@@ -26,7 +26,12 @@
 // checks can declare inLoopCheckAuth in dapp.json; this runner signs in once
 // against LOOPBACK using an existing disposable test account, then gives
 // each route its own isolated copy of that browser session. Without that
-// declaration protected checks run signed out; they are not auth parity.
+// declaration, an app usernode-run-inloop launched with its local sign-in
+// (its SIGNED IN note: the platform's identity token, from a key pair of the
+// launch's own) is checked signed in as that launch's viewer, each route's
+// URL carrying the token as Homeroom's frame carries it (App bench run 191:
+// these checks ran signed out, and failed on every protected route). Other
+// protected checks run signed out; they are not auth parity.
 //
 // Usage (from the app repo root, app already listening on $INLOOP_PORT):
 //   usernode-run-checks                      run every declared check
@@ -162,6 +167,33 @@ async function authenticateLocalChecks(browser, baseUrl, auth) {
   } finally {
     await context.close().catch(() => {});
   }
+}
+
+// The in-loop launch's own sign-in for the app at `baseUrl` (see the header),
+// as a token to add to each route, or null: not a loopback launch this
+// machine's usernode-run-inloop signed in, or that command is not beside
+// this one. Never throws.
+function launchToken(baseUrl, { inloop = null } = {}) {
+  try {
+    const parsed = new URL(baseUrl);
+    if (parsed.protocol !== 'http:' || !['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname)) return null;
+    const launcher = inloop || require(path.join(__dirname, 'usernode-run-inloop'));
+    const port = Number(parsed.port || 80);
+    const launch = launcher.readLaunch(port);
+    if (!launch || !launch.signedIn) return null;
+    const identity = launcher.localIdentity();
+    return identity ? launcher.viewerToken(identity, launch.appId || launcher.LOCAL_APP_ID) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** A route's URL with the viewer's token in its query (a hash route keeps its hash). Pure. */
+function withToken(url, token) {
+  if (!token) return url;
+  const u = new URL(url);
+  u.searchParams.set('token', token);
+  return u.toString();
 }
 
 // Identity of a check INCLUDING its assertions, so `--changed` re-runs a
@@ -358,6 +390,9 @@ async function main() {
   }
 
   const all = [];
+  // The launch's own sign-in, when dapp.json names none of its own.
+  const token = inLoopCheckAuth ? null : launchToken(baseUrl);
+  if (token) process.stdout.write('Signed in as the in-loop launch signs its app in (usernode-run-inloop), as Homeroom signs a person in.\n');
   try {
     let authState;
     if (inLoopCheckAuth) {
@@ -383,7 +418,7 @@ async function main() {
           ...(authState ? { storageState: authState } : {}),
         });
         try {
-          const results = await runGroup(context, url, groupTests);
+          const results = await runGroup(context, withToken(url, token), groupTests);
           for (const r of results) {
             all.push(r);
             process.stdout.write(r.pass
@@ -421,5 +456,5 @@ if (require.main === module) {
 // the worker container only ever executes this file directly.
 module.exports = {
   readTests, readInLoopCheckAuth, localAuthUrl, authenticateLocalChecks,
-  checkFingerprint, validatePath, parseArgs, runGroup,
+  checkFingerprint, validatePath, parseArgs, runGroup, launchToken, withToken,
 };

@@ -145,6 +145,79 @@ export function createLanguageRuntime(catalogs: Catalogs) {
     } catch { return language; }
   }
 
+  // The refresher runtime.ts installs: ask the server for its list again
+  // (GET /api/languages) when a pack has moved. One ask at a time; parallel
+  // readers share the one in flight.
+  let liveRefresh: (() => Promise<boolean>) | null = null;
+  let liveRefreshing: Promise<boolean> | null = null;
+
+  function refreshLive(): Promise<boolean> {
+    if (!liveRefresh) return Promise.resolve(false);
+    if (!liveRefreshing) {
+      // A refresh that cannot be used (offline, refused, an answer the
+      // runtime cannot trust) is never an error of its own: the pack
+      // request's own failure is the one that stands.
+      liveRefreshing = (async () => {
+        try { return !!(await liveRefresh()); } catch { return false; }
+      })().finally(() => { liveRefreshing = null; });
+    }
+    return liveRefreshing;
+  }
+
+  /**
+   * A pack request that failed the way a MOVED pack does: the answer was 404
+   * or 410, or the bytes were not the hash the list named. Only these ask for
+   * the list again; an outage, a timeout or a malformed pack fails on its own.
+   */
+  type MovedError = Error & { status?: number; mismatch?: boolean };
+
+  function packMoved(error: unknown): boolean {
+    const moved = error as MovedError;
+    return moved instanceof Error
+      && (moved.status === 404 || moved.status === 410 || moved.mismatch === true);
+  }
+
+  async function loadPack(language: string, namespace: string, entry: { url: string; hash: string }): Promise<void> {
+    const controller = new AbortController();
+    const deadline = setTimeout(() => controller.abort(), PACK_TIMEOUT_MS);
+    try {
+      const response = await fetch(entry.url, {
+        credentials: 'same-origin', signal: controller.signal, redirect: 'error',
+      });
+      if (!response.ok) {
+        const unavailable: MovedError = new Error('Language pack unavailable');
+        unavailable.status = response.status;
+        throw unavailable;
+      }
+      const bytes = await response.arrayBuffer();
+      // HTTP previews and self-hosted installations do not expose
+      // SubtleCrypto. The exact bytes are still verified there; integrity
+      // is never skipped.
+      const subtle = globalThis.crypto?.subtle;
+      const digest = subtle
+        ? await subtle.digest('SHA-256', bytes)
+        : sha256(new Uint8Array(bytes));
+      const actual = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+      if (actual !== entry.hash) {
+        const mismatch: MovedError = new Error('Language pack does not match this build');
+        mismatch.mismatch = true;
+        throw mismatch;
+      }
+      const messages = JSON.parse(new TextDecoder().decode(bytes));
+      if (!messages || Array.isArray(messages) || typeof messages !== 'object'
+          || Object.values(messages).some((value) => typeof value !== 'string')) {
+        throw new Error('Invalid language pack');
+      }
+      const showing = language === activeLanguage;
+      i18n.addResourceBundle(language, namespace, messages, true, true, { silent: !showing });
+      // React readers hear the store. A legacy reader repaints on this
+      // event, and its first read of this namespace was English: tell it the
+      // text for the language on screen is here. A pack loaded ahead of a
+      // switch is announced by the switch itself (activate), once.
+      if (showing) announce(namespace);
+    } finally { clearTimeout(deadline); }
+  }
+
   async function fetchPack(language: string, namespace: string): Promise<void> {
     if (language === 'en' || i18n.hasResourceBundle(language, namespace)) return;
     const entry = manifest[language]?.[namespace];
@@ -153,36 +226,21 @@ export function createLanguageRuntime(catalogs: Catalogs) {
     const requested = requests.get(key);
     if (requested) return requested;
     const request = (async () => {
-      const controller = new AbortController();
-      const deadline = setTimeout(() => controller.abort(), PACK_TIMEOUT_MS);
       try {
-        const response = await fetch(entry.url, {
-          credentials: 'same-origin', signal: controller.signal, redirect: 'error',
-        });
-        if (!response.ok) throw new Error('Language pack unavailable');
-        const bytes = await response.arrayBuffer();
-        // HTTP previews and self-hosted installations do not expose
-        // SubtleCrypto. The exact bytes are still verified there; integrity
-        // is never skipped.
-        const subtle = globalThis.crypto?.subtle;
-        const digest = subtle
-          ? await subtle.digest('SHA-256', bytes)
-          : sha256(new Uint8Array(bytes));
-        const actual = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
-        if (actual !== entry.hash) throw new Error('Language pack does not match this build');
-        const messages = JSON.parse(new TextDecoder().decode(bytes));
-        if (!messages || Array.isArray(messages) || typeof messages !== 'object'
-            || Object.values(messages).some((value) => typeof value !== 'string')) {
-          throw new Error('Invalid language pack');
+        await loadPack(language, namespace, entry);
+      } catch (error) {
+        // The list this page booted with can be out of date: English has
+        // changed since, or a translation pass has run, and a pack's URL is
+        // its content. A moved pack asks for the list once; if it now names
+        // this pack elsewhere, take it from there. Readers of the same pack
+        // share the refresh, which lives inside this request's promise.
+        if (packMoved(error) && await refreshLive()) {
+          const fresh = manifest[language]?.[namespace];
+          if (!fresh) throw new Error('Unknown language pack');
+          if (fresh.url !== entry.url) return loadPack(language, namespace, fresh);
         }
-        const showing = language === activeLanguage;
-        i18n.addResourceBundle(language, namespace, messages, true, true, { silent: !showing });
-        // React readers hear the store. A legacy reader repaints on this
-        // event, and its first read of this namespace was English: tell it the
-        // text for the language on screen is here. A pack loaded ahead of a
-        // switch is announced by the switch itself (activate), once.
-        if (showing) announce(namespace);
-      } finally { clearTimeout(deadline); }
+        throw error;
+      }
     })();
     requests.set(key, request);
     try { await request; } finally { requests.delete(key); }
@@ -482,6 +540,8 @@ export function createLanguageRuntime(catalogs: Catalogs) {
     dismissNotice: () => setNotice(null),
     setLiveCatalogs,
     waitForLive,
+    /** runtime.ts installs this: its list fetch, asked again on a moved pack. */
+    setLiveRefresh(refresh: () => Promise<boolean>): void { liveRefresh = refresh; },
     /** The languages offered now, English first, each under its own name. */
     getLanguages: () => languageList,
     subscribeLanguages(listener: () => void) {

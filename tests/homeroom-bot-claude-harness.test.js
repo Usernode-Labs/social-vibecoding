@@ -1113,6 +1113,52 @@ test('lean_turns: a first version\'s build turns ask for LEAN_TURNS; the worker 
   assert.equal((await dispatch(834, { mode: 'build', buildProfile: 'first_version', leanTurns: true })).LEAN_TURNS, '1');
 });
 
+// App bench run 191: GLM builds compacted their context 2 to 3 times each,
+// about 3.3 minutes a build. A configuration's roomy_context tweak asks for
+// ROOMY_CONTEXT, which reaches a first version's build that Claude Code runs
+// and nothing else.
+test('roomy_context: a first version\'s build turns ask for ROOMY_CONTEXT; the worker gives it to a Claude Code first-version build alone', async (t) => {
+  stubRuntime(t);
+  const { worker, calls } = loadWorker(t, JOURNAL);
+  const execs = [];
+  const session = { id: 5005, branch_name: 'dev/homeroom_bot-5005', agent_backend: 'codex_openrouter', agent_model: GLM, agent_config_version: 1 };
+  worker.adoptWarmWorker(5005, 'usernode-worker-5005');
+  const runner = (tweaks, firstVersion = true) => live.buildTurnRunner({
+    pool: { async query() { return { rows: [], rowCount: 1 }; } },
+    config: CONFIG, bot: BOT, session, model: GLM, branchName: session.branch_name, containerName: 'usernode-worker-5005',
+    deps: {
+      worker: { execInWorker(id, opts) { execs.push(opts); return worker.execInWorker(id, opts); }, async stopTurn() {} },
+      sessions: { runCodexAttemptLoop: sessions.runCodexAttemptLoop },
+      agentTurn,
+      activeWorkers: new Set(),
+    },
+    firstVersion, tweaks,
+  });
+  const turn = { prompt: 'Build it.', budgetMs: 60_000, commitMsg: 'Homeroom bot: #1 First version', progress: { note() {} } };
+  assert.ok(!(await runner(['roomy_context', 'lean_plan'])(turn)).routed?.error);
+  assert.ok(!(await runner(['lean_turns'])(turn)).routed?.error);
+  assert.ok(!(await runner(['roomy_context'], false)(turn)).routed?.error);
+  assert.deepEqual(execs.map((o) => o.roomyContext), [true, undefined, undefined]);
+  assert.deepEqual(execs.map((o) => o.leanTurns), [undefined, true, undefined], 'each tweak on its own');
+  const envs = calls.filter((c) => c.args?.[0] === 'exec' && c.args?.[1] === '-d').map(readDispatch).map((d) => d.env);
+  assert.deepEqual(envs.map((e) => e.ROOMY_CONTEXT), ['1', undefined, undefined]);
+
+  const dispatch = async (id, opts) => {
+    worker.adoptWarmWorker(id, `usernode-worker-${id}`);
+    await worker.execInWorker(id, {
+      prompt: 'Build it.', branchName: `dev/someone-${id}`, agentBackend: 'codex_openrouter', agentHarness: 'claude',
+      agentModel: GLM, openrouterApiKey: KEY, openrouterApiBase: 'https://openrouter.ai/api/v1',
+      turnUuid: `attempt-${id}`, logicalTurnId: `turn-${id}`, attemptNumber: 1, ...opts,
+    });
+    return readDispatch(calls.filter((c) => c.args?.[0] === 'exec' && c.args?.[1] === '-d').at(-1)).env;
+  };
+  assert.equal((await dispatch(841, { mode: 'build', roomyContext: true })).ROOMY_CONTEXT, undefined, 'not without the first-version profile');
+  assert.equal((await dispatch(842, { mode: 'scout', buildProfile: 'first_version', roomyContext: true })).ROOMY_CONTEXT, undefined);
+  assert.equal((await dispatch(843, { mode: 'build', agentHarness: 'codex', buildProfile: 'first_version', roomyContext: true })).ROOMY_CONTEXT,
+    undefined, 'the Codex runner keeps its own catalog limit');
+  assert.equal((await dispatch(844, { mode: 'build', buildProfile: 'first_version', roomyContext: true })).ROOMY_CONTEXT, '1');
+});
+
 test('run four: the platform\'s host shortlist for a model reaches the turn\'s listener, checked; none sent, none set', async (t) => {
   const { worker, calls } = loadWorker(t, JOURNAL);
   const dispatch = async (id, opts) => {

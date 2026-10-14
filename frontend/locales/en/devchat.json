@@ -2311,6 +2311,14 @@
     "text": "Discard this request",
     "description": "Accessible name of the ✕ button in the comment box in comment mode (the box beside a pin where the person writes their request): throws the request away without posting it."
   },
+  "commentPin.box.minimize": {
+    "text": "Minimize",
+    "description": "Tooltip and accessible name of a button at the top of the comment sheet on a phone in comment mode (a layer over the page where a tap leaves a comment pinned to that spot): folds the sheet back to the small box beside the comment's pin, so the page is in sight again. Nothing written is lost."
+  },
+  "commentPin.box.write": {
+    "text": "Write your comment",
+    "description": "Accessible name of the small box beside a new comment's pin on a phone in comment mode (a layer over the page where a tap leaves a comment pinned to that spot), while nothing is written yet: tapping it opens the comment sheet with the keyboard."
+  },
   "commentPin.textLabelNumbered": {
     "text": "Comment {{number}}",
     "description": "Accessible name of a comment's text box in the comment box in comment mode (the box beside a pin where the person writes their request) when the request has several comments. {{number}} is the comment's number within the request."
@@ -2416,8 +2424,8 @@
     "description": "How the facts on the card of a request already posted from comment mode are joined, for example \"3 comments · 2 images · kudos for whoever solves it\". {{first}} is everything said so far and {{second}} the next fact. Keep the middle dot unless your language separates them otherwise."
   },
   "commentPin.card.open": {
-    "text": "Open request",
-    "description": "Button on the card of a request already posted from comment mode: leaves comment mode and opens that request's page."
+    "text": "View request",
+    "description": "Button on the card of a request already posted from comment mode (the sent card, and the card shown when you tap a pin posted earlier): the request is already posted, this button only shows it. It leaves comment mode and opens the request's page."
   },
   "commentPin.sent.label": {
     "text": "Request posted",

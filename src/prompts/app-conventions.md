@@ -609,6 +609,12 @@ the plain route keeps its test of the production-shaped answer. The
 viewer's demo rows must never be what makes a check of the form "has
 this user done X" pass (see the next section): keep such checks off
 demo rows, or add the rows to the responses rather than storing them.
+The same goes for a check of the plain route's empty state: a proposal's
+checks run at the same time, signed in as one account, on one staging
+database, so once the `?demo=1` check has stored that account's rows the
+plain route shows them too. Add the viewer's rows to the `?demo=1`
+responses without storing them, or store them marked as demo and leave
+those out of every response without `?demo=1`.
 
 ### Seeded data must not fabricate a signal your logic reads
 
@@ -3558,9 +3564,14 @@ locally inside the worker the same way a staging container does:
   to `/tailwind.css` shipped a blank production page for days. Only once
   the page itself is sound, suspect missing seed data — the local DB starts
   empty. Check the app's existing staging fixtures or
-  `?demo=1` route first. A sign-in screen means this browser is signed out;
-  use an existing documented fake staging account through the normal UI if
-  possible. Do not change auth code or seed passwords solely for this check.
+  `?demo=1` route first. For an app that verifies the platform's identity
+  token, the launch signs it in as Homeroom does: it prints a link that opens
+  the app signed in, and `usernode-run-inloop --link <route>` prints one for
+  any route (`usernode-run-checks` signs its checks in the same way). A page
+  opened without it is signed out. For an app with a sign-in of its own, a
+  sign-in screen means this browser is signed out; use an existing documented
+  fake staging account through the normal UI if possible. Do not change auth
+  code, mint a token or seed passwords solely for this check.
 - Keep it tight (a couple of launch→check→fix cycles, a minute or two).
   **If the app won't boot** — no local Postgres, a missing required
   secret, a crash on start — report the blocker. You can still finish

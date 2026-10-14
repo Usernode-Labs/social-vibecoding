@@ -289,8 +289,12 @@ test('offered inside the built plan while it is being built, and not again once 
   const card = read('frontend/src/features/messages/bot-plan.tsx');
   assert.match(card, /const \[offer\] = useState\(\(\) => !notifyMeChosen\(userId\)\);/,
     'decided when the card is drawn: an account that chose here is not asked again');
-  assert.match(card, /footer=\{offer && state === 'built' && card && card\.state !== 'done' \? <div className="mt-3"><NotifyMe userId=\{userId\} \/><\/div> : null\}/,
+  assert.match(card, /footer=\{state === 'built' && card && card\.state !== 'done'\s*\? notifyFooter\(meta, offer, userId\)\s*: null\}/,
     'only once built, and only while it is being built');
+  // Run six: a first version's plan gets the switch that starts on
+  // (tests/first-version-notify-live.test.js); a complicated change's keeps
+  // this offer, once per account on this device.
+  assert.match(card, /return offer \? <div className="mt-3"><NotifyMe userId=\{userId\} \/><\/div> : null;/);
   const notify = read('frontend/src/features/messages/notify-me.tsx');
   assert.match(notify, /setState\('asking'\);\s*markNotifyMeChosen\(userId\);\s*const answered = await askToNotify\(\);/,
     'chosen on the tap, whatever the answer');

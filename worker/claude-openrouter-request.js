@@ -982,7 +982,15 @@ const AUTO_COMPACT_TOKEN_LIMIT = 200_000;
 // limit above.
 const NON_ANTHROPIC_AUTO_COMPACT_TOKEN_LIMIT = 120_000;
 
-function autoCompactLimit(model) {
+// A first version's `roomy_context` tweak (ROOMY_CONTEXT=1, worker.js): the
+// Anthropic limit for any model. App bench run 191's GLM builds compacted 2
+// to 3 times each at about 65k tokens of context, and each compaction was a
+// one-to-three-minute reply writing the summary, then files read again. Only
+// the latest few images are sent now, so a bench arm tries compacting later.
+const ROOMY_AUTO_COMPACT_TOKEN_LIMIT = AUTO_COMPACT_TOKEN_LIMIT;
+
+function autoCompactLimit(model, env = {}) {
+  if (env.ROOMY_CONTEXT === '1') return ROOMY_AUTO_COMPACT_TOKEN_LIMIT;
   return ANTHROPIC_MODEL.test(String(model || '')) ? AUTO_COMPACT_TOKEN_LIMIT : NON_ANTHROPIC_AUTO_COMPACT_TOKEN_LIMIT;
 }
 
@@ -992,7 +1000,7 @@ function autoCompactLimit(model) {
 function compactionEnv(env, model) {
   const window = Number(env.AGENT_MODEL_CONTEXT_WINDOW);
   const known = Number.isSafeInteger(window) && window > 0;
-  const limit = autoCompactLimit(model);
+  const limit = autoCompactLimit(model, env);
   const out = {
     CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(known ? Math.min(window, limit) : limit),
   };
@@ -1105,7 +1113,7 @@ if (require.main === module) {
 
 module.exports = {
   startMessagesAdapter, applyTurnPolicy, pairToolIds, makeRedactor, claudeChildEnv, runClaude, replyFields, PROVIDER_PREFERENCES,
-  AUTO_COMPACT_TOKEN_LIMIT, NON_ANTHROPIC_AUTO_COMPACT_TOKEN_LIMIT, autoCompactLimit,
+  AUTO_COMPACT_TOKEN_LIMIT, NON_ANTHROPIC_AUTO_COMPACT_TOKEN_LIMIT, ROOMY_AUTO_COMPACT_TOKEN_LIMIT, autoCompactLimit,
   pruneOldImages, KEEP_LATEST_IMAGES, PRUNE_STEP_IMAGES, PRUNED_IMAGE_NOTE, TOOL_OUTPUT_LIMITS,
   pruneStaleToolOutput, KEEP_LATEST_OUTPUTS, PRUNE_STEP_OUTPUTS, PRUNE_MIN_OUTPUT_CHARS, PRUNED_OUTPUT_HEAD_CHARS,
   PROVIDER_ROUTING_BY_MODEL, providerRoutingFor, withoutShortlist, parseShortlist, SHORTLIST_FALLBACK_STATUSES,

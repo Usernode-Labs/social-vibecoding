@@ -403,3 +403,107 @@ test('the launch record only ever stops this command: a pid that is now somethin
   assert.equal(fs.existsSync(path.join(dir, '4100.json')), false, 'the stale record goes');
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+// App bench run 191: the launch served every app signed out (a worker has no
+// USERNODE_JWT_PUBLIC_KEY), and 11 of 17 builds read the platform's check
+// script to mint a token of their own.
+test('the launch signs an app in as Homeroom does: its own key, kept, and a link that verifies', () => {
+  const jwt = require('jsonwebtoken');
+  const {
+    localIdentity, viewerToken, signedInLink, signsIn, VIEWER, LOCAL_APP_ID,
+  } = require('../worker/usernode-run-inloop');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'un-inloop-id-'));
+  try {
+    const identity = localIdentity({ dir });
+    assert.match(identity.publicKeyPem, /^-----BEGIN PUBLIC KEY-----/);
+    assert.deepEqual(localIdentity({ dir }), identity, 'made once, so earlier links keep working after a relaunch');
+    assert.equal(fs.statSync(path.join(dir, 'identity.json')).mode & 0o777, 0o600, 'readable by this user alone');
+    // The starter's own check (template.js server.js): RS256, issuer, audience, pur.
+    const claims = jwt.verify(viewerToken(identity, '42'), identity.publicKeyPem,
+      { algorithms: ['RS256'], issuer: 'usernode', audience: 'usernode:app:42' });
+    assert.equal(claims.pur, 'iframe');
+    assert.equal(claims.id, VIEWER.id);
+    assert.equal(claims.username, 'staging-demo-viewer', 'the platform check script\'s viewer');
+    assert.ok(claims.exp - claims.iat >= 4 * 60 * 60, 'lasts a build and its review');
+    const link = new URL(signedInLink(identity, LOCAL_APP_ID, 3100, '/?demo=1#/feeds'));
+    assert.equal(link.origin, 'http://localhost:3100');
+    assert.equal(link.searchParams.get('demo'), '1');
+    assert.equal(link.hash, '#/feeds', 'a hash route keeps its hash');
+    assert.equal(jwt.verify(link.searchParams.get('token'), identity.publicKeyPem,
+      { algorithms: ['RS256'], issuer: 'usernode', audience: 'usernode:app:1' }).pur, 'iframe');
+    assert.throws(() => jwt.verify(viewerToken(identity, '42'), localIdentity({ dir: fs.mkdtempSync(path.join(os.tmpdir(), 'un-inloop-id-')) }).publicKeyPem,
+      { algorithms: ['RS256'] }), /invalid signature/, 'nothing else trusts it');
+    // Only an app's checkout, and only when the worker sets no key of its own.
+    assert.equal(signsIn({}, true), true);
+    assert.equal(signsIn({}, false), false, 'not the platform\'s own repository');
+    assert.equal(signsIn({ USERNODE_JWT_PUBLIC_KEY: 'k' }, true), false);
+    assert.equal(signsIn({ INLOOP_SIGN_IN: '0' }, true), false);
+    // A directory it cannot make: no identity, and the launch goes on signed out.
+    const notADir = path.join(dir, 'not-a-dir');
+    fs.writeFileSync(notADir, 'x');
+    assert.equal(localIdentity({ dir: notADir }), null);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('end to end: the launched app gets the public half, the printed link opens it signed in, and --link prints one for any route', async () => {
+  const jwt = require('jsonwebtoken');
+  const { readLaunch } = require('../worker/usernode-run-inloop');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'un-inloop-signed-'));
+  const launcher = path.join(__dirname, '..', 'worker', 'usernode-run-inloop');
+  const reserved = http.createServer();
+  const port = await listen(reserved);
+  await close(reserved);
+  fs.writeFileSync(path.join(dir, 'server.js'), [
+    "const http = require('http');",
+    'http.createServer((req, res) => res.end(JSON.stringify({',
+    '  key: process.env.USERNODE_JWT_PUBLIC_KEY || null, app: process.env.USERNODE_APP_ID || null,',
+    '}))).listen(Number(process.env.PORT));',
+    "process.on('SIGTERM', () => process.exit(0));",
+  ].join('\n'));
+  const { spawn, spawnSync } = require('node:child_process');
+  const env = { ...process.env, INLOOP_BROWSER: '1', INLOOP_ENV: 'staging', INLOOP_PORT: String(port),
+    INLOOP_DATABASE_URL: 'postgres://postgres:postgres@127.0.0.1:5432/inloop', PLATFORM_URL: '', INLOOP_SKIP_BUILD: '1' };
+  delete env.USERNODE_JWT_PUBLIC_KEY;
+  delete env.USERNODE_APP_ID;
+  delete env.INLOOP_SIGN_IN;
+  const child = spawn(process.execPath, [launcher, process.execPath, 'server.js'], { cwd: dir, stdio: ['ignore', 'ignore', 'pipe'], env });
+  let stderr = '';
+  child.stderr.on('data', (c) => { stderr += c; });
+  const exited = new Promise((resolve) => child.on('exit', (code) => resolve(code)));
+  try {
+    let seen = null;
+    for (let i = 0; i < 100 && !seen; i += 1) {
+      try {
+        const res = await request(port, { path: '/' });
+        if (res.status === 200) seen = JSON.parse(res.body);
+      } catch { /* not up yet */ }
+      if (!seen) await new Promise((r) => setTimeout(r, 100));
+    }
+    assert.ok(seen, `the launch came up (stderr: ${stderr})`);
+    assert.match(seen.key, /^-----BEGIN PUBLIC KEY-----/, 'the app gets a key to verify with, as on the platform');
+    assert.equal(seen.app, '1');
+    const printed = new RegExp(`signed in as staging-demo-viewer, as Homeroom signs a person in: open (http://localhost:${port}/\\?token=\\S+)`).exec(stderr);
+    assert.ok(printed, stderr);
+    assert.equal(jwt.verify(new URL(printed[1]).searchParams.get('token'), seen.key,
+      { algorithms: ['RS256'], issuer: 'usernode', audience: 'usernode:app:1' }).pur, 'iframe');
+    assert.deepEqual([readLaunch(port).signedIn, readLaunch(port).appId], [true, '1']);
+    const link = spawnSync(process.execPath, [launcher, '--link', '/?demo=1'], { cwd: dir, env, encoding: 'utf8', timeout: 20000 });
+    assert.equal(link.status, 0, link.stderr);
+    const url = new URL(link.stdout.trim());
+    assert.equal(url.searchParams.get('demo'), '1');
+    assert.equal(jwt.verify(url.searchParams.get('token'), seen.key, { algorithms: ['RS256'], audience: 'usernode:app:1' }).username, 'staging-demo-viewer');
+    const help = spawnSync(process.execPath, [launcher, '--help'], { cwd: dir, env, encoding: 'utf8', timeout: 20000 });
+    assert.equal(help.status, 0, 'help is help, never an app command');
+    assert.match(help.stderr, /--link \[route\]/);
+    spawnSync(process.execPath, [launcher, '--stop'], { cwd: dir, env, encoding: 'utf8', timeout: 20000 });
+    assert.equal(await exited, 0);
+    const none = spawnSync(process.execPath, [launcher, '--link'], { cwd: dir, env, encoding: 'utf8', timeout: 20000 });
+    assert.equal(none.status, 2);
+    assert.match(none.stderr, /no app it launched is running/);
+  } finally {
+    child.kill('SIGKILL');
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

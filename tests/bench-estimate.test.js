@@ -33,7 +33,7 @@ test('heavy trials never get more than the three heavy slots', () => {
 
 test('the run is clamped to the lane\'s own limits', () => {
   const items = Array.from({ length: 16 }, () => ({ stage: 'dm', ms: MIN }));
-  assert.equal(lane.estimateWallMs(items, 50), 2 * MIN, 'never more than eight in flight');
+  assert.equal(lane.estimateWallMs(Array.from({ length: 22 }, () => ({ stage: 'dm', ms: MIN })), 50), 2 * MIN, 'never more than eleven in flight');
   assert.equal(lane.estimateWallMs(items, 0), 16 * MIN, 'and never fewer than one');
   assert.equal(lane.estimateWallMs([], 4), 0);
 });

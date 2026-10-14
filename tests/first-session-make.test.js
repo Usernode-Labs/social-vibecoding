@@ -828,3 +828,36 @@ test('the waitlist answer is read for the account\'s linked row only, and /me se
   assert.match(read('src/routes/auth.js'), /if \(storyFirstSession\) waitlistIdea = await firstSession\.waitlistIdea\(pool, req\.user\.id\);/);
   assert.match(read('src/routes/auth.js'), /storyFirstSession,\s+\/\/[^\n]*\n\s+\/\/[^\n]*\n\s+waitlistIdea,/);
 });
+
+test('run six: a long description scrolls inside its own box, under its label, thinning out at the top', () => {
+  // Newcomer run six (14 Oct 2026, iPhone Safari, keyboard up): about 200
+  // characters scrolled the description's text up to the label's own bottom
+  // edge, and the line cut off there read as text passing under "What should
+  // it do?". Both fields keep 8px between label and writing; while the
+  // description is scrolled from its top, its top line fades out.
+  const make = loadTsx(`${DIR}/make.tsx`);
+  assert.equal(make.BRIEF_FADE, '[mask-image:linear-gradient(to_bottom,transparent,#000_22px)]');
+  assert.equal(make.briefFades({ scrollTop: 0 }), false, 'at its top, the first line drawn whole');
+  assert.equal(make.briefFades({ scrollTop: 13 }), true);
+  assert.equal(make.briefFades(null), false);
+  const html = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { who: '', onMade() {}, onLookAround() {} });
+  const brief = html.match(/<textarea[^>]*id="first-session-brief"[^>]*>/)[0];
+  const name = html.match(/<input[^>]*id="first-session-name"[^>]*>/)[0];
+  const classOf = (tag) => tag.match(/class="([^"]*)"/)[1].split(' ');
+  for (const [field, tag] of [['brief', brief], ['name', name]]) {
+    const cls = classOf(tag);
+    assert.ok(cls.includes('pt-2') && cls.includes('pb-1'), `${field}: 8px under its label`);
+    assert.ok(!cls.includes('py-1'), field);
+    assert.ok(!cls.includes(make.BRIEF_FADE), `${field}: no fade unscrolled`);
+  }
+  // Read on its scroll, and after every render (a box swapped in, or a
+  // shorter description, can land it back at its top with no scroll event).
+  const src = read(`${DIR}/make.tsx`);
+  assert.match(src, /const \[briefScrolled, setBriefScrolled\] = useState\(false\);\s+useEffect\(\(\) => \{ setBriefScrolled\(briefFades\(briefRef\.current\)\); \}\);/);
+  assert.match(src, /onScroll=\{\(e\) => setBriefScrolled\(briefFades\(e\.currentTarget\)\)\}/);
+  assert.match(src, /className=\{`\$\{INPUT\}\$\{briefScrolled \? ` \$\{BRIEF_FADE\}` : ''\} resize-none leading-\[22px\]`\}/);
+  // A box of its own under the label, which stays where it is.
+  assert.match(html, /<label for="first-session-brief" class="block text-\[13px\] text-zinc-500 dark:text-zinc-400">What should it do\?<\/label><textarea/);
+  assert.match(brief, /rows="3"/);
+  assert.ok(classOf(brief).includes('resize-none'));
+});

@@ -57,7 +57,12 @@ const MAX_MODELS = 5;
 const MAX_PACKS = 4;
 const MAX_REFERENCES = 5;
 const MAX_REPEATS = 3;
-const MAX_CONCURRENCY = 6;
+// Builds at once. 9, not 6 (14 Oct 2026): a three-arm run of three briefs
+// twice is 18 trials, which go in two rounds instead of three. Run 191's own
+// trial durations put it at about 60 minutes instead of about 90; each
+// build's own time is what the run measures, and the lane keeps room beside
+// it (lane.js MAX_IN_FLIGHT).
+const MAX_CONCURRENCY = 9;
 const MIN_CAP_USD = 0.5;
 const MAX_CAP_USD = 1000;
 const MAX_LIVE_PREVIEWS = 4;
@@ -598,7 +603,11 @@ function reviewRecord(review) {
         problem: clip(i?.problem, 1000), fix: clip(i?.fix, 1000),
       })),
       previousFixed: (Array.isArray(r?.previousFixed) ? r.previousFixed : []).slice(0, 20).map((x) => clip(x, 80)),
-      reviewer: { costUsd: n(r?.reviewerCostUsd), ms: n(r?.reviewerMs), error: r?.reviewerError ? clip(r.reviewerError, 300) : null },
+      reviewer: {
+        costUsd: n(r?.reviewerCostUsd), ms: n(r?.reviewerMs), error: r?.reviewerError ? clip(r.reviewerError, 300) : null,
+        // Asked twice (bot-review.js reviewCapture): what was wrong with its first reply.
+        retry: r?.reviewerRetry ? clip(r.reviewerRetry, 300) : null,
+      },
       fix: r?.fix ? {
         ok: !!r.fix.ok, costUsd: n(r.fix.costUsd), ms: n(r.fix.ms), sha: r.fix.sha || null, commits: n(r.fix.commits),
         error: r.fix.error ? clip(r.fix.error, 300) : null,

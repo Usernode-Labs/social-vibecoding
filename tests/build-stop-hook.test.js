@@ -284,7 +284,7 @@ const record = { args, env: {
   count: process.env.USERNODE_STOP_GUARD_COUNT || null,
   repo: process.env.USERNODE_STOP_GUARD_REPO || null,
 }, hooks: [] };
-if (work === 'commit' || work === 'commit_and_serve') {
+if (work === 'commit' || work === 'commit_and_serve' || work === 'commit_then_tests') {
   fs.writeFileSync('feature.js', 'x\\n');
   execSync('git add -A && git commit -q -m feature');
 }
@@ -316,6 +316,8 @@ if (at >= 0) {
     if (!verdict || verdict.decision !== 'block') break;
     active = true;
     if (work === 'after_first_block') fs.writeFileSync('made.js', 'made\\n');
+    // A first version sent back for its checks' key declares them under \`tests\`.
+    if (work === 'commit_then_tests') fs.writeFileSync('dapp.json', JSON.stringify({ tests: [{ name: 'Home', path: '/' }] }));
   }
 }
 fs.writeFileSync(process.env.STUB_LOG, JSON.stringify(record));
@@ -567,6 +569,60 @@ test('runGuard: a changed turn runs the checks, is sent back while one fails (co
   assert.deepEqual(hook.runGuard({ env: env3, git: committed, checks, fsImpl: unwritable }), { block: false, why: 'committed', checks: 'no_count' });
 });
 
+test('a first version\'s dapp.json: checks under `checks`, none, or not JSON are named; checks under `tests` pass', () => {
+  // Run 191's three no-check builds, as they wrote it.
+  const misplaced = hook.manifestProblem(JSON.stringify({ icon: { emoji: 'x' }, secrets: [], checks: [{ name: 'Home', path: '/' }] }));
+  assert.equal(misplaced.why, 'checks_misplaced');
+  assert.match(misplaced.reason, /declares checks under `checks`, a key the platform does not read: they would never run, here or on the proposal\. Move them into the top-level `tests` array/);
+  assert.match(misplaced.reason, /delete the `checks` key, and finish again\./);
+  assert.equal(hook.manifestProblem(JSON.stringify({ tests: [{ path: '/' }], checks: [] })).why, 'checks_misplaced', 'both: the stray key still goes');
+  for (const m of [{ secrets: [] }, { tests: [] }, { tests: [{ name: 'no path' }, { path: 'relative' }, { path: '//host' }, null, 'x'] }, { tests: {} }]) {
+    const none = hook.manifestProblem(JSON.stringify(m));
+    assert.equal(none.why, 'checks_none', JSON.stringify(m));
+    assert.match(none.reason, /declares no checks: its top-level `tests` array is missing, empty or has no check with a path\. A first version ships two or three there/);
+  }
+  assert.equal(hook.manifestProblem(null).why, 'checks_none', 'no dapp.json');
+  assert.equal(hook.manifestProblem('{"tests": [').why, 'checks_manifest_invalid');
+  assert.equal(hook.manifestProblem('[]').why, 'checks_manifest_invalid');
+  assert.equal(hook.manifestProblem(JSON.stringify({ tests: [{ name: 'Home', path: '/' }] })), null);
+  assert.equal(hook.manifestProblem(JSON.stringify({ tests: [{ path: ' /?demo=1 ' }] })), null);
+});
+
+test('runGuard: a first version whose dapp.json declares no checks the platform reads is sent back before anything boots', () => {
+  const dir = tmp('stop-guard-tests-');
+  const env = {
+    USERNODE_STOP_GUARD_START: START, USERNODE_STOP_GUARD_COUNT: path.join(dir, 'blocks'), USERNODE_STOP_GUARD_REPO: dir,
+    USERNODE_STOP_GUARD_CHECKS: '/cmd', USERNODE_STOP_GUARD_CHECKS_COUNT: path.join(dir, 'checks'),
+    USERNODE_STOP_GUARD_DEADLINE: String(Date.now() + 30 * 60_000), USERNODE_STOP_GUARD_REQUIRE_TESTS: '1',
+  };
+  const committed = (args) => (args[0] === 'rev-parse' ? `${OTHER}\n` : '');
+  const runs = [];
+  const checks = (args) => { runs.push(args); return PASSING; };
+  fs.writeFileSync(path.join(dir, 'dapp.json'), JSON.stringify({ secrets: [], checks: [{ name: 'Home', path: '/' }] }));
+  const sent = hook.runGuard({ env, git: committed, checks });
+  assert.equal(sent.block, true);
+  assert.equal(sent.why, 'checks_misplaced');
+  assert.equal(sent.checkBlocks, 1);
+  assert.equal(fs.readFileSync(env.USERNODE_STOP_GUARD_CHECKS_COUNT, 'utf8'), '1', 'counted with the checks gate\'s own sends');
+  assert.equal(runs.length, 0, 'nothing booted');
+  assert.equal(hook.hookOutput(sent), JSON.stringify({ decision: 'block', reason: sent.reason }));
+  // Moved under `tests`: the checks run, and pass.
+  fs.writeFileSync(path.join(dir, 'dapp.json'), JSON.stringify({ secrets: [], tests: [{ name: 'Home', path: '/' }] }));
+  assert.deepEqual(hook.runGuard({ env, git: committed, checks }), { block: false, why: 'committed', checks: 'checks_pass' });
+  assert.equal(runs.length, 1);
+  // Within the same cap as a failing check.
+  fs.writeFileSync(path.join(dir, 'dapp.json'), JSON.stringify({ tests: [] }));
+  assert.equal(hook.runGuard({ env, git: committed, checks }).why, 'checks_none');
+  assert.deepEqual(hook.runGuard({ env, git: committed, checks }), { block: false, why: 'committed', checks: 'checks_cap' });
+  // A later change (no REQUIRE_TESTS) is left as it is: no checks, nothing to run.
+  const later = { ...env, USERNODE_STOP_GUARD_CHECKS_COUNT: path.join(tmp('stop-guard-tests-'), 'checks') };
+  delete later.USERNODE_STOP_GUARD_REQUIRE_TESTS;
+  assert.deepEqual(hook.runGuard({ env: later, git: committed, checks }), { block: false, why: 'committed', checks: 'checks_pass' });
+  // Too little time left, or unchanged: as before, whatever dapp.json says.
+  const late = { ...env, USERNODE_STOP_GUARD_CHECKS_COUNT: path.join(tmp('stop-guard-tests-'), 'checks'), USERNODE_STOP_GUARD_DEADLINE: String(Date.now() + 60_000) };
+  assert.deepEqual(hook.runGuard({ env: late, git: committed, checks }), { block: false, why: 'committed', checks: 'checks_no_time' });
+});
+
 test('runChecks runs the platform\'s command in the repository and reads its result line; anything else is no result', () => {
   const dir = tmp('stop-guard-cmd-');
   const cmd = path.join(dir, 'usernode-app-check');
@@ -628,6 +684,26 @@ test('run-cc.sh: a turn that changed something is sent back once its checks fail
   const without = await runRunCc(plain, { STUB_WORK: 'commit', STOP_GUARD_CHECKS: path.join(plain.dir, 'absent') });
   assert.equal(without.code, 0, without.out);
   assert.match(resultLine(without.out), / stop_hook_blocks=0$/);
+});
+
+test('run-cc.sh: a first version with no checks under `tests` is sent back, and its checks run once it declares them', async () => {
+  const fx = runnerFixture();
+  const cmd = path.join(fx.dir, 'usernode-app-check');
+  const counter = path.join(fx.dir, 'check-runs');
+  fs.writeFileSync(cmd, [
+    '#!/bin/sh',
+    `n=$(cat "${counter}" 2>/dev/null || echo 0); n=$((n+1)); echo "$n" > "${counter}"`,
+    `echo '__USERNODE_BENCH_CAPTURE__ ${JSON.stringify(PASSING)}'`,
+    '',
+  ].join('\n'));
+  const ran = await runRunCc(fx, {
+    STUB_WORK: 'commit_then_tests', STOP_GUARD_CHECKS: cmd, STOP_GUARD_REQUIRE_TESTS: '1',
+    STOP_GUARD_DEADLINE: String(Date.now() + 30 * 60_000),
+  });
+  assert.equal(ran.code, 0, ran.out);
+  assert.deepEqual(ran.claude.hooks, ['block', null], 'sent back for its checks, then let go once they are under `tests`');
+  assert.equal(fs.readFileSync(counter, 'utf8').trim(), '1', 'booted only once they were declared');
+  assert.match(resultLine(ran.out), / stop_hook_check_blocks=1$/);
 });
 
 // ── Leftover servers (App bench run 190) ────────────────────────────────

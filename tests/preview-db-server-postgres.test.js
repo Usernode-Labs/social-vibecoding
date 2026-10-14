@@ -336,6 +336,34 @@ test('switching both ways: old previews are found where they are, and the templa
   await dbManager.dropDatabase(drained, { strict: true });
 });
 
+test('a rebuild drops what the other server holds of its name, and builds when it holds nothing', async (t) => {
+  const ctx = await setup(t);
+  if (!ctx) return;
+  const { main, preview, dbManager, tok, source, names, roles } = ctx;
+  const rebuilt = `${source}_staging_s915_eeeeee`;
+  const roleOnly = `${source}_staging_s916_ffffff`;
+  const absent = `${source}_staging_s917_abcdef`;
+
+  // Built before the setting existed: database and role on the main server.
+  delete process.env.STAGING_DB_ADMIN_URL;
+  await dbManager.cloneDatabase(source, rebuilt, { viaTemplate: true });
+  // A drop that stopped half way: only the role is left on the main server.
+  await main.query(`CREATE ROLE ${roleOnly}_owner LOGIN PASSWORD 'left-behind'`);
+  process.env.STAGING_DB_ADMIN_URL = PREVIEW;
+
+  for (const name of [rebuilt, roleOnly, absent]) {
+    sent.length = 0;
+    const cloned = await dbManager.cloneDatabase(source, name, { viaTemplate: true });
+    assert.equal(cloned.server, 'preview', name);
+    assert.equal(sent.filter((q) => q.port === ctx.mainPort && q.text.includes(name)).length, 0,
+      `${name}: the main server is asked and cleared through psql, as before, not node-postgres`);
+  }
+  assert.deepEqual(await names(main, `%${tok}%`), [source], 'the earlier build is gone from the main server');
+  assert.deepEqual(await roles(main, `%${tok}%`), [`${source}_owner`], 'and so are its role and the left-behind one');
+  assert.deepEqual(await names(preview, `%${tok}%`), [rebuilt, roleOnly, absent, `${source}_stgtmpl`].sort());
+  for (const name of [rebuilt, roleOnly, absent]) await dbManager.dropDatabase(name, { strict: true });
+});
+
 test('an old clone of the same session on the other server does not vouch for the current one', async (t) => {
   const ctx = await setup(t);
   if (!ctx) return;

@@ -2374,6 +2374,12 @@ function plainMarkdown(value) {
     .replace(/\s+/g, ' ')
     .trim();
 }
+// The Homeroom bot's account (services/conversations.js HOMEROOM_BOT_USERNAME): a
+// synthetic account nobody else can hold.
+function isBotUsername(username) {
+  return String(username || '').toLowerCase() === 'homeroom_bot';
+}
+
 // The row's words for one of the bot's notifications: { label, subject, meta },
 // or null when the detail is not the bot's. Its answer is what it wrote,
 // under its name.
@@ -2555,6 +2561,9 @@ function rowView(n) {
         conversationId: n.conversationId != null ? Number(n.conversationId) : null,
         appLine: bot.meta || t('notifications:row.source.messages'),
         botMoment: true,
+        // Run six: the row wears the bot's own face (the sheet's AvatarChip),
+        // never a letter tile of its handle.
+        bot: true,
         ...headline(bot.label, bot.subject),
       };
     }
@@ -2562,6 +2571,9 @@ function rowView(n) {
       ...base,
       wrap: true,
       icon: icons[n.kind],
+      // A build moment always comes from the bot; so does anything its
+      // account sent, a moment without its detail included.
+      ...(BUILD_KIND_MOMENTS[n.kind] || isBotUsername(n.sourceUsername) ? { bot: true } : {}),
       by: n.sourceUsername || null,
       // What the sheet's Messages tab filters on. Carried as a flag rather
       // than re-deriving it there from `kind`: CONVERSATION_NOTIF_KINDS lives

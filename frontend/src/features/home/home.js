@@ -28,7 +28,7 @@ import { AppCard } from '../apps/app-card.js';
 import { gridStore } from './grid-store';
 import { chromeStore } from './chrome-store';
 import { detectInstallHost } from '../mobile-install/environment';
-import { buildLineTileClass, buildLineTileOf, buildLineTileWordsOf } from '../first-session/build-line-words.js';
+import { buildLineTileClass, buildLineTileOf, buildLineTileWordsOf, tileStageOf } from '../first-session/build-line-words.js';
 
 // Which discovery cards and add badges already carry their listeners.
 // `_wireDiscoveryCards` runs again whenever a lane's tiles change identity,
@@ -1216,8 +1216,8 @@ const Home = {
     // tile's short words (run four, 13 Oct: the whole phrases were cut off),
     // and while it is built, its stage's (`first_version_phase`, run five:
     // the tile said "Building" while the App tab said "Drawing the screens").
-    const buildLine = Home.tileBuildLine(app);
-    const statusLabel = buildLine ? message(buildLineTileWordsOf(buildLine, app.first_version_phase))
+    const { line: buildLine, phase: buildPhase } = Home.tileBuildStage(app);
+    const statusLabel = buildLine ? message(buildLineTileWordsOf(buildLine, buildPhase))
       : isRunning ? ''
       : app.status === 'creating' ? message('home:grid.tile.status.creating')
       : isAwaiting ? message('home:grid.tile.status.awaitingSecrets')
@@ -1264,8 +1264,19 @@ const Home = {
    * null. An app that failed to set up says that instead: Error and Retry.
    */
   tileBuildLine(app) {
-    if (!app || app.status === 'error') return null;
-    return buildLineTileOf(app.first_version_line);
+    return Home.tileBuildStage(app).line;
+  },
+
+  /**
+   * The tile's first version, { line, phase }: the list's line and its
+   * stage (`first_version_phase`), as the made screen says them from the
+   * moment its Submit went through (run six, build-line-words.js
+   * tileStageOf: "Starting", grey, never the list's "Plan ready" from before
+   * Submit). `line` is null for none.
+   */
+  tileBuildStage(app) {
+    if (!app || app.status === 'error') return { line: null, phase: null };
+    return tileStageOf(app.slug, buildLineTileOf(app.first_version_line), app.first_version_phase);
   },
 
   // One placed item -> its view-model entry. The string version spliced
@@ -2699,8 +2710,8 @@ const Home = {
     // Every non-running status still says so in words on the tile — see
     // statusLabel / warningHtml below — so "Spinning up…", "Awaiting
     // secrets" and "Error" are unaffected.
-    const buildLine = Home.tileBuildLine(app);
-    const statusLabel = buildLine ? htmlText(buildLineTileWordsOf(buildLine, app.first_version_phase))
+    const { line: buildLine, phase: buildPhase } = Home.tileBuildStage(app);
+    const statusLabel = buildLine ? htmlText(buildLineTileWordsOf(buildLine, buildPhase))
       : app.status === 'running' ? ''
       : app.status === 'creating' ? htmlText('home:grid.tile.status.creating')
       : isAwaiting ? htmlText('home:grid.tile.status.awaitingSecrets')
