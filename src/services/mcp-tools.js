@@ -281,6 +281,19 @@ function positiveIntId() {
   );
 }
 
+// The same for a true-or-false field: "true" and "false" as text are the
+// booleans they spell, and anything else is refused as before. Run 194's
+// launch was refused this way: its client's copy of the tool list predated
+// launch_bench_studio's sharedPlans.
+const BOOLEAN_TEXT = Object.freeze({ true: true, false: false });
+function textBoolean() {
+  const { z } = require('zod');
+  return z.preprocess(
+    (value) => (typeof value === 'string' && Object.hasOwn(BOOLEAN_TEXT, value.trim()) ? BOOLEAN_TEXT[value.trim()] : value),
+    z.boolean()
+  );
+}
+
 function clip(value, max) {
   const text = String(value == null ? '' : value);
   if (text.length <= max) return text;
@@ -7209,7 +7222,8 @@ function registerTools(server, ctx) {
         capUsd: z.number().positive().describe(`The most the run may spend, in US dollars. Required. Over ${STUDIO_CONFIRM_CAP_USD} needs confirmLargeCap.`),
         confirmLargeCap: z.boolean().optional(),
         concurrency: z.number().int().min(1).max(9).optional().describe('Builds at once (default: all of them, at most 9).'),
-        sharedPlans: z.boolean().optional().describe('Build every arm from one plan per brief, pack and repeat (default false).'),
+        // Added after clients cached the tool list, so it takes "true" as text too.
+        sharedPlans: textBoolean().optional().describe('Build every arm from one plan per brief, pack and repeat (default false).'),
         note: z.string().optional(),
       },
       outputSchema: {
