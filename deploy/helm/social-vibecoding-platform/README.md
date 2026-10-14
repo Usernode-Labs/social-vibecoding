@@ -358,7 +358,9 @@ Installations without Helm can set both environment variables on the platform.
 
 Staging preview and production app Deployments receive one preferred Pod
 affinity term matching that cluster's `cnpg.io/instanceRole: primary`, weight
-100 across `topology.kubernetes.io/zone`. It matters on a cluster spread over
+100 across `topology.kubernetes.io/zone`. The platform's own Pods, web and
+conductor, get the same term from the chart, under the same switch: they make
+more queries than any app, the conductor's leader loops most of all. It matters on a cluster spread over
 data centres: a page makes many sequential queries, so a pod in another data
 centre pays that round trip on every one, and checks against such a preview
 fail on data that arrives too late. There is deliberately no term for the

@@ -108,6 +108,9 @@ the chart's context plus processRole: "" (all: serves and stands for leader),
     spec:
       serviceAccountName: social-platform-runtime
       automountServiceAccountToken: true
+      {{- with include "social-vibecoding-platform.databasePrimaryAffinity" . }}
+      {{- . | nindent 6 }}
+      {{- end }}
       # A Pod a release replaced keeps finishing the work it started for up
       # to platform.drainMinutes, then hands the rest over and exits
       # (docs/plans/draining-releases.md). The 60 seconds on top are the

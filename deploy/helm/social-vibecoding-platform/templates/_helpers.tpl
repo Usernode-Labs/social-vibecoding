@@ -63,6 +63,34 @@ app.kubernetes.io/component: postgresql
 {{- end -}}
 {{- end -}}
 
+{{- /*
+The platform's own Pods (web and conductor) prefer the zone of the external
+CloudNativePG primary, as previews and production apps do
+(src/services/kubernetes.js databaseAffinity): every request and every leader
+loop makes many sequential queries, and a Pod in another data centre pays that
+round trip on each. Same switch and same cluster as PREVIEW_DATABASE_CLUSTER;
+empty for bundled PostgreSQL or a database without the CNPG cluster selector.
+A preference only: the Pod still schedules when that zone is full.
+*/}}
+{{- define "social-vibecoding-platform.databasePrimaryAffinity" -}}
+{{- if and .Values.config.previewFollowDatabasePrimary (not .Values.postgresql.enabled) -}}
+{{- $cluster := index .Values.postgresql.podSelector "cnpg.io/cluster" | default "" -}}
+{{- if $cluster -}}
+affinity:
+  podAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          namespaces: [{{ default .Release.Namespace .Values.postgresql.namespace | quote }}]
+          labelSelector:
+            matchLabels:
+              cnpg.io/cluster: {{ $cluster | quote }}
+              cnpg.io/instanceRole: primary
+          topologyKey: topology.kubernetes.io/zone
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "social-vibecoding-platform.validate" -}}
 {{- if .Values.enabled -}}
   {{- if or .Values.platform.enabled .Values.migration.enabled -}}
