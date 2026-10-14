@@ -729,7 +729,12 @@ serves and which revision the verdict is for are separate facts on the instance;
 - **One build at a time, one checks run at a time.** A build is an attempt
   (`preview.prepare`): its own checkout, database and env Secret, then the session's
   runtime updated in place, fenced by attempt number, the serving template restored if
-  the rollout fails. A newer head cancels the obsolete build or run (the kernel's
+  the rollout fails. Each claim of a build clones into a database of its own, so a claim
+  that runs again after a crash never re-clones the database an earlier claim's pods may
+  already use; the receipt names the one that serves, and the earlier claims' go. A
+  failed attempt deletes only its own Deployment, and only as it read it (UID and
+  version), never one a newer attempt has written since. A recheck whose inputs changed
+  (`testing-update`, `shots-update`) replaces a run going; any other joins it. A newer head cancels the obsolete build or run (the kernel's
   `cancel`) and retires what it created, never while it still serves (a build cancelled
   after its deploy gives the Deployment back to the attempt that serves). Each claim of a
   checks run (`checks.run`) gives its Jobs an id of its own, and its manifest names the

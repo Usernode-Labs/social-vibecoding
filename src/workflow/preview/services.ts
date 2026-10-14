@@ -21,7 +21,7 @@ import { createHash } from 'node:crypto';
 import type { Json, Pool, WorkContext, WorkHandler } from '../kernel/index.ts';
 import { LeaseLost } from '../kernel/index.ts';
 import { legacy } from '../legacy.ts';
-import { WORK } from './machine.ts';
+import { PREPARE_CLAIMS, WORK } from './machine.ts';
 
 interface Deps { config: any; pool: Pool }
 
@@ -31,8 +31,8 @@ interface Deps { config: any; pool: Pool }
 // retirement, and nothing is dropped while it still serves (below).
 export const PREPARE_LEASE_MS = 60000;
 // Retries after a lost lease, never after a failure: a build that fails is
-// the error lane's, as on [main].
-const PREPARE_ATTEMPTS = 3;
+// the error lane's, as on [main]. One database per claim (machine.ts).
+const PREPARE_ATTEMPTS = PREPARE_CLAIMS;
 // A lost checks run is collected from the cluster by its retry; a second
 // loss reruns it once more.
 const RUN_ATTEMPTS = 3;
@@ -120,16 +120,19 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
         const { input } = ctx;
         const [row, a] = await Promise.all([session(input.sessionId), app(input.appId)]);
         if (!row || !a) return { ok: false, detail: 'The proposal or its app no longer exists' };
-        const attempt = { n: input.n, dbName: input.db, servingN: input.serving?.n ?? null,
+        // Each claim clones into its own database: one before it may have
+        // deployed, and its pods still use that one.
+        const db: string = (Array.isArray(input.dbs) && input.dbs[ctx.attempt - 1]) || input.db;
+        const attempt = { n: input.n, dbName: db, servingN: input.serving?.n ?? null,
           checkpoint: (v: Json) => ctx.checkpoint(v) };
         try {
           const built = await staging().prepareAttempt(config, row, a, input.head, attempt);
           // Deployed: still this machine's attempt? A cancel that came during
           // the rollout is seen here, and the deploy undone.
-          await ctx.checkpoint({ step: 'deployed', db: input.db });
+          await ctx.checkpoint({ step: 'deployed', db });
           await staging().verifyStagingEdge(row, built.hostname, built.stagingUrl).catch(() => null);
           return {
-            ok: true, url: built.stagingUrl, runtimeKind: built.runtimeKind, runtimeName: built.runtimeName,
+            ok: true, db, url: built.stagingUrl, runtimeKind: built.runtimeKind, runtimeName: built.runtimeName,
             containerId: built.containerId ?? null, imageRef: built.imageRef ?? null, buildRef: built.buildRef ?? null,
           };
         } catch (err) {
@@ -138,13 +141,13 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
             // cancel (the machine's retirement covers everything before). A
             // lost lease authorizes nothing: a retry of this same attempt
             // may be using the database right now.
-            if (await cancelledByMachine(ctx.workId)) await undo({ ...input, appSlug: a.slug });
+            if (await cancelledByMachine(ctx.workId)) await undo({ ...input, db, appSlug: a.slug });
             throw err;
           }
           // A failure seen by a claim that is no longer the live one (its
           // lease ran out, or the machine cancelled it) reports nothing and
           // sets nothing off: checkpoint throws for it.
-          await ctx.checkpoint({ step: 'failed', db: input.db });
+          await ctx.checkpoint({ step: 'failed', db });
           const detail = visuals().summarizeBootFailure(err);
           const infrastructure = !!legacy('services/deploy-failure').bootFailureIsInfrastructure(err);
           const sync = legacy('services/boot-failure-sync');
@@ -241,7 +244,7 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
         // Never what serves: a cancelled attempt whose deploy could not be
         // given back still has the live pods on its database and Secret.
         if (await serves(input)) throw new Error(`Attempt ${input.n} still serves the preview; not retired`);
-        await dbManager().dropDatabase(input.db, { strict: true });
+        for (const db of (Array.isArray(input.dbs) ? input.dbs : [input.db])) await dbManager().dropDatabase(db, { strict: true });
         if (runtimeMode() === 'kubernetes') {
           const k = kubernetes();
           await k.deleteSecret(config, k.attemptSecretName(runtimeName(input.appId, input.sessionId), input.n));
@@ -271,11 +274,24 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
           await legacy('services/application-runtime').remove(config,
             { runtimeKind: 'docker', runtimeName: input.runtimeName || `usernode-staging-${input.appSlug}--${input.sessionId}` });
         }
-        for (const a of attempts) await dbManager().dropDatabase(a.db, { strict: true });
+        const dbs = attempts.flatMap((a: { db: string; dbs?: string[] }) => a.dbs ?? [a.db]);
+        for (const db of dbs) await dbManager().dropDatabase(db, { strict: true });
         const left = name ? await k.previewResourcesPresent(config, name, secrets) : [];
-        for (const a of attempts) if (await dbManager().databaseExists(a.db, { strict: true })) left.push(a.db);
+        for (const db of dbs) if (await dbManager().databaseExists(db, { strict: true })) left.push(db);
         if (left.length) throw new Error(`Still present after retirement: ${left.join(', ')}`);
         return { closed: true };
+      },
+    },
+
+    // The databases of a serving attempt's other claims (one that died after
+    // its clone, or after a deploy this attempt's rollout has since
+    // replaced): never the one that serves, which the machine leaves out.
+    [WORK.dropClaims]: {
+      maxAttempts: 5,
+      leaseMs: 120000,
+      async run({ input }): Promise<Json> {
+        for (const db of input.dbs || []) await dbManager().dropDatabase(db, { strict: true });
+        return { dropped: input.dbs || [] };
       },
     },
 

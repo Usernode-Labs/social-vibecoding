@@ -97,7 +97,7 @@ test('a built attempt returns its receipt; a failed one returns why, for the mac
     runtimeName: 'sv-preview-2-s5', containerId: null, imageRef: 'img@sha256:1', buildRef: 'b1' };
   const input = { sessionId: 5, appId: 2, n: 3, head, db: 'app_shop_staging_s5_abcdef' };
   assert.deepEqual(await handlers[WORK.prepare].run(ctx(input)), {
-    ok: true, url: 'https://shop--s5.apps', runtimeKind: 'kubernetes', runtimeName: 'sv-preview-2-s5',
+    ok: true, db: 'app_shop_staging_s5_abcdef', url: 'https://shop--s5.apps', runtimeKind: 'kubernetes', runtimeName: 'sv-preview-2-s5',
     containerId: null, imageRef: 'img@sha256:1', buildRef: 'b1',
   });
   assert.deepEqual(calls[0], ['prepare', head, 3, 'app_shop_staging_s5_abcdef']);
@@ -207,3 +207,15 @@ test('a retirement deletes by identity and closes only when nothing is left', as
   assert.deepEqual(del, ['delete', 'sv-preview-2-s5', true, ['sv-preview-2-s5-env', 'sv-preview-2-s5-env-a1', 'sv-preview-2-s5-env-a2']]);
   assert.ok(calls.some((c) => c[0] === 'cancel-jobs' && c[2] === null), 'the session\'s check Jobs go with it');
 });
+
+test('a reclaimed build clones into its own claim\'s database, never the one a claim before it may have deployed (review finding)', async () => {
+  calls.length = 0;
+  state.build = { stagingUrl: 'https://shop--s5.apps', hostname: 'shop--s5.apps', runtimeKind: 'kubernetes',
+    runtimeName: 'sv-preview-2-s5', containerId: null, imageRef: 'img@sha256:6', buildRef: 'b6' };
+  const dbs = ['app_shop_staging_s5_aaaaaa', 'app_shop_staging_s5_bbbbbb', 'app_shop_staging_s5_cccccc'];
+  const input = { sessionId: 5, appId: 2, n: 6, head, db: dbs[0], dbs };
+  const out = await handlers[WORK.prepare].run(ctx(input, { attempt: 2 }));
+  assert.deepEqual(calls.filter((c) => c[0] === 'prepare'), [['prepare', head, 6, dbs[1]]], 'the second claim\'s own database');
+  assert.equal(out.db, dbs[1], 'and the receipt says which one serves');
+});
+

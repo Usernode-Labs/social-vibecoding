@@ -18,7 +18,7 @@ const missing = () => Object.assign(new Error('missing'), { code: 404 });
 
 // An in-memory namespace. `failRollout` makes the new pod fail to start, so
 // the rollout fails at once instead of after its five-minute budget.
-function cluster({ failRollout = false } = {}) {
+function cluster({ failRollout = false, beforeDelete = null } = {}) {
   const store = new Map();
   const failing = { on: failRollout };
   // The ReplicaSets the controller keeps, one per template a Deployment ran.
@@ -62,9 +62,13 @@ function cluster({ failRollout = false } = {}) {
       return structuredClone(o);
     },
     delete: async ({ name, body }) => {
+      if (beforeDelete) await beforeDelete(k, name);
       const cur = store.get(`${k}/${name}`);
       if (!cur) throw missing();
       if (body?.preconditions?.uid && body.preconditions.uid !== cur.metadata.uid) {
+        throw Object.assign(new Error('precondition'), { code: 409 });
+      }
+      if (body?.preconditions?.resourceVersion && body.preconditions.resourceVersion !== cur.metadata.resourceVersion) {
         throw Object.assign(new Error('precondition'), { code: 409 });
       }
       calls.push(`delete ${k} ${name}${body?.preconditions?.uid ? ' by uid' : ''}`);
@@ -184,3 +188,17 @@ test('retirement deletes every resource by the UID it read, and reports what is 
   ]);
   assert.deepEqual(await kubernetes.previewResourcesPresent(CONFIG, NAME, secrets), []);
 });
+
+test('a failed attempt\'s cleanup never deletes a Deployment a newer attempt wrote meanwhile (review finding)', async () => {
+  let successor = null;
+  const c = cluster({ failRollout: true, beforeDelete: async (kind) => {
+    // Between attempt 1's read of its Deployment and its delete, attempt 2
+    // replaces it (same UID): a delete on the UID alone would take it.
+    if (kind === 'deployment' && !successor) { successor = true; c.fail(false); await deploy(2, { serving: null }); }
+  } });
+  await assert.rejects(deploy(1, { imageRef: 'app@sha256:broken' }));
+  assert.ok(c.store.has(`deployment/${NAME}`), 'attempt 2\'s Deployment is still there');
+  assert.equal(c.secretOf(), `${NAME}-env-a2`);
+  assert.ok(c.store.has(`service/${NAME}`), 'and the session\'s Service with it');
+});
+

@@ -716,7 +716,8 @@ the machine.
 
 **On the cluster.** A preview keeps its per-session Deployment, Service and Ingress
 (`sv-preview-<appId>-s<sessionId>`). Each attempt has its own env Secret
-(`<name>-env-a<n>`) and database, and the Deployment carries the annotation
+(`<name>-env-a<n>`) and database (one per claim of its build, should a build be claimed
+again after a crash), and the Deployment carries the annotation
 `social.usernode.io/preview-attempt`, the highest attempt that wrote it. A failed rollout
 restores the template that served, so the older revision keeps serving. Each platform
 process also holds one more database connection, for its presence lock.

@@ -657,4 +657,42 @@ test('preview machine against the full PostgreSQL schema', { timeout: 120000 }, 
     assert.equal((await outcome(id)).reason, 'checks_moved');
     assert.equal((await row(s.id)).check_state, 'pending');
   });
+  await t.test('P22 the claim that deployed is the database that serves; the claims before it go', async () => {
+    const s = await proposal(await app(), { status: 'active' });
+    work.answer.set(WORK.prepare, (input) => ({ ...prepareOk(input), db: input.dbs[1] }));   // the second claim deployed
+    await submit(s, SHA('5'));
+    await settle();
+    work.answer.set(WORK.prepare, prepareOk);
+    const i = await instance(s);
+    const prepare = (await workOf(s, WORK.prepare))[0];
+    assert.equal(prepare.input.dbs.length, 3);
+    assert.equal(prepare.input.dbs[0], prepare.input.db);
+    assert.equal(new Set(prepare.input.dbs).size, 3, 'one database per claim');
+    assert.equal(i.data.serving.db, prepare.input.dbs[1]);
+    assert.deepEqual((await workOf(s, WORK.dropClaims)).map((w) => w.input.dbs), [[prepare.input.dbs[0]]],
+      'the first claim\'s database goes, the serving one stays');
+  });
+
+  await t.test('P23 a recheck whose inputs changed replaces the run going; any other joins it (review finding)', async () => {
+    const s = await proposal(await app(), { status: 'active' });
+    await submit(s, SHA('6'));
+    await rt.drain();
+    await rt.runServices();   // prepare
+    await rt.drain();
+    assert.equal((await instance(s)).state, 'checking');
+    const first = (await instance(s)).data.run.key;
+    const joins = await send(s, 'RecheckRequested', { reason: 'manual' }, { kind: 'route' });
+    await rt.drain();
+    assert.equal((await outcome(joins)).reason, 'run_outstanding');
+    const replaces = await send(s, 'RecheckRequested', { reason: 'testing-update' }, { kind: 'system' });
+    await rt.drain();
+    assert.equal((await outcome(replaces)).state_after, 'checking');
+    const i = await instance(s);
+    assert.notEqual(i.data.run.key, first, 'a new run, with what the row says now');
+    const runs = await workOf(s, WORK.run);
+    assert.deepEqual(runs.find((w) => w.work_key === first).result, { cancelled: true });
+    assert.equal((await workOf(s, WORK.cancel)).length, 1, 'its Jobs are cancelled by run id');
+    await settle();
+    assert.equal((await instance(s)).state, 'settled');
+  });
 });

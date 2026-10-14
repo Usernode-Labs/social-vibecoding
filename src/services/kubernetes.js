@@ -1254,7 +1254,8 @@ async function deployApplication(config, {
       // An attempt deletes only the Deployment it wrote, by its UID.
       const own = attempt ? await readFencedDeployment(apps, namespace, name, attempt).catch(() => null) : null;
       if (!attempt || own) {
-        const deleted = await deleteApplication(config, name, own ? { uid: own.metadata.uid } : {}).then(() => true, (cleanupErr) => {
+        const cleanup = attempt ? deleteAttemptDeployment(config, name, own) : deleteApplication(config, name).then(() => true);
+        const deleted = await cleanup.catch((cleanupErr) => {
           log.warn('kubernetes', 'Failed preview cleanup failed', {
             namespace, name, err: cleanupErr.message,
           });
@@ -1375,8 +1376,26 @@ async function restorePreviewAttempt(config, name, attempt, servingN) {
     const restored = await restoreTemplate(apps, namespace, name, attempt, attemptSecretName(name, servingN), null);
     if (restored !== 'missing') return restored;
   }
-  await deleteApplication(config, name, { uid: own.metadata.uid });
-  return 'deleted';
+  return await deleteAttemptDeployment(config, name, own) ? 'deleted' : 'superseded';
+}
+
+// A preview attempt's own Deployment, as it read it, deleted only if nobody
+// has written it since: the precondition carries its UID and the version it
+// read, so a successor's update in between (same UID) makes the delete
+// conflict, and it is left alone. Nothing else goes: the Service and the
+// Ingress are the session's, kept for whichever attempt serves next, and
+// retired with the preview. Answers whether it was deleted.
+async function deleteAttemptDeployment(config, name, read) {
+  const { apps } = getClients();
+  try {
+    await deleteIfPresent(apps, 'deleteNamespacedDeployment', name, config.kubernetes.appNamespace,
+      { body: { propagationPolicy: 'Foreground',
+        preconditions: { uid: read.metadata.uid, resourceVersion: read.metadata.resourceVersion } } });
+    return true;
+  } catch (err) {
+    if (isConflict(err)) return false;
+    throw err;
+  }
 }
 
 function terminalPodFailureDetails(pods, { imageRef, environmentChecksum, container = 'app' } = {}) {

@@ -41,6 +41,7 @@ export const WORK = Object.freeze({
   cancel: 'checks.cancel',
   publish: 'checks.publish',
   retireAttempt: 'preview.retireAttempt',
+  dropClaims: 'preview.dropClaims',
   retire: 'preview.retire',
   // Hand-offs to flows later steps migrate (the boundary list's "hand-off"
   // entries): shots beside the checks, a verdict's merge kick, bot note and
@@ -56,7 +57,11 @@ export type Verdict = 'passing' | 'failing' | 'skipped' | 'error';
 
 // An attempt: its number, the head it builds, and its database. Attempt 0
 // is a preview [main] built before the flag, adopted with [main]'s names.
-export interface Attempt { n: number; head: string; db: string }
+// `dbs`: the database each claim of its build clones into, the first being
+// `db` (a claim that runs again never re-clones the database a claim before
+// it may have deployed: its pods would lose it). The one that serves is the
+// receipt's.
+export interface Attempt { n: number; head: string; db: string; dbs?: string[] }
 // An attempt that serves, as its prepare reported it.
 export interface Served extends Attempt {
   url: string;
@@ -185,10 +190,16 @@ const EVENTS = {
 // The attempt's database: [main]'s pattern (app_<slug>_staging_s<sid>_<6
 // hex>), so [main]'s orphan sweep can still collect it after a rollback,
 // with a tag only this instance gives out.
-export function attemptDb(slug: string, sessionId: number, seed: number, n: number): string {
-  const tag = createHash('sha256').update(`preview:${sessionId}:${seed}:${n}`).digest('hex').slice(0, 6);
+export function attemptDb(slug: string, sessionId: number, seed: number, n: number, claim = 1): string {
+  const tag = createHash('sha256').update(`preview:${sessionId}:${seed}:${n}${claim > 1 ? `:c${claim}` : ''}`).digest('hex').slice(0, 6);
   return `app_${slug.replace(/[^a-z0-9_]/g, '_')}_staging_s${sessionId}_${tag}`;
 }
+// As many as a build's work item has claims (services.ts PREPARE_ATTEMPTS).
+export const PREPARE_CLAIMS = 3;
+const attemptDbs = (slug: string, sessionId: number, seed: number, n: number) =>
+  Array.from({ length: PREPARE_CLAIMS }, (_, i) => attemptDb(slug, sessionId, seed, n, i + 1));
+// Every database an attempt may have made.
+const dbsOf = (a: Attempt) => a.dbs ?? [a.db];
 // db-manager.stagingDbName, for a preview [main] built.
 const legacyDb = (slug: string, sessionId: number, head: string) =>
   `app_${slug.replace(/[^a-z0-9_]/g, '_')}_staging_s${sessionId}_${head.slice(0, 6)}`;
@@ -205,6 +216,8 @@ const TRIGGERS = new Map([
   ['stale-pending-vote-kick', 'promote-kick'],
   ['conflict-resolved', 'conflict-resolved'],
 ]);
+// The recheck reasons whose run replaces one going (its inputs changed).
+const REPLACING_REASONS: ReadonlySet<string> = new Set(['testing-update', 'shots-update']);
 const recheckTrigger = (reason: string, trigger: string | null) =>
   store.normalizeCheckTrigger(trigger) || TRIGGERS.get(reason) || 'stuck-sweep';
 
@@ -285,10 +298,10 @@ function obsolete(d: Data, ctx: TransitionContext, deps: Deps): { cancel: WorkRe
 function retire(d: Data, a: Attempt, ctx: TransitionContext, deps: Deps, cancelled = false): { entry: Retiring; work: WorkRequest } {
   const key = retireAttemptKey(a.n, ctx.version + 1);
   return {
-    entry: { n: a.n, head: a.head, db: a.db, key, ...(cancelled ? { cancelled: true } : {}) },
+    entry: { n: a.n, head: a.head, db: a.db, dbs: dbsOf(a), key, ...(cancelled ? { cancelled: true } : {}) },
     work: {
       kind: WORK.retireAttempt, key,
-      input: { sessionId: d.sessionId, appId: d.appId, appSlug: d.appSlug, n: a.n, db: a.db },
+      input: { sessionId: d.sessionId, appId: d.appId, appSlug: d.appSlug, n: a.n, db: a.db, dbs: dbsOf(a) },
       ...(cancelled ? { notBefore: new Date(ctx.now.getTime() + deps.retireAfterMs) } : {}),
     },
   };
@@ -302,7 +315,8 @@ function begin(s: Live, head: string, trigger: string | null, ctx: TransitionCon
   const d0 = s.data;
   const old = obsolete(d0, ctx, deps);
   const n = d0.last + 1;
-  const attempt: Attempt = { n, head, db: attemptDb(d0.appSlug, d0.sessionId, d0.seed, n) };
+  const dbs = attemptDbs(d0.appSlug, d0.sessionId, d0.seed, n);
+  const attempt: Attempt = { n, head, db: dbs[0]!, dbs };
   const sameHead = d0.head === head;
   const d: Data = {
     ...d0, head, trigger, last: n, preparing: attempt, run: null, verdict: null,
@@ -315,7 +329,7 @@ function begin(s: Live, head: string, trigger: string | null, ctx: TransitionCon
     cancel: old.cancel,
     writes: [pendingWrite(d, head, 'building', trigger)],
     work: [...old.work, { kind: WORK.prepare, key: prepareKey(n), input: {
-      sessionId: d.sessionId, appId: d.appId, n, head, db: attempt.db, trigger,
+      sessionId: d.sessionId, appId: d.appId, n, head, db: attempt.db, dbs, trigger,
       serving: d.serving ? { n: d.serving.n, head: d.serving.head, runtimeName: d.serving.runtimeName } : null,
     } }],
     push: [checksPending(d, ctx, head, 'building', trigger)],
@@ -560,6 +574,21 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
     },
   };
 
+  // During a run, a recheck whose inputs changed (the proposal's capture
+  // routes or its shots: staging-recovery's REPLACING_RECHECK_REASONS)
+  // replaces it, since the run going answers the old question; any other
+  // recheck joins it. (A build in progress runs its checks with what the row
+  // says once it is up, so it needs nothing.)
+  const replacing: Entry = {
+    guard: (s, e) => (REPLACING_REASONS.has(e.payload.reason) ? ok() : reject('run_outstanding')),
+    to: (s, e, f, ctx) => {
+      const old = obsolete(s.data, ctx, deps);
+      const o = startRun({ name: s.name, data: { ...s.data, run: null } }, recheckTrigger(e.payload.reason, e.payload.trigger), ctx,
+        { work: old.work });
+      return { ...o, cancel: old.cancel };
+    },
+  };
+
   const lost: Entry = {
     guard: (s, e) => (s.data.serving?.n === e.payload.attempt ? ok() : reject('not_serving')),
     to: (s, e, f, ctx) => begin(s, s.data.head || s.data.serving.head, 'stuck-sweep', ctx, deps),
@@ -686,7 +715,7 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
     checking: {
       ...created, ...ops,
       ChecksSkipped: notHere('in_progress'),
-      RecheckRequested: notHere('run_outstanding'),
+      RecheckRequested: replacing,
       ConflictResolved: notHere('not_deferred'),
       ChecksCleared: cleared,
       PreviewLost: lost,
@@ -796,7 +825,9 @@ function toRetiring(s: Live, reason: string, terminal: boolean, ctx: TransitionC
   const d0 = s.data;
   const old = obsolete(d0, ctx, deps);
   const attempts = new Map<number, Attempt>();
-  for (const a of [...again, ...(d0.serving ? [d0.serving] : []), ...old.retiring]) attempts.set(a.n, { n: a.n, head: a.head, db: a.db });
+  for (const a of [...again, ...(d0.serving ? [d0.serving] : []), ...old.retiring]) {
+    attempts.set(a.n, { n: a.n, head: a.head, db: a.db, dbs: dbsOf(a) });
+  }
   const key = `retire:${ctx.version + 1}`;
   // A prepare cancelled just now, or lately, may still create something
   // until its handler stops: the retirement runs after that.
@@ -822,6 +853,7 @@ export interface PrepareResult {
   ok: boolean;
   url?: string; runtimeKind?: string; runtimeName?: string; containerId?: string | null;
   imageRef?: string | null; buildRef?: string | null;
+  db?: string;                  // the database the claim that deployed cloned into
   // A failure: the reason for the card, and what to tell the author.
   detail?: string; infrastructure?: boolean; platformFault?: boolean; aboutMain?: string | null; sync?: boolean;
   servingRemoved?: boolean;     // Docker removes the old container before it runs the new one
@@ -867,9 +899,15 @@ function prepared(s: Live, e: Event<any>, outcome: string, f: Facts, ctx: Transi
   const attempt = d0.preparing!;
   const r = (outcome === 'succeeded' ? e.payload.result : null) as PrepareResult | null;
   if (r?.ok) {
+    // The database of the claim that deployed is the one that serves; the
+    // other claims' (a claim that died, after a clone or after a deploy whose
+    // pods this rollout replaced) go.
+    const servedDb = r.db || attempt.db;
+    const claims = dbsOf(attempt);
+    const leftovers = claims.slice(0, Math.max(0, claims.indexOf(servedDb)));   // only claims before it ran
     const served: Served = {
-      ...attempt, url: String(r.url), runtimeKind: String(r.runtimeKind), runtimeName: String(r.runtimeName),
-      containerId: r.containerId ?? null, imageRef: r.imageRef ?? null, buildRef: r.buildRef ?? null,
+      ...attempt, db: servedDb, dbs: [servedDb], url: String(r.url), runtimeKind: String(r.runtimeKind),
+      runtimeName: String(r.runtimeName), containerId: r.containerId ?? null, imageRef: r.imageRef ?? null, buildRef: r.buildRef ?? null,
     };
     const previous = d0.serving && d0.serving.n !== served.n ? d0.serving : null;
     const gone = previous ? retire(d0, previous, ctx, deps) : null;
@@ -879,6 +917,8 @@ function prepared(s: Live, e: Event<any>, outcome: string, f: Facts, ctx: Transi
       writes: [{ type: 'published', sessionId: d.sessionId, served: served as unknown as Json }],
       work: [
         ...(gone ? [gone.work] : []),
+        ...(leftovers.length ? [{ kind: WORK.dropClaims, key: `drop-claims:${served.n}`,
+          input: { sessionId: d.sessionId, dbs: leftovers } }] : []),
         { kind: WORK.ready, key: `ready:${served.n}`, input: { sessionId: d.sessionId, head: served.head } },
       ],
       push: [
