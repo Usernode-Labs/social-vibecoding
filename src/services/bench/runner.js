@@ -1085,6 +1085,7 @@ async function firstVersionStage(ctx) {
   step('scaffold');
   const made = await steps.once('scaffold', () => (deps.scaffold || scaffold.ensure)(pool, {
     runId: ctx.trial.run_id, taskId: ctx.task?.id, pack: ctx.pack || null, input, repo, github: deps.github, user: ctx.user, deps,
+    claimant: steps.active && ctx.trial?.id ? `trial:${ctx.trial.id}` : null,
   }));
   if (!made || !made.ok) return { status: 'infra_fail', error: `scaffold: ${made?.error || 'not made'}` };
   // An earlier claim's branch of the same trial goes first.

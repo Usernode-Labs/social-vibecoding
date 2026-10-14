@@ -11156,6 +11156,9 @@ CREATE TABLE IF NOT EXISTS bench_scaffolds (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_bench_scaffolds_arm
   ON bench_scaffolds(run_id, task_id, COALESCE(context_pack_id, 0));
+-- Whose claim a row in 'making' is (bench/scaffold.js ensure): a durable
+-- trial carried on after a crash takes its own claim over at once.
+ALTER TABLE bench_scaffolds ADD COLUMN IF NOT EXISTS claimed_by TEXT;
 COMMENT ON TABLE bench_scaffolds IS 'staging:private';
 
 -- The studio's one host app: a private project the benchmark user made

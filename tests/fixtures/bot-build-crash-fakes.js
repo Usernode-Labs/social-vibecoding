@@ -21,6 +21,8 @@
 //                       mayor), the included key (openrouter-managed-keys).
 //   the platform's own  docker, kubernetes, llm, firebase: anything reached
 //   outside clients     is refused and recorded as `fake.unexpected`.
+//   the clock           a bench trial's wait for a first commit somebody
+//                       else is making (bench/scaffold.js ensure): seconds.
 //
 // Everything else is the platform's: build-runs.js, durable-steps.js,
 // durable-turn.js, the kernel, homeroom-bot.js, homeroom-bot-live.js,
@@ -654,4 +656,13 @@ module.exports = function install(world) {
     }),
   });
 
+  // ── A first version's first commit, waited for (bench/scaffold.js) ────
+  // Real, but its wait for a claim somebody else holds is seconds, not five
+  // minutes: time passing, as a lease is run out after a kill. The claim's
+  // own staleness (CLAIM_STALE_SECONDS) is left as it is.
+  const realScaffold = require(path.join(SRC, 'services/bench/scaffold'));
+  world.stub(path.join(SRC, 'services/bench/scaffold'), {
+    ...realScaffold,
+    ensure: (p, args) => realScaffold.ensure(p, { ...args, waitMs: 1500, pollMs: 100 }),
+  });
 };
