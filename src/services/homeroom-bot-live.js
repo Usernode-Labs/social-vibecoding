@@ -4695,6 +4695,7 @@ async function reviewLanded({
       worker.clearPendingStop?.(session.id);
     }
     const fixBudgetMs = Math.max(1000, Math.min(budgetMs, turnBudgetMs));
+    const progress = lastActivity();
     const turn = await runBuildTurn({
       key: `fix:${round}`,
       prompt: botReview.fixPrompt({
@@ -4704,7 +4705,7 @@ async function reviewLanded({
       budgetMs: fixBudgetMs,
       resumeThreadId: null,
       commitMsg: FIX_COMMIT_MESSAGES.review(round),
-      progress: lastActivity(),
+      progress,
     });
     const r = (turn.routed && turn.routed.result) || {};
     const costUsd = Number.isFinite(turn.routed && turn.routed.estimatedCostUsd) ? turn.routed.estimatedCostUsd : null;
@@ -4713,7 +4714,14 @@ async function reviewLanded({
     if (turn.stopped) return { ok: false, stopped: true, costUsd, ms };
     if (turn.routed?.error) return { ok: false, error: `the fix turn failed (${turn.routed.error})`, costUsd, ms };
     const failed = failedClaudeTurn(r);
-    if (failed) return { ok: false, error: `the fix turn failed (${failed})`, costUsd, ms };
+    // With what it was last doing and its final message, as a failed build
+    // turn's (failureDetail): a provider refusing the key for its spending
+    // limit ("Failed to authenticate. API Error: 403 Key limit exceeded")
+    // is only there, not in its exit code.
+    if (failed) {
+      const reason = `the fix turn failed (${failed})`;
+      return { ok: false, error: `${reason}${failureDetail({ progress, result: r, reason })}`, costUsd, ms };
+    }
     return {
       ok: true, sha: r.pushOk ? (r.sha || null) : null, commits: Number(r.ahead) > 0 ? Number(r.ahead) : null, costUsd, ms,
     };

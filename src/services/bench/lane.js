@@ -1347,9 +1347,24 @@ function providerLimitHit(error) {
   return PROVIDER_LIMIT_RE.test(String(error || ''));
 }
 
-/** A trial's result, its model's failure read as the platform's when providerLimitHit says so. Pure. */
+// A review stopped by one of these could not finish what it found: run
+// 196's trials 1498 and 1504 built, and their fix turns were refused.
+const REVIEW_CUT_STOPS = new Set(['fix_failed', 'reviewer_error']);
+
+/**
+ * A trial's result, read as the platform's fault when providerLimitHit
+ * says so: its model's failure, or a first version that built but whose
+ * review was cut short by the refusal (its review's numbers would count a
+ * review that never finished). Pure.
+ */
 function asPlatformFault(patch) {
-  return patch && patch.status === 'model_fail' && providerLimitHit(patch.error) ? { ...patch, status: 'infra_fail' } : patch;
+  if (!patch) return patch;
+  if (patch.status === 'model_fail' && providerLimitHit(patch.error)) return { ...patch, status: 'infra_fail' };
+  const review = patch.parsed?.review;
+  if (patch.status === 'ok' && review && REVIEW_CUT_STOPS.has(review.stop) && providerLimitHit(review.stopDetail)) {
+    return { ...patch, status: 'infra_fail', error: `the review was cut short: ${review.stopDetail}` };
+  }
+  return patch;
 }
 
 /**

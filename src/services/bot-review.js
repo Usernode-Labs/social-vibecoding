@@ -95,6 +95,10 @@ const STOPS = Object.freeze({
   regressed: 'regressed',
   error: 'error',
 });
+// How much of why the loop stopped is kept: room for a failed fix turn's
+// reason and the last lines it ran (homeroom-bot-live.js failureDetail),
+// where a provider's refusal shows.
+const STOP_DETAIL_CHARS = 600;
 const REVIEW_TIMEOUT_MS = 4 * 60 * 1000;
 // A reviewer call may run this far past the review's budget, never further
 // than its own timeout.
@@ -755,7 +759,7 @@ async function runReviewLoop({
       throw err;
     }
   };
-  const stopWith = (stop, detail = null) => { state.stop = stop; state.stopDetail = detail ? clip(detail, 300) : null; };
+  const stopWith = (stop, detail = null) => { state.stop = stop; state.stopDetail = detail ? clip(detail, STOP_DETAIL_CHARS) : null; };
   // What the review has spent: each round's reviewer call and fix turn, as
   // that round records them, so a call asked again after a restart is
   // counted once.
@@ -960,7 +964,7 @@ async function runReviewLoop({
         }
         entry.fix = {
           ok: !!fx?.ok, sha: fx?.sha || null, commits: num(fx?.commits), costUsd: num(fx?.costUsd), ms: num(fx?.ms),
-          ...(fx?.ok ? {} : { error: clip(fx?.error || (fx?.stopped ? 'ran past the review\'s time' : 'the fix turn failed'), 300) }),
+          ...(fx?.ok ? {} : { error: clip(fx?.error || (fx?.stopped ? 'ran past the review\'s time' : 'the fix turn failed'), STOP_DETAIL_CHARS) }),
           ...(fx?.stopped ? { stopped: true } : {}),
           ...(recovered ? { recovered: true } : {}),
         };
