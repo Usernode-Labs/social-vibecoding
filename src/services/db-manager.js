@@ -2214,13 +2214,34 @@ async function truncatePrivateTables(targetDb, execute = execInTarget) {
   // to ordinary tables (not views/indexes/sequences). We exclude
   // pg_catalog/information_schema defensively even though they
   // shouldn't have user comments.
+  //
+  // The same query also lists every foreign table among their inheritance
+  // descendants, as `FOREIGN <private table> <foreign table>` (no table
+  // name contains a space). TRUNCATE without ONLY reaches those children,
+  // and for postgres_fdw it sends TRUNCATE to the remote server, which in a
+  // copy is the same server the live app's definition names. Nor can their
+  // emptiness be shown from here: another user mapping, or a policy on the
+  // remote side, may see rows ours does not. So a private table with a
+  // foreign descendant refuses the copy before any TRUNCATE is sent.
   const discoverySql = `
-SELECT n.nspname || '.' || c.relname
-  FROM pg_class c
+WITH RECURSIVE private(name, rel) AS (
+  SELECT n.nspname || '.' || c.relname, c.oid
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+   WHERE obj_description(c.oid, 'pg_class') = 'staging:private'
+     AND c.relkind = 'r'
+     AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+), tree(name, rel) AS (
+  SELECT name, rel FROM private
+  UNION SELECT tree.name, i.inhrelid FROM pg_inherits i JOIN tree ON i.inhparent = tree.rel
+)
+SELECT name FROM private
+UNION ALL
+SELECT DISTINCT 'FOREIGN ' || tree.name || ' ' || n.nspname || '.' || c.relname
+  FROM tree
+  JOIN pg_class c ON c.oid = tree.rel
   JOIN pg_namespace n ON n.oid = c.relnamespace
- WHERE obj_description(c.oid, 'pg_class') = 'staging:private'
-   AND c.relkind = 'r'
-   AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+ WHERE c.relkind = 'f'
  ORDER BY 1`.trim();
 
   let stdout;
@@ -2237,10 +2258,24 @@ SELECT n.nspname || '.' || c.relname
     );
   }
 
-  const qualifiedNames = (stdout || '')
+  const lines = (stdout || '')
     .split('\n')
     .map((s) => s.trim())
     .filter(Boolean);
+  const foreign = lines.filter((line) => line.startsWith('FOREIGN '))
+    .map((line) => line.slice('FOREIGN '.length));
+  const qualifiedNames = lines.filter((line) => !line.startsWith('FOREIGN '));
+
+  if (foreign.length > 0) {
+    log.error('db-manager', 'staging:private table with a foreign-table descendant; nothing truncated', {
+      targetDb, foreign,
+    });
+    throw new Error(
+      `Refusing to empty the staging:private tables in ${targetDb}: ` +
+      foreign.map((pair) => pair.replace(' ', ' has the foreign-table descendant ')).join('; ') +
+      '. Its rows are on another server: they can neither be emptied from a copy safely nor shown to be empty.'
+    );
+  }
 
   if (qualifiedNames.length === 0) {
     log.info('db-manager', 'No staging:private tables to truncate', { targetDb });
@@ -2305,15 +2340,16 @@ SELECT n.nspname || '.' || c.relname
   //      file, and any row written afterwards takes a page. A size reads the
   //      same for every role, so row-level security cannot hide anything
   //      here. Every other relation is a suspect: a heap with pages, which
-  //      may hold only dead rows, and anything not a plain heap (a foreign
-  //      table, another access method, a partitioned table), whose local
-  //      file size says nothing about its rows.
+  //      may hold only dead rows, and anything not a plain heap (another
+  //      access method, a partitioned table; a foreign table was refused
+  //      before any TRUNCATE), whose local file size says nothing about its
+  //      rows.
   //   2. Only when there are suspects: their rows are read, in one DO block
   //      with row_security off for that transaction. With it off, a read
   //      that a policy would filter raises an error instead, so a refill
   //      hidden by row-level security fails the check rather than passing
-  //      it, and so does a suspect that cannot be read (an unreachable
-  //      foreign server, no privilege). The block raises, naming the private
+  //      it, and so does a suspect that cannot be read (no privilege, a
+  //      relation gone). The block raises, naming the private
   //      tables whose suspects hold rows; it returns nothing when none do.
   // After the single statement, anything but proof of emptiness sends the
   // pass table by table; after that pass, it fails the pass.

@@ -24,11 +24,11 @@ const { truncatePrivateTables } = require('../src/services/db-manager');
 // (listed by the size query, reported by the DO block); `allocated` names
 // tables whose file is not empty but holds no live row; `listed` adds raw
 // lines to the size query's answer; `readError` makes the DO block fail.
-function recorder(tables, { failOn = null, holding = () => [], allocated = [], listed = [], readError = null } = {}) {
+function recorder(tables, { failOn = null, holding = () => [], allocated = [], listed = [], readError = null, foreign = [] } = {}) {
   const calls = [];
   const execute = async (db, sql, opts = {}) => {
     calls.push({ db, sql, opts });
-    if (/obj_description/.test(sql)) return tables.join('\n') + '\n';
+    if (/obj_description/.test(sql)) return [...tables, ...foreign.map((f) => `FOREIGN ${f}`)].join('\n') + '\n';
     if (failOn && failOn(sql)) throw new Error(`boom: ${sql.slice(0, 60)}`);
     if (/pg_relation_size/.test(sql)) {
       return [...holding(calls), ...allocated].map((n) => `${n}|${n}`).concat(listed).join('\n');
@@ -101,7 +101,7 @@ test('a file with pages but no live row is read, found empty, and passes', async
   assert.match(r.reads()[0].sql, /SET LOCAL row_security = off; IF EXISTS \(SELECT 1 FROM ONLY "public"\."b"\)/);
 });
 
-test('a suspect that cannot be read (a policy with row_security off, a foreign server down) fails the pass', async () => {
+test('a suspect that cannot be read (a policy with row_security off, no privilege) fails the pass', async () => {
   const r = recorder(['public.a'], { allocated: ['public.a'], readError: 'query would be affected by row-level security policy for table "a"' });
   await assert.rejects(truncatePrivateTables('app_demo_staging_s1_abc', r.execute),
     /Could not confirm the staging:private tables in app_demo_staging_s1_abc are empty: query would be affected by row-level security/);
@@ -131,6 +131,15 @@ test('a check that cannot run fails the pass', async () => {
   const r = recorder(['public.a'], { failOn: (sql) => /pg_relation_size/.test(sql) });
   await assert.rejects(truncatePrivateTables('app_demo_staging_s1_abc', r.execute),
     /Could not confirm the staging:private tables in app_demo_staging_s1_abc are empty: boom/);
+});
+
+test('a private table with a foreign-table descendant refuses the copy before any TRUNCATE', async () => {
+  const r = recorder(['public.a', 'public.b'], { foreign: ['public.b public.b_remote'] });
+  await assert.rejects(truncatePrivateTables('app_demo_staging_s1_abc', r.execute),
+    /Refusing to empty the staging:private tables in app_demo_staging_s1_abc: public\.b has the foreign-table descendant public\.b_remote/);
+  assert.deepEqual(r.truncates(), []);
+  assert.equal(r.calls.length, 1, 'discovery only');
+  assert.match(r.calls[0].sql, /c\.relkind = 'f'/);
 });
 
 test('no private tables: no TRUNCATE at all', async () => {
@@ -376,32 +385,36 @@ test('real server: a table left with pages but no live row passes without the pe
   assert.equal(s.statements.filter((sql) => /^DO \$staging_check\$/.test(sql)).length, 1, 'b was read, not trusted by size');
 });
 
-// A foreign table has no local file, so its size says nothing: a foreign
-// inheritance child of a private table is always read.
-test('real server: a refilled foreign inheritance child of a private table is caught', { timeout: 60000 }, async (t) => {
+// TRUNCATE reaches a foreign inheritance child and, through postgres_fdw,
+// empties the REMOTE table, which in a copy is the live app's. The pass
+// refuses such a table before sending any TRUNCATE.
+test('real server: a foreign-table descendant is refused, and the remote rows are not touched', { timeout: 60000 }, async (t) => {
   const s = await scratchDatabase(t, 'trunc_foreign');
   if (!s) return;
+  const live = await scratchDatabase(t, 'trunc_foreign_live');
   try { await s.client.query('CREATE EXTENSION postgres_fdw'); } catch (err) {
     if (process.env.TEST_DATABASE_URL) throw err;
     t.skip(`postgres_fdw unavailable: ${err.message}`); return;
   }
+  await live.client.query("CREATE TABLE store (id int); INSERT INTO store VALUES (1), (2)");
   const url = new URL(DSN);
   const lit = (v) => `'${String(v).replace(/'/g, "''")}'`;
   await s.client.query(`
-    CREATE SERVER loopback FOREIGN DATA WRAPPER postgres_fdw
-      OPTIONS (host ${lit(url.hostname)}, port ${lit(url.port || '5432')}, dbname ${lit(s.name)});
-    CREATE USER MAPPING FOR CURRENT_USER SERVER loopback
+    CREATE SERVER live_app FOREIGN DATA WRAPPER postgres_fdw
+      OPTIONS (host ${lit(url.hostname)}, port ${lit(url.port || '5432')}, dbname ${lit(live.name)});
+    CREATE USER MAPPING FOR CURRENT_USER SERVER live_app
       OPTIONS (user ${lit(decodeURIComponent(url.username))}, password ${lit(decodeURIComponent(url.password))});
-    CREATE TABLE store (id int);
     CREATE TABLE a (id int); CREATE TABLE b (id int);
-    CREATE FOREIGN TABLE b_remote () INHERITS (b) SERVER loopback OPTIONS (table_name 'store');
+    CREATE FOREIGN TABLE b_remote () INHERITS (b) SERVER live_app OPTIONS (table_name 'store');
     COMMENT ON TABLE a IS 'staging:private'; COMMENT ON TABLE b IS 'staging:private';
-    CREATE FUNCTION refill_remote() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN INSERT INTO b_remote VALUES (7); RETURN NULL; END $$;
-    CREATE TRIGGER a_refills_remote AFTER TRUNCATE ON a FOR EACH STATEMENT EXECUTE FUNCTION refill_remote();
+    INSERT INTO a VALUES (1);
   `);
-  await truncatePrivateTables(s.name, s.execute);
-  assert.ok(s.statements.includes('TRUNCATE public.b RESTART IDENTITY CASCADE'), 'the refill was seen, and the per-table pass ran');
-  assert.equal((await s.client.query('SELECT count(*)::int AS n FROM b')).rows[0].n, 0, 'nothing is visible through b');
+  s.statements.length = 0;
+  await assert.rejects(truncatePrivateTables(s.name, s.execute),
+    /Refusing to empty the staging:private tables in trunc_foreign_[0-9a-f]+: public\.b has the foreign-table descendant public\.b_remote/);
+  assert.equal(s.statements.length, 1, 'discovery, and nothing after it');
+  assert.equal((await live.client.query('SELECT count(*)::int AS n FROM store')).rows[0].n, 2, 'the remote rows are untouched');
+  assert.equal((await s.client.query('SELECT count(*)::int AS n FROM ONLY a')).rows[0].n, 1, 'no local table was emptied either');
 });
 
 test('real server: the platform schema\'s private tables, in one statement', { timeout: 180000 }, async (t) => {
