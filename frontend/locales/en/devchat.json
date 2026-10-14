@@ -2424,8 +2424,8 @@
     "description": "How the facts on the card of a request already posted from comment mode are joined, for example \"3 comments · 2 images · kudos for whoever solves it\". {{first}} is everything said so far and {{second}} the next fact. Keep the middle dot unless your language separates them otherwise."
   },
   "commentPin.card.open": {
-    "text": "Open request",
-    "description": "Button on the card of a request already posted from comment mode: leaves comment mode and opens that request's page."
+    "text": "View request",
+    "description": "Button on the card of a request already posted from comment mode (the sent card, and the card shown when you tap a pin posted earlier): the request is already posted, this button only shows it. It leaves comment mode and opens the request's page."
   },
   "commentPin.sent.label": {
     "text": "Request posted",
