@@ -20,6 +20,10 @@
 //   listen / tell   what the pipeline's own watchers are told as it goes (a
 //                   turn starting, or a turn a restart caught being
 //                   followed: a bench trial's watch recounts its looks)
+//   triesLeft       how many more tries the kernel gives the work if this
+//                   one throws (0 on its last, and always for the inert
+//                   context): a step refused for now throws only while one
+//                   is left (homeroom-bot-live.js promoteOwnBuild)
 //
 // The stop is sticky: once the signal has aborted, every later step throws
 // it again, so a stop that one `catch` swallows on the way out (much of the
@@ -65,7 +69,9 @@ function plain(value) {
 
 // `owner` names the work these steps belong to ('bot-build/run:12'): what a
 // session or a turn record carries so recovery elsewhere leaves it alone.
-function durable({ resumeFrom = null, checkpoint, signal = null, attempt = 1, lostAttempts = 0, owner = null } = {}) {
+function durable({
+  resumeFrom = null, checkpoint, signal = null, attempt = 1, lostAttempts = 0, owner = null, triesLeft = 0,
+} = {}) {
   if (typeof checkpoint !== 'function') throw new Error('durable: a checkpoint function is required');
   const state = resumeFrom && typeof resumeFrom === 'object' && !Array.isArray(resumeFrom) ? { ...resumeFrom } : {};
   let stopped = !!signal?.aborted;
@@ -112,6 +118,7 @@ function durable({ resumeFrom = null, checkpoint, signal = null, attempt = 1, lo
       resumed: !!resumeFrom,
       attempt,
       lostAttempts,
+      triesLeft: Math.max(0, Math.floor(Number(triesLeft) || 0)),
       owner,
       signal,
       get stopped() { return stopped || !!signal?.aborted; },
@@ -186,6 +193,7 @@ function none() {
     resumed: false,
     attempt: 1,
     lostAttempts: 0,
+    triesLeft: 0,
     owner: null,
     signal: null,
     stopped: false,

@@ -2089,6 +2089,10 @@ function promoteAsBot({ config, bot, sessionId, router = null, ceiling = null })
     const req = {
       method: 'POST', url, originalUrl: url, baseUrl: '', path: url,
       headers: {}, query: {}, params: {}, body: {}, cookies: {},
+      // A step of a build this process runs, which a process a release
+      // replaced finishes: the drain guard lets it through (lifecycle.js
+      // OWN_WORK; 14 Oct 2026, bot run 2027's "Server is restarting").
+      [require('./lifecycle').OWN_WORK]: true,
       // The marker app-access and the membership gate honour for the bot's
       // own session only: it proposes on apps in its live list whether or
       // not it is a collaborator or member there. Never an admin.
@@ -3790,6 +3794,70 @@ async function proposedAlready(pool, sessionId) {
   return { status: 200, body: { ok: true, prNumber: Number(row.pr_number), error: null, message: null } };
 }
 
+// ── A refusal is not a result ────────────────────────────────────────────
+//
+// 14 Oct 2026: a newcomer's first version (bot run 2027) was built to the
+// end, and its promote answered 503 "Server is restarting" (lifecycle.js
+// OWN_WORK says why). The `promoted` step kept that answer as what the
+// promotion came to, so the build ended "built but could not be proposed",
+// the newcomer was told it had stopped, and a later attempt would have read
+// the same 503 back. An answer of 5xx says the platform could not take the
+// proposal just then, not what the proposal is: it is tried again here a few
+// times, and then, while the build's work item has a try left
+// (durable-steps.js triesLeft), thrown (ProposalDeferred), so that nothing is
+// kept for the step, nothing is said, and the next try goes on from the
+// build's last step (`prepared`) and proposes. On its last try, or run
+// unkept, a build still refused ends as it always has: built, not proposed,
+// its session left for a person to propose.
+const PROPOSE_RETRY_MS = Object.freeze([2000, 5000, 15000]);
+
+/** What a refused proposal throws while its build has a try left. Never a stop. */
+class ProposalDeferred extends Error {
+  constructor({ status, why }) {
+    super(`the proposal could not be made now (${status}: ${why}); the build goes on from its last step on its next try`);
+    this.code = 'proposal_deferred';
+    this.status = status;
+  }
+}
+
+function proposalUnavailable(out) {
+  return Number(out?.status) >= 500;
+}
+
+/**
+ * promoteAsBot, tried again after an answer of 5xx (PROPOSE_RETRY_MS, or
+ * `waits`), and resolved as it answered; a session that went up for a vote
+ * meanwhile (an answer lost after the route had done its work) is read
+ * rather than promoted twice. Throws ProposalDeferred when every try was
+ * refused and `steps` will be tried again; a stop ends the waits. `waits`
+ * are a test's own (buildAndPropose's `deps.proposeRetryMs`).
+ */
+async function promoteOwnBuild({ pool, steps, waits = PROPOSE_RETRY_MS, ...args }) {
+  for (let i = 0; ; i += 1) {
+    // eslint-disable-next-line no-await-in-loop
+    const out = await promoteAsBot(args);
+    if (!proposalUnavailable(out)) return out;
+    const why = out.body?.error || out.body?.message || `promotion answered ${out.status}`;
+    if (i >= waits.length) {
+      if (steps.active && steps.triesLeft > 0) {
+        log.warn('homeroom-bot', 'The proposal was refused on every try; the build tries again from its last step', {
+          sessionId: args.sessionId, status: out.status, why, triesLeft: steps.triesLeft,
+        });
+        throw new ProposalDeferred({ status: out.status, why });
+      }
+      return out;
+    }
+    log.warn('homeroom-bot', 'The proposal was refused for now; trying again', {
+      sessionId: args.sessionId, status: out.status, why, inMs: waits[i],
+    });
+    // eslint-disable-next-line no-await-in-loop
+    await steps.race(new Promise((resolve) => { setTimeout(resolve, waits[i]); }));
+    // eslint-disable-next-line no-await-in-loop
+    const already = await proposedAlready(pool, args.sessionId);
+    if (already) return already;
+  }
+}
+
 async function buildAndPropose({
   pool, config, bot, app, repo, issueNumber, issue, seed, buildNote,
   turnBudgetMs, model, deps, propose = true, onSpec = null, specBudgetMs = SPEC_TURN_MAX_MS,
@@ -4514,11 +4582,14 @@ async function buildAndPropose({
     return true;
   });
   // Once, and never twice for one session: a restart between the promotion
-  // and its save finds the session up for a vote already, and reads it.
+  // and its save finds the session up for a vote already, and reads it. An
+  // answer of 5xx is not kept (promoteOwnBuild): tried again, then thrown
+  // while the build has a try left, so its next try proposes from here.
   const promoted = await steps.once('promoted', async () => {
     const already = await proposedAlready(pool, session.id);
     if (already) return already;
-    const out = await promoteAsBot({
+    const out = await promoteOwnBuild({
+      pool, steps, ...(Array.isArray(deps.proposeRetryMs) ? { waits: deps.proposeRetryMs } : {}),
       config, bot, sessionId: session.id, router: deps.votesRouter || null, ceiling: proposalCeiling,
     });
     return { status: out.status, body: out.body ? { ok: !!out.body.ok, prNumber: out.body.prNumber ?? null, error: out.body.error ?? null, message: out.body.message ?? null } : null };
@@ -4820,6 +4891,9 @@ module.exports = {
   botUsernameOf,
   openBotProposal,
   promoteAsBot,
+  promoteOwnBuild,
+  ProposalDeferred,
+  PROPOSE_RETRY_MS,
   prepareProposal,
   proposalTitle,
   specUserFacing,
