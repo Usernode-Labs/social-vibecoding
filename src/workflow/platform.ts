@@ -31,7 +31,7 @@ let merges: ReturnType<typeof mergeFollowups> | null = null;
 let mergesAdmitted = false;
 // The Homeroom bot's builds and the bench's trials: on in every process that
 // runs the workflow, which is every process (docs/plans/bot-build-workflow.md).
-let builds: ReturnType<typeof botBuild> | null = null;
+const builds = botBuild();
 let log: Logger | null = null;
 
 // What the ownership triggers read, synced on every boot:
@@ -176,7 +176,6 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
     machines.push(merges);
     services = { ...services, ...mergeFollowupsServices(deps) };
   }
-  builds = botBuild();
   machines.push(builds);
   services = { ...services, ...botBuildServices(deps) };
   const started = createRuntime({
@@ -192,7 +191,6 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
     machine = null;
     merges = null;
     mergesAdmitted = false;
-    builds = null;
     throw err;
   }
   runtime = started;
@@ -222,7 +220,6 @@ export async function stopWorkflow(): Promise<void> {
   machine = null;
   merges = null;
   mergesAdmitted = false;
-  builds = null;
   await r?.stop();
   await kernelPool?.end();
   kernelPool = null;
@@ -433,7 +430,7 @@ async function releaseBooted(pool: Pool): Promise<void> {
 // Whether builds run on the machine here; without the runtime (it failed to
 // start) services/build-runs.js runs them in its process, unkept, as before.
 export function botBuildsRunning(): boolean {
-  return runtime !== null && builds !== null;
+  return runtime !== null;
 }
 
 // Start a build: one instance per build, so asking twice starts it once.
@@ -441,7 +438,7 @@ export async function requestBuild(b: {
   target: BuildTarget; id: number; nonce?: string | null; appId: number | null; input: Record<string, unknown>;
 }): Promise<string> {
   const key = buildKey(b.target, b.id, b.nonce ?? null);
-  await runtime!.append(builds!, key, { type: 'Requested', payload: { target: b.target, id: b.id, nonce: b.nonce ?? null, input: b.input } },
+  await runtime!.append(builds, key, { type: 'Requested', payload: { target: b.target, id: b.id, nonce: b.nonce ?? null, input: b.input } },
     { requestKey: `request:${key}`, source: { kind: 'system', name: 'bot-build' }, appId: b.appId ?? null });
   return key;
 }

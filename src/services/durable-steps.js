@@ -17,6 +17,9 @@
 //   scope(prefix)   a child context whose keys are its own (a second try)
 //   fence()         throws once the work is no longer this process's
 //   race(promise)   the promise, or the stop, whichever comes first
+//   listen / tell   what the pipeline's own watchers are told as it goes (a
+//                   turn starting, or a turn a restart caught being
+//                   followed: a bench trial's watch recounts its looks)
 //
 // The stop is sticky: once the signal has aborted, every later durable call
 // throws again, so a stop that one `catch` swallows on the way out (much of
@@ -56,6 +59,7 @@ function durable({ resumeFrom = null, checkpoint, signal = null, attempt = 1, lo
   const state = resumeFrom && typeof resumeFrom === 'object' && !Array.isArray(resumeFrom) ? { ...resumeFrom } : {};
   let stopped = !!signal?.aborted;
   let writes = Promise.resolve();
+  const listeners = [];
   const markStopped = () => { stopped = true; };
   if (signal && typeof signal.addEventListener === 'function') signal.addEventListener('abort', markStopped, { once: true });
 
@@ -126,6 +130,17 @@ function durable({ resumeFrom = null, checkpoint, signal = null, attempt = 1, lo
       scope(child) { return make(k(child)); },
       // Every write made so far is saved (the handler's last act).
       async flush() { await writes; },
+      listen(fn) { if (typeof fn === 'function') listeners.push(fn); },
+      // A watcher that throws is logged; a stop it causes is the next step's.
+      async tell(event = {}) {
+        const told = { ...event, key: event.key != null ? k(event.key) : null };
+        for (const fn of listeners) {
+          // eslint-disable-next-line no-await-in-loop
+          try { await fn(told); } catch (err) {
+            log.warn('durable', 'A watcher of the steps failed', { kind: told.kind, key: told.key, err: err.message });
+          }
+        }
+      },
     };
     return ctx;
   };
@@ -151,6 +166,8 @@ function none() {
     race: (promise) => Promise.resolve(promise),
     scope: () => ctx,
     flush: async () => {},
+    listen: () => {},
+    tell: async () => {},
   };
   return ctx;
 }

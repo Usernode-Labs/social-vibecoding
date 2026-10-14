@@ -253,6 +253,9 @@ async function runTurn(steps, key, {
         sessionId: session.id, key, mode: activeTurn.mode, restarts,
       });
       const record = { turnId: turnLifecycle.turnIdentity(activeTurn), journal: activeTurn.journal || null };
+      // The journal is replayed from the turn's start: a watcher counting
+      // what the turn did counts it again from what it began with.
+      await steps.tell({ kind: 'turn_follow', key: k, activeTurn });
       let followed;
       try {
         followed = await steps.race(followTurn({ pool, session, activeTurn, onProgress, deps }));
@@ -266,6 +269,7 @@ async function runTurn(steps, key, {
         return finish({ routed: { error: `the turn could not be followed after a restart (${err.message})` }, stopped }, record);
       } finally {
         disarm();
+        await steps.tell({ kind: 'turn_followed', key: k });
       }
       if (!followed?.notDispatched) {
         return finish({ routed: followed, stopped, followed: true }, record);
@@ -294,6 +298,7 @@ async function runTurn(steps, key, {
   const left = deadlineAt ? Math.max(MIN_REDISPATCH_MS, deadlineAt - now()) : budgetMs;
   const headBefore = typeof head === 'function' ? await head().catch(() => null) : null;
   saved = { phase: 'started', mode: mode || null, deadlineAt: deadlineAt || now() + budgetMs, headBefore, record: null };
+  await steps.tell({ kind: 'turn_start', key: k });
   await steps.set(k, saved);
   let record = null;
   arm(left);

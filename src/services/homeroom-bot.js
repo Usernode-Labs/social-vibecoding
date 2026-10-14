@@ -7629,7 +7629,6 @@ async function buildLive({
       // And only once: the link is the build's claim on its run, and a run
       // another build already linked (or whose outcome is in) refuses it, so
       // a second build of one run stops before its plan (LOST_CLAIM).
-      // The claim starts the build's checkpoint too (homeroom-bot-checkpoint.js).
       // Run five (13 Oct 2026): and says how long the build waited for its
       // slot since it went ahead (`waitedMs`, from go_ahead_at, which the
       // claim leaves; live_build_waiting_at is the one it clears).

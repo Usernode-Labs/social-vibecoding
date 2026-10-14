@@ -51,7 +51,7 @@ const STAGES = Object.freeze([
 ]);
 
 // The build's step boundaries (homeroom-bot-live.js buildAndPropose's
-// `onStep`, homeroom-bot-checkpoint.js STEPS) that are stages.
+// `onStep`) that are stages.
 const STAGE_OF_STEP = Object.freeze({
   spec_turn: 'spec_started',
   build_turn: 'build_started',

@@ -3702,10 +3702,9 @@ async function buildAndPropose({
   // the work it pushed, which its review then looks at (worker.keepPartialWork).
   // Never a bench trial's or a later change's.
   keepPartial = false,
-  // Each step boundary the build reaches, saved by the caller so a restart
-  // carries the build on from there (homeroom-bot-checkpoint.js), called
-  // with (step, { sessionId, ...what the step left }) and awaited. Never a
-  // reason the build stops.
+  // Each step boundary the build reaches, told to the caller once (a first
+  // version's timeline), called with (step, { sessionId, ...what the step
+  // left }) and awaited. Never a reason the build stops.
   onStep = null,
   // A first version's configuration's build-speed tweaks (bot-configs.js
   // TWEAKS, recipe.tweaks), for its build turn, its nudge and its review's
@@ -4543,6 +4542,7 @@ module.exports = {
   BOT_STOP_KEY,
   stopOnClock,
   botStopOf,
+  ensureBuildWorker,
   waitOutShotsRun,
   askerOf,
   creditedDescription,
