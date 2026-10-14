@@ -799,6 +799,7 @@ CREATE TABLE IF NOT EXISTS app_activity (
   date           DATE NOT NULL DEFAULT CURRENT_DATE,
   UNIQUE(app_id, user_id, date)
 );
+ALTER TABLE app_activity ADD COLUMN IF NOT EXISTS precise_milliseconds BIGINT NOT NULL DEFAULT 0;
 
 -- Delivery receipts for engaged-use batches. A browser retains the same UUID
 -- until acknowledgement, so a response lost after COMMIT can be retried
@@ -816,6 +817,27 @@ CREATE TABLE IF NOT EXISTS app_activity_receipts (
 CREATE INDEX IF NOT EXISTS idx_app_activity_receipts_received
   ON app_activity_receipts(received_at);
 COMMENT ON TABLE app_activity_receipts IS 'staging:private';
+
+-- The occurrence intervals behind the daily totals. Kept for challenge
+-- scoring after a delivery receipt expires; their timestamps are never the
+-- upload or scoring time. A receipt and all its intervals commit together.
+CREATE TABLE IF NOT EXISTS app_usage_intervals (
+  id              BIGSERIAL PRIMARY KEY,
+  user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  app_id          INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  batch_id        UUID NOT NULL,
+  interval_index  INTEGER NOT NULL,
+  date            DATE NOT NULL,
+  started_at      TIMESTAMPTZ NOT NULL,
+  ended_at        TIMESTAMPTZ NOT NULL,
+  CHECK (ended_at > started_at),
+  UNIQUE (user_id, batch_id, interval_index)
+);
+CREATE INDEX IF NOT EXISTS idx_app_usage_intervals_user_app_time
+  ON app_usage_intervals (user_id, app_id, started_at, ended_at);
+CREATE INDEX IF NOT EXISTS idx_app_usage_intervals_day
+  ON app_usage_intervals (user_id, app_id, date);
+COMMENT ON TABLE app_usage_intervals IS 'staging:private';
 
 -- Per-check history: which of an app's declared dapp.json checks have ever
 -- been OBSERVED PASSING, and are therefore allowed to block a merge.

@@ -9,8 +9,8 @@
  *
  * Upload state is durable and account-scoped.  A batch keeps the same UUID
  * until the server acknowledges it; the server receipt makes a retry after a
- * lost response harmless.  Buffers retain occurrence-day milliseconds so a
- * delayed upload does not move yesterday's use into today.
+ * lost response harmless. Buffers retain the engaged intervals themselves,
+ * so a delayed upload preserves both the day and the time of the action.
  */
 
 export const ENGAGEMENT_IDLE_MS = 60_000;
@@ -21,6 +21,8 @@ export const ACTIVITY_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 export const ACTIVITY_MAX_BATCH_SECONDS = 3_600;
 export const ACTIVITY_MAX_BATCHES = 64;
 export const ACTIVITY_MAX_BUFFERS = 128;
+export const ACTIVITY_MAX_INTERVALS = 64;
+const MAX_BUFFER_INTERVALS = 256;
 export const ACTIVITY_FETCH_TIMEOUT_MS = 10_000;
 
 const STORAGE_KEY = 'sv:engaged-app-usage:v1';
@@ -353,8 +355,21 @@ export class EngagedAppUsage {
           const oldest = values[0];
           delete this.state.buffers[`${oldest.slug}\n${oldest.day}`];
         }
-        buffer = { slug, day, milliseconds: 0 };
+        buffer = { slug, day, milliseconds: 0, legacyMilliseconds: 0, intervals: [] };
         this.state.buffers[key] = buffer;
+      }
+      // A buffer restored from the old collector has no occurrence times.
+      // Deliver those seconds as v1; never assign them the time of the upgrade.
+      if (!buffer.intervals) {
+        buffer.legacyMilliseconds = buffer.milliseconds;
+        buffer.intervals = [];
+      }
+      const last = buffer.intervals.at(-1);
+      if (last && last.end === cursor) last.end = partEnd;
+      else buffer.intervals.push({ start: cursor, end: partEnd });
+      if (buffer.intervals.length > MAX_BUFFER_INTERVALS) {
+        const oldest = buffer.intervals.shift();
+        buffer.milliseconds -= oldest.end - oldest.start;
       }
       buffer.milliseconds += partEnd - cursor;
       cursor = partEnd;
@@ -385,11 +400,22 @@ export class EngagedAppUsage {
     for (const buffer of Object.values(parsed.buffers || {})) {
       if (!buffer || !validSlug(buffer.slug) || !/^\d{4}-\d{2}-\d{2}$/.test(buffer.day)) continue;
       if (!Number.isFinite(buffer.milliseconds) || buffer.milliseconds <= 0) continue;
-      buffers[`${buffer.slug}\n${buffer.day}`] = {
+      const restored = {
         slug: buffer.slug,
         day: buffer.day,
         milliseconds: Math.min(buffer.milliseconds, 86_400_000),
       };
+      if (Array.isArray(buffer.intervals)) {
+        restored.intervals = buffer.intervals.filter((r) => (
+          Number.isSafeInteger(r.start) && Number.isSafeInteger(r.end)
+          && r.end > r.start && utcDay(r.start) === buffer.day
+          && utcDay(r.end - 1) === buffer.day
+        )).slice(-MAX_BUFFER_INTERVALS);
+        restored.legacyMilliseconds = Math.max(0, Number(buffer.legacyMilliseconds) || 0);
+        restored.milliseconds = restored.legacyMilliseconds
+          + restored.intervals.reduce((sum, r) => sum + r.end - r.start, 0);
+      }
+      buffers[`${buffer.slug}\n${buffer.day}`] = restored;
     }
     this.state = { owner, batches, buffers };
     this._prune();
@@ -414,13 +440,37 @@ export class EngagedAppUsage {
       !this.state.batches.some((batch) => batch.slug === buffer.slug)
     ));
     if (!first) return false;
+    const legacy = !first.intervals || first.legacyMilliseconds >= 1_000;
     let remaining = ACTIVITY_MAX_BATCH_SECONDS;
+    let intervalBudget = ACTIVITY_MAX_INTERVALS;
     const entries = [];
     for (const buffer of buffers) {
       if (buffer.slug !== first.slug || entries.length >= 8 || remaining <= 0) continue;
-      const seconds = Math.min(Math.floor(buffer.milliseconds / 1_000), remaining);
+      const legacyMs = buffer.intervals ? buffer.legacyMilliseconds : buffer.milliseconds;
+      const availableMs = legacy ? legacyMs : (buffer.intervals || [])
+        .slice(0, intervalBudget).reduce((sum, r) => sum + r.end - r.start, 0);
+      const seconds = Math.min(Math.floor(availableMs / 1_000), remaining);
       if (seconds <= 0) continue;
-      entries.push({ date: buffer.day, seconds });
+      const entry = { date: buffer.day, seconds };
+      if (legacy) {
+        if (buffer.intervals) buffer.legacyMilliseconds -= seconds * 1_000;
+      } else {
+        entry.intervals = [];
+        let take = seconds * 1_000;
+        while (take > 0) {
+          const range = buffer.intervals[0];
+          const end = Math.min(range.end, range.start + take);
+          entry.intervals.push({
+            startedAt: new Date(range.start).toISOString(),
+            endedAt: new Date(end).toISOString(),
+          });
+          take -= end - range.start;
+          range.start = end;
+          if (range.start === range.end) buffer.intervals.shift();
+        }
+        intervalBudget -= entry.intervals.length;
+      }
+      entries.push(entry);
       buffer.milliseconds -= seconds * 1_000;
       remaining -= seconds;
       if (buffer.milliseconds < 1) delete this.state.buffers[`${buffer.slug}\n${buffer.day}`];
@@ -428,6 +478,7 @@ export class EngagedAppUsage {
     if (!entries.length) return false;
     this.state.batches.push({
       id: this.uuid(),
+      version: legacy ? 1 : 2,
       slug: first.slug,
       entries,
       createdAt: this.now(),
@@ -448,7 +499,7 @@ export class EngagedAppUsage {
           credentials: 'same-origin',
           keepalive: true,
           body: JSON.stringify({
-            version: 1,
+            version: batch.version || 1,
             batchId: batch.id,
             entries: batch.entries,
           }),
