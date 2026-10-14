@@ -810,6 +810,12 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       // and open issues. All DB-derived; no GitHub round trips.
       const userId = req.user?.id || null;
       const isAdmin = !!req.user?.isAdmin;
+      // ?scope=joined (#5023): only the communities this viewer is in. The
+      // Workshop and its community switcher list nothing else, and without
+      // it they were sent the whole catalog (and the per-app work below:
+      // secrets, contributors, domains, first versions, lineage) only to
+      // throw most of it away. Same rows, same fields, fewer of them.
+      const joinedOnly = req.query.scope === 'joined' && userId != null;
       // Visibility filter: admins see everything; everyone else sees
       // view-public apps plus apps they're a member of (the `me` join).
       // View-private apps are simply absent from the list for outsiders
@@ -919,8 +925,9 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         WHERE a.moderation_suspended_at IS NULL AND (NOT a.self_hosted OR $1::boolean)
           AND NOT EXISTS (SELECT 1 FROM user_app_blocks b WHERE b.user_id = $2 AND b.app_id = a.id)
           AND ($3::boolean OR a.view_visibility = 'public' OR me.user_id IS NOT NULL)
+          AND (NOT $4::boolean OR cm.user_id IS NOT NULL)
         ORDER BY (COALESCE(msg_counts.cnt, 0) + COALESCE(activity.total_seconds, 0)) DESC, a.created_at DESC
-      `, [showSelfHosted, userId, isAdmin]);
+      `, [showSelfHosted, userId, isAdmin, joinedOnly]);
 
       // #788: one query for every app this viewer is a per-app admin
       // of, so accessFlags below can resolve can_manage per row without
