@@ -11,7 +11,6 @@ const models = require('./models');
 const inLoopBrowser = require('./in-loop-browser');
 const registry = require('../agents/registry');
 const turnLifecycle = require('./turn-lifecycle');
-const botDrain = require('./homeroom-bot-drain');
 const branchNames = require('./branch-names');
 const llmTelemetry = require('./llm-telemetry');
 const liveAgentSpend = require('./live-agent-spend');
@@ -3456,6 +3455,13 @@ async function execInWorker(sessionId, {
   // "Post-agent TAIL" note above. Default false — the sync path and any
   // future tail-less caller keep the original clear-on-exit behaviour.
   holdTurnRecord = false,
+  // Called with the turn record's identity ({ turnId, journal, turnUuid,
+  // mode }) once it is saved and before the turn is dispatched, so a caller
+  // that keeps its own steps (services/durable-turn.js) knows which record is
+  // its turn's should a restart come next. A throw (the caller's work is no
+  // longer this process's) dispatches nothing and leaves the record for the
+  // next owner, who finds it never dispatched.
+  onTurnRecord = null,
   // Kept as a compatibility option for older call sites. Persistence is now
   // required for every dispatch, not only recovered retries.
   requireActiveTurnPersistence = false,
@@ -3950,6 +3956,21 @@ async function execInWorker(sessionId, {
     throw err;
   }
 
+  if (typeof onTurnRecord === 'function') {
+    try {
+      await onTurnRecord({ turnId: durableTurnId, journal, turnUuid: turnUuid || null, mode });
+    } catch (err) {
+      // Nothing was dispatched: this process's registry goes back as it was,
+      // and the record stays for whoever owns the turn next.
+      _registryUpsert(sessionId, {
+        ...(replacedRegistryFields || { activeTurnMode: null, journal: null, activeTurnId: null }),
+        inFlight: false, lastUsedMs: Date.now(),
+      });
+      await revokeHomeroomReadGrant(sessionId, homeroomGrant);
+      throw err;
+    }
+  }
+
   // Visible to the `finally` below, which stamps the tail's seed
   // milestones (sha / pushOk) from whatever the exec established.
   let execState = null;
@@ -3987,10 +4008,6 @@ async function execInWorker(sessionId, {
     }).catch((err) => log.warn('worker', 'Failed to mark turn executing; durable dispatch remains recoverable', {
       sessionId, turnId: durableTurnId, err: err.message,
     }));
-    // The turn's record is saved and its process runs: a Homeroom bot
-    // pipeline that opened it is parked at a point restart recovery adopts
-    // (homeroom-bot-drain.js), so shutdown need not wait for it.
-    botDrain.noteTurnDispatched(sessionId, { mode });
     // onChild is legacy: there is no host-side child that owns the turn
     // anymore. Stop semantics live in stopTurn() (in-container pkill).
     if (typeof onChild === 'function') {
@@ -4073,17 +4090,6 @@ async function execInWorker(sessionId, {
     } catch (err) {
       consumeError = err;
     }
-    // A Homeroom bot pipeline's turn that ends once shutdown has begun goes
-    // no further: its record and journal stay as they are (this never
-    // returns, so the `finally` below never clears them) and the next
-    // leader adopts the finished turn, rather than this process starting a
-    // step it cannot finish (homeroom-bot-drain.js).
-    if (botDrain.holdAfterTurn()) {
-      log.info('worker', 'Shutting down: a Homeroom bot turn ended; left for the next leader', {
-        sessionId, turnId: durableTurnId, mode,
-      });
-      await new Promise(() => {});
-    }
     if (consumeError) {
       // What the turn did before the journal could not be read on, for the
       // ledger (sessions.js reads err.turnResult): its usage, its telemetry
@@ -4108,7 +4114,6 @@ async function execInWorker(sessionId, {
     }
     return finalizeHarnessResult(state);
   } finally {
-    if (providerDispatched) botDrain.noteTurnEnded(sessionId, { mode });
     // The agent process is done with the platform once its journal has
     // ended: the tail (PR, staging, the wrap-up) never uses this token.
     await revokeHomeroomReadGrant(sessionId, homeroomGrant);
@@ -4670,15 +4675,27 @@ async function resumeTurnFromJournal(sessionId, {
   attemptNumber = 1,
   billingByok = false,
   providerWasDispatched = false,
+  // The per-turn state execInWorker keeps only in the warm registry, put
+  // back from the durable record: active_turn.mode, the session's branch,
+  // and a stop requested before the restart (active_turn.stopRequestedAt,
+  // as epoch ms). Without the mode an adopted sync turn's remaining model
+  // calls bill the owner instead of the system budget (the proxy reads
+  // getActiveTurnMode); without the branch a commit the turn could not
+  // push is not rescued before eviction deletes the checkout.
+  mode = null,
+  branchName = null,
+  stopRequestedAt = null,
 } = {}) {
   if (!journal) throw new Error('resumeTurnFromJournal: journal path required');
   const meta = _registryGet(sessionId);
   const containerName = meta?.containerName || workerRuntimeName(sessionId);
+  const turnMode = mode || meta?.activeTurnMode || null;
   // #664: seed the per-turn BYOK counters from the persisted active_turn
   // record (callers pass active_turn.byokCents) so post-restart switched
   // calls accumulate on top instead of restarting from zero, and the
   // one-time switch notice doesn't re-fire for an already-switched turn.
   const seedCents = Number(byokCentsSoFar) > 0 ? Number(byokCentsSoFar) : 0;
+  const durableStopMs = Number(stopRequestedAt) > 0 ? Number(stopRequestedAt) : null;
   _registryUpsert(sessionId, {
     inFlight: true, adopted: true,
     // Recovered proxy calls must keep mirroring BYOK spillover onto the
@@ -4686,10 +4703,21 @@ async function resumeTurnFromJournal(sessionId, {
     // every cent observed after the first recovery.
     activeTurnId: turnId || null,
     turnByokCents: seedCents, turnByokSwitched: seedCents > 0,
+    // What execInWorker's dispatch upsert records, so the adopted turn is
+    // the same turn to every reader: the proxy's sync check, stopTurn's
+    // journal, and the liveness watchdog's stop cadence.
+    activeTurnMode: turnMode,
+    journal,
+    ...(durableStopMs && !meta?.stopRequestedAt ? { stopRequestedAt: durableStopMs } : {}),
   });
+  // A stop that was asked for before the restart is applied now: the
+  // process that recorded it may have died before its kill landed, and the
+  // recovered turn is closed as stopped either way (server.js). Not awaited:
+  // the kill appends the exit marker this replay then reads.
+  if (durableStopMs) Promise.resolve().then(() => stopTurn(sessionId)).catch(() => {});
   const state = newWatchState();
   state.turnId = turnId || null;
-  state.liveSpendEnabled = agentBackend === 'claude_code' && meta?.activeTurnMode !== 'sync';
+  state.liveSpendEnabled = agentBackend === 'claude_code' && turnMode !== 'sync';
   workerProgress.setSpend(sessionId, null);
   state.hostSessionId = sessionId;
   state.hostContainerName = containerName;
@@ -4758,7 +4786,14 @@ async function resumeTurnFromJournal(sessionId, {
         correlationId: telemetryCorrelationId || String(turnId),
       });
     }
-    _registryUpsert(sessionId, { inFlight: false, lastUsedMs: Date.now() });
+    // execInWorker's teardown, for the adopted turn: the turn is over, and
+    // what a finished build committed but could not push is remembered so
+    // the tail's heal, or failing that evictWorker, pushes it before the
+    // workspace goes. A pending stop survives, as it does there (#937).
+    _registryUpsert(sessionId, {
+      inFlight: false, lastUsedMs: Date.now(), activeTurnMode: null, journal: null,
+      unpushed: unpushedCommit(turnMode, state, branchName),
+    });
   }
 }
 

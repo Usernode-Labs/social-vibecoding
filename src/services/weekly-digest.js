@@ -44,6 +44,7 @@
  */
 
 const log = require('./logger');
+const leaderTimers = require('./leader-timers');
 const { WEEKLY_DIGEST_LOCK } = require('./advisory-locks');
 
 const INTERVAL_MS = 60 * 60 * 1000;      // sweep hourly
@@ -58,8 +59,6 @@ const MIN_GAP_DAYS = 6;                  // never two cards in one week
 // not a changelog. Three of each (#3678): the newest that went live, the
 // longest waiting. It was eight, each with its people, and read as a wall.
 const MAX_LISTED = 3;
-
-let timer = null;
 
 /** Friday at or after the posting hour, in UTC. */
 function isPostingTime(now) {
@@ -253,7 +252,7 @@ async function sweep(pool, now = new Date()) {
 }
 
 function start(config) {
-  if (timer) return;
+  if (leaderTimers.has('weekly-digest')) return;
   const { getPool } = require('../db/pool');
   const run = async () => {
     try {
@@ -263,14 +262,13 @@ function start(config) {
       log.error('weekly-digest', 'Sweep failed', { err: err.message });
     }
   };
-  setTimeout(run, FIRST_SWEEP_DELAY_MS);
-  timer = setInterval(run, INTERVAL_MS);
-  if (typeof timer.unref === 'function') timer.unref();
+  // A leader timer (services/leader-timers.js): no sweep starts once
+  // shutdown has begun, and one under way is given the drain to finish.
+  leaderTimers.every('weekly-digest', run, INTERVAL_MS, { firstDelayMs: FIRST_SWEEP_DELAY_MS });
 }
 
 function stop() {
-  if (timer) clearInterval(timer);
-  timer = null;
+  leaderTimers.clear('weekly-digest');
 }
 
 module.exports = {

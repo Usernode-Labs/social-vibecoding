@@ -1161,7 +1161,13 @@
       "COMMIT :: []",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Building staging preview...\",{\"json\":{}}]",
       "UPDATE chat_sessions SET staging_container_id = $1, staging_url = $2 WHERE id = $3 :: [\"stage-1\",\"https://whiteboard-pr42.staging.test\",4242]",
+      "BEGIN :: []",
+      "INSERT INTO turn_effects (turn_id, effect_key, session_id, state) VALUES ($1, $2, $3, 'pending') ON CONFLICT (turn_id, effect_key) DO NOTHING RETURNING state :: [\"turn-build-1\",\"recovered_staging_publication\",4242]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Staging deployed!\",{\"json\":{\"stagingUrl\":\"https://whiteboard-pr42.staging.test\",\"changesReady\":true,\"prNumber\":42,\"prUrl\":\"https://github.com/usernode-bot/whiteboard-0d337f/pull/42\"}}]",
+      "UPDATE chat_sessions SET active_turn = jsonb_set( active_turn, '{tail}', COALESCE(active_turn->'tail', '{}'::jsonb) || $… <sha:508f11108a93a8f0 len:298> :: [4242,{\"json\":{\"stagingPublished\":true}},\"turn-build-1\",[\"tail_pending\",\"tail\"]]",
+      "SELECT active_turn FROM chat_sessions WHERE id = $1 :: [4242]",
+      "UPDATE turn_effects SET state = 'completed', result = $3::jsonb, completed_at = NOW(), updated_at = NOW() WHERE turn_id = $1 AND effect_key = $2 :: [\"turn-build-1\",\"recovered_staging_publication\",{\"json\":{\"outcome\":\"success\",\"metadata\":{\"stagingUrl\":\"https://whiteboard-pr42.staging.test\",\"changesReady\":true,\"prNumber\":42,\"prUrl\":\"https://github.com/usernode-bot/whiteboard-0d337f/pull/42\"},\"failure\":null,\"checkpoint\":{\"stagingPublished\":true}}}]",
+      "COMMIT :: []",
       "BEGIN :: []",
       "INSERT INTO turn_effects (turn_id, effect_key, session_id, state) VALUES ($1, $2, $3, 'pending') ON CONFLICT (turn_id, effect_key) DO NOTHING RETURNING state :: [\"turn-build-1\",\"completion_row\",4242]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Claude Code finished\",{\"json\":{\"agentBackend\":\"claude_code\",\"agentModel\":\"claude-opus-5-5\",\"ccOutput\":\"Added a theme toggle to the toolbar and saved the choice in localStorage.\",\"ccOutcome\":\"success\",\"durationMs\":\"<num>\"}}]",
@@ -1912,7 +1918,13 @@
       "COMMIT :: []",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Building staging preview...\",{\"json\":{}}]",
       "UPDATE chat_sessions SET staging_container_id = $1, staging_url = $2 WHERE id = $3 :: [\"stage-1\",\"https://whiteboard-pr42.staging.test\",4242]",
+      "BEGIN :: []",
+      "INSERT INTO turn_effects (turn_id, effect_key, session_id, state) VALUES ($1, $2, $3, 'pending') ON CONFLICT (turn_id, effect_key) DO NOTHING RETURNING state :: [\"turn-or-1\",\"recovered_staging_publication\",4242]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Staging deployed!\",{\"json\":{\"stagingUrl\":\"https://whiteboard-pr42.staging.test\",\"changesReady\":true,\"prNumber\":42,\"prUrl\":\"https://github.com/usernode-bot/whiteboard-0d337f/pull/42\"}}]",
+      "UPDATE chat_sessions SET active_turn = jsonb_set( active_turn, '{tail}', COALESCE(active_turn->'tail', '{}'::jsonb) || $… <sha:508f11108a93a8f0 len:298> :: [4242,{\"json\":{\"stagingPublished\":true}},\"turn-or-1\",[\"tail_pending\",\"tail\"]]",
+      "SELECT active_turn FROM chat_sessions WHERE id = $1 :: [4242]",
+      "UPDATE turn_effects SET state = 'completed', result = $3::jsonb, completed_at = NOW(), updated_at = NOW() WHERE turn_id = $1 AND effect_key = $2 :: [\"turn-or-1\",\"recovered_staging_publication\",{\"json\":{\"outcome\":\"success\",\"metadata\":{\"stagingUrl\":\"https://whiteboard-pr42.staging.test\",\"changesReady\":true,\"prNumber\":42,\"prUrl\":\"https://github.com/usernode-bot/whiteboard-0d337f/pull/42\"},\"failure\":null,\"checkpoint\":{\"stagingPublished\":true}}}]",
+      "COMMIT :: []",
       "BEGIN :: []",
       "INSERT INTO turn_effects (turn_id, effect_key, session_id, state) VALUES ($1, $2, $3, 'pending') ON CONFLICT (turn_id, effect_key) DO NOTHING RETURNING state :: [\"turn-or-1\",\"completion_row\",4242]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"OpenRouter finished\",{\"json\":{\"agentBackend\":\"codex_openrouter\",\"agentModel\":\"openai/gpt-5.3-codex\",\"ccOutput\":\"Added the toggle.\",\"ccOutcome\":\"success\",\"durationMs\":\"<num>\"}}]",
@@ -2056,7 +2068,13 @@
       "COMMIT :: []",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Building staging preview...\",{\"json\":{}}]",
       "UPDATE chat_sessions SET staging_container_id = $1, staging_url = $2 WHERE id = $3 :: [\"stage-1\",\"https://whiteboard-pr42.staging.test\",4242]",
+      "BEGIN :: []",
+      "INSERT INTO turn_effects (turn_id, effect_key, session_id, state) VALUES ($1, $2, $3, 'pending') ON CONFLICT (turn_id, effect_key) DO NOTHING RETURNING state :: [\"turn-or-1\",\"recovered_staging_publication\",4242]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Staging deployed!\",{\"json\":{\"stagingUrl\":\"https://whiteboard-pr42.staging.test\",\"changesReady\":true,\"prNumber\":42,\"prUrl\":\"https://github.com/usernode-bot/whiteboard-0d337f/pull/42\"}}]",
+      "UPDATE chat_sessions SET active_turn = jsonb_set( active_turn, '{tail}', COALESCE(active_turn->'tail', '{}'::jsonb) || $… <sha:508f11108a93a8f0 len:298> :: [4242,{\"json\":{\"stagingPublished\":true}},\"turn-or-1\",[\"tail_pending\",\"tail\"]]",
+      "SELECT active_turn FROM chat_sessions WHERE id = $1 :: [4242]",
+      "UPDATE turn_effects SET state = 'completed', result = $3::jsonb, completed_at = NOW(), updated_at = NOW() WHERE turn_id = $1 AND effect_key = $2 :: [\"turn-or-1\",\"recovered_staging_publication\",{\"json\":{\"outcome\":\"success\",\"metadata\":{\"stagingUrl\":\"https://whiteboard-pr42.staging.test\",\"changesReady\":true,\"prNumber\":42,\"prUrl\":\"https://github.com/usernode-bot/whiteboard-0d337f/pull/42\"},\"failure\":null,\"checkpoint\":{\"stagingPublished\":true}}}]",
+      "COMMIT :: []",
       "BEGIN :: []",
       "INSERT INTO turn_effects (turn_id, effect_key, session_id, state) VALUES ($1, $2, $3, 'pending') ON CONFLICT (turn_id, effect_key) DO NOTHING RETURNING state :: [\"turn-or-1\",\"completion_row\",4242]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"OpenRouter finished\",{\"json\":{\"agentBackend\":\"codex_openrouter\",\"agentModel\":\"openai/gpt-5.3-codex\",\"ccOutput\":\"Added the toggle.\",\"ccOutcome\":\"success\",\"durationMs\":\"<num>\"}}]",
@@ -2169,7 +2187,13 @@
       "COMMIT :: []",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Building staging preview...\",{\"json\":{}}]",
       "UPDATE chat_sessions SET staging_container_id = $1, staging_url = $2 WHERE id = $3 :: [\"stage-1\",\"https://whiteboard-pr42.staging.test\",4242]",
+      "BEGIN :: []",
+      "INSERT INTO turn_effects (turn_id, effect_key, session_id, state) VALUES ($1, $2, $3, 'pending') ON CONFLICT (turn_id, effect_key) DO NOTHING RETURNING state :: [\"turn-or-1\",\"recovered_staging_publication\",4242]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Staging deployed!\",{\"json\":{\"stagingUrl\":\"https://whiteboard-pr42.staging.test\",\"changesReady\":true,\"prNumber\":42,\"prUrl\":\"https://github.com/usernode-bot/whiteboard-0d337f/pull/42\"}}]",
+      "UPDATE chat_sessions SET active_turn = jsonb_set( active_turn, '{tail}', COALESCE(active_turn->'tail', '{}'::jsonb) || $… <sha:508f11108a93a8f0 len:298> :: [4242,{\"json\":{\"stagingPublished\":true}},\"turn-or-1\",[\"tail_pending\",\"tail\"]]",
+      "SELECT active_turn FROM chat_sessions WHERE id = $1 :: [4242]",
+      "UPDATE turn_effects SET state = 'completed', result = $3::jsonb, completed_at = NOW(), updated_at = NOW() WHERE turn_id = $1 AND effect_key = $2 :: [\"turn-or-1\",\"recovered_staging_publication\",{\"json\":{\"outcome\":\"success\",\"metadata\":{\"stagingUrl\":\"https://whiteboard-pr42.staging.test\",\"changesReady\":true,\"prNumber\":42,\"prUrl\":\"https://github.com/usernode-bot/whiteboard-0d337f/pull/42\"},\"failure\":null,\"checkpoint\":{\"stagingPublished\":true}}}]",
+      "COMMIT :: []",
       "BEGIN :: []",
       "INSERT INTO turn_effects (turn_id, effect_key, session_id, state) VALUES ($1, $2, $3, 'pending') ON CONFLICT (turn_id, effect_key) DO NOTHING RETURNING state :: [\"turn-or-1\",\"completion_row\",4242]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"OpenRouter finished\",{\"json\":{\"agentBackend\":\"codex_openrouter\",\"agentModel\":\"openai/gpt-5.3-codex\",\"ccOutput\":\"Added the toggle.\",\"ccOutcome\":\"success\",\"durationMs\":\"<num>\"}}]",
@@ -2224,6 +2248,210 @@
       "{\"role\":\"system\",\"content\":\"Staging deployed!\",\"metadata\":{\"stagingUrl\":\"https://whiteboard-pr42.staging.test\",\"changesReady\":true,\"prNumber\":42,\"prUrl\":\"https://github.com/usernode-bot/whiteboard-0d337f/pull/42\"}}",
       "{\"role\":\"system\",\"content\":\"OpenRouter finished\",\"metadata\":{\"agentBackend\":\"codex_openrouter\",\"agentModel\":\"openai/gpt-5.3-codex\",\"ccOutput\":\"Added the toggle.\",\"ccOutcome\":\"success\",\"durationMs\":\"<num>\"}}",
       "{\"role\":\"assistant\",\"content\":\"What the agent did:\\nAdded the toggle.\\n\\nCommit fed9876a pushed to dev/tester-4242.\\n\\nOpened PR #42: https://github.com/usernode-bot/whiteboard-0d337f/pull/42\\n\\nStaging redeployed: https://whiteboard-pr42.staging.test\",\"metadata\":{\"quickReplies\":[\"Propose it to the group\",\"Make a tweak\",\"What did it change?\"],\"quickRepliesSource\":\"static\",\"quickRepliesKind\":\"code_done\",\"openRouterDirect\":true,\"costEstimated\":true}}"
+    ]
+  },
+  "local build turn": {
+    "status": 200,
+    "events": [
+      "{\"type\":\"accepted\",\"_seq\":\"#1\",\"messageId\":900,\"clientMessageId\":null}",
+      "{\"type\":\"status\",\"_seq\":\"#2\",\"text\":\"Thinking about your request...\"}",
+      "{\"type\":\"phase\",\"_seq\":\"#3\",\"phase\":\"mayor1\"}",
+      "{\"type\":\"token\",\"_seq\":\"#4\",\"text\":\"Building it now.\"}",
+      "{\"type\":\"usage\",\"_seq\":\"#5\",\"costCents\":1.5,\"model\":\"claude-opus-5-5\",\"byok\":false}",
+      "{\"type\":\"mayor_reasoning\",\"_seq\":\"#6\",\"text\":\"Building it now.\"}",
+      "{\"type\":\"quick_replies\",\"_seq\":\"#7\",\"replies\":[\"Build the plan\",\"Revise the plan\",\"What will this change?\"]}",
+      "{\"type\":\"assistant_message_end\",\"_seq\":\"#8\"}",
+      "{\"type\":\"phase\",\"_seq\":\"#9\",\"phase\":\"cc\"}",
+      "{\"type\":\"status\",\"_seq\":\"#10\",\"text\":\"Handing this turn to Tester's laptop: your machine, your Claude subscription...\",\"agentBackend\":\"claude_code\",\"agentModel\":null,\"runner\":\"local\",\"localAgentLabel\":\"Tester's laptop\",\"localMode\":\"build\"}",
+      "{\"type\":\"status\",\"_seq\":\"#11\",\"text\":\"Claude Code is running...\",\"agentBackend\":\"claude_code\",\"agentModel\":null}",
+      "{\"type\":\"status\",\"_seq\":\"#12\",\"text\":\"PR #42 created\"}",
+      "{\"type\":\"status\",\"_seq\":\"#13\",\"text\":\"Building staging preview...\"}",
+      "{\"type\":\"status\",\"_seq\":\"#14\",\"text\":\"Staging deployed!\",\"stagingUrl\":\"https://whiteboard-pr42.staging.test\",\"changesReady\":true,\"prNumber\":42,\"prUrl\":\"https://github.com/usernode-bot/whiteboard-0d337f/pull/42\"}",
+      "{\"type\":\"staging_ready\",\"_seq\":\"#15\",\"url\":\"https://whiteboard-pr42.staging.test\",\"changesReady\":true,\"testingMd\":null,\"testingPath\":null}",
+      "{\"type\":\"status\",\"_seq\":\"#16\",\"text\":\"Claude Code finished Coding done on Tester's laptop, so no Homeroom credits were used.\",\"agentBackend\":\"claude_code\",\"agentModel\":null,\"ccOutput\":\"Added the toggle on the laptop.\",\"ccOutcome\":\"success\",\"durationMs\":\"<num>\",\"runner\":\"local\",\"localAgentLabel\":\"Tester's laptop\",\"localMode\":\"build\"}",
+      "{\"type\":\"phase\",\"_seq\":\"#17\",\"phase\":\"mayor2\"}",
+      "{\"type\":\"token\",\"_seq\":\"#18\",\"text\":\"Done on your laptop. The toggle is in the toolbar.\"}",
+      "{\"type\":\"usage\",\"_seq\":\"#19\",\"costCents\":1.5,\"model\":\"claude-opus-5-5\",\"byok\":false}",
+      "{\"type\":\"mayor_reasoning\",\"_seq\":\"#20\",\"text\":\"Done on your laptop. The toggle is in the toolbar.\"}",
+      "{\"type\":\"quick_replies\",\"_seq\":\"#21\",\"replies\":[\"Try it in the preview\",\"What did it change?\"]}",
+      "{\"type\":\"done\",\"_seq\":\"#22\"}"
+    ],
+    "broadcasts": [
+      "{\"type\":\"session_event\",\"_seq\":\"#2\",\"text\":\"Thinking about your request...\",\"sessionId\":4242,\"event\":\"status\"}",
+      "{\"type\":\"session_event\",\"_seq\":\"#3\",\"phase\":\"mayor1\",\"sessionId\":4242,\"event\":\"phase\"}",
+      "{\"type\":\"session_event\",\"_seq\":\"#6\",\"text\":\"Building it now.\",\"sessionId\":4242,\"event\":\"mayor_reasoning\"}",
+      "{\"type\":\"session_event\",\"_seq\":\"#7\",\"replies\":[\"Build the plan\",\"Revise the plan\",\"What will this change?\"],\"sessionId\":4242,\"event\":\"quick_replies\"}",
+      "{\"type\":\"session_event\",\"_seq\":\"#8\",\"sessionId\":4242,\"event\":\"assistant_message_end\"}",
+      "{\"type\":\"session_event\",\"_seq\":\"#9\",\"phase\":\"cc\",\"sessionId\":4242,\"event\":\"phase\"}",
+      "{\"type\":\"session_event\",\"_seq\":\"#10\",\"text\":\"Handing this turn to Tester's laptop: your machine, your Claude subscription...\",\"agentBackend\":\"claude_code\",\"agentModel\":null,\"runner\":\"local\",\"localAgentLabel\":\"Tester's laptop\",\"localMode\":\"build\",\"sessionId\":4242,\"event\":\"status\"}",
+      "{\"type\":\"session_event\",\"_seq\":\"#11\",\"text\":\"Claude Code is running...\",\"agentBackend\":\"claude_code\",\"agentModel\":null,\"sessionId\":4242,\"event\":\"status\"}",
+      "{\"type\":\"session_event\",\"_seq\":\"#12\",\"text\":\"PR #42 created\",\"sessionId\":4242,\"event\":\"status\"}",
+      "{\"type\":\"session_event\",\"_seq\":\"#13\",\"text\":\"Building staging preview...\",\"sessionId\":4242,\"event\":\"status\"}",
+      "{\"type\":\"session_event\",\"_seq\":\"#14\",\"text\":\"Staging deployed!\",\"stagingUrl\":\"https://whiteboard-pr42.staging.test\",\"changesReady\":true,\"prNumber\":42,\"prUrl\":\"https://github.com/usernode-bot/whiteboard-0d337f/pull/42\",\"sessionId\":4242,\"event\":\"status\"}",
+      "{\"type\":\"session_event\",\"_seq\":\"#15\",\"url\":\"https://whiteboard-pr42.staging.test\",\"changesReady\":true,\"testingMd\":null,\"testingPath\":null,\"sessionId\":4242,\"event\":\"staging_ready\"}",
+      "{\"type\":\"session_event\",\"_seq\":\"#16\",\"text\":\"Claude Code finished Coding done on Tester's laptop, so no Homeroom credits were used.\",\"agentBackend\":\"claude_code\",\"agentModel\":null,\"ccOutput\":\"Added the toggle on the laptop.\",\"ccOutcome\":\"success\",\"durationMs\":\"<num>\",\"runner\":\"local\",\"localAgentLabel\":\"Tester's laptop\",\"localMode\":\"build\",\"sessionId\":4242,\"event\":\"status\"}",
+      "{\"type\":\"session_event\",\"_seq\":\"#17\",\"phase\":\"mayor2\",\"sessionId\":4242,\"event\":\"phase\"}",
+      "{\"type\":\"session_event\",\"_seq\":\"#20\",\"text\":\"Done on your laptop. The toggle is in the toolbar.\",\"sessionId\":4242,\"event\":\"mayor_reasoning\"}",
+      "{\"type\":\"session_event\",\"_seq\":\"#21\",\"replies\":[\"Try it in the preview\",\"What did it change?\"],\"sessionId\":4242,\"event\":\"quick_replies\"}",
+      "{\"type\":\"session_event\",\"_seq\":\"#22\",\"sessionId\":4242,\"event\":\"done\"}"
+    ],
+    "queries": [
+      "SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
+      "SELECT app_id FROM user_app_blocks WHERE user_id = $1 AND app_id = $2 :: [7,4242]",
+      "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:49b4726211dab378 len:549> :: [\"4242\",7]",
+      "INSERT INTO chat_session_messages (session_id, role, content, metadata, client_message_id) VALUES ($1, 'user', $2, $3, $… <sha:513d6d719625fb1d len:226> :: [4242,\"Build it\",{\"json\":{}},null]",
+      "UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1 :: [4242]",
+      "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Thinking about your request...\",{\"json\":{}}]",
+      "SELECT id, role, content, metadata FROM chat_session_messages WHERE session_id = $1 AND (role IN ('user', 'assistant') O… <sha:454a396501e7d17e len:194> :: [4242]",
+      "SELECT spec_md FROM chat_sessions WHERE id = $1 :: [4242]",
+      "SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.status, cs.linked_issues, cs.spec_md, u.username FROM chat_sessio… <sha:c7047dc891be2a6e len:285> :: [31,4242]",
+      "SELECT kind, name, description, size_bytes, updated_at FROM user_agent_files WHERE user_id = $1 ORDER BY kind, name :: [7]",
+      "SELECT a.self_hosted, u.is_admin, cs.user_id FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id JOIN users u ON u.id = cs.user_id WHERE cs.id = $1 :: [4242]",
+      "SELECT m.content, m.created_at, u.username FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.app_id = $… <sha:b8a1d28b89ac3d11 len:246> :: [31,\"session\",4242]",
+      "INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata) VALUES ($1, 'assistant', $2, $3, $4, $5, $6) :: [4242,\"Building it now.\",\"claude-opus-5-5\",150,1.5,{\"json\":{\"quickReplies\":[\"Build the plan\",\"Revise the plan\",\"What will this change?\"],\"quickRepliesSource\":\"static\",\"quickRepliesKind\":\"spec_done\",\"quickRepliesPreamble\":true}}]",
+      "SELECT a.self_hosted, u.is_admin, cs.user_id FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id JOIN users u ON u.id = cs.user_id WHERE cs.id = $1 :: [4242]",
+      "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Handing this turn to Tester's laptop: your machine, your Claude subscription...\",{\"json\":{\"agentBackend\":\"claude_code\",\"agentModel\":null,\"runner\":\"local\",\"localAgentLabel\":\"Tester's laptop\",\"localMode\":\"build\"}}]",
+      "SELECT spec_md FROM chat_sessions WHERE id = $1 :: [4242]",
+      "SELECT check_state, test_results FROM chat_sessions WHERE id = $1 :: [4242]",
+      "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Claude Code is running...\",{\"json\":{\"agentBackend\":\"claude_code\",\"agentModel\":null}}]",
+      "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', 'Claude Code progress', $2) RETURNING id :: [4242,{\"json\":{\"progressLog\":[],\"agentBackend\":\"claude_code\",\"agentModel\":null}}]",
+      "UPDATE chat_sessions SET behind_main = $1 WHERE id = $2 :: [0,4242]",
+      "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"PR #42 created\",{\"json\":{}}]",
+      "INSERT INTO events (user_id, app_id, session_id, event_type, metadata) VALUES ($1, $2, $3, $4, $5::jsonb) :: [7,31,4242,\"pr_opened\",{\"json\":{\"prNumber\":42}}]",
+      "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Building staging preview...\",{\"json\":{}}]",
+      "UPDATE chat_sessions SET staging_container_id = $1, staging_url = $2 WHERE id = $3 :: [\"stage-1\",\"https://whiteboard-pr42.staging.test\",4242]",
+      "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Staging deployed!\",{\"json\":{\"stagingUrl\":\"https://whiteboard-pr42.staging.test\",\"changesReady\":true,\"prNumber\":42,\"prUrl\":\"https://github.com/usernode-bot/whiteboard-0d337f/pull/42\"}}]",
+      "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Claude Code finished Coding done on Tester's laptop, so no Homeroom credits were used.\",{\"json\":{\"agentBackend\":\"claude_code\",\"agentModel\":null,\"ccOutput\":\"Added the toggle on the laptop.\",\"ccOutcome\":\"success\",\"durationMs\":\"<num>\",\"runner\":\"local\",\"localAgentLabel\":\"Tester's laptop\",\"localMode\":\"build\"}}]",
+      "UPDATE chat_sessions SET last_turn_runner = $2, local_agent_label = $3 WHERE id = $1 :: [4242,\"local\",\"Tester's laptop\"]",
+      "INSERT INTO events (user_id, app_id, session_id, event_type, metadata) VALUES ($1, $2, $3, $4, $5::jsonb) :: [7,31,4242,\"local_agent_turn\",{\"json\":{\"outcome\":\"completed\",\"runtime\":\"claude-code\",\"durationMs\":\"<num>\",\"mode\":\"build\"}}]",
+      "UPDATE chat_sessions SET last_activity_at = NOW() WHERE id = $1 :: [4242]",
+      "SELECT spec_md FROM chat_sessions WHERE id = $1 :: [4242]",
+      "SELECT m.content, m.created_at, u.username FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.app_id = $… <sha:b8a1d28b89ac3d11 len:246> :: [31,\"session\",4242]",
+      "INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata) VALUES ($1, 'assistant', $2, $3, $4, $5, $6) :: [4242,\"Done on your laptop. The toggle is in the toolbar.\",\"claude-opus-5-5\",150,1.5,{\"json\":{\"quickReplies\":[\"Try it in the preview\",\"What did it change?\"],\"quickRepliesSource\":\"model\"}}]",
+      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]"
+    ],
+    "llm": [
+      {
+        "kind": "streamChat",
+        "model": "claude-opus-5-5",
+        "apiKey": null,
+        "systemPrompt": {
+          "sha": "2140f176427e7981",
+          "length": 202893
+        },
+        "tools": [
+          "dispatch_claude_code",
+          "dispatch_scout",
+          "suggest_answers",
+          "suggest_replies",
+          "list_github_issues",
+          "get_github_issue",
+          "web_fetch"
+        ],
+        "toolsSha": "c5dc1458ae310e99",
+        "toolChoice": null,
+        "messages": [
+          {
+            "role": "user",
+            "content": "Build it"
+          }
+        ],
+        "telemetry": "mayor_phase_1"
+      },
+      {
+        "kind": "requireQuickReplies",
+        "model": "claude-opus-5-5"
+      },
+      {
+        "kind": "generateQuickReplies",
+        "model": null
+      },
+      {
+        "kind": "streamChat",
+        "model": "claude-opus-5-5",
+        "apiKey": null,
+        "systemPrompt": {
+          "sha": "959328588c3c0c1b",
+          "length": 203627
+        },
+        "tools": [
+          "suggest_replies"
+        ],
+        "toolsSha": "a92d0ef432e0ac61",
+        "toolChoice": {
+          "type": "auto"
+        },
+        "messages": [
+          {
+            "role": "user",
+            "content": "Build it"
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "Building it now."
+              },
+              {
+                "type": "tool_use",
+                "id": "tu-build",
+                "name": "dispatch_claude_code",
+                "input": {
+                  "prompt": "Build the dark mode toggle from the spec."
+                }
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "tu-build",
+                "content": "What the agent did:\nAdded the toggle on the laptop.\n\nCommit eeeeeeee pushed to dev/tester-4242.\n\nOpened PR #42: https://github.com/usernode-bot/whiteboard-0d337f/pull/42\n\nStaging redeployed: https://whiteboard-pr42.staging.test"
+              }
+            ]
+          }
+        ],
+        "telemetry": "mayor_phase_2"
+      }
+    ],
+    "billing": [
+      "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
+      "{\"fn\":\"recordSpend\",\"userId\":7,\"cents\":1.5,\"opts\":{\"byok\":false}}",
+      "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
+      "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
+      "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
+      "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
+      "{\"fn\":\"recordSpend\",\"userId\":7,\"cents\":1.5,\"opts\":{\"byok\":false}}"
+    ],
+    "worker": [
+      "{\"fn\":\"clearPendingStop\",\"id\":4242}"
+    ],
+    "calls": [
+      "{\"fn\":\"localAgent.enqueueTurn\",\"mode\":\"build\",\"branchName\":\"dev/tester-4242\"}",
+      "{\"fn\":\"localAgent.awaitTurnResult\",\"turnId\":\"11\",\"waiterId\":\"waiter-1\"}",
+      "{\"fn\":\"applyPrMetadata\",\"userMessage\":\"Build it\",\"ccSummary\":\"Added the toggle on the laptop.\",\"proposalDescription\":null}",
+      "{\"fn\":\"setChecksPending\",\"id\":4242}",
+      "{\"fn\":\"buildAndDeployStaging\",\"sessionId\":4242,\"sha\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"}",
+      "{\"fn\":\"verifyStagingEdge\"}",
+      "{\"fn\":\"captureForSession\",\"id\":{\"id\":4242,\"app_id\":31,\"user_id\":7,\"branch_name\":\"dev/tester-4242\",\"status\":\"active\",\"is_headless\":false,\"source\":null,\"session_title\":\"Dark mode\",\"pr_number\":42,\"pr_title\":\"Add a dark mode toggle\",\"cc_session_id\":null,\"cloned_from_session_id\":null,\"agent_backend\":\"claude_code\",\"agent_model\":null,\"spec_md\":\"# Dark mode toggle\\n\\n## Summary\\nA sun/moon button in the toolbar switches themes. The choice is saved on each device.\\n\\n## Questions\\nNone.\",\"linked_issues\":[],\"app_slug\":\"whiteboard-0d337f\",\"app_name\":\"Whiteboard\",\"repo_url\":\"https://github.com/usernode-bot/whiteboard-0d337f\",\"app_self_hosted\":false,\"collab_visibility\":\"public\",\"view_visibility\":\"public\",\"pr_url\":\"https://github.com/usernode-bot/whiteboard-0d337f/pull/42\"}}",
+      "{\"fn\":\"titleAtTurnEnd\",\"firstTurn\":false,\"message\":\"Build it\"}"
+    ],
+    "unusedLlmSteps": 0,
+    "messages": [
+      "{\"role\":\"user\",\"content\":\"Build it\",\"metadata\":{}}",
+      "{\"role\":\"system\",\"content\":\"Thinking about your request...\",\"metadata\":{}}",
+      "{\"role\":\"assistant\",\"content\":\"Building it now.\",\"metadata\":{\"quickReplies\":[\"Build the plan\",\"Revise the plan\",\"What will this change?\"],\"quickRepliesSource\":\"static\",\"quickRepliesKind\":\"spec_done\",\"quickRepliesPreamble\":true}}",
+      "{\"role\":\"system\",\"content\":\"Handing this turn to Tester's laptop: your machine, your Claude subscription...\",\"metadata\":{\"agentBackend\":\"claude_code\",\"agentModel\":null,\"runner\":\"local\",\"localAgentLabel\":\"Tester's laptop\",\"localMode\":\"build\"}}",
+      "{\"role\":\"system\",\"content\":\"Claude Code is running...\",\"metadata\":{\"agentBackend\":\"claude_code\",\"agentModel\":null}}",
+      "{\"role\":\"system\",\"content\":\"{\\\"progressLog\\\":[],\\\"agentBackend\\\":\\\"claude_code\\\",\\\"agentModel\\\":null}\",\"metadata\":{}}",
+      "{\"role\":\"system\",\"content\":\"PR #42 created\",\"metadata\":{}}",
+      "{\"role\":\"system\",\"content\":\"Building staging preview...\",\"metadata\":{}}",
+      "{\"role\":\"system\",\"content\":\"Staging deployed!\",\"metadata\":{\"stagingUrl\":\"https://whiteboard-pr42.staging.test\",\"changesReady\":true,\"prNumber\":42,\"prUrl\":\"https://github.com/usernode-bot/whiteboard-0d337f/pull/42\"}}",
+      "{\"role\":\"system\",\"content\":\"Claude Code finished Coding done on Tester's laptop, so no Homeroom credits were used.\",\"metadata\":{\"agentBackend\":\"claude_code\",\"agentModel\":null,\"ccOutput\":\"Added the toggle on the laptop.\",\"ccOutcome\":\"success\",\"durationMs\":\"<num>\",\"runner\":\"local\",\"localAgentLabel\":\"Tester's laptop\",\"localMode\":\"build\"}}",
+      "{\"role\":\"assistant\",\"content\":\"Done on your laptop. The toggle is in the toolbar.\",\"metadata\":{\"quickReplies\":[\"Try it in the preview\",\"What did it change?\"],\"quickRepliesSource\":\"model\"}}"
     ]
   }
 }

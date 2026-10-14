@@ -37,6 +37,7 @@
  */
 
 const log = require('./logger');
+const leaderTimers = require('./leader-timers');
 const { VOTE_DIGEST_LOCK } = require('./advisory-locks');
 const { firstVersionSql } = require('./first-version-rule');
 
@@ -48,8 +49,6 @@ const MIN_GAP_HOURS = 20;
 // Nobody reads "47 proposals need you" as a to-do list, and a runaway count
 // usually means something is wrong rather than that somebody is very busy.
 const MAX_COUNT = 99;
-
-let timer = null;
 
 /**
  * Users who owe at least one vote, with the count.
@@ -211,7 +210,7 @@ async function sweep(pool) {
 }
 
 function start(config) {
-  if (timer) return;
+  if (leaderTimers.has('vote-digest')) return;
   const { getPool } = require('../db/pool');
   const run = async () => {
     try {
@@ -221,14 +220,13 @@ function start(config) {
       log.error('vote-digest', 'Sweep failed', { err: err.message });
     }
   };
-  setTimeout(run, FIRST_SWEEP_DELAY_MS);
-  timer = setInterval(run, INTERVAL_MS);
-  if (typeof timer.unref === 'function') timer.unref();
+  // A leader timer (services/leader-timers.js): no sweep starts once
+  // shutdown has begun, and one under way is given the drain to finish.
+  leaderTimers.every('vote-digest', run, INTERVAL_MS, { firstDelayMs: FIRST_SWEEP_DELAY_MS });
 }
 
 function stop() {
-  if (timer) clearInterval(timer);
-  timer = null;
+  leaderTimers.clear('vote-digest');
 }
 
 module.exports = {

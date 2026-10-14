@@ -753,11 +753,44 @@ ALTER TABLE apps ADD COLUMN IF NOT EXISTS manifest_snapshot JSONB;
 --   stage  : 'database'|'repo'|'clone'|'build'|'start'|'healthcheck'|'timeout'|'other'
 --   reason : concise human line (<= 280 chars)
 --   log    : ANSI-stripped tail of the docker build / boot output (<= 16 kB)
+--   interrupted : true on a creation the platform's restarts ended, whose
+--            Retry is not counted against the creator
 -- Written by the deploy catch paths (services/app-creator.js,
--- services/staging.js rebuildProduction, routes/apps.js watchdog);
+-- services/staging.js rebuildProduction, the creation watchdog in
+-- services/app-creation-owner.js);
 -- cleared (NULL) on every successful deploy. Exposed API-side only to
 -- the app's creator / collaborators / admins — see routes/apps.js.
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS last_failure JSONB;
+
+-- Who is setting a project up, so a platform restart cannot lose it
+-- (services/app-creation-owner.js). Creation runs for minutes after the
+-- request that started it has answered, in whichever process served it, and
+-- dies with that process. `creating_owner` is the token of the attempt
+-- driving the row and `creating_heartbeat_at` when it last said so (every
+-- 20 seconds while it runs); both NULL once it ends. The leader resumes a
+-- 'creating' row whose owner went quiet, by running the same idempotent
+-- create path again under a new token, at most three times an attempt
+-- (`creating_redrives`, back to 0 when a person starts a new attempt), and
+-- only then flips it to 'error'. A row whose owner is alive is never swept,
+-- and Retry takes the row only from nobody, or from an owner gone quiet.
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS creating_owner TEXT;
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS creating_heartbeat_at TIMESTAMPTZ;
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS creating_redrives INTEGER NOT NULL DEFAULT 0;
+-- A production redeploy the platform owes the app (services/owed-redeploy.js):
+-- a secret a vote changed reaches the running container only by a rebuild,
+-- and main_sha does not move for it, so neither the drift poller nor the
+-- heal would ever notice one a restart lost. Marked in the transaction that
+-- applies the change (`redeploy_owed_at`, `redeploy_owed_reason`), cleared
+-- by the rebuild that ran after it; the rebuild under way holds
+-- `redeploy_owner` / `redeploy_heartbeat_at` as creation does, and the
+-- leader runs again one whose owner went quiet, at most three times a mark
+-- (`redeploy_kicks`). The governance machine (WF_GOVERNANCE_ENABLED) owes
+-- its rebuild as durable work of its own and writes none of these.
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS redeploy_owed_at TIMESTAMPTZ;
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS redeploy_owed_reason TEXT;
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS redeploy_owner TEXT;
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS redeploy_heartbeat_at TIMESTAMPTZ;
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS redeploy_kicks INTEGER NOT NULL DEFAULT 0;
 
 -- Admin-gated change lock. When TRUE, applying any group-voted change to
 -- this app (PR merge in routes/votes.js, rename proposal + secret-change
@@ -1226,6 +1259,22 @@ ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS merge_commit_sha    
 -- A recovery sweep may release a failed merge claim only after its GitHub
 -- request has had time to finish. The timestamp is set with the claim.
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS merge_attempt_at   TIMESTAMPTZ;
+-- What a merge still owes once it is recorded (routes/votes.js
+-- runMergeFollowups: the PR_MERGED event, the changes it carried, the bell,
+-- the bot's news, the bounties, the requests and their watch, the
+-- announcement), on the legacy path (WF_MERGE_FOLLOWUPS_ENABLED off). They
+-- run in the process that merged, and a restart can cut them off.
+--   merge_followups_due_at  set with the status move to 'merged' (the merge's
+--                           own, or recoverStuckMerges' heal of one GitHub
+--                           merged), cleared once they have all run.
+--                           recoverStuckMerges runs a row that still has it.
+--   merge_followups_done    the follow-ups not safe to run twice that have
+--                           run ('pr_merged', 'agent_note', 'merged_line'),
+--                           so a resumed run skips them.
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS merge_followups_due_at TIMESTAMPTZ;
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS merge_followups_done TEXT[];
+CREATE INDEX IF NOT EXISTS chat_sessions_merge_followups_due_idx
+  ON chat_sessions (merge_followups_due_at) WHERE merge_followups_due_at IS NOT NULL;
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS revert_of_session_id INTEGER REFERENCES chat_sessions(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS chat_sessions_revert_of_idx ON chat_sessions(revert_of_session_id);
 
@@ -1585,6 +1634,25 @@ BEGIN
   ALTER TABLE local_agent_turns ADD CONSTRAINT local_agent_turns_readonly_check
     CHECK ((mode = 'build' OR head_sha IS NULL) AND (mode = 'scout' OR spec_md IS NULL));
 END $$;
+
+-- Who on the platform side is waiting for a local turn, and who ran its
+-- post-turn tail (commit → PR → staging → checks → completion card →
+-- wrap-up). The waiter lives in the process that dispatched the turn, so a
+-- restart kills it while the laptop keeps working; without these, nothing
+-- ever finished such a turn. The waiter renews `waiter_seen_at` while it
+-- waits, under its `waiter_id`. A waiter that stops renewing (its process
+-- died) is taken over by the leader's recovery pass
+-- (services/local-agent-recovery.js), which takes the waiter id over. Whoever holds
+-- the id when the turn ends claims `tail_claimed_at`, once, and runs the
+-- tail; `tail_finished_at` says the recovered tail got to its end. Rows from
+-- before this existed have no waiter id and are never taken over.
+ALTER TABLE local_agent_turns ADD COLUMN IF NOT EXISTS waiter_id UUID;
+ALTER TABLE local_agent_turns ADD COLUMN IF NOT EXISTS waiter_seen_at TIMESTAMPTZ;
+ALTER TABLE local_agent_turns ADD COLUMN IF NOT EXISTS tail_claimed_at TIMESTAMPTZ;
+ALTER TABLE local_agent_turns ADD COLUMN IF NOT EXISTS tail_finished_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS local_agent_turns_waiting_idx
+  ON local_agent_turns (waiter_seen_at)
+  WHERE waiter_id IS NOT NULL AND tail_claimed_at IS NULL;
 
 -- Both tables describe a specific person's machine and the prompts sent to
 -- it, so a staging clone must never carry them. See tools/clone-db.
@@ -10313,6 +10381,10 @@ CREATE TABLE IF NOT EXISTS homeroom_bot_posts (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_homeroom_bot_posts_looking
   ON homeroom_bot_posts(app_id, issue_number) WHERE kind = 'looking';
+-- TRUE while the post is going out (live.post), NULL once it has, and for
+-- every post from before: a durable build a restart caught in the middle of
+-- one says it again, taking up this row and sending only what had not gone.
+ALTER TABLE homeroom_bot_posts ADD COLUMN IF NOT EXISTS pending BOOLEAN;
 CREATE INDEX IF NOT EXISTS idx_homeroom_bot_posts_issue
   ON homeroom_bot_posts(app_id, issue_number, created_at DESC);
 
@@ -11089,6 +11161,9 @@ CREATE TABLE IF NOT EXISTS bench_scaffolds (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_bench_scaffolds_arm
   ON bench_scaffolds(run_id, task_id, COALESCE(context_pack_id, 0));
+-- Whose claim a row in 'making' is (bench/scaffold.js ensure): a durable
+-- trial carried on after a crash takes its own claim over at once.
+ALTER TABLE bench_scaffolds ADD COLUMN IF NOT EXISTS claimed_by TEXT;
 COMMENT ON TABLE bench_scaffolds IS 'staging:private';
 
 -- The studio's one host app: a private project the benchmark user made
@@ -13412,6 +13487,9 @@ CREATE TABLE IF NOT EXISTS wf_work (
   CONSTRAINT wf_work_claim_shape
     CHECK ((status = 'running') = (claim_id IS NOT NULL AND lease_until IS NOT NULL))
 );
+-- Claims whose process went before reporting (it died, or stopped and gave
+-- the lease up): a resumable handler's tries count only the others.
+ALTER TABLE wf_work ADD COLUMN IF NOT EXISTS lost_attempts INTEGER NOT NULL DEFAULT 0;
 CREATE INDEX IF NOT EXISTS wf_work_due_idx
   ON wf_work (kind, due_at) WHERE status IN ('queued', 'running');
 CREATE INDEX IF NOT EXISTS wf_work_instance_idx ON wf_work (machine, key, created_at);
@@ -13773,6 +13851,17 @@ ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_diagram JSONB;
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_diagram_source TEXT;
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_touches JSONB;
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_touches_sha TEXT;
+-- The durable build that owns the session ('bot-build/run:12',
+-- 'bot-build/trial:7'; docs/plans/bot-build-workflow.md): its worker and its
+-- turns are that build's to carry on after a restart, so server.js's worker
+-- adoption leaves them alone while the build is under way.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS workflow_owner TEXT;
+-- And the durable step that opened it ('session', 'build/session:triage'):
+-- a restart between the insert and the step being saved finds the row
+-- instead of opening a second session.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS workflow_step TEXT;
+CREATE INDEX IF NOT EXISTS idx_chat_sessions_workflow_step
+  ON chat_sessions (workflow_owner, workflow_step) WHERE workflow_owner IS NOT NULL;
 
 -- Test release emails (services/test-accounts.js sendRelease, the connector's
 -- send_test_release_email): a full admin sends the waitlist's real "you're
@@ -13950,6 +14039,20 @@ CREATE INDEX IF NOT EXISTS idx_test_run_reports_slug
 CREATE INDEX IF NOT EXISTS idx_test_run_reports_user
   ON test_run_reports (test_user_id, created_at DESC);
 COMMENT ON TABLE test_run_reports IS 'staging:private';
+
+-- When each of the leader's long-interval sweeps last completed
+-- (services/leader-timers.js, a `durable` timer). The leader changes with
+-- every release, about every twenty minutes on a busy day, and an hourly
+-- setInterval restarts its clock at each election, so the stale-proposal
+-- sweep, the Workshop theme sweep and the grant prune went days without
+-- running. On election each one now runs when this says it is due. One row
+-- per sweep, written by the leader after each completed run; a sweep with
+-- no row has never run and is due at once. Nothing private: names and
+-- times.
+CREATE TABLE IF NOT EXISTS leader_sweeps (
+  name        TEXT PRIMARY KEY,
+  last_run_at TIMESTAMPTZ NOT NULL
+);
 
 -- Before & after shots EVALS (services/shots-eval.js, its runner in
 -- services/shots-eval-runner.js): an admin trying the shots agent with

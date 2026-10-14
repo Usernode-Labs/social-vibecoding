@@ -8,16 +8,22 @@
 // whose checks then failed on the very bug the review had fixed.
 //
 // Each step of the loop saves the state before it starts and after it ends,
-// stamped with the process that ran it; carried on from that state, the loop
-// takes the step that was cut and goes on as it would have:
+// stamped with the process that ran it (a build keeps it on its durable
+// steps, docs/plans/bot-build-workflow.md); carried on from that state, the
+// loop takes the step that was cut and goes on as it would have:
 //   - a capture under way is harvested (its id goes to capture() as
 //     `prior`), or taken again;
 //   - a reviewer call under way is asked again for the same round, its cost
 //     recorded once;
-//   - a fix turn under way is recorded from what recovery followed it to
-//     (`recoveredFix`), or run again when it was lost;
+//   - a fix turn under way is asked for again (a build's fix is a durable
+//     turn, services/durable-turn.js, which follows the turn the restart
+//     caught rather than run it twice), or recorded from `recoveredFix`
+//     when one is handed in;
 //   - the time the restart cost is given back on the budget, and the
-//     resumes are counted.
+//     resumes are counted;
+//   - once the build is no longer this process's (the durable context's
+//     `fence` throws), no further step is taken: the stop is thrown to the
+//     build's handler, and the next owner carries the review on.
 // Then the detached capture itself (bench/capture.js runDetached, worker.js
 // startDetachedCapture and its status script), with the worker handed in.
 //
@@ -31,6 +37,7 @@ const { spawnSync } = require('node:child_process');
 
 const review = require('../src/services/bot-review');
 const captureMod = require('../src/services/bench/capture');
+const durableSteps = require('../src/services/durable-steps');
 const worker = require('../src/services/worker');
 
 const OPUS = 'anthropic/claude-opus-5.5';
@@ -309,30 +316,38 @@ test('a stop the review saved goes straight to its final capture; a fix the fina
   assert.deepEqual(skipped.calls.capture, []);
 });
 
-test('once the platform is shutting down, the loop takes no further step and never returns: the next leader carries it on', async () => {
+test('once the build is no longer this process\'s, the loop takes no further step: the stop is thrown, and the next owner carries it on', async () => {
+  // The durable context's fence (services/durable-steps.js) throws once the
+  // build's work item is no longer this process's: its lease is gone, or the
+  // process is stopping.
   let stopping = false;
+  const fence = () => { if (stopping) throw new durableSteps.StepsStopped(); };
   const h = harness({ verdicts: ['fix'] });
   h.opts.resumeFrom = null;
-  h.opts.isStopping = () => stopping;
+  h.opts.fence = fence;
   const inner = h.opts.review;
   h.opts.review = async (args) => { const out = await inner(args); stopping = true; return out; };
-  let settled = false;
-  review.runReviewLoop(h.opts).then(() => { settled = true; });
-  await new Promise((r) => { setTimeout(r, 50); });
-  assert.equal(settled, false, 'held');
+  await assert.rejects(review.runReviewLoop(h.opts), (err) => durableSteps.isStopped(err),
+    'the stop reaches the build\'s handler, past every catch in the loop');
   assert.equal(h.calls.fix.length, 0, 'no fix turn is started');
   assert.deepEqual(h.calls.rollback, []);
+  assert.deepEqual(h.calls.capture.map((c) => c.index), [0], 'nor a final capture');
   const last = h.calls.states.at(-1);
-  assert.equal(last.rounds[0].verdict, 'fix', 'what it got is saved, for the next leader');
+  assert.equal(last.rounds[0].verdict, 'fix', 'what it got is saved, for the next owner');
   assert.equal(last.state, 'reviewing');
   // A detached capture is left where it runs, unread and uncleared.
   const w = fakeWorker({ states: ['done'] });
-  let held = true;
-  captureMod.runDetached({ worker: w, containerName: 'w', appId: 1, prior: { id: 'feedfacecafebeef', startedAt: new Date().toISOString() }, isStopping: () => true, sleep: async () => {} })
-    .then(() => { held = false; });
-  await new Promise((r) => { setTimeout(r, 20); });
-  assert.equal(held, true);
+  await assert.rejects(captureMod.runDetached({
+    worker: w, containerName: 'w', appId: 1, prior: { id: 'feedfacecafebeef', startedAt: new Date().toISOString() },
+    fence: () => { throw new durableSteps.StepsStopped(); }, sleep: async () => {},
+  }), (err) => durableSteps.isStopped(err));
   assert.deepEqual([w.calls.read.length, w.calls.cleared.length, w.calls.started.length], [0, 0, 0]);
+  // And one it would start is not started.
+  const fresh = fakeWorker();
+  await assert.rejects(captureMod.runDetached({
+    worker: fresh, containerName: 'w', appId: 1, fence: () => { throw new durableSteps.StepsStopped(); }, sleep: async () => {},
+  }), (err) => durableSteps.isStopped(err));
+  assert.deepEqual(fresh.calls.started, []);
 });
 
 test('canResume counts the restarts; recoveredFixOf reads a recovered turn as a fix turn\'s result; a done review is not carried on', async () => {

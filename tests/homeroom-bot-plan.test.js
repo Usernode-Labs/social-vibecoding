@@ -840,5 +840,6 @@ test('a first version made from a game starter is specced and built on it; witho
   const bot = read('src/services/homeroom-bot.js');
   assert.equal((bot.match(/const starter = firstVersion \? await starterOfApp\(pool, app\.id\)\.catch\(\(\) => null\) : null;/g) || []).length, 2,
     'the live build and the shadow build');
-  assert.match(bot, /firstVersion, platformRepo: isPlatformRepo\(app, config\), model, specModel, starter,\n  \}\);/);
+  assert.equal((bot.match(/firstVersion, platformRepo: isPlatformRepo\(app, config\), model, specModel, starter,\n\s+\}\)\);/g) || []).length, 2,
+    'and each one\'s snapshot (recordBuildSnapshot), a durable step of its own');
 });

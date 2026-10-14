@@ -78,11 +78,13 @@ test('with a clock, the TIME section comes before the browser block, which defer
 
 test('the live build hands its prompt the clock its turn is stopped on', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'homeroom-bot-live.js'), 'utf8');
-  // Read once, as the turn starts: the prompt's clock and the nudge's share
-  // of it (homeroom-bot-live.js buildNudgePrompt) are the same clock.
-  assert.match(src, /const turnStartedMs = Date\.now\(\);\n  const prompt = buildPrompt\(\{/);
+  // Read once, as the turn starts, and kept as a step of the build's own
+  // (durable-steps.js), so the build carried on after a restart keeps it:
+  // the prompt's clock and the nudge's share of it (homeroom-bot-live.js
+  // buildNudgePrompt) are the same clock.
+  assert.match(src, /const turnStartedMs = Number\(await steps\.once\('build_clock', async \(\) => Date\.now\(\)\)\) \|\| Date\.now\(\);\n  const prompt = buildPrompt\(\{/);
   assert.match(src, /clock: \{ startedAt: turnStartedMs, budgetMs: turnBudgetMs \},/);
-  assert.match(src, /runBuildTurn\(\{ prompt, budgetMs: turnBudgetMs, commitMsg, progress \}\)/, 'the same budget the turn\'s timer uses');
+  assert.match(src, /runBuildTurn\(\{ prompt, budgetMs: turnBudgetMs, commitMsg, progress, key: 'build' \}\)/, 'the same budget the turn\'s timer uses');
 });
 
 test('a drag is tried with the tools the build has, twice at most, and a failed gesture is said', () => {

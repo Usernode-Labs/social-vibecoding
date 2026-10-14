@@ -126,7 +126,7 @@ test('a rollout-interrupted run is retried on its current head, a bounded number
   assert.match(sql, /LEAST\(\$5::bigint, \$1::bigint \* POWER\(2, n\.interrupted_retries\)::bigint\)/);
   assert.deepEqual(params.slice(2),
     [gc.MAX_INTERRUPTED_RETRIES, gc.MAX_UNEXPLAINED_RETRIES, gc.MAX_RETRY_DELAY_MS]);
-  assert.equal(gc.MAX_INTERRUPTED_RETRIES, 6);
+  assert.equal(gc.MAX_INTERRUPTED_RETRIES, 24, 'a backstop only rollouts reach, not a budget a burst of them spends');
   assert.equal(gc.MAX_UNEXPLAINED_RETRIES, 2, 'a crash keeps the original budget');
 
   const disabled = await gc.retryInterrupted({ shots: { execute: false } }, {
