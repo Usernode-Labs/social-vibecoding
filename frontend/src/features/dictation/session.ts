@@ -78,6 +78,16 @@ export class DictationSession {
     if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined' || typeof OfflineAudioContext === 'undefined') {
       this.cancel(); this.publish('idle', 'unsupported'); return;
     }
+    const page = typeof document === 'undefined' ? null : document as Document & {
+      permissionsPolicy?: { allowsFeature: (feature: string) => boolean };
+      featurePolicy?: { allowsFeature: (feature: string) => boolean };
+    };
+    const policy = page?.permissionsPolicy || page?.featurePolicy;
+    // An embedding page can refuse capture before any browser permission
+    // prompt. Changing the user's microphone settings cannot lift that gate.
+    if (policy && !policy.allowsFeature('microphone')) {
+      this.cancel(); this.publish('idle', 'policy_blocked'); return;
+    }
     this.publish('asking');
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });

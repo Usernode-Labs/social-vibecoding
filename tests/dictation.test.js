@@ -227,6 +227,29 @@ test('permission refusal returns an actionable error and no recording', async t 
   await session.start(); assert.deepEqual(state, { phase: 'idle', error: 'permission_denied' });
 });
 
+test('a page policy refusal does not request microphone permission and can recover when capture is allowed', async t => {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, 'document');
+  t.after(() => { if (previous) Object.defineProperty(globalThis, 'document', previous); else delete globalThis.document; });
+  let calls = 0;
+  const { stream, track } = browser(t, async () => { calls++; track.readyState = 'live'; return stream; });
+  for (const name of ['permissionsPolicy', 'featurePolicy']) {
+    let allowed = false;
+    Object.defineProperty(globalThis, 'document', { configurable: true, value: {
+      [name]: { allowsFeature(feature) { assert.equal(feature, 'microphone'); return allowed; } },
+    } });
+    let state;
+    const session = new DictationSession({ onState: next => { state = next; }, onText() { assert.fail('no recording was submitted'); } });
+    calls = 0;
+    await session.start();
+    assert.deepEqual(state, { phase: 'idle', error: 'policy_blocked' });
+    assert.equal(calls, 0);
+    allowed = true;
+    await session.start();
+    assert.equal(state.phase, 'recording'); assert.equal(calls, 1);
+    session.cancel(); assert.equal(track.readyState, 'ended');
+  }
+});
+
 test('a cancelled transcription cannot insert its late response into a different draft', async t => {
   let finish; let requested;
   const begun = new Promise(r => { requested = r; });

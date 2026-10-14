@@ -455,6 +455,10 @@
     "text": "Allow microphone access in your browser or device settings, then try again.",
     "description": "Dictation error when microphone access was denied."
   },
+  "dictation.error.policy": {
+    "text": "Microphone access is blocked on this page. You can still type your message.",
+    "description": "Dictation error when the page's permissions policy prevents microphone access. Browser microphone settings cannot override this restriction."
+  },
   "dictation.error.unsupported": {
     "text": "Speaking is unavailable in this browser. You can still type your message.",
     "description": "Dictation error when recording is unsupported."

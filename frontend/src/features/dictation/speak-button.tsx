@@ -5,6 +5,7 @@ import { appendTranscript, DictationSession, type DictationState } from './sessi
 
 const ERRORS: Record<string, string> = {
   permission_denied: 'core:dictation.error.permission', unsupported: 'core:dictation.error.unsupported',
+  policy_blocked: 'core:dictation.error.policy',
   unavailable: 'core:dictation.error.unavailable', interrupted: 'core:dictation.error.interrupted',
   invalid_audio: 'core:dictation.error.invalidAudio', no_speech: 'core:dictation.error.noSpeech',
   key_required: 'core:dictation.error.keyRequired', credits_required: 'core:dictation.error.credits',
