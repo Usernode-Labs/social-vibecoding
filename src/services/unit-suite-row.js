@@ -178,13 +178,14 @@ function reusedFrom(testResults) {
 
 // Is this stored verdict one the merge gate must not take yet? A person
 // asked for the head's checks again (chat_sessions.unit_suite_fresh_sha
-// names it) and the stored unit-suite row is still a copied pass, not a
-// suite that ran (services/unit-suite-reuse.js). `row` carries
-// unit_suite_fresh_sha, checks_commit_sha and test_results.
+// names it) and no verdict whose unit suite really ran has been stored
+// since: storeChecks clears the request when one is (services/unit-suite-
+// reuse.js). Whatever the stored row says, copied pass or an older real
+// one, it is not the answer they asked for. `row` carries
+// unit_suite_fresh_sha and checks_commit_sha.
 function freshSuiteOwed(row) {
   if (!row || !row.unit_suite_fresh_sha || !row.checks_commit_sha) return false;
-  if (String(row.unit_suite_fresh_sha).toLowerCase() !== String(row.checks_commit_sha).toLowerCase()) return false;
-  return !!reusedFrom(row.test_results);
+  return String(row.unit_suite_fresh_sha).toLowerCase() === String(row.checks_commit_sha).toLowerCase();
 }
 
 module.exports = {

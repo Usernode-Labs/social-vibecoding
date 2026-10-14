@@ -1250,7 +1250,10 @@ async function storeChecks(pool, sessionId, commitSha, result, errorDetail = nul
   // and one whose suite really ran settles the request ($8).
   const unitRow = Array.isArray(result && result.results) ? result.results.find(unitSuiteRow.isUnitSuiteRow) : null;
   const unitReused = !!(unitRow && unitRow.reused);
-  const unitRan = !!(unitRow && !unitRow.reused && !unitRow.couldNotRun);
+  // Whatever else this run did, it did not copy a pass: the request is
+  // answered. Except a suite that could not run on an 'error' verdict, which
+  // the error lane runs again (that run answers it).
+  const unitRan = !unitReused && !(unitRow && unitRow.couldNotRun && result && result.state === 'error');
   if (result && result.state === 'error') {
     // A build/boot/capture failure — record a TERMINAL 'error' verdict plus
     // the failure-streak bookkeeping that powers the sweeper's backoff and
@@ -1370,6 +1373,9 @@ async function storeChecksSkipped(
            check_phase = NULL,
            check_error_detail = $2,
            check_error_platform = false,
+           -- Nothing to run: a fresh unit suite owed by a person's request
+           -- (services/unit-suite-reuse.js) is moot.
+           unit_suite_fresh_sha = NULL,
            consecutive_check_failures = 0,
            first_check_failure_at = NULL,
            last_check_failure_at = NULL,
@@ -1911,27 +1917,39 @@ function hasInFlightCapture(sessionId) {
 // Start the run a person asked for when the run that answered them copied
 // an earlier unit-suite pass and its verdict was refused. Only while the
 // fresh run is still owed on this head; detached, and never throws.
-async function requestOwedFreshRun(config, pool, session, commitHash) {
-  try {
-    const { rows: [row] } = await pool.query(
-      'SELECT unit_suite_fresh_sha, checks_commit_sha FROM chat_sessions WHERE id = $1', [session.id]
-    );
-    const owed = row && row.unit_suite_fresh_sha && commitHash
-      && String(row.unit_suite_fresh_sha).toLowerCase() === String(commitHash).toLowerCase()
-      && String(row.checks_commit_sha || '').toLowerCase() === String(commitHash).toLowerCase();
-    if (!owed) return false;
-    log.info('visuals', 'A copied unit-suite pass was refused: starting the run a person asked for', {
-      sessionId: session.id, commitHash,
-    });
-    require('./staging-recovery').recheckSessionChecks({ config, pool, session, reason: 'manual-recheck' })
-      .catch((err) => log.warn('visuals', 'Owed fresh run could not start (non-fatal)', {
-        sessionId: session.id, err: err.message,
-      }));
-    return true;
-  } catch (err) {
-    log.warn('visuals', 'Owed fresh run check failed (non-fatal)', { sessionId: session.id, err: err.message });
-    return false;
-  }
+//
+// The follow-up is its own run: it leaves the finishing run's preview-
+// lifecycle context (lifecycle.detach) and uses the base pool, not that
+// run's guarded one, so it asks the lifecycle for an operation of its own
+// rather than being cancelled with the one that is ending.
+async function requestOwedFreshRun(config, _runPool, session, commitHash) {
+  return new Promise((resolve) => {
+    require('./preview-lifecycle').detach(() => setImmediate(async () => {
+      // Out of the finishing run's context, so this is the base pool
+      // (getPool hands a lifecycle operation its own guarded one).
+      const pool = getPool(config);
+      try {
+        const { rows: [row] } = await pool.query(
+          'SELECT unit_suite_fresh_sha, checks_commit_sha FROM chat_sessions WHERE id = $1', [session.id]
+        );
+        const owed = row && row.unit_suite_fresh_sha && commitHash
+          && String(row.unit_suite_fresh_sha).toLowerCase() === String(commitHash).toLowerCase()
+          && String(row.checks_commit_sha || '').toLowerCase() === String(commitHash).toLowerCase();
+        if (!owed) { resolve(false); return; }
+        log.info('visuals', 'A copied unit-suite pass was refused: starting the run a person asked for', {
+          sessionId: session.id, commitHash,
+        });
+        require('./staging-recovery').recheckSessionChecks({ config, pool, session, reason: 'manual-recheck' })
+          .catch((err) => log.warn('visuals', 'Owed fresh run could not start (non-fatal)', {
+            sessionId: session.id, err: err.message,
+          }));
+        resolve(true);
+      } catch (err) {
+        log.warn('visuals', 'Owed fresh run check failed (non-fatal)', { sessionId: session.id, err: err.message });
+        resolve(false);
+      }
+    }));
+  });
 }
 
 // Is this process's run for the session one that copied an earlier
@@ -2052,9 +2070,13 @@ async function checksAlreadyDecided(pool, sessionId, commitHash) {
   if (!commitHash) return false;
   try {
     const { rows } = await pool.query(
-      'SELECT check_state, checks_commit_sha FROM chat_sessions WHERE id = $1', [sessionId]
+      'SELECT check_state, checks_commit_sha, unit_suite_fresh_sha FROM chat_sessions WHERE id = $1', [sessionId]
     );
     const row = rows[0];
+    // A person asked for this head again and its unit suite has not run
+    // since (services/unit-suite-reuse.js): not decided, whatever it reads.
+    if (row && row.unit_suite_fresh_sha
+        && String(row.unit_suite_fresh_sha).toLowerCase() === String(commitHash).toLowerCase()) return false;
     return !!row && row.check_state === 'passing' && row.checks_commit_sha === commitHash;
   } catch (err) {
     // Unreadable state means RUN, never skip — a skipped run leaves the gate
@@ -3695,7 +3717,7 @@ async function settleCaptureRun(config, pool, run) {
         // And the render-health row: advisory until this app's pages have
         // been seen rendering with their stylesheets once.
         if (renderOutcome) historyRows.push(renderOutcome.history);
-        await checkHistory.recordRun(pool, app.id, historyRows, { sessionId: session.id });
+        const recorded = await checkHistory.recordRun(pool, app.id, historyRows, { sessionId: session.id });
         // A unit suite copied from an earlier pass of the commit observed
         // nothing new, so it moves no counts, but its proposal earns the
         // gate that pass earns: a later head of it that fails the suite
@@ -3705,7 +3727,11 @@ async function settleCaptureRun(config, pool, run) {
         }
         // A suite that ran and passed is in the app's history now: its
         // recorded pass may be copied (only an observed pass is reused).
-        if (unitOutcome && unitOutcome.history && unitOutcome.history.passed) {
+        // recordRun answers 0 when its write failed (it logs and swallows
+        // the error): then the pass stays unobserved, and a later run of
+        // the commit runs the suite rather than copy a pass with no history
+        // row behind the gate it would earn.
+        if (recorded > 0 && unitOutcome && unitOutcome.history && unitOutcome.history.passed) {
           await require('./unit-suite-reuse').markObserved(pool, { appId: app.id, sessionId: session.id, commitSha: commitHash });
         }
       }
@@ -4386,6 +4412,8 @@ module.exports = {
   captureFailureDetail,
   classifyTests,
   inFlightReusedUnit,
+  // Exported for tests.
+  requestOwedFreshRun,
   unreachableOriginDetail,
   connectionExhaustionDetail,
   dnsHostname,

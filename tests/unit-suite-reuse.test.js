@@ -164,7 +164,7 @@ test('every way a person asks for the checks again reaches the manual-recheck tr
   // The "Re-run checks" button, the connector's recheck_change and the CLI's
   // proposal_recheck all POST this route.
   const route = sessions.slice(sessions.indexOf("router.post('/api/sessions/:id/recheck'"));
-  assert.match(route.slice(0, 6000), /recheckSessionChecks\(\{ config, pool, session, reason: 'manual-recheck' \}\)/);
+  assert.match(route.slice(0, 12000), /recheckSessionChecks\(\{ config, pool, session, reason: 'manual-recheck' \}\)/);
   assert.match(read('src/services/mcp-tools.js'), /callPlatform\(baseUrl, accessToken, 'POST', `\/api\/sessions\/\$\{changeId\}\/recheck`/);
   assert.match(read('src/cli/main.js'), /target: `\/api\/sessions\/\$\{sessionId\}\/recheck`/);
   // Deploying a preview by hand.
@@ -667,7 +667,7 @@ test('a refused copied verdict starts the run the person asked for; only an obse
   const src = read_('src/services/visuals.js');
   assert.match(src, /if \(unitOutcome && unitOutcome\.row && unitOutcome\.row\.reused\) \{\s+await requestOwedFreshRun\(config, pool, session, commitHash\);/);
   assert.match(src, /recheckSessionChecks\(\{ config, pool, session, reason: 'manual-recheck' \}\)/);
-  assert.match(src, /if \(unitOutcome && unitOutcome\.history && unitOutcome\.history\.passed\) \{\s+await require\('\.\/unit-suite-reuse'\)\.markObserved\(pool, \{ appId: app\.id, sessionId: session\.id, commitSha: commitHash \}\);/);
+  assert.match(src, /if \(recorded > 0 && unitOutcome && unitOutcome\.history && unitOutcome\.history\.passed\) \{\s+await require\('\.\/unit-suite-reuse'\)\.markObserved\(pool, \{ appId: app\.id, sessionId: session\.id, commitSha: commitHash \}\);/);
 });
 
 test('with the preview lifecycle on, a manual capture does not take a run that copied a pass as its answer', async (t) => {
@@ -693,3 +693,124 @@ test('with the preview lifecycle on, a manual capture does not take a run that c
   assert.deepEqual(asked.map((o) => !!o.forManual), [true, false]);
   assert.match(read('src/services/preview-lifecycle.js'), /async function run\(config, session, revision, phase, fn, \{ force = false, onError = null, resolveRevision = null, manual = false \} = \{\}\)/);
 });
+
+// A fresh database holding the whole schema, for the tests that drive the
+// real settlement and verdict store.
+async function fullSchemaDb(t) {
+  const conn = await connect();
+  if (!conn) { t.skip('the pg driver is not installed in this environment'); return null; }
+  if (conn.error) { t.skip(`no postgres reachable at ${DSN}: ${conn.error}`); return null; }
+  const admin = conn.pool;
+  const dbName = `unit_suite_settle_${process.pid}_${Math.floor(Math.random() * 1e6)}`;
+  await admin.query(`CREATE DATABASE ${dbName}`);
+  const url = new URL(DSN);
+  url.pathname = `/${dbName}`;
+  const { Pool } = require('pg');
+  const pool = new Pool({ connectionString: url.toString(), max: 3 });
+  await pool.query(SCHEMA_SQL);
+  t.after(async () => {
+    await pool.end().catch(() => {});
+    await admin.query(`DROP DATABASE IF EXISTS ${dbName}`).catch(() => {});
+    await admin.end().catch(() => {});
+  });
+  return pool;
+}
+
+test('postgres, real settlement: a pass becomes reusable only when its history observation was written', async (t) => {
+  const pool = await fullSchemaDb(t);
+  if (!pool) return;
+  const { rows: [app] } = await pool.query("INSERT INTO apps (slug, name, repo_url) VALUES ('observe-test', 'T', 'https://github.com/o/r') RETURNING id, slug, name, repo_url");
+  const { rows: [u] } = await pool.query("INSERT INTO users (username, password) VALUES ('observe-test', 'x') RETURNING id");
+  const newSession = async () => (await pool.query(
+    "INSERT INTO chat_sessions (user_id, app_id, status, source) VALUES ($1, $2, 'active', 'cli_handoff') RETURNING *",
+    [u.id, app.id])).rows[0];
+  const key = reuse.keyFor(config, { ...keyArgs, appId: app.id, repoOwner: 'o', repoName: 'r' });
+  const unitKey = require('../src/services/app-manifest').checkKey(unitSuite.UNIT_CHECK_NAME, unitSuite.UNIT_CHECK_PATH);
+  const passOutcome = {
+    row: { index: -3, name: unitSuite.UNIT_CHECK_NAME, path: 'package.json', status: 'pass', advisory: false, consoleErrors: [], failureReason: '' },
+    history: { checkKey: unitKey, name: unitSuite.UNIT_CHECK_NAME, path: 'package.json', passed: true },
+  };
+  const frame = [`__USERNODE_TEST__ index=0 status=pass loadStatus=200`,
+    Buffer.from(JSON.stringify({ name: 'home', path: '/' })).toString('base64'), '__USERNODE_TEST_END__'].join('\n');
+  const settle = (session) => visuals.settleCaptureRun({}, pool, {
+    session, app, commitHash: SHA, trigger: 'commit-push', media: false, capturePaths: ['/'], pathDefaulted: true,
+    visualScenarios: [], prodRunning: false, stagingOrigin: '', targets: [], testsCount: 1, stdout: frame,
+    unitOutcome: passOutcome,
+  });
+  const observed = async (sessionId) => (await pool.query(
+    'SELECT observed_at FROM unit_suite_passes WHERE session_id = $1', [sessionId])).rows[0].observed_at;
+
+  // The history write fails (recordRun logs it and answers 0).
+  const a = await newSession();
+  await visuals.setChecksPending(pool, a.id, SHA, 'testing', 'commit-push');
+  await reuse.recordPass(pool, key, { sessionId: a.id, runId: 'run-a' });
+  const realRecordRun = checkHistory.recordRun;
+  checkHistory.recordRun = async () => 0;
+  try { await settle(a); } finally { checkHistory.recordRun = realRecordRun; }
+  assert.equal((await pool.query('SELECT check_state FROM chat_sessions WHERE id = $1', [a.id])).rows[0].check_state, 'passing');
+  assert.equal(await observed(a.id), null, 'no history row behind it: never copied');
+  assert.equal(await reuse.findPass(pool, key, { trigger: 'boot-reconcile' }), null);
+
+  // The history write lands: observed, and reusable.
+  const b = await newSession();
+  await visuals.setChecksPending(pool, b.id, SHA, 'testing', 'commit-push');
+  await reuse.recordPass(pool, key, { sessionId: b.id, runId: 'run-b' });
+  await settle(b);
+  assert.ok(await observed(b.id));
+  assert.equal((await reuse.findPass(pool, key, { trigger: 'boot-reconcile' })).runId, 'run-b');
+  assert.equal((await pool.query('SELECT count(*)::int AS n FROM app_check_history WHERE app_id = $1 AND check_key = $2', [app.id, unitKey])).rows[0].n, 1);
+});
+
+test('postgres: a request folded into a busy session stamps the head pending, is not "already decided", and starts the owed run once idle', async (t) => {
+  const pool = await fullSchemaDb(t);
+  if (!pool) return;
+  const { rows: [app] } = await pool.query("INSERT INTO apps (slug, name, repo_url) VALUES ('busy-test', 'T', 'https://github.com/o/r') RETURNING id");
+  const { rows: [u] } = await pool.query("INSERT INTO users (username, password) VALUES ('busy-test', 'x') RETURNING id");
+  const { rows: [s] } = await pool.query(
+    "INSERT INTO chat_sessions (user_id, app_id, status, source) VALUES ($1, $2, 'promoted', 'cli_handoff') RETURNING *", [u.id, app.id]);
+  const realUnit = { index: -3, name: unitSuite.UNIT_CHECK_NAME, path: 'package.json', status: 'pass', advisory: false };
+  const row = async () => (await pool.query('SELECT * FROM chat_sessions WHERE id = $1', [s.id])).rows[0];
+  // An old REAL pass of the head is stored.
+  await visuals.setChecksPending(pool, s.id, SHA, 'testing', 'commit-push');
+  assert.equal(await visuals.storeChecks(pool, s.id, SHA, { state: 'passing', results: [realUnit] }), true);
+  assert.equal(await visuals.checksAlreadyDecided(pool, s.id, SHA), true);
+
+  // The press, folded into a busy session (the route's busy branch).
+  await reuse.markFreshOwed(pool, { sessionId: s.id, commitSha: SHA });
+  let busy = 2;
+  const rechecks = [];
+  await reuse.owePendingRun({
+    pool, visuals, config: {}, session: { ...s, checks_commit_sha: SHA }, busy: () => busy-- > 0, pollMs: 10,
+    stagingRecovery: { recheckSessionChecks: async (args) => { rechecks.push(args.reason); } },
+  });
+  let r = await row();
+  assert.equal(r.check_state, 'pending', 'the old pass no longer stands');
+  assert.equal(r.check_trigger, 'manual-recheck');
+  assert.equal(unitSuiteRow.freshSuiteOwed(r), true, 'the merge gate reads it as not checked, real old pass or not');
+  assert.equal(await visuals.checksAlreadyDecided(pool, s.id, SHA), false, 'and no redundancy skip');
+  for (let i = 0; i < 100 && !rechecks.length; i += 1) await new Promise((res) => setTimeout(res, 10));
+  assert.deepEqual(rechecks, ['manual-recheck'], 'idle again: the owed run starts');
+
+  // The owed run's real suite settles it.
+  assert.equal(await visuals.storeChecks(pool, s.id, SHA, { state: 'passing', results: [realUnit] }), true);
+  r = await row();
+  assert.equal(r.unit_suite_fresh_sha, null);
+  assert.equal(unitSuiteRow.freshSuiteOwed(r), false);
+  assert.equal(await visuals.checksAlreadyDecided(pool, s.id, SHA), true);
+
+  // Already answered by the time the session is idle: nothing more starts.
+  await reuse.markFreshOwed(pool, { sessionId: s.id, commitSha: SHA });
+  const more = [];
+  await reuse.owePendingRun({
+    pool, visuals, config: {}, session: { ...s, checks_commit_sha: SHA }, busy: () => false, pollMs: 10,
+    stagingRecovery: { recheckSessionChecks: async (args) => { more.push(args.reason); } },
+  });
+  await visuals.storeChecks(pool, s.id, SHA, { state: 'passing', results: [realUnit] });
+  await new Promise((res) => setTimeout(res, 60));
+  assert.deepEqual(more, []);
+
+  const route = read('src/routes/sessions.js');
+  const recheck = route.slice(route.indexOf("router.post('/api/sessions/:id/recheck'"), route.indexOf("router.post('/api/sessions/:id/recheck'") + 9000);
+  assert.match(recheck, /if \(busyNow\(\)\) \{[\s\S]{0,700}owePendingRun\(\{\s+pool, visuals, stagingRecovery, config, session, busy: busyNow,\s+\}\);\s+return res\.json\(\{ status: 'running' \}\);/);
+});
+

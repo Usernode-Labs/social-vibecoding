@@ -6551,9 +6551,19 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // instead of running the suite (services/unit-suite-reuse.js) is not
       // the run a person asks for. The request goes on and queues its own
       // behind it, and the suite runs.
-      if (isSessionBusy(sessionId)
-          || staging.hasInFlightBuild(sessionId)
-          || (visuals.hasInFlightCapture(sessionId) && !visuals.inFlightReusedUnit(sessionId))) {
+      const busyNow = () => isSessionBusy(sessionId)
+        || staging.hasInFlightBuild(sessionId)
+        || (visuals.hasInFlightCapture(sessionId) && !visuals.inFlightReusedUnit(sessionId));
+      if (busyNow()) {
+        // Folded into what is running. The head is owed a unit suite that
+        // really runs, so a verdict stored before this press no longer
+        // stands for it: it reads pending (and merge-blocked) until one
+        // does, and once the session is idle again the owed run starts if
+        // nothing has answered it (services/unit-suite-reuse.js). The stale
+        // sweep re-drives it after a restart.
+        await require('../services/unit-suite-reuse').owePendingRun({
+          pool, visuals, stagingRecovery, config, session, busy: busyNow,
+        });
         return res.json({ status: 'running' });
       }
       // The same holds for a run of this commit that another process

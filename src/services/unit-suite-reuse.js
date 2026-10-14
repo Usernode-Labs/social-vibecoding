@@ -211,6 +211,61 @@ async function markFreshOwed(pool, { sessionId, commitSha } = {}) {
 }
 
 /**
+ * A person's request was folded into what the session is already doing (an
+ * agent turn, a build, a run whose suite is not copied): the route answers
+ * "running" without a run of its own. The head is owed a fresh suite
+ * (markFreshOwed, already set), so:
+ *   * a verdict already stored for it no longer stands: the row is stamped
+ *     pending, as the request's own run would, so the merge gate waits and
+ *     the stale sweep re-drives the head if this process goes away;
+ *   * once the session is idle, if nothing has answered the request yet
+ *     (still owed on that head), the owed run starts.
+ * `busy()` is the route's own test of "something is running". Never throws.
+ */
+async function owePendingRun({
+  pool, visuals, stagingRecovery, config, session, busy, pollMs = 5000, maxWaitMs = 15 * 60 * 1000,
+}) {
+  const sha = session && session.checks_commit_sha;
+  if (!pool || !isSha(sha)) return false;
+  const same = (a) => !!a && String(a).toLowerCase() === String(sha).toLowerCase();
+  try {
+    const { rows: [row] } = await pool.query(
+      'SELECT check_state, checks_commit_sha FROM chat_sessions WHERE id = $1', [Number(session.id)]
+    );
+    if (row && same(row.checks_commit_sha) && row.check_state !== 'pending') {
+      await visuals.setChecksPending(pool, session.id, sha, null, 'manual-recheck');
+      visuals.notifyChecksPending(session.id, sha, null, 'manual-recheck');
+    }
+  } catch (err) {
+    log.warn('unit-suite-reuse', 'Could not stamp a folded request pending', { sessionId: session.id, err: err.message });
+  }
+  const started = Date.now();
+  const later = (fn) => { const t = setTimeout(fn, pollMs); if (typeof t.unref === 'function') t.unref(); };
+  const tick = async () => {
+    try {
+      if (busy()) {
+        if (Date.now() - started < maxWaitMs) later(tick);
+        return;
+      }
+      const { rows: [r] } = await pool.query(
+        'SELECT checks_commit_sha, unit_suite_fresh_sha FROM chat_sessions WHERE id = $1', [Number(session.id)]
+      );
+      if (!r || !same(r.unit_suite_fresh_sha) || !same(r.checks_commit_sha)) return;
+      log.info('unit-suite-reuse', 'The session is idle and its owed unit suite has not run: starting it', {
+        sessionId: session.id, commitSha: sha,
+      });
+      await stagingRecovery.recheckSessionChecks({ config, pool, session, reason: 'manual-recheck' });
+    } catch (err) {
+      log.warn('unit-suite-reuse', 'Owed run after a folded request failed (non-fatal)', {
+        sessionId: session.id, err: err.message,
+      });
+    }
+  };
+  later(tick);
+  return true;
+}
+
+/**
  * The run of `sessionId` that passed `commitSha` stored its verdict and
  * recorded the pass in the app's history: its passes may now be reused.
  * Never throws.
@@ -309,6 +364,7 @@ module.exports = {
   findPass,
   markFreshOwed,
   markObserved,
+  owePendingRun,
   reusedOutcome,
   reusedSnapshot,
   checkedOutCommit,
