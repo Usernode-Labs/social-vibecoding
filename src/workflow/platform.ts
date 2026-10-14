@@ -228,8 +228,7 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
     services = { ...services, ...governanceServices(deps) };
   }
   if (withMerges) {
-    merges = mergeFollowups({ dataKey: config.dataEncryptionKey, notifiers: mergeFollowupsNotifiers(deps), delivery,
-      previews: () => previewsAdmitted });
+    merges = mergeFollowups({ dataKey: config.dataEncryptionKey, notifiers: mergeFollowupsNotifiers(deps), delivery });
     mergesAdmitted = !!config.wfMergeFollowupsEnabled;
     machines.push(merges);
     services = { ...services, ...mergeFollowupsServices(deps) };
@@ -660,22 +659,6 @@ export async function retirePreview(sessionId: number, appId: number, reason: st
   if (!await previewHeld(sessionId)) return null;
   return runtime!.appendAndWait(previews!, previewKey(sessionId), { type: 'RetireRequested', payload: { reason, terminal } },
     { requestKey: await versioned(sessionId, `retire:${reason}`), source: sys(reason), appId, waitMs: 2000 });
-}
-
-// Who is working on a session: an old flow's operation starts or ends
-// (services/active-workers.js). Recorded only with the flag on; the start
-// is waited for, so a reader in another process sees it before the work
-// goes on.
-export async function operationStarted(o: { sessionId: number; id: string; kind: string; holder: string }): Promise<void> {
-  if (!previewsEnabled()) return;
-  const { rows: [s] } = await kernelPool!.query('SELECT app_id FROM chat_sessions WHERE id = $1', [o.sessionId]);
-  await runtime!.appendAndWait(previews!, previewKey(o.sessionId), { type: 'OperationStarted', payload: o },
-    { requestKey: `op:${o.id}:start`, source: sys('operation'), appId: s?.app_id ?? null, waitMs: 2000 });
-}
-export async function operationEnded(o: { sessionId: number; id: string }): Promise<void> {
-  if (!previewsEnabled()) return;
-  await runtime!.append(previews!, previewKey(o.sessionId), { type: 'OperationEnded', payload: { id: o.id } },
-    { requestKey: `op:${o.id}:end`, source: sys('operation') });
 }
 
 // The flag is off here: hand every session the machine holds back to

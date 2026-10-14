@@ -14,7 +14,6 @@ const fs = require('node:fs');
 const { Pool } = require('pg');
 const { createRuntime } = require('../src/workflow/kernel/index.ts');
 const { preview, sessionKey, MACHINE, WORK, attemptDb } = require('../src/workflow/preview/machine.ts');
-const { PROCESS_PRESENCE_LOCK } = require('../src/workflow/rules/presence.ts');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 const SHA = (c) => c.repeat(40).slice(0, 40);
@@ -524,39 +523,29 @@ test('preview machine against the full PostgreSQL schema', { timeout: 120000 }, 
     assert.equal((await workOf(s, WORK.cancel)).length, 1, 'its Jobs are cancelled by run id');
   });
 
-  await t.test('P16 who is working on a session: operations recorded, counted while their process lives', async () => {
+  await t.test('P16 who is working on a session: a live platform process\'s hold is honoured, a gone one\'s is not', async () => {
     const s = await proposal(await app(), { status: 'active' });
-    // A process that holds its presence lock, and one that does not.
-    const live = await pool.connect();
-    await live.query('SELECT pg_advisory_lock($1, hashtext($2) & 2147483647)', [PROCESS_PRESENCE_LOCK, 'live-host']);
-    try {
-      const op = (id, holder) => send(s, 'OperationStarted', { sessionId: s.id, id, kind: 'sync', holder });
-      const first = await op('op:1', 'live-host');
-      await rt.drain();
-      assert.equal((await outcome(first)).state_after, 'idle', 'an operation on a session never previewed starts its instance');
-      await op('op:2', 'dead-host');
-      await rt.drain();
-      assert.deepEqual((await instance(s)).data.operations.map((o) => o.id), ['op:1', 'op:2']);
-      // Idle retirement waits while a live process works on the session.
-      await submit(s, SHA('1'));
-      await settle();
-      const refused = await send(s, 'RetireRequested', { reason: 'idle', terminal: false });
-      await rt.drain();
-      assert.equal((await outcome(refused)).reason, 'worked_on');
-      // The dead holder's record goes at the next record; the live one ends.
-      await send(s, 'OperationEnded', { id: 'op:1' });
-      await rt.drain();
-      assert.deepEqual((await instance(s)).data.operations, [], 'ended, and the dead process\'s record dropped');
-      const again = await send(s, 'RetireRequested', { reason: 'idle', terminal: false });
-      await rt.drain();
-      assert.equal((await outcome(again)).state_after, 'retiring');
-      await settle();
-      const unknown = await send(s, 'OperationEnded', { id: 'op:9' });
-      await rt.drain();
-      assert.equal((await outcome(unknown)).reason, 'no_such_operation');
-    } finally {
-      live.release(true);
-    }
+    await submit(s, SHA('1'));
+    await settle();
+    // A process beating now holds the session (a sync with main there).
+    const proc = async (id, beat) => pool.query(
+      `INSERT INTO platform_processes (id, heartbeat_at) VALUES ($1, NOW() - $2::interval)`, [id, beat]);
+    const hold = (id) => pool.query(
+      `INSERT INTO process_holds (process_id, kind, ref) VALUES ($1, 'session', $2)`, [id, String(s.id)]);
+    await proc(`p16-live-${s.id}`, '5 seconds');
+    await hold(`p16-live-${s.id}`);
+    const refused = await send(s, 'RetireRequested', { reason: 'idle', terminal: false });
+    await rt.drain();
+    assert.equal((await outcome(refused)).reason, 'worked_on', 'idle retirement waits while a live process works on it');
+    // Its work ends; a process that stopped beating a minute ago still has a
+    // row: it is gone, and holds nothing.
+    await pool.query('DELETE FROM process_holds WHERE process_id = $1', [`p16-live-${s.id}`]);
+    await proc(`p16-gone-${s.id}`, '60 seconds');
+    await hold(`p16-gone-${s.id}`);
+    const again = await send(s, 'RetireRequested', { reason: 'idle', terminal: false });
+    await rt.drain();
+    assert.equal((await outcome(again)).state_after, 'retiring');
+    await settle();
   });
 
   await t.test('P17 the error lane: a platform fault keeps retrying past the cap for a day', async () => {
@@ -571,62 +560,6 @@ test('preview machine against the full PostgreSQL schema', { timeout: 120000 }, 
     assert.equal((await row(s.id)).check_error_platform, true);
     work.answer.set(WORK.prepare, prepareOk);
   });
-  await t.test('P18 an operation on a session with a serving preview enrols it as it stands, without starting anything', async () => {
-    const s = await proposal(await app(), { status: 'active', extra: {
-      staging_url: 'https://legacy', staging_runtime_name: 'sv-preview-legacy', staging_runtime_kind: 'kubernetes',
-      staging_commit_sha: SHA('a'), checks_commit_sha: SHA('a'), check_state: 'passing' } });
-    const live = await pool.connect();
-    await live.query('SELECT pg_advisory_lock($1, hashtext($2) & 2147483647)', [PROCESS_PRESENCE_LOCK, 'p18-host']);
-    try {
-      const id = await send(s, 'OperationStarted', { sessionId: s.id, id: 'op:p18', kind: 'turn', holder: 'p18-host' });
-      await rt.drain();
-      assert.equal((await outcome(id)).state_after, 'settled');
-      const i = await instance(s);
-      assert.deepEqual([i.data.serving.n, i.data.verdict, i.data.head], [0, 'passing', SHA('a')]);
-      assert.equal((await workOf(s)).length, 0, 'nothing built or run');
-      const same = await submit(s, SHA('a'));
-      await rt.drain();
-      assert.equal((await outcome(same)).reason, 'same_head', 'the head it serves, with its verdict, joins');
-      await send(s, 'OperationEnded', { id: 'op:p18' });
-      await rt.drain();
-      const idle = await send(s, 'RetireRequested', { reason: 'idle', terminal: false });
-      await rt.drain();
-      assert.equal((await outcome(idle)).state_after, 'retiring', 'an idle reclaim can retire it');
-      await settle();
-    } finally {
-      live.release(true);
-    }
-  });
-
-  await t.test('P19 a retirement retried by an admin still covers every attempt it had', async () => {
-    const s = await proposal(await app(), { status: 'active' });
-    await submit(s, SHA('1'));
-    await settle();
-    const release = hold(WORK.prepare);
-    await submit(s, SHA('2'));
-    await rt.drain();
-    const running = rt.runServices();
-    await new Promise((r) => setTimeout(r, 50));
-    work.answer.set(WORK.retire, { closed: false });
-    await pool.query(`UPDATE chat_sessions SET status = 'archived' WHERE id = $1`, [s.id]);
-    await send(s, 'RetireRequested', { reason: 'archived', terminal: true });
-    await rt.drain();
-    release();
-    await running;
-    await settle();
-    let i = await instance(s);
-    assert.equal(i.state, 'retiring');
-    assert.ok(i.data.exit.failed);
-    const first = (await workOf(s, WORK.retire))[0].input.attempts.map((a) => a.n).sort();
-    work.answer.set(WORK.retire, { closed: true });
-    await send(s, 'AdminRetry', {}, { kind: 'admin' });
-    await settle();
-    const retires = await workOf(s, WORK.retire);
-    assert.deepEqual(retires[1].input.attempts.map((a) => a.n).sort(), first, 'the same attempts, the failed one\'s included');
-    i = await instance(s);
-    assert.equal(i.state, 'retired');
-  });
-
   await t.test('P20 a retirement right after a cancelled build waits for it to stop', async () => {
     // The transition itself, with a lease to wait for: a prepare cancelled by
     // ChecksCleared left its attempt in `retiring`; a terminal retirement
@@ -637,10 +570,10 @@ test('preview machine against the full PostgreSQL schema', { timeout: 120000 }, 
     const data = {
       sessionId: 1, appId: 1, appSlug: 'a', userId: null, seed: 1, head: SHA('3'), trigger: null, last: 1,
       preparing: null, serving: null, run: null, verdict: null, failure: null, platformFault: false, streak: 0,
-      firstFailureAt: null, episode: 0, exit: null, pending: null, closedAt: null, operations: [],
+      firstFailureAt: null, episode: 0, exit: null, pending: null, closedAt: null,
       retiring: [{ n: 1, head: SHA('3'), db: 'db1', key: 'retire-attempt:1:v5', cancelled: true }],
     };
-    const facts = { session: { status: 'archived' }, app: { id: 1 }, alive: new Set() };
+    const facts = { session: { status: 'archived' }, app: { id: 1 } };
     const event = { id: 9, type: 'RetireRequested', payload: { reason: 'archived', terminal: true }, source: { kind: 'system' } };
     const out = m.entryFor('idle', 'RetireRequested').to({ name: 'idle', data }, event, facts, ctx);
     const retire = out.work.find((w) => w.kind === WORK.retire);

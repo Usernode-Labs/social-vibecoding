@@ -6,7 +6,7 @@
 // the merge or a turn committed meanwhile would be missing).
 
 import type { Tx } from '../kernel/index.ts';
-import { LIVE_SHOTS_RUN, operationsLiveSql, previewWorkingSql } from '../session-work.ts';
+import { LIVE_SHOTS_RUN, previewWorkingSql, sessionHeldSql } from '../session-work.ts';
 
 export interface Session {
   id: number;
@@ -82,7 +82,7 @@ export async function readFacts(tx: Tx, sessionId: number, { lock }: { lock: boo
             (EXISTS (SELECT 1 FROM check_runs k WHERE k.session_id = cs.id AND k.heartbeat_at > NOW() - INTERVAL '60 seconds')
               OR (cs.check_state = 'pending' AND cs.checks_checked_at > NOW() - INTERVAL '10 minutes')
               OR ${previewWorkingSql('cs.id')}) AS checks_running,
-            (${operationsLiveSql('cs.id')}
+            (${sessionHeldSql('cs.id')}
               OR EXISTS (SELECT 1 FROM local_agent_turns t
                           WHERE t.session_id = cs.id AND t.status IN ('queued', 'offered', 'accepted', 'running'))) AS worked_on,
             cs.staging_image_ref, cs.staging_build_ref, cs.staging_commit_sha,

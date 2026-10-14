@@ -773,8 +773,7 @@ again after a crash), and the Deployment carries the annotation
 `social.usernode.io/preview-attempt`: the newest attempt that wrote it and which claim of
 its build, as `n.k` (a bare `n` is claim 0). The attempt's Secret carries the same
 annotation, so an older claim never writes its database back into it. A failed rollout
-restores the template that served, so the older revision keeps serving. Each platform
-process also holds one more database connection, for its presence lock.
+restores the template that served, so the older revision keeps serving.
 
 ### Activation and rollback
 

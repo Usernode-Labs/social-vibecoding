@@ -1,12 +1,10 @@
 // What the preview machine reads inside a transition: the proposal's row
 // (locked first for a decision about its preview or checks, then read by
 // the next statement, so what a turn or a merge committed while the lock
-// was waited for is seen), its app, who else is working on it, and which
-// of the processes its operations name are still alive.
+// was waited for is seen), its app, and who else is working on it.
 
 import type { Tx } from '../kernel/index.ts';
-import { holderAliveSql } from '../rules/presence.ts';
-import { LIVE_SHOTS_RUN } from '../session-work.ts';
+import { LIVE_SHOTS_RUN, sessionHeldSql } from '../session-work.ts';
 
 export interface Session {
   id: number;
@@ -33,6 +31,7 @@ export interface Session {
   turnRunning: boolean;         // active_turn: a coding turn's journal
   localTurnRunning: boolean;    // local_agent_turns: a turn on the author's machine
   shotsRunning: boolean;        // shot_runs, heard from lately
+  held: boolean;                // a live platform process's hold: a turn or an operation there
 }
 
 export interface App { id: number; slug: string; selfHosted: boolean; repoUrl: string | null }
@@ -40,8 +39,6 @@ export interface App { id: number; slug: string; selfHosted: boolean; repoUrl: s
 export interface Facts {
   session: Session | null;
   app: App | null;
-  // Of the processes the instance's operations name, those still alive.
-  alive: ReadonlySet<string>;
 }
 
 export const OPEN: ReadonlySet<string> = new Set(['active', 'paused', 'promoted', 'merging']);
@@ -67,11 +64,8 @@ function retryScope(r: any): boolean {
   return r.status === 'active' && r.source === 'cli_handoff' && !!(r.checks_commit_sha || r.handoff_head_sha);
 }
 
-// `lock`: a decision about the preview or the checks (every event but an
-// operation's own record). `holders`: the processes to test for life.
-export async function readFacts(tx: Tx, sessionId: number,
-  { lock = true, holders = [] }: { lock?: boolean; holders?: string[] } = {}): Promise<Facts> {
-  if (lock) await tx.query('SELECT 1 FROM chat_sessions WHERE id = $1 FOR UPDATE', [sessionId]);
+export async function readFacts(tx: Tx, sessionId: number): Promise<Facts> {
+  await tx.query('SELECT 1 FROM chat_sessions WHERE id = $1 FOR UPDATE', [sessionId]);
   const { rows: [r] } = await tx.query(
     `SELECT cs.id, cs.app_id, cs.user_id, cs.status, cs.source, cs.is_headless, cs.shared_at, cs.branch_name,
             cs.pr_number, cs.imported_pr_head_sha, cs.reviewed_head_sha, cs.handoff_head_sha,
@@ -82,15 +76,10 @@ export async function readFacts(tx: Tx, sessionId: number,
             EXISTS (SELECT 1 FROM local_agent_turns t
                      WHERE t.session_id = cs.id AND t.status IN ('queued', 'offered', 'accepted', 'running')) AS local_turn_running,
             EXISTS (SELECT 1 FROM shot_runs r WHERE r.session_id = cs.id AND ${LIVE_SHOTS_RUN}) AS shots_running,
+            ${sessionHeldSql('cs.id')} AS held,
             a.slug AS app_slug, a.self_hosted, a.repo_url
        FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1`, [sessionId]);
-  const alive = new Set<string>();
-  if (holders.length) {
-    const { rows } = await tx.query(
-      `SELECT h AS holder FROM unnest($1::text[]) AS h WHERE ${holderAliveSql('h')}`, [holders]);
-    for (const x of rows) alive.add(String(x.holder));
-  }
-  if (!r) return { session: null, app: null, alive };
+  if (!r) return { session: null, app: null };
   return {
     session: {
       id: r.id, appId: r.app_id, userId: r.user_id ?? null, status: r.status,
@@ -107,8 +96,8 @@ export async function readFacts(tx: Tx, sessionId: number,
       checks: { commitSha: sha(r.checks_commit_sha), state: r.check_state ?? null },
       testing: { md: r.testing_md ?? null, path: r.testing_path ?? null },
       turnRunning: !!r.turn_running, localTurnRunning: !!r.local_turn_running, shotsRunning: !!r.shots_running,
+      held: !!r.held,
     },
     app: { id: r.app_id, slug: r.app_slug, selfHosted: !!r.self_hosted, repoUrl: r.repo_url ?? null },
-    alive,
   };
 }
