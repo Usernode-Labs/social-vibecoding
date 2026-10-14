@@ -17,9 +17,12 @@
  *   testing      Testing it                           step 5
  *   ready        Ready to try                         step 6
  *   live         Live                                 step 7
+ *   stopped      Stopped                              its build stopped, nothing live yet
  *
  * A spinner turns while it is being made, a blue dot marks the one line that
- * waits on the reader, and a check marks it ready or live. No step numbers:
+ * waits on the reader, and a check marks it ready or live. A build that
+ * stopped (14 Oct 2026, newcomer run eight) has nothing turning: a still dot
+ * in the attention colour, since something went wrong, and its words quiet. No step numbers:
  * "Step 4 of 7" stays in Homeroom bot's chat, the one place it is counted.
  * Before this the line was "Step 4 of 7: Build it", which an invited member
  * read as being asked to build it, beside a dot that only faded (and stood
@@ -128,6 +131,11 @@ export function buildLineDone(state: BuildLineState): boolean {
   return state === 'ready' || state === 'live';
 }
 
+/** 14 Oct 2026: the line of a build that stopped, nothing under way: no spinner. */
+export function buildLineStopped(state: BuildLineState | null): boolean {
+  return state === 'stopped';
+}
+
 /**
  * `note`, after the words: how long it usually takes, where a screen says so
  * (#4392, Homeroom bot's thanks: "Building it · usually 10 to 25 min").
@@ -150,6 +158,8 @@ export function BuildLine({ state, note = null, words: own = null, className = '
     >
       {asks ? (
         <span aria-hidden="true" className="h-2 w-2 shrink-0 rounded-full bg-[color:var(--accent)]" />
+      ) : buildLineStopped(state) ? (
+        <span aria-hidden="true" className="h-2 w-2 shrink-0 rounded-full bg-[color:var(--state-attention)]" />
       ) : done ? (
         <CheckIcon className="h-4 w-4 shrink-0" aria-hidden="true" />
       ) : (

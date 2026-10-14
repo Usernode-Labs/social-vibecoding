@@ -206,7 +206,8 @@ test('the progress: the setup\'s step until it runs, then the stage in the words
   // line's (BUILD_LINE_WORDS), as BuildLine says them.
   assert.match(CODE, /words: named\.words \|\| \(line && line !== 'working' \? t\(BUILD_LINE_WORDS\[line\]\) : t\(SETUP_SET_UP\)\),/);
   assert.match(CODE, /note: named\.note \|\| t\(SETUP_SET_UP\),/);
-  assert.match(CODE, /busy: !!line && !buildLineAsks\(line\) && !buildLineDone\(line\),/);
+  // A build that stopped (14 Oct 2026) turns nothing either.
+  assert.match(CODE, /busy: !!line && !buildLineAsks\(line\) && !buildLineDone\(line\) && !buildLineStopped\(line\),/);
   assert.match(CODE, /const phase = fv\?\.phase \|\| \(answered && line === 'building' \? \{ key: 'starting' \} : null\);\s+const named = phaseLine\(line, phase, now, null, left\);/);
   assert.equal(message('onboarding:buildLine.phase.starting'), 'Starting the build');
   assert.doesNotMatch(CODE, /'onboarding:firstSession\.made\.firstLook\.(stage|building|drawing)/, 'no stage words of its own');

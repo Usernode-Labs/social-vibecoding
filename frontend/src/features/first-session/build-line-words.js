@@ -18,6 +18,12 @@
 //   testing      Testing it                           step 5
 //   ready        Ready to try                         step 6
 //   live         Live                                 step 7
+//   stopped      Stopped                              its build stopped, nothing live yet
+//
+// `stopped` (14 Oct 2026, newcomer run eight, Club Votes): the build was
+// done and could not be proposed, and the App tab, the hub and the tile had
+// no line to say, so the App tab showed the starter template running. Now
+// they say Stopped (services/homeroom-bot-progress.js firstVersionStopped).
 
 export const BUILD_LINE_WORDS = Object.freeze({
   planning: 'onboarding:buildLine.planning',
@@ -28,6 +34,7 @@ export const BUILD_LINE_WORDS = Object.freeze({
   testing: 'onboarding:buildLine.testing',
   ready: 'onboarding:buildLine.ready',
   live: 'onboarding:buildLine.live',
+  stopped: 'onboarding:buildLine.stopped',
 });
 
 /** The line in an answer (`first_version_line`), or null for none or one this shell does not know. */
@@ -39,7 +46,7 @@ export function buildLineTileOf(value) {
 /**
  * A Home tile's caption for the line, short enough for its one 11px line
  * (`.app-card-status`): Planning, Plan ready, Question, Building, Testing,
- * Ready to try, Live. Run four (13 Oct 2026): the build line's own words
+ * Ready to try, Live, Stopped. Run four (13 Oct 2026): the build line's own words
  * ran to two lines and were cut off on a phone ("Homeroom bot is...",
  * "Your plan is ready to..."), so the tile says a short set, and the screens
  * with room (the thumbnail, the hub card) keep the whole phrases above.
@@ -54,6 +61,7 @@ export const BUILD_LINE_TILE_WORDS = Object.freeze({
   testing: 'onboarding:buildLine.tile.testing',
   ready: 'onboarding:buildLine.tile.ready',
   live: 'onboarding:buildLine.tile.live',
+  stopped: 'onboarding:buildLine.tile.stopped',
 });
 
 /**
@@ -63,9 +71,12 @@ export const BUILD_LINE_TILE_WORDS = Object.freeze({
  * build going on by itself asks nothing). One line, so the project's name
  * keeps its two (app.css, the --home-cell-h derivation: a two-line name and
  * one caption line fill the tile's 38px), and a longer translation ends in
- * an ellipsis rather than painting over the tile below.
+ * an ellipsis rather than painting over the tile below. A build that
+ * stopped (14 Oct 2026) is something wrong, so it is in the attention colour
+ * a tile's "Awaiting secrets" is.
  */
 export function buildLineTileClass(state) {
+  if (state === 'stopped') return 'app-card-status line-clamp-1 text-[color:var(--state-attention)]';
   return state === 'plan' || state === 'question'
     ? 'app-card-status line-clamp-1 font-semibold text-[color:var(--accent)]'
     : 'app-card-status line-clamp-1 text-zinc-500 dark:text-zinc-400';

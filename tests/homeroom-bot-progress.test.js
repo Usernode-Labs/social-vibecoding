@@ -54,7 +54,8 @@ test('#4053: the build line a first version\'s thumbnail shows, for its creator 
   for (const s of ['checks', 'checks_failed', 'fix_queued', 'fixing']) assert.equal(line(s), 'testing', s);
   for (const s of ['vote', 'merging', 'followup_queued', 'revising']) assert.equal(line(s), 'ready', s);
   assert.equal(line('nonsense'), null);
-  assert.deepEqual(progress.BUILD_LINE_STATES, ['planning', 'plan', 'plan-member', 'question', 'building', 'testing', 'ready', 'live']);
+  // 14 Oct 2026: and `stopped`, which no stage is (firstVersionStopped).
+  assert.deepEqual(progress.BUILD_LINE_STATES, ['planning', 'plan', 'plan-member', 'question', 'building', 'testing', 'ready', 'live', 'stopped']);
   // The chat's step names for steps 4 to 7 lead the line's own words
   // (frontend/src/features/first-session/build-line-words.js): one story
   // names a step in a word ("Building"), the thumbnail's line in a phrase

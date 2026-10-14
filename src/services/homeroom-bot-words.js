@@ -85,6 +85,8 @@ const FIRST_PERSON = Object.freeze([
   // A build or an update that did not finish (homeroom-bot-dm.js FAILED_SAID.bot).
   [/the (\w+) took longer than it's allowed\./, 'the $1 took longer than I\'m allowed.'],
   [/Homeroom bot built (.+?), but couldn't put it up for approval\./, 'I built $1, but couldn\'t put it up for approval.'],
+  // A first version built and not proposed (14 Oct 2026: FIRST_UNPROPOSED_SAID).
+  [/Homeroom bot built (.+?) but couldn't put it live yet\./, 'I built $1 but couldn\'t put it live yet.'],
   [/: it ended up with no changes to show\./, ': I ended up with no changes to show.'],
   [/Homeroom bot couldn't\b/g, 'I couldn\'t'],
   // Leaving a request to the people holding it (homeroom-bot-holds.js).

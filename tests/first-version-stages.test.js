@@ -162,7 +162,8 @@ test('the server answers the stage and the steps, and the screens say them', () 
   assert.match(words, /export const PHASE_WORDS = Object\.freeze\(\{/);
   assert.match(words, /export const STEP_WORDS = Object\.freeze\(\{/);
   // The line itself is unchanged: Live and the first look key on `building`.
-  assert.deepEqual(progress.BUILD_LINE_STATES, ['planning', 'plan', 'plan-member', 'question', 'building', 'testing', 'ready', 'live']);
+  // 14 Oct 2026: `stopped` is said apart, never for a stage (firstVersionStopped).
+  assert.deepEqual(progress.BUILD_LINE_STATES, ['planning', 'plan', 'plan-member', 'question', 'building', 'testing', 'ready', 'live', 'stopped']);
   for (const stage of ['planning', 'reviewing', 'build_queued']) assert.equal(progress.buildLineOf(stage), 'building', stage);
 });
 

@@ -6641,9 +6641,11 @@ async function recordLiveBuild(pool, runId, built, model = null) {
  * What a live build came to, said on its issue: the proposal (and the spec
  * on it, where the group votes), the request found impossible, or the build
  * that did not become a proposal. Shared by the live path and the recovery
- * of a live build a restart interrupted (#3471). Returns what was done.
+ * of a live build a restart interrupted (#3471). `firstVersion`: the
+ * project's first version, whose stop is said without approval (14 Oct
+ * 2026, live.buildFailedText). Returns what was done.
  */
-async function announceBuilt({ pool, ws, app, bot, issueNumber, runId, built, say, domain }) {
+async function announceBuilt({ pool, ws, app, bot, issueNumber, runId, built, say, domain, firstVersion = false }) {
   await recordLiveBuild(pool, runId, built, built.model || null);
   if (built.ok) {
     // The run's first proposal stays its proposal (recordLiveBuild).
@@ -6694,7 +6696,7 @@ async function announceBuilt({ pool, ws, app, bot, issueNumber, runId, built, sa
   });
   // Said once per run, whatever brought the build here again.
   if (!await runPosted(pool, runId, 'build_failed')) {
-    await say('build_failed', live.buildFailedText(built.error), { dm: { reason: built.error } });
+    await say('build_failed', live.buildFailedText(built.error, { firstVersion }), { dm: { reason: built.error } });
   }
   return 'build_failed';
 }
@@ -7913,7 +7915,9 @@ async function buildLive({
   } else {
     // Once: a restart after it was said does not say it again (and each post
     // is also guarded on the posts table: runPosted).
-    acted = await steps.once('announced', () => announceBuilt({ pool, ws, app, bot, issueNumber, runId, built, say, domain: deps.domain }));
+    acted = await steps.once('announced', () => announceBuilt({
+      pool, ws, app, bot, issueNumber, runId, built, say, domain: deps.domain, firstVersion,
+    }));
   }
   await pool.query('UPDATE homeroom_bot_runs SET live_build_waiting_at = NULL WHERE id = $1', [runId]).catch(() => {});
   await live.advanceSeen({
@@ -8520,6 +8524,7 @@ async function buildOne(pool, config, { bot, app, run, settings, deps = {} }) {
     });
     await announceBuilt({
       pool, ws: buildDeps.ws, app, bot, issueNumber, runId: Number(run.id), say, domain: buildDeps.domain,
+      firstVersion: !!requester?.firstVersion,
       built: { ok: false, error: `the build could not start (${clip(err.message, 200)})` },
     }).catch(() => {});
     await pool.query('UPDATE homeroom_bot_runs SET live_build_waiting_at = NULL WHERE id = $1', [run.id]).catch(() => {});

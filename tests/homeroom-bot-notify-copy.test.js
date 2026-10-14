@@ -52,6 +52,8 @@ const FIRST_VERSION = [
   ['needs_you', 'plan_first', 'My plan for your first version is ready. Tap Build it if it looks right.'],
   ['ready', 'ready_first', 'Your first version is ready to try.'],
   ['stopped', 'first_failed', 'Stopped: I couldn\'t start building your first version. You can still post a request on its page.'],
+  // 14 Oct 2026 (newcomer run eight): a first version goes live without a vote.
+  ['stopped', 'build_not_proposed', 'Stopped: I built your first version but couldn\'t put it live yet. Tap Try again.'],
   ['live', 'live_first', 'Your first version is live. Open Plant Pal to try it.'],
   ['live', 'live_first_soon', 'Your first version is going live now. Open Plant Pal in a few minutes to try it.'],
 ];

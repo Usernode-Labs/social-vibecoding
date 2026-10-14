@@ -311,7 +311,11 @@ function bodyFor(d) {
     case 'build_time': return 'Stopped: it took longer than I\'m allowed. Tap Try again.';
     case 'build_restart': return 'Stopped: Homeroom restarted while I was building. Tap Try again.';
     case 'build_no_change': return 'Stopped: I ended up with no changes to show. Tap Try again.';
-    case 'build_not_proposed': return 'Stopped: I built it but couldn\'t put it up for a vote. Tap Try again.';
+    // 14 Oct 2026 (newcomer run eight): a first version goes live without a
+    // vote, so one built and not proposed is said as not live yet.
+    case 'build_not_proposed': return d.firstVersion
+      ? 'Stopped: I built your first version but couldn\'t put it live yet. Tap Try again.'
+      : 'Stopped: I built it but couldn\'t put it up for a vote. Tap Try again.';
     case 'build_no_start': return 'Stopped: I couldn\'t get started. Tap Try again.';
     case 'build_other': return 'Stopped: something went wrong while I was building. Tap Try again.';
     case 'update_failed': return 'Stopped: I couldn\'t update it. It\'s as it was.';

@@ -34,6 +34,8 @@ function notes() {
     live.buildFailedText('budget: wall clock'),
     live.buildFailedText('the turn produced no change'),
     live.buildFailedText('restarted mid-build'),
+    live.buildFailedText('the change was built but could not be proposed: x'),
+    live.buildFailedText('the change was built but could not be proposed: x', { firstVersion: true }),
     live.heldText({ cap: 'proposals_per_app', limit: 5 }),
     live.heldText({ cap: 'proposals_per_app', limit: 5, project: 'Plant Pal' }),
     live.heldText({ cap: 'proposals_total', limit: 100 }),
