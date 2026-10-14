@@ -385,6 +385,8 @@ test('the other server is asked first: what it holds of the name is dropped as b
       assert.equal((await h.dbManager.cloneDatabase(SOURCE, OTHER)).server, 'preview');
       for (const name of [TARGET, OTHER]) {
         assert.deepEqual(h.sqlOn(MAIN_HOST).filter((sql) => sql.includes(name)), [oldTargetCheck(name), ...dropSequence(name)], `${leftover}: ${name}`);
+        const there = h.on(MAIN_HOST).filter((c) => c.sql.includes(name));
+        assert.ok(there.every((c) => c.via === 'pg' && c.session === there[0].session), `${leftover}: ${name}: the question and the drop share one connection`);
       }
       const dropped = h.logs.filter((l) => l.message === 'Database and role dropped' && l.meta.server === 'primary').map((l) => l.meta.dbName);
       assert.deepEqual(dropped.filter((name) => name === TARGET || name === OTHER), [TARGET, OTHER], leftover);
@@ -398,6 +400,7 @@ test('the other server is asked first: what it holds of the name is dropped as b
     await h.dbManager.cloneDatabase(SOURCE, OTHER);
     for (const name of [TARGET, OTHER]) {
       assert.deepEqual(h.sqlOn(MAIN_HOST).filter((sql) => sql.includes(name)), [oldTargetCheck(name)], name);
+      assert.equal(h.on(MAIN_HOST).filter((c) => c.sql.includes(name) && c.via !== 'pg').length, 0, `${name}: no psql process on the main server`);
       assert.ok(h.sqlOn(PREVIEW_HOST).includes(`DROP DATABASE IF EXISTS ${name}`), `${name}: its own server keeps its drop`);
       assert.ok(h.logs.some((l) => l.message === 'Database and role dropped' && l.meta.dbName === name && l.meta.server === 'preview'),
         `${name}: the drop on its own server is said to be there`);
