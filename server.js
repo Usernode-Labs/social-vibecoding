@@ -5317,7 +5317,11 @@ function startSessionAutoPauseSweeper(config) {
     stagingIdleMs: config.stagingIdleTeardownMs,
     sweepIntervalMs: config.sessionSweepIntervalMs,
   });
-  sessionSweeperHandle = setInterval(async () => {
+  // Held in services/inflight-work.js like a leader timer's tick, so the
+  // shutdown drain waits for a pass under way instead of closing the pool
+  // under it (its proposal measurement wrote into a closed pool at each
+  // restart); its long loops stop at their next row once shutdown begins.
+  sessionSweeperHandle = setInterval(() => inflightWork.track('timer:session-sweeper', async () => {
     if (lifecycle.isShuttingDown()) return;
 
     // Pass 1: auto-pause idle 'active' sessions (worker + slot only;
@@ -5632,7 +5636,7 @@ function startSessionAutoPauseSweeper(config) {
       const MAX_HEALS_PER_SWEEP = 5;
       let healed = 0;
       for (const session of rows) {
-        if (healed >= MAX_HEALS_PER_SWEEP) break;
+        if (healed >= MAX_HEALS_PER_SWEEP || lifecycle.isShuttingDown()) break;
         if (activeWorkersSvc.isSessionBusy(session.id)) continue;
         // #866: worker.isInFlight only covers agent turns. An imported
         // proposal's first staging build runs from the import path with no
@@ -5847,6 +5851,7 @@ function startSessionAutoPauseSweeper(config) {
       );
       let measured = 0;
       for (const session of rows) {
+        if (lifecycle.isShuttingDown()) break;
         // A session mid-turn is about to move its own head; measuring it now
         // records an answer that is wrong before it is written.
         if (worker.isInFlight(session.id)) continue;
@@ -5920,7 +5925,7 @@ function startSessionAutoPauseSweeper(config) {
     } catch (err) {
       log.warn('server', 'Connection-pressure sweep failed', { err: err.message });
     }
-  }, config.sessionSweepIntervalMs).unref();
+  }), config.sessionSweepIntervalMs).unref();
 }
 
 let governanceApplyTickerHandle = null;
