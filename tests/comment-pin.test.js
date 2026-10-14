@@ -192,12 +192,18 @@ test('on a phone the keyboard is not the page moving, and the sheet stays under 
   assert.match(src, /if \(next\.width === was\.width && keyboardAbout\(\)\) return;/, 'a height-only resize with the keys about is the keys');
   assert.match(src, /vv\?\.addEventListener\('resize', onResize\);/, 'and the keys leaving re-measures');
   // Scrolls that are not the page: the mode's own sheet and field, and a
-  // document pan while the keys are about unless the person made it.
+  // document pan while the keys are about.
   assert.match(src, /if \(target instanceof Node && host\.contains\(target\)\) return;/);
-  assert.match(src, /if \(isDocumentScroll\(target\) && keyboardAbout\(\) && performance\.now\(\) - ownScrollAt\.current > 300\) return;/);
+  assert.match(src, /if \(isDocumentScroll\(target\) && keyboardAbout\(\)\) return;/);
   assert.match(src, /const keyboardAbout = \(\) => textFocused\(document\)\s*\|\| document\.documentElement\.classList\.contains\(KB_OPEN_CLASS\)\s*\|\| performance\.now\(\) < keyboardUntil\.current;/);
-  // A drag on the picture scrolls the page under the finger, and says so.
-  assert.match(src, /t\.scroller\.scrollBy\(\(t\.last\.x - p\.x\) \/ k, \(t\.last\.y - p\.y\) \/ k\);/);
+  // The page holds still while the mode is up (#5045): the wheel is stopped
+  // at the layer by hand (React's onWheel is passive), and a drag never
+  // scrolls.
+  assert.doesNotMatch(src, /scrollBy\(/);
+  assert.doesNotMatch(src, /scrollerAt/);
+  assert.doesNotMatch(src, /onWheel=\{/);
+  assert.match(src, /addEventListener\('wheel', onWheel, \{ passive: false \}\)/);
+  assert.match(src, /const onWheel = \(e: WheelEvent\) => \{ e\.preventDefault\(\); \};/);
   // Fields take the keyboard without iOS panning the page (and the bar) away.
   assert.match(src, /t\.focus\(\{ preventScroll: true \}\);\s*t\.setSelectionRange/);
   assert.doesNotMatch(src, /\.focus\(\)/, 'no focus that pans');
@@ -1251,7 +1257,7 @@ test('comment mode opens on demand into a host of its own, once, and C asks it t
   assert.equal(message('devchat:commentPin.intro.gotIt'), 'Got it');
   assert.match(src, /<li>\{t\('devchat:commentPin\.intro\.form'\)\}<\/li>/);
   assert.equal(message('devchat:commentPin.intro.form'), 'Prefer the form? Tap Form to switch back at any time.');
-  // A finger: a tap is a comment, a drag scrolls.
+  // A finger: a tap is a comment, a drag does nothing.
   assert.match(src, /if \(!t\.moved\) place\(\{ x: e\.clientX, y: e\.clientY \}\);/);
   // The form is called the form.
   assert.doesNotMatch(src, /Detailed/);

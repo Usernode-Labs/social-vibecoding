@@ -15,9 +15,9 @@
  * one request, its comments numbered, each with its own pin. A click
  * elsewhere moves the open comment's pin (the words stay). Esc closes what
  * is on top: an open marker, the wait for the next pin, the request (asking
- * first when it has words), then the mode. The page under the layer still
- * scrolls, with the wheel or a finger, and the pins move with what they
- * were put on; a tap is a comment, as a click is.
+ * first when it has words), then the mode. The page under the layer holds
+ * still while the mode is up: a wheel turn or a finger drag does nothing;
+ * a tap is a comment, as a click is.
  *
  * Over the inset picture the bar is that view's header: the picture leaves
  * a band for it at the top and it sits there, the picture's own width, so
@@ -63,7 +63,6 @@
 import {
   createElement, useCallback, useEffect, useLayoutEffect, useRef, useState,
   type ClipboardEvent, type DragEvent, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode,
-  type WheelEvent,
 } from 'react';
 
 import { Button } from '@/components/ui/button';
@@ -238,17 +237,6 @@ function anchorPoint(a: Anchor, size: Size): Point | null {
   const p = { x: r.left + a.dx, y: r.top + a.dy };
   if (p.x < 0 || p.y < 0 || p.x > size.width || p.y > size.height) return null;
   return p;
-}
-
-/** What the wheel scrolls under a point: the nearest scroller, else the page. */
-function scrollerAt(p: Point, host: HTMLElement): Element | null {
-  for (let el = underPoint(p, host); el && el !== document.body; el = el.parentElement) {
-    if (el.tagName === 'IFRAME') return null;
-    const s = getComputedStyle(el);
-    const scrolls = /(auto|scroll|overlay)/.test(`${s.overflowY} ${s.overflowX}`);
-    if (scrolls && (el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1)) return el;
-  }
-  return document.scrollingElement;
 }
 
 function clampToViewport(p: Point, size: Size): Point {
@@ -572,13 +560,14 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
   const boxRef = useRef<HTMLDivElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
   const barRef = useRef<HTMLDivElement>(null);
+  const layerRef = useRef<HTMLDivElement>(null);
   const textRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const keys = useRef(0);
   const hoverFrame = useRef(0);
   const view = useRef(0);
   const drag = useRef<{ dx: number; dy: number } | null>(null);
-  const touch = useRef<{ id: number; start: Point; last: Point; moved: boolean; scroller: Element | null } | null>(null);
+  const touch = useRef<{ id: number; start: Point; moved: boolean } | null>(null);
   const viewShotKeys = useRef(0);
   const viewShotUrl = useRef<string | null>(null);
   // The page's size as the mode keeps it. The keyboard does not change it:
@@ -593,9 +582,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
   // under it. 0 on a computer and in a phone browser.
   const safeRef = useRef<HTMLDivElement>(null);
   const [safeTop, setSafeTop] = useState(0);
-  // When the person last scrolled the page from the layer (the wheel, a
-  // drag), and until when the keyboard is still arriving or leaving.
-  const ownScrollAt = useRef(-Infinity);
+  // Until when the keyboard is still arriving or leaving.
   const keyboardUntil = useRef(-Infinity);
   const draftRef = useRef(draft);
   draftRef.current = draft;
@@ -642,8 +629,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
   //    comment raised it, so every comment's close-up fell back to a
   //    stretched thumbnail (iPhone 17 simulator, 12 Oct 2026);
   //  - a height-only resize while the keyboard is about.
-  // A document scroll while the keyboard is about still counts when the
-  // person made it, from the layer.
+  // A document scroll while the keyboard is about is the keyboard's.
   useEffect(() => {
     let frame = 0;
     const redraw = () => {
@@ -657,7 +643,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
     const onScroll = (e: Event) => {
       const target = e.target;
       if (target instanceof Node && host.contains(target)) return;
-      if (isDocumentScroll(target) && keyboardAbout() && performance.now() - ownScrollAt.current > 300) return;
+      if (isDocumentScroll(target) && keyboardAbout()) return;
       redraw();
     };
     const onResize = () => {
@@ -1374,22 +1360,22 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
   };
   useEffect(() => () => { if (hoverFrame.current) cancelAnimationFrame(hoverFrame.current); }, []);
 
-  const onWheel = (e: WheelEvent<HTMLDivElement>) => {
-    const at = inset ? toPage({ x: e.clientX, y: e.clientY }, inset) : { x: e.clientX, y: e.clientY };
-    const s = scrollerAt(at, host);
-    if (!s) return;
-    const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? size.height : 1;
-    ownScrollAt.current = performance.now();
-    s.scrollBy({ left: e.deltaX * unit, top: e.deltaY * unit });
-  };
+  // The wheel, bound by hand: React's onWheel is passive, and a wheel over
+  // the layer must not reach the page underneath — the page holds still
+  // while the mode is up.
+  useEffect(() => {
+    const layer = layerRef.current;
+    if (!layer) return undefined;
+    const onWheel = (e: WheelEvent) => { e.preventDefault(); };
+    layer.addEventListener('wheel', onWheel, { passive: false });
+    return () => layer.removeEventListener('wheel', onWheel);
+  }, []);
 
-  // A finger: a tap is a comment, a drag scrolls what is under it.
+  // A finger: a tap is a comment, a drag does nothing.
   const onLayerPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
     if (e.pointerType === 'mouse') return;
     e.preventDefault();
-    const start = { x: e.clientX, y: e.clientY };
-    const at = inset ? toPage(start, inset) : start;
-    touch.current = { id: e.pointerId, start, last: start, moved: false, scroller: scrollerAt(at, host) };
+    touch.current = { id: e.pointerId, start: { x: e.clientX, y: e.clientY }, moved: false };
     e.currentTarget.setPointerCapture?.(e.pointerId);
   };
   const onLayerPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
@@ -1397,15 +1383,6 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
     if (!t || e.pointerId !== t.id) return;
     const p = { x: e.clientX, y: e.clientY };
     if (!t.moved && Math.hypot(p.x - t.start.x, p.y - t.start.y) > 8) t.moved = true;
-    if (t.moved && t.scroller) {
-      // Over the inset picture the page is drawn smaller, so it scrolls by
-      // the finger's travel over that scale: what is under the finger stays
-      // under it.
-      const k = inset?.scale || 1;
-      ownScrollAt.current = performance.now();
-      t.scroller.scrollBy((t.last.x - p.x) / k, (t.last.y - p.y) / k);
-    }
-    t.last = p;
   };
   const onLayerPointerUp = (e: ReactPointerEvent<HTMLDivElement>) => {
     const t = touch.current;
@@ -1502,9 +1479,11 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
       <div ref={safeRef} aria-hidden="true" className="pointer-events-none invisible absolute left-0 top-0 w-px" style={{ height: 'var(--platform-safe-top, 0px)' }} />
       {/* The layer: a press anywhere is a comment. Its mousedown is
           prevented, so the box's field keeps the keyboard through it
-          (tests/keyboard-dismiss.test.js); a finger taps or scrolls. */}
+          (tests/keyboard-dismiss.test.js); a finger taps, and a drag does
+          nothing. The wheel is stopped by hand in the effect above. */}
       <div
         id="comment-pin"
+        ref={layerRef}
         aria-hidden="true"
         data-keep-keyboard=""
         className="absolute inset-0"
@@ -1520,7 +1499,6 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
         onPointerCancel={() => { touch.current = null; }}
         onMouseMove={onLayerMove}
         onMouseLeave={() => setHover(null)}
-        onWheel={onWheel}
       />
       {/* The page as the person sees it. Over the inset picture: a grey
           ground, the picture drawn at the inset frame with the cards'
