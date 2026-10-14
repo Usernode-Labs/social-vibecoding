@@ -1830,6 +1830,7 @@ async function start() {
     const platformRelease = require('./src/services/platform-release');
     if (processRole.servesRequests(ownRole)) platformRelease.recordRunning(getPool(config));
     platformRelease.recordBoot(getPool(config));
+    if (processRole.servesRequests(ownRole)) require('./src/workflow/platform.ts').releaseServing(getPool(config));
   });
   // Let Envoy retire idle upstream connections at 60s before Node closes them.
   // Keep a 15s margin for transit and timer scheduling; applies to self-previews too.

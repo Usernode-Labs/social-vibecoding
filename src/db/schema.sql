@@ -13740,7 +13740,8 @@ CREATE TRIGGER issues_wf_governance_owned
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS live_at TIMESTAMPTZ;
 -- booted_shas: the platform's own row only. The builds platform processes
 -- booted with, newest first, at most ten: [{ "sha": ..., "at": ... }].
--- Written by each process at startup (src/workflow/platform.ts), never by
+-- Written by each process that serves requests, once it listens
+-- (src/workflow/platform.ts releaseServing; never a conductor), never by
 -- the migration Job: main_sha is seeded from the incoming release's GIT_SHA
 -- by the migration that runs BEFORE the rollout, so it can name a build that
 -- does not serve yet. A history, not the last boot: during a rollout an
