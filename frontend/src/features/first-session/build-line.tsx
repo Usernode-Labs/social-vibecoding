@@ -48,14 +48,13 @@ export { BUILD_LINE_WORDS, PHASE_WORDS, minutesSince, phaseOf };
 export type FirstVersionPhase = { key: keyof typeof PHASE_WORDS; since: string | null; round: number | null; rounds: number | null };
 
 /**
- * N4: the words for a phase, in the language on screen: "Drawing the
- * screens", "Checking the screens · round 1 of 2". Null for none.
+ * N4: the words for a phase, in the language on screen: "Working out the
+ * details", "Checking the screens". Null for none. No round (14 Oct 2026:
+ * with it the line ran past a phone's width and lost its time): the steps
+ * list says it, under its Checking step.
  */
 export function phaseWords(phase: FirstVersionPhase | null): string | null {
   if (!phase) return null;
-  if (phase.key === 'checking') {
-    return translate(PHASE_WORDS.checking, { round: phase.round || 1, rounds: phase.rounds || phase.round || 1 });
-  }
   return translate(PHASE_WORDS[phase.key]);
 }
 

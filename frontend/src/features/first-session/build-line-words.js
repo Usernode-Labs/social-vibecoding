@@ -94,7 +94,7 @@ export function buildLineTileClass(state) {
  *   writing    Working out the details
  *   building   Building it
  *   built      Built. Checking the screens…
- *   checking   Checking the screens · round 1 of 2
+ *   checking   Checking the screens
  *   testing    Testing it
  *
  * Run seven (14 Oct 2026, iPhone Safari, Club Votes): the plan and the
@@ -103,6 +103,12 @@ export function buildLineTileClass(state) {
  * the plan" under a "Plan written" step already ticked. The spec's two
  * phases say one thing, "Working out the details", which is what it is
  * doing, and the Home tile says "Planning" for both.
+ *
+ * Runs eight and nine (14 Oct 2026, iPhone Safari): "Checking the screens ·
+ * round 1 of 2 · about 9 min left" was cut off at 390 px, and the time was
+ * what went. The line says "Checking the screens" and the time; the round
+ * is said where there is room for it, under the Checking step in the App
+ * tab's step list ("Round 1 of 2", ../app-frame/first-version-steps.tsx).
  */
 export const PHASE_WORDS = Object.freeze({
   starting: 'onboarding:buildLine.phase.starting',
