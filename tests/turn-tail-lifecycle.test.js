@@ -534,7 +534,7 @@ test('restart cleanup retries derive their action from the durable phase', () =>
 });
 
 test('finalizeRecoveredTurn takes an alreadyDone map and defaults to empty', () => {
-  assert.match(SERVER_SRC, /startedAtMs, alreadyDone = null,\s*activeTurn = null,\s*\}\) \{/,
+  assert.match(SERVER_SRC, /startedAtMs, alreadyDone = null,\s*activeTurn = null,[\s\S]{0,300}?localAgentLabel = null,\s*\}\) \{/,
     'optional, so a genuine mid-exec recovery is unaffected');
   assert.match(SERVER_SRC,
     /const done = alreadyDone && typeof alreadyDone === 'object' \? alreadyDone : \{\};/);
@@ -551,7 +551,7 @@ test('a resumed tail does not duplicate the completion card or the PR event', ()
     /const prAnnounced = !!done\.prNumber \|\| !!done\.prOpenedEventRecorded;/);
   assert.match(SERVER_SRC, /wasNewPR && !prAnnounced/,
     '"PR #N created" is announced at most once');
-  assert.match(SERVER_SRC, /done\.votesResetFor !== result\.sha/,
+  assert.match(SERVER_SRC, /done\.votesResetFor === result\.sha\) return;/,
     'a vote reset the live tail already announced is not re-announced');
 });
 
@@ -563,13 +563,17 @@ test('a resumed tail reuses a healthy preview instead of rebuilding for ~5 minut
   assert.match(SERVER_SRC, /if \(!reusedStaging\) emit\('status', \{ text: 'Building staging preview\.\.\.' \}\)/,
     'no "building" line when nothing is being built');
   // Reuse still publishes the Changes-ready outcome the interrupted tail
-  // owed the user, behind the same receipt as a newly built preview, and
-  // still re-runs checks (setChecksPending voided the verdict).
+  // owed the user, behind the same receipt as a newly built preview (and as
+  // the live tail's own card: publishStagingOutcome in routes/sessions.js),
+  // and re-runs checks unless this very commit already has a verdict
+  // (tests/recovered-turn-tail-parity.test.js drives both shapes).
   assert.match(SERVER_SRC,
     /if \(reusedStaging\) \{[\s\S]{0,500}publishRecoveredStaging\(\{ outcome: 'success'/);
-  assert.match(SERVER_SRC,
-    /effectKey: turnEffects\.EFFECT_KEYS\.RECOVERED_STAGING_PUBLICATION/,
+  assert.match(SERVER_SRC, /\.publishStagingOutcome\(\{/,
     'staging cards are receipt-backed across recovery retries');
+  assert.match(SESSIONS_SRC,
+    /effectKey: turnEffects\.EFFECT_KEYS\.RECOVERED_STAGING_PUBLICATION/,
+    'one receipt key for the live and the recovered card');
   assert.match(SERVER_SRC,
     /if \(reusedStaging\) \{[\s\S]{0,1400}visuals\.captureForSession/);
 });

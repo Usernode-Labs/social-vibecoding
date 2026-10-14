@@ -2493,9 +2493,42 @@ function startLocalAgentLeaseSweeper(config) {
       .catch((err) => {
         log.warn('server', 'Local-agent lease sweep tick failed', { err: err.message });
       })
+      // A turn the sweep just failed may have lost its waiter too (the
+      // restart that took the platform took the laptop's connection with
+      // it): finish it now rather than on the next recovery tick.
+      .then(() => recoverLocalAgentTurns(config))
       .finally(() => { running = false; });
   };
   leaderTimers.every('local-agent-lease-sweep', tick, LOCAL_AGENT_SWEEP_MS);
+  // Turns whose platform-side waiter died with its process are taken over
+  // and finished (services/local-agent-recovery.js): at boot, and on a
+  // tick well inside the waiter's stale window.
+  recoverLocalAgentTurns(config);
+  leaderTimers.every('local-agent-recovery', () => recoverLocalAgentTurns(config), LOCAL_AGENT_RECOVERY_MS);
+}
+
+const LOCAL_AGENT_RECOVERY_MS = 15 * 1000;
+let localAgentRecoveryRunning = false;
+
+// One recovery pass; never overlaps itself, never throws. The turns it takes
+// over are finished in the background (a turn still running on the laptop
+// is waited for), so a pass is one UPDATE.
+async function recoverLocalAgentTurns(config) {
+  if (localAgentRecoveryRunning) return 0;
+  localAgentRecoveryRunning = true;
+  try {
+    const { adopted } = await require('./src/services/local-agent-recovery').recoverOrphanedLocalTurns({
+      config,
+      pool: getPool(config),
+      deps: { finalizeRecoveredTurn, buildRecoveryStopHandle },
+    });
+    return adopted;
+  } catch (err) {
+    log.warn('server', 'Local-agent turn recovery pass failed', { err: err.message });
+    return 0;
+  } finally {
+    localAgentRecoveryRunning = false;
+  }
 }
 
 // Resume post-merge issue-close watches for sessions merged shortly
@@ -2634,7 +2667,7 @@ async function restoreMissingQuickReplies(config) {
   const { broadcastGlobal } = require('./src/services/ws');
 
   const { rows } = await pool.query(
-    `SELECT id, pr_number, spec_md FROM chat_sessions
+    `SELECT id, pr_number, spec_md, agent_session_id FROM chat_sessions
      WHERE status IN ('active', 'promoted')
        AND source IS DISTINCT FROM 'imported'
        AND is_headless = FALSE
@@ -2652,10 +2685,25 @@ async function restoreMissingQuickReplies(config) {
 
   for (const session of rows) {
     try {
+      // A change an agent session started has no dev chat of its own: its
+      // rows are the conversation's, whose Mayor holds a lease of its own
+      // (agent-sessions.js) and whose dead turns end, once that lease is
+      // stale, with the conversation's own Retry note (agent-turn.js
+      // sweepInterruptedTurns). A Mayor turn still running on this pod or
+      // another sets no busy flag on the change, so this sweep would read
+      // its message as unanswered, bell "stopped before finishing", and pin
+      // dev-chat pills onto the conversation's Mayor rows. None of that is
+      // this sweep's to say.
+      if (session.agent_session_id != null) { skipped++; continue; }
       // A live consumer owns this session right now (a detached-turn
-      // resume started above, or a turn came in while we were sweeping) —
-      // its own wrap-up/breadcrumb will supply the pills.
-      if (activeWorkersSvc.isSessionBusy(session.id)) { skipped++; continue; }
+      // resume started above, a turn came in while we were sweeping, or a
+      // Mayor turn this process is still answering: its stop handle is
+      // registered from the turn's first token) — its own
+      // wrap-up/breadcrumb will supply the pills.
+      if (activeWorkersSvc.isSessionBusy(session.id) || stopRegistry.get(session.id)) {
+        skipped++;
+        continue;
+      }
 
       // System rows are transparent to the client's pill resolution, so
       // the deciding row is the newest user/assistant one.
@@ -3703,9 +3751,18 @@ async function finalizeRecoveredTurn({
   config, pool, staging, session, sessionId, result, repoOwner, repoName,
   emit, containerName, keepWorker, startedAtMs, alreadyDone = null,
   activeTurn = null,
+  // The machine a local agent's turn ran on (services/local-agent-recovery.js):
+  // its completion card names it, as the live card does.
+  localAgentLabel = null,
 }) {
   const done = alreadyDone && typeof alreadyDone === 'object' ? alreadyDone : {};
   const recoveryAgent = recoveredAgentIdentity(session, activeTurn);
+  if (localAgentLabel) {
+    recoveryAgent.metadata = {
+      agentBackend: 'claude_code', agentModel: null,
+      runner: 'local', localAgentLabel, localMode: 'build',
+    };
+  }
   const noteMilestone = async (milestone) => {
     if (!activeTurn) return false;
     const noted = await worker.noteTailMilestone(
@@ -3752,13 +3809,14 @@ async function finalizeRecoveredTurn({
       else summaryParts.unshift(`What the agent did:\n${ccText}`);
       return;
     }
-    const statusText = ccOutcome === 'success'
+    const statusText = (ccOutcome === 'success'
       ? `${recoveryAgent.name} finished`
       : ccOutcome === 'no_changes'
         ? (recoveryAgent.isOpenRouter
           ? `${recoveryAgent.name} replied`
           : `${recoveryAgent.name} made no changes`)
-        : `${recoveryAgent.name} did not complete`;
+        : `${recoveryAgent.name} did not complete`)
+      + (localAgentLabel ? ` Coding done on ${localAgentLabel}, so no Homeroom credits were used.` : '');
     const metadata = {
       ccOutput: ccText,
       ccOutcome,
@@ -4025,39 +4083,23 @@ async function finalizeRecoveredTurn({
     }
 
     // Live-path parity for a PROMOTED session (sessions.js's post-staging
-    // block): a new commit invalidates the votes cast against the old one.
-    // Recovery used to skip this entirely, which was harmless while an
-    // interrupted tail simply never finished — now that it DOES finish, a
-    // resumed tail must not leave a promoted proposal carrying votes for a
-    // commit nobody reviewed. Gated on the milestone so a reset the live
-    // tail already performed is never re-announced.
-    if (session.status === 'promoted' && done.votesResetFor !== result.sha) {
+    // block): a new commit invalidates the votes cast against the old one,
+    // once its preview is up, and only then: a preview that failed leaves
+    // the votes where the live tail leaves them. Gated on the milestone so
+    // a reset the live tail already performed is never re-announced.
+    const retireVotesOnceStaged = async () => {
+      if (session.status !== 'promoted' || done.votesResetFor === result.sha) return;
       try {
         // Claim before the destructive delete. If recovery dies after this
         // point, repeating the reset/announcement would be worse than
         // leaving the already-reset votes unannounced.
         await noteMilestone({ votesResetFor: result.sha });
-        await require('./src/services/app-admins')
-          .refreshExplicitApproval(pool, session, session);
         // #1688: retired by an epoch bump, not deleted — the same step the
-        // live tail takes (services/vote-revision.js), so the recovered
-        // turn also asks the prior Yes voters back.
-        const { sendSystemMessage, pushVoteUpdate } = require('./src/services/ws');
-        const retired = await require('./src/services/vote-revision').retireAndRecheck(
-          pool, { ...session, id: sessionId }, result.sha,
-          {
-            announce: async ({ retired: dropped }) => {
-              pushVoteUpdate({ sessionId, appSlug: session.app_slug, merged: false });
-              const resetMsg = `An update was pushed to PR #${session.pr_number || sessionId} (commit ${result.sha.substring(0, 8)}). Earlier votes were on the old version, so take another look.`;
-              await sendSystemMessage(pool, session.app_id, resetMsg, 'system').catch(() => {});
-              await sendSystemMessage(pool, session.app_id, resetMsg, 'system',
-                null, { type: 'session', ref: sessionId }).catch(() => {});
-              log.info('server', 'Recovered turn: retired PR votes after new commit', {
-                sessionId, commitHash: result.sha.substring(0, 8), votesRetired: dropped,
-              });
-            },
-          },
-        );
+        // live tail takes, so the recovered turn also asks the prior Yes
+        // voters back, in the proposal's own thread.
+        const retired = await require('./src/routes/sessions').retireVotesForNewCommit({
+          pool, session, sessionId, commitHash: result.sha,
+        });
         if (retired.retired > 0) {
           summaryParts.push('Group-chat votes were reset for the new commit.');
         }
@@ -4066,7 +4108,7 @@ async function finalizeRecoveredTurn({
           sessionId, err: err.message,
         });
       }
-    }
+    };
 
     const app = { id: session.app_id, slug: session.app_slug, name: session.app_name, repo_url: session.repo_url };
 
@@ -4080,11 +4122,12 @@ async function finalizeRecoveredTurn({
     // The transcript card and its replay checkpoint commit together. The
     // staging build itself is external and may already have happened, but a
     // retained tail must never publish its outcome twice on a later wrap-up
-    // retry. A failed outcome is checkpointed too so retrying Mayor/spend
-    // work does not launch another expensive build known to have failed.
+    // retry, nor after the live tail already did: both write it through
+    // publishStagingOutcome, under one receipt. A failed outcome is
+    // checkpointed too so retrying Mayor/spend work does not launch another
+    // expensive build known to have failed.
     const publishRecoveredStaging = async ({ outcome, stagingUrl = null, failure = null }) => {
       const succeeded = outcome === 'success';
-      const content = succeeded ? 'Staging deployed!' : 'Staging build failed';
       const metadata = succeeded
         ? {
             stagingUrl,
@@ -4103,40 +4146,16 @@ async function finalizeRecoveredTurn({
             prUrl: prResult?.prUrl || session.pr_url || null,
             recovered: true,
           };
-      const checkpoint = succeeded
-        ? { stagingPublished: true }
-        : { stagingPublished: true, stagingFailed: failure || { errMsg: metadata.error } };
-      const persist = async (client) => {
-        await client.query(
-          `INSERT INTO chat_session_messages (session_id, role, content, metadata)
-           VALUES ($1, 'system', $2, $3)`,
-          [sessionId, content, JSON.stringify(metadata)],
-        );
-        if (activeTurn) {
-          await turnLifecycle.mergeTailMilestones(client, {
-            sessionId,
-            ...turnLifecycle.cleanupArgs(activeTurn),
-            milestones: checkpoint,
-          });
-        }
-        return { outcome, metadata, failure, checkpoint };
-      };
-
-      let applied = true;
-      let value;
-      if (activeTurn?.turnId) {
-        const receipt = await turnEffects.runDbEffect({
+      const { applied, ...value } = await require('./src/routes/sessions')
+        .publishStagingOutcome({
           pool,
-          turnId: activeTurn.turnId,
-          effectKey: turnEffects.EFFECT_KEYS.RECOVERED_STAGING_PUBLICATION,
           sessionId,
-          run: persist,
+          turnId: activeTurn?.turnId || null,
+          tailIdentity: activeTurn ? turnLifecycle.cleanupArgs(activeTurn) : null,
+          outcome,
+          metadata,
+          failure,
         });
-        applied = receipt.applied;
-        value = receipt.value || { outcome, metadata, failure, checkpoint };
-      } else {
-        value = await persist(pool);
-      }
       // A completed receipt is authoritative if two recovery owners reached
       // this boundary with different observations. Restore the checkpoint
       // that committed with the card, not the retrying owner's proposal.
@@ -4204,30 +4223,52 @@ async function finalizeRecoveredTurn({
 
     if (!reusedStaging) emit('status', { text: 'Building staging preview...' });
 
+    // A reused preview is the one the live tail built for this commit, and
+    // its checks may already have a verdict for it: the live tail pended
+    // them and started the capture before the restart. Only a head the
+    // checks have not seen is reset; a verdict for this very commit is kept
+    // (a passing one is not wiped and re-run), and a capture that was still
+    // pending when the restart took it is started again.
+    let checksForHead = null;
+    if (reusedStaging) {
+      const { rows: checkRows } = await pool.query(
+        'SELECT checks_commit_sha, check_state FROM chat_sessions WHERE id = $1',
+        [sessionId]
+      ).catch(() => ({ rows: [] }));
+      const checks = checkRows[0] || null;
+      if (checks && checks.checks_commit_sha === result.sha) checksForHead = checks;
+    }
+
     // #461 parity: pend the checks for the NEW commit before the build
     // starts, so the previous commit's verdict (e.g. a stale 'passing')
     // can't satisfy the merge gate while this build runs — or after it
     // fails. The live dev-turn path does this; recovery used to skip it.
     const visuals = require('./src/services/visuals');
-    await visuals.setChecksPending(pool, sessionId, result.sha, 'building', 'boot-reconcile')
-      .catch((err) => log.warn('server', 'Recovered turn: setChecksPending failed (non-fatal)', {
-        sessionId, err: err.message,
-      }));
+    if (!checksForHead) {
+      await visuals.setChecksPending(pool, sessionId, result.sha, 'building', 'boot-reconcile')
+        .catch((err) => log.warn('server', 'Recovered turn: setChecksPending failed (non-fatal)', {
+          sessionId, err: err.message,
+        }));
+    }
 
     // Preview already up for this commit: skip straight to the
-    // Changes-ready card the interrupted tail never got to post. The
-    // checks capture still re-runs below (setChecksPending just voided the
-    // verdict), so the merge gate resolves either way.
+    // Changes-ready card the interrupted tail never got to post (the
+    // receipt keeps it to one if it did). The checks capture re-runs unless
+    // this commit already has its verdict, so the merge gate resolves
+    // either way.
     if (reusedStaging) {
       log.info('server', 'Recovered turn: reusing healthy staging preview', {
-        sessionId, url: reusedStaging,
+        sessionId, url: reusedStaging, checksKept: checksForHead ? checksForHead.check_state : null,
       });
       await publishRecoveredStaging({ outcome: 'success', stagingUrl: reusedStaging });
       summaryParts.push(`Staging preview is live: ${reusedStaging}`);
-      visuals.captureForSession(config, session, app, result.sha, null, { send: () => {}, trigger: 'boot-reconcile' })
-        .catch((err) => log.warn('server', 'Recovered turn: reused-preview capture failed (non-fatal)', {
-          sessionId, err: err.message,
-        }));
+      if (!checksForHead || checksForHead.check_state === 'pending') {
+        visuals.captureForSession(config, session, app, result.sha, null, { send: () => {}, trigger: 'boot-reconcile' })
+          .catch((err) => log.warn('server', 'Recovered turn: reused-preview capture failed (non-fatal)', {
+            sessionId, err: err.message,
+          }));
+      }
+      await retireVotesOnceStaged();
       // The `finally` below owns worker teardown — don't pre-empt it.
       return { outcome: 'done', summary: summaryParts.join('\n\n') };
     }
@@ -4281,6 +4322,7 @@ async function finalizeRecoveredTurn({
         .catch((err) => log.warn('server', 'Recovered turn: capture failed (non-fatal)', {
           sessionId, err: err.message,
         }));
+      await retireVotesOnceStaged();
     } else {
       const { describeStagingFailure } = require('./src/routes/sessions');
       const { fix, missingKeys, errMsg, errName } = describeStagingFailure(stagingErr);
@@ -4396,8 +4438,13 @@ async function resumeDetachedTurn(args) {
   // was the sweeper pausing sessions and destroying their workers in
   // the window between the journal tail ending and finalize completing.
   activeWorkersSvc.activeWorkers.add(sessionId);
+  // Whether the recovery got to the end of the turn's work: only then has
+  // the conversation that dispatched it something new to read.
+  let recoveredToEnd = false;
   try {
-    return await resumeDetachedTurnInner({ ...args, stopHandle });
+    const out = await resumeDetachedTurnInner({ ...args, stopHandle });
+    recoveredToEnd = true;
+    return out;
   } catch (err) {
     let retainedTurn;
     try {
@@ -4427,7 +4474,7 @@ async function resumeDetachedTurn(args) {
     // that Mayor's dead turn, and its screen follows the run. Whether the run
     // finished, stopped or failed, it is over.
     require('./src/services/mayor/agent-turn')
-      .handBackAfterRecovery({ pool, changeId: sessionId })
+      .handBackAfterRecovery({ pool, changeId: sessionId, finished: recoveredToEnd })
       .catch((err) => log.warn('server', 'Recovered turn: conversation hand-back failed (non-fatal)', {
         sessionId, err: err.message,
       }));
@@ -4657,6 +4704,10 @@ async function resumeDetachedTurnInner({
       // post-restart switched calls accumulate on top of pre-restart ones.
       byokCentsSoFar: Number(activeTurn.byokCents || 0),
       onProgress: onRecoveredProgress,
+      // The registry state execInWorker kept for this turn (worker.js).
+      mode: activeTurn.mode || null,
+      branchName: session.branch_name || null,
+      stopRequestedAt: turnLifecycle.stopRequestOf(activeTurn)?.atMs || null,
     });
   } catch (err) {
     if (botClock) clearTimeout(botClock);

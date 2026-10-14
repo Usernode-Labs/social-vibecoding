@@ -104,6 +104,10 @@ async function followTurn({ pool, session, activeTurn, onProgress = null, deps =
     providerWasDispatched: phase !== turnLifecycle.PHASE_DISPATCH_PENDING,
     byokCentsSoFar: Number(activeTurn.byokCents || 0),
     onProgress: typeof onProgress === 'function' ? onProgress : () => {},
+    // The registry state execInWorker kept for this turn (worker.js).
+    mode: activeTurn.mode || null,
+    branchName: session.branch_name || null,
+    stopRequestedAt: turnLifecycle.stopRequestOf(activeTurn)?.atMs || null,
   });
   if (phase === turnLifecycle.PHASE_EXECUTING || phase === turnLifecycle.PHASE_DISPATCH_PENDING) {
     await worker.markTurnTail(session.id, { sha: result.sha || null, pushOk: result.pushOk === true },

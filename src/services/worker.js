@@ -4675,15 +4675,27 @@ async function resumeTurnFromJournal(sessionId, {
   attemptNumber = 1,
   billingByok = false,
   providerWasDispatched = false,
+  // The per-turn state execInWorker keeps only in the warm registry, put
+  // back from the durable record: active_turn.mode, the session's branch,
+  // and a stop requested before the restart (active_turn.stopRequestedAt,
+  // as epoch ms). Without the mode an adopted sync turn's remaining model
+  // calls bill the owner instead of the system budget (the proxy reads
+  // getActiveTurnMode); without the branch a commit the turn could not
+  // push is not rescued before eviction deletes the checkout.
+  mode = null,
+  branchName = null,
+  stopRequestedAt = null,
 } = {}) {
   if (!journal) throw new Error('resumeTurnFromJournal: journal path required');
   const meta = _registryGet(sessionId);
   const containerName = meta?.containerName || workerRuntimeName(sessionId);
+  const turnMode = mode || meta?.activeTurnMode || null;
   // #664: seed the per-turn BYOK counters from the persisted active_turn
   // record (callers pass active_turn.byokCents) so post-restart switched
   // calls accumulate on top instead of restarting from zero, and the
   // one-time switch notice doesn't re-fire for an already-switched turn.
   const seedCents = Number(byokCentsSoFar) > 0 ? Number(byokCentsSoFar) : 0;
+  const durableStopMs = Number(stopRequestedAt) > 0 ? Number(stopRequestedAt) : null;
   _registryUpsert(sessionId, {
     inFlight: true, adopted: true,
     // Recovered proxy calls must keep mirroring BYOK spillover onto the
@@ -4691,10 +4703,21 @@ async function resumeTurnFromJournal(sessionId, {
     // every cent observed after the first recovery.
     activeTurnId: turnId || null,
     turnByokCents: seedCents, turnByokSwitched: seedCents > 0,
+    // What execInWorker's dispatch upsert records, so the adopted turn is
+    // the same turn to every reader: the proxy's sync check, stopTurn's
+    // journal, and the liveness watchdog's stop cadence.
+    activeTurnMode: turnMode,
+    journal,
+    ...(durableStopMs && !meta?.stopRequestedAt ? { stopRequestedAt: durableStopMs } : {}),
   });
+  // A stop that was asked for before the restart is applied now: the
+  // process that recorded it may have died before its kill landed, and the
+  // recovered turn is closed as stopped either way (server.js). Not awaited:
+  // the kill appends the exit marker this replay then reads.
+  if (durableStopMs) Promise.resolve().then(() => stopTurn(sessionId)).catch(() => {});
   const state = newWatchState();
   state.turnId = turnId || null;
-  state.liveSpendEnabled = agentBackend === 'claude_code' && meta?.activeTurnMode !== 'sync';
+  state.liveSpendEnabled = agentBackend === 'claude_code' && turnMode !== 'sync';
   workerProgress.setSpend(sessionId, null);
   state.hostSessionId = sessionId;
   state.hostContainerName = containerName;
@@ -4763,7 +4786,14 @@ async function resumeTurnFromJournal(sessionId, {
         correlationId: telemetryCorrelationId || String(turnId),
       });
     }
-    _registryUpsert(sessionId, { inFlight: false, lastUsedMs: Date.now() });
+    // execInWorker's teardown, for the adopted turn: the turn is over, and
+    // what a finished build committed but could not push is remembered so
+    // the tail's heal, or failing that evictWorker, pushes it before the
+    // workspace goes. A pending stop survives, as it does there (#937).
+    _registryUpsert(sessionId, {
+      inFlight: false, lastUsedMs: Date.now(), activeTurnMode: null, journal: null,
+      unpushed: unpushedCommit(turnMode, state, branchName),
+    });
   }
 }
 

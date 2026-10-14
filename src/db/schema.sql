@@ -1635,6 +1635,25 @@ BEGIN
     CHECK ((mode = 'build' OR head_sha IS NULL) AND (mode = 'scout' OR spec_md IS NULL));
 END $$;
 
+-- Who on the platform side is waiting for a local turn, and who ran its
+-- post-turn tail (commit → PR → staging → checks → completion card →
+-- wrap-up). The waiter lives in the process that dispatched the turn, so a
+-- restart kills it while the laptop keeps working; without these, nothing
+-- ever finished such a turn. The waiter renews `waiter_seen_at` while it
+-- waits, under its `waiter_id`. A waiter that stops renewing (its process
+-- died) is taken over by the leader's recovery pass
+-- (services/local-agent-recovery.js), which takes the waiter id over. Whoever holds
+-- the id when the turn ends claims `tail_claimed_at`, once, and runs the
+-- tail; `tail_finished_at` says the recovered tail got to its end. Rows from
+-- before this existed have no waiter id and are never taken over.
+ALTER TABLE local_agent_turns ADD COLUMN IF NOT EXISTS waiter_id UUID;
+ALTER TABLE local_agent_turns ADD COLUMN IF NOT EXISTS waiter_seen_at TIMESTAMPTZ;
+ALTER TABLE local_agent_turns ADD COLUMN IF NOT EXISTS tail_claimed_at TIMESTAMPTZ;
+ALTER TABLE local_agent_turns ADD COLUMN IF NOT EXISTS tail_finished_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS local_agent_turns_waiting_idx
+  ON local_agent_turns (waiter_seen_at)
+  WHERE waiter_id IS NOT NULL AND tail_claimed_at IS NULL;
+
 -- Both tables describe a specific person's machine and the prompts sent to
 -- it, so a staging clone must never carry them. See tools/clone-db.
 COMMENT ON TABLE session_agent_leases IS 'staging:private';
