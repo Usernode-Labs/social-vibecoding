@@ -82,7 +82,7 @@ import { PLANE_FILL } from '@/components/ui/grouped-list';
 import { platformSlug } from '../messages/channel-hub';
 import {
   changesPicture, loadLibrary, outOfPicture, textsUnchanged,
-  closeUpView, coverCrop, cropCanvas, describeElement, dragCrop, encodeUnder, FULL_CROP, inRect, insetFrame,
+  closeUpView, coverCrop, cropCanvas, CROP_SHADE, describeElement, dragCrop, encodeUnder, FULL_CROP, inRect, insetFrame,
   isFullCrop, overlaysGone, pictureScale, pinInCrop, placeBeside,
   takeBase, thumbnail, toPage, toScreen,
   type Base, type CropHandle, type ElementInfo, type Point, type Rect, type Size,
@@ -498,7 +498,7 @@ function CropFrame({ pic, rect, onRect, frame, page, phone, draft, numbered }: {
         <div
           aria-hidden="true"
           className="absolute border-2 border-white"
-          style={{ left: rect.x * W, top: rect.y * H, width: rect.width * W, height: rect.height * H, boxShadow: '0 0 0 9999px rgba(0,0,0,0.45)' }}
+          style={{ left: rect.x * W, top: rect.y * H, width: rect.width * W, height: rect.height * H, boxShadow: CROP_SHADE }}
         />
         {/* Handles: a visible grip inside a bigger transparent hit box. */}
         {handles.map((h) => {
@@ -1328,7 +1328,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
     ? draft.pictures.find((pic) => pic.key === boxComment.picture) || null
     : null;
   const viewDiffers = !!viewShot && !!activePicture && activePicture.view !== viewShot.view;
-  const closeUpSrc = activePicture?.cut?.url || activePicture?.url || (viewDiffers ? '' : viewShot?.url || '');
+  const closeUpSrc = activePicture?.url || (viewDiffers ? '' : viewShot?.url || '');
   // Beside the marker where there is room for it; on a narrow screen, under
   // the point (or over the marker), never on top of the pin it belongs to.
   const besidePin = (p: Point, size: { width: number; height: number }): Point => {
@@ -1642,7 +1642,8 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
               {phone ? (
                 <CloseUp
                   view={closeUpSrc}
-                  pin={(boxComment ? pinInCrop(boxComment.pin, activePicture?.cut?.rect ?? null) : null) ?? { x: 0.5, y: 0.5 }}
+                  pin={boxComment?.pin ?? { x: 0.5, y: 0.5 }}
+                  crop={activePicture?.cut?.rect ?? null}
                 />
               ) : null}
               <div className="flex min-h-[30px] items-center gap-1.5">
@@ -1801,27 +1802,45 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
               // a phone's tall picture in this wide box shows a third of its
               // height at most, and a pin placed as a fraction of the box
               // landed on another part of the page.
-              // A cropped picture previews its crop: the pins are fractions
-              // of the full picture, so they map into the crop first — one
-              // outside it is already gone from the request.
-              const shown = pic.cut?.size || pic.size || size;
-              const pins = draft.comments.filter((c) => c.picture === pic.key)
-                .map((c) => ({ c, at: pinInCrop(c.pin, pic.cut?.rect ?? null) }))
-                .filter((x): x is { c: Comment; at: Point } => x.at !== null);
+              // A cropped picture is drawn whole, the part kept framed and
+              // the rest dimmed (#5020): the pins are fractions of the full
+              // picture and stay put on it — one the crop cut away is already
+              // gone from the request, so it is not drawn.
+              const shown = pic.size || size;
+              const pins = draft.comments
+                .filter((c) => c.picture === pic.key && (!pic.cut || pinInCrop(c.pin, pic.cut.rect) !== null))
+                .map((c) => ({ c, at: c.pin }));
               const focus = pins.length
                 ? { x: pins.reduce((n, x) => n + x.at.x, 0) / pins.length, y: pins.reduce((n, x) => n + x.at.y, 0) / pins.length }
-                : { x: 0.5, y: 0 };
+                : pic.cut
+                  ? { x: pic.cut.rect.x + pic.cut.rect.width / 2, y: pic.cut.rect.y + pic.cut.rect.height / 2 }
+                  : { x: 0.5, y: 0 };
               const crop = coverCrop({ width: 64, height: 42 }, shown, focus);
               return (
               <span key={pic.key} className="relative block h-[42px] w-[64px] shrink-0">
-                {(pic.cut?.thumb || pic.thumb) ? (
+                {pic.thumb ? (
                   <span className="block h-[42px] w-[64px] overflow-hidden rounded-lg ring-1 ring-black/10 dark:ring-white/10">
                     <img
-                      src={pic.cut?.thumb || pic.thumb}
+                      src={pic.thumb}
                       alt=""
                       className="relative block max-w-none"
                       style={{ left: crop.x, top: crop.y, width: crop.width, height: crop.height }}
                     />
+                    {pic.cut ? (
+                      /* What was cropped away stays in sight, dimmed, the
+                         kept part framed in white. */
+                      <span
+                        aria-hidden="true"
+                        className="absolute border border-white"
+                        style={{
+                          left: crop.x + pic.cut.rect.x * crop.width,
+                          top: crop.y + pic.cut.rect.y * crop.height,
+                          width: pic.cut.rect.width * crop.width,
+                          height: pic.cut.rect.height * crop.height,
+                          boxShadow: CROP_SHADE,
+                        }}
+                      />
+                    ) : null}
                   </span>
                 ) : (
                   <span className="block h-[42px] w-[64px] animate-pulse rounded-lg bg-zinc-100 motion-reduce:animate-none dark:bg-zinc-800" />
