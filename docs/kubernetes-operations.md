@@ -757,6 +757,53 @@ merge-followups and governance-proposal instances this release wrote are version
 older code leaves an instance a newer version wrote alone. With those flags on, such an
 instance waits until the release comes back.
 
+## Workflow preview machine
+
+`platform.workflowPreviewsEnabled` (default `false`) becomes `WF_PREVIEWS_ENABLED`. When
+it is on, every source of a preview or a checks run asks the preview machine, which builds,
+checks and retires previews as durable work, and records who is working on a session.
+The stuck-checks sweep, the harvest, the by-name reap and the orphan-database sweep leave
+the sessions it holds alone. It needs no other workflow flag. `docs/workflows.md` explains
+the machine.
+
+**On the cluster.** A preview keeps its per-session Deployment, Service and Ingress
+(`sv-preview-<appId>-s<sessionId>`). Each attempt has its own env Secret
+(`<name>-env-a<n>`) and database (one per claim of its build, should a build be claimed
+again after a crash), and the Deployment carries the annotation
+`social.usernode.io/preview-attempt`: the newest attempt that wrote it and which claim of
+its build, as `n.k` (a bare `n` is claim 0). The attempt's Secret carries the same
+annotation, so an older claim never writes its database back into it. A failed rollout
+restores the template that served, so the older revision keeps serving. Each platform
+process also holds one more database connection, for its presence lock.
+
+### Activation and rollback
+
+1. **Set the value** in the platform's values in the infra repository. Argo CD rolls the
+   Deployments.
+2. **While the replaced Pods drain.** A Pod the release replaced finishes the previews it
+   was building the old way, for up to `platform.drainMinutes`. Once a new Pod has recorded
+   the flag, the ownership trigger logs such writes in `wf_ownership_violations` (`log`
+   mode in production).
+   - **Where the work runs.** The machine's builds and checks runs are its work items,
+     which only the leader runs: with the web and conductor split, the conductor Pod.
+     Each build clones the proposal into that Pod's `/tmp` and follows its rollout there,
+     so size `platform.conductor.resources` for the previews built at once.
+3. **Verify.**
+   - **The new Pod's log.** `Workflow runtime started` lists `preview`.
+   - **Admin → Workflows.** The next revision appears as `preview / session:<id>`, goes
+     through `preparing` and `checking`, and settles; the problems panel is empty.
+   - **The cluster.** `kubectl -n social-apps get secrets` shows `-env-a<n>` Secrets, only
+     for attempts that serve or are being prepared.
+
+**Rollback.** Set the value back to `false`. The next boot hands every session the machine
+holds back to the old paths (`Detach`): its work is cancelled, what it built stays (its
+databases follow the old naming, so the orphan sweep collects them once unlinked), and the
+old paths own the sessions again. Turning it on again later adopts each session from its
+row. The old paths delete a preview's `-env` Secret only: a held session's `-env-a<n>`
+Secrets stay until the machine retires the preview again, or are deleted by hand: list
+them with `kubectl -n social-apps get secrets -l social.usernode.io/session-id=<id>` and
+delete only the `-env-a<n>` ones (the `-env` Secret is the old paths' preview's).
+
 ## Read-only inventory and logs
 
 These examples use the organization namespace and Deployment names. Substitute

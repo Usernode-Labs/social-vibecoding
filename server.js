@@ -4347,7 +4347,15 @@ async function finalizeRecoveredTurn({
     // expensive build known to have failed.
     const publishRecoveredStaging = async ({ outcome, stagingUrl = null, failure = null }) => {
       const succeeded = outcome === 'success';
-      const metadata = succeeded
+      const metadata = outcome === 'building'
+        ? {
+            changesReady: true,
+            stagingBuild: 'running',
+            prNumber: prResult?.prNumber || session.pr_number || null,
+            prUrl: prResult?.prUrl || session.pr_url || null,
+            recovered: true,
+          }
+        : succeeded
         ? {
             stagingUrl,
             changesReady: true,
@@ -4397,7 +4405,7 @@ async function finalizeRecoveredTurn({
           testingMd: session.testing_md || null,
           testingPath: session.testing_path || null,
         });
-      } else if (applied) {
+      } else if (applied && value.outcome !== 'building') {
         emit('staging_failed', {
           error: value.metadata.error,
           errorName: value.metadata.stagingErrorName,
@@ -4441,6 +4449,21 @@ async function finalizeRecoveredTurn({
     }
 
     if (!reusedStaging) emit('status', { text: 'Building staging preview...' });
+
+    // With WF_PREVIEWS_ENABLED on the preview machine builds and checks the
+    // recovered commit (a preview it already serves for it is joined). A
+    // promoted proposal's votes are retired first: its reviewed head is the
+    // pin the machine checks a revision against.
+    if (require('./src/services/preview-workflow').enabled()) {
+      await retireVotesOnceStaged();
+      if (await require('./src/services/preview-workflow').revision({
+        pool, session, head: result.sha, source: 'turn', trigger: 'boot-reconcile',
+      })) {
+        await publishRecoveredStaging({ outcome: 'building' });
+        summaryParts.push('The staging preview is building; its checks run once it is up.');
+        return { outcome: 'done', summary: summaryParts.join('\n\n') };
+      }
+    }
 
     // A reused preview is the one the live tail built for this commit, and
     // its checks may already have a verdict for it: the live tail pended
@@ -4656,7 +4679,7 @@ async function resumeDetachedTurn(args) {
   // sweepers see the session as busy — the sessions 2391/2386 incident
   // was the sweeper pausing sessions and destroying their workers in
   // the window between the journal tail ending and finalize completing.
-  activeWorkersSvc.activeWorkers.add(sessionId);
+  await activeWorkersSvc.activeWorkers.enter(sessionId);
   // Whether the recovery got to the end of the turn's work: only then has
   // the conversation that dispatched it something new to read.
   let recoveredToEnd = false;

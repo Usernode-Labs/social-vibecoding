@@ -547,6 +547,105 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null } = {}) 
   }
 }
 
+// A preview machine's checks run whose claim was lost (its process died, or
+// its lease ran out), collected by the retry of the same work item rather
+// than run again (src/workflow/preview/services.ts checks.run): the Jobs its
+// manifest names, read to the end and settled in collect mode, so the
+// settlement is returned for the machine to store. Null when there is
+// nothing to read (no launched manifest, a Job gone, a blocking unit suite
+// that cannot be read): the retry then runs the checks again. Throws the
+// signal's reason when the work item is cancelled meanwhile, and throws when
+// whether the unit suite blocks merges cannot be read: the item is retried
+// and reads the Jobs again, as the harvest's run waits for its next sweep.
+// Never settled as advisory on that doubt (#4996, #4973).
+async function collectForWorkflow(config, pool, { runKey, session, app, signal }) {
+  const visuals = require('./visuals');
+  const kubernetes = require('./kubernetes');
+  const unitSuite = require('./unit-suite');
+  const checkHistory = require('./check-history');
+  const appManifest = require('./app-manifest');
+  if (!isEnabled(config)) return null;
+  // The newest claim of the run that launched its Jobs.
+  const { rows: [row] } = await pool.query(
+    `SELECT run_id, session_id, commit_sha, manifest, started_at FROM check_runs
+      WHERE session_id = $1 AND manifest->>'runKey' = $2 AND manifest->>'launched' = 'true'
+      ORDER BY started_at DESC LIMIT 1`, [session.id, runKey]);
+  const manifest = row?.manifest || {};
+  if (!row || manifest.workflow !== true) return null;
+  const runId = row.run_id;
+  const sessionId = Number(session.id);
+  const commitSha = row.commit_sha || null;
+  const jobs = await kubernetes.findCheckJobs(config, { sessionId, previewRunId: runId });
+  const unitJobs = Array.isArray(jobs.unitSuites) && jobs.unitSuites.length
+    ? jobs.unitSuites : (jobs.unitSuite ? [jobs.unitSuite] : []);
+  const captureJobs = Array.isArray(jobs.captures) ? jobs.captures : (jobs.capture ? [jobs.capture] : []);
+  const captureExpected = !(manifest.shotsOnly && !manifest.media);
+  if (captureExpected && captureJobs.length < (Number(manifest.captureShards) || 1)) return null;
+  const unitTracker = unitSuite.makeUnitSuiteTracker(await unitSuite.loadExpectedTests(pool, app.id));
+  const [capture, unit] = await Promise.all([
+    captureJobs.length ? Promise.all(captureJobs.map((job) => kubernetes.collectCheckJob(config, {
+      name: job.name, kind: 'capture',
+      timeoutMs: visuals.RUN_TIMEOUT_MS + DEADLINE_SLACK_MS, maxBuffer: visuals.RUN_MAX_BUFFER, signal,
+    }))).then(joinCaptures) : Promise.resolve(null),
+    unitJobs.length ? Promise.all(unitJobs.map((job) => kubernetes.collectCheckJob(config, {
+      name: job.name, kind: 'unit-suite',
+      timeoutMs: unitSuite.UNIT_SUITE_TIMEOUT_MS + DEADLINE_SLACK_MS, maxBuffer: unitSuite.UNIT_SUITE_MAX_BUFFER,
+      onStdoutLine: (line) => {
+        if (unitJobs.length > 1 && /^# (tests|pass|fail|skipped|cancelled|todo) /.test(line)) return;
+        unitTracker.feed(line);
+      },
+      signal,
+    }))).then((results) => joinUnitResults(results, Number(jobs.unitShards) || 1)) : Promise.resolve(null),
+  ]);
+  if (signal?.aborted) throw signal.reason;
+  if (capture && (capture.state === 'gone' || capture.state === 'aborted')) return null;
+  const graduated = (await checkHistory.loadGraduated(pool, app.id, { sessionId, strict: true }))
+    .has(appManifest.checkKey(unitSuite.UNIT_CHECK_NAME, unitSuite.UNIT_CHECK_PATH));
+  let unitOutcome = null;
+  if (unit && (unit.state === 'succeeded' || unit.state === 'failed' || unit.state === 'timeout')) {
+    unitOutcome = await unitSuite.outcomeFromLog({
+      pool, appId: app.id, sessionId, succeeded: unit.state === 'succeeded',
+      stdout: unit.stdout, stderr: unit.stderr, timedOut: unit.timedOut || unit.state === 'timeout',
+      exitCode: unit.exitCode, graduated, tracker: unitTracker,
+    });
+  }
+  // As the harvest: a suite that blocks merges and cannot be read is one
+  // only a fresh run can judge.
+  if (!unitOutcome && !manifest.shotsOnly && graduated) return null;
+  // As the harvest: a capture Job that wrote nothing at all, or that its
+  // deadline did not end, says nothing about the proposal. It is the
+  // platform's fault, and spends none of the proposal's automatic retries.
+  if (capture && ((capture.state === 'failed' && !capture.stdout.trim()) || capture.state === 'timeout')) {
+    const why = capture.state === 'timeout'
+      ? 'capture Job still running past its deadline'
+      : `capture Job failed${capture.stderr ? ` (${capture.stderr})` : ''}`;
+    kubernetes.deleteSettledCheckJobs(config, { sessionId, previewRunId: runId }).catch(() => {});
+    await checkRuns.finish(pool, runId);
+    return { outcome: 'blocked', reason: why.slice(0, 300), platformFault: true };
+  }
+  const settled = await visuals.settleCaptureRun(config, pool, {
+    session, app, commitHash: commitSha, trigger: manifest.trigger || null, send: null, operation: null,
+    runStartedAt: Number(manifest.startedAt) || Date.parse(row.started_at) || Date.now(),
+    shotsOnly: !!manifest.shotsOnly, admissionReason: manifest.admissionReason || null,
+    media: !!manifest.media, legacyMediaSuppressed: manifest.legacyMediaSuppressed === true,
+    capturePaths: Array.isArray(manifest.capturePaths) && manifest.capturePaths.length ? manifest.capturePaths : ['/'],
+    pathDefaulted: !!manifest.pathDefaulted, captureRouteSource: manifest.captureRouteSource || null,
+    visualScenarios: Array.isArray(manifest.visualScenarios) ? manifest.visualScenarios : [],
+    prodRunning: !!manifest.prodRunning, stagingOrigin: manifest.stagingOrigin || '',
+    targets: Array.isArray(manifest.targets) ? manifest.targets : [],
+    testsCount: Number(manifest.testsCount) || 0,
+    dispatched: Array.isArray(manifest.dispatched) ? manifest.dispatched : null,
+    ceilingDropped: Number(manifest.ceilingDropped) || 0,
+    stdout: capture ? capture.stdout : '', stderr: capture ? (capture.stderr || '') : '',
+    runPartial: capture ? !!capture.partial : false, runPartialReason: capture ? (capture.partialReason || '') : '',
+    unitOutcome, collect: { runId: runKey },
+  });
+  // Read out: the Jobs and the row go, as a live run's do once it settles.
+  kubernetes.deleteSettledCheckJobs(config, { sessionId, previewRunId: runId }).catch(() => {});
+  await checkRuns.finish(pool, runId);
+  return settled.result;
+}
+
 // One pass over every orphaned manifest, in two phases. The claims run
 // inline — every orphan is seated (claimRun) before the returned promise
 // settles, so a caller that sequences the stale sweep after this one is
@@ -768,6 +867,7 @@ function start(config, { intervalMs = SWEEP_MS } = {}) {
 
 module.exports = {
   SWEEP_MS,
+  collectForWorkflow,
   isEnabled,
   isHarvesting,
   sweep,

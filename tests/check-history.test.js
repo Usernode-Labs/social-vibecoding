@@ -122,7 +122,8 @@ test('recordRun adds this proposal\'s passes to its own, leaving out what a merg
   ], { sessionId: 7494 });
   const own = pool.calls.find((c) => /SET checks_earned_keys/.test(c.text));
   assert.ok(own, 'the proposal row is written');
-  assert.deepEqual(own.params, [7494, 7, ['k-pass', 'k-first']], 'every check that passed in this run, and only those');
+  assert.deepEqual(own.params, [7494, 7, ['k-first', 'k-pass']],
+    'every check that passed in this run, and only those (in check_key order: two runs of one app lock alike)');
   const sql = own.text.replace(/\s+/g, ' ');
   assert.match(sql, /merged_pass_at IS NOT NULL/, 'checks blocking for everybody are not stored again');
   assert.match(sql, /checks_earned_settled_at IS NULL/, 'never after its passes were folded in');

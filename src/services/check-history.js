@@ -64,6 +64,7 @@
 
 const appManifest = require('./app-manifest');
 const log = require('./logger');
+const checkStore = require('../workflow/rules/check-store.ts');
 
 // Rows for checks nobody has declared in this long are pruned on the next
 // run that touches the app, so renamed / deleted checks age out instead of
@@ -250,127 +251,18 @@ async function bootstrapIfEmpty(pool, appId, declaredTests) {
 }
 
 // Record one run's outcomes. `rows` is [{ checkKey, name, path, passed }].
-//
-// `first_passed_at` is stamped with COALESCE so it only ever records the
-// FIRST pass; `last_failed_at` never clears it. That asymmetry is the
-// no-demotion rule expressed in SQL. It is the first pass ANYWHERE, kept
-// for the record; what gates is merged_pass_at (settleMergedPasses).
-//
-// With `sessionId`, the checks this run passed that no merge has made
-// blocking yet are added to that proposal's own checks_earned_keys: they
-// block its later heads, and everybody's once it merges.
+// One copy, shared with the preview machine, which records a run inside the
+// transition that stores its verdict: src/workflow/rules/check-store.ts
+// (the no-demotion rule and the earned keys are explained there). Never
+// throws here: history is best-effort for the code not migrated yet.
 //
 // Called only after storeChecks() reports it actually wrote — a run whose
 // snapshot was discarded as stale must not move history either.
 async function recordRun(pool, appId, rows, { sessionId = null } = {}) {
   if (!pool || !appId || !Array.isArray(rows) || !rows.length) return 0;
-  const capped = rows.slice(0, MAX_ROWS_PER_RUN);
   try {
-    const values = [];
-    const params = [appId];
-    for (const r of capped) {
-      if (!r || !r.checkKey) continue;
-      const base = params.length;
-      // Counts, not a boolean: a check on its first appearance runs
-      // NEW_CHECK_RUNS times and lands here as one row carrying all of
-      // them. A single observation is just passes=1 or fails=1, which is
-      // what every caller but that one sends.
-      const passes = Number.isInteger(r.passes) ? r.passes : (r.passed ? 1 : 0);
-      const fails = Number.isInteger(r.fails) ? r.fails : (r.passed ? 0 : 1);
-      if (passes <= 0 && fails <= 0) continue;
-      params.push(r.checkKey, String(r.name || ''), String(r.path || ''), passes, fails);
-      // EVERY column carries an explicit cast, not just `passed`.
-      //
-      // A bind parameter inside a sub-SELECT's VALUES list has nothing to
-      // infer a type from, so postgres resolves it to `text`. `passed` was
-      // already cast because `CASE WHEN v.passed` on a text column throws
-      // outright — a loud failure. `app_id` failed the quieter way: the
-      // VALUES column came out `text`, the INSERT target is `integer`, and
-      // postgres refused the statement with "column app_id is of type
-      // integer but expression is of type text". recordRun swallows its
-      // errors as non-fatal, so every run logged one warning and wrote
-      // nothing — leaving app_check_history empty, which the earned-gating
-      // rule reads as "no check has ever passed", i.e. nothing blocking.
-      // The check_* columns are varchar; text coerces there, but they are
-      // cast too so the next reader doesn't have to work out which of the
-      // five were load-bearing.
-      values.push(
-        `($1::int, $${base + 1}::text, $${base + 2}::text, `
-        + `$${base + 3}::text, $${base + 4}::int, $${base + 5}::int)`
-      );
-    }
-    if (!values.length) return 0;
-    await pool.query(
-      `INSERT INTO app_check_history AS h
-         (app_id, check_key, check_name, check_path,
-          first_passed_at, last_passed_at, last_failed_at, last_seen_at,
-          pass_count, fail_count, consecutive_passes, merged_pass_known)
-       SELECT v.app_id, v.check_key, v.check_name, v.check_path,
-              CASE WHEN v.passes > 0 THEN NOW() ELSE NULL END,
-              CASE WHEN v.passes > 0 THEN NOW() ELSE NULL END,
-              CASE WHEN v.fails > 0 THEN NOW() ELSE NULL END,
-              NOW(),
-              v.passes,
-              v.fails,
-              -- One failure anywhere in the run ends the streak, however
-              -- many passes came with it.
-              CASE WHEN v.fails > 0 THEN 0 ELSE v.passes END,
-              -- Written explicitly, so the schema's one-time backfill of
-              -- merged_pass_at (which reads a NULL here as "from before
-              -- the merged rule") never reaches a row made under it.
-              TRUE
-         FROM (VALUES ${values.join(', ')})
-              AS v(app_id, check_key, check_name, check_path, passes, fails)
-       ON CONFLICT (app_id, check_key) DO UPDATE SET
-         check_name = EXCLUDED.check_name,
-         check_path = EXCLUDED.check_path,
-         merged_pass_known = TRUE,
-         -- COALESCE, so the first observed pass is the one that sticks and
-         -- a later failure can never un-graduate the check.
-         first_passed_at = COALESCE(h.first_passed_at, EXCLUDED.first_passed_at),
-         last_passed_at = COALESCE(EXCLUDED.last_passed_at, h.last_passed_at),
-         last_failed_at = COALESCE(EXCLUDED.last_failed_at, h.last_failed_at),
-         last_seen_at = NOW(),
-         pass_count = h.pass_count + EXCLUDED.pass_count,
-         fail_count = h.fail_count + EXCLUDED.fail_count,
-         -- The one counter that goes DOWN. EXCLUDED's value is 1 on a pass
-         -- and 0 on a failure, so this reads as "extend the run, or start
-         -- it again from nothing". It is the only reason a check that
-         -- passes nine times and fails once does not gate.
-         consecutive_passes = CASE WHEN EXCLUDED.consecutive_passes > 0
-           THEN COALESCE(h.consecutive_passes, 0) + EXCLUDED.consecutive_passes
-           ELSE 0 END`,
-      params
-    );
-    const own = proposalId(sessionId);
-    const passed = capped
-      .filter((r) => r && r.checkKey && (Number.isInteger(r.passes) ? r.passes > 0 : !!r.passed))
-      .map((r) => String(r.checkKey));
-    if (own && passed.length) {
-      // Only what a merge has not already made blocking for everybody, so
-      // the list stays the handful of new or backlog checks, not the suite.
-      // A row already folded in after its merge is left alone.
-      await pool.query(
-        `UPDATE chat_sessions cs
-            SET checks_earned_keys = NULLIF(ARRAY(
-                  SELECT DISTINCT k
-                    FROM unnest(COALESCE(cs.checks_earned_keys, '{}'::text[]) || $3::text[]) AS k
-                   WHERE NOT EXISTS (
-                     SELECT 1 FROM app_check_history h
-                      WHERE h.app_id = $2 AND h.check_key = k AND h.merged_pass_at IS NOT NULL)
-                   ORDER BY k), '{}'::text[])
-          WHERE cs.id = $1 AND cs.app_id = $2 AND cs.checks_earned_settled_at IS NULL`,
-        [own, appId, passed]
-      ).catch((err) => log.warn('check-history', 'Own passes record failed (non-fatal)', {
-        appId, sessionId: own, err: err.message,
-      }));
-    }
-    await pool.query(
-      `DELETE FROM app_check_history
-        WHERE app_id = $1 AND last_seen_at < NOW() - make_interval(days => $2)`,
-      [appId, PRUNE_AFTER_DAYS]
-    ).catch(() => {});
-    return capped.length;
+    return await checkStore.recordRun(pool, appId, rows,
+      { sessionId: proposalId(sessionId), maxRows: MAX_ROWS_PER_RUN, pruneAfterDays: PRUNE_AFTER_DAYS });
   } catch (err) {
     log.warn('check-history', 'Run record failed (non-fatal)', { appId, err: err.message });
     return 0;

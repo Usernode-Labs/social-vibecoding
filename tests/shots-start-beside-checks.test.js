@@ -72,8 +72,8 @@ test('the checks run starts the shots right after it claims the preview, and sti
   const decided = body.indexOf('checksAlreadyDecided(pool, session.id, commitHash)');
   assert.ok(claim > 0 && early > claim && early < decided,
     'after the run claims its slot, before any early return');
-  assert.match(body, /scheduleShots\(config, pool, session\.id, commitHash\);\n  \}\n\}/,
-    'the hand-off after the checks stays as the fallback');
+  assert.match(body, /if \(!workflow\) \{\n[^}]*scheduleShots\(config, pool, session\.id, commitHash\);\n    \}\n  \}\n\}/,
+    'the hand-off after the checks stays as the fallback (a preview machine\'s run: its follow-ups)');
 });
 
 test('an interrupted run is looked for every 30 seconds, apart from the two-minute sweep', () => {
