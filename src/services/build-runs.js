@@ -68,14 +68,16 @@ function announce(key, outcome) {
   ended.emit(key, outcome || null);
 }
 
-/**
- * Resolves once the build `key` has ended: heard here (its handler, or its
- * loss, ran in this process) or read from its state (it ended elsewhere).
- * Resolves its result, or null. Never rejects.
- */
 // A build asked for but not yet created (its Requested event waits for a
 // pipeline slot) reads as no instance: it is waited for this long.
 const UNBORN_MS = 10 * 60 * 1000;
+
+/**
+ * Resolves once the build `key` has ended: heard here (its handler, or its
+ * loss, ran in this process: the instance moves to its end a moment later)
+ * or read from its state (it ended elsewhere). Resolves its result, or null.
+ * Never rejects.
+ */
 
 function whenEnded(key, { pollMs = POLL_MS } = {}) {
   const since = Date.now();
@@ -111,7 +113,9 @@ function whenEnded(key, { pollMs = POLL_MS } = {}) {
       timer = setTimeout(look, pollMs);
       if (typeof timer.unref === 'function') timer.unref();
     };
-    timer = setTimeout(look, pollMs);
+    // Looked at once: a build that ended already (asked for again) is not
+    // waited for a whole poll.
+    timer = setTimeout(look, 0);
     if (typeof timer.unref === 'function') timer.unref();
   });
 }

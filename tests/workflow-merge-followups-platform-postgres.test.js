@@ -226,7 +226,11 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
     await quiet();
     await platform.stopWorkflow();
     await platform.startWorkflow(off, { loops: true });
-    assert.equal(platform.workflowRunning(), false, 'nothing left: no runtime');
+    // Nothing left of the merges: the runtime still runs, for the bot's
+    // builds (docs/plans/bot-build-workflow.md), without the merge machine.
+    assert.equal(platform.workflowRunning(), true, 'the runtime runs for the bot\'s builds');
+    assert.equal(platform.mergeFollowupsEnabled(), false, 'and takes no merges');
+    await platform.stopWorkflow();
   });
 
   await t.test('with the flag off, a merge still waiting for a deploy keeps the runtime (review finding 3)', async () => {
