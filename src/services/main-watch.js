@@ -82,6 +82,7 @@ const unitSuite = require('./unit-suite');
 const unitSuiteRow = require('./unit-suite-row');
 const checkRuns = require('./check-runs');
 const checksQueue = require('./checks-queue');
+const leaderTimers = require('./leader-timers');
 // Required when used: it reads scripts/test-changed.js and the bot's queue.
 const redFix = () => require('./main-red-fix');
 
@@ -1080,19 +1081,22 @@ async function resumeInterrupted(config, { pool = null, olderThanMs = staleMs() 
   return { resumed, done: Promise.all(runs) };
 }
 
-/** The leader's timer for resumeInterrupted and recheckPaused. Returns a stop function. */
+/**
+ * The leader's timer for resumeInterrupted and recheckPaused. Returns a stop
+ * function. A leader timer (services/leader-timers.js): a re-drive can start
+ * a whole-tree run or release a paused main to merges, so none starts once
+ * shutdown has begun, and the sweeps of a tick under way are drained.
+ */
 function start(config, { intervalMs = 2 * 60 * 1000 } = {}) {
   if (!isEnabled()) return () => {};
-  const timer = setInterval(() => {
+  return leaderTimers.every('main-watch', () => Promise.all([
     resumeInterrupted(config).catch((err) => {
       log.warn('main-watch', 'Interrupted-run sweep failed (non-fatal)', { err: err.message });
-    });
+    }),
     recheckPaused(config).catch((err) => {
       log.warn('main-watch', 'Paused-main sweep failed (non-fatal)', { err: err.message });
-    });
-  }, intervalMs);
-  if (typeof timer.unref === 'function') timer.unref();
-  return () => clearInterval(timer);
+    }),
+  ]), intervalMs);
 }
 
 module.exports = {

@@ -771,3 +771,33 @@ test('no GitHub mergeability polling happens anywhere in a pass', async () => {
     await queue.enqueue({}, 7);
   } finally { teardown(); }
 });
+
+// LAST in the file: lifecycle's shutdown flag never resets in a process.
+//
+// Most triggers answer their request and never await the pass they set off
+// (a vote, a verdict), so before the in-flight registry the shutdown drain
+// could not see a merge under way and exited from under it. A pass is held
+// there now (src/services/inflight-work.js) until it ends, and the re-kick
+// it would run next is dropped once shutdown has begun: the next leader's
+// boot reconcile drains every app with open proposals.
+test('a pass is held where the shutdown drain waits for it, and no re-kick starts once shutdown has begun', async () => {
+  const inflight = require('../src/services/inflight-work');
+  const lifecycle = require('../src/services/lifecycle');
+  const { queue, events } = setup({ candidates: [candidate(1, 2)] });
+  const votes = require('../src/routes/votes'); // the stub setup installed
+  const merge = votes.checkAndMerge;
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  votes.checkAndMerge = async (...args) => { await gate; return merge(...args); };
+  try {
+    const pass = queue.enqueue({}, 7);
+    assert.deepEqual(inflight.snapshot().map((e) => e.name), ['merge-queue'], 'held while it runs');
+    queue.enqueue({}, 7); // a trigger mid-pass: flags a re-kick
+    lifecycle.setShuttingDown();
+    release();
+    await pass;
+    await new Promise((r) => setTimeout(r, 20));
+    assert.deepEqual(events.merges, [1], 'the pass under way finished; no second pass was started');
+    assert.equal(inflight.size(), 0);
+  } finally { teardown(); }
+});

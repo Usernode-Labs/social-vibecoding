@@ -93,6 +93,57 @@ async function runCleanup(server, { listener, pool }) {
   return order;
 }
 
+async function until(check, ms = 3000) {
+  const deadline = Date.now() + ms;
+  while (Date.now() < deadline) {
+    if (check()) return true;
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  return check();
+}
+
+// FIRST in the file, deliberately: once any cleanup() below has run the
+// process is shutting down for good, and a leader timer refuses to start.
+//
+// Through the whole drain the leader's timers used to keep firing — the
+// eligible-merge sweep, the drift poller, main-watch, app-heal — because
+// cleanup() cleared only the handles server.js kept, so a merge or a
+// rebuild could start moments before the exit cut it. Every one of them is
+// a leader timer now (src/services/leader-timers.js): cleanup() stops them
+// all as it begins, and the tick already running is drained, not cut.
+test('leader timers stop as shutdown begins, and the tick under way finishes before the pool closes', async () => {
+  const { server, logs } = loadServer();
+  const leaderTimers = require('../src/services/leader-timers');
+  const seq = [];
+  let started = 0;
+  leaderTimers.every('test-eligible-merge-sweep', async () => {
+    started += 1;
+    const n = started;
+    seq.push(`tick ${n} started`);
+    await new Promise((r) => setTimeout(r, 250));
+    seq.push(`tick ${n} finished`);
+  }, 40);
+  assert.ok(await until(() => started > 0), 'the timer runs while this process leads');
+  const startedBeforeShutdown = started;
+
+  const startedAt = Date.now();
+  const pool = fakePool({ endImpl: async () => { seq.push('poolEnd'); } });
+  const order = await runCleanup(server, { listener: fakeListener(), pool });
+  const elapsed = Date.now() - startedAt;
+
+  assert.deepEqual(order, ['exit:0']);
+  assert.equal(started, startedBeforeShutdown, 'no tick starts once shutdown has begun (the interval is 40ms)');
+  assert.equal(leaderTimers.has('test-eligible-merge-sweep'), false, 'cleared');
+  assert.deepEqual(leaderTimers.snapshot(), []);
+  assert.equal(seq[seq.length - 1], 'poolEnd', 'every tick under way finished before the pool closed');
+  assert.equal(seq.filter((e) => / finished$/.test(e)).length, startedBeforeShutdown);
+  assert.ok(elapsed >= 150, `cleanup waited for the tick (${elapsed}ms)`);
+  const draining = logs.find((l) => l.msg === 'Draining in-flight requests and background work');
+  assert.ok(draining.data.timersStopped >= 1);
+  assert.ok(draining.data.background.some((e) => e.name === 'timer:test-eligible-merge-sweep'));
+  assert.ok(logs.some((l) => l.msg === 'In-flight requests and background work drained'));
+});
+
 test('cleanup closes the listener, then the pool, then exits', async () => {
   const { server, restore } = loadServer();
   try {
@@ -572,4 +623,176 @@ test('a target that cannot be read — unreachable, hung or failed — costs not
   } finally {
     restore();
   }
+});
+
+// ── The drain waits for what is in flight (requests, background work) ──
+//
+// It used to wait for busy workers and shots runs alone, so a pod with
+// neither exited the moment SIGTERM arrived: every handler mid-write and
+// every merge a vote had set off after answering was cut, with some eighty
+// seconds of the Kubernetes grace period unspent. The request count is
+// src/middleware/inflight-requests.js (mounted first in server.js; this file
+// shares its module instance), the registry src/services/inflight-work.js.
+
+const http = require('node:http');
+const express = require('express');
+const inflightRequests = require('../src/middleware/inflight-requests');
+const inflightWork = require('../src/services/inflight-work');
+const lifecycleModule = require('../src/services/lifecycle');
+
+async function withMiniApp(mount, fn) {
+  const mini = express();
+  mini.use(inflightRequests.inflightRequests());
+  mount(mini);
+  const srv = http.createServer(mini);
+  await new Promise((resolve) => srv.listen(0, '127.0.0.1', resolve));
+  try {
+    return await fn(srv.address().port);
+  } finally {
+    srv.closeAllConnections?.();
+    await new Promise((resolve) => srv.close(resolve));
+  }
+}
+
+function withDrainEnv(value, fn) {
+  const saved = process.env.PLATFORM_DRAIN_TIMEOUT_MS;
+  if (value === undefined) delete process.env.PLATFORM_DRAIN_TIMEOUT_MS;
+  else process.env.PLATFORM_DRAIN_TIMEOUT_MS = value;
+  return Promise.resolve().then(fn).finally(() => {
+    if (saved === undefined) delete process.env.PLATFORM_DRAIN_TIMEOUT_MS;
+    else process.env.PLATFORM_DRAIN_TIMEOUT_MS = saved;
+  });
+}
+
+test('server.js counts every request, ahead of every other middleware', () => {
+  const layers = serverModule.app._router.stack
+    .map((layer) => layer.name)
+    .filter((name) => name !== 'query' && name !== 'expressInit');
+  assert.equal(layers[0], 'trackInflightRequest');
+});
+
+test('the drain waits for a handler still answering, and closes the pool only after it has', async () => {
+  const { server, logs } = loadServer();
+  const seq = [];
+  await withMiniApp((mini) => {
+    mini.post('/api/sessions/:id/votes', async (_req, res) => {
+      await new Promise((r) => setTimeout(r, 300));
+      res.json({ ok: true });
+      seq.push('answered');
+    });
+  }, async (port) => {
+    const req = http.request({ host: '127.0.0.1', port, method: 'POST', path: '/api/sessions/7/votes', agent: false });
+    req.on('response', (res) => res.resume());
+    req.on('error', () => {});
+    req.end();
+    assert.ok(await until(() => inflightRequests.pending() === 1));
+
+    const startedAt = Date.now();
+    const pool = fakePool({ endImpl: async () => { seq.push('poolEnd'); } });
+    const order = await runCleanup(server, { listener: fakeListener(), pool });
+    const elapsed = Date.now() - startedAt;
+
+    assert.deepEqual(order, ['exit:0']);
+    assert.deepEqual(seq, ['answered', 'poolEnd']);
+    assert.ok(elapsed >= 200, `cleanup waited for the handler (${elapsed}ms)`);
+    const draining = logs.find((l) => l.msg === 'Draining in-flight requests and background work');
+    assert.equal(draining.data.requests, 1);
+    assert.equal(draining.data.deadlineMs, server.DRAIN_TIMEOUT_MS, 'the short drain outside Kubernetes');
+    assert.ok(logs.some((l) => l.msg === 'In-flight requests and background work drained'));
+  });
+});
+
+test('the drain waits for registered background work, such as a merge a vote set off after answering', async () => {
+  const { server } = loadServer();
+  const seq = [];
+  inflightWork.track('merge-queue', new Promise((r) => setTimeout(r, 250)).then(() => { seq.push('merged'); }));
+  const pool = fakePool({ endImpl: async () => { seq.push('poolEnd'); } });
+  await runCleanup(server, { listener: fakeListener(), pool });
+  assert.deepEqual(seq, ['merged', 'poolEnd']);
+});
+
+test('the deadline bounds the wait: work still running is logged by name and the exit goes on', async () => {
+  const { server, logs } = loadServer();
+  let release;
+  inflightWork.track('timer:main-drift-poller', new Promise((r) => { release = r; }));
+  try {
+    await withDrainEnv('300', async () => {
+      const startedAt = Date.now();
+      const order = await runCleanup(server, { listener: fakeListener(), pool: fakePool() });
+      const elapsed = Date.now() - startedAt;
+      assert.deepEqual(order, ['exit:0']);
+      assert.ok(elapsed >= 280 && elapsed < 3000, `bounded by PLATFORM_DRAIN_TIMEOUT_MS (${elapsed}ms)`);
+      const warned = logs.find((l) => l.msg === 'Drain deadline passed with requests or background work in flight');
+      assert.ok(warned, 'the cut is logged');
+      assert.equal(warned.data.deadlineMs, 300);
+      assert.deepEqual(warned.data.background.map((e) => e.name), ['timer:main-drift-poller']);
+    });
+  } finally {
+    release();
+    await new Promise((r) => setImmediate(r));
+  }
+});
+
+test('an open event stream does not hold the drain', async () => {
+  const { server, logs } = loadServer();
+  await withMiniApp((mini) => {
+    mini.get('/api/sessions/:id/stream', (_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      res.write(': open\n\n');
+    });
+  }, async (port) => {
+    await new Promise((resolve) => {
+      http.get({ host: '127.0.0.1', port, path: '/api/sessions/7/stream', agent: false }, (res) => { res.resume(); resolve(); })
+        .on('error', () => {});
+    });
+    const startedAt = Date.now();
+    await runCleanup(server, { listener: fakeListener(), pool: fakePool() });
+    assert.ok(Date.now() - startedAt < 1000, 'a stream open for as long as its client likes is not waited on');
+    assert.equal(logs.some((l) => l.msg === 'Drain deadline passed with requests or background work in flight'), false);
+  });
+});
+
+test('the drain deadline is long only on the platform\'s Kubernetes Pods, and clamped', () => {
+  const d = lifecycleModule.drainDeadlineMs;
+  const short = serverModule.DRAIN_TIMEOUT_MS;
+  assert.equal(d({ kubernetes: false, shortMs: short, env: {} }), short, 'docker-compose keeps the short drain');
+  assert.equal(d({ kubernetes: true, shortMs: short, env: {} }), lifecycleModule.KUBERNETES_DRAIN_DEFAULT_MS);
+  assert.ok(lifecycleModule.KUBERNETES_DRAIN_DEFAULT_MS >= 30000, 'a real window for a merge or a sweep to finish');
+  assert.equal(d({ kubernetes: true, shortMs: short, env: { PLATFORM_DRAIN_TIMEOUT_MS: '20000' } }), 20000);
+  assert.equal(d({ kubernetes: true, shortMs: short, env: { PLATFORM_DRAIN_TIMEOUT_MS: '600000' } }),
+    lifecycleModule.KUBERNETES_DRAIN_MAX_MS, 'never past the ceiling the grace period allows');
+  assert.equal(d({ kubernetes: true, shortMs: short, env: { PLATFORM_DRAIN_TIMEOUT_MS: '-5' } }), 0);
+  assert.equal(d({ kubernetes: true, shortMs: short, env: { PLATFORM_DRAIN_TIMEOUT_MS: 'soon' } }),
+    lifecycleModule.KUBERNETES_DRAIN_DEFAULT_MS, 'a value that is not a number is ignored');
+  assert.equal(d({ kubernetes: false, shortMs: short, env: { PLATFORM_DRAIN_TIMEOUT_MS: '60000' } }), short,
+    'under compose the variable can only shorten it: there is no grace above it to spend');
+  assert.equal(d({ kubernetes: false, shortMs: short, env: { PLATFORM_DRAIN_TIMEOUT_MS: '1000' } }), 1000);
+  // This process is configured as every test is (no APP_RUNTIME): docker.
+  return withDrainEnv(undefined, () => {
+    assert.equal(serverModule.shutdownDrainMs(), short);
+  });
+});
+
+test('preStop, the longest drain and the rest of cleanup fit inside the platform Pod\'s grace period', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const chart = fs.readFileSync(path.join(__dirname, '..', 'deploy', 'helm', 'social-vibecoding-platform',
+    'templates', 'platform.yaml'), 'utf8');
+  const grace = chart.match(/terminationGracePeriodSeconds: (\d+)/);
+  const preStop = chart.match(/preStop: \{exec: \{command: \["sh", "-c", "sleep (\d+)"\]\}\}/);
+  assert.ok(grace && preStop, 'the chart still sets both');
+  const graceMs = Number(grace[1]) * 1000;
+  const preStopMs = Number(preStop[1]) * 1000;
+  // Kubernetes counts the grace from the start of termination, preStop
+  // included. After the drain, cleanup takes each of its bounded steps in
+  // turn (the shots mark, the build marks and the checks hand-over, the pool
+  // close), then releases the leader lock: a second is allowed for that.
+  const afterDrainMs = serverModule.SHOTS_SHUTDOWN_MARK_TIMEOUT_MS
+    + 3 * serverModule.BUILD_SHUTDOWN_MARK_TIMEOUT_MS
+    + serverModule.POOL_CLOSE_TIMEOUT_MS
+    + 1000;
+  const total = preStopMs + lifecycleModule.KUBERNETES_DRAIN_MAX_MS + afterDrainMs;
+  assert.ok(total < graceMs,
+    `preStop ${preStopMs} + drain ceiling ${lifecycleModule.KUBERNETES_DRAIN_MAX_MS} + the rest ${afterDrainMs} ` +
+    `= ${total}ms must stay below terminationGracePeriodSeconds (${graceMs}ms), or the kubelet SIGKILLs mid-cleanup`);
 });

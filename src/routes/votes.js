@@ -25,6 +25,7 @@ const limits = require('../services/limits');
 const { weekStartUtc } = require('../services/leaderboard-users');
 const { usesMockGithubForImports } = require('../config');
 const { drainGuard } = require('../services/lifecycle');
+const inflightWork = require('../services/inflight-work');
 const { isCliCredentialManagementSession } = require('../services/cli-api-policy');
 const visibleChangesContract = require('../services/visible-changes');
 const diagramContract = require('../services/diagram');
@@ -4059,8 +4060,9 @@ function voteRoutes(config) {
 
       // The live head read the response no longer waits on, then the
       // majority check. If it turns into a merge, a second broadcast flips
-      // the PR out of the vote panel and updates the "merged" list.
-      settleVoteInBackground({ config, pool, session, revision })
+      // the PR out of the vote panel and updates the "merged" list. Held in
+      // the in-flight registry so a shutdown's drain lets it finish.
+      inflightWork.track('vote-settle', settleVoteInBackground({ config, pool, session, revision }))
         .then((mergeResult) => {
           if (mergeResult?.merged) {
             pushVoteUpdate({ sessionId: session.id, appSlug: session.app_slug, merged: true });
@@ -5661,7 +5663,7 @@ function voteRoutes(config) {
       });
       res.json({ ok: true, queued: true });
 
-      checkAndMerge(config, pool, session, { force: true, forceBy: req.user })
+      inflightWork.track('force-merge', checkAndMerge(config, pool, session, { force: true, forceBy: req.user }))
         .then((mergeResult) => {
           if (mergeResult?.merged) {
             const { pushVoteUpdate } = require('../services/ws');

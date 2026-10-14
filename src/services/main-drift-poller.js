@@ -45,6 +45,8 @@ const { broadcastGlobal } = require('./ws');
 const { checkAndResolveConflicts } = require('./conflict-resolver');
 const releaseWatch = require('./release-watch');
 const githubBudget = require('./github-budget');
+const lifecycle = require('./lifecycle');
+const leaderTimers = require('./leader-timers');
 
 // 5 minutes default. GitHub's rest API has a 5000 req/hr limit per token.
 // A plain read of every running app's main every five minutes is 12 requests
@@ -347,6 +349,11 @@ async function poll(config) {
   // is never held.
   let checked = 0;
   for (const app of rows) {
+    // A redeploy started now would die with the process; the next leader's
+    // first poll picks the rest up.
+    if (lifecycle.isShuttingDown()) {
+      return { apps: rows.length, checked, held: false, stopped: true };
+    }
     if (!githubBudget.budgetAllows('background')) {
       log.debug('drift-poller', 'Pass held for the GitHub budget', { checked, left: rows.length - checked });
       return { apps: rows.length, checked, held: true };
@@ -367,12 +374,11 @@ function start(config) {
     return;
   }
   log.info('drift-poller', 'Starting', { intervalMs: POLL_INTERVAL_MS });
-  setTimeout(() => {
-    poll(config).catch((err) => log.error('drift-poller', 'Initial poll failed', { err: err.message }));
-  }, FIRST_POLL_DELAY_MS).unref?.();
-  setInterval(() => {
-    poll(config).catch((err) => log.error('drift-poller', 'Poll failed', { err: err.message }));
-  }, POLL_INTERVAL_MS).unref?.();
+  // A leader timer (services/leader-timers.js): no poll starts once shutdown
+  // has begun, and one under way is given the drain to finish.
+  leaderTimers.every('main-drift-poller', () => poll(config)
+    .catch((err) => log.error('drift-poller', 'Poll failed', { err: err.message })),
+  POLL_INTERVAL_MS, { firstDelayMs: FIRST_POLL_DELAY_MS });
 }
 
 module.exports = {

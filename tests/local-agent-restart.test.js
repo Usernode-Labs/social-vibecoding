@@ -129,7 +129,9 @@ test('the sweeper never takes the process down with it', () => {
     serverSource.indexOf('function startLocalAgentLeaseSweeper') + 900
   );
   assert.ok(/catch/.test(block), 'a failed sweep is logged, not thrown into the event loop');
-  assert.match(block, /unref\(\)|setInterval/);
+  // A leader timer (services/leader-timers.js): unref'd, skipped once
+  // shutdown begins and stopped by cleanup().
+  assert.match(block, /leaderTimers\.every\('local-agent-lease-sweep', tick, LOCAL_AGENT_SWEEP_MS\)/);
 });
 
 // ── The client rides out the outage ────────────────────────────────────────

@@ -13903,3 +13903,17 @@ CREATE INDEX IF NOT EXISTS idx_test_run_reports_slug
 CREATE INDEX IF NOT EXISTS idx_test_run_reports_user
   ON test_run_reports (test_user_id, created_at DESC);
 COMMENT ON TABLE test_run_reports IS 'staging:private';
+
+-- When each of the leader's long-interval sweeps last completed
+-- (services/leader-timers.js, a `durable` timer). The leader changes with
+-- every release, about every twenty minutes on a busy day, and an hourly
+-- setInterval restarts its clock at each election, so the stale-proposal
+-- sweep, the Workshop theme sweep and the grant prune went days without
+-- running. On election each one now runs when this says it is due. One row
+-- per sweep, written by the leader after each completed run; a sweep with
+-- no row has never run and is due at once. Nothing private: names and
+-- times.
+CREATE TABLE IF NOT EXISTS leader_sweeps (
+  name        TEXT PRIMARY KEY,
+  last_run_at TIMESTAMPTZ NOT NULL
+);

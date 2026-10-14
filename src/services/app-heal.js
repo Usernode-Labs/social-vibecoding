@@ -46,6 +46,8 @@ const applicationRuntime = require('./application-runtime');
 const appOutages = require('./app-outages');
 const appTeardown = require('./app-teardown');
 const { getPool } = require('../db/pool');
+const lifecycle = require('./lifecycle');
+const leaderTimers = require('./leader-timers');
 
 const FIRST_PASS_DELAY_MS = 30_000;
 const MAX_HEALS_PER_TICK = 3;
@@ -471,6 +473,8 @@ async function poll(config) {
   let attempts = 0;
   for (const app of rows) {
     if (attempts >= MAX_HEALS_PER_TICK) break;
+    // A restart or rebuild started now would die with the process.
+    if (lifecycle.isShuttingDown()) break;
     try {
       const result = await checkAndHealOne(config, pool, app, { background: true });
       appOutages.recordHealed(pool, app, result, 'sweep');
@@ -517,12 +521,11 @@ function start(config) {
     return;
   }
   log.info('app-heal', 'Starting', { intervalMs: interval, cooldownMs: cooldownMs(config) });
-  setTimeout(() => {
-    poll(config).catch((err) => log.error('app-heal', 'Initial sweep failed', { err: err.message }));
-  }, FIRST_PASS_DELAY_MS).unref?.();
-  setInterval(() => {
-    poll(config).catch((err) => log.error('app-heal', 'Sweep failed', { err: err.message }));
-  }, interval).unref?.();
+  // A leader timer (services/leader-timers.js): no sweep starts once
+  // shutdown has begun, and one under way is given the drain to finish.
+  leaderTimers.every('app-heal', () => poll(config)
+    .catch((err) => log.error('app-heal', 'Sweep failed', { err: err.message })),
+  interval, { firstDelayMs: FIRST_PASS_DELAY_MS });
 }
 
 // Test hook: clear all in-memory bookkeeping between test cases.

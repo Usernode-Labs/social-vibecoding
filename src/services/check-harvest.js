@@ -53,6 +53,7 @@
 const log = require('./logger');
 const checkRuns = require('./check-runs');
 const { getPool } = require('../db/pool');
+const leaderTimers = require('./leader-timers');
 
 const SWEEP_MS = Math.max(5000, Number(process.env.CHECK_HARVEST_SWEEP_MS) || 30_000);
 const MAX_CONCURRENT = Math.max(1, Number(process.env.CHECK_HARVEST_CONCURRENCY) || 3);
@@ -693,16 +694,16 @@ async function stopSupersededRuns(config, pool, { sessionId, runId, commitSha })
   }
 }
 
-// Leader-only ticker. Returns the stop function.
+// Leader-only ticker. Returns the stop function. A leader timer
+// (services/leader-timers.js): no tick once shutdown has begun, so nothing
+// is adopted by a process about to hand its rows over (cleanup's
+// check-runs.release). The claim phase of a tick under way is drained; its
+// detached reads are not waited on.
 function start(config, { intervalMs = SWEEP_MS } = {}) {
   if (!isEnabled(config)) return () => {};
-  const timer = setInterval(() => {
-    sweep(config, { reason: 'tick' }).catch((err) => {
-      log.warn('check-harvest', 'Harvest tick failed (non-fatal)', { err: err.message });
-    });
-  }, intervalMs);
-  if (typeof timer.unref === 'function') timer.unref();
-  return () => clearInterval(timer);
+  return leaderTimers.every('check-harvest', () => sweep(config, { reason: 'tick' }).catch((err) => {
+    log.warn('check-harvest', 'Harvest tick failed (non-fatal)', { err: err.message });
+  }), intervalMs);
 }
 
 module.exports = {

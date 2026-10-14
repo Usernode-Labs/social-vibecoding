@@ -541,9 +541,10 @@ test('the short description is suggested for everyone making a project, and ever
   // The bot's wake is only for a first version it builds.
   assert.match(src, /if \(botBuilds\) settingsModule\(\)\.noteIssueActivity\(/);
   assert.match(src, /if \(final && botBuilds\) \{/, 'no DM about a request the bot never took on');
-  // A sweep the bot's mode does not gate, on the leader.
+  // A sweep the bot's mode does not gate, on the leader (a leader timer:
+  // services/leader-timers.js unrefs it and stops it at shutdown).
   const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
-  assert.match(server, /\.sweepFirstVersions\(getPool\(config\), config\)[\s\S]{0,240}setInterval\(runFirstRequestSweep, 5 \* 60 \* 1000\)\.unref\(\);/);
+  assert.match(server, /\.sweepFirstVersions\(getPool\(config\), config\)[\s\S]{0,240}leaderTimers\.every\('first-request-sweep', runFirstRequestSweep, 5 \* 60 \* 1000\);/);
   const schema = fs.readFileSync(path.join(__dirname, '..', 'src', 'db', 'schema.sql'), 'utf8');
   assert.match(schema, /ALTER TABLE homeroom_bot_first_versions ADD COLUMN IF NOT EXISTS bot_builds BOOLEAN NOT NULL DEFAULT TRUE;/);
 });
