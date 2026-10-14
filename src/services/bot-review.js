@@ -69,6 +69,7 @@
 
 const crypto = require('crypto');
 const log = require('./logger');
+const durableSteps = require('./durable-steps');
 
 const MAX_ISSUES = 8;
 const SEVERITIES = Object.freeze(['blocker', 'major', 'minor']);
@@ -631,24 +632,28 @@ function artifactIdsOf(capture) {
  * `start` is the first build: { sha, commits, costUsd, activeMs }.
  *
  * R5: `resumeFrom` is the saved state of a review a restart cut short (see
- * the header): the loop carries on from it instead of starting over, and
- * `recoveredFix` is the result of the fix turn restart recovery followed to
- * its end, in fix()'s shape, used only when that state was waiting on its
- * round's fix. `leader` is stamped on every state saved. Once the platform
- * is shutting down (`isStopping`), the loop starts no further step and never
- * returns, as a bot turn that ends then is held (homeroom-bot-drain.js
- * holdAfterTurn): its last saved state is the next leader's to carry on, and
- * a step taken now (a fix turn, a rollback) would race it.
+ * the header): the loop carries on from it instead of starting over. A round
+ * whose fix had no result yet calls `fix` again for it; a build's fix is a
+ * durable turn (services/durable-turn.js), so that call follows the turn
+ * the restart caught, or returns the result it saved, rather than running
+ * it twice. `recoveredFix`, a fix turn's result in fix()'s shape, still
+ * stands in for that call when given. `leader` is stamped on every state
+ * saved. Once the build is no longer this process's (`fence` throws), the
+ * loop starts no further step: the stop is thrown to the build's handler,
+ * and its last saved state is the next owner's to carry on.
  *
  * Resolves the final state ({ state: 'done', round0, rounds, stop, finalSha,
  * finalCommits, finalCapture, lastBooted, costUsd (the review phase's own),
- * and `rolledBack` when a fix was undone }); never throws.
+ * and `rolledBack` when a fix was undone }); never throws, but a stop.
  */
 async function runReviewLoop({
   reviewer, start = {}, capture, review, fix, rollback = null, budgetCheck = null, skipCheck = null,
   onState = null, onProgress = null, now = Date.now,
   resumeFrom = null, recoveredFix = null, leader = PROCESS_ID,
-  isStopping = () => require('./lifecycle').isShuttingDown(),
+  // The durable context's fence (services/durable-steps.js): throws once the
+  // build is no longer this process's (its work item's lease is gone, or the
+  // process is stopping), before each step that acts.
+  fence = null,
 }) {
   const prior = inProgress(resumeFrom) ? JSON.parse(JSON.stringify(resumeFrom)) : null;
   // A review carried on keeps the shape it started with.
@@ -702,17 +707,22 @@ async function runReviewLoop({
     state.leader = leader;
     if (!onState) return;
     try { await onState(JSON.parse(JSON.stringify(state))); } catch (err) {
+      durableSteps.rethrowStop(err, 'review state');
       log.warn('bot-review', 'Could not record the review state (going on)', { err: err.message });
     }
   };
   const say = (line) => { if (onProgress) { try { onProgress(line); } catch { /* a watcher never stops a review */ } } };
-  // Shutting down: no further step (see above). Never resolves.
+  // No longer this process's to run: no further step (see above). The stop
+  // is thrown, past every catch below, to the build's handler, and the next
+  // claim of its work item carries the review on from its saved state.
   const holdIfStopping = async (next) => {
-    let stopping = false;
-    try { stopping = !!isStopping(); } catch { stopping = false; }
-    if (!stopping) return;
-    log.info('bot-review', 'Shutting down: the review stops here; the next leader carries it on', { next });
-    await new Promise(() => {});
+    if (typeof fence !== 'function') return;
+    try {
+      fence();
+    } catch (err) {
+      log.info('bot-review', 'The review stops here; the build\'s next owner carries it on', { next });
+      throw err;
+    }
   };
   const stopWith = (stop, detail = null) => { state.stop = stop; state.stopDetail = detail ? clip(detail, 300) : null; };
   // What the review has spent: each round's reviewer call and fix turn, as
@@ -949,6 +959,7 @@ async function runReviewLoop({
       entry = null;
     }
   } catch (err) {
+    durableSteps.rethrowStop(err, 'review loop');
     log.warn('bot-review', 'The review loop failed; what is built goes on', { err: err.message });
     if (!state.stop) stopWith(STOPS.error, err.message);
   }
@@ -986,11 +997,13 @@ async function runReviewLoop({
           state.finalCommits = state.lastBooted.commits;
           state.finalCapture = bootedCapture;
         } catch (err) {
+          durableSteps.rethrowStop(err, 'review rollback');
           state.rollbackError = clip(err.message || String(err), 300);
           log.warn('bot-review', 'Could not roll a broken fix back; what is committed goes on', { from, to: state.lastBooted.sha, err: err.message });
         }
       }
     } catch (err) {
+      durableSteps.rethrowStop(err, 'review final capture');
       log.warn('bot-review', 'The final capture failed; what is built goes on', { err: err.message });
       if (!state.stop) stopWith(STOPS.error, err.message);
     }

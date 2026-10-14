@@ -11,7 +11,6 @@ const models = require('./models');
 const inLoopBrowser = require('./in-loop-browser');
 const registry = require('../agents/registry');
 const turnLifecycle = require('./turn-lifecycle');
-const botDrain = require('./homeroom-bot-drain');
 const branchNames = require('./branch-names');
 const llmTelemetry = require('./llm-telemetry');
 const liveAgentSpend = require('./live-agent-spend');
@@ -3456,6 +3455,13 @@ async function execInWorker(sessionId, {
   // "Post-agent TAIL" note above. Default false — the sync path and any
   // future tail-less caller keep the original clear-on-exit behaviour.
   holdTurnRecord = false,
+  // Called with the turn record's identity ({ turnId, journal, turnUuid,
+  // mode }) once it is saved and before the turn is dispatched, so a caller
+  // that keeps its own steps (services/durable-turn.js) knows which record is
+  // its turn's should a restart come next. A throw (the caller's work is no
+  // longer this process's) dispatches nothing and leaves the record for the
+  // next owner, who finds it never dispatched.
+  onTurnRecord = null,
   // Kept as a compatibility option for older call sites. Persistence is now
   // required for every dispatch, not only recovered retries.
   requireActiveTurnPersistence = false,
@@ -3950,6 +3956,21 @@ async function execInWorker(sessionId, {
     throw err;
   }
 
+  if (typeof onTurnRecord === 'function') {
+    try {
+      await onTurnRecord({ turnId: durableTurnId, journal, turnUuid: turnUuid || null, mode });
+    } catch (err) {
+      // Nothing was dispatched: this process's registry goes back as it was,
+      // and the record stays for whoever owns the turn next.
+      _registryUpsert(sessionId, {
+        ...(replacedRegistryFields || { activeTurnMode: null, journal: null, activeTurnId: null }),
+        inFlight: false, lastUsedMs: Date.now(),
+      });
+      await revokeHomeroomReadGrant(sessionId, homeroomGrant);
+      throw err;
+    }
+  }
+
   // Visible to the `finally` below, which stamps the tail's seed
   // milestones (sha / pushOk) from whatever the exec established.
   let execState = null;
@@ -3987,10 +4008,6 @@ async function execInWorker(sessionId, {
     }).catch((err) => log.warn('worker', 'Failed to mark turn executing; durable dispatch remains recoverable', {
       sessionId, turnId: durableTurnId, err: err.message,
     }));
-    // The turn's record is saved and its process runs: a Homeroom bot
-    // pipeline that opened it is parked at a point restart recovery adopts
-    // (homeroom-bot-drain.js), so shutdown need not wait for it.
-    botDrain.noteTurnDispatched(sessionId, { mode });
     // onChild is legacy: there is no host-side child that owns the turn
     // anymore. Stop semantics live in stopTurn() (in-container pkill).
     if (typeof onChild === 'function') {
@@ -4073,17 +4090,6 @@ async function execInWorker(sessionId, {
     } catch (err) {
       consumeError = err;
     }
-    // A Homeroom bot pipeline's turn that ends once shutdown has begun goes
-    // no further: its record and journal stay as they are (this never
-    // returns, so the `finally` below never clears them) and the next
-    // leader adopts the finished turn, rather than this process starting a
-    // step it cannot finish (homeroom-bot-drain.js).
-    if (botDrain.holdAfterTurn()) {
-      log.info('worker', 'Shutting down: a Homeroom bot turn ended; left for the next leader', {
-        sessionId, turnId: durableTurnId, mode,
-      });
-      await new Promise(() => {});
-    }
     if (consumeError) {
       // What the turn did before the journal could not be read on, for the
       // ledger (sessions.js reads err.turnResult): its usage, its telemetry
@@ -4108,7 +4114,6 @@ async function execInWorker(sessionId, {
     }
     return finalizeHarnessResult(state);
   } finally {
-    if (providerDispatched) botDrain.noteTurnEnded(sessionId, { mode });
     // The agent process is done with the platform once its journal has
     // ended: the tail (PR, staging, the wrap-up) never uses this token.
     await revokeHomeroomReadGrant(sessionId, homeroomGrant);

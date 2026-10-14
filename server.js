@@ -2959,11 +2959,12 @@ async function abandonOrphanShotsTurn({
   if (!containerRunning) await worker.destroyWorker(containerName);
 }
 
-// #3654: a benchmark trial's worker that outlived a restart, when its turn
-// is not one recovery can finish (adoptBenchOrphan, below). The same
-// abandonment as a shots turn's (above), then the session is archived and
-// the trial put straight back in the lane's queue, what the attempt spent
-// charged to its run: the lane runs it again from the start.
+// #3654: a benchmark trial's worker that outlived a restart and that no
+// durable trial owns (trials are durable builds: services/build-runs.js; this
+// is one that started before they were). The same abandonment as a shots
+// turn's (above), then the session is archived and the trial put straight
+// back in the lane's queue, what the attempt spent charged to its run: the
+// lane runs it again from the start.
 async function abandonOrphanBenchTurn({
   pool, session, sessionId, containerName, containerRunning, retryRuntimeRecovery,
 }) {
@@ -3002,115 +3003,43 @@ async function abandonOrphanBenchTurn({
   });
 }
 
-/**
- * #3654: a benchmark trial's worker that outlived a restart, still running
- * the trial's LAST turn (a triage, a follow-up, a checks fix, a build's build
- * turn). Followed to its end like the bot's own (adoptBotOrphan): the journal
- * is replayed by resumeDetachedTurn, which hands the result to the lane
- * instead of the dev-chat tail (no PR, staging, wrap-up or notification),
- * while the trial holds its lane slot and keeps its own clock. Resolves
- * false, having done nothing, for a turn the lane cannot finish this way;
- * the caller abandons it. A recovery that fails without a retry scheduled
- * puts the trial back in the queue.
- */
-async function adoptBenchOrphan({
-  config, pool, staging, broadcastGlobal, session, sessionId, containerName, containerState,
-}) {
-  const activeTurn = session.active_turn || null;
-  if (containerState !== 'running' || !activeTurn || !activeTurn.journal) return false;
-  // Active, or paused under its turn (a build's nudge, a review's fix).
-  if (!require('./src/services/bench/runner').isRecoveredBenchSession(session)) return false;
-  const lane = require('./src/services/bench/lane');
-  let plan = null;
-  try {
-    plan = await lane.recoveryPlan(pool, session, activeTurn);
-  } catch (err) {
-    log.warn('server', 'Benchmark recovery plan failed; abandoning the turn', { sessionId, err: err.message });
-    return false;
-  }
-  if (!plan || !plan.resumable) return false;
-  if (worker.usesKubernetesWorkers()) {
-    // As for any adoption: the startup inventory may be stale. A worker that
-    // cannot be confirmed running is abandoned instead.
-    let state = null;
-    try { state = await worker.getWorkerStatus(containerName); } catch (_) { state = null; }
-    if (state !== 'running') return false;
-  }
-  log.info('server', 'Adopting a benchmark trial\'s last turn for the lane to finish', {
-    sessionId, containerName, trialId: plan.trial.id, stage: plan.trial.stage, mode: activeTurn.mode,
-  });
-  worker.adoptWarmWorker(sessionId, containerName);
-  try {
-    await lane.holdRecoveredTrial(plan.trial, sessionId, resumeDetachedTurn({
-      config, pool, staging, broadcastGlobal, session, sessionId, containerName, activeTurn,
-    }));
-  } catch (err) {
-    // A retained turn is retried by the caller's scheduler and adopted
-    // again; anything else will not be, so the trial goes back now.
-    if (!(err?.retainActiveTurn && recoveryRetry.shouldRetryRecoveryError(err))) {
-      await lane.releaseTrialOfSession(pool, sessionId, { why: `recovery failed: ${err.message}` });
-    }
-    throw err;
-  }
-  await worker.destroyWorker(containerName).catch(() => {});
-  return true;
-}
-
 function homeroomBotRecovery() {
   return require('./src/services/homeroom-bot');
 }
 
 /**
- * #3401: a worker of the Homeroom bot's that outlived a restart. With a
- * turn in flight, the journal is followed to its end as any recovered turn
- * is, and resumeDetachedTurnInner hands the result to the bot instead of
- * the dev-chat tail; the build holds its lane slot meanwhile. With nothing
- * to follow (the worker is gone, or idle between the spec and the build),
- * the bot puts its run back in the queue unspent.
+ * #3401: a worker of the Homeroom bot's that outlived a restart and that no
+ * durable build owns (a build's session is its build's: adoptOrphanWorker
+ * leaves it alone before this). What is left is a read (its triage), which
+ * the bot's queue reads again: its turn is stopped and its record cleared,
+ * its ledger attempt closed, and its session put back to rest. The bot's
+ * builds no longer come here: they carry themselves on (services/build-runs.js).
  */
-async function adoptBotOrphan({
-  config, pool, staging, broadcastGlobal, session, sessionId, containerName, containerState,
-}) {
+async function adoptBotOrphan({ pool, session, sessionId, containerName, containerState }) {
   const bot = homeroomBotRecovery();
   const activeTurn = session.active_turn || null;
-  if (containerState === 'running' && activeTurn && activeTurn.journal) {
-    log.info('server', 'Adopting a Homeroom bot turn for the bot to finish', {
-      sessionId, containerName, mode: activeTurn.mode,
-    });
-    worker.adoptWarmWorker(sessionId, containerName);
-    await bot.holdSlotDuringRecovery(pool, sessionId, resumeDetachedTurn({
-      config, pool, staging, broadcastGlobal, session, sessionId, containerName, activeTurn,
-    }));
-    // #3471: a live build is proposed (or said to have failed) only now,
-    // with the session free, the order the live path promotes in.
-    await bot.completeRecoveredLive({ pool, config, sessionId });
-    return;
-  }
-  // R5: a live first version in its review, between its turns (a capture,
-  // which runs detached in this worker, or a reviewer call). The worker is
-  // kept, so its capture is harvested rather than lost, and the review is
-  // carried on from the state it saved (homeroom-bot.js finishRecoveredLive).
-  if (containerState === 'running' && bot.isRecoveredBotReview(session)) {
-    log.info('server', 'Adopting a Homeroom bot worker whose first version is in its review', {
-      sessionId, containerName,
-    });
-    worker.adoptWarmWorker(sessionId, containerName);
-    await bot.abandonRecoveredTurn({ pool, session, why: 'the platform restarted during its review' });
-    await bot.completeRecoveredLive({ pool, config, sessionId });
-    return;
-  }
   if (activeTurn) {
-    const cleanupArgs = turnCleanupArgs(activeTurn);
+    const args = turnCleanupArgs(activeTurn);
+    if (containerState === 'running') {
+      worker.adoptWarmWorker(sessionId, containerName);
+      await worker.stopTurn(sessionId).catch(() => {});
+      worker.clearPendingStop(sessionId);
+    }
+    await abandonCodexAttempt(pool, sessionId, activeTurn, {
+      label: 'Orphaned Homeroom bot read',
+      errorDetail: 'A Homeroom bot read was stopped after the platform process that dispatched it exited; its request is read again.',
+    });
     recoveryRetry.requireDurableTurnCleanup(
-      await worker.finishTurn(sessionId, cleanupArgs),
-      cleanupArgs,
+      containerState === 'running'
+        ? await worker.finishTurn(sessionId, args)
+        : await worker.clearActiveTurn(sessionId, args),
+      args,
     );
   }
-  await worker.destroyWorker(containerName).catch(() => {});
+  if (containerState !== 'running') await worker.destroyWorker(containerName).catch(() => {});
   await bot.abandonRecoveredTurn({
-    pool, session, why: containerState === 'running' ? 'no turn was in flight' : 'the worker is gone',
+    pool, session, why: activeTurn ? 'the platform restarted during its turn' : 'no turn was in flight',
   });
-  await bot.completeRecoveredLive({ pool, config, sessionId });
 }
 
 async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcastGlobal }) {
@@ -3125,19 +3054,17 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
     // #896: app_self_hosted rides along so the recovered turn's Mayor
     // wrap-up gets the same system prompt a live turn would (the
     // self-hosted block changes what the Mayor is allowed to say).
-    // R5: and whether the session's live run is in its review, which a
-    // paused bot session's worker may be capturing for with no turn in
-    // flight (homeroom-bot.js isRecoveredBotSession; the same condition as
-    // its BOT_REVIEW_IN_PROGRESS_SQL, which tests hold this to).
+    // And whether a durable build that owns the session is still under way
+    // (bot-build, docs/plans/bot-build-workflow.md).
     `SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url,
             a.self_hosted AS app_self_hosted, u.username,
             u.is_synthetic AS user_is_synthetic,
-            EXISTS (
-              SELECT 1 FROM homeroom_bot_runs r
-               WHERE r.build_session_id = cs.id AND r.mode = 'live'
-                 AND r.build_ok IS NULL AND r.proposal_session_id IS NULL
-                 AND (r.review->>'state') IN ('reviewing', 'capturing')
-            ) AS bot_review_in_progress
+            (cs.workflow_owner IS NOT NULL AND EXISTS (
+              SELECT 1 FROM wf_instances w
+               WHERE w.machine = split_part(cs.workflow_owner, '/', 1)
+                 AND w.key = substr(cs.workflow_owner, length(split_part(cs.workflow_owner, '/', 1)) + 2)
+                 AND w.state = 'building'
+            )) AS workflow_owned
      FROM chat_sessions cs
      JOIN apps a ON cs.app_id = a.id
      JOIN users u ON cs.user_id = u.id
@@ -3151,6 +3078,28 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
     return;
   }
   const session = rows[0];
+
+  // A turn this process is following itself is no orphan. A follower serves
+  // requests and starts turns during a rollout's overlap, before it is
+  // promoted; adopting its own live turn here put a second consumer on its
+  // journal and finished it twice (cards, vote resets, wrap-ups), and the
+  // adoption's `finally` took the live owner's busy flag with it.
+  if (worker.getActiveTurnMode(sessionId) || activeWorkersSvc.isSessionBusy(sessionId)) {
+    log.info('server', 'A turn on this worker is live in this process; not adopting it', { containerName, sessionId });
+    return;
+  }
+
+  // A durable build's session: its worker and its turns are that build's,
+  // whose work item the next leader claims and carries on from its last
+  // saved step (services/build-runs.js). The worker is kept and registered;
+  // nothing else is done to it here.
+  if (session.workflow_owned) {
+    if (containerState === 'running') worker.adoptWarmWorker(sessionId, containerName);
+    log.info('server', 'Leaving a durable build\'s worker to its build', {
+      containerName, sessionId, owner: session.workflow_owner, state: containerState,
+    });
+    return;
+  }
 
   const recoveryAction = turnLifecycle.recoveryAction(session.active_turn);
   if (recoveryAction === 'quarantine') {
@@ -3174,11 +3123,9 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
   }
 
   // #1006: except a Homeroom bot session paused under a turn in flight,
-  // which is the bot's to follow or hand back (adoptBotOrphan below).
-  // Destroying it here, in silence and with its turn record left, lost six
-  // platform builds on 10-02 and spent their attempts. A benchmark trial's
-  // likewise (a build's nudge, a review's fix): the lane's to follow or
-  // put back (adoptBenchOrphan, abandonOrphanBenchTurn).
+  // whose turn is stopped and its record cleared (adoptBotOrphan below),
+  // and a benchmark trial's (abandonOrphanBenchTurn): destroying it here, in
+  // silence and with its turn record left, lost six platform builds on 10-02.
   if (!['active', 'promoted'].includes(session.status)
       && !homeroomBotRecovery().isRecoveredBotSession(session)
       && !require('./src/services/bench/runner').isRecoveredBenchSession(session)) {
@@ -3189,14 +3136,11 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
 
   // #3654: a Homeroom bot benchmark trial is never recovered into the
   // dev-chat tail below, which would open a PR, build staging and notify,
-  // none of which a trial may do. Its last turn is followed to its end and
-  // finished by the lane (adoptBenchOrphan); any other turn is stopped and
-  // abandoned, and the trial put back in the lane's queue at once
-  // (services/bench/lane.js).
+  // none of which a trial may do. A trial is a durable build, left to its
+  // build above; one that is not (it started before trials were durable)
+  // has its turn stopped and abandoned, and the trial put back in the
+  // lane's queue (services/bench/lane.js).
   if (require('./src/services/bench/runner').isBenchSession(session)) {
-    if (await adoptBenchOrphan({
-      config, pool, staging, broadcastGlobal, session, sessionId, containerName, containerState,
-    })) return;
     await abandonOrphanBenchTurn({
       pool, session, sessionId, containerName,
       containerRunning: containerState === 'running',
@@ -4478,13 +4422,9 @@ async function resumeDetachedTurnInner({
     ).catch(() => {});
   };
 
-  // A benchmark trial's watch (bench/lane.js recoveryWatch), set below once
-  // the session is known to be one: the studio sees the replay's lines.
-  let benchWatch = null;
   const onRecoveredProgress = (text) => {
     emit('cc_progress', { text, ...recoveryAgent.metadata });
     progressLines.push(text);
-    if (benchWatch) benchWatch.note(text);
     if (!flushQueued) {
       flushQueued = true;
       setTimeout(flushProgress, 1000);
@@ -4577,51 +4517,24 @@ async function resumeDetachedTurnInner({
     emit('done', {});
   };
 
-  // #3401: a bot turn keeps the bot's own clock across the restart. The
-  // live path stopped it at its budget; recovery would otherwise follow it
-  // for as long as the agent cares to run.
+  // The bot's builds and the bench's trials never reach this: a durable
+  // build's turns are its build's to follow (services/durable-turn.js), and
+  // adoptOrphanWorker leaves them alone.
   //
-  // #3654: and a benchmark trial's, whose result is the lane's to record.
-  // Checked first: a trial's session is never the bot's, but the dev-chat
-  // tail must be unreachable for it whatever the bot check says.
-  //
-  // Each restart that reaches the turn is counted on its record first, and
-  // the bot's clock gives that time back (homeroom-bot.js
-  // RESTART_ALLOWANCE_MS): the worker ran on, so a restart costs a build only
-  // the calls it makes back to the platform while the platform is down. A
-  // build whose clock still runs out ran too long on its own (7 Oct 2026:
-  // two builds that ran on through every restart were each sent round again
-  // from the start, twice).
-  //
-  // #4533: and a follow-up of the bot's on its own PROMOTED proposal, which
-  // goes on through the person's tail below (isRecoveredBotSession leaves it
-  // there on purpose) but keeps the bot's clock, from the deadline its turn
-  // record carries. Only a turn with the bot's mark: a person's turn on the
-  // same session is never stopped on it.
-  const benchTurn = require('./src/services/bench/runner').isBenchSession(session);
-  const botTurn = !benchTurn && homeroomBotRecovery().isRecoveredBotSession(session);
-  const botFollowUp = !benchTurn && !botTurn && homeroomBotRecovery().isRecoveredBotFollowUp(session, activeTurn);
+  // #4533: a follow-up of the bot's on its own PROMOTED proposal goes on
+  // through the person's tail below (isRecoveredBotSession leaves it there on
+  // purpose) but keeps the bot's clock, from the deadline its turn record
+  // carries. Each restart that reaches the turn is counted on its record
+  // first, and the clock gives that time back (durable-turn.js
+  // RESTART_ALLOWANCE_MS). Only a turn with the bot's mark: a person's turn
+  // on the same session is never stopped on it.
+  const botFollowUp = homeroomBotRecovery().isRecoveredBotFollowUp(session, activeTurn);
   let botTimedOut = false;
   let botClock = null;
-  // The bot's clock's deadline, for a recovered build that changed nothing:
-  // it is nudged on what is left of it, as the live path nudges one.
-  let botDeadline = null;
-  if (benchTurn) benchWatch = await require('./src/services/bench/lane').recoveryWatch(pool, sessionId, activeTurn);
-  if (botTurn || benchTurn || botFollowUp) {
+  if (botFollowUp) {
     const restarts = await turnLifecycle.noteRestart(pool, { sessionId, turnId: activeTurn.turnId }).catch(() => null);
     const clockTurn = Number.isInteger(restarts) ? { ...activeTurn, restarts } : activeTurn;
-    let deadline = await (benchTurn
-      ? require('./src/services/bench/lane').recoveryDeadline(pool, config, session, clockTurn)
-      : homeroomBotRecovery().recoveryDeadline(pool, config, session, clockTurn)).catch(() => null);
-    botDeadline = deadline;
-    // The bot's clock had already stopped this turn before the restart, and
-    // saved why on its record (homeroom-bot-live.js stopOnClock). Its journal
-    // ends in the 143 the stop left, which read alone is the agent's own
-    // failure: it is the time-out it was, whatever this clock has left.
-    if (botTurn && require('./src/services/homeroom-bot-live').botStopOf(activeTurn)) {
-      botTimedOut = true;
-      deadline = Date.now();
-    }
+    const deadline = await homeroomBotRecovery().recoveryDeadline(pool, config, session, clockTurn).catch(() => null);
     if (deadline != null) {
       const botClockMs = Math.max(0, deadline - Date.now());
       botClock = setTimeout(() => {
@@ -4676,7 +4589,7 @@ async function resumeDetachedTurnInner({
     // when it does throw, the user still asked for this to end. Close it as
     // a stop instead of reporting a failure they caused on purpose. (A
     // benchmark turn writes no stop card: its trial is put back below.)
-    if (handle.stopped && !benchTurn) {
+    if (handle.stopped) {
       await finishAsStopped(activeTurn);
       return;
     }
@@ -4722,33 +4635,6 @@ async function resumeDetachedTurnInner({
         });
         throw ledgerErr;
       }
-    }
-    // #3654: the trial goes back in the lane's queue, its spend charged;
-    // nothing is said anywhere.
-    if (benchTurn) {
-      if (benchWatch) await benchWatch.close();
-      const benchCleanup = turnCleanupArgs(activeTurn);
-      recoveryRetry.requireDurableTurnCleanup(
-        await worker.finishTurn(sessionId, benchCleanup),
-        benchCleanup,
-      );
-      await require('./src/services/bench/lane').releaseTrialOfSession(pool, sessionId, {
-        why: `the journal replay failed: ${err.message}`,
-      });
-      return;
-    }
-    // #3401: the bot's run goes back in the queue unspent; no breadcrumb
-    // or stalled notification, which nobody reads on the bot's session.
-    if (botTurn) {
-      const botCleanup = turnCleanupArgs(activeTurn);
-      recoveryRetry.requireDurableTurnCleanup(
-        await worker.finishTurn(sessionId, botCleanup),
-        botCleanup,
-      );
-      await homeroomBotRecovery().abandonRecoveredTurn({
-        pool, session, why: `the journal replay failed: ${err.message}`,
-      });
-      return;
     }
     // Terminal marker: the card must not stay frozen on the last line
     // the journal managed to deliver before the resume died. When the
@@ -4799,7 +4685,7 @@ async function resumeDetachedTurnInner({
   // going, so none of it may run. Close the turn as a stop and return.
   // (A benchmark turn writes no stop card either: the lane records the
   // trial as stopped on its clock, below.)
-  if (handle.stopped && !benchTurn) {
+  if (handle.stopped) {
     await finishAsStopped(recoveryActiveTurn, result);
     return;
   }
@@ -4889,56 +4775,6 @@ async function resumeDetachedTurnInner({
       sessionId, err: err.message,
     });
     throw err;
-  }
-
-  // A build whose commit the restart kept from being pushed (its worker's
-  // push landed while this platform was down) is pushed now, from the
-  // worker, as a person's recovered turn is below: what the bot or the lane
-  // reads next is the turn as the live path would have had it.
-  if (benchTurn || botTurn) {
-    result = await homeroomBotRecovery().repushRecovered({
-      session, activeTurn: recoveryActiveTurn, result, timedOut: botTimedOut || (benchTurn && !!handle.stopped),
-    });
-  }
-
-  // #3401: the journal is followed and the attempt settled; the rest is the
-  // dev-chat tail (a PR, staging, a wrap-up, a notification), which a bot
-  // turn must not get. The bot records the result on its run, then the
-  // turn record is cleared. Recording first: a failed clear is retried by
-  // the retained-recovery timer, and the bot's writes are guarded so the
-  // repeat records nothing twice.
-  // #3654: likewise a benchmark trial's: the lane reads the result as the
-  // live stage would and records the trial (or, failing that, puts it back
-  // in the queue), then the turn record is cleared. Its writes are guarded
-  // on the trial still running, so a retried clear records nothing twice.
-  if (benchTurn) {
-    // Its last lines written before the lane records the trial, which then
-    // takes its skills and looks from the watch.
-    if (benchWatch) await benchWatch.close();
-    await require('./src/services/bench/lane').finishRecoveredTrial({
-      pool, config, session, activeTurn: recoveryActiveTurn, result, timedOut: botTimedOut || !!handle.stopped,
-      // Every line of the turn, from its start: the looks it took (progress.js).
-      progress: progressLines,
-      watch: benchWatch,
-    });
-    const benchCleanup = turnCleanupArgs(recoveryActiveTurn);
-    recoveryRetry.requireDurableTurnCleanup(
-      await worker.finishTurn(sessionId, benchCleanup),
-      benchCleanup,
-    );
-    return;
-  }
-
-  if (botTurn) {
-    await homeroomBotRecovery().finishRecoveredTurn({
-      pool, session, activeTurn: recoveryActiveTurn, result, timedOut: botTimedOut, deadlineMs: botDeadline,
-    });
-    const botCleanup = turnCleanupArgs(recoveryActiveTurn);
-    recoveryRetry.requireDurableTurnCleanup(
-      await worker.finishTurn(sessionId, botCleanup),
-      botCleanup,
-    );
-    return;
   }
 
   // Terminal marker for the progress card: pessimistic default so a
@@ -5454,11 +5290,18 @@ function startSessionAutoPauseSweeper(config) {
         // pr_number: a reaped TAIL row names the PR its work landed on.
         // username / user_is_synthetic: a reaped turn of the Homeroom bot's
         // or of a benchmark trial goes back to its owner, not to a person.
-        `SELECT cs.id, cs.user_id, cs.app_id, cs.status, cs.pr_number, cs.active_turn,
+        // A durable build's turn is its build's (services/durable-turn.js),
+        // which follows it wherever the build runs next: never reaped here.
+        `SELECT cs.id, cs.user_id, cs.app_id, cs.status, cs.pr_number, cs.active_turn, cs.workflow_owner,
                 u.username, u.is_synthetic AS user_is_synthetic
            FROM chat_sessions cs
            LEFT JOIN users u ON u.id = cs.user_id
          WHERE cs.active_turn IS NOT NULL
+           AND NOT (cs.workflow_owner IS NOT NULL AND EXISTS (
+             SELECT 1 FROM wf_instances w
+              WHERE w.machine = split_part(cs.workflow_owner, '/', 1)
+                AND w.key = substr(cs.workflow_owner, length(split_part(cs.workflow_owner, '/', 1)) + 2)
+                AND w.state = 'building'))
          ORDER BY (cs.active_turn->>'startedAt') ASC NULLS FIRST
          LIMIT 20`
       );
@@ -5561,10 +5404,9 @@ function startSessionAutoPauseSweeper(config) {
           // notification below are for a person; these go back to the bot's
           // queue (attempt unspent) or the bench lane instead.
           if (require('./src/services/bench/runner').isBenchSession(row)) {
-            await require('./src/services/bench/lane').releaseTrialOfSession(pool, row.id, {
-              why: 'the stale-turn watchdog reaped its turn',
-            });
-            log.warn('server', 'Watchdog handed a reaped benchmark turn back to the lane', { sessionId: row.id });
+            // A trial's turn no durable trial owns (one started before trials
+            // were durable): nothing is waiting on it.
+            log.warn('server', 'Watchdog reaped a benchmark turn no trial owns', { sessionId: row.id });
             continue;
           }
           if (homeroomBotRecovery().isRecoveredBotSession(row)) {
@@ -6598,22 +6440,11 @@ async function cleanup() {
   try { require('./src/services/homeroom-bot-welcome').stop(); } catch (err) {
     log.warn('server', 'Stopping the Homeroom bot welcome failed', { err: err.message });
   }
-  // The bot's builds under way in this process are not waited on: each step
-  // boundary is saved on its run, and the next leader carries a build on from
-  // the step it was at (homeroom-bot-checkpoint.js). An admin can restore the
-  // wait with HOMEROOM_BOT_DRAIN_TIMEOUT_MS (up to 75s): each build is then
-  // waited on until it has finished or is parked inside a detached turn whose
-  // record and journal are saved (homeroom-bot-drain.js). The listener still
-  // closes at once below, and the leader lock is still released last, so the
-  // next leader adopts the parked turns. Awaited with the handler drain.
-  const botDrain = require('./src/services/homeroom-bot-drain');
-  const botDeadlineMs = botDrain.deadlineMs(process.env);
-  const botPipelines = botDrain.snapshot();
-  const botSafe = botDrain.waitForSafePoint({ timeoutMs: botDeadlineMs })
-    .catch((err) => {
-      log.warn('server', 'Waiting for the Homeroom bot\'s builds failed', { err: err.message });
-      return { safe: false, waitedMs: 0, midStep: [], parked: [] };
-    });
+  // The bot's builds and the bench's trials under way here are durable
+  // builds (services/build-runs.js): stopping the workflow runtime below
+  // stops each at its next step, its turn left running in its worker, and
+  // gives its work item up, so the next leader carries it on from the step it
+  // saved. Nothing waits for them.
   const retentionStop = require('./src/services/build-retention').stop();
   const checkRetentionStop = require('./src/services/check-retention').stop();
   const fixedCheckSyncStop = require('./src/services/fixed-check-sync').stop();
@@ -6621,8 +6452,8 @@ async function cleanup() {
   const scorerStop = require('./src/services/topochain/challenge-scorer').stop();
   // Stop claiming push jobs immediately. The bounded drain runs in
   // parallel with HTTP/session draining and is awaited before pool close.
-  // The workflow runtime has its own pool; its running work reports nothing
-  // and is reclaimed when its lease runs out.
+  // The workflow runtime has its own pool; its running work reports nothing,
+  // and gives its lease up so the next leader claims it at once.
   const workflowStop = require('./src/workflow/platform.ts').stopWorkflow()
     .catch((err) => log.warn('server', 'Stopping the workflow runtime failed', { err: err.message }));
   const pushStop = mobilePush.stop({ timeoutMs: DRAIN_TIMEOUT_MS }).catch((err) => {
@@ -6711,33 +6542,14 @@ async function cleanup() {
     activeWorkers: startingCount,
     activeShotsRuns: startingShots.slice(0, 20),
     timeoutMs: DRAIN_TIMEOUT_MS,
-    botPipelines: botPipelines.length,
-    botDeadlineMs,
   });
 
-  const [drained, , botWait] = await Promise.all([
+  const [drained] = await Promise.all([
     lifecycle.waitFor(() => getActiveWorkerCount() === 0 && shotsRuns().length === 0, {
       timeoutMs: DRAIN_TIMEOUT_MS, intervalMs: 500,
     }),
     announced,
-    botSafe,
   ]);
-  if (botPipelines.length || botWait.midStep.length) {
-    const summary = (p) => ({ kind: p.kind, runId: p.runId, trialId: p.trialId, step: p.step });
-    if (botWait.safe) {
-      log.info('server', 'Homeroom bot builds reached a saved point', {
-        waitedMs: botWait.waitedMs, parked: botWait.parked.slice(0, 20).map(summary),
-      });
-    } else if (botDeadlineMs === 0) {
-      log.info('server', 'Left Homeroom bot builds between steps for the next leader to carry on from their checkpoints', {
-        midStep: botWait.midStep.slice(0, 20).map(summary),
-      });
-    } else {
-      log.warn('server', 'Shutdown deadline passed with Homeroom bot builds mid-step', {
-        waitedMs: botWait.waitedMs, deadlineMs: botDeadlineMs, midStep: botWait.midStep.slice(0, 20).map(summary),
-      });
-    }
-  }
 
   if (!drained) {
     log.warn('server', 'Drain timeout — exiting with in-flight work', {
@@ -6749,21 +6561,6 @@ async function cleanup() {
   }
   await pushStop;
   await agentTurnsEnded;
-
-  // The builds a wait an admin set caught between steps: one incident each,
-  // so admins see what the restart cut short. Bounded like the marks below.
-  // With no wait (the default) leaving builds between steps is the plan:
-  // their checkpoints carry them on, and nothing is recorded.
-  if (botWait.midStep.length && botDeadlineMs > 0 && shutdownPool) {
-    let markTimer = null;
-    await Promise.race([
-      botDrain.recordMidStep(shutdownPool, botWait.midStep).catch(() => 0),
-      new Promise((resolve) => {
-        markTimer = setTimeout(() => resolve(null), BUILD_SHUTDOWN_MARK_TIMEOUT_MS);
-      }),
-    ]);
-    if (markTimer) clearTimeout(markTimer);
-  }
 
   // A planned replay is hosted by this server process. If it is still active
   // when the drain expires, record the actual shutdown now so its owner can

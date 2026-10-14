@@ -16,6 +16,9 @@ import { MACHINE, governanceProposal, issueKey } from './governance-proposal/mac
 import { governanceNotifiers, governanceServices } from './governance-proposal/services.ts';
 import { MACHINE as MERGE, mergeFollowups, sessionKey } from './merge-followups/machine.ts';
 import { mergeFollowupsNotifiers, mergeFollowupsServices } from './merge-followups/services.ts';
+import { MACHINE as BUILD, botBuild, buildKey } from './bot-build/machine.ts';
+import type { Target as BuildTarget } from './bot-build/machine.ts';
+import { botBuildServices } from './bot-build/services.ts';
 
 const pg = createRequire(import.meta.url)('pg');
 
@@ -26,6 +29,9 @@ let kernelPool: Pool & { end(): Promise<void> } | null = null;
 let machine: ReturnType<typeof governanceProposal> | null = null;
 let merges: ReturnType<typeof mergeFollowups> | null = null;
 let mergesAdmitted = false;
+// The Homeroom bot's builds and the bench's trials: on in every process that
+// runs the workflow, which is every process (docs/plans/bot-build-workflow.md).
+let builds: ReturnType<typeof botBuild> | null = null;
 let log: Logger | null = null;
 
 // What the ownership triggers read, synced on every boot:
@@ -146,7 +152,8 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
   await recordBooted(appPool).catch((err) => log!.warn('workflow', 'Could not record the booted build', { message: err.message }));
   if (runtime) return;
   const withMerges = !!config.wfMergeFollowupsEnabled || await mergesUnfinished(appPool).catch(() => false);
-  if (!config.wfGovernanceEnabled && !withMerges) return;
+  // The runtime always starts: bot builds have no other path. The other
+  // machines still come and go with their flags.
   const workflowPool = new pg.Pool({
     connectionString: config.databaseUrl, max: config.wfPoolMax, idleTimeoutMillis: 30000, application_name: 'homeroom-workflow',
   });
@@ -169,6 +176,9 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
     machines.push(merges);
     services = { ...services, ...mergeFollowupsServices(deps) };
   }
+  builds = botBuild();
+  machines.push(builds);
+  services = { ...services, ...botBuildServices(deps) };
   const started = createRuntime({
     pool: kernelPool!, machines, services, slots: config.wfSlots, log: log!, publish: publishPushes,
   });
@@ -182,6 +192,7 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
     machine = null;
     merges = null;
     mergesAdmitted = false;
+    builds = null;
     throw err;
   }
   runtime = started;
@@ -211,6 +222,7 @@ export async function stopWorkflow(): Promise<void> {
   machine = null;
   merges = null;
   mergesAdmitted = false;
+  builds = null;
   await r?.stop();
   await kernelPool?.end();
   kernelPool = null;
@@ -414,6 +426,42 @@ async function releaseBooted(pool: Pool): Promise<void> {
   if (!/^[0-9a-f]{40}$/i.test(sha)) return;
   const { rows } = await pool.query('SELECT id FROM apps WHERE self_hosted = TRUE');
   for (const a of rows) await productionDeployed(a.id, sha);
+}
+
+// ── Bot builds and bench trials ─────────────────────────────────────────
+
+// Whether builds run on the machine here; without the runtime (it failed to
+// start) services/build-runs.js runs them in its process, unkept, as before.
+export function botBuildsRunning(): boolean {
+  return runtime !== null && builds !== null;
+}
+
+// Start a build: one instance per build, so asking twice starts it once.
+export async function requestBuild(b: {
+  target: BuildTarget; id: number; nonce?: string | null; appId: number | null; input: Record<string, unknown>;
+}): Promise<string> {
+  const key = buildKey(b.target, b.id, b.nonce ?? null);
+  await runtime!.append(builds!, key, { type: 'Requested', payload: { target: b.target, id: b.id, nonce: b.nonce ?? null, input: b.input } },
+    { requestKey: `request:${key}`, source: { kind: 'system', name: 'bot-build' }, appId: b.appId ?? null });
+  return key;
+}
+
+// Where a build is: 'building', 'done', 'failed', or null when there is none.
+export async function buildState(key: string): Promise<{ state: string; data: unknown } | null> {
+  if (!kernelPool) return null;
+  const { rows: [r] } = await kernelPool.query(`SELECT state, data FROM wf_instances WHERE machine = $1 AND key = $2`, [BUILD, key]);
+  return r ? { state: r.state, data: r.data } : null;
+}
+
+// The builds under way, for the bot's and the lane's slots after a restart.
+export async function buildsUnderWay(target?: BuildTarget): Promise<{ key: string; target: BuildTarget; id: number; nonce: string | null; appId: number | null }[]> {
+  if (!kernelPool) return [];
+  const { rows } = await kernelPool.query(
+    `SELECT key, app_id, data FROM wf_instances WHERE machine = $1 AND state = 'building'
+        AND ($2::text IS NULL OR data->>'target' = $2) ORDER BY created_at`, [BUILD, target ?? null]);
+  return rows.map((r: { key: string; app_id: number | null; data: { target: BuildTarget; id: number; nonce?: string | null } }) => ({
+    key: r.key, target: r.data.target, id: Number(r.data.id), nonce: r.data.nonce ?? null, appId: r.app_id ?? null,
+  }));
 }
 
 // ── The admin console ───────────────────────────────────────────────────

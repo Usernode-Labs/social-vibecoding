@@ -13379,6 +13379,9 @@ CREATE TABLE IF NOT EXISTS wf_work (
   CONSTRAINT wf_work_claim_shape
     CHECK ((status = 'running') = (claim_id IS NOT NULL AND lease_until IS NOT NULL))
 );
+-- Claims whose process went before reporting (it died, or stopped and gave
+-- the lease up): a resumable handler's tries count only the others.
+ALTER TABLE wf_work ADD COLUMN IF NOT EXISTS lost_attempts INTEGER NOT NULL DEFAULT 0;
 CREATE INDEX IF NOT EXISTS wf_work_due_idx
   ON wf_work (kind, due_at) WHERE status IN ('queued', 'running');
 CREATE INDEX IF NOT EXISTS wf_work_instance_idx ON wf_work (machine, key, created_at);
@@ -13718,6 +13721,11 @@ ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_diagram JSONB;
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_diagram_source TEXT;
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_touches JSONB;
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_touches_sha TEXT;
+-- The durable build that owns the session ('bot-build/run:12',
+-- 'bot-build/trial:7'; docs/plans/bot-build-workflow.md): its worker and its
+-- turns are that build's to carry on after a restart, so server.js's worker
+-- adoption leaves them alone while the build is under way.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS workflow_owner TEXT;
 
 -- Test release emails (services/test-accounts.js sendRelease, the connector's
 -- send_test_release_email): a full admin sends the waitlist's real "you're

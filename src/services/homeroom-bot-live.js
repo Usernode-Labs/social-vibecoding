@@ -80,6 +80,8 @@ const designSkill = require('./design-skill');
 const events = require('./events');
 const { redactString } = require('./log-redaction');
 const timeline = require('./first-version-timeline');
+const durableSteps = require('./durable-steps');
+const durableTurn = require('./durable-turn');
 
 // A staging copy of the platform starts from production's settings, live
 // list included. Posting on real GitHub issues and pushing real branches
@@ -3098,12 +3100,6 @@ async function draftSpec({
     ? (line) => { savedScreens(line); if (typeof onProgress === 'function') onProgress(line); }
     : onProgress;
   let stopped = false;
-  let stopping = null;
-  const timer = setTimeout(() => {
-    stopped = true;
-    stopping = stopOnClock(pool, worker, session.id).catch(() => {});
-  }, budgetMs);
-  if (typeof timer.unref === 'function') timer.unref();
   activeWorkers.add(session.id);
   const startedAt = Date.now();
   const prompt = specPrompt({
@@ -3112,8 +3108,10 @@ async function draftSpec({
     platformStyles: specHtml.specStylesFor({ slug: session.app_slug, self_hosted: session.app_self_hosted }) === 'platform',
   });
   let routed;
-  try {
-    routed = await sessions.runCodexAttemptLoop({
+  // A durable build's spec turn is a durable step (services/durable-turn.js):
+  // a restart's next attempt follows it instead of writing the plan again.
+  const steps = durableSteps.of(deps);
+  const dispatch = (extra = {}) => sessions.runCodexAttemptLoop({
       pool, session, userId: bot.id, config, isCodexSession: true,
       turnModel: model, resumeThreadId: null, mode: 'scout',
       telemetryComponent,
@@ -3133,6 +3131,7 @@ async function draftSpec({
         resumeSessionId: null,
         branchName: session.branch_name,
         ...(ctx || {}),
+        ...extra,
         telemetryComponent,
         onProgress: teeProgress(progress, watching),
       }),
@@ -3143,11 +3142,19 @@ async function draftSpec({
       classifyAttemptStatus: ({ failed }) => (failed ? 'failed' : 'completed'),
       containerName,
     });
+  try {
+    const turn = await durableTurn.runTurn(steps, 'spec', {
+      pool, session, mode: 'scout', budgetMs, deps,
+      stop: () => stopOnClock(pool, worker, session.id),
+      onProgress: teeProgress(progress, watching),
+      dispatch,
+    });
+    routed = turn.routed;
+    stopped = turn.stopped;
   } catch (err) {
+    durableSteps.rethrowStop(err, 'spec turn');
     routed = { error: `dispatch: ${err.message}` };
   } finally {
-    clearTimeout(timer);
-    if (stopping) await stopping;
     activeWorkers.delete(session.id);
   }
   // Only an HTML spec is asked to save its screens (specHtmlPrompt).
@@ -3437,12 +3444,59 @@ function buildTurnRunner({
 }) {
   const { worker, sessions, agentTurn, activeWorkers } = deps;
   const runnerTelemetry = telemetry;
+  // A durable build's turns are durable steps (services/durable-turn.js):
+  // each call names its step (`key`: 'build', 'nudge', 'fix:<round>'), and a
+  // restart's next attempt follows the turn it caught rather than start it
+  // again. With the inert context, or no key, the turn runs as it always has.
+  const steps = durableSteps.of(deps);
+  const [, repoOwner, repoName] = String(session.repo_url || '').match(/github\.com[/:]([^/]+)\/([^/.]+)/) || [];
+  const head = deps.github && repoOwner && branchName
+    ? () => deps.github.getBranchSha(repoOwner, repoName, branchName)
+    : null;
+  // A turn that pushed and lost its record before it was kept: the branch
+  // tip is its result (the worker commits and pushes a turn's work only when
+  // the turn succeeded: discardFailedTurn).
+  const observe = async ({ tip }) => {
+    let ahead = 1;
+    if (typeof deps.github?.compareCommitAncestry === 'function') {
+      ahead = await deps.github.compareCommitAncestry(repoOwner, repoName, 'main', tip)
+        .then((c) => Math.max(1, Number(c.aheadBy) || 1)).catch(() => 1);
+    }
+    return { result: { pushOk: true, sha: tip, ahead, lastResultText: '', observed: true }, estimatedCostUsd: null, logicalTurnId: null };
+  };
   return async ({
     prompt: turnPrompt, budgetMs, resumeThreadId = null, commitMsg, progress: turnProgress,
-    freshPrompt = null, telemetry: turnTelemetry = null,
+    freshPrompt = null, telemetry: turnTelemetry = null, key = null,
   }) => {
     // A turn may go on the ledger under a name of its own (the nudge).
     const telemetry = turnTelemetry || runnerTelemetry;
+    activeWorkers.add(session.id);
+    let turnRouted;
+    let turnStopped = false;
+    try {
+      const turn = await durableTurn.runTurn(key ? steps : durableSteps.none(), key || 'turn', {
+        pool, session, mode: 'build', budgetMs, deps, head, observe,
+        stop: () => stopOnClock(pool, worker, session.id),
+        onProgress: teeProgress(turnProgress, onProgress),
+        dispatch: (extra) => dispatchTurn(extra),
+      });
+      turnRouted = turn.routed;
+      turnStopped = turn.stopped;
+    } catch (err) {
+      durableSteps.rethrowStop(err, 'build turn');
+      turnRouted = { error: `dispatch: ${err.message}` };
+    } finally {
+      activeWorkers.delete(session.id);
+      if (!steps.stopped) {
+        await pool.query(
+          "UPDATE chat_sessions SET status = 'paused', last_activity_at = NOW() WHERE id = $1 AND status = 'active'",
+          [session.id],
+        ).catch(() => {});
+      }
+    }
+    return { routed: turnRouted, stopped: turnStopped };
+
+    async function dispatchTurn(extra = {}) {
     // L2: the check command, written fresh for this turn (the platform's
     // current script); a write that fails runs the turn without the gate.
     let gate = null;
@@ -3464,16 +3518,8 @@ function buildTurnRunner({
     // dispatch does, so this turn does not take the session from under it;
     // the wait is not charged to the turn's own clock.
     await waitOutShotsRun(session.id, deps);
-    let turnStopped = false;
-    let stopping = null;
     // The gate's deadline is the turn's own clock, which starts here.
     if (gate) gate.deadlineMs = Date.now() + budgetMs;
-    const timer = setTimeout(() => {
-      turnStopped = true;
-      stopping = stopOnClock(pool, worker, session.id).catch(() => {});
-    }, budgetMs);
-    if (typeof timer.unref === 'function') timer.unref();
-    activeWorkers.add(session.id);
     let turnRouted;
     try {
       turnRouted = await sessions.runCodexAttemptLoop({
@@ -3520,6 +3566,7 @@ function buildTurnRunner({
           // The `roomy_context` tweak: compact later (worker.js ROOMY_CONTEXT).
           ...(firstVersion && Array.isArray(tweaks) && tweaks.includes('roomy_context') ? { roomyContext: true } : {}),
           ...(ctx || {}),
+          ...extra,
           telemetryComponent: telemetry || 'homeroom_bot_build',
           onProgress: teeProgress(turnProgress, onProgress),
         }),
@@ -3531,17 +3578,11 @@ function buildTurnRunner({
         containerName,
       });
     } catch (err) {
+      durableSteps.rethrowStop(err, 'build turn dispatch');
       turnRouted = { error: `dispatch: ${err.message}` };
-    } finally {
-      clearTimeout(timer);
-      if (stopping) await stopping;
-      activeWorkers.delete(session.id);
-      await pool.query(
-        "UPDATE chat_sessions SET status = 'paused', last_activity_at = NOW() WHERE id = $1 AND status = 'active'",
-        [session.id],
-      ).catch(() => {});
     }
-    return { routed: turnRouted, stopped: turnStopped };
+    return turnRouted;
+    }
   };
 }
 
@@ -3562,6 +3603,38 @@ async function publishSpec({ pool, sessions, session, specMd, specHtml: html = n
     log.warn('homeroom-bot', 'Could not store the spec; building from it anyway', { sessionId: session.id, err: err.message });
     return null;
   }
+}
+
+/**
+ * The build's worker. A build carried on after a restart takes the worker
+ * that outlived it as it is: making it sure (ensureWorker) would replace a
+ * worker whose image the release changed, and a turn or a detached capture
+ * running in it with it. A step that needs a fresh worker later makes it
+ * sure itself (a capture's, a fix's `ensure`).
+ */
+async function ensureBuildWorker({ worker, session, repo, branchName, steps }) {
+  if (steps.resumed && typeof worker.getWorkerStatus === 'function' && typeof worker.adoptWarmWorker === 'function') {
+    const name = typeof worker.workerRuntimeName === 'function' ? worker.workerRuntimeName(session.id) : null;
+    const status = name ? await worker.getWorkerStatus(name).catch(() => null) : null;
+    if (status === 'running') {
+      worker.adoptWarmWorker(session.id, name);
+      return name;
+    }
+  }
+  await worker.ensureWorkerImage();
+  return worker.ensureWorker(session.id, {
+    repoOwner: repo.owner, repoName: repo.repo, branchName,
+    temporary: true, onProgress: () => {},
+  });
+}
+
+/** A session already up for a vote, as promoteAsBot answers one, or null. */
+async function proposedAlready(pool, sessionId) {
+  const { rows: [row] = [] } = await pool.query(
+    `SELECT status, pr_number FROM chat_sessions WHERE id = $1`, [sessionId],
+  ).catch(() => ({ rows: [] }));
+  if (!row || !['promoted', 'merging', 'merged'].includes(row.status) || !row.pr_number) return null;
+  return { status: 200, body: { ok: true, prNumber: Number(row.pr_number), error: null, message: null } };
 }
 
 async function buildAndPropose({
@@ -3640,15 +3713,23 @@ async function buildAndPropose({
   tweaks = [],
 }) {
   const { worker, sessions, agentTurn, sessionLifecycle, activeWorkers } = deps;
+  // Each step below is a durable step of the build's work item when the
+  // workflow runs it (services/durable-steps.js, docs/plans/bot-build-workflow.md):
+  // run again after a restart, the build skips what it finished and follows
+  // a turn that was under way. With the inert context every step just runs.
+  const steps = durableSteps.of(deps);
   const buildTweaks = firstVersion && Array.isArray(tweaks) ? tweaks : [];
-  const buildStartedMs = Date.now();
+  const startedSaved = await steps.once('started_at', async () => Date.now());
+  const buildStartedMs = Number(startedSaved) || Date.now();
   const title = clipText(issue?.title || `Issue #${issueNumber}`, 120);
   // A shadow build (`propose: false`) is the same build, on a session of the
   // bot's own that links no issue, so no board reads it as work under way
   // on one, and that is archived the moment the build ends. Its branch is
   // the only thing it leaves, on the app's repository, for spot checks.
   let session;
-  try {
+  let openedRow = null;
+  const opened = await steps.once('session', async () => {
+   try {
     const { rows } = await pool.query(
       `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, is_headless,
                                   created_from_issue_number, linked_issues, issue_link_seeded,
@@ -3662,14 +3743,32 @@ async function buildAndPropose({
         sessionTitle || `${propose ? 'Homeroom bot' : 'Homeroom bot shadow build'}: #${issueNumber} ${title}`,
         model, config.openrouterDefaultCodexReasoning || 'low'],
     );
-    session = rows[0];
-    session.app_slug = app.slug;
-    session.app_name = app.name;
-    session.repo_url = app.repo_url;
-    session.app_self_hosted = app.self_hosted;
-  } catch (err) {
-    return { ok: false, error: `could not open a session: ${err.message}` };
+    openedRow = rows[0];
+    // Which build owns it: server.js leaves a session a durable build owns
+    // to that build when it adopts workers at a restart.
+    if (steps.owner) {
+      await pool.query('UPDATE chat_sessions SET workflow_owner = $2 WHERE id = $1', [openedRow.id, steps.owner]);
+    }
+    return { id: Number(openedRow.id) };
+   } catch (err) {
+    return { error: err.message };
+   }
+  });
+  if (opened?.error) return { ok: false, error: `could not open a session: ${opened.error}` };
+  session = openedRow;
+  if (!session) {
+    try {
+      ({ rows: [session] } = await pool.query('SELECT * FROM chat_sessions WHERE id = $1', [opened.id]));
+    } catch (err) {
+      durableSteps.rethrowStop(err, 'session');
+      return { ok: false, error: `could not read its session: ${err.message}` };
+    }
+    if (!session) return { ok: false, error: 'its session is gone' };
   }
+  session.app_slug = app.slug;
+  session.app_name = app.name;
+  session.repo_url = app.repo_url;
+  session.app_self_hosted = app.self_hosted;
   // The caller's durable link to this session, written before any turn runs:
   // a restart mid-turn leaves the worker running, and restart recovery finds
   // the run it belongs to through this (#3401). It is the build's claim on
@@ -3678,15 +3777,18 @@ async function buildAndPropose({
   // (homeroom-bot.js buildLive). That build is the run's; this one ends below,
   // before its branch, its worker and its plan, with `lostClaim` on the
   // result. A link that could not be written is logged and the build goes on.
-  let claimRefused = null;
-  if (onSession) {
+  const claimed = await steps.once('claim', async () => {
+    if (!onSession) return { refused: null };
     try {
       const refused = await onSession(session);
-      if (typeof refused === 'string' && refused) claimRefused = refused;
+      return { refused: typeof refused === 'string' && refused ? refused : null };
     } catch (err) {
+      durableSteps.rethrowStop(err, 'claim');
       log.warn('homeroom-bot', 'Could not link the build session to its run', { sessionId: session.id, err: err.message });
+      return { refused: null };
     }
-  }
+  });
+  const claimRefused = claimed?.refused || null;
 
   // What the spec turn wrote, carried on every outcome below so a run that
   // failed to build still shows what it meant to build. A spec that failed
@@ -3720,6 +3822,8 @@ async function buildAndPropose({
     return Object.keys(stages).length ? { stageCosts: stages } : {};
   };
   const fail = async (error) => {
+    // Not this process's to fail any more: the build's next owner goes on.
+    steps.fence();
     // The bot's own failed attempt. Archived so it never reads as work
     // under way; its branch stays on GitHub for a person to look at.
     await pool.query(
@@ -3738,6 +3842,7 @@ async function buildAndPropose({
     try {
       return (await skipCheck()) || null;
     } catch (err) {
+      durableSteps.rethrowStop(err, 'skip check');
       log.warn('homeroom-bot', 'Could not check whether the build is still wanted (going on)', { sessionId: session.id, err: err.message });
       return null;
     }
@@ -3747,20 +3852,33 @@ async function buildAndPropose({
   if (claimRefused) {
     return { ...(await fail(claimRefused)), skipped: claimRefused, lostClaim: true, costUsd: null };
   }
+  // Each step boundary the build reaches, told to its caller once (a first
+  // version's timeline): a restart that brings the build back to a boundary
+  // it passed does not tell it again.
   const step = async (name, data = {}) => {
-    if (!onStep) return;
-    try { await onStep(name, { ...data, sessionId: session.id }); } catch { /* a checkpoint never stops a build */ }
+    await steps.once(`reached:${name}`, async () => {
+      if (!onStep) return true;
+      try { await onStep(name, { ...data, sessionId: session.id }); } catch (err) {
+        durableSteps.rethrowStop(err, `step ${name}`);
+      }
+      return true;
+    });
   };
 
-  let branchName;
-  try {
-    ({ branchName } = await sessionLifecycle.ensureSessionBranch({
-      pool, sessionId: session.id, username: bot.username,
-    }));
-    session.branch_name = branchName;
-  } catch (err) {
-    return fail(`could not create its branch: ${err.message}`);
-  }
+  const branched = await steps.once('branch', async () => {
+    try {
+      const made = await sessionLifecycle.ensureSessionBranch({
+        pool, sessionId: session.id, username: bot.username,
+      });
+      return { branchName: made.branchName };
+    } catch (err) {
+      durableSteps.rethrowStop(err, 'branch');
+      return { error: err.message };
+    }
+  });
+  if (branched?.error) return fail(`could not create its branch: ${branched.error}`);
+  const branchName = branched.branchName;
+  session.branch_name = branchName;
   await step('session', { branch: branchName });
   // A later build of a project whose repository has the frontend-design
   // skill is told, at its spec and its build, to read it (the nudge alone;
@@ -3779,20 +3897,20 @@ async function buildAndPropose({
   // message. Its "Build issue #N:" line is scaffolding, peeled off wherever
   // a name is derived from it (session-title.js parseIssueSeed, #3518), and
   // the name the bot proposes under is the spec's (prepareProposal).
-  await pool.query(
-    `INSERT INTO chat_session_messages (session_id, role, content)
-     VALUES ($1, 'user', $2)`,
-    [session.id, `Build issue #${issueNumber}: ${title}\n\n${clipText(buildNote, 4000)}`],
-  ).catch(() => {});
+  await steps.once('request_message', async () => {
+    await pool.query(
+      `INSERT INTO chat_session_messages (session_id, role, content)
+       VALUES ($1, 'user', $2)`,
+      [session.id, `Build issue #${issueNumber}: ${title}\n\n${clipText(buildNote, 4000)}`],
+    ).catch(() => {});
+    return true;
+  });
 
   let containerName;
   try {
-    await worker.ensureWorkerImage();
-    containerName = await worker.ensureWorker(session.id, {
-      repoOwner: repo.owner, repoName: repo.repo, branchName,
-      temporary: true, onProgress: () => {},
-    });
+    containerName = await ensureBuildWorker({ pool, worker, session, repo, branchName, steps });
   } catch (err) {
+    durableSteps.rethrowStop(err, 'worker');
     return fail(`the worker would not start: ${err.message}`);
   }
 
@@ -3807,7 +3925,9 @@ async function buildAndPropose({
   // A kept spec's drawn screens, measured as a fresh spec's are (draftSpec),
   // so a build that went on from a kept plan still says what they hold.
   const presetScreens = presetSpec && presetSpecHtml ? specHtml.screenStats(String(presetSpecHtml)) : [];
-  spec = presetSpec
+  // The plan, written once: a restart in its turn follows the turn
+  // (draftSpec's durable turn), and one after it reads what it wrote.
+  spec = await steps.once('spec', async () => (presetSpec
     ? {
       ok: true, specMd: String(presetSpec), costUsd: null, preset: true,
       ...(presetSpecHtml ? { specHtml: String(presetSpecHtml) } : {}),
@@ -3816,7 +3936,7 @@ async function buildAndPropose({
         pool, sessions, session, specMd: String(presetSpec), specHtml: presetSpecHtml ? String(presetSpecHtml) : null, model: specModel || model,
       }) : null,
     }
-    : await draftSpec({
+    : draftSpec({
       pool, config, bot, session, containerName, seed, buildNote, turnBudgetMs,
       model: specModel || model, deps, specBudgetMs, firstVersion, starter, guidance: specGuidance, onProgress,
       locale, onScreen, tweaks: buildTweaks,
@@ -3825,7 +3945,7 @@ async function buildAndPropose({
         harness: harnessOf(specModel || model, config),
         reasoningEffort: recipeSpecEffort(specModel || model),
       } : {}),
-    });
+    })));
   // The build turn runs the build's model again.
   await stampSessionModel(pool, session, model);
   if (spec.blocked) {
@@ -3861,7 +3981,7 @@ async function buildAndPropose({
   }
   if (spec.ok) {
     await step('spec', { specVersion: spec.version ?? null });
-    if (onSpec && (!spec.preset || propose)) {
+    if (onSpec && (!spec.preset || propose)) await steps.once('spec_posted', async () => {
       // Posted, not waited on: the build starts whatever happens to the post.
       try {
         // Its ledger id too: a bench trial keeps it, so a restart's next claim
@@ -3874,15 +3994,18 @@ async function buildAndPropose({
           ...(spec.specHtml ? { specHtml: spec.specHtml } : {}),
         });
       } catch (err) {
+        durableSteps.rethrowStop(err, 'spec post');
         log.warn('homeroom-bot', 'Posting the spec failed (building anyway)', { sessionId: session.id, err: err.message });
       }
-    }
-    if (onFirstLook && spec.specHtml) {
+      return true;
+    });
+    if (onFirstLook && spec.specHtml) await steps.once('first_look', async () => {
       const drawIn = containerName;
       void Promise.resolve()
         .then(() => onFirstLook({ specHtml: spec.specHtml, containerName: drawIn }))
         .catch((err) => log.warn('homeroom-bot', 'The first look could not be drawn', { sessionId: session.id, err: err.message }));
-    }
+      return true;
+    });
   } else {
     log.warn('homeroom-bot', 'No spec; building from the plan', { sessionId: session.id, error: spec.error });
     if (spec.stopped) {
@@ -3893,6 +4016,7 @@ async function buildAndPropose({
           temporary: true, onProgress: () => {},
         });
       } catch (err) {
+        durableSteps.rethrowStop(err, 'worker');
         return { ...(await fail(`the worker would not start: ${err.message}`)), costUsd: spec.costUsd };
       }
     }
@@ -3909,10 +4033,11 @@ async function buildAndPropose({
   // spec drew, written into the repository and pushed as its first commit
   // (services/spec-screens-start.js), before the build's clock starts. Null
   // when they are not carried over: the build then draws them, as before.
+  // Once: it pushes the screens as the branch's first commit.
   const startingScreens = firstVersion && spec.ok && !platformRepo
-    ? await require('./spec-screens-start').startFromScreens({
+    ? await steps.once('starting_screens', () => require('./spec-screens-start').startFromScreens({
       worker, containerName, sessionId: session.id, branchName, specHtml: spec.specHtml || null,
-    })
+    }))
     : null;
 
   // Read before the build's clock starts: a catalog read is not build time.
@@ -3938,8 +4063,8 @@ async function buildAndPropose({
   });
   await step('build_turn', { budgetMs: turnBudgetMs });
   // The build's clock, from about when its turn starts (runBuildTurn's
-  // timer). A nudge runs on what is left of it.
-  const turnStartedMs = Date.now();
+  // timer). A nudge runs on what is left of it, a restart included.
+  const turnStartedMs = Number(await steps.once('build_clock', async () => Date.now())) || Date.now();
   const prompt = buildPrompt({
     seed, buildNote, spec: spec.ok ? specForBuild(spec.specMd, startingScreens) : null, platformRepo, readsImages, firstVersion, starter, guidance: buildGuidance,
     clock: { startedAt: turnStartedMs, budgetMs: turnBudgetMs },
@@ -3969,7 +4094,7 @@ async function buildAndPropose({
       .then(() => turn.end({ buildTurnMs, turnsMs: Date.now() - turnStartedMs, nudged: !!noChange?.nudged }))
       .catch(() => {});
   };
-  let { routed, stopped } = await runBuildTurn({ prompt, budgetMs: turnBudgetMs, commitMsg, progress });
+  let { routed, stopped } = await runBuildTurn({ prompt, budgetMs: turnBudgetMs, commitMsg, progress, key: 'build' });
   buildTurnMs = Date.now() - turnStartedMs;
   // The screens the platform wrote are a commit of the branch's own: a turn
   // that added nothing after it changed nothing (pastStartingScreens).
@@ -4019,12 +4144,15 @@ async function buildAndPropose({
       ...where, ...first, notNudged, leftMs: Math.max(0, Math.round(leftMs)),
     });
     const counted = { appId: app.id, sessionId: session.id, userId: bot.id, issueNumber, origin };
-    await recordNoChange(pool, { ...counted, noChange, which: 'first' });
-    // Kept on the run before the nudge starts, so a restart in the middle
-    // of it still finds what the first turn said (homeroom-bot.js).
-    if (onNoChange) {
-      try { await onNoChange(noChange); } catch { /* the record never stops a build */ }
-    }
+    // Once each: a restart in the nudge brings the build back here.
+    noChange = await steps.once('no_change', async () => {
+      await recordNoChange(pool, { ...counted, noChange, which: 'first' });
+      // Kept on the run before the nudge starts (homeroom-bot.js keepNoChange).
+      if (onNoChange) {
+        try { await onNoChange(noChange); } catch (err) { durableSteps.rethrowStop(err, 'no change'); }
+      }
+      return noChange;
+    });
     if (!notNudged) {
       const stopAt = utcClock(turnStartedMs + turnBudgetMs);
       const nudgeStartedMs = Date.now();
@@ -4032,7 +4160,7 @@ async function buildAndPropose({
         prompt: buildNudgePrompt({ stopAt }),
         freshPrompt: [prompt, '', buildNudgePrompt({ stopAt, fresh: true })].join('\n'),
         resumeThreadId: routed?.result?.agentThreadId || null,
-        budgetMs: leftMs, commitMsg, progress, telemetry: telemetry || BUILD_NUDGE_TELEMETRY,
+        budgetMs: leftMs, commitMsg, progress, telemetry: telemetry || BUILD_NUDGE_TELEMETRY, key: 'nudge',
       }));
       pastStartingScreens(routed, startingScreens);
       countTurn(routed);
@@ -4041,7 +4169,10 @@ async function buildAndPropose({
       noChange.turns.push({ ...nudge, said: noChange.committed ? null : agentSaid(routed?.result?.lastResultText) });
       if (noChange.committed) log.info('homeroom-bot', 'The nudge built it', { ...where, ...noChange.turns[1] });
       else log.warn('homeroom-bot', 'The nudge did not build it either', { ...where, ...noChange.turns[1] });
-      await recordNoChange(pool, { ...counted, noChange, which: 'nudge' });
+      await steps.once('no_change_nudge', async () => {
+        await recordNoChange(pool, { ...counted, noChange, which: 'nudge' });
+        return true;
+      });
     }
     if (noChange.nudged) {
       const skippedAfterNudge = await skipNow();
@@ -4075,7 +4206,9 @@ async function buildAndPropose({
   // boots; a build kept this way that never booted fails as before.
   let partial = null;
   if (faultError && keepPartial && review?.reviewer && typeof worker.keepPartialWork === 'function') {
-    const kept = await worker.keepPartialWork(session.id, { branchName, commitMsg }).catch((err) => ({ pushed: false, reason: err.message }));
+    // Once: it commits and pushes what the turn left.
+    const kept = await steps.once('partial', () => worker.keepPartialWork(session.id, { branchName, commitMsg })
+      .catch((err) => { durableSteps.rethrowStop(err, 'partial'); return { pushed: false, reason: err.message }; }));
     if (kept?.pushed && Number(kept.commits) > 0 && !(startingScreens?.sha && kept.sha === startingScreens.sha)) {
       partial = { reason: faultReason, sha: kept.sha || null, commits: Number(kept.commits) };
       Object.assign(result, { pushOk: true, ahead: Number(kept.commits), sha: kept.sha || null });
@@ -4114,7 +4247,9 @@ async function buildAndPropose({
   let landedCommits = Number(result.ahead) || 0;
   if (review?.reviewer) {
     if (onStage) { try { await onStage('review'); } catch { /* a watcher never stops a build */ } }
-    reviewed = await reviewLanded({
+    // Once it is over; a restart in it carries it on from the state it saved
+    // (reviewLanded, on the durable context).
+    reviewed = await steps.once('reviewed', () => reviewLanded({
       pool, config, bot, app, repo, session, branchName, seed, spec: spec.ok ? spec.specMd : null,
       review, deps, runBuildTurn, turnBudgetMs, readsImages, platformRepo, skipNow, onProgress, fixTurnIds,
       locale, tweaks: buildTweaks,
@@ -4122,7 +4257,7 @@ async function buildAndPropose({
         sha: landedSha, commits: landedCommits,
         costUsd, activeMs: Date.now() - buildStartedMs, buildText: result.lastResultText || null,
       },
-    });
+    }));
     if (reviewed) {
       if (reviewed.finalSha) landedSha = reviewed.finalSha;
       if (Number(reviewed.finalCommits) > 0) landedCommits = Number(reviewed.finalCommits);
@@ -4145,6 +4280,7 @@ async function buildAndPropose({
   }
 
   if (!propose) {
+    steps.fence();
     // Built, pushed, and put away: the session is archived exactly as a
     // failed attempt is, and nothing is promoted, posted or shown.
     await pool.query(
@@ -4163,25 +4299,36 @@ async function buildAndPropose({
   const pushed = { branchName: session.branch_name, sha: landedSha, commits: landedCommits };
   // Named and described first: the route reads both as it opens the pull
   // request (#3518).
-  await prepareProposal({
-    pool, bot, sessionId: session.id, spec: spec.ok ? spec.specMd : null,
-    buildText: result.lastResultText, model, checkedFirst,
+  await steps.once('prepared', async () => {
+    await prepareProposal({
+      pool, bot, sessionId: session.id, spec: spec.ok ? spec.specMd : null,
+      buildText: result.lastResultText, model, checkedFirst,
+    });
+    return true;
   });
   // #4487: its visible changes, so the proposal gets before/after shots on
   // the exact builds like a person's: the build's own declaration, else the
   // one its spec lists. A first version has no "before" worth a shot (the
   // base is the starter) and its screens are reviewed on the build already,
   // so it declares nothing here and its requester is not kept waiting.
-  if (!firstVersion) {
+  if (!firstVersion) await steps.once('visible_changes', async () => {
     const declared = await specVisibleChanges.recordForBotProposal({
       pool, config, sessionId: session.id, specHtml: spec.ok ? spec.specHtml || null : null,
     });
     if (declared.reason === 'error') {
       log.warn('homeroom-bot', 'Could not record the visible changes its spec lists', { sessionId: session.id, err: declared.error });
     }
-  }
-  const promoted = await promoteAsBot({
-    config, bot, sessionId: session.id, router: deps.votesRouter || null, ceiling: proposalCeiling,
+    return true;
+  });
+  // Once, and never twice for one session: a restart between the promotion
+  // and its save finds the session up for a vote already, and reads it.
+  const promoted = await steps.once('promoted', async () => {
+    const already = await proposedAlready(pool, session.id);
+    if (already) return already;
+    const out = await promoteAsBot({
+      config, bot, sessionId: session.id, router: deps.votesRouter || null, ceiling: proposalCeiling,
+    });
+    return { status: out.status, body: out.body ? { ok: !!out.body.ok, prNumber: out.body.prNumber ?? null, error: out.body.error ?? null, message: out.body.message ?? null } : null };
   });
   if (promoted.status !== 200 || !promoted.body?.ok) {
     const why = promoted.body?.error || promoted.body?.message || `promotion answered ${promoted.status}`;
@@ -4235,6 +4382,8 @@ async function captureBuildState({
   // the worker sure: a new worker image would replace the worker, and the
   // capture with it. HOMEROOM_BOT_DETACHED_CAPTURE=0 keeps them attached.
   detached = false, prior = null, onStarted = null,
+  // The durable build's fence (bench/capture.js runDetached).
+  fence = null,
 }) {
   const t0 = Date.now();
   const ensure = async () => {
@@ -4256,7 +4405,7 @@ async function captureBuildState({
   const out = await step({
     pool, trialId: owner.trialId ?? null, worker, containerName, appId: app.id,
     store: (kept) => require('./bot-review').storeRoundShots(pool, { ...owner, round: index }, kept),
-    detached: detach ? { sessionId: session.id, prior, onStarted, ensure } : null,
+    detached: detach ? { sessionId: session.id, prior, onStarted, ensure, ...(fence ? { fence } : {}) } : null,
   });
   return { ...out, ms: Date.now() - t0 };
 }
@@ -4287,6 +4436,12 @@ async function reviewLanded({
 }) {
   const botReview = require('./bot-review');
   const { worker } = deps;
+  // On a durable build the loop's state is a step of its own: kept as it
+  // goes, and handed back as `resumeFrom` when a restart brings the build
+  // back here, so the review carries on from the step it was at.
+  const steps = durableSteps.of(deps);
+  const keptState = steps.get('review_state');
+  if (!resumeFrom && keptState && keptState.state && keptState.state !== 'done') resumeFrom = keptState;
   const reviewer = (resumeFrom && resumeFrom.reviewer && resumeFrom.reviewer.maxRounds != null) ? resumeFrom.reviewer : review.reviewer;
   const owner = review.owner || {};
   const ensure = async () => {
@@ -4300,20 +4455,27 @@ async function reviewLanded({
   // harvests it (`prior`) rather than losing it.
   const capture = (index, { prior = null, onStarted = null } = {}) => captureBuildState({
     pool, worker, repo, app, session, branchName, owner, index, captureRound: deps.captureRound || null,
-    detached: true, prior, onStarted,
+    detached: true, prior, onStarted, fence: steps.active ? steps.fence : null,
   });
   const fix = async ({ round, issues, budgetMs }) => {
     const t0 = Date.now();
     // Made sure first: a review carried on after a restart may reach its
     // fix with no capture before it in this process.
-    try {
-      await ensure();
-    } catch (err) {
-      return { ok: false, error: `worker: ${err.message}`, ms: Date.now() - t0 };
+    // A fix a restart caught is followed where it runs: its worker is not
+    // made sure (it would be replaced, and the turn with it, on a new image).
+    const caught = steps.get(`turn:fix:${round}`);
+    if (!caught) {
+      try {
+        await ensure();
+      } catch (err) {
+        durableSteps.rethrowStop(err, 'fix worker');
+        return { ok: false, error: `worker: ${err.message}`, ms: Date.now() - t0 };
+      }
+      worker.clearPendingStop?.(session.id);
     }
-    worker.clearPendingStop?.(session.id);
     const fixBudgetMs = Math.max(1000, Math.min(budgetMs, turnBudgetMs));
     const turn = await runBuildTurn({
+      key: `fix:${round}`,
       prompt: botReview.fixPrompt({
         seed, spec, issues, round, maxRounds: reviewer.maxRounds, readsImages, platformRepo, locale,
         clock: { startedAt: Date.now(), budgetMs: fixBudgetMs }, appChecks: appChecksOn(platformRepo), tweaks,
@@ -4363,10 +4525,15 @@ async function reviewLanded({
       // is weighed against what this build has spent so far as well.
       budgetCheck: review.budgetCheck ? (spent) => review.budgetCheck({ spentUsd: (Number(start.costUsd) || 0) + (Number(spent?.spentUsd) || 0) }) : null,
       skipCheck: skipNow,
-      onState: review.onState || null,
+      onState: async (state) => {
+        if (steps.active) await steps.set('review_state', state);
+        if (review.onState) await review.onState(state);
+      },
+      fence: steps.active ? steps.fence : null,
       onProgress,
     });
   } catch (err) {
+    durableSteps.rethrowStop(err, 'review');
     log.warn('homeroom-bot', 'The review could not run; proposing what is built', { sessionId: session.id, err: err.message });
     return null;
   }
