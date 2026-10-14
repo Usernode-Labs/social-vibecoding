@@ -104,6 +104,7 @@ async function render(block, {
   title = 'Bread Bot',
   runs = 1,
   noShadow = false,
+  appHost,
 } = {}) {
   const origin = `https://${host}`;
   const head = makeElement('head');
@@ -133,6 +134,14 @@ async function render(block, {
 
   const fetch = (url, init) => {
     fetched.push({ url, init });
+    // The platform's answer for a custom domain (#4405): `appHost` is the
+    // JSON, or a status number for a refusal; absent, the path 404s.
+    if (String(url).includes('/api/public/app-host')) {
+      if (appHost === undefined || typeof appHost === 'number') {
+        return Promise.resolve({ ok: false, status: appHost === undefined ? 404 : appHost, json: async () => ({}) });
+      }
+      return Promise.resolve({ ok: true, status: 200, json: async () => JSON.parse(JSON.stringify(appHost)) });
+    }
     if (typeof config === 'number') return Promise.resolve({ ok: false, status: config, json: async () => ({}) });
     return Promise.resolve({ ok: true, status: 200, json: async () => JSON.parse(JSON.stringify(config)) });
   };
@@ -352,6 +361,45 @@ test('only a production app host qualifies', async () => {
   assert.ok(!(await drawn('localhost:3000')), 'plain local dev');
   assert.ok(!(await drawn('bread-bot.localhost:3000')), 'a single-label dev host');
   assert.ok(!(await drawn('a.b.onhomeroom.com')), 'deeper than one label under the apps domain');
+});
+
+// ── Custom domains (#4405) ───────────────────────────────────────────────
+
+test('an app at its custom domain gets the button once the platform names the app', async () => {
+  const block = platformLinkBlock(versioned);
+  const r = await render(block, { host: 'app.example.com', appHost: { slug: 'bread-bot-3e3f5c', name: 'Bread Bot' } });
+  assert.ok(r.host, 'drawn');
+  assert.equal(r.host.shadowMode, 'closed');
+  assert.equal(r.fetched.length, 2, 'platform.json from this origin, then the platform asked which app this is');
+  assert.equal(r.fetched[0].url, '/usernode-bridge/v1/platform.json');
+  assert.equal(r.fetched[1].url, 'https://app.onhomeroom.com/api/public/app-host?host=app.example.com');
+  assert.equal(r.fetched[1].init.credentials, 'omit');
+  r.fab.click();
+  assert.equal(r.rows[0].href, 'https://app.onhomeroom.com/#app/bread-bot-3e3f5c', 'Open in Homeroom opens THAT app');
+  assert.equal(r.rows[2].href, 'https://onhomeroom.com/');
+  assert.equal(r.byClass('name').textContent, 'Bread Bot');
+  // The legacy flat copy behaves the same.
+  assert.ok((await render(platformLinkBlock(unversioned), { host: 'app.example.com', appHost: { slug: 'bread-bot-3e3f5c' } })).host);
+});
+
+test('a host the platform does not know, or a bad answer, draws nothing and asks nothing it should not', async () => {
+  const block = platformLinkBlock(versioned);
+  const drawn = async (opts) => !!(await render(block, opts)).host;
+  assert.ok(!(await drawn({ host: 'app.example.com' })), 'the platform answers 404');
+  assert.ok(!(await drawn({ host: 'app.example.com', appHost: 500 })));
+  assert.ok(!(await drawn({ host: 'app.example.com', appHost: { slug: 'Not A Slug!' } })), 'a slug that is not one');
+  assert.ok(!(await drawn({ host: 'app.example.com', appHost: {} })));
+  assert.ok(!(await drawn({ host: 'app.example.com', appHost: { slug: 'x' }, config: 404 })), 'no platform.json, no platform to ask');
+  assert.ok(!(await drawn({ host: 'app.example.com', appHost: { slug: 'x' }, config: { ...CONFIG_HOSTED, platform_origin: 'http://app.onhomeroom.com' } })), 'not https');
+  // Never asked: an apex-looking host, the platform's own hosts, the shell, a frame.
+  const asked = async (opts) => (await render(block, opts)).fetched.some((f) => String(f.url).includes('/api/public/app-host'));
+  assert.ok(!(await asked({ host: 'example.com', appHost: { slug: 'x' } })), 'two labels is never a custom domain');
+  assert.ok(!(await asked({ host: 'app.onhomeroom.com', appHost: { slug: 'x' } })), 'the platform itself');
+  assert.ok(!(await asked({ host: 'a.b.onhomeroom.com', appHost: { slug: 'x' } })), 'under the apps domain');
+  assert.ok(!(await asked({ host: 'app.example.com', appHost: { slug: 'x' }, inIframe: true })), 'inside the platform’s frame');
+  assert.ok(!(await asked({ host: 'app.example.com', appHost: { slug: 'x' }, platformShell: true })), 'the shell');
+  assert.ok(!(await asked({ host: 'app.example.com', appHost: { slug: 'x' }, scriptSrc: 'https://cdn.example.com/usernode-bridge/v1/bridge.js' })), 'a tag naming another host');
+  assert.ok(await asked({ host: 'app.example.com', appHost: { slug: 'x' }, scriptSrc: 'https://app.onhomeroom.com/usernode-bridge/v1/bridge.js' }), 'naming the platform is fine');
 });
 
 test('no shadow DOM, no button (never an unprotected one)', async () => {

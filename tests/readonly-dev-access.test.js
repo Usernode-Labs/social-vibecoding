@@ -258,6 +258,7 @@ test("session/proposal/issue/board list routes read at 'view' level", () => {
     ['src/routes/votes.js', "'/api/apps/:slug/promoted'"],
     ['src/routes/votes.js', "'/api/apps/:slug/merged'"],
     ['src/routes/votes.js', "'/api/apps/:slug/proposals/:id'"],
+    ['src/routes/votes.js', "'/api/apps/:slug/changes/:number'"],
     ['src/routes/issues.js', "'/api/apps/:slug/issues'"],
     ['src/routes/issues.js', "'/api/apps/:slug/github-issues'"],
     ['src/routes/issues.js', "'/api/apps/:slug/github-issues/:number'"],

@@ -23,6 +23,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -46,7 +47,9 @@ function fn(name) {
 
 test('the toggle: "Full width" with arrows out, "Show the conversation list" with arrows in', () => {
   const toggle = fn('FullWidthToggle');
-  assert.match(toggle, /const label = collapsed \? 'Show the conversation list' : 'Full width';/);
+  assert.equal(message('messages:header.showList'), 'Show the conversation list');
+  assert.equal(message('messages:header.fullWidth'), 'Full width');
+  assert.match(toggle, /const label = collapsed \? t\('messages:header\.showList'\) : t\('messages:header\.fullWidth'\);/);
   assert.match(toggle, /className="messages-thread-action messages-list-toggle"/,
     'the disc every header action is, and the class the checks and app.css find it by');
   assert.match(toggle, /aria-pressed=\{collapsed\}/);
@@ -67,9 +70,11 @@ test('a conversation, a group and #general: at the right of the header, just bef
   assert.ok(at > 0, 'the conversation header carries it');
   assert.equal(header.indexOf('<FullWidthToggle />', at + 1), -1, 'once');
   assert.ok(at > header.indexOf('className="min-w-0 text-left flex-1"'), 'after the title, which takes the free width');
-  assert.ok(at > header.indexOf('aria-label="Group members"'), 'after a group\'s members disc');
+  assert.equal(message('messages:header.groupMembers'), 'Group members');
+  assert.ok(at > header.indexOf("aria-label={t('messages:header.groupMembers')}"), 'after a group\'s members disc');
   // The ⋯ is a keyboard menu button with refs of its own (QA 2026-09-24 Q18).
-  assert.match(header, /<FullWidthToggle \/>\s*<div className="relative" ref=\{menuWrapRef\}>\s*<button ref=\{menuBtnRef\} type="button" onClick=\{\(\) => setMenu\(\(open\) => !open\)\}[^>]*aria-label="Conversation actions"/,
+  assert.equal(message('messages:header.actions'), 'Conversation actions');
+  assert.match(header, /<FullWidthToggle \/>\s*<div className="relative" ref=\{menuWrapRef\}>\s*<button ref=\{menuBtnRef\} type="button" onClick=\{\(\) => setMenu\(\(open\) => !open\)\}[^>]*aria-label=\{t\('messages:header\.actions'\)\}/,
     'immediately before the ⋯ menu');
   // #3407: #general's way back to its hub leads the row; the toggle does not.
   assert.match(header, /<header className="messages-thread-header">\s*\{channel \? <PageBackButton /, 'no longer leading the row');
@@ -77,7 +82,9 @@ test('a conversation, a group and #general: at the right of the header, just bef
 
 test('an app\'s channel: at the end of its header, where it draws nothing — a channel is always full width', () => {
   const pane = fn('AppDiscussionThread');
-  assert.match(pane, /Everyone building this project`\}\s*<\/span>\s*<\/span>\s*<FullWidthToggle \/>\s*<\/header>/);
+  assert.equal(message('messages:discussion.subtitle.everyone'), 'Everyone building this project');
+  assert.equal(message('messages:discussion.subtitle.channel', { channel: 'notes' }), '#notes · Everyone building this project');
+  assert.match(pane, /t\('messages:discussion\.subtitle\.everyone'\)\}\s*<\/span>\s*<\/span>\s*<FullWidthToggle \/>\s*<\/header>/);
   // #3407: the channel's way back to its hub leads the row, then the tile.
   assert.match(pane, /<header className="messages-thread-header">\s*<PageBackButton [^\n]*\/>\s*<AppIconLink\s+slug=\{slug\}\s+name=\{name\}\s+data-icon=/, 'no longer leading the row');
   // A channel is its community's room and opens with no list beside it, so
@@ -88,7 +95,8 @@ test('an app\'s channel: at the end of its header, where it draws nothing — a 
 
 test('a dev session: in the pane\'s bar, after "Open full view"', () => {
   const pane = fn('AgentSessionThread');
-  assert.match(pane, /<div className="messages-session-bar">\s*<a className="messages-session-full" href=\{full\}>Open full view<\/a>\s*<FullWidthToggle \/>\s*<\/div>/);
+  assert.equal(message('messages:agent.session.openFull'), 'Open full view');
+  assert.match(pane, /<div className="messages-session-bar">\s*<a className="messages-session-full" href=\{full\}>\{t\('messages:agent\.session\.openFull'\)\}<\/a>\s*<FullWidthToggle \/>\s*<\/div>/);
   assert.match(CSS, /\.messages-session-bar \{\s*display: flex;\s*align-items: center;\s*justify-content: flex-end;\s*gap: 12px;/);
 });
 
@@ -99,7 +107,8 @@ test('an agent chat and a Mayor session: handed to their panels, drawn at the en
   // The global chat: last in its toolbar, after New. Its own screen passes
   // nothing, so that surface is unchanged.
   assert.match(CHAT, /export function GlobalChatPanel\(\{ embedded = false, headerAction = null \}: \{ embedded\?: boolean; headerAction\?: ReactNode \}\)/);
-  assert.match(CHAT, /<span>New<\/span>\s*<\/button>\s*\{headerAction\}\s*<\/header>/);
+  assert.match(CHAT, /<span>\{t\('chat:global\.toolbar\.new'\)\}<\/span>\s*<\/button>\s*\{headerAction\}\s*<\/header>/);
+  assert.equal(message('chat:global.toolbar.new'), 'New');
   assert.match(CHAT, /\{snapshot\.host === 'messages' \? null : <GlobalChatPanel \/>\}/);
 
   // The Mayor: the session bar's `action`, after Changes, the "Open app"
@@ -107,7 +116,7 @@ test('an agent chat and a Mayor session: handed to their panels, drawn at the en
   // other panes.
   assert.match(SESSION, /export function AgentSessionPanel\(\{ embedded = false, headerAction = null \}: \{ embedded\?: boolean; headerAction\?: ReactNode \}\)/);
   assert.match(SESSION, /<SessionBar session=\{snapshot\.session\} about=\{about\} embedded=\{embedded\} action=\{headerAction\} \/>/);
-  assert.match(SESSION, /Changes · \{count\}\s*<\/button>\s*<OpenAppButton target=\{target\} \/>\s*\{action\}\s*<SessionMenu session=\{session\} \/>/);
+  assert.match(SESSION, /\{t\('agent:session\.bar\.changes', \{ count \}\)\}\s*<\/button>\s*<OpenAppButton target=\{target\} \/>\s*\{action\}\s*<SessionMenu session=\{session\} \/>/);
 });
 
 test('the list folds for an agent thread too; a reply thread still belongs to a chat', () => {

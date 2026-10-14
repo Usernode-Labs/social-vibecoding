@@ -203,19 +203,16 @@ test('test accounts against the full PostgreSQL schema', { timeout: 180000 }, as
     await pool.query("UPDATE platform_settings SET value = 'off' WHERE key = 'welcome_dm_enabled'");
   });
 
-  await t.test('the bot DM place follows a first-run rename and is cleared on retire', async () => {
-    const dm = await make({ homeroomBotDm: true });
-    const members = async () => JSON.parse((await pool.query("SELECT value FROM platform_settings WHERE key = 'homeroom_bot_dm_users'")).rows[0].value);
-    assert.ok((await members()).includes(dm.username));
-    const usernames = require('../src/services/usernames');
-    const chosen = await usernames.chooseFirstUsername(pool, dm.userId, 'Fresh_Tester');
-    assert.equal(chosen.username, 'Fresh_Tester');
-    const after = await members();
-    assert.ok(after.includes('fresh_tester'), 'the place moved to the new name');
-    assert.equal(after.includes(dm.username), false, 'and left the old one');
-    const retired = await testAccounts.retire(pool, { userId: dm.userId, confirmation: 'RETIRE' }, { actorId: owner.id, config });
-    assert.equal(retired.homeroomBotDm, true);
-    assert.equal((await members()).includes('fresh_tester'), false, 'retiring frees the place');
+  await t.test('the Homeroom bot works for a test account let in, with nothing to switch', async () => {
+    const tester = await make();
+    assert.equal(Object.hasOwn(tester, 'homeroomBotDm'), false);
+    const { rows: [row] } = await pool.query('SELECT username, is_synthetic, has_platform_access FROM users WHERE id = $1', [tester.userId]);
+    const settings = await require('../src/services/homeroom-bot').readSettings(pool);
+    assert.equal(require('../src/services/homeroom-bot-dm').hasBot(settings, {
+      username: row.username, isSynthetic: row.is_synthetic, hasPlatformAccess: row.has_platform_access,
+    }), true);
+    const retired = await testAccounts.retire(pool, { userId: tester.userId, confirmation: 'RETIRE' }, { actorId: owner.id, config });
+    assert.equal(Object.hasOwn(retired, 'homeroomBotDm'), false);
   });
 
   await t.test('retire refuses a real account, takes the apps down first, then anonymises', async () => {

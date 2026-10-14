@@ -66,12 +66,12 @@
   },
   "firstMile": {
     "cohort": "string",
-    "notRecorded": {
-      "followedLink": {
-        "reason": "string",
-        "recorded": "boolean"
-      }
+    "mail": {
+      "clicked": "number",
+      "opened": "number",
+      "tracked": "number"
     },
+    "notRecorded": {},
     "people": [
       {
         "daysSince": "number",
@@ -79,6 +79,7 @@
         "failedAttempts": "number",
         "furthest": "string",
         "hasAccount": "boolean",
+        "mail": "object",
         "name": "string",
         "repeatedTaps": "number",
         "signupId": "number",
@@ -221,6 +222,13 @@
       "first_version": "number",
       "running": "number"
     },
+    "timing": {
+      "from": "object",
+      "of": "number",
+      "pod": "object",
+      "stages": [],
+      "totalMs": "object"
+    },
     "week": "string",
     "weeks": [
       {
@@ -253,6 +261,14 @@
       "people": "number",
       "steps": []
     },
+    "look": {
+      "notRecorded": {
+        "reason": "string",
+        "recorded": "boolean"
+      },
+      "people": "number",
+      "steps": []
+    },
     "make": {
       "aha": "number",
       "notRecorded": {
@@ -267,6 +283,7 @@
       "recorded": "boolean"
     },
     "recordedFrom": {
+      "look": "object",
       "make": "object",
       "opens": "object",
       "reward": "object",

@@ -162,7 +162,7 @@ test('a project\'s first version goes first, against the full PostgreSQL schema'
       `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title) VALUES ($1, 2, $2, 'Bin day'), ($1, 5, $2, 'Mark as done')`,
       [app.id, invitee.id],
     );
-    const settings = { mode: 'shadow', liveApps: [app.slug], perPerson: 2 };
+    const settings = { mode: 'shadow', perPerson: 2 };
     const states = await progress.requestStates(pool, { userId: invitee.id, settings });
     const byNumber = new Map(states.filter((s) => Number(s.row.app_id) === Number(app.id))
       .map((s) => [Number(s.row.issue_number), s.state]));

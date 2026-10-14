@@ -16,6 +16,7 @@
  */
 
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
+import { t } from '../../lib/i18n/runtime';
 
 /** The route names `AuthScreens.show()` accepts, and their screen roots. */
 export const AUTH_SCREEN_IDS: Record<string, string> = {
@@ -37,8 +38,9 @@ export const AUTH_SCREEN_IDS: Record<string, string> = {
  * /api/auth/register and the email-code sign-up's username. The first-run
  * "Choose your username" step says the same thing in its own sentence.
  */
-export const USERNAME_RULE = 'Letters, numbers and underscores, 3 to 32 characters.';
-export const PASSWORD_RULE = 'At least 8 characters.';
+// The words are catalog entries now, one for each place they are said:
+// auth:register.usernameRule and .passwordRule, auth:login.signup.usernameRule,
+// auth:signInSheet.usernamePlaceholder and .providerUsernamePlaceholder.
 
 /**
  * Said next to every field where a new account types its handle (#3575):
@@ -51,7 +53,7 @@ export const PASSWORD_RULE = 'At least 8 characters.';
  * spells the same words; tests/username-first-choice.test.js holds the two
  * copies together.
  */
-export const USERNAME_PUBLIC_NOTE = 'Your username will be public to other users on Homeroom.';
+// Catalog entries: auth:register.usernamePublic and auth:login.signup.usernamePublic.
 
 /**
  * The attributes every username field carries, so a phone does not
@@ -60,6 +62,32 @@ export const USERNAME_PUBLIC_NOTE = 'Your username will be public to other users
  * capitalised name is still a different name in the register form.
  */
 export const HANDLE_FIELD = { autoCapitalize: 'none', autoCorrect: 'off', spellCheck: false } as const;
+
+/**
+ * A 6-digit code's field, said in every way a browser reads (Evan, 10 Oct
+ * 2026: on iPhone the sheet's code field read as a password). A plain text
+ * field, numeric keys, the one-time-code autofill (Messages and Mail offer
+ * the code over the keyboard) and a name that says so, with nothing for
+ * autocorrect or a password manager to take it for.
+ */
+export const ONE_TIME_CODE_FIELD = {
+  type: 'text',
+  name: 'one-time-code',
+  inputMode: 'numeric',
+  pattern: '[0-9]*',
+  autoComplete: 'one-time-code',
+  autoCapitalize: 'none',
+  autoCorrect: 'off',
+  spellCheck: false,
+} as const;
+
+/**
+ * What blockedOffline says. Exported so a form can tell this error from any
+ * other and clear it when the connection returns, in whatever language.
+ */
+export function offlineSignInText(): string {
+  return t('auth:offline.signIn');
+}
 
 /** One public app as `/api/public/apps` returns it. */
 export interface PublicApp {
@@ -229,7 +257,7 @@ export function blockedOffline(setError?: (msg: string) => void): boolean {
     noteSignInBegun();
     return false;
   }
-  if (setError) setError("You're offline. Signing in needs a connection.");
+  if (setError) setError(offlineSignInText());
   try {
     legacy().Offline?.nudge();
   } catch {
@@ -265,8 +293,6 @@ export function isNative(): boolean {
   return !!(w.usernode && w.usernode.isNative);
 }
 
-const NATIVE_LOGIN_PREPARATION_MESSAGE =
-  'Secure app session could not be prepared. Force-quit and reopen Homeroom, then try again.';
 const NATIVE_DIAGNOSTIC_RE = /^[a-z][a-z0-9_-]{0,95}$/;
 const BRIDGE_STATES = new Set([
   'ready', 'blocked-frame', 'unsupported', 'inconclusive', 'unattached', 'unknown',
@@ -365,7 +391,7 @@ function nativePreparationDetails(
 export class NativeLoginPreparationError extends Error {
   constructor(
     readonly diagnostic: string | null,
-    message = NATIVE_LOGIN_PREPARATION_MESSAGE,
+    message = t('auth:native.sessionNotPrepared'),
     readonly details: NativeLoginFailureDetails | null = null,
   ) {
     super(message);
@@ -374,7 +400,7 @@ export class NativeLoginPreparationError extends Error {
 }
 
 export function sessionMintFailureMessage(error: unknown): string {
-  return error instanceof NativeLoginPreparationError ? error.message : 'Network error';
+  return error instanceof NativeLoginPreparationError ? error.message : t('auth:session.networkError');
 }
 
 /**
@@ -389,7 +415,7 @@ async function prepareNativeMint(w: LegacyWindow): Promise<void> {
   if (!chrome || typeof chrome.prepareForLogin !== 'function') {
     throw new NativeLoginPreparationError(
       null,
-      'This Homeroom app version must be updated for secure sign-in',
+      t('auth:native.updateRequired'),
     );
   }
   try {
@@ -499,11 +525,16 @@ export interface LoginCompletionFailure {
   code: 'session-rejected' | 'server-response' | 'network-error' | 'timeout' | 'invalid-response' | 'client-error';
 }
 
-export async function finishLogin(): Promise<LoginCompletionFailure | null> {
+/**
+ * `beforeShell` runs once the session is confirmed and the page stays on its
+ * build, just before the signed-in shell starts: the sign-in sheet's
+ * hand-off to the make screen (./sign-in-sheet.tsx), held until then.
+ */
+export async function finishLogin(beforeShell?: () => Promise<void>): Promise<LoginCompletionFailure | null> {
   const fn = legacy().AuthScreens?.finishLogin as undefined |
-    (() => Promise<LoginCompletionFailure | null>);
+    ((opts?: { beforeShell?: () => Promise<void> }) => Promise<LoginCompletionFailure | null>);
   if (!fn) return { stage: 'open-session', status: null, code: 'client-error' };
-  return fn();
+  return beforeShell ? fn({ beforeShell }) : fn();
 }
 
 /** What a password sign-in came to: in, or what to say and (in the app) the bridge's report. */
@@ -527,7 +558,7 @@ export async function passwordSignIn(username: string, password: string): Promis
       body: JSON.stringify({ username, password }),
     });
     const data = await res.json();
-    if (!res.ok) return { ok: false, error: data.error || 'Login failed', details: null };
+    if (!res.ok) return { ok: false, error: data.error || t('auth:signIn.failed'), details: null };
     return { ok: true };
   } catch (error) {
     return {
@@ -540,18 +571,30 @@ export async function passwordSignIn(username: string, password: string): Promis
 
 /**
  * What a waitlist "you're in" mail's link asked for. The mail links to
- * `/?signup=1&t=<token>` for a new account and `/?login=1` for one that
+ * `/?signup=1&t=<token>[&key=<one-time link>]` for a new account and `/?login=1` for one that
  * exists (src/services/mail/index.js); AuthScreens.enter() reads either off
  * the query, keeps it here and puts the address back to `/`, so the story
- * (./landing.tsx) opens with the sign-in sheet over it at this step.
+ * (./landing.tsx) opens with it: a new account's link is spent as the page
+ * opens, once a read that spends nothing says the account is still new, and
+ * otherwise Get started takes it to the sheet; an existing account's Sign in
+ * sheet is open over it.
  */
 export interface ReleaseLink {
   route: 'signup' | 'login';
   /** The waitlist row's more_token, which names the address to sign up with. */
   token: string | null;
+  /**
+   * #4594: the mail's one-time sign-in link (src/services/release-links.js),
+   * spent by a POST to /api/auth/release-link: the landing's as the page
+   * opens for a new account, the sheet's on Get started otherwise. Null when
+   * the mail carried none; an expired or used one falls back to `token`'s
+   * code.
+   */
+  signIn?: string | null;
 }
 
 const RELEASE_TOKEN_RE = /^[A-Za-z0-9_-]{8,128}$/;
+const RELEASE_SIGN_IN_RE = /^[A-Za-z0-9_-]{43}$/;
 
 /** The release link, once: whoever shows it takes it. */
 export function takeReleaseLink(): ReleaseLink | null {
@@ -561,7 +604,9 @@ export function takeReleaseLink(): ReleaseLink | null {
   host._releaseLink = null;
   if (link.route !== 'signup' && link.route !== 'login') return null;
   const token = typeof link.token === 'string' && RELEASE_TOKEN_RE.test(link.token) ? link.token : null;
-  return { route: link.route, token };
+  const signIn = link.route === 'signup' && typeof link.signIn === 'string' && RELEASE_SIGN_IN_RE.test(link.signIn)
+    ? link.signIn : null;
+  return { route: link.route, token, signIn };
 }
 
 /** Hand the link on, for the sign-in screen to take when the story is switched off. */

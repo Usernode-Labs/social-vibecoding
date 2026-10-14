@@ -1,8 +1,10 @@
 // #1019: services/check-history — the durable per-check record that decides
 // which checks may block a merge.
 //
-// The rule: a check blocks iff it has been observed passing at least once
-// (`first_passed_at IS NOT NULL`). Everything else is advisory. Three
+// The rule: a check blocks every proposal iff it has passed on a proposal
+// that merged (`merged_pass_at IS NOT NULL`), and blocks a proposal's own
+// later heads once that proposal has passed it (`checks_earned_keys`).
+// Everything else is advisory. Three
 // properties have to hold or the rule is unsafe in one direction or the
 // other, and all three are easy to break with an innocent-looking SQL edit:
 //
@@ -51,7 +53,7 @@ const tests = (n, from = 0) => Array.from({ length: n }, (_, i) => ({
 
 // ── loadGraduated ──────────────────────────────────────────────────────
 
-test('loadGraduated returns the keys that have ever passed', async () => {
+test('loadGraduated returns the keys a merged proposal has passed', async () => {
   const pool = makePool((text) => (
     /SELECT check_key/.test(text) ? { rows: [{ check_key: 'aaa' }, { check_key: 'bbb' }] } : null
   ));
@@ -59,11 +61,77 @@ test('loadGraduated returns the keys that have ever passed', async () => {
   assert.ok(set.has('aaa') && set.has('bbb'));
   assert.equal(set.size, 2);
   // Every declared check blocks now. This set is the EXEMPTION list running
-  // the other way: a check seen before and never once passing is a legacy
-  // backlog entry, unfinished rather than broken by the proposal in front
-  // of it, and it earns its gate by passing once. Nothing new can enter
-  // that state, because a new check has to pass its first runs to land.
-  assert.match(pool.sql(0), /first_passed_at IS NOT NULL/);
+  // the other way: a check seen before and never passing on main is a
+  // legacy backlog entry, unfinished rather than broken by the proposal in
+  // front of it, and it earns its gate by passing on a change that lands.
+  // Nothing new can enter that state, because a new check has to pass its
+  // first runs to land.
+  //
+  // MERGED, not first passed (9 Oct 2026): the fix for the Custom domain
+  // check passed it on its own preview, and that unmerged pass made the
+  // check block ~15 proposals that did not contain the fix.
+  assert.match(pool.sql(0), /^WITH merged AS \( UPDATE chat_sessions/, 'merged proposals are folded in first');
+  assert.match(pool.sql(1), /merged_pass_at IS NOT NULL/);
+  assert.doesNotMatch(pool.sql(1), /first_passed_at/);
+  assert.equal(pool.calls.length, 2, 'no proposal named, so nothing of its own is read');
+});
+
+test('settling folds each merged proposal\'s passes in once, and keeps the first merge\'s stamp', async () => {
+  const pool = makePool();
+  await checkHistory.settleMergedPasses(pool, 7);
+  const sql = pool.sql(0);
+  assert.match(sql, /SET checks_earned_settled_at = NOW\(\)/);
+  assert.match(sql, /status = 'merged'/, 'only a proposal that landed');
+  assert.match(sql, /checks_earned_settled_at IS NULL/, 'each one once');
+  assert.match(sql, /merged_pass_at = COALESCE\(h\.merged_pass_at, NOW\(\)\)/, 'no restamping, no demotion');
+  assert.deepEqual(pool.calls[0].params, [7]);
+});
+
+test('a proposal\'s own passes block its own later heads', async () => {
+  // Without this, a backlog check a proposal made pass would go back to
+  // advisory on its next push, and the push could quietly break it again.
+  const pool = makePool((text) => {
+    if (/SELECT check_key/.test(text)) return { rows: [{ check_key: 'main' }] };
+    if (/SELECT checks_earned_keys/.test(text)) return { rows: [{ checks_earned_keys: ['own'] }] };
+    return null;
+  });
+  const set = await checkHistory.loadGraduated(pool, 7, { sessionId: 7494 });
+  assert.deepEqual([...set].sort(), ['main', 'own']);
+  assert.deepEqual(pool.calls[2].params, [7494, 7]);
+  // Main watch's unit-suite run is not a proposal.
+  const watch = makePool();
+  await checkHistory.loadGraduated(watch, 7, { sessionId: 'main-12' });
+  assert.equal(watch.calls.length, 2, 'no row to read for main-12');
+});
+
+test('an unreadable own-passes row still leaves the app-wide set standing', async () => {
+  const pool = makePool((text) => {
+    if (/SELECT check_key/.test(text)) return { rows: [{ check_key: 'main' }] };
+    if (/SELECT checks_earned_keys/.test(text)) return new Error('nope');
+    return null;
+  });
+  assert.deepEqual([...await checkHistory.loadGraduated(pool, 7, { sessionId: 1 })], ['main']);
+});
+
+test('recordRun adds this proposal\'s passes to its own, leaving out what a merge already made blocking', async () => {
+  const pool = makePool();
+  await checkHistory.recordRun(pool, 7, [
+    { checkKey: 'k-pass', name: 'a', path: '/a', passed: true },
+    { checkKey: 'k-fail', name: 'b', path: '/b', passed: false },
+    { checkKey: 'k-first', name: 'c', path: '/c', passes: 2, fails: 1 },
+  ], { sessionId: 7494 });
+  const own = pool.calls.find((c) => /SET checks_earned_keys/.test(c.text));
+  assert.ok(own, 'the proposal row is written');
+  assert.deepEqual(own.params, [7494, 7, ['k-pass', 'k-first']], 'every check that passed in this run, and only those');
+  const sql = own.text.replace(/\s+/g, ' ');
+  assert.match(sql, /merged_pass_at IS NOT NULL/, 'checks blocking for everybody are not stored again');
+  assert.match(sql, /checks_earned_settled_at IS NULL/, 'never after its passes were folded in');
+  const insert = pool.calls.find((c) => /INSERT INTO app_check_history/.test(c.text)).text.replace(/\s+/g, ' ');
+  assert.match(insert, /merged_pass_known = TRUE/, 'the one-time backfill never reaches a row written now');
+
+  const watch = makePool();
+  await checkHistory.recordRun(watch, 7, [{ checkKey: 'k', name: 'a', path: '/a', passed: true }], { sessionId: 'main-12' });
+  assert.ok(!watch.calls.some((c) => /SET checks_earned_keys/.test(c.text)), 'nothing for a non-proposal run');
 });
 
 test('an unreadable history makes everything advisory, not everything blocking', async () => {

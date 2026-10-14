@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { XIcon } from '@/components/ui/icons';
 import { Html } from '../../../lib/html';
+import { useMessages } from '../../../lib/i18n/react';
 import { pushDismissible } from '../../../lib/back-stack';
 
 type Description = {
@@ -22,6 +23,7 @@ function Preview({ text }: { text: string }) {
 /** Local React state owns the draft, so live check/metadata refreshes cannot
  * replace what the author is typing. Only the matching change opens it. */
 export function DescriptionEditor({ id, onSaved }: { id: number; onSaved: (data: Description) => void }) {
+  const t = useMessages('project');
   const dialog = useRef<HTMLDialogElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
   const request = useRef<AbortController | null>(null);
@@ -46,7 +48,7 @@ export function DescriptionEditor({ id, onSaved }: { id: number; onSaved: (data:
   async function read(signal: AbortSignal): Promise<Description> {
     const response = await fetch(`/api/sessions/${id}/description`, { signal });
     const data = await response.json();
-    if (!response.ok) throw new Error(data.message || data.error || 'Could not load the description.');
+    if (!response.ok) throw new Error(data.message || data.error || t('project:topic.editor.loadFailed'));
     return data;
   }
 
@@ -65,7 +67,7 @@ export function DescriptionEditor({ id, onSaved }: { id: number; onSaved: (data:
     read(controller.signal).then((data) => {
       if (!controller.signal.aborted) { setCurrent(data); setDraft(data.description); }
     }).catch((err) => {
-      if (!controller.signal.aborted) setError(err.message || 'Could not load the description.');
+      if (!controller.signal.aborted) setError(err.message || t('project:topic.editor.loadFailed'));
     }).finally(() => { if (!controller.signal.aborted) setBusy(false); });
     return () => {
       controller.abort(); request.current?.abort();
@@ -100,19 +102,19 @@ export function DescriptionEditor({ id, onSaved }: { id: number; onSaved: (data:
       const data = await response.json();
       if (!response.ok) {
         if (response.status === 409) setConflict(true);
-        throw new Error(data.message || data.error || 'Could not save the description.');
+        throw new Error(data.message || data.error || t('project:topic.editor.saveFailed'));
       }
       if (controller.signal.aborted) return;
       setCurrent(data); setDraft(data.description); onSaved(data);
       if (String(data.prBodyStatus || '').startsWith('github_')) {
-        setNotice('Saved in Homeroom. Pull-request synchronization is incomplete. Save again to retry.');
+        setNotice(t('project:topic.editor.savedSyncIncomplete'));
       } else {
         setOpen(false);
-        (window as any).PlatformUI?.toast?.('Description saved.');
+        (window as any).PlatformUI?.toast?.(t('project:topic.editor.savedToast'));
       }
     } catch (err) {
       if (!controller.signal.aborted) setError((err as Error).name === 'TypeError'
-        ? 'Could not connect. Your draft is kept; try saving again.' : (err as Error).message);
+        ? t('project:topic.editor.connectFailed') : (err as Error).message);
     } finally {
       saving.current = false;
       if (!controller.signal.aborted) setBusy(false);
@@ -125,40 +127,40 @@ export function DescriptionEditor({ id, onSaved }: { id: number; onSaved: (data:
       onCancel={(event) => { event.preventDefault(); if (!saving.current) setOpen(false); }}>
       <form onSubmit={save}>
         <div className="dev-details-head">
-          <h2 id={`${fieldId}-heading`} className="dev-topic-h">Edit description</h2>
-          <button type="button" className="dev-details-close" aria-label="Close description editor" disabled={saving.current} onClick={() => setOpen(false)}>
+          <h2 id={`${fieldId}-heading`} className="dev-topic-h">{t('project:topic.editor.title')}</h2>
+          <button type="button" className="dev-details-close" aria-label={t('project:topic.editor.closeLabel')} disabled={saving.current} onClick={() => setOpen(false)}>
             <XIcon className="w-4 h-4" aria-hidden="true" />
           </button>
         </div>
-        <p id={`${fieldId}-help`} className="text-sm text-zinc-500 dark:text-zinc-400 mb-3">Explain the problem and what this change does. Markdown is supported.</p>
-        {!current && busy ? <p role="status">Loading description…</p> : null}
+        <p id={`${fieldId}-help`} className="text-sm text-zinc-500 dark:text-zinc-400 mb-3">{t('project:topic.editor.help')}</p>
+        {!current && busy ? <p role="status">{t('project:topic.editor.loading')}</p> : null}
         {current ? <>
-          <label className="block text-sm font-medium mb-2" htmlFor={fieldId}>Description</label>
+          <label className="block text-sm font-medium mb-2" htmlFor={fieldId}>{t('project:topic.editor.fieldLabel')}</label>
           <Textarea ref={input} id={fieldId} rows={11} className={preview ? 'hidden' : 'w-full'}
             aria-describedby={`${fieldId}-help ${fieldId}-count`} value={draft} disabled={saving.current}
             onChange={(event) => setDraft(event.target.value)} />
-          {preview ? <div className="max-h-[45vh] overflow-auto" aria-label="Description preview"><Preview text={draft} /></div> : null}
+          {preview ? <div className="max-h-[45vh] overflow-auto" aria-label={t('project:topic.editor.previewRegion')}><Preview text={draft} /></div> : null}
           <div className="flex items-center justify-between gap-3 my-3">
-            <Button type="button" variant="neutral" ink="neutral" onClick={() => setPreview(!preview)} aria-pressed={preview}>{preview ? 'Edit text' : 'Preview'}</Button>
+            <Button type="button" variant="neutral" ink="neutral" onClick={() => setPreview(!preview)} aria-pressed={preview}>{preview ? t('project:topic.editor.editText') : t('project:topic.editor.preview')}</Button>
             <span id={`${fieldId}-count`} className="text-sm text-zinc-500 dark:text-zinc-400">{draft.length.toLocaleString()} / {current.maxLength.toLocaleString()}</span>
           </div>
-          {draft.length > current.maxLength ? <p role="alert">Shorten the description before saving; none of your text has been removed.</p> : null}
+          {draft.length > current.maxLength ? <p role="alert">{t('project:topic.editor.tooLong')}</p> : null}
         </> : null}
         {error ? <p role="alert" className="text-sm text-red-600 dark:text-red-400 my-3">{error}</p> : null}
-        {!current && !busy ? <Button type="button" variant="neutral" ink="neutral" onClick={() => { setOpen(false); }}>Close</Button> : null}
-        {conflict && !latest ? <Button type="button" variant="neutral" ink="neutral" disabled={busy} onClick={reviewLatest}>Review latest description</Button> : null}
+        {!current && !busy ? <Button type="button" variant="neutral" ink="neutral" onClick={() => { setOpen(false); }}>{t('core:common.close')}</Button> : null}
+        {conflict && !latest ? <Button type="button" variant="neutral" ink="neutral" disabled={busy} onClick={reviewLatest}>{t('project:topic.editor.reviewLatest')}</Button> : null}
         {latest ? <div className="my-3 rounded-xl border border-zinc-500/30 p-3">
-          <h3 className="text-sm font-medium mb-2">Latest saved description</h3>
+          <h3 className="text-sm font-medium mb-2">{t('project:topic.editor.latestTitle')}</h3>
           <div className="max-h-40 overflow-auto"><Preview text={latest.description} /></div>
           <div className="flex flex-wrap gap-2 mt-3">
-            <Button type="button" variant="neutral" ink="neutral" onClick={() => { setDraft(latest.description); setCurrent(latest); setLatest(null); setConflict(false); setError(''); }}>Use latest text</Button>
-            <Button type="button" variant="neutral" ink="neutral" onClick={() => { setCurrent(latest); setLatest(null); setConflict(false); setError(''); }}>Keep my draft</Button>
+            <Button type="button" variant="neutral" ink="neutral" onClick={() => { setDraft(latest.description); setCurrent(latest); setLatest(null); setConflict(false); setError(''); }}>{t('project:topic.editor.useLatest')}</Button>
+            <Button type="button" variant="neutral" ink="neutral" onClick={() => { setCurrent(latest); setLatest(null); setConflict(false); setError(''); }}>{t('project:topic.editor.keepDraft')}</Button>
           </div>
         </div> : null}
         {notice ? <p role="status" className="text-sm my-3">{notice}</p> : null}
         {current ? <div className="flex flex-wrap justify-end gap-2 mt-4">
-          <Button type="button" variant="neutral" ink="neutral" disabled={saving.current} onClick={() => setOpen(false)}>Cancel</Button>
-          <Button type="submit" disabled={busy || conflict || !draft.trim() || draft.length > current.maxLength}>{saving.current ? 'Saving…' : notice ? 'Retry GitHub sync' : 'Save description'}</Button>
+          <Button type="button" variant="neutral" ink="neutral" disabled={saving.current} onClick={() => setOpen(false)}>{t('core:common.cancel')}</Button>
+          <Button type="submit" disabled={busy || conflict || !draft.trim() || draft.length > current.maxLength}>{saving.current ? t('project:topic.editor.saving') : notice ? t('project:topic.editor.retrySync') : t('project:topic.editor.save')}</Button>
         </div> : null}
       </form>
     </dialog>, document.body,

@@ -248,19 +248,26 @@ const TASTE_BRIEF = 'Staging demo: a planner for a weekly bake. Pick the breads 
 /** A PNG of one flat colour with horizontal bars: enough to stand in for a screenshot. Pure. */
 function demoPng(width, height, ground, bars = []) {
   const zlib = require('zlib');
-  const row = Buffer.alloc(1 + width * 3);
+  // A row is one of a few: the ground, or a bar's. Each is drawn once and
+  // every row that looks the same shares it (the result is read, never
+  // written), where drawing all 800 pixel by pixel took most of the time.
+  const drawn = new Map();
+  const lineFor = (bar) => {
+    let line = drawn.get(bar);
+    if (line) return line;
+    line = Buffer.alloc(1 + width * 3);
+    for (let x = 0; x < width; x += 1) {
+      const [r, g, b] = bar && x >= 16 && x < width - 16 ? bar.rgb : ground;
+      line[1 + x * 3] = r;
+      line[2 + x * 3] = g;
+      line[3 + x * 3] = b;
+    }
+    drawn.set(bar, line);
+    return line;
+  };
   const rows = [];
   for (let y = 0; y < height; y += 1) {
-    const bar = bars.find((b) => y >= b.y && y < b.y + b.h);
-    const [r, g, b] = bar ? bar.rgb : ground;
-    const line = Buffer.from(row);
-    for (let x = 0; x < width; x += 1) {
-      const inBar = bar && x >= 16 && x < width - 16;
-      line[1 + x * 3] = inBar ? r : ground[0];
-      line[2 + x * 3] = inBar ? g : ground[1];
-      line[3 + x * 3] = inBar ? b : ground[2];
-    }
-    rows.push(line);
+    rows.push(lineFor(bars.find((b) => y >= b.y && y < b.y + b.h)));
   }
   const chunk = (type, data) => {
     const len = Buffer.alloc(4);
@@ -307,12 +314,29 @@ function demoShot(viewport, look, state) {
 // The control the demo's result screens tapped, as the step records it.
 const DEMO_ACTION = Object.freeze({ label: 'Plan the week', rule: 'kit-primary' });
 
+// One drawing per (screen size, look, state). The demo's eight builds show
+// the same few pictures, 152 screenshots of at most twenty kinds, and a
+// preview draws them at every start: drawing each kind once took the two
+// seeders from about two seconds to a tenth of that. The bytes are the same
+// ones as before, and nothing writes to them.
+const demoShotCache = new Map();
+function demoShotOnce(viewport, look, state) {
+  const key = `${viewport}/${look}/${state}`;
+  let hit = demoShotCache.get(key);
+  if (!hit) {
+    const data = demoShot(viewport, look, state);
+    hit = { data, sha256: crypto.createHash('sha256').update(data).digest('hex') };
+    demoShotCache.set(key, hit);
+  }
+  return hit;
+}
+
 /** The demo's screenshots, one per planned shot, the result screens with the control they tapped. */
 function demoShots(capture, lookOf = (p) => p.look) {
   return capture.plannedShots().map((p) => {
-    const data = demoShot(p.viewport, lookOf(p), p.state);
+    const { data, sha256 } = demoShotOnce(p.viewport, lookOf(p), p.state);
     return {
-      ...p, data, bytes: data.length, sha256: crypto.createHash('sha256').update(data).digest('hex'), status: 200, consoleErrors: 0,
+      ...p, data, bytes: data.length, sha256, status: 200, consoleErrors: 0,
       ...(p.state === 'result' ? { action: DEMO_ACTION } : {}),
     };
   });

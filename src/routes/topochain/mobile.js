@@ -44,8 +44,7 @@ const { nativeWebSessionIsLive } = require('../../services/web-session-auth');
 
 
 const {
-  loadOnboarding, visibleChallenges, challengeCategory, resolveProgress, loadEventBlocks,
-  gateSummary,
+  loadOnboarding, challengeCategory, resolveProgress, loadEventBlocks,
 } = require('../../services/topochain/challenge-onboarding');
 const { isWeekly, weekStartMs } = require('../../services/topochain/challenge-rules');
 
@@ -530,8 +529,34 @@ function effectiveCategory(rawCategory) {
 // /seasons ... v4 should pick one behavior" — v4's ONE behavior is this
 // fallback applied on BOTH endpoints, documented here at the one shared
 // call site both builders below go through.
-function effectiveCtaLabel(rawCtaLabel) {
-  return rawCtaLabel != null ? rawCtaLabel : 'Get Started';
+//
+// A CTA is its link (#3202). With no link at all, web or mobile, there is
+// nothing for a button to open, and the fallback label made the app draw a
+// "Get Started" that did nothing on the weekly challenges whose templates
+// carry no link. So such a challenge sends no CTA: all six fields null, the
+// way the web challenge page (TopochainChallenges.ctaView) and the Home
+// panel (home-panels.js buildChallengeRow) already draw none. While either
+// link is usable the fields pass through as before, since a mobile label
+// may ride the web link and the web label a mobile one.
+function hasCtaLink(link) {
+  return typeof link === 'string' && link.trim() !== '';
+}
+
+function effectiveCta(eff) {
+  if (!hasCtaLink(eff.cta_link) && !hasCtaLink(eff.mobile_cta_link)) {
+    return {
+      cta_type: null, cta_label: null, cta_link: null,
+      mobile_cta_type: null, mobile_cta_label: null, mobile_cta_link: null,
+    };
+  }
+  return {
+    cta_type: eff.cta_type,
+    cta_label: eff.cta_label != null ? eff.cta_label : 'Get Started',
+    cta_link: eff.cta_link,
+    mobile_cta_type: eff.mobile_cta_type,
+    mobile_cta_label: eff.mobile_cta_label,
+    mobile_cta_link: eff.mobile_cta_link,
+  };
 }
 
 // Full per-challenge item for GET /challenges (SPEC 1934-1974): every
@@ -560,12 +585,7 @@ function buildMobileChallengeItem(r, { activities, activitiesTotal }) {
     description: eff.description,
     requirements: eff.requirements,
     reward_logic: eff.reward_logic,
-    cta_type: eff.cta_type,
-    cta_label: effectiveCtaLabel(eff.cta_label),
-    cta_link: eff.cta_link,
-    mobile_cta_type: eff.mobile_cta_type,
-    mobile_cta_label: eff.mobile_cta_label,
-    mobile_cta_link: eff.mobile_cta_link,
+    ...effectiveCta(eff),
     schedule_start: iso(eff.schedule_start),
     schedule_end: iso(eff.schedule_end),
     enabled: r.enabled,
@@ -594,12 +614,7 @@ function buildSeasonChallengeItem(r) {
     description: eff.description,
     requirements: eff.requirements,
     reward_logic: eff.reward_logic,
-    cta_type: eff.cta_type,
-    cta_label: effectiveCtaLabel(eff.cta_label),
-    cta_link: eff.cta_link,
-    mobile_cta_type: eff.mobile_cta_type,
-    mobile_cta_label: eff.mobile_cta_label,
-    mobile_cta_link: eff.mobile_cta_link,
+    ...effectiveCta(eff),
     schedule_start: iso(eff.schedule_start),
     schedule_end: iso(eff.schedule_end),
     enabled: r.enabled,
@@ -702,7 +717,7 @@ async function fetchSeasonEventChallengeItems(pool, seasonEventId, opts) {
       ORDER BY c.display_order ASC, c.id ASC`,
     params
   );
-  return visibleChallenges(rows.filter((r) => r.t_id != null), onboarding)
+  return rows.filter((r) => r.t_id != null)
     .map((r) => {
       const item = buildSeasonChallengeItem(r);
       item.category = challengeCategory(item.challenge_id, item.category, onboarding);
@@ -1304,9 +1319,11 @@ function topochainMobileRoutes(config) {
         rows = await fetchChallengesForSeason(pool, seasonId);
       }
 
+      // The season's First challenges: their ids (for the category) and the
+      // viewer's lifetime progress on them. Since #4635 they hide nothing, so
+      // the list is the whole event or season.
       const onboarding = await loadOnboarding(pool, req.user.id,
         { seasonId: resolvedSeasonId, eventId: seasonEventId });
-      rows = visibleChallenges(rows, onboarding);
       const ids = rows.map((r) => Number(r.id));
       const activityRows = ids.length ? await fetchOwnChallengeActivities(pool, req.user.id, ids) : [];
       const activitiesByChallenge = new Map();
@@ -1392,11 +1409,9 @@ function topochainMobileRoutes(config) {
         });
       }
 
-      // The gate summary only for a viewer it applies to: a new account on
-      // its Getting started list (2026-10-01). Anyone else gets the whole
-      // season and no summary, as for a season with no First challenges.
-      const gate = gateSummary(onboarding);
-      return ok(res, { data: items, ...(gate ? { onboarding: gate } : {}) });
+      // No `onboarding` summary any more (#4635): nothing is gated, and the
+      // app already reads a missing summary as "not gated".
+      return ok(res, { data: items });
     } catch (err) {
       log.error('topochain-mobile', 'GET /challenges failed', { message: err.message });
       return fail(res, 500, 'Internal server error.');
@@ -1477,7 +1492,6 @@ function topochainMobileRoutes(config) {
           ends_at: iso(season.ends_at),
           is_active: season.is_active,
           events,
-          ...(gateSummary(onboarding) ? { onboarding: onboarding.summary } : {}),
         };
         if (includeChallenges) {
           // "season_challenges ... same shape, from the season-type
@@ -1512,7 +1526,15 @@ function topochainMobileRoutes(config) {
   // (mobileTokenAuth's own "never trust a client-supplied id" rule,
   // Constraint #12, now holds on the web surface too).
   const webSessionAuth = optionalSessionAuth(config);
+  // A session lookup that threw (a DB error or pool timeout, which
+  // optionalSessionAuth swallows for the public reads) is a server fault,
+  // not "signed out": answer 500 as authMiddleware does, so the Profile
+  // screen never tells a signed-in person to sign in (#4808).
   const requireSessionUser = (req, res, next) => {
+    if (req.sessionLookupError) {
+      log.warn('topochain-mobile', 'web session lookup failed', { message: req.sessionLookupError.message });
+      return fail(res, 500, 'Internal server error.');
+    }
     if (!req.user) return fail(res, 401, 'Unauthenticated.');
     return next();
   };

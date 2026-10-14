@@ -2,6 +2,9 @@ const fs = require('fs');
 const path = require('path');
 const nodeAppPackage = require('../templates/node-app/package.json');
 const nodeAppLock = require('../templates/node-app/package-lock.json');
+// The packages a starter may add on top of the template's (an entry's
+// `dependencies` in services/app-templates.js), with their lockfile entries.
+const extraPackages = require('../templates/node-app/extra-packages.json');
 const appTemplates = require('./app-templates');
 
 // Forwarder snippet injected into every scaffolded app's public/index.html.
@@ -82,10 +85,10 @@ const DEV_CONSOLE_FORWARDER = `
 // (the theme <script> after the bridge tag in public/index.html, the same one
 // a starter under app-templates/ would ship); this is what its CLAUDE.md tells the
 // agent that replaces that screen, so the first real version keeps both.
-// Shared by the Empty scaffold's notes and every starter's. Empty's screen is
-// built from its design kit, whose colour tokens carry both looks, and its
-// notes record a fixed look under their own "## Design"; a starter's screen
-// uses `dark:` variants, and its notes have no such section.
+// Shared by the Empty scaffold's notes and every starter's. Every screen is
+// built from the design kit, whose colour tokens carry both looks, and the
+// notes record a fixed look under their own "## Design". The default wording
+// (`dark:` variants) is for a screen drawn without the kit.
 function themeClaudeNote({ how = 'Tailwind\'s `dark:` variants', where = '"App-specific conventions"' } = {}) {
   return `The screen has a light and a dark look and follows the viewer's Homeroom
 theme, switching live when they change it: the theme \`<script>\` right after
@@ -141,7 +144,10 @@ Re-theme by changing the token values there, keeping every text pair at
   what failed, what still works, and offers Retry.
 - Seed obviously fake staging demo data so the populated screen can be seen
   ("Staging mock data" in the platform conventions).
-- No cards in cards, no uppercase eyebrows, no emoji as icons.`;
+- No cards in cards, no uppercase eyebrows, no emoji as icons.
+- A header that shows the app's own mark shows the project's icon there
+  (the emoji in \`dapp.json\`'s \`icon\` block) or no mark at all: never an
+  empty tile, and never \`brand/icon.png\`, which the app does not serve.`;
 
 // The design kit's half of styles/tailwind-input.css, after the three
 // @tailwind lines. Part of the Tailwind build every new app shares (a
@@ -535,6 +541,10 @@ api.routes(app, pool);
   const server = app.listen(port, () => console.log(\`Listening on :\${port}\`));
   // Let Envoy retire idle upstream connections at 60s, with a 15s margin.
   server.keepAliveTimeout = 75_000;
+  // A starter that keeps live connections (a game's, game/live.js) takes
+  // them on this same server, with its own sign-in check: the middleware
+  // above never sees a WebSocket upgrade.
+  const live = typeof api.attach === 'function' ? api.attach(server) : null;
 
   // Every deploy stops this container with SIGTERM. Stop accepting
   // connections, let in-flight requests finish under a short deadline,
@@ -544,6 +554,7 @@ api.routes(app, pool);
     if (shuttingDown) return;
     shuttingDown = true;
     console.log(\`[shutdown] \${signal} received, draining\`);
+    if (live && typeof live.close === 'function') live.close();
     server.close(() => {});
     server.closeIdleConnections?.();
     const timer = setTimeout(() => server.closeAllConnections?.(), DRAIN_MS);
@@ -586,6 +597,9 @@ function getTemplateFiles(appName, slug, dbUrl, repoUrl = null, { governance = n
   const starter = template == null || template === appTemplates.DEFAULT_TEMPLATE ? null : appTemplates.get(template);
   if (template != null && !appTemplates.isTemplate(template)) throw new Error(`Unknown app template: ${template}`);
   const server = starter ? STARTER_SERVER : EMPTY_SERVER;
+  // A starter's own packages (a game's `ws`), added to package.json and its
+  // lockfile so the image's `npm ci` installs them.
+  const extraDeps = starter && starter.dependencies ? extraDependencies(starter) : null;
   const governanceBlock = require('./create-options').governanceBlock(governance);
   const about = typeof description === 'string' && description.trim() ? description.trim() : null;
   // The first session's card (services/app-sketch.js): its emoji is the
@@ -598,7 +612,9 @@ function getTemplateFiles(appName, slug, dbUrl, repoUrl = null, { governance = n
   // one.
   const card = sketch ? require('./app-sketch').cardOf(sketch.design) : null;
   const callerEmoji = typeof iconEmoji === 'string' && iconEmoji.trim() ? iconEmoji.trim() : null;
-  const icon = starter ? { emoji: starter.icon }
+  // A game starter becomes the game its creator described, so the card's
+  // emoji (drawn from their words) comes before the starter's own.
+  const icon = starter && (starter.ready || !card) ? { emoji: starter.icon }
     : (card ? { emoji: card.emoji }
     : (callerEmoji ? { emoji: callerEmoji } : null));
   // The welcome card's thumbnail tile, the app's face on Home
@@ -614,35 +630,32 @@ function getTemplateFiles(appName, slug, dbUrl, repoUrl = null, { governance = n
       path: 'CLAUDE.md',
       content: `# ${appName} — notes for Claude Code
 
-This app runs on **Homeroom**. If you're Claude Code
-editing this repo, read the platform conventions before making
-changes:
+This app runs on **Homeroom**. The platform conventions are the single
+source of truth for platform-wide behavior (auth model, \`USERNODE_ENV\`,
+public/private tables, "don't \`git push\`", etc.):
 
 **Platform conventions (authoritative, always current):**
 ${PLATFORM_BASE_URL}/claude.md
 
-Fetch that URL at the start of each session — it's the single source
-of truth for platform-wide behavior (auth model, \`USERNODE_ENV\`,
-public/private tables, "don't \`git push\`", etc.). The hosted copy is
+**Inside Homeroom** (its dev chat, and Homeroom bot's builds), do not
+fetch that URL: what applies to your change is already in your
+instructions, and the \`homeroom\` MCP server's
+\`get_platform_conventions\` reads any one section of the conventions
+when you need it. The two sections below are for working outside
+Homeroom; skip them there.
+
+**Anywhere else** (Claude Code run against this repo locally, or another
+harness), fetch it at the start of each session. The hosted copy is
 updated in place when platform rules change, so fetching it gives you
 today's rules, not a stale snapshot.
 
-When running inside Homeroom's dev-chat, those same conventions are
-already injected into your system prompt, so the fetch is a no-op in
-that path — but it's the right reflex when someone runs Claude Code
-against this repo locally or from another harness.
-
-## Connector permission prompts
+## Connector permission prompts (outside Homeroom)
 
 This repo ships \`.claude/settings.json\`, which allows the **read-only**
 Homeroom connector calls (\`mcp__${CONNECTOR_SERVER_NAME}__get_*\`,
-\`…__list_*\`, \`…__whoami\`) so they stop prompting one at a time. Everything
-that acts — filing a request, opening or advancing a proposal — still asks.
-Claude Code applies those rules only after you accept the
-workspace trust dialog, which lists them for review. See \`.claude/README.md\`
-for the whole story, including what to do if you are still being prompted
-(usually: your connector is registered under a different name than the rules
-assume).
+\`…__list_*\`, \`…__whoami\`) once you accept the workspace trust dialog.
+See \`.claude/README.md\` for the whole story, including what to do if you
+are still being prompted.
 
 ## Check that this checkout is current
 
@@ -669,8 +682,9 @@ answers the same question.
 
 A session-start hook (\`${FRESHNESS_HOOK_PATH}\`, see \`.claude/README.md\`) runs
 this check for you and tells you when you are behind. It is silent offline, so
-its silence is not proof the checkout is current. Inside Homeroom's dev-chat
-the platform fixes the base commit, and none of this applies.
+its silence is not proof the checkout is current. Inside Homeroom (its dev
+chat, and Homeroom bot's builds) the platform fixes the base commit, and none
+of this applies.
 
 ${starter ? starterClaudeSection(starter) : `## Starter template
 
@@ -705,7 +719,9 @@ tables you've marked private), etc.
 
 ${about ? `${about}\n\n_(add a sentence or two more of product context here so Claude Code has a\nshared understanding of what this app is for)_` : `_(add a sentence or two of product context here so Claude Code has a
 shared understanding of what this app is for)_`}
-${starter ? '' : `\n${DESIGN_CLAUDE_SECTION}\n`}
+
+${DESIGN_CLAUDE_SECTION}
+
 ## App-specific conventions
 
 _(optional — e.g. "all currency values stored as integer cents, not
@@ -762,6 +778,7 @@ Once the real app exists, rewrite this README to describe it.
         ...nodeAppPackage,
         name: slug,
         description: appName,
+        ...(extraDeps ? { dependencies: sortedKeys({ ...nodeAppPackage.dependencies, ...extraDeps.ranges }) } : {}),
       }, null, 2),
     },
     {
@@ -769,7 +786,15 @@ Once the real app exists, rewrite this README to describe it.
       content: JSON.stringify({
         ...nodeAppLock,
         name: slug,
-        packages: {
+        packages: extraDeps ? sortedKeys({
+          ...nodeAppLock.packages,
+          '': {
+            ...nodeAppLock.packages[''],
+            name: slug,
+            dependencies: sortedKeys({ ...nodeAppLock.packages[''].dependencies, ...extraDeps.ranges }),
+          },
+          ...extraDeps.packages,
+        }, '') : {
           ...nodeAppLock.packages,
           '': { ...nodeAppLock.packages[''], name: slug },
         },
@@ -1274,7 +1299,10 @@ ${server.start}start().catch(err => { console.error(err); process.exit(1); });
   if (!starter) return card ? withCard(files, appName, sketch) : files;
   // A starter's own screen replaces the Press! page, and its api.js and
   // scripts join the shared plumbing.
+  // The entry's own `fill` (what a tier list ranks) lands in the page's
+  // markup, so it is escaped like the name.
   const own = appTemplates.starterFiles(template, {
+    ...Object.fromEntries(Object.entries(starter.fill || {}).map(([key, value]) => [key, escapeHtml(value)])),
     APP_NAME: escapeHtml(appName),
     DEV_CONSOLE_FORWARDER: DEV_CONSOLE_FORWARDER.trim(),
   });
@@ -1295,14 +1323,19 @@ function withCard(files, appName, sketch) {
 }
 
 // The CLAUDE.md section a starter writes in place of the Press! example's.
-// Same job: tell the coding agent what is placeholder and what to keep.
+// Same job: tell the coding agent what the app already is and what to keep.
+// A ready-made starter is the app (services/app-templates.js), so its screen
+// carries no "started from a template" notice to delete. A game starter is
+// a working game its first version turns into the one its creator described
+// (gameClaudeSection).
 function starterClaudeSection(starter) {
+  if (!starter.ready) return gameClaudeSection(starter);
   return `## Starter template: ${starter.title}
 
-This app was created from Homeroom's **${starter.title}** template:
-${starter.summary.charAt(0).toLowerCase()}${starter.summary.slice(1)} It is a working starting point, not
-product intent. Keep what the people building this app want and change
-the rest freely.
+This app was created from Homeroom's ready-made **${starter.title}**.
+${starter.summary} It works as it is, and it is a starting point, not a fixed
+product: keep what the people building this app want and change the rest
+freely.
 
 Where things are:
 
@@ -1313,24 +1346,87 @@ Where things are:
 - \`dapp.json\` \`tests\`: the checks every proposal runs. Keep them passing,
   and change them when you change what they look for.
 
-The \`usernode-starter-notice@1\` block in \`public/index.html\` (both sentinel
-comments and everything between them) is the "started from a template"
-notice: remove it with the first real change. Rewrite \`README.md\` to
-describe the actual app once it has one.
+Update \`README.md\` when what the app does changes.
 
 Keep the \`usernode-dev-console@1\` forwarder \`<script>\` and the bridge
 \`<script>\` when rewriting the HTML: both are platform infrastructure.
+The screen is built from the design kit, which is not placeholder either:
+keep building with it, and fill in "## Design" below with the first change
+that gives this app a look of its own.
 
-${themeClaudeNote()}
+${themeClaudeNote({ how: 'the design kit\'s colour tokens carry both', where: '"## Design"' })}
+
+`;
+}
+
+// A game starter (services/app-templates.js, `kind: 'game'`): a working
+// multiplayer game on the shared game room, which Homeroom bot's first
+// version changes into the game its creator described. This is what tells
+// that build, and every later one, what is already there.
+function gameClaudeSection(starter) {
+  return `## Starter template: ${starter.title}
+
+This app was created from Homeroom's **${starter.title}**: ${starter.summary}
+It is a working game, and its first version is the game its creator
+described, built ON it: keep what fits, change what does not, and replace
+the example game's rules and screen freely. Never delete the game room
+layer to start over; it is what makes the game multiplayer.
+
+Where things are:
+
+- \`game/room.js\` and \`game/live.js\`: the game room. Who is playing, the
+  lobby, starting a game, turns, timers or a live tick, each player's view,
+  saved results and the leaderboard, kept in Postgres (tables
+  \`game_rooms\` and \`game_results\`) and sent to every player over one
+  WebSocket (\`/api/live\`), with \`GET /api/room\` and \`POST /api/room/*\`
+  as the same thing over plain requests. It knows nothing about the game.
+  Its header comment is the contract a game's rules keep.
+- \`game/rules.js\`: this game's rules, as plain functions of the game's
+  state: set up a game, apply a move, what each player may see, when it is
+  over and who won. Most changes to how the game plays happen here.
+- \`api.js\`: wires the rules into the room${starter.tables ? ', and keeps ' + starter.tables : ''}.
+  \`server.js\` mounts it after the sign-in check, runs \`migrate()\` on
+  boot (which also seeds a few obviously fake rows in a staging preview)
+  and hands it the server for the live connection (\`attach\`).
+- \`public/game/room.js\`: the page's side of the room: the live
+  connection, falling back to asking every couple of seconds, and
+  \`join()\`, \`start()\`, \`act(move)\`, \`input(controls)\`.
+- \`public/index.html\` and \`public/app.js\`: the screens (a title screen with
+  the lobby, then the game filling the screen), and \`public/scene.css\`: the
+  game's own look.
+${starter.notes ? `${starter.notes}
+` : ''}- \`dapp.json\` \`tests\`: the checks every proposal runs. Keep them passing,
+  and change them when you change what they look for.
+
+Rules the room keeps for you, and a new game should too:
+
+- The server decides. A move is checked by \`rules.act\` on the server; the
+  page only shows the result. A guest (no account) can watch, never play.
+- Time on the server is \`Date.now()\` inside the room: games run on real
+  time, not a preview's chosen \`req.now\`.
+- Content rules: no weapons, combat or attacking characters, and no
+  gambling or wagering. Shooting games are out; breaking rocks, racing,
+  building and quizzes are fine.
+
+Update \`README.md\` when what the game does changes.
+
+Keep the \`usernode-dev-console@1\` forwarder \`<script>\` and the bridge
+\`<script>\` when rewriting the HTML: both are platform infrastructure.
+The page around the game is built from the design kit, which is not
+placeholder either; a game drawn as its own scene may keep one look of its
+own, and should say so under "## Design".
+
+${themeClaudeNote({ how: 'the design kit\'s colour tokens carry both', where: '"## Design"' })}
 
 `;
 }
 
 function starterReadme(appName, starter) {
+  if (!starter.ready) return gameReadme(appName, starter);
   return `# ${appName}
 
-> **Started from a template.** This repo was scaffolded by Homeroom from
-> the **${starter.title}** template. Make it your own.
+> **Ready-made.** This repo was scaffolded by Homeroom as its ready-made
+> **${starter.title}**. It works as it is; make it your own.
 
 ${starter.summary}
 
@@ -1355,6 +1451,62 @@ what you want in plain English. You can also run Claude Code against this repo d
 \`CLAUDE.md\`, which carries the app-specific notes and points at the
 platform rules.
 `;
+}
+
+// A game starter's README: what the example game does, and that the
+// project's first version turns it into the game its creator described.
+function gameReadme(appName, starter) {
+  return `# ${appName}
+
+> **Game starter.** This repo was scaffolded by Homeroom from its
+> **${starter.title}**, a game that already works and is multiplayer.
+> Homeroom bot builds the game its creator described on top of it.
+
+${starter.summary}
+
+What the starter already does:
+
+${starter.features.map((f) => `- ${f}`).join('\n')}
+
+And what every Homeroom app gets:
+
+- **Sign-in**: the server verifies the platform-issued user token (an
+  RS256 JWT) on every request and every live connection, so the game
+  already knows who is playing.
+- **Database**: the app has its own Postgres database. Its tables are
+  created on boot by \`api.js\` and \`game/room.js\`.
+- **Styling**: Tailwind CSS, precompiled by \`npm run build\` during image
+  creation, following the platform's light or dark theme.
+
+## Changing it
+
+To change this game, ask Homeroom bot: open the app on Homeroom, tap the
+Homeroom icon in the header, then **Suggest an improvement**, and describe
+what you want in plain English. You can also run Claude Code against this
+repo directly; start with \`CLAUDE.md\`, which says where the game's rules
+live and points at the platform rules.
+`;
+}
+
+// An object with its keys in order (`first` leading), the way npm writes
+// package.json dependencies and a lockfile's packages.
+function sortedKeys(obj, first = null) {
+  const keys = Object.keys(obj).sort((a, b) => (a === first ? -1 : b === first ? 1 : a.localeCompare(b)));
+  return Object.fromEntries(keys.map((k) => [k, obj[k]]));
+}
+
+// A starter's `dependencies` (names from extra-packages.json): their ranges
+// for package.json and the lockfile entries `npm ci` installs them from.
+function extraDependencies(starter) {
+  const ranges = {};
+  let packages = {};
+  for (const name of starter.dependencies) {
+    const extra = extraPackages[name];
+    if (!extra) throw new Error(`Starter ${starter.id} needs ${name}, which src/templates/node-app/extra-packages.json does not lock`);
+    ranges[name] = extra.range;
+    packages = { ...packages, ...extra.packages };
+  }
+  return { ranges, packages };
 }
 
 function escapeHtml(str) {

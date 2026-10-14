@@ -66,6 +66,33 @@ test('the build carries the dev chat\'s in-loop browser block and the bot\'s exp
   assert.match(text, /Boot the app, then\n  walk each changed screen through its accessibility snapshot \(`browser_snapshot`; you read text, not images\)\n/);
 });
 
+test('with a reviewer, the build checks its main flow once at one width and leaves the visual sweep to the review', () => {
+  for (const readsImages of [true, false]) {
+    const without = live.buildPrompt({ seed: 'ISSUE', buildNote: 'plan', readsImages, firstVersion: true });
+    const p = live.buildPrompt({ seed: 'ISSUE', buildNote: 'plan', readsImages, firstVersion: true, reviewed: true });
+    assert.ok(p.includes(IN_LOOP_BROWSER_GUIDANCE));
+    assert.match(p, /- For you, the Homeroom bot, one check is EXPECTED, not optional: boot the app and, at 390x844 only, do its main\n  thing once \(below\), enough to know it runs and its main flow works, and fix what that shows is broken\./);
+    assert.match(p, /Do not\n  check other widths, both looks, or the empty and error states: a reviewer captures and checks every screen at\n  both widths and in both looks once your turn is over, and you fix what it finds\./);
+    assert.match(p, /- A page that renders is not a button that works\./, 'the main-flow check stays');
+    assert.doesNotMatch(p, /at a desktop width, in both looks/);
+    assert.doesNotMatch(p, /Boot the app, then\n  (take screenshots|walk each changed screen)/);
+    // Without a reviewer, today's sweep, unchanged.
+    assert.match(without, /at 390x844 and at a desktop width, in both looks/);
+    assert.doesNotMatch(without, /one check is EXPECTED/);
+    assert.equal(without, live.buildPrompt({ seed: 'ISSUE', buildNote: 'plan', readsImages, firstVersion: true, reviewed: false }));
+  }
+  const clocked = live.buildPrompt({
+    seed: 'ISSUE', buildNote: 'plan', firstVersion: true, reviewed: true, clock: { startedAt: Date.now(), budgetMs: 40 * 60000 },
+  });
+  assert.match(clocked, /the reviewer checks sizes, looks, and empty and error states/);
+  assert.match(clocked, /Do it in the order, and by the time, the TIME section above sets\./);
+});
+
+test('the build is told it has a reviewer exactly when its configuration has one', () => {
+  const src = read('src/services/homeroom-bot-live.js');
+  assert.match(src, /reviewed: Boolean\(review\?\.reviewer\),/);
+});
+
 test('the dev chat\'s browser guidance is left as it was', () => {
   const sessions = read('src/routes/sessions.js');
   assert.match(sessions, /browserGuidance: IN_LOOP_BROWSER_GUIDANCE,/);
@@ -174,6 +201,29 @@ test('a first version\'s spec owns its design and scope; what its creator approv
   assert.doesNotMatch(live.buildPrompt({ seed: 'ISSUE', buildNote: long }), /Keep this bullet/, 'a later build clips its note as before');
 });
 
+test('a first version\'s spec is sized for about 25 of its build\'s 40 minutes and ranks its work; its build follows that order', () => {
+  // The build's clock this aims inside: twice the default turn budget.
+  assert.equal(bot.FIRST_VERSION_BUILD_TIME_FACTOR, 2);
+  for (const html of [false, true]) {
+    const first = live.specPrompt({ seed: 'ISSUE', buildNote: 'plan', firstVersion: true, html }).replace(/\s+/g, ' ');
+    const other = live.specPrompt({ seed: 'ISSUE', buildNote: 'plan', html });
+    assert.match(first, /- Sized for the build that follows: it has about 40 minutes, so plan about 25 minutes of its work, which leaves it time to look at the result and fix it\. This is a size to aim for, not a cut: nothing the request needs is dropped to fit, and what may not fit goes last in the order below\./);
+    assert.match(first, /End the technical half with a "Build order" subsection of two short lists\. "Must-haves first": the main action working end to end; honest loading, empty and error states \(never a blank loading screen, a made-up zero or a raw server error\); the phone layout \(nothing covering or cutting off content, the tab you are on marked\); demo data that shows the app's core idea; and the signature element on the first screen\. Then "Nice-to-haves": everything else, most valuable first\./);
+    // Gentle: the complete first version is still asked for.
+    assert.match(first, /- A complete first version of what the request asks for, done fully and well/);
+    assert.doesNotMatch(other, /Build order|25 minutes|Must-haves first/, 'a later change is as it was');
+  }
+  for (const line of live.FIRST_VERSION_SIZE_LINES) assert.ok(!/—/.test(line), line);
+  const order = live.FIRST_VERSION_ORDER_LINES.join('\n');
+  assert.match(order.replace(/\s+/g, ' '), /Build in the order the spec's "Build order" gives: every must-have first, working, then the nice-to-haves, most valuable first, only while time is left\./);
+  for (const spec of [null, '# Spec']) {
+    const first = live.buildPrompt({ seed: 'ISSUE', buildNote: 'plan', spec, firstVersion: true });
+    assert.ok(first.includes(order));
+    assert.ok(first.indexOf(order) < first.indexOf('Make exactly that change, and nothing else:'));
+    assert.ok(!live.buildPrompt({ seed: 'ISSUE', buildNote: 'plan', spec }).includes('Build order'), 'a later build is as it was');
+  }
+});
+
 test('a first version\'s HTML spec draws its finished screens within a budget; a markdown spec and every later spec do not', () => {
   const screens = prompts.FIRST_VERSION_SCREENS_BRIEF;
   const flat = screens.replace(/\s+/g, ' ');
@@ -223,6 +273,8 @@ test('a first version\'s build uses the starter\'s design kit and records its lo
   // The record: the starter's "## Design" section, which a starter other
   // than Empty does not have yet.
   assert.match(flat, /Then fill in the "## Design" section of the app's `CLAUDE\.md` \(add it if it is missing\): the palette by name, the signature element, the type scale, and the one fixed look if the app keeps one\. Every later change follows it\./);
+  // Run five (13 Oct 2026, fix 7): the header's mark is the project's icon, or none.
+  assert.match(flat, /If the app's header shows its own mark, show the project's icon there \(the emoji in `dapp\.json`'s `icon` block\), or leave the mark out: never an empty tile, and never `brand\/icon\.png`, which the app does not serve\./);
   assert.doesNotMatch(flat, /zinc|violet|`Design:` note/, 'nothing left of the old starter\'s palette or note');
   for (const line of live.FIRST_VERSION_DESIGN_LINES) assert.ok(!/—/.test(line), line);
 
@@ -235,8 +287,24 @@ test('a first version\'s build uses the starter\'s design kit and records its lo
     // And App bench context pack 4's nudge and look-and-fix loop
     // (services/design-skill.js; tests/design-skill.test.js).
     const pack4 = live.guidanceLines(designSkill.stageGuidance('build', { firstVersion: true })).join('\n');
-    assert.equal(first.replace(`${lines}\n`, '').replace(`${pack4}\n`, ''), other,
-      'the record, the skill\'s nudge and the look-and-fix loop are the only differences');
+    // #4387: and the "Adding …" phrases its waiting members see.
+    const progress = live.FIRST_VERSION_PROGRESS_LINES.join('\n');
+    assert.ok(first.includes(progress) && !other.includes('usernode-progress'));
+    // #4487: and a later change is asked to declare its visible changes.
+    const declare = live.buildVisibleChangesLines(null).join('\n');
+    assert.ok(other.includes(declare) && !first.includes('declare_visible_changes'));
+    // The copies have no model key, so no declared step waits for the bot (PR 4536).
+    assert.match(declare.replace(/\n/g, ' '), /The before and after copies have no model key, so nothing on them answers with a model: Homeroom bot only says it cannot reach its model there/);
+    assert.match(declare.replace(/\n/g, ' '), /Never make a step ask Homeroom bot \(or any AI feature\) for something and wait for its reply\./);
+    // A state new in the change is seeded in it: the after copy is the side
+    // that needs it (22 failed runs and 13 skipped changes, 2026-10-09 to 10-12).
+    assert.match(declare.replace(/\n/g, ' '), /add an idempotent, obviously fake staging seed for it in this same change: it reaches the after copy, which is the side a new state needs\./);
+    assert.match(declare.replace(/\n/g, ' '), /fake people, never a signal your code reads to decide something, and a reply as the stored message, never asked for\./);
+    assert.match(declare.replace(/\n/g, ' '), /A change to a state that already existed needs it on both copies, which a seed in this change cannot give/);
+    // And the order its spec ranked the work in.
+    const order = live.FIRST_VERSION_ORDER_LINES.join('\n');
+    assert.equal(first.replace(`${lines}\n`, '').replace(`${progress}\n`, '').replace(`${order}\n`, '').replace(`${pack4}\n`, ''), other.replace(`${declare}\n`, ''),
+      'the record, the progress phrases, the build order, the skill\'s nudge, the look-and-fix loop and the declaration are the only differences');
     // Every build, a later one included, reads the note through the guidance.
     for (const p of [first, other]) {
       assert.match(p, /If the app's `CLAUDE\.md` has a "## Design" section \(or a `Design:` note under "App-specific conventions"\), that is this app's look/);
@@ -357,4 +425,38 @@ test('a live first version passes the flag to its build, and a benchmark trial r
   const specStage = runner.slice(runner.indexOf('async function specStage('), runner.indexOf('async function buildResult('));
   const buildStage = runner.slice(runner.indexOf('async function buildStage('), runner.indexOf('function followupTurn('));
   for (const stage of [specStage, buildStage]) assert.match(stage, /firstVersion: !!snapshot\.extra\?\.firstVersion,/);
+});
+
+// #4387: once a first version's spec is written, its drawn screens are
+// handed on for the App tab's first look, with the worker they can be drawn
+// in, and the build goes straight on without waiting for it.
+test('a first version\'s spec screens are handed to its first look, and nothing waits on it', async () => {
+  const HTML_SPEC = '<article data-spec><h1>Plants</h1><section data-spec-tab="user"><figure data-screens>'
+    + '<template data-screen data-size="phone"><div data-side="after" data-change="1">Today</div></template>'
+    + '<ol data-changes><li>The list</li></ol></figure><p>What changes.</p></section>'
+    + '<section data-spec-tab="tech"><p>How.</p></section></article>';
+  const h = buildHarness();
+  h.deps.seesImages = true;
+  const exec = h.deps.worker.execInWorker;
+  h.deps.worker.execInWorker = async (id, opts) => (opts.mode === 'scout' ? { lastResultText: HTML_SPEC } : exec(id, opts));
+  const looks = [];
+  let release;
+  const held = new Promise((r) => { release = r; });
+  const built = await live.buildAndPropose({
+    pool: h.pool, deps: h.deps, ...ARGS, model: 'm', firstVersion: true,
+    onFirstLook: async (args) => { looks.push(args); await held; },
+  });
+  release();
+  assert.equal(built.ok, true, 'built while the first look was still being drawn');
+  assert.equal(looks.length, 1);
+  assert.equal(looks[0].containerName, 'w');
+  assert.ok(looks[0].specHtml.includes('<template data-screen data-size="phone">'));
+  assert.equal('specHtml' in built, false, 'the HTML is never carried onto the result');
+
+  // A markdown spec draws nothing to look at.
+  const md = buildHarness();
+  md.deps.seesImages = true;
+  const none = [];
+  await live.buildAndPropose({ pool: md.pool, deps: md.deps, ...ARGS, model: 'm', firstVersion: true, onFirstLook: (a) => none.push(a) });
+  assert.equal(none.length, 0);
 });

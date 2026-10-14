@@ -133,14 +133,13 @@ const MAX_CLOSE_REASON_LENGTH = 2000;
 // #556: cap for author-edited issue titles (rename route below). Matches
 // the feedback form's optional title input; far below GitHub's own limit.
 const MAX_ISSUE_TITLE_LENGTH = 200;
-// Matches the issue-draft service and feedback form. Empty is valid: GitHub
-// issues may deliberately have no description, but an accidental novel must
-// not ride through the app's JSON limit or make the topic unusable.
-const MAX_ISSUE_BODY_LENGTH = 10000;
-// GitHub's own issue-body limit: the most a request filed with screenshots
-// may come to once their embed lines are appended (MAX_REQUEST_BODY_CHARS in
-// services/mcp-tools.js is the same number).
-const MAX_GITHUB_ISSUE_BODY_CHARS = 65536;
+// GitHub's own issue-body limit (services/issue-body-limit.js): the most a
+// request filed with screenshots may come to once their embed lines are
+// appended, and the most its author may edit its body to (#4194: this was
+// 10,000, so a request written at length on GitHub could not be edited
+// here). Empty is valid: GitHub issues may deliberately have no description.
+const { GITHUB_ISSUE_BODY_MAX: MAX_GITHUB_ISSUE_BODY_CHARS } = require('../services/issue-body-limit');
+const MAX_ISSUE_BODY_LENGTH = MAX_GITHUB_ISSUE_BODY_CHARS;
 
 // A request body with its screenshots embedded exactly as the feedback
 // dialog embeds them, so every reader of `/issue-images/<id>` lines (the
@@ -205,6 +204,9 @@ function stagingMockIssues(repoUrl) {
     title,
     body,
     labels: ['usernode'],
+    // #4453: a request's page says when it was asked; a day before its
+    // last activity, as a filed request is.
+    createdAt: hoursAgo(hours + 24),
     updatedAt: hoursAgo(hours),
     htmlUrl: `${base}/issues/${number}`,
     user: 'staging-tester',
@@ -224,8 +226,11 @@ function stagingMockIssues(repoUrl) {
       // Homeroom (safeMention's zero-width space after the `@`), so its page
       // shows the mention as a link to their page.
       + '@​staging_tester lmk wyt', 9),
+    // #4453: filed on Homeroom, so its body opens with the Source line
+    // GitHub keeps and the request's page leaves out.
     mk(900003, '[Mock] Topic cards overflow on narrow phones',
-      'Staging-only mock issue for previewing the Dev card list.\n\n'
+      '**Source:** Homeroom user (staging-tester)\n\n'
+      + 'Staging-only mock issue for previewing the Dev card list.\n\n'
       + 'On a 360px-wide viewport the action buttons on issue cards can '
       + 'push past the card edge. They should wrap onto their own row '
       + 'instead.', 30),
@@ -605,10 +610,9 @@ function isStagingMockIssueNumber(number) {
 // a short spec here is how the request page could pass every check and
 // still show the raw markers on every real request.
 const MOCK_BOT_SPEC_COMMENT = [
-  '[Mock] Homeroom bot wrote a spec for this request and is building it now. The change will be linked here '
-    + 'when it\'s ready to try.',
+  '[Mock] Homeroom bot wrote a plan for this request and is building it now.',
   '',
-  '<details><summary>The spec</summary>',
+  '<details><summary>The plan</summary>',
   '',
   '# Keep the Vote and Preview buttons on screen on small phones',
   '',
@@ -978,6 +982,9 @@ function issueRoutes(config) {
         ? await governanceSvc.communityMemberCount(pool, appId)
         : undefined;
       const secretReason = explicitApprovalCopy.secretChangeReason(!!gatedApp.self_hosted);
+      // #4666: who voted, on a project with rules of its own.
+      const rulesCtx = gov.rules
+        ? await governanceSvc.rulesContext(pool, appId, gov, 'issue', rows.map((r) => r.id)) : null;
 
       // Strip ciphertext from secret_change rows before serializing —
       // the value should never be readable from this endpoint, even
@@ -995,7 +1002,10 @@ function issueRoutes(config) {
         const flagged = r.kind === 'secret_change';
         const gate = governanceSvc.computeGate(
           gov, electorate.active, q.yes, q.no, r.created_at, null,
-          flagged ? { explicitApproval: true, otherYes: q.otherYes, memberCount } : {}
+          {
+            ...(flagged ? { explicitApproval: true, otherYes: q.otherYes, memberCount } : {}),
+            ...(rulesCtx ? governanceSvc.rulesGateOpts(rulesCtx, r.id, r.created_by ?? null, flagged ? 'secrets' : null) : {}),
+          }
         );
         const withGate = {
           ...r,
@@ -1004,6 +1014,7 @@ function issueRoutes(config) {
           contested: gate.contested,
           approval_policy: gate.policy,
           approvals_required: gate.approvalsRequired,
+          ...(gate.mode === 'rules' ? governanceSvc.ruleRowFields(gate) : {}),
           qualified_yes_count: gate.qualifiedYes,
           qualified_no_count: gate.qualifiedNo,
           ...(flagged ? governanceSvc.explicitApprovalRowFields({
@@ -1105,13 +1116,20 @@ function issueRoutes(config) {
         const flagged = row.kind === 'secret_change';
         const gate = governanceSvc.computeGate(
           gov, electorate.active, q.yes, q.no, row.created_at, null,
-          flagged
-            ? {
-              explicitApproval: true,
-              otherYes: q.otherYes,
-              memberCount: await governanceSvc.communityMemberCount(pool, appId),
-            }
-            : {}
+          {
+            ...(flagged
+              ? {
+                explicitApproval: true,
+                otherYes: q.otherYes,
+                memberCount: await governanceSvc.communityMemberCount(pool, appId),
+              }
+              : {}),
+            // #4666: who voted, on a project with rules of its own.
+            ...(gov.rules ? governanceSvc.rulesGateOpts(
+              await governanceSvc.rulesContext(pool, appId, gov, 'issue', [row.id]),
+              row.id, row.created_by ?? null, flagged ? 'secrets' : null
+            ) : {}),
+          }
         );
         proposal = {
           ...row,
@@ -1120,6 +1138,7 @@ function issueRoutes(config) {
           contested: gate.contested,
           approval_policy: gate.policy,
           approvals_required: gate.approvalsRequired,
+          ...(gate.mode === 'rules' ? governanceSvc.ruleRowFields(gate) : {}),
           qualified_yes_count: gate.qualifiedYes,
           qualified_no_count: gate.qualifiedNo,
           ...(flagged ? governanceSvc.explicitApprovalRowFields({
@@ -1231,7 +1250,9 @@ function issueRoutes(config) {
   // B8: "Ask Homeroom bot to build this" on a request's page. It goes first
   // in the bot's queue, paid from the asker's building time; the request
   // stays whoever's it is (services/homeroom-bot-dm.js askBotToBuild). A
-  // member's own tap only: same-origin, and on no connector's list.
+  // member's own tap only: same-origin, and on no connector's list. #4530:
+  // 409 `awaiting_reply` while the bot is waiting on an answer there (the
+  // repository, to read the issue's comments for one).
   //
   //   POST /api/apps/:slug/issues/:number/homeroom-bot → { ok, typicalMinutes, mine }
   router.post('/api/apps/:slug/issues/:number/homeroom-bot', issueKindLimiter, sameOriginBrowserOnly,
@@ -1241,7 +1262,9 @@ function issueRoutes(config) {
         if (!Number.isInteger(n) || n <= 0) return res.status(400).json({ error: 'Invalid request number' });
         // The demo's door decides nothing.
         if (IS_STAGING && req.query.demo === '1') return res.json({ ok: true, demo: true, typicalMinutes: 8, mine: true });
-        const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS);
+        const app = await appAccess.getAppForUser(
+          pool, req.params.slug, req.user, 'view', `${appAccess.ACCESS_COLUMNS}, repo_url`,
+        );
         if (!app) return res.status(404).json({ error: 'App not found' });
         const out = await require('../services/homeroom-bot-dm').askBotToBuild(pool, { app, user: req.user, issueNumber: n });
         if (!out.ok) return res.status(out.status || 400).json({ error: out.error, ...(out.code ? { code: out.code } : {}) });
@@ -2180,6 +2203,11 @@ function issueRoutes(config) {
       if (!botDoor && IS_STAGING && req.query.demo === '1' && req.query.bot === '1') {
         botDoor = { typicalMinutes: botDm.TYPICAL_BUILD_MINUTES, demo: true };
       }
+      // #4530: the requests the bot is waiting on people about, for a viewer
+      // it builds for: their card answers the bot instead of asking it again.
+      const botWaiting = botDoor && !botDoor.demo
+        ? await botDm.botWaitingByIssue(pool, app.id, (result.issues || []).filter((i) => !botByNumber.has(i.number)))
+        : new Map();
 
       const issues = (result.issues || []).map((issue) => {
         const b = byNumber.get(issue.number);
@@ -2206,6 +2234,9 @@ function issueRoutes(config) {
           // ({ what, since }), or null. Its own field, like `headless`: the
           // bot is never `in_progress`.
           bot: botAsked(issue.number),
+          // #4530: the bot's note there that nobody has answered yet
+          // ({ kind: 'question' | 'person' | 'empty', messageId }), or null.
+          botAwaits: botWaiting.get(issue.number) || null,
           // #287: per-viewer proposal session id, or null. Drives the
           // "Create proposal" → "Create new proposal" swap on the issue row.
           myPrSessionId: myPrSessionByNumber.get(issue.number) || null,
@@ -2389,6 +2420,16 @@ function issueRoutes(config) {
         for (const issue of issues) {
           if (issue.number === 900018 && !issue.bot) issue.bot = stagingMockBotWork();
         }
+        // #4530: and one it asked a question on that nobody has answered:
+        // 900001, where its door is drawn (?demo=1&bot=1). Its card offers
+        // to answer the bot instead of asking it again.
+        if (botDoor && botDoor.demo) {
+          for (const issue of issues) {
+            if (issue.number === 900001 && !issue.bot && !issue.botAwaits) {
+              issue.botAwaits = { kind: 'question', messageId: null };
+            }
+          }
+        }
       }
 
       // Community-voted priority + assigned-person summary per issue (the
@@ -2468,6 +2509,18 @@ function issueRoutes(config) {
       const used = await countWeeklyBountiesUsed(pool, req.user.id, weekStartUtc());
       const myRemaining = Math.max(0, WEEKLY_BOUNTY_LIMIT - used);
 
+      // #4772: what Homeroom bot waits on this viewer for here (its plans
+      // waiting for their Build it, its open questions to them, and the
+      // back and forths they are in with it), for the Workshop's Waiting on
+      // you. Best-effort: services/workshop-waiting.js never throws. The
+      // staging demo shows one of each on the mock requests.
+      const workshopWaiting = require('../services/workshop-waiting');
+      const waitingOnYou = IS_STAGING && req.query.demo === '1'
+        ? workshopWaiting.demoWaiting()
+        : await workshopWaiting.waitingOnViewer(pool, {
+          appId: app.id, userId: req.user.id, botId: (await botDm.botAccount(pool).catch(() => null))?.id || null,
+        });
+
       res.json({
         issues,
         truncatedList: !!result.truncatedList,
@@ -2481,6 +2534,7 @@ function issueRoutes(config) {
         myRemaining,
         limit: WEEKLY_BOUNTY_LIMIT,
         ...(botDoor ? { homeroomBot: botDoor } : {}),
+        waitingOnYou,
       });
     } catch (err) {
       log.error('issues', 'Failed to list GitHub issues', { message: err.message });
@@ -2593,6 +2647,10 @@ function issueRoutes(config) {
         }
         if (!bot && mock && number === 900018) bot = stagingMockBotWork();
       }
+      // #4530: and its unanswered note there, as the list says it.
+      const botAwaits = issue.state !== 'closed' && !bot && issue !== mock
+        ? (await require('../services/homeroom-bot-dm').botWaitingByIssue(pool, app.id, [issue])).get(number) || null
+        : null;
       // #4244: a closed issue no merged change closed was closed by a
       // close_issue vote, or an admin forcing one through. The applied row's
       // audit payload says which, so the page's status band can too.
@@ -2631,6 +2689,7 @@ function issueRoutes(config) {
           headless: null,
           in_progress: null,
           bot,
+          botAwaits,
           myPrSessionId: null,
           addressed_by: addressed,
           closed_via: closedVia,
@@ -3323,8 +3382,9 @@ function issueRoutes(config) {
         const pat = process.env.GITHUB_BOT_TOKEN;
         if (owner && repo && pat) {
           try {
-            const { Octokit } = await import('@octokit/rest');
-            const ok = new Octokit({ auth: pat });
+            // The bot token's client from services/github.js (recorded and
+            // counted against the hourly budget).
+            const ok = await github.getOctokit(owner);
             await ok.rest.issues.update({
               owner, repo, issue_number: issue.github_issue_number, state: 'closed',
             });
@@ -3451,8 +3511,9 @@ async function maybeApplyRenameProposal(pool, issue) {
 
       if (owner && repo && pat) {
         try {
-          const { Octokit } = await import('@octokit/rest');
-          const ok = new Octokit({ auth: pat });
+          // The bot token's client from services/github.js (recorded and
+          // counted against the hourly budget).
+          const ok = await github.getOctokit(owner);
 
           await ok.rest.issues.update({
             owner, repo, issue_number: locked.github_issue_number, state: 'closed',
@@ -3863,8 +3924,9 @@ async function maybeApplySecretChangeProposal(config, pool, issue, options = {})
       const pat = process.env.GITHUB_BOT_TOKEN;
       if (owner && repo && pat) {
         try {
-          const { Octokit } = await import('@octokit/rest');
-          const ok = new Octokit({ auth: pat });
+          // The bot token's client from services/github.js (recorded and
+          // counted against the hourly budget).
+          const ok = await github.getOctokit(owner);
           await ok.rest.issues.update({
             owner, repo, issue_number: locked.github_issue_number, state: 'closed',
           });

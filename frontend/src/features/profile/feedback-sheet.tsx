@@ -25,6 +25,7 @@ import { useRef, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { GroupedList, ListRow } from '@/components/ui/grouped-list';
+import { useMessages } from '../../lib/i18n/react';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { adoptKitSurface, type KitAdoption } from '../../lib/kit-surface';
 import { Profile } from './profile.js';
@@ -58,17 +59,18 @@ export interface FeedbackListView {
 }
 
 function Rows({ view }: { view: FeedbackListView }): ReactNode {
+  const t = useMessages('profile');
   if (!view.loaded) {
     return (
       <p id="profile-feedback-error" className={`${NOTE_CLASS} py-6 text-center`}>
-        Your feedback could not be loaded. Check your connection and try again.
+        {t('profile:feedback.loadFailed')}
       </p>
     );
   }
   if (!view.rows.length) {
     return (
       <p id="profile-feedback-empty" className={`${NOTE_CLASS} py-6 text-center`}>
-        Nothing sent yet. Feedback you send shows up here, with its status.
+        {t('profile:feedback.empty')}
       </p>
     );
   }
@@ -102,13 +104,14 @@ function Rows({ view }: { view: FeedbackListView }): ReactNode {
         ))}
       </GroupedList>
       {view.truncated ? (
-        <p className={`${NOTE_CLASS} mt-3`}>Showing the 50 you sent most recently.</p>
+        <p className={`${NOTE_CLASS} mt-3`}>{t('profile:feedback.truncated')}</p>
       ) : null}
     </>
   );
 }
 
 export function FeedbackSheet({ view }: { view: FeedbackListView }): ReactNode {
+  const t = useMessages('profile');
   const rootRef = useRef<HTMLDivElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
 
@@ -146,13 +149,13 @@ export function FeedbackSheet({ view }: { view: FeedbackListView }): ReactNode {
     <div id="profile-feedback-root" ref={rootRef} className={ROOT_CLASS}>
       <div id="profile-feedback-sheet" ref={panelRef} className={CARD_CLASS}>
         <div className="flex items-center justify-between gap-3 pt-3">
-          <h2 className="text-lg font-bold">Your feedback</h2>
+          <h2 className="text-lg font-bold">{t('profile:feedback.title')}</h2>
           <Button
             id="profile-feedback-close"
             variant="neutral"
             size="sm"
             ink="neutral"
-            aria-label="Close your feedback"
+            aria-label={t('profile:feedback.close')}
             onClick={() => Profile._dismissFeedback()}
           >
             {TIMES}
@@ -163,8 +166,7 @@ export function FeedbackSheet({ view }: { view: FeedbackListView }): ReactNode {
         ) : null}
         {/* What the two statuses mean, once, above the rows that wear them. */}
         <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-2 mb-3">
-          Received: it was filed as a request. Counted: it earned points in the
-          feedback challenge.
+          {t('profile:feedback.legend')}
         </p>
         <Rows view={view} />
       </div>

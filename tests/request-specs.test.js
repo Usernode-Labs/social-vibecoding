@@ -83,9 +83,9 @@ test('the GitHub copy says who posted it and where it is whole, and says when it
   const short = specs.specCommentText({
     username: 'ada', version: 2, markdown: MARKDOWN, format: 'html', webPath: 'https://h.example/#app/a/dev/issues/9',
   });
-  assert.match(short, /^\*\*ada\*\* posted a spec for this request \(version 2\)\./);
-  assert.match(short, /before\/after screens are in the spec card on Homeroom: https:\/\/h\.example/);
-  assert.match(short, /<details><summary>The spec<\/summary>/);
+  assert.match(short, /^\*\*ada\*\* posted a plan for this request \(version 2\)\./);
+  assert.match(short, /before\/after screens are in the plan card on Homeroom: https:\/\/h\.example/);
+  assert.match(short, /<details><summary>The plan<\/summary>/);
   assert.ok(short.includes(MARKDOWN));
   assert.doesNotMatch(short, /@ada/, 'no @mention of the poster');
 
@@ -97,7 +97,7 @@ test('the GitHub copy says who posted it and where it is whole, and says when it
 test('the thread card is the spec card the bot and the share route post', () => {
   const card = specs.specCard({ sessionId: 41, version: 3, markdown: MARKDOWN, user: { id: 7, username: 'ada' } });
   assert.equal(card.msgType, 'spec_share');
-  assert.equal(card.content, '📋 ada posted a spec for this request: "Pre-fill the make screen" (version 3).');
+  assert.equal(card.content, '📋 ada posted a plan for this request: "Pre-fill the make screen" (version 3).');
   assert.deepEqual(Object.keys(card.metadata.specShare).sort(),
     ['builtAt', 'commitSha', 'prNumber', 'sessionId', 'sharedBy', 'snippet', 'title', 'totalChars', 'version']);
   assert.equal(card.metadata.specShare.sessionId, 41);
@@ -177,7 +177,7 @@ test('the first post opens a paused, branchless record linked to the request, an
   assert.match(insert.sql, /VALUES \(\$1, \$2, NULL, 'paused', \$3, \$4, ARRAY\[\$4::int\], TRUE, \$5, FALSE\)/,
     'no branch, paused: no container, and no session cap');
   assert.deepEqual(insert.params.slice(0, 4), [9, 7, specs.SPEC_SOURCE, 4041]);
-  assert.equal(insert.params[4], 'Spec for #4041 Being made screen');
+  assert.equal(insert.params[4], 'Plan for #4041 Being made screen');
 
   const stored = pool.calls.find((c) => /UPDATE chat_sessions SET spec_md/.test(c.sql));
   assert.match(stored.params[2], /^<article data-spec-styles="kit" data-spec>/,

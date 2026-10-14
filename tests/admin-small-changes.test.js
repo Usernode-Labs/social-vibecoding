@@ -102,7 +102,7 @@ test('a payload of every verdict renders its rows, its reasons in words, and the
   assert.match(html, /Nothing about votes, merges, checks or cards reads these tags\./);
   assert.match(html, /6 files or 150 changed lines/);
   // The link is built from the row's own slug and session id.
-  assert.match(html, /href="#app\/plant-pal\/dev\/proposals\/601"/);
+  assert.match(html, /href="#app\/plant-pal\/dev\/changes\/41"/); // #4367: by its PR number
   assert.match(html, /#41 Change 1/);
   assert.match(html, /&lt;\$0\.01/, 'a fraction of a cent reads as under a cent');
   assert.match(html, /2 files, 10 lines/);

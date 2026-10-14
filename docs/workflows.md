@@ -87,7 +87,8 @@ The workflow kernel answers each one with a rule:
 | **Request key** | Identifies the request behind an event, so a retry is recognised as the same request. |
 | **Facts** | What a transition reads from the database inside its transaction: the issue row, vote counts, settings. |
 | **Guard** | A pure check that accepts the event or rejects it with a reason, such as `not_open` or `reason_required`. |
-| **Outcome** | What a transition returns: the next state, plus writes, work, messages, a timer and notifications. |
+| **Outcome** | What a transition returns: the next state, plus writes, work, messages, a timer, pushes and notifications. |
+| **Push** | What browsers should hear, published in the transition's transaction. Every web process relays it to its sockets once the transaction commits, whichever process decided. |
 | **Work item** | A durable request for I/O, run by a service. Its result returns as an event. |
 | **Projection** | The legacy columns (`issues.status`, audit fields in `issues.payload`) written from the machine's state in the same transaction, so existing readers keep working. |
 
@@ -130,16 +131,38 @@ afterwards. A machine that answers routes defines `reply(tx, event, after, ctx, 
    3. **Authorise, then guard.** A rejection marks the event `rejected` with its reason
       and writes **no receipt**, so a later retry with the same key can still succeed.
    4. **Transition.** It returns the outcome, and the next state must be declared.
-   5. **Persist,** in this order: domain writes, projection, the machine's reply, work
-      items, messages, then the instance row, receipt and the event's own result in one
-      statement. A placeholder row whose event is rejected is deleted again.
-5. commits, then wakes whoever waits for the outcome and runs the notifications (WebSocket
-   pushes, which may be lost in a crash because the next read refreshes the client).
+   5. **Persist,** in this order: domain writes, projection, the machine's reply, the
+      pushes, work items, messages, then the instance row, receipt and the event's own
+      result in one statement. A placeholder row whose event is rejected is deleted again.
+5. commits, then wakes whoever waits for the outcome and runs the notifications
+   (post-commit kicks, which may be lost in a crash).
+
+**Pushes.** What browsers should hear is part of the transition. A transition returns
+`push`, and a domain write adds what it inserted with `ctx.push` (a thread line with its
+id). `src/workflow/pushes.ts` shapes them as `services/ws.js`'s helpers do. The runtime's
+`publish` (`platform.ts publishPushes`) sends each one with `pg_notify` on the WebSocket
+bus's channel before `COMMIT`, so it is heard only if the transition commits. The
+sender is `workflow` (`services/ws-bus.js WORKFLOW_SENDER`), so every web process relays
+it, the one whose slot decided included. No machine calls into web code to reach a
+browser. A push is delivery only. What `ws.js`'s push helpers also kick in the process
+that calls them (the Workshop's board-change reaction, the phone badge sync) is the
+machine's own notifier (`boardChange`, `badgeSync`), run once where it decided, and
+listed until those flows migrate. Delivery is at most once, as a WebSocket broadcast
+always was, with two differences from a push helper called in the deciding process:
+- every process, the deciding one included, hears it through its own `LISTEN`
+  connection; while that connection is down its sockets miss it, and get the resync
+  nudge when it is back (a client also resyncs after its own reconnect);
+- a push over the NOTIFY budget becomes the resync nudge for every socket, the deciding
+  process's included.
+
+A notification is named, not carried: the transition pushes its id
+(`notification_new` with `notificationId`), and the relaying process reads it for the
+recipient's open tabs, so the bell's query never runs in the transition.
 
 **Round trips.** A producer waits on every query of the transaction, so the kernel keeps
 its own to three: one batch opens the transaction and picks (`BEGIN`, the writer marker,
 the timeouts, the pick with its receipt and the clock), one statement records the
-outcome, then `COMMIT`. A route registers for the outcome's notification before it
+outcome, then `COMMIT`; a transition with pushes adds one statement that publishes them. A route registers for the outcome's notification before it
 appends, so it reads the outcome once, when it is there. The rest is the machine's: keep
 its facts to as few queries as the rules allow, and fold a write and what goes with it
 into one statement. `tests/workflow-query-budget-postgres.test.js` counts the queries of
@@ -302,6 +325,15 @@ A machine is a folder under `src/workflow/<machine>/`:
 | `facts.ts` | Its reads. |
 | `services.ts` | Its work handlers. |
 
+**Its decisions' own code lives in `src/workflow/rules/`** when the code not migrated yet
+uses it too: the merge gate and the electorate, the governance kinds, platform variables and
+the encryption helper, the merged line's credits, bounties, notification preferences and the
+merged notification. Each is one copy: the old module imports it back under its old name
+(`services/governance.js` re-exports `computeGate`). A file in `rules/` imports only `node:`
+built-ins and other `rules/` files, because old modules `require` it at load. It is held to a
+transition's limits (no state, timers, hooks or outside I/O), and a function that throws
+where its old copy swallowed keeps a never-throw wrapper on the old side.
+
 `src/workflow/governance-proposal/` is the reference. The definition is a plain object
 that `defineMachine` validates once and turns into `Map`s:
 
@@ -323,7 +355,7 @@ defineMachine<State, Facts>({
   writes: { vote: writeVote, chat: writeChat, apply: applyKind },   // named domain writes
   project: async (tx, before, after) => { /* UPDATE issues ... */ },
   reply: async (tx, event, after) => ({ result: ... }),   // the routes' answer, replayed as recorded
-  notifiers: { issueUpdate, ... },    // post-commit pushes
+  notifiers: { startCampaign, ... },  // post-commit kicks (being retired; see Rules)
 });
 ```
 
@@ -345,16 +377,25 @@ always `unknown_event`.
    something outside the machine can still decide it (the governance machine locks its
    issue row).
 3. **External I/O is work, and its result is an event.** Anything a person or another
-   system relies on (a GitHub call, an email) is work. Only WebSocket refreshes are
-   notifications.
-4. **States are phases a person would recognise.** I/O progress belongs in the work
+   system relies on (a GitHub call, an email, the next merge) is work or a message.
+   What browsers hear is a push. The notifiers still declared are post-commit kicks
+   into code not migrated yet; each is on the list in
+   `tests/baselines/workflow-process-state.json` until its step replaces it.
+4. **A machine relies only on what `src/workflow/setup.ts` sets up.** That is the
+   configuration and the clients of outside services every process running the
+   machines makes at boot (activity mail, the account-deletion guard on workers, the
+   phone push sender, GitHub, the model); `server.js` runs it, and so does the
+   two-process tests' child. Nothing only the web server has (its sockets, the
+   Workshop's board-change listener, the leader's sweepers and loops) may be needed:
+   a machine relying on one fails its two-process tests.
+5. **States are phases a person would recognise.** I/O progress belongs in the work
    item's checkpoint, not in more states.
-5. **Rejection reasons are stable snake_case codes.** They appear in the admin view and in
+6. **Rejection reasons are stable snake_case codes.** They appear in the admin view and in
    API answers.
-6. **Terminal states still accept work results,** so follow-ups can report after the
+7. **Terminal states still accept work results,** so follow-ups can report after the
    instance has finished.
-7. **One instance per transaction.** Reach other instances with messages.
-8. **A machine replaces its old paths.** Once its flag is the default, the old code is
+8. **One instance per transaction.** Reach other instances with messages.
+9. **A machine replaces its old paths.** Once its flag is the default, the old code is
    deleted.
 
 **Wiring it in.** `src/workflow/platform.ts` owns the process's runtime: its own pool,
@@ -369,7 +410,17 @@ append and answer with the outcome.
 separate workflow Pod.
 
 - **Every process** records its flags in `wf_settings` at boot (`startWorkflow` in
-  `server.js`). With a flag on, it also starts the runtime on its own pool
+  `server.js`): a flag that is on turns its machine's ownership guard on
+  (`enabled:<machine>`). In `log` mode (production) a flag that is off leaves the guard
+  as it is: the flag is per process and the guard is the cluster's, so a Pod still running
+  with the flag off (the old one in a rollout, a rollback, a restart) never switches it off
+  under the Pods that run the machine. Once no process runs it, an admin turns it off in
+  Admin → Workflows, which lists a guard that is on while the flag is off. That action
+  checks only the flag of the process serving it. Turned off while another Pod still runs
+  the machine, legacy writes to that machine's rows are neither refused nor logged until
+  that Pod's next boot turns the guard on again. In `raise` mode
+  (development, previews, tests: one process) a flag-off boot turns it off. A rollback to
+  code from before this rule deletes it, as that code did. With a flag on, it also starts the runtime on its own pool
   (`application_name` `homeroom-workflow`), listens for outcomes so routes can wait for
   them, and runs pipeline slots. A Pod that is not the leader (the new one, during a
   rollout) therefore applies its own events at once instead of answering `202`. With
@@ -390,19 +441,45 @@ separate workflow Pod.
   preview has no GitHub credentials and no app fleet, so its work items fail and show in
   Admin → Workflows, where [main]'s inline calls only failed in the logs.
 
-Correctness does not depend on the leader: the loops can move to more processes, or to a
-Deployment of their own, without changing the machines.
+Which process holds the leader role does not decide anything: row locks do. What the
+machines' work handlers and notifiers still reach in process memory does: a restart
+erases it, and a machine resumes its work right after a boot, when memory is empty.
+Every place a machine calls into code that may keep such memory is listed, per machine,
+in `tests/baselines/workflow-process-state.json` (below).
+**Moving the loops to a Deployment of their own waits until that list is empty;** it is
+then a deployment change, with more than one replica and alerts on overdue work.
 
-**Moving the loops to their own Deployment** is planned before the preview and checks
-machine, which drives far more external calls. It needs:
-- an entry point that starts the runtime with its loops and no HTTP server;
-- a second Deployment in the chart (same image, that command), with the web Pods no
-  longer running the loops;
-- a relay for the post-commit pushes. `pushIssueUpdate` and the other WebSocket
-  broadcasts reach only clients connected to the same process, so a separate Pod would
-  publish them (for example with Postgres `NOTIFY`) for the web Pods to re-broadcast;
-- a check of every post-commit call that relies on the platform Pod's Kubernetes
-  permissions or locks: the campaign start and the production rebuild.
+### What the machines still depend on (the list)
+
+`tests/lib/workflow-boundary.js` reads each machine's code (`src/workflow/<machine>/`, the
+shared workflow modules it imports, `platform.ts` for the routes' side, the kernel) and
+lists, per part (transitions and domain writes, work handlers, notifiers), the boundary
+between it and the code not migrated yet:
+- each place its code names code outside `src/workflow/` (`uses`), as written there:
+  `legacy('services/x').fn` is `uses src/services/x.js:fn`, a module handed on whole is
+  `(whole module)`, a member chosen at run time is `[computed]`, a dynamic `import()`
+  counts too;
+- what its own code does that the part may not: module state that changes after load,
+  timers, process listeners, and outside I/O from a transition;
+- each notifier still declared;
+- each table a work handler's own code writes;
+- each other writer of a column the machine owns: SQL anywhere under `src/` that
+  updates it, and triggers that assign it (schema.sql's ownership triggers). A SET list
+  built from a named fragment (`${INVALIDATE_SQL}`, `${invalidateHeadMoveSql(…)}`) is read
+  with the fragment's own columns; one built from an array is "dynamic", counted as
+  writing every owned column.
+
+It reads only the text, never what lies behind a call: the two-process and restart
+tests (below) show that. Transitions are held to the strictest form of it: a step moves
+the helpers its transitions use into the machine's own code, so that `decider | uses`
+reaches zero, and nothing outside the workflow code runs inside a transaction.
+
+The list is checked in, with what it allows and why (the kernel's own timers).
+`tests/workflow-process-state.test.js` fails when a change adds an entry, and when an
+entry disappears until the list is shrunk with `node tests/lib/workflow-boundary.js
+--shrink`, which never adds anything. So the list only shrinks, and a migration step is
+done when its entries are gone. A new machine may enter it only with the other writers of
+its own columns, which go when its legacy paths are deleted.
 
 ### In production (Kubernetes)
 
@@ -476,6 +553,9 @@ governance machine.
 | `tests/workflow-governance-routes-postgres.test.js` | The routes with the runtime on. |
 | `tests/workflow-governance-services.test.js` | The governance work handlers. |
 | `tests/admin-workflows.test.js` | The admin section. |
+| `tests/workflow-process-state.test.js` | The list of what the machines still depend on only shrinks. |
+| `tests/workflow-boundary.test.js` | The boundary check's rules, on a small source tree of its own. |
+| `tests/workflow-processes-postgres.test.js` | Each machine's flows with every decision and work item in a child process, the test process being the web side; and the same flows with the child killed (SIGKILL) mid-item, restarted, and compared with an uninterrupted run. Only outside services are faked (`tests/fixtures/workflow-outside-fakes.js`); the harness is `tests/lib/workflow-processes.js`. The known dependencies on the web process's memory are `todo` scenarios, each naming its entry in the list. |
 
 The kernel guarantees cover:
 - replay;
@@ -504,6 +584,18 @@ A new machine brings the same two layers:
 |---|---|---|---|
 | `governance-proposal` | `issue:<id>`, for the five governance kinds (rename, secret change, close issue, maintenance campaign, featured illustration) | `open` → `applied` / `refused` / `withdrawn` / `superseded` | Behind `WF_GOVERNANCE_ENABLED` |
 | `merge-followups` | `session:<id>`, for each merged proposal and each change that went live inside one | `delivering` → `live`, or `deploy_failed` → `live` | Behind `WF_MERGE_FOLLOWUPS_ENABLED` |
+
+### governance-proposal
+
+A governance proposal from filing to its outcome (`src/workflow/governance-proposal/`):
+votes, the gate (`rules/governance-gate.ts`, the same rule every merge path uses), the
+vote window and a 10-minute backstop as the instance's timer, then the kind's own change
+in the transaction that closes it. What talks to the outside is durable work: GitHub's
+close and comment (`github.closeIssue`), the production rebuild a secret change needs
+(`app.rebuildProduction`), the target check of a close proposal, and a passed maintenance
+campaign's fan-out (`campaign.run`). The campaign also holds a lease of its own
+(`fleet-maintenance.runCampaign`), so the leader's resume or an admin's retry never drives
+it at the same time.
 
 ### merge-followups
 
@@ -535,6 +627,20 @@ What a merged pull request still has to do once GitHub has merged it
   - Until then the change reads merged and going live.
 - **A failed deploy** ends in `deploy_failed`, said in the thread. Any later deploy that
   contains the change makes it live, and so does **Retry delivery** in Admin → Workflows.
+
+- **What a merge leaves alone.** `worker.retire` waits while the change's shots run is
+  still heard from (its `shot_runs` row, heartbeated; `facts.ts liveShotsRun`), asking
+  again two minutes later (`notBefore`). A change is carried only if, under its own lock,
+  its head is still the one the carrier listed and no turn, shots run or checks run is
+  working on it. An operation that keeps no durable record while it runs (a sync with main
+  or a dispatch starting its worker, a hand-off's commit upload, a local agent run) is
+  seen only in the process running it (`isSessionBusy`, as before the machine): during a
+  rollout's overlap, the other Pod's are not. Who is working on a session becomes durable
+  with previews and checks.
+- **Every web process's issue lists.** GitHub's open-issues list is cached per process,
+  with the requests just closed hidden from it. A merge and its close work publish an
+  `issues_closed` push, which every web process applies to its own copy (`ws.js`); no
+  browser receives it.
 
 **Planned order:**
 1. **Previews and required checks.**

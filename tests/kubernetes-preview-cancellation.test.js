@@ -25,7 +25,11 @@ test('cancels capture and unit Jobs together and waits for foreground deletion',
   const pending = kubernetes.cancelPreviewChecks(config, 42).then(() => { complete = true; });
   await flush();
   assert.deepEqual(deleted.map(x => x.name), names);
-  assert.equal(deleted[0].propagationPolicy, 'Foreground');
+  // With a body the API server reads delete options from it alone. A policy
+  // in the query string beside one is ignored, and a batch/v1 Job deleted
+  // without a policy orphans its Pods and strips its input Secret's owner.
+  assert.equal(deleted[0].body.propagationPolicy, 'Foreground');
+  assert.equal(deleted[0].propagationPolicy, undefined, 'never only in the query string, where the body overrides it');
   assert.equal(deleted[0].body.preconditions.uid, `${names[0]}-uid`);
   assert.equal(complete, false, 'DELETE acknowledgement is insufficient');
   stopping = false; t.mock.timers.tick(250); await pending;
@@ -58,6 +62,34 @@ test('run-scoped cancellation leaves successor Jobs alone', async t => {
   await kubernetes.cancelPreviewChecks(config, 42, 'old');
   assert.match(selector, /social\.usernode\.io\/preview-run-id=old/);
   assert.deepEqual(deleted, ['sv-capture-s42-old']);
+});
+
+// preview-lifecycle.run leaves a run of its revision to the harvest and
+// cancels the rest: the spared run keeps its Jobs, every other run's go, with
+// the policy and the precondition together in the body.
+test('a spared run keeps its Jobs while every other run of the session is cancelled', async t => {
+  const deleted = [];
+  const job = (name, runId, status = {}) => ({
+    metadata: { name, uid: `${name}-uid`, labels: { 'social.usernode.io/preview-run-id': runId } }, status,
+  });
+  kubernetes._setClientsForTest({ batch: {
+    listNamespacedJob: async () => ({ items: [
+      job('sv-capture-s42-harvested', 'harvested', { active: 1 }),
+      job('sv-unit-suite-s42-harvested', 'harvested', { succeeded: 1 }),
+      job('sv-capture-s42-other-commit', 'other-commit', { active: 1 }),
+      job('sv-unit-suite-s42-other-commit', 'other-commit', { active: 1 }),
+    ] }),
+    deleteNamespacedJob: async request => { deleted.push(request); },
+    readNamespacedJob: async () => missing(),
+  }, core: { listNamespacedPod: async () => ({ items: [] }) } });
+  t.after(() => kubernetes._setClientsForTest(null));
+  await kubernetes.cancelPreviewChecks(config, 42, null, { spare: runId => runId === 'harvested' });
+  assert.deepEqual(deleted, [
+    { name: 'sv-capture-s42-other-commit', namespace: 'workers',
+      body: { propagationPolicy: 'Foreground', preconditions: { uid: 'sv-capture-s42-other-commit-uid' } } },
+    { name: 'sv-unit-suite-s42-other-commit', namespace: 'workers',
+      body: { propagationPolicy: 'Foreground', preconditions: { uid: 'sv-unit-suite-s42-other-commit-uid' } } },
+  ], 'the spared run\'s Jobs, running or finished, are not touched; the others go in the foreground');
 });
 
 test('cancellation interrupts a stalled Job observation without salvaging old results', async t => {
@@ -104,6 +136,10 @@ test('teardown waits for the original Deployment UID to disappear', async t => {
   const pending = kubernetes.deleteApplication(config, 'sv-preview-42').then(() => { complete = true; });
   await flush();
   assert.equal(deleted.body.preconditions.uid, 'original');
+  // The policy rides in the body with the precondition: a query option
+  // beside a body is ignored, and the Deployment would go before its Pods.
+  assert.equal(deleted.body.propagationPolicy, 'Foreground');
+  assert.equal(deleted.propagationPolicy, undefined);
   assert.equal(complete, false);
   stopping = false; t.mock.timers.tick(250); await pending;
 });
@@ -134,4 +170,20 @@ test('failed teardown settles all in-flight deletes before releasing ownership',
   const pending = kubernetes.deleteApplication(config, 'preview').catch(err => { settled = true; return err; });
   await flush(); assert.equal(settled, false);
   finishIngress(); assert.match((await pending).message, /API failed/);
+});
+
+test('teardown outside the preview lifecycle deletes the Deployment with Foreground as a query option and no body', async t => {
+  const oldFlag = process.env.PREVIEW_LIFECYCLE_ENABLED;
+  delete process.env.PREVIEW_LIFECYCLE_ENABLED;
+  let deleted;
+  kubernetes._setClientsForTest({ apps: { deleteNamespacedDeployment: async request => { deleted = request; } },
+    core: { deleteNamespacedService: async () => {}, deleteNamespacedSecret: async () => {} },
+    networking: { deleteNamespacedIngress: async () => {} } });
+  t.after(() => {
+    kubernetes._setClientsForTest(null);
+    if (oldFlag !== undefined) process.env.PREVIEW_LIFECYCLE_ENABLED = oldFlag;
+  });
+  await kubernetes.deleteApplication(config, 'sv-preview-42');
+  assert.equal(deleted.propagationPolicy, 'Foreground');
+  assert.equal(deleted.body, undefined);
 });

@@ -211,6 +211,7 @@ test('the hub and the Share dialog open it with one call, not open() then a pane
 const LINK = {
   id: 7, token: 'tok', path: '/invite/tok', maxUses: 25, uses: 0,
   expiresAt: '2026-10-12T12:00:00Z', createdAt: '2026-10-05T12:00:00Z', createdBy: 'maya', mine: true, note: null,
+  status: 'live', joined: 0, waiting: 0,
 };
 const STATE = {
   links: [],
@@ -283,6 +284,29 @@ test('a viewer with a link of their own makes none; a failure is an answer, not 
   });
 });
 
+test('#4779: a viewer whose only link ended gets a new one made on opening, and it fills the link box', async () => {
+  const api = loadTsx('tests/fixtures/invite-pane-api.ts');
+  const ended = { ...LINK, id: 8, status: 'expired', waiting: 1 };
+  const fresh = { ...LINK, id: 9, token: 'tok9', path: '/invite/tok9' };
+  const { fake, calls } = stubFetch({
+    GET: { body: { ...STATE, links: [ended] } },
+    POST: { status: 201, body: { link: fresh } },
+  });
+  await withFetch(fake, async () => {
+    const outcome = await api.prepareInvite('notes-ab12');
+    assert.deepEqual(calls, [
+      'GET /api/apps/notes-ab12/invite-links',
+      'POST /api/apps/notes-ab12/invite-links',
+    ], 'a link that no longer works is not counted as one of theirs');
+    assert.deepEqual(outcome.state.links.map((l) => l.id), [9, 8], 'the new link leads, the ended one stays listed');
+  });
+  const html = renderToHtml(createElement(api.InvitePane, { slug: 'notes-ab12', label: 'Notes' }));
+  assert.match(html, /value="\/invite\/tok9"/, 'the new link is in the box, not the ended one');
+  assert.match(html, /data-invite-status="expired"/, 'the ended row says why it is ended');
+  assert.match(html, /0 of 25 used · expired/, 'the ended row keeps its use count and why it ended');
+  assert.match(html, /1 waiting/, 'the ended row keeps its waiting people');
+});
+
 // ── the pane ─────────────────────────────────────────────────────────────
 
 const classOf = (html, id) => {
@@ -300,7 +324,18 @@ test('the pane\'s first render is the answer the opener read', async () => {
   assert.match(html, /id="app-invite-url"[^>]*value="\/invite\/tok"|value="\/invite\/tok"[^>]*id="app-invite-url"/,
     'the link is there on the first render, so the kit measures the loaded pane');
   assert.doesNotMatch(html, /data-invite-loading/);
-  assert.match(html, /Changes go in when 2 people approve\./);
+  // #4599: the joining rule the read carries is not spelled out under the link.
+  assert.doesNotMatch(html, /Changes go in when 2 people approve\./);
+  assert.match(html, /id="app-invite-change-open"[^>]*>Change</, 'Change beside the links\' heading');
+});
+
+test('with no live links, the heading row and its Change are still there', async () => {
+  const api = loadTsx('tests/fixtures/invite-pane-api.ts');
+  const { fake } = stubFetch({ GET: { body: STATE }, POST: { status: 201, body: {} } });
+  await withFetch(fake, () => api.prepareInvite('notes-ab12'));
+  const html = renderToHtml(createElement(api.InvitePane, { slug: 'notes-ab12', label: 'Notes' }));
+  assert.match(html, />Your links</);
+  assert.match(html, /id="app-invite-change-open"/);
 });
 
 test('before the answer, the pane is its own rows in grey, never a one-line note', () => {
@@ -318,8 +353,7 @@ test('before the answer, the pane is its own rows in grey, never a one-line note
 test('the skeleton is built from the loaded pane\'s own rows', async () => {
   // Same containers, padding and type as the rows they stand for, so the
   // height comes from the same classes: the link field is the Input's own
-  // box, the buttons h-10, the small lines the small paragraphs' lines, the
-  // change row 40px, a link row 44px.
+  // box, the buttons h-10, the heading row with Change, a link row 44px.
   const api = loadTsx('tests/fixtures/invite-pane-api.ts');
   const { fake } = stubFetch({ GET: { body: { ...STATE, links: [LINK] } } });
   await withFetch(fake, () => api.prepareInvite('notes-ab12'));
@@ -331,11 +365,9 @@ test('the skeleton is built from the loaded pane\'s own rows', async () => {
   for (const row of [
     'class="px-5 pt-1"',
     'class="px-5 pt-3"',
-    'px-5 pt-2 text-[0.8125rem] leading-snug',
     'class="flex items-stretch gap-2 px-5 pt-3"',
-    'px-5 pt-3 text-[0.8125rem] leading-snug',
-    'w-full px-5 min-h-[40px] text-left text-sm font-medium',
-    'px-5 pt-4 pb-1 text-[0.7rem] font-semibold uppercase tracking-wide',
+    'flex items-center justify-between gap-3 px-5 pt-4 pb-1',
+    'text-[0.7rem] font-semibold uppercase tracking-wide',
     'flex items-center gap-3 px-5 min-h-[44px] text-sm w-full text-left',
   ]) {
     assert.ok(loaded.includes(row), `the loaded pane has ${row}`);

@@ -40,6 +40,15 @@ const MAX_CUSTOM_CATEGORIES_PER_APP = 24;
 // Thrown by ensureCategory when the app is already at its custom cap, so
 // the route can turn it into a distinct 400 instead of a 500.
 const CATEGORY_CAP_ERROR = 'category_cap_exceeded';
+// #4417: thrown by ensureCategory for a RETIRED topic's key (archived, or
+// merged into another): a vote may not bring a retired topic back, and no
+// category may be minted under a topic's key. The vote route answers 400.
+const TOPIC_CLOSED_ERROR = 'topic_closed';
+// Votes for a retired topic stay on their rows (an archive moves nothing),
+// and every tally leaves them out: this is the one spelling of "retired".
+const RETIRED_TOPIC_KEYS_SQL = `SELECT category_key FROM app_category_registry
+                                  WHERE app_id = $1 AND origin = 'topic'
+                                    AND topic_state IN ('archived', 'merged')`;
 // Counted over LIVE rows only (retired_at IS NULL). That is what makes the
 // cap survive a model that re-drafts the whole vocabulary every day: the
 // draft it no longer wants is retired in the same pass that mints its
@@ -103,6 +112,21 @@ async function resolveCategoryKey(pool, appId, typed) {
   const candidates = categoryKeyCandidates(typed);
   for (const c of candidates) {
     if (CATEGORY_VALUES.includes(c)) return c;
+  }
+  // #4417: a topic answers to its key, its channel's handle and the handles
+  // it had before, and a merged topic to the one it was merged into.
+  const { rows: topics } = await pool.query(
+    `SELECT category_key, topic_state, merged_into FROM app_category_registry
+      WHERE app_id = $1 AND origin = 'topic'
+        AND (category_key = ANY($2::text[]) OR topic_handle = ANY($2::text[])
+             OR topic_aliases && $2::text[])
+      ORDER BY (category_key = ANY($2::text[])) DESC, (topic_state = 'live') DESC, id ASC
+      LIMIT 1`,
+    [appId, candidates]
+  );
+  if (topics[0]) {
+    return topics[0].topic_state === 'merged' && topics[0].merged_into
+      ? topics[0].merged_into : topics[0].category_key;
   }
   const { rows } = await pool.query(
     `SELECT category_key FROM app_category_registry
@@ -192,6 +216,7 @@ async function fetchBuckets(pool, appId, targetType, ids) {
             (array_agg(value ORDER BY created_at DESC))[1] AS display_value
        FROM topic_attribute_votes
       WHERE app_id = $1 AND target_type = $2 AND target_ref = ANY($3::int[])
+        AND NOT (field = 'category' AND value IN (${RETIRED_TOPIC_KEYS_SQL}))
       GROUP BY target_ref, field, norm`,
     [appId, targetType, ids]
   );
@@ -379,6 +404,7 @@ async function listOptions(pool, appId, targetType, ref, field, userId, linkedIs
             (array_agg(value ORDER BY created_at DESC))[1] AS display_value
        FROM topic_attribute_votes
       WHERE app_id = $1 AND target_type = $2 AND target_ref = $3 AND field = $4
+        AND NOT (field = 'category' AND value IN (${RETIRED_TOPIC_KEYS_SQL}))
       GROUP BY norm`,
     [appId, targetType, ref, field]
   );
@@ -441,12 +467,16 @@ async function listCategories(pool, appId) {
   }));
   const seen = new Set(CATEGORY_VALUES);
 
+  // #4417: the project's live TOPICS lead the registry, in dapp.json's
+  // order, each carrying its channel's handle; a retired topic is not on
+  // offer (retired_at is set with its state).
   const { rows } = await pool.query(
     `SELECT category_key, label, description, icon, origin,
-            (pinned_at IS NOT NULL) AS pinned
+            (pinned_at IS NOT NULL) AS pinned, topic_handle, topic_order
        FROM app_category_registry
       WHERE app_id = $1 AND retired_at IS NULL
-      ORDER BY (pinned_at IS NULL) ASC, created_at ASC, id ASC`,
+      ORDER BY (origin = 'topic') DESC, topic_order ASC NULLS LAST,
+               (pinned_at IS NULL) ASC, created_at ASC, id ASC`,
     [appId]
   );
   for (const r of rows) {
@@ -460,13 +490,17 @@ async function listCategories(pool, appId) {
       icon: r.icon || '',
       origin: r.origin || 'ai',
       pinned: !!r.pinned,
+      ...(r.origin === 'topic' ? { topic: { handle: r.topic_handle || r.category_key, order: r.topic_order ?? null } } : {}),
     });
   }
 
   // Self-heal tail: values that cards are already using with no live row.
+  // Never a retired topic's: those votes stay where they were cast, and the
+  // tally reads past them, so offering one would offer a closed topic.
   const { rows: orphans } = await pool.query(
     `SELECT DISTINCT value FROM topic_attribute_votes
       WHERE app_id = $1 AND field = 'category'
+        AND value NOT IN (${RETIRED_TOPIC_KEYS_SQL})
       ORDER BY value ASC`,
     [appId]
   );
@@ -516,11 +550,20 @@ async function ensureCategory(pool, appId, { slug, label, description, icon }, u
   if (CATEGORY_VALUES.includes(slug)) return;
   const pin = !!opts.pin;
   const { rows } = await pool.query(
-    `SELECT id, (retired_at IS NULL) AS live FROM app_category_registry
+    `SELECT id, (retired_at IS NULL) AS live, origin, topic_state FROM app_category_registry
       WHERE app_id = $1 AND category_key = $2`,
     [appId, slug]
   );
   const existing = rows[0] || null;
+
+  // #4417: A TOPIC'S KEY IS dapp.json'S. A vote for a live topic is a vote
+  // like any other, and changes nothing about it (its name, about and icon
+  // are the file's); nothing mints, revives or redraws a category under a
+  // retired topic's key.
+  if (existing && existing.origin === 'topic') {
+    if (existing.live && (existing.topic_state || 'live') === 'live') return;
+    throw new Error(TOPIC_CLOSED_ERROR);
+  }
 
   if (existing && existing.live) {
     // Already on offer. A member's vote pins it; the model's draft may
@@ -540,9 +583,10 @@ async function ensureCategory(pool, appId, { slug, label, description, icon }, u
 
   // Reviving a retired row and minting a new one both consume a live slot,
   // so both go through the cap.
+  // Topics are bounded by dapp.json (MAX_LIVE_TOPICS), not by this cap.
   const { rows: countRows } = await pool.query(
     `SELECT COUNT(*)::int AS live FROM app_category_registry
-      WHERE app_id = $1 AND retired_at IS NULL`,
+      WHERE app_id = $1 AND retired_at IS NULL AND origin <> 'topic'`,
     [appId]
   );
   if (((countRows[0] && countRows[0].live) || 0) >= MAX_CUSTOM_CATEGORIES_PER_APP) {
@@ -573,6 +617,14 @@ async function ensureCategory(pool, appId, { slug, label, description, icon }, u
   );
 }
 
+// #4417: the keys of this app's RETIRED topics (archived, or merged into
+// another). The Workshop's grouping drops them from a standing draft; the
+// tallies above read past their votes in SQL (RETIRED_TOPIC_KEYS_SQL).
+async function retiredTopicKeys(pool, appId) {
+  const { rows } = await pool.query(RETIRED_TOPIC_KEYS_SQL, [appId]);
+  return rows.map((r) => r.category_key).filter(Boolean);
+}
+
 // Retire every LIVE, UNPINNED category whose key the latest draft did not
 // redraw. This is the half of the generational registry that makes the cap
 // survive a daily re-draft: the model's discards free their slots in the
@@ -596,6 +648,7 @@ async function retireCategoriesExcept(pool, appId, keepKeys) {
       WHERE app_id = $1
         AND retired_at IS NULL
         AND pinned_at IS NULL
+        AND origin <> 'topic'
         AND NOT (category_key = ANY($2::text[]))
       RETURNING category_key`,
     [appId, keep]
@@ -696,6 +749,8 @@ module.exports = {
   MAX_CATEGORY_LEN,
   MAX_CUSTOM_CATEGORIES_PER_APP,
   CATEGORY_CAP_ERROR,
+  TOPIC_CLOSED_ERROR,
+  RETIRED_TOPIC_KEYS_SQL,
   normalizeValue,
   normalizeCategoryInput,
   categoryKeyCandidates,
@@ -704,6 +759,7 @@ module.exports = {
   listCategories,
   ensureCategory,
   retireCategoriesExcept,
+  retiredTopicKeys,
   groupKey,
   pickTop,
   mergeBuckets,

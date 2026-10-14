@@ -137,8 +137,36 @@ test('the shots agent prompt asks for before/after shots and leaves judgement to
   // sign-in or landing page can be the very state a change shows.
   assert.match(prompt, /The guest browser is not signed in/);
   assert.match(prompt, /Do not sign in \(the guest stays signed out too\)/);
+  // The one exception: phone sign-in on Homeroom's own copies, with a test
+  // number and the run's code from the brief (shots-orchestrator.js
+  // phoneSignInBrief), so a Join sheet's phone step can be followed through.
+  assert.match(prompt, /The one exception is phone sign-in:\s+when the brief has phoneSignIn/);
+  assert.match(prompt, /a phone step\s+\(signing in, joining, or adding a phone\)/);
+  assert.match(prompt, /with a\s+test number and phoneSignIn\.code, on the two addresses only, as\s+phoneSignIn\.use says/);
+  assert.match(prompt, /sign it out again before a change that needs it signed out/);
   assert.match(prompt, /For a guest change, a sign-in or landing\s+page can be the very state the checkpoint describes/);
-  assert.match(prompt, /Call browser_resize with that width and height/);
+  assert.match(prompt, /call\s+browser_resize with that width and height/);
+  // A phone screen is shot in a browser that presents as a phone, signed in
+  // as the same persona, never in a desktop browser made narrow: a page
+  // that asks what device it is on (the install strip) answered "desktop".
+  assert.match(prompt, /A phone screen \(narrower than 768 px\) has a browser of its own: the same\s+name with _phone/);
+  assert.match(prompt, /signed in as\s+the same persona/);
+  assert.match(prompt, /presents as an iPhone running Safari, with a phone's\s+user agent, touch and screen density/);
+  assert.match(prompt, /screenBrowsers names the browser for every change and\s+screen: use that one, and never shoot a phone screen in a desktop browser/);
+  assert.match(prompt, /In the browser screenBrowsers names for that change and screen, call/);
+  assert.match(prompt, /record a clip of each side in that screen's browser/);
+  // Every shots page dismisses Homeroom's install strip; a change to the
+  // strip itself opens its start path with the brief's flag (4420, 4321).
+  assert.match(prompt, /If the brief has installStrip, Homeroom's "Add it to your home screen" strip\s+is dismissed on every page these browsers open/);
+  assert.match(prompt, /open the start path with\s+installStrip\.param added to its query \(before any #\), on both addresses and\s+in the phone browser/);
+  // A project made on Homeroom's copies never finishes setting up there
+  // (shots-orchestrator.js MAKE_PROJECT): a change that needs one running is
+  // skipped at once, not tried in every browser (PR 4777, 2026-10-12).
+  assert.match(prompt, /If the brief has makeProject, a project made on these copies never finishes\s+setting up/);
+  assert.match(prompt, /Read makeProject\.note before a change whose\s+steps make, remix or import a project/);
+  assert.match(prompt, /a\s+change that needs a made project to run is skipped at once/);
+  assert.ok(prompt.includes(`narrower than ${require('../src/services/visible-changes').PHONE_WIDTH_BELOW} px`),
+    'the prompt names the same threshold the brief is built with');
   assert.match(prompt, /browser_take_screenshot with a filename/);
   assert.match(prompt, /Save both in one save_shot call: list each file with the change id, the\s+screen name, side "after"/);
   // Fewer round trips: each tool call is a model turn, which is what the
@@ -168,6 +196,10 @@ test('the shots agent prompt asks for before/after shots and leaves judgement to
   assert.match(prompt, /including anything\s+drawn over its edges/, "a corner badge overflows its button");
   assert.match(prompt, /pick the\s+bar or card around it/);
   assert.match(prompt, /create it\s+the same way on both addresses before you shoot either/);
+  // A step another account takes is taken in another persona's browser
+  // (PR 4626's reply in a topic's thread went unshot without it).
+  assert.match(prompt, /The member, read_only_admin and full_admin browsers are three different\s+accounts/);
+  assert.match(prompt, /take that\s+step in another of those browsers as the brief's secondAccount says, on both\s+addresses alike/);
   // A time-dependent change (a Thursday-evening reminder) is shot at the
   // moment its author declared, on both copies (services/preview-clock.js).
   assert.match(prompt, /If the brief has previewAt, the change only shows at certain times/);
@@ -185,6 +217,12 @@ test('the shots agent prompt asks for before/after shots and leaves judgement to
   assert.match(prompt, /call browser_close again, then\s+call save_clip/);
   assert.match(prompt, /skip_change with that change id and what\s+you saw/);
   assert.match(prompt, /You do not need to judge whether a change is\s+good/);
+  // An app built on Homeroom is never told a role: three runs on one app's
+  // Creator Studio tried every browser before giving up (QuestVerse's PRs 7 to 9).
+  assert.match(prompt, /When the brief has appRoles, the app is one built on Homeroom and no browser\s+holds a role in it/);
+  assert.match(prompt, /kept for particular accounts \(its creator, an allowlist, a page\s+private to one account\), every other browser is refused the same way/);
+  assert.match(prompt, /call\s+skip_change for that change at once, with the default outcome/);
+  assert.match(prompt, /do not try the other browsers/);
   assert.match(prompt, /do not end with only\s+prose/);
   assert.match(agent.TASK_PROMPT, /get_brief/);
   assert.match(agent.TASK_PROMPT, /before and an\s+after shot of every declared change/);
@@ -200,6 +238,52 @@ test('the shots agent prompt asks for before/after shots and leaves judgement to
   for (const retired of ['promptFor', 'replayPlanGuide', 'CAPTURE_SYSTEM_PROMPT', 'CAPTURE_PROMPT']) {
     assert.equal(agent[retired], undefined, `${retired} was removed`);
   }
+});
+
+// A project's first version: the before address is the starter template's
+// placeholder, and every before shot of proposals 7608, 7871 and 7610 was
+// that placeholder, at the cost of half the agent's turn.
+test('the shots agent takes only the after side when the brief has afterOnly', () => {
+  const prompt = agent.SYSTEM_PROMPT;
+  assert.match(prompt, /When the brief has afterOnly, the proposal builds the app's first real\s+screens/);
+  assert.match(prompt, /leave out step 7 and the before clip, do not open the\s+before address at all/);
+  assert.match(prompt, /create hints\.setup data on the after address only/);
+  assert.match(prompt, /A change is ready with its after shots\./);
+  assert.match(agent.TASK_PROMPT, /When the brief has afterOnly, save the after side only\./);
+});
+
+// reloop PR 12, smart-cashier PR 2 and pixora PR 3 went unshot (2026-10-09 to
+// 10-12): a loading or error state no change declared, and a file to choose.
+test('the shots agent holds or fails an undeclared request, and chooses only sample files, both sides alike', () => {
+  const prompt = agent.SYSTEM_PROMPT;
+  assert.match(prompt, /declares no controlledFailurePath, call\s+control_request with the change, the exact API GET path and query the page\s+sends/);
+  assert.match(prompt, /mode "hold" for the loading\s+state or "fail" for the error/);
+  assert.match(prompt, /Shoot\s+both sides that way, then call it again with mode "off"/);
+  assert.match(prompt, /when the browser says a file chooser is open,\s+call upload_file with that browser, the change and the files from the\s+brief's sampleFiles/);
+  assert.match(prompt, /the same ones on both sides\. They are the only\s+files you can give a page/);
+  assert.match(prompt, /People see a line\s+beside the shots saying which request you held or made fail/);
+  // The declared failure keeps its own tool.
+  assert.match(prompt, /If a change declares intent\.controlledFailurePath, call fail_request/);
+});
+
+// Published shots showed defects nobody remarked on: a result table cut off
+// at the right edge on both screen sizes, a sort control over a column
+// heading. The agent notes those (note_problem), and only those.
+test('the shots agent notes clear problems on the after build, a handful, never taste or the change itself', () => {
+  const prompt = agent.SYSTEM_PROMPT;
+  assert.match(prompt, /Call note_problem with the change and screen where you saw it/);
+  assert.match(prompt, /content cut off or\s+running off the screen, text or controls overlapping each other, an error\s+message or a broken image on screen, a layout that falls apart at the phone\s+size/);
+  // Whether the before build has it too, from the before shot it takes
+  // anyway: every problem noted in the proposals merged 2026-10-09 to 10-12
+  // said "unknown".
+  assert.match(prompt, /You shoot the before side of that screen anyway: look at\s+that before shot, or the same place on the before address, and say\s+alsoBefore true when it shows the same thing, false when it does not/);
+  assert.match(prompt, /Say "unknown" only when you\s+could not look/);
+  assert.match(prompt, /If you noticed it before you shot the before side, note it\s+again once you have/);
+  assert.match(prompt, /Note only what any\s+person would agree is broken, at most a\s+handful per run/);
+  assert.match(prompt, /never a matter of\s+taste, style or wording/);
+  assert.match(prompt, /never\s+whether the declared change is shown or works \(that is note_change and\s+skip_change\)/);
+  assert.match(prompt, /under\s+"Also noticed"; they change nothing about\s+the shots/);
+  assert.match(prompt, /Do not go looking for problems\s+on other screens/);
 });
 
 test('backend results cannot silently turn an errored model turn into success', () => {
@@ -327,8 +411,20 @@ test('the worker records clips only when the run needs them', async () => {
   assert.equal(seen.pop().shotsClipSize, '390x844', 'clips are recorded at the motion screen\'s size');
   await agent.dispatch(config, { ...options(false), clipSize: '390x844' }, { workerService });
   assert.equal('shotsClipSize' in seen.pop(), false, 'no size without clips');
+  // The phone browsers record at their own size, and only the personas with
+  // a phone screen get one.
+  await agent.dispatch(config, { ...options(true), clipSize: '1280x800', phoneClipSize: '390x844',
+    phonePersonas: ['member'] }, { workerService });
+  const phone = seen.pop();
+  assert.equal(phone.shotsClipSize, '1280x800');
+  assert.equal(phone.shotsPhoneClipSize, '390x844');
+  assert.deepEqual(phone.shotsPhonePersonas, ['member']);
+  await agent.dispatch(config, { ...options(false), phoneClipSize: '390x844' }, { workerService });
+  assert.equal('shotsPhoneClipSize' in seen.pop(), false, 'no phone size without clips');
   // Only a real true records; the worker refuses anything but a boolean.
   assert.deepEqual(seen.map((sent) => sent.shotsRecordClips), [true, false, false, false]);
+  assert.ok(seen.every((sent) => Array.isArray(sent.shotsPhonePersonas) && !sent.shotsPhonePersonas.length),
+    'no phone browser unless a screen is a phone\'s');
   for (const sent of seen) {
     assert.equal(sent.agentBackend, 'claude_code');
     assert.equal(sent.mode, 'shots');

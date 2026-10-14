@@ -17,6 +17,7 @@ const assert = require('node:assert/strict');
 const vm = require('node:vm');
 
 const { HOME_SRC } = require('./helpers/home-modules');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 function makeHome() {
   const screen = { scrollTop: 0, addEventListener() {} };
@@ -47,6 +48,7 @@ function makeHome() {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(`${HOME_SRC}\n;globalThis.__Home = Home;`, sandbox);
   const Home = sandbox.__Home;

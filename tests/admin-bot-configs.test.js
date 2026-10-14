@@ -182,7 +182,7 @@ test('the scope switch: First versions or Later changes, each with its own words
   const html = render({ payload: later, scope: 'later' });
   assert.match(html, /aria-pressed="true"[^>]*data-bot-config-scope="later"|data-bot-config-scope="later"[^>]*aria-pressed="true"/);
   assert.match(html, /How the Homeroom bot builds every later change, live or shadow/);
-  assert.match(html, /pairs compare the two sides(&#x27;|')\s+specs and diffs/);
+  assert.match(html, /pairs compare the two sides(&#x27;|')\s+plans and diffs/);
   assert.match(html, /Builds every later change/);
   assert.match(html, /88% built/);
   assert.match(html, /Proposals: 3 merged, 1 closed, 2 open, 1 not proposed/);

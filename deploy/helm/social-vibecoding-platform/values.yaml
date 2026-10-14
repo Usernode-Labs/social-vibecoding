@@ -89,6 +89,35 @@ postgresql:
       memory: 4Gi
   sharedMemorySizeLimit: 1Gi
 
+# A second PostgreSQL server that holds preview databases only: the redacted
+# staging templates, each preview's copy, and the copies before & after shots
+# use. Off by default, and with it off nothing changes. The chart does not
+# create the server; docs/kubernetes-operations.md ("A separate server for
+# preview databases") lists what the cluster has to provide and how to switch
+# it on and off.
+#
+# The platform reads the server's address and credential from
+# STAGING_DB_ADMIN_URL. With secrets.create=true the chart writes it from the
+# values below and secrets.previewDatabasePassword; with an existing Secret,
+# add that key to it yourself. Either way `enabled` is the switch: while it
+# is false the chart sets STAGING_DB_ADMIN_URL to an empty value on the
+# platform, which overrides a key left in the Secret.
+previewPostgresql:
+  enabled: false
+  # First step of switching back: new preview databases are made on the main
+  # server again while the ones already on this server are still cleaned up.
+  # Set enabled=false once those previews have expired.
+  drain: false
+  host: ""
+  port: 5432
+  # Selects the server's Pods for the platform's egress. Leave namespace
+  # empty when it runs in the release namespace.
+  namespace: ""
+  podSelector: {}
+  # The database administrative statements connect to; it must exist.
+  database: postgres
+  username: ""
+
 migration:
   enabled: true
   activeDeadlineSeconds: 1800
@@ -145,6 +174,17 @@ config:
   workerCpus: "2"
   captureMemory: 6g
   captureCpus: "8"
+  # Proposal checks runs with Jobs on the cluster at once (a capture Job and a
+  # unit-suite Job each); further runs wait for a slot after their preview is
+  # built. Main-watch's run of main has one slot besides these. 0 turns the
+  # queue off. See the chart README.
+  checksMaxConcurrentRuns: 4
+  # A dedicated node pool for check Jobs, as the pool nodes' label key=value
+  # (for example "usernodelabs.org/node-pool=cpu-heavy"). Checks tolerate a
+  # NoSchedule taint with the same pair and prefer those nodes, falling back
+  # to the others when the pool is full or down. Empty keeps the default
+  # spread over every node. See the chart README.
+  checkNodePool: ""
   # Match application defaults here; each cluster declares its own capacity.
   dbPoolMax: 10
   maxGlobalSessions: 25
@@ -160,6 +200,8 @@ secrets:
   create: false
   existingSecret: social-vibecoding
   databasePassword: ""
+  # The preview database server's credential (previewPostgresql above).
+  previewDatabasePassword: ""
   adminUsername: ""
   adminPassword: ""
   sessionSecret: ""

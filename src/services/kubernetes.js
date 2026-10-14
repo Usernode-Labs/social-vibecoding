@@ -6,6 +6,7 @@ const log = require('./logger');
 const { collectPodDiagnostics, conditionDetails, boundedText } = require('./kubernetes-diagnostics');
 const { waitForWorkerBootstrap } = require('./kubernetes-worker-bootstrap');
 const buildkit = require('./kubernetes-buildkit');
+const { watchDeployment } = require('./kubernetes-deployment-watch');
 
 // The client is 967 ES modules: about a quarter of a second and 70 MB to
 // load. Most processes that load this file never reach the cluster (341 of
@@ -23,6 +24,10 @@ const PART_OF = 'social-vibecoding';
 // slice of a ~25s preview turnaround.
 const BUILD_POLL_MS = 1000;
 const ROLLOUT_POLL_MS = 1000;
+// How long a finished check Job (and its Pod's log) stays for a harvest to
+// read when the process that launched it died (services/check-harvest.js).
+// A run that settles deletes its Jobs itself (deleteSettledCheckJobs).
+const CHECK_JOB_TTL_SECONDS = 3600;
 const TERMINAL_CONTAINER_WAITING_REASONS = new Set([
   'CreateContainerConfigError',
   'CreateContainerError',
@@ -156,6 +161,16 @@ function packageRunsScript(sourceDir, scriptName) {
   } catch {
     return false;
   }
+}
+
+// Whether a build reads its `sourceDir` below the root. The source itself
+// never comes from that directory here: kpack is given the repository and
+// revision, and the BuildKit Job fetches the commit itself. The directory is
+// read for two things, package.json's scripts (above) and which Dockerfile
+// the tree carries (buildkit.selectDockerfile), and both sit at the root
+// unless BUILDKIT_DOCKERFILES names a Dockerfile in a subdirectory.
+function buildReadsBelowSourceRoot(config) {
+  return (config?.kubernetes?.buildkitDockerfiles || []).some((name) => /[\\/]/.test(String(name)));
 }
 
 async function deleteBuild(config, name) {
@@ -542,18 +557,22 @@ function containerSecurityContext() {
   return { allowPrivilegeEscalation: false, capabilities: { drop: ['ALL'] }, readOnlyRootFilesystem: false };
 }
 
-// Previews and apps prefer to run near their database: first in the CNPG
-// primary's zone, then on its host. A page makes many sequential queries, so
-// a pod in another data centre pays that round trip on every one. When the
-// only preference was the primary's HOST, a full host left every other node
-// equally good, and previews landed in Falkenstein while the database ran in
-// Helsinki: those previews took a third longer to check, and 8 of 10 runs
-// there failed 60 to 240 checks on data that arrived too late (2026-10-01,
-// sessions 5588, 5664 and 5674).
+// Previews and apps prefer to run in the CNPG primary's zone. A page makes
+// many sequential queries, so a pod in another data centre pays that round
+// trip on every one: previews that landed in Falkenstein while the database
+// ran in Helsinki took a third longer to check, and 8 of 10 runs there failed
+// 60 to 240 checks on data that arrived too late (2026-10-01, sessions 5588,
+// 5664 and 5674).
 //
-// Both are preferences, so other eligible nodes stay available when the zone
+// The preference stops at the zone. A second term for the primary's own HOST
+// saves nothing a page can measure inside one data centre, and it piled the
+// fleet onto one node: on 2026-10-12 that node ran 100 of 209 app pods at the
+// kubelet's 110-pod limit while its three zone neighbours ran 25 to 43, so
+// losing it would have taken the database primary and half the apps together.
+//
+// It is a preference, so other eligible nodes stay available when the zone
 // is full. A node without `topology.kubernetes.io/zone` matches no zone, so
-// a cluster whose nodes carry no zone labels keeps the host preference alone.
+// a cluster whose nodes carry no zone labels gets normal placement.
 // Select the primary role, not a Pod/node name, so new scheduling follows
 // CNPG failover without moving already-running pods.
 function databaseAffinity(cfg, environment) {
@@ -571,28 +590,52 @@ function databaseAffinity(cfg, environment) {
       podAffinity: {
         preferredDuringSchedulingIgnoredDuringExecution: [
           { weight: 100, podAffinityTerm: { ...primary, topologyKey: 'topology.kubernetes.io/zone' } },
-          { weight: 50, podAffinityTerm: { ...primary, topologyKey: 'kubernetes.io/hostname' } },
         ],
       },
     },
   };
 }
 
-// The node an app's ready Pod was scheduled on, for the deploy log. Best
-// effort: a lookup that fails or finds no ready Pod returns null and never
-// fails the deploy that just succeeded.
-async function scheduledNode(core, namespace, name, imageRef) {
+// The app's ready Pod, for the deploy log (the node it was scheduled on) and
+// for the creation timing (podStartTimeline). Best effort: a lookup that
+// fails or finds no ready Pod returns null and never fails the deploy that
+// just succeeded.
+async function findReadyAppPod(core, namespace, name, imageRef) {
   try {
     const pods = await core.listNamespacedPod({ namespace,
       labelSelector: `social.usernode.io/runtime-name=${name}` });
-    const pod = (pods?.items || []).find((item) => !item.metadata?.deletionTimestamp
+    return (pods?.items || []).find((item) => !item.metadata?.deletionTimestamp
       && item.spec?.nodeName
       && item.spec?.containers?.some((c) => c.name === 'app' && c.image === imageRef)
-      && item.status?.conditions?.some((c) => c.type === 'Ready' && c.status === 'True'));
-    return pod ? pod.spec.nodeName : null;
+      && item.status?.conditions?.some((c) => c.type === 'Ready' && c.status === 'True')) || null;
   } catch {
     return null;
   }
+}
+
+// How a Pod's start was spent, from its own status (#4895): placed on a node
+// (PodScheduled), its app container running (the image pulled and the
+// container created), and Ready (the app booted and its /health answered
+// the probes). Whole seconds, as the API keeps them. Null when any of the
+// four stamps is missing, e.g. a Pod that restarted since.
+function podStartTimeline(pod) {
+  const at = (value) => {
+    const t = Date.parse(value || '');
+    return Number.isFinite(t) ? t : null;
+  };
+  const condition = (type) => at(pod?.status?.conditions
+    ?.find((c) => c.type === type && c.status === 'True')?.lastTransitionTime);
+  const created = at(pod?.metadata?.creationTimestamp);
+  const scheduled = condition('PodScheduled');
+  const ready = condition('Ready');
+  const app = (pod?.status?.containerStatuses || []).find((c) => c.name === 'app');
+  const started = at(app?.state?.running?.startedAt);
+  if ([created, scheduled, started, ready].some((t) => t == null) || app?.restartCount) return null;
+  return {
+    scheduleMs: Math.max(0, scheduled - created),
+    startMs: Math.max(0, started - scheduled),
+    readyMs: Math.max(0, ready - started),
+  };
 }
 
 // ── Platform assets on every app's own origin ─────────────────────────
@@ -968,7 +1011,10 @@ async function ensureAppGateBackend(config, { readyTimeoutMs = 60000, retryAfter
 function ingressWithGateRoute(ingress, mode) {
   const own = ingress?.metadata?.name;
   if (!own) return null;
-  const target = mode === 'on' ? APP_GATE_NAME : own;
+  // A custom domain's Ingress (#4405) is not named after a Service: the app
+  // Service it fronts is in its annotation (customDomainIngressManifest).
+  const service = ingress?.metadata?.annotations?.[CUSTOM_DOMAIN_SERVICE_ANNOTATION] || own;
+  const target = mode === 'on' ? APP_GATE_NAME : service;
   let changed = false;
   const rules = (ingress?.spec?.rules || []).map((rule) => {
     if (!rule?.http || !Array.isArray(rule.http.paths)) return rule;
@@ -976,7 +1022,7 @@ function ingressWithGateRoute(ingress, mode) {
       if (item?.path !== '/' || !item?.backend?.service) return item;
       const current = item.backend.service.name;
       // Only ever swap between the two names this code writes.
-      if (current !== own && current !== APP_GATE_NAME) return item;
+      if (current !== service && current !== APP_GATE_NAME) return item;
       if (current === target) return item;
       changed = true;
       return { ...item, backend: { ...item.backend, service: { ...item.backend.service, name: target } } };
@@ -1024,7 +1070,7 @@ async function reconcileAppGateIngresses(config, { force = null } = {}) {
 async function deployApplication(config, {
   app, environment, sessionId, imageRef, env, cpus = null,
   labels: extraLabels = {}, runtimeName = null, internalOnly = false,
-  command = [], runAsUser = null,
+  command = [], runAsUser = null, onRollout = null,
 }) {
   if (!imageRef?.includes('@sha256:')) throw new Error('Kubernetes deployments require an immutable image digest');
   // runAsUser is an explicit override for an image that names no user and
@@ -1136,9 +1182,12 @@ async function deployApplication(config, {
     await upsert(networking, 'readNamespacedIngress', 'createNamespacedIngress', 'replaceNamespacedIngress', namespace,
       appIngressManifest({ name, namespace, hostname, resourceLabels, cfg, assetBackend, gateBackend }));
   }
+  // Everything is applied; what follows is the Pod starting. A caller timing
+  // the two apart (services/app-creator.js) hears it here.
+  if (typeof onRollout === 'function') { try { onRollout(); } catch { /* observer only */ } }
   try {
     await waitForDeployment(namespace, name, {
-      generation: deployed?.metadata?.generation,
+      generation: deployed?.metadata?.generation, uid: deployed?.metadata?.uid,
       terminalPodFilter: { imageRef, environmentChecksum: envChecksum(env), container: 'app' },
     });
   } catch (err) {
@@ -1166,12 +1215,15 @@ async function deployApplication(config, {
     }
     throw err;
   }
-  const node = await scheduledNode(core, namespace, name, imageRef);
+  const pod = await findReadyAppPod(core, namespace, name, imageRef);
+  const node = pod ? pod.spec.nodeName : null;
+  const podTimeline = podStartTimeline(pod);
   return {
     runtimeKind: 'kubernetes', runtimeName: name, imageRef,
     hostname: internalOnly ? `${name}.${namespace}.svc` : hostname,
     url: internalOnly ? `http://${name}.${namespace}.svc:3000` : `https://${hostname}`,
     ...(node ? { node } : {}),
+    ...(podTimeline ? { podTimeline } : {}),
   };
 }
 
@@ -1193,50 +1245,100 @@ function terminalPodFailureDetails(pods, { imageRef, environmentChecksum, contai
   return details;
 }
 
+function deploymentReady(deployment, generation) {
+  const desired = deployment.spec?.replicas ?? 1;
+  const status = deployment.status || {};
+  return !deployment.metadata?.deletionTimestamp && desired > 0
+    && status.observedGeneration >= Math.max(generation, deployment.metadata?.generation)
+    && status.updatedReplicas === desired && status.replicas === desired
+    && status.readyReplicas >= desired && status.availableReplicas >= desired;
+}
+
 async function waitForDeployment(namespace, name, {
-  timeoutMs = 5 * 60 * 1000, generation = 0, terminalPodFilter = null,
+  timeoutMs = 5 * 60 * 1000, generation = 0, uid = null, terminalPodFilter = null,
 } = {}) {
   const deadline = Date.now() + timeoutMs;
-  const { apps, core } = getClients();
+  const api = getClients();
+  const { apps, core } = api;
   let rolloutDetails = '';
-  while (Date.now() < deadline) {
-    const deployment = await apps.readNamespacedDeployment({ name, namespace });
-    const desired = deployment.spec?.replicas ?? 1;
-    const status = deployment.status || {};
-    rolloutDetails = boundedText(conditionDetails(status.conditions).join('\n'), 4096);
-    // An available OLD replica keeps serving during a rolling update. Wait
-    // for the controller to observe our write, replace every old replica,
-    // and make the updated replicas ready and available before publishing it.
-    if (!deployment.metadata.deletionTimestamp && desired > 0
-        && status.observedGeneration >= Math.max(generation, deployment.metadata.generation)
-        && status.updatedReplicas === desired && status.replicas === desired
-        && status.readyReplicas >= desired && status.availableReplicas >= desired) return deployment;
-    // A Pod rejected before its process starts will never become healthy, so
-    // waiting the whole rollout budget only turns a precise configuration
-    // error into a five-minute "spinning up" delay. This read is best-effort:
-    // transient API errors keep the ordinary rollout waiter in control.
-    if (terminalPodFilter && typeof core?.listNamespacedPod === 'function') {
-      try {
-        const pods = await core.listNamespacedPod({ namespace,
-          labelSelector: `social.usernode.io/runtime-name=${name}` });
-        const terminal = terminalPodFailureDetails(pods.items, terminalPodFilter);
-        if (terminal.length) {
-          const detail = terminal.join('\n');
-          const err = new Error(`Deployment ${namespace}/${name} cannot start: ${terminal[0]}`);
-          err.rolloutDetails = rolloutDetails;
-          err.terminalPodDetails = boundedText(detail, 4096);
-          err.terminalPodFailure = true;
-          throw err;
+  let watcher;
+  let watchAttempted = false;
+  let wake;
+  let wakePending = false;
+  let nextDiagnosisAt = 0;
+  const notify = () => { wakePending = true; wake?.(); };
+  const stopWatch = () => { watcher?.abort(); watcher = null; };
+  try {
+    while (Date.now() < deadline) {
+      const deployment = await apps.readNamespacedDeployment({ name, namespace });
+      uid ||= deployment.metadata?.uid;
+      const sameDeployment = !uid || deployment.metadata?.uid === uid;
+      const status = deployment.status || {};
+      rolloutDetails = boundedText(conditionDetails(status.conditions).join('\n'), 4096);
+      // Watch events only wake us; this authoritative read retains the full
+      // completion contract and cannot publish a stale/backlogged ready event.
+      if (sameDeployment && deploymentReady(deployment, generation)) return deployment;
+      if (!watchAttempted) {
+        watchAttempted = true;
+        const resourceVersion = deployment.metadata?.resourceVersion;
+        const startWatch = api.watchDeployment || (api.kc && ((options, event, done) =>
+          watchDeployment(api.kc, options, event, done)));
+        if (sameDeployment && uid && resourceVersion && startWatch) {
+          let finishedSynchronously = false;
+          const event = (type, object) => {
+            if (type === 'ERROR' || type === 'DELETED') { finishedSynchronously = true; stopWatch(); return; }
+            if ((type !== 'ADDED' && type !== 'MODIFIED') || object?.metadata?.uid !== uid
+                || object.metadata.name !== name || object.metadata.namespace !== namespace
+                || object.metadata.resourceVersion === resourceVersion
+                || !deploymentReady(object, generation)) return;
+            // One early confirmation per wait: a misleading event cannot make
+            // us hammer the API. Subsequent observation uses ordinary polling.
+            stopWatch();
+            notify();
+          };
+          const done = () => { finishedSynchronously = true; stopWatch(); };
+          try {
+            watcher = startWatch({ namespace, name, resourceVersion,
+              timeoutMs: Math.max(1, deadline - Date.now()) }, event, done);
+            if (finishedSynchronously || wakePending) stopWatch();
+          } catch { stopWatch(); }
         }
-      } catch (err) {
-        if (err.terminalPodFailure) throw err;
       }
+      // A Pod rejected before its process starts will never become healthy, so
+      // waiting the whole rollout budget only turns a precise configuration
+      // error into a five-minute "spinning up" delay. This read is best-effort:
+      // transient API errors keep the ordinary rollout waiter in control.
+      if (Date.now() >= nextDiagnosisAt && terminalPodFilter && typeof core?.listNamespacedPod === 'function') {
+        nextDiagnosisAt = Date.now() + ROLLOUT_POLL_MS;
+        try {
+          const pods = await core.listNamespacedPod({ namespace,
+            labelSelector: `social.usernode.io/runtime-name=${name}` });
+          const terminal = terminalPodFailureDetails(pods.items, terminalPodFilter);
+          if (terminal.length) {
+            const detail = terminal.join('\n');
+            const err = new Error(`Deployment ${namespace}/${name} cannot start: ${terminal[0]}`);
+            err.rolloutDetails = rolloutDetails;
+            err.terminalPodDetails = boundedText(detail, 4096);
+            err.terminalPodFailure = true;
+            throw err;
+          }
+        } catch (err) {
+          if (err.terminalPodFailure) throw err;
+        }
+      }
+      if (!wakePending) {
+        await new Promise(resolve => {
+          const timer = setTimeout(finish, Math.max(0, Math.min(ROLLOUT_POLL_MS, deadline - Date.now())));
+          function finish() { clearTimeout(timer); wake = null; resolve(); }
+          wake = finish;
+        });
+      }
+      wakePending = false;
     }
-    await new Promise((resolve) => setTimeout(resolve, ROLLOUT_POLL_MS));
-  }
-  const err = new Error(`Timed out waiting for Deployment ${namespace}/${name}`);
-  err.rolloutDetails = rolloutDetails;
-  throw err;
+    const err = new Error(`Timed out waiting for Deployment ${namespace}/${name}`);
+    err.rolloutDetails = rolloutDetails;
+    throw err;
+  } finally { stopWatch(); }
 }
 
 async function getApplicationStatus(config, runtimeName) {
@@ -1300,6 +1402,95 @@ async function getDebugLogs(config, runtimeName, { tailLines = 200, maxBytes = 2
   } finally { clearTimeout(timer); }
 }
 
+// ── Custom domains (#4405) ────────────────────────────────────────────
+//
+// A project served at a web address its manager owns. The app's own Ingress
+// stays exactly as it is (one host, the shared wildcard Secret, no issuer:
+// tests/kubernetes-app-tls.test.js); a SECOND Ingress, `sv-domain-<id>`,
+// carries the custom host, routes it the same way (the asset prefixes to
+// the shared asset backend, everything else through the gate when it is on
+// or to the app's Service) and, unlike the app's, asks cert-manager for a
+// certificate of its own: this host is not under the wildcard, and the
+// manager has already proved they control it (services/app-domains.js) by
+// the time this is written, so an HTTP-01 challenge for it can succeed and
+// nobody else's name ever costs the issuer a certificate.
+//
+// The Secret the certificate lands in is the Ingress's own and goes with it.
+// The app's Service name rides in an annotation so the gate switch
+// (ingressWithGateRoute) can point the catch-all back at it.
+const CUSTOM_DOMAIN_SERVICE_ANNOTATION = 'social.usernode.io/app-service';
+const CUSTOM_DOMAIN_ID_LABEL = 'social.usernode.io/domain-id';
+
+function customDomainResourceName(domain) {
+  return dnsName(`sv-domain-${domain.id}`);
+}
+
+// Pure, so the shape can be asserted without a cluster.
+function customDomainIngressManifest({ domain, app, namespace, cfg, assetBackend, gateBackend = null, serviceName }) {
+  const name = customDomainResourceName(domain);
+  const hostname = String(domain.hostname || '').toLowerCase();
+  const service = serviceName || app.runtime_name || appResourceName(app, 'production');
+  const assetPaths = assetBackend ? PLATFORM_ASSET_PREFIXES.map(platformAssetPath) : [];
+  return {
+    apiVersion: 'networking.k8s.io/v1', kind: 'Ingress', metadata: {
+      name, namespace,
+      labels: { ...labels({ appId: app.id, environment: 'production' }), [CUSTOM_DOMAIN_ID_LABEL]: String(domain.id) },
+      annotations: {
+        'cert-manager.io/cluster-issuer': cfg.clusterIssuer || 'letsencrypt-public',
+        [CUSTOM_DOMAIN_SERVICE_ANNOTATION]: service,
+      },
+    },
+    spec: {
+      ingressClassName: cfg.ingressClassName,
+      rules: [{ host: hostname, http: { paths: [
+        ...assetPaths,
+        { path: '/', pathType: 'Prefix', backend: { service: { name: gateBackend || service, port: { number: 3000 } } } },
+      ] } }],
+      tls: [{ hosts: [hostname], secretName: withSuffix(name, 'tls') }],
+    },
+  };
+}
+
+async function deployCustomDomain(config, { app, domain }) {
+  const cfg = config.kubernetes;
+  const namespace = cfg.appNamespace;
+  const hostname = String(domain.hostname || '').toLowerCase();
+  if (!hostname || !/^[a-z0-9.-]+$/.test(hostname)) throw new Error('Invalid custom domain hostname');
+  require('./caddy').assertAppHostname(hostname, cfg.platformDomain);
+  const { networking } = getClients();
+  let assetBackend = null;
+  try {
+    assetBackend = await ensurePlatformAssetBackend(config);
+  } catch (err) {
+    log.warn('kubernetes', 'platform asset backend unavailable — custom domain routes without asset paths', {
+      namespace, hostname, error: err?.message,
+    });
+  }
+  let gateBackend = null;
+  if (appGateMode(config) === 'on') {
+    try {
+      gateBackend = await ensureAppGateBackend(config);
+    } catch (err) {
+      log.warn('kubernetes', 'app gate unavailable — custom domain routes straight to the app', {
+        namespace, hostname, error: err?.message,
+      });
+    }
+  }
+  await upsert(networking, 'readNamespacedIngress', 'createNamespacedIngress', 'replaceNamespacedIngress', namespace,
+    customDomainIngressManifest({ domain, app, namespace, cfg, assetBackend, gateBackend }));
+  return { name: customDomainResourceName(domain), hostname };
+}
+
+// The Ingress and the certificate Secret cert-manager wrote for it. The
+// app's own resources are never touched.
+async function deleteCustomDomain(config, { domain }) {
+  const namespace = config.kubernetes.appNamespace;
+  const name = customDomainResourceName(domain);
+  const { core, networking } = getClients();
+  await deleteIfPresent(networking, 'deleteNamespacedIngress', name, namespace);
+  await deleteIfPresent(core, 'deleteNamespacedSecret', withSuffix(name, 'tls'), namespace);
+}
+
 async function restartApplication(config, runtimeName) {
   const namespace = config.kubernetes.appNamespace;
   const deployment = await getClients().apps.readNamespacedDeployment({ name: runtimeName, namespace });
@@ -1307,7 +1498,7 @@ async function restartApplication(config, runtimeName) {
   deployment.spec.template.metadata.annotations ||= {};
   deployment.spec.template.metadata.annotations['social.usernode.io/restarted-at'] = new Date().toISOString();
   const restarted = await getClients().apps.replaceNamespacedDeployment({ name: runtimeName, namespace, body: deployment });
-  return waitForDeployment(namespace, runtimeName, { generation: restarted?.metadata?.generation });
+  return waitForDeployment(namespace, runtimeName, { generation: restarted?.metadata?.generation, uid: restarted?.metadata?.uid });
 }
 
 async function deleteApplication(config, runtimeName) {
@@ -1325,9 +1516,16 @@ async function deleteApplication(config, runtimeName) {
     deleteIfPresent(core, 'deleteNamespacedSecret', withSuffix(runtimeName, 'env'), namespace),
     // Keep shared and legacy TLS material across rebuilds, idle teardown and
     // failed rollouts. Certificate retirement is a separate operator action.
-    deleteIfPresent(apps, 'deleteNamespacedDeployment', runtimeName, namespace, {
-      propagationPolicy: 'Foreground', ...(uid ? { body: { preconditions: { uid } } } : {}),
-    }),
+    //
+    // Foreground keeps the Deployment until its Pods are gone, which is what
+    // the wait below reads. With a body the API server takes the delete
+    // options from the body alone, so the policy goes in with the
+    // precondition; beside it, as a query option, it was ignored, the
+    // Deployment went at once and the wait returned with its Pods still
+    // running (the same mistake orphaned check Pods, #4310).
+    deleteIfPresent(apps, 'deleteNamespacedDeployment', runtimeName, namespace, uid
+      ? { body: { propagationPolicy: 'Foreground', preconditions: { uid } } }
+      : { propagationPolicy: 'Foreground' }),
   ]);
   const failed = deletions.find(result => result.status === 'rejected');
   if (failed) throw failed.reason;
@@ -1966,9 +2164,75 @@ async function runUnitSuiteJob(config, options) {
   return runCheckJob(config, options, 'unit-suite');
 }
 
+// A check Job's name before any shard suffix: `sv-<kind>-s<session>-<run>`,
+// or under `namePrefix` in place of `sv-<kind>`.
+function checkJobRunName(kind, sessionId, runId, namePrefix = null) {
+  return `${namePrefix || `sv-${kind}`}-s${sessionId}-${runId}`;
+}
+
+// Delete one check Job by name, with its Pod and input Secret (Background
+// propagation, as stopCheckJobs). For a Job no preview run owns, such as
+// an early unit suite nobody adopted. Never throws.
+async function deleteCheckJob(config, name) {
+  try {
+    const { batch } = getClients();
+    await deleteIfPresent(batch, 'deleteNamespacedJob', dnsName(name), config.kubernetes.workerNamespace,
+      { propagationPolicy: 'Background' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// How many unit suites (a run's own, main-watch's, and early ones) are
+// running in the worker namespace: a suite split across Jobs counts once,
+// by its run id. Null when the count could not be read.
+async function countRunningUnitSuiteJobs(config) {
+  try {
+    const { batch } = getClients();
+    const jobs = await batch.listNamespacedJob({
+      namespace: config.kubernetes.workerNamespace,
+      labelSelector: `app.kubernetes.io/managed-by=${MANAGED_BY},social.usernode.io/workload=check`,
+    });
+    const runs = new Set();
+    for (const job of jobs.items || []) {
+      const name = job.metadata?.name || '';
+      if (!(name.startsWith('sv-unit-suite-') || name.startsWith('sv-unit-early-'))) continue;
+      if (job.metadata?.deletionTimestamp || describeCheckJob(job).state !== 'running') continue;
+      runs.add(job.metadata?.labels?.['social.usernode.io/preview-run-id'] || name);
+    }
+    return runs.size;
+  } catch {
+    return null;
+  }
+}
+
+// Delete every check Job of one run, running or not, with their Pods and
+// input Secrets: all the shards of an early unit suite nobody adopted.
+// Never throws; returns how many it asked to delete.
+async function deleteRunCheckJobs(config, { sessionId, previewRunId }) {
+  if (!previewRunId) return 0;
+  try {
+    const { batch } = getClients();
+    const namespace = config.kubernetes.workerNamespace;
+    const jobs = await batch.listNamespacedJob({ namespace,
+      labelSelector: `app.kubernetes.io/managed-by=${MANAGED_BY},social.usernode.io/session-id=${sessionId},social.usernode.io/preview-run-id=${previewRunId}` });
+    const mine = (jobs.items || []).filter((job) => job.metadata?.labels?.['social.usernode.io/preview-run-id'] === previewRunId
+      && !job.metadata?.deletionTimestamp);
+    await Promise.all(mine.map((job) => deleteIfPresent(batch, 'deleteNamespacedJob', job.metadata.name, namespace,
+      { propagationPolicy: 'Background' }).catch(() => {})));
+    return mine.length;
+  } catch {
+    return 0;
+  }
+}
+
 // A DELETE response only acknowledges termination. Keep preview ownership
 // until every consuming Pod has stopped, including Jobs orphaned by a crash.
-async function cancelPreviewChecks(config, sessionId, previewRunId = null) {
+// `spare(runId)` keeps the Jobs of the runs it names (by preview-run-id):
+// the preview lifecycle spares a run of the revision it is about to leave
+// to the harvest (check-harvest.runToCollect).
+async function cancelPreviewChecks(config, sessionId, previewRunId = null, { spare = () => false } = {}) {
   const { batch, core } = getClients();
   const namespace = config.kubernetes.workerNamespace;
   const selector = `app.kubernetes.io/managed-by=${MANAGED_BY},social.usernode.io/session-id=${sessionId}`
@@ -1978,14 +2242,21 @@ async function cancelPreviewChecks(config, sessionId, previewRunId = null) {
     const name = job.metadata.name;
     if (!name.startsWith(`sv-capture-s${sessionId}-`)
         && !name.startsWith(`sv-unit-suite-s${sessionId}-`)) return;
-    if (previewRunId && job.metadata.labels?.['social.usernode.io/preview-run-id'] !== previewRunId) return;
+    const runId = job.metadata.labels?.['social.usernode.io/preview-run-id'];
+    if (previewRunId && runId !== previewRunId) return;
+    if (runId && spare(runId)) return;
     const podsStopped = async () => {
       const pods = await core.listNamespacedPod({ namespace, labelSelector: `job-name=${name}` });
       return (pods.items || []).every(pod => ['Succeeded', 'Failed'].includes(pod.status?.phase));
     };
     if ((job.status?.succeeded || job.status?.failed) && await podsStopped()) return;
+    // The policy goes in the body. The API server reads delete options from
+    // the body when there is one and ignores the query string, and a batch/v1
+    // Job deleted without a policy ORPHANS its dependents: its Pods ran on
+    // with no deadline and its input Secret lost its owner, which is how 130
+    // ownerless input Secrets filled the worker namespace's quota.
     await deleteIfPresent(batch, 'deleteNamespacedJob', name, namespace, {
-      propagationPolicy: 'Foreground', body: { preconditions: { uid: job.metadata.uid } },
+      body: { propagationPolicy: 'Foreground', preconditions: { uid: job.metadata.uid } },
     });
     const deadline = Date.now() + 60000;
     for (;;) {
@@ -2071,10 +2342,77 @@ function reconcileCheckOutput(observed, terminal) {
   return known;
 }
 
+// Kubernetes' syntax for a label key (an optional DNS-subdomain prefix, then
+// a name) and for a label value.
+const LABEL_NAME = '[A-Za-z0-9](?:[-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?';
+const NODE_POOL_PAIR = new RegExp(
+  `^((?:[a-z0-9](?:[-a-z0-9.]{0,251}[a-z0-9])?/)?${LABEL_NAME})=(${LABEL_NAME})$`);
+const warnedNodePools = new Set();
+
+// CHECK_NODE_POOL as { key, value }, or null when it is empty or is not a
+// valid label pair. An invalid one is said once and ignored: a Job the API
+// refuses for a malformed toleration is a check that cannot start, and
+// running where checks always ran is the better failure.
+function checkNodePool(cfg) {
+  const raw = String(cfg.checkNodePool || '').trim();
+  if (!raw) return null;
+  const match = NODE_POOL_PAIR.exec(raw);
+  if (!match) {
+    if (!warnedNodePools.has(raw)) {
+      warnedNodePools.add(raw);
+      log.warn('kubernetes', 'CHECK_NODE_POOL is not a label key=value; checks keep the default placement', { value: raw });
+    }
+    return null;
+  }
+  return { key: match[1], value: match[2] };
+}
+
+// Where a check Pod may run.
+//
+// Without a pool, checks prefer spare hosts and are never stranded when only
+// one host fits: a soft spread over every node, counted across all check
+// kinds and sessions.
+//
+// With a pool (CHECK_NODE_POOL), its nodes carry the label and the same pair
+// as a NoSchedule taint, so nothing else is scheduled on them. Checks
+// tolerate the taint and prefer the label. It stays a preference: with the
+// pool full or its nodes gone, checks run on the other nodes as before.
+//
+// The spread goes when there is a pool. Both are scoring preferences of the
+// same weight to the scheduler, and the spread counts check Pods per host, so
+// on a pool of one large node it would send every Pod after the first back to
+// the small nodes the pool is there to relieve.
+function checkPlacement(cfg, checkSelector) {
+  const pool = checkNodePool(cfg);
+  if (!pool) {
+    return {
+      topologySpreadConstraints: [{
+        maxSkew: 1, topologyKey: 'kubernetes.io/hostname', whenUnsatisfiable: 'ScheduleAnyway',
+        nodeAffinityPolicy: 'Honor', nodeTaintsPolicy: 'Honor',
+        labelSelector: { matchLabels: checkSelector },
+      }],
+    };
+  }
+  return {
+    tolerations: [{ key: pool.key, operator: 'Equal', value: pool.value, effect: 'NoSchedule' }],
+    affinity: { nodeAffinity: { preferredDuringSchedulingIgnoredDuringExecution: [{
+      weight: 100,
+      preference: { matchExpressions: [{ key: pool.key, operator: 'In', values: [pool.value] }] },
+    }] } },
+  };
+}
+
+// `namePrefix` names a Job outside the preview's own check Jobs: an early
+// unit suite (services/early-unit-suite.js) is `sv-unit-early-…`, which
+// cancelPreviewChecks and stopCheckJobs leave alone. `nameSuffix` and
+// `shard` name and label one of a run's capture shards; `cpuRequest` is a
+// shard's smaller share of the scheduler (services/visuals.js
+// CAPTURE_SHARD_CPU_REQUEST).
 async function runCheckJob(config, {
   sessionId, env, stdinPayload = null, timeoutMs = 180000,
   onStdoutLine = null, cmd, memory = '2g', cpus = '4', maxBuffer = 64 * 1024 * 1024,
   salvagePartial = false, signal = null, previewRunId = null,
+  namePrefix = null, nameSuffix = null, shard = null, cpuRequest = null, unitShard = null,
 }, kind) {
   const cfg = config.kubernetes;
   const unitSuite = kind === 'unit-suite';
@@ -2082,7 +2420,7 @@ async function runCheckJob(config, {
   const memoryLimit = String(memory).replace(/g$/i, 'Gi').replace(/m$/i, 'Mi');
   const resources = {
     requests: {
-      cpu: checkResourceRequest('4', cpuLimit, 'CPU'),
+      cpu: checkResourceRequest(cpuRequest || '4', cpuLimit, 'CPU'),
       memory: checkResourceRequest(unitSuite ? '1Gi' : '3Gi', memoryLimit, 'memory'),
       'ephemeral-storage': '1Gi',
     },
@@ -2091,9 +2429,15 @@ async function runCheckJob(config, {
   const image = unitSuite ? cfg.workerImage : cfg.captureImage;
   if (!image?.includes('@sha256:')) throw new Error(`${unitSuite ? 'KUBERNETES_WORKER_IMAGE' : 'KUBERNETES_CAPTURE_IMAGE'} must be an immutable digest`);
   const namespace = cfg.workerNamespace;
-  const runName = `sv-${kind}-s${sessionId}-${previewRunId || Date.now().toString(36)}`;
-  const name = dnsName(runName);
-  const inputSecretName = !unitSuite && stdinPayload == null ? null : withSuffix(name, 'input');
+  const runName = checkJobRunName(kind, sessionId, previewRunId || Date.now().toString(36), namePrefix);
+  const name = nameSuffix ? withSuffix(runName, nameSuffix) : dnsName(runName);
+  // A shard's Secret keeps its shard in its name. Cut from the Job's name,
+  // which is already near the 63-character limit for a run id that is a
+  // UUID, the `-input` suffix pushed the shard's own suffix off the end, and
+  // every shard of a unit suite asked for the same Secret: only the first
+  // could start (10 Oct 2026, every proposal's split unit suite).
+  const inputSecretName = !unitSuite && stdinPayload == null ? null
+    : nameSuffix ? withSuffix(runName, `${nameSuffix}-input`) : withSuffix(name, 'input');
   if (stdinPayload != null && Buffer.byteLength(String(stdinPayload), 'utf8') > 900 * 1024) {
     throw new Error('Capture stdin payload exceeds the Kubernetes Secret transport limit');
   }
@@ -2129,16 +2473,11 @@ async function runCheckJob(config, {
   };
   const checkLabels = { ...labels({ sessionId, environment: unitSuite ? 'worker' : 'capture' }), ...checkSelector };
   const body = { apiVersion: 'batch/v1', kind: 'Job', metadata: { name, namespace, labels: { ...checkLabels } }, spec: {
-    backoffLimit: 0, activeDeadlineSeconds: Math.ceil(timeoutMs / 1000), ttlSecondsAfterFinished: 3600,
+    backoffLimit: 0, activeDeadlineSeconds: Math.ceil(timeoutMs / 1000), ttlSecondsAfterFinished: CHECK_JOB_TTL_SECONDS,
     template: { metadata: { labels: { ...checkLabels } }, spec: {
       restartPolicy: 'Never', serviceAccountName: cfg.workerServiceAccount,
       automountServiceAccountToken: false, securityContext: nodePodSecurityContext(),
-      // Prefer spare hosts without stranding checks when only one host fits.
-      topologySpreadConstraints: [{
-        maxSkew: 1, topologyKey: 'kubernetes.io/hostname', whenUnsatisfiable: 'ScheduleAnyway',
-        nodeAffinityPolicy: 'Honor', nodeTaintsPolicy: 'Honor',
-        labelSelector: { matchLabels: checkSelector },
-      }],
+      ...checkPlacement(cfg, checkSelector),
       containers: [container], ...(podVolumes.length ? { volumes: podVolumes } : {}),
     } },
   } };
@@ -2147,7 +2486,18 @@ async function runCheckJob(config, {
     body.metadata.labels['social.usernode.io/preview-run-id'] = previewRunId;
     body.spec.template.metadata.labels['social.usernode.io/preview-run-id'] = previewRunId;
   }
+  if (Number.isInteger(shard)) {
+    body.metadata.labels['social.usernode.io/capture-shard'] = String(shard);
+    body.spec.template.metadata.labels['social.usernode.io/capture-shard'] = String(shard);
+  }
+  // One shard of a split unit suite, as `k-of-n` (services/unit-suite.js):
+  // the harvest reads how many shards a run had from it.
+  if (unitShard) {
+    body.metadata.labels['social.usernode.io/unit-shard'] = String(unitShard);
+    body.spec.template.metadata.labels['social.usernode.io/unit-shard'] = String(unitShard);
+  }
   let inputSecretCreated = false;
+  let inputSecret = null;
   // Follow state lives outside the try so the finally can close the stream.
   let following = false;
   let followAbort = null;
@@ -2160,24 +2510,41 @@ async function runCheckJob(config, {
     }
   };
   const boundedOutput = text => boundedCheckOutput(text, maxBuffer);
+  // A create the API refused or never answered: nothing ran, so the caller
+  // can say the check could not start rather than that it failed
+  // (services/unit-suite.js reads the mark).
+  const create = async (call) => {
+    try { return await call(); } catch (err) {
+      if (err && typeof err === 'object') err.checkJobNotCreated = true;
+      throw err;
+    }
+  };
   try {
     signal?.throwIfAborted();
     if (inputSecretName) {
-      await core.createNamespacedSecret({ namespace, body: {
+      inputSecret = await create(() => core.createNamespacedSecret({ namespace, body: {
         apiVersion: 'v1', kind: 'Secret',
         metadata: { name: inputSecretName, namespace, labels: labels({ sessionId, environment: unitSuite ? 'worker' : 'capture' }) },
         type: 'Opaque', stringData: unitSuite
           ? Object.fromEntries(Object.entries(env || {}).map(([key, value]) => [key, String(value)]))
           : { 'tests.json': String(stdinPayload) },
-      } });
+      } }));
       inputSecretCreated = true;
     }
     signal?.throwIfAborted();
-    const createdJob = await batch.createNamespacedJob({ namespace, body });
+    // A refused create (the namespace's quota, for one) leaves no Job to own
+    // the Secret; the finally below deletes it.
+    const createdJob = await create(() => batch.createNamespacedJob({ namespace, body }));
     // A platform restart must not orphan private clone credentials. The Job's
     // TTL also garbage-collects its input Secret if normal cleanup cannot run.
+    // The Secret goes first so a Pod never starts without its input, which
+    // leaves a crash between the Job's create and this write as the one way
+    // to strand it ownerless. The owner is written onto the object the create
+    // returned, without reading it back, so that window is these two calls;
+    // services/check-retention.js removes what a crash leaves in it.
     if (inputSecretName && createdJob?.metadata?.uid) {
-      const secret = await core.readNamespacedSecret({ name: inputSecretName, namespace });
+      const secret = inputSecret?.metadata?.resourceVersion
+        ? inputSecret : await core.readNamespacedSecret({ name: inputSecretName, namespace });
       secret.metadata.ownerReferences = [{ apiVersion: 'batch/v1', kind: 'Job', name, uid: createdJob.metadata.uid }];
       await core.replaceNamespacedSecret({ name: inputSecretName, namespace, body: secret });
     }
@@ -2327,7 +2694,9 @@ async function runCheckJob(config, {
     }
     if (inputSecretCreated) {
       await deleteIfPresent(core, 'deleteNamespacedSecret', inputSecretName, namespace)
-        .catch(() => {});
+        .catch((err) => log.warn('kubernetes', 'Check input Secret cleanup failed', {
+          name: inputSecretName, err: err.message,
+        }));
     }
   }
 }
@@ -2338,8 +2707,9 @@ async function runCheckJob(config, {
 // When that process is replaced mid-run — a platform rollout — the Job runs
 // on to completion regardless, and these two functions are how a later
 // process finds it and reads what it produced, without creating or deleting
-// anything. Deletion stays with the Job's own TTL / activeDeadline and with
-// cancelPreviewChecks, which a newer run for the session calls first.
+// anything. Deletion stays with the Job's own TTL / activeDeadline, with
+// cancelPreviewChecks, which a newer run for the session calls first, and
+// with deleteSettledCheckJobs, once a run's verdict is stored.
 
 function describeCheckJob(job) {
   const failedCondition = (job.status?.conditions || []).find(c => c.type === 'Failed' && c.status === 'True');
@@ -2351,6 +2721,8 @@ function describeCheckJob(job) {
     state: failed ? 'failed' : (succeeded ? 'succeeded' : 'running'),
     failedReason: failedCondition?.reason || null,
     startedAt: job.status?.startTime || job.metadata?.creationTimestamp || null,
+    finishedAt: failed ? (failedCondition?.lastTransitionTime || null)
+      : (succeeded ? (job.status?.completionTime || null) : null),
   };
 }
 
@@ -2365,13 +2737,55 @@ async function findCheckJobs(config, { sessionId, previewRunId }) {
   const namespace = config.kubernetes.workerNamespace;
   const selector = `app.kubernetes.io/managed-by=${MANAGED_BY},social.usernode.io/session-id=${sessionId},social.usernode.io/preview-run-id=${previewRunId}`;
   const jobs = await batch.listNamespacedJob({ namespace, labelSelector: selector });
-  const found = { capture: null, unitSuite: null };
+  // `captures` is every capture Job of the run, by name: one, or one per
+  // shard plus a sweep (services/visuals.js runCaptureShards). `capture` is
+  // the first of them, as before shards existed.
+  // `unitSuites` likewise: one Job, or one per shard of a split suite,
+  // with the shard count its label gives (`unitShards`).
+  const found = { capture: null, captures: [], unitSuite: null, unitSuites: [], unitShards: 1 };
   for (const job of jobs.items || []) {
     const name = job.metadata?.name || '';
-    if (name.startsWith(`sv-capture-s${sessionId}-`)) found.capture = describeCheckJob(job);
-    else if (name.startsWith(`sv-unit-suite-s${sessionId}-`)) found.unitSuite = describeCheckJob(job);
+    if (name.startsWith(`sv-capture-s${sessionId}-`)) found.captures.push(describeCheckJob(job));
+    else if (name.startsWith(`sv-unit-suite-s${sessionId}-`) || name.startsWith(`sv-unit-early-s${sessionId}-`)) {
+      found.unitSuites.push(describeCheckJob(job));
+      const of = /^\d+-of-(\d+)$/.exec(job.metadata?.labels?.['social.usernode.io/unit-shard'] || '');
+      if (of) found.unitShards = Math.max(found.unitShards, Number(of[1]));
+    }
   }
+  found.captures.sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  found.capture = found.captures[0] || null;
+  found.unitSuites.sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  found.unitSuite = found.unitSuites[0] || null;
   return found;
+}
+
+// Stop a session's check Jobs that are still running, except those of the
+// runs `spare` names (by preview-run-id): the runs a newer one supersedes
+// (check-harvest.stopSupersededRuns). Unlike cancelPreviewChecks this waits
+// for nothing. The policy is a query option with no body, as deleteIfPresent
+// sends it: with a body the API server reads the options from the body
+// alone, and a batch/v1 Job deleted without a policy orphans its Pod and
+// input Secret. Background propagation takes both (runCheckJob points the
+// Secret's ownerReference at its Job). Each name carries its run id, so no
+// precondition is needed. A finished Job holds no capacity and is left for
+// its TTL, and a Job with no run label names no run that could be
+// superseded. Returns the names it deleted.
+async function stopCheckJobs(config, { sessionId, spare = () => false }) {
+  const { batch } = getClients();
+  const namespace = config.kubernetes.workerNamespace;
+  const selector = `app.kubernetes.io/managed-by=${MANAGED_BY},social.usernode.io/session-id=${sessionId}`;
+  const jobs = await batch.listNamespacedJob({ namespace, labelSelector: selector });
+  const stopping = (jobs.items || []).filter((job) => {
+    const name = job.metadata?.name || '';
+    if (!name.startsWith(`sv-capture-s${sessionId}-`) && !name.startsWith(`sv-unit-suite-s${sessionId}-`)) return false;
+    const runId = job.metadata?.labels?.['social.usernode.io/preview-run-id'];
+    if (!runId || spare(runId)) return false;
+    return !job.metadata?.deletionTimestamp && describeCheckJob(job).state === 'running';
+  });
+  await Promise.all(stopping.map((job) => deleteIfPresent(
+    batch, 'deleteNamespacedJob', job.metadata.name, namespace, { propagationPolicy: 'Background' },
+  )));
+  return stopping.map((job) => job.metadata.name);
 }
 
 // Wait for a check Job to end and return its whole output. Same shape a
@@ -2486,6 +2900,75 @@ async function collectCheckJob(config, {
     stdout = boundedOutput(reconcileCheckOutput(retained.output(), raw));
   } catch { stdout = retained.output(); }
   return { state: 'timeout', stdout, stderr: '', exitCode: null, timedOut: true, partial: true, partialReason: 'run timed out' };
+}
+
+// A settled run's Jobs: its verdict is stored and the manifest a harvest
+// would find them by is cleared, so nothing reads them again. Deleting them
+// then, rather than leaving each for CHECK_JOB_TTL_SECONDS, keeps the worker
+// namespace's Job count near the runs in flight; the TTL held every run of
+// the last hour, two Jobs each, and filled 100 of 100 on 7 Oct 2026. Only
+// this run's finished Jobs go: one still running is left to its deadline and
+// TTL. Background propagation takes the Pods and the owned input Secret too.
+// Resolves how many were deleted.
+async function deleteSettledCheckJobs(config, { sessionId, previewRunId }) {
+  if (!previewRunId) return 0;
+  const { batch } = getClients();
+  const namespace = config.kubernetes.workerNamespace;
+  const selector = `app.kubernetes.io/managed-by=${MANAGED_BY},social.usernode.io/session-id=${sessionId},social.usernode.io/preview-run-id=${previewRunId}`;
+  const jobs = await batch.listNamespacedJob({ namespace, labelSelector: selector });
+  let deleted = 0;
+  for (const job of jobs.items || []) {
+    const name = job.metadata?.name || '';
+    if (!name.startsWith(`sv-capture-s${sessionId}-`) && !name.startsWith(`sv-unit-suite-s${sessionId}-`)
+        && !name.startsWith(`sv-unit-early-s${sessionId}-`)) continue;
+    if (job.metadata?.labels?.['social.usernode.io/preview-run-id'] !== previewRunId) continue;
+    if (job.metadata?.deletionTimestamp || describeCheckJob(job).state === 'running') continue;
+    await deleteIfPresent(batch, 'deleteNamespacedJob', name, namespace, { propagationPolicy: 'Background' });
+    deleted += 1;
+  }
+  return deleted;
+}
+
+// ── What a check run can leave behind (services/check-retention.js) ──
+//
+// Every Job and Pod in the worker namespace, and every Secret the platform
+// manages there, each list read to its end. Jobs and Pods are unfiltered
+// because anything that references a Secret keeps it; Secrets are only the
+// platform's own because nothing else is ours to delete. A page that fails
+// fails the whole inventory: a partial list must never read as "nothing
+// references this".
+async function listCheckLeftovers(config) {
+  const { batch, core } = getClients();
+  const namespace = config.kubernetes.workerNamespace;
+  const all = async (api, method, labelSelector) => {
+    const items = [];
+    let next;
+    do {
+      const page = await api[method]({ namespace, ...(labelSelector ? { labelSelector } : {}), limit: 500, _continue: next });
+      if (!Array.isArray(page?.items)) throw new Error(`Invalid ${method} inventory`);
+      items.push(...page.items);
+      next = page.metadata?.continue;
+    } while (next);
+    return items;
+  };
+  const [jobs, pods, secrets] = await Promise.all([
+    all(batch, 'listNamespacedJob'),
+    all(core, 'listNamespacedPod'),
+    all(core, 'listNamespacedSecret', `app.kubernetes.io/managed-by=${MANAGED_BY}`),
+  ]);
+  return { jobs, pods, secrets };
+}
+
+// Deletes exactly the object the sweep judged. One that changed since (an
+// owner written onto it, say) fails the precondition with a 409 and stays.
+async function deleteCheckLeftover(config, kind, metadata) {
+  const { name, uid, resourceVersion } = metadata || {};
+  if (!name || !uid || !resourceVersion) throw new Error('Check leftover deletion requires a name, UID and resourceVersion');
+  const method = { pod: 'deleteNamespacedPod', secret: 'deleteNamespacedSecret' }[kind];
+  if (!method) throw new Error(`Unknown check leftover kind: ${kind}`);
+  await getClients().core[method]({
+    name, namespace: config.kubernetes.workerNamespace, body: { preconditions: { uid, resourceVersion } },
+  });
 }
 
 // The pod-log follow client: an injected `logs` for tests, else one built
@@ -2617,24 +3100,33 @@ async function execInWorker(config, runtimeName, command, stdinText = null, { ti
 }
 
 module.exports = {
-  dnsName, withSuffix, labels, appResourceName, createBuild, deployApplication, getApplicationStatus, inspectApplication,
+  dnsName, withSuffix, labels, appResourceName, createBuild, buildReadsBelowSourceRoot,
+  deployApplication, getApplicationStatus, inspectApplication,
   getApplicationLogs, getDebugLogs, restartApplication, deleteApplication, deleteBuilds, deleteFailedBuilds, ensureWorker,
   listManagedBuilds, readBuild, deleteBuildSnapshot,
   runCaptureJob, runUnitSuiteJob, cancelPreviewChecks, findCheckJobs, collectCheckJob,
+  checkJobRunName, deleteCheckJob, countRunningUnitSuiteJobs, deleteRunCheckJobs,
+  deleteSettledCheckJobs, listCheckLeftovers, deleteCheckLeftover, MANAGED_BY, CHECK_JOB_TTL_SECONDS,
   execInWorker, _getClients: getClients,
   getWorkerStatus, getWorkerContractVersion, getWorkerRuntimeMetadata, deleteWorker, eraseWorker, listWorkers, cloneWorkerVolume,
   listWorkerVolumes, listPreviews, listShotsRuntimes, isQuotaExceeded,
   listStatusResources, listNamespaceCapacity, inspectWorkerTermination, getPlatformDeployStatus,
+  stopCheckJobs,
   _setClientsForTest: setClientsForTest, _envChecksumForTest: envChecksum,
+  _packageRunsScriptForTest: packageRunsScript,
   _attachLineObserverForTest: attachLineObserver,
   _clientsLogApiForTest: clientsLogApi,
   _buildPhasesFromPodForTest: buildPhasesFromPod,
+  podStartTimeline,
   _deploymentStateForTest: deploymentState,
+  _waitForDeploymentForTest: waitForDeployment,
   _terminalPodFailureDetailsForTest: terminalPodFailureDetails,
   _normalizeDeploymentForTest: normalizeDeployment,
   _quantityNumberForTest: quantityNumber,
   PLATFORM_ASSET_PREFIXES, PLATFORM_ASSET_NAME, ensurePlatformAssetBackend,
   _appIngressManifestForTest: appIngressManifest,
+  customDomainResourceName, customDomainIngressManifest, deployCustomDomain, deleteCustomDomain,
+  CUSTOM_DOMAIN_SERVICE_ANNOTATION,
   _platformAssetEnvForTest: platformAssetEnv,
   APP_GATE_NAME, APP_GATE_HEALTH_PATH, appGateMode, ensureAppGateBackend, reconcileAppGateIngresses,
   _appGateDeploymentManifestForTest: appGateDeploymentManifest,

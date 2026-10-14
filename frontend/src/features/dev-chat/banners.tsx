@@ -18,6 +18,7 @@ import {
   WarningTriangleIcon,
 } from '@/components/ui/icons';
 
+import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import {
   bannersStore,
@@ -31,8 +32,6 @@ import {
 function controller(): any {
   return (typeof window !== 'undefined' ? (window as any).DevChat : null) || null;
 }
-
-const BUSY_TITLE = 'Claude is busy with a turn. Sync will be available when it finishes';
 
 const SYNC_BTN
   = 'rounded-md bg-amber-600 hover:bg-amber-500 disabled:opacity-60 disabled:cursor-not-allowed'
@@ -65,13 +64,15 @@ const CREDITS_ICON = {
 } as const;
 
 function SyncBanner({ b }: { b: SyncBannerView }): ReactNode {
+  const t = useMessages('devchat');
+  const busyTitle = t('devchat:banner.sync.busyTitle');
   const onSync = () => controller()?.startSyncWithMain?.();
   if (b.kind === 'inflight') {
     return (
       <div id="dc-sync-banner" className={SHELL.amber}>
         <SpinnerArcIcon className="w-4 h-4 animate-spin text-amber-800 dark:text-amber-400 shrink-0" />
         <span className="text-amber-800 dark:text-amber-200 flex-1">{b.message}</span>
-        <button id="dc-sync-btn" type="button" disabled className={SYNC_BTN}>Syncing…</button>
+        <button id="dc-sync-btn" type="button" disabled className={SYNC_BTN}>{t('devchat:banner.sync.syncing')}</button>
       </div>
     );
   }
@@ -91,8 +92,8 @@ function SyncBanner({ b }: { b: SyncBannerView }): ReactNode {
         <span className="text-amber-800 dark:text-amber-200 flex-1">{b.message}</span>
         <button
           id="dc-sync-btn" type="button" className={SYNC_BTN}
-          disabled={b.busy} title={b.busy ? BUSY_TITLE : undefined} onClick={onSync}
-        >Try again</button>
+          disabled={b.busy} title={b.busy ? busyTitle : undefined} onClick={onSync}
+        >{t('devchat:banner.sync.tryAgain')}</button>
       </div>
     );
   }
@@ -101,24 +102,28 @@ function SyncBanner({ b }: { b: SyncBannerView }): ReactNode {
       {warn}
       {/* One text node with a bold count inside it, as the template wrote it. */}
       <span className="text-amber-800 dark:text-amber-200 flex-1">
-        {'main has moved '}
-        <span className="font-semibold">{b.behind}</span>
-        {` ${b.behind === 1 ? 'commit' : 'commits'} ahead of this branch.`}
+        <RichMessage
+          id="devchat:banner.sync.behind" values={{ count: b.behind }}
+          components={[<span className="font-semibold" />]}
+        />
       </span>
       <button
         id="dc-sync-btn" type="button" className={SYNC_BTN}
-        disabled={b.busy} title={b.busy ? BUSY_TITLE : undefined} onClick={onSync}
-      >Sync with main</button>
+        disabled={b.busy} title={b.busy ? busyTitle : undefined} onClick={onSync}
+      >{t('devchat:banner.sync.syncWithMain')}</button>
     </div>
   );
 }
 
 function NewChangeBanner({ b }: { b: NewChangeBannerView }): ReactNode {
+  const t = useMessages('devchat');
   return (
     <div id="dc-new-change-banner" className={SHELL.violet}>
       <PlusThinIcon className="w-4 h-4 text-violet-700 dark:text-violet-400 shrink-0" />
       <span className="text-violet-800 dark:text-violet-200 flex-1">
-        {`This change has been ${b.stateLabel}. New work in this chat is added to the same PR, so start a new change to keep PRs focused.`}
+        {b.state === 'proposed'
+          ? t('devchat:banner.newChange.proposed', { number: b.prNumber })
+          : t('devchat:banner.newChange.merged', { number: b.prNumber })}
       </span>
       {/* #2602: the way to the card this session became. An ANCHOR, not a
           button: it is a hash navigation, so it middle-clicks and copies
@@ -131,7 +136,7 @@ function NewChangeBanner({ b }: { b: NewChangeBannerView }): ReactNode {
         <a
           id="dc-open-card-link" href={b.cardHref}
           className="col-start-2 justify-self-start sm:col-auto sm:justify-self-auto shrink-0 text-xs font-medium text-violet-800 underline underline-offset-2 hover:text-violet-700 dark:text-violet-200 dark:hover:text-violet-100"
-        >Open proposal card</a>
+        >{t('devchat:banner.newChange.openCard')}</a>
       ) : null}
       {/* The one primary-filled button on these four strips, so it routes
           through the shell's <Button> — `pill` + `dim60` + `xsText` + `solid`
@@ -143,7 +148,7 @@ function NewChangeBanner({ b }: { b: NewChangeBannerView }): ReactNode {
         className="col-start-2 justify-self-start sm:col-auto sm:justify-self-auto shrink-0"
         onClick={() => controller()?.startNewChange?.()}
       >
-        Start a new change
+        {t('devchat:banner.newChange.start')}
       </Button>
     </div>
   );
@@ -195,6 +200,7 @@ function CreditsBanner({ b }: { b: CreditsBannerView }): ReactNode {
   // shown on request. Desktop is unchanged: the toggle never shows there.
   const [open, setOpen] = useState(false);
   const moreId = `${b.id}-more`;
+  const t = useMessages('devchat');
   const Icon = b.icon ? CREDITS_ICON[b.icon] : null;
   return (
     <div
@@ -207,10 +213,12 @@ function CreditsBanner({ b }: { b: CreditsBannerView }): ReactNode {
       <span className={TEXT_CLASS[b.tone]}>
         <span className="font-semibold" {...(b.leadTagged ? { 'data-credits-low-lead': '1' } : null)}>{b.lead}</span>
         <span id={moreId} className="dc-credits-banner-more">
-          {b.reset === null ? b.tail : (
+          {/* The lead, the reset and the tail are three whole sentences; the
+              spaces between them are this markup's. */}
+          {b.reset === null ? ` ${b.tail}` : (
             <>
               <span data-credits-reset="1" title={b.resetTitle || undefined}>{` ${b.reset}`}</span>
-              {b.tail}
+              {` ${b.tail}`}
             </>
           )}
         </span>
@@ -222,7 +230,7 @@ function CreditsBanner({ b }: { b: CreditsBannerView }): ReactNode {
         aria-controls={moreId}
         onClick={() => setOpen((v) => !v)}
       >
-        {open ? 'Hide' : 'Details'}
+        {open ? t('devchat:banner.credits.hide') : t('devchat:banner.credits.details')}
       </button>
       {/* Another module's markup, and a declared check selects into it — so it
           arrives whole, through a host that generates no box so the actions
@@ -235,17 +243,18 @@ function CreditsBanner({ b }: { b: CreditsBannerView }): ReactNode {
 // #2779: the owner of a change started from an agent session revises it in
 // that conversation. An anchor: it is a hash navigation.
 function AgentSessionBanner({ b }: { b: AgentSessionBannerView }): ReactNode {
+  const t = useMessages('devchat');
   return (
     <div id="dc-agent-session-banner" className={SHELL.violet}>
       <SparklesIcon className="w-4 h-4 text-violet-700 dark:text-violet-400 shrink-0" />
       <span className="text-violet-800 dark:text-violet-200 flex-1">
-        This change belongs to one of your agent sessions. Continue there to revise it.
+        {t('devchat:banner.agentSession.text')}
       </span>
       <a
         href={b.href}
         className="col-start-2 justify-self-start sm:col-auto sm:justify-self-auto shrink-0 rounded-full bg-violet-600 px-3 py-1 text-xs font-semibold text-white hover:bg-violet-500"
       >
-        Continue
+        {t('devchat:banner.agentSession.continue')}
       </a>
     </div>
   );
@@ -256,11 +265,12 @@ function AgentSessionBanner({ b }: { b: AgentSessionBannerView }): ReactNode {
 // does, and it calls the same controller method: an unsent agent session on
 // this session's app (`DevChat.startNewChange`).
 function ClassicReadOnlyBanner({ b }: { b: ClassicReadOnlyBannerView }): ReactNode {
+  const t = useMessages('devchat');
   return (
     <div id="dc-classic-read-only-banner" className={SHELL.violet} role="status">
       <InfoCircleIcon className="w-4 h-4 text-violet-700 dark:text-violet-400 shrink-0" />
       <span className="text-violet-800 dark:text-violet-200 flex-1">
-        This is an older session. You can read it, but it can no longer be continued. New work happens in agent sessions.
+        {t('devchat:banner.classic.text')}
       </span>
       {b.canStart ? (
         <Button
@@ -269,7 +279,7 @@ function ClassicReadOnlyBanner({ b }: { b: ClassicReadOnlyBannerView }): ReactNo
           className="col-start-2 justify-self-start sm:col-auto sm:justify-self-auto shrink-0"
           onClick={() => controller()?.startNewChange?.()}
         >
-          Start an agent session
+          {t('devchat:banner.classic.start')}
         </Button>
       ) : null}
     </div>
@@ -278,6 +288,9 @@ function ClassicReadOnlyBanner({ b }: { b: ClassicReadOnlyBannerView }): ReactNo
 
 export function DevChatBanners(): ReactNode {
   const s = useStoreState(bannersStore);
+  // Subscribed: the store's own lines are worded by dev-chat.js, which
+  // republishes them when the language changes.
+  useMessages('devchat');
   return (
     <>
       {s.classicReadOnly ? <ClassicReadOnlyBanner b={s.classicReadOnly} /> : null}

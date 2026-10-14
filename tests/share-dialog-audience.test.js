@@ -15,6 +15,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const FILE = 'frontend/src/features/dialogs/share.tsx';
 let cached = null;
@@ -42,10 +43,12 @@ test('a view-public app reads as public; everything else as members only', () =>
 
 test('the copy for each audience', () => {
   const { SHARE_COPY } = mod();
-  assert.equal(SHARE_COPY.members, 'Only members can open it. Invite people to let them in.');
-  assert.equal(SHARE_COPY.public, 'Anyone with a Homeroom account can open it.');
-  for (const line of Object.values(SHARE_COPY)) {
-    assert.doesNotMatch(line, /—/, 'no em dash in copy');
+  // The table holds message ids; the dialog reads them when it renders.
+  assert.deepEqual({ ...SHARE_COPY }, { members: 'dialogs:share.audience.members', public: 'dialogs:share.audience.public' });
+  assert.equal(message(SHARE_COPY.members), 'Only members can open it. Invite people to let them in.');
+  assert.equal(message(SHARE_COPY.public), 'Anyone with a Homeroom account can open it.');
+  for (const id of Object.values(SHARE_COPY)) {
+    assert.doesNotMatch(message(id), /—/, 'no em dash in copy');
   }
 });
 

@@ -52,9 +52,12 @@ test('invitees are usernames, for a private community only, deduplicated and bou
 
 test('who approves is dapp.json\'s own block, read strictly', () => {
   const gov = (governance, extra = {}) => options.parseCreateOptions({ audience: 'open', governance, ...extra });
-  assert.equal(gov(undefined).governance, null, 'absent is the default rule');
+  // #4666: absent is the default preset, You or the group.
+  assert.equal(gov(undefined).governance.preset, 'you_or_the_group', 'absent is the default preset');
+  assert.equal(gov({ preset: 'open_floor' }).governance.preset, 'open_floor');
+  assert.match(gov({ preset: 'captain' }).error, /preset/);
   assert.equal(gov({ approvers: 'anyone', approvals: 'default' }).governance, null,
-    'the default rule, spelled out, is still the default');
+    'the old default rule, spelled out, is still the old default');
   assert.deepEqual(gov({ approvers: 'invited' }).governance, { approverPolicy: 'invited', approvalsRequired: null });
   assert.deepEqual(gov({ approvers: 'invited', approvals: { atLeast: 2 } }).governance,
     { approverPolicy: 'invited', approvalsRequired: 2 },

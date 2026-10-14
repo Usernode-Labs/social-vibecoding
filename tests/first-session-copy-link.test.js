@@ -26,6 +26,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -120,7 +121,7 @@ test('the buttons sit where Share link sat: after the note, before the status an
     assert.ok(i >= 0, needle);
     return i;
   };
-  assert.ok(at('Your note is also your first message in the group chat.') < at('data-first-session-invite-action="copy"'));
+  assert.ok(at('When you share, your note also goes in the group chat as your first message.') < at('data-first-session-invite-action="copy"'));
   assert.ok(at('data-first-session-invite-action="copy"') < at('data-first-session-invite-action="share"'));
   assert.ok(at('data-first-session-invite-action="share"') < at('Anyone with the link can join for the next 7 days, up to 25 people.'));
 });
@@ -133,8 +134,12 @@ test('Copy link copies the note and the link, then does what a share does', () =
 
   const src = read(MADE);
   // One "it went out" for both: said on the sheet, the note kept, posted
-  // once, the made screen told how. The sheet stays open (#4196).
-  assert.match(src, /const sent = useCallback\(async \(how: SentHow\) => \{\s+setStatus\(sentStatus\(how\)\);\s+setOut\(true\);\s+keepNote\(made\.slug, note\);\s+await postNote\(\);\s+onSent\(how\);\s+\}/);
+  // once when it was shared (notePostable), the made screen told how. The
+  // sheet stays open (#4196).
+  assert.match(src, /const sent = useCallback\(async \(how: SentHow\) => \{\s+setStatus\(sentStatus\(how\)\);\s+setOut\(true\);\s+keepNote\(made\.slug, note\);\s+await postNote\(how\);\s+onSent\(how\);\s+\}/);
+  // The example's note is a message id, read in the language on screen.
+  assert.match(src, /const exampleNote = made\.example \? translate\(made\.example\.note\) : null;/);
+  assert.match(src, /const postNote = useCallback\(async \(how: SentHow\) => \{\s+if \(!notePostable\(how, note, exampleNote\)\) return;/);
   const share = src.slice(src.indexOf('const shareLink = useCallback'), src.indexOf('const copyLink = useCallback'));
   const copy = src.slice(src.indexOf('const copyLink = useCallback'), src.indexOf('const tile = '));
   assert.match(share, /await sent\('shared'\);/);
@@ -149,7 +154,8 @@ test('Copy link copies the note and the link, then does what a share does', () =
   // Said on the sheet, which stays: "✓ Copied" on the button for a moment.
   assert.match(copy, /setCopied\(Date\.now\(\)\);\s+await sent\('copied'\);/);
   assert.match(src, /const t = window\.setTimeout\(\(\) => setCopied\(0\), COPIED_MS\);/);
-  assert.match(src, /copied \? '✓ Copied' : 'Copy link'/);
+  assert.match(src, /copied \? t\('onboarding:firstSession\.invite\.copied'\) : t\('onboarding:firstSession\.invite\.copyLink'\)/);
+  assert.deepEqual([message('onboarding:firstSession.invite.copied'), message('onboarding:firstSession.invite.copyLink')], ['✓ Copied', 'Copy link']);
   assert.match(src, /const COPIED_MS = 1200;/);
   const { sentStatus } = loadTsx(MADE);
   assert.equal(sentStatus('copied'), 'Link copied. Paste it in your group chat.');
@@ -158,6 +164,17 @@ test('Copy link copies the note and the link, then does what a share does', () =
 
 // #4196: "Clicking Share link just immediately goes back to the prior screen
 // with ✓ Invite sent." The sheet closed the moment the share sheet resolved.
+test('#4238: the note goes in the group chat only when shared, and only a note they wrote', () => {
+  const { notePostable } = loadTsx(MADE);
+  assert.equal(notePostable('shared', 'Read with us', null), true);
+  assert.equal(notePostable('copied', 'Read with us', null), false, 'a copy may never be pasted');
+  assert.equal(notePostable('shared', 'I\'m making this for us. Join and tell me what it needs.', null), false, 'the untouched default');
+  assert.equal(notePostable('shared', '  I\'m making this for us. Join and tell me what it needs.  ', null), false);
+  assert.equal(notePostable('shared', 'Pick a book for June', 'Pick a book for June'), false, "the example's preset note");
+  assert.equal(notePostable('shared', 'Pick one for July', 'Pick a book for June'), true);
+  assert.equal(notePostable('shared', '   ', null), false);
+});
+
 test('after a share or a copy the sheet stays open, says so, and Done closes it', () => {
   const src = read(MADE);
   const sheet = src.slice(src.indexOf('export function InviteSheet('), src.indexOf('export function PlanWaitsCard('));
@@ -183,7 +200,8 @@ test('a share: cancelled changes nothing; refused copies instead; a made link is
   // Any other failure falls through to the copy; a refused copy leaves the
   // link ready for the next press.
   assert.match(share, /if \(outcome === 'copied'\) \{\s+setCopied\(Date\.now\(\)\);\s+await sent\('copied'\);\s+return;\s+\}/);
-  assert.match(share, /setStatus\('Your link is ready\. Press Share again to send it\.'\);/);
+  assert.match(share, /setStatus\(translate\('onboarding:firstSession\.invite\.status\.ready'\)\);/);
+  assert.equal(message('onboarding:firstSession.invite.status.ready'), 'Your link is ready. Press Share again to send it.');
   assert.doesNotMatch(share, /navigator\.clipboard\.writeText/, 'the copy goes through copyText and its fallbacks');
 });
 
@@ -297,9 +315,11 @@ test('copyText: without ClipboardItem, or when the promised write is refused, th
 
 test('the sheet says what went wrong in its own words', () => {
   const src = read(MADE);
-  assert.match(src, /if \(outcome === 'no-link'\) \{ setError\(\(was\) => was \|\| 'Could not make a link\. Try again\.'\); return; \}/,
+  assert.equal(message('onboarding:firstSession.invite.error.noLink'), 'Could not make a link. Try again.');
+  assert.equal(message('onboarding:firstSession.invite.error.notCopied'), 'Could not copy the link. Try again.');
+  assert.match(src, /if \(outcome === 'no-link'\) \{ setError\(\(was\) => was \|\| translate\('onboarding:firstSession\.invite\.error\.noLink'\)\); return; \}/,
     'the server\'s own reason (link()) when it gave one');
-  assert.match(src, /if \(outcome === 'refused'\) \{ setError\('Could not copy the link\. Try again\.'\); return; \}/,
+  assert.match(src, /if \(outcome === 'refused'\) \{ setError\(translate\('onboarding:firstSession\.invite\.error\.notCopied'\)\); return; \}/,
     'pressed again, the link is made and the copy is written at once');
   // The textarea fallback is the message menu's own.
   assert.match(read(COPY), /import \{ legacyCopy \} from '\.\.\/message-actions\/clipboard';/);

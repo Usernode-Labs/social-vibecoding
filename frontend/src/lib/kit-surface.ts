@@ -196,12 +196,27 @@ function designWidthOf(el: HTMLElement): string | null {
   }
 }
 
+/*
+ * HANDED BACK, OUT OF SIGHT (onboarding run three, 12 Oct 2026, iPhone 17
+ * Safari). A surface homed on <body> goes back there when the kit's exit
+ * ends, without the adopted class, as its owner's own web presentation: the
+ * Homeroom menu's bottom sheet, which the kit's exit had just taken away,
+ * stood again at its open place for 190ms before anything closed it. It
+ * takes REHOMED_CLASS on the way back, which app.css keeps out of sight, and
+ * lets it go at the start of its next adoption, so a presentation the kit
+ * refuses still shows the web one.
+ */
+export const REHOMED_CLASS = 'platform-surface-rehomed';
+
 /**
  * Present `contentEl` in a native-kit surface, or return null when the kit
  * is absent, gated out, or refuses — in which case nothing has been touched
  * and the caller falls through to its own web presentation.
  */
 export function adoptKitSurface(options: AdoptKitSurfaceOptions): KitAdoption | null {
+  // A node the kit handed back is shown again only through a presentation:
+  // this one, or its web fallback when this one is refused (REHOMED_CLASS).
+  options.contentEl.classList.remove(REHOMED_CLASS);
   const ui = kit();
   if (!ui) return null;
   if (options.gate === 'kit') {
@@ -242,6 +257,7 @@ export function adoptKitSurface(options: AdoptKitSurfaceOptions): KitAdoption | 
     if (home) {
       home.restore();
     } else if (presented) {
+      contentEl.classList.add(REHOMED_CLASS);
       document.body.appendChild(contentEl);
     }
     flagEl.classList.remove(adoptedClass);

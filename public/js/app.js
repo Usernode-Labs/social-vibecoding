@@ -358,6 +358,16 @@ const App = {
       await App.enterAnonymous();
       return;
     }
+    // `?shot=waiting` / `?shot=waiting-invite` (#4073): the waiting room,
+    // which only an account still waiting for access reaches, so no shot
+    // persona can. The anonymous shell, then the room over it; the room
+    // itself neither checks for access nor follows a link in a shot
+    // (features/auth/waiting.tsx, waitingShot).
+    if (App._waitingShot()) {
+      await App.enterAnonymous();
+      if (window.AuthScreens) AuthScreens.show('waiting');
+      return;
+    }
     // `?shot=offline` / `?shot=offline-signin` pin the offline state before
     // the boot check runs, so the shot never depends on real connectivity.
     // The signed-out variant boots the anonymous shell directly, exactly
@@ -615,10 +625,6 @@ const App = {
     // (features/settings/terms-first-run.js), so it has to be re-offered
     // once there is a verified one.
     try { window.TermsFirstRun?.maybePrompt?.(); } catch (e) { /* ignore */ }
-    // The phone step, the same: it skips a snapshot boot, waits for the
-    // terms, and the join screen below waits for it
-    // (frontend/src/features/auth/phone-first-run.tsx).
-    try { window.PhoneFirstRun?.maybePrompt?.(); } catch (e) { /* ignore */ }
     // And the communities join screen, which skips an unverified session for
     // the same reason. Without this, a browser that has signed in before
     // (every boot there starts from the snapshot) never showed it: that is
@@ -657,6 +663,20 @@ const App = {
   //                          or the full one-shot authed boot.
   _authedBooted: false,
 
+  // The head's first-session hold (frontend/src/head.html): a document that
+  // opens while the story's sheet is handing a new account to "What do you
+  // want to make?" (a sign-in that reloaded onto the live build), or with no
+  // saved session (SESSION_SNAPSHOT_KEY: the landing is coming, not Home),
+  // keeps its body hidden until the shell has drawn its first screen. Each
+  // way the boot ends lifts it; it never holds a screen nobody is about to
+  // cover.
+  _liftFirstSessionBoot() {
+    try { document.documentElement.classList.remove('first-session-boot'); } catch (err) { /* no document */ }
+    // The head's spinner for a sign-in link goes with it: the landing has
+    // drawn "Signing you in…" by now, its own spinner in the same place.
+    try { document.documentElement.classList.remove('release-signing-in'); } catch (err) { /* no document */ }
+  },
+
   async enterAnonymous() {
     let nativeBoundary = null;
     if (window.NativeChrome && NativeChrome.enterAnonymous) {
@@ -670,6 +690,9 @@ const App = {
     if (nativeBoundary) await nativeBoundary;
     // The boot reader sees signed-out only after native authority is closed.
     App._publishBootSession({ signedOut: true });
+    // Signed out, the language follows this device (frontend/src/lib/i18n).
+    // Not awaited: the sign-in screens never wait for a language pack.
+    void globalThis.PlatformI18n?.applySessionLanguage?.(null);
     // #2902: the apps kept loaded were the signed-out viewer's.
     if (typeof AppView !== 'undefined') AppView.evictAllAppFrames?.();
     // THE SIDE PANEL'S DOCUMENT HAS NO SESSION: the cookie it shares with the
@@ -688,6 +711,7 @@ const App = {
     // platformMovedOn() needs a boot-time baseline to compare against.
     App.loadVersion();
     if (window.AuthScreens) AuthScreens.enter();
+    App._liftFirstSessionBoot();
     App._drainLogoutNotice();
     // A signed-out document behind the live build moves to it before a
     // sign-in starts on it (see _moveToLiveShell). Not awaited: the landing
@@ -813,6 +837,14 @@ const App = {
     return true;
   },
 
+  // True for `?shot=waiting` and `?shot=waiting-invite`, the waiting room for
+  // the before/after shots (see init). Pure UI state, no writes.
+  _waitingShot() {
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
+    return shot === 'waiting' || shot === 'waiting-invite';
+  },
+
   // Screenshot-state deep links for the offline experience (#1021):
   //   ?shot=offline         — the signed-in shell in read-only offline mode
   //                           (the fixed strip above everything).
@@ -867,9 +899,13 @@ const App = {
     try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
     // B6: `?shot=first-version-plan`, the same screen while its plan waits for
     // Build it. `-ready` and `-approved`: built and up for approval, as a
-    // member who still has to approve it and as one who has.
+    // member who still has to approve it and as one who has. #4396:
+    // `-member`, being built, as a member who is not its maker reads it.
+    // #4387: `-testing`, the same member once it is being tested, with its
+    // real screens. #4449: `-live`, being built with Live offered.
     const variants = {
       'first-version': false, 'first-version-plan': 'plan', 'first-version-ready': 'ready', 'first-version-approved': 'approved',
+      'first-version-member': 'member', 'first-version-testing': 'testing', 'first-version-live': 'live',
     };
     if (!Object.prototype.hasOwnProperty.call(variants, shot)) return;
     try {
@@ -944,11 +980,13 @@ const App = {
     // must not lock anyone out.
     if (App.user?.hasPlatformAccess === false && window.AuthScreens) {
       AuthScreens.showWaiting();
+      App._liftFirstSessionBoot();
       return;
     }
 
     if (App._authedBooted) {
       App.restoreFromHash();
+      App._liftFirstSessionBoot();
       return;
     }
     App._authedBooted = true;
@@ -984,6 +1022,10 @@ const App = {
     document.dispatchEvent(new CustomEvent('sv:authed', {
       detail: { user: App.user },
     }));
+    // The first screen is drawn now ("What do you want to make?" opened by
+    // the `sv:authed` listeners, in this same tick, before anything paints),
+    // so the head's hold comes off.
+    App._liftFirstSessionBoot();
     App.restoreFromHash();
     // The fragment-scoped `?shot=` states, applied for whatever fragment is
     // live now and re-applied whenever it changes — see _applyRouteShots.
@@ -2551,7 +2593,9 @@ const App = {
     }
     if (Leaderboard.section === 'challenges') {
       if (!window.TopochainChallenges) return Promise.resolve();
-      return TopochainChallenges.loadChallenges();
+      // A pull or a correction wants the current numbers, read in place
+      // rather than from the worker's saved copy (#3985).
+      return TopochainChallenges.loadChallenges({ fresh: true });
     }
     Leaderboard._cache.clear();
     return Leaderboard._load();
@@ -2624,8 +2668,8 @@ const App = {
       const staging = info.env === 'staging';
       const label = staging ? 'staging' : 'dev';
       const tip = staging
-        ? 'Staging preview of the platform, built without a commit SHA, so there is no revision to link'
-        : 'Running outside of a deploy (no GIT_SHA set)';
+        ? PlatformI18n.htmlText('shell:version.tip.staging')
+        : PlatformI18n.htmlText('shell:version.tip.dev');
       paint(`
         <span class="drawer-ver drawer-ver--dev" title="${tip}">${label}</span>`, 'idle');
       return;
@@ -2637,12 +2681,18 @@ const App = {
       const elapsed = deploy.startedAt
         ? Math.max(0, Math.floor((Date.now() - new Date(deploy.startedAt).getTime()) / 1000))
         : null;
-      const tipParts = [`Deploying ${newShort || 'new build'}`];
-      if (oldShort) tipParts.push(`from ${oldShort}`);
-      if (elapsed != null) tipParts.push(`${elapsed}s elapsed`);
-      const shaLabel = newShort ? `→ ${newShort}` : 'deploying';
+      // One whole tooltip per case: the new build named or not, the time
+      // elapsed known or not. `oldShort` is the running build's, always here.
+      const deployTip = newShort
+        ? (elapsed != null
+          ? PlatformI18n.htmlText('shell:version.tip.deployingElapsed', { newSha: newShort, oldSha: oldShort, count: elapsed })
+          : PlatformI18n.htmlText('shell:version.tip.deploying', { newSha: newShort, oldSha: oldShort }))
+        : (elapsed != null
+          ? PlatformI18n.htmlText('shell:version.tip.deployingNewBuildElapsed', { oldSha: oldShort, count: elapsed })
+          : PlatformI18n.htmlText('shell:version.tip.deployingNewBuild', { oldSha: oldShort }));
+      const shaLabel = newShort ? `→ ${newShort}` : PlatformI18n.htmlText('shell:version.label.deploying');
       paint(`
-        <span class="drawer-ver drawer-ver--deploying" title="${tipParts.join(' · ')}">
+        <span class="drawer-ver drawer-ver--deploying" title="${deployTip}">
           <span class="drawer-ver-spinner" aria-hidden="true"></span>${shaLabel}
         </span>`, 'deploying');
       return;
@@ -2667,8 +2717,8 @@ const App = {
         // is one.
         paint(`
           <span class="drawer-ver drawer-ver--stale drawer-ver--fetching"
-                title="Platform updated from ${oldShort} to ${newShort}. Downloading it now; the reload appears once there is something to switch to.">
-            <span class="drawer-ver-spinner" aria-hidden="true"></span>${newShort} · updating…
+                title="${PlatformI18n.htmlText('shell:version.tip.downloading', { oldSha: oldShort, newSha: newShort })}">
+            <span class="drawer-ver-spinner" aria-hidden="true"></span>${PlatformI18n.htmlText('shell:version.label.updating', { sha: newShort })}
           </span>`, 'downloading');
         return;
       }
@@ -2678,20 +2728,20 @@ const App = {
       // this row had before, and a tab with no way back would be worse.
       const failed = !!(update && update.state === 'failed');
       const tip = failed
-        ? `Platform updated from ${oldShort} to ${newShort}. Click to reload (the update could not be pre-downloaded, so this may take two tries).`
-        : `Platform updated from ${oldShort} to ${newShort}, and the new build is ready. Click to reload.`;
+        ? PlatformI18n.htmlText('shell:version.tip.reloadFailedPrefetch', { oldSha: oldShort, newSha: newShort })
+        : PlatformI18n.htmlText('shell:version.tip.reloadReady', { oldSha: oldShort, newSha: newShort });
       paint(`
         <button type="button"
                 class="drawer-ver drawer-ver--stale"
                 title="${tip}"
-                onclick="location.reload()">${newShort} · reload</button>`, failed ? 'failed' : 'ready');
+                onclick="location.reload()">${PlatformI18n.htmlText('shell:version.label.reload', { sha: newShort })}</button>`, failed ? 'failed' : 'ready');
       return;
     }
 
     const shortSha = runningSha.slice(0, 7);
     const href = `${repoUrl.replace(/\/$/, '')}/commit/${runningSha}`;
     paint(`
-      <a href="${href}" target="_blank" rel="noopener" class="drawer-ver" title="Platform commit ${shortSha}">${shortSha}</a>`, 'idle');
+      <a href="${href}" target="_blank" rel="noopener" class="drawer-ver" title="${PlatformI18n.htmlText('shell:version.tip.commit', { sha: shortSha })}">${shortSha}</a>`, 'idle');
   },
 
   // Tiny local HTML-escaper for server-sourced strings interpolated into
@@ -2808,6 +2858,55 @@ const App = {
   // we know we might have missed something" rather than a periodic poll.
   _eventsWsHasConnected: false,
 
+  // #4318: a session's live events (`session_event`: the agent's progress,
+  // the Mayor's replies, status rows) reach only its owner's sockets and the
+  // sockets that WATCH it, so a screen showing a session's live transcript
+  // says so on this socket. `_watchedSessions` maps a session id to the set
+  // of reasons it is on screen; the socket watches every id with at least
+  // one, and is told them all again whenever it reconnects. Today the one
+  // reason is DevChat's open session (the session chat and the Mayor chat;
+  // DevChat.currentSession's setter calls setDevChatSession). Lists, boards,
+  // proposal pages and previews need nothing here: checks and preview
+  // events still reach everyone who may view the app.
+  _watchedSessions: new Map(),
+
+  watchSession(sessionId, reason = 'screen') {
+    const id = Number(sessionId);
+    if (!Number.isSafeInteger(id) || id <= 0) return;
+    let reasons = App._watchedSessions.get(id);
+    if (!reasons) {
+      reasons = new Set();
+      App._watchedSessions.set(id, reasons);
+      App._sendSessionWatch('watch_session', id);
+    }
+    reasons.add(reason);
+  },
+
+  unwatchSession(sessionId, reason = 'screen') {
+    const id = Number(sessionId);
+    const reasons = App._watchedSessions.get(id);
+    if (!reasons) return;
+    reasons.delete(reason);
+    if (reasons.size) return;
+    App._watchedSessions.delete(id);
+    App._sendSessionWatch('unwatch_session', id);
+  },
+
+  _devChatWatchedId: null,
+  setDevChatSession(sessionId) {
+    const id = Number(sessionId) > 0 ? Number(sessionId) : null;
+    if (id === App._devChatWatchedId) return;
+    if (App._devChatWatchedId != null) App.unwatchSession(App._devChatWatchedId, 'devchat');
+    App._devChatWatchedId = id;
+    if (id != null) App.watchSession(id, 'devchat');
+  },
+
+  _sendSessionWatch(type, sessionId) {
+    const socket = App.eventsWs;
+    if (!socket || socket.readyState !== 1) return; // re-sent on open
+    try { socket.send(JSON.stringify({ type, sessionId })); } catch { /* closed */ }
+  },
+
   connectEvents() {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     // Same staging-iframe token fallback as GroupChat._openSocket — the
@@ -2826,6 +2925,9 @@ const App = {
       // A (re)opened socket proves we're online — clear the offline
       // banner immediately instead of waiting for the slow re-probe loop.
       if (window.Offline) Offline.nudge();
+      // #4318: a new socket watches nothing until told; tell it every
+      // session still on screen before anything else can be missed.
+      for (const id of App._watchedSessions.keys()) App._sendSessionWatch('watch_session', id);
       if (isReconnect) App.resyncCurrentView();
     };
 
@@ -3068,9 +3170,11 @@ const App = {
     // is the mounted one, so calling both is free.
     if (window.AdminConsole?.isOpen?.()) AdminConsole.loadStagingReap?.();
     App.loadVersion();
-    // A change's page re-reads its row on events, not on a timer, so a
-    // dropped socket is its cue too (topic-head.tsx's ChangeDetail).
-    window.dispatchEvent(new CustomEvent('change-detail-refresh', { detail: 'all' }));
+    // #4177: everything that registered with live reads re-reads what it
+    // shows — a change's page (topic-head.tsx's ChangeDetail), its vote
+    // rosters, every loaded chat stream. The lines above are the screens not
+    // moved there yet; a screen that moves takes its line out of this list.
+    window.UsernodeReact?.liveReads?.resync?.('reconnect');
     if (App.currentApp && typeof AppView !== 'undefined' && AppView.appData) {
       // Re-fetch tab-specific state. We don't blow away the DOM —
       // these helpers update in place — so scroll positions, drafts,
@@ -3968,8 +4072,14 @@ const App = {
   _wirePullToRefresh() {
     const home = document.getElementById('home-screen');
     if (home) {
+      // The Challenges block keeps its read for a minute (HomePanels.TTL_MS),
+      // which a pull must not be answered from (#3985): it reads again,
+      // fresh, and Home.load() joins that read.
       PlatformUI.pullToRefresh(home,
-        () => App._refreshOrReload(() => Home.load()));
+        () => App._refreshOrReload(() => Promise.all([
+          window.HomePanels?.ensureLoaded?.({ force: true, fresh: true }),
+          Home.load(),
+        ])));
     }
     // The #apps browse screen (home-screen split). Its own scroller and
     // its own fetch, so it must not be routed through Home.load().
@@ -4170,6 +4280,15 @@ const App = {
     return `/${App._routeSearch(null)}${hash || ''}`;
   },
 
+  // A change's pull request number from an address segment or ref, or null
+  // (#4367: `dev/changes/<N>`). Digits only — never a guess at an id.
+  _changeNumber(value) {
+    const raw = String(value == null ? '' : value);
+    if (!/^\d{1,9}$/.test(raw)) return null;
+    const n = parseInt(raw, 10);
+    return n > 0 ? n : null;
+  },
+
   // One serializer for cold links, ordinary navigation, Back/Forward, and
   // legacy-hash normalisation. Keeping all app-route spellings here is what
   // prevents a copied address and the screen it restores from drifting.
@@ -4185,6 +4304,10 @@ const App = {
         suffix = `/dev/sessions/${norm.ref}`;
       } else if (norm.subTab === 'chat') {
         suffix = '/dev/chat';
+      } else if (norm.subTab === 'topic' && norm.ref && norm.ref.kind === 'proposal'
+          && norm.ref.pr) {
+        // #4367: a change with a pull request is addressed by its number.
+        suffix = `/dev/changes/${norm.ref.pr}`;
       } else if (norm.subTab === 'topic' && norm.ref && norm.ref.id) {
         const seg = norm.ref.kind === 'issue' ? 'issues'
           : norm.ref.kind === 'proposal' ? 'proposals'
@@ -4238,7 +4361,7 @@ const App = {
     App._publishBootSession({ signedOut: true });
     if (!reload) {
       if (window.PlatformUI && PlatformUI.toast) {
-        PlatformUI.toast('You are signed out. Sign in again to join.', { error: true });
+        PlatformUI.toast(PlatformI18n.t('shell:invite.signedOut'), { error: true });
       }
       return;
     }
@@ -4287,7 +4410,20 @@ const App = {
       // between the sheet and the welcome (Evan, 5 October 2026; the make
       // screen's hand-off, #3894, works the same way). The welcome fills it;
       // any other ending takes it down (_endWelcomeHold).
-      const fromLanding = App._inviteLandingToken === token;
+      //
+      // The landing's mark is kept in this tab's sessionStorage as well as
+      // here, because a sign-in does not always finish in the document that
+      // showed the landing: the move onto the live build reloads it after
+      // the code step (finishLogin, _moveToLiveShell 'signed-in'), and a
+      // provider's trip comes back to the link in a new one. With only the
+      // in-memory mark, that boot followed the link unheld and Home showed
+      // until the standing came back (#4215).
+      let landed = null;
+      try {
+        landed = sessionStorage.getItem(App.INVITE_LANDING_KEY);
+        sessionStorage.removeItem(App.INVITE_LANDING_KEY);
+      } catch (_) { /* the in-memory mark alone */ }
+      const fromLanding = App._inviteLandingToken === token || landed === token;
       App._inviteLandingToken = null;
       const island = window.UsernodeReact && window.UsernodeReact.firstSession;
       held = !!(fromLanding && island && typeof island.holdWelcome === 'function' && island.holdWelcome());
@@ -4310,10 +4446,10 @@ const App = {
         if (window.PlatformUI && PlatformUI.toast) PlatformUI.toast(msg, error ? { error: true } : undefined);
       };
       const DEAD = {
-        expired: 'That invite link has expired.',
-        revoked: 'That invite link was turned off.',
-        used_up: 'That invite link has been used as many times as it allows.',
-        unknown: 'That invite link does not work.',
+        expired: 'shell:invite.dead.expired',
+        revoked: 'shell:invite.dead.revoked',
+        used_up: 'shell:invite.dead.usedUp',
+        unknown: 'shell:invite.dead.unknown',
       };
       const openHub = (slug) => {
         if (!slug) return;
@@ -4336,10 +4472,7 @@ const App = {
           name: project.name || slug,
           iconEmoji: project.iconEmoji || null,
           iconUrl: project.iconUrl || null,
-          // The picture the invite page showed, and its one line, to fill
-          // "You're in" with the project rather than empty space.
-          description: project.description || null,
-          picture: project.picture || null,
+          inviter: standing.inviter || null,
           inviterName: standing.inviterName || standing.inviter || null,
           inviterMadeIt: !!standing.inviterMadeIt,
           building: !!standing.building,
@@ -4353,7 +4486,7 @@ const App = {
         // Only the link's own answer says what is wrong with it: 200 with its
         // state, or 404 for one that never existed. A 500 or a 429 is a read
         // that did not land, and the link may be fine.
-        if (status !== 200 && status !== 404) { toast('Could not open that invite link. Try again.', true); return; }
+        if (status !== 200 && status !== 404) { toast(PlatformI18n.t('shell:invite.couldNotOpen'), true); return; }
         if (standing.mine === 'joined' && standing.slug) {
           joinedHere = true;
           // Joined by the sign-in that brought them here (within the last
@@ -4366,13 +4499,17 @@ const App = {
           openHub(standing.slug);
           return;
         }
-        if (!standing.live) { toast(DEAD[standing.reason] || DEAD.unknown, true); return; }
-        const name = standing.project && standing.project.name ? standing.project.name : 'this project';
+        if (!standing.live) { toast(PlatformI18n.t(DEAD[standing.reason] || DEAD.unknown), true); return; }
+        const name = standing.project && standing.project.name ? standing.project.name : null;
         const count = standing.memberCount || 0;
         // Who it is from, in the words the invite page uses, then their note.
         const from = standing.inviterMadeIt && standing.inviterName
-          ? `${standing.inviterName} ${standing.building ? 'is making' : 'made'} it and invited you.`
-          : (standing.inviter ? `@${standing.inviter} invited you.` : 'You were invited.');
+          ? (standing.building
+            ? PlatformI18n.t('shell:invite.from.isMaking', { inviter: standing.inviterName })
+            : PlatformI18n.t('shell:invite.from.made', { inviter: standing.inviterName }))
+          : (standing.inviter
+            ? PlatformI18n.t('shell:invite.from.handle', { handle: standing.inviter })
+            : PlatformI18n.t('shell:invite.from.unknown'));
         // Join was already pressed on the link's own page, and the person chose
         // "Sign in with a password" from its sheet (features/auth/
         // sign-in-sheet.tsx): that press was the consent, so it is not asked
@@ -4408,15 +4545,18 @@ const App = {
           return;
         }
         const ok = pressed ? true : window.ConfirmModal ? await ConfirmModal.show({
-          title: `Join ${name}?`,
-          message: from
-            + (standing.note ? ` “${standing.note}”` : '')
-            + (count ? ` ${count} ${count === 1 ? 'person is' : 'people are'} in it.` : '')
-            // WP-E: the link's maker hears when somebody joins through it.
-            + (standing.inviterName || standing.inviter
-              ? ` ${standing.inviterName || `@${standing.inviter}`} will see that you joined.` : ''),
-          confirmLabel: 'Join',
-          cancelLabel: 'Not now',
+          title: name
+            ? PlatformI18n.t('shell:invite.confirm.title', { project: name })
+            : PlatformI18n.t('shell:invite.confirm.titleUnnamed'),
+          // Up to three whole sentences, in this order: who invited them,
+          // their note, how many people are in it.
+          message: App._inviteConfirmMessage([
+            from,
+            standing.note ? PlatformI18n.t('shell:invite.confirm.note', { note: standing.note }) : null,
+            count ? PlatformI18n.t('shell:invite.confirm.members', { count }) : null,
+          ]),
+          confirmLabel: PlatformI18n.t('shell:invite.confirm.join'),
+          cancelLabel: PlatformI18n.t('shell:invite.confirm.notNow'),
         }) : true;
         if (!ok) return;
         // A public community asks a provisional handle for a username first
@@ -4430,7 +4570,7 @@ const App = {
         if (joined.status === 401) { App._inviteSessionEnded(address); return; }
         const result = await joined.json().catch(() => ({}));
         if (result.reason === 'username_required') { toast(result.error, true); return; }
-        if (!joined.ok || !result.ok) { toast(DEAD[result.reason] || 'Could not join. Try again.', true); return; }
+        if (!joined.ok || !result.ok) { toast(PlatformI18n.t(DEAD[result.reason] || 'shell:invite.couldNotJoin'), true); return; }
         joinedHere = true;
         // Read Home's challenges again now. Home painted them above, before
         // the confirm, and they are cached for a minute (HomePanels.TTL_MS),
@@ -4445,7 +4585,7 @@ const App = {
           await App._landJoined(result.slug);
         }
       } catch (_) {
-        toast('Could not open that invite link. Try again.', true);
+        toast(PlatformI18n.t('shell:invite.couldNotOpen'), true);
       }
     } finally {
       if (!deferred) settle(joinedHere);
@@ -4453,6 +4593,23 @@ const App = {
       if (held) App._endWelcomeHold();
     }
   },
+
+  // The confirm's body: the sentences that apply, one after another. Each
+  // is a whole message; the catalog decides what goes between them.
+  _inviteConfirmMessage(sentences) {
+    const said = sentences.filter(Boolean);
+    if (said.length === 3) {
+      return PlatformI18n.t('shell:invite.confirm.threeSentences', { first: said[0], second: said[1], third: said[2] });
+    }
+    if (said.length === 2) {
+      return PlatformI18n.t('shell:invite.confirm.twoSentences', { first: said[0], second: said[1] });
+    }
+    return said[0] || '';
+  },
+
+  // Where the landing marks the invite link it showed signed out, for a
+  // sign-in that finishes in another document (_followInvite).
+  INVITE_LANDING_KEY: 'usernode:invite-landing',
 
   // "You're in"'s held frame (above), down; a welcome that took its place stays.
   _endWelcomeHold() {
@@ -4512,7 +4669,7 @@ const App = {
       owed = !!count && Number(count.needs) > 0;
     } catch (_) { /* the hub */ }
     const said = !!(opts && opts.said);
-    if (!said && window.PlatformUI && PlatformUI.toast) PlatformUI.toast("You're in.");
+    if (!said && window.PlatformUI && PlatformUI.toast) PlatformUI.toast(PlatformI18n.t('shell:invite.joined'));
     if (typeof AppView !== 'undefined' && AppView._landOnTab) AppView._landOnTab(slug, owed ? 'needs' : 'status');
     App.navigateToApp(slug, 'dev');
   },
@@ -4535,13 +4692,15 @@ const App = {
     const project = standing.project || {};
     return island.open({
       token,
-      name: project.name || 'this community',
+      name: project.name || PlatformI18n.t('shell:invitePreview.unnamed'),
+      // No name came with the link: the Join button has its own wording.
+      unnamed: !project.name,
       iconEmoji: project.iconEmoji || null,
       iconUrl: project.iconUrl || null,
       iconColor: shown.iconColor || null,
       description: project.description || null,
       memberCount: Number(standing.memberCount) || 0,
-      audienceLabel: shown.audienceLabel || 'Private community',
+      audienceLabel: shown.audienceLabel || PlatformI18n.t('shell:invitePreview.privateCommunity'),
       inviter: standing.inviter || null,
       inviterName: standing.inviterName || null,
       inviterMadeIt: !!standing.inviterMadeIt,
@@ -4604,6 +4763,7 @@ const App = {
         if (!App.user) {
           // A sign-in from here comes back to this link (_followInvite).
           App._inviteLandingToken = inviteToken;
+          try { sessionStorage.setItem(App.INVITE_LANDING_KEY, inviteToken); } catch (_) { /* this document only */ }
           AuthScreens.rememberDeepLink(location.pathname);
           AuthScreens.show('landing');
           return;
@@ -4953,6 +5113,7 @@ const App = {
         // `#app/<slug>/dev/sessions/<id>`): no history entry of its own, so
         // Back from the chat still lands on the inbox it was opened from.
         const agent = App._messagesAgentThread(parts);
+        if (agent && agent.kind === 'agent') App._takeAgentFlow(hash, fragQuery);
         if (agent) {
           if (!window.matchMedia('(min-width: 768px)').matches) {
             if (agent.kind === 'session' && typeof Improve !== 'undefined') {
@@ -5024,6 +5185,7 @@ const App = {
         // A serial id, so the same signed-int32 bound as a conversation's;
         // `#agent/new` is one not sent yet, created by its first message.
         App.setChromeless(false);
+        App._takeAgentFlow(hash, fragQuery);
         if (parts[1] === 'new') {
           App.navigateToAgentSession('new');
           return;
@@ -5062,6 +5224,9 @@ const App = {
         App.navigateToLeaderboard(_tcSection, null);
         return;
       }
+      // #4417: a channel's own address, `dev/discussion` or `dev/c/<handle>`,
+      // is the project page on that place (App._placeAddress).
+      App._placeAddress(parts);
       if (parts[0] === 'app' && parts[1]) {
         const slug = parts[1];
         // Card-list hashes (#194 revision): app/{slug}/app,
@@ -5154,6 +5319,9 @@ const App = {
           } else if (sec === 'proposals' && parts[4]) {
             subTab = 'topic';
             ref = { kind: 'proposal', id: parseInt(parts[4]) || null };
+          } else if (sec === 'changes' && App._changeNumber(parts[4])) {
+            subTab = 'topic'; // #4367: by PR number; the topic view finds the session
+            ref = { kind: 'proposal', id: null, pr: App._changeNumber(parts[4]) };
           } else if (sec === 'governance' && parts[4]) {
             subTab = 'topic';
             ref = { kind: 'gov', id: parseInt(parts[4]) || null };
@@ -6087,6 +6255,30 @@ const App = {
   // The address of a project's hub, the page its channel hangs off. A HASH,
   // because the back button follows its href only when it is one (the
   // #back-btn listener below); `#app/<slug>/workshop` is the same route.
+  /**
+   * #4417: A CHANNEL'S OWN ADDRESS. `#app/<slug>/dev/discussion` is the
+   * project's #general and `#app/<slug>/dev/c/<handle>` one of its topics (a
+   * handle it had before a rename too: the page resolves it once it has read
+   * its places). Each is the project page on that place: the place is the one
+   * the page is told it is on (AppView._landOnTab, which also turns a page
+   * already up for the project), and `parts` is rewritten in place to the
+   * page's own address (`workshop`), which the route then takes as it takes
+   * any other. Every older address is left as it is.
+   */
+  _placeAddress(parts) {
+    if (!parts || parts[0] !== 'app' || !parts[1] || parts[2] !== 'dev') return false;
+    if (parts[3] !== 'discussion' && !(parts[3] === 'c' && parts[4])) return false;
+    let handle = '';
+    try { handle = decodeURIComponent(parts[4] || '').toLowerCase(); } catch (_) { handle = ''; }
+    const place = parts[3] === 'discussion' || handle === 'general' ? 'discussion' : `c:${handle}`;
+    if (typeof AppView !== 'undefined' && AppView._isWorkshopPlace && AppView._isWorkshopPlace(place)) {
+      AppView._landOnTab(parts[1], place);
+    }
+    parts.length = 3;
+    parts[2] = 'workshop';
+    return true;
+  },
+
   _hubHref(slug) {
     return slug ? `#app/${encodeURIComponent(slug)}/workshop` : '#communities';
   },
@@ -6129,6 +6321,18 @@ const App = {
   _appChatToHub(rawSlug, rest, from) {
     let slug = rawSlug;
     try { slug = decodeURIComponent(rawSlug); } catch (_) { /* the raw segment */ }
+    // #4417: `…/c/<topic>[/m/<id>]` is a message in one of the project's
+    // topic channels (a notification's address), Homeroom's included: its
+    // channel's place on the project page, once the page's record names it.
+    // #4417 follow-up: at the place in it the address names, as #general's
+    // own address is (`m/<id>` brought into view and marked, `thread/<root>`
+    // opened beside the channel).
+    const topicRef = rest && rest[0] === 'c' ? App._numericSegment(rest[1]) : null;
+    const topics = window.UsernodeReact?.places?.openTopicRef;
+    if (slug && topicRef != null && topicRef <= 2147483647 && topics) {
+      void topics(slug, topicRef, App._messagesExtras(rest.slice(2)));
+      return true;
+    }
     if (!slug || App._appChatIsArchive(slug)) return false;
     // Known not to be the archive: straight to the page, no step between.
     if (App._appChatIsNotArchive(slug)) {
@@ -6170,6 +6374,10 @@ const App = {
     let target = null;
     if (parts[1] === 'app' && parts[2]) {
       try { slug = decodeURIComponent(parts[2]); } catch (_) { return false; }
+      // #4417: a topic channel's message is that channel's, not #general's.
+      // #4417 follow-up: so the page turns to that channel in place, at the
+      // place the address names, as it turns to #general's.
+      if (parts[3] === 'c') return App._topicInPlace(slug, parts.slice(4));
       if (App._appChatIsArchive(slug)) return false;
       target = App._messagesExtras(parts.slice(3));
     } else {
@@ -6181,6 +6389,21 @@ const App = {
     if (!slug || typeof AppView === 'undefined' || !AppView._onProjectPage?.(slug)) return false;
     if (!App._isScreenVisible?.('app-view')) return false;
     AppView._landOnDiscussion(slug, target);
+    return true;
+  },
+
+  // #4417 follow-up: `…/c/<topic>[/m/<id>|/thread/<root>]` followed while
+  // `slug`'s page is the page on screen: the page turns to that topic's
+  // channel in place (places/place-store.ts openTopicRef, which moves a page
+  // that is up for the project without an address), with what the address
+  // named waiting for it. True when it turned.
+  _topicInPlace(slug, rest) {
+    const topicRef = App._numericSegment(rest[0]);
+    const topics = window.UsernodeReact?.places?.openTopicRef;
+    if (topicRef == null || topicRef > 2147483647 || !topics) return false;
+    if (typeof AppView === 'undefined' || !AppView._onProjectPage?.(slug)) return false;
+    if (!App._isScreenVisible?.('app-view')) return false;
+    void topics(slug, topicRef, App._messagesExtras(rest.slice(1)));
     return true;
   },
 
@@ -6560,19 +6783,21 @@ const App = {
       and never comes back through here, so Leaderboard._syncTitle asks this
       same method on every section change. One table, both paths.
   */
+  // Message ids: the table is read before the language runtime exists, and
+  // _leaderboardTitle reads the words when it names the screen.
   LEADERBOARD_TITLES: {
-    challenges: 'Challenges',
-    kudos: 'Kudos',
-    prs: 'Kudos',
-    users: 'Kudos',
-    history: 'Kudos',
-    topochain: 'Standings',
-    seasons: 'History',
+    challenges: 'shell:title.leaderboard.challenges',
+    kudos: 'shell:title.leaderboard.kudos',
+    prs: 'shell:title.leaderboard.kudos',
+    users: 'shell:title.leaderboard.kudos',
+    history: 'shell:title.leaderboard.kudos',
+    topochain: 'shell:title.leaderboard.standings',
+    seasons: 'shell:title.leaderboard.history',
   },
 
   _leaderboardTitle(sub, profileUser) {
     if (profileUser) return `@${profileUser}`;
-    return App.LEADERBOARD_TITLES[sub || 'challenges'] || 'Challenges';
+    return PlatformI18n.t(App.LEADERBOARD_TITLES[sub || 'challenges'] || 'shell:title.leaderboard.challenges');
   },
 
   _routeLeaderboard(sub, profileUser, challengeTarget) {
@@ -6655,7 +6880,7 @@ const App = {
       if (leavingApp) AppView.close();
       App._showOnlyScreen('profile-screen');
       App._enterScreenChrome();
-      App.setHeaderTitle(username ? `@${username}` : 'Profile');
+      App.setHeaderTitle(username ? `@${username}` : PlatformI18n.t('shell:title.profile'));
       // NOTHING IN THE LEFT SLOT. Me is a tab root: the bar is on screen
       // beside it, so a control in the corner that goes home is a second way
       // to press a button already in view.
@@ -6679,7 +6904,7 @@ const App = {
   // not a new screen entry. Keep it out of the global transition gate so
   // drawer navigation still has exactly one transition per screen entry.
   _routeMountedProfile(username) {
-    App.setHeaderTitle(username ? `@${username}` : 'Profile');
+    App.setHeaderTitle(username ? `@${username}` : PlatformI18n.t('shell:title.profile'));
     if (window.Profile?.open) Profile.open(username);
   },
 
@@ -6707,8 +6932,9 @@ const App = {
     'your-requests': 'requests',
     'your-votes': 'votes',
   },
+  // Message ids, read when the screen is named.
   PROFILE_WORK_TITLES: {
-    changes: 'Your changes', requests: 'Your requests', votes: 'Your votes',
+    changes: 'shell:title.yourChanges', requests: 'shell:title.yourRequests', votes: 'shell:title.yourVotes',
   },
 
   navigateToProfileProposals(kind = 'changes') {
@@ -6735,7 +6961,7 @@ const App = {
       if (leavingApp) AppView.close();
       App._showOnlyScreen('profile-proposals-screen');
       App._enterScreenChrome();
-      App.setHeaderTitle(App.PROFILE_WORK_TITLES[view]);
+      App.setHeaderTitle(PlatformI18n.t(App.PROFILE_WORK_TITLES[view]));
     }, { type: App._entryTransition(switching || fromIframe ? 'none' : 'push', screen) });
   },
 
@@ -6784,7 +7010,7 @@ const App = {
       if (leavingApp) AppView.close();
       App._showOnlyScreen('browse-screen');
       App._enterScreenChrome();
-      App.setHeaderTitle('All apps');
+      App.setHeaderTitle(PlatformI18n.t('shell:title.allApps'));
       // Browse owns the header title / back icon for whichever level the
       // slug selected, so its sync runs after setHeaderTitle above.
       if (window.Browse?.syncChrome) Browse.syncChrome();
@@ -6850,7 +7076,7 @@ const App = {
       if (leavingApp) AppView.close();
       App._showOnlyScreen('workshop-screen');
       App._enterScreenChrome();
-      App.setHeaderTitle('Communities');
+      App.setHeaderTitle(PlatformI18n.t('shell:title.communities'));
       // Nothing in the left slot: the Workshop is a tab root, and its tab is
       // on screen beside it. _showOnlyScreen publishes that from App._BACK_SLOT
       // — see the table for why a root shows no glyph at all.
@@ -7141,7 +7367,9 @@ const App = {
       if (leavingApp) AppView.close();
       App._showOnlyScreen('admin-screen');
       App._enterScreenChrome();
-      App.setHeaderTitle(publicMode ? 'Platform status' : 'Admin & moderation');
+      App.setHeaderTitle(publicMode
+        ? PlatformI18n.t('shell:title.platformStatus')
+        : PlatformI18n.t('shell:title.admin'));
       if (window.AdminConsole?.syncChrome) AdminConsole.syncChrome();
     }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
   },
@@ -7192,7 +7420,7 @@ const App = {
       if (leavingApp) AppView.close();
       App._showOnlyScreen('settings-screen');
       App._enterScreenChrome();
-      App.setHeaderTitle('Settings');
+      App.setHeaderTitle(PlatformI18n.t('shell:title.settings'));
       // Runs after app.js's own setHeaderTitle, so on a mobile deep link
       // the header ends up showing the section's name rather than
       // "Settings".
@@ -7251,7 +7479,7 @@ const App = {
       if (leavingApp) AppView.close();
       App._showOnlyScreen('messages-screen');
       App._enterScreenChrome();
-      App.setHeaderTitle('Messages');
+      App.setHeaderTitle(PlatformI18n.t('shell:title.messages'));
       messages?.syncChrome?.();
     }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
   },
@@ -7298,6 +7526,36 @@ const App = {
     return null;
   },
 
+  // #4312: a shared link's `?flow=claude-code|codex` on an agent session
+  // address, in the fragment's own query (#messages/agent/new?flow=codex) or
+  // the page's (/?flow=codex#messages/agent/new). The conversation opens with
+  // its "Build with" sheet on that agent's tab, as the model pill and the
+  // credits card open it (features/agent-session/store.ts prepareHandoff).
+  // The value is taken out of the address once handed over, so a reload,
+  // Back, or the first message giving an unsent conversation its own address
+  // does not open the sheet again. Any other value is ignored.
+  _takeAgentFlow(hash, fragQuery) {
+    const read = (query) => {
+      try { return new URLSearchParams(query || '').get('flow'); } catch (_) { return null; }
+    };
+    const known = (value) => value === 'claude-code' || value === 'codex';
+    const flow = [read(fragQuery), read(location.search)].find(known);
+    if (!flow) return;
+    window.UsernodeReact?.agentSession?.prepareHandoff?.(flow);
+    const without = (query) => {
+      try {
+        const params = new URLSearchParams(query || '');
+        if (known(params.get('flow'))) params.delete('flow');
+        const rest = params.toString();
+        return rest ? `?${rest}` : '';
+      } catch (_) { return ''; }
+    };
+    try {
+      history.replaceState(history.state, '',
+        `${location.pathname}${without(location.search)}#${hash}${without(fragQuery)}`);
+    } catch (_) {}
+  },
+
   // State-only teardown; the incoming transition hides the root.
   _exitMessages() {
     App._inMessages = false;
@@ -7333,7 +7591,7 @@ const App = {
       App._showOnlyScreen('global-chat-screen');
       App._enterScreenChrome();
       if (typeof Home !== 'undefined') Home.publishImproveTarget();
-      App.setHeaderTitle('Chat');
+      App.setHeaderTitle(PlatformI18n.t('shell:title.chat'));
     }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
   },
 
@@ -7406,7 +7664,7 @@ const App = {
       App._showOnlyScreen('agent-session-screen');
       App._enterScreenChrome();
       if (typeof Home !== 'undefined') Home.publishImproveTarget();
-      App.setHeaderTitle('Agent session');
+      App.setHeaderTitle(PlatformI18n.t('shell:title.agentSession'));
     }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
   },
 
@@ -7522,13 +7780,15 @@ const App = {
       if (App.currentTab === 'dev') {
         if (ref == null && App.currentSubTab === 'sessions'
             && typeof DevChat !== 'undefined' && DevChat.currentSession) {
-          // #2241: an unsent change has no id, and `null` here would
-          // normalize the whole route back to the board — so it serializes
-          // as the word the router reserves for it.
-          ref = DevChat.currentSession.id
-            || (DevChat.currentSession.pending ? DevChat.NEW_SESSION_REF : null);
+          ref = DevChat.currentSession.id || null;
         } else if (ref == null && App.currentSubTab === 'topic'
             && typeof AppView !== 'undefined' && AppView._devTopic) {
+          ref = AppView._devTopic;
+        } else if (ref && ref.kind === 'proposal' && !ref.pr && App.currentSubTab === 'topic'
+            && typeof AppView !== 'undefined' && AppView._devTopic?.kind === 'proposal'
+            && AppView._devTopic.id === ref.id && AppView._devTopic.pr) {
+          // #4367: the page has found the change's PR number since this ref
+          // was made; its address is dev/changes/<N>.
           ref = AppView._devTopic;
         }
         if (!boardView && App.currentSubTab === 'forum') {
@@ -7579,6 +7839,8 @@ const App = {
       if (segs[0] === 'app' && (segs[2] === 'workshop' || segs[2] === 'activity' || segs[2] === 'board')) {
         segs.splice(2, 1, 'dev');
       }
+      // #4367: dev/changes/<N> is the same screen as dev/proposals/<id>.
+      if (segs[0] === 'app' && segs[2] === 'dev' && segs[3] === 'changes') segs[3] = 'proposals';
       if (segs[0] === 'app' && segs[2] === 'dev') {
         return SUB_SCREENS.has(segs[3])
           ? segs.slice(0, 4).join('/')
@@ -7972,7 +8234,7 @@ const App = {
     if (AppView.appData?.slug === slug && AppView.appData.name && App.currentTab !== 'dev') {
       App.setHeaderTitle(AppView.appData.name);
     } else if (!AppView.appData) {
-      App.setHeaderTitle('App not available');
+      App.setHeaderTitle(PlatformI18n.t('shell:title.appNotAvailable'));
     }
 
     // "View on GitHub" and "Share app" were drawer rows revealed by hand
@@ -8022,6 +8284,7 @@ const App = {
     if (App.embeddedPanel && window.UsernodeReact?.sidePanelEmbed?.forward?.('')) return;
     App.setChromeless(false);
     const leavingSlug = App.currentApp;
+    const returning = !App._isScreenVisible('home-screen');
     // Iframe caveat (spec): View Transitions snapshot the outgoing
     // page, and a live app iframe in that snapshot can flash on iOS
     // Safari. The kit 'zoom-out' transform-animates the LIVE view (no
@@ -8102,6 +8365,11 @@ const App = {
       },
     });
     App.updateHash();
+    // Coming back to Home from somewhere else (an app, the Challenges tab)
+    // reads its Challenges block again past its minute (#3985): what the
+    // viewer just did there is what the block counts. Home.load() joins
+    // that read. Only once there is a block; the first load brings it.
+    if (returning && window.HomePanels?._data) HomePanels.ensureLoaded({ force: true });
     Home.load();
   },
 
@@ -8402,11 +8670,12 @@ const App = {
 
     if (subTab === 'sessions') {
       // #2241: `new` is the one session ref that is a WORD rather than an
-      // id — /app/<slug>/dev/sessions/new is the change you have not sent
-      // yet, which has no row and therefore no id to be addressed by. It
-      // needs a route of its own precisely because of the line below: a
-      // session sub-tab with no ref normalizes to the card list, so a
-      // screen with nothing to name could not be navigated to at all.
+      // id — /app/<slug>/dev/sessions/new was the classic change you had
+      // not sent yet. That screen is gone (#2779, #4268), but the address
+      // still resolves to an unsent agent session
+      // (App.openNewChangeAsAgentSession). It needs a route of its own
+      // because of the line below: a session sub-tab with no ref
+      // normalizes to the card list.
       // DevChat.NEW_SESSION_REF holds the only other copy of this literal.
       if (ref === 'new') return { tab: 'dev', subTab: 'sessions', ref: 'new' };
       const id = (ref && typeof ref === 'object') ? ref.id : parseInt(ref, 10);
@@ -8425,7 +8694,12 @@ const App = {
     // legacy issues/proposals sub-tab vocabulary — opens that topic
     // full-screen; everything else lands on the card list.
     let fref = null;
-    if (ref && typeof ref === 'object' && ref.kind && ref.id) {
+    if (ref && typeof ref === 'object' && ref.kind === 'proposal'
+        && App._changeNumber(ref.pr)) {
+      // #4367: a proposal ref may carry its PR number — alone, before the
+      // page has looked up the session it names.
+      fref = { kind: 'proposal', id: ref.id || null, pr: App._changeNumber(ref.pr) };
+    } else if (ref && typeof ref === 'object' && ref.kind && ref.id) {
       fref = { kind: ref.kind, id: ref.id };
     } else if (ref != null && subTab === 'issues') {
       const id = parseInt(ref, 10);
@@ -8844,3 +9118,10 @@ try {
 } catch (err) { /* no usable DOM — the router still routes, one paint later */ }
 
 document.addEventListener('DOMContentLoaded', () => App.init());
+
+// The platform version at the foot of the side menu is painted from the last
+// /api/version answer, so it is painted again when the language changes.
+// (A `?shot=` pose owns the row while it is up, as in the poll.)
+document.addEventListener('homeroom:language-changed', () => {
+  if (App._lastVersionInfo && !App._platformUpdateShot) App.renderPlatformVersionPill(App._lastVersionInfo);
+});

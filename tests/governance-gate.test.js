@@ -539,3 +539,108 @@ test('electorateAtPromote: the gate\'s electorate count, null when it cannot be 
   governance.invalidateGovernance(9102);
   assert.equal(await governance.electorateAtPromote({ query: async () => { throw new Error('down'); } }, 9102), null);
 });
+
+// ── #4747: who sees the advisory line ─────────────────────────────────
+//
+// viewerDecides answers whether a viewer's vote can affect a proposal's
+// outcome under the project's governance, so the vote picker can say when
+// it cannot. It reads the same deciding set the gate reads; it is display
+// only and takes no pool.
+
+test('viewerDecides: everyone decides without approvers or rules', () => {
+  const anyone = { approverPolicy: 'anyone', approvalsRequired: null };
+  assert.equal(governance.viewerDecides(anyone, { approverIds: null }, 7), true);
+  assert.equal(governance.viewerDecides(anyone, {}, 7), true);
+});
+
+test('viewerDecides: invited project — the roster decides, nobody else', () => {
+  const invited = { approverPolicy: 'invited', approvalsRequired: null };
+  const opts = { approverIds: [3, 4] };
+  assert.equal(governance.viewerDecides(invited, opts, 3), true, 'an approver decides');
+  assert.equal(governance.viewerDecides(invited, opts, 9), false, 'a non-approver is advisory');
+  assert.equal(governance.viewerDecides(invited, {}, 9), false, 'a missing roster decides nobody');
+});
+
+test('viewerDecides: invited admin fallback — the admins passed as the roster decide', () => {
+  const invited = { approverPolicy: 'invited', approvalsRequired: null };
+  // getElectorate hands the fallback admins as approverIds; viewerDecides
+  // reads the same list, so a full admin is not flagged and others are.
+  const opts = { approverIds: [1] };
+  assert.equal(governance.viewerDecides(invited, opts, 1), true, 'the fallback admin decides');
+  assert.equal(governance.viewerDecides(invited, opts, 2), false, 'another member is advisory');
+});
+
+test('viewerDecides: a members rule decides everyone', () => {
+  const gov = {
+    approverPolicy: 'anyone',
+    rules: { rules: [{ group: 'members', kind: 'majority', n: null }], groups: [] },
+  };
+  assert.equal(governance.viewerDecides(gov, { facts: { creatorId: null, adminIds: [], groups: new Map() } }, 7), true);
+});
+
+test('viewerDecides: a creator-only rule decides the creator alone', () => {
+  const gov = {
+    approverPolicy: 'anyone',
+    rules: { rules: [{ group: 'creator', kind: 'atLeast', n: 1 }], groups: [] },
+  };
+  const facts = { creatorId: 5, adminIds: [], groups: new Map() };
+  assert.equal(governance.viewerDecides(gov, { facts }, 5), true, 'the creator decides');
+  assert.equal(governance.viewerDecides(gov, { facts }, 6), false, 'another member is advisory');
+});
+
+test('viewerDecides: a named group decides its people', () => {
+  const gov = {
+    approverPolicy: 'anyone',
+    rules: {
+      rules: [{ group: 'core', kind: 'majority', n: null }],
+      groups: [{ key: 'core', name: 'Core', ids: [11, 12] }],
+    },
+  };
+  const facts = { creatorId: null, adminIds: [], groups: new Map([['core', [11, 12]]]) };
+  assert.equal(governance.viewerDecides(gov, { facts }, 11), true);
+  assert.equal(governance.viewerDecides(gov, { facts }, 13), false);
+});
+
+test('viewerDecides: any rule passing includes the viewer, so admins count beside the creator', () => {
+  const gov = {
+    approverPolicy: 'anyone',
+    rules: {
+      rules: [
+        { group: 'creator', kind: 'atLeast', n: 1 },
+        { group: 'admins', kind: 'atLeast', n: 1 },
+      ],
+      groups: [],
+    },
+  };
+  const facts = { creatorId: 5, adminIds: [9], groups: new Map() };
+  assert.equal(governance.viewerDecides(gov, { facts }, 5), true);
+  assert.equal(governance.viewerDecides(gov, { facts }, 9), true);
+  assert.equal(governance.viewerDecides(gov, { facts }, 6), false);
+});
+
+test('viewerDecides: a flagged change to who decides goes by WHO_DECIDES, so everyone decides', () => {
+  // A creator-only rules project, whose change is flagged for a reason that
+  // is not `secrets`: WHO_DECIDES (you or the group) includes a members
+  // rule, so every member's vote can decide it.
+  const gov = {
+    approverPolicy: 'anyone',
+    rules: { rules: [{ group: 'creator', kind: 'atLeast', n: 1 }], groups: [] },
+  };
+  const facts = { creatorId: 5, adminIds: [], groups: new Map() };
+  assert.equal(governance.viewerDecides(gov, {
+    facts, explicitApproval: true, explicitReason: 'who_can_see',
+  }, 6), true);
+  assert.equal(governance.viewerDecides(gov, {
+    facts, explicitApproval: true, explicitReason: 'secrets',
+  }, 6), false, 'a flagged change to the keys follows the project rule');
+});
+
+test('viewerDecides: a signed-out viewer is never flagged', () => {
+  const invited = { approverPolicy: 'invited', approvalsRequired: null };
+  assert.equal(governance.viewerDecides(invited, { approverIds: [3] }, null), true);
+  const gov = {
+    approverPolicy: 'anyone',
+    rules: { rules: [{ group: 'creator', kind: 'atLeast', n: 1 }], groups: [] },
+  };
+  assert.equal(governance.viewerDecides(gov, { facts: { creatorId: 5, adminIds: [], groups: new Map() } }, null), true);
+});

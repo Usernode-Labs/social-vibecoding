@@ -59,7 +59,10 @@ lookup tag for subsequent releases with the same inputs; previously published
 charts retain their original digests. Registry retention must preserve images
 referenced by releases for rollback. A manual run on `main` publishes a normal
 stable release for Argo CD, including a new platform build and the selected
-component refreshes.
+component refreshes. A manual run never waits for the release gap: a push
+to `main` waits until the previous release is `RELEASE_MIN_GAP_MINUTES`
+old. So a manual run is also how to release an urgent fix without waiting;
+see "Ownership and releases" in `docs/kubernetes-operations.md`.
 
 `main` publishes stable `0.1.x` chart versions tracked by Argo CD. The
 `feat/k8s` branch publishes `0.0.x-feat-k8s` candidates that can be pulled and
@@ -335,6 +338,15 @@ control ingress to its Pods. This also permits a cutover-ready configuration
 with the platform, migration Job, and ingress disabled until the database is
 writable.
 
+Preview databases (staging templates, preview copies, before & after shots
+copies) can live on a second PostgreSQL server instead of the main one:
+`previewPostgresql.enabled`, with the server's address and credential in the
+Secret as `STAGING_DB_ADMIN_URL`. The chart adds the platform's egress to that
+server and does not create it. It is off by default; see "A separate server
+for preview databases" in `docs/kubernetes-operations.md` for what the cluster
+has to provide, the drain step for switching back, and the costs. The
+placement preference below still follows the main server's primary.
+
 Previews and production apps prefer to run near the external CloudNativePG
 primary by default (`config.previewFollowDatabasePrimary: true`; the name
 predates apps following it too). The chart derives
@@ -344,21 +356,22 @@ namespace). Set the flag to `false` to disable the preference. Bundled PostgreSQ
 and external databases without the CNPG cluster selector keep normal placement.
 Installations without Helm can set both environment variables on the platform.
 
-Staging preview and production app Deployments receive two preferred Pod
-affinity terms matching that cluster's `cnpg.io/instanceRole: primary`: weight
-100 across `topology.kubernetes.io/zone`, and weight 50 across
-`kubernetes.io/hostname`. The zone term is the one that matters on a cluster
-spread over data centres: a page makes many sequential queries, so a pod in
-another data centre pays that round trip on every one, and checks against such
-a preview fail on data that arrives too late. Label every node with its
+Staging preview and production app Deployments receive one preferred Pod
+affinity term matching that cluster's `cnpg.io/instanceRole: primary`, weight
+100 across `topology.kubernetes.io/zone`. It matters on a cluster spread over
+data centres: a page makes many sequential queries, so a pod in another data
+centre pays that round trip on every one, and checks against such a preview
+fail on data that arrives too late. There is deliberately no term for the
+primary's own node: it gains nothing measurable inside one data centre and
+fills that node to its Pod limit while its neighbours stay half empty. Label every node with its
 location for the zone term to apply, for example:
 
 ```sh
 kubectl label node <node> topology.kubernetes.io/zone=<location>
 ```
 
-A node without the label matches no zone, so an unlabelled cluster keeps the
-host preference alone. Other eligible nodes remain available if the zone is
+A node without the label matches no zone, so an unlabelled cluster gets normal
+placement. Other eligible nodes remain available if the zone is
 full, unavailable, or no matching primary exists. This is a scheduler
 preference, not a guarantee: other scheduling scores can outweigh it. It needs
 no extra runtime RBAC or node lookup.
@@ -416,6 +429,33 @@ browser groups). Their requests are one CPU / 3 GiB, matching the observed
 browser working set; smaller limit overrides also lower the requests so
 Kubernetes can admit the Pod. Per-job ephemeral storage remains 1 GiB
 requested / 4 GiB limited. Changes apply to newly created check Jobs.
+
+`config.checksMaxConcurrentRuns` (`CHECKS_MAX_CONCURRENT_RUNS`, default 4)
+bounds how many proposal checks runs have their Jobs on the cluster at once,
+across every platform Pod. A run whose preview is built waits for a slot
+before it creates its capture and unit-suite Jobs, so their deadlines start
+only once it has one; proposals show "Waiting for a checks slot" meanwhile.
+Slots go to promoted proposals first, then submitted CLI hand-offs, then
+drafts, first come first served within each. Main-watch's run of the unit
+suite on a merge commit has one slot of its own besides these and goes first
+for any free one. The count is the live `check_runs` rows, so it survives a
+platform restart, and a run that was waiting keeps its place when the next
+leader re-drives it. Size it so the check Jobs' requests (4 CPU each, two per
+run) leave room in the worker namespace's ResourceQuota for coding workers,
+and so the previews under test do not saturate the shared Postgres primary.
+`0` turns the queue off.
+
+`config.checkNodePool` (`CHECK_NODE_POOL`, default empty) names a dedicated
+node pool for check Jobs as the pool nodes' label `key=value`, for example
+`usernodelabs.org/node-pool=cpu-heavy`. Label the pool's nodes with that pair
+and taint them with the same pair and `NoSchedule`, so nothing else is
+scheduled there. Capture and unit-suite Jobs then tolerate the taint and
+prefer those nodes. It is a preference, so checks still run on the other nodes
+when the pool is full or down. With a pool set, checks drop their hostname
+spread: on a pool of one large node it would push Pods back onto the small
+nodes. A value that is not a valid label pair is logged once and ignored.
+Coding workers, builds, apps and previews are not affected. Changes apply to
+newly created check Jobs.
 
 Capture Jobs visit the generated app and preview HTTPS ingress hostnames. The
 self-app's production capture uses the canonical platform hostname. Worker

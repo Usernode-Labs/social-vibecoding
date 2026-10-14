@@ -23,9 +23,10 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 const { makeComposerBridge } = require('./lib/dev-composer-html');
-const { loadTsx, renderComponent } = require('./lib/render-tsx');
+const { loadTsx, renderComponent, renderToHtml, createElement } = require('./lib/render-tsx');
 const { SW_VERSION } = require('../public/sw.js');
 
 const SRC = fs.readFileSync(
@@ -182,6 +183,7 @@ function makeHarness() {
     }),
   });
 
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(`${SRC}\n;globalThis.__DevChat = DevChat;`, sandbox);
   const DevChat = sandbox.__DevChat;
@@ -382,47 +384,9 @@ test('a saved OpenRouter model is offered even when it is not a starter', () => 
     'the starting pair still leads — a saved choice does not reorder the list');
 });
 
-test('an unsent change displays the saved OpenRouter default before creation', () => {
-  const pending = {
-    pending: true,
-    id: null,
-    app_slug: 'demo',
-    pending_agent_choice: null,
-  };
-  const saved = render({
-    session: pending,
-    pickerData: pickerData({
-      backends: {
-        codex_openrouter: {
-          model: 'anthropic/claude-sonnet-4.5', reasoningEffort: 'medium',
-        },
-      },
-    }),
-  });
-
-  assert.equal(
-    saved.view().models.selected,
-    'openrouter:anthropic/claude-sonnet-4.5',
-    'the client-only placeholder must reflect the provider the server will resolve on first send',
-  );
-  assert.equal(saved.DevChat.currentSession.pending_agent_choice, null,
-    'displaying the saved default must not turn it into an explicit per-session override');
-});
-
-test('an explicit pending Anthropic pick overrides a saved OpenRouter default', () => {
-  const pending = {
-    pending: true,
-    id: null,
-    app_slug: 'demo',
-    pending_agent_choice: {
-      backend: 'claude_code', model: null, reasoningEffort: null,
-    },
-    agent_backend: 'claude_code',
-  };
-  const selected = render({ session: pending });
-
-  assert.equal(selected.view().models.selected, 'anthropic:claude-opus-5-5');
-});
+// #4268: the unsent classic change, and with it the picker's staged
+// `pending_agent_choice`, is gone. Every session the picker reads is a row,
+// so it states that row's backend (tests above).
 
 test('the saved OpenRouter default ships through a fresh shell cache', () => {
   const version = Number(String(SW_VERSION).replace(/^v/, ''));
@@ -953,7 +917,7 @@ test('a label the user typed on their own machine is escaped, not interpreted', 
   assert.match(html, /&lt;img/);
   // It rides in a `title` too, which is the attribute context the string
   // renderer needed a separate escape for.
-  assert.match(html, /title="The last turn ran on|title="Spec and coding turns in this session run on &lt;img/);
+  assert.match(html, /title="The last turn ran on|title="Plan and coding turns in this session run on &lt;img/);
 });
 
 test('a machine that has gone leaves a past-tense chip, not a live one', () => {
@@ -972,6 +936,14 @@ test('a machine that has gone leaves a past-tense chip, not a live one', () => {
   assert.match(html, /the next turn runs on Homeroom/);
 });
 
+// A component that reads its words with a hook can only be called while
+// React is rendering, so the call is made inside a probe's render.
+function duringRender(call) {
+  let result;
+  renderToHtml(createElement(() => { result = call(); return null; }));
+  return result;
+}
+
 test('choosing Homeroom hands the session back and never leaves a half-set select', async () => {
   const { DevChat, runnerView } = makeHarness();
   const requests = [];
@@ -989,7 +961,7 @@ test('choosing Homeroom hands the session back and never leaves a half-set selec
   // directly rather than through a listener registry.
   const { RunnerControlsView } = loadTsx('frontend/src/features/dev-chat/composer-chrome.tsx');
   const onChange = () => {
-    const parts = RunnerControlsView(runnerView()).props.children;
+    const parts = duringRender(() => RunnerControlsView(runnerView())).props.children;
     const select = parts.find((child) => child && child.props && child.props.id === 'dc-runner-select');
     assert.ok(select, 'the live strip renders a selector');
     return select.props.onChange;

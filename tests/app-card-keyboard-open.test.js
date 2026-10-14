@@ -29,6 +29,15 @@ const path = require('node:path');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
 const { decodeEntities } = require('./helpers/html-tokens');
 
+// The card reads its text through a hook, so a direct call runs inside a
+// render: the element it returns is what the assertions walk.
+function inRender(fn) {
+  let out;
+  const Probe = () => { out = fn(); return null; };
+  renderToHtml(createElement(Probe));
+  return out;
+}
+
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 
@@ -96,8 +105,8 @@ test('landing tile: Enter and Space open it like a tap; nothing else does', () =
 // ── Home Discover card ───────────────────────────────────────────────────
 
 const TILE = {
-  slug: 'alpha', name: 'Alpha Board', status: 'running', added: false,
-  icon: { kind: 'letter', letter: 'A' }, illustration: null, blurb: '', contributors: 0,
+  slug: 'alpha', name: 'Alpha Board', status: 'running', added: false, joined: false,
+  icon: { kind: 'letter', letter: 'A' }, illustration: null, blurb: '', meta: null, contributors: 0,
 };
 
 test('Discover card: a focusable button named by its app, attributes after data-slug', () => {
@@ -109,8 +118,9 @@ test('Discover card: a focusable button named by its app, attributes after data-
   // The shape the render suites match on is untouched.
   assert.match(html, /class="app-card home-discover-card [^"]*" data-slug="alpha"/);
   assert.ok(tag.indexOf('data-slug=') < tag.indexOf('role='), 'role comes after data-slug');
-  // The inner ⊕ keeps its own name; the card's does not replace it.
-  assert.match(html, /class="card-add-btn [^"]*"[^>]*aria-label="Add Alpha Board to My apps"/);
+  // The inner pill keeps its own name; the card's does not replace it.
+  // A card the viewer has neither joined nor added offers the real join.
+  assert.match(html, /class="card-add-btn [^"]*"[^>]*aria-label="Join Alpha Board"/);
 });
 
 test('Discover card: the editor preview stays a picture, out of the tab order', () => {
@@ -118,11 +128,11 @@ test('Discover card: the editor preview stays a picture, out of the tab order', 
   const tag = html.match(/<div class="app-card home-discover-card [^>]*>/)[0];
   assert.equal(attr(tag, 'role'), null);
   assert.equal(attr(tag, 'tabindex'), null);
-  assert.equal(DiscoverCard({ tile: TILE, preview: true }).props.onKeyDown, undefined);
+  assert.equal(inRender(() => DiscoverCard({ tile: TILE, preview: true })).props.onKeyDown, undefined);
 });
 
 test('Discover card: Enter/Space on the card press it; keys on the ⊕ badge do not', () => {
-  const el = DiscoverCard({ tile: TILE });
+  const el = inRender(() => DiscoverCard({ tile: TILE }));
   assert.equal(el.props.onKeyDown, activateOnKey);
 
   const enter = keyEvent('Enter');

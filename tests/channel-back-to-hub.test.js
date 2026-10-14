@@ -27,6 +27,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { loadTsx } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
@@ -46,7 +47,9 @@ function fn(src, name) {
 test('one disc: the Workshop\'s page head and the channels draw the same button', () => {
   const button = fn(BACK, 'PageBackButton');
   assert.match(button, /className="dev-ws-page-back un-touch-target"/);
-  assert.match(button, /aria-label=\{`Back to \$\{label\}`\}/);
+  assert.match(button, /const name = t\('project:pageBack\.backTo', \{ place: label \}\);/);
+  assert.match(button, /aria-label=\{name\}/);
+  assert.equal(message('project:pageBack.backTo', { place: 'Homeroom' }), 'Back to Homeroom');
   assert.match(button, /<ChevronLeftIcon className="dev-ws-page-back-glyph" aria-hidden="true" \/>/);
   assert.match(fn(BACK, 'PageBack'), /<PageBackButton label=\{label\} onBack=\{onBack\} data-ws-page-back="" \/>/);
   assert.match(WORKSHOP, /import \{ PageBack \} from '\.\/page-back';/);

@@ -20,8 +20,8 @@ test('staging proposal mocks have unique ids', () => {
 
 test('testing-phase and approvals demos deep-link to separate fixtures', () => {
   const byName = new Map(dapp.tests.map((entry) => [entry.name, entry]));
-  assert.match(byName.get('Checks card names the test stage on a testing run').path, /9000026$/);
-  assert.match(byName.get('At-least-approvals proposal renders the approvals pill (#646)').path, /9000023$/);
+  assert.match(byName.get('#4452: a testing run is one bar, the build and the checks split by how long each usually takes, with the time left').path, /9000026$/);
+  assert.match(byName.get('At-least-approvals proposal: the Votes card counts the yes it still needs, and says the advisory ones count for nothing (#646, #4455)').path, /9000023$/);
 });
 
 test('declared checks do not require removed All Apps UI or write access from the view-only identity', () => {

@@ -23,6 +23,7 @@
 // for a typical change", because a naked "$1.55" reads as per message, per
 // hour or per month just as easily.
 
+import { t } from '../../lib/i18n/runtime';
 import type { AgentChoice, ModelCatalog, ModelNotes, OpenRouterModel } from './api';
 import { prettyModel } from './transcript';
 
@@ -30,18 +31,19 @@ export const ANTHROPIC_PREFIX = 'anthropic:';
 export const OPENROUTER_PREFIX = 'openrouter:';
 
 export const REASONING_EFFORTS = ['minimal', 'low', 'medium', 'high', 'xhigh'] as const;
+// Message ids: the labels are read with `t` when the options are built.
 const EFFORT_LABELS: Record<string, string> = {
-  minimal: 'Minimal',
-  low: 'Low',
-  medium: 'Medium',
-  high: 'High',
-  xhigh: 'Extra high',
+  minimal: 'agent:session.effort.minimal',
+  low: 'agent:session.effort.low',
+  medium: 'agent:session.effort.medium',
+  high: 'agent:session.effort.high',
+  xhigh: 'agent:session.effort.xhigh',
 };
 
-const OPENROUTER_TITLE = 'Runs on your OpenRouter key';
+const OPENROUTER_TITLE = 'agent:session.model.title.openRouter';
 // #3296: the platform runs some OpenRouter models in Claude Code, not Codex.
-const OPENROUTER_CLAUDE_TITLE = 'Runs on your OpenRouter key, in Claude Code';
-const ANTHROPIC_TITLE = 'Runs on the platform Claude allowance, or your own Anthropic key';
+const OPENROUTER_CLAUDE_TITLE = 'agent:session.model.title.openRouterClaudeCode';
+const ANTHROPIC_TITLE = 'agent:session.model.title.anthropic';
 
 export interface PickerOption {
   value: string;
@@ -110,8 +112,9 @@ export function modelCost(id: string | null | undefined, catalog: ModelCatalog |
   let cents = entry && entry.estimateCents != null && Number.isFinite(Number(entry.estimateCents)) ? Number(entry.estimateCents) : null;
   if (cents == null && notes?.typicalChange && model) cents = typicalChangeCents(notes.typicalChange, model);
   const money = cents == null ? '' : (cents > 0 && cents < 1 ? '<$0.01' : `$${(cents / 100).toFixed(2)}`);
-  const perChange = money ? `about ${money} for a typical change` : '';
-  return { note, perChange, compact: [note, perChange].filter(Boolean).join(' · ') };
+  const perChange = money ? t('agent:session.model.cost', { amount: money }) : '';
+  const compact = note && money ? t('agent:session.model.costWithNote', { note, amount: money }) : note || perChange;
+  return { note, perChange, compact };
 }
 
 function withCost(option: PickerOption, cost: ModelCost): PickerOption {
@@ -210,7 +213,7 @@ export function pickerOptions(catalog: ModelCatalog | null, selected: AgentChoic
     if (!id) return;
     const model = openRouterModel(catalog, id);
     const title = model?.harness === 'claude' ? OPENROUTER_CLAUDE_TITLE : OPENROUTER_TITLE;
-    push(withCost({ value: `${OPENROUTER_PREFIX}${id}`, label: model?.name || id, title }, modelCost(id, catalog, model)));
+    push(withCost({ value: `${OPENROUTER_PREFIX}${id}`, label: model?.name || id, title: t(title) }, modelCost(id, catalog, model)));
   };
   const openRouter = !!catalog && catalog.codexAvailable && catalog.openrouter.length > 0;
 
@@ -222,7 +225,7 @@ export function pickerOptions(catalog: ModelCatalog | null, selected: AgentChoic
   }
   // 2. The Anthropic models.
   for (const model of catalog?.anthropic || []) {
-    push(withCost({ value: `${ANTHROPIC_PREFIX}${model.id}`, label: model.label, title: ANTHROPIC_TITLE }, modelCost(model.id, catalog)));
+    push(withCost({ value: `${ANTHROPIC_PREFIX}${model.id}`, label: model.label, title: t(ANTHROPIC_TITLE) }, modelCost(model.id, catalog)));
   }
   // 3. What this account already uses: the saved default and the favourites.
   if (openRouter && catalog) {
@@ -236,7 +239,7 @@ export function pickerOptions(catalog: ModelCatalog | null, selected: AgentChoic
     const value = choiceValue(selected);
     if (!seen.has(value)) {
       if (selected.backend === 'codex_openrouter') pushOpenRouter(selected.model);
-      else push(withCost({ value, label: selected.model || 'Claude', title: ANTHROPIC_TITLE }, modelCost(selected.model, catalog)));
+      else push(withCost({ value, label: selected.model || 'Claude', title: t(ANTHROPIC_TITLE) }, modelCost(selected.model, catalog)));
     }
   }
   const fallback = catalog ? choiceValue(effectiveChoice(null, catalog)) : null;
@@ -285,9 +288,9 @@ export function effortOptions(catalog: ModelCatalog | null): PickerOption[] {
     ? catalog.defaultReasoningEffort
     : null;
   const efforts = REASONING_EFFORTS.map((effort): PickerOption => (effort === fallback
-    ? { value: '', label: EFFORT_LABELS[effort], isDefault: true }
-    : { value: effort, label: EFFORT_LABELS[effort] }));
-  return fallback ? efforts : [{ value: '', label: 'Default', isDefault: true }, ...efforts];
+    ? { value: '', label: t(EFFORT_LABELS[effort]), isDefault: true }
+    : { value: effort, label: t(EFFORT_LABELS[effort]) }));
+  return fallback ? efforts : [{ value: '', label: t('agent:session.effort.default'), isDefault: true }, ...efforts];
 }
 
 /** The option a choice's effort is: its own, or '' when it follows the default or names it. */
@@ -305,7 +308,7 @@ export function effortValue(choice: AgentChoice | null, catalog: ModelCatalog | 
 export function effortLabel(choice: AgentChoice | null, catalog: ModelCatalog | null): string {
   if (!offersReasoning(choice, catalog)) return '';
   const effort = (choice && choice.reasoningEffort) || catalog?.defaultReasoningEffort || '';
-  return EFFORT_LABELS[effort] || '';
+  return EFFORT_LABELS[effort] ? t(EFFORT_LABELS[effort]) : '';
 }
 
 /** Two choices that run the same way. */

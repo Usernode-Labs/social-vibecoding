@@ -10,16 +10,29 @@ function handler(name) {
   const end = source.indexOf('\n  }', start) + 4;
   return source.slice(start, end).replace(': FormEvent', '').replace(': string', '');
 }
+// The handlers read their text through `t` (and `blockedCopy` through
+// `translate`). This is the English catalog source read directly, so the
+// suite still needs no frontend install; one/other is all English has.
+const catalog = JSON.parse(fs.readFileSync('frontend/locales/en/dialogs.json', 'utf8'));
+function t(id, values = {}) {
+  const key = id.slice(id.indexOf(':') + 1);
+  const entry = catalog[key] || catalog[`${key}_${values.count === 1 ? 'one' : 'other'}`];
+  if (!entry) throw new Error(`No English catalog entry for ${id}`);
+  return entry.text.replace(/{{\s*(\w+)\s*}}/g, (_, name) => String(values[name] ?? ''));
+}
 function setup(fetch) {
   const s = { app: {slug:'test-app',name:'Test App',repo_url:'https://github.com/o/r',self_hosted:false,
     can_manage:true,collab_visibility:'public',view_visibility:'public',can_delete:true,contributor_count:1},
     confirmation:'Test App',accessDraft:'private',accessChanged:true,accessProposalOpen:false,
-    sharedAck:false,setSharedAck(v){s.sharedAck=v;},JSON,
+    sharedAck:false,setSharedAck(v){s.sharedAck=v;},JSON,t,
     pending:{current:false},generation:{current:0},fetch,Error,Promise,
     setApp(v){s.app=v;},setConfirmation(v){s.confirmation=v;},setError(v){s.error=v;},
     setLoading(v){s.loading=v;},setBusy(v){s.busy=v;},
     setAccessDraft(v){s.accessDraft=v;},setAccessMessage(v){s.accessMessage=v;},
     setAccessMessageIsError(v){s.accessMessageIsError=v;},setAccessBusy(v){s.accessBusy=v;},
+    // #4659: the verify sheet's answer is configurable; a person who chooses
+    // Not now answers false. Default true keeps the retry path reachable.
+    askToVerifyForPublic(){return Promise.resolve(s.verifyChoice!==false);},
     setAccessProposalOpen(v){s.accessProposalOpen=v;},
     currentAccessMode(app){return app.collab_visibility==='public'?'public':(app.view_visibility==='private'?'private':'public-invite');},
     visibilityForAccess(mode){return ACCESS_MODES.find((item)=>item.id===mode);},
@@ -28,53 +41,25 @@ function setup(fetch) {
     window:{App:{navigateHome(){s.home=true;s.order.push('navigateHome');}},Home:{load(){}},PlatformUI:{toast(){}}},
     order:[],
   };
-  vm.createContext(s); vm.runInContext(`${handler('load')}\n${handler('proposeAccess')}\n${handler('remove')}`,s);
+  vm.createContext(s); vm.runInContext(`${handler('load')}\n${handler('remove')}`,s);
   s.submit=()=>s.remove({preventDefault(){}}); return s;
 }
 const ok = (app) => ({ok:true,json:async()=>({app})});
 const deferred = () => {let resolve;const promise=new Promise(r=>resolve=r);return {promise,resolve};};
 
-const modesSource = source.match(/const ACCESS_MODES:[\s\S]*?= (\[[\s\S]*?\n\]);\n\nfunction currentAccessMode/);
-assert.ok(modesSource, 'access mode table is readable');
-const ACCESS_MODES = vm.runInNewContext(`(${modesSource[1]})`);
-
-test('the three access modes map only to the valid build/view combinations',()=>{
-  const values=Object.fromEntries(ACCESS_MODES.map((mode)=>[mode.id,[mode.collabVisibility,mode.viewVisibility]]));
-  assert.deepEqual(values,{
-    public:['public','public'],
-    'public-invite':['private','public'],
-    private:['private','private'],
-  });
-});
-
-test('an explicit access proposal sends the selected valid combination',async()=>{
-  let path;let sent;
-  const s=setup(async(p,opts)=>{path=p;sent=opts;return {ok:true,status:201,json:async()=>({prNumber:77})};});
-  s.accessDraft='public-invite';
-  await s.proposeAccess();
-  assert.equal(path,'/api/apps/test-app/visibility-pr');
-  assert.equal(sent.method,'POST');
-  assert.deepEqual(JSON.parse(sent.body),{collabVisibility:'private',viewVisibility:'public'});
-  assert.equal(s.accessProposalOpen,true);
-  assert.match(s.accessMessage,/PR #77/);
-});
-
-test('access proposals stay blocked without management, a repo, or a mutable app',async()=>{
-  let calls=0;const s=setup(async()=>{calls++;return ok();});
-  s.app.can_manage=false;await s.proposeAccess();
-  s.app.can_manage=true;s.app.repo_url=null;await s.proposeAccess();
-  s.app.repo_url='https://github.com/o/r';s.app.self_hosted=true;await s.proposeAccess();
-  s.app.self_hosted=false;s.accessChanged=false;await s.proposeAccess();
-  assert.equal(calls,0);
-});
-
-test('an existing visibility proposal is reported and prevents a duplicate retry',async()=>{
-  let calls=0;const s=setup(async()=>{calls++;return {ok:false,status:409,json:async()=>({sessionId:55})};});
-  await s.proposeAccess();
-  assert.equal(s.accessProposalOpen,true);
-  assert.match(s.accessMessage,/already waiting for approval/);
-  await s.proposeAccess();
-  assert.equal(calls,1);
+// #4666: who can see it is the Who can see & change it sheet's now
+// (features/dialogs/who-decides.tsx, one proposal with the approval rule);
+// App settings says what it is today and opens the sheet.
+test('the Access section says who can see it today and opens the one sheet', () => {
+  const names = source.match(/const ACCESS_NAMES: Record<AccessMode, string> = (\{[\s\S]*?\n\});/);
+  assert.ok(names, 'the access names table is readable');
+  const table = vm.runInNewContext(`(${names[1]})`);
+  assert.equal(t(table.private), 'Private community');
+  assert.equal(t(table.public), 'Public community');
+  assert.equal(t(table['public-invite']), 'Public, invite-only building');
+  assert.match(source, /id="app-access-open"/);
+  assert.match(source, /window\.UsernodeReact\?\.dialogs\?\.whoDecides\?\.open\(\{ slug: target \}\)/);
+  assert.ok(!source.includes('/visibility-pr'), 'the dialog no longer proposes visibility itself');
 });
 
 test('deletion requires current permission and the exact app name',async()=>{
@@ -107,7 +92,7 @@ test('a blocked app (core or shared) never makes a request',async()=>{
 });
 test('the blocked notice names the reason the server gave (#2161)',()=>{
   const start=source.indexOf('function blockedCopy(');const end=source.indexOf('\n}',start)+2;
-  const ctx={};vm.createContext(ctx);vm.runInContext(source.slice(start,end).replace(': AppSettings',''),ctx);
+  const ctx={translate:t};vm.createContext(ctx);vm.runInContext(source.slice(start,end).replace(': AppSettings',''),ctx);
   assert.match(ctx.blockedCopy({delete_block:'core'}),/core platform app/);
   assert.match(ctx.blockedCopy({delete_block:'shared',contributor_count:2}),/1 other contributor,/);
   assert.match(ctx.blockedCopy({delete_block:'shared',contributor_count:4}),/3 other contributors,/);

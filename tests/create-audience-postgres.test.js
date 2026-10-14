@@ -183,7 +183,7 @@ test('creating a project for someone, against the full schema', { timeout: 18000
     assert.equal(wrong.status, 400, 'only a group is created with invites');
   });
 
-  await t.test('Empty is the only starter: it is stored as nothing, and a deleted starter is refused before anything exists (#3521)', async () => {
+  await t.test('Empty is stored as nothing, a ready-made app as itself, and a deleted starter is refused before anything exists (#3521)', async () => {
     viewer = { id: starter.id, username: starter.username, isAdmin: false, canAdminWrite: false };
     const plain = await create({ name: 'Plain', audience: 'solo' });
     assert.equal(plain.status, 201, JSON.stringify(plain.data));
@@ -193,10 +193,27 @@ test('creating a project for someone, against the full schema', { timeout: 18000
     assert.equal(named.data.app.template, null, 'naming the empty starter stores nothing either');
     assert.equal(built.find((row) => row.id === named.data.app.id).template, null,
       'the build reads no template as the empty starter');
-    // The four starters went with the create dialog (services/app-templates.js).
+    // A ready-made app (services/app-templates.js) is stored, built from, and
+    // has nothing for Homeroom bot to build or sketch, even with a description.
+    // (Made by mailer: the create limiter allows five an hour each.)
+    viewer = { id: mailer.id, username: mailer.username, isAdmin: false, canAdminWrite: false };
+    const groceries = await create({
+      name: 'Groceries', audience: 'invited', template: 'grocery-list', description: 'A grocery list',
+      brief: 'An app to organize our groceries: one shared list.', from: 'first-session',
+    });
+    assert.equal(groceries.status, 201, JSON.stringify(groceries.data));
+    assert.equal(groceries.data.app.template, 'grocery-list');
+    assert.equal(built.find((row) => row.id === groceries.data.app.id).template, 'grocery-list', 'the build makes the ready-made app');
+    assert.equal(groceries.data.homeroomBot, undefined, 'no first version is started');
+    const { rows: firsts } = await pool.query('SELECT 1 FROM homeroom_bot_first_versions WHERE app_id = $1', [groceries.data.app.id]);
+    assert.deepEqual(firsts, [], 'nor recorded for anyone to build');
+    const { rows: sketches } = await pool.query('SELECT 1 FROM app_sketches WHERE app_id = $1', [groceries.data.app.id]);
+    assert.deepEqual(sketches, [], 'and nothing is sketched: it has its own icon');
+    viewer = { id: starter.id, username: starter.username, isAdmin: false, canAdminWrite: false };
+    // The four general starters went with the create dialog.
     const game = await create({ name: 'Star catch', audience: 'solo', template: 'game-2d' });
     assert.equal(game.status, 400);
-    assert.equal(game.data.error, 'template must be one of: empty');
+    assert.match(game.data.error, /^template must be one of: empty, tier-list-restaurants, /);
     const unknown = await create({ name: 'Mystery', audience: 'solo', template: 'chess' });
     assert.equal(unknown.status, 400);
     const imported = await create({ name: 'Imported', audience: 'solo', template: 'game-3d', repoUrl: 'https://github.com/o/r' });

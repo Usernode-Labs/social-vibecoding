@@ -797,6 +797,12 @@ html.un-kb .un-action-sheet {
 .un-action-btn.un-action-cancel {
   font-weight: 600;
 }
+/* The row a menu leads with (`highlighted: true`): the accent's tint behind
+   it and its label bold. One row of a sheet, never several. */
+.un-action-btn.un-highlighted {
+  font-weight: 700;
+  background: color-mix(in srgb, var(--un-accent) 12%, transparent);
+}
 
 /* ── Menu-row icons ────────────────────────────────────────────────────
    Rows given `icon` / `iconEl` draw the glyph to the left of the label.

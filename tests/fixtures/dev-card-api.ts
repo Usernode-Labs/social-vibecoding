@@ -12,9 +12,11 @@
 export { ActionButton, DevCard, StatusPill, Badge, Preview, CardIcon, fmtCountdown, voteFillWidths, BADGE_MAX } from '../../frontend/src/features/dev-board/card/dev-card';
 export { SessionCheckResults, SessionChecks } from '../../frontend/src/features/dev-board/modals/session-checks';
 export { FooterView } from '../../frontend/src/features/dev-board/card/footer';
-export { DevWorkshop, orderThemesStable } from '../../frontend/src/features/dev-board/workshop/workshop';
+export { DevWorkshop, orderThemesStable, startHereBotReference } from '../../frontend/src/features/dev-board/workshop/workshop';
+// #4680: the feed alone, for the Communities shape's end card (no suggest link).
+export { NeedsFeed } from '../../frontend/src/features/dev-board/workshop/workshop';
 export { publishWorkshopGroup } from '../../frontend/src/features/dev-board/workshop/group-mode-store';
-export { DevKanban } from '../../frontend/src/features/dev-board/card/dev-kanban';
+export { DevKanban, StageStrip } from '../../frontend/src/features/dev-board/card/dev-kanban';
 // #2573: the Workshop's start-here banner gates its button on the SAME store
 // field the Improve panel gates its own "New change" row on, so a test that
 // wants the read-only viewer has to reach the instance the rendered tree

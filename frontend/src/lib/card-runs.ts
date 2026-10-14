@@ -18,6 +18,8 @@
  * browser.
  */
 
+import { t } from './i18n/runtime';
+
 /** The shortest run that folds. Two cards in a row are just two cards. */
 export const CARD_RUN_MIN = 3;
 
@@ -47,5 +49,5 @@ export function cardRunStarts<T>(
 
 /** "… 4 more", the folded row's words. */
 export function cardRunLabel(hidden: number): string {
-  return `… ${hidden} more`;
+  return t('core:ui.cardRun.more', { count: hidden });
 }

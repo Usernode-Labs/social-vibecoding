@@ -470,6 +470,52 @@ function assignIds(themes, previous) {
   });
 }
 
+// ── Topics: the categories the group set (#4417) ──────────────────────
+//
+// A project's topics are categories dapp.json owns, each with a channel of
+// its own. To the grouping they are FIXED DEFINITIONS: discovery is handed
+// them and asked to return them as given and draft around them, and this is
+// where that stops being a request, exactly as keepPinned is for a pinned
+// category. Whatever the model answered, the standing list leads with every
+// live topic, in dapp.json's order, under dapp.json's name, about and icon
+// (the model's saying and anchors are kept, so a topic reads like the rest);
+// and a RETIRED topic's key (archived, or merged into another) is in no
+// list, because its cards are placed again or moved with the merge.
+
+/** The live topics among `registry` (registryCategories), in their order. */
+function liveTopicsOf(registry) {
+  return (registry || [])
+    .filter((r) => r && r.id && r.topic)
+    .slice()
+    .sort((a, b) => (Number(a.topic.order) || 0) - (Number(b.topic.order) || 0));
+}
+
+/** Pure. `themes` with the topics first and fixed, and no retired key. */
+function fixTopics(themes, registry, retired = []) {
+  const topics = liveTopicsOf(registry);
+  const gone = new Set(retired || []);
+  const topicIds = new Set(topics.map((t) => t.id));
+  const drafted = new Map((themes || []).filter(Boolean).map((t) => [t.id, t]));
+  const lead = topics.map((tp) => {
+    const d = drafted.get(tp.id) || null;
+    return {
+      id: tp.id,
+      name: tp.name,
+      description: tp.description || (d && d.description) || '',
+      saying: d ? d.saying || null : null,
+      icon: tp.icon || (d && d.icon) || '',
+      anchors: d && Array.isArray(d.anchors) ? d.anchors : [],
+    };
+  });
+  const rest = (themes || []).filter((t) => t && t.id && !topicIds.has(t.id) && !gone.has(t.id));
+  return [...lead, ...rest];
+}
+
+/** The order of ids, for "did fixing the topics change the standing list". */
+function sameIds(a, b) {
+  return a.length === b.length && a.every((t, i) => t.id === b[i].id);
+}
+
 // ── The no-model grouping ─────────────────────────────────────────────
 //
 // By the community-voted category, which is the grouping the board already
@@ -485,7 +531,7 @@ const CATEGORY_LABELS = {
   design: 'Design', docs: 'Docs', chore: 'Chores',
 };
 
-function fallbackThemes(input) {
+function fallbackThemes(input, registry = []) {
   const groups = new Map();
   const rest = [];
   for (const it of (input && input.items) || []) {
@@ -493,18 +539,37 @@ function fallbackThemes(input) {
     if (!groups.has(it.category)) groups.set(it.category, []);
     groups.get(it.category).push(it.key);
   }
+  // #4417: the project's topics lead, in their order and under their own
+  // names, each drawn even before anything is filed under it: a topic is a
+  // place to talk as well as a grouping.
+  const topics = liveTopicsOf(registry);
+  const topicOf = new Map(topics.map((t) => [t.id, t]));
+  for (const t of topics) if (!groups.has(t.id)) groups.set(t.id, []);
   const themes = [...groups.entries()]
-    .sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]))
+    .sort((a, b) => {
+      const ta = topicOf.get(a[0]);
+      const tb = topicOf.get(b[0]);
+      if (ta || tb) {
+        if (!ta) return 1;
+        if (!tb) return -1;
+        return (Number(ta.topic.order) || 0) - (Number(tb.topic.order) || 0);
+      }
+      return b[1].length - a[1].length || a[0].localeCompare(b[0]);
+    })
     .map(([cat, keys]) => {
-      const label = CATEGORY_LABELS[cat]
-        || (cat.charAt(0).toUpperCase() + cat.slice(1));
+      const topic = topicOf.get(cat);
+      const label = topic ? topic.name : (CATEGORY_LABELS[cat]
+        || (cat.charAt(0).toUpperCase() + cat.slice(1)));
       return {
         id: `category-${slugify(cat)}`,
         name: label,
-        description: `Everything the group has tagged as ${label.toLowerCase()}.`,
+        description: topic && topic.description
+          ? topic.description
+          : `Everything the group has tagged as ${label.toLowerCase()}.`,
         saying: null,
-        icon: CATEGORY_ICONS[cat] || '',
+        icon: topic ? topic.icon || '' : (CATEGORY_ICONS[cat] || ''),
         items: keys,
+        ...(topic ? { topic: { key: topic.id, handle: topic.topic.handle } } : {}),
       };
     });
   if (rest.length) {
@@ -541,19 +606,31 @@ const STAGING_THEME_NAMES = [
 // changes about the row of theme heads.
 const STAGING_THEME_ICONS = ['\uD83D\uDD11', '\uD83D\uDCF1', '\uD83D\uDDF3\uFE0F', '\uD83C\uDFA8'];
 
-function stagingDemoGrouping(input) {
+function stagingDemoGrouping(input, registry = []) {
   const items = (input && input.items) || [];
-  if (!items.length) return [];
+  // #4417: the project's topics are real, so a preview leads with them (a
+  // board with topics and nothing else to deal still shows them), and the
+  // demo themes after them hold the rest of the deal.
+  const topics = liveTopicsOf(registry).map((t) => ({
+    id: t.id,
+    name: t.name,
+    description: t.description || '',
+    saying: 'Staging demo: what people are asking for in this topic would be summarised here by the model.',
+    icon: t.icon || '',
+    items: [],
+    topic: { key: t.id, handle: t.topic.handle },
+  }));
+  if (!items.length) return topics;
   const n = Math.min(STAGING_THEME_NAMES.length, Math.max(1, Math.ceil(items.length / 4)));
-  const themes = STAGING_THEME_NAMES.slice(0, n).map((name, i) => ({
+  const themes = [...topics, ...STAGING_THEME_NAMES.slice(0, n).map((name, i) => ({
     id: `staging-demo-${i + 1}`,
     name,
     description: 'A staging-only grouping of real board items, dealt out to show the Workshop\'s shape.',
     saying: 'Staging demo: what people are asking for in this category would be summarised here by the model.',
     icon: STAGING_THEME_ICONS[i] || '',
     items: [],
-  }));
-  items.forEach((it, i) => { themes[i % n].items.push(it.key); });
+  }))];
+  items.forEach((it, i) => { themes[i % themes.length].items.push(it.key); });
   return themes;
 }
 
@@ -839,12 +916,16 @@ function themesWithItems(row, keys, placements, votes = {}, registry = []) {
       }
     }
   }
+  // #4417: a topic says so, with its channel's handle, which is what the
+  // client splits By category on and what "Discuss in #name" opens.
+  const topicOf = new Map((registry || []).filter((r) => r && r.topic).map((r) => [r.id, r.topic]));
   return defs.map((t) => ({
     id: t.id, name: t.name, description: t.description || '', saying: t.saying || null,
     // '' when the model gave none, or on a row written before icons existed —
     // the client draws the theme's initial rather than a stand-in glyph.
     icon: t.icon || '',
     items: byTheme.get(t.id),
+    ...(topicOf.has(t.id) ? { topic: { key: t.id, handle: topicOf.get(t.id).handle } } : {}),
   }));
 }
 
@@ -916,6 +997,7 @@ async function registryCategories(pool, appId) {
     .map((r) => ({
       id: r.value, name: r.label, description: r.description || '',
       icon: r.icon || '', pinned: !!r.pinned, origin: r.origin || 'ai',
+      ...(r.topic ? { topic: { handle: r.topic.handle, order: r.topic.order ?? null } } : {}),
     }));
 }
 
@@ -993,15 +1075,21 @@ function chunk(arr, n) {
   return out;
 }
 
-async function discover({ pool, app, input, previous }) {
+async function discover({ pool, app, input, previous, retired = [] }) {
   const keys = input.items.map((i) => i.key);
+  const topics = liveTopicsOf(previous);
   const result = await llm.generateWorkshopThemeDefinitions({
     inputJson: JSON.stringify({
       ...input,
-      previousCategories: previous,
+      previousCategories: previous.filter((p) => !p.topic),
       // The six the platform ships. Named so the draft works AROUND them
       // instead of redrawing "bug" as a category of its own.
       builtInCategories: builtInCategories(),
+      // #4417: the project's topics, fixed: returned as given, drafted
+      // around (fixTopics holds the draft to it).
+      ...(topics.length ? {
+        topics: topics.map((t) => ({ id: t.id, name: t.name, description: t.description || '' })),
+      } : {}),
     }),
     appName: app.name || app.slug,
     itemKeys: keys,
@@ -1011,7 +1099,8 @@ async function discover({ pool, app, input, previous }) {
   // assignIds keeps a reused id stable; keepPinned then re-adds any theme
   // the GROUP pinned that the model dropped. Order matters — a pinned theme
   // re-added here already carries its final id and must not be re-slugged.
-  const themes = keepPinned(assignIds(result.themes, previous), previous);
+  // And then the topics lead, fixed, and no retired topic survives.
+  const themes = fixTopics(keepPinned(assignIds(result.themes, previous), previous), previous, retired);
   return { themes, model: result.model };
 }
 
@@ -1345,11 +1434,14 @@ async function makeDigest({ pool, app, input, themes, now = Date.now() }) {
 // outright is left for the next reconcile (`failed`) and the error is the
 // row's to report. Sequential on purpose: the theme prefix is cached after
 // the first call, and the platform account's rate budget is shared.
-async function placeAll({ pool, app, themes, input, keys }) {
+async function placeAll({ pool, app, themes, input, keys, topicIds = null }) {
   const byKey = new Map(input.items.map((i) => [i.key, i]));
   const themeIds = themes.map((t) => t.id);
+  // #4417: the topics lead the list already (fixTopics), marked, and the
+  // prompt sends a card that fits one as well as another category to it.
   const themesJson = JSON.stringify(themes.map((t) => ({
     id: t.id, name: t.name, description: t.description, anchors: t.anchors || [],
+    ...(topicIds && topicIds.has(t.id) ? { topic: true } : {}),
   })));
   const placed = {};
   const none = [];
@@ -1437,6 +1529,24 @@ async function reconcile({ pool, app, reason }) {
     const churnAdded = row.churnAdded + diff.added.length;
     const churnRemoved = row.churnRemoved + diff.removed;
     result.removed = diff.removed;
+    // #4417: the registry (whose topics are fixed definitions) and the keys
+    // of the retired topics, read once for the pass. A failed read degrades
+    // to the grouping before topics: the standing draft as it is.
+    let registryNow = [];
+    let retiredKeys = [];
+    try {
+      [registryNow, retiredKeys] = await Promise.all([
+        registryCategories(pool, app.id),
+        topicAttrs.retiredTopicKeys(pool, app.id),
+      ]);
+    } catch (err) {
+      log.warn('workshop-themes', 'registry read failed', { app: app.slug, message: err.message });
+    }
+    const standing = row.themes.length ? fixTopics(row.themes, registryNow, retiredKeys) : row.themes;
+    // A topic added, retired or moved since the draft: the standing list is
+    // not the one the cards were placed against, so they are placed again,
+    // all of them, as for a placement prompt that moved.
+    const topicsMoved = row.themes.length > 0 && !sameIds(standing, row.themes);
     const why = needsDiscovery({
       hasThemes: row.themes.length > 0, discoveredAt: row.discoveredAt,
       discoveryKeyCount: row.discoveryKeyCount, churnAdded, churnRemoved,
@@ -1444,7 +1554,7 @@ async function reconcile({ pool, app, reason }) {
     });
     // Cards placed under an older prompt are placed again, all of them,
     // against the definitions as they stand. A re-draft does that anyway.
-    const replace = !why && versionBehind(row.placementVersion, llm.WORKSHOP_PLACEMENT_VERSION);
+    const replace = !why && (versionBehind(row.placementVersion, llm.WORKSHOP_PLACEMENT_VERSION) || topicsMoved);
     // A pass with nothing else to do still runs when the paragraph is due:
     // on a settled board this branch is the ONLY one that ever fires, which
     // is exactly why the digest never got written before.
@@ -1452,7 +1562,7 @@ async function reconcile({ pool, app, reason }) {
     // `let`, because a draft that FAILS has to take this back. See the catch.
     let wantDigest = !!digestWhy;
     if (why === 'version') result.outdated.push('discovery');
-    if (replace) result.outdated.push('placement');
+    if (replace) result.outdated.push(topicsMoved ? 'topics' : 'placement');
     if (digestWhy === 'version') result.outdated.push('digest');
     if (result.outdated.length) log.info('workshop-themes', 'prompt version moved', { app: app.slug, stages: result.outdated });
     if (!why && !replace && !wantDigest && !diff.added.length && !diff.removed && !row.lastError) {
@@ -1461,7 +1571,7 @@ async function reconcile({ pool, app, reason }) {
       return { ...result, skipped: 'unchanged' };
     }
 
-    let themes = row.themes;
+    let themes = standing;
     let model = row.model;
     const next = {
       placements: diff.placements, unplaced: diff.unplaced,
@@ -1496,20 +1606,16 @@ async function reconcile({ pool, app, reason }) {
       // draft is folded in for anything the registry write missed, so a
       // failed registry sync degrades to the old behaviour instead of
       // losing the standing vocabulary.
-      let previous = [];
-      try {
-        previous = await registryCategories(pool, app.id);
-      } catch (err) {
-        log.warn('workshop-themes', 'registry read failed', { app: app.slug, message: err.message });
-      }
+      const previous = registryNow.slice();
       const seenPrev = new Set(previous.map((p2) => p2.id));
+      const gone = new Set(retiredKeys);
       for (const t of row.themes) {
-        if (seenPrev.has(t.id)) continue;
+        if (seenPrev.has(t.id) || gone.has(t.id)) continue;
         seenPrev.add(t.id);
         previous.push({ id: t.id, name: t.name, description: t.description, icon: t.icon || '', pinned: false });
       }
       try {
-        const disc = await discover({ pool, app, input, previous });
+        const disc = await discover({ pool, app, input, previous, retired: retiredKeys });
         themes = disc.themes;
         model = disc.model;
         next.placements = {};
@@ -1563,7 +1669,10 @@ async function reconcile({ pool, app, reason }) {
     // one call per batch of forty, to sort cards into no categories at all.
     // Every card came back unplaced, which then counts as churn.
     if (toPlace.length && themes.length) {
-      const out = await placeAll({ pool, app, themes, input, keys: toPlace });
+      const out = await placeAll({
+        pool, app, themes, input, keys: toPlace,
+        topicIds: new Set(liveTopicsOf(registryNow).map((t) => t.id)),
+      });
       Object.assign(next.placements, out.placed);
       for (const k of out.none) next.unplaced.add(k);
       if (out.model) model = out.model;
@@ -1721,10 +1830,12 @@ async function getThemes({ pool, app }) {
   // that shipped before, which is also what a brand-new app sees.
   let votes = {};
   let registry = [];
+  let retired = [];
   try {
-    [votes, registry] = await Promise.all([
+    [votes, registry, retired] = await Promise.all([
       loadThemeVotes(pool, app.id, keys),
       registryCategories(pool, app.id),
+      topicAttrs.retiredTopicKeys(pool, app.id),
     ]);
   } catch (err) {
     log.warn('workshop-themes', 'theme vote overlay failed', { app: app.slug, message: err.message });
@@ -1739,7 +1850,7 @@ async function getThemes({ pool, app }) {
     }
     if (IS_STAGING && !enabled) {
       return {
-        themes: stagingDemoGrouping(input), source: 'demo', generatedAt: null, discoveredAt: null,
+        themes: stagingDemoGrouping(input, registry), source: 'demo', generatedAt: null, discoveredAt: null,
         stale: true, pending: false, pendingStage: null, lastError: null, coverage: null, unplaced: [],
         digest: 'Staging demo: the model\u2019s three lines on the two weeks and the open board would sit here.',
         digestCards: {
@@ -1751,7 +1862,7 @@ async function getThemes({ pool, app }) {
       };
     }
     return {
-      themes: fallbackThemes(input), source: 'category', generatedAt: null, discoveredAt: null,
+      themes: fallbackThemes(input, registry), source: 'category', generatedAt: null, discoveredAt: null,
       registry, votes,
       digest: null, digestCards: null,
       stale: true, pending, pendingStage: pending ? 'discovery' : null,
@@ -1761,7 +1872,11 @@ async function getThemes({ pool, app }) {
   }
 
   const diff = diffRow(row, keys);
-  const themes = themesWithItems(row, keys, diff.placements, votes, registry);
+  // #4417: the topics lead, fixed, whatever the standing draft says; a
+  // retired one is in no list (its cards wait for the next pass).
+  const themes = themesWithItems(
+    { ...row, themes: fixTopics(row.themes, registry, retired) }, keys, diff.placements, votes, registry
+  );
   const placedCount = themes.reduce((n, t) => n + t.items.length, 0);
   const unplacedKeys = [...diff.unplaced];
   const pendingCount = Math.max(0, keys.length - placedCount - unplacedKeys.length);
@@ -1808,6 +1923,7 @@ module.exports = {
   buildThemeInput, fingerprint, fingerprintKeys, fallbackThemes, stagingDemoGrouping, assignIds, slugify, excerpt,
   needsDiscovery, versionBehind, digestDue, digestStale, diffRow, themesWithItems,
   keepPinned, targetOfKey, loadThemeVotes, registryCategories, builtInCategories, syncCategories,
+  liveTopicsOf, fixTopics,
   getCached, getThemes, reconcile, noteBoardChange, sweep, setNotifier,
   DISCOVERY_MAX_AGE_MS, DIGEST_MAX_AGE_MS, DIGEST_RETRY_MS, DRIFT_RATIO, CHANGE_DEBOUNCE_MS, FAILURE_BACKOFF_MS, PLACEMENT_BATCH,
   // The digest’s own windows, fetched apart from the board snapshot so a

@@ -274,6 +274,8 @@ test('the starter\'s CLAUDE.md has a short "## Design" section the first build f
   assert.match(flat, /honest loading, empty and error states\. Never show the empty state while loading or after a failure; an error says what failed, what still works, and offers Retry\./);
   assert.match(flat, /Seed obviously fake staging demo data so the populated screen can be seen \("Staging mock data" in the platform conventions\)\./);
   assert.match(flat, /No cards in cards, no uppercase eyebrows, no emoji as icons\./);
+  // Run five (13 Oct 2026, fix 7): a blank lavender square in the header.
+  assert.match(flat, /A header that shows the app's own mark shows the project's icon there \(the emoji in `dapp\.json`'s `icon` block\) or no mark at all: never an empty tile, and never `brand\/icon\.png`, which the app does not serve\./);
   assert.match(flat, /The kit is in `styles\/tailwind-input\.css`/);
   assert.ok(section.trim().split('\n').length <= 40, 'short: the long form belongs in a design skill');
   assert.doesNotMatch(section, /—/, 'no em dashes: the agent copies the voice it is given');
@@ -282,10 +284,16 @@ test('the starter\'s CLAUDE.md has a short "## Design" section the first build f
   assert.match(claude.replace(/\s+/g, ' '), /both looks \(the design kit's colour tokens carry both\), unless one fixed look is the point of this app, like a game's own scene; then say so under "## Design" below\./);
 });
 
-test('a starter other than Empty keeps its notes as they were', () => {
-  for (const id of appTemplates.TEMPLATE_IDS.filter((x) => x !== appTemplates.DEFAULT_TEMPLATE)) {
+test('a ready-made app is built on the kit too, and its notes say so', () => {
+  // Evan, 8 October 2026: the ready-made apps (services/app-templates.js)
+  // are drawn with the kit, so their notes carry the same "## Design"
+  // section, filled in by the first change that gives one a look of its own.
+  for (const id of appTemplates.READY_IDS) {
     const claude = file(generate(id), 'CLAUDE.md');
-    assert.doesNotMatch(claude, /\n## Design\n/, id);
-    assert.match(claude.replace(/\s+/g, ' '), /both looks \(Tailwind's `dark:` variants\), unless one fixed look is the point of this app, like a game's own scene; then say so under "App-specific conventions" below\./, id);
+    assert.match(claude, /\n## Design\n/, id);
+    const flat = claude.replace(/\s+/g, ' ');
+    assert.match(flat, /The screen is built from the design kit, which is not placeholder either: keep building with it, and fill in "## Design" below with the first change that gives this app a look of its own\./, id);
+    assert.match(flat, /both looks \(the design kit's colour tokens carry both\), unless one fixed look is the point of this app, like a game's own scene; then say so under "## Design" below\./, id);
+    assert.ok(claude.indexOf('## About Demo') < claude.indexOf('\n## Design\n'), `${id}: app-specific, after About`);
   }
 });

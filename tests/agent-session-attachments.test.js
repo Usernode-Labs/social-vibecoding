@@ -19,6 +19,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const express = require('express');
@@ -280,6 +281,95 @@ test('the limit is green above 40% left, yellow down to 15%, red below; nothing 
   assert.equal(parts.creditView(figures(100, { level: 'unavailable' })), null);
 });
 
+test('the low-credits note shows whenever the pill is red, and not while the out-of-credits card is open (#4784, #4801)', () => {
+  const figures = (remainingCents) => ({ limitCents: 5000, remainingCents, spentCents: 5000 - remainingCents, byokCents: 0, weekly: true, level: 'ok' });
+  const red = parts.creditView(figures(300));
+  assert.equal(parts.showLowCreditNote(red, false), true, 'red pill, no card: the note shows');
+  assert.equal(parts.showLowCreditNote(parts.creditView(figures(1500)), false), false, 'the yellow pill says nothing');
+  assert.equal(parts.showLowCreditNote(parts.creditView(figures(4000)), false), false, 'nor the green');
+  assert.equal(parts.showLowCreditNote(null, false), false, 'no figures, no note');
+  assert.equal(parts.showLowCreditNote(red, true), false, 'the out-of-credits card is open: it speaks instead');
+  assert.equal(parts.showLowCreditNote(parts.creditView(figures(0)), false), true, 'nothing left at all is the other line');
+
+  const keyLink = (html) => {
+    assert.match(html, /href="#settings\/api-key"/, 'the way out is the API key page in Settings');
+    assert.match(html, /data-agent-session-low-credit-key="true"/);
+    return html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+  };
+
+  const raw = renderToHtml(createElement(parts.LowCreditNote, { credit: red }));
+  assert.match(raw, /^<p class="px-2 text-\[13px\] text-red-600 dark:text-red-400" data-agent-session-low-credit="true">/,
+    'the same small red line above the send row');
+  const html = keyLink(raw);
+  assert.ok(html.includes('add your own Anthropic API key'), 'the link names the key');
+  const plain = (id, values) => message(id, values).replace(/<\/?0>/g, '').replace(/\s+/g, ' ').trim();
+  for (const piece of plain('agent:session.credits.lowNote', { amount: '$3.00' }).split('. ')) {
+    if (piece) assert.ok(html.includes(piece.replace(/\.$/, '')), `the lowNote text is there: ${piece}`);
+  }
+  const noneRaw = renderToHtml(createElement(parts.LowCreditNote, { credit: parts.creditView(figures(0)) }));
+  const none = keyLink(noneRaw);
+  assert.ok(none.includes('add your own Anthropic API key'));
+  for (const piece of plain('agent:session.credits.lowNoteNone').split('. ')) {
+    if (piece) assert.ok(none.includes(piece.replace(/\.$/, '')), `the lowNoteNone text is there: ${piece}`);
+  }
+});
+
+// ── 3b. The low-credits check (#4792) ──────────────────────────────────
+
+test('a send with almost nothing left is held for one tap: under $1, or under 10% of the allowance (#4792)', () => {
+  const figures = (remainingCents, limitCents = 5000) => (
+    { limitCents, remainingCents, spentCents: limitCents - remainingCents, byokCents: 0, weekly: true, level: 'ok' }
+  );
+  const view = (remainingCents, limitCents = 5000) => parts.creditView(figures(remainingCents, limitCents));
+  assert.equal(parts.isLowCredit(view(99)), true, '$0.99 of $5 (20%) is low: under a dollar');
+  assert.equal(parts.isLowCredit(view(400, 5000)), true, '$4 of $50 (8%) is low: under 10% of the allowance');
+  assert.equal(parts.isLowCredit(view(100, 500)), false, '$1.00 of $5 (20%) exactly is not low');
+  assert.equal(parts.isLowCredit(view(600, 5000)), false, '$6 of $50 (12%) is not low');
+  assert.equal(parts.isLowCredit(view(0)), true, 'nothing left at all is low');
+  assert.equal(parts.isLowCredit(null), false, 'no figures, no check');
+  assert.equal(parts.isLowCredit(view(1500)), false, 'the yellow pill is not low either');
+
+  parts.resetLowCreditConfirmedForTest();
+  assert.equal(parts.lowCreditConfirmed(), false);
+  assert.equal(parts.needsLowCreditCheck(view(99)), true, 'not yet confirmed: the next send is held');
+  assert.equal(parts.needsLowCreditCheck(view(1500)), false, 'credits with room are never held');
+  assert.equal(parts.needsLowCreditCheck(null), false, 'no figures, nothing to hold');
+  parts.confirmLowCredit();
+  assert.equal(parts.lowCreditConfirmed(), true);
+  assert.equal(parts.needsLowCreditCheck(view(99)), false, 'confirmed: sends go straight through for the rest of the visit');
+  parts.resetLowCreditConfirmedForTest();
+  assert.equal(parts.needsLowCreditCheck(view(99)), true, 'the reset is a fresh page');
+});
+
+test('the low-credits check is the note\'s words in a red strip, with Cancel and Continue beside them (#4792)', () => {
+  const figures = (remainingCents) => ({ limitCents: 5000, remainingCents, spentCents: 5000 - remainingCents, byokCents: 0, weekly: true, level: 'ok' });
+  const check = (credit) => renderToHtml(createElement(parts.LowCreditConfirm, {
+    credit,
+    buttonClass: 'card-button-outlined',
+    primaryClass: 'card-button-filled',
+    onContinue() {},
+    onCancel() {},
+  }));
+
+  const html = check(parts.creditView(figures(60)));
+  assert.match(html, /role="alert"/);
+  assert.match(html, /data-agent-session-low-credit-confirm="true"/);
+  // The sentence is rich text: its tag 0 renders as the real Settings link,
+  // so the catalog string is compared with its markers stripped, as the
+  // LowCreditNote test above does.
+  const words = (id, values) => message(id, values).replace(/<\/?0>/g, '').replace(/\s+/g, ' ').trim();
+  const spoken = (html) => html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+  assert.ok(spoken(html).includes(words('agent:session.credits.lowNote', { amount: '$0.60' })), 'the check speaks the note\'s words');
+  assert.match(html, /href="#settings\/api-key"/, 'the way out is the API key page in Settings');
+  assert.match(html, /class="card-button-outlined"[^>]*>Cancel</, 'Cancel in the outlined card-button style');
+  assert.match(html, /class="card-button-filled"[^>]*>Continue</, 'Continue in the filled card-button style');
+  assert.match(html, /bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950\/40 dark:text-red-300/, 'the red tint of the credits pill');
+  assert.equal((html.match(/type="button"/g) || []).length, 2, 'neither button submits the form');
+
+  const empty = check(parts.creditView(figures(0)));
+  assert.ok(spoken(empty).includes(words('agent:session.credits.lowNoteNone')), 'nothing left says the none-left sentence');
+});
+
 test('the pill is gray in every state and only its ink changes; a bar along its bottom drains from the right', () => {
   const view = (remainingCents) => parts.creditView({ limitCents: 5000, remainingCents, spentCents: 0, byokCents: 0, weekly: true, level: 'ok' });
   const pill = (credit) => renderToHtml(createElement(parts.CreditPill, { credit, onOpen() {} }));
@@ -402,7 +492,7 @@ test('a sent message is one row: its outbox copy goes the moment the server\'s r
       .map((r) => [r.id, r.content]), [[1, ''], [2, 'edited'], [3, '']], 'a read since a rev merges edits and new rows by id');
 
     const src = read('frontend/src/features/agent-session/store.ts');
-    assert.match(src, /const outbox = markStranded\(withoutLanded\(current\.outbox, messages\), inFlight\(\), STRANDED_TEXT\);/,
+    assert.match(src, /const outbox = markStranded\(withoutLanded\(current\.outbox, messages\), inFlight\(\), t\(STRANDED_TEXT\)\);/,
       'every read settles it, not only the turn\'s own end');
 
     // The streamed words stay until the read that brings their saved row.
@@ -444,8 +534,9 @@ test('the attach button draws a paperclip and says it attaches files (#3080)', (
   const panel = read('frontend/src/features/agent-session/index.tsx');
   const button = panel.match(/<button[^>]*?data-agent-session-attach[\s\S]*?<\/button>/);
   assert.ok(button, 'the attach button is still marked data-agent-session-attach');
-  assert.match(button[0], /aria-label="Attach photos or files"/);
-  assert.match(button[0], /title="Attach photos or files"/);
+  assert.match(button[0], /aria-label=\{t\('agent:session\.composer\.attach'\)\}/);
+  assert.match(button[0], /title=\{t\('agent:session\.composer\.attach'\)\}/);
+  assert.equal(message('agent:session.composer.attach'), 'Attach photos or files');
   assert.match(button[0], /<PaperclipIcon className="h-5 w-5" aria-hidden="true" \/>/);
   assert.doesNotMatch(button[0], /PlusIcon/);
 });

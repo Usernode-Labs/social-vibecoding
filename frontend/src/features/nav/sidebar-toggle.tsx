@@ -59,6 +59,7 @@
 
 import { SidebarIcon } from '@/components/ui/icons';
 
+import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { navStore } from './nav-store.js';
 import { clearPeekTimer, enterPeekByMouse, leavePeekByMouse } from './rail-peek';
@@ -97,6 +98,7 @@ export function SidebarToggle() {
   // publishes it before hydration: INITIAL is `true`, and only a press
   // moves it.
   const { railOpen, peek } = useStoreState(navStore);
+  const t = useMessages();
 
   return (
     <button
@@ -105,7 +107,7 @@ export function SidebarToggle() {
       className={TOGGLE_CLASS}
       aria-pressed={railOpen ? 'true' : 'false'}
       aria-controls="platform-tabs"
-      aria-label={railOpen ? 'Hide sidebar' : 'Show sidebar'}
+      aria-label={railOpen ? t('core:rail.hideSidebar') : t('core:rail.showSidebar')}
       // A PRESS ENDS ANY PEEK. Docking the rail makes the peek moot, and
       // left standing it would come straight back as an overlay the moment
       // the next press folded the rail under the same pointer.

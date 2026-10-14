@@ -215,6 +215,58 @@ test('a passing proposal clears the gate and proceeds to claim the merge', async
   }
 });
 
+// 13 Oct 2026 (D1): a project's first version needs no vote. With no yes at
+// all it passes the votes step and waits only on its checks, and says so in
+// its own words rather than "reached the vote threshold"; once they pass it
+// claims the merge.
+function firstVersionPool(checkState, testResults) {
+  return makeRecordingPool([
+    [/AS first_version FROM chat_sessions cs/, [{ first_version: true }]],
+    [/SELECT COUNT\(\*\) as cnt FROM pr_votes/, [{ cnt: '0' }]],
+    [/SELECT check_state, test_results[\s\S]*FROM chat_sessions/, [{ check_state: checkState, test_results: testResults || [], check_error_detail: null }]],
+    [/SET status = 'merging'/, [{ id: 7 }]],
+    [/SELECT \* FROM apps WHERE id/, [{ id: 5, slug: 'whiteboard', self_hosted: false }]],
+    [/SET\s+status = 'merged'/, { rows: [], rowCount: 1 }],
+  ]);
+}
+
+test('D1: a first version with no votes waits only on its checks, and says so', async () => {
+  const { subject, systemMessages, restore } = loadVotes();
+  const p = firstVersionPool('failing', [{ status: 'fail' }]);
+  try {
+    const r = await subject.checkAndMerge({ jwtSecret: 's' }, p, { ...session, id: 71, user_id: 99 });
+    assert.equal(r.merged, false);
+    assert.equal(r.checksBlocked, true, 'past the votes step with no yes at all');
+    assert.equal(r.yesCount, 0);
+    assert.equal(r.needed, 0);
+    assert.ok(systemMessages.some((m) => /is the project's first version, which goes live without a vote, but has 1 test failing\. It goes live once its checks pass\./.test(m)),
+      `said in its own words: ${systemMessages.join(' | ')}`);
+    assert.ok(!systemMessages.some((m) => /reached the vote threshold/.test(m)));
+  } finally {
+    restore();
+  }
+});
+
+test('D1: a first version whose checks passed claims the merge with no votes', async () => {
+  const { subject, restore } = loadVotes();
+  const p = firstVersionPool('passing', [{ status: 'pass' }]);
+  try {
+    const r = await subject.checkAndMerge({ jwtSecret: 's' }, p, { ...session, id: 72, user_id: 99 });
+    assert.equal(r.merged, true);
+    assert.ok(p.queries.some((q) => /SET status = 'merging'/.test(q.sql)), 'claimed the merge');
+    // Any other change with no yes stays where it is.
+    const other = makeRecordingPool([
+      [/SELECT COUNT\(\*\) as cnt FROM pr_votes/, [{ cnt: '0' }]],
+      [/SELECT check_state, test_results[\s\S]*FROM chat_sessions/, [{ check_state: 'passing', test_results: [], check_error_detail: null }]],
+    ]);
+    const held = await subject.checkAndMerge({ jwtSecret: 's' }, other, { ...session, id: 73, user_id: 99 });
+    assert.equal(held.merged, false);
+    assert.equal(held.checksBlocked, undefined, 'it stops at the votes, before the checks');
+  } finally {
+    restore();
+  }
+});
+
 test('admin force-merge bypasses the checks gate', async () => {
   const { subject, restore } = loadVotes();
   // Even with a failing check_state, force=true must merge — and must NOT

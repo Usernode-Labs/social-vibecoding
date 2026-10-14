@@ -41,6 +41,7 @@ import {
   type RefObject,
 } from 'react';
 
+import { useMessages } from '../../lib/i18n/react';
 import { useSpecFrames } from '../../lib/spec-html';
 import { useStoreState } from '../../lib/use-store-state';
 import {
@@ -83,11 +84,6 @@ const POP = { on: 'dc-spec-share-pop', off: 'dc-spec-share-pop hidden' } as cons
 
 const ERR = { on: 'dc-spec-share-error', off: 'dc-spec-share-error hidden' } as const;
 
-const BUILD_HINT
-  = 'This is a plan, not a built change. Ready? Ask the AI in chat to build it.';
-
-const SHARE_USER_LABEL = 'Share to user';
-
 /**
  * Memoised on the STRING so the `{__html}` wrapper keeps its identity across
  * re-renders — React diffs host props by reference and re-assigns `innerHTML`
@@ -119,7 +115,8 @@ function TabButton({ tab, active, label }: {
 }
 
 function Body({ body }: { body: SpecBody }): ReactNode {
-  if (body.kind === 'loading') return <div className={MUTED_BLOCK}>Loading spec…</div>;
+  const t = useMessages('devchat');
+  if (body.kind === 'loading') return <div className={MUTED_BLOCK}>{t('devchat:spec.loading')}</div>;
   if (body.kind === 'empty') return <div className={MUTED_BLOCK}>{body.copy}</div>;
   if (body.kind === 'plain') {
     return <MarkdownBody className="dc-spec-viewer-body" html={body.html} />;
@@ -134,9 +131,9 @@ function Body({ body }: { body: SpecBody }): ReactNode {
           />
         )
         : null}
-      <div className="dc-spec-viewer-tabs" role="tablist" aria-label="Spec sections">
-        <TabButton tab="user" active={body.tab} label="User-facing" />
-        <TabButton tab="tech" active={body.tab} label="Technical" />
+      <div className="dc-spec-viewer-tabs" role="tablist" aria-label={t('devchat:spec.tabs.label')}>
+        <TabButton tab="user" active={body.tab} label={t('devchat:spec.tabs.user')} />
+        <TabButton tab="tech" active={body.tab} label={t('devchat:spec.tabs.technical')} />
       </div>
       {/* An empty-but-present half keeps its tab and says so, so the toggle
           does not appear and disappear between versions. */}
@@ -144,7 +141,7 @@ function Body({ body }: { body: SpecBody }): ReactNode {
         ? <MarkdownBody className="dc-spec-viewer-body" role="tabpanel" html={body.halfHtml} />
         : (
           <div className="dc-spec-viewer-body" role="tabpanel">
-            <p className="dc-spec-tab-empty">Nothing in this section.</p>
+            <p className="dc-spec-tab-empty">{t('devchat:spec.tabs.empty')}</p>
           </div>
         )}
     </>
@@ -156,48 +153,53 @@ function Body({ body }: { body: SpecBody }): ReactNode {
  * marker headings — never the rendered half and never the active tab.
  */
 function CopyButton({ action, raw }: { action: SpecAction; raw: string }): ReactNode {
-  const [label, setLabel] = useState('Copy markdown');
+  const t = useMessages('devchat');
+  // What the last press came to; the label is read from it when it renders.
+  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
   if (action.kind !== 'live') {
     return (
       <button
         className="dc-spec-action-btn dc-spec-copy-btn" disabled
-        title="No spec to copy yet"
-      >Copy markdown</button>
+        title={t('devchat:spec.copy.noneTitle')}
+      >{t('devchat:spec.copy.label')}</button>
     );
   }
   return (
     <button
       id="dc-spec-viewer-copy" className="dc-spec-action-btn dc-spec-copy-btn"
-      title="Copy the whole spec (both sections) as markdown"
+      title={t('devchat:spec.copy.title')}
       onClick={async () => {
         const ok = await ui()?.copyText?.(raw);
-        setLabel(ok ? 'Copied!' : 'Copy failed');
-        if (!ok) ui()?.toast?.('Couldn’t copy. Select the text and copy it manually');
-        setTimeout(() => setLabel('Copy markdown'), 1500);
+        setCopyState(ok ? 'copied' : 'failed');
+        if (!ok) ui()?.toast?.(t('devchat:spec.copy.failedToast'));
+        setTimeout(() => setCopyState('idle'), 1500);
       }}
-    >{label}</button>
+    >{copyState === 'copied'
+      ? t('devchat:spec.copy.copied')
+      : copyState === 'failed' ? t('devchat:spec.copy.failed') : t('devchat:spec.copy.label')}</button>
   );
 }
 
 function GroupShareButton(
   { action, version }: { action: SpecGroupShare; version: number | null },
 ): ReactNode {
+  const t = useMessages('devchat');
   if (action.kind === 'absent') return null;
   if (action.kind === 'blank') {
     return (
       <button
-        className="dc-spec-action-btn" disabled title="No spec version to share yet"
-      >Share to group</button>
+        className="dc-spec-action-btn" disabled title={t('devchat:spec.share.noneTitle')}
+      >{t('devchat:spec.share.toGroup')}</button>
     );
   }
   return (
     <button
       id="dc-spec-viewer-share" className="dc-spec-action-btn" disabled={action.shared}
       title={action.shared
-        ? 'Already shared to group chat'
-        : 'Post a card linking to this spec in the group chat'}
+        ? t('devchat:spec.share.groupSharedTitle')
+        : t('devchat:spec.share.groupTitle')}
       onClick={() => controller()?._shareSpecVersion?.(version)}
-    >{action.shared ? 'Shared' : 'Share to group'}</button>
+    >{action.shared ? t('devchat:spec.share.shared') : t('devchat:spec.share.toGroup')}</button>
   );
 }
 
@@ -224,7 +226,9 @@ function useSharePopover(version: number | null): SharePopover {
   const [value, setValue] = useState('');
   const [error, setError] = useState('');
   const [sending, setSending] = useState(false);
-  const [label, setLabel] = useState(SHARE_USER_LABEL);
+  // Who the spec was just sent to, while the button says so.
+  const [sentTo, setSentTo] = useState<string | null>(null);
+  const t = useMessages('devchat');
   const [names, setNames] = useState<string[]>([]);
   // Picking a suggestion collapses the list until the next keystroke — the
   // one piece of the old `sugBox.innerHTML = ''` dance that was intentional.
@@ -280,25 +284,26 @@ function useSharePopover(version: number | null): SharePopover {
 
   const send = async () => {
     const username = value.trim().replace(/^@/, '');
-    if (!username) { setError('Enter a username'); return; }
+    if (!username) { setError(t('devchat:spec.share.enterUsername')); return; }
     setSending(true);
     const result = await controller()?._shareSpecToUser?.(version, username);
     setSending(false);
     if (!result || !result.ok) {
-      setError((result && result.error) || 'Failed to share');
+      setError((result && result.error) || t('devchat:spec.share.failed'));
       return;
     }
     setError('');
     setPicked(false);
     setValue('');
     const sentName = (result.recipient && result.recipient.username) || username;
-    setLabel(`Sent to @${sentName}`);
+    setSentTo(sentName);
     setOpen(false);
-    setTimeout(() => setLabel(SHARE_USER_LABEL), 2500);
+    setTimeout(() => setSentTo(null), 2500);
   };
 
   return {
-    open, value, error, sending, label, matches,
+    open, value, error, sending, matches,
+    label: sentTo ? t('devchat:spec.share.sentTo', { username: sentTo }) : t('devchat:spec.share.toUser'),
     popRef, btnRef, inputRef,
     // Opening starts clean; closing leaves what was typed alone, exactly as
     // the module's `close()` did.
@@ -319,18 +324,19 @@ function useSharePopover(version: number | null): SharePopover {
 function UserShareButton(
   { action, pop }: { action: SpecAction; pop: SharePopover },
 ): ReactNode {
+  const t = useMessages('devchat');
   if (action.kind === 'absent') return null;
   if (action.kind === 'blank') {
     return (
       <button
-        className="dc-spec-action-btn" disabled title="No spec version to share yet"
-      >Share to user</button>
+        className="dc-spec-action-btn" disabled title={t('devchat:spec.share.noneTitle')}
+      >{t('devchat:spec.share.toUser')}</button>
     );
   }
   return (
     <button
       ref={pop.btnRef} id="dc-spec-viewer-share-user" className="dc-spec-action-btn"
-      title="Privately share this spec version with one person"
+      title={t('devchat:spec.share.userTitle')}
       aria-haspopup="dialog" aria-expanded={pop.open} aria-controls="dc-spec-share-pop"
       onClick={pop.toggle}
     >{pop.label}</button>
@@ -343,14 +349,15 @@ function UserShareButton(
  * button can open it.
  */
 function SharePopoverCard({ pop }: { pop: SharePopover }): ReactNode {
+  const t = useMessages('devchat');
   return (
     <div
       ref={pop.popRef} id="dc-spec-share-pop" className={pop.open ? POP.on : POP.off}
-      role="dialog" aria-label="Share this spec with one person"
+      role="dialog" aria-label={t('devchat:spec.share.dialogLabel')}
     >
       <input
         ref={pop.inputRef} id="dc-spec-share-input" className="dc-spec-share-input"
-        type="text" placeholder="Username…" aria-label="Username to share with"
+        type="text" placeholder={t('devchat:spec.share.usernamePlaceholder')} aria-label={t('devchat:spec.share.usernameLabel')}
         autoComplete="off" spellCheck={false}
         maxLength={32}
         value={pop.value}
@@ -374,7 +381,7 @@ function SharePopoverCard({ pop }: { pop: SharePopover }): ReactNode {
         // The username keeps focus through the press (lib/keyboard-open.ts).
         onMouseDown={(event) => event.preventDefault()}
         disabled={pop.sending} onClick={pop.send}
-      >{pop.sending ? 'Sending…' : 'Send'}</button>
+      >{pop.sending ? t('devchat:spec.share.sending') : t('devchat:spec.share.send')}</button>
     </div>
   );
 }
@@ -383,6 +390,7 @@ export function SpecViewerView({ s }: { s: SpecViewerState }): ReactNode {
   // Hooks run on every render, so the popover's state is held here rather
   // than inside the branch that draws it.
   const pop = useSharePopover(s.kind === 'open' ? s.version : null);
+  const t = useMessages('devchat');
   if (s.kind === 'closed') return null;
   // `userShare` is `absent` for exactly one reason — a non-owner — and the
   // popover is the owner's affordance whether or not the button is live.
@@ -397,20 +405,20 @@ export function SpecViewerView({ s }: { s: SpecViewerState }): ReactNode {
         >
           {s.versions.length
             ? s.versions.map((v) => <option key={v.value} value={v.value}>{v.label}</option>)
-            : <option value="">No versions yet</option>}
+            : <option value="">{t('devchat:spec.noVersions')}</option>}
         </select>
         <CopyButton action={s.copy} raw={s.raw} />
         <UserShareButton action={s.userShare} pop={pop} />
         <GroupShareButton action={s.groupShare} version={s.version} />
         <button
           id="dc-spec-viewer-close" className="dc-spec-viewer-close"
-          aria-label="Close spec viewer"
+          aria-label={t('devchat:spec.close')}
           onClick={() => controller()?.closeSpecViewer?.()}
         >×</button>
         {owner ? <SharePopoverCard pop={pop} /> : null}
       </div>
       <div className="dc-spec-viewer-body-wrap"><Body body={s.body} /></div>
-      {s.buildHint ? <div className="dc-spec-viewer-build-hint">{BUILD_HINT}</div> : null}
+      {s.buildHint ? <div className="dc-spec-viewer-build-hint">{t('devchat:spec.buildHint')}</div> : null}
     </>
   );
 }

@@ -20,6 +20,7 @@
 import { useRef, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { useMessages } from '../../lib/i18n/react';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { adoptKitSurface, type KitAdoption } from '../../lib/kit-surface';
 import { FriendsSection, type FriendsSectionView } from './friends-section';
@@ -39,6 +40,7 @@ export function FriendsSheet({ view, pendingId, status }: {
   pendingId: number | null;
   status: string;
 }): ReactNode {
+  const t = useMessages('profile');
   const rootRef = useRef<HTMLDivElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
 
@@ -73,13 +75,13 @@ export function FriendsSheet({ view, pendingId, status }: {
     <div id="profile-friends-root" ref={rootRef} className={ROOT_CLASS}>
       <div id="profile-friends-sheet" ref={panelRef} className={CARD_CLASS}>
         <div className="flex items-center justify-between gap-3 pt-3">
-          <h2 className="text-lg font-bold">Friends</h2>
+          <h2 className="text-lg font-bold">{t('profile:friends.title')}</h2>
           <Button
             id="profile-friends-close"
             variant="neutral"
             size="sm"
             ink="neutral"
-            aria-label="Close friends"
+            aria-label={t('profile:friends.close')}
             onClick={() => Profile._dismissFriends()}
           >
             {TIMES}

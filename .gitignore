@@ -62,3 +62,8 @@ public/__*.html
 
 # Rebuilt by each image after shell/CSS generation.
 public.precompressed/
+
+# Language packs and the bundled catalog, built from frontend/locales
+# (scripts/language-packs.js)
+public/locales/
+frontend/src/lib/i18n/catalogs.generated.json

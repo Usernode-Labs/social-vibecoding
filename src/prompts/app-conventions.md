@@ -72,6 +72,9 @@ Ordered by how badly an agent working offline gets each one wrong.
    fabricates the answer makes that code path untestable by the gate
    and different for real users. A project's first version is the one
    exception, on `?demo=1` only: see "A first version's populated demo".
+   The shots' fixture accounts are not whoever opened the preview: a
+   state new in a change is seeded in that change, for them or for fake
+   people, as "Who the before & after shots see" says.
 4. **Tables are public by default; mark the sensitive ones private.**
    `COMMENT ON TABLE foo IS 'staging:private'` copies the schema to
    staging without the rows. Use it for auth material, direct messages,
@@ -637,7 +640,9 @@ app's own logic. Three habits keep them apart:
   so attributing seeded rows to them is handing the preview a
   credential production won't have. (A first version's `?demo=1` demo
   may give the viewer rows of their own, within the limits of "A first
-  version's populated demo" above; nothing else may.)
+  version's populated demo" above; nothing else may.) The before & after
+  shots' fixture accounts are not the visitor: "Who the before & after
+  shots see" below says what a seed may give them.
 - **Request-time seeding only behind `?demo=1`.** Never seed from a
   route the app serves normally. A `GET /api/lists` that writes demo
   rows as a side effect leaves no way to ask the app what production
@@ -710,9 +715,26 @@ Two related notes on `path:` form:
 ### Who the before & after shots see
 
 The shots agent signs in as the persona each declared change names, on
-throwaway copies of the app. Three things it cannot do by itself, which
+throwaway copies of the app. Five things it cannot do by itself, which
 account for most changes that end up with no shots:
 
+- **It finds only the data the copies hold.** Each copy is a fresh
+  staging copy that runs its own revision's `IS_STAGING` seed. When the
+  state a change shows is not there, add an idempotent, obviously fake
+  seed for it in the same proposal: the seed reaches the after copy,
+  which is the side a state new in this proposal needs. Seed rows for
+  fake people and for the shots' own accounts, by username
+  (`usernode-capture` is the member; `usernode-capture-admin` and
+  `usernode-shots-full-admin` are the two administrators). That is not
+  "seeding the visitor" (see "Never seed the visitor" above): a fixture
+  account is one named account, not whoever opens the preview. The rest
+  of that rule holds: never seed a signal your code reads to decide
+  something, so a seed never answers the question the change's own code
+  asks ("may this person invite?", "has this user done X?"). A reply
+  from an AI feature is seeded as the stored reply, never asked for: the
+  copies have no model key. A seed cannot help a change to a state that
+  already existed, which both copies need: put the steps that make it in
+  `hints.setup`, or seed it first, in its own proposal.
 - **It has no role in your app.** `member` is an ordinary signed-in member:
   not your app's manager or owner, with no linked wallet and nothing it
   made. When a change shows only to someone with a role, put the real
@@ -721,6 +743,23 @@ account for most changes that end up with no shots:
   whoever opens the preview in seed data (see "Never seed the visitor"
   above). If no in-app path reaches it, declare what a member does see and
   say in the claim what the shots will leave out.
+- **No persona is your app's creator or one of its admins.** Homeroom tells
+  your app who is signed in, never their role in it: `req.user` has no
+  creator or admin field, and no platform call answers "is this the
+  owner?". `read_only_admin` and `full_admin` are Homeroom's own
+  administrators, which your app is not told; it sees them as ordinary
+  signed-in people (only on Homeroom's own proposals are they its
+  administrators). So a screen your code keeps for particular accounts (a
+  username or id written into it, an allowlist, "private to this account")
+  refuses every shots browser, and its changes are skipped. It refuses every
+  other voter who opens the preview too. Do not hard-code people into a
+  screen the project works on: gate it on something a signed-in person can
+  reach through the app's own UI (whoever creates a story edits it) and name
+  that way in `hints.setup`. When a screen must stay with particular people,
+  declare what a member sees and say in the claim what the shots leave out.
+  The response to `declare_visible_changes` warns when a change is declared
+  for an administrator persona, or names a creator, owner or admin screen
+  with no `hints.setup`.
 - **It cannot sign out.** A change that signed-out visitors see is declared
   with persona `guest`. A private app shows a guest only what it shows a
   signed-out visitor outside Homeroom, usually a sign-in page, so declare a
@@ -1238,6 +1277,9 @@ Rules:
 - If both `emoji` and `image` are declared, the image wins; the emoji
   is the fallback should the image file fail validation (missing,
   oversized, wrong format).
+- **Inside the app.** A header that shows the app's own mark shows
+  this icon (its emoji) or no mark at all: never an empty tile.
+  `brand/icon.png` is not served, so the app cannot load it.
 - **Changing the icon is just a PR that edits this block** (and, for
   an image, commits the file). The change takes effect when the PR is
   voted in, merged, and redeployed — not before. Don't mutate the
@@ -2343,10 +2385,10 @@ localize their UI should treat it as the **default** instead of building
 their own detection from `navigator.language` (which reflects the device,
 not the user's Homeroom-level choice). It reaches apps two ways:
 
-**Expect `null` for nearly every user (SV #1556).** The setting is still
-stored and still delivered on both paths below, but the platform shell is
-English-only, so its Settings picker is hidden pending platform i18n and is
-offered only to the few users who had already chosen a language. So make
+**Expect `null` for nearly every user.** The setting is stored and
+delivered on both paths below, but Homeroom's own screens are English only
+for now, so its Settings picker offers just "Auto" (`null`) and English, plus
+whatever language a user had already chosen when it listed more. So make
 device-language fallback the PRIMARY path and the platform tag an override
 when present. Do not build a feature that only works once the user sets a
 platform locale, and do not tell users to go and set one.
@@ -3472,7 +3514,8 @@ committing.
 Use it before declaring a `ui` or `motion` change for before/after shots.
 A declared change must describe a checkpoint you actually reached in the
 local app, including the state the shots agent will need to reach it
-again (put that in `hints.setup`). For backend-only,
+again (put that in `hints.setup`, or seed it as "Who the before & after
+shots see" says). For backend-only,
 refactor, or docs work, rendering may tell you nothing and the browser is
 optional. Chromium only launches on the first browser tool call. Scout and
 sync turns have no browser at all.

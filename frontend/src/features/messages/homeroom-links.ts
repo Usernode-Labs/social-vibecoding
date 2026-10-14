@@ -41,6 +41,8 @@ export interface HomeroomLink {
   issueNumber?: number;
   /** `proposal`: the change's session id, the number in its address. */
   sessionId?: number;
+  /** `proposal`: its pull request's number, for a `dev/changes/<N>` address (#4367). */
+  prNumber?: number;
   /** `governance`: the question's id. */
   proposalId?: number;
   /**
@@ -98,7 +100,8 @@ export function routeOf(url: URL): string {
 }
 
 function page(type: LinkCardType, slug: string, href: string, extra: Partial<HomeroomLink> = {}): HomeroomLink {
-  const ref = extra.issueNumber ?? extra.sessionId ?? extra.proposalId ?? '';
+  const ref = extra.issueNumber ?? extra.sessionId ?? extra.proposalId
+    ?? (extra.prNumber ? `pr${extra.prNumber}` : '');
   return { type, appSlug: slug, href, key: `${type}:${slug}:${ref}`, ...extra };
 }
 
@@ -125,7 +128,7 @@ export function pageOf(route: string): HomeroomLink | null {
   if (section === 'chat') return page('discussion', slug, `${base}/dev/chat`);
   // A list with no id is the card list, which is the hub; an id that does
   // not parse is no card at all, not the list it would fall back to.
-  if (!ref) return ['issues', 'proposals', 'governance', 'sessions', 'shared'].includes(section)
+  if (!ref) return ['issues', 'proposals', 'changes', 'governance', 'sessions', 'shared'].includes(section)
     ? page('hub', slug, `${base}/workshop`)
     : null;
   const n = id(ref);
@@ -138,6 +141,8 @@ export function pageOf(route: string): HomeroomLink | null {
   if (section === 'proposals' || section === 'shared' || section === 'sessions') {
     return page('proposal', slug, `${base}/dev/${section}/${n}`, { sessionId: n });
   }
+  // #4367: a change by its pull request's number.
+  if (section === 'changes') return page('proposal', slug, `${base}/dev/changes/${n}`, { prNumber: n });
   return null;
 }
 
@@ -179,11 +184,13 @@ export function currentOrigin(): string | null {
  */
 export function sameItem(
   link: HomeroomLink,
-  object: { type: string; appSlug?: string; issueNumber?: number; sessionId?: number; proposalId?: number },
+  object: { type: string; appSlug?: string; issueNumber?: number; sessionId?: number; prNumber?: number; proposalId?: number },
 ): boolean {
   if (object.type !== link.type || object.appSlug !== link.appSlug) return false;
   if (link.type === 'issue') return object.issueNumber === link.issueNumber;
-  if (link.type === 'proposal') return object.sessionId === link.sessionId;
+  if (link.type === 'proposal') {
+    return link.prNumber ? object.prNumber === link.prNumber : object.sessionId === link.sessionId;
+  }
   if (link.type === 'governance') return object.proposalId === link.proposalId;
   return true;
 }

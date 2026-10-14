@@ -35,6 +35,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { shellMarkup } = require('./lib/shell-markup');
+const { message } = require('./lib/platform-i18n');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 
@@ -231,7 +232,9 @@ test('the join pill is the marketing URL, from the server, opened externally', (
   // file, href/target/rel together or not at all, and hidden until the server
   // has named the host rather than rendered inert.
   assert.match(tsx, /marketing_url/, 'the site link is read off the same payload');
-  const learn = tsx.slice(tsx.indexOf('Learn more about Homeroom') - 900);
+  assert.equal(message('auth:landing.learnMore'), 'Learn more about Homeroom');
+  assert.ok(tsx.includes("{t('auth:landing.learnMore')}"));
+  const learn = tsx.slice(tsx.indexOf("{t('auth:landing.learnMore')}") - 900);
   assert.match(learn.slice(0, 900), /href=\{siteUrl \|\| undefined\}/);
   assert.match(learn.slice(0, 900), /target=\{siteUrl \? '_blank' : undefined\}/);
   assert.match(learn.slice(0, 900), /rel=\{siteUrl \? 'noopener noreferrer' : undefined\}/);
@@ -405,8 +408,8 @@ test('both "you\'re on the list" surfaces name the registered address (#1537)', 
   const tsx = read(WAITLIST_TSX);
   const panel = tsx.match(/id="waitlist-confirmed-email"[\s\S]{0,400}?<\/p>/);
   assert.ok(panel, '#waitlist-confirmed-email exists');
-  assert.match(panel[0], /\{sentTo\}/);
-  assert.match(panel[0], /Registered with/);
+  assert.match(panel[0], /<RichMessage id="auth:waitlist\.status\.registeredWith" values=\{\{ email: sentTo \}\}/);
+  assert.equal(message('auth:waitlist.status.registeredWith', { email: 'a@b.co' }), 'Registered with <0>a@b.co</0>');
   // Hidden rather than conditionally rendered: the id is part of the shell's
   // inventory, and an empty "Registered with" reads as a bug.
   assert.match(panel[0], /hiddenFirst\(\s*!sentTo/);
@@ -430,12 +433,13 @@ test('both "you\'re on the list" surfaces name the registered address (#1537)', 
   assert.match(more, /const \[signupEmail, setSignupEmail\] = useState\(''\)/);
   const line = more.match(/id="more-signup-email"[\s\S]{0,400}?<\/p>/);
   assert.ok(line, '#more-signup-email exists');
-  assert.match(line[0], /\{email\}/);
-  assert.match(line[0], /Registered with/);
+  assert.match(line[0], /<RichMessage id="auth:more\.registeredWith" values=\{\{ email \}\}/);
+  assert.equal(message('auth:more.registeredWith', { email: 'a@b.co' }), 'Registered with <0>a@b.co</0>');
   assert.match(line[0], /email \? '' : ' hidden'/);
   assert.doesNotMatch(line[0], /mailto:/);
   // Beside the queue pill, inside the form both dapp.json checks select on.
-  const block = more.match(/<form\s+id="more-form"[\s\S]*?Question 1 of 4/);
+  assert.equal(message('auth:more.question', { number: 1, total: 4 }), 'Question 1 of 4');
+  const block = more.match(/<form\s+id="more-form"[\s\S]*?t\('auth:more\.question', \{ number: 1, total: 4 \}\)/);
   assert.ok(block, 'the stage-2 form exists');
   const pillAt = block[0].indexOf('<StatusPill');
   const emailAt = block[0].indexOf('<SignupEmail');

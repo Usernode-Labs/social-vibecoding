@@ -1,6 +1,8 @@
 import { SectionHeading, StatusLine } from '@/components/ui/field';
 import { SwitchRow } from '@/components/ui/switch';
 
+import { RichMessage, useMessages } from '../../../lib/i18n/react';
+
 import { LocalAgentsList } from '../local-agents-list';
 
 /**
@@ -22,12 +24,18 @@ import { LocalAgentsList } from '../local-agents-list';
  * #2779 Agent sessions used to have a switch here too. They are no longer
  * experimental: new work starts in one for everyone, so the switch is gone.
  *
- * #3624 Homeroom bot (default OFF) puts this person on the bot's DM list, or
- * takes them off it: the same list an admin keeps on the bot's dashboard
- * (homeroom_bot_dm_users), so its cap and the weekly allowance per person
- * hold either way. settings.js wires the change handler to
- * POST /api/me/homeroom-bot-dm and paints the switch from /api/auth/me's
- * `homeroomBotDm`; a full list answers 409 and the switch goes back off.
+ * #3624 Homeroom bot used to have a switch here too, while it was tried out
+ * one person at a time. It works for everyone now, so the switch is gone.
+ *
+ * #4289 Comment on the page (default OFF; "Press C to comment on the page"
+ * until 13 Oct 2026, a name with no meaning on a phone) is the one switch
+ * here kept on the DEVICE, not the account: a keyboard shortcut belongs to
+ * the keyboard in front of you. C turns on comment mode, where a click leaves
+ * a comment (../../comment-pin/), and Suggest an improvement opens it too,
+ * with its form one switch away. ../../improve/suggest-settings.ts keeps the
+ * switch (localStorage), and
+ * ../../improve/suggest-shortcut.ts publishes window.UsernodeReact.suggestShortcut,
+ * which settings.js paints and saves the switch through.
  *
  * #907 Local coding agent lives in the same pane (not the CLI section) because
  * it is a preview of the same feature the dev chat's "Run on" selector
@@ -38,41 +46,48 @@ import { LocalAgentsList } from '../local-agents-list';
  * nothing for the overwhelming majority who never run the CLI.
  */
 export function ExperimentalSection() {
+  const t = useMessages('settings');
   return (
     <div data-settings-section="experimental" className="hidden">
       <div id="settings-experimental-section">
-        <SectionHeading title="Experimental">
-          Early features we're still testing. They may change or disappear.
+        <SectionHeading title={t('settings:experimental.title')}>
+          {t('settings:experimental.intro')}
         </SectionHeading>
         <SwitchRow id="ai-progress-estimate">
-          AI progress estimate
+          {t('settings:experimental.progressEstimate.label')}
         </SwitchRow>
         <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
-          While the coding agent works, a small AI model skims its progress log about once a minute and guesses how far along it is and roughly how long is left. It's calibrated against how long real runs actually take, but it's still a guess and can be wrong. Adds a tiny per-run cost (billed to your own API key if you've saved one above).
+          {t('settings:experimental.progressEstimate.description')}
         </p>
         <StatusLine id="ai-progress-estimate-status" size="xs" />
         <div className="mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">
           <SwitchRow id="session-bridge-enabled">
-            Session bridge (run this chat on your computer)
+            {t('settings:experimental.sessionBridge.label')}
           </SwitchRow>
           <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
-            Adds <span className="font-mono">Your computer &middot; Homeroom session</span> to the list of places a session can be built. You keep the platform chat exactly as it is, with the same transcript, branch and proposal, but its turns run through the Homeroom CLI on your own machine, on your own Claude plan. It needs the CLI installed and attached, so it stays off until you ask for it.
+            <RichMessage
+              id="settings:experimental.sessionBridge.description"
+              components={[<span className="font-mono" />]}
+            />
           </p>
           <StatusLine id="session-bridge-status" size="xs" />
         </div>
         <div className="mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">
-          <SwitchRow id="homeroom-bot-dm-enabled">
-            Homeroom bot (build with it in Messages)
+          <SwitchRow id="suggest-shortcut-enabled">
+            {t('settings:experimental.suggestShortcut.label')}
           </SwitchRow>
           <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
-            Create a project and describe what it should do, and Homeroom bot builds the first version. On the projects it works on, it asks you its questions about your requests in Messages, with answers you can tap, and tells you when something is building, ready to vote on, and live. Your answers are still posted on the request, where everyone can see them. You can also write to it to ask what it's working on. The platform pays for its work for you, up to a weekly limit. Turning this off stops it, including on projects it built for you.
+            {t('settings:experimental.suggestShortcut.description')}
           </p>
-          <StatusLine id="homeroom-bot-dm-status" size="xs" />
         </div>
       </div>
       <div id="settings-local-agents-section" className="hidden mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">
-        <SectionHeading title="Local coding agent">
-          Machines running <span className="font-mono">social-vibecoding agent run</span>. While one is attached, that session's spec and coding turns run there on your own Claude subscription instead of on Homeroom. Each turn asks in your terminal before it starts; spec turns are read-only, and after a coding turn Homeroom still opens the pull request, builds the preview and runs the checks. Detaching sends the next turn back to Homeroom.
+        <SectionHeading title={t('settings:experimental.localAgents.title')}>
+          <RichMessage
+            id="settings:experimental.localAgents.intro"
+            values={{ command: 'social-vibecoding agent run' }}
+            components={[<span className="font-mono" />]}
+          />
         </SectionHeading>
         <div id="settings-local-agents-list" className="space-y-2">
           <LocalAgentsList />

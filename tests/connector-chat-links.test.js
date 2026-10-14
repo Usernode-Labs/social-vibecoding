@@ -1,7 +1,9 @@
 // The "set it up in Claude / ChatGPT" links in Settings → Connectors (#1607).
 //
-// The two product walkthroughs under the connector URL are six and seven
-// steps, and the reported cost was reading them: "instructions ... are too
+// The two product walkthroughs under the connector URL are six and four
+// steps (ChatGPT's reworked for #4431, then opened directly at
+// chatgpt.com/plugins for #4433), and the reported cost was reading them:
+// "instructions ... are too
 // long, maybe some link could be provided ... so that they imported the
 // instructions to the chat". These links open a NEW chat pre-loaded with the
 // server URL and the job.
@@ -18,6 +20,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
+const { message } = require('./lib/platform-i18n');
 
 const TSX = 'frontend/src/features/settings/sections/connectors.tsx';
 // #2706: the two walkthroughs are rendered by the pane but written here,
@@ -70,7 +73,10 @@ test('#1607: the href is built from the LIVE connector URL, never hardcoded', ()
   // the field is filled with.
   assert.match(settings, /const connectorUrl = `\$\{window\.location\.origin\}\/mcp`;/);
   assert.match(settings, /urlField\.value = connectorUrl/);
-  assert.match(settings, /\$\{connectorUrl\}/, 'the prompt embeds the derived URL');
+  assert.match(settings, /const chatPrompt = tr\('settings:connectors\.setupPrompt', \{ url: connectorUrl \}\);/,
+    'the prompt embeds the derived URL');
+  assert.match(message('settings:connectors.setupPrompt', { url: 'https://live.example/mcp' }),
+    /The server URL is https:\/\/live\.example\/mcp and/, 'and the sentence carries it where the URL goes');
   assert.match(settings, /connector-open-claude', 'https:\/\/claude\.ai\/new\?q='/);
   assert.match(settings, /connector-open-chatgpt', 'https:\/\/chatgpt\.com\/\?q='/);
   assert.match(settings, /encodeURIComponent\(chatPrompt\)/, 'the prompt is encoded');
@@ -80,7 +86,10 @@ test('#1607: the prompt carries the two facts people get wrong, and nothing secr
   const settings = read(SETTINGS);
   const start = settings.indexOf('const chatPrompt =');
   assert.ok(start > 0, 'the prompt is built in one place');
-  const prompt = settings.slice(start, settings.indexOf('const chatLinks', start));
+  const wired = settings.slice(start, settings.indexOf('const chatLinks', start));
+  // The sentence is one catalog message now; the source hands it one value.
+  assert.match(wired, /^const chatPrompt = tr\('settings:connectors\.setupPrompt', \{ url: connectorUrl \}\);\s*$/);
+  const prompt = message('settings:connectors.setupPrompt', { url: '${connectorUrl}' });
 
   // Dynamic client registration: without this, people go hunting for a client
   // ID and secret that do not exist. It is step 4 of the Claude walkthrough.
@@ -95,6 +104,9 @@ test('#1607: the prompt carries the two facts people get wrong, and nothing secr
   // secret to enter", so that scan flags itself — pin the property that
   // actually matters: the only value interpolated into the prompt is the
   // derived connector URL. Nothing else from the page can reach the link.
+  const catalog = JSON.parse(read('frontend/locales/en/settings.json'))['connectors.setupPrompt'].text;
+  assert.deepEqual([...new Set([...catalog.matchAll(/\{\{(\w+)\}\}/g)].map((m) => m[1]))], ['url'],
+    'the message has one parameter, and the source fills it with connectorUrl');
   const interpolations = [...prompt.matchAll(/\$\{([^}]+)\}/g)].map((m) => m[1].trim());
   assert.deepEqual([...new Set(interpolations)], ['connectorUrl'],
     'only the derived connector URL is interpolated into the prompt');
@@ -110,8 +122,13 @@ test('#1607: the written walkthroughs stay, because a chat cannot click a settin
   // row rather than the old <h4>. It is a slightly stronger check than before:
   // the hint states the step COUNT, so a walkthrough quietly losing steps now
   // fails here too. Whether the route starts open was never the point.
-  assert.match(tsx, /6 steps &middot; also sets up Claude Code/);
-  assert.match(tsx, /7 steps &middot; needs Developer mode/);
+  assert.match(tsx, /<Disclosure title="Claude\.ai" hint=\{t\('settings:connectors\.claude\.hint'\)\}>/);
+  assert.equal(message('settings:connectors.claude.hint'), '6 steps · also sets up Claude Code');
+  // #4431 moved ChatGPT's route to the plugins directory; #4433 opened it
+  // at the directory's own address, and the Developer-mode gate it used to
+  // warn about is gone from the flow.
+  assert.match(tsx, /<Disclosure title="ChatGPT" hint=\{t\('settings:connectors\.chatgpt\.hint'\)\}>/);
+  assert.equal(message('settings:connectors.chatgpt.hint'), '4 steps · in the plugins directory');
   // #2706: still complete, still authoritative, one module further out —
   // and the pane still renders both, which is what the counts above are a
   // promise about. tests/connector-setup-shared.test.js holds the counts
@@ -119,6 +136,15 @@ test('#1607: the written walkthroughs stay, because a chat cannot click a settin
   const steps = read(STEPS_TSX);
   assert.match(tsx, /<ClaudeSetupSteps \/>/);
   assert.match(tsx, /<ChatgptSetupSteps \/>/);
-  assert.match(steps, /Turn on Developer mode\./);
-  assert.match(steps, /Paste your MCP server URL\./);
+  assert.match(steps, /title=\{t\('settings:connectors\.chatgptSteps\.directory\.title'\)\}/);
+  assert.equal(message('settings:connectors.chatgptSteps.directory.title'), 'Open the plugins directory.');
+  assert.match(steps, /chatgpt\.com\/plugins/);
+  assert.match(message('settings:connectors.chatgptSteps.directory.body'), /chatgpt\.com\/plugins/);
+  const chatgptWords = Object.entries(JSON.parse(fs.readFileSync(path.join(__dirname, '../frontend/locales/en/settings.json'), 'utf8')))
+    .filter(([key]) => key.startsWith('connectors.chatgptSteps.')).map(([, entry]) => entry.text).join('\n');
+  assert.doesNotMatch(steps, /Developer mode/);
+  assert.doesNotMatch(chatgptWords, /Developer mode/);
+  assert.doesNotMatch(chatgptWords, /Browse plugins directory/, 'no Settings walk first');
+  assert.match(steps, /title=\{t\('settings:connectors\.claudeSteps\.paste\.title'\)\}/);
+  assert.equal(message('settings:connectors.claudeSteps.paste.title'), 'Paste your MCP server URL.');
 });

@@ -29,6 +29,7 @@
 'use strict';
 
 import { eventBarStore } from './event-bar-store.js';
+import { t } from '../../lib/i18n/runtime';
 
 const TopochainEventContext = {
   _mounted: false,
@@ -174,7 +175,7 @@ const TopochainEventContext = {
     eventBarStore.set({
       mounted: true,
       options: [],
-      placeholder: 'Loading…',
+      placeholder: 'leaderboard:eventBar.loading',
       selectedId: null,
       hero: null,
       history: TopochainEventContext._history,
@@ -260,7 +261,7 @@ const TopochainEventContext = {
     } else {
       TopochainEventContext._detail = null;
       TopochainEventContext._detailError = (data && data.error)
-        || 'Failed to load this event.';
+        || t('leaderboard:eventBar.loadFailed');
     }
     TopochainEventContext._renderHero();
   },
@@ -279,13 +280,13 @@ const TopochainEventContext = {
   _renderOptions() {
     const events = TopochainEventContext._events;
     if (!events.length) {
-      eventBarStore.set({ options: [], placeholder: 'No events', selectedId: null, currentSeasonId: null });
+      eventBarStore.set({ options: [], placeholder: 'leaderboard:eventBar.noEvents', selectedId: null, currentSeasonId: null });
       return;
     }
     eventBarStore.set({
       options: events.map((ev) => ({
         id: ev.id,
-        label: `${ev.name}${TopochainEventContext._tagFor(ev)}`,
+        label: TopochainEventContext._labelFor(ev),
         seasonId: Number.isInteger(ev.season_id) ? ev.season_id : null,
       })),
       placeholder: null,
@@ -306,12 +307,13 @@ const TopochainEventContext = {
   // standings are the whole season's, so "(past)" is both wrong and — since it
   // is the default selection — the first thing a reader sees. Its own window
   // has usually closed while the season is still the dataset everyone means.
-  _tagFor(ev) {
+  _labelFor(ev) {
     const isSeason = !!(window.TopochainEvents
       && TopochainEvents.isSeasonAggregate(ev));
-    if (isSeason) return ' (season)';
-    if (ev.is_current) return ' (current)';
-    return ev.is_active ? '' : ' (past)';
+    const event = `${ev.name}`;
+    if (isSeason) return t('leaderboard:eventBar.option.season', { event });
+    if (ev.is_current) return t('leaderboard:eventBar.option.current', { event });
+    return ev.is_active ? event : t('leaderboard:eventBar.option.past', { event });
   },
 
   // The hero, as one of four tagged shapes. Every branch of the string version
@@ -343,8 +345,9 @@ const TopochainEventContext = {
         : (ev.is_active
           ? 'bg-amber-500/20 text-amber-800 dark:text-amber-300'
           : 'bg-zinc-500/20 text-zinc-500 dark:text-zinc-400'));
-    const statusLabel = isSeason ? 'season'
-      : (ev.is_current ? 'active now' : (ev.is_active ? 'active' : 'past'));
+    const statusLabel = isSeason ? t('leaderboard:eventBar.status.season')
+      : (ev.is_current ? t('leaderboard:eventBar.status.activeNow')
+        : (ev.is_active ? t('leaderboard:eventBar.status.active') : t('leaderboard:eventBar.status.past')));
     const fmt = (iso) => (iso
       ? new Date(iso).toLocaleDateString(undefined,
         { year: 'numeric', month: 'short', day: 'numeric' })
@@ -357,8 +360,11 @@ const TopochainEventContext = {
         statusClass,
         description: ev.description ? String(ev.description) : null,
         // An en dash between the two dates, as the `&ndash;` entity drew.
-        dates: `${fmt(ev.starts_at)} – ${fmt(ev.ends_at)}`,
-        participants: ev.users_count != null ? ` · ${ev.users_count} taking part` : null,
+        // One line: the dates, and how many take part when that is known.
+        dates: ev.users_count != null
+          ? t('leaderboard:eventBar.datesTakingPart',
+            { start: fmt(ev.starts_at), end: fmt(ev.ends_at), count: Number(ev.users_count) })
+          : t('leaderboard:eventBar.dates', { start: fmt(ev.starts_at), end: fmt(ev.ends_at) }),
         seasonNote: isSeason,
         fallbackNote: !!TopochainEventContext._endedFallback,
       },
@@ -373,3 +379,13 @@ const TopochainEventContext = {
 // frontend/scripts/build-shell.mjs evaluates the island's whole module graph
 // in Node, where there is no window.
 if (typeof window !== 'undefined') window.TopochainEventContext = TopochainEventContext;
+
+// The option labels and the hero's words are read when they are drawn, so a
+// new language draws them again from the same events.
+if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+  document.addEventListener('homeroom:language-changed', () => {
+    if (!TopochainEventContext._mounted) return;
+    if (TopochainEventContext._events.length) TopochainEventContext._renderOptions();
+    if (TopochainEventContext._detail) TopochainEventContext._renderHero();
+  });
+}

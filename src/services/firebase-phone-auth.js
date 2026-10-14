@@ -73,6 +73,15 @@
  *     testNumbersOn re-checks the environment. With only the code set, phone
  *     sign-in is offered and any other number is refused; with Firebase set
  *     up too, other numbers text.
+ *     The one exception to "never where NODE_ENV is production" is a before
+ *     & after shots copy of Homeroom (docs/proposal-visuals/
+ *     before-after-shots.md). It runs the production image, so the code
+ *     arrives as SHOTS_PHONE_TEST_CODE instead: a random code per run, put
+ *     only on that run's two internal-only, throwaway copies by the deployed
+ *     platform (shots-environment.js), and honoured only where USERNODE_ENV
+ *     is 'staging' (config.js shotsPhoneTestCodeFrom). testNumbersAllowed
+ *     re-checks that too, so a USERNODE_ENV=production server never turns
+ *     test numbers on, whatever its config object carries.
  *   A one-time code a full admin mints for one number (test-accounts.js
  *     mintPhoneSignIn; the connector's create_test_phone_sign_in, registered
  *     for a full admin's connector only; Admin → Test accounts). Works in any
@@ -94,6 +103,7 @@ const bcrypt = require('bcrypt');
 const log = require('./logger');
 const { parseServiceAccount } = require('./mobile-push-provider');
 const emailSignup = require('./email-signup');
+const { shotsPhoneTestCodeFrom } = require('../config');
 
 const IDENTITY_ENDPOINT = 'https://identitytoolkit.googleapis.com/v1';
 const ADMIN_APP_NAME = 'social-phone-auth';
@@ -125,6 +135,11 @@ class PhoneAuthError extends Error {
     this.name = 'PhoneAuthError';
     this.code = code;
     this.status = status;
+    // The provider's own code when one was given (identityToolkitError, the
+    // Admin SDK's verify refusal): this API's code deliberately hides which
+    // Firebase knob failed, and the failure log (Admin → SMS delivery)
+    // needs it. Null for refusals decided here (phone_in_use, bad replay).
+    this.providerCode = null;
   }
 }
 
@@ -180,18 +195,24 @@ const TEST_TOKEN_TTL_MS = 5 * 60 * 1000;
 // client cannot forge one to skip the code on the idToken path.
 const TEST_TOKEN_KEY = crypto.randomBytes(32);
 
-// The same rule config.js applies when it reads PHONE_TEST_CODE, read again
-// from the environment itself, so a config object built anywhere else still
-// cannot turn test numbers on in production.
-function productionEnv(env = process.env) {
-  return env.NODE_ENV === 'production' || env.USERNODE_ENV === 'production';
+// The same rules config.js applies when it reads PHONE_TEST_CODE and
+// SHOTS_PHONE_TEST_CODE, read again from the environment itself, so a config
+// object built anywhere else still cannot turn test numbers on in production.
+// USERNODE_ENV=production: never. NODE_ENV=production, which the platform
+// image sets wherever it runs: only on a shots copy (USERNODE_ENV=staging),
+// and only with the very code the platform gave that copy.
+function testNumbersAllowed(config, env = process.env) {
+  if (env.USERNODE_ENV === 'production') return false;
+  if (env.NODE_ENV !== 'production') return true;
+  const shots = shotsPhoneTestCodeFrom(env).code;
+  return !!shots && sameCode(config.phoneTestCode, shots);
 }
 
 function testNumbersOn(config) {
   return !!(config
     && typeof config.phoneTestCode === 'string'
     && TEST_CODE_RE.test(config.phoneTestCode)
-    && !productionEnv());
+    && testNumbersAllowed(config));
 }
 
 function isTestNumber(phoneNumber) {
@@ -305,20 +326,24 @@ function identityToolkitError(data, status, path = null) {
   // 404 for a method that does not exist) is otherwise indistinguishable
   // from any other unmapped refusal.
   log.warn('phone-auth', 'Identity Toolkit refused', { path, status, code });
+  const withProvider = (err) => {
+    if (/^[A-Z][A-Z0-9_]{0,63}$/.test(code)) err.providerCode = code;
+    return err;
+  };
   if (code === 'INVALID_CODE' || code === 'SESSION_EXPIRED'
       || code === 'CODE_EXPIRED' || code === 'INVALID_SESSION_INFO') {
-    return new PhoneAuthError('invalid_or_expired_code', 'Invalid or expired code.');
+    return withProvider(new PhoneAuthError('invalid_or_expired_code', 'Invalid or expired code.'));
   }
   if (code === 'TOO_MANY_ATTEMPTS_TRY_LATER') {
-    return new PhoneAuthError('too_many_attempts', 'Too many attempts. Try again later.', 429);
+    return withProvider(new PhoneAuthError('too_many_attempts', 'Too many attempts. Try again later.', 429));
   }
   if (code === 'INVALID_PHONE_NUMBER') {
-    return new PhoneAuthError('invalid_phone', 'Enter a valid phone number.');
+    return withProvider(new PhoneAuthError('invalid_phone', 'Enter a valid phone number.'));
   }
   if (RECAPTCHA_REFUSALS.has(code)) {
-    return new PhoneAuthError('recaptcha_required', 'We could not check that you are a person. Try again.');
+    return withProvider(new PhoneAuthError('recaptcha_required', 'We could not check that you are a person. Try again.'));
   }
-  return new PhoneAuthError('firebase_unreachable', 'Could not reach the sign-in service. Try again.', 502);
+  return withProvider(new PhoneAuthError('firebase_unreachable', 'Could not reach the sign-in service. Try again.', 502));
 }
 
 // The bare POST: { ok, status, data }, throwing only when no answer came
@@ -599,8 +624,12 @@ async function verifyIdToken(pool, config, rawToken, deps = {}) {
       const verifier = deps.auth || adminAuth(config, deps);
       payload = await verifier.verifyIdToken(rawToken);
     } catch (err) {
-      log.warn('phone-auth', 'ID token verification failed', { err: err.message });
-      throw badToken();
+      log.warn('phone-auth', 'ID token verification failed', { err: err.message, code: err.code });
+      // The Admin SDK's own code ('auth/id-token-expired', 'auth/argument-error'
+      // …) is the operator's diagnosis; the caller still gets the bare 502.
+      const refusal = badToken();
+      if (typeof err.code === 'string' && err.code) refusal.providerCode = err.code;
+      throw refusal;
     }
     if (payload?.firebase?.sign_in_provider !== 'phone') throw badToken();
     phoneNumber = normalizePhone(payload.phone_number);
@@ -649,6 +678,13 @@ async function cleanupExpired(pool) {
     await pool.query("DELETE FROM oauth_signup_sessions WHERE expires_at < NOW() - INTERVAL '1 hour'");
   } catch (err) {
     log.warn('phone-auth', 'Expired phone sign-in state cleanup failed', { err: err.message });
+  }
+  // The failure log's own reap, in its own try: a missing table (a test
+  // schema without it) must not skip the state cleanup above.
+  try {
+    await pool.query("DELETE FROM phone_auth_failures WHERE created_at < NOW() - INTERVAL '30 days'");
+  } catch (err) {
+    log.warn('phone-auth', 'Failure log cleanup failed', { err: err.message });
   }
 }
 
@@ -908,6 +944,7 @@ module.exports = {
   PhoneAuthError,
   offered,
   firebaseOffered,
+  testNumbersAllowed,
   testNumbersOn,
   isTestNumber,
   usesTestNumber,

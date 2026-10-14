@@ -15,31 +15,47 @@
 //     next light one (triage, DM, follow-up) instead of holding the run.
 //     And at most eight trials in flight across every run, counting the ones
 //     restart recovery is finishing.
-//   * Never while the live bot's live builds (ones a person is waiting for)
-//     use every build slot it has (homeroom-bot isLiveLaneSaturated): the
-//     benchmark waits for them, not the other way round. Shadow builds do
-//     not hold it back; they are experiments too. A later change's side
-//     builds (services/bot-configs.js, kind `bot_config_later`) take only
-//     the build slots live builds leave free: those in flight count beside
-//     the live builds against the bot's build concurrency.
+//   * Never while the live bot's live work (the requests a person is waiting
+//     for, read or built) fills every live slot it has, `liveAtOnce`
+//     (homeroom-bot isLiveLaneSaturated): the benchmark waits for it, not
+//     the other way round. Shadow builds do not hold it back; they are
+//     experiments too. A later change's side builds (services/bot-configs.js,
+//     kind `bot_config_later`) take only the live slots live work leaves
+//     free: those in flight count beside the live work against `liveAtOnce`.
+//     It was the bot's build concurrency (2) until 9 Oct 2026, from when live
+//     builds had only that many slots; once they had `liveAtOnce` (12), any
+//     two live builds held every side build back, and none started for hours
+//     with twenty queued.
 //   * The cap. Before a trial is claimed, what the run has spent, plus the
 //     estimate of every trial still under way, plus this trial's estimate
 //     (catalog.estimateTrialCost, deliberately pessimistic), must stay inside
 //     the run's cap; the first trial that would cross it ends the run's
-//     scheduling, and every trial not yet run is marked `skipped_cap`. The
+//     scheduling, and every trial not yet run is marked `skipped_cap` (a
+//     side build's result with it, skipped: capRun). A trial that goes on
+//     from what it kept after a restart is counted at what is still to come
+//     of its estimate, less what its kept work cost (keptSpend), which its
+//     run was charged already. The
 //     bench user's own weekly allowance is checked too, as a backstop. What
 //     a trial already under way spends cannot be stopped mid-turn (usage is
 //     only known when the turn ends), so the cap can be overrun by at most
 //     the overrun of the trials in flight at that moment.
 //   * Resumable. Trials are rows, and a trial's session is on its row from
 //     the moment it opens. A restart that interrupts a trial does one of
-//     two things (server.js adoptOrphanWorker):
+//     three things (server.js adoptOrphanWorker):
 //       - its turn is the last one the trial needs (a triage, a follow-up,
 //         a checks fix, or a build's build turn) and its worker is still
 //         running it: recovery follows the turn's journal to its end and
 //         the trial is finished here (finishRecoveredTrial), through the
 //         same finisher a trial run start to end uses (recordTrial), held
 //         in this lane's slots while it runs;
+//       - a first version's or a configuration's side build's turn, any of
+//         them (its triage, spec, build, or a review's fix), with its worker
+//         still running it: followed to its end too, what it produced kept
+//         on the trial's checkpoint, and the trial handed back to go on from
+//         there (handBackTrial), costing it no claim. Its next claim reviews
+//         a kept build its configuration's reviewer has not seen, or records
+//         a review the restart cut short, as recovery does a live first
+//         version's (runner.goOnFromKept);
 //       - anything else (a build's spec turn, a DM conversation, a worker
 //         that is gone): the turn is abandoned and the trial goes back to
 //         `pending` at once (releaseTrial), what the interrupted attempt
@@ -54,7 +70,9 @@
 //
 // Branches: a trial's `bench/` branch is deleted when it ends unless it
 // holds commits (a build, a revision), which are kept BRANCH_KEEP_DAYS for
-// a person to look at; the diff the judge reads is stored on the trial.
+// a person to look at; the diff the judge reads is stored on the trial. A
+// later change's side build's is kept while its pair waits for a pick, up
+// to BRANCH_KEEP_WAITING_DAYS.
 
 const crypto = require('crypto');
 const log = require('../logger');
@@ -64,6 +82,7 @@ const dmSim = require('./dm-sim');
 const taste = require('./taste');
 const progress = require('./progress');
 const snapshots = require('../homeroom-bot-snapshots');
+const drain = require('../homeroom-bot-drain');
 
 const MAX_CONCURRENCY = 8;
 // Heavy stages: at most this many of one run's at once.
@@ -86,7 +105,19 @@ const DEFAULT_REPEATS = 3;
 // screenshots again.
 const SINGLE_ATTEMPT_STAGES = Object.freeze(['build', 'spec', 'capture']);
 const MAX_CLAIMS = 2;
+// A trial that goes on from its checkpoint may be put back this many times
+// by restarts that lost nothing (a capture, a review settled, a turn whose
+// worker was gone before it spent anything) without spending a claim, as a
+// live first version's review is carried on up to MAX_REVIEW_RESUMES times.
+// Until 13 Oct 2026 each spent one, so two restarts in its screenshot step
+// failed a trial whose build and review were kept.
+const MAX_FREE_RESTARTS = 3;
 const BRANCH_KEEP_DAYS = 7;
+// A side build's branch whose pair still waits for a pick is kept past
+// BRANCH_KEEP_DAYS, so the pair's compare link opens, but not for good: it
+// sits on the live project's own repository. After this, the pair shows the
+// diff stored on its trial (bot-configs.js diffSummary).
+const BRANCH_KEEP_WAITING_DAYS = 30;
 const IDLE_MS = 60 * 1000;
 const SWEEP_EVERY_MS = 10 * 60 * 1000;
 // How long a claimed trial may go without this process holding it before
@@ -591,6 +622,9 @@ async function studioContext(pool, config, row, settings) {
     out.harnessOf = require('../homeroom-bot-live').recipeHarness;
     out.configVersionId = version.id;
     if (botConfigs.reviews(recipe)) out.reviewer = recipe.reviewer;
+    // Its build-speed tweaks, which a first version's build applies.
+    const tweaks = botConfigs.tweaksOf(recipe);
+    if (tweaks.length) out.tweaks = tweaks;
     if (recipe.pack && !row.context_pack_id) {
       const packs = require('./packs');
       const pack = await packs.packRow(pool, recipe.pack);
@@ -626,11 +660,36 @@ async function noteSession(pool, trialId, sessionId, { baseSha = null, branch = 
   }
 }
 
-/** A first version, which keeps a checkpoint and goes on from it after a restart; a reference build has no turns to keep. */
+/**
+ * A trial that keeps a checkpoint and goes on from it after a restart: a
+ * first version, and a configuration's side build (services/bot-configs.js),
+ * of a first version or of a later change (runner.sideBuildStage,
+ * laterSideBuildStage). A reference build has no turns to keep. Pure.
+ *
+ * Side builds were run again from the start until 7 Oct 2026, when restarts
+ * every 3 to 15 minutes left almost none of them able to finish.
+ */
 function goesOnAfterRestart(row) {
-  // A side build (services/bot-configs.js) is run again instead: its turns
-  // are not the first-version stage's.
-  return !!row && row.stage === 'first_version' && !row.reference_label && !row.bot_config_version_id;
+  if (!row || row.reference_label) return false;
+  // A build's too, since 13 Oct 2026: its spec is kept (runner.replayBuildStage);
+  // and a DM conversation's, each turn it finished (dm-sim.js dmStage).
+  return row.stage === 'first_version' || row.stage === 'build' || row.stage === 'dm';
+}
+
+/**
+ * Whether a recovered turn is kept and its trial handed back to go on
+ * (handBackTrial), rather than finished here: any turn of a trial that goes
+ * on after a restart, but a plain build's build turn, which is its last
+ * and is finished as it always was (runner.recoverStage). Pure.
+ */
+function handsBack(row, activeTurn) {
+  if (!goesOnAfterRestart(row)) return false;
+  return !(row.stage === 'build' && !row.bot_config_version_id && activeTurn?.mode === 'build');
+}
+
+/** Whether a trial's turns are told apart as a side build's (runner.sideTurnOf: no triage). Pure. */
+function turnsAsSide(row) {
+  return !!row?.bot_config_version_id || row?.stage === 'build';
 }
 
 /**
@@ -646,10 +705,42 @@ async function saveCheckpoint(pool, trialId, part) {
   );
 }
 
-/** How many of a first version's sub-steps its checkpoint holds: each is progress a restart did not lose. Pure. */
+/**
+ * How many of a trial's sub-steps its checkpoint holds: each is progress a
+ * restart did not lose. A review counts once it has begun, and then each
+ * step of it its state records (its first capture, each round's verdict and
+ * fix) and a fix turn recovery followed for it: a restart in a review
+ * carries it on from there (runner.goOnFromKept), so one that came after a
+ * step was saved loses nothing and costs no claim. Pure.
+ */
 function stepsKept(checkpoint) {
   const cp = checkpoint || {};
-  return ['triage', 'spec', 'build'].filter((k) => cp[k]).length;
+  const parts = ['triage', 'spec', 'build', 'review'].filter((k) => cp[k]).length + (Number(cp.dm?.turns) || 0);
+  const rounds = Array.isArray(cp.review?.rounds) ? cp.review.rounds : [];
+  const reviewSteps = (cp.review?.round0 ? 1 : 0) + rounds.filter((r) => r && r.verdict).length + rounds.filter((r) => r && r.fix).length;
+  return parts + reviewSteps + (cp.recoveredFix ? 1 : 0);
+}
+
+/** The sessions whose work a trial's checkpoint keeps: its triage, spec, build and review. Pure. */
+function keptSessions(checkpoint) {
+  const cp = checkpoint || {};
+  const dmSessions = Array.isArray(cp.dm?.sessionIds) ? cp.dm.sessionIds : [];
+  return new Set([cp.triage?.session_id, cp.spec?.sessionId, cp.build?.sessionId, cp.reviewSessionId, ...dmSessions].filter(Boolean).map(Number));
+}
+
+/**
+ * What a trial that goes on from its checkpoint has already spent on the
+ * work it keeps (keptSessions), as its run was charged for it (`charged`,
+ * releaseTrial): the part of its estimate it will not spend again. What an
+ * interrupted attempt threw away is not in it; that work is still to come.
+ * Zero for a trial with no checkpoint. Pure.
+ */
+function keptSpend(checkpoint) {
+  const cp = checkpoint || {};
+  const charged = cp.charged && typeof cp.charged === 'object' ? cp.charged : {};
+  let sum = 0;
+  for (const id of keptSessions(cp)) sum += Math.max(Number(charged[String(id)]) || 0, 0);
+  return sum;
 }
 
 /**
@@ -663,7 +754,7 @@ function stepsKept(checkpoint) {
 async function unchargedSpend(pool, checkpoint, { sessionIds = [], skip = [] } = {}) {
   const cp = checkpoint || {};
   const already = cp.charged && typeof cp.charged === 'object' ? cp.charged : {};
-  const kept = new Set([cp.triage?.session_id, cp.spec?.sessionId, cp.build?.sessionId].filter(Boolean).map(Number));
+  const kept = keptSessions(cp);
   const skipped = new Set(skip.map(Number));
   const ids = [...new Set([...(Array.isArray(cp.sessions) ? cp.sessions : []), ...sessionIds]
     .filter((x) => x != null).map(Number))].filter((id) => !skipped.has(id));
@@ -705,8 +796,9 @@ async function executeTrial(pool, config, trialRow, deps = {}) {
     const task = { id: row.task_id, stage: row.stage, reference: row.reference || {}, tags: row.tags || {} };
     const studio = await studioContext(pool, config, row, settings);
     const model = studio.stageModels ? studio.stageModels.build : row.model;
-    // A first version goes on after a restart from what it kept ("After a
-    // restart", below), the skills it already reached for included.
+    // A first version or a side build goes on after a restart from what it
+    // kept ("After a restart", below), the skills it already reached for
+    // included.
     const resumes = goesOnAfterRestart(row);
     // Every write to its checkpoint, one after another, each with the skills
     // and looks seen by the time it is written: a later write never lands
@@ -720,6 +812,8 @@ async function executeTrial(pool, config, trialRow, deps = {}) {
     watch = progress.tracker(pool, row.id, {
       log, skills: resumes ? row.checkpoint?.skills : null, looks: resumes ? row.checkpoint?.looks : null,
       ...(resumes ? { keep: keepOnTrial } : {}),
+      // Its whole transcript too (bench_trial_lines), every claim's.
+      transcript: {},
     });
     const cancelled = () => !!inFlight.get(row.id)?.cancelled;
     patch = await runner.runStage({
@@ -905,9 +999,19 @@ async function deleteBranch(pool, github, repoUrl, branch, trialId) {
   }
 }
 
-/** Kept branches past their time, deleted. Throttled; never throws. */
+/**
+ * Kept branches past their time, deleted. A side build's whose pair still
+ * waits for a pick is kept on, as recordTrial says it is, until the pair is
+ * picked (or left out) or BRANCH_KEEP_WAITING_DAYS pass: before, the sweep
+ * took it at seven days like any other, and the pair's compare link stopped
+ * opening while the pair still waited. Throttled; never throws.
+ */
 async function sweepBranches(pool, deps = {}, now = Date.now()) {
   if (now - lastSweepAt < SWEEP_EVERY_MS && !deps.force) return 0;
+  // Each deletion spends the bot token's hourly budget, and nothing waits on
+  // it: under the reserve it waits for the reset, checked again each tick.
+  const githubBudget = require('../github-budget');
+  if (!githubBudget.budgetAllows('background')) return 0;
   lastSweepAt = now;
   const github = runner.guardedGithub(deps.github || require('../github'));
   const { rows } = await pool.query(
@@ -918,11 +1022,17 @@ async function sweepBranches(pool, deps = {}, now = Date.now()) {
       WHERE tr.build_branch IS NOT NULL AND tr.branch_deleted_at IS NULL
         AND tr.kept_at IS NULL
         AND tr.finished_at < NOW() - make_interval(days => $1)
+        AND (tr.finished_at < NOW() - make_interval(days => $2)
+             OR NOT EXISTS (
+               SELECT 1 FROM bot_config_results cr
+                 JOIN bot_config_pairs p ON p.side_result_id = cr.id
+                WHERE cr.trial_id = tr.id AND p.status = 'waiting'))
       ORDER BY tr.id LIMIT 50`,
-    [BRANCH_KEEP_DAYS],
+    [BRANCH_KEEP_DAYS, BRANCH_KEEP_WAITING_DAYS],
   );
   let n = 0;
   for (const r of rows) {
+    if (!githubBudget.budgetAllows('background')) return n;
     // eslint-disable-next-line no-await-in-loop
     if (await deleteBranch(pool, github, r.repo_url, r.build_branch, r.id)) n += 1;
   }
@@ -943,6 +1053,7 @@ async function sweepBranches(pool, deps = {}, now = Date.now()) {
   );
   const bot = require('../homeroom-bot');
   for (const r of firsts) {
+    if (!githubBudget.budgetAllows('background')) return n;
     const repo = bot.parseRepo(r.repo_url);
     if (!repo) continue;
     try {
@@ -997,15 +1108,17 @@ async function releaseStale(pool, settings) {
  * second caller for the same interruption changes and charges nothing.
  * Resolves the trial's new status, or null when it was not released.
  *
- * A first version with a checkpoint goes on from it rather than starting
- * again, as the bot's own builds do (homeroom-bot.js handBackRun): every
- * session it opened is charged once, the part whose work it keeps counted as
- * its own and the rest as interrupted; the time this claim ran is added to
- * prior_ms; and a restart that cost it no kept work (the checkpoint holds
- * more sub-steps than at its last hand-back) does not spend a claim, so only
- * an interruption that loses work counts toward the second that fails it.
+ * A first version or a side build with a checkpoint goes on from it rather
+ * than starting again, as the bot's own builds do (homeroom-bot.js
+ * handBackRun): every session it opened is charged once, the part whose work
+ * it keeps counted as its own and the rest as interrupted; the time this
+ * claim ran is added to prior_ms; and a restart that cost it no kept work
+ * (the checkpoint holds more sub-steps than at its last hand-back), or that
+ * lost nothing at all (none of its spend thrown away: up to
+ * MAX_FREE_RESTARTS times), does not spend a claim, so only an interruption
+ * that loses work counts toward the second that fails it.
  */
-async function releaseTrial(pool, { trialId, sessionId = null, why = 'interrupted', deps = {} }) {
+async function releaseTrial(pool, { trialId, sessionId = null, why = 'interrupted', noTurnLost = false, deps = {} }) {
   const { rows: [held] } = await pool.query(
     `SELECT checkpoint FROM bench_trials
       WHERE id = $1 AND status = 'running' AND session_id IS NOT DISTINCT FROM $2::int`,
@@ -1021,10 +1134,18 @@ async function releaseTrial(pool, { trialId, sessionId = null, why = 'interrupte
     const spend = await unchargedSpend(pool, cp, { sessionIds: [sessionId] });
     ({ cost, interrupted } = spend);
     const kept = stepsKept(cp);
-    free = kept > (Number(cp.handedBackAt) || 0);
+    const progressed = kept > (Number(cp.handedBackAt) || 0);
+    // Nothing kept since, but nothing lost either: no turn thrown away (the
+    // caller knows: `noTurnLost`; a lost turn's spend may not be priced yet)
+    // and none of its spend. Free, a few times.
+    const lostNothing = !progressed && noTurnLost && !(interrupted > 0)
+      && (Number(cp.freeRestarts) || 0) < MAX_FREE_RESTARTS;
+    free = progressed || lostNothing;
     update = {
       charged: { ...(cp.charged || {}), ...spend.charged },
-      ...(free ? { handedBackAt: kept, handBacks: (Number(cp.handBacks) || 0) + 1 } : {}),
+      ...(progressed ? { handedBackAt: kept } : {}),
+      ...(lostNothing ? { freeRestarts: (Number(cp.freeRestarts) || 0) + 1 } : {}),
+      ...(free ? { handBacks: (Number(cp.handBacks) || 0) + 1 } : {}),
     };
   } else {
     const usage = sessionId ? await runner.sessionUsage(pool, sessionId).catch(() => null) : null;
@@ -1124,7 +1245,8 @@ async function releaseOrphaned(pool, deps = {}) {
   let n = 0;
   for (const r of rows) {
     // eslint-disable-next-line no-await-in-loop
-    if (await releaseTrial(pool, { trialId: r.id, sessionId: r.session_id, why: 'no process or turn holds it', deps })) n += 1;
+    // No turn left on its session: none was thrown away.
+    if (await releaseTrial(pool, { trialId: r.id, sessionId: r.session_id, why: 'no process or turn holds it', noTurnLost: true, deps })) n += 1;
   }
   return n;
 }
@@ -1138,6 +1260,10 @@ async function releaseOrphaned(pool, deps = {}) {
 // followed: what it produced is kept on the trial's checkpoint, and the
 // trial handed back to the lane, whose next claim goes on from there
 // (runner.firstVersionStage), as the bot's own builds do after a restart.
+// A configuration's side build is followed the same way through its spec
+// turn, its build turn and a review's fix turn (runner.sideTurnOf), and its
+// next claim goes on from what was kept (runner.sideBuildStage,
+// laterSideBuildStage). One whose worker is gone is released as before.
 
 /** The running trial a session belongs to, and whether its turn can be finished. */
 async function recoveryPlan(pool, session, activeTurn) {
@@ -1165,9 +1291,12 @@ async function recoveryPlan(pool, session, activeTurn) {
  */
 function holdRecoveredTrial(trial, sessionId, recovery) {
   if (!trial || inFlight.has(trial.id)) return Promise.resolve(recovery);
+  // As a claim counts it: what is still to come of its estimate, less what
+  // its kept work cost (keptSpend), and a later change's side build among
+  // the live slots it takes.
   const entry = {
-    runId: trial.run_id, est: Number(trial.est_cost_usd) || 0, sessionId, promise: null,
-    heavy: HEAVY_STAGES.includes(trial.stage), recovered: true,
+    runId: trial.run_id, est: Math.max((Number(trial.est_cost_usd) || 0) - keptSpend(trial.checkpoint), 0), sessionId, promise: null,
+    heavy: HEAVY_STAGES.includes(trial.stage), recovered: true, laterSide: trial.run_kind === LATER_SIDE_RUN_KIND,
   };
   const promise = Promise.resolve(recovery).finally(() => {
     if (inFlight.get(trial.id) === entry) inFlight.delete(trial.id);
@@ -1181,9 +1310,19 @@ function holdRecoveredTrial(trial, sessionId, recovery) {
 /**
  * When the trial's own clock ends a recovered turn: the turn's start plus
  * the budget the live path gave it (a build turn's for a build, a turn's
- * otherwise), or null to leave it unbounded.
+ * otherwise) and the time its restarts cost it, as the live bot's clock
+ * gives it back (homeroom-bot.js restartAllowanceMs: two minutes a restart,
+ * `activeTurn.restarts` from server.js noteRestart), or null to leave it
+ * unbounded. Until 13 Oct 2026 a trial's clock gave none back, so a turn a
+ * restart caught near its end was cut short, as a live build's had been.
  */
 async function recoveryDeadline(pool, config, session, activeTurn) {
+  const at = await turnDeadline(pool, config, session, activeTurn);
+  return at == null ? null : at + require('../homeroom-bot').restartAllowanceMs(activeTurn);
+}
+
+/** recoveryDeadline before its restarts are given back. */
+async function turnDeadline(pool, config, session, activeTurn) {
   const startedMs = Date.parse(activeTurn?.startedAt || '');
   if (!Number.isFinite(startedMs)) return null;
   const plan = await recoveryPlan(pool, session, activeTurn);
@@ -1192,17 +1331,100 @@ async function recoveryDeadline(pool, config, session, activeTurn) {
   const settings = await bot.readSettings(pool);
   const app = { repo_url: plan.trial.repo_url, self_hosted: plan.trial.self_hosted };
   const budgets = runner.budgetsFor(settings, app, config, plan.trial.stage);
+  // A side build's, and a build's: its spec turn on the shorter of the
+  // build's and the spec's clocks (draftSpec), its build turn on the build's.
+  if (turnsAsSide(plan.trial)) return sideTurnDeadline(plan.trial, budgets, activeTurn, startedMs);
   if (plan.trial.stage === 'first_version') {
     // Each of its turns on the clock the live stage gave it: the triage a
     // turn's, the spec and the build a first version's (draftSpec takes
     // the shorter of the build's and the spec's).
+    // A review's fix turn the build's, and never past the end of the
+    // review's own minutes, as a side build's (fixDeadline).
     const first = budgets.firstVersion || budgets;
     const which = runner.firstVersionTurnOf(plan.trial.checkpoint, session.id, activeTurn);
+    if (which === 'fix') return fixDeadline(plan.trial.checkpoint, startedMs, startedMs + first.buildMs);
     const ms = which === 'build' ? first.buildMs
       : which === 'spec' ? Math.min(first.buildMs, first.specMs) : first.turnMs;
     return startedMs + ms;
   }
-  return startedMs + (plan.trial.stage === 'build' ? budgets.buildMs : budgets.turnMs);
+  // A spec task's turn on draftSpec's clock: the shorter of a turn's and the spec's.
+  if (plan.trial.stage === 'spec') return startedMs + Math.min(budgets.turnMs, budgets.specMs || budgets.turnMs);
+  return startedMs + budgets.turnMs;
+}
+
+/**
+ * When a side build's recovered turn ends, on the clock its stage gave it
+ * (runner.buildSideNow, through buildAndPropose): a first version's side
+ * build on a first version's clocks, a later change's on a build's. Its spec
+ * turn has the shorter of the build's and the spec's (draftSpec); its build
+ * turn the build's; a review's fix turn the build's too, and never past the
+ * end of the review's own minutes, which it was started with what was left
+ * of (live.reviewLanded). Pure.
+ */
+function sideTurnDeadline(trial, budgets, activeTurn, startedMs) {
+  const clocks = trial.stage === 'first_version' ? (budgets.firstVersion || budgets) : budgets;
+  const which = runner.sideTurnOf(trial.checkpoint, activeTurn);
+  if (which === 'spec') return startedMs + Math.min(clocks.buildMs, clocks.specMs);
+  const turnEnd = startedMs + clocks.buildMs;
+  return which === 'fix' ? fixDeadline(trial.checkpoint, startedMs, turnEnd) : turnEnd;
+}
+
+/**
+ * When a review's recovered fix turn ends: at `turnEnd` (the build's clock),
+ * and never past the end of the review's own minutes, which it was started
+ * with what was left of (live.reviewLanded). Pure.
+ */
+function fixDeadline(checkpoint, startedMs, turnEnd) {
+  const review = checkpoint?.review;
+  const reviewStarted = Date.parse(review?.startedAt || '');
+  const minutes = Number(review?.reviewer?.budgetMinutes);
+  if (!Number.isFinite(reviewStarted) || !(minutes > 0)) return turnEnd;
+  // A fix is given at least a second (reviewLanded's Math.max(1000, ...)).
+  return Math.max(startedMs + 1000, Math.min(turnEnd, reviewStarted + minutes * 60 * 1000));
+}
+
+/**
+ * The studio's watch of a trial whose turn restart recovery is following
+ * (server.js resumeDetachedTurnInner, its onRecoveredProgress): the trial's
+ * own progress carried on from where the restart left it, each line the
+ * replay shows noted as a live turn's is (progress.tracker). Until 13 Oct
+ * 2026 nothing wrote it, and run 189's six builds, followed for twenty
+ * minutes and more, each showed the line it was at when the platform went
+ * down. The replay shows the turn from its start, so its looks are counted
+ * on the counts its step began with (`stepLooks`), never on counts that hold
+ * some of them already. Resolves the tracker, or null for a session no
+ * running trial is on. Never throws.
+ */
+async function recoveryWatch(pool, sessionId, activeTurn = null) {
+  try {
+    const { rows: [t] } = await pool.query(
+      `SELECT id, progress, checkpoint FROM bench_trials
+        WHERE session_id = $1 AND status = 'running'
+        ORDER BY id DESC LIMIT 1`,
+      [Number(sessionId)],
+    );
+    if (!t) return null;
+    const p = t.progress && typeof t.progress === 'object' ? t.progress : {};
+    const cp = t.checkpoint && typeof t.checkpoint === 'object' ? t.checkpoint : {};
+    const looks = cp.stepLooks && cp.stepLooks.step === p.step ? cp.stepLooks : null;
+    // The replay shows the turn from its start: the lines its transcript got
+    // before the restart (an earlier replay's included) are not written
+    // again, and the rest (the last few seconds' and everything since) are
+    // marked replayed.
+    const startedAt = activeTurn?.startedAt && Number.isFinite(Date.parse(activeTurn.startedAt)) ? activeTurn.startedAt : null;
+    const skip = startedAt ? Number((await pool.query(
+      `SELECT COUNT(*)::int AS n FROM bench_trial_lines
+        WHERE trial_id = $1 AND kind = 'line' AND at >= $2::timestamptz`,
+      [Number(t.id), startedAt],
+    )).rows[0]?.n) || 0 : 0;
+    return progress.tracker(pool, t.id, {
+      log, skills: p.skills || cp.skills || null, looks, seed: { step: p.step, stepAt: p.stepAt, lines: p.lines },
+      transcript: { replayed: true, skip },
+    });
+  } catch (err) {
+    log.warn('bench', 'Could not watch a recovered trial', { sessionId, err: err.message });
+    return null;
+  }
 }
 
 /**
@@ -1211,14 +1433,19 @@ async function recoveryDeadline(pool, config, session, activeTurn) {
  * the same finisher (recordTrial). `result` is what the journal replay
  * returned; `timedOut` says the trial's clock, re-armed by recovery, ended
  * it; `progress` is every progress line the replay showed, from the turn's
- * start. A first version's turn, whichever it is, is kept and its trial
- * handed back to go on instead (handBackFirstVersion). Never throws:
+ * start. A first version's or a side build's turn, whichever it is, is kept
+ * and its trial handed back to go on instead (handBackTrial). Never throws:
  * whatever goes wrong puts the trial back in the queue (releaseTrial), as
  * though recovery had abandoned it.
  */
 async function finishRecoveredTrial({
-  pool, config, session, activeTurn, result = {}, timedOut = false, progress: lines = null, deps = {},
+  pool, config, session, activeTurn, result = {}, timedOut: clockFired = false, progress: lines = null, watch = null, deps = {},
 }) {
+  // The clock re-armed past a deadline fires at once, even for a turn that
+  // had finished before the restart: one whose journal ended on its own
+  // exit 0, before the stop's 143, did its work in time (as the live bot
+  // reads it, homeroom-bot.js finishRecoveredFollowUp).
+  const timedOut = !!clockFired && Number(result?.exitCode) !== 0;
   try {
     const plan = await recoveryPlan(pool, session, activeTurn);
     if (!plan) {
@@ -1227,8 +1454,19 @@ async function finishRecoveredTrial({
     }
     const row = plan.trial;
     if (!plan.resumable) throw new Error(`a ${row.stage} trial's ${activeTurn?.mode || 'unknown'} turn is not its last`);
-    if (goesOnAfterRestart(row)) return await handBackFirstVersion({ pool, row, session, activeTurn, result, timedOut, lines, deps });
     const d = liveDeps(deps);
+    // A spec whose figure holds placeholders for the screens it saved gets
+    // them back off its worker, still running here, as the live path and
+    // live recovery do (homeroom-bot-live.js fillSavedScreens).
+    if (activeTurn?.mode === 'scout' && !timedOut) {
+      const worker = d.worker || require('../worker');
+      result = await require('../homeroom-bot-live').fillSavedScreens({
+        fvScreens: require('../first-version-screens'), screens: null, worker,
+        containerName: typeof worker.workerRuntimeName === 'function' ? worker.workerRuntimeName(Number(session.id)) : null,
+        result,
+      });
+    }
+    if (handsBack(row, activeTurn)) return await handBackTrial({ pool, row, session, activeTurn, result, timedOut, lines, watch, deps });
     const bot = require('../homeroom-bot');
     const repo = bot.parseRepo(row.repo_url);
     if (!repo) throw new Error('the app has no GitHub repository');
@@ -1243,6 +1481,16 @@ async function finishRecoveredTrial({
     if (!patch) throw new Error('nothing to finish');
     const startedMs = row.started_at ? new Date(row.started_at).getTime() : NaN;
     patch.duration_ms = Number.isFinite(startedMs) ? Math.max(Date.now() - startedMs, 0) : null;
+    // The skills it reached for and its looks, as a trial run start to end
+    // records them (executeTrial), from the watch recovery kept.
+    if (watch) {
+      const skills = watch.skills();
+      if (skills.invoked.length || skills.read.length || row.context_pack_id) patch.parsed = { ...(patch.parsed || {}), skills };
+      const looks = watch.looks();
+      if (patch.parsed?.sight || looks.screenshots || looks.snapshots || looks.navigations) {
+        patch.parsed = { ...(patch.parsed || {}), sight: { told: null, passed: null, ...(patch.parsed?.sight || {}), ...looks } };
+      }
+    }
     return await recordTrial(pool, {
       trialRow: { id: row.id, run_id: row.run_id }, row, patch, user: { id: session.user_id }, d,
       recovered: true, sessionId: session.id,
@@ -1274,22 +1522,44 @@ function recoveredLooks(checkpoint, step, lines) {
 }
 
 /**
- * A first version's turn, followed to its end: what it produced kept on the
- * trial's checkpoint (runner.recoverFirstVersionTurn) with the looks it took
- * (recoveredLooks), its session put away as a finished one is, and the trial
- * handed back to the lane (releaseTrial), whose next claim goes on from
- * there. Kept work costs it no claim. Resolves 'handed_back', or 'gone' when
- * the trial was no longer on this session.
+ * A first version's or a side build's turn, followed to its end: what it
+ * produced kept on the trial's checkpoint (runner.recoverFirstVersionTurn)
+ * with the looks it took (recoveredLooks), its session put away as a
+ * finished one is, and the trial handed back to the lane (releaseTrial),
+ * whose next claim goes on from there. Kept work costs it no claim. A
+ * review's fix keeps nothing of its own, but its review is kept already, so
+ * it costs no claim either. Resolves 'handed_back', or 'gone'
+ * when the trial was no longer on this session.
  */
-async function handBackFirstVersion({ pool, row, session, activeTurn, result, timedOut, lines = null, deps }) {
-  const kept = runner.recoverFirstVersionTurn({ checkpoint: row.checkpoint, session, activeTurn, result, timedOut });
-  const looks = recoveredLooks(row.checkpoint, runner.firstVersionTurnOf(row.checkpoint, session.id, activeTurn), lines);
-  if (kept || looks) {
+async function handBackTrial({ pool, row, session, activeTurn, result, timedOut, lines = null, watch = null, deps }) {
+  const side = turnsAsSide(row);
+  const step = side
+    ? runner.sideTurnOf(row.checkpoint, activeTurn)
+    : runner.firstVersionTurnOf(row.checkpoint, session.id, activeTurn);
+  const kept = runner.recoverFirstVersionTurn({ checkpoint: row.checkpoint, session, activeTurn, result, timedOut, side });
+  // A review's fix turn keeps what it did when the review was waiting on it,
+  // for the next claim to carry the review on with (bot-review.js
+  // recoveredFixOf), as recovery keeps a live first version's.
+  let recoveredFix = null;
+  const review = row.checkpoint?.review;
+  if (step === 'fix' && require('../bot-review').awaitsFix(review, result)) {
+    const usage = await require('../homeroom-bot').fixTurnUsage(pool, session.id, review.inFlight?.at || activeTurn?.startedAt || null);
+    recoveredFix = require('../bot-review').recoveredFixOf({ result, timedOut, ...usage });
+  }
+  // A fix turn's step began before the build turn did, so its looks cannot
+  // be told from the build's: the checkpoint's are left as they are.
+  const looks = recoveredLooks(row.checkpoint, step === 'fix' ? null : step, lines);
+  // And the skills its turn reached for, which the next claim's watch starts from.
+  const skills = watch ? watch.skills() : null;
+  const seenSkills = skills && (skills.invoked.length || skills.read.length) ? { skills } : {};
+  if (kept || looks || seenSkills.skills || recoveredFix) {
     await pool.query(
       `UPDATE bench_trials SET checkpoint = COALESCE(checkpoint, '{}'::jsonb) || $3::jsonb,
               recovered_at = CASE WHEN $4::boolean THEN NOW() ELSE recovered_at END
         WHERE id = $1 AND status = 'running' AND session_id = $2`,
-      [row.id, Number(session.id), JSON.stringify({ ...(kept ? kept.keep : {}), ...(looks ? { looks } : {}) }), !!kept],
+      [row.id, Number(session.id), JSON.stringify({
+        ...(kept ? kept.keep : {}), ...(looks ? { looks } : {}), ...seenSkills, ...(recoveredFix ? { recoveredFix } : {}),
+      }), !!(kept || recoveredFix)],
     );
   }
   await pool.query(
@@ -1297,19 +1567,32 @@ async function handBackFirstVersion({ pool, row, session, activeTurn, result, ti
     [Number(session.id)],
   ).catch(() => {});
   const status = await releaseTrial(pool, {
-    trialId: row.id, sessionId: session.id, deps,
-    why: kept ? `its ${kept.step} finished after a restart and is kept` : 'its turn left nothing to keep',
+    // Its turn was followed to its end: lost only when it left nothing.
+    trialId: row.id, sessionId: session.id, deps, noTurnLost: !!(kept || recoveredFix),
+    why: kept ? `its ${kept.step} finished after a restart and is kept`
+      : recoveredFix ? 'its review\'s fix finished after a restart and is kept; the review goes on from it'
+        : step === 'fix' ? 'its review\'s fix finished after a restart; the review goes on from its saved state'
+          : 'its turn left nothing to keep',
   });
-  log.info('bench', 'A first version\'s turn finished after a restart; it goes on from there', {
-    trialId: row.id, sessionId: session.id, step: kept?.step || null, status,
+  log.info('bench', side
+    ? 'A side build\'s turn finished after a restart; it goes on from there'
+    : 'A first version\'s turn finished after a restart; it goes on from there', {
+    trialId: row.id, sessionId: session.id, step: step || null, kept: !!kept, status,
   });
   return status ? 'handed_back' : 'gone';
 }
 
-/** End a run's scheduling at its cap: what is left is skipped. */
+/**
+ * End a run's scheduling at its cap: what is left is skipped. A
+ * configuration's side build skipped here is finished as one the lane
+ * recorded (bot-configs.js finishSideTrial): its result skipped, with why.
+ * Left pending, it was never paired nor counted, and nothing came back to
+ * it (9 of 50 side builds, 9 Oct 2026).
+ */
 async function capRun(pool, runId) {
-  await pool.query(
-    "UPDATE bench_trials SET status = 'skipped_cap', finished_at = NOW() WHERE run_id = $1 AND status = 'pending'",
+  const { rows: skipped } = await pool.query(
+    `UPDATE bench_trials SET status = 'skipped_cap', finished_at = NOW() WHERE run_id = $1 AND status = 'pending'
+     RETURNING id, bot_config_version_id`,
     [runId],
   );
   await pool.query(
@@ -1317,6 +1600,41 @@ async function capRun(pool, runId) {
     [runId],
   );
   log.info('bench', 'Run reached its cap', { runId });
+  for (const t of skipped) {
+    // eslint-disable-next-line no-await-in-loop
+    if (t.bot_config_version_id) await require('../bot-configs').finishSideTrial(pool, t.id);
+  }
+}
+
+/**
+ * Side builds' results still pending whose trial has ended: capped before
+ * capRun finished them, released into a run capped meanwhile (releaseTrial),
+ * or cancelled by an admin. Each is finished as capRun finishes one, so none
+ * waits for good. A trial this process still holds is left to its own
+ * finisher. Resolves how many it settled; never throws.
+ */
+async function settleSideResults(pool) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT tr.id FROM bot_config_results cr
+         JOIN bench_trials tr ON tr.id = cr.trial_id
+        WHERE cr.status = 'pending' AND cr.source = 'trial'
+          AND tr.status NOT IN ('pending', 'running', 'awaiting')
+          AND NOT (tr.id = ANY($1::int[]))
+        ORDER BY tr.id LIMIT 50`,
+      [[...inFlight.keys()]],
+    );
+    let n = 0;
+    for (const r of rows) {
+      // eslint-disable-next-line no-await-in-loop
+      if (await require('../bot-configs').finishSideTrial(pool, r.id)) n += 1;
+    }
+    if (n) log.info('bench', 'Settled side builds whose trial ended without a result', { results: n });
+    return n;
+  } catch (err) {
+    log.warn('bench', 'Could not settle side builds\' results', { err: err.message });
+    return 0;
+  }
 }
 
 /**
@@ -1341,6 +1659,7 @@ async function tick(pool, config, deps = {}) {
     await releaseStale(pool, settings);
     await releaseOrphaned(pool, deps).catch((err) => log.warn('bench', 'Orphaned-trial sweep failed', { err: err.message }));
     await sweepBranches(pool, deps).catch(() => {});
+    await settleSideResults(pool);
     // The studio's previews: kept up for their day, then taken down.
     await require('./studio').sweepPreviews(pool, deps).catch(() => {});
     const { rows: runs } = await pool.query(
@@ -1364,6 +1683,8 @@ async function tick(pool, config, deps = {}) {
       }
       let free = Math.min(run.concurrency, MAX_CONCURRENCY) - mine.length;
       while (free > 0) {
+        // Shutdown began: start no trial (homeroom-bot-drain.js).
+        if (drain.refusing()) { out.paused = 'stopped'; break; }
         if (inFlight.size >= MAX_IN_FLIGHT) { out.paused = out.paused || 'lane_full'; break; }
         if ((deps.isLiveLaneSaturated || bot.isLiveLaneSaturated)(settings)) { out.paused = 'live_bot_busy'; break; }
         if (run.kind === LATER_SIDE_RUN_KIND) {
@@ -1384,7 +1705,7 @@ async function tick(pool, config, deps = {}) {
         // three heavy trials at a time.
         const heavyCap = run.kind === 'studio' ? Math.min(Number(run.concurrency) || 1, MAX_IN_FLIGHT) : MAX_HEAVY_PER_RUN;
         const { rows: [next] } = await pool.query(
-          `SELECT tr.id, tr.est_cost_usd::float8 AS est, t.stage
+          `SELECT tr.id, tr.est_cost_usd::float8 AS est, t.stage, tr.checkpoint
              FROM bench_trials tr JOIN bench_tasks t ON t.id = tr.task_id
             WHERE tr.run_id = $1 AND tr.status = 'pending'
               AND ($2::boolean OR NOT (t.stage = ANY($3::text[])))
@@ -1397,9 +1718,16 @@ async function tick(pool, config, deps = {}) {
         );
         const running = [...inFlight.values()].filter((f) => f.runId === run.id);
         const inFlightEst = running.reduce((sum, f) => sum + (f.est || 0), 0);
+        // What is still to come of its estimate. A trial going on from what
+        // it kept after a restart (a side build, a first version) already
+        // spent part of it, and its run was charged for that when it was
+        // handed back: counted again at its whole estimate, a side build
+        // that had used most of its run's cap (three times its estimate) was
+        // capped for spend it already had, its work thrown away.
+        const toCome = Math.max((Number(next.est) || 0) - keptSpend(next.checkpoint), 0);
         // A trial that spends nothing on a model (a capture, a reference
         // build's screenshots) cannot take the run past its cap.
-        if (Number(next.est) > 0 && !fitsCap({ spentUsd: money.spent, capUsd: money.cap, inFlightEst, nextEst: next.est || 0 })) {
+        if (Number(next.est) > 0 && !fitsCap({ spentUsd: money.spent, capUsd: money.cap, inFlightEst, nextEst: toCome })) {
           // Wait for what is under way, then stop the run there.
           if (!running.length) await capRun(pool, run.id);
           out.paused = out.paused || 'cap';
@@ -1419,11 +1747,15 @@ async function tick(pool, config, deps = {}) {
           [run.id],
         );
         const entry = {
-          runId: run.id, est: claim.est || 0, sessionId: null, promise: null, heavy: HEAVY_STAGES.includes(next.stage),
+          runId: run.id, est: toCome, sessionId: null, promise: null, heavy: HEAVY_STAGES.includes(next.stage),
           laterSide: run.kind === LATER_SIDE_RUN_KIND,
         };
         inFlight.set(claim.id, entry);
-        entry.promise = executeTrial(pool, config, claim, { ...deps, user })
+        // A pipeline shutdown waits on until it is parked in a saved turn.
+        entry.promise = drain.run(
+          { kind: 'bench_trial', trialId: claim.id },
+          () => executeTrial(pool, config, claim, { ...deps, user }),
+        )
           .catch(async (err) => {
             log.error('bench', 'Trial threw', { trialId: claim.id, err: err.message });
             await pool.query(
@@ -1524,6 +1856,7 @@ module.exports = {
   SINGLE_ATTEMPT_STAGES,
   MAX_CLAIMS,
   BRANCH_KEEP_DAYS,
+  BRANCH_KEEP_WAITING_DAYS,
   validateLaunch,
   attemptsFor,
   launcherDefaults,
@@ -1545,8 +1878,11 @@ module.exports = {
   executeTrial,
   recordTrial,
   noteSession,
+  goesOnAfterRestart,
+  handsBack,
   saveCheckpoint,
   stepsKept,
+  keptSpend,
   recoveredLooks,
   sweepBranches,
   releaseStale,
@@ -1556,8 +1892,10 @@ module.exports = {
   recoveryPlan,
   holdRecoveredTrial,
   recoveryDeadline,
+  recoveryWatch,
   finishRecoveredTrial,
   capRun,
+  settleSideResults,
   fitsCap,
   tick,
   start,

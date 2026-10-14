@@ -49,7 +49,7 @@ test('a mention after that answer is the go-ahead, and it covers the holds that 
   assert.deepEqual(asked.others.map((h) => h.username), ['chinchan8']);
   assert.equal(holds.goingText({ asker: 'evan', holders: ['chinchan8'] }),
     'evan asked Homeroom bot to build this anyway, so it is taking it up now. '
-    + 'It will reply here with a question, a note or a proposal.');
+    + 'It will reply here with a question, a note or a change to vote on.');
 
   // From then on the request is the bot's to work on...
   const after = { notes: [note(holds.LEAVING_KIND, 6), note(holds.GOING_KIND, 1)] };
@@ -67,7 +67,7 @@ test('holding it yourself and mentioning the bot is asking it to go ahead', () =
   assert.equal(verdict.action, 'go');
   assert.deepEqual(verdict.others, []);
   assert.equal(holds.goingText({ asker: 'evan', holders: [] }),
-    'Homeroom bot is taking this up now, as asked. It will reply here with a question, a note or a proposal.');
+    'Homeroom bot is taking this up now, as asked. It will reply here with a question, a note or a change to vote on.');
 });
 
 test('a proposal up for a vote is left to the vote, however often the bot is asked', () => {
@@ -112,7 +112,7 @@ function fakePool({ mentions = [], notes = [], optouts = [] }) {
     async query(sql, params) {
       const s = String(sql);
       if (/FROM chat_messages m/.test(s)) {
-        assert.match(params[2], /@homeroom_bot/);
+        assert.match(params[2], /@\(homeroom_bot\|/);
         return { rows: mentions };
       }
       if (/SELECT issue_number, kind, created_at FROM homeroom_bot_posts/.test(s)) return { rows: notes };
@@ -150,7 +150,8 @@ test('answerMentions posts the answer, tagging the person who asked, and keeps t
   });
   assert.deepEqual([...cleared], []);
   assert.deepEqual(pool.posts, [holds.LEAVING_KIND], 'one answer, on the request that was mentioned');
-  assert.match(f.messages[0].content, /^@evan chinchan8 claimed this request 3 days ago, so Homeroom bot is leaving it to them\./);
+  // The thread copy is the bot's own words (homeroom-bot-words.js); GitHub keeps the note as written.
+  assert.match(f.messages[0].content, /^@evan chinchan8 claimed this request 3 days ago, so I'm leaving it to them\./);
   assert.deepEqual(f.messages[0].thread, { type: 'issue', ref: 75 });
   assert.match(f.comments[0].text, /^chinchan8 claimed this request/, 'on GitHub too, with nobody @-tagged');
 });
@@ -167,7 +168,7 @@ test('answerMentions goes ahead on the second mention, tagging whoever held it u
   });
   assert.deepEqual([...cleared], [75]);
   assert.deepEqual(pool.posts, [holds.GOING_KIND]);
-  assert.match(f.messages[0].content, /^@chinchan8 evan asked Homeroom bot to build this anyway, so it is taking it up now\./);
+  assert.match(f.messages[0].content, /^@chinchan8 evan asked me to build this anyway, so I'm taking it up now\./);
 
   const quiet = fakes();
   const optedOut = fakePool({ mentions, notes, optouts: ['chinchan8'] });
@@ -176,7 +177,7 @@ test('answerMentions goes ahead on the second mention, tagging whoever held it u
     holders: new Map([[75, [claim('chinchan8', DAYS3)]]]),
     deps: { ws: quiet.ws, notifications: quiet.notifications },
   });
-  assert.match(quiet.messages[0].content, /^evan asked Homeroom bot/, 'somebody who asked not to be tagged is not');
+  assert.match(quiet.messages[0].content, /^evan asked me/, 'somebody who asked not to be tagged is not');
 });
 
 test('answerMentions never throws: a failure leaves every hold in place', async () => {

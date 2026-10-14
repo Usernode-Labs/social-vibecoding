@@ -17,11 +17,13 @@ import type { ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
 
+import { useMessages } from '../../../lib/i18n/react';
 import { useStoreState } from '../../../lib/use-store-state';
 import { creditOptionsModalStore } from './modals-store';
 import type { CreditOptionsModalView } from './model';
 
 export function CreditOptionsCard({ view }: { view: CreditOptionsModalView }): ReactNode {
+  const t = useMessages('project');
   return (
     <div className="dc-credits-modal-card w-full max-w-lg rounded-xl bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 shadow-xl p-4">
       <div dangerouslySetInnerHTML={{ __html: view.cardHtml }} />
@@ -30,7 +32,7 @@ export function CreditOptionsCard({ view }: { view: CreditOptionsModalView }): R
             handler closes on it, and it also fires for a click on the
             backdrop, so the button carries no onClick of its own. */}
         <Button type="button" data-credits-close="" variant="neutral" ink="neutral" size="sm">
-          Not now
+          {t('project:modals.credits.notNow')}
         </Button>
       </div>
     </div>

@@ -243,10 +243,9 @@ for (const id of appTemplates.TEMPLATE_IDS) {
   test(`the ${id} starter's CLAUDE.md tells the agent to keep both looks`, () => {
     const claude = flat(file(generate(id), 'CLAUDE.md'));
     assert.match(claude, /follows the viewer's Homeroom theme, switching live/);
-    // #3737: Empty's screen gets both from its design kit's colour tokens.
-    assert.match(claude, id === 'empty'
-      ? /Keep that script, and give everything you build both looks \(the design kit's colour tokens carry both\)/
-      : /Keep that script, and give everything you build both looks \(Tailwind's `dark:` variants\)/);
+    // #3737: Empty's screen gets both from its design kit's colour tokens,
+    // and so does every ready-made app's (services/app-templates.js).
+    assert.match(claude, /Keep that script, and give everything you build both looks \(the design kit's colour tokens carry both\)/);
     assert.match(claude, /unless one fixed look is the point of this app/, 'where relevant to the app');
     assert.match(claude, /Unless a request asks for one, add no theme picker/, 'the platform setting is the default');
     assert.match(claude, /The platform's light\/dark theme inside the app frame/, 'points at the conventions');

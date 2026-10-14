@@ -43,6 +43,7 @@ const path = require('path');
 const log = require('../logger');
 const packs = require('./packs');
 const scaffold = require('./scaffold');
+const speed = require('./speed');
 const stageCosts = require('../stage-costs');
 
 const SUITE_NAME = 'App bench studio';
@@ -212,14 +213,21 @@ async function ensureSuite(pool, { actorId = null } = {}) {
 /** The checked-in starter briefs (suites/app-bench-starter.json). */
 function starterBriefs(file = STARTER_FILE) {
   const def = JSON.parse(fs.readFileSync(file, 'utf8'));
-  return (def.briefs || []).map((b) => ({ ref: String(b.ref), appName: String(b.name), brief: String(b.brief) }));
+  return (def.briefs || []).map((b) => ({
+    ref: String(b.ref), appName: String(b.name), brief: String(b.brief), ...(b.template ? { template: String(b.template) } : {}),
+  }));
 }
 
 /**
  * The briefs a launch names, checked: the starter set (`briefSet:
  * "starter"`, optionally narrowed by `refs`), and/or `briefs`, each
- * { name, brief, ref? }, { ref } (a starter brief) or { taskId } (an
- * existing taste task's brief and name).
+ * { name, brief, ref?, template? }, { ref, template? } (a starter brief) or
+ * { taskId } (an existing taste task's brief, name and template).
+ *
+ * `template` is the starter the first commit is scaffolded from
+ * (services/app-templates.js), `empty` when absent, as a new project's is.
+ * The same brief from a game starter and from `empty` is two tasks, so a
+ * run can build both side by side.
  */
 async function resolveBriefs(pool, body = {}) {
   const taste = require('./taste');
@@ -237,13 +245,15 @@ async function resolveBriefs(pool, body = {}) {
       const task = await suites.taskRow(pool, { taskId: Number(raw.taskId) });
       if (!task || !taste.isTasteStage(task.stage)) return httpError(404, `No taste task ${raw.taskId}`);
       const input = taste.inputOf(await snapshots.readSnapshot(pool, task.snapshot_id));
-      items.push({ ref: task.tags?.taste_ref || null, appName: input.appName, brief: input.brief });
+      items.push({ ref: task.tags?.taste_ref || null, appName: input.appName, brief: input.brief, template: input.template });
     } else if (raw && raw.ref && !raw.brief) {
       const b = starter.find((s) => s.ref === String(raw.ref));
       if (!b) return httpError(404, `No starter brief "${raw.ref}"`);
-      items.push(b);
+      items.push(raw.template != null ? { ...b, template: raw.template } : b);
     } else {
-      items.push({ ref: raw?.ref ? String(raw.ref).slice(0, 80) : null, appName: raw?.name ?? raw?.appName, brief: raw?.brief });
+      items.push({
+        ref: raw?.ref ? String(raw.ref).slice(0, 80) : null, appName: raw?.name ?? raw?.appName, brief: raw?.brief, template: raw?.template,
+      });
     }
   }
   if (!items.length) return httpError(400, 'Name at least one brief, or briefSet "starter"');
@@ -251,19 +261,25 @@ async function resolveBriefs(pool, body = {}) {
   const out = [];
   const seen = new Set();
   for (const item of items) {
-    const v = taste.validateInput('first_version', { appName: item.appName, brief: item.brief });
+    const v = taste.validateInput('first_version', { appName: item.appName, brief: item.brief, template: item.template });
     if (!v.ok) return v;
-    const key = studioKey(v.input.appName, v.input.brief);
+    const key = studioKey(v.input.appName, v.input.brief, v.input.template);
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push({ ref: item.ref || null, appName: v.input.appName, brief: v.input.brief, key });
+    out.push({ ref: item.ref || null, appName: v.input.appName, brief: v.input.brief, template: v.input.template, key });
   }
   return { ok: true, items: out };
 }
 
-/** The key a brief's task is found by: the same name and brief, the same task. Pure. */
-function studioKey(appName, brief) {
-  return crypto.createHash('sha256').update(`${appName}\n${brief}`).digest('hex').slice(0, 32);
+/**
+ * The key a brief's task is found by: the same name, brief and starter, the
+ * same task. The default starter adds nothing, so a brief's task from before
+ * starters were named is still found. Pure.
+ */
+function studioKey(appName, brief, template = null) {
+  const appTemplates = require('../app-templates');
+  const starter = template && template !== appTemplates.DEFAULT_TEMPLATE ? `\n${template}` : '';
+  return crypto.createHash('sha256').update(`${appName}\n${brief}${starter}`).digest('hex').slice(0, 32);
 }
 
 async function taskFor(pool, { suiteId, host, item }) {
@@ -276,7 +292,7 @@ async function taskFor(pool, { suiteId, host, item }) {
   if (have) return { ok: true, task: have };
   const taste = require('./taste');
   const out = await taste.addTask(pool, {
-    suiteId, kind: 'first_version', appSlug: host.slug, appName: item.appName, brief: item.brief, ref: item.ref,
+    suiteId, kind: 'first_version', appSlug: host.slug, appName: item.appName, brief: item.brief, template: item.template, ref: item.ref,
   });
   if (!out.ok) return out;
   await pool.query(
@@ -432,7 +448,7 @@ async function launch(pool, config, body = {}, { actorId = null, deps = {} } = {
     trials: plan.task.length,
     notApplicable: plan.status.filter((s) => s === 'not_applicable').length,
     estimateUsd: Math.round(estimate * 100) / 100,
-    briefs: tasks.map((t) => ({ taskId: t.taskId, ref: t.ref, appName: t.appName })),
+    briefs: tasks.map((t) => ({ taskId: t.taskId, ref: t.ref, appName: t.appName, template: t.template })),
     references: v.references,
     host: { slug: host.app.slug, repoUrl: host.app.repo_url },
   };
@@ -596,8 +612,13 @@ function reviewRecord(review) {
   };
 }
 
-/** A trial row as the watch and the gallery show it. Pure but for the preview and grades passed in. */
-function trialOut(row, { preview = null, grades = [] } = {}) {
+/**
+ * A trial row as the watch and the gallery show it. Pure but for the preview,
+ * grades and build turns passed in. Only a read handed `buildTurns`
+ * (speed.buildTurnsFor's rows) carries buildSpeed: one that did not ask the
+ * ledger leaves it out rather than calling a timed build untimed.
+ */
+function trialOut(row, { preview = null, grades = [], buildTurns = null } = {}) {
   const { pickShots } = require('./capture');
   const p = row.progress || {};
   const parsed = row.parsed || {};
@@ -611,6 +632,8 @@ function trialOut(row, { preview = null, grades = [] } = {}) {
   const priorMs = Number(row.prior_ms) || 0;
   const handBacks = Number(row.hand_backs) || 0;
   const firstStarted = row.first_started_at ? new Date(row.first_started_at).getTime() : null;
+  const buildSpeed = Array.isArray(buildTurns) ? speed.buildSpeedOf(buildTurns, row) : undefined;
+  const planSpeed = Array.isArray(buildTurns) ? speed.planSpeedOf(buildTurns, row) : undefined;
   return {
     trialId: Number(row.id),
     runId: Number(row.run_id),
@@ -635,6 +658,13 @@ function trialOut(row, { preview = null, grades = [] } = {}) {
     // up to it (services/stage-costs.js): null for a trial that recorded no
     // stages (one from before they were, a triage-only task).
     costBreakdown: parsed.costParts ? stageCosts.breakdown(Number.isFinite(row.cost_usd) ? row.cost_usd : null, parsed.costParts) : null,
+    // What its build took (its build turn and any nudge, as the turn ledger
+    // recorded them) and what its review found, as numbers an arm's medians
+    // are taken over (services/bench/speed.js).
+    ...(buildSpeed !== undefined ? { buildSpeed } : {}),
+    // Its plan step (the spec turn) the same way, beside it.
+    ...(planSpeed !== undefined ? { planSpeed } : {}),
+    reviewOutcome: speed.reviewOutcomeOf(parsed.review, { buildStartedAt: buildSpeed?.startedAt || null }),
     activity: Array.isArray(p.lines) ? p.lines.map((l) => clip(l, ACTIVITY_CHARS)) : [],
     skills: parsed.skills || p.skills || { invoked: [], read: [] },
     // Whether its build could look at its own screens: what its prompt told
@@ -665,9 +695,12 @@ async function runRow(pool, runId) {
 
 /**
  * A run as it moves: every trial's arm, step, time, spend, last activity
- * lines, skills, newest screenshots, code and preview. With `since` (an
- * ISO time), only the trials that changed after it, and the cursor to pass
- * next time. A studio run's view; any run can be watched.
+ * lines, skills, newest screenshots, code and preview, its build's speed and
+ * its review's outcome; and per arm, the medians of those over its trials
+ * that ended (`arms`, speed.armSpeed), always over every trial. With `since`
+ * (an ISO time), only the trials that changed after it, and the cursor to
+ * pass next time. A studio run's view; any run can be watched. The build
+ * turns of all its trials are one query, however many there are.
  */
 async function watchRun(pool, runId, { since = null } = {}) {
   const run = await runRow(pool, runId);
@@ -675,8 +708,8 @@ async function watchRun(pool, runId, { since = null } = {}) {
   const now = new Date().toISOString();
   const { rows } = await pool.query(`${TRIAL_SQL} WHERE tr.run_id = $1 ORDER BY tr.task_id, tr.id`, [Number(runId)]);
   const ids = rows.map((r) => Number(r.id));
-  const [previews, grades] = await Promise.all([previewsFor(pool, ids), gradesFor(pool, ids)]);
-  const all = rows.map((r) => trialOut(r, { preview: previews.get(Number(r.id)) || null, grades: grades.get(Number(r.id)) || [] }));
+  const [previews, grades, buildTurns] = await Promise.all([previewsFor(pool, ids), gradesFor(pool, ids), speed.buildTurnsFor(pool, rows)]);
+  const all = rows.map((r) => trialOut(r, { preview: previews.get(Number(r.id)) || null, grades: grades.get(Number(r.id)) || [], buildTurns }));
   const sinceMs = since ? Date.parse(since) : NaN;
   const trials = Number.isFinite(sinceMs)
     ? all.filter((t) => Date.parse(t.updatedAt || 0) > sinceMs || (t.preview && t.preview.status === 'building'))
@@ -696,6 +729,7 @@ async function watchRun(pool, runId, { since = null } = {}) {
       createdAt: iso(run.created_at), startedAt: iso(run.started_at), finishedAt: iso(run.finished_at),
     },
     counts,
+    arms: speed.armSpeed(all),
     firstCommits: firsts.map((f) => ({
       taskId: Number(f.task_id), packId: f.context_pack_id ? Number(f.context_pack_id) : 0, status: f.status,
       sha: f.sha || null, branch: f.branch || null, error: f.error ? clip(f.error, 200) : null,
@@ -1006,14 +1040,85 @@ async function trialRows(pool, runId) {
   };
 }
 
+// ── A trial's transcript ─────────────────────────────────────────────────
+
+const TRANSCRIPT_PAGE = 500;
+
+/**
+ * A trial's steps as its transcript recorded them (bench_trial_lines): each
+ * step it reached, in order, with when it began (its `step` row, or its
+ * first line), when its last line came, how long that was and how many lines
+ * it reported. A step reached again (a claim after a restart) is a second
+ * entry. Null for a trial with no transcript (one from before 13 Oct 2026).
+ */
+async function timelineOf(pool, trialId) {
+  const { rows } = await pool.query(
+    `SELECT step, kind, at, replayed FROM bench_trial_lines WHERE trial_id = $1 ORDER BY id`,
+    [Number(trialId)],
+  );
+  if (!rows.length) return null;
+  const out = [];
+  let cur = null;
+  for (const r of rows) {
+    const step = r.step || null;
+    if (!cur || r.kind === 'step' || step !== cur.step) {
+      cur = { step, from: iso(r.at), to: iso(r.at), lines: 0, replayed: 0 };
+      out.push(cur);
+    }
+    cur.to = iso(r.at);
+    if (r.kind === 'line') {
+      cur.lines += 1;
+      if (r.replayed) cur.replayed += 1;
+    }
+  }
+  return out.map((e, i) => {
+    // A step runs until the next one begins; the last, until its last line.
+    const end = out[i + 1] ? out[i + 1].from : e.to;
+    return { ...e, to: end, ms: Math.max(0, Date.parse(end) - Date.parse(e.from)) };
+  });
+}
+
+/**
+ * A page of a trial's transcript, oldest first: up to `limit` lines (500 at
+ * most) after the cursor `after` (a line's id), of one `step` when given,
+ * each { id, at, step, kind, line, replayed }; `next` is the cursor for the
+ * page after, null at the end; `total` the trial's lines in all.
+ */
+async function transcriptOf(pool, trialId, { step = null, after = null, limit = TRANSCRIPT_PAGE } = {}) {
+  const { rows: [trial] } = await pool.query('SELECT id FROM bench_trials WHERE id = $1', [Number(trialId)]);
+  if (!trial) return httpError(404, 'No such trial');
+  const n = Math.min(Math.max(Number(limit) || TRANSCRIPT_PAGE, 1), TRANSCRIPT_PAGE);
+  const from = Number.isSafeInteger(Number(after)) && Number(after) > 0 ? Number(after) : 0;
+  const stepName = typeof step === 'string' && /^[a-z_]{1,16}$/.test(step) ? step : null;
+  // Ordered by the column, a number: by the output's text `id` it put
+  // 1000 before 999, and a page's cursor skipped the lines between.
+  const { rows } = await pool.query(
+    `SELECT id::text AS id, at, step, kind, line, replayed FROM bench_trial_lines
+      WHERE trial_id = $1 AND id > $2::bigint AND ($3::text IS NULL OR step = $3::text)
+      ORDER BY bench_trial_lines.id LIMIT $4`,
+    [Number(trialId), from, stepName, n + 1],
+  );
+  const { rows: [count] } = await pool.query('SELECT COUNT(*)::int AS n FROM bench_trial_lines WHERE trial_id = $1', [Number(trialId)]);
+  const page = rows.slice(0, n);
+  return {
+    ok: true,
+    trialId: Number(trialId),
+    step: stepName,
+    total: Number(count?.n) || 0,
+    lines: page.map((r) => ({ id: Number(r.id), at: iso(r.at), step: r.step || null, kind: r.kind, line: r.line, replayed: !!r.replayed })),
+    next: rows.length > n ? Number(page[page.length - 1].id) : null,
+  };
+}
+
 /**
  * One trial in full: its brief, arm, what the triage said and planned, its
  * spec (whole up to TRIAL_SPEC_CHARS, and its drawn screens' sizes), what
  * each stage cost (trialOut's costBreakdown), a first version's review
- * round by round (reviewRecord), files changed, the automatic checks, the
- * grade and critique, its code and preview, and its screenshots (with `images`, as
- * base64 PNGs, at most 8 MB). Refused like trialRows for a trial of a run
- * that is not a studio run while it waits for the judge.
+ * round by round (reviewRecord), its build's speed and its review's outcome
+ * (trialOut's buildSpeed and reviewOutcome), files changed, the automatic
+ * checks, the grade and critique, its code and preview, and its screenshots
+ * (with `images`, as base64 PNGs, at most 8 MB). Refused like trialRows for a
+ * trial of a run that is not a studio run while it waits for the judge.
  */
 async function trialDetail(pool, trialId, { images = false } = {}) {
   const { rows: [row] } = await pool.query(
@@ -1036,7 +1141,8 @@ async function trialDetail(pool, trialId, { images = false } = {}) {
   );
   if (!row) return httpError(404, 'No such trial');
   const grades = (await gradesFor(pool, [Number(row.id)])).get(Number(row.id)) || [];
-  const t = trialOut(row, { preview: (await previewsFor(pool, [Number(row.id)])).get(Number(row.id)) || null, grades });
+  const buildTurns = await speed.buildTurnsFor(pool, [row]);
+  const t = trialOut(row, { preview: (await previewsFor(pool, [Number(row.id)])).get(Number(row.id)) || null, grades, buildTurns });
   if (row.run_kind !== 'studio' && t.final === 'pending') {
     return httpError(409, 'This trial waits for the judge: grade it blind first (list_bench_grading_queue)', { code: 'judge_pending' });
   }
@@ -1073,6 +1179,10 @@ async function trialDetail(pool, trialId, { images = false } = {}) {
     changedFiles: Array.isArray(row.changed_files?.files) ? row.changed_files.files.slice(0, 200).map((f) => f.filename || f) : null,
     checks: row.capture ? grading.tasteSignals(row.capture) : null,
     bootError: row.capture && row.capture.booted === false ? clip(row.capture.error || 'did not boot', 400) : null,
+    // Its steps as its transcript recorded them, and how many lines that
+    // holds (transcriptOf pages through them).
+    timeline: await timelineOf(pool, row.id),
+    transcriptLines: Number((await pool.query('SELECT COUNT(*)::int AS n FROM bench_trial_lines WHERE trial_id = $1', [Number(row.id)])).rows[0]?.n) || 0,
   };
   if (images && row.capture) {
     const picked = capture.pickShots(row.capture).chosen;
@@ -1282,6 +1392,8 @@ async function listStudioRuns(pool, { limit = 20 } = {}) {
 }
 
 module.exports = {
+  timelineOf,
+  transcriptOf,
   SUITE_NAME,
   HOST_KEY,
   TODAY,

@@ -16,15 +16,22 @@ import { phoneRecaptchaToken, RECAPTCHA_NOTICE } from '../auth/recaptcha';
 //
 //   1. Is phone sign-in set up?        (status card, GET /api/admin/sms/status)
 //   2. Does a text go out right now?   (send a test, POST /api/admin/sms/test)
+//   3. What has been failing, and why? (failure log, GET /api/admin/sms/failures)
 //
 // The test is the real send: the same Identity Toolkit call, with the same
 // invisible reCAPTCHA token the sign-in sheet earns (auth/recaptcha.ts), so
 // what arrives is Firebase's own code message. The answer is Firebase's own
 // code, which the user-facing routes deliberately hide.
 //
-// PERMISSIONS: visible to any admin. The send is full-admin-only; a
-// view-only admin gets a note where the form would be. The server enforces
-// that independently via requireAdminWrite.
+// The failure log is the historical side of the same question: every failed
+// code request, verification and link attempt real callers made is one row
+// (routes/phone-auth.js fail(), services/phone-failure-log.js), with
+// Firebase's own code beside this API's mapped one and the number kept to
+// its last four digits.
+//
+// PERMISSIONS: visible to any admin, the log read included. The send is
+// full-admin-only; a view-only admin gets a note where the form would be.
+// The server enforces that independently via requireAdminWrite.
 
 interface SmsStatus {
   offered?: boolean;
@@ -49,6 +56,26 @@ type Result =
   | { kind: 'none' }
   | { kind: 'note'; text: string; bad?: boolean }
   | { kind: 'outcome'; outcome: Outcome };
+
+interface PhoneFailure {
+  id: number;
+  kind: string;
+  user_id: number | null;
+  username: string | null;
+  phone_last4: string | null;
+  error_code: string;
+  provider_code: string | null;
+  message: string;
+  created_at: string;
+}
+
+// One plain label per leg of the flow, the words the section already uses.
+const KIND_LABELS: Record<string, string> = {
+  code_request: 'Code request',
+  verify: 'Verify code',
+  link_request: 'Link code request',
+  link_verify: 'Link number',
+};
 
 const canWrite = () => !!(typeof window !== 'undefined'
   && (window as any).AdminConsole && (window as any).AdminConsole.canWrite());
@@ -172,10 +199,79 @@ function OutcomeLine({ outcome }: { outcome: Outcome }) {
   );
 }
 
+function FailuresCard({ failures, total7d, failed }: { failures: PhoneFailure[] | null; total7d: number | null; failed: boolean }) {
+  return (
+    <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-4 py-3">
+      <h3 className="text-sm font-semibold mb-2">Recent failures</h3>
+      {failed ? (
+        <p className="text-sm text-zinc-500 dark:text-zinc-400">Could not load the failure log.</p>
+      ) : failures === null ? (
+        <p className={AdminUI.loading}>Loading…</p>
+      ) : failures.length === 0 ? (
+        <p className="text-sm text-zinc-500 dark:text-zinc-400">
+          No failures recorded. Every failed code request, verification and link attempt
+          would appear here with the reason Firebase gave.
+        </p>
+      ) : (
+        <>
+          <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-2">
+            {`The 50 most recent, newest first. ${total7d === 1 ? '1 failure' : `${total7d ?? failures.length} failures`} in the last 7 days.`}
+          </p>
+          <div className={AdminUI.tableWrap} id="admin-sms-failures-table">
+            <table className={AdminUI.table}>
+              <thead className={AdminUI.thead}>
+                <tr>
+                  <th className={AdminUI.th}>When (UTC)</th>
+                  <th className={AdminUI.th}>Step</th>
+                  <th className={AdminUI.th}>Account</th>
+                  <th className={AdminUI.th}>Number</th>
+                  <th className={AdminUI.th}>Reason</th>
+                </tr>
+              </thead>
+              <tbody>
+                {failures.map((f) => (
+                  <tr key={f.id}>
+                    <td className={`${AdminUI.td} whitespace-nowrap text-zinc-500 dark:text-zinc-400`}>
+                      {f.created_at ? f.created_at.replace('T', ' ').slice(0, 16) : ''}
+                    </td>
+                    <td className={AdminUI.td}>{KIND_LABELS[f.kind] || f.kind}</td>
+                    <td className={AdminUI.td}>
+                      {f.username ? (
+                        <span className="font-mono text-xs">{f.username}</span>
+                      ) : (
+                        <span className="text-zinc-400 dark:text-zinc-600">not signed in</span>
+                      )}
+                    </td>
+                    <td className={`${AdminUI.td} font-mono text-xs`}>
+                      {f.phone_last4 ? `…${f.phone_last4}` : ''}
+                    </td>
+                    <td className={AdminUI.td}>
+                      <Mono>{f.error_code}</Mono>
+                      {f.provider_code && f.provider_code !== f.error_code ? (
+                        <span className="text-zinc-500 dark:text-zinc-400">
+                          {' (Firebase: '}<Mono>{f.provider_code}</Mono>{')'}
+                        </span>
+                      ) : null}
+                      <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">{f.message}</div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function SmsSection() {
   const write = canWrite();
   const [status, setStatus] = useState<SmsStatus | null>(null);
   const [statusFailed, setStatusFailed] = useState(false);
+  const [failures, setFailures] = useState<PhoneFailure[] | null>(null);
+  const [total7d, setTotal7d] = useState<number | null>(null);
+  const [failuresFailed, setFailuresFailed] = useState(false);
   const [to, setTo] = useState('');
   const [sending, setSending] = useState(false);
   const [result, setResult] = useState<Result>({ kind: 'none' });
@@ -188,6 +284,13 @@ function SmsSection() {
       if (!alive.current) return;
       if (!ok || !data) { setStatusFailed(true); return; }
       setStatus(data);
+    })();
+    (async () => {
+      const { ok, data } = await fetchJson('/api/admin/sms/failures');
+      if (!alive.current) return;
+      if (!ok || !data || !Array.isArray(data.failures)) { setFailuresFailed(true); return; }
+      setFailures(data.failures);
+      setTotal7d(typeof data.total7d === 'number' ? data.total7d : null);
     })();
   }, []);
 
@@ -290,6 +393,9 @@ function SmsSection() {
             </p>
           ) : null}
         </div>
+      </div>
+      <div id="admin-sms-failures" className="mb-4">
+        <FailuresCard failures={failures} total7d={total7d} failed={failuresFailed} />
       </div>
     </div>
   );

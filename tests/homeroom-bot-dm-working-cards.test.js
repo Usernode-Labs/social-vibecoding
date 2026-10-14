@@ -67,7 +67,7 @@ test('the client keeps Invite people, and draws a first version\'s live news wit
   // The sheet is mounted as it is, live (`making` false), never re-implemented.
   const src = read(QUESTION);
   assert.match(src, /import \{ InviteSheet \} from '\.\.\/first-session\/made';/);
-  assert.match(src, /<InviteSheet made=\{invite\} me=\{inviterName\(\)\} making=\{false\} onClose=\{\(\) => setInviting\(false\)\} onSent=\{\(\) => \{\}\} \/>/);
+  assert.match(src, /<InviteSheet made=\{invite\} me=\{inviterName\(\)\} onClose=\{\(\) => setInviting\(false\)\} onSent=\{\(\) => \{\}\} \/>/);
   assert.match(src, /if \(action\.type === 'invite'\) \{\n\s+if \(invite\) setInviting\(true\);\n\s+return;\n\s+\}/);
 });
 

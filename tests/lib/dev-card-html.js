@@ -89,11 +89,15 @@ function workshopHtml(AppView, tab) {
   return renderToHtml(createElement(m.DevWorkshop));
 }
 
-/** Render the whole kanban board from `AppView._kanbanView()`. */
+/**
+ * Render the whole kanban board from `AppView._kanbanView()`: the stage
+ * strip, then the columns, as All items draws them (#4486: the strip is the
+ * columns' heads and the phone's tabs, drawn in the pinned head above them).
+ */
 function kanbanHtml(AppView) {
   const m = mod();
   m.devKanbanStore.set(AppView._kanbanView());
-  return renderToHtml(createElement(m.DevKanban));
+  return renderToHtml(createElement(m.StageStrip)) + renderToHtml(createElement(m.DevKanban));
 }
 
 // ── The topic head's body blocks ────────────────────────────────────────

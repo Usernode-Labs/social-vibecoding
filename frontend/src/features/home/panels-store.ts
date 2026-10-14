@@ -49,6 +49,12 @@ export interface DiscoverTileView {
   demo: boolean;
   /** Is this app already in "Your apps"? Drives the badge's whole treatment. */
   added: boolean;
+  /**
+   * Is the viewer a member of this community? Together with `added` it picks
+   * the corner pill's one of three states: a real join, the quiet "Joined"
+   * that taps through to the leave confirm, or a plain pin to My apps.
+   */
+  joined: boolean;
   icon: IconView;
   /**
    * The featured illustration: its image, how it is framed inside the art
@@ -63,6 +69,12 @@ export interface DiscoverTileView {
    * declares none, which is most apps. The card draws nothing in its place.
    */
   blurb: string | null;
+  /**
+   * The fallback facts line — "12 users · Updated 3d ago" — drawn when the
+   * app declares no description, so a card with no blurb still says more
+   * than "N contributors". Null whenever a blurb exists.
+   */
+  meta: string | null;
   /** How many people built it. 0 hides the line rather than printing "0". */
   contributors: number;
 }
@@ -152,26 +164,6 @@ export interface ChallengesView {
    * area's own label into an ellipsis on a phone. `season` draws it now.
    */
   summary: string | null;
-  /**
-   * "Finish Getting started to unlock the rest of the season." while the
-   * gate is closed and the block has no locked card to say it (nothing
-   * hidden to count); null once unlocked or with no gate.
-   */
-  onboardingNote?: string | null;
-  /**
-   * How many challenges Getting started still hides (the server's
-   * `onboarding.hidden_count`), 0 once unlocked or when the payload has no
-   * count. Above 0 the block is `locked`.
-   */
-  lockedCount?: number;
-  /** The first few of their names (`onboarding.hidden_names`), for the locked card's second line. */
-  lockedNames?: string[];
-  /**
-   * A new account's season, still behind its Getting started list
-   * (2026-10-01): the block draws ONE dashed locked card and nothing else,
-   * because the card on top of Home already lists the First challenges.
-   */
-  locked?: boolean;
   /** Null between seasons, and on the empty block. */
   season: SeasonView | null;
   /** How many challenges are OPEN — what "See all N challenges" counts. */

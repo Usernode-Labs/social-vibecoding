@@ -246,6 +246,7 @@ test('the taste eval against the full PostgreSQL schema and its routes', { timeo
       // eslint-disable-next-line no-await-in-loop
       const r = await call('GET', `/api/bot-bench/items/${tr.item_token}?images=1`, { connector: true });
       assert.equal(r.status, 200);
+      assert.equal(r.body.item.itemId, tr.item_token, 'the item carries its trial\'s opaque token, and only that');
       items[tr.id] = r.body.item;
     }
     for (const item of Object.values(items)) {
@@ -262,7 +263,9 @@ test('the taste eval against the full PostgreSQL schema and its routes', { timeo
       assert.ok(item.candidate.identicalScreens.length > 0, 'a state identical to the populated screen is named, not shown twice');
       assert.equal(item.signals.automaticChecks.tapTargetsUnder44px.small, 1);
       // Blind: no model, no arm, no trial, no commit, no install step.
-      const text = JSON.stringify({ ...item, images: undefined });
+      // The itemId is a random base64url token, checked above; by chance it can spell "glm", so it sits out this search.
+      const { images: _images, itemId: _itemId, ...shown } = item;
+      const text = JSON.stringify(shown);
       assert.doesNotMatch(text, /glm|z-ai|first_version|"capture"|before|c{40}|"trialId"|"runId"|"model"|install/i);
       assert.ok(!('trialId' in item) && !('runId' in item) && !('model' in item) && !('id' in item));
     }

@@ -38,6 +38,15 @@ const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 
 const REMOTE_SRC = read('src/routes/mcp-remote.js');
 const CONNECTORS_TSX = read('frontend/src/features/settings/sections/connectors.tsx');
+
+const { message } = require('./lib/platform-i18n');
+// The pane's prose lives in the catalog (frontend/locales/en/settings.json).
+// This is the English of every message a stretch of source wires, in order:
+// what a reader of that stretch sees, less the markup. Inline code and
+// emphasis appear as the catalog's numbered tags (<1>homeroom</1>).
+const wiredEnglish = (source) => [...source.matchAll(/['"]((?:settings|core):[\w.]+)['"]/g)]
+  .map((match) => message(match[1])).join('\n');
+const CONNECTORS_COPY = wiredEnglish(CONNECTORS_TSX);
 const CONNECTOR_DOC = read('MCP-CONNECTOR.md');
 const SETTINGS_JS = read('frontend/src/features/settings/settings.js');
 
@@ -88,8 +97,11 @@ test('the connect flow recommends the canonical name where it is typed', () => {
   // The Name field is the only place that string is decided, so this is
   // where it has to be said — not in a doc nobody opens mid-dialog.
   assert.match(CONNECTORS_TSX, /Add custom connector/);
-  assert.match(CONNECTORS_TSX, /Name it exactly/);
-  assert.match(CONNECTORS_TSX, new RegExp(`<code[^>]*>${constants.SERVER_NAME}</code>`));
+  assert.match(CONNECTORS_TSX, /<RichMessage id="settings:connectors\.naming\.body" components=\{\[CODE, CODE, CODE, CODE\]\} \/>/);
+  assert.match(CONNECTORS_TSX, /const CODE = <code /);
+  const naming = message('settings:connectors.naming.body');
+  assert.match(naming, /Name it exactly/);
+  assert.match(naming, new RegExp(`<0>${constants.SERVER_NAME}</0>`));
 });
 
 // ── 2. The shipped allow rules ─────────────────────────────────────────
@@ -399,12 +411,15 @@ test('Settings → Connectors offers the rules for a personal settings file', ()
   // The scaffolded file fixes one repo. The user's own settings file is the
   // only thing that fixes every repo, including ones Homeroom never made — so
   // the block has to be somewhere they can copy it from.
-  assert.match(CONNECTORS_TSX, /Stop the permission prompts/);
+  assert.match(CONNECTORS_TSX, /title=\{t\('settings:connectors\.prompts\.title'\)\}/);
+  assert.equal(message('settings:connectors.prompts.title'), 'Stop the permission prompts');
   assert.match(CONNECTORS_TSX, /~\/\.claude\/settings\.json/);
+  assert.match(CONNECTORS_COPY, /~\/\.claude\/settings\.json/);
   assert.match(CONNECTORS_TSX, /id="connector-allow-rules"/);
   assert.match(CONNECTORS_TSX, /id="connector-allow-rules-copy"/);
   // And it says what is NOT covered, so nobody reads it as "approve nothing".
-  assert.match(CONNECTORS_TSX, /still asks every time/);
+  assert.match(CONNECTORS_TSX, /\{t\('settings:connectors\.prompts\.readsOnly'\)\}/);
+  assert.match(message('settings:connectors.prompts.readsOnly'), /still asks every time/);
 });
 
 test('the panel splits into the three surfaces the answer differs between', () => {
@@ -422,13 +437,14 @@ test('the panel splits into the three surfaces the answer differs between', () =
     CONNECTORS_TSX.indexOf('id="connector-case-cc-web"'),
     CONNECTORS_TSX.indexOf('id="connector-case-chat"')
   );
-  assert.match(web, /fresh container/i);
+  assert.match(wiredEnglish(web), /fresh container/i);
+  assert.match(wiredEnglish(web), /\.claude\/settings\.json/);
   assert.match(web, /\.claude\/settings\.json/);
   assert.match(web, /id="connector-repo-allow-rules"/);
   // And the chat case says there is nothing to do, rather than leaving a
   // Claude.ai user to copy a file format that has no effect there.
   const chat = CONNECTORS_TSX.slice(CONNECTORS_TSX.indexOf('id="connector-case-chat"'));
-  assert.match(chat, /Nothing to do/i);
+  assert.match(wiredEnglish(chat), /Nothing to do/i);
 });
 
 test('the copied block is byte-for-byte the shipped allowlist, in BOTH places', () => {
@@ -471,9 +487,11 @@ test('the panel says why Homeroom cannot just do this for the user', () => {
   // could have spared them — and the honest answer is also reassuring, since
   // "a connector cannot write your permission files" is exactly what stops
   // the NEXT connector granting itself whatever it likes.
-  assert.match(CONNECTORS_TSX, /Homeroom cannot switch this on for you/);
-  assert.match(CONNECTORS_TSX, /a connector has no way to write either/);
-  assert.match(CONNECTORS_TSX, /one-time thing/);
+  assert.match(CONNECTORS_TSX, /\{t\('settings:connectors\.prompts\.ownership'\)\}/);
+  const ownership = message('settings:connectors.prompts.ownership');
+  assert.match(ownership, /Homeroom cannot switch this on for you/);
+  assert.match(ownership, /a connector has no way to write either/);
+  assert.match(ownership, /one-time thing/);
 });
 
 test('a user whose connector has some other name has a field, not a paragraph', () => {
@@ -481,15 +499,20 @@ test('a user whose connector has some other name has a field, not a paragraph', 
   // same fix for the person reading the page, who has the one piece of
   // information the platform does not: what their tools are actually called.
   assert.match(CONNECTORS_TSX, /id="connector-name-spelling"/);
-  assert.match(CONNECTORS_TSX, /Connector registered under a different name\?/);
+  assert.match(CONNECTORS_TSX, /\{t\('settings:connectors\.prompts\.spelling\.label'\)\}/);
+  assert.equal(message('settings:connectors.prompts.spelling.label'), 'Connector registered under a different name?');
   // It tells them where to look, and names both spellings that need no fix.
-  const field = CONNECTORS_TSX.slice(CONNECTORS_TSX.indexOf('connector-name-spelling'));
+  // The help text sits between the label and the field, under the label's id.
+  const field = wiredEnglish(CONNECTORS_TSX.slice(
+    CONNECTORS_TSX.indexOf('htmlFor="connector-name-spelling"'),
+    CONNECTORS_TSX.indexOf('id="connector-name-spelling"')
+  ));
   assert.match(field, new RegExp(`mcp__${constants.SERVER_NAME}__whoami`));
   assert.match(field, /both blocks above are rewritten/);
   // Every spelling the shipped block covers is named as one that needs no
   // fix — a user on the pre-rename name must not be told to retype it.
   for (const name of constants.ALLOW_RULE_SERVER_NAMES) {
-    assert.match(field, new RegExp(`>${name}</code>`), `${name} is named as already covered`);
+    assert.match(field, new RegExp(`<\\d>${name}</\\d>`), `${name} is named as already covered`);
   }
 
   // And it is wired: the field rewrites the two rendered blocks in place, so
@@ -567,7 +590,10 @@ test('every copy button is distinguishable to a screen reader', () => {
   // blocks, so the count is read off the markup rather than assumed: one
   // `<id>-copy` button, one distinct label, each.
   const buttons = (CONNECTORS_TSX.match(/id="[a-z-]+-copy"/g) || []);
-  const labels = (CONNECTORS_TSX.match(/aria-label="Copy[^"]*"/g) || []);
+  // Each name is its own catalog message, wired on the button.
+  const labels = [...CONNECTORS_TSX.matchAll(/aria-label=\{t\('(settings:connectors\.[\w.]+)'\)\}/g)]
+    .map((match) => message(match[1]))
+    .filter((label) => /^Copy /.test(label));
   assert.ok(buttons.length >= 3, 'the connector URL and both allow-rule blocks are still here');
   assert.equal(labels.length, buttons.length, 'every copy button carries an aria-label');
   assert.equal(new Set(labels).size, buttons.length,
@@ -578,14 +604,20 @@ test('copying reports the destination, and reports failure honestly', () => {
   const settingsJs = read('frontend/src/features/settings/settings.js');
   // The label swap alone cannot say WHICH file you copied for, and on a phone
   // the thumb is over it — so the toast names the destination.
-  assert.match(settingsJs, /Copied\. Paste it into ~\/\.claude\/settings\.json/);
-  assert.match(settingsJs, /Copied\. Commit it as \.claude\/settings\.json in your app repo/);
+  assert.match(settingsJs, /success: 'settings:connectors\.copy\.personalRulesCopied'/);
+  assert.equal(message('settings:connectors.copy.personalRulesCopied'), 'Copied. Paste it into ~/.claude/settings.json');
+  assert.match(settingsJs, /success: 'settings:connectors\.copy\.repoRulesCopied'/);
+  assert.equal(message('settings:connectors.copy.repoRulesCopied'),
+    'Copied. Commit it as .claude/settings.json in your app repo');
   // #2370: the field is labelled "MCP server URL" — the words Claude, ChatGPT
   // and Codex use for the box it gets pasted into — and the toast agrees.
-  assert.match(settingsJs, /MCP server URL copied/);
+  assert.match(settingsJs, /successMessage: 'settings:connectors\.copy\.urlCopied'/);
+  assert.equal(message('settings:connectors.copy.urlCopied'), 'MCP server URL copied');
   // The URL button used to write 'Copied' even when writeText had rejected.
-  assert.match(settingsJs, /'Copy failed'/);
-  assert.match(settingsJs, /\{ error: true \}/);
+  assert.match(settingsJs, /btn\.textContent = ok \? tr\('core:common\.copied'\) : tr\('settings:copyControl\.failed'\);/);
+  assert.equal(message('core:common.copied'), 'Copied');
+  assert.equal(message('settings:copyControl.failed'), 'Copy failed');
+  assert.match(settingsJs, /PlatformUI\.toast\(tr\(ok \? successMessage : failureMessage\),\s*ok \? \{\} : \{ error: true \}\);/);
   // A second press must not cut the first press's confirmation short.
   assert.match(settingsJs, /clearTimeout\(resetTimer\)/);
 });

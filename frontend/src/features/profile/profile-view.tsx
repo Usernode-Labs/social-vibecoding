@@ -24,6 +24,7 @@ import { type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { PLANE_FILL } from '@/components/ui/grouped-list';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
+import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import {
   buildProfileView,
@@ -66,6 +67,7 @@ function IdentityAvatar({ url, initial }: { url: string | null; initial: string 
  *  editing it. The prototype's compact card: the name, one muted line of
  *  facts ("@handle · Building since March 2026 · 3 apps"), then the bio. */
 function IdentityCard({ identity }: { identity: any }): ReactNode {
+  const t = useMessages('profile');
   return (
     <div
       id="profile-identity-card"
@@ -103,7 +105,7 @@ function IdentityCard({ identity }: { identity: any }): ReactNode {
           className="self-start ml-[68px] sm:self-auto sm:ml-0"
           onClick={() => Profile.showEditSheet()}
         >
-          Edit profile
+          {t('profile:identity.edit')}
         </Button>
       </div>
       {/*
@@ -175,8 +177,9 @@ function StatCards({ stats }: { stats: Array<{ key: string; value: string; label
  * leading tile and two lines of text.
  */
 function ProfileSkeleton(): ReactNode {
+  const t = useMessages('profile');
   return (
-    <SkeletonGroup label="Loading your profile">
+    <SkeletonGroup label={t('profile:screen.loading')}>
       <div className={`rounded-2xl ${PLANE_FILL} p-4 mb-3`}>
         <div className="flex items-center gap-3">
           <Skeleton shape="circle" className="w-14 h-14" />
@@ -216,6 +219,8 @@ function ProfileSkeleton(): ReactNode {
 
 export function ProfileRoot(): ReactNode {
   const state = useStoreState(profileStore);
+  // Subscribed before the view is built: its lines are read as it is.
+  const t = useMessages('profile');
   const view = buildProfileView(state);
 
   if (view.kind === 'empty') return null;
@@ -226,7 +231,7 @@ export function ProfileRoot(): ReactNode {
     return (
       <div className="py-12 text-center">
         <div className="text-sm text-zinc-500 dark:text-zinc-400 mb-4">
-          Sign in to see your profile.
+          {t('profile:signedOut.text')}
         </div>
         <a
           className={
@@ -235,7 +240,7 @@ export function ProfileRoot(): ReactNode {
           }
           href="#login"
         >
-          Sign in
+          {t('profile:signedOut.signIn')}
         </a>
       </div>
     );
@@ -243,13 +248,13 @@ export function ProfileRoot(): ReactNode {
   if (view.kind === 'error') {
     return (
       <div className="text-sm text-zinc-500 py-8 text-center dark:text-zinc-400">
-        Could not load your profile. Check your connection and try again.
+        {t('profile:screen.loadFailed')}
       </div>
     );
   }
   if (view.kind === 'publicNotFound') {
     return (
-      <div className="text-sm text-zinc-500 py-12 text-center dark:text-zinc-400">This profile is unavailable.</div>
+      <div className="text-sm text-zinc-500 py-12 text-center dark:text-zinc-400">{t('profile:public.unavailable')}</div>
     );
   }
   if (view.kind === 'public') {

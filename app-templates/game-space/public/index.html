@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  {{DEV_CONSOLE_FORWARDER}}
+  <title>{{APP_NAME}}</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🚀</text></svg>">
+  <!-- This app's precompiled Tailwind (npm run build writes it on every
+       image build; tailwind.config.js says which files it scans), then the
+       game's own scene (public/scene.css). -->
+  <link rel="stylesheet" href="/tailwind.css">
+  <link rel="stylesheet" href="/scene.css">
+  <!-- The platform bridge, centrally hosted and loaded by RELATIVE path.
+       Never vendor it and never write a hostname in front of it. It is also
+       how the app answers the shell, so keep it even if no bridge API is
+       called. -->
+  <script src="/usernode-bridge/v1/bridge.js"></script>
+  <!-- Follow the viewer's Homeroom theme (the bridge reports it), with the
+       OS preference as the fallback outside Homeroom. The game's scene keeps
+       its own look in both; the kit's parts (the toast) follow it. -->
+  <script>
+    (function () {
+      var media = window.matchMedia('(prefers-color-scheme: dark)');
+      function applyTheme() {
+        var theme = (window.usernode && window.usernode.theme) || (media.matches ? 'dark' : 'light');
+        document.documentElement.classList.toggle('dark', theme === 'dark');
+        document.documentElement.style.colorScheme = theme;
+      }
+      applyTheme();
+      window.addEventListener('usernode:theme-changed', applyTheme);
+      media.addEventListener('change', applyTheme);
+    })();
+  </script>
+</head>
+<body class="min-h-screen bg-ground text-fg">
+  <!-- The field: deep space, always behind everything. On the title screen
+       it drifts (and shows a run that is on); in a run it fills the screen. -->
+  <div id="field" class="space fixed inset-0 touch-none select-none">
+    <canvas id="field-canvas" class="block h-full w-full" aria-label="The field: ships, storms of sparks and stardust"></canvas>
+  </div>
+
+  <!-- The title screen: the game's name, the hangar (who is flying, join,
+       launch) and the best runs. Everyone lands here. -->
+  <div id="title" class="space-over fixed inset-0 overflow-y-auto">
+    <main class="mx-auto flex min-h-full max-w-md flex-col items-center justify-center gap-6 px-4 py-12">
+      <div class="flex flex-col items-center gap-3">
+        <h1 class="title-name">{{APP_NAME}}</h1>
+        <p class="title-line">Fly together through storms of sparks. Weave between them, collect the stardust, and see how far you get.</p>
+      </div>
+
+      <section id="hangar" class="glass flex flex-col gap-4" aria-live="polite">
+        <!-- Loading: shapes where the hangar will be. -->
+        <div id="loading" class="flex flex-col gap-3" aria-label="Loading">
+          <div class="skeleton h-6 w-40"></div>
+          <div class="skeleton h-10 w-full"></div>
+          <div class="skeleton h-12 w-full"></div>
+        </div>
+
+        <!-- Error: only when the first load failed. -->
+        <div id="error" class="state-error" hidden>
+          <p class="glass-title">The game did not load</p>
+          <p class="glass-note">Nothing is lost. Check your connection and try again.</p>
+          <button id="retry" type="button" class="btn-ghost">Retry</button>
+        </div>
+
+        <div id="hangar-body" class="flex flex-col gap-4" hidden>
+          <div class="flex flex-col gap-1">
+            <h2 id="lobby-title" class="glass-title">In the hangar</h2>
+            <p id="lobby-note" class="glass-note"></p>
+          </div>
+          <ul id="players" class="pilots"></ul>
+          <!-- Empty: only when nobody has joined yet. -->
+          <div id="empty" class="state-empty py-2" hidden>
+            <p class="glass-title">No pilots yet</p>
+            <p class="glass-note">Join, and launch a run on your own or wait for the others.</p>
+          </div>
+          <div id="lobby-actions" class="flex flex-wrap gap-2">
+            <button id="join" type="button" class="btn-launch flex-1">Join the run</button>
+            <button id="start" type="button" class="btn-launch flex-1">Launch</button>
+            <button id="resume" type="button" class="btn-launch flex-1" hidden>Back to my ship</button>
+            <button id="watch" type="button" class="btn-ghost flex-1" hidden>Watch the run</button>
+            <button id="leave" type="button" class="btn-ghost">Leave</button>
+          </div>
+        </div>
+      </section>
+
+      <section id="leaders-section" class="glass flex flex-col gap-1" hidden>
+        <h2 class="glass-title">Best runs</h2>
+        <ol id="leaders" class="ranks"></ol>
+      </section>
+
+      <p class="controls">Arrow keys or WASD to fly, and hold Shift to slow down for the tight gaps. On a phone, drag anywhere: your ship follows your finger.</p>
+    </main>
+  </div>
+
+  <!-- The run: the field fills the screen; your score, the sector and your
+       shields float over it. Taps go through to the field. -->
+  <div id="stage" class="space-over pointer-events-none fixed inset-0 flex flex-col" hidden>
+    <header class="flex items-start justify-between gap-3 p-3">
+      <button id="to-title" type="button" class="hud-btn pointer-events-auto" aria-label="Back to the title screen">&lsaquo;</button>
+      <div class="hud-score" aria-live="off">
+        <p id="score" class="hud-points">0</p>
+        <p id="wave" class="hud-sector">Sector 1</p>
+      </div>
+      <div class="flex flex-col items-end gap-2">
+        <div id="shields" class="hud-shields" role="img" aria-label="Shields"></div>
+        <ol id="pilot-scores" class="hud-pilots" aria-label="Everyone's score"></ol>
+      </div>
+    </header>
+    <div class="flex-1"></div>
+    <div class="flex justify-center p-4">
+      <p id="hint" class="hud-hint" hidden></p>
+    </div>
+
+    <!-- Your ship is out, and the others fly on. -->
+    <div id="out" class="flex justify-center p-4" hidden>
+      <div class="glass pointer-events-auto flex max-w-sm flex-col gap-2 text-center">
+        <p class="glass-title">Your ship is out</p>
+        <p id="out-note" class="glass-note"></p>
+      </div>
+    </div>
+
+    <!-- The end of a run: everyone's score. -->
+    <div id="over" class="veil pointer-events-auto" hidden>
+      <div class="glass flex max-w-sm flex-col gap-3" role="dialog" aria-labelledby="over-line">
+        <p id="over-line" class="glass-title text-center">Run over</p>
+        <p id="over-score" class="big-score"></p>
+        <p id="over-note" class="glass-note text-center"></p>
+        <ol id="standings" class="ranks"></ol>
+        <div class="flex flex-wrap gap-2 pt-1">
+          <button id="again" type="button" class="btn-launch flex-1">Fly again</button>
+          <button id="over-title" type="button" class="btn-ghost">Title screen</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Only when the live connection is lost. -->
+  <p id="connection" class="fixed left-1/2 top-3 z-40 -translate-x-1/2 rounded-full bg-fg px-3 py-1 text-small text-ground" role="status" hidden></p>
+
+  <div id="toast" class="pointer-events-none fixed inset-x-0 bottom-24 z-50 flex justify-center px-4" role="status" aria-live="polite" hidden>
+    <p id="toast-text" class="rounded-lg bg-fg px-4 py-2 text-small text-ground shadow-lg"></p>
+  </div>
+
+  <script src="/game/room.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

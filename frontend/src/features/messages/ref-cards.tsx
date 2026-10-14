@@ -14,6 +14,7 @@
  * request, or the activity card's `data-bot-activity-request`.
  */
 
+import { useMessages } from '../../lib/i18n/react';
 import { issueRefHref } from './channels';
 import { ObjectCard } from './format';
 import { pageOf, type HomeroomLink } from './homeroom-links';
@@ -34,10 +35,13 @@ export function findRequestCard(from: Element, appSlug: string, n: number): HTML
   const activity = `${appSlug}#${n}`;
   let above: HTMLElement | null = null;
   let below: HTMLElement | null = null;
-  for (const el of Array.from(scope.querySelectorAll<HTMLElement>('a.messages-object-card[href], [data-bot-activity-request]'))) {
+  // #4564: a ready card leading a change block names its request
+  // (`data-bot-ready-request`), so a chip in a row whose request card was
+  // dropped still finds the card at the top of its block.
+  for (const el of Array.from(scope.querySelectorAll<HTMLElement>('a.messages-object-card[href], [data-bot-activity-request], [data-bot-ready-request]'))) {
     const match = el.matches('a.messages-object-card')
       ? el.getAttribute('href') === href
-      : el.getAttribute('data-bot-activity-request') === activity;
+      : el.getAttribute('data-bot-activity-request') === activity || el.getAttribute('data-bot-ready-request') === activity;
     if (!match) continue;
     if (el.compareDocumentPosition(from) & Node.DOCUMENT_POSITION_FOLLOWING) above = el;
     else if (!below) below = el;
@@ -62,6 +66,7 @@ export function revealCard(card: HTMLElement): void {
 export function RefCards({ appSlug, numbers }: { appSlug: string; numbers: readonly number[] }) {
   const links = numbers.map((n) => pageOf(`app/${appSlug}/dev/issues/${n}`)).filter((link): link is HomeroomLink => !!link);
   const read = useLinkCards(links);
+  const t = useMessages('messages');
   if (!links.length) return null;
   return (
     <div className="messages-object-list mt-1 max-w-[480px]" data-ref-cards="">
@@ -72,7 +77,7 @@ export function RefCards({ appSlug, numbers }: { appSlug: string; numbers: reado
         // request by its number alone: it still opens the request's page.
         const card: SharedObjectCard = found || {
           type: 'issue', available: true, appSlug, issueNumber: link.issueNumber,
-          title: answered ? 'Open this request' : 'Loading…',
+          title: answered ? t('messages:refCard.open') : t('core:common.loading'),
         };
         return (
           <div key={link.key} data-ref-card={link.issueNumber} aria-busy={!found && !answered ? true : undefined}>

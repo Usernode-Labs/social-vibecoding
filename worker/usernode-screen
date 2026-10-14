@@ -1,0 +1,35 @@
+#!/bin/sh
+# usernode-screen 1 <<'SCREEN' ... SCREEN (newcomer run four, 13 Oct 2026):
+# a first version's spec turn saves each phone screen it draws, the main
+# one first, the moment it is drawn and before it writes the rest of the
+# spec. The screen is the whole <template data-screen> element, on stdin.
+# It is written whole to /tmp/usernode-screens/<n>.html (never into the
+# repository, and never half: written aside, then moved into place), and
+# nothing is sent from here: the platform sees the command in the turn's
+# own stream, reads the file and draws the app's first look from it while
+# the spec goes on (services/first-version-screens.js). The spec then puts
+# an empty placeholder where the screen goes, and the platform puts the
+# saved screen there once the spec is in.
+#
+# Exit 0 always: a screen never fails a spec.
+n="$1"
+case "$n" in
+  1|2) ;;
+  *)
+    echo 'usage: usernode-screen 1|2 <<'"'"'SCREEN'"'"' then the <template data-screen> element, then SCREEN'
+    exit 0
+    ;;
+esac
+dir=/tmp/usernode-screens
+mkdir -p "$dir" 2>/dev/null || { echo "Not saved: $dir could not be made. Draw screen $n in the spec in full."; exit 0; }
+part="$dir/.$n.$$"
+head -c 200000 > "$part"
+size=$(wc -c < "$part" | tr -d ' ')
+if [ "$size" -lt 40 ] || ! grep -q '<template' "$part"; then
+  rm -f "$part"
+  echo "Not saved: send screen $n's whole <template data-screen> element on stdin. Draw it in the spec in full instead."
+  exit 0
+fi
+mv -f "$part" "$dir/$n.html"
+echo "Saved screen $n ($size characters). In the spec's screens figure, write <template data-screen data-from=\"$n\"></template> where it goes."
+exit 0

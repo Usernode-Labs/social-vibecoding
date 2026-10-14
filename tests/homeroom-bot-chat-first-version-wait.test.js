@@ -32,6 +32,7 @@ const path = require('node:path');
 const { Pool } = require('pg');
 
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL
   || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
@@ -90,7 +91,10 @@ test('a Reading chip the moments missed catches up with the card', () => {
 });
 
 test('what the card and the chip say while it waits', () => {
-  const { BotStatusChip, BotRequestCardView, cardWords, FIRST_VERSION_WAIT_LINE } = loadTsx('frontend/src/features/group-chat/bot-request.tsx');
+  const { BotStatusChip, BotRequestCardView, cardWords } = loadTsx('frontend/src/features/group-chat/bot-request.tsx');
+  // The wait line is the end of a whole catalog message that starts with what was taken.
+  const FIRST_VERSION_WAIT_LINE = message('chat:group.botCard.filed.firstVersionWait', { title: 'X' }).slice('Got it: X. '.length);
+  assert.equal(message('chat:group.botCard.filed.firstVersionWait', { title: 'X' }), `Got it: X. ${WAIT}`);
   assert.equal(FIRST_VERSION_WAIT_LINE, WAIT);
   // The DM card's own words (homeroom-bot-activity.js), in the chat card's typography.
   const { FIRST_VERSION_WAIT_WORDS } = require('../src/services/homeroom-bot-activity');
@@ -128,7 +132,7 @@ test('the merge wakes the loop for what waited, and its pick-up moves the chat r
   assert.match(src, /noteIssueActivity\(\{ appId, issueNumber: Number\(firstVersion\[0\]\.issue_number\), reason: 'first_version_live' \}\);/);
   // processOne, picking the request up: its chat message reads Reading, and
   // noteRequestStatus pushes the requester's cards (followCards).
-  assert.match(src, /await activity\(\)\.startCard\(pool, \{ app, issueNumber, requester, bot, jobKey: item\.id, settings, deps: \{ dm: deps\.dm \} \}\);\s*\/\/ B9: [^\n]*\n\s*await require\('\.\/homeroom-bot-chat'\)\.noteRequestStatus\(pool, \{ appId: app\.id, issueNumber, status: 'reading' \}\);/);
+  assert.match(src, /await activity\(\)\.startCard\(pool, \{\s*app, issueNumber, requester, bot, jobKey: item\.id, settings, inDm: DM_REASONS\.has\(item\.reason\), reason: item\.reason,\s*deps: \{ dm: deps\.dm \},\s*\}\);\s*\/\/ B9: [^\n]*\n\s*await require\('\.\/homeroom-bot-chat'\)\.noteRequestStatus\(pool, \{ appId: app\.id, issueNumber, status: 'reading' \}\);/);
 });
 
 test('Page Turners, against the full PostgreSQL schema', { timeout: 180000 }, async (t) => {
@@ -178,9 +182,7 @@ test('Page Turners, against the full PostgreSQL schema', { timeout: 180000 }, as
     `INSERT INTO platform_settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
     [key, value],
   );
-  await set('homeroom_bot_dm_users', JSON.stringify(['maya', 'priya']));
   await set('homeroom_bot_mode', 'live');
-  await set('homeroom_bot_live_apps', JSON.stringify(['page-turners']));
 
   // Maya's first version, request #1: the bot read it and is building it.
   await pool.query(
@@ -210,6 +212,9 @@ test('Page Turners, against the full PostgreSQL schema', { timeout: 180000 }, as
   const deps = (answer) => ({
     readAsk: async () => answer,
     takeOfferRead: () => true,
+    // The chat's own path for a mention, as it is with the bot's voice off
+    // in chats (homeroom-bot-voice.js answers it otherwise).
+    voice: { enabledFor: async () => false, recordAsk: async () => null, dropAsks: async () => {} },
     github: {
       isEnabled: () => true,
       safeMention: (s) => s,
@@ -262,7 +267,13 @@ test('Page Turners, against the full PostgreSQL schema', { timeout: 180000 }, as
     const { rows: dm } = await pool.query(
       `SELECT content FROM conversation_messages WHERE content LIKE '%request #2%' AND content LIKE '%Filed. Waiting for the first version to go live.%'`,
     );
-    assert.equal(dm.length, 1, 'the DM card says it waits too');
+    // One story: asked in the chat, it still gets its card in her DM with
+    // the bot (every request has one), whose thread says where it came from.
+    assert.equal(dm.length, 1, 'its card in her DM, saying it waits');
+    const { rows: origin } = await pool.query(
+      `SELECT content FROM conversation_messages WHERE content LIKE 'You asked for this in %chat. It''s request #2.'`,
+    );
+    assert.equal(origin.length, 1, 'its thread starts with where it was asked');
     // After a reload (GET my-bot-requests): the same card, and the chip left as it is.
     frames.length = 0;
     const again = (await mine()).find((c) => c.messageId === booksId);

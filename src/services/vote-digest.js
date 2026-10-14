@@ -38,6 +38,7 @@
 
 const log = require('./logger');
 const { VOTE_DIGEST_LOCK } = require('./advisory-locks');
+const { firstVersionSql } = require('./first-version-rule');
 
 const INTERVAL_MS = 60 * 60 * 1000;      // sweep hourly
 const FIRST_SWEEP_DELAY_MS = 5 * 60_000; // let boot settle first
@@ -68,7 +69,10 @@ let timer = null;
  *   - `hidden` is not read, so a hidden opt-out row counts like a pin.
  *
  * Excluded: the proposal's own author, apps the person blocked, proposals
- * they already voted on, and anyone who had a digest in the last
+ * they already voted on, a change Homeroom bot built for a request they
+ * asked for, a change they were told is ready to try in the last 24 hours,
+ * a project's first version (it goes live without a vote:
+ * services/first-version-rule.js), and anyone who had a digest in the last
  * MIN_GAP_HOURS.
  *
  * Deliberately ONE query rather than a loop: this runs over every user on
@@ -88,6 +92,8 @@ const PENDING_SQL = `
     SELECT cs.id, cs.app_id, cs.user_id AS author_id
       FROM chat_sessions cs
      WHERE cs.status = 'promoted'
+       -- 13 Oct 2026, D1: a project's first version waits on nobody's vote.
+       AND NOT ${firstVersionSql('cs')}
   )
   SELECT s.user_id, COUNT(DISTINCT p.id) AS pending,
          -- The one change, when there is exactly one: the row names it, so a
@@ -101,6 +107,22 @@ const PENDING_SQL = `
      AND NOT EXISTS (
        SELECT 1 FROM pr_votes v
         WHERE v.session_id = p.id AND v.user_id = s.user_id
+     )
+     -- "One story": not a change Homeroom bot built for a request this
+     -- person asked for. The bot is its author, so they would otherwise
+     -- "owe" a vote on their own change; the bot's own message asks them.
+     AND NOT EXISTS (
+       SELECT 1 FROM homeroom_bot_runs r
+         JOIN homeroom_bot_requesters q ON q.app_id = r.app_id AND q.issue_number = r.issue_number
+        WHERE r.proposal_session_id = p.id AND q.user_id = s.user_id
+     )
+     -- Nor one they were told is ready to try in the last day: that ping
+     -- already asked them.
+     AND NOT EXISTS (
+       SELECT 1 FROM notifications n
+        WHERE n.user_id = s.user_id AND n.session_id = p.id
+          AND n.kind IN ('change_ready', 'build_ready')
+          AND n.created_at > NOW() - INTERVAL '24 hours'
      )
      AND NOT EXISTS (
        SELECT 1 FROM notifications n

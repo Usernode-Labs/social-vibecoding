@@ -1,6 +1,7 @@
 /**
- * "Has this account finished the welcome tour?", kept by the account (#3237)
- * and read by Home's Getting started card (#3240).
+ * "Has this account finished the welcome tour?", kept by the account (#3237).
+ * Home's Getting started card read it for its first row (#3240) until #4635
+ * retired the card; Admin › Journey reads it still.
  *
  * The browser's flag (./tour-storage.ts) used to be the whole answer, and it
  * is a poor one on its own: another device, another browser, the phone app
@@ -12,24 +13,22 @@
  * carries it too.
  *
  * Since #3240 the tour no longer starts by itself, so nothing here decides
- * whether it OPENS: the Getting started card's first row, "Take the 1-minute
- * tour", ticks off from the account's answer (src/services/onboarding.js),
- * and that is what the answer is for now. Two rules are left, each a pure
- * function or a guarded write so the tests EXECUTE them:
+ * whether it OPENS. Two rules are left, each a pure function or a guarded
+ * write so the tests EXECUTE them:
  *
  *   * BACKFILL. A browser that has the flag when the account does not copies
  *     it to the account, once, so somebody who finished the tour before the
- *     account kept the answer sees that row ticked on every device. Never
+ *     account kept the answer has it done on every device. Never
  *     while a join screen is still to come or was shown here, because that
  *     is an account an admin has reset (Admin → Users → Reset first run,
  *     which clears the account's flag), and never against the session
  *     snapshot's user: a stale "not done" there could be that reset account,
  *     and copying "done" over it would undo the reset on every device.
- *   * THE WRITE IS FIRE-AND-FORGET. A failure costs an unticked row and
+ *   * THE WRITE IS FIRE-AND-FORGET. A failure costs the account's answer and
  *     nothing else: it never throws out of this module and never logs a
  *     console.error, which fails proposal checks on any route. A write that
- *     lands says so on `document` (`sv:tour-done`), which is how the card
- *     on the same screen learns to tick the row without a reload.
+ *     lands says so on `document` (`sv:tour-done`), for anything on the same
+ *     screen that wants to know without a reload.
  */
 
 export const TOUR_DONE_PATH = '/api/me/tour-done';
@@ -123,7 +122,7 @@ export async function markDoneOnServer(userId: number | null, end?: TourEnd): Pr
   return true;
 }
 
-/** The event the Getting started card reloads on, so its tour row ticks. */
+/** Said on `document` when a "done" write lands (see the header). */
 export const TOUR_DONE_EVENT = 'sv:tour-done';
 
 function announceDone(): void {

@@ -17,6 +17,8 @@
  * "Waiting for approval from you and @ada".
  */
 
+import { t } from '../../lib/i18n/runtime';
+
 export interface ApprovalNeed {
   /** The reader's own approval counts and is not in yet: listed as "you". */
   you?: boolean;
@@ -41,46 +43,95 @@ export function countOf(value: unknown): number | null {
 /** Pure: "a", "a and b", "a, b and c". */
 export function andWords(items: string[]): string {
   if (items.length <= 1) return items.join('');
-  return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
+  return t('messages:approval.list.and', { first: commaWords(items.slice(0, -1)), last: items[items.length - 1] });
+}
+
+/** Everyone before the last, as the language on screen separates them. */
+function commaWords(items: string[]): string {
+  return items.reduce((first, second) => t('messages:approval.list.comma', { first, second }));
 }
 
 /** Pure: "a", "a or b", "a, b or c". */
 export function orWords(items: string[]): string {
   if (items.length <= 1) return items.join('');
-  return `${items.slice(0, -1).join(', ')} or ${items[items.length - 1]}`;
+  return t('messages:approval.list.or', { first: commaWords(items.slice(0, -1)), last: items[items.length - 1] });
 }
 
-/** Pure: "one approval", "2 approvals", or with `again` "one more approval", "2 more approvals". */
-export function approvalsWords(count: number, again = false): string {
-  const more = again ? ' more' : '';
-  return count === 1 ? `one${more} approval` : `${count}${more} approvals`;
+/**
+ * The same three lines in the two places that say them: a status line under
+ * the ready card (no full stop), and a sentence in the project chat's card
+ * (with one). Two wordings are two messages, so the full stop is never added
+ * to a finished line.
+ */
+export type ApprovalLineForm = 'status' | 'sentence';
+const LINE_IDS = {
+  status: {
+    needs: 'messages:approval.needs',
+    needsMore: 'messages:approval.needsMore',
+    waiting: 'messages:approval.waiting',
+    waitingYou: 'messages:approval.waitingYou',
+  },
+  sentence: {
+    needs: 'chat:group.botCard.approval.needs',
+    needsMore: 'chat:group.botCard.approval.needsMore',
+    waiting: 'chat:group.botCard.approval.waitingFrom',
+    waitingYou: 'chat:group.botCard.approval.waitingFromYou',
+  },
+} as const;
+
+/** Pure: "Needs one approval from …", "Needs 2 approvals from …", or with `again` "… one more approval …". */
+export function approvalsWords(count: number, people: string, again = false, form: ApprovalLineForm = 'status'): string {
+  return again
+    ? t(LINE_IDS[form].needsMore, { count, people })
+    : t(LINE_IDS[form].needs, { count, people });
 }
+
+/**
+ * Where a list of people stands in its sentence. The words in the list that
+ * are not account names (the reader, and "2 more" for people not named) are
+ * worded for ONE such place each, because a language with cases needs a
+ * different form after "approval from" than as the subject of "approve":
+ *   from     "Waiting for approval from …", "Needs 2 approvals from …"
+ *   subject  "It goes live when … approve too."
+ */
+type ListPlace = 'fromAll' | 'fromAny' | 'subjectAll';
+
+/** The unnamed rest of a list, in the form its place needs, and how the list is joined. */
+const LIST = {
+  fromAll: { rest: 'messages:approval.list.from.more', joiner: 'and' },
+  fromAny: { rest: 'messages:approval.list.from.others', joiner: 'or' },
+  subjectAll: { rest: 'messages:approval.list.subject.more', joiner: 'and' },
+} as const;
 
 /** Pure: whoever is named, then the rest as "2 others" (with "or") or "2 more" (with "and"). */
-function people(names: string[], more: number, joiner: 'and' | 'or'): string {
-  const rest = joiner === 'or' ? `${more} ${more === 1 ? 'other' : 'others'}` : `${more} more`;
-  const all = [...names, ...(more ? [rest] : [])];
-  return joiner === 'or' ? orWords(all) : andWords(all);
+function people(names: string[], more: number, place: ListPlace): string {
+  const all = [...names, ...(more ? [t(LIST[place].rest, { count: more })] : [])];
+  return LIST[place].joiner === 'or' ? orWords(all) : andWords(all);
 }
 
 /**
  * Pure: "Needs 2 approvals from you, @priya or @mo" when fewer are needed
  * than the people listed, "Waiting for approval from you and @ada" when
  * every one of them is. Null when nobody is listed, or when no approval is
- * missing any more.
+ * missing any more. `form` picks the status line or the sentence with its
+ * full stop.
  */
-export function waitingWords(need: ApprovalNeed): string | null {
+export function waitingWords(need: ApprovalNeed, form: ApprovalLineForm = 'status'): string | null {
   const missing = countOf(need.missing);
   if (missing === 0) return null;
-  const named = [...(need.you ? ['you'] : []), ...(need.names || []).map((name) => `@${name}`)];
+  const others = (need.names || []).map((name) => `@${name}`);
+  // The reader, as an item of a list that follows "from".
+  const named = [...(need.you ? [t('messages:approval.list.from.you')] : []), ...others];
   const more = Math.max(Math.floor(Number(need.more) || 0), 0);
   const listed = named.length + more;
   if (!listed) return null;
   if (missing !== null && missing < listed) {
     const needed = countOf(need.needed);
-    return `Needs ${approvalsWords(missing, needed !== null && missing < needed)} from ${people(named, more, 'or')}`;
+    return approvalsWords(missing, people(named, more, 'fromAny'), needed !== null && missing < needed, form);
   }
-  return `Waiting for approval from ${people(named, more, 'and')}`;
+  // Only the reader is left: a whole sentence of its own, with no list in it.
+  if (need.you && !others.length && !more) return t(LINE_IDS[form].waitingYou);
+  return t(LINE_IDS[form].waiting, { people: people(named, more, 'fromAll') });
 }
 
 /**
@@ -89,12 +140,27 @@ export function waitingWords(need: ApprovalNeed): string | null {
  * needed, "after one more approval from @priya or @mo" when fewer are,
  * "when one more person approves" when nobody is named.
  */
-export function afterYesWords({ missing, names, more = 0 }: { missing: number; names: string[]; more?: number }): string {
+/**
+ * Which of the sentences after "It goes live" applies, and what goes in it.
+ * The sentences themselves are whole catalog entries (./bot-ready.tsx
+ * approvedLine), one per case and per day, so no language has to fit a
+ * clause built here into a sentence built there.
+ */
+export interface AfterYes {
+  who: 'person' | 'people' | 'approvals' | 'anyone';
+  values: Record<string, string | number>;
+}
+
+export function afterYesWords({ missing, names, more = 0 }: { missing: number; names: string[]; more?: number }): AfterYes {
   const named = names.map((name) => `@${name}`);
   const listed = named.length + more;
   if (named.length && listed === missing) {
-    return `when ${people(named, more, 'and')} ${missing === 1 ? 'approves' : 'approve'} too`;
+    return missing === 1
+      ? { who: 'person', values: { username: names[0] } }
+      // "… when {{people}} approve too": the list is the sentence's subject.
+      : { who: 'people', values: { people: people(named, more, 'subjectAll') } };
   }
-  if (named.length && listed > missing) return `after ${approvalsWords(missing, true)} from ${people(named, more, 'or')}`;
-  return missing === 1 ? 'when one more person approves' : `when ${missing} more people approve`;
+  // "… after one more approval from {{people}}": the list follows "from".
+  if (named.length && listed > missing) return { who: 'approvals', values: { count: missing, people: people(named, more, 'fromAny') } };
+  return { who: 'anyone', values: { count: missing } };
 }

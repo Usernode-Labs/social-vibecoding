@@ -8,17 +8,17 @@
 // cap, sat in the session list, and showed up in Improve as a change in
 // progress — with nothing to do about it but archive it by hand.
 //
-// What replaces it is a screen with a route of its own —
+// What replaced it was a screen with a route of its own —
 // /app/<slug>/dev/sessions/new — rendered against a client-only placeholder
-// (`DevChat.startPendingSession`). The first send turns it into a real
-// session (`_materializePendingSession`) and the turn proceeds normally.
+// (`DevChat.startPendingSession`). The first send turned it into a real
+// session (`_materializePendingSession`) and the turn proceeded normally.
 //
 // #2779 retired that screen as a destination: classic sessions are no
 // longer created, and New change opens an unsent agent session instead. The
 // address still resolves — a bookmark, Back, a link an older page wrote —
-// and the router sends it to the unsent agent session on the same app. The
-// placeholder machinery below is unreachable from the product now and is
-// pinned only until it is deleted.
+// and the router sends it to the unsent agent session on the same app.
+// #4268 deleted the placeholder machinery, which nothing could reach any
+// more, along with `DevChat.createSession`, which only it called.
 //
 // What these tests pin, in order:
 //   1. the route: `new` is still the one session ref that is a word, and the
@@ -26,11 +26,8 @@
 //   2. the entry points: New change (AppView.createProposal), the
 //      out-of-credits hand-off and the banner's "Start a new change" open an
 //      agent session and create nothing;
-//   3. the placeholder: no id, no owner, nothing said about a venue or a PR,
-//      and NO request of any kind while it is on screen;
-//   4. the send: one session created, the message posted to the new id, and
-//      a refusal that leaves the text in the box and creates nothing;
-//   5. the copy: the empty state says so.
+//   3. the placeholder is gone, and the dev chat creates no session at all;
+//   4. the copy: the empty state invites the first message.
 //
 // Run with: node --test tests/dev-new-change.test.js
 
@@ -39,14 +36,15 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 const root = path.join(__dirname, '..');
 const read = (...p) => fs.readFileSync(path.join(root, ...p), 'utf8');
 const APP_SRC = read('public', 'js', 'app.js');
 const APP_VIEW_SRC = read('public', 'js', 'app-view.js');
 const DEV_CHAT_SRC = read('frontend', 'src', 'features', 'dev-chat', 'dev-chat.js');
-// #2607 put the venue dropdown on this screen, so the venue vocabulary and
-// the launchpad question are part of what the placeholder has to answer.
+// The venue vocabulary and the launchpad question load beside the dev chat,
+// as they do in the shell.
 const BUILD_VENUES_SRC = read('public', 'js', 'build-venues.js');
 const LAUNCHPAD_SRC = read('frontend', 'src', 'features', 'dev-chat', 'launchpad.js');
 
@@ -112,7 +110,7 @@ function loadApp() {
 
 /** app-view.js in a vm — just enough for createProposal / renderDevChatTab. */
 function loadAppView() {
-  const calls = { createSession: [], switchTab: [], pending: [] };
+  const calls = { createSession: [], switchTab: [] };
   const sandbox = {
     console,
     relTime: () => 'just now',
@@ -140,15 +138,17 @@ function loadAppView() {
       _devFlow: { mode: null, agent: null },
       _devFlowEnsureStatus: () => {},
       renderMessages: () => {},
+      // Gone from DevChat (#4268); stubbed so a stray classic creation
+      // from AppView would be recorded rather than throw.
       createSession: async (...args) => {
         calls.createSession.push(args);
         return { id: 77 };
       },
-      startPendingSession: (...args) => { calls.pending.push(args); },
     },
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(`${APP_VIEW_SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
@@ -208,9 +208,6 @@ function makeDevChat() {
     },
     AbortController,
     escapeHtml: (s) => String(s == null ? '' : s),
-    // #2607: the venue sheet is presented by the kit. `hasKit` is false by
-    // default, so the sheet is a no-op unless a test stands in for it (see
-    // `pickVenue` below) — which keeps every other test here unchanged.
     PlatformUI: {
       toast: (m) => { sandbox.toasts.push(m); },
       hasKit: () => false,
@@ -229,8 +226,8 @@ function makeDevChat() {
     URLSearchParams,
   };
   // One recording fetch. Every test overrides `reply` rather than the stub,
-  // so the request LOG is complete for every path — which is how "the
-  // placeholder makes no requests" is asserted at all.
+  // so the request LOG is complete for every path — which is how "nothing
+  // is created" is asserted at all.
   sandbox.reply = async () => ({ ok: true, status: 200, json: async () => ({}) });
   sandbox.fetch = async (url, init) => {
     requests.push([String(url), (init && init.method) || 'GET', init || {}]);
@@ -238,14 +235,14 @@ function makeDevChat() {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(BUILD_VENUES_SRC, sandbox);
   vm.runInContext(LAUNCHPAD_SRC, sandbox);
   vm.runInContext(`${DEV_CHAT_SRC}\n;globalThis.__DevChat = DevChat;`, sandbox);
   const DevChat = sandbox.__DevChat;
   // The render plumbing is not what these tests are about; the methods under
-  // test (startPendingSession, _materializePendingSession, sendMessage,
-  // createSession) stay real.
+  // test stay real.
   DevChat.renderMessages = () => {};
   DevChat.renderSessionList = () => {};
   DevChat.scrollToBottom = () => {};
@@ -266,33 +263,8 @@ function makeDevChat() {
   const sessionRequests = () => requests.filter(
     ([u]) => /^\/api\/(apps\/[^/]+\/sessions|sessions\/)/.test(u)
   );
-  // #2607: stand in for the kit and click one of the sheet's rows, exactly
-  // as tests/venue-return-to-chat.test.js does — the pick handler lives
-  // inside a menu callback, so this is the only way to run the real one.
-  // Returns the labels the sheet offered, which is also what pins the
-  // wording a new change sees.
-  const pickVenue = async (match) => {
-    let offered = null;
-    sandbox.PlatformUI.hasKit = () => true;
-    sandbox.PlatformUI.menu = async (opts) => {
-      offered = opts.items.map((i) => i.label);
-      // `match` null lists the rows without clicking one, which is how the
-      // wording an unsent change is offered gets pinned.
-      const row = match ? opts.items.find((i) => match.test(i.label)) : null;
-      if (match) assert.ok(row, `the sheet offers ${match}`);
-      if (row) row.handler();
-      return null;
-    };
-    DevChat.openVenueSheet();
-    // The kit discards what a row's handler returns, so the pick cannot be
-    // awaited directly. A macrotask turn drains every microtask the handler
-    // queued — the creation POST and its json() — which is what the
-    // assertions after it are about.
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    return offered;
-  };
   return {
-    DevChat, sandbox, document, getEl, requests, sessionRequests, hashes, storage, pickVenue,
+    DevChat, sandbox, document, getEl, requests, sessionRequests, hashes, storage,
   };
 }
 
@@ -402,371 +374,45 @@ test('the banner\'s "Start a new change" opens an agent session on the same app'
   assert.deepEqual(plain(sessionRequests()), [], 'and nothing is created on the way');
 });
 
-// ── 3. the placeholder ────────────────────────────────────────────────
+// ── 3. the placeholder is gone (#4268) ───────────────────────────────
 
-test('the placeholder has no id and no owner, so nothing owner-scoped is offered', () => {
+test('the unsent classic change and the creation behind it are deleted', () => {
+  // Nothing reached them once the old address became an agent session's:
+  // the router answers it before the dev chat renders, and no entry point
+  // opened the placeholder. Each was a client-only stand-in for a row that
+  // POST /api/apps/:slug/sessions now refuses to a browser
+  // (`agent_sessions_only`), so the only thing left for them to do was fail.
+  for (const name of [
+    'startPendingSession', '_materializePendingSession',
+    '_materializePendingSessionForVenue', 'isPendingSession',
+    '_pendingCreateInFlight', 'pending_agent_choice', 'createSession',
+  ]) {
+    assert.doesNotMatch(DEV_CHAT_SRC, new RegExp(`\\b${name}\\b`), `${name} is gone`);
+  }
+  assert.doesNotMatch(DEV_CHAT_SRC,
+    /fetch\(`\/api\/apps\/\$\{[^}]*\}\/sessions`,\s*\{\s*method: 'POST'/,
+    'the dev chat never POSTs a classic session');
+  // The router no longer serializes a placeholder as the word: every
+  // session the dev chat has open is a row with an id.
+  assert.doesNotMatch(APP_SRC, /currentSession\.pending/);
+
   const { DevChat } = makeDevChat();
-  const s = DevChat.startPendingSession('recipe-box');
-  assert.equal(s.pending, true);
-  assert.equal(s.id, null, 'no id: every per-session request in this module guards on one');
-  assert.equal(s.user_id, undefined, 'no owner: _ownsSession is what empties the ⋯ menu');
-  assert.equal(s.app_slug, 'recipe-box');
-  assert.equal(s.created_from_issue_number, null,
-    'nothing links an unsent change to an issue — the issue row\'s own button still creates up front (#609)');
-  assert.equal(DevChat.isPendingSession(), true);
-  assert.deepEqual(plain(DevChat.messages), []);
-  assert.equal(DevChat._devFlow, null,
-    'a stale hand-off wizard would swap the composer for a launchpad with no session');
-
-  const head = DevChat._sessionHeaderView();
-  assert.equal(head.title, 'New change');
-  // #2572: and it says only that — the caption carries no tooltip spelling
-  // out that nothing is created until you send.
-  assert.equal(head.newChangeTitle, '');
-  assert.equal(head.sessionId, null);
-  assert.equal(head.pr, null);
-  assert.equal(head.life, null);
-  assert.deepEqual(plain(head.actions), [], 'Pause / Archive / Free worker have nothing to act on');
+  for (const name of ['startPendingSession', '_materializePendingSession', 'createSession', 'isPendingSession']) {
+    assert.equal(typeof DevChat[name], 'undefined', `DevChat.${name}`);
+  }
 });
 
-// ── 3b. #2607: the one control an unsent change DOES get ────────────
-
-test('the unsent change states the venue it would be built in, and offers the choice', () => {
-  // This assertion was `head.venue === null`, on the reasoning that a venue
-  // is the server's answer at creation time and guessing before that would
-  // be dishonest. The cost was that the one screen where "where should this
-  // be built?" is still an open question was the one screen that never
-  // asked it: the only way to reach the choice was to send a message into
-  // the venue you did not want and switch afterwards.
-  const { DevChat } = makeDevChat();
-  DevChat.startPendingSession('recipe-box');
-
-  const head = DevChat._sessionHeaderView();
-  assert.ok(head.venue, 'the dropdown paints before the first send');
-  assert.equal(head.venue.id, 'usernode-claude',
-    'derived from the placeholder, exactly as a real row derives its own');
-  assert.equal(head.venue.label, 'Homeroom · Claude');
-  assert.equal(head.venue.disabled, false, 'nothing is running, so nothing is locked');
-  assert.match(head.venue.title, /^This change will be built in Homeroom · Claude\./,
-    'and the tense is the true one — nothing is being built yet');
-  assert.doesNotMatch(head.venue.title, /^Building in/);
-
-  // #2607 changes THIS control and nothing else about the strip.
-  assert.equal(head.pr, null);
-  assert.equal(head.life, null);
-  assert.deepEqual(plain(head.actions), []);
-});
-
-test('the composer picker and the venue dropdown state the same in-chat venue', () => {
-  // `pending_agent_choice` is the only thing that can move an unsent change
-  // between the two in-chat venues, and both controls read it through the
-  // same derivation, so they cannot disagree about a change nobody has sent.
-  const { DevChat } = makeDevChat();
-  DevChat.startPendingSession('recipe-box');
-  DevChat.currentSession.agent_backend = 'codex_openrouter';
-  assert.equal(DevChat._sessionHeaderView().venue.id, 'usernode-openrouter');
-});
-
-test('the sheet asks the unsent change the START question, with every answer open', async () => {
-  const { DevChat, sandbox, pickVenue } = makeDevChat();
-  sandbox.App.user = { ...sandbox.App.user, externalFlowsAvailable: true };
+test('the venue sheet always answers for a real session', () => {
+  // 'start' was the placeholder's case: "nothing in it yet". A session the
+  // sheet opens on now always has a row, so it says what each venue keeps.
+  const { DevChat, sandbox } = makeDevChat();
   sandbox.AppView = { readOnly: false, appData: { repo_url: 'https://example.test/r' } };
-  DevChat.startPendingSession('recipe-box');
-
-  const state = DevChat._venueSheetState();
-  assert.equal(state.mode, 'start',
-    'an unsent change is build-venues.js\'s own "nothing in it yet" case');
-  assert.equal(state.sessionId, null);
-  assert.equal(state.hasBranch, false);
-  assert.equal(DevChat._webHandoffTargetId(), null,
-    'so a hand-off starts new work rather than pushing onto a branch that does not exist');
-
-  const offered = await pickVenue(null);
-  assert.deepEqual(plain(offered), [
-    'On-Platform ✓', 'Claude or Codex WebUI', 'Your Own Developer Tooling',
-  ], 'the same rows an existing session is offered, with the in-chat one ticked');
+  DevChat.currentSession = { id: 101, app_slug: 'recipe-box', status: 'active', source: 'request_spec' };
+  assert.equal(DevChat._venueSheetState().mode, 'switch');
+  assert.match(DevChat._sessionHeaderView().venue.title, /^Building in Homeroom · Claude\./);
 });
 
-test('an unsent change on screen makes no requests at all', async () => {
-  const { DevChat, sessionRequests } = makeDevChat();
-  DevChat.startPendingSession('recipe-box');
-  // The three things that fire by themselves on an open session.
-  DevChat._startHeartbeat();
-  await DevChat._reconcileDrafts(DevChat.currentSession.id, null);
-  assert.equal(await DevChat._resumeCurrentSessionIfPaused({ silent: true }), false);
-  assert.deepEqual(plain(sessionRequests()), [],
-    'arriving, reading and leaving again writes nothing — the whole point of #2241');
-});
-
-test('an OpenRouter pick stays local until the placeholder is created', async () => {
-  const { DevChat, sandbox, requests, sessionRequests } = makeDevChat();
-  DevChat.startPendingSession('recipe-box');
-
-  await DevChat._switchCurrentCodingAgent({
-    backend: 'codex_openrouter',
-    model: 'openai/gpt-5.3-codex',
-    reasoningEffort: 'high',
-  });
-
-  assert.deepEqual(plain(sessionRequests()), [],
-    'an id-less placeholder must never call /sessions/null/reset-agent-context');
-  assert.deepEqual(plain(DevChat.currentSession.pending_agent_choice), {
-    backend: 'codex_openrouter',
-    model: 'openai/gpt-5.3-codex',
-    reasoningEffort: 'high',
-  });
-  assert.equal(DevChat.currentSession.agent_backend, 'codex_openrouter',
-    'the grouped picker immediately reflects the staged provider');
-
-  sendReplies(sandbox, {
-    create: {
-      id: 101,
-      agent_backend: 'codex_openrouter',
-      agent_model: 'openai/gpt-5.3-codex',
-      agent_reasoning_effort: 'high',
-    },
-  });
-  await DevChat.sendMessage(MSG);
-
-  const create = requests.find(([u, m]) => m === 'POST' && /\/sessions$/.test(u));
-  assert.deepEqual(JSON.parse(create[2].body), {
-    backend: 'codex_openrouter',
-    model: 'openai/gpt-5.3-codex',
-    reasoningEffort: 'high',
-  }, 'the first real session is created with the model selected while it was pending');
-});
-
-test('an Anthropic pick explicitly overrides the saved provider on first send', async () => {
-  const { DevChat, sandbox, requests, sessionRequests } = makeDevChat();
-  DevChat.startPendingSession('recipe-box');
-
-  await DevChat._onModelPicked('anthropic:claude-fable-5-1');
-
-  assert.deepEqual(plain(sessionRequests()), [], 'the pending choice is still client-only');
-  assert.equal(DevChat.selectedModel, 'claude-fable-5-1');
-  assert.deepEqual(plain(DevChat.currentSession.pending_agent_choice), {
-    backend: 'claude_code', model: null, reasoningEffort: null,
-  });
-
-  sendReplies(sandbox, { create: { id: 101, agent_backend: 'claude_code' } });
-  await DevChat.sendMessage(MSG);
-
-  const create = requests.find(([u, m]) => m === 'POST' && /\/sessions$/.test(u));
-  assert.deepEqual(JSON.parse(create[2].body), {
-    backend: 'claude_code', model: null, reasoningEffort: null,
-  }, 'the server must not silently reapply an OpenRouter default after this explicit pick');
-});
-
-// ── 4. the send ───────────────────────────────────────────────────────
-
-const MSG = 'add a dark mode toggle to the settings page';
-
-function sendReplies(sandbox, { create = { id: 101, agent_backend: 'claude' } } = {}) {
-  sandbox.reply = async (url, init) => {
-    if (/\/api\/apps\/[^/]+\/sessions$/.test(url) && init && init.method === 'POST') {
-      return { ok: true, status: 201, json: async () => ({ session: create }) };
-    }
-    // The chat POST: an immediate non-ok, so the turn unwinds without an SSE
-    // reader. What this test is about happened before it.
-    return { ok: false, status: 500, json: async () => ({ error: 'nope' }) };
-  };
-}
-
-test('the first send creates the session, once, and posts the turn to it', async () => {
-  const { DevChat, sandbox, requests, hashes } = makeDevChat();
-  sendReplies(sandbox);
-  DevChat.startPendingSession('recipe-box');
-
-  await DevChat.sendMessage(MSG);
-
-  const posts = requests.filter(([u, m]) => m === 'POST' && /\/sessions$/.test(u));
-  assert.equal(posts.length, 1, 'exactly one session is created');
-  assert.equal(posts[0][0], '/api/apps/recipe-box/sessions');
-  assert.ok(requests.some(([u]) => u === '/api/sessions/101/chat'),
-    'and the message goes to the session that was just created');
-  assert.equal(DevChat.currentSession.id, 101);
-  assert.equal(DevChat.currentSession.pending, undefined, 'the placeholder is gone');
-  assert.deepEqual(plain(hashes.at(-1)), { replace: true, ref: 101 },
-    'the screen earns its own address, replacing /sessions/new so Back skips it');
-});
-
-test('an empty submit still creates nothing', async () => {
-  const { DevChat, sandbox, sessionRequests } = makeDevChat();
-  sendReplies(sandbox);
-  DevChat.startPendingSession('recipe-box');
-  await DevChat.sendMessage('', []);
-  assert.deepEqual(plain(sessionRequests()), [], 'the content check runs before the creation');
-  assert.equal(DevChat.isPendingSession(), true);
-});
-
-test('a refused creation leaves the text in the box and the screen unsent', async () => {
-  const { DevChat, sandbox, document, sessionRequests } = makeDevChat();
-  sandbox.reply = async () => ({
-    ok: false, status: 429,
-    json: async () => ({ error: 'You already have 3 running sessions. Pause or archive one first.' }),
-  });
-  DevChat.startPendingSession('recipe-box');
-  const input = document.getElementById('dc-input');
-  input.value = ''; // _submitFromInput clears optimistically
-
-  await DevChat.sendMessage(MSG);
-
-  assert.equal(sessionRequests().length, 1, 'the cap is hit at creation — no turn is attempted');
-  assert.match(sandbox.toasts.join(' '), /already have 3 running sessions/,
-    'the server\'s own refusal is what the user reads');
-  assert.equal(input.value, MSG, 'the message is never lost');
-  assert.equal(DevChat.isPendingSession(), true, 'still unsent, so the next try is one click');
-  assert.equal(DevChat.isStreaming, false, 'and no turn was armed');
-});
-
-// ── 4b. #2607: picking a venue before the first send ───────────────
-
-/** An unsent change with the sheet's gates open and the creation stubbed. */
-function pendingWithSheet({ create = { id: 101, agent_backend: 'claude_code' } } = {}) {
-  const h = makeDevChat();
-  h.sandbox.App.user = { ...h.sandbox.App.user, externalFlowsAvailable: true };
-  h.sandbox.AppView = { readOnly: false, appData: { repo_url: 'https://example.test/r' } };
-  h.sandbox.SessionOptions = {
-    openInstructions: (opts) => { h.sandbox.instructions = opts; return { dismiss() {} }; },
-  };
-  h.sandbox.reply = async (url, init) => {
-    if (/\/api\/apps\/[^/]+\/sessions$/.test(url) && init && init.method === 'POST') {
-      return { ok: true, status: 201, json: async () => ({ session: create }) };
-    }
-    return { ok: true, status: 200, json: async () => ({ session: create }) };
-  };
-  h.DevChat.startPendingSession('recipe-box');
-  return h;
-}
-
-test('an in-chat pick before the first send creates nothing', async () => {
-  // On-Platform is the row the unsent change is already on, so picking it
-  // is only reachable after a hand-off has been chosen and abandoned. What
-  // matters either way is that it writes nothing: which in-chat agent the
-  // change is created with is staged on the placeholder as
-  // `pending_agent_choice` by the composer's picker, and left null the
-  // server resolves the saved default at creation — which is exactly the
-  // resolution the no-backend reset-agent-context asks for on a real row.
-  const { DevChat, sessionRequests, pickVenue } = pendingWithSheet();
-  // Stand the change on a hand-off first, in memory only, so On-Platform is
-  // an offered row rather than the ticked one.
-  DevChat.currentSession.build_venue = 'web-claude-code';
-  DevChat._resetDevFlow(null);
-  DevChat._devFlowFromCredits('claude-code', null);
-  assert.equal(DevChat._launchpadVenue(), 'web-claude-code');
-
-  await pickVenue(/On-Platform/);
-
-  assert.deepEqual(plain(sessionRequests()), [],
-    'no session is created, and nothing is POSTed against a null id');
-  assert.equal(DevChat.isPendingSession(), true, 'still unsent');
-  assert.equal(DevChat.currentSession.build_venue, null, 'the hand-off is cleared');
-  assert.equal(DevChat.currentSession.pending_agent_choice, null,
-    'and the in-chat choice stays the server\'s to resolve at creation');
-  assert.equal(DevChat._launchpadVenue(), null, 'the composer is back');
-});
-
-test('a hand-off pick creates the session first, then hands off exactly as it would on a real one', async () => {
-  const { DevChat, requests, getEl, hashes, storage, pickVenue } = pendingWithSheet();
-  const TYPED = 'add a dark mode toggle to the settings page';
-  getEl('dc-input').value = TYPED;
-
-  await pickVenue(/Claude or Codex WebUI/);
-
-  // 1. The row is created through the FIRST SEND'S own path: same endpoint,
-  //    and no backend key, so the server resolves the saved default.
-  const creates = requests.filter(([u, m]) => m === 'POST' && /\/sessions$/.test(u));
-  assert.equal(creates.length, 1, 'exactly one session is created');
-  assert.equal(creates[0][0], '/api/apps/recipe-box/sessions');
-  assert.deepEqual(JSON.parse(creates[0][2].body), {},
-    'same defaults as the first send — the server resolves the venue');
-  assert.equal(DevChat.currentSession.id, 101);
-  assert.equal(DevChat.isPendingSession(), false, 'the placeholder is gone');
-  assert.deepEqual(plain(hashes.at(-1)), { replace: true, ref: 101 },
-    'and the screen earns its own address, exactly as the first send gives it one');
-
-  // 2. The chosen venue is recorded on it through the existing persistence.
-  const venuePost = requests.find(([u, m]) => m === 'POST' && /\/build-venue$/.test(u));
-  assert.ok(venuePost, 'the pick is recorded on the new row');
-  assert.equal(venuePost[0], '/api/sessions/101/build-venue');
-  assert.deepEqual(JSON.parse(venuePost[2].body), { venue: 'web-claude-code' });
-  assert.ok(requests.some(([u, m]) => m === 'POST' && u === '/api/me/dev-flow'),
-    'and answering the venue question answers it for next time, as it does on a real session');
-
-  // 3. Then it continues precisely as the pick does on an existing session:
-  //    the guided walkthrough, on the session that was just created.
-  assert.equal(DevChat._launchpadVenue(), 'web-claude-code');
-  assert.equal(DevChat._devFlow.mode, 'wizard');
-  assert.equal(DevChat._devFlow.agent, 'claude-code');
-  assert.equal(DevChat._devFlow.targetId, null,
-    'a change with no branch starts new work — "Start new work with", not "Continue"');
-
-  // 4. And what was typed is still there, under the id it now belongs to.
-  assert.equal(getEl('dc-input').value, TYPED, 'the composer survives the creation');
-  assert.equal(storage.get('usernode:dc-draft:101'), TYPED,
-    're-keyed onto the new session, so the next paint cannot clear it');
-  DevChat._restoreDraft();
-  assert.equal(getEl('dc-input').value, TYPED, 'including the paint that follows');
-});
-
-test('the lease and the import both create the row first too', async () => {
-  const lease = pendingWithSheet();
-  lease.sandbox.App.user = {
-    ...lease.sandbox.App.user, cliAuthEnabled: true, sessionBridgeEnabled: true,
-  };
-  await lease.pickVenue(/Local CLI Bridge/);
-  assert.equal(lease.DevChat.currentSession.id, 101, 'a lease is granted against a session id');
-  assert.equal(lease.sandbox.instructions.state.sessionId, 101,
-    'and the card names the session that now exists, not null');
-
-  const own = pendingWithSheet();
-  await own.pickVenue(/Your Own Developer Tooling/);
-  assert.equal(own.DevChat.currentSession.id, 101);
-  const venuePost = own.requests.find(([u, m]) => m === 'POST' && /\/build-venue$/.test(u));
-  assert.deepEqual(JSON.parse(venuePost[2].body), { venue: 'own-tools-pr' });
-  assert.equal(own.DevChat._launchpadVenue(), 'own-tools-pr');
-});
-
-test('a refused creation says so and leaves the dropdown where it was', async () => {
-  const { DevChat, sandbox, requests, pickVenue } = pendingWithSheet();
-  sandbox.reply = async () => ({
-    ok: false,
-    status: 429,
-    json: async () => ({ error: 'You already have 3 running sessions. Pause or archive one first.' }),
-  });
-
-  await pickVenue(/Claude or Codex WebUI/);
-
-  assert.match(sandbox.toasts.join(' '), /already have 3 running sessions/,
-    'the server\'s own refusal is what the user reads, in the line that already says it');
-  assert.equal(DevChat.isPendingSession(), true, 'still unsent, so the next try is one click');
-  assert.equal(requests.filter(([u, m]) => m === 'POST' && /\/build-venue$/.test(u)).length, 0,
-    'nothing is recorded against a row that was never created');
-  assert.equal(DevChat._sessionHeaderView().venue.id, 'usernode-claude',
-    'and the dropdown still states the venue it was showing');
-  assert.equal(DevChat._launchpadVenue(), null, 'no launchpad for a session that does not exist');
-});
-
-test('a second click while the first is in flight creates one session, not two', async () => {
-  const { DevChat, sandbox, requests } = makeDevChat();
-  let release;
-  const gate = new Promise((r) => { release = r; });
-  sandbox.reply = async (url, init) => {
-    if (/\/sessions$/.test(url) && init && init.method === 'POST') {
-      await gate;
-      return { ok: true, status: 201, json: async () => ({ session: { id: 101 } }) };
-    }
-    return { ok: false, status: 500, json: async () => ({ error: 'nope' }) };
-  };
-  DevChat.startPendingSession('recipe-box');
-  const first = DevChat.sendMessage(MSG);
-  const second = DevChat.sendMessage(MSG);
-  release();
-  await Promise.all([first, second]);
-  assert.equal(requests.filter(([u, m]) => m === 'POST' && /\/sessions$/.test(u)).length, 1);
-});
-
-// ── 5. the copy ───────────────────────────────────────────────────────
+// ── 4. the copy ───────────────────────────────────────────────────────
 
 // #2572: the screen no longer spells out that nothing is created until you
 // send — neither in the transcript's empty state nor in the header strip's

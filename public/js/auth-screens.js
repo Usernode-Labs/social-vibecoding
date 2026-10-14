@@ -131,7 +131,7 @@
     try { offline = !!(window.Offline && Offline.isOffline()); } catch (_) { offline = false; }
     if (!offline) return false;
     if (errorEl) {
-      showError(errorEl, "You're offline. Signing in needs a connection.");
+      showError(errorEl, PlatformI18n.t('auth:offline.signIn'));
     }
     try { window.Offline.nudge(); } catch (_) { /* ignore */ }
     return true;
@@ -213,8 +213,13 @@
       // An invite link a visitor signed in from (App.restoreFromHash
       // remembers it): back to it, so it is followed as the new session.
       if (/^\/invite\/[A-Za-z0-9_-]{22}$/.test(value)) return value;
-      if (value.startsWith('#')) return '/' + value;
-      return '/';
+      // A fragment link keeps the address's query, the way every other
+      // screen change does (App._rootUrl): a shared demo link is
+      // `/?demo=1#app/<slug>/board`, and without its `?demo=1` the screen it
+      // names has no demo in it, or falls back to Home (#4789).
+      const root = typeof App !== 'undefined' ? App._rootUrl : null;
+      if (value.startsWith('#')) return typeof root === 'function' ? root(value) : '/' + value;
+      return typeof root === 'function' ? root('') : '/';
     },
 
     // Anonymous boot entry (App.enterAnonymous). Routing lives in
@@ -240,10 +245,13 @@
       // `?signup=1[&t=<token>]` and `?login=1` are the waitlist's "you're
       // in" mail (sendWaitlistReleaseMail), and they no longer go to the
       // sign-in screen. They open the STORY, the screen everybody else
-      // starts on, with the sign-in sheet over it at the step the link asked
-      // for (features/auth/landing.tsx takes this on show): for a new
-      // account, the address the token names filled in and the code sent;
-      // for one that exists, Sign in. So the address goes back to `/`, the
+      // starts on (features/auth/landing.tsx takes this on show): for an
+      // account that is still new, the landing spends the one-time sign-in
+      // as it opens ("Signing you in…", then the Welcome page), once a read
+      // that spends nothing says so; for one already set up, its Get started
+      // opens the sheet, which spends it then, or fills in the address the
+      // token names and sends the code; for one that exists, the Sign in
+      // sheet is open over it. So the address goes back to `/`, the
       // landing's own, and the link waits on this object rather than in it,
       // which also keeps the token out of the address bar. With the story
       // switched off the landing hands it on to `#signup` / `#login`, as
@@ -257,9 +265,14 @@
                 : null;
           if (route === 'signup' || route === 'login') {
             const t = params.get('t');
+            // #4594: `key` is the mail's one-time sign-in link. Kept here,
+            // never spent on this GET: the landing or its sheet spends it
+            // with a POST.
+            const key = params.get('key');
             AuthScreens._releaseLink = {
               route,
               token: route === 'signup' && t && /^[A-Za-z0-9_-]{8,128}$/.test(t) ? t : null,
+              signIn: route === 'signup' && key && /^[A-Za-z0-9_-]{43}$/.test(key) ? key : null,
             };
             history.replaceState(null, '', '/');
           } else if (route) history.replaceState(null, '', `/#${route}`);
@@ -389,7 +402,16 @@
     // Confirm the session before navigating. Failure stays on the form and
     // returns a fixed diagnostic result to its React owner; retrying this
     // method never sends credentials or mints another session.
-    async finishLogin() {
+    //
+    // `opts.beforeShell` runs once the session is confirmed and this page is
+    // staying on its build, just before the signed-in shell starts: the
+    // sign-in sheet's hand-off to "What do you want to make?"
+    // (features/auth/sign-in-sheet.tsx). The sheet stays up, busy, through
+    // the session read and leaves only then, so the make screen, drawn in
+    // the tick the shell starts, follows it with no wait between (#4892:
+    // leaving first showed a blank page for as long as the read took).
+    async finishLogin(opts) {
+      const beforeShell = opts && typeof opts.beforeShell === 'function' ? opts.beforeShell : null;
       let returnTo = '';
       // The login-return targets accepted by the platform. Both are separate
       // documents by design — real navigation stays.
@@ -463,8 +485,21 @@
         // by the old build. The reload lands on the address just restored.
         // It never resolves once it reloads, so the sign-in stays busy until
         // the page goes.
+        //
+        // The session this read just confirmed is kept for that reload first.
+        // The new page then starts from it (App.init's snapshot boot) and
+        // draws its first screen, "What do you want to make?" for a new
+        // account, in the tick it starts. Without it the reload waited on
+        // /api/auth/me and painted Home, then the landing, before the make
+        // screen. enterAuthed writes the same snapshot when nothing reloads.
         if (typeof App !== 'undefined' && typeof App._moveToLiveShell === 'function') {
+          try { App.saveSessionSnapshot?.(user); } catch (_) {}
           await App._moveToLiveShell('signed-in', liveShell);
+        }
+        // Staying: the sheet goes now (see above), and the shell starts once
+        // it has gone. A hand-off that fails must not keep anyone out.
+        if (beforeShell) {
+          try { await beforeShell(); } catch (_) { /* the shell starts all the same */ }
         }
         fx(() => {
           App.enterAuthed(user);

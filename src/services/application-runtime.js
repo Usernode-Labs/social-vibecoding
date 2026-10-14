@@ -25,6 +25,15 @@ async function build(config, { app, revision, environment, sessionId, sourceDir,
   return kubernetes.createBuild(config, { app, revision, environment, sessionId, sourceDir, onProgress });
 }
 
+// Whether `build` needs every file of `sourceDir`. Docker builds FROM that
+// directory, submodules included. A Kubernetes build fetches the commit from
+// GitHub itself and only looks at the directory's root, so a caller there can
+// hand over a checkout of the root alone (services/staging.js does).
+function buildReadsWholeSource(config) {
+  if (mode(config) === 'docker') return true;
+  return kubernetes.buildReadsBelowSourceRoot(config);
+}
+
 async function cleanupFailedBuilds(config) {
   if (mode(config) !== 'kubernetes') return { examined: 0, deleted: 0 };
   return kubernetes.deleteFailedBuilds(config);
@@ -58,10 +67,14 @@ function dnsAlias({ environment, sessionId, dockerName }) {
   return name.length > 63 ? docker.containerHostname(name) : null;
 }
 
+// `onRollout()` is called once the runtime's objects are in place and only
+// the wait for the app to answer /health is left (Docker: the container is
+// running; Kubernetes: everything is applied), so a caller can time the two
+// apart (services/app-creator.js). An observer: it cannot fail the deploy.
 async function deploy(config, {
   app, environment, sessionId, imageRef, env, dockerName,
   port = 3000, memory, cpus, labels, runtimeName = null, internalOnly = false,
-  command = [], runAsUser = null,
+  command = [], runAsUser = null, onRollout = null,
 }) {
   if (mode(config) === 'docker') {
     const name = runtimeName || dockerName;
@@ -73,6 +86,7 @@ async function deploy(config, {
       aliases: alias ? [alias] : [],
       command,
     });
+    if (typeof onRollout === 'function') { try { onRollout(); } catch { /* observer only */ } }
     await docker.waitForHealthy(name, port, '/health');
     if (internalOnly) {
       return {
@@ -101,6 +115,7 @@ async function deploy(config, {
   return kubernetes.deployApplication(config, {
     app, environment, sessionId, imageRef, env, cpus, labels, runtimeName, internalOnly,
     command, ...(runAsUser != null ? { runAsUser } : {}),
+    ...(onRollout ? { onRollout } : {}),
   });
 }
 
@@ -181,5 +196,5 @@ async function remove(config, ref, options = {}) {
 }
 
 module.exports = {
-  mode, productionRef, appOrigin, build, cleanupFailedBuilds, deploy, dnsAlias, status, inspect, probeHealth, logs, restart, remove,
+  mode, productionRef, appOrigin, build, buildReadsWholeSource, cleanupFailedBuilds, deploy, dnsAlias, status, inspect, probeHealth, logs, restart, remove,
 };

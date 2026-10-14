@@ -11,6 +11,7 @@ const models = require('./models');
 const inLoopBrowser = require('./in-loop-browser');
 const registry = require('../agents/registry');
 const turnLifecycle = require('./turn-lifecycle');
+const botDrain = require('./homeroom-bot-drain');
 const branchNames = require('./branch-names');
 const llmTelemetry = require('./llm-telemetry');
 const liveAgentSpend = require('./live-agent-spend');
@@ -317,6 +318,14 @@ const HOMEROOM_READ_MODES = new Set(['build', 'scout']);
 // Bounded by the turn's own length; revocation normally ends it far sooner.
 const HOMEROOM_READ_TTL_SECONDS = 2 * 60 * 60;
 
+// The per-turn host shortlist override (config.openrouterProviderShortlists),
+// as the listener reads AGENT_PROVIDER_SHORTLIST: 'none', or provider slugs
+// joined by commas. Anything else is '' (the listener's own). Pure.
+function providerShortlistEnv(value) {
+  const text = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return /^(?:none|[a-z0-9][a-z0-9._/-]{0,80}(?:,[a-z0-9][a-z0-9._/-]{0,80}){0,15})$/.test(text) ? text : '';
+}
+
 async function mintHomeroomReadGrant(sessionId, mode) {
   if (!HOMEROOM_READ_MODES.has(mode)) return null;
   const pool = _getPoolSafe();
@@ -479,7 +488,9 @@ function notifyUsage(state) {
   }
 }
 
-function applyClaudeResultUsage(usage, state) {
+// `add`: a result after the first of the same run, whose usage is its own
+// query's and adds to the turn's (claudeResultsSeen).
+function applyClaudeResultUsage(usage, state, { add = false } = {}) {
   if (!usage || typeof usage !== 'object') return;
   const values = {
     inputTokens: usageToken(usage.input_tokens),
@@ -505,7 +516,7 @@ function applyClaudeResultUsage(usage, state) {
   if (!Object.values(values).some((value) => value != null) && !hasUsageMetadata) return;
   state.usageSeen = true;
   for (const [key, value] of Object.entries(values)) {
-    if (value != null) state[key] = value;
+    if (value != null) state[key] = add && Number.isFinite(state[key]) ? state[key] + value : value;
   }
   notifyUsage(state);
   if (typeof usage.service_tier === 'string') state.serviceTier = usage.service_tier;
@@ -532,7 +543,8 @@ function claudeTurnModel(mode, model) {
 // text, tool arguments/results, URLs, provider messages and journal lines can
 // contain private app data or credentials and must never enter a run trace.
 const SHOTS_DIAGNOSTIC_TOOLS = new Set([
-  'get_brief', 'save_shot', 'save_clip', 'skip_change', 'note_change', 'fail_request',
+  'get_brief', 'save_shot', 'save_clip', 'skip_change', 'note_change', 'note_problem', 'fail_request',
+  'control_request', 'upload_file',
   'browser_navigate', 'browser_navigate_back', 'browser_snapshot',
   'browser_take_screenshot', 'browser_click', 'browser_type',
   'browser_fill_form', 'browser_press_key', 'browser_select_option',
@@ -545,15 +557,17 @@ const SHOTS_DIAGNOSTIC_PHASES = new Set([
   'shots_mcp_ready', 'claude', 'agent', 'done',
 ]);
 
+// Each persona's browser server, and its phone browser (`_phone`).
+const SHOTS_BROWSER_SERVER = /^browser_(member|admin|full_admin|guest)(_phone)?$/;
+// The personas a shots turn may give a phone browser (visible-changes.PERSONAS).
+const SHOTS_PERSONAS = new Set(['member', 'read_only_admin', 'full_admin', 'guest']);
+
 function shotsDiagnosticTool(name) {
   const parts = String(name || '').split(/__|[./]/);
   const tool = parts.at(-1);
   if (!SHOTS_DIAGNOSTIC_TOOLS.has(tool)) return { tool: 'other' };
-  const server = parts.includes('browser_member') ? 'member'
-    : parts.includes('browser_full_admin') ? 'full_admin'
-      : parts.includes('browser_admin') ? 'admin'
-        : parts.includes('browser_guest') ? 'guest' : null;
-  return { tool, ...(server ? { persona: server } : {}) };
+  const server = parts.map((part) => SHOTS_BROWSER_SERVER.exec(part)).find(Boolean);
+  return { tool, ...(server ? { persona: server[1], ...(server[2] ? { phone: true } : {}) } : {}) };
 }
 
 function shotsNavigationTarget(state, input) {
@@ -624,6 +638,7 @@ function observeShotsTool(state, { phase, id, name, input = null, failed = false
     kind: 'tool_end',
     sequence: prior?.sequence || null,
     ...(prior ? { tool: prior.tool, ...(prior.persona ? { persona: prior.persona } : {}),
+      ...(prior.phone ? { phone: true } : {}),
       ...(prior.side ? { side: prior.side } : {}),
       ...(prior.routeOrdinal ? { routeOrdinal: prior.routeOrdinal } : {}),
       ...(prior.routeHint ? { routeHint: prior.routeHint } : {}),
@@ -692,6 +707,25 @@ function addObservedValue(set, value) {
 
 function noteToolName(state, name) {
   addObservedValue(state.telemetryToolNames, name);
+  noteToolSequence(state, name);
+}
+
+// The order a turn called its tools in, by name alone (run four, 13 Oct
+// 2026): what a 33-minute build spent its 71 commands and 34 browser calls
+// on was lost with its pod. A name is the tool's, never its input or output,
+// and only one the platform knows (llm-telemetry.js toolSequenceName: Bash,
+// Read, browser_take_screenshot, get_platform_conventions); any other is
+// `mcp` or `other`. Bounded: the first TOOL_SEQUENCE_MAX, then a count of
+// the rest (telemetry_metrics tool_sequence and tool_sequence_dropped).
+const TOOL_SEQUENCE_MAX = 400;
+function noteToolSequence(state, name) {
+  if (!state) return;
+  const seq = Array.isArray(state.toolSequence) ? state.toolSequence : (state.toolSequence = []);
+  if (seq.length >= TOOL_SEQUENCE_MAX) {
+    state.toolSequenceDropped = (state.toolSequenceDropped || 0) + 1;
+    return;
+  }
+  seq.push(llmTelemetry.toolSequenceName(name));
 }
 
 function noteFileRead(state, path) {
@@ -702,6 +736,39 @@ function noteFileRead(state, path) {
 function noteFileChange(state, path) {
   state.fileChangeCount += 1;
   addObservedValue(state.telemetryFileChanges, path);
+  if (state.browserCallSeen) noteFileChangeAfterBrowser(state, path);
+}
+
+// What a build's own look-and-fix loop changed (newcomer run five, 13 Oct
+// 2026): the edits made after the turn first used the in-loop browser, which
+// first_browser_call_ms alone could not say. Counted, and the first
+// FILES_AFTER_BROWSER_MAX distinct paths kept (repository-relative), never
+// what was in them: telemetry_metrics file_change_after_first_browser_count,
+// distinct_file_change_after_first_browser_count, and on the turn's own
+// agent_turns row only, files_changed_after_first_browser (agent-turn.js).
+// Ordered by the stream, so it needs no request clock.
+const FILES_AFTER_BROWSER_MAX = 20;
+const WORKSPACE_PREFIX = '/home/node/workspace/';
+
+// The turn's first browser call: from here its edits are counted (0 until
+// one is made, so "looked and changed nothing" reads apart from "never
+// looked", which stays null).
+function noteBrowserCall(state, kind) {
+  if (kind !== 'browser' || state.browserCallSeen) return;
+  state.browserCallSeen = true;
+  if (state.fileChangeAfterFirstBrowserCount == null) state.fileChangeAfterFirstBrowserCount = 0;
+}
+
+function noteFileChangeAfterBrowser(state, path) {
+  state.fileChangeAfterFirstBrowserCount = (state.fileChangeAfterFirstBrowserCount || 0) + 1;
+  if (typeof path !== 'string' || !path) return;
+  const seen = state.telemetryFileChangesAfterBrowser instanceof Set
+    ? state.telemetryFileChangesAfterBrowser
+    : (state.telemetryFileChangesAfterBrowser = new Set());
+  seen.add(path);
+  const kept = Array.isArray(state.filesChangedAfterFirstBrowser) ? state.filesChangedAfterFirstBrowser : (state.filesChangedAfterFirstBrowser = []);
+  const relative = path.startsWith(WORKSPACE_PREFIX) ? path.slice(WORKSPACE_PREFIX.length) : path;
+  if (kept.length < FILES_AFTER_BROWSER_MAX && !kept.includes(relative)) kept.push(relative);
 }
 
 // ── Where a coding turn's time went (2026-10-07) ────────────────────────
@@ -863,6 +930,7 @@ function noteClaudeToolCall(state, block) {
       bootsApp: name === 'Bash' && APP_BOOT_COMMAND.test(String(input.command || '')),
     });
   }
+  noteBrowserCall(state, codingToolKind(name));
   state.toolCallCount += 1;
   noteToolName(state, name);
   if (block?.type === 'server_tool_use' || block?.type === 'mcp_tool_use') {
@@ -895,6 +963,7 @@ function noteCodexToolStart(state, event) {
     bootsApp: event.kind === 'command_started'
       && APP_BOOT_COMMAND.test(String(event.command || event.text || '')),
   });
+  noteBrowserCall(state, codexToolKind(event));
   state.toolCallCount += 1;
   state.responseToolCallCount += 1;
   noteToolName(state, event.toolName || event.kind);
@@ -991,6 +1060,20 @@ function noteCodingProviderImages(images, state) {
   state.imageSentCount = (state.imageSentCount || 0) + count(images.sent);
   state.imageMovedCount = (state.imageMovedCount || 0) + count(images.moved);
   state.imageOmittedCount = (state.imageOmittedCount || 0) + count(images.omitted);
+  // Older images left out to keep the request small (pruneOldImages).
+  state.imagePrunedCount = (state.imagePrunedCount || 0) + count(images.pruned);
+}
+
+// What one request under LEAN_TURNS cut of older browser and shell output
+// (claude-openrouter-request.js pruneStaleToolOutput): how many results it
+// shortened and how many characters it left out, summed over the turn's
+// requests the way images are. A turn without the tweak reports none, and
+// its fields stay null.
+function noteCodingProviderToolOutput(toolOutput, state) {
+  if (!toolOutput || typeof toolOutput !== 'object') return;
+  const count = (n, max) => (Number.isSafeInteger(n) && n >= 0 && n <= max ? n : 0);
+  state.toolOutputPrunedCount = (state.toolOutputPrunedCount || 0) + count(toolOutput.pruned, 100_000);
+  state.toolOutputPrunedChars = (state.toolOutputPrunedChars || 0) + count(toolOutput.chars, 1_000_000_000);
 }
 
 // The text blocks a Claude turn wrote since its last tool call, oldest
@@ -1071,6 +1154,10 @@ function applyStreamEvent(event, onProgress, state) {
       browserAdminToolCount: mcpToolCount(systemEvent.tools, 'browser_admin'),
       browserFullAdminToolCount: mcpToolCount(systemEvent.tools, 'browser_full_admin'),
       browserGuestToolCount: mcpToolCount(systemEvent.tools, 'browser_guest'),
+      // Every phone browser's together: a turn has one per persona that needs it.
+      browserPhoneToolCount: collectionCount(systemEvent.tools) == null ? null
+        : ['member', 'admin', 'full_admin', 'guest'].reduce((sum, persona) => (
+          sum + mcpToolCount(systemEvent.tools, `browser_${persona}_phone`)), 0),
     });
   }
   if (event.type === 'assistant' && event.message?.content) {
@@ -1183,7 +1270,14 @@ function applyStreamEvent(event, onProgress, state) {
     }
   } else if (event.type === 'result') {
     state.lastResultText = event.result || state.lastResultText;
-    applyClaudeResultUsage(event.usage, state);
+    // App bench run 190: a turn whose agent had left a background task
+    // running went on after its result (the task's end woke it), and its
+    // second result's usage, three model calls, replaced the first one's
+    // 138: the turn was priced at $0.002. Each result's usage is its own
+    // query's, so a later one adds to the turn's.
+    const laterResult = (state.claudeResultsSeen || 0) > 0;
+    state.claudeResultsSeen = (state.claudeResultsSeen || 0) + 1;
+    applyClaudeResultUsage(event.usage, state, { add: laterResult });
     state.resultSubtype = safeResultSubtype(event.subtype) || state.resultSubtype;
     state.providerStopReason = safeResultSubtype(event.stop_reason) || state.providerStopReason;
     emitShotsDiagnostic(state, {
@@ -1194,9 +1288,13 @@ function applyStreamEvent(event, onProgress, state) {
     const reportedDuration = observeDiagnostics ? resultMetric(event.duration_ms) : null;
     const providerDuration = observeDiagnostics ? resultMetric(event.duration_api_ms) : null;
     const turns = observeDiagnostics ? usageToken(event.num_turns) : null;
-    if (reportedDuration != null) state.agentReportedDurationMs = reportedDuration;
-    if (providerDuration != null) state.providerDurationMs = providerDuration;
-    if (turns != null) state.providerTurnCount = turns;
+    const plus = (key, value) => {
+      if (value == null) return;
+      state[key] = laterResult && Number.isFinite(state[key]) ? state[key] + value : value;
+    };
+    plus('agentReportedDurationMs', reportedDuration);
+    plus('providerDurationMs', providerDuration);
+    plus('providerTurnCount', turns);
     const modelUsage = event.modelUsage && typeof event.modelUsage === 'object'
       && !Array.isArray(event.modelUsage)
       ? event.modelUsage
@@ -1265,9 +1363,17 @@ function observeCodingProviderResult(event, ordinal, onProgress, state) {
   const errorMessage = typeof event.errorMessage === 'string'
     ? event.errorMessage.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, 300) || null
     : null;
-  if (providerName) state.routedProvider = providerName;
+  if (providerName) {
+    state.routedProvider = providerName;
+    // Every provider the turn's requests went to, in order, not only the
+    // last: whether a build that quits early follows a provider is read
+    // from this (homeroom-bot-live.js turnFacts). A few names at most.
+    const seen = Array.isArray(state.routedProviders) ? state.routedProviders : (state.routedProviders = []);
+    if (!seen.includes(providerName) && seen.length < 8) seen.push(providerName);
+  }
   noteCodingProviderUsage(event.usage, state);
   noteCodingProviderImages(event.images, state);
+  noteCodingProviderToolOutput(event.toolOutput, state);
   const failed = (status != null && status >= 400) || !!errorType || !!errorMessage;
   if (!failed) return;
   state.providerRequestFailures = (state.providerRequestFailures || 0) + 1;
@@ -1328,9 +1434,11 @@ function observeCodingProviderTiming(event, onProgress, state) {
     const payloadBytes = codingProviderCount(event.payloadBytes, 64 * 1024 * 1024);
     const inputBytes = codingProviderCount(event.inputBytes, 64 * 1024 * 1024);
     const instructionBytes = codingProviderCount(event.instructionBytes, 64 * 1024 * 1024);
+    const toolBytes = codingProviderCount(event.toolBytes, 64 * 1024 * 1024);
     const inputItems = codingProviderCount(event.inputItems, 1_000_000);
     const maxOutputTokens = codingProviderCount(event.maxOutputTokens, 10_000_000);
     const linked = event.previousResponseLinked;
+    noteRequestSize(state, { payloadBytes, inputBytes, instructionBytes, toolBytes, inputItems });
     if (payloadBytes != null && inputBytes != null && instructionBytes != null && maxOutputTokens != null
         && typeof linked === 'boolean') {
       const itemCount = inputItems == null ? '' : ` in ${inputItems} items`;
@@ -1387,6 +1495,23 @@ function observeCodingProviderTiming(event, onProgress, state) {
       ? `, ${responseBytes} response bytes in ${chunkCount} chunks` : '';
     onProgress(`OpenRouter request #${ordinal}: ${event.outcome} after ${Math.round(durationMs / 1000)}s${status}${transfer}`);
   }
+}
+
+// What the turn's first and last model requests carried, in bytes of the
+// wire request (run four, 13 Oct 2026): a build's turn kept only counts, and
+// how its prompt grew, from a 68,577-character first request through four
+// compactions, could not be read back once its pod was gone. Sizes only,
+// never content (telemetry_metrics first_request_* and last_request_*).
+function noteRequestSize(state, size) {
+  if (!state || size.payloadBytes == null) return;
+  const kept = {
+    payloadBytes: size.payloadBytes, inputBytes: size.inputBytes,
+    instructionBytes: size.instructionBytes, inputItems: size.inputItems,
+    // A listener that does not say (Codex's, an older image) leaves it out.
+    ...(size.toolBytes != null ? { toolBytes: size.toolBytes } : {}),
+  };
+  if (!state.firstRequestSize) state.firstRequestSize = kept;
+  state.lastRequestSize = kept;
 }
 
 function parseLine(line, onProgress, state) {
@@ -1448,6 +1573,15 @@ function parseLine(line, onProgress, state) {
       // The agent ended on a line that does not build on the session branch
       // (worker/session-branch.sh): nothing was committed or pushed.
       else if (k === 'branch_mismatch') state.branchMismatch = v === '1';
+      // How many times the stop guard sent the agent back (run-cc.sh,
+      // STOP_GUARD=1 only): telemetry_metrics.stop_hook_blocks.
+      else if (k === 'stop_hook_blocks') state.stopHookBlocks = /^\d+$/.test(v || '') ? parseInt(v, 10) : null;
+      // L2: how many times its checks gate sent the agent back to fix a
+      // failing declared check (run-cc.sh, STOP_GUARD_CHECKS only).
+      else if (k === 'stop_hook_check_blocks') state.stopHookCheckBlocks = /^\d+$/.test(v || '') ? parseInt(v, 10) : null;
+      // Run 190: how many servers the agent left running that the stop guard
+      // stopped as the turn ended: telemetry_metrics.stop_hook_servers_stopped.
+      else if (k === 'stop_hook_servers_stopped') state.stopHookServersStopped = /^\d+$/.test(v || '') ? parseInt(v, 10) : null;
     }
     state.resultSeen = true;
     const terminalExit = Number.isInteger(state.agentExit) ? state.agentExit : state.ccExit;
@@ -1692,6 +1826,17 @@ function newWatchState() {
     imageSentCount: null,
     imageMovedCount: null,
     imageOmittedCount: null,
+    imagePrunedCount: null,
+    // Under a first version's lean_turns tweak only
+    // (noteCodingProviderToolOutput).
+    toolOutputPrunedCount: null,
+    toolOutputPrunedChars: null,
+    // What the first and last model requests carried (noteRequestSize), and
+    // the tools called in order (noteToolSequence): unknown until seen.
+    firstRequestSize: null,
+    lastRequestSize: null,
+    toolSequence: null,
+    toolSequenceDropped: null,
     // Where an OpenRouter turn's time went, read off its request listener's
     // own clock (noteCodingRequestClock). All null when the listener sent
     // no clock: an Anthropic turn, or a worker image from before atMs.
@@ -1706,6 +1851,11 @@ function newWatchState() {
     firstAppBootMs: null,
     firstBrowserCallMs: null,
     lastBrowserCallMs: null,
+    // The edits after the turn's first browser call (noteFileChangeAfterBrowser):
+    // whether it has made one yet, how many, and the first paths.
+    browserCallSeen: false,
+    fileChangeAfterFirstBrowserCount: null,
+    filesChangedAfterFirstBrowser: null,
     requestMode: null,
     requestMessageCount: null,
     requestUserMessageCount: null,
@@ -1750,6 +1900,14 @@ function newWatchState() {
     // The build ended off the session branch, on work that does not build
     // on it; the runner committed and pushed nothing (session-branch.sh).
     branchMismatch: false,
+    // Times the stop guard kept the agent from ending a turn that had
+    // changed nothing (worker/build-stop-hook.js). Null for a turn without
+    // the guard, so "none asked for" stays apart from "none needed".
+    stopHookBlocks: null,
+    stopHookServersStopped: null,
+    // Claude Code result events seen this turn: a run that goes on after its
+    // first (a background task's end wakes it) adds each later one's usage.
+    claudeResultsSeen: 0,
     // #361: conflicted file paths from a MODE=sync turn's
     // __USERNODE_RESULT__ line. Defaults empty.
     conflictFiles: [],
@@ -1778,6 +1936,7 @@ function newWatchState() {
     telemetryToolNames: new Set(),
     telemetryFileReads: new Set(),
     telemetryFileChanges: new Set(),
+    telemetryFileChangesAfterBrowser: new Set(),
   };
 }
 
@@ -2062,6 +2221,30 @@ const TURN_SYSTEM_PROMPT_PATH = '/home/node/.claude/turn-system-prompt.txt';
 // context saving on resume and the old fully-specified fresh-run behavior.
 const TURN_RESUME_FALLBACK_PROMPT_PATH = '/home/node/.claude/turn-resume-fallback-prompt.txt';
 
+// #4575: each turn writes its prompt files under its own id. The fixed paths
+// above were shared by every turn on the session, and a dispatch writes its
+// prompt BEFORE it claims chat_sessions.active_turn: a second dispatch that
+// then lost that claim (the shots agent racing the Homeroom bot) had already
+// overwritten the winner's prompt, so the winner could run with the loser's
+// task. The fixed paths remain the fallback for an id that is not
+// path-safe, and finishTurn still removes them for a turn an older release
+// dispatched.
+function turnPromptPaths(turnId) {
+  const id = String(turnId || '');
+  if (!/^[A-Za-z0-9-]{1,128}$/.test(id)) {
+    return {
+      prompt: TURN_PROMPT_PATH,
+      system: TURN_SYSTEM_PROMPT_PATH,
+      resumeFallback: TURN_RESUME_FALLBACK_PROMPT_PATH,
+    };
+  }
+  return {
+    prompt: `/home/node/.claude/turn-prompt-${id}.txt`,
+    system: `/home/node/.claude/turn-system-prompt-${id}.txt`,
+    resumeFallback: `/home/node/.claude/turn-resume-fallback-prompt-${id}.txt`,
+  };
+}
+
 // Shell script that writes arbitrary turn context to a fixed private path.
 // The base64
 // payload is split into bounded chunks appended by `printf` (a shell
@@ -2084,31 +2267,31 @@ function buildTurnContextFileScript(content, targetPath) {
   return lines.join('\n') + '\n';
 }
 
-function buildTurnPromptScript(prompt) {
-  return buildTurnContextFileScript(prompt, TURN_PROMPT_PATH);
+function buildTurnPromptScript(prompt, targetPath = TURN_PROMPT_PATH) {
+  return buildTurnContextFileScript(prompt, targetPath);
 }
 
-function buildTurnSystemPromptScript(systemPrompt) {
-  return buildTurnContextFileScript(systemPrompt, TURN_SYSTEM_PROMPT_PATH);
+function buildTurnSystemPromptScript(systemPrompt, targetPath = TURN_SYSTEM_PROMPT_PATH) {
+  return buildTurnContextFileScript(systemPrompt, targetPath);
 }
 
-function buildTurnResumeFallbackPromptScript(prompt) {
-  return buildTurnContextFileScript(prompt, TURN_RESUME_FALLBACK_PROMPT_PATH);
+function buildTurnResumeFallbackPromptScript(prompt, targetPath = TURN_RESUME_FALLBACK_PROMPT_PATH) {
+  return buildTurnContextFileScript(prompt, targetPath);
 }
 
 // Materialize the dispatch prompt into the warm worker's CC volume ahead
 // of the detached exec. Unlike syncUserAgentFiles this file is required:
 // a failure here fails the turn (before active_turn is persisted, so
 // there is nothing to clean up).
-async function writeTurnPrompt(sessionId, prompt) {
+async function writeTurnPrompt(sessionId, prompt, targetPath = TURN_PROMPT_PATH) {
   const meta = _registryGet(sessionId);
   if (!meta) {
     throw new Error(`writeTurnPrompt: no warm worker registered for session ${sessionId}`);
   }
   if (usesKubernetesWorkers()) {
-    await execWorkerCommand(meta.containerName, ['sh', '-s'], buildTurnPromptScript(prompt));
+    await execWorkerCommand(meta.containerName, ['sh', '-s'], buildTurnPromptScript(prompt, targetPath));
   } else {
-    await docker.execShellStdin(meta.containerName, buildTurnPromptScript(prompt), {
+    await docker.execShellStdin(meta.containerName, buildTurnPromptScript(prompt, targetPath), {
       timeoutMs: 20000, label: 'writeTurnPrompt',
     });
   }
@@ -2118,7 +2301,7 @@ async function writeTurnPrompt(sessionId, prompt) {
 // aborts before active_turn is persisted or the provider is dispatched; the
 // platform must never silently run a shortened task prompt without its
 // authoritative conventions.
-async function writeTurnSystemPrompt(sessionId, systemPrompt) {
+async function writeTurnSystemPrompt(sessionId, systemPrompt, targetPath = TURN_SYSTEM_PROMPT_PATH) {
   const meta = _registryGet(sessionId);
   if (!meta) {
     throw new Error(`writeTurnSystemPrompt: no warm worker registered for session ${sessionId}`);
@@ -2127,10 +2310,10 @@ async function writeTurnSystemPrompt(sessionId, systemPrompt) {
     await execWorkerCommand(
       meta.containerName,
       ['sh', '-s'],
-      buildTurnSystemPromptScript(systemPrompt),
+      buildTurnSystemPromptScript(systemPrompt, targetPath),
     );
   } else {
-    await docker.execShellStdin(meta.containerName, buildTurnSystemPromptScript(systemPrompt), {
+    await docker.execShellStdin(meta.containerName, buildTurnSystemPromptScript(systemPrompt, targetPath), {
       timeoutMs: 20000, label: 'writeTurnSystemPrompt',
     });
   }
@@ -2140,7 +2323,7 @@ async function writeTurnSystemPrompt(sessionId, systemPrompt) {
 // fails and run-cc.sh retries fresh. It is required whenever supplied: failing
 // to materialize it aborts before dispatch rather than running without the
 // session's authoritative spec.
-async function writeTurnResumeFallbackPrompt(sessionId, prompt) {
+async function writeTurnResumeFallbackPrompt(sessionId, prompt, targetPath = TURN_RESUME_FALLBACK_PROMPT_PATH) {
   const meta = _registryGet(sessionId);
   if (!meta) {
     throw new Error(`writeTurnResumeFallbackPrompt: no warm worker registered for session ${sessionId}`);
@@ -2149,12 +2332,12 @@ async function writeTurnResumeFallbackPrompt(sessionId, prompt) {
     await execWorkerCommand(
       meta.containerName,
       ['sh', '-s'],
-      buildTurnResumeFallbackPromptScript(prompt),
+      buildTurnResumeFallbackPromptScript(prompt, targetPath),
     );
   } else {
     await docker.execShellStdin(
       meta.containerName,
-      buildTurnResumeFallbackPromptScript(prompt),
+      buildTurnResumeFallbackPromptScript(prompt, targetPath),
       { timeoutMs: 20000, label: 'writeTurnResumeFallbackPrompt' },
     );
   }
@@ -2179,9 +2362,13 @@ function _getPoolSafe() {
   }
 }
 
+// Resolves { ok: true } or { ok: false, code }: the code says why the record
+// could not be written (#4575), so execInWorker can tell a session another
+// turn already owns (session_busy, which a caller may wait out) from a
+// database failure.
 async function _persistActiveTurn(sessionId, turn) {
   const pool = _getPoolSafe();
-  if (!pool) return false;
+  if (!pool) return { ok: false, code: 'db_unavailable' };
   try {
     const current = await turnLifecycle.loadActiveTurn(pool, sessionId);
     if (current) {
@@ -2198,15 +2385,43 @@ async function _persistActiveTurn(sessionId, turn) {
         && current.phase === turnLifecycle.PHASE_DISPATCH_PENDING
         && String(current.journal || '') === String(turn.journal || '')
       );
-      if (isRegisteredAttempt) return true;
+      if (isRegisteredAttempt) return { ok: true };
       const err = new Error('turn-lifecycle: session already owns a different turn');
       err.code = 'session_busy';
       throw err;
     }
     await turnLifecycle.persistNewTurn(pool, sessionId, turn);
+    return { ok: true };
+  } catch (err) {
+    log.warn('worker', 'Failed to persist active_turn', { sessionId, err: err.message, code: err.code });
+    const code = typeof err?.code === 'string' && /^[A-Za-z0-9_]{1,48}$/.test(err.code)
+      ? err.code
+      : 'persist_error';
+    return { ok: false, code };
+  }
+}
+
+// A dispatch that a pending stop skipped before it began (execInWorker's
+// #937 gate). Only the exact record registered for it is touched, and only
+// while it is still dispatch_pending: a turn that replaced it, or one that
+// somehow moved on, is never someone this may clear. A tail-holding caller
+// gets the record handed to its tail, as a finished exec's would be; any
+// other caller gets it cleared. A later finishTurn by the caller finds it
+// gone and returns true. Never throws.
+async function releaseSkippedDispatch(sessionId, turnId, { holdTurnRecord = false } = {}) {
+  if (!turnId) return false;
+  const pool = _getPoolSafe();
+  if (!pool) return false;
+  try {
+    const current = await turnLifecycle.loadActiveTurn(pool, sessionId);
+    if (!current
+      || String(turnLifecycle.turnIdentity(current) || '') !== String(turnId)
+      || turnLifecycle.phaseOf(current) !== turnLifecycle.PHASE_DISPATCH_PENDING) return false;
+    if (holdTurnRecord) await markTurnTail(sessionId, {}, { turnId });
+    else if (!(await finishTurn(sessionId, { turnId }))) return false;
     return true;
   } catch (err) {
-    log.warn('worker', 'Failed to persist active_turn', { sessionId, err: err.message });
+    log.warn('worker', 'Could not release a skipped dispatch\'s turn record', { sessionId, turnId, err: err.message });
     return false;
   }
 }
@@ -2403,11 +2618,20 @@ async function finishTurn(sessionId, { journal = null, turnId = null } = {}) {
   // An idempotent call after the row is already gone may remove only UUID-
   // unique journals; it never owns the shared prompt path.
   const filesToRemove = [...journalPaths];
-  if (ownsCleanup) filesToRemove.push(
-    TURN_PROMPT_PATH,
-    TURN_SYSTEM_PROMPT_PATH,
-    TURN_RESUME_FALLBACK_PROMPT_PATH,
-  );
+  if (ownsCleanup) {
+    filesToRemove.push(
+      TURN_PROMPT_PATH,
+      TURN_SYSTEM_PROMPT_PATH,
+      TURN_RESUME_FALLBACK_PROMPT_PATH,
+    );
+    // The turn's own prompt files (#4575), named by the identity it carried.
+    if (cleanupTurnId) {
+      const own = turnPromptPaths(cleanupTurnId);
+      for (const path of [own.prompt, own.system, own.resumeFallback]) {
+        if (!filesToRemove.includes(path)) filesToRemove.push(path);
+      }
+    }
+  }
   if (filesToRemove.length) {
     const containerName = _registryGet(sessionId)?.containerName
       || workerRuntimeName(sessionId);
@@ -2672,6 +2896,9 @@ async function _bootstrapWarmContainer(sessionId, {
       `Homeroom could not start working on ${repoOwner}/${repoName}. ${privacy.message} Nothing was changed.`
     );
     err.code = 'github_rate_limited';
+    // When it resets, for a caller that tries again then (the before &
+    // after shots' recovery sweep).
+    if (privacy.retryAfterSeconds > 0) err.retryAfterMs = privacy.retryAfterSeconds * 1000;
     throw err;
   }
   if (!privacy.ok) {
@@ -3017,7 +3244,9 @@ async function ensureWorker(sessionId, {
       // rollout from ever becoming a reason to interrupt paid work.
       if (existing?.inFlight) {
         if (staleReason === 'storage-mode') {
-          throw new Error('Cannot change worker storage while a turn is running');
+          // #4533: the session is busy, not the platform broken: the code
+          // lets a caller wait for the turn rather than report a fault.
+          throw Object.assign(new Error('Cannot change worker storage while a turn is running'), { code: 'session_busy' });
         }
         log.info('worker', 'Deferring stale warm worker replacement until turn completion', {
           containerName, staleReason,
@@ -3132,6 +3361,10 @@ async function execInWorker(sessionId, {
   agentModel = null,
   agentReasoningEffort = null,
   agentModelMetadata = null,
+  // The hosts an OpenRouter turn may use, when the platform overrides the
+  // listener's own per-model shortlist: 'slug,slug' or 'none' (agent-turn.js
+  // resolveCodexRuntimeContext). Null leaves the listener's.
+  agentProviderShortlist = null,
   openrouterApiKey = null,
   openrouterApiBase = null,
   // A build whose agent failed (exited non-zero, or ended on an error result)
@@ -3141,6 +3374,33 @@ async function execInWorker(sessionId, {
   // pushes is what it proposes, or a revision of a proposal up for a vote. A
   // person's dev chat keeps a failed turn's work, as it always has.
   discardFailedTurn = false,
+  // The stop guard: a Claude Code Stop hook (worker/build-stop-hook.js) that
+  // sends the agent back to work, twice at most, when it tries to end a turn
+  // that has changed nothing. The Homeroom bot's build and review-fix turns
+  // ask for it (homeroom-bot-live.js buildTurnRunner); it reaches run-cc.sh
+  // as STOP_GUARD=1 for a build that Claude Code runs, and nothing else.
+  stopGuard = false,
+  // L2: with the stop guard, its checks gate: { deadlineMs } when the
+  // platform wrote this turn's check command (writeAppCheck) and stops the
+  // turn at `deadlineMs`. The hook then runs the app's declared checks, on
+  // a fresh copy signed in, before a turn that changed something ends, and
+  // sends it back while one fails. It reaches run-cc.sh as STOP_GUARD_CHECKS
+  // (the command's path) and STOP_GUARD_DEADLINE.
+  checksGate = null,
+  // 'first_version': a build of a project's first version (the Homeroom
+  // bot's build and review fixes, homeroom-bot-live.js buildTurnRunner). Its
+  // runner loads only the tools one uses (run-cc.sh and run-codex-agent.sh
+  // BUILD_PROFILE): no visible_changes server, the Homeroom read tools
+  // narrowed to the platform conventions, no web or notebook tools. Anything
+  // else is an ordinary build.
+  buildProfile = null,
+  // A first version's build under its configuration's `lean_turns` tweak
+  // (bot-configs.js TWEAKS): run-cc.sh leaves out the tools such a build
+  // never needs, and Claude Code's request adapter cuts stale browser and
+  // shell output from what each model call re-sends
+  // (claude-openrouter-request.js pruneStaleToolOutput). LEAN_TURNS=1, for
+  // a first version's build that Claude Code runs, and nothing else.
+  leanTurns = false,
   shotsRunId = null,
   shotsOrigins = null,
   shotsAuthTokens = null,
@@ -3150,7 +3410,12 @@ async function execInWorker(sessionId, {
   shotsRecordClips = false,
   // The size clips are recorded at, WIDTHxHEIGHT: the motion screens' own,
   // so a phone clip is not a phone in the corner of a desktop-sized frame.
+  // The phone browsers record at the phone motion screens' size.
   shotsClipSize = null,
+  shotsPhoneClipSize = null,
+  // The personas that get a phone browser beside their desktop one: those
+  // with a phone screen (visible-changes.phonePersonas).
+  shotsPhonePersonas = [],
   // The app under test is a child app: the shots proxy serves its
   // /usernode-bridge|native|tailwind/ requests from the platform, as the
   // production edge does. The platform's own pairs serve their own.
@@ -3256,6 +3521,14 @@ async function execInWorker(sessionId, {
     stopped.agentHarness = resolveTurnBackend(agentBackend, agentHarness).harness;
     stopped.execExitSeen = true;
     stopped.exitCode = 143;
+    // The record that attempt registration already wrote for this very turn
+    // is released here, the way this function's `finally` releases a turn
+    // that ran: returning before that `try` left it in dispatch_pending with
+    // nothing to clear it. A caller that does not finish turns itself (the
+    // Homeroom bot's follow-ups) left its proposal "running" for good, and
+    // every later turn on it waited behind a turn that had never started
+    // (change 7490, 9 Oct 2026).
+    await releaseSkippedDispatch(sessionId, preRegisteredTurnId, { holdTurnRecord });
     return stopped;
   }
 
@@ -3282,7 +3555,9 @@ async function execInWorker(sessionId, {
   if (systemPrompt && !runsClaude) {
     throw new Error('execInWorker: systemPrompt is only supported for Claude turns');
   }
-  if (resumeFallbackPrompt && !isClaude) {
+  // Claude Code makes the fresh run itself when --resume fails (run-cc.sh),
+  // on Anthropic or on OpenRouter; Codex asks the host for one instead.
+  if (resumeFallbackPrompt && !isClaude && !isClaudeOpenRouter) {
     throw new Error('execInWorker: resumeFallbackPrompt is only supported for Claude turns');
   }
   if (resumeFallbackPrompt && mode !== 'build') {
@@ -3309,8 +3584,14 @@ async function execInWorker(sessionId, {
     if (typeof shotsRecordClips !== 'boolean') {
       throw new Error('execInWorker: shots clip recording must be boolean');
     }
-    if (shotsClipSize != null && !/^[1-9][0-9]{2,3}x[1-9][0-9]{2,3}$/.test(String(shotsClipSize))) {
-      throw new Error('execInWorker: shots clip size must be WIDTHxHEIGHT');
+    for (const size of [shotsClipSize, shotsPhoneClipSize]) {
+      if (size != null && !/^[1-9][0-9]{2,3}x[1-9][0-9]{2,3}$/.test(String(size))) {
+        throw new Error('execInWorker: shots clip size must be WIDTHxHEIGHT');
+      }
+    }
+    if (!Array.isArray(shotsPhonePersonas)
+        || !shotsPhonePersonas.every((persona) => SHOTS_PERSONAS.has(persona))) {
+      throw new Error('execInWorker: shots phone personas must be a list of personas');
     }
     if (typeof shotsPlatformAssets !== 'boolean') {
       throw new Error('execInWorker: shots platform assets must be boolean');
@@ -3359,16 +3640,19 @@ async function execInWorker(sessionId, {
   // (conventions block + spec doc) legitimately exceed it. See
   // TURN_PROMPT_PATH. Written before active_turn is persisted so a
   // failure here surfaces as a plain turn error with nothing to reap.
+  // #4575: under this turn's own id, so a dispatch that loses the race for
+  // active_turn below never overwrites the prompt of the turn that won it.
+  const promptPaths = turnPromptPaths(durableTurnId);
   if (!reusePromptFile) {
-    await writeTurnPrompt(sessionId, prompt);
+    await writeTurnPrompt(sessionId, prompt, promptPaths.prompt);
   }
   if (resumeFallbackPrompt) {
-    await writeTurnResumeFallbackPrompt(sessionId, resumeFallbackPrompt);
+    await writeTurnResumeFallbackPrompt(sessionId, resumeFallbackPrompt, promptPaths.resumeFallback);
   }
   // A reused task prompt is a Codex recovery concern today, but keep this
   // write independent so any future Claude recovery cannot point the runner
   // at an absent or stale system-context file.
-  if (systemPrompt) await writeTurnSystemPrompt(sessionId, systemPrompt);
+  if (systemPrompt) await writeTurnSystemPrompt(sessionId, systemPrompt, promptPaths.system);
 
   // Anthropic-proxy: when the caller provides a BYOK key (anthropicApiKey
   // truthy), the worker hits api.anthropic.com directly with that key
@@ -3410,13 +3694,16 @@ async function execInWorker(sessionId, {
     throw err;
   }
   const safeEnv = {
-    PROMPT_FILE: TURN_PROMPT_PATH,
-    SYSTEM_PROMPT_FILE: systemPrompt ? TURN_SYSTEM_PROMPT_PATH : '',
+    PROMPT_FILE: promptPaths.prompt,
+    SYSTEM_PROMPT_FILE: systemPrompt ? promptPaths.system : '',
     MODE: mode,
     BRANCH: branchName || '',
     COMMIT_MSG: commitMsg || 'Changes via Homeroom',
     SESSION_ID: String(sessionId),
     PLATFORM_URL: mode === 'shots' ? shotsControlUrl() : PLATFORM_INTERNAL_URL,
+    // usernode-push rides out a platform restart only when asked to: every
+    // real turn asks, and a test or a stray run of the script tries once.
+    USERNODE_PUSH_RETRY: '1',
     ...(mode === 'shots' ? {
       SHOTS_RUN_ID: shotsRunId,
       SHOTS_BASE_ORIGIN: new URL(shotsOrigins.base).origin,
@@ -3424,13 +3711,15 @@ async function execInWorker(sessionId, {
       SHOTS_NAVIGATION_HINTS: JSON.stringify(shotsNavigationHints || {}),
       SHOTS_RECORD_CLIPS: shotsRecordClips ? '1' : '0',
       ...(shotsRecordClips && shotsClipSize ? { SHOTS_CLIP_SIZE: String(shotsClipSize) } : {}),
+      ...(shotsRecordClips && shotsPhoneClipSize ? { SHOTS_PHONE_CLIP_SIZE: String(shotsPhoneClipSize) } : {}),
+      SHOTS_PHONE_PERSONAS: JSON.stringify([...new Set(shotsPhonePersonas)]),
       SHOTS_PLATFORM_ASSETS: shotsPlatformAssets ? '1' : '0',
     } : {}),
     ...(isClaude ? {
       MODEL: claudeModel,
       CLAUDE_RESUME_SESSION_ID: resumeSessionId || '',
       RESUME_FALLBACK_PROMPT_FILE: resumeFallbackPrompt
-        ? TURN_RESUME_FALLBACK_PROMPT_PATH
+        ? promptPaths.resumeFallback
         : '',
       // Retarget the Anthropic SDK through the proxy only for Claude when
       // not BYOK. Never set for Codex.
@@ -3457,6 +3746,13 @@ async function execInWorker(sessionId, {
     safeEnv.AGENT_MODEL_MAX_OUTPUT_TOKENS = agentModelMetadata?.maxOutputTokens != null
       ? String(agentModelMetadata.maxOutputTokens)
       : '';
+    // The catalog's context window, which the adapter hands Claude Code with
+    // the window it compacts at (claudeChildEnv): an OpenRouter model is one
+    // Claude Code does not know, and without them a build resent its whole
+    // history, up to 1.2 MB, on every request.
+    safeEnv.AGENT_MODEL_CONTEXT_WINDOW = agentModelMetadata?.contextWindow != null
+      ? String(agentModelMetadata.contextWindow)
+      : '';
     // The thinking level, which the adapter sends as output_config.effort.
     safeEnv.AGENT_REASONING_EFFORT = agentReasoningEffort || '';
     // #3426: '1' lets the adapter pass image blocks through to a model the
@@ -3466,10 +3762,14 @@ async function execInWorker(sessionId, {
     // the catalog lists as taking files; anything else is a note.
     safeEnv.AGENT_MODEL_SUPPORTS_FILES = agentModelMetadata?.supportsFiles === true ? '1' : '';
     safeEnv.CLAUDE_RESUME_SESSION_ID = resumeSessionId || '';
-    safeEnv.RESUME_FALLBACK_PROMPT_FILE = '';
+    // The Homeroom bot's nudge (homeroom-bot-live.js buildTurnRunner): the
+    // whole build prompt, for the fresh run run-cc.sh makes when the build's
+    // conversation cannot be resumed. Empty for every other turn.
+    safeEnv.RESUME_FALLBACK_PROMPT_FILE = resumeFallbackPrompt ? promptPaths.resumeFallback : '';
     safeEnv.TURN_UUID = turnUuid || '';
     safeEnv.OPENROUTER_API_BASE = openrouterApiBase || '';
     safeEnv.DISCARD_FAILED_TURN = discardFailedTurn === true ? '1' : '';
+    safeEnv.AGENT_PROVIDER_SHORTLIST = providerShortlistEnv(agentProviderShortlist);
   }
   if (isCodex) {
     safeEnv.AGENT_BACKEND = 'codex_openrouter';
@@ -3499,7 +3799,20 @@ async function execInWorker(sessionId, {
     // The operator-configured OpenRouter endpoint (plan 4): always forward
     // the (already-validated) base so generation and catalog agree.
     safeEnv.OPENROUTER_API_BASE = openrouterApiBase || '';
+    safeEnv.AGENT_PROVIDER_SHORTLIST = providerShortlistEnv(agentProviderShortlist);
   }
+  // Only a Claude Code build has the hook: a scout changes nothing by design,
+  // and the Codex runner has no Stop hook to install.
+  if (stopGuard === true && mode === 'build' && runsClaude) {
+    safeEnv.STOP_GUARD = '1';
+    if (checksGate && typeof checksGate === 'object') {
+      safeEnv.STOP_GUARD_CHECKS = APP_CHECK_COMMAND_PATH;
+      const deadline = Number(checksGate.deadlineMs);
+      if (Number.isFinite(deadline) && deadline > 0) safeEnv.STOP_GUARD_DEADLINE = String(Math.round(deadline));
+    }
+  }
+  if (buildProfile === 'first_version' && mode === 'build') safeEnv.BUILD_PROFILE = 'first_version';
+  if (leanTurns === true && buildProfile === 'first_version' && mode === 'build' && runsClaude) safeEnv.LEAN_TURNS = '1';
   const runner = registry.runnerFor(resolvedBackend, resolvedHarness);
  // Journal transport: the turn runs DETACHED from this process. The
   // wrapper below redirects run-cc.sh's combined output to a journal
@@ -3547,6 +3860,17 @@ async function execInWorker(sessionId, {
   // `journal` is recorded so stopTurn() can append the exit marker to the
   // turn's own journal (#889) instead of leaving the consumer to discover
   // the kill via its 10s liveness watchdog.
+  // What this call is about to overwrite, so a dispatch that loses the race
+  // for active_turn puts it back rather than wiping it (#4575).
+  const registryBefore = _registryGet(sessionId);
+  const replacedRegistryFields = registryBefore ? {
+    activeTurnMode: registryBefore.activeTurnMode ?? null,
+    journal: registryBefore.journal ?? null,
+    activeTurnId: registryBefore.activeTurnId ?? null,
+    turnByokCents: registryBefore.turnByokCents,
+    turnByokSwitched: registryBefore.turnByokSwitched,
+    unpushed: registryBefore.unpushed ?? null,
+  } : null;
   _registryUpsert(sessionId, {
     inFlight: true, activeTurnMode: mode, journal, activeTurnId: durableTurnId,
     turnByokCents: 0, turnByokSwitched: false,
@@ -3555,7 +3879,7 @@ async function execInWorker(sessionId, {
     // worker's to rescue.
     unpushed: null,
   });
-  const activeTurnPersisted = await _persistActiveTurn(sessionId, {
+  const activeTurnPersist = await _persistActiveTurn(sessionId, {
     turnId: durableTurnId,
     phase: turnLifecycle.PHASE_DISPATCH_PENDING,
     mode,
@@ -3588,16 +3912,33 @@ async function execInWorker(sessionId, {
     // even if the user adds/removes their key while the turn is detached.
     byok: !!anthropicApiKey,
   });
-  if (!activeTurnPersisted) {
+  if (!activeTurnPersist.ok) {
+    // Put back what this call replaced: this dispatch never ran, so the
+    // turn that owns the session (or the last one's remembered state) keeps
+    // its in-memory record.
     _registryUpsert(sessionId, {
-      inFlight: false, lastUsedMs: Date.now(), activeTurnMode: null,
-      journal: null, activeTurnId: null,
+      ...(replacedRegistryFields || {
+        activeTurnMode: null, journal: null, activeTurnId: null,
+      }),
+      inFlight: false, lastUsedMs: Date.now(),
     });
     await revokeHomeroomReadGrant(sessionId, homeroomGrant);
-    const err = new Error('execInWorker: durable active turn could not be persisted');
+    // This turn's own prompt files are not used by anyone else (#4575).
+    if (promptPaths.prompt !== TURN_PROMPT_PATH) {
+      await execWorkerCommand(containerName, [
+        'rm', '-f', promptPaths.prompt, promptPaths.system, promptPaths.resumeFallback,
+      ], null, { timeoutMs: 5000 }).catch(() => {});
+    }
+    const err = new Error(activeTurnPersist.code === 'session_busy'
+      ? 'execInWorker: another turn already owns this session'
+      : 'execInWorker: durable active turn could not be persisted');
     err.code = requireActiveTurnPersistence
       ? 'durable_retry_persist_failed'
       : 'durable_turn_persist_failed';
+    // Why (#4575): session_busy means another turn holds the session and a
+    // caller may wait for it to finish and dispatch again.
+    err.persistCode = activeTurnPersist.code;
+    err.sessionBusy = activeTurnPersist.code === 'session_busy';
     throw err;
   }
 
@@ -3638,6 +3979,10 @@ async function execInWorker(sessionId, {
     }).catch((err) => log.warn('worker', 'Failed to mark turn executing; durable dispatch remains recoverable', {
       sessionId, turnId: durableTurnId, err: err.message,
     }));
+    // The turn's record is saved and its process runs: a Homeroom bot
+    // pipeline that opened it is parked at a point restart recovery adopts
+    // (homeroom-bot-drain.js), so shutdown need not wait for it.
+    botDrain.noteTurnDispatched(sessionId, { mode });
     // onChild is legacy: there is no host-side child that owns the turn
     // anymore. Stop semantics live in stopTurn() (in-container pkill).
     if (typeof onChild === 'function') {
@@ -3714,7 +4059,33 @@ async function execInWorker(sessionId, {
     state.modelMaxOutputTokens = agentModelMetadata?.maxOutputTokens ?? null;
     execState = state;
     const progress = typeof onProgress === 'function' ? onProgress : () => {};
-    await _consumeJournal(containerName, journal, progress, state, { sessionId, startedAt: providerStartedAt });
+    let consumeError = null;
+    try {
+      await _consumeJournal(containerName, journal, progress, state, { sessionId, startedAt: providerStartedAt });
+    } catch (err) {
+      consumeError = err;
+    }
+    // A Homeroom bot pipeline's turn that ends once shutdown has begun goes
+    // no further: its record and journal stay as they are (this never
+    // returns, so the `finally` below never clears them) and the next
+    // leader adopts the finished turn, rather than this process starting a
+    // step it cannot finish (homeroom-bot-drain.js).
+    if (botDrain.holdAfterTurn()) {
+      log.info('worker', 'Shutting down: a Homeroom bot turn ended; left for the next leader', {
+        sessionId, turnId: durableTurnId, mode,
+      });
+      await new Promise(() => {});
+    }
+    if (consumeError) {
+      // What the turn did before the journal could not be read on, for the
+      // ledger (sessions.js reads err.turnResult): its usage, its telemetry
+      // and the host OpenRouter routed it to, which a failed turn otherwise
+      // never recorded.
+      if (consumeError && typeof consumeError === 'object' && !consumeError.turnResult) {
+        try { consumeError.turnResult = finalizeHarnessResult(state); } catch { /* the error still goes up */ }
+      }
+      throw consumeError;
+    }
     providerTerminalObserved = true;
 
     // Successful, complete turns don't need their journal anymore; failed
@@ -3729,6 +4100,7 @@ async function execInWorker(sessionId, {
     }
     return finalizeHarnessResult(state);
   } finally {
+    if (providerDispatched) botDrain.noteTurnEnded(sessionId, { mode });
     // The agent process is done with the platform once its journal has
     // ended: the tail (PR, staging, the wrap-up) never uses this token.
     await revokeHomeroomReadGrant(sessionId, homeroomGrant);
@@ -4419,6 +4791,120 @@ async function rescueUnpushedCommit(sessionId, { branchName = null } = {}) {
   }
 }
 
+// A first version's build turn that ran past its time limit or failed is
+// not always empty-handed: its edits are still in the worker's checkout,
+// uncommitted (run-cc.sh's DISCARD_FAILED_TURN skips the commit, and a
+// stopped turn is killed before it reaches it). The script commits them on
+// the session branch the way the runner would have (session-branch.sh), and
+// prints how far the branch is ahead of main and its commit. `workspace`
+// and `lib` are overridable for tests only.
+function buildPartialCommitScript({
+  workspace = '/home/node/workspace', lib = '/usr/local/bin/session-branch.sh',
+} = {}) {
+  return [
+    `cd ${shellQuote(workspace)} || exit 1`,
+    `. ${shellQuote(lib)}`,
+    // The session branch as GitHub had it when the turn started: what the
+    // runner's TURN_START_SHA would have been.
+    'start=$(git rev-parse --quiet --verify "refs/remotes/origin/$BRANCH" 2>/dev/null || true)',
+    'if ! usernode_settle_session_branch >&2; then echo "__USERNODE_PARTIAL__ ahead=0 sha="; exit 0; fi',
+    'usernode_commit_leftovers "$start" "$COMMIT_MSG" >&2',
+    'echo "__USERNODE_PARTIAL__ ahead=$(git rev-list --count origin/main..HEAD 2>/dev/null || echo 0) sha=$(git rev-parse HEAD 2>/dev/null)"',
+  ].join('\n');
+}
+
+/** Pure: the script's `__USERNODE_PARTIAL__` line, as { ahead, sha }, or null. */
+function parsePartialCommit(stdout) {
+  const line = String(stdout || '').split('\n').reverse().find((l) => l.startsWith('__USERNODE_PARTIAL__ '));
+  if (!line) return null;
+  const ahead = Number((line.match(/\bahead=(\d+)/) || [])[1]) || 0;
+  const sha = (line.match(/\bsha=([0-9a-f]{7,40})\b/) || [])[1] || null;
+  return { ahead, sha };
+}
+
+/**
+ * Commit and push what a failed or stopped build turn left in the session's
+ * worker, when it differs from main. Resolves { pushed: true, sha, commits }
+ * or { pushed: false, reason }; never throws. Outside any agent turn:
+ * nothing is journaled and the active-turn record is untouched.
+ */
+async function keepPartialWork(sessionId, { branchName, commitMsg = 'Homeroom bot: work so far' } = {}) {
+  if (!branchName) return { pushed: false, reason: 'no branch' };
+  const containerName = _registryGet(sessionId)?.containerName || workerRuntimeName(sessionId);
+  let committed;
+  try {
+    const script = `BRANCH=${shellQuote(branchName)}\nCOMMIT_MSG=${shellQuote(String(commitMsg).slice(0, 200))}\n`
+      + buildPartialCommitScript();
+    const { stdout } = await execWorkerCommand(containerName, ['sh', '-c', script], null, { timeoutMs: 60000 });
+    committed = parsePartialCommit(stdout);
+  } catch (err) {
+    return { pushed: false, reason: `could not read the worker's checkout (${String(err.message || err).slice(0, 200)})` };
+  }
+  if (!committed || !(committed.ahead > 0) || !committed.sha) return { pushed: false, reason: 'nothing differs from main' };
+  try {
+    const pushed = await execPushFromWorker(sessionId, branchName);
+    log.info('worker', 'Kept a failed build turn\'s work', {
+      sessionId, branch: branchName, sha: String(pushed?.sha || committed.sha).slice(0, 8), commits: committed.ahead,
+    });
+    return { pushed: true, sha: pushed?.sha || committed.sha, commits: committed.ahead };
+  } catch (err) {
+    return { pushed: false, reason: `the push failed (${String(err.message || err).slice(0, 200)})` };
+  }
+}
+
+// Build speed item 2 (a first version's `starter_inline` tweak,
+// homeroom-bot-live.js starterLines): run four's build spent 3.8 minutes
+// before its first file change, 14 reads of 8 files among it, on a starter
+// it could have been handed. So the platform reads the build's checkout
+// once, before its turn: every tracked file's path, size and lines, and the
+// text of each small one, in one exec. The prompt chooses what to show.
+const REPO_SNAPSHOT_MAX_FILE_BYTES = 48 * 1024;
+const REPO_SNAPSHOT_MAX_TOTAL_BYTES = 384 * 1024;
+const REPO_SNAPSHOT_MAX_FILES = 400;
+
+// The node script run in the worker's checkout. It prints one JSON line:
+// { files: [{ path, bytes, lines, text? }] }, text only for a file at most
+// maxFile bytes that decodes as UTF-8 with no NUL, while the total stays
+// under maxTotal. Pure (a string).
+function repoSnapshotScript({ maxFile = REPO_SNAPSHOT_MAX_FILE_BYTES, maxTotal = REPO_SNAPSHOT_MAX_TOTAL_BYTES, maxFiles = REPO_SNAPSHOT_MAX_FILES } = {}) {
+  return [
+    "const fs = require('fs');",
+    "const { execFileSync } = require('child_process');",
+    "const paths = execFileSync('git', ['ls-files', '-z'], { maxBuffer: 8 * 1024 * 1024 }).toString('utf8').split('\\0').filter(Boolean);",
+    `const maxFile = ${Number(maxFile)}; const maxTotal = ${Number(maxTotal)};`,
+    // What no build reads, so its text never takes room from what it does.
+    "const skip = /(^|\\/)(package-lock\\.json|yarn\\.lock|pnpm-lock\\.yaml|LICENSE[^/]*)$|(^|\\/)vendor\\//i;",
+    'let total = 0; const files = [];',
+    `for (const p of paths.slice(0, ${Number(maxFiles)})) {`,
+    '  let buf; try { buf = fs.readFileSync(p); } catch { continue; }',
+    "  const f = { path: p, bytes: buf.length, lines: buf.length ? buf.toString('utf8').split('\\n').length : 0 };",
+    "  if (!skip.test(p) && buf.length <= maxFile && !buf.includes(0) && total + buf.length <= maxTotal) { f.text = buf.toString('utf8'); total += buf.length; }",
+    '  files.push(f);',
+    '}',
+    "process.stdout.write(JSON.stringify({ files, more: Math.max(0, paths.length - files.length) }) + '\\n');",
+  ].join('\n');
+}
+
+/**
+ * The build's checkout as it stands: { files: [{ path, bytes, lines, text? }],
+ * more } (repoSnapshotScript), or null when it could not be read. Outside any
+ * agent turn: nothing is written. Never throws.
+ */
+async function readRepoSnapshot(sessionId, { timeoutMs = 30000 } = {}) {
+  const containerName = _registryGet(sessionId)?.containerName || workerRuntimeName(sessionId);
+  try {
+    const { stdout } = await execWorkerCommand(containerName, [
+      'sh', '-c', `cd /home/node/workspace && exec node -e ${shellQuote(repoSnapshotScript())}`,
+    ], null, { timeoutMs, maxBuffer: 2 * REPO_SNAPSHOT_MAX_TOTAL_BYTES + 512 * 1024 });
+    const line = String(stdout || '').trim().split('\n').pop();
+    const parsed = JSON.parse(line);
+    return parsed && Array.isArray(parsed.files) ? parsed : null;
+  } catch (err) {
+    log.warn('worker', 'Could not read the build\'s checkout for its prompt', { sessionId, err: String(err.message || err).slice(0, 200) });
+    return null;
+  }
+}
+
 // #3737: the benchmark's screenshot step (services/bench/capture.js). The
 // platform's own script is written into the worker (never baked into its
 // image, so the step is the platform's current one) and run there with
@@ -4428,28 +4914,230 @@ async function rescueUnpushedCommit(sessionId, { branchName = null } = {}) {
 // committed, pushed or journaled, and the active-turn record is untouched.
 const BENCH_CAPTURE_SCRIPT_PATH = '/tmp/usernode-bench-capture.js';
 const BENCH_ENV_KEY = /^[A-Z][A-Z0-9_]{0,63}$/;
+// #4387: another of the platform's scripts run the same way (the first
+// version's first look, services/first-version-screens.js) is written to a
+// file of its own, so it never overwrites a capture running beside it.
+const BENCH_SCRIPT_PATH_RE = /^\/tmp\/usernode-[a-z0-9-]{1,40}\.js$/;
 
-function buildBenchCaptureCommand(env = {}) {
+function buildBenchCaptureCommand(env = {}, scriptPath = BENCH_CAPTURE_SCRIPT_PATH) {
+  if (!BENCH_SCRIPT_PATH_RE.test(scriptPath)) throw new Error(`runBenchCapture: invalid script path ${scriptPath}`);
   const pairs = Object.entries(env).map(([key, value]) => {
     if (!BENCH_ENV_KEY.test(key)) throw new Error(`runBenchCapture: invalid env key ${key}`);
     return shellQuote(`${key}=${String(value)}`);
   });
-  return ['sh', '-c', `cd /home/node/workspace && exec env ${pairs.join(' ')} node ${BENCH_CAPTURE_SCRIPT_PATH}`];
+  return ['sh', '-c', `cd /home/node/workspace && exec env ${pairs.join(' ')} node ${scriptPath}`];
 }
 
-async function runBenchCapture(containerName, { source, env = {}, timeoutMs, maxBuffer = 96 * 1024 * 1024 } = {}) {
+async function runBenchCapture(containerName, {
+  source, env = {}, timeoutMs, maxBuffer = 96 * 1024 * 1024, scriptPath = BENCH_CAPTURE_SCRIPT_PATH,
+} = {}) {
   if (!containerName) throw new Error('runBenchCapture: no worker');
   if (typeof source !== 'string' || !source) throw new Error('runBenchCapture: no script');
-  const write = buildTurnContextFileScript(source, BENCH_CAPTURE_SCRIPT_PATH);
+  const command = buildBenchCaptureCommand(env, scriptPath);
+  const write = buildTurnContextFileScript(source, scriptPath);
   if (usesKubernetesWorkers()) await execWorkerCommand(containerName, ['sh', '-s'], write);
   else await docker.execShellStdin(containerName, write, { timeoutMs: 20000, label: 'runBenchCapture' });
-  const { stdout } = await execWorkerCommand(containerName, buildBenchCaptureCommand(env), null, { timeoutMs, maxBuffer });
+  const { stdout } = await execWorkerCommand(containerName, command, null, { timeoutMs, maxBuffer });
   return String(stdout || '');
+}
+
+// L2: THE APP'S DECLARED CHECKS, for a Homeroom bot build or fix turn to run
+// before it ends (homeroom-bot-live.js buildTurnRunner). The screenshot
+// step's own script (services/bench/capture.js), which boots a fresh copy of
+// the app on a port and a database of its own and signs a viewer in with a
+// throwaway key, as a proposal's checks sign in, runs here in its checks
+// mode: every check dapp.json declares, signed in (a plain in-loop launch is
+// signed out, and an app behind the platform's identity answers 401 on every
+// route). Written into the worker's private volume before each turn, beside
+// a two-line command that sets it up for this app; the stop guard's checks
+// gate (worker/build-stop-hook.js) runs that command, and so can the agent.
+const APP_CHECK_SCRIPT_PATH = '/home/node/.claude/usernode-app-check.js';
+const APP_CHECK_COMMAND_PATH = '/home/node/.claude/usernode-app-check';
+// Not the build turn's in-loop port (3100) or the screenshot step's (3190),
+// and not its database: the agent's own launch keeps running.
+const APP_CHECK_PORT = 3191;
+const APP_CHECK_DATABASE_URL = 'postgres://postgres:postgres@127.0.0.1:5432/inloop_checks';
+
+/** The command that runs the app's declared checks (see above), for app `appId`. Pure. */
+function buildAppCheckCommand(appId) {
+  const id = Number(appId);
+  if (!Number.isInteger(id) || id <= 0) throw new Error(`writeAppCheck: invalid app id ${appId}`);
+  return [
+    '#!/bin/sh',
+    '# The app\'s declared checks, signed in, on a fresh copy of the app (Homeroom).',
+    '# Run from the repository root; it prints each result. Written by the platform.',
+    'cd "${1:-/home/node/workspace}" 2>/dev/null || cd /home/node/workspace || exit 2',
+    `exec env BENCH_CAPTURE_MODE=checks INLOOP_PORT=${APP_CHECK_PORT} INLOOP_DATABASE_URL=${APP_CHECK_DATABASE_URL} `
+      + `BENCH_INLOOP_DB_SCRIPT=/nonexistent BENCH_APP_ID=${id} node ${APP_CHECK_SCRIPT_PATH}`,
+    '',
+  ].join('\n');
+}
+
+/**
+ * Write the check script and its command into a session's worker (see
+ * above). Throws when it cannot: the caller runs its turn without the gate.
+ */
+async function writeAppCheck(sessionId, { source, appId } = {}) {
+  const meta = _registryGet(sessionId);
+  if (!meta) throw new Error(`writeAppCheck: no warm worker registered for session ${sessionId}`);
+  if (typeof source !== 'string' || !source) throw new Error('writeAppCheck: no script');
+  const script = [
+    buildTurnContextFileScript(source, APP_CHECK_SCRIPT_PATH),
+    buildTurnContextFileScript(buildAppCheckCommand(appId), APP_CHECK_COMMAND_PATH),
+    `chmod 0755 ${APP_CHECK_COMMAND_PATH}`,
+    '',
+  ].join('\n');
+  if (usesKubernetesWorkers()) await execWorkerCommand(meta.containerName, ['sh', '-s'], script);
+  else await docker.execShellStdin(meta.containerName, script, { timeoutMs: 20000, label: 'writeAppCheck' });
+  return APP_CHECK_COMMAND_PATH;
+}
+
+// R5: the same step, DETACHED, for a first version's review
+// (services/bench/capture.js runDetached). Over the attached exec above the
+// screenshots come back on the exec's stdout, which dies with the platform
+// process: a release in the middle of a review's capture lost it, and the
+// review with it (run four, 12 Oct 2026). Here the step runs in the
+// background in the worker, as a turn does, its stdout written to a file of
+// its own and its exit code to another once it is over; the platform polls
+// for that file and reads the result back. A platform that restarts meanwhile
+// finds the step by its id (saved on the review state before it starts) and
+// harvests it, or, when the worker went with the restart, takes it again.
+// Under /tmp in the worker: the step's result is only worth the worker it
+// was taken in, and a new worker starts with none, so an id is never read
+// back from a different worker's leftovers.
+const DETACHED_CAPTURE_DIR = '/tmp/usernode-capture';
+const DETACHED_CAPTURE_ID_RE = /^[0-9a-f]{16,32}$/;
+
+function detachedCapturePath(id, ext) {
+  if (!DETACHED_CAPTURE_ID_RE.test(String(id || ''))) throw new Error(`detached capture: invalid id ${id}`);
+  return `${DETACHED_CAPTURE_DIR}/${id}.${ext}`;
+}
+
+/** The shell script that starts the step in the background and records its pid. Pure. */
+function buildDetachedCaptureScript({ id, env = {}, scriptPath = BENCH_CAPTURE_SCRIPT_PATH } = {}) {
+  const run = buildBenchCaptureCommand(env, scriptPath)[2];
+  const out = detachedCapturePath(id, 'out');
+  const err = detachedCapturePath(id, 'err');
+  const exit = detachedCapturePath(id, 'exit');
+  const pid = detachedCapturePath(id, 'pid');
+  // The exit code is written to a temporary name and moved into place, so a
+  // poll never reads a half-written one; the stdout is complete before it.
+  const body = `sh -c ${shellQuote(run)} > ${out} 2> ${err}; echo $? > ${exit}.tmp; mv ${exit}.tmp ${exit}`;
+  return [
+    'set -e',
+    `mkdir -p ${DETACHED_CAPTURE_DIR}`,
+    `rm -f ${out} ${err} ${exit} ${exit}.tmp ${pid}`,
+    `nohup sh -c ${shellQuote(body)} > /dev/null 2>&1 &`,
+    `echo $! > ${pid}`,
+  ].join('\n') + '\n';
+}
+
+/** The shell script that says where the step is: `exit <code>`, `running` or `gone`. Pure. */
+function buildDetachedCaptureStatusScript(id) {
+  const exit = detachedCapturePath(id, 'exit');
+  const pid = detachedCapturePath(id, 'pid');
+  return `if [ -f ${exit} ]; then echo "exit $(cat ${exit})"; `
+    + `elif [ -f ${pid} ] && kill -0 "$(cat ${pid})" 2>/dev/null; then echo running; else echo gone; fi`;
+}
+
+/** What a status script printed: { state: 'done', code } | { state: 'running' } | { state: 'gone' }. Pure. */
+function parseDetachedCaptureStatus(stdout) {
+  const s = String(stdout || '').trim().split('\n').pop() || '';
+  const done = /^exit\s+(-?\d+)\s*$/.exec(s);
+  if (done) return { state: 'done', code: Number(done[1]) };
+  if (s === 'running') return { state: 'running' };
+  return { state: 'gone' };
+}
+
+/**
+ * Start the step in the background (see above). Resolves once it is
+ * running; the script is written first, as runBenchCapture writes it.
+ */
+async function startDetachedCapture(containerName, {
+  id, source, env = {}, scriptPath = BENCH_CAPTURE_SCRIPT_PATH,
+} = {}) {
+  if (!containerName) throw new Error('startDetachedCapture: no worker');
+  if (typeof source !== 'string' || !source) throw new Error('startDetachedCapture: no script');
+  const start = buildDetachedCaptureScript({ id, env, scriptPath });
+  const write = buildTurnContextFileScript(source, scriptPath);
+  if (usesKubernetesWorkers()) {
+    await execWorkerCommand(containerName, ['sh', '-s'], write);
+    await execWorkerCommand(containerName, ['sh', '-s'], start, { timeoutMs: 30000 });
+  } else {
+    await docker.execShellStdin(containerName, write, { timeoutMs: 20000, label: 'startDetachedCapture' });
+    // `docker exec -d`, as a detached turn is dispatched: the step must not
+    // belong to an exec this process holds open.
+    await docker.execFileAsync('docker', ['exec', '-d', containerName, 'sh', '-c', start], { timeout: 30000 });
+  }
+}
+
+/** Where a detached step is (parseDetachedCaptureStatus). Throws when the worker cannot be reached. */
+async function detachedCaptureStatus(containerName, id) {
+  const { stdout } = await execWorkerCommand(containerName, ['sh', '-c', buildDetachedCaptureStatusScript(id)], null, { timeoutMs: 15000 });
+  return parseDetachedCaptureStatus(stdout);
+}
+
+/** A finished step's stdout, read back as runBenchCapture would have had it. */
+async function readDetachedCapture(containerName, id, { maxBuffer = 96 * 1024 * 1024, timeoutMs = 120000 } = {}) {
+  const { stdout } = await execWorkerCommand(containerName, ['cat', detachedCapturePath(id, 'out')], null, { timeoutMs, maxBuffer });
+  return String(stdout || '');
+}
+
+/** Stop a step that ran too long, and remove what it left. Never throws. */
+async function stopDetachedCapture(containerName, id) {
+  try {
+    const pid = detachedCapturePath(id, 'pid');
+    await execWorkerCommand(containerName, ['sh', '-c',
+      `if [ -f ${pid} ]; then P=$(cat ${pid}); pkill -TERM -P "$P" 2>/dev/null; kill -TERM "$P" 2>/dev/null; fi; true`,
+    ], null, { timeoutMs: 15000 });
+  } catch { /* the worker is gone, and the step with it */ }
+  await clearDetachedCapture(containerName, id);
+}
+
+/** Remove a step's files once its result is read. Never throws. */
+async function clearDetachedCapture(containerName, id) {
+  try {
+    detachedCapturePath(id, 'out');
+    await execWorkerCommand(containerName, ['sh', '-c', `rm -f ${DETACHED_CAPTURE_DIR}/${id}.*`], null, { timeoutMs: 15000 });
+  } catch { /* left for the worker's end */ }
+}
+
+/**
+ * Keep a warm worker from the idle sweeper while a detached step runs in it:
+ * no turn is in flight, so nothing else marks it used. A worker this process
+ * has not registered is left alone.
+ */
+function touchWorker(sessionId) {
+  for (const key of [sessionId, Number(sessionId)]) {
+    if (_warmRegistry.has(key)) { _registryUpsert(key, { lastUsedMs: Date.now() }); return; }
+  }
 }
 
 // Tear down a warm worker container (eviction). Volume is preserved so
 // the next `ensureWorker` re-warms with CC's session memory intact. A
 // finished build's unpushed commit is pushed first (rescueUnpushedCommit).
+// #4449: Live (services/first-version-live.js), a watcher run beside a
+// first version's build turn, outside it: its files written, started in the
+// background, its stream read and finally stopped, each by a short shell
+// script the platform builds (first-version-live.js). `files` are
+// { path, content } under /tmp/usernode-live/; a read answers the script's
+// stdout. Nothing here touches the turn, its journal or its checkout.
+const LIVE_FILE_PATH_RE = /^\/tmp\/usernode-live\/[a-z0-9-]{1,40}\.(js|cjs)$/;
+
+async function runLiveScript(containerName, script, { files = [], args = [], timeoutMs = 20000, maxBuffer = null } = {}) {
+  if (!containerName) throw new Error('runLiveScript: no worker');
+  for (const file of files) {
+    if (!LIVE_FILE_PATH_RE.test(file.path)) throw new Error(`runLiveScript: invalid file path ${file.path}`);
+    const write = `mkdir -p /tmp/usernode-live\n${buildTurnContextFileScript(file.content, file.path)}`;
+    // eslint-disable-next-line no-await-in-loop
+    await execWorkerCommand(containerName, ['sh', '-s'], write, { timeoutMs: 30000 });
+  }
+  const { stdout } = await execWorkerCommand(containerName, ['sh', '-c', script, 'sh', ...args.map(String)], null, {
+    timeoutMs, ...(maxBuffer ? { maxBuffer } : {}),
+  });
+  return String(stdout || '');
+}
+
 async function evictWorker(sessionId) {
   const meta = _registryGet(sessionId);
   const containerName = meta?.containerName || workerContainerName(sessionId);
@@ -5065,6 +5753,7 @@ module.exports = {
   syncUserAgentFiles,
   resumeTurnFromJournal,
   clearActiveTurn,
+  releaseSkippedDispatch,
   // post-agent tail lifecycle (holdTurnRecord callers)
   TURN_PHASE_TAIL,
   markTurnTail,
@@ -5076,6 +5765,24 @@ module.exports = {
   // #3737: the benchmark's screenshot step, outside any agent turn
   runBenchCapture,
   buildBenchCaptureCommand,
+  APP_CHECK_SCRIPT_PATH,
+  APP_CHECK_COMMAND_PATH,
+  APP_CHECK_PORT,
+  APP_CHECK_DATABASE_URL,
+  buildAppCheckCommand,
+  writeAppCheck,
+  DETACHED_CAPTURE_DIR,
+  buildDetachedCaptureScript,
+  buildDetachedCaptureStatusScript,
+  parseDetachedCaptureStatus,
+  startDetachedCapture,
+  detachedCaptureStatus,
+  readDetachedCapture,
+  stopDetachedCapture,
+  clearDetachedCapture,
+  touchWorker,
+  // #4449: Live's watcher, beside a first version's build turn
+  runLiveScript,
   BENCH_CAPTURE_SCRIPT_PATH,
   warmRegistrySnapshot,
   adoptWarmWorker,
@@ -5118,6 +5825,11 @@ module.exports = {
   buildPushScript,
   unpushedCommit,
   rescueUnpushedCommit,
+  keepPartialWork,
+  readRepoSnapshot,
+  repoSnapshotScript,
+  buildPartialCommitScript,
+  parsePartialCommit,
   mintWorkerJwt,
   mintAnthropicProxyJwt,
   // #616: prod-debug JWT + pure turn-env builder (exported for tests)
@@ -5133,6 +5845,7 @@ module.exports = {
   TURN_PROMPT_PATH,
   TURN_SYSTEM_PROMPT_PATH,
   TURN_RESUME_FALLBACK_PROMPT_PATH,
+  turnPromptPaths,
   buildTurnPromptScript,
   buildTurnSystemPromptScript,
   buildTurnResumeFallbackPromptScript,

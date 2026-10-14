@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  {{DEV_CONSOLE_FORWARDER}}
+  <title>{{APP_NAME}}</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧱</text></svg>">
+  <!-- This app's precompiled Tailwind (npm run build writes it on every
+       image build; tailwind.config.js says which files it scans), then the
+       game's own scene (public/scene.css). -->
+  <link rel="stylesheet" href="/tailwind.css">
+  <link rel="stylesheet" href="/scene.css">
+  <!-- The platform bridge, centrally hosted and loaded by RELATIVE path.
+       Never vendor it and never write a hostname in front of it. It is also
+       how the app answers the shell, so keep it even if no bridge API is
+       called. -->
+  <script src="/usernode-bridge/v1/bridge.js"></script>
+  <!-- Follow the viewer's Homeroom theme (the bridge reports it), with the
+       OS preference as the fallback outside Homeroom. The game's scene keeps
+       its own look in both; the kit's parts (the toast) follow it. -->
+  <script>
+    (function () {
+      var media = window.matchMedia('(prefers-color-scheme: dark)');
+      function applyTheme() {
+        var theme = (window.usernode && window.usernode.theme) || (media.matches ? 'dark' : 'light');
+        document.documentElement.classList.toggle('dark', theme === 'dark');
+        document.documentElement.style.colorScheme = theme;
+      }
+      applyTheme();
+      window.addEventListener('usernode:theme-changed', applyTheme);
+      media.addEventListener('change', applyTheme);
+    })();
+  </script>
+</head>
+<body class="min-h-screen bg-ground text-fg">
+  <!-- The world: the sky and everything built, filling the screen and
+       always behind the rest. On the title screen the camera circles it. -->
+  <div id="world" class="blocks sky fixed inset-0 touch-none select-none overflow-hidden">
+    <canvas id="world-canvas" class="block h-full w-full" aria-label="The block world"></canvas>
+    <div id="labels" class="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true"></div>
+    <!-- Only on a device that cannot draw in 3D. -->
+    <div id="no-3d" class="veil" hidden>
+      <div class="panel flex max-w-sm flex-col gap-2 text-center">
+        <p class="panel-title">This device cannot draw the world</p>
+        <p class="panel-note">It needs WebGL, which this browser has switched off. Everyone building is still listed on the title screen.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- The title screen: the game's name over the world, who is building
+       now, and the way in. There is one world for everyone: no lobby. -->
+  <div id="title" class="blocks title-scrim fixed inset-0 overflow-y-auto">
+    <main class="mx-auto flex min-h-full max-w-md flex-col items-center justify-end gap-5 px-4 pb-10 pt-16">
+      <div class="flex flex-1 flex-col items-center justify-center gap-4">
+        <h1 class="title-name">{{APP_NAME}}</h1>
+        <p class="title-line">One world for everyone in the project. Fly in, build anything, and watch the others build as they go.</p>
+      </div>
+
+      <section class="panel flex flex-col gap-4" aria-live="polite">
+        <!-- Loading: shapes where the world's builders will be. -->
+        <div id="loading" class="flex flex-col gap-3" aria-label="Loading">
+          <div class="skeleton h-6 w-40"></div>
+          <div class="skeleton h-8 w-full"></div>
+          <div class="skeleton h-12 w-full"></div>
+        </div>
+
+        <!-- Error: only when the first load failed. -->
+        <div id="error" class="state-error" hidden>
+          <p class="panel-title">The world did not load</p>
+          <p class="panel-note">Nothing is lost. Check your connection and try again.</p>
+          <button id="retry" type="button" class="btn-plain">Retry</button>
+        </div>
+
+        <div id="ready" class="flex flex-col gap-4" hidden>
+          <div class="flex items-baseline justify-between gap-3">
+            <h2 class="panel-title">Building now</h2>
+            <p id="count" class="panel-note"></p>
+          </div>
+          <ul id="builders" class="builders"></ul>
+          <!-- Empty: only when nobody else is here. -->
+          <div id="empty" class="state-empty py-1" hidden>
+            <p class="panel-note">Nobody else is here right now. Whatever you build, everyone sees.</p>
+          </div>
+          <button id="enter" type="button" class="btn-enter w-full">Enter the world</button>
+        </div>
+      </section>
+
+      <p id="keys" class="keys">WASD to walk, Space and Shift to fly up and down, the mouse to look. Click to build, right-click to take a block away, and 1 to 9 (or the scroll wheel) to choose a block.</p>
+    </main>
+  </div>
+
+  <!-- In the world: full screen, with a crosshair, the hotbar, and on a
+       touch screen a stick to walk and buttons to fly and build. -->
+  <div id="stage" class="blocks pointer-events-none fixed inset-0" hidden>
+    <div class="crosshair" aria-hidden="true"></div>
+    <header class="flex items-start justify-between gap-2 p-3">
+      <button id="to-title" type="button" class="hud-btn pointer-events-auto" aria-label="Back to the title screen">&lsaquo;</button>
+      <p id="here" class="hud-chip"></p>
+    </header>
+
+    <div class="absolute inset-x-0 bottom-0 flex flex-col items-center gap-2 pb-3">
+      <p id="hand-name" class="hand-name" aria-live="polite"></p>
+      <div id="hotbar" class="hotbar pointer-events-auto" role="radiogroup" aria-label="Block to build with"></div>
+    </div>
+
+    <!-- Touch controls, only on a touch screen. -->
+    <div id="touch" class="absolute inset-x-0 bottom-20 flex items-end justify-between px-4 pb-2" hidden>
+      <div id="stick" class="stick pointer-events-auto" aria-label="Walk"><div id="knob" class="stick-knob"></div></div>
+      <div class="flex flex-col items-end gap-2">
+        <div class="flex gap-2">
+          <button id="fly-down" type="button" class="touch-btn pointer-events-auto">Down</button>
+          <button id="fly-up" type="button" class="touch-btn pointer-events-auto">Up</button>
+        </div>
+        <div class="flex gap-2">
+          <button id="remove" type="button" class="touch-btn pointer-events-auto">Remove</button>
+          <button id="place" type="button" class="touch-btn touch-place pointer-events-auto">Build</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- The mouse was let go (Esc): one click to carry on. -->
+    <div id="paused" class="veil pointer-events-auto" hidden>
+      <div class="panel flex max-w-sm flex-col gap-3 text-center">
+        <p class="panel-title">Paused</p>
+        <p class="panel-note">Click to carry on building. Esc lets go of the mouse again.</p>
+        <div class="flex flex-wrap justify-center gap-2">
+          <button id="carry-on" type="button" class="btn-enter flex-1">Carry on</button>
+          <button id="paused-title" type="button" class="btn-plain">Title screen</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Only when the live connection is lost. -->
+  <p id="connection" class="fixed left-1/2 top-3 z-40 -translate-x-1/2 rounded-full bg-fg px-3 py-1 text-small text-ground" role="status" hidden></p>
+
+  <div id="toast" class="pointer-events-none fixed inset-x-0 top-16 z-50 flex justify-center px-4" role="status" aria-live="polite" hidden>
+    <p id="toast-text" class="rounded-lg bg-fg px-4 py-2 text-small text-ground shadow-lg"></p>
+  </div>
+
+  <script src="/game/room.js"></script>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

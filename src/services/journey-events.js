@@ -156,7 +156,9 @@ function requestNumbers(session) {
  * replaces that reading in tests. Recorded at the moment of the merge, not
  * after the reading. Resolves the metadata written, or null.
  */
-async function recordChangeLive(pool, { config = null, session, sha = null, at = new Date(), deps = {} } = {}) {
+// `strict` (the merge-followups machine's durable work) throws what it could
+// not record instead of resolving null, so the work is retried.
+async function recordChangeLive(pool, { config = null, session, sha = null, at = new Date(), deps = {}, strict = false } = {}) {
   try {
     const sessionId = Number(session && session.id);
     const appId = Number(session && session.app_id);
@@ -179,6 +181,7 @@ async function recordChangeLive(pool, { config = null, session, sha = null, at =
     ]);
     return rows[0] ? rows[0].metadata : null;
   } catch (err) {
+    if (strict) throw err;
     log.warn('journey-events', 'Could not record a change going live', {
       sessionId: session && session.id, err: err && err.message,
     });
@@ -221,6 +224,14 @@ async function noteFirstArtefactShown(pool, { appId, userId }) {
 // a sign-in records it before following the link. `$4` is whether the
 // sign-in carried the link; an account made by that sign-in (within the
 // hour, as standing() reads a new account) signed up, any other signed in.
+//
+// `how` is which of the funnel's two ways it was (#4272): 'signed_up' and
+// 'signed_in' the link brought about (opened signed out, then a sign-in
+// carrying it, whether or not that sign-in follows it), 'was_signed_in'
+// was signed in when they opened it (the standing read, or the waiting
+// room's redeem). The first record stands: every sign-in that carries a
+// link records it before it answers, so the shell's read after it cannot
+// take that person for somebody already signed in.
 const INVITE_SIGNED_IN_SQL = `INSERT INTO events (user_id, app_id, event_type, metadata)
   SELECT u.id, ci.app_id, $3::text,
          jsonb_build_object('inviteId', ci.id, 'how',
@@ -240,9 +251,9 @@ const INVITE_SIGNED_IN_SQL = `INSERT INTO events (user_id, app_id, event_type, m
 
 /**
  * `userId` signed up or in carrying the invite link `token` (`carried`,
- * communityInvites.redeemCarried), or opened it already signed in. Resolves
- * how ('signed_up', 'signed_in' or 'was_signed_in') when this call wrote the
- * record, else null.
+ * communityInvites.redeemCarried, or dropCarried when the sign-in does not
+ * follow it), or opened it already signed in. Resolves how ('signed_up',
+ * 'signed_in' or 'was_signed_in') when this call wrote the record, else null.
  */
 async function noteInviteSignedIn(pool, { token, userId, carried = false } = {}) {
   try {

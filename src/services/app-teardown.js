@@ -19,7 +19,29 @@
 const log = require('./logger');
 const appAccess = require('./app-access');
 
+// Slugs whose teardown is running in this process. The row goes last, so for
+// the whole teardown the app still reads as a running app whose runtime is
+// missing, which is exactly what the self-heal sweep (services/app-heal.js)
+// rebuilds. It asks here first. On 2026-10-05 it did not: a test account was
+// retired, its app's database drop took 30 seconds, and the sweep rebuilt the
+// production Deployment ten seconds in. The row was then deleted, and the
+// Deployment crash-looped against the dropped database for a week.
+const tearingDown = new Set();
+
+function isTearingDown(slug) {
+  return tearingDown.has(slug);
+}
+
 async function teardownApp(pool, config, app) {
+  tearingDown.add(app.slug);
+  try {
+    await removeApp(pool, config, app);
+  } finally {
+    tearingDown.delete(app.slug);
+  }
+}
+
+async function removeApp(pool, config, app) {
   // Teardown through the backend that owns this app. Historical rows
   // without runtime_kind/runtime_name remain Docker-compatible.
   if (app.runtime_name || app.container_id) {
@@ -34,6 +56,20 @@ async function teardownApp(pool, config, app) {
         runtimeKind: 'docker', runtimeName: `usernode-app-${app.slug}`,
       }).catch(() => {});
     }
+  }
+
+  // The custom domain's edge resources (#4405): its Ingress and the
+  // certificate Secret on Kubernetes; on Docker nothing, as below. The row
+  // itself goes with the app (ON DELETE CASCADE).
+  try {
+    const appDomains = require('./app-domains');
+    const domain = await appDomains.forApp(pool, app.id);
+    if (domain) {
+      await appDomains.teardownEdge(config, domain);
+      appDomains.invalidateHost(domain.hostname);
+    }
+  } catch (err) {
+    log.warn('apps', 'Custom domain teardown failed on app delete', { appId: app.id, err: err.message });
   }
 
   // No Caddy route to remove — the wildcard site maps hostnames to
@@ -68,4 +104,4 @@ async function teardownApp(pool, config, app) {
   appAccess.invalidateVisibility(app.id, app.slug);
 }
 
-module.exports = { teardownApp };
+module.exports = { teardownApp, isTearingDown };

@@ -14,6 +14,7 @@
 
 import { Button } from '@/components/ui/button';
 
+import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { notificationPrefsStore } from './notification-prefs-store.js';
 
@@ -45,13 +46,14 @@ function controller(): any {
 const ROW_CLASS = 'rounded-lg bg-white dark:bg-zinc-900 px-3 py-2 text-xs';
 
 export function NotificationPrefsList() {
+  const t = useMessages('settings');
   const state = useStoreState<State>(notificationPrefsStore);
   if (state.phase === 'idle') return null;
   if (state.phase === 'loading') {
-    return <p className="text-xs text-zinc-500 dark:text-zinc-400">Loading…</p>;
+    return <p className="text-xs text-zinc-500 dark:text-zinc-400">{t('core:common.loading')}</p>;
   }
   if (state.phase === 'error') {
-    return <p className="text-xs text-red-700 dark:text-red-400">Could not load notification settings.</p>;
+    return <p className="text-xs text-red-700 dark:text-red-400">{t('settings:alerts.apps.loadFailed')}</p>;
   }
   return (
     <>
@@ -85,7 +87,7 @@ export function NotificationPrefsList() {
       </div>
 
       <div className="mt-5 pt-5 border-t border-zinc-200 dark:border-zinc-800">
-        <p className="text-sm font-medium text-zinc-800 mb-2 dark:text-zinc-200">Apps set differently</p>
+        <p className="text-sm font-medium text-zinc-800 mb-2 dark:text-zinc-200">{t('settings:alerts.apps.overridesHeading')}</p>
         {state.apps.length ? (
           <div className="space-y-2">
             {state.apps.map((app) => (
@@ -104,13 +106,15 @@ export function NotificationPrefsList() {
                       void controller()?._onNotificationAppReset?.(app.appId, app.appSlug);
                     }}
                   >
-                    Use my defaults
+                    {t('settings:alerts.apps.useDefaults')}
                   </Button>
                 </div>
                 <ul className="mt-1 text-zinc-500 dark:text-zinc-400">
                   {app.categories.map((category) => (
                     <li key={category.key}>
-                      {`${category.label}: ${category.enabled ? 'on' : 'off'}`}
+                      {category.enabled
+                        ? t('settings:alerts.apps.categoryOn', { category: category.label })
+                        : t('settings:alerts.apps.categoryOff', { category: category.label })}
                     </li>
                   ))}
                 </ul>
@@ -119,7 +123,7 @@ export function NotificationPrefsList() {
           </div>
         ) : (
           <p className="text-xs text-zinc-500 dark:text-zinc-400">
-            No app is set differently. Change one from its Notifications entry in the app menu.
+            {t('settings:alerts.apps.noOverrides')}
           </p>
         )}
       </div>

@@ -11,6 +11,7 @@ const log = require('../services/logger');
 const limits = require('../services/limits');
 const anthropicCredits = require('../services/anthropic-credits');
 const dbExport = require('../services/db-export');
+const adminAppsUsage = require('../services/admin-apps-usage');
 const events = require('../services/events');
 const llmTelemetry = require('../services/llm-telemetry');
 const appRollover = require('../services/app-rollover');
@@ -19,6 +20,7 @@ const { isSessionBusy } = require('../services/active-workers');
 const stagingEnv = require('../services/staging-env');
 const mail = require('../services/mail');
 const phoneAuth = require('../services/firebase-phone-auth');
+const phoneFailureLog = require('../services/phone-failure-log');
 const mobilePushDiagnostics = require('../services/mobile-push-diagnostics');
 const applicationRuntime = require('../services/application-runtime');
 const managedOpenRouter = require('../services/openrouter-managed-keys');
@@ -784,8 +786,8 @@ function adminRoutes(config) {
   });
 
   // "Reset first run" (communities, stage 5): the account's next load shows
-  // the join screen, the tour and the Getting started card again, as for a
-  // new account. For trying onboarding on a test account, or on yourself.
+  // the join screen again, with the tour not done, as for a new account. For
+  // trying onboarding on a test account, or on yourself.
   // Nothing the account owns is touched (services/onboarding.js
   // resetFirstRun), so any full admin may do it, to anyone, like a password
   // reset.
@@ -1074,6 +1076,41 @@ function adminRoutes(config) {
       system_tokens_daily_limit_cents: systemCents,
     };
   }
+
+  // #4296: the Unexpected events section. Read-only, so view-only admins see
+  // it too; the alerts it describes go to full admins only.
+  router.get('/api/admin/incidents', async (req, res) => {
+    // Required here, not at the top: platform-incidents reads the events
+    // type table when it loads, which route tests stub without.
+    const platformIncidents = require('../services/platform-incidents');
+    const platformIncidentAlerts = require('../services/platform-incident-alerts');
+    const q = req.query || {};
+    const listed = await platformIncidents.list(pool, {
+      days: q.days,
+      kind: typeof q.kind === 'string' && q.kind ? q.kind : null,
+      app: typeof q.app === 'string' && q.app ? q.app : null,
+    });
+    if (!listed) return res.status(500).json({ error: 'Could not read unexpected events' });
+    res.json({
+      ...listed,
+      alerts: {
+        hourlyThreshold: platformIncidentAlerts.HOURLY_THRESHOLD,
+        digestHourUtc: platformIncidentAlerts.DIGEST_HOUR_UTC,
+      },
+    });
+  });
+
+  // Apps & usage: every app with its members, contributors and activity
+  // over a 7/30/90-day window (services/admin-apps-usage.js). Read-only, so
+  // view-only admins see it too.
+  router.get('/api/admin/apps-usage', async (req, res) => {
+    try {
+      res.json(await adminAppsUsage.adminPayload(pool, { days: (req.query || {}).days }));
+    } catch (err) {
+      log.error('admin', 'Read apps & usage failed', { message: err.message });
+      res.status(500).json({ error: 'Could not read apps & usage' });
+    }
+  });
 
   router.get('/api/admin/limits', async (_req, res) => {
     try {
@@ -1419,17 +1456,6 @@ function adminRoutes(config) {
     }
   });
 
-  // #3624: the DM list's username rows suggest accounts as you type. The
-  // same people Welcome messages offers: let in, not deleted, not a bot.
-  router.get('/api/admin/homeroom-bot/people', async (req, res) => {
-    try {
-      res.json({ users: await welcomeDm.searchPeople(pool, req.query.q) });
-    } catch (err) {
-      log.error('admin', 'Homeroom bot people search failed', { message: err.message });
-      res.status(500).json({ error: 'Internal server error' });
-    }
-  });
-
   // The watch-only small-change tag (services/small-change.js): its latest
   // verdicts with their proposal, and the last week's totals. Read-only, so
   // it stays on the plain adminMiddleware gate. `reason` is model-written
@@ -1511,19 +1537,6 @@ function adminRoutes(config) {
     }
   });
 
-  // Every question verdict on a shadow app, triaged again under the current
-  // prompt, so the old and new verdicts can be compared in the export.
-  router.post('/api/admin/homeroom-bot/retriage-questions', requireAdminWrite, drainGuard, async (req, res) => {
-    try {
-      const result = await homeroomBot.retriageQuestions(pool, { actorId: req.user.id });
-      log.info('admin', 'Homeroom bot questions re-triaged', { by: req.user.username, queued: result.queued });
-      res.status(202).json(result);
-    } catch (err) {
-      log.error('admin', 'Homeroom bot re-triage failed', { message: err.message });
-      res.status(500).json({ error: 'Internal server error' });
-    }
-  });
-
   // "Triage this app again" (#3480): every open issue on a live app goes in
   // its queue, oldest first, and the loop takes them one at a time.
   router.post('/api/admin/homeroom-bot/retriage-app', requireAdminWrite, drainGuard, async (req, res) => {
@@ -1534,22 +1547,6 @@ function adminRoutes(config) {
       res.status(202).json(result);
     } catch (err) {
       log.error('admin', 'Homeroom bot app re-triage failed', { message: err.message });
-      res.status(500).json({ error: 'Internal server error' });
-    }
-  });
-
-  // Shadow builds: queue every open request whose latest verdict is ready
-  // and that has not been built. The build lane drains it at its own pace.
-  router.post('/api/admin/homeroom-bot/shadow-builds/backfill', requireAdminWrite, drainGuard, async (req, res) => {
-    try {
-      const result = await homeroomBot.queueShadowBackfill(pool, config);
-      if (!result.ok) return res.status(result.status || 400).json({ error: result.error });
-      log.info('admin', 'Homeroom bot shadow build backfill', {
-        by: req.user.username, queued: result.queued, apps: result.apps,
-      });
-      res.status(202).json(result);
-    } catch (err) {
-      log.error('admin', 'Homeroom bot shadow build backfill failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -1702,6 +1699,69 @@ function adminRoutes(config) {
       res.status(500).json({ error: 'Internal server error' });
     }
   });
+
+  // ── Custom domains (#4405) ─────────────────────────────────
+  //
+  // Every custom domain with its project and where it stands. The read is
+  // open to view-only admins; the levers (check again, disable, enable,
+  // remove) change what the edge serves, so they requireAdminWrite. Disable
+  // takes the host out of service without touching the project: its Homeroom
+  // address keeps working, and Enable verifies the claim again from the
+  // start.
+  const appDomains = require('../services/app-domains');
+
+  function adminDomainRow(row) {
+    return {
+      id: row.id,
+      appSlug: row.app_slug,
+      appName: row.app_name,
+      createdBy: row.created_by_username || null,
+      ...appDomains.publicRow(row),
+      disabledAt: row.disabled_at ? new Date(row.disabled_at).toISOString() : null,
+      failureCount: row.failure_count,
+    };
+  }
+
+  router.get('/api/admin/domains', async (req, res) => {
+    try {
+      const rows = await appDomains.adminList(pool);
+      res.json({ domains: rows.map(adminDomainRow), sweep: appDomains.getStatus() });
+    } catch (err) {
+      log.error('admin', 'Read custom domains failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  async function adminDomainAction(req, res, act) {
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'Invalid domain id' });
+    try {
+      const row = await appDomains.byId(pool, id);
+      if (!row) return res.status(404).json({ error: 'Domain not found' });
+      const result = await act(row);
+      log.info('admin', 'Custom domain action', { by: req.user.username, id, hostname: row.hostname, action: req.path.split('/').pop() });
+      if (result === null) return res.status(204).end();
+      const rows = await appDomains.adminList(pool);
+      const fresh = rows.find((r) => r.id === id);
+      res.json({ domain: fresh ? adminDomainRow(fresh) : null });
+    } catch (err) {
+      log.error('admin', 'Custom domain action failed', { id, message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  }
+
+  router.post('/api/admin/domains/:id/check', requireAdminWrite, (req, res) => adminDomainAction(req, res,
+    (row) => (row.status === 'disabled' ? row : appDomains.checkNow(pool, config, row))));
+  router.post('/api/admin/domains/:id/disable', requireAdminWrite, (req, res) => adminDomainAction(req, res,
+    (row) => (row.status === 'disabled' ? row : appDomains.disable(pool, config, row, req.user))));
+  router.post('/api/admin/domains/:id/enable', requireAdminWrite, (req, res) => adminDomainAction(req, res,
+    (row) => (row.status === 'disabled' ? appDomains.enable(pool, row, req.user) : row)));
+  router.delete('/api/admin/domains/:id', requireAdminWrite, (req, res) => adminDomainAction(req, res,
+    async (row) => {
+      const { rows } = await pool.query('SELECT id, slug FROM apps WHERE id = $1', [row.app_id]);
+      await appDomains.remove(pool, config, rows[0] || { id: row.app_id }, row, req.user);
+      return null;
+    }));
 
   // ── Featured apps ──────────────────────────────────────────
   //
@@ -2876,6 +2936,22 @@ function adminRoutes(config) {
         res.status(500).json({ error: 'Internal server error' });
       }
     });
+
+  // The failure log the test send cannot answer on its own: every failed
+  // phone code request, verification and link attempt real callers made
+  // (routes/phone-auth.js fail()), newest first, with the account name and
+  // Firebase's own code beside this API's. Any admin: it holds what the
+  // users table already shows them plus error codes, never a phone number
+  // (its last four digits only) and never session material.
+  router.get('/api/admin/sms/failures', async (req, res) => {
+    try {
+      const { failures, total7d } = await phoneFailureLog.recentFailures(pool, 50);
+      return res.json({ failures, total7d });
+    } catch (err) {
+      log.error('admin', 'sms failures read failed', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
 
   return router;
 }

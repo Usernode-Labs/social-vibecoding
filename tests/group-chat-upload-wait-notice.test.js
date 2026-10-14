@@ -15,6 +15,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 function loadGroupChat() {
   const src = fs.readFileSync(
@@ -32,6 +33,7 @@ function loadGroupChat() {
   // Each upload's fetch resolves only when the test says so.
   const uploads = [];
   const sandbox = {
+    PlatformI18n: englishPlatformI18n(),
     location: { search: '', protocol: 'http:', host: 'localhost' },
     URLSearchParams,
     URL: { createObjectURL: () => 'blob:x', revokeObjectURL() {} },

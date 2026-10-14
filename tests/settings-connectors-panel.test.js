@@ -31,6 +31,7 @@ const CONNECTORS_TSX = fs.readFileSync(
   path.join(ROOT, 'frontend/src/features/settings/sections/connectors.tsx'), 'utf8'
 );
 const { demoConnectorState } = require('../src/routes/mcp-remote');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 // The ids the panel drives. Every one is in the rendered markup and in
 // tests/baselines/shell-markup.json; a rename that misses one of the three
@@ -84,6 +85,8 @@ function harness(payload) {
     setInterval,
     clearInterval,
     console,
+    // settings.js reads its text through this global; the real English catalog.
+    PlatformI18n: englishPlatformI18n(),
   });
   context.window.window = context.window;
   context.window.document = context.document;

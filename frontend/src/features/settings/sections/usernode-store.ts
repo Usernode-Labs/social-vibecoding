@@ -36,8 +36,8 @@ export interface UnStatusRow {
   label: string;
   ok: boolean;
   text: string;
-  /** Present when the row itself is the control. */
-  hint?: string;
+  /** Present when the row itself is the control: its whole accessible name. */
+  actionName?: string;
   action?: string;
 }
 

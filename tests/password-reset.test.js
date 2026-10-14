@@ -43,8 +43,11 @@ poolMod.getPool = () => ({
     if (/SELECT .*usernode_pubkey = \$1/s.test(sql)) {
       return { rows: userByPubkey ? [userByPubkey] : [] };
     }
-    if (/SELECT password FROM users WHERE id/.test(sql)) {
-      return { rows: userPasswordRow ? [userPasswordRow] : [] };
+    if (/SELECT password(, password_set)? FROM users WHERE id/.test(sql)) {
+      return { rows: userPasswordRow ? [{ password_set: true, ...userPasswordRow }] : [] };
+    }
+    if (/UPDATE users SET password = \$1, password_set = TRUE WHERE id = \$2 AND password_set = FALSE/.test(sql)) {
+      return { rows: [], rowCount: userPasswordRow && userPasswordRow.password_set === false ? 1 : 0 };
     }
     if (/SELECT .*password_reset_token_hash = \$1/s.test(sql)) {
       return { rows: userByResetHash ? [userByResetHash] : [] };
@@ -177,6 +180,32 @@ test('change-password: requires current password and verifies it', async () => {
     // The stored value is a fresh bcrypt hash of the new password.
     assert.ok(await bcrypt.compare('brand-new-pw', upd.params[0]));
     assert.strictEqual(upd.params[1], 5);
+  } finally {
+    server.close();
+  }
+});
+
+// #4595: an account with no password yet (it signs in with an email code)
+// sets its first one without a current password; the write is conditional,
+// so it cannot overwrite one set meanwhile.
+test('change-password: an account with no password sets its first one without a current password', async () => {
+  reset();
+  userPasswordRow = { password: await bcrypt.hash('unusable-random', 4), password_set: false };
+  currentUser = { id: 6, username: 'bea', isAdmin: false };
+  const server = await startApp(authRoutes, { nodeRpcUrl: 'http://unused' });
+  try {
+    let r = await post(server, '/api/me/password', { newPassword: 'short' });
+    assert.strictEqual(r.res.status, 400, 'still held to the policy');
+    r = await post(server, '/api/me/password', { newPassword: 'brand-new-pw' });
+    assert.strictEqual(r.res.status, 200);
+    assert.strictEqual(r.body.first, true);
+    const upd = capturedQueries.find((q) => /password_set = TRUE WHERE id = \$2 AND password_set = FALSE/.test(q.sql));
+    assert.ok(upd, 'the first password is a conditional write');
+    assert.ok(await bcrypt.compare('brand-new-pw', upd.params[0]));
+    // Once it has one, the current password is asked for again.
+    userPasswordRow.password_set = true;
+    r = await post(server, '/api/me/password', { newPassword: 'brand-new-pw' });
+    assert.strictEqual(r.res.status, 400);
   } finally {
     server.close();
   }

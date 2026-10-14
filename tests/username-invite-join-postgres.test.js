@@ -176,6 +176,7 @@ test('an invite by username joins a group the way its link does, against the ful
     assert.deepEqual(rest, {
       kind: 'collab', appId: turners.id, appSlug: 'page-turners', appName: 'Page Turners',
       invitedBy: 'alex_t1005', joins: true, note: 'Come read with us!', memberCount: 2,
+      inCommunity: false,
     });
   });
 
@@ -187,10 +188,9 @@ test('an invite by username joins a group the way its link does, against the ful
       appSlug: 'page-turners',
       welcome: {
         slug: 'page-turners', name: 'Page Turners', iconEmoji: '📚', iconUrl: null,
-        // Nothing to fill "You're in" with yet: no line, no picture, and no
-        // first version on its way.
-        description: null, picture: null,
-        inviterName: 'alex_t1005', inviterMadeIt: true, building: false, newAccount: false,
+        // No first version on its way. "You're in" reads who is in it itself
+        // and shows no picture (#4052).
+        inviter: 'alex_t1005', inviterName: 'alex_t1005', inviterMadeIt: true, building: false, newAccount: false,
       },
     });
     assert.equal(await communities.isMember(pool, turners.id, mo.id), true, 'in the group');
@@ -223,6 +223,9 @@ test('an invite by username joins a group the way its link does, against the ful
     assert.deepEqual(notif, { detail: null, invite_note: null }, 'no note was written, and it is not a join');
     const [pending] = await notifications.listPendingInvites(pool, reader.id);
     assert.equal(pending.joins, false);
+    // #4740: they joined the project's community before the invite arrived,
+    // so the drawer says so instead of a headcount they are part of.
+    assert.equal(pending.inCommunity, true);
     const got = await call(reader, 'POST', `/api/invites/${lib.id}/accept`);
     assert.deepEqual(got.body, { ok: true, appSlug: 'open-library' }, 'already in its community: no "You joined"');
   });
@@ -284,7 +287,7 @@ test('an invite by username joins a group the way its link does, against the ful
     assert.equal(standing.newAccount, true);
   });
 
-  await t.test('"You\'re in" gets the project\'s picture at an address a member can read, and whether it is being made', async () => {
+  await t.test('"You\'re in" is told whether it is being made, and the link\'s page shows its build line', async () => {
     // Page Turners, still being built, with the sketch its maker was shown.
     await pool.query(
       `INSERT INTO app_sketches (app_id, user_id, status, design, ready_at)
@@ -298,8 +301,8 @@ test('an invite by username joins a group the way its link does, against the ful
     const sam = await user('sam_sketch');
     await call(alex, 'POST', `/api/apps/${turners.slug}/invites`, { username: 'sam_sketch' });
     const got = await call(sam, 'POST', `/api/invites/${turners.id}/accept`);
-    assert.deepEqual(got.body.welcome.picture, { kind: 'sketch', url: null, darkUrl: null, card: { emoji: '📚', tagline: 'A book club', points: ['Pick the next book'] } });
-    assert.equal(got.body.welcome.description, 'A book club that meets monthly');
+    assert.equal('picture' in got.body.welcome, false, 'no picture: "You\'re in" shows none (#4052)');
+    assert.equal('description' in got.body.welcome, false);
     assert.equal(got.body.welcome.building, true, 'its first version is on its way');
     assert.equal(await invites.firstVersionPending(pool, turners.id), true);
     // The link's own page says the same: "alex is making Page Turners".
@@ -307,6 +310,8 @@ test('an invite by username joins a group the way its link does, against the ful
     const preview = await invites.preview(pool, link.link.token);
     assert.equal(preview.building, true);
     assert.equal(preview.project.picture.kind, 'sketch');
+    // #4049: no build step leaves the server on a signed-out preview.
+    assert.equal('buildLine' in preview, false);
     // Once a proposal for it has merged, it is made.
     const { rows: [session] } = await pool.query(
       `INSERT INTO chat_sessions (app_id, user_id, status) VALUES ($1, $2, 'merged') RETURNING id`, [turners.id, alex.id]);
@@ -314,6 +319,7 @@ test('an invite by username joins a group the way its link does, against the ful
       `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, proposal_session_id) VALUES ($1, 1, 'live', 'ready', $2)`,
       [turners.id, session.id]);
     assert.equal(await invites.firstVersionPending(pool, turners.id), false);
-    assert.equal((await invites.preview(pool, link.link.token)).building, false);
+    const made = await invites.preview(pool, link.link.token);
+    assert.equal(made.building, false);
   });
 });

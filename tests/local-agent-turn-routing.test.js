@@ -51,9 +51,12 @@ const db = {
       head_sha: null, summary: null, error_detail: null, spec_md: null,
       created_at: new Date(), updated_at: new Date(), finished_at: null,
     };
+    // A CLI hand-off: one of the kinds of session that still takes coding
+    // turns. An older (classic) session is refused at attach (#4268).
     this.session = {
       id: 42, status: 'active', branch_name: 'dev/x', session_title: 'Add a button',
       handoff_base_sha: null, checks_commit_sha: null, handoff_uploaded_sha: null,
+      agent_session_id: null, is_headless: false, source: 'cli_handoff',
       app_slug: 'demo-app', repo_url: 'https://github.com/o/r',
     };
     this.updated = null;
@@ -246,6 +249,36 @@ test('attach refuses a session that is no longer taking coding turns', async () 
     sessionId: 42, label: 'laptop', runtime: 'claude-code',
   });
   assert.equal(missing.status, 404);
+});
+
+test('attach refuses an older session, which never gets another turn (#4268)', async () => {
+  // #3976 made classic sessions read-only: POST /chat never hands one a
+  // turn, so a machine attached to it would wait forever. The refusal is the
+  // one every classic route answers with, and its `error` is the sentence,
+  // which is what a CLI that does not know the code prints.
+  const classicSessions = require('../src/services/classic-sessions');
+  db.lease = null;
+  db.session = { ...db.session, source: 'native' };
+  const r = await call('POST', '/api/cli/agent/attach', {
+    sessionId: 42, label: 'laptop', runtime: 'claude-code',
+  });
+  assert.equal(r.status, 409);
+  assert.deepEqual(r.json, classicSessions.refusal());
+  assert.ok(!db.queries.some((q) => /INSERT INTO session_agent_leases/.test(q.sql)),
+    'and no lease is granted');
+  const loaded = db.queries.find((q) => /FROM chat_sessions cs JOIN apps/.test(q.sql));
+  assert.match(loaded.sql, /cs\.agent_session_id, cs\.is_headless, cs\.source/,
+    'the attach reads every column the verdict needs');
+
+  // The kinds of session that still continue keep attaching.
+  for (const source of ['cli_handoff', 'request_spec']) {
+    db.lease = null;
+    db.session = { ...db.session, source };
+    const ok = await call('POST', '/api/cli/agent/attach', {
+      sessionId: 42, label: 'laptop', runtime: 'claude-code',
+    });
+    assert.equal(ok.status, 201, source);
+  }
 });
 
 test('a lapsed lease cannot post anything, on any endpoint', async () => {

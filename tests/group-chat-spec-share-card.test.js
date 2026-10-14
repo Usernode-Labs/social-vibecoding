@@ -24,6 +24,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -38,6 +39,7 @@ const TRANSCRIPT = 'frontend/src/features/group-chat/transcript.tsx';
  */
 function loadGroupChat(over = {}) {
   const sandbox = {
+    PlatformI18n: englishPlatformI18n(),
     console,
     App: { user: { id: 1, username: 'admin' } },
     document: {
@@ -107,7 +109,7 @@ test('a spec_share row renders a CARD, not an empty host', () => {
   assert.match(html, /Shared by <strong>admin<\/strong>/);
   assert.match(html, /v2/);
   assert.match(html, /PR #77/);
-  assert.match(html, /View full spec/);
+  assert.match(html, /View full plan/);
   // The host it replaced is gone from the tree entirely.
   assert.doesNotMatch(read(TRANSCRIPT), /data-gc-spec-share=\{/);
 });
@@ -116,8 +118,8 @@ test('an older share with no title falls back to the version label', () => {
   // `metadata.specShare.title` is set by the share endpoint only when the
   // content starts with an H1; shares that predate it have none.
   const html = card(shareMsg({ title: undefined }));
-  assert.match(html, /gc-spec-card-title">Spec v2</);
-  assert.match(html, /data-spec-title="spec v2"/, 'and the panel preview follows it');
+  assert.match(html, /gc-spec-card-title">Plan v2</);
+  assert.match(html, /data-spec-title="plan v2"/, 'and the panel preview follows it');
 });
 
 test('the optional parts are omitted, not drawn empty', () => {
@@ -157,7 +159,7 @@ test('a spec_share with no metadata degrades to a system line', () => {
   assert.equal(view.systemText, 'admin shared a spec');
 });
 
-test('View full spec owns its in-flight state, and the module owns the fetch', () => {
+test('View full plan owns its in-flight state, and the module owns the fetch', () => {
   const tsx = read(TRANSCRIPT);
   const row = tsx.slice(tsx.indexOf('function SpecShareRow('), tsx.indexOf('function SpecSnippet('));
   // The button's disabled/label were written onto it by a click delegate on
@@ -165,7 +167,9 @@ test('View full spec owns its in-flight state, and the module owns the fetch', (
   // own state now, bracketing the module's promise.
   assert.match(row, /const \[loading, setLoading\] = useState\(false\)/);
   assert.match(row, /disabled=\{loading\}/);
-  assert.match(row, /\{loading \? 'Loading…' : 'View full spec'\}/);
+  assert.match(row, /\{loading \? t\('chat:group\.specCard\.loading'\) : t\('chat:group\.specCard\.view'\)\}/);
+  assert.equal(message('chat:group.specCard.loading'), 'Loading…');
+  assert.equal(message('chat:group.specCard.view'), 'View full plan');
   assert.match(row, /openSharedSpec\?\.\(spec\.sessionId, spec\.version, spec\.previewTitle\)/);
 
   // …and everything that is not markup stayed put: the per-app open state,
@@ -174,16 +178,19 @@ test('View full spec owns its in-flight state, and the module owns the fetch', (
   const open = gc.slice(gc.indexOf('  async openSharedSpec('), gc.indexOf('  _specPanelRaw:'));
   assert.match(open, /_writeSpecPanelOpen\(GroupChat\.appSlug/);
   assert.match(open, /\/api\/sessions\/\$\{sessionId\}\/specs\/\$\{version\}/);
-  assert.match(open, /This spec is no longer available/);
-  assert.match(open, /Failed to load spec \(HTTP \$\{resp\.status\}\)/);
-  assert.match(open, /Error: \$\{err\.message\}/);
+  assert.match(open, /PlatformI18n\.t\('chat:group\.spec\.gone'\)/);
+  assert.match(message('chat:group.spec.gone'), /This plan is no longer available/);
+  assert.match(open, /PlatformI18n\.t\('chat:group\.spec\.loadFailed', \{ status: resp\.status \}\)/);
+  assert.equal(message('chat:group.spec.loadFailed', { status: 500 }), 'Failed to load plan (HTTP 500).');
+  assert.match(open, /PlatformI18n\.t\('chat:group\.spec\.error', \{ message: err\.message \}\)/);
+  assert.equal(message('chat:group.spec.error', { message: 'x' }), 'Error: x');
   // The delegate that used to do all this is gone, along with the DOM
   // round-trip it needed to find the card's title.
   assert.doesNotMatch(gc, /_attachSpecCardHandlers\(/);
   assert.doesNotMatch(gc, /card\.dataset\.specTitle/);
 });
 
-// ── #3495: "View full spec" did nothing in a request's Discussion ─────────
+// ── #3495: "View full plan" did nothing in a request's Discussion ─────────
 //
 // The Homeroom bot posts its spec as this card into a request's thread and
 // into its proposal's, and a person's share can land there too. Both
@@ -221,6 +228,26 @@ test('the topic frame carries the spec panel slot, as the general chat pane does
   assert.equal(topic.split('id="gc-spec-resizer"').length, 2);
 });
 
+// #4875: the Workshop's side panel (workshop/side-panel.tsx) shows the same
+// request page on a wide window, plan card and all, and its Read went dead the
+// same way: the panel had no slot. It carries one now, over the page.
+test('the Workshop side panel carries the spec panel slot over its page', () => {
+  const panel = read('frontend/src/features/dev-board/workshop/side-panel.tsx');
+  assert.match(panel,
+    /<div className="dev-ws-side-body">\s*<div key=\{`\$\{item\.kind\}:\$\{item\.id\}`\} id="dev-topic-thread" className="dev-ws-side-page" \/>[\s\S]*?<div key=\{`spec:\$\{item\.kind\}:\$\{item\.id\}`\} id="gc-spec-side-panel" className="gc-spec-side-panel" \/>\s*<\/div>/,
+    'the slot follows the page inside one body, keyed by the item like the page');
+  assert.equal(panel.split('id="gc-spec-side-panel"').length, 2, 'one slot');
+  // Escape closes an open plan first, the panel only after.
+  assert.match(panel, /if \(document\.querySelector\('\.dev-ws-side \.gc-spec-side-panel-open'\)\) return;\s*onClose\(\);/);
+  assert.match(panel, /window\.addEventListener\('keydown', onKey, true\);/, 'ahead of group-chat.js on document');
+  // The plan closes with the panel, while its slot is still in the document.
+  assert.match(panel, /useLayoutEffect\(\(\) => \(\) => \{\s*const gc = \(window as any\)\.GroupChat;\s*if \(gc && gc\._specPanelRaw != null\) gc\._closeSpecPanel\?\.\(\);\s*\}, \[item\.kind, item\.id\]\);/);
+  // The reader fills the panel below its bar at every width.
+  const css = read('public/css/app.css');
+  assert.match(css, /\.dev-ws-side-body \{ position: relative; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; \}/);
+  assert.match(css, /\.dev-ws-side \.gc-spec-side-panel\.gc-spec-side-panel-open \{\s*position: absolute; inset: 0; z-index: 2;\s*width: auto !important;/);
+});
+
 /** A DOM element with just what the spec panel code touches. */
 function fakeEl() {
   const classes = new Set();
@@ -240,7 +267,7 @@ function fakeEl() {
   };
 }
 
-test('View full spec opens the panel wherever the slot is, and binds its divider', async () => {
+test('View full plan opens the panel wherever the slot is, and binds its divider', async () => {
   // The topic frame never runs `GroupChat.mount`, which is where the general
   // chat binds the divider; opening the panel binds it instead.
   const panel = fakeEl();

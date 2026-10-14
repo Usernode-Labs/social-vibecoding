@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState, type RefObject } from 'react';
 
+import { t } from '../../lib/i18n/runtime';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { isNearBottom, STICK_SLACK_PX, type ScrollBox } from './stick-to-bottom';
+import { inMainStream } from './bot-shared';
 
 /*
  * A conversation with unread messages opens where they begin.
@@ -91,7 +93,7 @@ export function firstUnreadId(rows: readonly UnreadRow[], lastReadId: number): n
 export function newMessagesLabel(count: number): string {
   const n = Math.floor(Number(count) || 0);
   if (n <= 0) return '';
-  return `${n} new ${n === 1 ? 'message' : 'messages'}`;
+  return t('messages:thread.newMessages', { count: n });
 }
 
 /**
@@ -182,8 +184,8 @@ export function jumpShown(box: ScrollBox, slack: number = STICK_SLACK_PX): boole
 
 /** The button's name, which says what the dot means. */
 export function jumpLabel(arrived: number): string {
-  const words = newMessagesLabel(arrived);
-  return words ? `Jump to latest, ${words}` : 'Jump to latest';
+  const n = Math.floor(Number(arrived) || 0);
+  return n > 0 ? t('messages:thread.jumpToLatestNew', { count: n }) : t('messages:thread.jumpToLatest');
 }
 
 /** A glide the reader asked for, or a jump for a reader who asked for less motion. */
@@ -364,16 +366,21 @@ export function useUnreadAffordances(
  * A message as this module reads it. Countable the way the server's unread
  * count is (services/conversations.js countUnread): the main stream only,
  * not deleted, not a platform line, and stored (a row still sending, or one
- * that failed, has no place among what was read).
+ * that failed, has no place among what was read). One request, one story: a
+ * thread reply the chat with Homeroom bot also lists in its main stream
+ * (`alsoInChat`, ./bot-shared.ts inMainStream) is part of that stream.
  */
 export function messageRow(
-  message: { id: number; sender: { id: number }; threadRootId?: number | null; deleted?: boolean; system?: boolean; pending?: boolean; failed?: boolean },
+  message: {
+    id: number; sender: { id: number }; threadRootId?: number | null; deleted?: boolean; system?: boolean; pending?: boolean; failed?: boolean;
+    metadata?: { homeroomBot?: { alsoInChat?: boolean } | null } | null;
+  },
   viewerId: number,
 ): UnreadRow {
   return {
     id: message.id,
     mine: !!viewerId && message.sender.id === viewerId,
-    countable: message.id > 0 && !message.threadRootId && !message.deleted && !message.system && !message.pending && !message.failed,
+    countable: message.id > 0 && inMainStream(message) && !message.deleted && !message.system && !message.pending && !message.failed,
   };
 }
 

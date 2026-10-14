@@ -164,9 +164,11 @@ type MilePerson = {
   userId: number | null; name: string; steps: MileStep[]; furthest: string | null; stuckAt: string | null;
   stuckReason: string | null; daysSince: number; failedAttempts: number; repeatedTaps: number;
   tour: { ended: string; step: number | null; at: string | null } | null;
-  // Getting started: the tour and the season's First challenges, x of n.
-  // `null` without an account; `shown: false` when the card was never drawn.
+  // The first-run list: the tour and the season's First challenges, x of n.
+  // `null` without an account; `shown: false` for an account from before it.
   onboard?: { shown: boolean; done: number | null; total: number | null; complete: boolean } | null;
+  // What the admit mail's tracking saw; `null` when it was not tracked.
+  mail?: { opened: boolean; clicked: boolean } | null;
 };
 type Summary = {
   demo?: boolean;
@@ -337,6 +339,7 @@ type Cohorts = { cohorts: Array<{ day: string; admitted: number; withAccount: nu
 type FirstMile = {
   cohort: string; people: MilePerson[];
   steps: Array<{ key: string; passed: number; stuck: Array<Person & { days: number; reason: string | null }> }>;
+  mail?: { tracked: number; opened: number; clicked: number } | NotRecorded;
   notRecorded?: Record<string, NotRecorded>;
 };
 
@@ -385,18 +388,24 @@ type NextSteps = {
 
 const UNIT_MAX = 24;
 
-function UnitBar({ n, of, fill, rest = JUI.empty }: { n: number; of: number; fill: string; rest?: string }) {
+// `also` more after the first `n`, in `alsoFill`: one count in two parts.
+function UnitBar({ n, of, fill, rest = JUI.empty, also = 0, alsoFill = fill }: {
+  n: number; of: number; fill: string; rest?: string; also?: number; alsoFill?: string;
+}) {
   if (of <= 0) return <div className={`h-2 rounded-sm ${JUI.empty}`} />;
   if (of > UNIT_MAX) {
     return (
-      <div className={`h-2 rounded-sm overflow-hidden ${rest}`}>
+      <div className={`flex h-2 rounded-sm overflow-hidden ${rest}`}>
         <div className={`h-2 ${fill}`} style={{ width: `${Math.round((n / of) * 100)}%` }} />
+        {also > 0 ? <div className={`h-2 ${alsoFill}`} style={{ width: `${Math.round((also / of) * 100)}%` }} /> : null}
       </div>
     );
   }
   return (
     <div className="flex gap-0.5">
-      {Array.from({ length: of }, (_, i) => <span key={i} className={`h-2 flex-1 rounded-sm ${i < n ? fill : rest}`} />)}
+      {Array.from({ length: of }, (_, i) => (
+        <span key={i} className={`h-2 flex-1 rounded-sm ${i < n ? fill : i < n + also ? alsoFill : rest}`} />
+      ))}
     </div>
   );
 }
@@ -608,7 +617,7 @@ const MILE_KEYS = Object.keys(MILE_STEPS);
 // "mail" is the provider taking the message, not the inbox getting it.
 const MILE_HELP: Record<string, string> = {
   admitted: 'Let in from the waitlist.',
-  mail_sent: 'Our mail provider accepted the \u201cYou\u2019re in\u201d mail. That does not prove it reached the inbox.',
+  mail_sent: 'Our mail provider accepted the \u201cYou\u2019re in\u201d mail. Since 7 Oct it is tracked: a person\u2019s panel says whether they opened it or clicked its link. An open is approximate, and no open is not proof it went unread.',
   code_asked: 'A sign-in code was asked for. The mail\u2019s button asks for one as it opens, so this is the first proof the link was followed.',
   account: 'Account created and finished.',
   access: 'The account has platform access.',
@@ -616,7 +625,7 @@ const MILE_HELP: Record<string, string> = {
   username: 'Chose a username. No time is recorded for it.',
   join: 'Answered \u201cWhat communities do you want to join?\u201d, or was not asked (an invite link or the story landing).',
   first_act: 'The first thing they did themselves: a message, a vote, feedback, a request, a change, using a project or joining a community.',
-  onboard: 'How much of Getting started on Home is done: the tour, then the season\u2019s First challenges. \u2014 means the card was never shown.',
+  onboard: 'How much of a new account\u2019s first run is done: the tour, then the season\u2019s First challenges. \u2014 means the account is from before the first-run list.',
 };
 
 const HELP_KEYS = [...MILE_KEYS, 'onboard'];
@@ -653,7 +662,7 @@ function MileLabel({ id, label, open, onOpen, onClose }: {
   );
 }
 
-/** The onboard cell: x/n, a dash when the card was never shown. */
+/** The onboard cell: x/n, a dash for an account from before the first-run list. */
 function OnboardCell({ onboard }: { onboard: MilePerson['onboard'] }) {
   if (!onboard || !onboard.shown) {
     return <span className="text-center text-[11px] leading-none text-zinc-400 dark:text-zinc-500">{'\u2014'}</span>;
@@ -704,6 +713,15 @@ function FirstMileCard({ cohorts, scope, onOpen }: { cohorts: Cohorts | null; sc
   }).length;
   const label = (cohort: string) => (cohort === 'other_way' ? 'Came in another way' : `Admitted ${weekLabel(cohort)}`);
   const onboarded = people.filter((p) => p.onboard && p.onboard.complete).length;
+  // The admit mail's tracking, on the card's own meta line: counts over the
+  // people whose mail was tracked, the gap said as a gap, and nothing when
+  // nobody here was sent one (all came in another way).
+  const mailed = people.filter((p) => p.steps.some((st) => st.key === 'mail_sent'));
+  const tracked = mailed.flatMap((p) => (p.mail ? [p.mail] : []));
+  const mailNote = !mailed.length ? ''
+    : tracked.length
+      ? ` \u00b7 mail: ${tracked.filter((m) => m.opened).length} opened \u00b7 ${tracked.filter((m) => m.clicked).length} clicked of ${tracked.length} tracked`
+      : ' \u00b7 mail opens not tracked';
   // One column note open at a time, and how it opened: a tap keeps it until
   // the next tap, a hover only while the mouse stays.
   const [help, setHelp] = useState<{ id: string; how: 'tap' | 'hover' } | null>(null);
@@ -725,7 +743,7 @@ function FirstMileCard({ cohorts, scope, onOpen }: { cohorts: Cohorts | null; sc
       onOpen={(how) => setHelp({ id, how })} onClose={() => setHelp(null)} />
   );
   return (
-    <Card id="admin-journey-mile" title="First mile" note={`admit mail to first act · ${scope.cohort ? 'this cohort' : 'every cohort'}, any week`}>
+    <Card id="admin-journey-mile" title="First mile" note={`admit mail to first act · ${scope.cohort ? 'this cohort' : 'every cohort'}, any week${mailNote}`}>
       {miles ? (n ? (
         <>
           {/* One grid for the staircase and every track, so each bar stands
@@ -965,11 +983,99 @@ type Creation = {
   targets: Record<string, number>;
   recordedFrom: Record<string, string | null>;
   weeks: Array<{ week: string; steps: Array<{ key: string; reached: Count; medianSeconds: number | null }> }>;
+  timing?: CreationTimingSummary;
   examples: Array<{
     userId: number; name: string; slug: string; project: string; createdAt: string;
     steps: Array<{ key: string; recorded: boolean; seconds: number | null }>;
+    timing?: CreationTiming | null;
   }>;
 };
+
+// Where the time to running goes (#4895): each stage of making a project,
+// its median over the projects made from a starter since creation was timed
+// (src/services/journey.js creationTimingSummary). Each stage is its own
+// clock: the database and the repository are made side by side, so the
+// stages do not add up to the total.
+type PodStart = { scheduleMs: number; startMs: number; readyMs: number };
+type CreationTiming = {
+  kind: string; totalMs: number | null; stages: Record<string, number>;
+  build?: { engine: string; reused?: boolean; steps: Array<{ name: string; ms: number }> };
+  pod?: PodStart;
+};
+type CreationTimingSummary = {
+  from: string | null; of: number; totalMs: number | null;
+  stages: Array<{ key: string; medianMs: number }>; pod: PodStart | null;
+};
+
+const TIMING_STAGES: Record<string, [string, string]> = {
+  database: ['Database', 'its own Postgres database and role'],
+  repository: ['Repository', 'its GitHub repository made and the starter committed'],
+  card: ['Card', 'waiting for the first session\'s card, inside Repository'],
+  checkout: ['Checkout', 'the starter written out for the image build'],
+  lock: ['Build lock', 'waiting to share the build-retention lock'],
+  manifest: ['Manifest', 'dapp.json read and reconciled, secrets checked'],
+  build: ['Image build', 'its container image built'],
+  deploy: ['Deploy', 'its Service, Deployment and Ingress applied'],
+  rollout: ['Start', 'its Pod placed, its image pulled and started, until /health answered'],
+};
+
+/** Milliseconds as a short duration: "0.4 s", "4.3 s", "71 s", "1.5 min". */
+function msDur(ms: number | null | undefined): string {
+  if (ms == null || !Number.isFinite(ms)) return '';
+  if (ms < 10000) return `${Math.round(ms / 100) / 10} s`;
+  return dur(ms / 1000);
+}
+
+function CreationTimingRows({ timing }: { timing: CreationTimingSummary | undefined }) {
+  if (!timing) return null;
+  if (!timing.of) {
+    return (
+      <p className={JUI.fine}>
+        {timing.from
+          ? `No project made from a starter in this time was timed. Timed from ${weekLabel(timing.from.slice(0, 10))}.`
+          : 'Not timed yet: each new project is timed from now on.'}
+      </p>
+    );
+  }
+  const most = Math.max(1, ...timing.stages.map((st) => st.medianMs));
+  return (
+    <div className="space-y-1">
+      {timing.stages.map((st) => {
+        const [label, means] = TIMING_STAGES[st.key] || [st.key, ''];
+        return (
+          <div key={st.key} data-journey-creation-stage={st.key} title={means}
+            className="grid grid-cols-[6.5rem_minmax(0,1fr)_3.5rem] items-center gap-2 text-xs">
+            <span className="truncate">{label}</span>
+            <div className={`h-2 rounded-sm ${JUI.empty}`}>
+              <div className="h-2 rounded-sm bg-violet-500" style={{ width: `${Math.max(2, Math.round((st.medianMs / most) * 100))}%` }} />
+            </div>
+            <span className="text-right tabular-nums">{msDur(st.medianMs)}</span>
+          </div>
+        );
+      })}
+      {timing.pod ? (
+        <p className={JUI.fine} data-journey-creation-pod="">
+          {`Start, from the Pod: placed ${msDur(timing.pod.scheduleMs)} · image pulled and started ${msDur(timing.pod.startMs)} · booted until healthy ${msDur(timing.pod.readyMs)}`}
+        </p>
+      ) : null}
+      <p className={JUI.fine}>
+        {`Median per stage over ${plural(timing.of, 'project', 'projects')} made from a starter, ${msDur(timing.totalMs)} in all. Each stage has its own clock: the database and the repository are made side by side, so the stages do not add up to the total.`}
+      </p>
+    </div>
+  );
+}
+
+/** One project's slowest stages, and how its image was built. */
+function exampleTiming(timing: CreationTiming): string {
+  const top = Object.entries(timing.stages).sort((a, b) => b[1] - a[1]).slice(0, 3)
+    .map(([key, ms]) => `${(TIMING_STAGES[key] || [key])[0]} ${msDur(ms)}`);
+  const b = timing.build;
+  const slowest = b && b.steps.length ? b.steps[0] : null;
+  const built = b
+    ? `built with ${b.engine}${b.reused ? ', reused' : ''}${slowest ? `, slowest ${slowest.name} ${msDur(slowest.ms)}` : ''}`
+    : null;
+  return [...top, ...(built ? [built] : [])].join(' · ');
+}
 
 const CREATION_STEPS: Array<[string, string, string]> = [
   ['created', 'Created', 'made a project'],
@@ -1041,6 +1147,11 @@ function CreationCard({ scope, onOpen }: { scope: Scope; onOpen: OpenPerson }) {
       </div>
       {since ? <p className={`${JUI.fine} mt-2`}>Running, Preview opened and Requested change live are recorded from {weekLabel(since)}.</p> : null}
 
+      <div className={`${JUI.label} mt-4 mb-1.5`}>Where the time to running goes</div>
+      <div id="admin-journey-creation-timing">
+        <CreationTimingRows timing={data.timing} />
+      </div>
+
       <div className={`${JUI.label} mt-4 mb-1.5`}>By week</div>
       <div className={JUI.weekGrid} id="admin-journey-creation-weeks">
         <span className={JUI.fine}>Week</span>
@@ -1086,6 +1197,7 @@ function CreationCard({ scope, onOpen }: { scope: Scope; onOpen: OpenPerson }) {
                   </span>
                 ))}
               </div>
+              {e.timing ? <div className={`mt-0.5 ${JUI.fine}`} data-journey-creation-example-timing="">{exampleTiming(e.timing)}</div> : null}
             </div>
           ))}
         </div>
@@ -1101,22 +1213,28 @@ function CreationCard({ scope, onOpen }: { scope: Scope; onOpen: OpenPerson }) {
 // somebody who joined one through an invite link, each timed from the start
 // of that session. The aha in the first session: the maker sent an invite,
 // or the person who joined wrote in its chat or filed a request, within the
-// hour. Under them, the invite funnel: links opened, sign-ins through one,
-// joins, and what dropped off between each.
+// hour. The question's other answer, "Look around first", is counted as its
+// own outcome beside Made a project (#4039), with whether they made one of
+// their own later. Under them, the invite funnel: links opened, sign-ins through one
+// (in their two ways: from the link, or already signed in), joins, and what
+// dropped off between each.
 
 type FirstSessionStep = {
   key: string; reached: number; inSession: number; medianSeconds: number | null;
   targetSeconds: number | null; withinTarget: number | null;
 };
-type InviteFunnel = { from: string; opened: number; signedIn: number; joined: number };
+type InviteFunnel = {
+  from: string; opened: number; signedIn: number; signedInByInvite: number; signedInAlready: number; joined: number;
+};
 type FirstSessionData = {
   week: string; finished: boolean; sessionMinutes: number;
   make: { people: number; notRecorded: NotRecorded | null; steps: FirstSessionStep[]; aha: number };
   join: { people: number; steps: FirstSessionStep[]; aha: number };
+  look: { people: number; notRecorded: NotRecorded | null; steps: FirstSessionStep[] };
   opens: InviteFunnel | NotRecorded;
-  recordedFrom: { make: string | null; reward: string | null; opens: string | null; signedIn: string | null };
+  recordedFrom: { make: string | null; reward: string | null; opens: string | null; signedIn: string | null; look: string | null };
   examples: Array<{
-    path: 'make' | 'join'; userId: number; name: string; slug: string; project: string; startedAt: string | null;
+    path: 'make' | 'join' | 'look'; userId: number; name: string; slug: string | null; project: string | null; startedAt: string | null;
     steps: Record<string, number | null>;
   }>;
 };
@@ -1127,7 +1245,10 @@ const FIRST_SESSION_STEPS: Record<string, [string, string]> = {
   running: ['Running', 'their project ran for the first time'],
   said: ['Wrote in its chat', 'their first message in the project\'s chat'],
   suggested: ['Filed a request', 'their first request on the project'],
+  made: ['Made a project later', 'a project of their own, after looking around'],
 };
+
+const FIRST_SESSION_PATHS: Record<string, string> = { make: 'made it', join: 'joined', look: 'looked around' };
 
 function FirstSessionRows({ steps, people, minutes }: { steps: FirstSessionStep[]; people: number; minutes: number }) {
   return (
@@ -1159,8 +1280,17 @@ function FirstSessionRows({ steps, people, minutes }: { steps: FirstSessionStep[
 // cohort, and a cohort view leaves the funnel out.
 const FUNNEL_STEPS: Array<['opened' | 'signedIn' | 'joined', string, string]> = [
   ['opened', 'Opened the link', 'opened an invite link, signed in or not: a person, or a browser, once per project'],
-  ['signedIn', 'Signed in', 'signed up or in from an invite link, or opened one already signed in'],
+  ['signedIn', 'Signed in', 'reached Homeroom signed in through an invite link: from the link, or already signed in'],
   ['joined', 'Joined', 'joined a project through an invite link'],
+];
+
+// Signed in, in its two ways (#4272): [key, label, what it counts, fill].
+// Signing up or in from the link is what the link brought about, so it is
+// the step's conversion, out of everyone who opened a link. Somebody already
+// signed in had nothing to convert: they are counted, never a share.
+const SIGNED_IN_WAYS: Array<['signedInByInvite' | 'signedInAlready', string, string, string]> = [
+  ['signedInByInvite', 'From the link', 'opened the link signed out, then signed up or in', 'bg-violet-500'],
+  ['signedInAlready', 'Already signed in', 'were signed in when they opened the link', 'bg-violet-300 dark:bg-violet-400/50'],
 ];
 
 // A step's share of the one before it is printed only from this many
@@ -1180,13 +1310,32 @@ function InviteFunnelRows({ funnel }: { funnel: InviteFunnel }) {
       {FUNNEL_STEPS.map(([key, label, means], i) => {
         const n = funnel[key];
         const before = i ? funnel[FUNNEL_STEPS[i - 1][0]] : null;
+        // Signed in is the total of its two ways, each on a line of its own,
+        // and its conversion is the first of them.
+        const ways = key === 'signedIn';
         return (
           <div key={key} data-journey-invite-funnel-step={key} title={means}>
             <div className="flex items-baseline justify-between gap-2 text-sm">
               <span>{label}</span>
-              <span className="tabular-nums shrink-0">{before == null ? plural(n, 'person', 'people') : conversion(n, before)}</span>
+              <span className="tabular-nums shrink-0">{before == null || ways ? plural(n, 'person', 'people') : conversion(n, before)}</span>
             </div>
-            <UnitBar n={n} of={most} fill={key === 'joined' ? 'bg-emerald-500' : 'bg-violet-500'} />
+            {ways ? (
+              <UnitBar n={funnel.signedInByInvite} also={funnel.signedInAlready} of={most}
+                fill={SIGNED_IN_WAYS[0][3]} alsoFill={SIGNED_IN_WAYS[1][3]} />
+            ) : <UnitBar n={n} of={most} fill={key === 'joined' ? 'bg-emerald-500' : 'bg-violet-500'} />}
+            {ways ? (
+              <div className="mt-1 space-y-0.5">
+                {SIGNED_IN_WAYS.map(([way, wayLabel, wayMeans, fill]) => (
+                  <div key={way} data-journey-invite-funnel-way={way} title={wayMeans}
+                    className="flex items-baseline justify-between gap-2 text-xs">
+                    <span className="inline-flex items-center gap-1.5 text-zinc-600 dark:text-zinc-300"><Dot cls={fill} />{wayLabel}</span>
+                    <span className="tabular-nums shrink-0">
+                      {way === 'signedInByInvite' ? conversion(funnel[way], funnel.opened) : plural(funnel[way], 'person', 'people')}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : null}
             {before == null ? null : (
               <div className={`mt-0.5 ${JUI.fine}`}>{before > n ? `${before - n} dropped off` : 'nobody dropped off'}</div>
             )}
@@ -1230,6 +1379,18 @@ function FirstSessionCard({ scope, onOpen }: { scope: Scope; onOpen: OpenPerson 
           </div>
           <div className="mt-3"><FirstSessionRows steps={data.join.steps} people={data.join.people} minutes={minutes} /></div>
         </div>
+        <div id="admin-journey-first-session-look">
+          <div className={`${JUI.label} mb-1.5`}>Looked around first</div>
+          {data.look.notRecorded ? <Num v={data.look.notRecorded} /> : (
+            <>
+              <div className="flex items-baseline gap-2">
+                <span className={JUI.headline}>{data.look.people}</span>
+                <span className={JUI.fine}>{`chose Look around first, beside ${plural(data.make.people, 'project', 'projects')} made`}</span>
+              </div>
+              <div className="mt-3"><FirstSessionRows steps={data.look.steps} people={data.look.people} minutes={minutes} /></div>
+            </>
+          )}
+        </div>
       </div>
       {scope.cohort ? null : (
         <div id="admin-journey-first-session-opens">
@@ -1244,8 +1405,8 @@ function FirstSessionCard({ scope, onOpen }: { scope: Scope; onOpen: OpenPerson 
             <div key={`${e.path}-${e.userId}`} data-journey-first-session-example={e.path}>
               <div className="flex flex-wrap items-center gap-1.5">
                 <PersonChip person={{ userId: e.userId, name: e.name }} onOpen={onOpen} />
-                <span className="text-sm font-medium truncate min-w-0">{e.project}</span>
-                <span className={AdminUI.badge.outline}>{e.path === 'make' ? 'made it' : 'joined'}</span>
+                {e.project ? <span className="text-sm font-medium truncate min-w-0">{e.project}</span> : null}
+                <span className={AdminUI.badge.outline}>{FIRST_SESSION_PATHS[e.path] || e.path}</span>
               </div>
               <div className={`mt-0.5 flex flex-wrap gap-x-2 ${JUI.fine}`}>
                 {Object.entries(e.steps).map(([key, seconds]) => (
@@ -1822,4 +1983,5 @@ const AdminJourney = {
 // evaluates this module in Node, where there is no window.
 if (typeof window !== 'undefined') (window as any).AdminJourney = AdminJourney;
 
-export { AdminJourney };
+// InviteFunnelRows for its render test (tests/admin-journey-section.test.js).
+export { AdminJourney, InviteFunnelRows, CreationTimingRows, exampleTiming };

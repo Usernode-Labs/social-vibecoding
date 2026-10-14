@@ -230,7 +230,7 @@ test('private members, against the full schema', { timeout: 180000 }, async (t) 
     const ana = await account({ email: 'Ana@Example.com' });
     await invites.redeem(pool, { token: made.link.token, user: ana });
     const before = await memberWaitlist.stateFor(pool, ana.id);
-    assert.deepEqual(before, { state: 'none', email: null, accountEmail: 'ana@example.com', moreToken: null });
+    assert.deepEqual(before, { state: 'none', email: null, accountEmail: 'ana@example.com', hasPhone: false, moreToken: null });
     const sent = [];
     const joined = await memberWaitlist.join(pool, { userId: ana.id, rawEmail: 'ana@example.com', send: (...a) => sent.push(a) });
     assert.equal(joined.next, 'listed');
@@ -266,6 +266,53 @@ test('private members, against the full schema', { timeout: 180000 }, async (t) 
     assert.deepEqual([done.next, done.state, done.email], ['listed', 'listed', 'ben@example.com']);
     const { rows } = await pool.query('SELECT email, email_confirmed FROM users WHERE id = $1', [ben.id]);
     assert.deepEqual(rows, [{ email: 'ben@example.com', email_confirmed: true }], 'an account with no address takes it');
+  });
+
+  await t.test('a verified phone joins with one tap, and its release waits on SMS (#4223)', async () => {
+    const pim = await account();
+    await invites.redeem(pool, { token: made.link.token, user: pim });
+    await assert.rejects(memberWaitlist.joinWithPhone(pool, { userId: pim.id }), (err) => err.code === 'no_phone');
+    await pool.query(
+      "INSERT INTO user_phone_identities (user_id, firebase_uid, phone_e164) VALUES ($1, 'fb-pim', '+15550104242')",
+      [pim.id]
+    );
+    const before = await memberWaitlist.stateFor(pool, pim.id);
+    assert.deepEqual(before, { state: 'none', email: null, accountEmail: null, hasPhone: true, moreToken: null });
+    const joined = await memberWaitlist.joinWithPhone(pool, { userId: pim.id });
+    assert.deepEqual([joined.next, joined.state, joined.email], ['listed', 'listed', null]);
+    assert.match(joined.moreToken, /^[a-f0-9]{48}$/, '"Want in sooner?" works for a phone row');
+    const again = await memberWaitlist.joinWithPhone(pool, { userId: pim.id });
+    assert.equal(again.moreToken, joined.moreToken, 'a second tap changes nothing');
+    const { rows } = await pool.query(
+      'SELECT id, email, confirmed_at IS NOT NULL AS confirmed FROM waitlist_signups WHERE linked_user_id = $1', [pim.id]);
+    assert.equal(rows.length, 1, 'one row per account');
+    assert.deepEqual([rows[0].email, rows[0].confirmed], [null, true]);
+    // The database holds one phone row per account too.
+    await assert.rejects(pool.query(
+      'INSERT INTO waitlist_signups (email, linked_user_id, confirmed_at) VALUES (NULL, $1, NOW())', [pim.id]),
+    (err) => err.code === '23505');
+    // "Want in sooner?" reads and saves against the phone row's token.
+    assert.ok(await waitlist.mergeMoreAnswers(pool, joined.moreToken, { country: 'PT' }));
+
+    // Release is held until Homeroom can send texts (#4096).
+    await assert.rejects(waitlist.releaseWaitlistSignup(pool, rows[0].id),
+      (err) => err instanceof waitlist.WaitlistReleaseError && err.code === 'needs_sms' && /#4096/.test(err.message));
+    assert.deepEqual(await tier(pim.id), { has_platform_access: false, private: true });
+    assert.equal(await waitlist.releaseWaitlistSignup(pool, 987654321), null, 'an unknown id is still not found');
+
+    // "Add an email too": the address is confirmed with a code and the phone
+    // row folds into it, so the account still has one row, and it can be let in.
+    const sent = [];
+    await memberWaitlist.join(pool, { userId: pim.id, rawEmail: 'pim@example.com', send: (...a) => sent.push(a) });
+    const done = await memberWaitlist.verify(pool, { userId: pim.id, rawEmail: 'pim@example.com', code: sent[0][1] });
+    assert.deepEqual([done.state, done.email], ['listed', 'pim@example.com']);
+    const { rows: after } = await pool.query(
+      'SELECT id, email, answers FROM waitlist_signups WHERE linked_user_id = $1', [pim.id]);
+    assert.equal(after.length, 1, 'the phone row was folded into the email row');
+    assert.equal(after[0].email, 'pim@example.com');
+    assert.equal(after[0].answers.country, 'PT', 'its answers came along');
+    await waitlist.releaseWaitlistSignup(pool, after[0].id);
+    assert.deepEqual(await tier(pim.id), { has_platform_access: true, private: true });
   });
 
   await t.test('a private member uses public apps but never votes on one, even one that invited them', async () => {

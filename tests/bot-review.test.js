@@ -142,11 +142,45 @@ test('the fix turn is asked for exactly the issues, within the spec, under the b
   assert.ok(!review.fixPrompt({ issues: [] }).includes('==== SPEC'), 'no spec, no spec block');
   // A fresh thread: it says what it needs to stand alone.
   assert.ok(p.startsWith('ISSUE #1'), 'the request first');
-  assert.match(p, /this is a new session, so read what you need of it before you change it/);
+  assert.match(p, /this is a new session\. Do not explore the repository: run\n`git diff --stat origin\/main\.\.\.HEAD` once/,
+    'L1: it reads what the first version wrote, not the whole repository');
   assert.match(p, /"## Design" section/);
   assert.match(p, /after the screen's primary action was tapped once \("after tapping \.\.\."\)/);
   assert.match(p, /An issue on an "after tapping \.\.\." screen is about what the main action does/);
-  assert.match(p, /boot the app and look at the screen it was on in the in-loop browser/, 'its in-loop check');
+  assert.match(p, /boot the app and look at the screen each issue was on in the in-loop browser, at the size, look and state the\nissue names, and nowhere else/, 'its in-loop check');
+});
+
+test('L1: a fix turn checks only the screens its issues name, never the build\'s sweep or a first version\'s look rounds', () => {
+  const designSkill = require('../src/services/design-skill');
+  const issues = [issue('empty-state', 'blocker'), { ...issue('post'), screen: 'Phone 390×844, light look, after tapping "Post"' }];
+  const p = review.fixPrompt({ seed: 'ISSUE #1', spec: '# Plant log', issues, round: 1, maxRounds: 3, readsImages: true });
+  // The build's own visual sweep is not a fix turn's.
+  for (const line of live.browserLines({ readsImages: true })) {
+    if (/at 390x844 and at a desktop width, in both looks|EXPECTED, not optional, when the change is one a person will/.test(line)) {
+      assert.ok(!p.includes(line), `not the build's sweep: ${line}`);
+    }
+  }
+  // Nor the first version's look-and-fix rounds, in any of their words.
+  for (const para of designSkill.FIRST_VERSION_LOOP.split(/\n\s*\n/)) assert.ok(!p.includes(para.trim()));
+  assert.ok(!/Stop after five rounds/.test(p));
+  assert.match(p, /check ONLY what the issues name/);
+  assert.match(p, /Do not check other widths, looks or states, and do not run rounds of looking and polishing/);
+  assert.match(p, /take a screenshot \(`browser_take_screenshot`\)/);
+  assert.match(review.fixPrompt({ issues, readsImages: false }), /`browser_snapshot`; you read text, not images/);
+  // The in-loop browser's own rules stay: how to boot the app, blank pages, the declared checks.
+  assert.ok(p.includes(require('../src/services/in-loop-browser').IN_LOOP_BROWSER_GUIDANCE));
+  // An "after tapping" issue is tried as a person would; a drag only when an issue is about one.
+  assert.match(p, /do that action yourself, and check that the screen shows the result/);
+  assert.ok(!p.includes(live.DRAG_TEST_LINES[1]));
+  assert.ok(review.fixPrompt({ issues: [{ ...issue('order'), fix: 'make the drag move the row' }] }).includes(live.DRAG_TEST_LINES[1]));
+  assert.ok(!review.fixPrompt({ issues: [issue('a')] }).includes('do that action yourself'), 'no tap issue, no tap check');
+  // Its clock, when it has one: what it has, and that the fixes are all it is for.
+  const started = Date.UTC(2026, 9, 12, 22, 26, 14);
+  const timed = review.fixPrompt({ issues, clock: { startedAt: started, budgetMs: 10 * 60_000 } });
+  assert.match(timed, /TIME\. This fix turn started at 22:26 UTC, and the platform stops it at 22:36 UTC \(10 minutes\)\. Make the fixes, check each issue's screen once, and finish/);
+  assert.ok(!/TIME\./.test(p), 'no clock, no time line');
+  // Each issue is one entry, its fix under it.
+  assert.match(p, /1\. \[blocker\] phone, empty: empty-state is wrong\n {3}Fix: make empty-state right\n2\. \[major\] Phone 390×844/);
 });
 
 // ── The loop ─────────────────────────────────────────────────────────────

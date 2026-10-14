@@ -1,5 +1,6 @@
 import { SpinnerArcIcon } from '@/components/ui/icons';
 
+import { useMessages } from '../../lib/i18n/react';
 import { ACTIVITY_LABEL, type AgentActivity } from './activity';
 
 /**
@@ -8,8 +9,9 @@ import { ACTIVITY_LABEL, type AgentActivity } from './activity';
  * Nothing otherwise. The green is the live-app dot's (#22c55e, `green-500`).
  */
 export function AgentActivityMark({ activity, className = '' }: { activity: AgentActivity; className?: string }) {
+  const t = useMessages('agent');
   if (!activity) return null;
-  const label = ACTIVITY_LABEL[activity];
+  const label = t(ACTIVITY_LABEL[activity]);
   if (activity === 'working') {
     return (
       <span role="img" aria-label={label} title={label} data-agent-activity="working" className={`inline-flex shrink-0 ${className}`}>

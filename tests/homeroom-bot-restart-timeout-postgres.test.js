@@ -1,7 +1,7 @@
 'use strict';
 
-// A live build that deploys land in is not told it took too long, against
-// the FULL PostgreSQL schema and through server.js's own restart recovery.
+// A live build that deploys land in keeps the time they cost it, against the
+// FULL PostgreSQL schema and through server.js's own restart recovery.
 //
 // Page Turners #3 (5 Oct 2026): its build turn started about 12:31; four
 // platform PRs merged between 12:33 and 12:41, each deployed, and each new
@@ -9,12 +9,18 @@
 // clock is the turn's start plus its budget (recoveryDeadline), counted
 // across every restart, so the last recovery's clock ended the turn at
 // 12:51 and the run was recorded as "the build ran past its time limit
-// (finished after a restart)". Its requester read that, and that a person
-// could pick it up from here.
+// (finished after a restart)".
+//
+// #3895 answered that by sending such a build round again from the start.
+// On 7 Oct 2026 two requests were each built three times that way: the
+// worker had run on through every restart, and each try was stopped at the
+// same 20-minute clock. Now each restart that reaches the turn is counted on
+// its record (turn-lifecycle noteRestart) and gives the clock back
+// RESTART_ALLOWANCE_MS, which is what a restart costs a worker that runs on;
+// a build whose clock still runs out ran too long on its own.
 //
 // A restart leaves nothing behind but the turn record, whose start does not
-// move, so the recovery these drive is the last restart's: the turn started
-// its whole budget ago, less the moment its clock has left. The worker is
+// move, so the recovery these drive is the last restart's. The worker is
 // stubbed (the journal runs until the bot's clock stops it); the run rows,
 // the queue, the session and the restart count are real.
 //
@@ -40,13 +46,14 @@ require('./platform-keys').setPlatformKeys();
 let journalTail = async () => ({});
 let onStop = null;
 const stops = [];
+const stopTimes = [];
 const workerPath = require.resolve('../src/services/worker');
 const realWorker = require(workerPath);
 require.cache[workerPath].exports = {
   ...realWorker,
   usesKubernetesWorkers: () => false,
   resumeTurnFromJournal: async (sessionId, opts) => journalTail(sessionId, opts),
-  stopTurn: async (sessionId) => { stops.push(sessionId); onStop?.(); return true; },
+  stopTurn: async (sessionId) => { stops.push(sessionId); stopTimes.push(Date.now()); onStop?.(); return true; },
   finishTurn: async () => true,
   markTurnTail: async () => true,
   noteTailMilestone: async () => true,
@@ -78,6 +85,7 @@ try {
 }
 
 const bot = require('../src/services/homeroom-bot');
+const turnLifecycle = require('../src/services/turn-lifecycle');
 const live = require('../src/services/homeroom-bot-live');
 const dm = require('../src/services/homeroom-bot-dm');
 const github = require('../src/services/github');
@@ -93,6 +101,7 @@ sessionsRoutes.resumeRecoveredCodexFreshRetry = async () => null;
 managedKeys.usesIncludedKey = async () => false;
 
 const BUDGET_MS = bot.DEFAULTS.turnSeconds * 1000;
+const ALLOWANCE_MS = bot.RESTART_ALLOWANCE_MS;
 const ago = (ms) => new Date(Date.now() - ms).toISOString();
 // What a build's clock has left when the last deploy's server takes it. The
 // adoption reads the clock only after its own queries (the session, whose
@@ -105,7 +114,7 @@ const CLOCK_LEFT_MS = 5000;
 // Still working when the bot's clock stops it.
 const untilStopped = () => new Promise((resolve) => { onStop = () => resolve({ exitCode: 143, pushOk: false, ahead: 0 }); });
 
-test('a live build deploys land in goes round again; one that ran too long on its own says so plainly', { timeout: 180000 }, async (t) => {
+test('a live build keeps the time restarts cost it; one that still runs out ran too long on its own', { timeout: 180000 }, async (t) => {
   const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 2000 });
   try { await admin.query('SELECT 1'); } catch (err) {
     await admin.end();
@@ -148,12 +157,14 @@ test('a live build deploys land in goes round again; one that ran too long on it
     ['https://github.com/usernode-bot/page-turners-30094f'],
   );
 
-  // A live build's session, its turn in flight since `startedAt`, and its run.
-  const build = async (issueNumber, startedAt) => {
+  // A live build's session, its turn in flight since `startedAt` (the
+  // restarts that reached it before this one counted on it), and its run.
+  const build = async (issueNumber, startedAt, { restarts = null } = {}) => {
     const turnId = `turn-${crypto.randomBytes(4).toString('hex')}`;
     const activeTurn = {
       turnId, turnUuid: `uuid-${turnId}`, journal: `/journals/${turnId}.log`, phase: 'executing', mode: 'build',
       backend: 'codex_openrouter', model: 'z-ai/glm-5.3-flash', startedAt, attemptNumber: 1,
+      ...(restarts == null ? {} : { restarts }),
     };
     const { rows: [s] } = await pool.query(
       `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, is_headless, linked_issues, active_turn)
@@ -165,7 +176,7 @@ test('a live build deploys land in goes round again; one that ran too long on it
        VALUES ($1, $2, 'live', 'ready', 'build it', $3) RETURNING id`,
       [app.id, issueNumber, s.id],
     );
-    return { sessionId: s.id, runId: r.id };
+    return { sessionId: s.id, runId: r.id, turnId };
   };
   // The last restart's server adopting the build's worker.
   const recover = (sessionId) => adoptOrphanWorker(
@@ -173,56 +184,58 @@ test('a live build deploys land in goes round again; one that ran too long on it
     { config: {}, pool, staging: {}, ghub: {}, broadcastGlobal: () => {} },
   );
   const runRow = async (id) => (await pool.query('SELECT build_ok, build_error FROM homeroom_bot_runs WHERE id = $1', [id])).rows[0];
+  const restartsOf = async (id) => (await pool.query(
+    `SELECT (active_turn->>'restarts')::int AS n FROM chat_sessions WHERE id = $1`, [id],
+  )).rows[0].n;
   const statusOf = async (id) => (await pool.query('SELECT status FROM chat_sessions WHERE id = $1', [id])).rows[0].status;
   const queueRows = async () => (await pool.query(
     'SELECT issue_number, reason FROM homeroom_bot_queue WHERE app_id = $1 ORDER BY issue_number', [app.id],
   )).rows;
   const context = { appName: 'Page Turners', issueNumber: 3, issueTitle: 'Display location and host information for meetings' };
 
-  await t.test('Page Turners #3: the clock that ends a build after the deploys sends it round again', async () => {
-    journalTail = untilStopped;
-    stops.length = 0; posts.length = 0;
-    // Started its whole budget ago, less what its clock has left when the
-    // last deploy's server takes it.
-    const { sessionId, runId } = await build(3, ago(BUDGET_MS - CLOCK_LEFT_MS));
+  await t.test('issue #9, 7 Oct: the fourth restart gives the build back the time all four cost it', async () => {
+    // Three restarts had reached it before this one: without their time it
+    // would be minutes past its clock and stopped at once. With it, the clock
+    // has CLOCK_LEFT_MS plus a margin left (both outcomes read the same, so
+    // the wait is what tells them apart).
+    const LEFT_MS = CLOCK_LEFT_MS + 3000;
+    let followedAt = 0; let restartsSeen = null;
+    journalTail = async (sessionId) => {
+      followedAt = Date.now();
+      restartsSeen = await restartsOf(sessionId);
+      return untilStopped();
+    };
+    stops.length = 0; stopTimes.length = 0; posts.length = 0;
+    const { sessionId, runId } = await build(9, ago(BUDGET_MS + 4 * ALLOWANCE_MS - LEFT_MS), { restarts: 3 });
     const t0 = Date.now();
     await recover(sessionId);
+    assert.equal(restartsSeen, 4, 'this restart counted on the turn before its clock was read');
     assert.deepEqual(stops, [sessionId], 'the bot\'s clock still ends the turn');
+    assert.ok(stopTimes[0] - followedAt >= 2000, `followed until its clock ran out, not stopped at once (${stopTimes[0] - followedAt} ms)`);
     assert.ok(Date.now() - t0 < 60_000, 'at the turn\'s own deadline: the restarts did not re-arm a fresh budget');
-    const recorded = await runRow(runId);
-    assert.equal(recorded.build_ok, false);
-    assert.equal(recorded.build_error,
-      `interrupted: the build turn ran out of time after it was cut short ${bot.RESTARTED_BUILD_NOTE}`,
-      'not the build\'s own failure: its activity card reads past it to the next look');
-    assert.deepEqual(await queueRows(), [{ issue_number: 3, reason: bot.RESTART_REASON }], 'back to be triaged again');
+    assert.deepEqual(await runRow(runId), { build_ok: false, build_error: 'the build ran past its time limit (finished after a restart)' },
+      'its own time ran out: said so, not sent round again from the start');
+    assert.deepEqual(await queueRows(), [], 'nothing back on the queue');
     assert.equal(await statusOf(sessionId), 'archived');
-    assert.deepEqual(posts, [], 'no "couldn\'t finish" on the request, nor in Mo\'s DM');
-  });
-
-  await t.test('the third build in a row a restart runs out of time is said to have failed, with the restarts as why', async () => {
-    journalTail = untilStopped;
-    await pool.query('DELETE FROM homeroom_bot_queue');
-    // The retriage's second build: round again (two in a row now).
-    const second = await build(3, ago(BUDGET_MS - CLOCK_LEFT_MS));
-    posts.length = 0;
-    await recover(second.sessionId);
-    assert.match((await runRow(second.runId)).build_error, /^interrupted: .* by a restart; the issue was sent back to be triaged again$/);
-    assert.deepEqual(await queueRows(), [{ issue_number: 3, reason: bot.RESTART_REASON }]);
-    assert.deepEqual(posts, []);
-
-    // The third: MAX_RESTARTED_BUILDS stops it going round for good.
-    await pool.query('DELETE FROM homeroom_bot_queue');
-    const third = await build(3, ago(BUDGET_MS - CLOCK_LEFT_MS));
-    await recover(third.sessionId);
-    assert.deepEqual(await runRow(third.runId), {
-      build_ok: false, build_error: 'the platform restarted in the middle of each of its last 3 tries at building this',
-    });
-    assert.deepEqual(await queueRows(), []);
     assert.equal(posts.length, 1);
     assert.equal(posts[0].kind, 'build_failed');
-    assert.equal(dm.dmText('build_failed', posts[0].dm, context).split('\n\n')[1],
-      'I couldn\'t finish building this: Homeroom restarted while I was working on it, 3 times in a row. '
-        + 'Reply here and I\'ll try again.');
+    assert.equal(dm.dmText('build_failed', posts[0].dm, { ...context, issueNumber: 9 }).split('\n\n')[1],
+      'I couldn\'t finish building this: it took longer than I\'m allowed. Reply here and I\'ll try again.');
+  });
+
+  await t.test('a restart is counted on its own turn only, and the count survives the turn\'s phase changes', async () => {
+    const { sessionId, turnId } = await build(10, ago(0));
+    assert.equal(await turnLifecycle.noteRestart(pool, { sessionId, turnId }), 1);
+    assert.equal(await turnLifecycle.noteRestart(pool, { sessionId, turnId }), 2);
+    await turnLifecycle.markTailPending(pool, { sessionId, turnId });
+    assert.equal(await restartsOf(sessionId), 2, 'a phase change merges into the record: the count stays');
+    assert.equal(await turnLifecycle.noteRestart(pool, { sessionId, turnId }), 3);
+    assert.equal(await turnLifecycle.noteRestart(pool, { sessionId, turnId: 'turn-another' }), null,
+      'a restart that finds another turn there counts nothing on it');
+    assert.equal(await restartsOf(sessionId), 3);
+    assert.equal(await turnLifecycle.noteRestart(pool, { sessionId, turnId: null }), null);
+    await pool.query('UPDATE chat_sessions SET active_turn = NULL WHERE id = $1', [sessionId]);
+    assert.equal(await turnLifecycle.noteRestart(pool, { sessionId, turnId }), null, 'no turn, nothing counted');
   });
 
   await t.test('a build whose time was up before any restart reached it ran too long on its own', async () => {
@@ -240,7 +253,7 @@ test('a live build deploys land in goes round again; one that ran too long on it
       'said plainly, with what to do about it');
   });
 
-  await t.test('a first version keeps its doubled clock across a restart', async () => {
+  await t.test('a first version keeps its doubled clock across a restart, and its restarts\' time', async () => {
     const { sessionId } = await build(5, ago(0));
     await pool.query(
       'INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, first_version) VALUES ($1, 5, $2, TRUE)',
@@ -250,5 +263,8 @@ test('a live build deploys land in goes round again; one that ran too long on it
     const session = { id: sessionId, repo_url: app.repo_url };
     const deadline = await bot.recoveryDeadline(pool, {}, session, { mode: 'build', startedAt: new Date(start).toISOString() });
     assert.equal(deadline - start, BUDGET_MS * bot.FIRST_VERSION_BUILD_TIME_FACTOR);
+    const afterTwo = await bot.recoveryDeadline(pool, {}, session, { mode: 'build', startedAt: new Date(start).toISOString(), restarts: 2 });
+    assert.equal(afterTwo - start, BUDGET_MS * bot.FIRST_VERSION_BUILD_TIME_FACTOR + 2 * ALLOWANCE_MS,
+      'and the time its restarts cost it on top');
   });
 });

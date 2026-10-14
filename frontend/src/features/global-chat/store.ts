@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react';
 
+import { t } from '../../lib/i18n/runtime';
 import { hasPlatformViewer, whenPlatformViewer } from '../../lib/platform-viewer';
 import * as api from './api';
 import type {
@@ -147,7 +148,7 @@ function applyProgressEvent(event: Record<string, unknown>) {
   publish((current) => {
     const existing = current.progress || {
       phase: 'understanding',
-      message: 'Understanding your request…',
+      message: t('chat:global.progress.understanding'),
       model: null,
       reasoningEffort: null,
       elapsedMs: 0,
@@ -299,8 +300,8 @@ async function recoverInterruptedTurn(
   return false;
 }
 
-function errorText(error: unknown, fallback = 'Global Chat could not complete that request.') {
-  return error instanceof Error && error.message ? error.message : fallback;
+function errorText(error: unknown, fallback?: string) {
+  return error instanceof Error && error.message ? error.message : (fallback ?? t('chat:global.error.request'));
 }
 
 export function useGlobalChatState() {
@@ -353,7 +354,7 @@ export async function initializeGlobalChat({ force = false } = {}): Promise<Glob
     // A boot-time 401 is expected before app.js has established the session.
     // sv:authed retries it; keep Classic untouched and do not surface a dead
     // feature error in the header.
-    if (state.open) publish({ phase: 'error', error: errorText(error, 'Global Chat is unavailable.') });
+    if (state.open) publish({ phase: 'error', error: errorText(error, t('chat:global.error.unavailable')) });
     return null;
   }).finally(() => {
     bootstrapPromise = null;
@@ -420,7 +421,7 @@ async function loadThread(thread: GlobalChatThread, version: number) {
   } catch (error) {
     if (version !== navigationVersion
         || state.bootstrap?.thread?.id !== thread.id) return;
-    publish({ phase: 'error', error: errorText(error, 'Could not load this chat.') });
+    publish({ phase: 'error', error: errorText(error, t('chat:global.error.loadChat')) });
   }
 }
 
@@ -481,7 +482,7 @@ export async function openGlobalChat({ threadId = null, host = 'screen' }: {
     await loadThread(thread, version);
   } catch (error) {
     if (version !== navigationVersion) return;
-    publish({ phase: 'error', error: errorText(error, 'Could not load this chat.') });
+    publish({ phase: 'error', error: errorText(error, t('chat:global.error.loadChat')) });
   }
   if (version !== navigationVersion) return;
   void refreshGlobalChatUsage();
@@ -593,7 +594,7 @@ async function runTurn({ text, more = false, topic }: {
   if (!boot || state.phase === 'sending') return;
   const thread = boot.thread;
   if (!boot.profiles.globalChat.enabled || !thread) {
-    publish({ error: 'Enable experimental Global Chat in Settings first.' });
+    publish({ error: t('chat:global.error.enableFirst') });
     return;
   }
   // Curated More pages are zero-model server actions and remain useful before
@@ -601,29 +602,29 @@ async function runTurn({ text, more = false, topic }: {
   // server returns the normal model-unavailable explanation for generated
   // suggestions. Free-form turns still require a configured model up front.
   if (!boot.available && !more) {
-    publish({ error: 'Add or claim an OpenRouter key in Settings to use Global Chat.' });
+    publish({ error: t('chat:global.error.needKey') });
     return;
   }
   const messageBoundary = lastPersistedMessageId(state.messages);
   const retryRequest: RetryRequest = more
     ? { kind: 'more', text, ...(topic ? { topic } : {}) }
     : { kind: 'turn', text };
-  appendOptimisticUser(more ? 'More suggestions' : text);
+  appendOptimisticUser(more ? t('chat:global.turn.moreSuggestions') : text);
   const controller = new AbortController();
   activeAbort = controller;
   publish({
     phase: 'sending',
-    activity: more ? 'Loading options…' : 'Thinking…',
+    activity: more ? t('chat:global.activity.loadingOptions') : t('chat:global.activity.thinking'),
     progress: more ? null : {
       phase: 'understanding',
-      message: 'Understanding your request…',
+      message: t('chat:global.progress.understanding'),
       model: boot.profiles.globalChat.model,
       reasoningEffort: boot.profiles.globalChat.reasoningEffort,
       elapsedMs: 0,
       startedAt: Date.now(),
       steps: [{
         phase: 'understanding',
-        message: 'Understanding your request…',
+        message: t('chat:global.progress.understanding'),
         elapsedMs: 0,
       }],
       operations: [],
@@ -646,13 +647,13 @@ async function runTurn({ text, more = false, topic }: {
         } else if (event.type === 'tool.started') {
           applyToolProgress(event, 'running');
           publish((current) => current.bootstrap?.thread?.id === thread.id
-            ? { activity: eventString(event.title, 'Working…') }
+            ? { activity: eventString(event.title, t('chat:global.activity.working')) }
             : {});
         } else if (event.type === 'tool.completed') {
           applyToolProgress(event, event.status === 'failed' ? 'failed' : 'completed');
         } else if (event.type === 'confirmation.required') {
           publish((current) => current.bootstrap?.thread?.id === thread.id
-            ? { activity: 'Preparing confirmation…' }
+            ? { activity: t('chat:global.activity.preparingConfirmation') }
             : {});
         } else if (event.type === 'result.attached' && event.result) {
           const attached = event.result as GlobalChatResult;
@@ -687,7 +688,7 @@ async function runTurn({ text, more = false, topic }: {
             : {});
         } else if (event.type === 'turn.failed') {
           completed = true;
-          const message = typeof event.message === 'string' ? event.message : 'That request could not be completed.';
+          const message = typeof event.message === 'string' ? event.message : t('chat:global.error.turnFailed');
           const assistantMessage = event.assistantMessage as GlobalChatMessage | null | undefined;
           publish((current) => current.bootstrap?.thread?.id === thread.id
             ? {
@@ -707,10 +708,10 @@ async function runTurn({ text, more = false, topic }: {
     });
     if (!completed && !controller.signal.aborted) {
       publish((current) => current.bootstrap?.thread?.id === thread.id
-        ? { activity: 'Reconnecting…', progress: current.progress ? {
+        ? { activity: t('chat:global.activity.reconnecting'), progress: current.progress ? {
           ...current.progress,
           phase: 'reconnecting',
-          message: 'Reconnecting to the saved turn…',
+          message: t('chat:global.progress.reconnecting'),
         } : null }
         : {});
       completed = await recoverInterruptedTurn(
@@ -722,7 +723,7 @@ async function runTurn({ text, more = false, topic }: {
             phase: 'error',
             activity: '',
             progress: null,
-            error: 'The connection was interrupted before an answer was saved. Please try again.',
+            error: t('chat:global.error.interrupted'),
             retryRequest,
             messages: current.messages.map((item) => item.pending ? { ...item, pending: false } : item),
           }
@@ -744,10 +745,10 @@ async function runTurn({ text, more = false, topic }: {
       // above, but the server may still be finishing the same durable turn.
       // Recover it in exactly the same way before showing a retry error.
       publish((current) => current.bootstrap?.thread?.id === thread.id
-        ? { activity: 'Reconnecting…', progress: current.progress ? {
+        ? { activity: t('chat:global.activity.reconnecting'), progress: current.progress ? {
           ...current.progress,
           phase: 'reconnecting',
-          message: 'Reconnecting to the saved turn…',
+          message: t('chat:global.progress.reconnecting'),
         } : null }
         : {});
       completed = await recoverInterruptedTurn(
@@ -797,7 +798,7 @@ async function runDirectAction({
   if (!boot || state.phase === 'sending') return;
   const thread = boot.thread;
   if (!boot.profiles.globalChat.enabled || !thread) {
-    publish({ error: 'Enable experimental Global Chat in Settings first.' });
+    publish({ error: t('chat:global.error.enableFirst') });
     return;
   }
   const messageBoundary = lastPersistedMessageId(state.messages);
@@ -813,7 +814,7 @@ async function runDirectAction({
   const controller = new AbortController();
   activeAbort = controller;
   publish({
-    phase: 'sending', activity: 'Loading…', progress: null, error: '', retryRequest: null,
+    phase: 'sending', activity: t('chat:global.activity.loading'), progress: null, error: '', retryRequest: null,
   });
   try {
     const response = await api.executeDirectAction(thread.id, {
@@ -846,7 +847,7 @@ async function runDirectAction({
         : {});
     } else {
       publish((current) => current.bootstrap?.thread?.id === thread.id
-        ? { activity: 'Reconnecting…' }
+        ? { activity: t('chat:global.activity.reconnecting') }
         : {});
       const recovered = await recoverInterruptedTurn(
         thread.id,
@@ -859,7 +860,7 @@ async function runDirectAction({
           ? {
             phase: 'error',
             activity: '',
-            error: errorText(error, 'That direct action could not be completed.'),
+            error: errorText(error, t('chat:global.error.directAction')),
             retryRequest,
             messages: current.messages.map((item) => item.pending ? { ...item, pending: false } : item),
           }
@@ -904,7 +905,7 @@ export async function loadGlobalChatInlineResults(
   targetLabel?: string,
 ) {
   const threadId = state.bootstrap?.thread?.id;
-  if (!threadId) throw new Error('Open a Global Chat first.');
+  if (!threadId) throw new Error(t('chat:global.error.openFirst'));
   const response = await api.executeInlineAction(threadId, {
     actionId,
     parameters,
@@ -958,7 +959,7 @@ export async function loadOlderGlobalChatMessages() {
     }));
   } catch (error) {
     if (state.bootstrap?.thread?.id !== threadId) return;
-    publish({ phase: 'error', error: errorText(error, 'Could not load earlier messages.') });
+    publish({ phase: 'error', error: errorText(error, t('chat:global.error.loadEarlier')) });
   }
 }
 
@@ -1005,7 +1006,7 @@ export async function startNewGlobalChat() {
     focusComposer();
   } catch (error) {
     if (version !== navigationVersion) return;
-    publish({ phase: 'error', error: errorText(error, 'Could not start a new chat.') });
+    publish({ phase: 'error', error: errorText(error, t('chat:global.error.startNew')) });
   }
 }
 
@@ -1066,7 +1067,7 @@ export function dismissConfirmation(resultId: string) {
 export async function confirmGlobalChatAction(result: GlobalChatResult, token: string) {
   const threadId = state.bootstrap?.thread?.id;
   if (!threadId || !token || state.consumedConfirmations[result.id]) return;
-  publish({ activity: 'Applying…', error: '' });
+  publish({ activity: t('chat:global.activity.applying'), error: '' });
   try {
     const response = await api.confirmAction(token, threadId, api.clientMetadata());
     publish((current) => current.bootstrap?.thread?.id === threadId
@@ -1085,7 +1086,7 @@ export async function confirmGlobalChatAction(result: GlobalChatResult, token: s
       ? {
         phase: 'error',
         activity: '',
-        error: errorText(error, 'That action could not be completed.'),
+        error: errorText(error, t('chat:global.error.action')),
       }
       : {});
   } finally {
@@ -1119,17 +1120,17 @@ export function clientAction(result: GlobalChatResult): Record<string, unknown> 
 function clientActionUrl(action: Record<string, unknown>): string {
   const template = String(action.pathTemplate || '');
   if (!template.startsWith('/') || template.startsWith('//') || template.includes('://')) {
-    throw new Error('That browser action is unavailable.');
+    throw new Error(t('chat:global.error.browserActionUnavailable'));
   }
   const input = object(action.input) || {};
   const pathParameters = object(input.pathParameters) || {};
   const path = template.replace(/:([A-Za-z][A-Za-z0-9_]*)/g, (_match, name: string) => {
     const value = pathParameters[name];
-    if (value == null) throw new Error('That browser action is missing its target.');
+    if (value == null) throw new Error(t('chat:global.error.browserActionNoTarget'));
     return encodeURIComponent(String(value));
   });
   const url = new URL(path, window.location.origin);
-  if (url.origin !== window.location.origin) throw new Error('That browser action is unavailable.');
+  if (url.origin !== window.location.origin) throw new Error(t('chat:global.error.browserActionUnavailable'));
   const query = Array.isArray(input.query) ? input.query : [];
   for (const entry of query) {
     const pair = object(entry);
@@ -1196,7 +1197,7 @@ function applyLocalSetting(action: Record<string, unknown>) {
     window.location.reload();
     return;
   }
-  throw new Error('That local setting is unavailable.');
+  throw new Error(t('chat:global.error.localSettingUnavailable'));
 }
 
 export async function runGlobalChatClientAction(result: GlobalChatResult) {
@@ -1213,7 +1214,7 @@ export async function runGlobalChatClientAction(result: GlobalChatResult) {
     const hint = agentHandoffHint(action);
     if (!hint) {
       publish((current) => ({
-        error: 'That development handoff is missing its app.',
+        error: t('chat:global.error.handoffNoApp'),
         clientActionStates: { ...current.clientActionStates, [result.id]: 'error' },
       }));
       return false;
@@ -1240,7 +1241,7 @@ export async function runGlobalChatClientAction(result: GlobalChatResult) {
     const method = String(action.method || 'GET').toUpperCase();
     const transport = String(action.transport || '');
     if (!['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
-      throw new Error('That browser action is unavailable.');
+      throw new Error(t('chat:global.error.browserActionUnavailable'));
     }
     if (method === 'GET') {
       window.open(url, '_blank', 'noopener,noreferrer');
@@ -1254,7 +1255,7 @@ export async function runGlobalChatClientAction(result: GlobalChatResult) {
       });
       if (!response.ok) {
         const body = await response.json().catch(() => ({})) as { error?: string };
-        throw new Error(body.error || `Action failed (${response.status}).`);
+        throw new Error(body.error || t('chat:global.error.actionFailedStatus', { status: response.status }));
       }
       if (transport === 'development_handoff') {
         publish((current) => ({
@@ -1272,7 +1273,7 @@ export async function runGlobalChatClientAction(result: GlobalChatResult) {
     return true;
   } catch (error) {
     publish((current) => ({
-      error: errorText(error, 'That browser action could not be completed.'),
+      error: errorText(error, t('chat:global.error.browserAction')),
       clientActionStates: { ...current.clientActionStates, [result.id]: 'error' },
     }));
     return false;

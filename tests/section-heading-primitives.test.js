@@ -39,6 +39,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -151,7 +152,8 @@ test('the public-profile controls are a group of the Edit profile sheet, headed 
   // what matters is that it is that shared heading and no class string of its
   // own.
   const sheet = read('frontend/src/features/profile/profile-edit-sheet.tsx');
-  assert.match(sheet, /<Group title="Public page">/,
+  assert.equal(message('profile:edit.public.group'), 'Public page');
+  assert.match(sheet, /<Group title=\{t\('profile:edit\.public\.group'\)\}>/,
     'the “Public page” heading is the sheet’s shared Group, not a hand-written <h2>');
   const view = read('frontend/src/features/profile/profile-view.tsx');
   assert.doesNotMatch(view, /className="font-semibold text-base"/,

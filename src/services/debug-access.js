@@ -55,6 +55,7 @@ const DENIED_TABLES = new Set([
   'account_email_verifications', // mailbox proof and current-password hash snapshot
   'mobile_otp_codes',   // hashed one-time email signup/claim codes
   'waitlist_verification_codes', // one-time waitlist email codes, same treatment as mobile_otp_codes
+  'waitlist_release_links', // hashed one-time sign-in links from the release mail (#4594)
   'web_signup_sessions', // hashed, single-use first-password continuations
   'sign_in_providers',  // Apple/Google client secrets and private keys (AES blobs, still deny)
   'oauth_sign_in_states', // Apple/Google round trips: state, binder, nonce, PKCE verifier
@@ -106,6 +107,7 @@ const DENIED_TABLES = new Set([
   'mcp_tokens',               // hosted-connector bearer hashes and hints
   'mcp_delegations',          // which of the platform's own agents holds a grant for whom (#2779)
   'mcp_auth_audit_events',    // security audit trail for connector credentials
+  'external_agent_upload_tokens', // one-time work-order patch upload credential hashes (#4264)
   'user_social_identities',   // private provider ownership proofs
   'social_identity_oauth_states', // social-link state hashes + PKCE verifiers
   'social_identity_pending_replacements', // short-lived verified account replacements
@@ -172,6 +174,9 @@ const DENIED_COLUMNS = {
   homeroom_bot_runs: [
     'plan_change', // what a creator asked the bot's plan changed with; never posted anywhere
     'review', // a first version's review: issues quoting a private project's screens (review_rounds and review_stop stay readable)
+    'build_no_change', // a build agent's last message when it changed nothing: can quote a private project's code
+    'build_retry', // why a first version's first try failed, which can quote its build agent's last message
+    'build_checkpoint', // where a build is between its steps, with its build agent's last message
   ],
   waitlist_signups: [
     'ip',         // submitter IP — same treatment as users.waitlist_ip

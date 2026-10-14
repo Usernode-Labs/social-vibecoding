@@ -474,7 +474,8 @@ test('creation waits a little for the card, the route starts it with the maker\'
   const routes = read('src/routes/apps.js');
   // Both doors that land on the made screen: the first session's and the
   // Create button's (MAKE_ORIGINS; tests/create-front-door.test.js).
-  assert.match(routes, /if \(MAKE_ORIGINS\.has\(req\.body\.from\) && !repoUrlNormalized\s+&& require\('\.\.\/services\/homeroom-bot-dm'\)\.normalizeBrief\(req\.body\.brief\)\) \{\s+await require\('\.\.\/services\/app-sketch'\)\.startSketch\(pool, \{/);
+  // A ready-made app (services/app-templates.js) has its own icon and nothing to sketch.
+  assert.match(routes, /const readyMade = appTemplates\.isReadyMade\(template\);\s+if \(MAKE_ORIGINS\.has\(req\.body\.from\) && !repoUrlNormalized && !readyMade\s+&& require\('\.\.\/services\/homeroom-bot-dm'\)\.normalizeBrief\(req\.body\.brief\)\) \{\s+await require\('\.\.\/services\/app-sketch'\)\.startSketch\(pool, \{/);
   assert.match(routes, /app: appRow, user: req\.user, brief: req\.body\.brief,\s+timeZone: typeof req\.body\.timeZone === 'string' \? req\.body\.timeZone\.slice\(0, 64\) : null,/);
   assert.doesNotMatch(routes, /sketch\.html/, 'no framed page: the card is drawn by the made screen');
   const make = read('frontend/src/features/first-session/make.tsx');
@@ -485,7 +486,8 @@ test('creation waits a little for the card, the route starts it with the maker\'
 test('the made screen says what is true: the bot builds it, or the description is its first request', () => {
   const { loadTsx } = require('./lib/render-tsx');
   const made = loadTsx('frontend/src/features/first-session/made.tsx');
-  assert.equal(made.buildLine(null, 'running', false), 'Your description is its first request.');
+  // #4053: nobody builds it, so no build line; the note says what it is.
+  assert.equal(made.madeLine(null, false), null);
   assert.equal(made.buildNote(true), 'Homeroom is making your app. It will message you when the first version is ready to try, or if it has any questions.');
   assert.equal(made.buildNote(false), 'You or anyone you invite can build it from there.');
   assert.equal(made.sketchCaption, undefined, 'no caption calling it a sketch of the real app');

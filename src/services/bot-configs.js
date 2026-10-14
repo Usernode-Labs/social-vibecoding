@@ -39,6 +39,11 @@
 //             the triage's, the spec's and the build's prompts the way the
 //             studio adds it. Its FILES apply only in the studio, whose first
 //             commit carries them: a live project's repository already exists.
+//   tweaks    optional: named changes to how a first version's plan or build works
+//             (TWEAKS), each one benched as a configuration of its own before
+//             it is anyone's default. Left out, or empty, is the build as
+//             every first version has it, and a recipe without tweaks is
+//             stored without the key, exactly as before tweaks existed.
 //
 // Every row of bot_config_versions is one immutable VERSION. Editing a
 // configuration saves the next version of its key; averages are per version
@@ -92,6 +97,33 @@ const MAX_ROUNDS = 5;
 const MIN_BUDGET_MINUTES = 1;
 const MAX_BUDGET_MINUTES = 60;
 const MAX_LABEL_CHARS = 80;
+// Build speed (13 Oct 2026): the GLM build was 33 of run five's 52 minutes
+// from Make it to live. Each tweak makes a first version's build do less
+// work in one way, and ships as a recipe's choice, never a default, until
+// its arm on the App bench cuts time without worse review findings
+// (homeroom-bot-live.js says what each one changes in the prompts, and
+// worker.js what it changes in the turn):
+//   one_look        the build's own check: boot once, look at each main screen
+//                   once at one width, fix only what is broken, stop; the
+//                   reviewer does the sweep (a reviewed recipe only).
+//   starter_inline  the starter's file map and the files every build reads,
+//                   in the build prompt, so the build does not read them again.
+//   lean_turns      every model call carries less: the declared checks are
+//                   left to the platform's gate rather than run by hand along
+//                   the way, and stale tool output is cut from what each call
+//                   re-sends.
+//   one_go          the whole first version written from the spec in a few
+//                   replies of whole files, with the repository in the prompt
+//                   (as starter_inline), before anything is booted; the agent
+//                   loop after it only fixes. The agent-loop form of the
+//                   plan's L3, the biggest saving and the biggest risk.
+//   lean_plan       the plan (the spec) asks for a focused first version:
+//                   the request done well, the platform's own minimums and
+//                   nothing else, in about a third of the length, one drawn
+//                   screen, and "Not in this version" in place of the
+//                   nice-to-haves, which the build then leaves out. Run 189's
+//                   builds built 23 of their plans' 26 nice-to-haves.
+const TWEAKS = Object.freeze(['one_look', 'starter_inline', 'lean_turns', 'one_go', 'lean_plan']);
 const MAX_NOTES_CHARS = 1000;
 // The side builds' own weekly spend, real dollars on the App bench lane's
 // key, in cents: a platform setting, $25 unless an admin sets another.
@@ -224,7 +256,7 @@ function badScope() {
 function validateRecipe(raw) {
   const re = modelIdRe();
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return httpError(400, 'recipe must be an object');
-  const extra = Object.keys(raw).filter((k) => !['models', 'reviewer', 'pack'].includes(k));
+  const extra = Object.keys(raw).filter((k) => !['models', 'reviewer', 'pack', 'tweaks'].includes(k));
   if (extra.length) return httpError(400, `recipe has unknown keys: ${extra.join(', ')}`);
   const m = raw.models;
   if (!m || typeof m !== 'object' || Array.isArray(m)) return httpError(400, 'recipe.models must name a model for triage, spec and build');
@@ -260,7 +292,28 @@ function validateRecipe(raw) {
     if (!Number.isInteger(id) || id <= 0) return httpError(400, 'recipe.pack must be null or an App bench context pack id');
     pack = id;
   }
-  return { ok: true, recipe: { models, reviewer, pack } };
+  let tweaks = [];
+  if (raw.tweaks != null) {
+    if (!Array.isArray(raw.tweaks) || raw.tweaks.some((t) => typeof t !== 'string')) {
+      return httpError(400, `recipe.tweaks must be a list of ${TWEAKS.join(', ')}`);
+    }
+    const unknown = raw.tweaks.filter((t) => !TWEAKS.includes(t.trim()));
+    if (unknown.length) return httpError(400, `recipe.tweaks has unknown tweaks: ${unknown.join(', ')} (known: ${TWEAKS.join(', ')})`);
+    // In one order, each once, so two recipes with the same tweaks are the
+    // same JSON (upgradeSeedConfigs compares stored recipes as jsonb).
+    const named = new Set(raw.tweaks.map((t) => t.trim()));
+    tweaks = TWEAKS.filter((t) => named.has(t));
+  }
+  if (tweaks.includes('one_look') && !(reviewer && reviewer.maxRounds > 0)) {
+    return httpError(400, 'recipe.tweaks one_look leaves the sweep to the review, so it needs a reviewer with at least one round');
+  }
+  return { ok: true, recipe: { models, reviewer, pack, ...(tweaks.length ? { tweaks } : {}) } };
+}
+
+/** A recipe's tweaks, [] for none or a recipe that does not validate. Pure. */
+function tweaksOf(recipe) {
+  const r = recipeOf(recipe);
+  return r && Array.isArray(r.tweaks) ? [...r.tweaks] : [];
 }
 
 /** A stored recipe read back in its one shape, or null when it no longer validates. Pure. */
@@ -279,6 +332,7 @@ function recipeLine(recipe) {
     ? `review ${short(r.reviewer.model)} ×${r.reviewer.maxRounds} in ${r.reviewer.budgetMinutes} min`
     : 'no review');
   if (r.pack) parts.push(`pack ${r.pack}`);
+  if (r.tweaks?.length) parts.push(`tweaks ${r.tweaks.join(', ')}`);
   return parts.join(' · ');
 }
 
@@ -294,7 +348,8 @@ function derivableFrom(current, side) {
   const c = recipeOf(current);
   const s = recipeOf(side);
   if (!c || !s || s.reviewer !== null) return false;
-  return STAGES.every((st) => c.models[st] === s.models[st]) && (c.pack || null) === (s.pack || null);
+  return STAGES.every((st) => c.models[st] === s.models[st]) && (c.pack || null) === (s.pack || null)
+    && tweaksOf(c).join(',') === tweaksOf(s).join(',');
 }
 
 /**
@@ -485,6 +540,9 @@ async function saveVersion(pool, {
   if (!v.ok) return v;
   if (scope === 'later' && v.recipe.reviewer) {
     return httpError(400, 'A later-changes recipe has no reviewer (reviewer: null): the review loop is for first versions');
+  }
+  if (scope === 'later' && v.recipe.tweaks) {
+    return httpError(400, 'A later-changes recipe has no tweaks: they change how a first version is built');
   }
   const cleanLabel = label == null ? null : String(label).replace(/\s+/g, ' ').trim();
   if (cleanLabel != null && (!cleanLabel || cleanLabel.length > MAX_LABEL_CHARS)) {
@@ -726,10 +784,11 @@ async function upgradeSeedConfigs(pool) {
  */
 async function recordResult(pool, {
   botRunId, configVersionId, source, trialId = null, status = 'done', built = null, booted = null,
-  costUsd = null, activeMs = null, sha = null, capture = null, error = null, costParts = null,
+  costUsd = null, activeMs = null, sha = null, capture = null, error = null, costParts = null, otherOf = null,
 }) {
-  // What the cost was made of, stage by stage, adding up to it (stage-costs.js).
-  const breakdown = costParts ? stageCosts.breakdown(costUsd, costParts) : null;
+  // What the cost was made of, stage by stage, adding up to it, and what
+  // the remainder no stage names is, where that is known (stage-costs.js).
+  const breakdown = costParts ? stageCosts.breakdown(costUsd, costParts, { of: otherOf || [] }) : null;
   const { rows: [row] } = await pool.query(
     `INSERT INTO bot_config_results
        (bot_run_id, config_version_id, source, trial_id, status, built, booted, cost_usd, active_ms, sha, capture, error,
@@ -817,13 +876,24 @@ async function finishLive(pool, {
     const carried = Number(carriedUsd) > 0 ? Number(carriedUsd) : 0;
     const liveCost = ledger.total != null ? ledger.total + require('./bot-review').reviewerCost(review) + carried : built.costUsd;
     // Its stages, on their models (stage-costs.js): the triage's share, and
-    // the build's own parts with their tokens from the ledger; the review's
-    // read from its state when the build did not carry them (a review a
-    // restart finished).
-    const parts = await stageCosts.withLedgerTokens(pool, {
-      ...stageCosts.reviewParts(review, { buildModel: version.recipe?.models?.build || null }),
+    // the spec, build and fix turns as the session's ledger holds them, the
+    // total's own source, whether the build named them or a restart finished
+    // it and named none; the review's reviewer calls from its state. What
+    // the ledger holds that no stage takes, and a kept plan's cost, are
+    // named under the remainder.
+    const buildModel = version.recipe?.models?.build || null;
+    const { parts, unnamed } = await stageCosts.ledgerParts(pool, built.sessionId, {
+      ...stageCosts.reviewParts(review, { buildModel }),
       ...stageCosts.fromStages(built.stageCosts),
+    }, {
+      models: { spec: version.recipe?.models?.spec || null, build: buildModel, review_fixes: buildModel },
+      reviewStartedAt: review?.startedAt || null,
     });
+    const keptPlan = carried > 0 ? [{ component: 'kept_plan', usd: carried }] : [];
+    const reviewFromMs = review?.startedAt ? Date.parse(review.startedAt) : NaN;
+    const unnamedBefore = Number.isFinite(reviewFromMs)
+      ? unnamed.filter((u) => u.startedAt && Date.parse(u.startedAt) < reviewFromMs)
+      : unnamed;
     await recordResult(pool, {
       botRunId, configVersionId: version.id, source: 'live',
       built: builtOk,
@@ -834,6 +904,7 @@ async function finishLive(pool, {
       capture: finalCapture,
       error: builtOk ? null : (built.blocked ? `blocked: ${built.blocked}` : built.error || null),
       costParts: { ...triagePart(triage), ...parts },
+      otherOf: [...unnamed, ...keptPlan],
     });
     const round0 = review?.round0 || null;
     const sides = await pool.query(
@@ -848,6 +919,7 @@ async function finishLive(pool, {
       await recordResult(pool, {
         botRunId, configVersionId: s.config_version_id, source: 'round0',
         costParts: { ...triagePart(triage), ...(round0 ? firstBuild : parts) },
+        otherOf: [...(round0 ? unnamedBefore : unnamed), ...keptPlan],
         built: round0 ? true : builtOk,
         booted: round0?.capture ? round0.capture.booted === true : (round0 ? null : (finalCapture ? finalCapture.booted === true : null)),
         costUsd: add(round0 ? (ledger.before != null ? ledger.before + carried : round0.costUsd) : liveCost, triage.costUsd),
@@ -874,8 +946,9 @@ async function finishSideTrial(pool, trialId) {
   try {
     const { rows: [t] } = await pool.query(
       `SELECT tr.id, tr.bot_run_id, tr.bot_config_version_id, tr.status, tr.parsed, tr.capture, tr.cost_usd::float8 AS cost,
-              tr.interrupted_cost_usd::float8 AS interrupted, tr.duration_ms, tr.build_sha, tr.build_commits, tr.error
-         FROM bench_trials tr WHERE tr.id = $1`,
+              tr.interrupted_cost_usd::float8 AS interrupted, tr.duration_ms, tr.build_sha, tr.build_commits, tr.error,
+              r.spent_usd::float8 AS run_spent, r.cap_usd::float8 AS run_cap
+         FROM bench_trials tr LEFT JOIN bench_runs r ON r.id = tr.run_id WHERE tr.id = $1`,
       [Number(trialId)],
     );
     if (!t || !t.bot_run_id || !t.bot_config_version_id) return null;
@@ -885,7 +958,12 @@ async function finishSideTrial(pool, trialId) {
     // that did not run) says nothing about its configuration: skipped with
     // why, like one never run, never counted as "didn't build".
     const ranAtAll = !['cancelled', 'skipped_cap', 'not_applicable', 'infra_fail'].includes(t.status);
-    const why = t.error || (t.parsed?.blocked ? `blocked: ${t.parsed.blocked}` : null);
+    // One its run's cap stopped (bench/lane.js capRun) says so, and how far
+    // the run had got: a capped trial has no error of its own.
+    const capped = t.status === 'skipped_cap'
+      ? `capped: its run had spent $${(num(t.run_spent) || 0).toFixed(2)} of its $${(num(t.run_cap) || 0).toFixed(2)} cap`
+      : null;
+    const why = t.error || capped || (t.parsed?.blocked ? `blocked: ${t.parsed.blocked}` : null);
     await recordResult(pool, {
       botRunId: t.bot_run_id, configVersionId: t.bot_config_version_id, source: 'trial', trialId: t.id,
       // Its own stages (bench/runner.js buildStage), and the live run's triage.
@@ -1321,6 +1399,23 @@ function outcomesOf(rows) {
 }
 
 /**
+ * Whether a result is the platform's failure rather than its
+ * configuration's, so it is left out of the build rate on both sides alike
+ * and counted on its own: a side build the platform failed (infra_fail,
+ * recorded skipped: finishSideTrial), and a live build a restart failed
+ * (finished by restart recovery and not built: homeroom-bot.js
+ * completeRecoveredLive says "(finished after a restart)", or the platform
+ * restarted in the middle of each try). Pure.
+ */
+function platformFailureOf(r) {
+  if (!r || r.built === true) return false;
+  const error = String(r.error || '');
+  if (r.status === 'skipped') return /^the platform failed the side build/.test(error);
+  if (r.status !== 'done') return false;
+  return /^the platform restarted in the middle/.test(error) || /\(finished after a restart\)$/.test(error);
+}
+
+/**
  * One scope's versions (first versions unless said) with their numbers:
  * builds, build rate, average real cost and what it was made of, median
  * active time, boot rate, and win rate against the scope's version current
@@ -1335,13 +1430,13 @@ async function listWithStats(pool, { scope: rawScope = null } = {}) {
   const versions = await listVersions(pool, scope);
   const current = versions.find((v) => v.role === 'current') || null;
   const { rows: results } = await pool.query(
-    `SELECT r.config_version_id, r.source, r.built, r.booted, r.cost_usd::float8 AS cost, r.active_ms::float8 AS ms, r.cost_parts,
-            run.mode, ps.status AS proposal_status
+    `SELECT r.config_version_id, r.source, r.status, r.built, r.booted, r.cost_usd::float8 AS cost, r.active_ms::float8 AS ms,
+            r.cost_parts, r.error, run.mode, ps.status AS proposal_status
        FROM bot_config_results r
        JOIN bot_config_versions v ON v.id = r.config_version_id
        JOIN homeroom_bot_runs run ON run.id = r.bot_run_id
        LEFT JOIN chat_sessions ps ON ps.id = run.proposal_session_id
-      WHERE r.status = 'done' AND v.scope = $1`,
+      WHERE (r.status = 'done' OR (r.status = 'skipped' AND r.error LIKE 'the platform failed%')) AND v.scope = $1`,
     [scope],
   );
   const { rows: pairs } = await pool.query(
@@ -1360,10 +1455,21 @@ async function listWithStats(pool, { scope: rawScope = null } = {}) {
     [scope],
   );
   const out = versions.map((v) => {
-    const mine = results.filter((r) => Number(r.config_version_id) === v.id);
+    const ofVersion = results.filter((r) => Number(r.config_version_id) === v.id);
+    const mine = ofVersion.filter((r) => r.status === 'done');
     const costs = mine.map((r) => num(r.cost)).filter((c) => c != null);
     const builtN = mine.filter((r) => r.built === true).length;
-    const bootKnown = mine.filter((r) => r.booted != null || r.built === false);
+    // The build rate leaves the platform's failures out on both sides alike
+    // (platformFailureOf): a side build the platform failed and a live one
+    // a restart failed say nothing about the configuration.
+    const platformFailures = ofVersion.filter(platformFailureOf).length;
+    const rated = mine.filter((r) => !platformFailureOf(r)).length;
+    // Booted out of the builds whose boot was measured. A build that failed
+    // had no boot to measure, and one with no capture (every later change,
+    // a first version without a final capture) is unknown, not a failure:
+    // counting failed builds as "didn't boot" while leaving unmeasured ones
+    // out read 0% for configurations none of whose builds failed to boot.
+    const bootKnown = mine.filter((r) => r.built === true && r.booted != null);
     const involving = pairs.filter((p) => Number(p.current_version) === v.id || Number(p.side_version) === v.id);
     let vsCurrent = null;
     if (current && current.id !== v.id) {
@@ -1389,9 +1495,11 @@ async function listWithStats(pool, { scope: rawScope = null } = {}) {
     return {
       ...v,
       stats: {
-        builds: mine.length,
+        builds: rated,
         built: builtN,
-        buildRate: mine.length ? builtN / mine.length : null,
+        buildRate: rated ? builtN / rated : null,
+        // Left out of builds and the build rate, counted here.
+        platformFailures,
         // A later change's current version: its live builds' proposals.
         ...(scope === 'later' && v.role === 'current'
           ? { proposals: outcomesOf(mine.filter((r) => r.source === 'live')) } : {}),
@@ -1401,7 +1509,7 @@ async function listWithStats(pool, { scope: rawScope = null } = {}) {
         // the remainder no stage names (stage-costs.js averages).
         avgCostByStage: stageCosts.averages(mine.map((r) => r.cost_parts).filter(Boolean)),
         medianActiveMs: median(mine.map((r) => num(r.ms))),
-        bootRate: bootKnown.length ? mine.filter((r) => r.booted === true).length / bootKnown.length : null,
+        bootRate: bootKnown.length ? bootKnown.filter((r) => r.booted === true).length / bootKnown.length : null,
         pairsWaiting: involving.filter((p) => p.status === 'waiting').length,
         vsCurrent,
       },
@@ -1422,6 +1530,32 @@ async function listWithStats(pool, { scope: rawScope = null } = {}) {
       paused: budget.leftUsd <= 0,
     },
   };
+}
+
+/**
+ * How many pairs wait for a pick in each scope, { first_version, later }:
+ * the Homeroom bot console's Overview shows them (homeroom-bot.js
+ * adminPayload). A pair is picked only through the connector
+ * (list_bot_configs, get_bot_config_pair), so nothing else told an admin one
+ * was waiting. Null when it cannot be read. Never throws.
+ */
+async function pairsWaitingByScope(pool) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT v.scope, COUNT(*)::int AS n
+         FROM bot_config_pairs p
+         JOIN bot_config_results cr ON cr.id = p.current_result_id
+         JOIN bot_config_versions v ON v.id = cr.config_version_id
+        WHERE p.status = 'waiting'
+        GROUP BY v.scope`,
+    );
+    const out = Object.fromEntries(SCOPES.map((scope) => [scope, 0]));
+    for (const r of rows) if (SCOPES.includes(r.scope)) out[r.scope] = Number(r.n) || 0;
+    return out;
+  } catch (err) {
+    log.warn('bot-configs', 'Could not count the pairs waiting for a pick', { err: err.message });
+    return null;
+  }
 }
 
 /** Both scopes' numbers, labelled, first versions first (the connector's list). */
@@ -1852,6 +1986,7 @@ function configIdOfModel(model) {
 }
 
 module.exports = {
+  platformFailureOf,
   GLM,
   OPUS,
   ROLES,
@@ -1869,8 +2004,10 @@ module.exports = {
   SIDE_SUITE_NAME,
   SIDE_RUN_KIND,
   LATER_SIDE_RUN_KIND,
+  TWEAKS,
   validateRecipe,
   recipeOf,
+  tweaksOf,
   recipeLine,
   derivableFrom,
   reviews,
@@ -1907,6 +2044,7 @@ module.exports = {
   outcomesOf,
   listWithStats,
   listAllScopes,
+  pairsWaitingByScope,
   sideWeeklyCents,
   setSideWeeklyBudget,
   sideBudget,

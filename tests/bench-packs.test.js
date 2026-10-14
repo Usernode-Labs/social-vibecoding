@@ -270,3 +270,45 @@ test('a tracker writes a step at once, notes later, keeps the last four lines, a
   tr.note('seven');
   assert.equal(writes.length, 2, 'nothing after close');
 });
+
+test('a tracker writes the whole transcript with its progress: every line, repeats too, each step\'s start, and a replay\'s new lines only', async () => {
+  const writes = [];
+  const pool = { async query(sql, params) { writes.push({ sql: String(sql), params }); return { rows: [] }; } };
+  const tr = progress.tracker(pool, 7, { writeEveryMs: 60_000, transcript: {} });
+  await tr.step('build');
+  tr.note('Using Write public/app.js');
+  tr.note('OpenRouter request #3: still responding after 30s');
+  tr.note('OpenRouter request #3: still responding after 30s');
+  tr.note(`Using Bash\n${'x'.repeat(3000)}`);
+  await tr.close();
+  const rows = writes.filter((w) => /INSERT INTO bench_trial_lines/.test(w.sql));
+  const kinds = rows.flatMap((w) => w.params[3]);
+  const lines = rows.flatMap((w) => w.params[4]);
+  const steps = rows.flatMap((w) => w.params[2]);
+  assert.deepEqual(kinds, ['step', 'line', 'line', 'line', 'line'], 'its step\'s start, then every line, the repeat included');
+  assert.equal(lines[0], 'build');
+  assert.equal(lines[1], 'Using Write public/app.js');
+  assert.ok(steps.every((s) => s === 'build'), 'each with the step it came in');
+  assert.match(lines[4], /^Using Bash\nx+…$/, 'its own line breaks, cut at the transcript\'s length');
+  assert.equal(lines[4].length, progress.TRANSCRIPT_LINE_CHARS);
+  assert.ok(rows.flatMap((w) => w.params[5]).every((r) => r === false), 'nothing replayed');
+  assert.deepEqual(tr.snapshot().lines, ['Using Write public/app.js', 'OpenRouter request #3: still responding after 30s', `Using Bash ${'x'.repeat(3000)}`.slice(0, 199) + '…'],
+    'the watch still keeps its last few, repeats dropped');
+
+  // Restart recovery's replay: the lines written before the restart are skipped, the rest marked replayed.
+  writes.length = 0;
+  const replay = progress.tracker(pool, 7, { writeEveryMs: 60_000, transcript: { replayed: true, skip: 2 }, seed: { step: 'build', stepAt: '2026-10-13T18:20:00.000Z', lines: ['old'] } });
+  for (const line of ['Using Write public/app.js', 'OpenRouter request #3: ok after 174s', 'Using Bash npm test', 'OpenRouter request #4: ok after 12s']) replay.note(line);
+  await replay.close();
+  const again = writes.filter((w) => /INSERT INTO bench_trial_lines/.test(w.sql));
+  assert.deepEqual(again.flatMap((w) => w.params[4]), ['Using Bash npm test', 'OpenRouter request #4: ok after 12s']);
+  assert.ok(again.flatMap((w) => w.params[5]).every((r) => r === true));
+  assert.deepEqual(again.flatMap((w) => w.params[2]), ['build', 'build'], 'in the step it was seeded at');
+
+  // A tracker asked for no transcript writes none.
+  writes.length = 0;
+  const plain = progress.tracker(pool, 7, { writeEveryMs: 60_000 });
+  plain.note('Using Read x');
+  await plain.close();
+  assert.equal(writes.filter((w) => /bench_trial_lines/.test(w.sql)).length, 0);
+});

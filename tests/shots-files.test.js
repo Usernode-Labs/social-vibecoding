@@ -232,6 +232,47 @@ test('a motion change also needs a before and an after clip', () => {
   assert.deepEqual(toast, { id: 'saved-toast', status: 'ready', files: 4 });
 });
 
+// A project's first version: its before build is the starter template's
+// placeholder (services/shots-starter.js), so there is no before to take.
+test('a first version\'s change is ready with its after shots alone, and publishes nothing from before', () => {
+  const intent = twoScreenIntent();
+  const saved = new Map();
+  const shot = (screen, side, kind) => save(saved, intent,
+    { change: 'invite-suggestions', screen, side, kind }, sideShot(side));
+
+  let summary = shots.summarize(intent, saved, new Map(), { afterOnly: true });
+  assert.equal(summary.stories[0].reason,
+    'The shots agent did not save the after shot on desktop, the after shot on mobile.',
+    'only the after side is missing');
+  shot('desktop', 'after');
+  shot('mobile', 'after');
+  shot('mobile', 'after', 'element');
+  summary = shots.summarize(intent, saved, new Map(), { afterOnly: true });
+  assert.deepEqual(summary.stories, [{ id: 'invite-suggestions', status: 'ready', files: 3 }]);
+  assert.deepEqual(summary.verdict, {
+    passed: true, mode: 'shots', runs: 1, stories: summary.stories, afterOnly: true,
+  });
+
+  // Even a before shot that got saved is not published.
+  shot('desktop', 'before');
+  summary = shots.summarize(intent, saved, new Map(), { afterOnly: true });
+  assert.deepEqual(summary.files.map((file) => file.side), ['head', 'head', 'head']);
+  // An ordinary run still needs both sides.
+  assert.equal(shots.summarize(intent, saved).stories[0].status, 'skipped');
+  assert.equal('afterOnly' in shots.summarize(intent, saved).verdict, false);
+
+  // A motion change needs its after clip, and no before clip.
+  const motion = motionIntent();
+  const clips = new Map();
+  save(clips, motion, { change: 'saved-toast', screen: 'desktop', side: 'after' }, sideShot('after'));
+  assert.equal(shots.summarize(motion, clips, new Map(), { afterOnly: true }).stories
+    .find((story) => story.id === 'saved-toast').reason,
+  'The shots agent did not save the after clip on desktop.');
+  save(clips, motion, { change: 'saved-toast', screen: 'desktop', side: 'after', kind: 'clip' }, fixtures.webm());
+  assert.deepEqual(shots.summarize(motion, clips, new Map(), { afterOnly: true }).stories
+    .find((story) => story.id === 'saved-toast'), { id: 'saved-toast', status: 'ready', files: 2 });
+});
+
 test('the agent\'s own skip reason is shown instead of the list of what is missing', () => {
   const intent = motionIntent();
   const saved = new Map();
@@ -294,6 +335,81 @@ test('a ready change carries the agent\'s note on what its shots leave out', () 
   for (const empty of ['', '   ', null, 42]) {
     assert.throws(() => shots.note(empty), { code: 'note_required', status: 400 });
   }
+});
+
+test('a problem noticed on the after build names a declared change and one of its screens', () => {
+  const intent = twoScreenIntent();
+  assert.deepEqual(shots.notice(intent, {
+    change: 'invite-suggestions', screen: 'mobile', problem: '  The table is cut off at the right edge.  ',
+    alsoBefore: false, shot: 'screen',
+  }), {
+    text: 'The table is cut off at the right edge.', change: 'invite-suggestions', screen: 'mobile',
+    shot: 'screen', alsoBefore: false,
+  });
+  // The shot is optional, and so is whether the before build has it.
+  const bare = shots.notice(intent, { change: 'invite-suggestions', screen: 'desktop', problem: 'Overlap.' });
+  assert.equal(bare.shot, null);
+  assert.equal(bare.alsoBefore, 'unknown');
+  // One short sentence: longer text is cut at the cap.
+  assert.equal(shots.notice(intent, {
+    change: 'invite-suggestions', screen: 'desktop', problem: 'x'.repeat(900),
+  }).text.length, shots.MAX_NOTICE);
+  assert.equal(shots.MAX_NOTICE, 300);
+
+  for (const value of [true, 'true']) assert.equal(shots.alsoBefore(value), true);
+  for (const value of [false, 'false']) assert.equal(shots.alsoBefore(value), false);
+  for (const value of [undefined, null, '', 'unknown']) assert.equal(shots.alsoBefore(value), 'unknown');
+  assert.throws(() => shots.alsoBefore('maybe'), refusal('invalid_also_before'));
+
+  const base = { change: 'invite-suggestions', screen: 'desktop', problem: 'Overlap.' };
+  assert.throws(() => shots.notice(intent, { ...base, problem: '  ' }), refusal('problem_required'));
+  assert.throws(() => shots.notice(intent, { ...base, problem: 42 }), refusal('problem_required'));
+  assert.throws(() => shots.notice(intent, { ...base, change: 'someone-elses' }), refusal('unknown_change'));
+  assert.throws(() => shots.notice(intent, { ...base, screen: 'tablet' }), refusal('unknown_screen'));
+  assert.throws(() => shots.notice(intent, { ...base, shot: 'clip' }), refusal('invalid_kind'));
+  assert.throws(() => shots.notice(intent, { ...base, alsoBefore: 'yes' }), refusal('invalid_also_before'));
+});
+
+test('noticed problems ride beside the results and never change a change\'s status', () => {
+  const intent = motionIntent();
+  const saved = new Map();
+  for (const side of ['before', 'after']) {
+    save(saved, intent, { change: 'invite-suggestions', screen: 'desktop', side }, sideShot(side));
+  }
+  const without = shots.summarize(intent, saved);
+  assert.deepEqual(without.notices, []);
+  assert.equal(Object.hasOwn(without.verdict, 'notices'), false, 'a run without notices stores none');
+
+  const notices = [
+    { text: 'The sort control overlaps a heading.', change: 'invite-suggestions', screen: 'desktop', shot: 'screen', alsoBefore: true },
+    // The element shot was never saved, so the notice cannot point at it.
+    { text: 'A broken image.', change: 'invite-suggestions', screen: 'desktop', shot: 'element', alsoBefore: 'unknown' },
+    // A change that is not ready keeps its notice, without a shot to show it.
+    { text: 'The toast covers the button.', change: 'saved-toast', screen: 'desktop', shot: 'screen', alsoBefore: false },
+  ];
+  const summary = shots.summarize(intent, saved, new Map(), { notices });
+  assert.deepEqual(summary.stories, without.stories, 'the results are exactly what they were without notices');
+  assert.equal(summary.verdict.passed, without.verdict.passed);
+  assert.equal(summary.manifestHash, without.manifestHash, 'notices publish no file');
+  assert.deepEqual(summary.verdict.notices, [
+    { ...notices[0] },
+    { ...notices[1], shot: null },
+    { ...notices[2], shot: null },
+  ]);
+  assert.deepEqual(summary.notices, summary.verdict.notices);
+
+  // A run whose only change failed keeps its notices too, still advisory.
+  const failed = shots.summarize(intent, new Map(), new Map([['invite-suggestions', 'Saving answered 500.'], ['saved-toast', 'x']]), {
+    failed: new Set(['invite-suggestions']), notices: notices.slice(0, 1),
+  });
+  assert.equal(failed.verdict.passed, false);
+  assert.equal(failed.failedCount, 1);
+  assert.equal(failed.verdict.notices.length, 1);
+
+  // Never more than the cap, whatever the caller hands in.
+  const many = Array.from({ length: 9 }, (_, i) => ({ ...notices[0], text: `Problem ${i}.` }));
+  assert.equal(shots.summarize(intent, saved, new Map(), { notices: many }).verdict.notices.length, shots.MAX_NOTICES);
+  assert.equal(shots.MAX_NOTICES, 5);
 });
 
 test('only the files of ready changes are published, and the manifest hash names them', () => {
@@ -387,6 +503,24 @@ test('markUnchanged only marks ready changes, once', () => {
   ]);
   assert.deepEqual(shots.markUnchanged(marked, new Set(['a'])), marked, 'a second pass adds nothing');
   assert.deepEqual(shots.markUnchanged(stories, new Set()), stories);
+});
+
+// The verdict keeps an unchanged change ready (its shots publish and count
+// toward the run); every result read off it says unchanged, so a change
+// whose before and after came out the same is not read as plain ready.
+test('a result reads unchanged for a ready change marked unchanged, and keeps the other three', () => {
+  assert.deepEqual(shots.RESULT_STATUSES, ['ready', 'unchanged', 'skipped', 'failed']);
+  const [unchanged] = shots.markUnchanged([{ id: 'a', status: 'ready', files: 2 }], new Set(['a']));
+  assert.equal(unchanged.status, 'ready', 'the verdict itself is as it was');
+  assert.equal(shots.resultStatus(unchanged), 'unchanged');
+  assert.equal(shots.resultStatus({ id: 'a', status: 'ready', files: 2 }), 'ready');
+  assert.equal(shots.resultStatus({ id: 'a', status: 'ready', unchanged: 'yes' }), 'ready', 'only the flag the fold sets');
+  assert.equal(shots.resultStatus({ id: 'a', status: 'failed', reason: 'A 500.' }), 'failed');
+  for (const other of [{ status: 'skipped' }, { status: 'published' }, { status: 'skipped', unchanged: true }, {}, null]) {
+    assert.equal(shots.resultStatus(other), 'skipped', JSON.stringify(other));
+  }
+  const verdict = shots.summarize(stillIntent(), new Map()).verdict;
+  assert.ok(verdict.stories.every((story) => shots.RESULT_STATUSES.includes(shots.resultStatus(story))));
 });
 
 test('an element shot must fit the screen it was taken on', () => {

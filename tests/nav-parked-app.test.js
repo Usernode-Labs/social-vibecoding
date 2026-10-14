@@ -188,6 +188,7 @@ function router({ launcher = [WHITEBOARD, PLATFORM], record = null } = {}) {
   const noop = () => undefined;
   const elements = new Map();
   const context = vm.createContext({
+    PlatformI18n: require('./lib/platform-i18n').englishPlatformI18n(),
     location: new URL('https://homeroom.test/'),
     history: { pushState() {}, replaceState() {}, state: null },
     URL, URLSearchParams, console, setTimeout, clearTimeout,

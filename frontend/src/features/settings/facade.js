@@ -64,11 +64,7 @@ const state = {
   walletLinkEnabled: false,
   aiProgressEstimate: false,
   sessionBridgeEnabled: false,
-  homeroomBotDm: false,
-  homeroomBotForEveryone: false,
   locale: null,
-  devFlowPreference: null,
-  externalFlowsAvailable: false,
 };
 
 let chunk = null;   // the import in flight (or settled), once started
@@ -249,11 +245,7 @@ const Facade = {
       state.walletLinkEnabled = !!u.walletLinkEnabled;
       state.aiProgressEstimate = !!u.aiProgressEstimate;
       state.sessionBridgeEnabled = !!u.sessionBridgeEnabled;
-      state.homeroomBotDm = !!u.homeroomBotDm;
-      state.homeroomBotForEveryone = !!u.homeroomBotForEveryone;
       state.locale = u.locale || null;
-      state.devFlowPreference = u.devFlowPreference || null;
-      state.externalFlowsAvailable = !!u.externalFlowsAvailable;
       // The CLI-credentials gate's memo, primed from the same payload. Written
       // to whichever object is window.Settings NOW — this one, or the module
       // if it took over while the read was in flight — and kept here for the

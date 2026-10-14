@@ -296,6 +296,122 @@ test('a failing build mark is logged and never holds the exit; no build, no writ
   }
 });
 
+test('shutdown hands its checks runs to the next harvest before closing the pool, and only on Kubernetes', async () => {
+  // 7 Oct 2026: the new leader's boot harvest ran while the rows the old
+  // Pod had been harvesting still carried its heartbeat, so it seated
+  // neither, and the stale sweep started both runs over.
+  const { server, restore } = loadServer();
+  const harvest = require('../src/services/check-harvest');
+  const checkRuns = require('../src/services/check-runs');
+  const lifecycle = require('../src/services/lifecycle');
+  const saved = { enabled: harvest.isEnabled, release: checkRuns.release, waitFor: lifecycle.waitFor };
+  const order = [];
+  lifecycle.waitFor = async () => true;
+  checkRuns.release = async (pool) => {
+    order.push('released');
+    assert.ok(pool, 'through the shutdown pool');
+    return 2;
+  };
+  try {
+    harvest.isEnabled = () => true;
+    let pool = fakePool({ endImpl: async () => { order.push('poolEnd'); } });
+    await runCleanup(server, { listener: fakeListener(), pool });
+    assert.deepEqual(order, ['released', 'poolEnd']);
+    const line = logs.find((l) => l.msg === 'Handed this process\'s checks runs to the next harvest on shutdown');
+    assert.deepEqual(line.data, { runs: 2, timedOut: false });
+
+    order.length = 0;
+    harvest.isEnabled = () => false;
+    pool = fakePool({ endImpl: async () => { order.push('poolEnd'); } });
+    await runCleanup(server, { listener: fakeListener(), pool });
+    assert.deepEqual(order, ['poolEnd'], 'no Kubernetes capture runtime, no manifests to hand over');
+  } finally {
+    harvest.isEnabled = saved.enabled;
+    checkRuns.release = saved.release;
+    lifecycle.waitFor = saved.waitFor;
+    restore();
+  }
+});
+
+// The Homeroom bot's builds under way are waited on until they reach a saved
+// point (homeroom-bot-drain.js). One still between steps at the deadline is
+// logged and recorded as an incident, and the shutdown goes on to its exit.
+test('a bot build still mid-step at the deadline is logged, recorded and does not hold the exit', async () => {
+  const { server, logs, restore } = loadServer();
+  const drain = require('../src/services/homeroom-bot-drain');
+  const savedEnv = process.env.HOMEROOM_BOT_DRAIN_TIMEOUT_MS;
+  process.env.HOMEROOM_BOT_DRAIN_TIMEOUT_MS = '150';
+  let release;
+  const pipeline = drain.run({ kind: 'live_build', runId: 77, appId: 4, issueNumber: 9 },
+    () => new Promise((resolve) => { release = resolve; }));
+  try {
+    const listener = fakeListener();
+    const writes = [];
+    const pool = { ...fakePool(), query: async (sql, params) => { writes.push({ sql, params }); return { rows: [] }; } };
+
+    const startedAt = Date.now();
+    const order = await runCleanup(server, { listener, pool });
+    const elapsed = Date.now() - startedAt;
+
+    assert.deepEqual(order, ['exit:0']);
+    assert.ok(elapsed >= 140, `cleanup took ${elapsed}ms; it must wait out the bot deadline`);
+    const warned = logs.find((l) => l.msg === 'Shutdown deadline passed with Homeroom bot builds mid-step');
+    assert.ok(warned, 'the deadline passing is logged');
+    assert.equal(warned.data.deadlineMs, 150);
+    assert.deepEqual(warned.data.midStep.map((p) => p.runId), [77]);
+    const incident = writes.find((w) => /INSERT INTO events/.test(w.sql));
+    assert.ok(incident, 'an incident is recorded for the build');
+    const meta = JSON.parse(incident.params[4]);
+    assert.equal(meta.kind, 'build_interrupted');
+    assert.equal(meta.why, 'shutdown deadline passed during its first step');
+  } finally {
+    release();
+    await pipeline;
+    if (savedEnv === undefined) delete process.env.HOMEROOM_BOT_DRAIN_TIMEOUT_MS;
+    else process.env.HOMEROOM_BOT_DRAIN_TIMEOUT_MS = savedEnv;
+    restore();
+  }
+});
+
+// By default the wait is gone: each build's step boundaries are saved
+// (homeroom-bot-checkpoint.js) and the next leader carries it on, so a
+// redeploy does not wait for the bot, and records no incident for leaving
+// it. HOMEROOM_BOT_DRAIN_TIMEOUT_MS (above) restores the wait.
+test('by default a bot build mid-step does not hold the shutdown, and nothing is recorded for it', async () => {
+  const { server, logs, restore } = loadServer();
+  const drain = require('../src/services/homeroom-bot-drain');
+  const savedEnv = process.env.HOMEROOM_BOT_DRAIN_TIMEOUT_MS;
+  delete process.env.HOMEROOM_BOT_DRAIN_TIMEOUT_MS;
+  let release;
+  const pipeline = drain.run({ kind: 'live_build', runId: 78, appId: 4, issueNumber: 10 },
+    () => new Promise((resolve) => { release = resolve; }));
+  try {
+    const listener = fakeListener();
+    const writes = [];
+    const pool = { ...fakePool(), query: async (sql, params) => { writes.push({ sql, params }); return { rows: [] }; } };
+
+    const startedAt = Date.now();
+    const order = await runCleanup(server, { listener, pool });
+    const elapsed = Date.now() - startedAt;
+
+    assert.deepEqual(order, ['exit:0']);
+    assert.ok(elapsed < 2000, `cleanup took ${elapsed}ms; it must not wait for the bot`);
+    const started = logs.find((l) => l.msg === 'Shutdown initiated, draining handlers');
+    assert.equal(started.data.botDeadlineMs, 0);
+    assert.equal(logs.some((l) => l.msg === 'Shutdown deadline passed with Homeroom bot builds mid-step'), false);
+    const left = logs.find((l) => l.msg === 'Left Homeroom bot builds between steps for the next leader to carry on from their checkpoints');
+    assert.ok(left, 'leaving it is logged');
+    assert.deepEqual(left.data.midStep.map((p) => p.runId), [78]);
+    assert.equal(writes.some((w) => /INSERT INTO events/.test(w.sql)), false, 'no incident for a build its checkpoint carries on');
+  } finally {
+    release();
+    await pipeline;
+    if (savedEnv === undefined) delete process.env.HOMEROOM_BOT_DRAIN_TIMEOUT_MS;
+    else process.env.HOMEROOM_BOT_DRAIN_TIMEOUT_MS = savedEnv;
+    restore();
+  }
+});
+
 test('cleanup survives a listener that throws on close', async () => {
   const { server, logs, restore } = loadServer();
   try {

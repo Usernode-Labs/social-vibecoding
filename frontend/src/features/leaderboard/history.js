@@ -19,6 +19,7 @@
 'use strict';
 
 import { createStore } from '../../lib/plain-store.js';
+import { t } from '../../lib/i18n/runtime';
 
 /**
  * `mounted: false` is the prerender state — the root ships empty and hidden,
@@ -34,14 +35,14 @@ export const historyStore = createStore({
 
 /** The month a season ended, with its year once that is not this one. */
 export function endedLabel(iso, now = new Date()) {
-  const t = Date.parse(iso || '');
-  if (!Number.isFinite(t)) return null;
-  const date = new Date(t);
+  const at = Date.parse(iso || '');
+  if (!Number.isFinite(at)) return null;
+  const date = new Date(at);
   const opts = date.getFullYear() === now.getFullYear()
     ? { month: 'long' }
     : { month: 'long', year: 'numeric' };
   try {
-    return `ended ${date.toLocaleDateString(undefined, opts)}`;
+    return t('leaderboard:history.ended', { date: date.toLocaleDateString(undefined, opts) });
   } catch (_) {
     return null;
   }
@@ -60,16 +61,14 @@ export function initialOf(name) {
  * podium-excluded account).
  */
 export function resultLine(season) {
-  const parts = [];
-  if (season.winner) {
-    parts.push(`${season.winner.name} won with ${Number(season.winner.points || 0).toLocaleString()} pts`);
-  } else {
-    parts.push('No winner was recorded');
-  }
+  const points = season.winner ? Number(season.winner.points || 0) : 0;
+  const result = season.winner
+    ? t('leaderboard:history.won', { name: season.winner.name, count: points, points: points.toLocaleString() })
+    : t('leaderboard:history.noWinner');
   const you = season.you;
-  if (you && you.rank) parts.push(`you finished #${you.rank}`);
-  else if (you) parts.push('you took part');
-  return parts.join(' · ');
+  const yours = you && you.rank ? t('leaderboard:history.youFinished', { rank: you.rank })
+    : you ? t('leaderboard:history.youTookPart') : null;
+  return yours ? t('leaderboard:history.factPair', { first: result, second: yours }) : result;
 }
 
 /** The pane's whole view, from the store. Pure, for the tests. */
@@ -77,26 +76,28 @@ export function historyView(state, now = new Date()) {
   if (!state.mounted) return { kind: 'none' };
   if (state.status === 'loading') return { kind: 'loading' };
   if (state.status === 'error') {
-    return { kind: 'error', message: 'Couldn’t load past seasons. Try again later.' };
+    return { kind: 'error', message: t('leaderboard:history.loadFailed') };
   }
   const seasons = Array.isArray(state.seasons) ? state.seasons : [];
   if (!seasons.length) {
     return {
       kind: 'empty',
-      message: 'No season has ended yet. When one does, its winners are listed here.',
+      message: t('leaderboard:history.empty'),
     };
   }
   return {
     kind: 'seasons',
     seasons: seasons.map((s) => ({
       key: String(s.season_id),
-      name: String(s.name || 'Season'),
+      name: String(s.name || t('leaderboard:history.fallbackName')),
       ended: endedLabel(s.ends_at, now),
       winnerInitial: s.winner ? initialOf(s.winner.name) : null,
       line: resultLine(s),
       events: (Array.isArray(s.events) ? s.events : []).map((ev) => ({
         key: String(ev.id),
-        label: ev.winner ? `${ev.name} · ${ev.winner.name}` : `${ev.name} · no winner`,
+        label: ev.winner
+          ? t('leaderboard:history.eventWinner', { event: ev.name, winner: ev.winner.name })
+          : t('leaderboard:history.eventNoWinner', { event: ev.name }),
       })),
     })),
   };

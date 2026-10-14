@@ -218,7 +218,7 @@ async function maybeRunAssetRouteCheck({
     if (!passed) {
       const checkKey = appManifest.checkKey(ASSET_CHECK_NAME, ASSET_CHECK_PATH);
       try {
-        graduated = (await checkHistory.loadGraduated(pool, appId)).has(checkKey);
+        graduated = (await checkHistory.loadGraduated(pool, appId, { sessionId })).has(checkKey);
       } catch (err) {
         log.warn('asset-route-check', 'Graduation lookup failed — treating as advisory', {
           sessionId, appId, err: err.message,

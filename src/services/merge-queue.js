@@ -75,6 +75,7 @@ const limits = require('./limits');
 const integration = require('./integration');
 const { runSyncMain } = require('./sync-main');
 const { currentVotePredicateSql, countedVotePredicateSql, reviewedHeadSql, sameSha } = require('./pr-vote-revision');
+const { firstVersionSql } = require('./first-version-rule');
 const { getPool } = require('../db/pool');
 
 // App-level single-flight. Every trigger — a vote crossing threshold, a
@@ -128,7 +129,7 @@ async function loadLine(pool, appId, { excludeId = 0 } = {}) {
 
   const { rows } = await pool.query(
     `SELECT cs.id, cs.user_id, cs.source, cs.promoted_at, cs.created_at,
-            cs.requires_explicit_approval, cs.approval_epoch, cs.integration_resolved_epoch,
+            cs.requires_explicit_approval, cs.explicit_approval_reason, cs.approval_epoch, cs.integration_resolved_epoch,
             cs.integration_behind_by, cs.integration_merges_clean, cs.integration_conflict_paths,
             cs.integration_head_sha, cs.integration_main_sha, cs.integration_block_reasons,
             cs.check_state, cs.check_phase, cs.checks_commit_sha, cs.checks_checked_at,
@@ -154,7 +155,10 @@ async function loadLine(pool, appId, { excludeId = 0 } = {}) {
                 WHERE pv.session_id = cs.id AND pv.vote = 'yes'
                   AND pv.user_id IS DISTINCT FROM cs.user_id
                   AND ${countedVotePredicateSql('pv', 'cs')})
-            END AS other_yes_count
+            END AS other_yes_count,
+            -- 13 Oct 2026, D1: a project's first version goes live without
+            -- a vote (governance-gate.ts applyFirstVersion).
+            ${firstVersionSql('cs')} AS first_version
        FROM chat_sessions cs
        JOIN apps a ON a.id = cs.app_id
       WHERE cs.app_id = $1 AND cs.status = 'promoted' AND cs.id <> $2`,
@@ -167,13 +171,20 @@ async function loadLine(pool, appId, { excludeId = 0 } = {}) {
   const memberCount = rows.some((r) => r.requires_explicit_approval)
     ? await governance.communityMemberCount(pool, appId)
     : undefined;
+  // #4666: a project with rules needs who voted, not how many: the
+  // creator's yes and a group's count are answers the tallies cannot give.
+  const rulesCtx = gov.rules ? await governance.rulesContext(pool, appId, gov, 'pr', rows.map((r) => r.id)) : null;
 
   return rows.map((r) => {
     const q = qualified ? (qualified.get(r.id) || { yes: 0, no: 0, otherYes: 0 })
       : { yes: r.yes_count, no: r.no_count, otherYes: r.other_yes_count };
     const approved = !!governance.computeGate(
       gov, electorate.active, q.yes, q.no, r.promoted_at || r.created_at, null,
-      { explicitApproval: !!r.requires_explicit_approval, otherYes: q.otherYes, memberCount }
+      {
+        explicitApproval: !!r.requires_explicit_approval, otherYes: q.otherYes, memberCount,
+        ...(rulesCtx ? governance.rulesGateOpts(rulesCtx, r.id, r.user_id, r.explicit_approval_reason || null) : {}),
+        firstVersion: r.first_version === true,
+      }
     ).mergeable;
     return { ...r, approved };
   });

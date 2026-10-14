@@ -27,6 +27,7 @@
  * submit; adding an attribute here would be a difference for its own sake.
  */
 
+import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { reactionBarStore, type ReactionBarState } from './reaction-bar-store';
 
@@ -52,6 +53,7 @@ export function ReactionBarView({
   reportable,
   readOnly,
 }: ReactionBarProps & ReactionBarState) {
+  const t = useMessages('chat');
   return (
     <>
       {!readOnly ? <div className="gc-react-bar-quick">
@@ -62,7 +64,7 @@ export function ReactionBarView({
             character is not one to reach for.
         */}
         {quick.map((emoji, i) => <EmojiButton key={`${i}:${emoji}`} emoji={emoji} />)}
-        <button className="gc-react-bar-more" aria-label="More emoji">＋</button>
+        <button className="gc-react-bar-more" aria-label={t('chat:group.reactionBar.moreEmoji')}>＋</button>
         {/*
             Touch-only Edit for the viewer's own ordinary messages — desktop
             has the hover pencil. Rendered always and hidden per row, as the
@@ -70,12 +72,12 @@ export function ReactionBarView({
         */}
         <button
           className={`gc-react-bar-edit${editable ? '' : ' hidden'}`}
-          aria-label="Edit message"
+          aria-label={t('chat:group.reactionBar.edit')}
         >
           ✏️
         </button>
       </div> : null}
-      {reportable ? <button type="button" className="gc-react-bar-report min-h-[44px] w-full text-sm text-red-700 dark:text-red-400">Report message</button> : null}
+      {reportable ? <button type="button" className="gc-react-bar-report min-h-[44px] w-full text-sm text-red-700 dark:text-red-400">{t('chat:group.reactionBar.report')}</button> : null}
       <div className={`gc-react-bar-grid${gridOpen && !readOnly ? '' : ' hidden'}`} >
         {grid.map((emoji, i) => <EmojiButton key={`${i}:${emoji}`} emoji={emoji} />)}
       </div>

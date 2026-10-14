@@ -97,6 +97,7 @@ function makeAppView(opts) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(`${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   return { AppView: sandbox.__AppView, published, sandbox };
@@ -327,7 +328,7 @@ test('the consent dialog prefills the cap and explains the budget it spends', ()
 
   const html = consentHtml(view);
   assert.match(html, /Allow RecipeBot to use AI\?/);
-  assert.match(html, /spend from your daily AI budget/);
+  assert.match(html, /spend from your weekly AI budget/);
   assert.match(html, /id="llm-consent-cap"[^>]*value="1.00"/);
   assert.match(html, /You can change this anytime in Settings/);
   assert.match(html, /id="llm-consent-error"[^>]*class="hidden/, 'the error line starts empty');
@@ -385,7 +386,7 @@ test('a key with platform credits offers the opt-in unchecked, as a fallback', (
   AppView.showLlmConsentModal(CONSENT({ hasApiKey: true }));
   const view = lastView(published);
   assert.equal(view.capacity.byok.checked, false);
-  assert.match(view.capacity.byok.label, /If my daily platform budget runs out/);
+  assert.match(view.capacity.byok.label, /If my weekly platform budget runs out/);
   assert.doesNotMatch(consentHtml(view), /id="llm-consent-byok"[^>]*checked/);
 });
 
@@ -476,7 +477,7 @@ test('an app in the App tab gets the consent card, as it always has', async () =
   await ask(AppView, frame.contentWindow);
   assert.equal(posted[0].__usernode_llm, 'ack', 'the bridge must stop its no-shell timer');
   assert.equal(published.at(-1).kind, 'consent');
-  assert.match(lastView(published).intro, /spend from your daily AI budget/);
+  assert.match(lastView(published).intro, /spend from your weekly AI budget/);
 });
 
 test('an app in the landing viewer gets the same card, not silence', async () => {

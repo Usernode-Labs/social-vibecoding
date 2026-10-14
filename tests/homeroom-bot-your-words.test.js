@@ -12,6 +12,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const { Pool } = require('pg');
@@ -67,7 +68,8 @@ test('B4: a change the bot built credits who asked for it, once', () => {
 
 test('B4: a change is named a change on its card', () => {
   const src = fs.readFileSync(require.resolve('../frontend/src/features/messages/format.tsx'), 'utf8');
-  assert.match(src, /proposal: 'Change',/);
+  assert.match(src, /proposal: 'messages:object\.kind\.proposal',/);
+  assert.equal(message('messages:object.kind.proposal'), 'Change');
 });
 
 test('B4: their words and the credit, against the full PostgreSQL schema', { timeout: 180000 }, async (t) => {
@@ -120,8 +122,8 @@ test('B4: their words and the credit, against the full PostgreSQL schema', { tim
   await t.test('her card carries her words', async () => {
     const opened = await require('../src/services/conversations').ensureAdmittedDirect(pool, bot.id, maya.id);
     assert.ok(opened);
-    const settings = { audience: 'everyone', dmUsers: [], mode: 'live' };
-    const sent = await require('../src/services/homeroom-bot-activity').startCard(pool, {
+    const settings = { mode: 'live' };
+    const sent = await require('../src/services/homeroom-bot-activity').startCard(pool, { inDm: true,
       app, issueNumber: 4, requester: await dm.requesterOf(pool, app.id, 4), bot, jobKey: 'words-1', settings,
     });
     const { rows: [msg] } = await pool.query('SELECT metadata FROM conversation_messages WHERE id = $1', [sent.messageId]);

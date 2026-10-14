@@ -2,6 +2,18 @@
 // Materialize ignored shell artifacts for root tests and native local runs.
 // Docker builds the same files in its lockfile-pinned shell/CSS stages and
 // never calls this helper.
+//
+//   --html-only   before the tests: public/index.html alone. The bundle is
+//                 neither built nor checked; no root suite reads it.
+//   --runtime     before `npm start`, `npm run dev` and `npm run ensure:shell`:
+//                 the document and the bundle, then the CSS and the release.
+//
+// The shell build is skipped when what the run needs is current: the document
+// carries the stamp of these sources and the build id of this GIT_SHA and,
+// unless --html-only, the bundle carries the same stamp. A run that skips it
+// still writes the language catalog when that file is missing, and --runtime
+// still compiles the CSS and writes the release every time. An image marked
+// USERNODE_SHELL_ASSETS_PREBUILT builds none of this here; it only checks.
 
 'use strict';
 
@@ -66,8 +78,8 @@ function installFrontendDependencies() {
   fs.writeFileSync(DEPENDENCY_MARKER, `${digest}\n`);
 }
 
-function runNode(script) {
-  execFileSync(process.execPath, [path.join(ROOT, script)], {
+function runNode(script, args = []) {
+  execFileSync(process.execPath, [path.join(ROOT, script), ...args], {
     cwd: ROOT,
     stdio: 'inherit',
   });
@@ -103,15 +115,24 @@ if (prebuilt) {
 
 if (needsShell) {
   installFrontendDependencies();
-  runNode('frontend/scripts/build-shell.mjs');
+  // The tests read the document and never the bundle, so their preflight
+  // skips the Vite pass that builds it. A bundle already on disk keeps its
+  // old stamp, which is what makes a later runtime preflight rebuild it.
+  runNode('frontend/scripts/build-shell.mjs', htmlOnly ? ['--no-bundle'] : []);
 
   const builtHtmlStamp = readHtmlStamp(read(htmlPath) || '');
   const builtJsStamp = readJsStamp(read(jsPath) || '');
-  if (builtHtmlStamp !== stamp || builtJsStamp !== stamp) {
+  if (builtHtmlStamp !== stamp || (!htmlOnly && builtJsStamp !== stamp)) {
     throw new Error('[ensure-shell] shell build completed without the expected HTML/JS stamp');
   }
 } else {
   console.log(`[ensure-shell] ${htmlOnly ? 'HTML is' : 'shell artifacts are'} current`);
+  // The shell build writes the bundled language catalog, and the tests that
+  // load the language runtime import it. A current document does not prove
+  // that ignored file is still on disk, and making it is cheap.
+  if (read(path.join(ROOT, 'frontend/src/lib/i18n/catalogs.generated.json')) === null) {
+    require('./language-packs').buildLanguagePacks(ROOT);
+  }
 }
 
 // CSS also scans public/js/**, which is outside the shell stamp. Recompile on

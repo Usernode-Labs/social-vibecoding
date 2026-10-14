@@ -8,6 +8,7 @@
  * the machine — the same argument the DOM builder passed it.
  */
 
+import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { agoStamp } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
 import { localAgentsStore } from './local-agents-store.js';
@@ -32,6 +33,7 @@ function controller(): any {
 const ROW_CLASS = 'rounded-lg bg-white dark:bg-zinc-900 px-3 py-2 text-xs';
 
 function AgentRow({ agent }: { agent: LocalAgentView }) {
+  const t = useMessages('settings');
   const seen = agoStamp(agent.lastSeenAt);
   return (
     <div className={ROW_CLASS}>
@@ -50,10 +52,13 @@ function AgentRow({ agent }: { agent: LocalAgentView }) {
               anyone chasing down a lease.
           */}
           <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
-            {`${agent.runtime} · last seen `}
             {seen.text ? (
-              <time dateTime={agent.lastSeenAt || undefined} title={seen.title}>{seen.text}</time>
-            ) : 'unknown'}
+              <RichMessage
+                id="settings:localAgents.lastSeen"
+                values={{ runtime: agent.runtime, when: seen.text }}
+                components={[<time dateTime={agent.lastSeenAt || undefined} title={seen.title} />]}
+              />
+            ) : t('settings:localAgents.lastSeenUnknown', { runtime: agent.runtime })}
           </div>
         </div>
         {/*
@@ -66,7 +71,7 @@ function AgentRow({ agent }: { agent: LocalAgentView }) {
             className="shrink-0 rounded bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-2 py-1 text-xs font-medium text-zinc-700 dark:text-zinc-200 transition-colors"
             onClick={(e) => controller()?._detachLocalAgent?.(agent, e.currentTarget)}
           >
-            Detach
+            {t('settings:localAgents.detach')}
           </button>
         ) : null}
       </div>

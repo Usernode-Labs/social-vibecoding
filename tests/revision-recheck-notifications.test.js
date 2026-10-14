@@ -19,6 +19,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const { loadTsx } = require('./lib/render-tsx');
@@ -47,12 +48,15 @@ function makePool() {
       const s = String(sql);
       queries.push({ sql: s, params });
       if (/INSERT INTO notifications/.test(s)) {
-        return {
-          rows: params.slice(4).map((userId, i) => ({
-            id: 500 + i, user_id: userId, app_id: params[0], session_id: params[1],
-            source_user_id: params[2], kind: 'revision_recheck', detail: params[3],
-          })),
-        };
+        // After the four shared parameters, each voter's id and detail.
+        const rows = [];
+        for (let i = 4; i < params.length; i += 2) {
+          rows.push({
+            id: 500 + rows.length, user_id: params[i], app_id: params[0], session_id: params[1],
+            source_user_id: params[2], kind: 'revision_recheck', detail: params[i + 1],
+          });
+        }
+        return { rows };
       }
       return { rows: [] };
     },
@@ -69,12 +73,14 @@ test('one ask per prior Yes voter per version; the author is never asked, a mute
   });
   assert.deepEqual(filtered, [{ userIds: [8, 10, 12], appId: 5, categoryKey: 'revision_recheck' }],
     'de-duplicated, the author dropped, then the category filter');
-  assert.equal(pool.queries.length, 1);
-  const [insert] = pool.queries;
-  assert.deepEqual(insert.params, [5, 41, 7, 'epoch:5', 8, 12], 'the epoch is the detail: a second push asks again');
-  assert.match(insert.sql, /\(\$5, \$1, \$2, \$3, 'revision_recheck', \$4\), \(\$6, \$1, \$2, \$3, 'revision_recheck', \$4\)/);
-  assert.match(insert.sql, /WHERE NOT EXISTS \([\s\S]*n\.kind = 'revision_recheck' AND n\.detail = v\.detail/,
-    'and a resumed tail does not ask twice for the same version');
+  // "One story": first who asked for the update (nobody, here), then the rows.
+  assert.equal(pool.queries.length, 2);
+  const [asker, insert] = pool.queries;
+  assert.match(asker.sql, /FROM homeroom_bot_change_asks/);
+  assert.deepEqual(insert.params, [5, 41, 7, 'epoch:5', 8, 'epoch:5', 12, 'epoch:5'], 'the epoch is the detail: a second push asks again');
+  assert.match(insert.sql, /\(\$5::int, \$1::int, \$2::int, \$3::int, 'revision_recheck'::text, \$6::text\), \(\$7::int, \$1::int, \$2::int, \$3::int, 'revision_recheck'::text, \$8::text\)/);
+  assert.match(insert.sql, /WHERE NOT EXISTS \([\s\S]*n\.kind = 'revision_recheck'\s+AND \(n\.detail = \$4::text OR n\.detail LIKE \$4::text \|\| ':%'\)/,
+    'and a resumed tail does not ask twice for the same version, whoever asked for it');
   assert.deepEqual(rows.map((r) => r.user_id), [8, 12]);
 });
 
@@ -116,6 +122,7 @@ let N = null;
 function controller() {
   if (N) return N;
   if (!globalThis.window) globalThis.window = globalThis;
+  globalThis.PlatformI18n = englishPlatformI18n();
   loadTsx('frontend/src/features/notifications/notifications.js');
   N = globalThis.window.Notifications;
   assert.equal(typeof N._rowView, 'function');
@@ -185,6 +192,14 @@ test('"Still yes" re-casts the Yes with no line of its own, and marks the row re
   assert.equal(await Notifications._onRowAction(99, 'still_yes'), false, 'an unknown row does nothing');
   assert.equal(calls.length, 1);
 
+  // #3984: a Yes that did not go through (castVote resolves false and its
+  // toast says why) leaves the row unread, its button there to press again.
+  globalThis.window.AppView = { castVote: async () => false };
+  Notifications.items = [{ id: 2, kind: 'revision_recheck', sessionId: 42 }];
+  assert.equal(await Notifications._onRowAction(2, 'still_yes'), false);
+  assert.deepEqual(marked, [1], 'not marked read');
+  assert.equal(refreshed, 1);
+
   const sheet = fs.readFileSync(path.join(__dirname, '../frontend/src/features/notifications/notifications-sheet.tsx'), 'utf8');
   assert.match(sheet, /data-notif-action=\{a\.key\}/, 'the screen draws a row\'s actions as real buttons');
   assert.match(sheet, /controller\(\)\?\._onRowAction\(view\.id, a\.key\)/);
@@ -209,13 +224,20 @@ test('the banners: still good, this week, the quoted line, the named merge', () 
   };
   const banner = (kind, context) => buildMessage({ ...INPUT, kind, context }).notification;
 
+  // "One story": the change and its project, and never "after your
+  // feedback" when it was not theirs (tests/one-story-pings-postgres.test.js
+  // pins whose ask it names).
   assert.deepEqual(banner('revision_recheck', CONTEXT), {
-    title: 'Still good? "Fix login redirect loop" was updated · MyPage',
-    body: '@alice pushed an update after your feedback. One tap keeps your yes',
+    title: 'Still good? Fix login redirect loop · MyPage',
+    body: '@alice updated it. One tap keeps your yes.',
   });
+  assert.deepEqual(banner('revision_recheck', { ...CONTEXT, detail: 'epoch:2:@ben' }).body,
+    '@alice updated it after @ben asked for a change. One tap keeps your yes.');
+  assert.deepEqual(banner('revision_recheck', { ...CONTEXT, sourceUsername: 'homeroom_bot', sourceIsSynthetic: true, detail: 'epoch:2:you' }).body,
+    '@homeroom_bot updated it after you asked for a change. One tap keeps your yes.');
   assert.deepEqual(banner('revision_recheck', {}), {
     title: 'Still good? A change you backed was updated',
-    body: 'A new version was pushed after your feedback. One tap keeps your yes',
+    body: 'Someone updated it. One tap keeps your yes.',
   });
   assert.deepEqual(banner('weekly_digest', { ...CONTEXT, detail: '3:1' }), {
     title: 'This week on MyPage',

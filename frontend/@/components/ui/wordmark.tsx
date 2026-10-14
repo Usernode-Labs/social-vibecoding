@@ -28,6 +28,15 @@ import * as React from 'react';
  * is NO colour class anywhere in this file, which is what makes that true
  * rather than merely intended.
  *
+ * ── What ink the call sites pass ─────────────────────────────────────
+ *
+ * The logotype is BLACK, and white in dark mode (#4382): a call site that
+ * sets its own ink passes `text-zinc-950 dark:text-white`, never the
+ * header's `--brand-ink` blue — that periwinkle belongs to the header's own
+ * controls (the app chip, the bell, the back disc), not to the logo. The
+ * platform header's mark sets no ink and inherits the bar's, which is the
+ * body's near-black/near-white retoned for an app's dark or light tone.
+ *
  * ── Why size is NOT a variant ────────────────────────────────────────
  *
  * The same reason icons.tsx gives (see its header): every call site passes its

@@ -131,7 +131,12 @@ test('the inbox rows are memo()\'d and the list filters on the deferred query', 
 test('the topic head draws its markup blocks through Html, which keeps the { __html } object', () => {
   const src = read('frontend/src/features/dev-board/topic/topic-head.tsx');
   assert.doesNotMatch(src, /dangerouslySetInnerHTML=\{\{/, 'no inline wrapper left');
-  assert.equal((src.match(/<Html /g) || []).length, 10, 'the ten blocks: summaries, the summary’s folded rest, bodies, details, testing and both tile hosts');
+  // #4455: the change page's summary and its picture moved to change-head.tsx
+  // (the root post), and Details gained the shots' details.
+  assert.equal((src.match(/<Html /g) || []).length, 9, 'the nine blocks: summaries, the summary’s folded rest, bodies, details, shot details, testing and the tile host');
+  const change = read('frontend/src/features/dev-board/topic/change-head.tsx');
+  assert.doesNotMatch(change, /dangerouslySetInnerHTML=\{\{/, 'nor in the change page’s root post');
+  assert.equal((change.match(/<Html /g) || []).length, 2, 'the verified shots and the capture tiles');
   assert.match(src, /<Html className="usn-visuals-body" html=\{tiles\.tilesHtml\} \/>/);
 
   const lib = read('frontend/src/lib/html.tsx');

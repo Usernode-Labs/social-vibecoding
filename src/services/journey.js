@@ -19,6 +19,7 @@ const { NAV_SCREENS } = require('./ui-telemetry');
 const changePerson = require('./change-person');
 const { loadOnboarding } = require('./topochain/challenge-onboarding');
 const { fetchCurrentSeason } = require('../routes/home-panels');
+const { STAGES: TIMED_STAGES } = require('./app-creation-timing');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const WEEK_MS = 7 * DAY_MS;
@@ -332,7 +333,8 @@ function nextSteps(visitsByPerson, { top = 3 } = {}) {
 // Every admit date is a cohort, however small. A person is counted once, at
 // their earliest admit; a member who already had access before that admit is
 // not a newcomer and stays in Earlier members. Admitted addresses with no
-// account yet are rows too: the waitlist row is all there is of them.
+// account yet are rows too: the waitlist row is all there is of them. An
+// admin's test release (services/test-accounts.js sendRelease) admits nobody.
 //
 // Parameters, fixed for every first-mile query: $1 the admit day or the
 // newcomer window, $2 now, $3 the reserved name patterns, $4 the left-out ids.
@@ -342,6 +344,7 @@ const ADMITTED_CTE = `admitted AS (
            w.id AS signup_id, w.email, w.released_at, w.linked_user_id
       FROM waitlist_signups w
      WHERE w.released_at IS NOT NULL
+       AND NOT EXISTS (SELECT 1 FROM test_waitlist_releases t WHERE t.signup_id = w.id)
      ORDER BY COALESCE('u' || w.linked_user_id::text, 'w' || w.id::text), w.released_at, w.id
   )`;
 
@@ -369,9 +372,13 @@ const COHORTS_SQL = `WITH ${ADMITTED_CTE}
 // shell was opened (the #general membership row or the first boot in UI
 // telemetry), the first-run sheets as they were shown (telemetry), the
 // welcome message's queue row, the earliest act of any kind, and the failed
-// attempts the telemetry saw.
+// attempts the telemetry saw. The admit mail's engagement (services/mail,
+// since 7 Oct 2026) is read across every admit mail to the address: whether
+// any was tracked, and the first open and the first followed link a person's
+// mail client made (a link scanner's or prefetcher's request is not one).
 const PERSON_FACTS = `
     m.status AS mail_status, m.error AS mail_error, m.created_at AS mail_at,
+    me.tracked AS mail_tracked, me.opened_at AS mail_opened_at, me.clicked_at AS mail_clicked_at,
     (SELECT MIN(d.created_at) FROM mail_deliveries d
       WHERE d.recipient = a.email AND d.kind = 'otp' AND d.created_at >= a.released_at) AS code_asked_at,
     u.id AS user_id, u.username, u.created_at AS account_at, u.password_set,
@@ -409,6 +416,15 @@ const PERSON_JOINS = `
        WHERE a.email IS NOT NULL AND d.recipient = a.email AND d.kind = 'waitlist_released'
        ORDER BY d.created_at DESC, d.id DESC LIMIT 1
     ) m ON TRUE
+    LEFT JOIN LATERAL (
+      SELECT bool_or(d.engagement_tracked) AS tracked,
+             MIN(e.created_at) FILTER (WHERE e.type = 'opened') AS opened_at,
+             MIN(e.created_at) FILTER (WHERE e.type = 'clicked') AS clicked_at
+        FROM mail_deliveries d
+        LEFT JOIN mail_events e ON e.delivery_id = d.id
+         AND e.user_agent_class IS DISTINCT FROM 'scanner_or_prefetch'
+       WHERE a.email IS NOT NULL AND d.recipient = a.email AND d.kind = 'waitlist_released'
+    ) me ON TRUE
     LEFT JOIN welcome_dm_queue q ON q.user_id = u.id
     LEFT JOIN LATERAL (
       SELECT x.at, x.kind FROM (
@@ -480,13 +496,15 @@ function firstMileSteps(row, now = new Date()) {
   const facts = {
     admitted: admitted ? { done: true, at: admitted } : null,
     mail_sent: row.mail_status === 'sent'
-      ? { done: true, at: t(row.mail_at) }
+      ? { done: true, at: t(row.mail_at), note: mailEngagement(row).note }
       : { done: false, stuck: row.mail_status ? `Mail not sent: ${row.mail_status}` : 'No admit mail on record',
         expired: mailExpired && !row.mail_status },
     code_asked: row.code_asked_at
       ? { done: true, at: t(row.code_asked_at) }
       : { done: false, stuck: 'Admitted, never asked for a login code', expired: mailExpired },
-    account: hasAccount && row.password_set !== false
+    // #4595: the password is optional, so an account is finished once its
+    // account step is: a password set, or (skipped) its username chosen.
+    account: hasAccount && (row.password_set !== false || row.needs_username_choice === false)
       ? { done: true, at: t(row.account_at) }
       : { done: false, stuck: hasAccount ? 'Account started, not finished' : 'Code mailed, no account' },
     access: row.has_platform_access ? { done: true, at: t(row.access_at) }
@@ -555,8 +573,24 @@ function firstMileSteps(row, now = new Date()) {
   };
 }
 
+/**
+ * What the admit mail's own tracking saw: null when no admit mail to this
+ * address was tracked (sent before tracking, or a mail kind it skips), so a
+ * gap reads as a gap and never as "not opened". A followed link counts as an
+ * open too: a client that blocks images still follows links. An open is
+ * approximate (an image proxy can fetch it), and no open is not proof the
+ * mail went unread.
+ */
+function mailEngagement(row) {
+  if (!row.mail_tracked) return { tracked: false, opened: false, clicked: false, note: row.mail_status === 'sent' ? 'not tracked' : null };
+  const clicked = row.mail_clicked_at != null;
+  const opened = clicked || row.mail_opened_at != null;
+  return { tracked: true, opened, clicked, note: clicked ? 'clicked the link' : opened ? 'opened' : 'no open seen' };
+}
+
 function firstMilePerson(row, now) {
   const mile = firstMileSteps(row, now);
+  const mail = mailEngagement(row);
   return {
     signupId: row.signup_id != null ? Number(row.signup_id) : null,
     userId: row.user_id != null ? Number(row.user_id) : null,
@@ -565,6 +599,7 @@ function firstMilePerson(row, now) {
     name: row.username || row.email || null,
     hasAccount: row.user_id != null,
     door: row.door || (row.released_at ? 'admitted' : null),
+    mail: mail.tracked ? { opened: mail.opened, clicked: mail.clicked } : null,
     ...mile,
   };
 }
@@ -599,39 +634,36 @@ async function cohorts(pool, { now = new Date(), leftOutIds = [] } = {}) {
   };
 }
 
-// Whether the Getting started card was ever drawn for this person: the rule
-// onboarding.js cardShows() spells, without its "not closed yet", since a
-// card that was closed was shown.
+// Whether this person started on the first-run list: a NEW account
+// (`users.getting_started_gate`, set at sign-up since 2026-10-01). It was the
+// rule for drawing Home's Getting started card, retired by #4635; the flag is
+// still how this page tells a newcomer from an account made before the list.
 function cardWasShown(row) {
-  return row.user_id != null && row.getting_started_gate === true && row.communities_onboarded_at != null;
+  return row.user_id != null && row.getting_started_gate === true;
 }
 
 /**
  * The first mile's last column, "onboard": how far the person got through
- * Getting started, the tour and then the season's First challenges, the list
- * the card on Home draws (services/onboarding.js). `null` without an
- * account; `shown: false` when the card was never drawn for them (an account
- * from before the card, or the join screen not answered yet). `complete` is
- * the card's own "You're all set", which an earlier read can have granted
- * with fewer ticks than today's list has. Read with `record: false`: an
- * admin looking never opens anybody's gate.
+ * the first-run list, the tour and then the season's First challenges that
+ * can be done now (services/topochain/challenge-onboarding.js `available`,
+ * read with their lifetime progress, an earlier season's credits included).
+ * `null` without an account; `shown: false` for an account that did not
+ * start on the list (one from before it). `complete` is every one of them
+ * done. A read with no side effect: an admin looking changes nobody's
+ * account.
  */
 async function onboardFor(pool, row, seasonId) {
   if (row.user_id == null) return null;
   if (!cardWasShown(row)) return { shown: false, done: null, total: null, complete: false };
+  const tourDone = row.tour_done_at != null;
   const state = seasonId != null
-    ? await loadOnboarding(pool, Number(row.user_id), { seasonId, record: false })
+    ? await loadOnboarding(pool, Number(row.user_id), { seasonId })
     : null;
-  if (!state) {
-    const tourDone = row.tour_done_at != null;
-    return { shown: true, done: tourDone ? 1 : 0, total: 1, complete: tourDone };
-  }
-  return {
-    shown: true,
-    done: (state.tourDone ? 1 : 0) + state.summary.completed,
-    total: 1 + state.summary.total,
-    complete: state.finished,
-  };
+  const ids = state ? state.available : [];
+  const completed = ids.filter((id) => state.progress.get(id).done).length;
+  const done = (tourDone ? 1 : 0) + completed;
+  const total = 1 + ids.length;
+  return { shown: true, done, total, complete: done === total };
 }
 
 /** One cohort's first mile: `day` is an admit day, or 'other_way'. */
@@ -645,13 +677,17 @@ async function firstMile(pool, { day, now = new Date(), leftOutIds = [] } = {}) 
     ...firstMilePerson(row, now),
     onboard: await onboardFor(pool, row, season ? season.id : null),
   })));
+  const tracked = people.filter((p) => p.mail);
   return {
     cohort: day,
     people,
     steps: firstMileCounts(people),
-    notRecorded: {
-      followedLink: notRecorded('Nothing records the admit mail being opened or its link followed.'),
-    },
+    mail: tracked.length ? {
+      tracked: tracked.length,
+      opened: tracked.filter((p) => p.mail.opened).length,
+      clicked: tracked.filter((p) => p.mail.clicked).length,
+    } : notRecorded('No admit mail in this cohort was tracked: tracking began on 7 Oct 2026.'),
+    notRecorded: {},
   };
 }
 
@@ -1292,8 +1328,8 @@ const PERSON_APPS_SQL = `SELECT ap.id, ap.slug, ap.name, ap.created_by = $1::int
    ORDER BY days_used DESC, ap.slug`;
 
 // The person's challenge credits since $2, with whether each is one of the
-// First challenges (the ONBOARDING category, which the Getting started card
-// is built from), from the ledger the scorer writes the moment an act counts.
+// First challenges (the ONBOARDING category), from the ledger the scorer
+// writes the moment an act counts.
 const PERSON_CHALLENGES_SQL = `SELECT ua.challenge_id, COALESCE(c.goal, ct.goal) AS title, ua.points, ua.activity_at, ua.source,
          UPPER(TRIM(COALESCE(ct.category, ''))) = 'ONBOARDING' AS first_challenge
     FROM user_activities ua
@@ -1485,6 +1521,13 @@ async function trustChecks(pool, { week, leftOutIds = [] } = {}) {
 // step is counted over the projects created since its first record, says
 // how many that is (`of`), and is "not recorded" when no project in the
 // window is that recent. Never a zero for something nobody recorded.
+//
+// Under Running, where that time went (#4895): each project's first
+// creation attempt that ran has an `app_creation_timed` record
+// (services/app-creation-timing.js), its stages each on their own clock.
+// The reading is per project, over the ones made from a starter into a new
+// repository (an import builds whatever it imported), and only from the day
+// creation was first timed.
 
 const CREATION_STEPS = Object.freeze(['created', 'running', 'first_version', 'preview', 'change_live']);
 const CREATION_TARGETS = Object.freeze({ running: 300, first_version: 120, change_live: 600 });
@@ -1511,9 +1554,16 @@ const CREATION_PATH_SQL = `WITH made AS (
     SELECT e.app_id, e.created_at, e.metadata->'requesterIds' AS requester_ids
       FROM events e
      WHERE e.event_type = 'change_live' AND e.app_id IN (SELECT m.id FROM made m)
+  ), timed AS (
+    SELECT DISTINCT ON (e.app_id) e.app_id, e.metadata
+      FROM events e
+     WHERE e.event_type = 'app_creation_timed' AND e.metadata->>'outcome' = 'running'
+       AND e.app_id IN (SELECT m.id FROM made m)
+     ORDER BY e.app_id, e.created_at, e.id
   )
   SELECT m.id AS app_id, m.slug, m.name, m.created_at, m.user_id, m.username,
          m.first_running_at AS running_at,
+         (SELECT t.metadata FROM timed t WHERE t.app_id = m.id) AS timing,
          (SELECT MIN(COALESCE(cs.promoted_at, cs.created_at))
             FROM homeroom_bot_first_versions f
             JOIN homeroom_bot_runs r ON r.app_id = f.app_id AND r.issue_number = f.issue_number
@@ -1529,7 +1579,8 @@ const CREATION_PATH_SQL = `WITH made AS (
 const CREATION_RECORDED_SQL = `SELECT
     (SELECT MIN(e.created_at) FROM events e WHERE e.event_type = 'app_running') AS running,
     (SELECT MIN(e.created_at) FROM events e WHERE e.event_type = 'preview_opened') AS preview,
-    (SELECT MIN(e.created_at) FROM events e WHERE e.event_type = 'change_live') AS change_live`;
+    (SELECT MIN(e.created_at) FROM events e WHERE e.event_type = 'change_live') AS change_live,
+    (SELECT MIN(e.created_at) FROM events e WHERE e.event_type = 'app_creation_timed') AS timed`;
 
 function median(values) {
   if (!values.length) return null;
@@ -1561,6 +1612,48 @@ function creationProject(row, recordedFrom) {
   return {
     appId: Number(row.app_id), slug: row.slug, project: row.name,
     userId: Number(row.user_id), name: row.username, createdAt: row.created_at, steps,
+    timing: creationTiming(row.timing),
+  };
+}
+
+// One project's creation timing, as the page shows it: its stages in
+// pipeline order, its total, the build's engine and slowest steps, and the
+// Pod's start. Only the known, well-formed fields of the stored record.
+const POD_STEPS = Object.freeze(['scheduleMs', 'startMs', 'readyMs']);
+function creationTiming(metadata) {
+  if (!metadata || typeof metadata !== 'object') return null;
+  const num = (v) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.round(v) : null);
+  const stages = {};
+  for (const key of TIMED_STAGES) {
+    const v = num(metadata.stages && metadata.stages[key]);
+    if (v != null) stages[key] = v;
+  }
+  const out = { kind: metadata.kind === 'new_repo' ? 'new_repo' : 'existing_repo', totalMs: num(metadata.totalMs), stages };
+  const b = metadata.build;
+  if (b && typeof b.engine === 'string') {
+    const steps = (Array.isArray(b.steps) && b.steps.length ? b.steps : (Array.isArray(b.phases) ? b.phases : []))
+      .filter((st) => st && typeof st.name === 'string' && num(st.ms) != null)
+      .slice(0, 3).map((st) => ({ name: st.name.slice(0, 60), ms: num(st.ms) }));
+    out.build = { engine: b.engine.slice(0, 16), ...(b.reused ? { reused: true } : {}), steps };
+  }
+  if (metadata.pod && POD_STEPS.every((k) => num(metadata.pod[k]) != null)) {
+    out.pod = Object.fromEntries(POD_STEPS.map((k) => [k, num(metadata.pod[k])]));
+  }
+  return out;
+}
+
+/** Where the time to running went, per project: each stage's median, over projects made from a starter. */
+function creationTimingSummary(projects) {
+  const timed = projects.map((p) => p.timing).filter((t) => t && t.kind === 'new_repo');
+  const of = (values) => values.filter((v) => v != null);
+  const withPod = timed.filter((t) => t.pod);
+  return {
+    of: timed.length,
+    totalMs: median(of(timed.map((t) => t.totalMs))),
+    stages: TIMED_STAGES
+      .map((key) => ({ key, medianMs: median(of(timed.map((t) => t.stages[key]))) }))
+      .filter((st) => st.medianMs != null),
+    pod: withPod.length ? Object.fromEntries(POD_STEPS.map((k) => [k, median(withPod.map((t) => t.pod[k]))])) : null,
   };
 }
 
@@ -1638,10 +1731,12 @@ async function creationPath(pool, { week, now = new Date(), leftOutIds = [], mem
     targets: CREATION_TARGETS,
     recordedFrom: { running: iso(recordedFrom.running), preview: iso(recordedFrom.preview), change_live: iso(recordedFrom.change_live) },
     weeks,
+    timing: { from: iso(r.timed), ...creationTimingSummary(inWeek) },
     examples: [...inWeek].reverse().slice(0, CREATION_EXAMPLES).map((p) => ({
       userId: p.userId, name: p.name, slug: p.slug, project: p.project, createdAt: iso(p.createdAt),
       steps: CREATION_STEPS.filter((key) => key !== 'created')
         .map((key) => ({ key, recorded: p.steps[key].counted, seconds: p.steps[key].seconds })),
+      timing: p.timing,
     })),
   };
 }
@@ -1661,14 +1756,22 @@ async function creationPath(pool, { week, now = new Date(), leftOutIds = [], mem
 //         reward being the project they were invited to, shown at once. The
 //         in-session aha: they wrote in its chat or filed a request within
 //         the hour.
+//   look  somebody answered the first session's question with "Look around
+//         first" instead of making a project (first_session_looked_around,
+//         #4039): the other outcome of the question, so make and look are
+//         the split between them. The clock starts at the answer; the one
+//         step is whether they made a project of their own later.
 //
 // Beside them, the invite funnel (#4176), for the same window: how many
 // people opened an invite link (invite_opened, signed in or out, never a
-// name), how many signed up or in through one (invite_signed_in), and how
-// many joined through one (community_invite_redemptions). Counts only: the
-// page works out what dropped off between them. Four of these are events
-// first written with this reading; before each was first recorded it is
-// "not recorded", never a zero.
+// name), how many reached Homeroom signed in through one (invite_signed_in),
+// and how many joined through one (community_invite_redemptions). Signed in
+// is everyone who got there, in its two ways (#4272): signed up or in from
+// the link, which is what the link converted, or already signed in when
+// they opened it (the event's `how`, journey-events.noteInviteSignedIn).
+// Counts only: the page works out what dropped off between them. Four of
+// these are events first written with this reading; before each was first
+// recorded it is "not recorded", never a zero.
 
 // Written into the reading as minutes and seconds; the SQL takes no window.
 const FIRST_SESSION_MINUTES = 60;
@@ -1695,6 +1798,13 @@ const FIRST_SESSION_SQL = `WITH real AS (
        AND COALESCE(x.applied_at, x.created_at) < $2::timestamptz
        AND x.user_id IN (SELECT r.id FROM real r)
      ORDER BY x.user_id, COALESCE(x.applied_at, x.created_at), x.id
+  ), looked AS (
+    SELECT DISTINCT ON (e.user_id) e.user_id, e.created_at AS intent_at
+      FROM events e
+     WHERE e.event_type = 'first_session_looked_around'
+       AND e.created_at >= $1::timestamptz AND e.created_at < $2::timestamptz
+       AND e.user_id IN (SELECT r.id FROM real r)
+     ORDER BY e.user_id, e.created_at, e.id
   )
   SELECT 'make' AS path, m.user_id, u.username, m.app_id, ap.slug, ap.name, m.intent_at,
          (SELECT MIN(e.created_at) FROM events e
@@ -1703,7 +1813,8 @@ const FIRST_SESSION_SQL = `WITH real AS (
            WHERE ci.app_id = m.app_id AND ci.created_by = m.user_id) AS invited_at,
          ap.first_running_at AS running_at,
          NULL::timestamptz AS said_at,
-         NULL::timestamptz AS suggested_at
+         NULL::timestamptz AS suggested_at,
+         NULL::timestamptz AS made_at
     FROM made m
     JOIN users u ON u.id = m.user_id
     JOIN apps ap ON ap.id = m.app_id
@@ -1717,10 +1828,22 @@ const FIRST_SESSION_SQL = `WITH real AS (
              AND cm.created_at >= j.intent_at) AS said_at,
          (SELECT MIN(i.created_at) FROM issues i
            WHERE i.app_id = j.app_id AND i.created_by = j.user_id
-             AND i.created_at >= j.intent_at) AS suggested_at
+             AND i.created_at >= j.intent_at) AS suggested_at,
+         NULL::timestamptz AS made_at
     FROM joined j
     JOIN users u ON u.id = j.user_id
     JOIN apps ap ON ap.id = j.app_id
+  UNION ALL
+  SELECT 'look' AS path, l.user_id, u.username, NULL::int AS app_id, NULL::varchar AS slug, NULL::varchar AS name, l.intent_at,
+         NULL::timestamptz AS reward_at,
+         NULL::timestamptz AS invited_at,
+         NULL::timestamptz AS running_at,
+         NULL::timestamptz AS said_at,
+         NULL::timestamptz AS suggested_at,
+         (SELECT MIN(ap.created_at) FROM apps ap
+           WHERE ap.created_by = l.user_id AND ap.created_at >= l.intent_at) AS made_at
+    FROM looked l
+    JOIN users u ON u.id = l.user_id
    ORDER BY intent_at, user_id`;
 
 // When each first-session event was first recorded at all.
@@ -1729,7 +1852,8 @@ const FIRST_SESSION_RECORDED_SQL = `SELECT
       WHERE e.event_type = 'app_created' AND e.metadata->>'from' = 'first-session') AS make,
     (SELECT MIN(e.created_at) FROM events e WHERE e.event_type = 'first_artefact_shown') AS reward,
     (SELECT MIN(e.created_at) FROM events e WHERE e.event_type = 'invite_opened') AS opens,
-    (SELECT MIN(e.created_at) FROM events e WHERE e.event_type = 'invite_signed_in') AS signed_in`;
+    (SELECT MIN(e.created_at) FROM events e WHERE e.event_type = 'invite_signed_in') AS signed_in,
+    (SELECT MIN(e.created_at) FROM events e WHERE e.event_type = 'first_session_looked_around') AS look`;
 
 // The invite funnel in [$1, $2), counted from the first sign-in through an
 // invite when that is later: before it the middle step was not recorded,
@@ -1737,7 +1861,9 @@ const FIRST_SESSION_RECORDED_SQL = `SELECT
 // once per maker and project, a sign-in and a join once per link. An open
 // signed out has no name, so opens are counted whoever opened them,
 // leaving out only the signed-in opens of people who are not real; the
-// other two steps are real people's. $3/$4 are the real-person parameters.
+// other two steps are real people's. A sign-in is counted in all, and in
+// its two ways: signed up or in from the link, or already signed in when
+// they opened it. $3/$4 are the real-person parameters.
 const INVITE_FUNNEL_SQL = `WITH real AS (
     SELECT u.id FROM users u WHERE ${REAL_PERSON_SQL}
   ), win AS (
@@ -1749,23 +1875,32 @@ const INVITE_FUNNEL_SQL = `WITH real AS (
            WHERE e.event_type = 'invite_opened'
              AND e.created_at >= w.from_at AND e.created_at < $2::timestamptz
              AND (e.user_id IS NULL OR e.user_id IN (SELECT r.id FROM real r))) AS opened,
-         (SELECT COUNT(*)::int FROM events e
-           WHERE e.event_type = 'invite_signed_in'
-             AND e.created_at >= w.from_at AND e.created_at < $2::timestamptz
-             AND e.user_id IN (SELECT r.id FROM real r)) AS signed_in,
+         s.signed_in, s.signed_in_by_invite, s.signed_in_already,
          (SELECT COUNT(*)::int FROM community_invite_redemptions x
            WHERE x.status = 'joined'
              AND COALESCE(x.applied_at, x.created_at) >= w.from_at
              AND COALESCE(x.applied_at, x.created_at) < $2::timestamptz
              AND x.user_id IN (SELECT r.id FROM real r)) AS joined
-    FROM win w`;
+    FROM win w
+    CROSS JOIN LATERAL (
+      SELECT COUNT(*)::int AS signed_in,
+             (COUNT(*) FILTER (WHERE e.metadata->>'how' IN ('signed_up', 'signed_in')))::int AS signed_in_by_invite,
+             (COUNT(*) FILTER (WHERE e.metadata->>'how' = 'was_signed_in'))::int AS signed_in_already
+        FROM events e
+       WHERE e.event_type = 'invite_signed_in'
+         AND e.created_at >= w.from_at AND e.created_at < $2::timestamptz
+         AND e.user_id IN (SELECT r.id FROM real r)
+    ) s`;
 
 /**
  * Pure: the invite funnel for `week`, from a row of INVITE_FUNNEL_SQL:
- * `{ from, opened, signedIn, joined }`, `from` being when its counts start.
- * Not recorded before the first sign-in through an invite was, nor for one
- * admit cohort (`cohort`): an open signed out names nobody, so it is in no
- * cohort, and the funnel is everyone's or nothing.
+ * `{ from, opened, signedIn, signedInByInvite, signedInAlready, joined }`,
+ * `from` being when its counts start. `signedIn` is everyone who reached
+ * Homeroom signed in through a link; `signedInByInvite` signed up or in from
+ * it (the step's conversion), `signedInAlready` was signed in when they
+ * opened it. Not recorded before the first sign-in through an invite was,
+ * nor for one admit cohort (`cohort`): an open signed out names nobody, so
+ * it is in no cohort, and the funnel is everyone's or nothing.
  */
 function inviteFunnelReading(row, { week, cohort = false } = {}) {
   if (cohort) return notRecorded('An invite opened signed out names nobody, so the funnel is counted for everyone only.');
@@ -1777,6 +1912,8 @@ function inviteFunnelReading(row, { week, cohort = false } = {}) {
     from: new Date(Math.max(new Date(week.start).getTime(), since.getTime())).toISOString(),
     opened: Number(row.opened || 0),
     signedIn: Number(row.signed_in || 0),
+    signedInByInvite: Number(row.signed_in_by_invite || 0),
+    signedInAlready: Number(row.signed_in_already || 0),
     joined: Number(row.joined || 0),
   };
 }
@@ -1799,6 +1936,8 @@ function firstSessionPerson(row) {
       invited: secondsBetween(intent, row.invited_at),
       running: secondsBetween(intent, row.running_at),
     };
+  } else if (row.path === 'look') {
+    out.steps = { made: secondsBetween(intent, row.made_at) };
   } else {
     out.steps = {
       said: secondsBetween(intent, row.said_at),
@@ -1830,6 +1969,7 @@ function firstSessionReading(rows, opens, { week, recordedFrom = {} } = {}) {
   const people = rows.map(firstSessionPerson);
   const make = people.filter((p) => p.path === 'make');
   const join = people.filter((p) => p.path === 'join');
+  const look = people.filter((p) => p.path === 'look');
   const ahaJoin = join.filter((p) => [p.steps.said, p.steps.suggested]
     .some((s) => s != null && s <= FIRST_SESSION_MINUTES * 60)).length;
   const iso = (v) => (v ? new Date(v).toISOString() : null);
@@ -1853,10 +1993,16 @@ function firstSessionReading(rows, opens, { week, recordedFrom = {} } = {}) {
       steps: [firstSessionStep(join, 'said'), firstSessionStep(join, 'suggested')],
       aha: ahaJoin,
     },
+    look: {
+      people: look.length,
+      notRecorded: recorded(recordedFrom.look, 'Not recorded before "Look around first" was marked.'),
+      steps: [firstSessionStep(look, 'made')],
+    },
     opens: opens || notRecorded('Not recorded before sign-ins through an invite were counted.'),
     recordedFrom: {
       make: iso(recordedFrom.make), reward: iso(recordedFrom.reward),
       opens: iso(recordedFrom.opens), signedIn: iso(recordedFrom.signedIn),
+      look: iso(recordedFrom.look),
     },
     examples: [...people].reverse().slice(0, FIRST_SESSION_EXAMPLES),
   };
@@ -1876,7 +2022,7 @@ async function firstSession(pool, { week, leftOutIds = [], memberIds = null } = 
   const r = rec || {};
   return firstSessionReading(mine, inviteFunnelReading(funnel, { week, cohort: !!memberIds }), {
     week,
-    recordedFrom: { make: r.make || null, reward: r.reward || null, opens: r.opens || null, signedIn: r.signed_in || null },
+    recordedFrom: { make: r.make || null, reward: r.reward || null, opens: r.opens || null, signedIn: r.signed_in || null, look: r.look || null },
   });
 }
 
@@ -2089,6 +2235,12 @@ async function summary(pool, { week, now = new Date(), leftOutIds = [], memberId
 }
 
 module.exports = {
+  // Spelled as properties, not shorthand, so scripts/check-sql.js can
+  // resolve the queries elsewhere that splice them in
+  // (services/topic-figures.js reads them as journey.<NAME>).
+  ADMITTED_CTE: ADMITTED_CTE,
+  NEWCOMER_OR_NO_ACCOUNT: NEWCOMER_OR_NO_ACCOUNT,
+  REAL_PERSON_SQL: REAL_PERSON_SQL,
   COHORTS_SQL,
   CHANGE_LOOP_SQL,
   CREATION_PATH_SQL,
@@ -2129,7 +2281,6 @@ module.exports = {
   TREND_WEEKS_MAX,
   LOST_CUTOFFS,
   NEWCOMER_DAYS,
-  REAL_PERSON_SQL,
   REAL_VOTER_SQL,
   CHANGE_PERSON_SQL,
   RESERVED_PATTERNS,
@@ -2144,9 +2295,12 @@ module.exports = {
   creationPath,
   creationProject,
   creationSteps,
+  creationTiming,
+  creationTimingSummary,
   pairReading,
   pairs,
   cohorts,
+  realPersonParams,
   coverage,
   groupsForWeek,
   inviteLoop,
@@ -2158,6 +2312,7 @@ module.exports = {
   inviteFunnelReading,
   firstMileCounts,
   firstMileSteps,
+  mailEngagement,
   groupLifecycle,
   isActiveGroup,
   isoDay,

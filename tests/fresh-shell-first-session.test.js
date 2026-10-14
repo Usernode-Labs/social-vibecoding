@@ -46,6 +46,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const ts = require('typescript');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -151,6 +152,7 @@ function harness({
     },
   };
   ctx.window = { AuthScreens: { _current: route } };
+  ctx.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(ctx);
 
   const App = Object.assign({
@@ -536,7 +538,7 @@ test('nobody signed in and mid-use is ever moved by it', () => {
 });
 
 test('finishLogin asks alongside the session read and moves before enterAuthed', () => {
-  const finish = authScreensJs.slice(authScreensJs.indexOf('async finishLogin() {'));
+  const finish = authScreensJs.slice(authScreensJs.indexOf('async finishLogin(opts) {'));
   const ask = finish.indexOf('App._askLiveBuild()');
   const me = finish.indexOf("fetch('/api/auth/me'");
   const replace = finish.indexOf("history.replaceState(null, '', AuthScreens.deepLinkUrl(target));");
@@ -642,6 +644,7 @@ function loadAuthShared(window, fetchImpl) {
     console: { warn() {} },
     require(specifier) {
       if (specifier === '../../lib/legacy-dom') return { useIsomorphicLayoutEffect() {} };
+      if (specifier === '../../lib/i18n/runtime') return englishPlatformI18n();
       throw new Error(`unexpected auth shared import: ${specifier}`);
     },
   };

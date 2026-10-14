@@ -28,6 +28,7 @@ const vm = require('node:vm');
 const { installAppCard } = require('./helpers/app-card');
 const { installGridStore } = require('./helpers/home-grid-store');
 const { HOME_SRC, LAYOUT_SRC } = require('./helpers/home-modules');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 function fakeAttrs(el) {
   const attrs = Object.create(null);
@@ -129,6 +130,7 @@ function makeHome({ strip = makeStrip(), cards = [] } = {}) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.createContext(sandbox);
   installAppCard(sandbox);
   installGridStore(sandbox);

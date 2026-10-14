@@ -106,7 +106,7 @@ function leavingText(holds, now = new Date()) {
 
 /** Pure: what the bot says when it goes ahead. */
 function goingText({ asker, holders = [] }) {
-  const tail = 'It will reply here with a question, a note or a proposal.';
+  const tail = 'It will reply here with a question, a note or a change to vote on.';
   if (!holders.length) return `Homeroom bot is taking this up now, as asked. ${tail}`;
   return `${asker || 'Somebody'} asked Homeroom bot to build this anyway, so it is taking it up now. ${tail}`;
 }
@@ -141,6 +141,22 @@ function decide({ holds = [], mentions = [], notes = [] }) {
   return { action: 'leave', mention, holds: others };
 }
 
+/**
+ * #4530: the text of the regex a mention of the bot matches, so every place
+ * that looks for one matches it identically: @homeroom_bot, and not
+ * @homeroom_bot_x or the tail of an email address.
+ *
+ * #4610: and its display name, "@Homeroom bot", which is what the composer
+ * writes when a person picks the bot from its list: with a zero-width
+ * character after the @ (U+200B, or a joiner) so the name does not link as
+ * somebody else's handle. Used as a JavaScript RegExp and a Postgres `~*`
+ * pattern alike, so the zero-width characters are literal, not escapes.
+ */
+const ZERO_WIDTH = '\u200b\u200c\u200d\u2060';
+function mentionPattern() {
+  return `(^|[^a-z0-9_])@(${live.BOT_USERNAME}|[${ZERO_WIDTH}]?homeroom bot)([^a-z0-9_-]|$)`;
+}
+
 /** Recent mentions of the bot by people, in the discussions of `numbers`, oldest first. */
 async function recentMentions(pool, appId, numbers, { windowHours = MENTION_WINDOW_HOURS } = {}) {
   const { rows } = await pool.query(
@@ -153,7 +169,7 @@ async function recentMentions(pool, appId, numbers, { windowHours = MENTION_WIND
         AND m.content ~* $3
         AND m.created_at > NOW() - make_interval(hours => $4)
       ORDER BY m.created_at, m.id`,
-    [appId, numbers, `(^|[^a-z0-9_])@${live.BOT_USERNAME}([^a-z0-9_-]|$)`, windowHours],
+    [appId, numbers, mentionPattern(), windowHours],
   );
   return rows;
 }
@@ -265,6 +281,7 @@ module.exports = {
   GOING_KIND,
   MENTION_WINDOW_HOURS,
   ageText,
+  mentionPattern,
   holdsByPerson,
   leavingText,
   goingText,

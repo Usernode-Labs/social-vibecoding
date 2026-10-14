@@ -90,7 +90,7 @@ test('the vote sheet is not held at the rail\'s level while it is up', () => {
 
 test('the wide layout keeps its own stacking: the 40 is the phone sheet\'s alone', () => {
   const wide = /@media \(min-width: 700px\) \{([\s\S]*?)\n\}/.exec(CSS)[1];
-  assert.match(wide, /\.dev-ws-sheet-ask, \.dev-ws-sheet-comments, \.dev-ws-sheet-description \{\n\s*position: relative; inset: auto; flex: 0 0 400px; z-index: auto;/);
+  assert.match(wide, /\.dev-ws-sheet-talk \{\n\s*position: relative; inset: auto; flex: 0 1 380px; min-width: 300px; z-index: auto;/);
   assert.match(wide, /\.dev-ws-sheet-vote \{ position: absolute;[^}]*z-index: 6;/);
   assert.match(wide, /\.dev-ws-rail \{\n\s*position: relative; right: auto; bottom: auto; z-index: auto;/);
 });

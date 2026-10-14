@@ -35,6 +35,8 @@ interface Recipe {
   models: { triage: string; spec: string; build: string };
   reviewer: { model: string; maxRounds: number; budgetMinutes: number } | null;
   pack: number | null;
+  // Build-speed tweaks (services/bot-configs.js TWEAKS); recipeLine names them.
+  tweaks?: string[];
 }
 
 interface VsCurrent {
@@ -71,6 +73,9 @@ export interface BotConfigVersion {
     builds: number;
     built: number;
     buildRate?: number | null;
+    // Builds the platform failed (a side build's infra failure, a live one a
+    // restart failed): left out of builds and the build rate on both sides.
+    platformFailures?: number;
     // A later change's current version: what became of its live builds' proposals.
     proposals?: { merged: number; closed: number; open: number; none: number };
     avgCostUsd: number | null;
@@ -181,6 +186,11 @@ function Row({ v, canWrite, busy, onRole }: {
       <td className={`${AdminUI.td} whitespace-nowrap`}>
         <div>{s.builds}</div>
         {s.builds > 0 && s.buildRate != null ? <div className={`${AdminUI.muted} text-xs`}>{pct(s.buildRate)} built</div> : null}
+        {s.platformFailures ? (
+          <div className={`${AdminUI.muted} text-xs`} data-platform-failures={s.platformFailures}>
+            {`${s.platformFailures} platform failure${s.platformFailures === 1 ? '' : 's'}, left out`}
+          </div>
+        ) : null}
         {proposals ? <div className={`${AdminUI.muted} text-xs`}>{proposals}</div> : null}
       </td>
       <td className={`${AdminUI.td} whitespace-nowrap`}>{usd(s.avgCostUsd) || 'None yet'}</td>
@@ -255,10 +265,10 @@ export function BotConfigsView({
       </div>
       {scope === 'later' ? (
         <p className={`${AdminUI.muted} mb-2`} id="admin-bot-configs-about">
-          How the Homeroom bot builds every later change, live or shadow: the current configuration&apos;s spec and
+          How the Homeroom bot builds every later change, live or shadow: the current configuration&apos;s plan and
           build models. The triage and follow-up turns keep their own models. Side configurations are built silently
           beside each later change on the App bench lane, never shown to the person, and pairs compare the two sides&apos;
-          specs and diffs. Each version is measured on its own, and its blind win rate is against the current one,
+          plans and diffs. Each version is measured on its own, and its blind win rate is against the current one,
           where a tie counts half. Recipes are saved and pairs are picked through the connector.
         </p>
       ) : (

@@ -318,3 +318,49 @@ test('a first version\'s populated demo: the viewer\'s own data, a screen and a 
   const excerpt = doc.slice(doc.indexOf('<!-- work-order:begin -->'), doc.indexOf('<!-- work-order:end -->'));
   assert.match(excerpt, /A project's first version is the one\n   exception, on `\?demo=1` only: see "A first version's populated demo"\./);
 });
+
+// The shots copies sign in fixture accounts, and Homeroom tells an app who
+// is signed in, never their role in it. An app that hard-codes its creator's
+// account into a screen makes every change there unshootable (three runs on
+// one app's Creator Studio, QuestVerse's PRs 7 to 9), so the doc says so
+// where it explains who the before & after shots see.
+test('conventions doc says no shots persona is the app\'s creator or admin, and not to hard-code people', () => {
+  const doc = getAppConventions();
+  const start = doc.indexOf('### Who the before & after shots see');
+  assert.ok(start > 0, 'the section is there');
+  const section = doc.slice(start, doc.indexOf('\n### ', start + 1)).replace(/\s+/g, ' ');
+  assert.match(section, /Five things it cannot do by itself/);
+  assert.match(section, /\*\*No persona is your app's creator or one of its admins\.\*\*/);
+  assert.match(section, /Homeroom tells your app who is signed in, never their role in it/);
+  assert.match(section, /`read_only_admin` and `full_admin` are Homeroom's own administrators, which your app is not told/);
+  assert.match(section, /refuses every shots browser, and its changes are skipped/);
+  assert.match(section, /Do not hard-code people into a screen the project works on/);
+  assert.match(section, /name that way in `hints\.setup`/);
+});
+
+// From 2026-10-09 to 10-12, 22 shot runs failed and 13 more changes were
+// skipped because the copies lacked the state the change shows, most of
+// them new in the proposal itself. A seed in the same proposal reaches the
+// after copy, the side a new state needs, so the doc says to add one, and
+// squares it with the seed rule: a fixture account is not whoever opened
+// the preview, and no seed answers the question the change's code asks.
+test('conventions doc says to seed a new state in the same proposal, within the seed rule', () => {
+  const doc = getAppConventions();
+  const start = doc.indexOf('### Who the before & after shots see');
+  const section = doc.slice(start, doc.indexOf('\n### ', start + 1)).replace(/\s+/g, ' ');
+  assert.match(section, /\*\*It finds only the data the copies hold\.\*\*/);
+  assert.match(section, /add an idempotent, obviously fake seed for it in the same proposal: the seed reaches the after copy, which is the side a state new in this proposal needs\./);
+  assert.match(section, /`usernode-capture` is the member/);
+  assert.match(section, /a fixture account is one named account, not whoever opens the preview/);
+  assert.match(section, /never seed a signal your code reads to decide something, so a seed never answers the question the change's own code asks/);
+  assert.match(section, /A reply from an AI feature is seeded as the stored reply, never asked for/);
+  assert.match(section, /A seed cannot help a change to a state that already existed, which both copies need/);
+
+  // The seed rule points there, in the full text and in the offline excerpt.
+  const visitor = doc.slice(doc.indexOf('**Never seed the visitor.**'), doc.indexOf('**Request-time seeding only'))
+    .replace(/\s+/g, ' ');
+  assert.match(visitor, /The before & after shots' fixture accounts are not the visitor/);
+  const excerpt = doc.slice(doc.indexOf('<!-- work-order:begin -->'), doc.indexOf('<!-- work-order:end -->'))
+    .replace(/\s+/g, ' ');
+  assert.match(excerpt, /The shots' fixture accounts are not whoever opened the preview: a state new in a change is seeded in that change/);
+});

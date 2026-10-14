@@ -105,7 +105,7 @@ test('each demo row opens the very merged mock it names', () => {
   // stagingMockMerged (src/routes/votes.js) serves these ids under the same
   // flag, so a demo row's link lands on a real proposal page in a preview.
   const votes = read('src/routes/votes.js');
-  const mocks = votes.slice(votes.indexOf('function stagingMockMerged()'));
+  const mocks = votes.slice(votes.indexOf('function stagingMockMerged('));
   for (const row of profile.DEMO_CONTRIBUTIONS) {
     assert.ok(mocks.includes(String(row.sessionId)), `${row.sessionId} is a merged mock`);
     const title = row.title.replace(/^\[Mock\] /, '');

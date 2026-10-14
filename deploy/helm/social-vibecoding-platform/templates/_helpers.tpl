@@ -92,6 +92,22 @@ app.kubernetes.io/component: postgresql
   {{- if and .Values.secrets.create (not (regexMatch "^[A-Za-z0-9._~-]+$" .Values.secrets.databasePassword)) -}}
     {{- fail "secrets.databasePassword must be non-empty and URL-safe" -}}
   {{- end -}}
+  {{- if .Values.previewPostgresql.enabled -}}
+    {{- if or (lt (int .Values.previewPostgresql.port) 1) (gt (int .Values.previewPostgresql.port) 65535) -}}
+      {{- fail "previewPostgresql.port must be between 1 and 65535" -}}
+    {{- end -}}
+    {{- if and .Values.networkPolicy.enabled .Values.platform.enabled (empty .Values.previewPostgresql.podSelector) -}}
+      {{- fail "previewPostgresql.podSelector is required when previewPostgresql and the network policy are enabled" -}}
+    {{- end -}}
+    {{- if .Values.secrets.create -}}
+      {{- if or (empty .Values.previewPostgresql.host) (empty .Values.previewPostgresql.username) (empty .Values.previewPostgresql.database) -}}
+        {{- fail "previewPostgresql.host, username and database are required when previewPostgresql is enabled with chart-created secrets" -}}
+      {{- end -}}
+      {{- if not (regexMatch "^[A-Za-z0-9._~-]+$" .Values.secrets.previewDatabasePassword) -}}
+        {{- fail "secrets.previewDatabasePassword must be non-empty and URL-safe when previewPostgresql is enabled" -}}
+      {{- end -}}
+    {{- end -}}
+  {{- end -}}
   {{- if and .Values.platform.enabled .Values.secrets.create (or (empty .Values.secrets.githubAppId) (empty .Values.secrets.githubPrivateKey) (empty .Values.secrets.githubBotToken)) -}}
     {{- fail "secrets.githubAppId, secrets.githubPrivateKey and secrets.githubBotToken are required when platform is enabled" -}}
   {{- end -}}

@@ -26,6 +26,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
@@ -216,6 +217,8 @@ function controllerHarness(opts) {
   const sheet = { open: false };
   runModules(sandbox, [['improve-controller.js', CONTROLLER]], {
     imports: {
+      // The module reads its words through the language runtime: the real one, in English.
+      '../../lib/i18n/runtime': englishPlatformI18n(),
       '../apps/app-card.js': { iconViewFor() {} },
       // THE CONTROLLER PRESENTS NOTHING NOW (#2718 review). It adopted the
       // Improve panel's root through lib/kit-surface and swept the other

@@ -7,6 +7,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { readBuildMeta, normalizeBuildSha } = require('./shell-stamp');
+const { PACK_NAME } = require('./language-packs');
 
 const digest = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 
@@ -27,6 +28,15 @@ function buildShellRelease(root, { revision = process.env.GIT_SHA } = {}) {
   const chunks = path.join(publicDir, 'shell', 'assets');
   for (const name of fs.readdirSync(chunks)) {
     if (/\.(?:js|css)$/.test(name)) paths.add(`/shell/assets/${name}`);
+  }
+  // Language packs likewise: their exact identities are recorded so a pack is
+  // verified and kept for offline use once a person asks for it, and none is
+  // in SHELL_ASSETS, so installing a worker never downloads a language.
+  const locales = path.join(publicDir, 'locales');
+  if (fs.existsSync(locales)) {
+    for (const name of fs.readdirSync(locales)) {
+      if (PACK_NAME.test(name)) paths.add(`/locales/${name}`);
+    }
   }
   const assets = [...paths].sort().map(url => ({
     path: url,

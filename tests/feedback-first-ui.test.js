@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 const source = fs.readFileSync(path.join(__dirname, '../frontend/src/features/dialogs/feedback-controller.js'), 'utf8')
   .replace(/^import .*$/gm, '').replace(/^export /gm, '') + '\nglobalThis.Feedback = Feedback;';
 const moment = { userId: 7, appSlug: 'filed-app', issueNumber: 41, canFix: true };
@@ -27,6 +28,8 @@ function harness({ response = { firstFeedback: moment }, ok = true } = {}) {
   let id = 0, queueHooks, failedReads = 0;
   const el = id => { if (!els.has(id)) els.set(id, element(id)); return els.get(id); };
   const sandbox = {
+    // The binding the controller's i18n import gives it (the import line is stripped above).
+    t: englishPlatformI18n().t,
     console, URLSearchParams, location: { search: '', hash: '', pathname: '/' },
     document: { getElementById: el, querySelector: () => null, querySelectorAll: () => [], createElement: element, addEventListener() {}, body: { appendChild() {} } },
     localStorage: { getItem() { return null; }, setItem() {} }, sessionStorage: { getItem() { return null; }, setItem() {}, removeItem() {} },
@@ -191,6 +194,18 @@ test('the first-request moment offers Your requests too, and replaces a sent con
   assert.ok(q.shown());
   assert.ok(q.el('feedback-sent').classList.contains('hidden'), 'one confirmation at a time');
 });
+// #4680: the form carries the same way to Your requests, under the intro
+// line, so what is already asked for is readable before a new one is written.
+// The route is written before the close, the same as the confirmations' links.
+test('the form itself offers Your requests before anything is typed', async () => {
+  const h = harness();
+  h.sandbox.App.openFeedbackModal();
+  assert.equal(h.el('feedback-form').classList.contains('hidden'), false, 'the form, not a confirmation');
+  h.el('feedback-form-mine').click();
+  assert.ok(h.el('feedback-modal').classList.contains('hidden'));
+  assert.equal(h.sandbox.location.hash, '#profile/your-requests');
+  assert.deepEqual(h.calls.filter((c) => c.url === '/api/feedback').length, 0, 'nothing filed by the look');
+});
 test('a rejected submission never congratulates the user', async () => {
   const h = harness({ ok: false, response: { error: 'Try again' } }); await h.submit();
   assert.equal(h.shown(), false);
@@ -324,7 +339,7 @@ test('#3971: the group path is thanked and still says where it went', async () =
     'Your idea is on the board now. Find it on your profile, under Your requests.');
   assert.ok(h.el('feedback-sent-first').classList.contains('hidden'));
 });
-test('B8: Build it yourself opens the request on the board and starts a change from it', async () => {
+test('B8: Build it now opens the request on the board and starts a change from it', async () => {
   const h = harness({ response: { homeroomBot: BOT } });
   await h.submit();
   h.el('feedback-sent-fix').click(); await settle();

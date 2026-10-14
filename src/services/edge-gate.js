@@ -433,9 +433,15 @@ async function handleAccess(pool, req, res) {
   const uri = typeof req.headers['x-forwarded-uri'] === 'string' && req.headers['x-forwarded-uri']
     ? req.headers['x-forwarded-uri'] : '/';
   const viaKubernetesGate = header(req.headers, 'x-usernode-gate') === 'kubernetes';
+  // Caddy's custom-domain site (#4405) cannot derive the container from the
+  // host the way the wildcard site's map does, so it asks for it too.
+  const viaCaddyCustom = header(req.headers, 'x-usernode-gate') === 'caddy';
 
   res.set('Cache-Control', 'no-store');
-  const parsed = appAccess.parseAppHost(rawHost);
+  // A Homeroom host parses with no database work; anything else is a LIVE
+  // custom domain (#4405, services/app-domains.js resolveAppHost) or 404.
+  // A custom host is the app's production address: never a preview.
+  const parsed = await require('./app-domains').resolveAppHost(pool, rawHost);
   if (!parsed) return res.status(404).send('Not found');
   const { slug, host } = parsed;
   const isProduction = parsed.label === slug;
@@ -468,6 +474,10 @@ async function handleAccess(pool, req, res) {
       const upstream = await upstreamFor(pool, parsed, vis);
       if (!upstream) return res.status(404).send('Not found');
       res.set('X-Usernode-Upstream', upstream);
+      if (isProduction) res.set('X-Usernode-Applink', chromelessUrl(slug));
+    } else if (viaCaddyCustom) {
+      // The docker runtime's production container name (application-runtime).
+      res.set('X-Usernode-Upstream', `usernode-app-${slug}`);
       if (isProduction) res.set('X-Usernode-Applink', chromelessUrl(slug));
     }
     return res.status(200).send('ok');
@@ -629,7 +639,9 @@ async function handleAccess(pool, req, res) {
 async function handleAuthorize(pool, req, res) {
   res.set('Cache-Control', 'no-store');
   res.set('Referrer-Policy', 'no-referrer');
-  const parsed = appAccess.parseAppHost(req.query.host);
+  // The same resolution as the gate: an unknown host is 404 here, which is
+  // what keeps the redirect back to `host` from being an open redirect.
+  const parsed = await require('./app-domains').resolveAppHost(pool, req.query.host);
   if (!parsed) return res.status(404).send('Not found');
   const next = safeNext(typeof req.query.next === 'string' ? req.query.next : '/');
   const isProduction = parsed.label === parsed.slug;

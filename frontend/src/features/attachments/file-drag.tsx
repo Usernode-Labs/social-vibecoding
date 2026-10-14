@@ -33,6 +33,7 @@
 
 import { useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent } from 'react';
 
+import { useMessages } from '../../lib/i18n/react';
 import { refusalSummary } from './refusal-summary';
 
 export { refusalSummary };
@@ -156,8 +157,9 @@ export function useFileDrag({ disabled = false, onFiles }: UseFileDragOptions) {
  * (app.css gives each composer card `position: relative`), and takes no
  * pointer events, so the drop still lands on the composer under it.
  */
-export function DropOverlay({ label = 'Drop files to attach', className = 'attach-drop-overlay' }: { label?: string; className?: string }) {
-  return <div className={className} aria-hidden="true" data-drop-overlay="">{label}</div>;
+export function DropOverlay({ label, className = 'attach-drop-overlay' }: { label?: string; className?: string }) {
+  const t = useMessages('messages');
+  return <div className={className} aria-hidden="true" data-drop-overlay="">{label ?? t('messages:attachments.dropToAttach')}</div>;
 }
 
 /**

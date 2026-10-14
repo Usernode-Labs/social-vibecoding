@@ -229,17 +229,13 @@ async function invitesToJoin(pool, app) {
  * who has just accepted an invite into app `appId`, in the shape the invite
  * link path hands it (App._followInvite): the project, who invited them and
  * whether they made it, and whether the account is about as old as this
- * accept (then "You're in" says what Homeroom is; a test account, made ahead
- * by an admin, is new on its first sign-in instead: test-accounts.js
- * onFirstRun). With them, what fills the middle of the screen: the project's
- * one-line description and the picture its invite page shows
- * (community-invites.js memberPicture), now that they may see it. Null when
- * there is no accepted row to read.
+ * accept (a test account, made ahead by an admin, is new on its first
+ * sign-in instead: test-accounts.js onFirstRun). "You're in" reads who is in
+ * the community itself (#4052). Null when there is no accepted row to read.
  */
 async function welcomeFor(pool, { appId, userId }) {
   const { rows } = await pool.query(
     `SELECT a.id, a.slug, a.name, a.icon_emoji, a.icon_image_id,
-            a.manifest_snapshot->>'description' AS description,
             (ac.invited_by IS NOT NULL AND ac.invited_by = a.created_by) AS inviter_made_it,
             inv.username AS inviter, inv.display_name AS inviter_display_name,
             COALESCE(ac.accepted_at, NOW()) AS joined_at,
@@ -254,12 +250,8 @@ async function welcomeFor(pool, { appId, userId }) {
   const row = rows[0];
   if (!row) return null;
   const communityInvites = require('./community-invites');
-  const [firstRun, picture, building] = await Promise.all([
+  const [firstRun, building] = await Promise.all([
     row.new_account ? false : require('./test-accounts').onFirstRun(pool, userId, row.joined_at),
-    communityInvites.pictureFor(pool, row.id).catch((err) => {
-      log.warn('collab-invites', 'Could not read the project\'s picture for its welcome', { appId, err: err.message });
-      return null;
-    }),
     communityInvites.firstVersionPending(pool, row.id),
   ]);
   return {
@@ -267,8 +259,7 @@ async function welcomeFor(pool, { appId, userId }) {
     name: row.name || row.slug,
     iconEmoji: row.icon_emoji || null,
     iconUrl: row.icon_image_id ? `/app-icons/${row.icon_image_id}` : null,
-    description: row.description || null,
-    picture: communityInvites.memberPicture(row.slug, picture),
+    inviter: row.inviter || null,
     inviterName: row.inviter_display_name || row.inviter || null,
     inviterMadeIt: !!row.inviter_made_it,
     // Its first version still on its way: "<maker> is making it".

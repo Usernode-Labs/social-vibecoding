@@ -8,8 +8,8 @@
  * "Resets Sunday at 8:00 PM", "They reset at 9:00 AM" — and the exact UTC
  * instant goes on `title`, one hover from certain.
  *
- *   resetWhen('weekly')   "Sunday at 8:00 PM"   (New York)
- *   resetWhen('daily')    "at 9:00 AM"          (Tokyo)
+ *   resetMoment('weekly') { day: "Sunday", time: "8:00 PM" }   (New York)
+ *   resetMoment('daily')  { day: "Monday", time: "9:00 AM" }   (Tokyo)
  *   resetUtc('weekly')    "Mon, Oct 5, 00:00 UTC"
  *
  * Both take the instant from the server's `resetsAt` when a caller has one,
@@ -22,6 +22,8 @@
  * have: a React component calls them from an effect, never in its first
  * render.
  */
+
+import { t } from './i18n/runtime';
 
 export type ResetCadence = 'weekly' | 'daily';
 
@@ -56,15 +58,28 @@ function resolve(cadence: ResetCadence, opts: ResetOptions = {}): Date {
 }
 
 /**
- * The local moment, worded to follow "Resets …": "Sunday at 8:00 PM" for a
- * weekly reset, "at 8:00 PM" for a daily one.
+ * The local moment as the values a sentence takes: the weekday's name and
+ * the time of day. Every sentence of ours that says when an allowance comes
+ * back is a whole message with {{day}} and {{time}} (a daily one uses the
+ * time alone), so the words around them are never put together here.
+ */
+export function resetMoment(cadence: ResetCadence, opts: ResetOptions = {}): { day: string; time: string } {
+  const at = resolve(cadence, opts);
+  return {
+    day: new Intl.DateTimeFormat(opts.locale, { weekday: 'long' }).format(at),
+    time: new Intl.DateTimeFormat(opts.locale, { hour: 'numeric', minute: '2-digit' }).format(at),
+  };
+}
+
+/**
+ * The local moment as words that follow "Resets …" in an English sentence
+ * the SERVER wrote: "Sunday at 8:00 PM" for a weekly reset, "at 8:00 PM" for
+ * a daily one. For localizeResetText only; our own sentences use resetMoment.
  */
 export function resetWhen(cadence: ResetCadence, opts: ResetOptions = {}): string {
-  const at = resolve(cadence, opts);
-  const time = new Intl.DateTimeFormat(opts.locale, { hour: 'numeric', minute: '2-digit' }).format(at);
-  if (cadence !== 'weekly') return `at ${time}`;
-  const day = new Intl.DateTimeFormat(opts.locale, { weekday: 'long' }).format(at);
-  return `${day} at ${time}`;
+  const { day, time } = resetMoment(cadence, opts);
+  if (cadence !== 'weekly') return t('core:time.reset.daily', { time });
+  return t('core:time.reset.weekly', { day, time });
 }
 
 /** The same instant in UTC, for `title`: "Mon, Oct 5, 00:00 UTC". */
@@ -90,7 +105,7 @@ export function localizeResetText(text: string, opts: Omit<ResetOptions, 'at'> =
     .replace(/at midnight UTC/g, () => resetWhen('daily', opts));
 }
 
-const ResetTime = { nextReset, resetWhen, resetUtc, localizeResetText };
+const ResetTime = { nextReset, resetMoment, resetWhen, resetUtc, localizeResetText };
 
 if (typeof window !== 'undefined') {
   (window as unknown as { ResetTime?: typeof ResetTime }).ResetTime = ResetTime;

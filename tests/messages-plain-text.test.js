@@ -13,6 +13,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -68,9 +69,11 @@ test('what is not markup is left as it was', () => {
 
 test('the quote, the reply bar and the inbox preview all use it', () => {
   const row = read('frontend/src/features/messages/message-row.tsx');
-  assert.match(row, /className="messages-quote"[\s\S]{0,400}plainText\(message\.reply\.content\) \|\| 'Attachment'/);
+  assert.equal(message('messages:row.quote.attachment'), 'Attachment');
+  assert.match(row, /className="messages-quote"[\s\S]{0,400}plainText\(message\.reply\.content\) \|\| t\('messages:row\.quote\.attachment'\)/);
   const composer = read('frontend/src/features/messages/composer.tsx');
-  assert.match(composer, /className="messages-reply-draft"[\s\S]{0,200}<p className="truncate">\{plainText\(reply\.content\) \|\| 'Attachment'\}<\/p>/);
+  assert.equal(message('messages:composer.replyAttachment'), 'Attachment');
+  assert.match(composer, /className="messages-reply-draft"[\s\S]{0,420}<p className="truncate">\{plainText\(reply\.content\) \|\| t\('messages:composer\.replyAttachment'\)\}<\/p>/);
   const api = read('frontend/src/features/messages/api.ts');
   assert.match(api, /const summary = plainText\(text\(pick\(row, 'latestSummary', 'latest_summary', 'preview'\)\) \|\| latestMessage\?\.content \|\| ''\);/);
   assert.match(api, /latestSummary: homeroomBot \? botRowPreview\(summary\) : summary,/);

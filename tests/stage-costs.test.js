@@ -84,7 +84,59 @@ test('averages per stage over the results that recorded their stages, adding up 
   assert.deepEqual(avg.stages.spec, { usd: 0.5, models: [OPUS, GLM] });
   assert.deepEqual(avg.stages.build, { usd: 0.5, models: [GLM] });
   assert.equal(avg.otherUsd, 0.5);
+  assert.equal(avg.otherOf, undefined, 'nothing named the remainders');
   assert.equal(stageCosts.averages([]), null);
+});
+
+test('the remainder says what it is: the ledger\'s turns no stage took, by component, largest first', () => {
+  const of = [
+    { component: 'homeroom_bot_triage', usd: 0.05 }, { component: 'kept_plan', usd: 0.4 },
+    { component: 'homeroom_bot_triage', usd: 0.01 }, { component: null, usd: 0.02 }, { component: 'Not A Name!', usd: 0.01 },
+    { component: 'nothing_spent', usd: 0 },
+  ];
+  assert.deepEqual(stageCosts.byComponent(of), [
+    { component: 'kept_plan', usd: 0.4 }, { component: 'homeroom_bot_triage', usd: 0.06 }, { component: 'unnamed', usd: 0.03 },
+  ]);
+  const b = stageCosts.breakdown(1.0, { build: { usd: 0.5, model: GLM } }, { of });
+  assert.equal(b.other.usd, 0.5);
+  assert.deepEqual(b.other.of.map((o) => o.component), ['kept_plan', 'homeroom_bot_triage', 'unnamed']);
+  assert.equal(stageCosts.breakdown(0.5, { build: { usd: 0.5, model: GLM } }, { of }).other.of, undefined, 'no remainder, nothing to name');
+  const avg = stageCosts.averages([b, stageCosts.breakdown(1.0, { build: { usd: 1.0, model: GLM } })]);
+  assert.deepEqual(avg.otherOf, [
+    { component: 'kept_plan', usd: 0.2 }, { component: 'homeroom_bot_triage', usd: 0.03 }, { component: 'unnamed', usd: 0.015 },
+  ], 'averaged over every result, as each stage is');
+});
+
+test('a build session\'s parts off its ledger: named turns keep their stage, the rest go by component, fixes after the review', async () => {
+  const REVIEW_AT = '2026-10-08T12:00:00.000Z';
+  const SPEC = 'aaaaaaaa-0000-4000-8000-000000000001';
+  const rows = [
+    { id: SPEC, component: null, model: OPUS, started_at: '2026-10-08T11:00:00Z', cost: 0.6, priced: 1, input: 1000, output: 100 },
+    { id: 'aaaaaaaa-0000-4000-8000-000000000002', component: 'homeroom_bot_build', model: GLM, started_at: '2026-10-08T11:10:00Z', cost: 0.3, priced: 2, input: 5000, output: 400 },
+    { id: 'aaaaaaaa-0000-4000-8000-000000000003', component: 'homeroom_bot_build', model: GLM, started_at: '2026-10-08T12:05:00Z', cost: 0.2, priced: 1, input: 2000, output: 200 },
+    { id: 'aaaaaaaa-0000-4000-8000-000000000004', component: 'homeroom_bot_triage', model: GLM, started_at: '2026-10-08T10:00:00Z', cost: 0.05, priced: 1, input: 0, output: 0 },
+    { id: 'aaaaaaaa-0000-4000-8000-000000000005', component: 'homeroom_bot_build', model: GLM, started_at: '2026-10-08T11:20:00Z', cost: 0, priced: 0, input: 0, output: 0 },
+  ];
+  const pool = { async query() { return { rows }; } };
+  const given = {
+    spec: { usd: 0.5, model: OPUS, turnIds: [SPEC], screens: [{ size: 'phone', overBudget: false }] },
+    review_reviewer: { usd: 0.3, model: OPUS },
+  };
+  const { parts, unnamed } = await stageCosts.ledgerParts(pool, 42, given, {
+    models: { build: GLM, review_fixes: GLM }, reviewStartedAt: REVIEW_AT,
+  });
+  assert.deepEqual([parts.spec.usd, parts.spec.model, parts.spec.inputTokens, parts.spec.screens.length], [0.6, OPUS, 1000, 1],
+    'the ledger\'s figure, every attempt, with what the build knew of it');
+  assert.deepEqual([parts.build.usd, parts.build.model, parts.build.outputTokens], [0.3, GLM, 400]);
+  assert.deepEqual([parts.review_fixes.usd, parts.review_fixes.model], [0.2, GLM], 'a build-runner turn after the review started is a fix');
+  assert.deepEqual(parts.review_reviewer, given.review_reviewer, 'a stage the ledger does not hold is kept as given');
+  assert.deepEqual(unnamed, [{ component: 'homeroom_bot_triage', usd: 0.05, startedAt: '2026-10-08T10:00:00.000Z' }]);
+
+  // No session, or a ledger that cannot be read: the parts as given.
+  const empty = { async query() { return { rows: [] }; } };
+  assert.deepEqual(await stageCosts.ledgerParts(empty, null, given), { parts: given, unnamed: [] });
+  const broken = { async query() { throw new Error('down'); } };
+  assert.deepEqual(await stageCosts.ledgerParts(broken, 42, given), { parts: given, unnamed: [] });
 });
 
 test('the review record: round 0, then each round\'s verdict, issues, fixes and costs, and why it stopped', () => {

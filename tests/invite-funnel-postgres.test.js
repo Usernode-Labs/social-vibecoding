@@ -10,8 +10,15 @@
 //     opening it already signed in (the signed-in standing read), is the
 //     funnel's middle step: invite_signed_in, once per person per link
 //     (journey-events.noteInviteSignedIn, the unique index in schema.sql).
+//   - #4272: that step in its two ways, kept apart by the event's `how`.
+//     A sign-in that carried the link is one the link brought, even when
+//     it does not follow it (communityInvites.dropCarried: a password
+//     sign-in, or an existing account's code without the page's Join), and
+//     the shell's standing read after it does not make it "already signed
+//     in". Somebody signed in who follows a link without reading it first
+//     (the waiting room's redeem) is already signed in.
 //   - journey.firstSession's `opens` counts the three, from the first
-//     sign-in through an invite.
+//     sign-in through an invite, and the sign-ins in their two ways.
 //
 // The pure reading always runs. The rest runs through the real routes
 // against the full schema in a throwaway database: required when
@@ -31,10 +38,10 @@ const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 
 test('the funnel reading: from the first sign-in through an invite, everyone\'s, never a silent zero', () => {
   const week = { start: new Date('2026-09-28T00:00:00Z'), end: new Date('2026-10-05T00:00:00Z') };
-  const row = { since: '2026-09-30T12:00:00Z', opened: 9, signed_in: 4, joined: 2 };
+  const row = { since: '2026-09-30T12:00:00Z', opened: 9, signed_in: 4, signed_in_by_invite: 3, signed_in_already: 1, joined: 2 };
   assert.deepEqual(journey.inviteFunnelReading(row, { week }),
-    { from: '2026-09-30T12:00:00.000Z', opened: 9, signedIn: 4, joined: 2 },
-    'counted from the first sign-in, which came during the week');
+    { from: '2026-09-30T12:00:00.000Z', opened: 9, signedIn: 4, signedInByInvite: 3, signedInAlready: 1, joined: 2 },
+    'counted from the first sign-in, which came during the week, and the sign-ins in their two ways');
   assert.equal(journey.inviteFunnelReading({ ...row, since: '2026-09-01T00:00:00Z' }, { week }).from,
     '2026-09-28T00:00:00.000Z', 'from the start of the week once the record is older');
   assert.equal(journey.inviteFunnelReading({ ...row, since: null }, { week }).recorded, false, 'never recorded');
@@ -54,6 +61,15 @@ test('the event is registered, recorded once per person per link, and before a c
   const carried = service.slice(service.indexOf('async function redeemCarried'));
   assert.ok(carried.indexOf("noteInviteSignedIn(pool, { token, userId: user.id, carried: true })")
     < carried.indexOf('await redeem(pool,'), 'recorded while they are not in it yet');
+  // #4272: the route that follows a link records it too, before following
+  // it, for somebody who never read its standing (the waiting room).
+  const routes = read('src/routes/community-invites.js');
+  const redeemRoute = routes.slice(routes.indexOf("router.post('/api/invite-links/by-token/:token/redeem'"));
+  assert.ok(redeemRoute.indexOf('await journeyEvents.noteInviteSignedIn(pool, { token: req.params.token, userId: req.user.id });')
+    < redeemRoute.indexOf('await invites.redeem(pool, {'), 'recorded while they are not in it yet');
+  // The two ways are the event's `how`: the funnel counts them apart.
+  assert.match(journey.INVITE_FUNNEL_SQL, /COUNT\(\*\) FILTER \(WHERE e\.metadata->>'how' IN \('signed_up', 'signed_in'\)\)\)::int AS signed_in_by_invite/);
+  assert.match(journey.INVITE_FUNNEL_SQL, /COUNT\(\*\) FILTER \(WHERE e\.metadata->>'how' = 'was_signed_in'\)\)::int AS signed_in_already/);
 });
 
 test('invite opens, sign-ins and joins through the real routes, against the full PostgreSQL schema', { timeout: 180000 }, async (t) => {
@@ -133,6 +149,14 @@ test('invite opens, sign-ins and joins through the real routes, against the full
     const res = await fetch(base + p, { headers: cookie ? { cookie } : {} });
     return { status: res.status, body: await res.json(), cookie: browserCookie(res) };
   };
+  const post = async (p, { who }) => {
+    as = who;
+    const res = await fetch(base + p, { method: 'POST' });
+    return { status: res.status, body: await res.json() };
+  };
+  const inIt = async (account) => (await pool.query(
+    `SELECT 1 FROM community_members m JOIN apps a ON a.community_id = m.community_id
+      WHERE a.id = $1 AND m.user_id = $2`, [made.id, account.id])).rows.length > 0;
 
   const opensNotices = async () => (await pool.query(
     `SELECT id, detail FROM notifications WHERE user_id = $1 AND kind = 'invite_opened' ORDER BY id`, [maya.id])).rows;
@@ -229,6 +253,55 @@ test('invite opens, sign-ins and joins through the real routes, against the full
     assert.equal((await eventsOf('invite_signed_in')).length, 3);
   });
 
+  // #4272: a password sign-in from the link's page (or an existing
+  // account's code without the page's Join) carries the link but does not
+  // follow it: the shell asks first, after reading the link's standing.
+  await t.test('a sign-in that carried the link without following it is one the link brought, whatever the shell reads next', async () => {
+    const erin = await user('erin', { daysOld: 30 });
+    const erinBrowser = (await get(`/api/public/invites/${token}`)).cookie;
+    await settled(5);
+    const cleared = [];
+    const req = { cookies: { [invites.INVITE_COOKIE]: token }, headers: {} };
+    const res = { clearCookie: (n) => cleared.push(n), cookie: () => {} };
+    assert.equal(await invites.dropCarried(pool, req, res, erin.id), null, 'it follows nothing');
+    assert.deepEqual(cleared, [invites.INVITE_COOKIE], 'the carried copy is dropped');
+    assert.equal(await inIt(erin), false, 'not in it: the shell asks first');
+    const mine = async () => (await eventsOf('invite_signed_in')).filter((e) => e.user_id === erin.id)
+      .map((e) => [e.metadata.how, e.metadata.inviteId]);
+    assert.deepEqual(await mine(), [['signed_in', link.link.id]], 'signed in from the link, recorded before the sign-in answered');
+    // The shell comes back to the link signed in: the standing read, then Join.
+    const standing = await get(`/api/invite-links/by-token/${token}`, { who: erin, cookie: erinBrowser });
+    assert.equal(standing.body.live, true);
+    await new Promise((r) => setTimeout(r, 200));
+    assert.deepEqual(await mine(), [['signed_in', link.link.id]], 'the read after it does not make her already signed in');
+    const joined = await post(`/api/invite-links/by-token/${token}/redeem`, { who: erin });
+    assert.equal(joined.status, 200);
+    assert.equal(joined.body.status, 'joined');
+    assert.deepEqual(await mine(), [['signed_in', link.link.id]], 'and nor does following it');
+    // No cookie, nothing carried: nothing recorded, and still dropped.
+    const plain = [];
+    assert.equal(await invites.dropCarried(pool, { cookies: {}, headers: {} }, { clearCookie: (n) => plain.push(n) }, erin.id), null);
+    assert.deepEqual(plain, [invites.INVITE_COOKIE]);
+    assert.equal((await eventsOf('invite_signed_in')).length, 4);
+  });
+
+  await t.test('somebody signed in who follows a link without reading it first (the waiting room) was already signed in', async () => {
+    const fay = await user('fay', { daysOld: 30 });
+    const joined = await post(`/api/invite-links/by-token/${token}/redeem`, { who: fay });
+    assert.equal(joined.status, 200);
+    assert.equal(joined.body.status, 'joined');
+    assert.deepEqual((await eventsOf('invite_signed_in')).filter((e) => e.user_id === fay.id).map((e) => e.metadata.how),
+      ['was_signed_in'], 'recorded before following it, while she was not in it yet');
+    // Following it again, or reading it now, is no second sign-in.
+    await post(`/api/invite-links/by-token/${token}/redeem`, { who: fay });
+    await get(`/api/invite-links/by-token/${token}`, { who: fay });
+    await new Promise((r) => setTimeout(r, 200));
+    assert.equal((await eventsOf('invite_signed_in')).length, 5);
+    // The link's maker following her own link is in no step.
+    await post(`/api/invite-links/by-token/${token}/redeem`, { who: maya });
+    assert.equal((await eventsOf('invite_signed_in')).length, 5);
+  });
+
   await t.test('the Journey reads the three steps, real people where a person is known', async () => {
     const window = journey.allTime();
     const r = await journey.firstSession(pool, { week: window });
@@ -236,14 +309,17 @@ test('invite opens, sign-ins and joins through the real routes, against the full
       `SELECT MIN(created_at) AS at FROM events WHERE event_type = 'invite_signed_in'`)).rows[0].at;
     // Counted from Sam's sign-in, the first through an invite: the two
     // browsers that opened it before then came before the record began.
-    // Carol's and Dan's opens are after it.
-    assert.deepEqual(r.opens, { from: new Date(since).toISOString(), opened: 2, signedIn: 3, joined: 2 },
-      'two opens, three people signed in with it, two joined');
+    // Carol's, Dan's and Erin's opens are after it; Fay never read it.
+    assert.deepEqual(r.opens, {
+      from: new Date(since).toISOString(), opened: 3,
+      signedIn: 5, signedInByInvite: 3, signedInAlready: 2, joined: 4,
+    }, 'three opens; five signed in with it, Carol, Dan and Erin from the link and Sam and Fay already; four joined');
     assert.equal(r.recordedFrom.signedIn, new Date(since).toISOString());
     // Dan on the left-out list: his sign-in and join go, his open signed
     // out cannot.
     const left = await journey.firstSession(pool, { week: window, leftOutIds: [dan.id] });
-    assert.deepEqual([left.opens.opened, left.opens.signedIn, left.opens.joined], [2, 2, 1]);
+    assert.deepEqual([left.opens.opened, left.opens.signedIn, left.opens.signedInByInvite, left.opens.signedInAlready, left.opens.joined],
+      [3, 4, 2, 2, 3]);
     // A week before the first sign-in through an invite reads "not recorded".
     const old = await journey.firstSession(pool, { week: journey.parseWeek('2026-01-05', new Date()) });
     assert.equal(old.opens.recorded, false);

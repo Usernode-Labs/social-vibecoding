@@ -128,6 +128,21 @@ const VIEWPORT = {
   height: 800,
   deviceScaleFactor: resolveDeviceScaleFactor(process.env.DEVICE_SCALE_FACTOR),
 };
+// The checks' own density. A check asserts on the DOM and the console, never
+// on pixels, and painting every check page at 2× is four times the pixels:
+// on 10 Oct 2026 the browser pod spent a 733-check run at 7.9 of its 8 CPUs,
+// throttled most of the time, while the preview it was testing idled under
+// one. The platform sends TEST_DEVICE_SCALE_FACTOR=1; without it the checks
+// keep the run's density, as before. The shots keep DEVICE_SCALE_FACTOR.
+function resolveTestViewport(env) {
+  const raw = (env || {}).TEST_DEVICE_SCALE_FACTOR;
+  return {
+    ...VIEWPORT,
+    deviceScaleFactor: raw == null || String(raw).trim() === ''
+      ? VIEWPORT.deviceScaleFactor : resolveDeviceScaleFactor(raw),
+  };
+}
+const TEST_VIEWPORT = resolveTestViewport(process.env);
 
 // #768: optional per-target viewport override ({ width, height } from the
 // TARGETS entry — a `@mobile` testing path). Bounds keep a corrupted value
@@ -603,8 +618,12 @@ function emitTest(index, status, loadStatus, payload) {
 // an OLDER platform reading a NEWER image is unaffected by this line. The
 // other direction (new platform, old image) sees no sentinel at all and
 // falls back to comparing frame count against dispatched count.
-function emitTestsDone(ran, expected, deadline) {
-  _sink(`__USERNODE_TESTS_DONE__ ran=${ran || 0} expected=${expected || 0} deadline=${deadline ? 1 : 0}\n`);
+//
+// A shard (TEST_SHARD_INDEX / TEST_SHARD_COUNT) counts its own checks and
+// says which shard it was; the platform adds the shards' lines up.
+function emitTestsDone(ran, expected, deadline, shard = null) {
+  _sink(`__USERNODE_TESTS_DONE__ ran=${ran || 0} expected=${expected || 0} deadline=${deadline ? 1 : 0}`
+    + `${shard ? ` shard=${shard.index}/${shard.count}` : ''}\n`);
 }
 
 function execFileAsync(cmd, args, opts = {}) {
@@ -1162,6 +1181,62 @@ const RETRY_MAX_CHECKS = 10;
 // And none are, when this fraction of the suite is red: that is the change.
 const RETRY_SKIP_FRACTION = 0.25;
 
+// Each shard numbers its retries from its own base, so two shards' retries
+// of different checks never share an index once the platform joins their
+// output.
+const RETRY_SHARD_STRIDE = 100000;
+
+// ── Shards ──────────────────────────────────────────────────────────────
+//
+// The platform can split one run's checks across several browser pods
+// (services/visuals.js, CAPTURE_SHARDS). Every pod gets the whole list and
+// TEST_SHARD_INDEX / TEST_SHARD_COUNT, groups the checks exactly as an
+// unsharded run would, and runs only the groups assigned to its index. The
+// assignment is a pure function of the list, so the pods agree on it without
+// talking to each other, and every group lands in exactly one shard.
+const MAX_SHARDS = 16;
+
+function testShard(env) {
+  const e = env || {};
+  const count = parseInt(e.TEST_SHARD_COUNT, 10);
+  const index = parseInt(e.TEST_SHARD_INDEX, 10);
+  if (!Number.isInteger(count) || count < 2 || count > MAX_SHARDS) return null;
+  if (!Number.isInteger(index) || index < 0 || index >= count) return null;
+  return { index, count };
+}
+
+// What a group costs, roughly: its cold load dominates, each further hash
+// cohort is a switch and a settle, and each check an assertion. Only the
+// order matters, for longest-first.
+function groupCost(group) {
+  const tests = Array.isArray(group) ? group : [group];
+  return 3 + Math.max(0, cohortsOf(tests).length - 1) + 0.1 * tests.length;
+}
+
+// The groups, heaviest first, ties in their original order. A pool that
+// takes a heavy group last finishes on it alone; taking the heavy ones
+// first lets the light ones fill in around them.
+function heaviestFirst(groups) {
+  return (groups || [])
+    .map((group, position) => ({ group, position, cost: groupCost(group) }))
+    .sort((a, b) => (b.cost - a.cost) || (a.position - b.position))
+    .map((g) => g.group);
+}
+
+// Split the groups into `count` shards of about equal cost: each group, the
+// heaviest first, goes to the shard with the least so far (the lowest index
+// on a tie). Every shard's groups stay heaviest first.
+function shardGroups(groups, count) {
+  const shards = Array.from({ length: Math.max(1, count) }, () => ({ load: 0, groups: [] }));
+  for (const group of heaviestFirst(groups)) {
+    let target = shards[0];
+    for (const shard of shards) if (shard.load < target.load) target = shard;
+    target.groups.push(group);
+    target.load += groupCost(group);
+  }
+  return shards.map((shard) => shard.groups);
+}
+
 function retryRuns(env) {
   const raw = parseInt((env || {}).TEST_RETRY_RUNS, 10);
   if (!Number.isFinite(raw) || raw < 0) return RETRY_RUNS;
@@ -1707,7 +1782,7 @@ async function runTestGroup(browser, group, opts) {
       context = await browser.createBrowserContext();
     }
     page = await (context || browser).newPage();
-    await page.setViewport(VIEWPORT);
+    await page.setViewport(TEST_VIEWPORT);
 
     // The settle's activity clock. Every signal that the document is still
     // doing something bumps it; `waitForQuiet` returns once nothing has.
@@ -2043,13 +2118,17 @@ async function runTests(browser, tests, opts) {
   const budgetMs = Number(o.deadlineMs) > 0 ? Number(o.deadlineMs) : 650000;
   const now = typeof o.now === 'function' ? o.now : () => Date.now();
 
+  const env = o.env || process.env;
+  const shard = o.shard !== undefined ? o.shard : testShard(env);
   if (!list.length) {
-    emitTestsDone(0, 0, false);
+    emitTestsDone(0, 0, false, shard);
     return { ran: 0, expected: 0, deadline: false };
   }
 
-  const env = o.env || process.env;
-  const groups = typeof o.groupTests === 'function' ? o.groupTests(list) : groupTests(list, env);
+  const allGroups = typeof o.groupTests === 'function' ? o.groupTests(list) : groupTests(list, env);
+  const groups = shard ? shardGroups(allGroups, shard.count)[shard.index] : heaviestFirst(allGroups);
+  // The checks this run answers for: a shard's own, or all of them.
+  const own = shard ? groups.flat() : list;
   const settleOpts = {
     settleQuietMs: Number.isFinite(o.settleQuietMs) ? o.settleQuietMs : settleQuietMs(env),
     settleMaxMs: Number.isFinite(o.settleMaxMs) ? o.settleMaxMs : settleMaxMs(env),
@@ -2145,10 +2224,15 @@ async function runTests(browser, tests, opts) {
   // stops the pass, because that run is red whatever the rest would say.
   const retries = retryRuns(env);
   const failedPrimaries = retries > 0
-    ? list.filter((t) => _testStatus.get(Number(t.index) || 0) === 'fail')
+    ? own.filter((t) => _testStatus.get(Number(t.index) || 0) === 'fail')
     : [];
-  const tooManyRed = failedPrimaries.length > list.length * RETRY_SKIP_FRACTION;
-  let nextIndex = RETRY_INDEX_BASE;
+  const tooManyRed = failedPrimaries.length > own.length * RETRY_SKIP_FRACTION;
+  // A shard's retries, and a sweep's (TEST_RETRY_SLOT, one past the last
+  // shard), each start from a base of their own.
+  const retrySlot = shard
+    ? shard.index
+    : Math.min(MAX_SHARDS, Math.max(0, parseInt(env.TEST_RETRY_SLOT, 10) || 0));
+  let nextIndex = RETRY_INDEX_BASE + retrySlot * RETRY_SHARD_STRIDE;
   for (let offset = 0;
     failedPrimaries.length && !tooManyRed && !hitDeadline && offset < failedPrimaries.length;
     offset += RETRY_MAX_CHECKS) {
@@ -2187,8 +2271,8 @@ async function runTests(browser, tests, opts) {
   // `ran` and `expected` still count DECLARED checks only. A retry is a
   // second opinion on a check the suite already ran, not another check, and
   // the platform's "did every check report?" arithmetic reads these two.
-  emitTestsDone(ran, list.length, hitDeadline);
-  return { ran, expected: list.length, deadline: hitDeadline };
+  emitTestsDone(ran, own.length, hitDeadline, shard);
+  return { ran, expected: own.length, deadline: hitDeadline };
 }
 
 async function main() {
@@ -2289,4 +2373,4 @@ if (require.main === module) {
 // file whose BEHAVIOUR (how many navigations it makes, whether it starts a
 // recording) is the thing under test, and it takes its page from the browser
 // it is handed, so a fake browser exercises it without Chromium.
-module.exports = { networkSnapshot, documentOf, stylesheetProblem, makeStylesheetWatch, pageShowsSomethingInPage, readRenderHealth, parseCookie, resolveTargets, resolveDeviceScaleFactor, parseTargetViewport, parseCompanion, parseReady, waitForScenarioReady, mediaEnabled, resolveTests, captureTarget, runTests, runTestGroup, groupTestsByUrl, groupTestsByDocument, groupTests, cohortsOf, hashGroupCap, waitForQuiet, makeActivityClock, makeConsoleErrorSink, settleQuietMs, settleMaxMs, assertMaxMs, poolSize, testTimeoutMs, testsDeadlineMs, setFrameSink, CHROMIUM_LAUNCH_ARGS };
+module.exports = { testShard, groupCost, heaviestFirst, shardGroups, resolveTestViewport, RETRY_INDEX_BASE, RETRY_SHARD_STRIDE, networkSnapshot, documentOf, stylesheetProblem, makeStylesheetWatch, pageShowsSomethingInPage, readRenderHealth, parseCookie, resolveTargets, resolveDeviceScaleFactor, parseTargetViewport, parseCompanion, parseReady, waitForScenarioReady, mediaEnabled, resolveTests, captureTarget, runTests, runTestGroup, groupTestsByUrl, groupTestsByDocument, groupTests, cohortsOf, hashGroupCap, waitForQuiet, makeActivityClock, makeConsoleErrorSink, settleQuietMs, settleMaxMs, assertMaxMs, poolSize, testTimeoutMs, testsDeadlineMs, setFrameSink, CHROMIUM_LAUNCH_ARGS };

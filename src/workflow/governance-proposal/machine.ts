@@ -6,9 +6,13 @@
 
 import { NONE, defineMachine, ok, reject } from '../kernel/index.ts';
 import type {
-  Check, DomainWrite, Event, Json, Machine, Notification, Outcome, TransitionContext, Tx, WorkRequest, WorkResultPayload,
+  Check, DomainWrite, Event, Json, Machine, Notification, Outcome, Push, TransitionContext, Tx, WorkRequest,
+  WorkResultPayload, WriteContext,
 } from '../kernel/index.ts';
-import { legacy } from '../legacy.ts';
+import { applyProposal } from '../rules/illustrations.ts';
+import { decrypt, encrypt } from '../rules/secrets.ts';
+import { deleteValue, setValue } from '../rules/platform-vars.ts';
+import { appUpdate, chatLine, issuesClosed, issueUpdate as issuePush } from '../pushes.ts';
 import { GOVERNANCE_KINDS, readFacts } from './facts.ts';
 import type { Facts, Issue } from './facts.ts';
 import { evaluate, nextCheck, withVote } from './gate.ts';
@@ -29,7 +33,7 @@ interface OpenData {
   targetCheckedAt: string | null;
   // The gate passed (or an admin applied) and the target check decides:
   // admin null is the group vote.
-  applyAfterCheck?: { admin: string | null } | null;
+  applyAfterCheck?: { admin: string | null; adminId?: number | null } | null;
 }
 interface ClosedData {
   issueId: number;
@@ -78,11 +82,12 @@ export interface MachineDeps {
   dataKey: string;               // config.dataEncryptionKey, to check a secret decrypts
   backstopMs?: number;           // re-evaluate an open proposal at least this often
   targetCheckMs?: number;        // how often an open close proposal checks its target on GitHub
-  // One implementation per NOTIFIERS entry: WS pushes and post-commit kicks.
+  // One implementation per NOTIFIERS entry: post-commit kicks into flows not
+  // migrated yet. What browsers hear is a push, published with the transition.
   notifiers: Record<string, (n: any) => void | Promise<void>>;
 }
 
-export const NOTIFIERS = ['issueUpdate', 'appUpdate', 'chat', 'scoreVote', 'startCampaign'] as const;
+export const NOTIFIERS = ['boardChange', 'scoreVote'] as const;
 
 // ── Copy ────────────────────────────────────────────────────────────────
 
@@ -135,22 +140,15 @@ function appliedLine(issue: Issue, how: string, campaignTitle: string): string {
 const chat = (event: Event<any>, issue: Issue, content: string, thread: { type: string; ref: number }, msgType = 'system'): DomainWrite =>
   ({ type: 'chat', eventId: event.id, appId: issue.appId, content, msgType, thread });
 const governanceThread = (issue: Issue) => ({ type: 'governance', ref: issue.id });
-const issueUpdate = (issue: Issue, action: string, extra: object = {}): Notification =>
-  ({ type: 'issueUpdate', action, appId: issue.appId, appSlug: issue.app.slug, issueId: issue.id, ...extra });
+const issueUpdate = (issue: Issue, action: string, extra: Record<string, Json> = {}): Push =>
+  issuePush({ action, appId: issue.appId, appSlug: issue.app.slug, issueId: issue.id, ...extra });
+// A request board changed: the Workshop re-places its cards (the kick
+// ws.pushIssueUpdate gave its in-process listeners; services/workshop-themes.js).
+const boardChange = (appId: number | null, appSlug: string | null): Notification => ({ type: 'boardChange', appId, appSlug });
 
-interface Extra { writes?: DomainWrite[]; notify?: Notification[] }
-
-// The thread lines an outcome writes (chat writes, and a vote's own line)
-// are broadcast after commit, once.
-function withChat(o: Outcome<GovState>): Outcome<GovState> {
-  const lines = (o.writes || []).map((w) => (w.type === 'vote' ? w.line as DomainWrite | null : w))
-    .filter((w): w is DomainWrite => w?.type === 'chat');
-  if (!lines.length) return o;
-  const first = lines[0]!;
-  return { ...o, notify: [...(o.notify || []), {
-    type: 'chat', appId: first.appId, eventId: first.eventId, threads: lines.map((w) => w.thread),
-  }] };
-}
+// The thread lines an outcome writes push themselves (the chat and vote
+// writes), with the rows they inserted.
+interface Extra { writes?: DomainWrite[]; push?: Push[]; notify?: Notification[] }
 
 function close(
   name: Closed, issue: Issue, event: Event<any>, ctx: TransitionContext,
@@ -163,18 +161,19 @@ function close(
   }
   const followups: Record<string, Followup> = {};
   for (const w of work) followups[w.key] = { kind: w.kind, input: w.input, status: 'pending' };
-  return withChat({
+  return {
     next: { name, data: { issueId: issue.id, kind: issue.kind, audit, followups } },
     writes: extra.writes,
     work,
     timer: null,
-    notify: [...(extra.notify || []), issueUpdate(issue, 'closed')],
-  });
+    push: [...(extra.push || []), issueUpdate(issue, 'closed')],
+    notify: [...(extra.notify || []), boardChange(issue.appId, issue.app.slug)],
+  };
 }
 
 function apply(
   issue: Issue, event: Event<any>, ctx: TransitionContext, e: Evaluation, refusal: string | null,
-  by: { admin: string } | null, extra: Extra,
+  by: { admin: string; adminId?: number | null } | null, extra: Extra,
 ): Outcome<GovState> {
   const at = ctx.now.toISOString();
   const tally = { upCount: e.yes, required: by ? e.yes : e.required, active: e.active };
@@ -190,9 +189,10 @@ function apply(
   const line = appliedLine(issue, how, campaignTitle);
   // The row is locked since the facts read it: its payload is current.
   writes.push({ type: 'apply', kind: issue.kind, issueId: issue.id, appId: issue.appId, selfHosted: issue.app.selfHosted,
-    authorId: issue.createdBy, payload: issue.payload, campaignTitle, admin: by?.admin || null });
+    authorId: issue.createdBy, payload: issue.payload, campaignTitle, admin: by?.admin || null, adminId: by?.adminId ?? null });
   writes.push(chat(event, issue, line, governanceThread(issue)));
   const work: WorkRequest[] = [];
+  const push: Push[] = [...(extra.push || [])];
   const notify: Notification[] = [...(extra.notify || [])];
   if (issue.kind === 'close_issue') {
     const n = Number(p.issueNumber);
@@ -208,16 +208,19 @@ function apply(
   } else if (issue.kind === 'secret_change' && !issue.app.selfHosted) {
     work.push({ kind: 'app.rebuildProduction', key: 'rebuild', input: { appId: issue.appId } });
   } else if (issue.kind === 'rename') {
-    notify.push({ type: 'appUpdate', action: 'renamed', appId: issue.appId, slug: issue.app.slug,
-      oldName: issue.app.name, newName: String(p.newName).trim() });
+    push.push(appUpdate({ action: 'renamed', appId: issue.appId, slug: issue.app.slug,
+      oldName: issue.app.name, newName: String(p.newName).trim() }));
   } else if (issue.kind === 'featured_illustration') {
-    notify.push({ type: 'appUpdate', action: 'illustration_changed', appId: issue.appId, slug: issue.app.slug,
-      illustration: p.proposed || null });
+    push.push(appUpdate({ action: 'illustration_changed', appId: issue.appId, slug: issue.app.slug,
+      illustration: p.proposed || null }));
   } else if (issue.kind === 'maintenance_campaign') {
-    notify.push({ type: 'startCampaign', issueId: issue.id });
+    // Driven as durable work: a crash or a release mid-campaign leaves the
+    // item to be run again, and the campaign's own lease keeps it to one
+    // driver whoever else resumes it (fleet-maintenance.runCampaign).
+    work.push({ kind: 'campaign.run', key: 'campaign', input: { issueId: issue.id } });
   }
   const audit = { appliedAt: at, appliedBy: by ? `admin:${by.admin}` : 'group-vote', ...tally };
-  return close('applied', issue, event, ctx, audit, { writes, work, notify });
+  return close('applied', issue, event, ctx, audit, { writes, work, push, notify });
 }
 
 type Timing = Required<Pick<MachineDeps, 'backstopMs' | 'targetCheckMs'>>;
@@ -240,13 +243,13 @@ function targetCheckWork(data: OpenData, issue: Issue, ctx: TransitionContext): 
 // Stay open until the target check answers, then apply as `by` says.
 function awaitTarget(
   s: { data: OpenData }, issue: Issue, e: Evaluation, ctx: TransitionContext, timing: Timing,
-  by: { admin: string | null }, extra: Extra = {},
+  by: { admin: string | null; adminId?: number | null }, extra: Extra = {},
 ): Outcome<GovState> {
   const data: OpenData = { ...s.data, evaluation: e, applyAfterCheck: by };
-  return withChat({
-    next: { name: 'open', data }, writes: extra.writes, notify: extra.notify, work: targetCheckWork(data, issue, ctx),
+  return {
+    next: { name: 'open', data }, writes: extra.writes, push: extra.push, notify: extra.notify, work: targetCheckWork(data, issue, ctx),
     timer: { at: new Date(ctx.now.getTime() + timing.backstopMs), event: { type: 'Evaluate' } },
-  });
+  };
 }
 
 // Evaluate the gate (with this event's vote folded in, if any) and either
@@ -264,10 +267,10 @@ function decide(
   const data: OpenData = { ...s.data, evaluation: e, applyAfterCheck: null };
   const stale = !data.targetCheckedAt || ctx.now.getTime() - Date.parse(data.targetCheckedAt) >= timing.targetCheckMs;
   const work = checksTarget(issue) && stale ? targetCheckWork(data, issue, ctx) : [];
-  return withChat({
-    next: { name: 'open', data }, writes: extra.writes, notify: extra.notify, work,
+  return {
+    next: { name: 'open', data }, writes: extra.writes, push: extra.push, notify: extra.notify, work,
     timer: { at: nextCheck(e, ctx.now, timing.backstopMs), event: { type: 'Evaluate' } },
-  });
+  };
 }
 
 function supersede(issue: Issue, event: Event<any>, ctx: TransitionContext, cause: { kind: string; prNumber?: number }) {
@@ -281,10 +284,22 @@ function supersede(issue: Issue, event: Event<any>, ctx: TransitionContext, caus
 }
 
 // A follow-up result on a closed proposal updates its record.
+// A target closed on GitHub: every web process stops listing it (GitHub's
+// list lags; pushes.ts issuesClosed), then the open-issues lists re-read.
 function followupResult(s: { name: Closed; data: ClosedData }, e: Event<WorkResultPayload>, status: Followup['status']): Outcome<GovState> {
   const prev = s.data.followups[e.payload.workKey]!;
   const followups = { ...s.data.followups, [e.payload.workKey]: { ...prev, status, ...(e.payload.error ? { error: e.payload.error.message } : {}) } };
-  return { next: { name: s.name, data: { ...s.data, followups } } };
+  const input = (prev.input || {}) as Record<string, Json>;
+  const closed = status === 'done' && e.payload.kind === 'github.closeIssue' && input.bustCache
+    && !(e.payload.result as { gone?: boolean } | null)?.gone;
+  return {
+    next: { name: s.name, data: { ...s.data, followups } },
+    push: closed ? [
+      issuesClosed({ owner: String(input.owner), repo: String(input.repo), numbers: [Number(input.number)] }),
+      issuePush({ action: 'github_synced', appSlug: input.appSlug ?? null, appId: input.appId ?? null, source: 'close_issue_vote' }),
+    ] : undefined,
+    notify: closed ? [boardChange(input.appId as number ?? null, input.appSlug as string ?? null)] : undefined,
+  };
 }
 
 // Something other than this machine closed or deleted the issue row: the
@@ -353,14 +368,17 @@ export function governanceProposal(deps: MachineDeps): Machine<GovState, Facts> 
       const pending = (s.data as OpenData).applyAfterCheck;
       if (!pending) return { next: checked };
       // Still open (or GitHub could not say): apply as the gate or the admin decided.
-      if (pending.admin) return apply(f.issue!, e, ctx, evaluate(f.gate!, ctx.now), f.refusal, { admin: pending.admin }, {});
+      if (pending.admin) return apply(f.issue!, e, ctx, evaluate(f.gate!, ctx.now), f.refusal, { admin: pending.admin, adminId: pending.adminId ?? null }, {});
       return decide(checked, e, f, ctx, timing, f.gate!, {}, true);
     },
   });
 
   return defineMachine<GovState, Facts>({
     name: MACHINE,
-    version: 1,
+    // 2: campaign.run work (the startCampaign notifier went), the issue lists'
+    // push, the forcing admin as a platform variable's author. During a
+    // rollout an older Pod leaves the instances this version wrote alone.
+    version: 2,
     events: EVENTS,
     create: ['Filed'],
     terminal: ['applied', 'refused', 'withdrawn', 'superseded'],
@@ -406,17 +424,17 @@ export function governanceProposal(deps: MachineDeps): Machine<GovState, Facts> 
               ? chat(e, issue, `${e.payload.username} voted ${vote} on ${voteSubject(issue)}${r ? `: “${r}”` : ''}`, governanceThread(issue), 'vote')
               : null;
             const writes: DomainWrite[] = [{ type: 'vote', issueId: issue.id, appId: issue.appId, userId: e.payload.userId, vote, reason: r, line }];
-            const notify: Notification[] = [issueUpdate(issue, 'voted', vote ? { vote } : { toggled: true })];
-            if (vote) notify.push({ type: 'scoreVote' });
-            return decide(s as any, e, f, ctx, timing, withVote(f.gate!, f.voter!, vote), { writes, notify });
+            const push = [issueUpdate(issue, 'voted', vote ? { vote } : { toggled: true })];
+            const notify: Notification[] = [boardChange(issue.appId, issue.app.slug), ...(vote ? [{ type: 'scoreVote' }] : [])];
+            return decide(s as any, e, f, ctx, timing, withVote(f.gate!, f.voter!, vote), { writes, push, notify });
           },
         }),
         Evaluate: watchingOutside({ to: (s, e, f, ctx) => decide(s as any, e, f, ctx, timing) }),
         AdminApply: watchingOutside({
           guard: (s, e, f) => (f.issue!.kind === 'rename' ? reject('not_admin_appliable') : ok()),
           to: (s, e, f, ctx) => (checksTarget(f.issue!)
-            ? awaitTarget(s, f.issue!, evaluate(f.gate!, ctx.now), ctx, timing, { admin: e.payload.username })
-            : apply(f.issue!, e, ctx, evaluate(f.gate!, ctx.now), f.refusal, { admin: e.payload.username }, {})),
+            ? awaitTarget(s, f.issue!, evaluate(f.gate!, ctx.now), ctx, timing, { admin: e.payload.username, adminId: e.payload.userId })
+            : apply(f.issue!, e, ctx, evaluate(f.gate!, ctx.now), f.refusal, { admin: e.payload.username, adminId: e.payload.userId }, {})),
         }),
         Withdraw: watchingOutside({
           to: (s, e, f, ctx) => close('withdrawn', f.issue!, e, ctx,
@@ -440,9 +458,12 @@ export function governanceProposal(deps: MachineDeps): Machine<GovState, Facts> 
     },
     writes: {
       vote: writeVote,
-      chat: async (tx, w) => tx.query(
-        `INSERT INTO chat_messages (app_id, content, msg_type, metadata, thread_type, thread_ref)
-         VALUES ($1, $2, $3, $4, $5, $6)`, chatValues(w)),
+      chat: async (tx, w, ctx) => {
+        const { rows: [row] } = await tx.query(
+          `INSERT INTO chat_messages (app_id, content, msg_type, metadata, thread_type, thread_ref)
+           VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, app_id, content, msg_type, metadata, thread_type, thread_ref, created_at`, chatValues(w));
+        ctx.push(chatLine(row));
+      },
       apply: (tx, w) => applyKind(tx, w, deps.dataKey),
     },
     async project(tx, before, after) {
@@ -510,13 +531,13 @@ const chatValues = (w: any) => [w.appId, w.content, w.msgType, JSON.stringify({ 
 
 // One statement: the vote, its `events` row and its thread line. A flip
 // replaces the line: the old sentence argued for the side this vote left.
-async function writeVote(tx: Tx, w: any) {
+async function writeVote(tx: Tx, w: any, ctx: WriteContext) {
   if (!w.vote) {
     await tx.query('DELETE FROM issue_votes WHERE issue_id = $1 AND user_id = $2', [w.issueId, w.userId]);
     return;
   }
   const line = w.line ? chatValues(w.line) : [null, null, null, null, null, null];
-  await tx.query(
+  const { rows } = await tx.query(
     `WITH voted AS (
        INSERT INTO issue_votes (issue_id, user_id, vote, reason) VALUES ($1, $2, $3, $4)
        ON CONFLICT (issue_id, user_id) DO UPDATE
@@ -527,9 +548,11 @@ async function writeVote(tx: Tx, w: any) {
        SELECT $2, $5, $6, jsonb_build_object('vote', $3::text, 'issueId', $1::int, 'issueVoteId', voted.id) FROM voted),
      line AS (
        INSERT INTO chat_messages (app_id, content, msg_type, metadata, thread_type, thread_ref)
-       SELECT $7, $8, $9, $10::jsonb, $11, $12 WHERE $8::text IS NOT NULL)
-     SELECT 1`,
-    [w.issueId, w.userId, w.vote, w.reason, w.appId, legacy('services/events').EVENT_TYPES.ISSUE_VOTE_CAST, ...line]);
+       SELECT $7, $8, $9, $10::jsonb, $11, $12 WHERE $8::text IS NOT NULL
+       RETURNING id, app_id, content, msg_type, metadata, thread_type, thread_ref, created_at)
+     SELECT * FROM line`,
+    [w.issueId, w.userId, w.vote, w.reason, w.appId, 'issue_vote_cast', ...line]);
+  for (const row of rows) ctx.push(chatLine(row));
 }
 
 // The kind's own change, in the transaction that closes the proposal.
@@ -540,7 +563,7 @@ async function applyKind(tx: Tx, w: any, dataKey: string) {
       await tx.query('UPDATE apps SET name = $1 WHERE id = $2', [String(p.newName).trim(), w.appId]);
       return;
     case 'featured_illustration':
-      await legacy('services/illustration-proposals').applyProposal(tx, w.appId, p, w.issueId);
+      await applyProposal(tx, w.appId, p, w.issueId);
       return;
     case 'close_issue':
       // The platform's open twin rows for the target, and its open bounties
@@ -572,18 +595,16 @@ async function applyKind(tx: Tx, w: any, dataKey: string) {
 }
 
 async function applySecret(tx: Tx, w: any, p: any, createdBy: number | null, dataKey: string) {
-  const platformEnv = legacy('services/platform-env');
-  const secrets = legacy('services/secrets');
   const key = String(p.key).trim();
   const isPrivate = !!(p.private || p.sensitive);
   if (p.action === 'delete') {
-    if (w.selfHosted) await platformEnv.deleteValue(tx, w.appId, key);
+    if (w.selfHosted) await deleteValue(tx, w.appId, key);
     else await tx.query('DELETE FROM app_secrets WHERE app_id = $1 AND key = $2', [w.appId, key]);
   } else {
-    const plaintext = secrets.decrypt(p.valueEnc, dataKey);
+    const plaintext = decrypt(p.valueEnc, dataKey)!;
     if (w.selfHosted) {
       // The DAO re-encrypts, re-checks writability and takes `private` from the declaration.
-      await platformEnv.setValue(tx, w.appId, key, plaintext, { userId: createdBy, dataKey });
+      await setValue(tx, w.appId, key, plaintext, { userId: createdBy, dataKey });
     } else {
       await tx.query(
         `INSERT INTO app_secrets (app_id, key, value_enc, value_last4, updated_by)
@@ -591,14 +612,16 @@ async function applySecret(tx: Tx, w: any, p: any, createdBy: number | null, dat
          ON CONFLICT (app_id, key)
          DO UPDATE SET value_enc = EXCLUDED.value_enc, value_last4 = EXCLUDED.value_last4,
                        updated_at = NOW(), updated_by = EXCLUDED.updated_by`,
-        [w.appId, key, secrets.encrypt(plaintext, dataKey), isPrivate ? null : plaintext.slice(-4), createdBy]);
+        [w.appId, key, encrypt(plaintext, dataKey), isPrivate ? null : plaintext.slice(-4), createdBy]);
     }
   }
   if (w.selfHosted) {
-    const events = legacy('services/events');
+    // One event type for a platform-variable change whichever path wrote
+    // it, recorded as [main] did: by the admin who forced it, else by the
+    // proposal's author.
     await tx.query(
-      `INSERT INTO events (user_id, app_id, event_type, metadata) VALUES ($1, $2, $3, $4::jsonb)`,
-      [createdBy, w.appId, events.EVENT_TYPES.PLATFORM_ENV_CHANGED, JSON.stringify({
+      `INSERT INTO events (user_id, app_id, event_type, metadata) VALUES ($1, $2, 'platform_env_changed', $3::jsonb)`,
+      [w.admin ? (w.adminId ?? null) : createdBy, w.appId, JSON.stringify({
         key, action: p.action === 'delete' ? 'clear' : 'set', private: isPrivate,
         appliedBy: w.admin ? 'admin-force-apply' : 'group-vote',
       })]);

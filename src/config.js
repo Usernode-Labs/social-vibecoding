@@ -130,6 +130,24 @@ function phoneTestCodeFrom(env) {
   return { code: raw, refused: null };
 }
 
+// SHOTS_PHONE_TEST_CODE: the same six digits, for the before & after shots
+// copies of Homeroom itself and nothing else. Those copies run the platform
+// image, whose NODE_ENV is 'production', so PHONE_TEST_CODE is refused there
+// and a change to the Join sheet's phone step had nothing to shoot. The
+// deployed platform hands each pair a fresh random code
+// (services/shots-environment.js shotsPhoneSignInEnv) and runs it as
+// USERNODE_ENV=staging. Honoured ONLY where USERNODE_ENV is exactly
+// 'staging': never in production, and app-manifest.js reserves the name, so
+// no dapp.json puts it on an ordinary staging preview either.
+function shotsPhoneTestCodeFrom(env) {
+  const raw = typeof env.SHOTS_PHONE_TEST_CODE === 'string' ? env.SHOTS_PHONE_TEST_CODE.trim() : '';
+  if (!raw) return { code: '', refused: null };
+  if (env.USERNODE_ENV === 'production') return { code: '', refused: 'production' };
+  if (env.USERNODE_ENV !== 'staging') return { code: '', refused: 'not a shots copy' };
+  if (!/^[0-9]{6}$/.test(raw)) return { code: '', refused: 'not six digits' };
+  return { code: raw, refused: null };
+}
+
 function canonicalCliOrigin(value, { allowLoopbackHttp = false } = {}) {
   if (typeof value !== 'string' || !value) return null;
   try {
@@ -196,6 +214,37 @@ function canonicalNativeSessionV2Network(value) {
   } catch {
     return null;
   }
+}
+
+// Per-model overrides of the hosts an OpenRouter coding turn may use (run
+// four, 13 Oct 2026). The default shortlists live with the worker's request
+// listeners (worker/*-openrouter-request.js PROVIDER_ROUTING_BY_MODEL: GLM 5.3
+// Flash on relace, fireworks, parasail, together and baseten); this replaces
+// one model's for every turn the platform dispatches, through the turn's
+// AGENT_PROVIDER_SHORTLIST. OPENROUTER_PROVIDER_SHORTLISTS is a JSON object of
+// model slug to a list of OpenRouter provider slugs, or "none" to send that
+// model's turns to every host by OpenRouter's own weighting, for example
+// {"z-ai/glm-5.3-flash":["fireworks","together"]}. Unset, or anything that is
+// not such an object, is no override.
+const PROVIDER_SLUG_RE = /^[a-z0-9][a-z0-9._-]{0,40}(?:\/[a-z0-9._-]{1,40})?$/;
+const MODEL_SLUG_RE = /^[a-z0-9~][a-z0-9._:/-]{0,120}$/i;
+function openRouterProviderShortlists(value) {
+  if (typeof value !== 'string' || !value.trim()) return {};
+  let parsed;
+  try { parsed = JSON.parse(value); } catch {
+    console.log('[config] [warn] OPENROUTER_PROVIDER_SHORTLISTS is not JSON; ignored');
+    return {};
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+  const out = {};
+  for (const [model, list] of Object.entries(parsed)) {
+    if (!MODEL_SLUG_RE.test(model)) continue;
+    if (list === 'none') { out[model] = 'none'; continue; }
+    if (!Array.isArray(list)) continue;
+    const slugs = [...new Set(list.map((s) => String(s).trim().toLowerCase()).filter((s) => PROVIDER_SLUG_RE.test(s)))].slice(0, 16);
+    if (slugs.length) out[model] = slugs.join(',');
+  }
+  return out;
 }
 
 function load() {
@@ -418,6 +467,9 @@ function load() {
       return configured.split(',').map((s) => s.trim()).filter(Boolean);
     })(),
     openrouterApiBase,
+    // Per-model host shortlists for coding turns (openRouterProviderShortlists
+    // above): { model: 'slug,slug' | 'none' }, empty for the listeners' own.
+    openrouterProviderShortlists: openRouterProviderShortlists(process.env.OPENROUTER_PROVIDER_SHORTLISTS),
     openrouterAllowInsecureBase: String(process.env.OPENROUTER_ALLOW_INSECURE_BASE || 'false') === 'true',
     openrouterOrigin: process.env.OPENROUTER_ORIGIN || 'https://usernode.dev',
     // Management credentials stay in the platform process only. They create
@@ -621,6 +673,11 @@ function load() {
       appGate: (process.env.APP_GATE || 'off').trim().toLowerCase() === 'on' ? 'on' : 'off',
       workerImage: process.env.KUBERNETES_WORKER_IMAGE || '',
       captureImage: process.env.KUBERNETES_CAPTURE_IMAGE || '',
+      // The dedicated node pool check Jobs prefer, as the pool nodes' label
+      // `key=value` (for example `usernodelabs.org/node-pool=cpu-heavy`).
+      // Empty spreads checks over every node (services/kubernetes.js,
+      // checkPlacement).
+      checkNodePool: (process.env.CHECK_NODE_POOL || '').trim(),
       workerStorageClass: process.env.WORKER_STORAGE_CLASS || '',
       workerStorageSize: process.env.WORKER_STORAGE_SIZE || '5Gi',
       // Which builder produces app images (see services/kubernetes-buildkit.js
@@ -874,8 +931,9 @@ function load() {
     // endpoint answering 404 not_offered, exactly as before this existed.
     firebasePhoneAuthEnabled: process.env.FIREBASE_PHONE_AUTH_ENABLED === 'true',
     firebaseWebApiKey: process.env.FIREBASE_WEB_API_KEY || '',
-    // Test numbers (phoneTestCodeFrom above). Never set in production.
-    phoneTestCode: phoneTestCodeFrom(process.env).code,
+    // Test numbers (phoneTestCodeFrom above, or shotsPhoneTestCodeFrom on a
+    // before & after shots copy). Never set in production.
+    phoneTestCode: phoneTestCodeFrom(process.env).code || shotsPhoneTestCodeFrom(process.env).code,
     // Platform outbound mail (login codes, waitlist confirmations,
     // waitlist release notices). src/services/mail/select.js picks the
     // transport once, here, from platform_env: Gmail API, a generic HTTP
@@ -1015,6 +1073,13 @@ function load() {
   } else if (phoneTest.refused) {
     console.error(`  PHONE_TEST_CODE=(refused: ${phoneTest.refused}) — test numbers are off`);
   }
+  // "(set)", never the code: the run's code lives in its brief only.
+  const shotsPhoneTest = shotsPhoneTestCodeFrom(process.env);
+  if (shotsPhoneTest.code && !phoneTest.code) {
+    console.log('  SHOTS_PHONE_TEST_CODE=(set) — a before & after shots copy: +1 … 555 0100–0199 sign in with the run\'s code; no text is sent');
+  } else if (shotsPhoneTest.refused) {
+    console.error(`  SHOTS_PHONE_TEST_CODE=(refused: ${shotsPhoneTest.refused}) — test numbers are off`);
+  }
   console.log(`  PLATFORM_MAIL=${config.mailTransport
     ? `${config.mailProvider}${config.mailStagingLogOnly ? ' (staging — rendered to the log, never delivered)' : ''} from=${config.mailFrom}`
     : '(no provider configured — OTP login codes and waitlist confirmations are NOT delivered)'}`);
@@ -1072,7 +1137,9 @@ module.exports = {
   runsClusterMaintenance,
   canonicalCliOrigin,
   canonicalOpenRouterApiBase,
+  openRouterProviderShortlists,
   canonicalNativeSessionV2Network,
   isLoopbackOrigin,
   phoneTestCodeFrom,
+  shotsPhoneTestCodeFrom,
 };

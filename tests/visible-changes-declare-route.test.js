@@ -3,8 +3,9 @@
 // The hosted build turn's declare_visible_changes reaches
 // POST /api/internal/sessions/:id/visible-changes (src/routes/internal.js).
 // Besides recording the declaration, it tells the building agent whose
-// browser the shots agent will use when that cannot show the change, while
-// the agent can still declare again.
+// browser the shots agent will use when that cannot show the change, and
+// what data the copies hold (shots-ready-states.js), while the agent can
+// still declare again.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -86,4 +87,47 @@ test('a recorded declaration carries the persona warnings for its app', async (t
   assert.equal(failedLookup.status, 200);
   assert.equal(failedLookup.body.ok, true);
   assert.equal(Object.hasOwn(failedLookup.body, 'warnings'), false);
+});
+
+test('a recorded declaration says what data the copies hold, and warns when a change needs a state they lack', async (t) => {
+  stub(t, shotsState, 'recordIntent', async (_pool, sessionId, raw) => ({
+    accepted: true, unchanged: false, required: true, state: 'planned', intent: raw, runId: null, sessionId,
+  }));
+  stub(t, shotsIdentities, 'personaWarnings', async () => ['persona first.']);
+  const url = await serve(t);
+  const story = (id, claim, intent = {}) => ({
+    id, persona: 'member', claim, intent: { startPath: '/', steps: ['Open Home'], checkpoint: 'Shown', ...intent },
+  });
+  const intent = {
+    version: 1, impact: 'ui', rationale: 'Two changes.',
+    stories: [
+      story('waitlist-card', 'A member on the waitlist sees when they get in.'),
+      story('approval-chip', 'A request waiting for approval offers no Build it now.'),
+    ],
+  };
+
+  // Homeroom's own proposal: the ready-made states, and a warning for the
+  // one change whose state none of them holds, after the persona warnings.
+  const original = appRow;
+  t.after(() => { appRow = original; });
+  appRow = { id: 1, slug: 'usernode-self' };
+  const own = (await declare(url, intent)).body;
+  assert.ok(own.availableStates.some((state) => /waits for approval/.test(state.name)));
+  assert.match(own.dataNote, /src\/db\/migrate\.js/);
+  assert.equal(own.warnings.length, 2);
+  assert.equal(own.warnings[0], 'persona first.');
+  assert.match(own.warnings[1], /^waitlist-card seems to need an account on the waitlist/);
+
+  // A child app has no ready-made states: both changes are warned about.
+  appRow = { id: 7, slug: 'vote-inbox' };
+  const child = (await declare(url, intent)).body;
+  assert.deepEqual(child.availableStates, []);
+  assert.match(child.dataNote, /IS_STAGING/);
+  assert.equal(child.warnings.length, 3);
+
+  // Nothing to shoot, nothing to say about data.
+  stub(t, shotsIdentities, 'personaWarnings', async () => []);
+  const none = (await declare(url, { version: 1, impact: 'none', rationale: 'Server only.', stories: [] })).body;
+  assert.equal(Object.hasOwn(none, 'availableStates'), false);
+  assert.equal(Object.hasOwn(none, 'warnings'), false);
 });

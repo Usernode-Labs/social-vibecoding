@@ -61,6 +61,7 @@ import { BookmarkSolidIcon } from '@/components/ui/icons';
 
 import { swatchFor } from '../messages/format';
 
+import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { notificationsStore } from './notifications-store.js';
 
@@ -91,7 +92,15 @@ export type NotificationRowView = {
   actions?: { key: string; label: string; primary?: boolean }[];
 };
 
-type SavedView = {
+/**
+ * #4769: the pinned section holds two kinds of save now, so SavedView is a
+ * union on `type`. The message half is what it always was; the notification
+ * half is the feed row's own data (`rowView`'s glyph, kind line and
+ * subject), plus the save time — the section shows when the user pinned it,
+ * not when it arrived.
+ */
+type SavedMessageView = {
+  type: 'message';
   messageId: number;
   /** The app the message was posted in — '' for a conversation save. */
   slug: string;
@@ -102,11 +111,33 @@ type SavedView = {
    */
   conversationId: number;
   who: string;
-  /** Where it was said: the app's name, or the conversation's. */
+  /** The author's username, bare; '' for a message the platform wrote. */
+  author: string;
+  /** Where it was said: the app's name, or the conversation's. '' when
+   *  unknown: `line` then says "a conversation" or "an app" itself. */
   appName: string;
+  /** The first line's message id (`notifications:saved.line.*`). */
+  line: string;
   time: string;
+  timeTitle?: string;
   text: string;
 };
+
+type SavedNotificationView = {
+  type: 'notification';
+  /** The notification's id — the tap's routing and the unsave key on it. */
+  id: number;
+  /** The feed row's glyph, for the tile; null falls back to the bookmark. */
+  icon: string | null;
+  /** The kind line, as the feed row prints it (rowView's `label`). */
+  label: string;
+  /** The subject, as the feed row drew it (rowView's `segments`). */
+  segments: Segment[];
+  time: string;
+  timeTitle?: string;
+};
+
+type SavedView = SavedMessageView | SavedNotificationView;
 
 type InviteView = {
   appId: number;
@@ -114,7 +145,11 @@ type InviteView = {
   kind: string;
   icon: string;
   who: string;
-  verb: string;
+  /** The inviter's username, bare; '' when unknown. */
+  inviter: string;
+  /** The sentence's message id (`notifications:invite.line.*`). */
+  line: string;
+  /** The project's name; '' when unknown. */
   appName: string;
   /** The inviter's own words, sent with the invite ('' for none). */
   note?: string;
@@ -146,7 +181,8 @@ function kit(): any {
  * depends on remembering which state it represents would be the least
  * readable option available.
  */
-function Saved({ view, touch }: { view: SavedView; touch: boolean }): ReactNode {
+function Saved({ view, touch }: { view: SavedMessageView; touch: boolean }): ReactNode {
+  const t = useMessages('notifications');
   const ref = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const el = ref.current;
@@ -154,7 +190,7 @@ function Saved({ view, touch }: { view: SavedView; touch: boolean }): ReactNode 
     if (!touch || !el || !ui?.swipeActions) return;
     ui.swipeActions(el, {
       actions: [{
-        label: 'Unsave',
+        label: t('notifications:saved.unsave'),
         handler: () => controller()?._unsave(view.messageId),
       }],
     });
@@ -190,11 +226,15 @@ function Saved({ view, touch }: { view: SavedView; touch: boolean }): ReactNode 
               definition — so the two ends of the gesture read as one
               feature. */}
           <BookmarkSolidIcon aria-hidden="true" className="inline-block w-3.5 h-3.5 align-[-2px] mr-1 text-violet-700 dark:text-violet-400" />
-          <span className="font-bold text-zinc-900 dark:text-zinc-100">{view.who}</span>
-          {' in '}
-          <span>{view.appName}</span>
-          {' · '}
-          <time title={view.timeTitle}>{view.time}</time>
+          <RichMessage
+            id={view.line}
+            values={{ username: view.author, place: view.appName, when: view.time }}
+            components={[
+              <span className="font-bold text-zinc-900 dark:text-zinc-100" />,
+              <span />,
+              <time title={view.timeTitle} />,
+            ]}
+          />
         </div>
         <div className="text-sm leading-snug text-zinc-900 dark:text-zinc-100 line-clamp-2">{view.text}</div>
       </button>
@@ -206,7 +246,88 @@ function Saved({ view, touch }: { view: SavedView; touch: boolean }): ReactNode 
           controller()?._unsave(view.messageId);
         }}
       >
-        Unsave
+        {t('notifications:saved.unsave')}
+      </button>
+    </div>
+  );
+}
+
+/**
+ * One saved notification (#4769), in the same pinned section as the saved
+ * messages above. Same shape and classes as `Saved`: a tile, two lines, an
+ * Unsave pill, and on touch the same Unsave swipe. It differs in what the
+ * tap does — it opens the notification's own destination, exactly as the
+ * feed row's tap does, by routing on the notification's id — and in the
+ * first line, which names the KIND and when it was saved, because "where it
+ * lives" is different for every kind and the subject below already says
+ * which one this is.
+ */
+function SavedNotification({ view, touch }: { view: SavedNotificationView; touch: boolean }): ReactNode {
+  const t = useMessages('notifications');
+  const ref = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = ref.current;
+    const ui = kit();
+    if (!touch || !el || !ui?.swipeActions) return;
+    ui.swipeActions(el, {
+      actions: [{
+        label: t('notifications:saved.unsave'),
+        handler: () => controller()?._unsaveNotification(view.id),
+      }],
+    });
+  }, [touch, view.id]);
+
+  // The second line, as the feed row drew it: the segments joined back into
+  // one sentence, or the kind's own label when the row has no subject.
+  const subject = view.segments.length
+    ? view.segments.map((segment) => (segment.t === 'who' ? `@${segment.v}` : segment.v)).join(' ')
+    : view.label;
+
+  return (
+    <div
+      ref={ref}
+      data-saved-notification={view.id}
+      className="notifications-row flex items-center gap-3 px-4 py-3"
+    >
+      <span
+        aria-hidden="true"
+        className="w-9 h-9 shrink-0 rounded-lg bg-zinc-100 text-zinc-500 flex items-center justify-center dark:bg-zinc-800 dark:text-zinc-400"
+      >
+        {view.icon
+          ? <span className="text-base leading-none">{view.icon}</span>
+          : <BookmarkSolidIcon className="h-4 w-4" />}
+      </span>
+      <button
+        className="flex-1 min-w-0 text-left"
+        onClick={(e) => {
+          e.stopPropagation();
+          controller()?._onItemClick(view.id);
+        }}
+      >
+        {/* First line: the KIND and the SAVE time, with the same mark the
+            saved messages carry, so the section reads as one feature. */}
+        <div className="text-xs text-zinc-500 dark:text-zinc-400 truncate">
+          <BookmarkSolidIcon aria-hidden="true" className="inline-block w-3.5 h-3.5 align-[-2px] mr-1 text-violet-700 dark:text-violet-400" />
+          <RichMessage
+            id="notifications:saved.notificationLine"
+            values={{ kind: view.label, when: view.time }}
+            components={[
+              <span className="font-bold text-zinc-900 dark:text-zinc-100" />,
+              <time title={view.timeTitle} />,
+            ]}
+          />
+        </div>
+        <div className="text-sm leading-snug text-zinc-900 dark:text-zinc-100 line-clamp-2">{subject}</div>
+      </button>
+      <button
+        data-saved-notification-unsave={view.id}
+        className="shrink-0 h-8 px-3 rounded-full bg-zinc-100 text-xs font-semibold text-zinc-900 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700 transition-colors"
+        onClick={(e) => {
+          e.stopPropagation();
+          controller()?._unsaveNotification(view.id);
+        }}
+      >
+        {t('notifications:saved.unsave')}
       </button>
     </div>
   );
@@ -218,6 +339,7 @@ function Saved({ view, touch }: { view: SavedView; touch: boolean }): ReactNode 
  * tap path everywhere.
  */
 function Invite({ view, touch }: { view: InviteView; touch: boolean }): ReactNode {
+  const t = useMessages('notifications');
   const ref = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const el = ref.current;
@@ -226,11 +348,11 @@ function Invite({ view, touch }: { view: InviteView; touch: boolean }): ReactNod
     ui.swipeActions(el, {
       actions: [
         {
-          label: 'Accept',
+          label: t('notifications:invite.accept'),
           handler: () => controller()?._acceptInvite(view.appId, view.slug, view.kind),
         },
         {
-          label: 'Decline',
+          label: t('notifications:invite.decline'),
           destructive: true,
           handler: () => controller()?._declineInvite(view.appId, view.kind),
         },
@@ -257,20 +379,27 @@ function Invite({ view, touch }: { view: InviteView; touch: boolean }): ReactNod
           whitespace-only children — see the note on <Meta> for why.
       */}
       <div className="text-sm leading-snug text-zinc-900 dark:text-zinc-100">
-        <span className="font-bold">{view.who}</span>
-        {` ${view.verb} `}
-        <span className="font-bold">{view.appName}</span>
+        <RichMessage
+          id={view.line}
+          values={{ username: view.inviter, project: view.appName }}
+          components={[<span className="font-bold" />, <span className="font-bold" />]}
+        />
       </div>
       {/* The inviter's note, as an invite link's page shows it. */}
       {view.note ? (
         <p data-invite-note="" className="mt-0.5 text-sm leading-snug text-zinc-700 dark:text-zinc-200 line-clamp-3">
-          {`“${view.note}”`}
+          {t('notifications:invite.note', { note: view.note })}
         </p>
       ) : null}
       <div className="text-xs text-zinc-500 dark:text-zinc-400">
         <span aria-hidden="true">{`${view.icon} `}</span>
-        {view.members ? <span data-invite-members="">{`${view.members} · `}</span> : null}
-        <time title={view.timeTitle}>{view.time}</time>
+        {view.members ? (
+          <RichMessage
+            id="notifications:invite.meta.membersWhen"
+            values={{ members: view.members, when: view.time }}
+            components={[<span data-invite-members="" />, <time title={view.timeTitle} />]}
+          />
+        ) : <time title={view.timeTitle}>{view.time}</time>}
       </div>
       <div className="flex gap-2 mt-2">
         <Button
@@ -284,7 +413,7 @@ function Invite({ view, touch }: { view: InviteView; touch: boolean }): ReactNod
             controller()?._acceptInvite(view.appId, view.slug, view.kind);
           }}
         >
-          Accept
+          {t('notifications:invite.accept')}
         </Button>
         <button
           data-invite-decline={view.appId}
@@ -295,7 +424,7 @@ function Invite({ view, touch }: { view: InviteView; touch: boolean }): ReactNod
             controller()?._declineInvite(view.appId, view.kind);
           }}
         >
-          Decline
+          {t('notifications:invite.decline')}
         </button>
       </div>
       </div>
@@ -342,6 +471,7 @@ export function NotificationsPinnedSections(): ReactNode {
   const saved = state.saved || [];
   const invites = state.invites || [];
   const [invitesOpen, setInvitesOpen] = useState(false);
+  const t = useMessages('notifications');
   const { shown: shownInvites, hidden: hiddenInvites } = visibleInvites(invites, invitesOpen);
 
   return (
@@ -355,12 +485,14 @@ export function NotificationsPinnedSections(): ReactNode {
       <div id="notifications-saved" className="shrink-0 overflow-y-auto max-h-64">
         {saved.length ? (
           <div className="px-4 pt-4 pb-1 text-xs font-medium text-zinc-500 dark:text-zinc-500">
-            Saved
+            {t('notifications:saved.heading')}
           </div>
         ) : null}
-        {saved.map((s) => (
-          <Saved key={s.messageId} view={s} touch={state.touch} />
-        ))}
+        {saved.map((s) => (s.type === 'notification' ? (
+          <SavedNotification key={`n:${s.id}`} view={s} touch={state.touch} />
+        ) : (
+          <Saved key={`m:${s.messageId}`} view={s} touch={state.touch} />
+        )))}
       </div>
       {/*
           Pinned collaborator-invites section: rendered above the notification
@@ -372,7 +504,7 @@ export function NotificationsPinnedSections(): ReactNode {
       <div id="notifications-invites" className="shrink-0">
         {invites.length ? (
           <div className="px-4 pt-4 pb-1 text-xs font-medium text-zinc-500 dark:text-zinc-500">
-            Invites
+            {t('notifications:invite.heading')}
           </div>
         ) : null}
         {shownInvites.map((inv) => (
@@ -389,7 +521,7 @@ export function NotificationsPinnedSections(): ReactNode {
                 setInvitesOpen(true);
               }}
             >
-              {`Show ${hiddenInvites} more ${hiddenInvites === 1 ? 'invite' : 'invites'}`}
+              {t('notifications:invite.showMore', { count: hiddenInvites })}
             </button>
           </div>
         ) : null}

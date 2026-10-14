@@ -7,6 +7,8 @@
  *   POST /api/me/waitlist/join     { email }: joins with the account's own
  *                                  address, or mails a code to another
  *   POST /api/me/waitlist/verify   { email, code }: confirms it and joins
+ *   POST /api/me/waitlist/join-phone  joins with the account's verified
+ *                                  phone, one tap, nothing asked (#4223)
  *
  * Signed in only. Anybody may ask where they stand; joining from here is for
  * an account that is not let in yet, which today is a private member (an
@@ -70,6 +72,15 @@ function memberWaitlistRoutes(config) {
         return fail(res, err, 'Joining the waitlist');
       }
     });
+
+  router.post('/api/me/waitlist/join-phone', drainGuard, sameOriginBrowserOnly, waiting, async (req, res) => {
+    try {
+      const result = await memberWaitlist.joinWithPhone(pool, { userId: req.user.id, ip: req.ip || null });
+      return res.json({ ok: true, ...result });
+    } catch (err) {
+      return fail(res, err, 'Joining the waitlist by phone');
+    }
+  });
 
   router.post('/api/me/waitlist/verify', drainGuard, otpVerifyLimiter,
     sameOriginBrowserOnly, waiting, async (req, res) => {

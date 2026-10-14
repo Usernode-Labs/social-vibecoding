@@ -39,6 +39,7 @@
 
 import { memo, useEffect, useRef, type ReactNode } from 'react';
 
+import { useMessages } from '../../lib/i18n/react';
 import { useHiddenClass, useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
 import { appActivity } from './app-activity.js';
@@ -46,7 +47,6 @@ import { APP_FRAME_SANDBOX, PENDING_FRAME_SANDBOX } from './app-frame-policy.js'
 import { navStore } from '../nav/nav-store.js';
 import { appFrameRefs, appFrameStore } from './app-frame-store.js';
 import { publishAppTone } from './app-tone.js';
-import { StarterBar } from './starter-bar';
 
 function LaunchCover({
   iconKind,
@@ -59,10 +59,11 @@ function LaunchCover({
   iconKind: string;
   iconHtml: string;
   name: string;
-  note: string;
+  note: string | null;
   spinner: boolean;
   out: boolean;
 }): ReactNode {
+  const t = useMessages('agent');
   return (
     <div
       id="app-launch-cover"
@@ -82,7 +83,7 @@ function LaunchCover({
       >
       </div>
       <p className="app-launch-cover-name">{name}</p>
-      <p className="app-launch-cover-note" id="app-launch-cover-note">{note}</p>
+      <p className="app-launch-cover-note" id="app-launch-cover-note">{note == null ? t('agent:appFrame.cover.opening') : note}</p>
       <div
         className={
           spinner
@@ -237,21 +238,13 @@ export function AppFrameHost(): ReactNode {
     publishAppTone(document, state, window, false, screen);
   }, [state.slug, state.active, state.background, screen]);
 
-  // A column, for the bar over a starter (./starter-bar.tsx, #15): rendered
-  // unconditionally and FIRST, so the launch host is always the second child
-  // and a bar appearing is an insert before it, never a move. Without a bar
-  // the launch host's `h-full` is the whole host, as before; with one it
-  // shrinks by the bar's height (its own overflow is hidden, so it has no
-  // content minimum). `hidden` still wins over `flex` while the frame is
-  // parked: the same pair #app-view carries.
   return (
     <div
       id="app-frame-host"
       ref={hostRef}
-      className="hidden flex-1 flex flex-col"
+      className="hidden flex-1"
       style={{ minHeight: '0', overflow: 'hidden' }}
     >
-      <StarterBar />
       <div className="app-launch-host w-full h-full">
         {liveFrames(state).map((slug) => <AppFrame key={slug} slug={slug} />)}
       </div>

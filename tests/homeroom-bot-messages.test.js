@@ -284,7 +284,7 @@ test('a message row renders the same controls host a vote row does', () => {
 
 test('the hub\'s activity counts people only', () => {
   const src = read('src/services/communities.js');
-  const fn = src.slice(src.indexOf('async function activitySummary'), src.indexOf('async function activitySummary') + 4000);
+  const fn = src.slice(src.indexOf('async function activitySummary'), src.indexOf('const ACTIVE_PEOPLE_SHOWN'));
   const joins = fn.match(/JOIN users u ON u\.id = (?:w|who)\.user_id AND u\.is_synthetic IS NOT TRUE/g) || [];
-  assert.equal(joins.length, 2, 'the fourteen-day trend and the week\'s count');
+  assert.equal(joins.length, 3, 'the fourteen-day trend, the week\'s count and the people it names');
 });

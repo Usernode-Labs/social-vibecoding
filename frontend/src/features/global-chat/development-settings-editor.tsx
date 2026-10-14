@@ -4,6 +4,9 @@ import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
 
+import { useMessages } from '../../lib/i18n/react';
+import { t as translate } from '../../lib/i18n/runtime';
+
 type CodingAgentPreferences = {
   defaultBackend?: string | null;
   codexAvailable?: boolean;
@@ -28,7 +31,7 @@ type CodingAgentCatalog = {
 
 async function responseJson<T>(response: Response): Promise<T> {
   const body = await response.json().catch(() => ({})) as T & { error?: string };
-  if (!response.ok) throw new Error(body.error || `Request failed (${response.status}).`);
+  if (!response.ok) throw new Error(body.error || translate('chat:global.devSettings.requestFailedStatus', { status: response.status }));
   return body;
 }
 
@@ -39,6 +42,7 @@ async function responseJson<T>(response: Response): Promise<T> {
  * existing development-chat component.
  */
 export function DevelopmentAISettingsEditor() {
+  const t = useMessages('chat');
   const instanceId = useId();
   const idPrefix = `chat-development-${instanceId}`;
   const [backend, setBackend] = useState('codex_openrouter');
@@ -78,7 +82,7 @@ export function DevelopmentAISettingsEditor() {
         ? String(saved?.model)
         : (catalog.recommendedModelId || nextModels[0]?.id || ''));
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Development AI settings could not be loaded.');
+      setError(reason instanceof Error ? reason.message : t('chat:global.devSettings.loadFailed'));
     } finally {
       setLoading(false);
     }
@@ -93,11 +97,11 @@ export function DevelopmentAISettingsEditor() {
 
   async function save() {
     if (backend === 'codex_openrouter' && !model) {
-      setError('Choose an OpenRouter model first.');
+      setError(t('chat:global.devSettings.chooseModel'));
       return;
     }
     setSaving(true);
-    setStatus('Saving…');
+    setStatus(t('chat:global.devSettings.savingStatus'));
     setError('');
     try {
       await responseJson(await fetch('/api/me/coding-agent', {
@@ -110,23 +114,23 @@ export function DevelopmentAISettingsEditor() {
           : { defaultBackend: 'claude_code' }),
       }));
       setStatus(backend === 'codex_openrouter'
-        ? 'Development AI settings saved.'
-        : 'Claude Code is now the default development AI.');
+        ? t('chat:global.devSettings.saved')
+        : t('chat:global.devSettings.claudeDefault'));
     } catch (reason) {
       setStatus('');
-      setError(reason instanceof Error ? reason.message : 'Development AI settings could not be saved.');
+      setError(reason instanceof Error ? reason.message : t('chat:global.devSettings.saveFailed'));
     } finally {
       setSaving(false);
     }
   }
 
-  if (loading) return <p className="global-chat-inline-loading">Loading current settings…</p>;
+  if (loading) return <p className="global-chat-inline-loading">{t('chat:global.devSettings.loading')}</p>;
 
   return (
     <div className="global-chat-settings-editor global-chat-development-editor">
       {error ? <p role="alert" className="global-chat-inline-error">{error}</p> : null}
       <div>
-        <Label className="mb-1" htmlFor={`${idPrefix}-backend`}>Development AI</Label>
+        <Label className="mb-1" htmlFor={`${idPrefix}-backend`}>{t('chat:global.devSettings.backendLabel')}</Label>
         <Select
           id={`${idPrefix}-backend`}
           value={backend}
@@ -140,7 +144,7 @@ export function DevelopmentAISettingsEditor() {
       {backend === 'codex_openrouter' && available ? (
         <>
           <div>
-            <Label className="mb-1" htmlFor={`${idPrefix}-model`}>Model</Label>
+            <Label className="mb-1" htmlFor={`${idPrefix}-model`}>{t('chat:global.devSettings.modelLabel')}</Label>
             <Select
               id={`${idPrefix}-model`}
               value={model}
@@ -152,38 +156,42 @@ export function DevelopmentAISettingsEditor() {
             >
               {models.map((item) => (
                 <option key={item.id} value={item.id}>
-                  {item.name || item.id}{item.isRecommended ? ' · Recommended' : ''}{item.isFavorite ? ' · ★' : ''}
+                  {item.isRecommended
+                    ? (item.isFavorite
+                      ? t('chat:global.devSettings.modelRecommendedFavorite', { model: item.name || item.id })
+                      : t('chat:global.devSettings.modelRecommended', { model: item.name || item.id }))
+                    : `${item.name || item.id}${item.isFavorite ? ' · ★' : ''}`}
                 </option>
               ))}
             </Select>
           </div>
           <div>
-            <Label className="mb-1" htmlFor={`${idPrefix}-reasoning`}>Reasoning effort</Label>
+            <Label className="mb-1" htmlFor={`${idPrefix}-reasoning`}>{t('chat:global.devSettings.effortLabel')}</Label>
             <Select
               id={`${idPrefix}-reasoning`}
               value={effort}
               disabled={selected?.supportsReasoning !== true}
               onChange={(event) => setEffort(event.target.value)}
             >
-              <option value="">Default</option>
-              <option value="minimal">Minimal</option>
-              <option value="low">Low</option>
-              <option value="medium">Medium</option>
-              <option value="high">High</option>
-              <option value="xhigh">Extra high</option>
+              <option value="">{t('chat:global.devSettings.effort.default')}</option>
+              <option value="minimal">{t('chat:global.devSettings.effort.minimal')}</option>
+              <option value="low">{t('chat:global.devSettings.effort.low')}</option>
+              <option value="medium">{t('chat:global.devSettings.effort.medium')}</option>
+              <option value="high">{t('chat:global.devSettings.effort.high')}</option>
+              <option value="xhigh">{t('chat:global.devSettings.effort.xhigh')}</option>
             </Select>
           </div>
         </>
       ) : null}
 
       {!available ? (
-        <p className="global-chat-inline-loading">OpenRouter development AI is unavailable for this account.</p>
+        <p className="global-chat-inline-loading">{t('chat:global.devSettings.unavailable')}</p>
       ) : null}
       <Button variant="pillAccent" size="pill" disabled={saving} onClick={() => void save()}>
-        {saving ? 'Saving…' : 'Save development AI'}
+        {saving ? t('chat:global.devSettings.saving') : t('chat:global.devSettings.save')}
       </Button>
       {status ? <p role="status" className="global-chat-setting-status">{status}</p> : null}
-      <p className="global-chat-setting-note">This changes development work only. It does not change the Global Chat model.</p>
+      <p className="global-chat-setting-note">{t('chat:global.devSettings.note')}</p>
     </div>
   );
 }

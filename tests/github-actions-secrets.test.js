@@ -26,6 +26,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const github = require('../src/services/github');
+const { message } = require('./lib/platform-i18n');
 
 const root = path.join(__dirname, '..');
 const appsJs = fs.readFileSync(path.join(root, 'src/routes/apps.js'), 'utf8');
@@ -316,13 +317,18 @@ test('the staging mock is gated on USERNODE_ENV and covers the annotation path',
 
 test('the client renders presence only, and says why no value can be shown', () => {
   assert.match(secretsUiJs, /source === 'github-actions'/);
-  assert.match(secretsUiJs, /Set on GitHub/);
-  assert.match(secretsUiJs, /never returns/,
+  assert.match(secretsUiJs, /htmlText\('dialogs:secrets\.value\.github'\)/);
+  assert.equal(message('dialogs:secrets.value.github'), 'Set on GitHub');
+  assert.match(secretsUiJs, /isGithubRow \? `<p[^`]*\$\{htmlText\('dialogs:secrets\.row\.githubStored'\)\}<\/p>`/);
+  assert.match(message('dialogs:secrets.row.githubStored'), /never returns/,
     'the UI must not imply a future reveal button');
-  assert.match(secretsUiJs, /Settings → Secrets and variables → Actions/,
+  assert.match(message('dialogs:secrets.row.githubStored'), /Settings → Secrets and variables → Actions/,
     'and must say where the change actually happens');
+  assert.match(secretsUiJs, /htmlRich\('dialogs:secrets\.github\.note', \{\}, \[path\]\)/);
+  assert.match(message('dialogs:secrets.github.note'), /<0>Settings → Secrets and variables → Actions<\/0> on GitHub\. GitHub never returns/);
   assert.match(secretsUiJs, /state === 'unavailable'/, 'the fail-open line has a renderer');
-  assert.match(secretsUiJs, /No Actions secrets on this repo/,
+  assert.match(secretsUiJs, /gh\.state === 'ok' && !gh\.count\) \{\s*return `<p[^`]*\$\{htmlRich\('dialogs:secrets\.github\.noteNone', \{\}, \[path\]\)\}<\/p>`/);
+  assert.match(message('dialogs:secrets.github.noteNone'), /^No Actions secrets on this repo\./,
     '"none" and "couldn\'t read them" are different answers');
   assert.match(secretsUiJs, /gh\.state !== 'hidden'/,
     'a non-admin sees no group at all rather than an empty one');

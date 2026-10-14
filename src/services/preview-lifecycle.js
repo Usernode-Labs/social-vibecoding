@@ -7,7 +7,10 @@ const { withResourceUse } = require('./build-retention-guard');
 const { PREVIEW_LIFECYCLE_LOCK } = require('./advisory-locks');
 const log = require('./logger');
 
-function createLifecycle({ poolFor = getPool, lock = withResourceUse, checks = () => require('./kubernetes'), pollMs = 500 } = {}) {
+function createLifecycle({
+  poolFor = getPool, lock = withResourceUse, checks = () => require('./kubernetes'),
+  harvest = () => require('./check-harvest'), pollMs = 500,
+} = {}) {
   const context = new AsyncLocalStorage();
   const active = new Map();
   const CANCELLED = 'PREVIEW_SUPERSEDED';
@@ -163,6 +166,28 @@ function createLifecycle({ poolFor = getPool, lock = withResourceUse, checks = (
       if (!force && previous.phase === phase && previous.state === 'completed'
           && previous.revision === revision && new Date(previous.finished_at) >= requestedAt) return previous.result;
 
+      // A run of this revision whose Jobs are still on the cluster, running
+      // or finished but not yet read, is the run a capture asks for: its
+      // owner died and the harvest collects it (services/check-harvest.js).
+      // Cancelling it threw that run away, and so would taking the row,
+      // which the harvest writes through. So a capture leaves it: it stops
+      // only the Jobs of other commits' runs, sparing every run of this
+      // revision, and returns as a superseded run does. A forced capture has
+      // already queued the row, which aborts a harvest, and a build replaces
+      // the preview the run was testing; both cancel as before, so the paths
+      // that should wait ask before they start one (visuals.captureForSession,
+      // staging-recovery.recheckSessionChecks, the sweeper's preview heal).
+      if (phase === 'capture' && !force) {
+        const left = await harvest().runToCollect(config, pool, session.id, revision);
+        if (left) {
+          const spared = await harvest().runsOfCommit(pool, session.id, revision);
+          await checks().cancelPreviewChecks(config, session.id, null, { spare: runId => spared.has(runId) });
+          log.info('preview-lifecycle', 'A run of this revision is still on the cluster; leaving it to the harvest', {
+            sessionId: session.id, revision, ...left,
+          });
+          throw cancelled();
+        }
+      }
       // An owner can die while its Kubernetes Jobs keep running. Owning this
       // lock is necessary but insufficient until those consumers have stopped.
       await checks().cancelPreviewChecks(config, session.id);

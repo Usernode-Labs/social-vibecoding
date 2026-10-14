@@ -446,8 +446,24 @@ function parseShareInProgressBody(body) {
 }
 
 function parseUpdateFromForkBody(body) {
-  exactKeys(body, ['branch', 'forkRepo', 'expectedHeadSha', 'testingPaths', 'testingSteps', 'title', 'description', 'summary', 'linkedIssues', 'recheck', 'visibleChanges', 'visualEvidence'], 'body');
-  const branch = boundedText(body.branch, { label: 'branch', min: 1, max: 255, trim: true });
+  exactKeys(body, ['branch', 'patch', 'forkRepo', 'expectedHeadSha', 'testingPaths', 'testingSteps', 'title', 'description', 'summary', 'linkedIssues', 'recheck', 'visibleChanges', 'visualEvidence'], 'body');
+  // #4263. The new work arrives as a fork `branch` OR as a `patch` (the
+  // connector's update-by-patch), never both. A patch is applied AT a commit,
+  // so it names that commit in `expectedHeadSha`. Its size limit is the
+  // patch service's own (it names the limit and the fallback); this bound is
+  // only the body's.
+  if (body.patch != null && body.branch != null) {
+    throw new ValidationError('Pass branch or patch, not both');
+  }
+  const patch = body.patch == null
+    ? null
+    : boundedText(body.patch, { label: 'patch', min: 1, max: 512 * 1024 });
+  if (patch != null && body.expectedHeadSha == null) {
+    throw new ValidationError('A patch needs expectedHeadSha: the commit it was made against');
+  }
+  const branch = patch != null
+    ? null
+    : boundedText(body.branch, { label: 'branch', min: 1, max: 255, trim: true });
   const forkRepo = body.forkRepo == null
     ? null
     : boundedText(body.forkRepo, { label: 'forkRepo', min: 1, max: 100, trim: true });
@@ -507,7 +523,7 @@ function parseUpdateFromForkBody(body) {
     ? []
     : parseImportLinkedIssues({ linkedIssues: body.linkedIssues });
   const testing = require('../services/testing-notes').parseSubmitted(body);
-  return { branch, forkRepo, expectedHeadSha, testing, title,
+  return { branch, patch, forkRepo, expectedHeadSha, testing, title,
     description, summary,
     recheck, linkedIssues, visibleChanges: parseVisibleChanges(visibleChangesContract.declaredChanges(body)) };
 }
@@ -888,6 +904,7 @@ function proposalHandoffRoutes(config) {
           user: req.user,
           session,
           branch: input.branch,
+          patch: input.patch,
           forkRepo: input.forkRepo,
           expectedHeadSha: input.expectedHeadSha,
           testing: input.testing,
@@ -1207,20 +1224,20 @@ function proposalHandoffRoutes(config) {
         const { freed } = await sessionLifecycle.freeUserSlot({
           pool, userId: req.user.id, excludeSessionId: replacementSession ? replacementSession.id : null,
         });
-        if (!freed) return res.status(429).json({ error: sessionLifecycle.USER_SLOTS_BUSY });
+        if (!freed) {
+          sessionLifecycle.recordCapacityRefusal(pool, {
+            cap: 'user', path: 'proposal_start', userId: req.user.id, appId: app.id,
+          });
+          return res.status(429).json({ error: sessionLifecycle.USER_SLOTS_BUSY });
+        }
       }
-      const { rows: globalCounts } = await pool.query(
-        `SELECT COUNT(*) AS cnt FROM chat_sessions
-          WHERE status IN ('active', 'promoted')
-            AND source IS DISTINCT FROM 'imported'`
-      );
-      if (Number(globalCounts[0].cnt) - replacedActiveSlot
-          >= Number(config.maxGlobalSessions || 100)) {
-        const { freed } = await sessionLifecycle.freeGlobalSlot({
-          pool, graceMs: config.sessionPressureGraceMs,
-        });
-        if (!freed) return res.status(429).json({ error: 'Platform is at capacity right now. Try again in a few minutes.' });
-      }
+      // The platform-wide cap, counted as every other start counts it
+      // (session-caps.countGlobalSessions): this path once had its own copy,
+      // which disagreed with the others (12 Oct 2026).
+      const global = await sessionLifecycle.claimGlobalSlot({
+        pool, config, path: 'proposal_start', userId: req.user.id, appId: app.id, discount: replacedActiveSlot,
+      });
+      if (!global.ok) return res.status(429).json({ error: sessionLifecycle.PLATFORM_AT_CAPACITY });
 
       const branchName = `dev/cli-u${req.user.id}-${input.requestId}`;
       // #1376: `requestId` is already validated to [a-z0-9-] and the user id

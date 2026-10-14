@@ -1,5 +1,6 @@
 import { Button } from '@/components/ui/button';
 import { SectionHeading, StatusLine } from '@/components/ui/field';
+import { useMessages } from '../../../lib/i18n/react';
 
 /**
  * Homeroom Wallet linking.
@@ -12,17 +13,18 @@ import { SectionHeading, StatusLine } from '@/components/ui/field';
  * permanently invisible the moment the router hides it.
  */
 export function WalletSection() {
+  const t = useMessages('settings');
   return (
     <div data-settings-section="wallet" className="hidden">
       {/* Wallet linking section */}
       <div id="wallet-section" className="hidden">
-        <SectionHeading title="Homeroom Wallet">
-          Link your on-chain identity. Scan the QR code with the Homeroom mobile app.
+        <SectionHeading title={t('settings:wallet.title')}>
+          {t('settings:wallet.intro')}
         </SectionHeading>
         {/* Unlinked: show link button */}
         <div id="wallet-unlinked" className="hidden">
           <Button id="wallet-link-btn" layout="full">
-            Link Homeroom Wallet
+            {t('settings:wallet.link')}
           </Button>
         </div>
         {/* Linking: show QR */}
@@ -35,7 +37,7 @@ export function WalletSection() {
             id="wallet-link-cancel"
             className="mt-2 text-xs text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-300 underline"
           >
-            Cancel
+            {t('core:common.cancel')}
           </button>
         </div>
         {/* Linked: show pubkey + unlink */}

@@ -22,6 +22,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 
 import { Input } from '@/components/ui/input';
+import { useMessages } from '../../lib/i18n/react';
 import { searchUsers } from '../messages/api';
 import type { ConversationUser } from '../messages/types';
 import { FriendButton } from './friend-button';
@@ -93,12 +94,13 @@ export function FriendSearchResults({
   failed: boolean;
   lists: FriendSearchLists;
 }): ReactNode {
+  const t = useMessages('messages');
   const q = query.trim();
   if (!q) return null;
   let note: string | null = null;
-  if (failed) note = 'Search isn’t working right now. Check your connection and try again.';
-  else if (loading && !users.length) note = 'Searching…';
-  else if (!loading && !users.length) note = `No one matches “${q}”.`;
+  if (failed) note = t('messages:friends.search.failed');
+  else if (loading && !users.length) note = t('messages:friends.search.searching');
+  else if (!loading && !users.length) note = t('messages:friends.search.noMatch', { query: q });
   return (
     <div
       id="profile-friend-search-results"
@@ -135,16 +137,17 @@ export function FriendSearchResults({
 export function FriendSearch({ lists }: { lists: FriendSearchLists }): ReactNode {
   const [query, setQuery] = useState('');
   const search = useFriendSearch(query);
+  const t = useMessages('messages');
   return (
     <div id="profile-friend-search" className="mb-3">
       <label className="block">
-        <span className="sr-only">Find friends by username</span>
+        <span className="sr-only">{t('messages:friends.search.label')}</span>
         <Input
           id="profile-friend-search-input"
           type="search"
           value={query}
           onChange={(event) => setQuery(event.target.value.slice(0, 64))}
-          placeholder="Find friends by username"
+          placeholder={t('messages:friends.search.label')}
           autoComplete="off"
           autoCapitalize="none"
           spellCheck={false}

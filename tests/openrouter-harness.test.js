@@ -561,10 +561,13 @@ function renderedOpenRouterCopy() {
   const start = settings.indexOf('_normalizeOpenRouterCopy() {');
   const body = settings.slice(start, settings.indexOf('_formatOpenRouterPrice(value)', start));
   const pick = (re) => { const m = re.exec(body); assert.ok(m, String(re)); return m[1]; };
+  // The heading is the product's name, written out. The description and the
+  // label are catalog messages: what the screen shows is their English.
+  const { message: english } = require('./lib/platform-i18n');
   return {
     heading: pick(/heading\.textContent = '([^']*)'/),
-    intro: pick(/intro\.textContent = '([^']*)'/),
-    label: pick(/modelLabel\.textContent = '([^']*)'/),
+    intro: english(pick(/intro\.textContent = tr\('(settings:openrouter\.intro)'\)/)),
+    label: english(pick(/modelLabel\.textContent = tr\('(settings:openrouter\.model\.label)'\)/)),
   };
 }
 
@@ -576,15 +579,30 @@ test('the OpenRouter settings copy people see names the models that run in Claud
 });
 
 test('the static OpenRouter settings markup says exactly what the runtime copy says', () => {
-  const copy = renderedOpenRouterCopy();
+  // Both sides read the description and the label from the catalog now, so
+  // "exactly the same" is the same message id on each side; the heading is
+  // the product's name, written out in both.
+  const settings = fs.readFileSync(path.join(ROOT, 'frontend', 'src', 'features', 'settings', 'settings.js'), 'utf8');
+  const start = settings.indexOf('_normalizeOpenRouterCopy() {');
+  const runtime = settings.slice(start, settings.indexOf('_formatOpenRouterPrice(value)', start));
+  const runtimeId = (node) => {
+    const m = new RegExp(`${node}\\.textContent = \\w+\\('(settings:[\\w.]+)'\\)`).exec(runtime);
+    assert.ok(m, `${node} is written from a catalog message`);
+    return m[1];
+  };
+  const runtimeHeading = /heading\.textContent = '([^']*)'/.exec(runtime);
+  assert.ok(runtimeHeading, 'the runtime heading is the name, written out');
   const tsx = fs.readFileSync(path.join(ROOT, 'frontend', 'src', 'features', 'settings', 'sections', 'openrouter.tsx'), 'utf8');
-  const section = /<SectionHeading title=\{<>([^<]*)<\/>\}>\s*([^<]*?)\s*<\/SectionHeading>/.exec(tsx);
+  const section = /<SectionHeading title=\{<>([^<]*)<\/>\}>\s*\{t\('(settings:[\w.]+)'\)\}\s*<\/SectionHeading>/.exec(tsx);
   assert.ok(section, 'the OpenRouter SectionHeading is where this test expects it');
-  assert.equal(section[1], copy.heading);
-  assert.equal(section[2].replace(/\s+/g, ' '), copy.intro);
-  const label = /<Label[^>]*htmlFor="settings-openrouter-model">\s*([^<]*?)\s*<\/Label>/.exec(tsx);
+  assert.equal(section[1], runtimeHeading[1]);
+  assert.equal(section[2], runtimeId('intro'));
+  const label = /<Label[^>]*htmlFor="settings-openrouter-model">\s*\{t\('(settings:[\w.]+)'\)\}\s*<\/Label>/.exec(tsx);
   assert.ok(label, 'the model picker label is where this test expects it');
-  assert.equal(label[1], copy.label);
+  assert.equal(label[1], runtimeId('modelLabel'));
+  const { message } = require('./lib/platform-i18n');
+  assert.match(message(section[2]), /^Use any compatible model for all chat and coding in an OpenRouter session\./);
+  assert.equal(message(label[1]), 'OpenRouter model');
 });
 
 test('the transcript and the log name the CLI that actually ran', () => {
@@ -606,5 +624,82 @@ test('pickers mark the Claude Code models and keep their thinking level', () => 
   const choice = fs.readFileSync(path.join(ROOT, 'frontend', 'src', 'features', 'agent-session', 'model-choice.ts'), 'utf8');
   assert.match(choice, /return !model \|\| model\.supportsReasoning !== false;/);
   assert.ok(!/harness !== 'claude'/.test(choice), 'no model loses its thinking level for running in Claude Code');
-  assert.match(choice, /'Runs on your OpenRouter key, in Claude Code'/);
+  assert.match(choice, /OPENROUTER_CLAUDE_TITLE = 'agent:session\.model\.title\.openRouterClaudeCode'/);
+  assert.equal(require('./lib/platform-i18n').message('agent:session.model.title.openRouterClaudeCode'),
+    'Runs on your OpenRouter key, in Claude Code');
+});
+
+// Run four (13 Oct 2026): a 33-minute first version kept only counts, and its
+// transcript went with its pod. Its ledger row now keeps what its first and
+// last requests carried, the order it called its tools in (names alone), how
+// many old screenshots its requests left out, and the host a refusal came
+// from, whatever became of the turn.
+test('run four: a turn\'s metrics keep its first and last request sizes, its tools in order, and the images left out', async () => {
+  const state = worker.newWatchState();
+  state.agentBackend = 'codex_openrouter';
+  state.agentHarness = 'claude';
+  state.telemetryDiagnosticsEnabled = true;
+  assert.deepEqual([state.firstRequestSize, state.toolSequence, state.imagePrunedCount], [null, null, null], 'unknown until seen');
+  const provider = (event) => worker.parseLine(`__USERNODE_CODING_PROVIDER__ ${JSON.stringify(event)}`, () => {}, state);
+  const start = (n, payloadBytes, inputItems) => provider({
+    kind: 'provider_request_start', requestOrdinal: n, atMs: n * 1000, payloadBytes, inputBytes: payloadBytes - 300,
+    instructionBytes: 300, inputItems, previousResponseLinked: false, maxOutputTokens: 64000,
+  });
+  start(1, 68_577, 1);
+  start(2, 90_000, 9);
+  start(3, 41_000, 3);
+  const said = (id, blocks) => worker.parseLine(JSON.stringify({ type: 'assistant', message: { id, content: blocks } }), () => {}, state);
+  said('m1', [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'npm run build -- --secret-flag' } },
+    { type: 'tool_use', id: 't2', name: 'mcp__playwright__browser_take_screenshot', input: {} }]);
+  said('m2', [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'npm run build -- --secret-flag' } }]);
+  said('m3', [{ type: 'tool_use', id: 't3', name: 'Read', input: { file_path: '/home/node/workspace/app.js' } }]);
+  provider({ kind: 'provider_request_result', requestOrdinal: 3, httpStatus: 200, outcome: 'ok', images: { sent: 3, moved: 3, omitted: 0, pruned: 6 } });
+  assert.deepEqual(state.firstRequestSize, { payloadBytes: 68_577, inputBytes: 68_277, instructionBytes: 300, inputItems: 1 });
+  assert.deepEqual(state.lastRequestSize, { payloadBytes: 41_000, inputBytes: 40_700, instructionBytes: 300, inputItems: 3 });
+  assert.deepEqual(state.toolSequence, ['Bash', 'browser_take_screenshot', 'Read'], 'each call once, in order, by its bare name');
+  assert.equal(state.imagePrunedCount, 6);
+
+  const llmTelemetry = require('../src/services/llm-telemetry');
+  const metrics = llmTelemetry.normalizeDiagnostics(state);
+  assert.equal(metrics.first_request_payload_bytes, 68_577);
+  assert.equal(metrics.first_request_input_items, 1);
+  assert.equal(metrics.last_request_payload_bytes, 41_000);
+  assert.equal(metrics.last_request_instruction_bytes, 300);
+  assert.deepEqual(metrics.tool_sequence, ['Bash', 'browser_take_screenshot', 'Read']);
+  assert.equal(metrics.image_pruned_count, 6);
+  for (const content of ['secret-flag', 'app.js', 'playwright']) {
+    assert.equal(JSON.stringify(metrics).includes(content), false, `no ${content} in the ledger`);
+  }
+  // Only names the platform knows: a person's or a repository's own MCP
+  // server, or anything else, is `mcp` or `other`.
+  assert.deepEqual(llmTelemetry.normalizeDiagnostics({
+    toolSequence: ['Bash', 'rm -rf /', 7, 'mcp__private_server__secret_tool', 'mcp__homeroom__get_platform_conventions',
+      'mcp__visible_changes__declare_visible_changes', 'mcp__playwright__browser_navigate', 'private_tool', 'command'],
+  }).tool_sequence, ['Bash', 'other', 'other', 'mcp', 'get_platform_conventions', 'declare_visible_changes', 'browser_navigate', 'other', 'command']);
+  assert.equal(llmTelemetry.normalizeDiagnostics({ toolSequence: Array(500).fill('Bash') }).tool_sequence.length, 400);
+  // Bounded on the worker too, the rest counted.
+  const many = worker.newWatchState();
+  many.telemetryDiagnosticsEnabled = true;
+  for (let i = 0; i < 410; i += 1) {
+    worker.parseLine(JSON.stringify({ type: 'assistant', message: { id: `x${i}`, content: [{ type: 'tool_use', id: `u${i}`, name: 'Bash', input: {} }] } }), () => {}, many);
+  }
+  assert.equal(many.toolSequence.length, 400);
+  assert.equal(many.toolSequenceDropped, 10);
+});
+
+test('run four: a turn whose journal could not be read on still hands the ledger what it saw', () => {
+  const src = require('node:fs').readFileSync(require.resolve('../src/services/worker'), 'utf8');
+  assert.match(src, /if \(consumeError\) \{[\s\S]{0,600}consumeError\.turnResult = finalizeHarnessResult\(state\);[\s\S]{0,120}throw consumeError;/);
+  const sessions = require('node:fs').readFileSync(require.resolve('../src/routes/sessions'), 'utf8');
+  assert.match(sessions, /const observedResult = err\?\.turnResult \|\| null;/, 'which the attempt loop records, routed provider and all');
+});
+
+test('run four: a Codex turn records the host a refusal came from as its routed provider', () => {
+  const codex = require('../src/agents/codex-openrouter');
+  const state = {};
+  codex.normalizeCodexLine(JSON.stringify({ type: 'usernode.openrouter.request', diagnostic: { httpStatus: 429, providerName: 'InferenceNet' } }), state);
+  assert.equal(state.routedProvider, 'InferenceNet');
+  assert.deepEqual(state.routedProviders, ['InferenceNet']);
+  codex.normalizeCodexLine(JSON.stringify({ type: 'usernode.openrouter.request', diagnostic: { httpStatus: 200 } }), state);
+  assert.equal(state.routedProvider, 'InferenceNet', 'a line without a host leaves it');
 });

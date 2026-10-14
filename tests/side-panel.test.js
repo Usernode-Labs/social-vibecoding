@@ -23,7 +23,8 @@
 //   4. THE CHOKEPOINTS refuse a navigation before it lands — a link, a
 //      script's location.hash — and only at the moment the panel applies.
 //   5. THE PANEL'S DOCUMENT never adds a history entry, never runs an app,
-//      and hands everything it does not show to the top window.
+//      hands everything it does not show to the top window, and draws its
+//      own page when the comment's picture asks (#4975).
 //   6. THE ROUTER (public/js/app.js, run in a vm): openAppTab asks the panel
 //      first, the running app leaving drops it, and in the panel's document
 //      an App tab is forwarded, never parked, never polled for versions.
@@ -187,17 +188,17 @@ test('Back climbs: a message to Messages, a proposal, an issue or a change to th
 
 test('the title is the page\'s own header title, except where that would only name the app', () => {
   assert.equal(R.titleFor('messages/4242', 'Design review'), 'Design review');
-  assert.equal(R.titleFor('messages/app/notes-ab12', 'Notes'), 'Workshop', 'a discussion is its project page (#3653)');
-  assert.equal(R.titleFor('app/notes-ab12/workshop', 'Notes'), 'Workshop', 'the Workshop is the Workshop, as the prototype titles it');
+  assert.equal(R.titleFor('messages/app/notes-ab12', 'Notes'), 'Community', 'a discussion is its project page (#3653)');
+  assert.equal(R.titleFor('app/notes-ab12/workshop', 'Notes'), 'Community', 'the project page is titled Community, as the prototype titled it');
   assert.equal(R.titleFor('messages', 'Inbox'), 'Messages', 'and the inbox is Messages');
   assert.equal(R.titleFor('app/notes-ab12/dev/proposals/12', 'Notes'), 'Proposal');
   assert.equal(R.titleFor('app/notes-ab12/dev/issues/7', 'Notes'), 'Request');
   assert.equal(R.titleFor('app/notes-ab12/dev/sessions/41', 'Notes'), 'Change');
   assert.equal(R.titleFor('app/notes-ab12/dev/sessions/new', 'Notes'), 'New change');
   // Derived from the route while the document has said nothing yet.
-  assert.equal(R.titleFor('app/notes-ab12/workshop', ''), 'Workshop');
+  assert.equal(R.titleFor('app/notes-ab12/workshop', ''), 'Community');
   assert.equal(R.titleFor('messages/4242', ''), 'Messages');
-  assert.equal(R.titleFor('messages/app/notes-ab12', ''), 'Workshop');
+  assert.equal(R.titleFor('messages/app/notes-ab12', ''), 'Community');
 });
 
 test('the panel document\'s address keeps the top window\'s query, less its own and the load-scoped ones', () => {
@@ -259,7 +260,7 @@ test('an open panel renders ONE frame, at a constant address, with the spinner a
     title: 'Design review', canBack: true, loading: true,
   });
   const loading = renderToHtml(createElement(api.SidePanelIsland, {}));
-  assert.match(loading, /<iframe id="side-panel-frame" title="Side panel" src="\/\?panel=1#messages\/4" class="side-panel-frame"><\/iframe><div id="side-panel-loading"/,
+  assert.match(loading, /<iframe id="side-panel-frame" title="Side panel" src="\/\?panel=1#messages\/4" class="side-panel-frame" data-un-keyboard-relay=""><\/iframe><div id="side-panel-loading"/,
     'the frame is the body\'s first child, transparent while its document boots');
   assert.match(loading, />Design review<\/h2>/);
   api.sidePanelStore.set({ loading: false, route: 'app/x/dev/proposals/1', title: 'Proposal' });
@@ -369,7 +370,7 @@ test('opening starts ONE document, and later pages are navigations inside it', (
   assert.equal(s.frameSrc, '/?demo=1&panel=1#app/notes-ab12/workshop');
   assert.equal(s.frameKey, 1);
   assert.equal(s.loading, true);
-  assert.equal(s.title, 'Workshop', 'titled from the route until the document says');
+  assert.equal(s.title, 'Community', 'titled from the route until the document says');
   assert.equal(s.canBack, false);
   const gone = fakeFrame();
   // A second page asked for while it boots is where it goes once it can.
@@ -742,12 +743,39 @@ function panelWindow({ href = 'https://homeroom.test/app/notes-ab12/workshop?pan
   const boot = () => (docListeners['sv:authed'] || []).forEach((fn) => fn());
   return { win, runtime, reports, routed, history, fire, boot, navigate, url: () => url.href };
 }
-const tick = () => new Promise((r) => setTimeout(r, 5));
+// The runtime reports from a 0 ms timer, and `go()` (or a refused hash push)
+// sets that timer from a microtask, after the page has routed. A 5 ms timer
+// started before the microtask ran could fire first when routing took more
+// than 4 ms on a loaded machine, and the report was not there yet. Waiting
+// for the next turn first lets the runtime's timer be set before this one,
+// and timers fire in the order they expire.
+const tick = async () => {
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setTimeout(r, 5));
+};
 
 test('the runtime installs only in the panel\'s document', () => {
   globalThis.document = { documentElement: { classList: { contains: () => false } } };
   assert.equal(api.installEmbeddedRuntime({}), null, 'the top document is left alone');
   delete globalThis.document;
+});
+
+test('the runtime answers the comment\'s picture with this document\'s own page (#4975)', async () => {
+  // The drawing module is imported only when a picture is asked for: no
+  // comment work loads in a panel that is never screenshotted.
+  assert.match(read('frontend/src/features/side-panel/embedded.ts'), /import\('\.\.\/comment-pin\/picture'\)/);
+  const p = panelWindow();
+  assert.equal(typeof p.runtime.picture, 'function');
+  // A panel still booting has nothing settled to draw: null, without
+  // touching the page.
+  assert.equal(await p.runtime.picture(1), null);
+  p.boot();
+  await tick();
+  assert.equal(p.runtime.isBooted(), true);
+  // After boot it draws on this document's own turn (a 0 ms timer), and a
+  // draw that fails in this realm — here there is no page to draw — resolves
+  // null, never a rejection.
+  assert.equal(await p.runtime.picture(1), null);
 });
 
 test('a panel inside Preview reports readiness and navigation to its immediate parent', async () => {
@@ -927,6 +955,7 @@ function router({ embedded = false, takes = true } = {}) {
   const root = fakeElement();
   if (embedded) root.classList.add('in-side-panel');
   const context = vm.createContext({
+    PlatformI18n: require('./lib/platform-i18n').englishPlatformI18n(),
     location: new URL('https://homeroom.test/'),
     history: { pushState() {}, replaceState() {}, state: null },
     URL, URLSearchParams, console, setTimeout, clearTimeout,

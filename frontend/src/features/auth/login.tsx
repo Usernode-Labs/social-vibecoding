@@ -67,6 +67,8 @@ import { Input } from '@/components/ui/input';
 import { PasswordInput } from '@/components/ui/password-input';
 import { Wordmark } from '@/components/ui/wordmark';
 
+import { RichMessage, useMessages } from '../../lib/i18n/react';
+import { t as translate } from '../../lib/i18n/runtime';
 import { useMountedOnReveal } from '../../lib/mount-on-reveal';
 import { returnKeyHandler } from '../../lib/return-to-next';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
@@ -85,12 +87,11 @@ import {
   legacy,
   NativeLoginPreparationError,
   type NativeLoginFailureDetails,
+  offlineSignInText,
   passwordSignIn,
   sessionMintFailureMessage,
   takeReleaseLink,
   useAuthScreensPatch,
-  USERNAME_PUBLIC_NOTE,
-  USERNAME_RULE,
 } from './shared';
 
 /** Which of the four views on this screen is showing. */
@@ -114,26 +115,35 @@ interface OtpSignup {
   /** The code just CREATED the account: no account used this address. */
   created: boolean;
   /**
-   * The account has never chosen its handle, so this step asks for it, with
-   * an empty field (#3575: the server no longer suggests one, and will not
-   * finish the step without it).
+   * The account has never chosen its handle, so this step asks for it. The
+   * server will not finish the step without one.
    */
   needsUsername: boolean;
+  /**
+   * #4596: the handle the field arrives holding, made from the address by
+   * the server and free when it was read; '' for an empty field. The person
+   * can change it.
+   */
+  suggestedUsername: string;
   /** It will land in the waiting room; null when the server could not tell. */
   waitlisted: boolean | null;
 }
 
 // The set-password step's opening line, one per case. A brand-new account is
 // told that is what is happening: it used to read "Now choose a password for
-// your account" as if the account had been there all along.
-const OTP_PASSWORD_INTRO = 'Code verified. Now choose a password for your account.';
+// your account" as if the account had been there all along. The step asks
+// for no password any more (#4891); its id and name are the route's.
+// The copy constants in this file hold message ids; they are read with `t`
+// when shown.
+const OTP_PASSWORD_INTRO = 'auth:login.signup.intro';
 const OTP_PASSWORD_INTRO_NEW =
-  "Code verified. No account uses this email yet, so we'll create one. Choose a username and a password.";
-const OTP_PASSWORD_INTRO_HANDLE = 'Code verified. Choose a username and a password for your account.';
+  'auth:login.signup.introNew';
+const OTP_PASSWORD_INTRO_HANDLE = 'auth:login.signup.introUsername';
 // Said BEFORE the waiting room rather than by it: the person is about to be
-// signed in to a queue, not to the platform.
+// signed in to the waitlist, not to the platform. The waitlist's own words
+// (#4073): a spot, a few at a time.
 const OTP_WAITLIST_NOTE =
-  "New accounts join a short waitlist. After this step you'll wait in the queue, and you'll get in automatically when it's your turn.";
+  'auth:login.signup.waitlistNote';
 
 /** Which reset path the recovery view offers. */
 type RecoveryPath = 'wallet' | 'email';
@@ -260,9 +270,9 @@ const OFFLINE_NOTICE = `offline-only mb-8 ${alertVariants({ variant: 'notice', d
  * now-spent reset controls: success has moved the person to their next action.
  * SENT_BOX is already the auth screen's durable positive-feedback treatment.
  */
-const RESET_COMPLETE_TITLE = 'Password changed';
+const RESET_COMPLETE_TITLE = 'auth:login.resetDone.title';
 const RESET_COMPLETE_MSG =
-  'For security, you’ve been signed out everywhere. Sign in with your new password.';
+  'auth:login.resetDone.body';
 
 /**
  * ── Arriving from a waitlist-release email (#1548) ─────────────────────
@@ -295,7 +305,7 @@ const AUTO_SEND_KEY = 'usernode.signup.otp.v1';
  * here is knowing a code is on its way. The 10-minute figure must match
  * OTP_TTL_MS in src/services/email-signup.js.
  */
-const CODE_SENT_MSG = 'We sent you a code. It expires in 10 minutes.';
+const CODE_SENT_MSG = 'auth:login.otp.sent';
 
 /** The resend button while it is held. Whole class literals, both arms. */
 const QUIET_BUTTON_WAITING =
@@ -369,12 +379,34 @@ function inviteTokenFromQuery(): string | null {
  * prefill is a convenience, and the screen is perfectly usable without it.
  */
 export async function inviteEmailFromToken(token: string): Promise<string | null> {
+  return (await releaseAccountFromToken(token))?.email ?? null;
+}
+
+/** What a waitlist "you're in" link's token says about its account. */
+export type ReleaseAccount = {
+  email: string;
+  /**
+   * The account the address would sign in to is still new: none yet, or one
+   * with no username and no password (src/services/release-links.js
+   * isNewAccount). Only then does the story spend the mail's one-time
+   * sign-in as the page opens (./landing.tsx).
+   */
+  newAccount: boolean;
+};
+
+/**
+ * The same lookup, with `new_account` beside the address. A GET, so it spends
+ * nothing: no link, no session. Null on anything unexpected, and anything
+ * but a literal `true` is not a new account.
+ */
+export async function releaseAccountFromToken(token: string): Promise<ReleaseAccount | null> {
   try {
     const res = await fetch(`/api/public/waitlist/more/${encodeURIComponent(token)}`);
     if (!res.ok) return null;
     const data = await res.json();
     const email = typeof data?.email === 'string' ? data.email.trim().toLowerCase() : '';
-    return email.includes('@') && email.length <= 255 ? email : null;
+    if (!email.includes('@') || email.length > 255) return null;
+    return { email, newAccount: data?.new_account === true };
   } catch {
     return null;
   }
@@ -403,7 +435,7 @@ function inviteFromSegment(seg?: string | null): string | null {
 }
 
 const EXPIRED_MSG =
-  'This reset link is invalid or has expired. Go back to login and request a new one from "Forgot password?".';
+  'auth:login.reset.expired';
 
 /**
  * The emailed-reset confirmation is a success state, not ambient status text:
@@ -414,7 +446,7 @@ const SENT_BOX =
   'rounded-lg border border-green-300 bg-green-100 px-3 py-2 text-sm font-medium text-green-800 dark:border-green-800 dark:bg-green-950/60 dark:text-green-300';
 /** Anti-enumeration: the same copy whether or not the address matched. */
 const SENT_MSG =
-  'If that address matches an account, a reset link is on its way. It expires in 30 minutes.';
+  'auth:login.emailReset.sent';
 
 /**
  * The fallback for the two branches where a correct email code cannot sign you
@@ -423,20 +455,20 @@ const SENT_MSG =
  * `src/services/email-signup.js`, which is what a real refusal carries.
  */
 const PASSWORD_ACCOUNT_MSG =
-  'This account signs in with a password. Enter it below to continue.';
+  'auth:login.passwordAccount';
 
 /** The pre-email copy the frozen markup shipped, and its replacement. */
 const ADMIN_LEAD_SHIPPED =
-  "Accounts here have no email on file, so a password can't be reset automatically from the web.";
+  'auth:login.recovery.noEmailOnFile';
 /**
  * The confirmed-email fallback copy (#2969): explains why the reset email
  * never arrives, then how to recover. Two sentences, both inside the same
  * warning card — see ADMIN_LEAD_NOTICE_BOX below.
  */
 const ADMIN_LEAD_WITH_EMAIL =
-  'If you did not confirm your email account, you will not receive the reset email.';
+  'auth:login.recovery.unconfirmedWarning';
 const ADMIN_LEAD_SUPPORT_INSTRUCTIONS =
-  'If this happens to you, ask Homeroom support team to issue you a temporary password (support@usernodelabs.org).';
+  'auth:login.recovery.askSupport';
 
 /**
  * The warning-card treatment for ADMIN_LEAD_WITH_EMAIL (#2958): a caution box
@@ -452,6 +484,7 @@ const ADMIN_LEAD_NOTICE_BOX = `flex items-start gap-2 ${alertVariants({ variant:
 export function LoginScreen() {
   const rootRef = useRef<HTMLElement>(null);
   useVisibilityHiddenClass(rootRef, AUTH_SCREEN_IDS.login, false);
+  const t = useMessages('auth');
   // The screen's interior mounts on its first reveal, not in the prerender —
   // see lib/mount-on-reveal.ts. AuthScreens.show() asks for it (through
   // window.UsernodeReact.mount) before it wires or reveals the screen, so the
@@ -523,9 +556,7 @@ export function LoginScreen() {
   const password = useRef<HTMLInputElement>(null);
   const otpEmailInput = useRef<HTMLInputElement>(null);
   const otpCode = useRef<HTMLInputElement>(null);
-  const otpNewPassword = useRef<HTMLInputElement>(null);
   const otpUsername = useRef<HTMLInputElement>(null);
-  const otpConfirmPassword = useRef<HTMLInputElement>(null);
   const recoveryNewPassword = useRef<HTMLInputElement>(null);
   const recoveryConfirmPassword = useRef<HTMLInputElement>(null);
   const recoveryEmailInput = useRef<HTMLInputElement>(null);
@@ -622,7 +653,7 @@ export function LoginScreen() {
       // A mangled link can be refused without a round trip — same message the
       // server would return.
       if (!st.resetToken || !/^[0-9a-f]{64}$/.test(st.resetToken)) {
-        setResetError(EXPIRED_MSG);
+        setResetError(translate(EXPIRED_MSG));
       }
     },
     [ensureResetUi, st],
@@ -710,7 +741,7 @@ export function LoginScreen() {
         // `password-recovery-sent` also paints the post-submit confirmation
         // so the green success box is URL-reachable for screenshots and
         // checks. Display-only, no writes, works in every environment.
-        setEmailResetStatus(shot === 'password-recovery-sent' ? SENT_MSG : null);
+        setEmailResetStatus(shot === 'password-recovery-sent' ? translate(SENT_MSG) : null);
       }
       // `?shot=email-code-password-account#login`: the state an email code
       // hands you when the account can only sign in with its password
@@ -718,7 +749,7 @@ export function LoginScreen() {
       // Reached by typing a code in production, so the link is display-only
       // and writes nothing, which keeps it working in every environment.
       if (!openSignup && shot === 'email-code-password-account') {
-        setLoginError(PASSWORD_ACCOUNT_MSG);
+        setLoginError(translate(PASSWORD_ACCOUNT_MSG));
       }
       if (openSignup) {
         // #signup/<address> from a waitlist-release email. Prefill by ref
@@ -750,7 +781,7 @@ export function LoginScreen() {
           st.otpEmail = shown;
           setOtpEmailEcho(shown);
           otpShowStep('code');
-          setOtpStatus(CODE_SENT_MSG);
+          setOtpStatus(translate(CODE_SENT_MSG));
           const until = alreadySent + RESEND_COOLDOWN_MS;
           setCooldownUntil(until > Date.now() ? until : 0);
         }
@@ -810,14 +841,14 @@ export function LoginScreen() {
     setOtpDetails(null);
     const email = (explicitEmail || otpEmailInput.current?.value || '').trim().toLowerCase();
     if (!email || !email.includes('@')) {
-      setOtpError('Enter a valid email address');
+      setOtpError(translate('auth:login.otp.emailInvalid'));
       return;
     }
     if (blockedOffline(setOtpError)) return;
     // Whichever step we end on, the email field should carry the address —
     // a rejected send drops back here and retyping it would be busywork.
     if (otpEmailInput.current) otpEmailInput.current.value = email;
-    setOtpStatus('Sending code...');
+    setOtpStatus(translate('auth:login.otp.sending'));
     try {
       const res = await fetch('/api/auth/otp/request', {
         method: 'POST',
@@ -836,7 +867,7 @@ export function LoginScreen() {
           st.otpEmail = email;
           setOtpEmailEcho(email);
           otpShowStep('code');
-          setOtpError(data.error || 'Too many requests. Wait a moment and try again.');
+          setOtpError(data.error || translate('auth:login.otp.tooMany'));
           const retryAfter = Number(res.headers.get('Retry-After'));
           setCooldownUntil(
             Date.now() +
@@ -849,7 +880,7 @@ export function LoginScreen() {
         // Refused (an address the server will not accept, and anything else):
         // the email step, with the address still in the field.
         otpShowStep('email');
-        setOtpError(data.error || 'Could not send a code');
+        setOtpError(data.error || translate('auth:login.otp.sendFailed'));
         return;
       }
       st.otpEmail = email;
@@ -859,12 +890,12 @@ export function LoginScreen() {
       // A standing confirmation, not a flash: somebody who arrived from an
       // invite link never pressed anything, so the screen has to say what it
       // just did on their behalf.
-      setOtpStatus(CODE_SENT_MSG);
+      setOtpStatus(translate(CODE_SENT_MSG));
       setCooldownUntil(Date.now() + RESEND_COOLDOWN_MS);
     } catch {
       setOtpStatus(null);
       otpShowStep('email');
-      setOtpError('Network error');
+      setOtpError(translate('auth:login.networkError'));
     }
   }, [otpShowStep, st]);
 
@@ -884,11 +915,11 @@ export function LoginScreen() {
     setOtpDetails(null);
     const code = (otpCode.current?.value || '').trim();
     if (!code) {
-      setOtpError('Enter the code from the email');
+      setOtpError(translate('auth:login.otp.codeMissing'));
       return;
     }
     if (blockedOffline(setOtpError)) return;
-    setOtpStatus('Verifying...');
+    setOtpStatus(translate('auth:login.otp.verifying'));
     try {
       // Verification can now mint an ordinary session (an account that already
       // has a password is signed straight in), so it crosses the session-mint
@@ -909,15 +940,15 @@ export function LoginScreen() {
         if (data.code === 'password_required' || data.code === 'admin_password_required') {
           showLoginBaseView();
           if (username.current) username.current.value = st.otpEmail || '';
-          setLoginError(data.error || PASSWORD_ACCOUNT_MSG);
+          setLoginError(data.error || translate(PASSWORD_ACCOUNT_MSG));
           return;
         }
         // NOT on a 429: the limiter's message already says exactly how long
         // to wait.
         setOtpError(
           res.status === 429
-            ? data.error || 'Too many code attempts. Try again shortly.'
-            : data.error || 'Invalid or expired code.',
+            ? data.error || translate('auth:login.otp.tooManyAttempts')
+            : data.error || translate('auth:login.otp.codeRejected'),
         );
         return;
       }
@@ -929,6 +960,7 @@ export function LoginScreen() {
       setOtpSignup({
         created: data.created === true,
         needsUsername: data.needsUsername === true,
+        suggestedUsername: typeof data.suggestedUsername === 'string' ? data.suggestedUsername : '',
         waitlisted: typeof data.waitlisted === 'boolean' ? data.waitlisted : null,
       });
       // Past the code: nothing left to resend, and setOtpStatus(null) above
@@ -941,6 +973,10 @@ export function LoginScreen() {
     }
   }, [clearConfirmation, finishLogin, otpShowStep, showLoginBaseView, st]);
 
+  // #4891: the step asks for no password. The account signs in with an
+  // emailed code and adds a password in Settings if it wants one (a first
+  // password needs no current one there, #4595); set-password takes the
+  // request with no password in it as exactly that.
   const onOtpSetPassword = useCallback(async () => {
     clearConfirmation();
     setOtpError(null);
@@ -950,30 +986,18 @@ export function LoginScreen() {
     // validates it exactly as the first-run "Choose your username" step does.
     const handle = otpSignup?.needsUsername ? (otpUsername.current?.value || '').trim() : null;
     if (handle === '') {
-      setOtpUsernameError('Enter a username.');
+      setOtpUsernameError(translate('auth:login.signup.usernameMissing'));
       otpUsername.current?.focus();
       return;
     }
-    const value = otpNewPassword.current?.value || '';
-    const confirm = otpConfirmPassword.current?.value || '';
-    if (value.length < 8) {
-      setOtpError('Password must be at least 8 characters');
-      return;
-    }
-    if (value !== confirm) {
-      setOtpError('Passwords do not match');
-      return;
-    }
     if (blockedOffline(setOtpError)) return;
-    setOtpStatus('Setting password...');
+    setOtpStatus(translate('auth:login.signup.finishing'));
     try {
       const res = await fetchSessionMint('/api/auth/otp/set-password', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
         body: JSON.stringify({
-          password: value,
-          passwordConfirmation: confirm,
           ...(handle ? { username: handle } : {}),
         }),
       });
@@ -987,7 +1011,7 @@ export function LoginScreen() {
           otpUsername.current?.focus();
           return;
         }
-        setOtpError(data.error || 'Could not set the password');
+        setOtpError(data.error || translate('auth:login.signup.failed'));
         return;
       }
       setOtpStatus(null);
@@ -1005,7 +1029,7 @@ export function LoginScreen() {
     clearConfirmation();
     setWalletError(null);
     if (blockedOffline(setWalletError)) return;
-    setWalletStatus('Verifying identity...');
+    setWalletStatus(translate('auth:login.wallet.verifying'));
     setWalletControls(false);
 
     const fail = (msg: string) => {
@@ -1026,7 +1050,7 @@ export function LoginScreen() {
       }
 
       if (!st.cachedChallenge) {
-        fail('Could not get challenge from server');
+        fail(translate('auth:login.wallet.noChallenge'));
         return;
       }
 
@@ -1049,7 +1073,7 @@ export function LoginScreen() {
         await finishLogin();
         return;
       }
-      fail(verifyData.error || 'Verification failed');
+      fail(verifyData.error || translate('auth:login.wallet.failed'));
     } catch (e) {
       st.cachedChallenge = null;
       if (e instanceof NativeLoginPreparationError) {
@@ -1057,8 +1081,8 @@ export function LoginScreen() {
         return;
       }
       const message = e instanceof Error ? e.message : String(e);
-      if (message && message.includes('denied')) fail('Signature request was denied.');
-      else fail('Signature failed: ' + message);
+      if (message && message.includes('denied')) fail(translate('auth:login.wallet.denied'));
+      else fail(translate('auth:login.wallet.signatureFailed', { reason: message }));
     }
   }, [clearConfirmation, finishLogin, st]);
 
@@ -1070,14 +1094,14 @@ export function LoginScreen() {
     const value = recoveryNewPassword.current?.value || '';
     const confirm = recoveryConfirmPassword.current?.value || '';
     if (value.length < 8) {
-      setRecoveryError('Password must be at least 8 characters');
+      setRecoveryError(translate('auth:login.walletReset.passwordTooShort'));
       return;
     }
     if (value !== confirm) {
-      setRecoveryError('Passwords do not match');
+      setRecoveryError(translate('auth:login.walletReset.passwordMismatch'));
       return;
     }
-    setRecoveryStatus('Verifying identity...');
+    setRecoveryStatus(translate('auth:login.walletReset.verifying'));
     try {
       // Get a fresh challenge — the sign-in cached one may be consumed or
       // absent. wallet-check returns one for any linked wallet.
@@ -1090,7 +1114,7 @@ export function LoginScreen() {
       const challenge = checkData.challenge;
       if (!challenge) {
         setRecoveryStatus(null);
-        setRecoveryError('Could not get a challenge from the server');
+        setRecoveryError(translate('auth:login.walletReset.noChallenge'));
         return;
       }
 
@@ -1109,7 +1133,7 @@ export function LoginScreen() {
       const data = await res.json();
       if (!res.ok) {
         setRecoveryStatus(null);
-        setRecoveryError(data.error || 'Reset failed');
+        setRecoveryError(data.error || translate('auth:login.walletReset.failed'));
         return;
       }
       setRecoveryStatus(null);
@@ -1122,9 +1146,9 @@ export function LoginScreen() {
       }
       const message = e instanceof Error ? e.message : String(e);
       if (message && message.includes('denied')) {
-        setRecoveryError('Signature request was denied.');
+        setRecoveryError(translate('auth:login.walletReset.denied'));
       } else {
-        setRecoveryError('Reset failed: ' + message);
+        setRecoveryError(translate('auth:login.walletReset.failedReason', { reason: message }));
       }
     }
   }, [clearConfirmation, finishLogin, st]);
@@ -1137,7 +1161,7 @@ export function LoginScreen() {
     if (blockedOffline(setEmailResetError)) return;
     const email = (recoveryEmailInput.current?.value || '').trim();
     if (!email || email.indexOf('@') === -1) {
-      setEmailResetError('Enter the email address on your account');
+      setEmailResetError(translate('auth:login.emailReset.emailMissing'));
       return;
     }
     setBusy('btn-email-reset');
@@ -1149,14 +1173,14 @@ export function LoginScreen() {
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        setEmailResetError(data.error || 'Could not send the link. Try again in a minute');
+        setEmailResetError(data.error || translate('auth:login.emailReset.sendFailed'));
         return;
       }
       // Anti-enumeration: the server answers the same whether or not the
       // address matched, and so does this copy.
-      setEmailResetStatus(SENT_MSG);
+      setEmailResetStatus(translate(SENT_MSG));
     } catch {
-      setEmailResetError('Network error');
+      setEmailResetError(translate('auth:login.networkError'));
     } finally {
       setBusy(null);
     }
@@ -1168,11 +1192,11 @@ export function LoginScreen() {
     const value = resetNewPassword.current?.value || '';
     const confirm = resetConfirmPassword.current?.value || '';
     if (value.length < 8) {
-      setResetError('Password must be at least 8 characters');
+      setResetError(translate('auth:login.reset.passwordTooShort'));
       return;
     }
     if (value !== confirm) {
-      setResetError('Passwords do not match');
+      setResetError(translate('auth:login.reset.passwordMismatch'));
       return;
     }
     setBusy('btn-reset-confirm');
@@ -1184,7 +1208,7 @@ export function LoginScreen() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setResetError(res.status === 401 ? EXPIRED_MSG : data.error || 'Reset failed. Try again');
+        setResetError(res.status === 401 ? translate(EXPIRED_MSG) : data.error || translate('auth:login.reset.failed'));
         return;
       }
       // The token is single-use and the reset revoked every session on
@@ -1213,7 +1237,7 @@ export function LoginScreen() {
       setPasswordResetComplete(true);
       window.requestAnimationFrame(() => username.current?.focus());
     } catch {
-      setResetError('Network error');
+      setResetError(translate('auth:login.networkError'));
     } finally {
       setBusy(null);
     }
@@ -1281,7 +1305,7 @@ export function LoginScreen() {
    */
   useEffect(() => {
     const dropOfflineMessage = (current: string | null) =>
-      current && /offline/i.test(current) ? null : current;
+      current && (current === offlineSignInText() || /offline/i.test(current)) ? null : current;
     const onOfflineChange = (e: Event) => {
       const detail = (e as CustomEvent<{ offline?: boolean }>).detail;
       if (!detail || detail.offline !== false) return;
@@ -1310,9 +1334,9 @@ export function LoginScreen() {
   const heading =
     view === 'otp'
       ? otpStep === 'code'
-        ? 'Check your email'
-        : 'Sign in with email'
-      : 'Sign in';
+        ? t('auth:login.otp.titleCode')
+        : t('auth:login.otp.title')
+      : t('auth:login.title');
 
   /*
       #btn-otp-back is ONE control under all three otp steps, so its words are
@@ -1322,10 +1346,10 @@ export function LoginScreen() {
   */
   const backLabel =
     otpStep === 'email'
-      ? 'Sign in with a password'
+      ? t('auth:login.otp.backToPassword')
       : otpStep === 'code'
-        ? 'Wrong address? Go back'
-        : 'Back to login';
+        ? t('auth:login.otp.backWrongAddress')
+        : t('auth:login.otp.backToLogin');
 
   return (
     <main
@@ -1408,7 +1432,7 @@ export function LoginScreen() {
           */}
           <Wordmark
             title="Homeroom"
-            className="mx-auto self-center mb-10 h-6 w-auto text-zinc-900 dark:text-zinc-100"
+            className="mx-auto self-center mb-10 h-6 w-auto text-zinc-950 dark:text-white"
           />
           <h1 className={view === 'recovery' || view === 'reset' ? SCREEN_H1_HIDDEN : SCREEN_H1}>
             {heading}
@@ -1424,19 +1448,17 @@ export function LoginScreen() {
           */}
           <div className={OFFLINE_NOTICE}>
             <h2 className="text-sm font-semibold text-amber-800 dark:text-amber-400">
-              You're offline
+              {t('auth:login.offline.title')}
             </h2>
             <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-              Signing in needs a connection. Your username and password are checked on the server.
-            Reconnect and try again; if you were signed in on this device before, reloading once
-            you're back online will take you straight in.
+              {t('auth:login.offline.body')}
             </p>
             <button
               type="button"
               data-offline-retry=""
               className="mt-3 rounded-lg border border-amber-500/50 px-3 py-1.5 text-sm font-medium text-amber-800 dark:text-amber-300 hover:bg-amber-500/10 transition-colors"
             >
-              Try again
+              {t('auth:login.offline.retry')}
             </button>
           </div>
           <SessionConfirmationNotice completion={completion} />
@@ -1457,7 +1479,7 @@ export function LoginScreen() {
                 onClick={onWalletSignIn}
               >
                 <KeyIcon className="w-5 h-5" />
-                Sign in with Wallet
+                {t('auth:login.wallet.submit')}
               </Button>
             </div>
             <div
@@ -1466,7 +1488,7 @@ export function LoginScreen() {
             >
               <div className="flex-1 h-px bg-zinc-300 dark:bg-zinc-800">
               </div>
-              or
+              {t('auth:login.wallet.or')}
               <div className="flex-1 h-px bg-zinc-300 dark:bg-zinc-800">
               </div>
             </div>
@@ -1508,8 +1530,8 @@ export function LoginScreen() {
               aria-atomic="true"
               className={hiddenLast(!passwordResetComplete, SENT_BOX)}
             >
-              <strong className="block font-semibold">{RESET_COMPLETE_TITLE}</strong>
-              <span className="mt-1 block">{RESET_COMPLETE_MSG}</span>
+              <strong className="block font-semibold">{t(RESET_COMPLETE_TITLE)}</strong>
+              <span className="mt-1 block">{t(RESET_COMPLETE_MSG)}</span>
             </div>
             {/*
                 NO PLACEHOLDER ON THESE TWO ROWS. The label above each field is
@@ -1527,7 +1549,7 @@ export function LoginScreen() {
                 htmlFor="login-username"
                 className={AUTH_LABEL}
               >
-                Username or email
+                {t('auth:login.identifierLabel')}
               </label>
               <Input
                 ref={username}
@@ -1546,7 +1568,7 @@ export function LoginScreen() {
                 htmlFor="login-password"
                 className={AUTH_LABEL}
               >
-                Password
+                {t('auth:login.passwordLabel')}
               </label>
               <PasswordInput
                 ref={password}
@@ -1564,7 +1586,7 @@ export function LoginScreen() {
               <NativeLoginDetailsLink details={loginDetails} />
             </div>
             <Button type="submit" data-offline-disabled="" {...SOLID}>
-              Sign in
+              {t('auth:login.submit')}
             </Button>
             <TermsNotice verb="signing in" />
           </form>
@@ -1585,12 +1607,12 @@ export function LoginScreen() {
                 openRecovery();
               }}
             >
-              Forgot password?
+              {t('auth:login.forgot')}
             </a>
           </p>
           <p id="otp-link-wrap" className={hiddenLast(!base, 'mt-2.5')}>
             <a id="otp-link" href="#signup" className={PILL_LINK}>
-              Sign in with an email code
+              {t('auth:login.withEmailCode')}
             </a>
           </p>
           {/*
@@ -1635,8 +1657,7 @@ export function LoginScreen() {
               onKeyDown={returnKeyHandler({ submit: () => { if (!cooldownLeft) void otpRequestCode(); } })}
             >
               <p className={STEP_P}>
-                We'll email you a 6-digit code to sign in. New here? You'll get
-                an account and a place on the waitlist.
+                {t('auth:login.otp.lead')}
               </p>
               {/*
                   One field, one card — the same white grouped card the
@@ -1649,7 +1670,7 @@ export function LoginScreen() {
               <div className={AUTH_CARD}>
                 <div className={AUTH_ROW}>
                   <label htmlFor="otp-email" className={AUTH_LABEL}>
-                    Email
+                    {t('auth:login.otp.emailLabel')}
                   </label>
                   <Input
                     ref={otpEmailInput}
@@ -1658,7 +1679,7 @@ export function LoginScreen() {
                     autoComplete="email"
                     enterKeyHint="send"
                     {...AUTHFIELD}
-                    placeholder="you@example.com"
+                    placeholder={t('auth:login.otp.emailPlaceholder')}
                   />
                 </div>
               </div>
@@ -1676,7 +1697,7 @@ export function LoginScreen() {
                   void otpRequestCode();
                 }}
               >
-                {cooldownLeft ? `Email me a code in ${cooldownLeft}s` : 'Email me a code'}
+                {cooldownLeft ? t('auth:login.otp.requestIn', { count: cooldownLeft }) : t('auth:login.otp.request')}
               </Button>
             </div>
             <div
@@ -1685,11 +1706,9 @@ export function LoginScreen() {
               onKeyDown={returnKeyHandler({ submit: () => { void onOtpVerify(); } })}
             >
               <p className={STEP_P}>
-                {'Enter the 6-digit code we sent to '}
-                <span id="otp-email-echo" className="font-medium text-zinc-700 dark:text-zinc-300">
-                  {otpEmailEcho}
-                </span>
-                .
+                <RichMessage id="auth:login.otp.codeLead" values={{ email: otpEmailEcho }} components={[
+                <span id="otp-email-echo" className="font-medium text-zinc-700 dark:text-zinc-300" />,
+                  ]} />
               </p>
               {/*
                   The same one-field card as the email step, with the value
@@ -1701,7 +1720,7 @@ export function LoginScreen() {
               <div className={AUTH_CARD}>
                 <div className={AUTH_ROW}>
                   <label htmlFor="otp-code" className={AUTH_LABEL}>
-                    6-digit code
+                    {t('auth:login.otp.codeLabel')}
                   </label>
                   <Input
                     ref={otpCode}
@@ -1734,7 +1753,7 @@ export function LoginScreen() {
                   {...SOLID}
                   onClick={onOtpVerify}
                 >
-                  Verify code
+                  {t('auth:login.otp.verify')}
                 </Button>
                 <button
                   id="btn-otp-resend"
@@ -1744,7 +1763,7 @@ export function LoginScreen() {
                   disabled={cooldownLeft > 0}
                   onClick={onOtpResend}
                 >
-                  {cooldownLeft ? `Send a new code in ${cooldownLeft}s` : 'Send a new code'}
+                  {cooldownLeft ? t('auth:login.otp.resendIn', { count: cooldownLeft }) : t('auth:login.otp.resend')}
                 </button>
               </div>
             </div>
@@ -1754,11 +1773,11 @@ export function LoginScreen() {
               onKeyDown={returnKeyHandler({ submit: () => { void onOtpSetPassword(); } })}
             >
               <p className="text-sm text-zinc-500 dark:text-zinc-400">
-                {otpSignup?.created
+                {t(otpSignup?.created
                   ? OTP_PASSWORD_INTRO_NEW
                   : otpSignup?.needsUsername
                     ? OTP_PASSWORD_INTRO_HANDLE
-                    : OTP_PASSWORD_INTRO}
+                    : OTP_PASSWORD_INTRO)}
               </p>
               {/*
                   QA 2026-09-24 Q12: the handle, asked HERE. An account made by
@@ -1767,72 +1786,51 @@ export function LoginScreen() {
                   have platform access yet"); the first-run gate that asks for
                   it only runs at release.
 
-                  #3575: the field starts EMPTY. It used to arrive holding a
-                  name derived from the address, which "Create account"
-                  accepted with one press — a username generated from the
-                  email, the thing the request asked us not to do. The person
-                  types their own, the server refuses to finish without one
-                  (`username_required`), and the line under the field says
-                  who will see it. That line is its own <p>, ahead of the
+                  #4596 (overturning #3575 for this step): the field arrives
+                  holding a suggestion the server made from the address, the
+                  letters and digits before the @ (and before any "+",
+                  #4891), free when it was read, or
+                  empty when none fits. The person can change it, the server
+                  refuses to finish without one (`username_required`), and
+                  the line under the field says who will see it. That line is its own <p>, ahead of the
                   rule: the rule's line is swapped whole for the server's
                   refusal, and the public note has to stay put meanwhile.
               */}
               {otpSignup?.needsUsername ? (
                 <div>
                   <label htmlFor="otp-username" className="block text-[15px] font-medium text-zinc-500 dark:text-zinc-400 mb-1">
-                    Username
+                    {t('auth:login.signup.usernameLabel')}
                   </label>
                   <Input
                     ref={otpUsername}
                     id="otp-username"
                     type="text"
+                    defaultValue={otpSignup.suggestedUsername}
                     autoComplete="username"
                     maxLength={32}
-                    enterKeyHint="next"
+                    enterKeyHint="go"
                     {...HANDLE_FIELD}
                     aria-describedby="otp-username-public otp-username-hint"
                     aria-invalid={otpUsernameError ? true : undefined}
                     onInput={() => setOtpUsernameError(null)}
                     {...FIELD}
-                    placeholder="yourname"
+                    placeholder={t('auth:login.signup.usernamePlaceholder')}
                   />
                   <p id="otp-username-public" className={FIELD_HINT}>
-                    {USERNAME_PUBLIC_NOTE}
+                    {t('auth:login.signup.usernamePublic')}
                   </p>
                   <p id="otp-username-hint" className={otpUsernameError ? FIELD_HINT_ERROR : FIELD_HINT}>
-                    {otpUsernameError || USERNAME_RULE}
+                    {otpUsernameError || t('auth:login.signup.usernameRule')}
                   </p>
                 </div>
               ) : null}
-              <div>
-                <label className="block text-[15px] font-medium text-zinc-500 dark:text-zinc-400 mb-1">
-                  New password
-                </label>
-                <PasswordInput
-                  ref={otpNewPassword}
-                  id="otp-new-password"
-                  autoComplete="new-password"
-                  enterKeyHint="next"
-                  {...FIELD}
-                  placeholder="at least 8 characters"
-                />
-              </div>
-              <div>
-                <label className="block text-[15px] font-medium text-zinc-500 dark:text-zinc-400 mb-1">
-                  Confirm password
-                </label>
-                <PasswordInput
-                  ref={otpConfirmPassword}
-                  id="otp-confirm-password"
-                  autoComplete="new-password"
-                  enterKeyHint="go"
-                  {...FIELD}
-                  placeholder="re-enter password"
-                />
-              </div>
+              {/* No password here (#4891): how they sign in, and where a password is added. */}
+              <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                {t('auth:login.signup.codeNote')}
+              </p>
               {otpSignup?.waitlisted ? (
                 <p id="otp-waitlist-note" className={WAITLIST_NOTE}>
-                  {OTP_WAITLIST_NOTE}
+                  {t(OTP_WAITLIST_NOTE)}
                 </p>
               ) : null}
               <Button
@@ -1840,9 +1838,9 @@ export function LoginScreen() {
                 type="button"
                 data-offline-disabled=""
                 {...SOLID}
-                onClick={onOtpSetPassword}
+                onClick={() => { void onOtpSetPassword(); }}
               >
-                {otpSignup?.created ? 'Create account & sign in' : 'Set password & sign in'}
+                {otpSignup?.created ? t('auth:login.signup.submitNew') : t('auth:login.signup.submit')}
               </Button>
             </div>
             <div id="otp-error" className={hiddenLast(!otpError, ERROR)}>
@@ -1883,7 +1881,7 @@ export function LoginScreen() {
           */}
           <div id="recovery-view" className={hiddenFirst(view !== 'recovery', 'space-y-4')}>
             <h2 className="text-lg font-bold text-center">
-              Reset your password
+              {t('auth:login.recovery.title')}
             </h2>
             <div
               id="recovery-wallet"
@@ -1891,11 +1889,11 @@ export function LoginScreen() {
               onKeyDown={returnKeyHandler({ submit: () => { void onWalletReset(); } })}
             >
               <p className="text-sm text-zinc-500 dark:text-zinc-400">
-                Your wallet is linked to this account. Approve a signature request, then choose a new password.
+                {t('auth:login.walletReset.lead')}
               </p>
               <div>
                 <label className="block text-[15px] font-medium text-zinc-500 dark:text-zinc-400 mb-1">
-                  New password
+                  {t('auth:login.walletReset.passwordLabel')}
                 </label>
                 <PasswordInput
                   ref={recoveryNewPassword}
@@ -1903,12 +1901,12 @@ export function LoginScreen() {
                   autoComplete="new-password"
                   enterKeyHint="next"
                   {...FIELD}
-                  placeholder="at least 8 characters"
+                  placeholder={t('auth:login.walletReset.passwordPlaceholder')}
                 />
               </div>
               <div>
                 <label className="block text-[15px] font-medium text-zinc-500 dark:text-zinc-400 mb-1">
-                  Confirm new password
+                  {t('auth:login.walletReset.confirmLabel')}
                 </label>
                 <PasswordInput
                   ref={recoveryConfirmPassword}
@@ -1916,7 +1914,7 @@ export function LoginScreen() {
                   autoComplete="new-password"
                   enterKeyHint="go"
                   {...FIELD}
-                  placeholder="re-enter new password"
+                  placeholder={t('auth:login.walletReset.confirmPlaceholder')}
                 />
               </div>
               <div id="recovery-error" className={hiddenLast(!recoveryError, ERROR)}>
@@ -1926,7 +1924,7 @@ export function LoginScreen() {
                 {recoveryStatus}
               </div>
               <Button id="btn-wallet-reset" type="button" {...SOLID} onClick={onWalletReset}>
-                Reset password with your wallet
+                {t('auth:login.walletReset.submit')}
               </Button>
             </div>
             {/*
@@ -1947,10 +1945,10 @@ export function LoginScreen() {
                     it appeared to render twice).
                 */}
                 <p className={hiddenFirst(!!emailResetStatus, P)}>
-                  Enter the email address on your account and we'll send you a link to choose a new password.
+                  {t('auth:login.emailReset.lead')}
                 </p>
                 <div>
-                  <label className={LABEL} htmlFor="recovery-email-input">Email</label>
+                  <label className={LABEL} htmlFor="recovery-email-input">{t('auth:login.emailReset.label')}</label>
                   <Input
                     ref={recoveryEmailInput}
                     id="recovery-email-input"
@@ -1958,7 +1956,7 @@ export function LoginScreen() {
                     autoComplete="email"
                     enterKeyHint="send"
                     {...FIELD}
-                    placeholder="you@example.com"
+                    placeholder={t('auth:login.emailReset.placeholder')}
                   />
                 </div>
                 <div id="recovery-email-error" className={hiddenLast(!emailResetError, ERROR)}>
@@ -1974,7 +1972,7 @@ export function LoginScreen() {
                   disabled={busy === 'btn-email-reset'}
                   onClick={onEmailReset}
                 >
-                  Email me a reset link
+                  {t('auth:login.emailReset.submit')}
                 </Button>
               </div>
             ) : null}
@@ -2003,11 +2001,11 @@ export function LoginScreen() {
                 ) : null}
                 {resetUi ? (
                   <div className="space-y-1">
-                    <p>{ADMIN_LEAD_WITH_EMAIL}</p>
-                    <p>{ADMIN_LEAD_SUPPORT_INSTRUCTIONS}</p>
+                    <p>{t(ADMIN_LEAD_WITH_EMAIL)}</p>
+                    <p>{t(ADMIN_LEAD_SUPPORT_INSTRUCTIONS)}</p>
                   </div>
                 ) : (
-                  <p className="text-sm text-zinc-500 dark:text-zinc-400">{ADMIN_LEAD_SHIPPED}</p>
+                  <p className="text-sm text-zinc-500 dark:text-zinc-400">{t(ADMIN_LEAD_SHIPPED)}</p>
                 )}
               </div>
               {resetUi ? null : (
@@ -2016,15 +2014,10 @@ export function LoginScreen() {
                       inline elements must live inside the string expressions —
                       without them the text renders as "atemporary" /
                       "fromSettings" (issue #1158). */}
-                  {'Ask a Homeroom platform admin to issue you a '}
-                  <span className="font-medium text-zinc-700 dark:text-zinc-300">
-                    temporary password
-                  </span>
-                  {". Once you're back in, set a password you choose from "}
-                  <a href="#settings/password" className="text-violet-700 hover:text-violet-400 underline dark:text-violet-400">
-                    Settings → Change password
-                  </a>
-                  .
+                  <RichMessage id="auth:login.recovery.askAdmin" components={[
+                  <span className="font-medium text-zinc-700 dark:text-zinc-300" />,
+                  <a href="#settings/password" className="text-violet-700 hover:text-violet-400 underline dark:text-violet-400" />,
+                  ]} />
                 </p>
               )}
             </div>
@@ -2034,7 +2027,7 @@ export function LoginScreen() {
               className="w-full text-sm text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-300"
               onClick={leaveRecovery}
             >
-              Back to login
+              {t('auth:login.recovery.back')}
             </button>
           </div>
           {/*
@@ -2052,27 +2045,27 @@ export function LoginScreen() {
               }}
               onKeyDown={returnKeyHandler()}
             >
-              <h2 className="text-lg font-bold text-center">Choose a new password</h2>
+              <h2 className="text-lg font-bold text-center">{t('auth:login.reset.title')}</h2>
               <div>
-                <label className={LABEL} htmlFor="reset-new-password">New password</label>
+                <label className={LABEL} htmlFor="reset-new-password">{t('auth:login.reset.passwordLabel')}</label>
                 <PasswordInput
                   ref={resetNewPassword}
                   id="reset-new-password"
                   autoComplete="new-password"
                   enterKeyHint="next"
                   {...FIELD}
-                  placeholder="at least 8 characters"
+                  placeholder={t('auth:login.reset.passwordPlaceholder')}
                 />
               </div>
               <div>
-                <label className={LABEL} htmlFor="reset-confirm-password">Confirm new password</label>
+                <label className={LABEL} htmlFor="reset-confirm-password">{t('auth:login.reset.confirmLabel')}</label>
                 <PasswordInput
                   ref={resetConfirmPassword}
                   id="reset-confirm-password"
                   autoComplete="new-password"
                   enterKeyHint="go"
                   {...FIELD}
-                  placeholder="re-enter new password"
+                  placeholder={t('auth:login.reset.confirmPlaceholder')}
                 />
               </div>
               <div id="reset-error" className={hiddenLast(!resetError, ERROR)}>
@@ -2084,7 +2077,7 @@ export function LoginScreen() {
                 {...SOLID}
                 disabled={busy === 'btn-reset-confirm'}
               >
-                Set new password
+                {t('auth:login.reset.submit')}
               </Button>
               <button
                 id="btn-reset-back"
@@ -2097,7 +2090,7 @@ export function LoginScreen() {
                   showLoginBaseView();
                 }}
               >
-                Back to login
+                {t('auth:login.reset.back')}
               </button>
             </form>
           ) : null}

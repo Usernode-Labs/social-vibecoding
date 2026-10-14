@@ -2,8 +2,8 @@
 
 // Rollout health, for the Homeroom bot's dashboard (#admin/homeroom-bot).
 //
-// Before the bot is on for everyone, an admin needs to see whether it is
-// working, not only what it spent. Four figures over the last week, read off
+// An admin needs to see whether the bot is working, not only what it
+// spent. Four figures over the last week, read off
 // what the bot already records, each with the line past which it is worth a
 // look (THRESHOLDS):
 //

@@ -45,6 +45,19 @@ test('failing rows render with name, route, reason and blocking/advisory power',
   assert.doesNotMatch(block, /ok row/, 'passing rows stay out of the block');
 });
 
+test('a unit suite that never ran is not handed to the fix turn as a failing test', () => {
+  const unitSuiteRow = require('../src/services/unit-suite-row');
+  const notRun = {
+    index: unitSuiteRow.UNIT_CHECK_INDEX, name: unitSuiteRow.UNIT_CHECK_NAME, path: unitSuiteRow.UNIT_CHECK_PATH,
+    status: 'fail', advisory: true, couldNotRun: true, consoleErrors: [],
+    failureReason: "The unit suite could not start: the cluster's job quota was full. | exceeded quota: count/jobs.batch=1",
+  };
+  assert.equal(buildFailingChecksBlock('failing', [notRun]), '', 'nothing failed that a fix turn could fix');
+  const block = buildFailingChecksBlock('failing', [failRow(), notRun]);
+  assert.match(block, /feedback queue survives offline/);
+  assert.doesNotMatch(block, /could not start|Repo unit suite/);
+});
+
 test('an all-advisory failure set says so instead of claiming a blocked merge count', () => {
   const block = buildFailingChecksBlock('failing', [failRow({ advisory: true })]);
   assert.match(block, /all advisory for now/);

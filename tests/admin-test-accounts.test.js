@@ -71,7 +71,7 @@ function fakeFetch(answer) {
 const CREATED = {
   account: {
     userId: 41, username: 'maya_test', password: PASSWORD, needsUsernameChoice: false,
-    platformAccess: true, homeroomBotDm: false, welcomeDm: false, note: 'first session',
+    platformAccess: true, welcomeDm: false, note: 'first session',
   },
 };
 
@@ -157,13 +157,13 @@ test('it calls only the four test-account routes, and draws nothing from the API
 
 test('the form builds the body the route takes, and checks a username lightly', () => {
   assert.deepEqual(mod.buildCreateBody(mod.BLANK), {
-    ok: true, body: { platformAccess: true, homeroomBotDm: false, welcomeDm: false },
+    ok: true, body: { platformAccess: true, welcomeDm: false },
   }, 'an empty username is left out (a placeholder and the real first-run step), and the toggles default as the route does');
   assert.deepEqual(mod.buildCreateBody({
-    username: '  @Maya_Test ', note: '  first session with Maya ', platformAccess: false, homeroomBotDm: true, welcomeDm: true,
+    username: '  @Maya_Test ', note: '  first session with Maya ', platformAccess: false, welcomeDm: true,
   }), {
     ok: true,
-    body: { username: 'Maya_Test', note: 'first session with Maya', platformAccess: false, homeroomBotDm: true, welcomeDm: true },
+    body: { username: 'Maya_Test', note: 'first session with Maya', platformAccess: false, welcomeDm: true },
   });
   for (const bad of ['ab', 'has space', 'dash-ed', 'x'.repeat(33), 'émile']) {
     const out = mod.buildCreateBody({ ...mod.BLANK, username: bad });
@@ -184,7 +184,7 @@ test('Create clears the last result, posts the body, and hands the password to t
   let made;
   try {
     made = await mod.runCreate({
-      username: 'maya_test', note: 'first session', platformAccess: true, homeroomBotDm: true, welcomeDm: false,
+      username: 'maya_test', note: 'first session', platformAccess: true, welcomeDm: false,
     }, {
       fetchImpl: impl,
       dispatch: (action) => { actions.push({ action, fetchedYet: calls.length }); },
@@ -199,7 +199,7 @@ test('Create clears the last result, posts the body, and hands the password to t
   assert.equal(calls[0].init.headers['Content-Type'], 'application/json');
   assert.equal(calls[0].init.cache, 'no-store');
   assert.deepEqual(calls[0].body, {
-    username: 'maya_test', note: 'first session', platformAccess: true, homeroomBotDm: true, welcomeDm: false,
+    username: 'maya_test', note: 'first session', platformAccess: true, welcomeDm: false,
   });
   assert.deepEqual(actions.map((a) => a.action.type), ['start', 'created']);
   assert.equal(actions[0].fetchedYet, 0, 'the previous password is cleared before the request goes out');
@@ -279,11 +279,9 @@ test('a refusal is the server\'s sentence, under its field when it names one', a
       { error: 'Keep the note to 200 characters.', field: 'note' }],
     [{ status: 429, body: { error: 'Too many test-account requests. Try again in 12 minutes.', retryAfterSeconds: 700 } },
       { error: 'Too many test-account requests. Try again in 12 minutes.', field: null }],
-    // These two name the connector's parameters, so the console says it in its own words.
+    // This one names the connector's parameters, so the console says it in its own words.
     [{ status: 429, body: { error: '… (list_test_accounts shows them) …', code: 'at_capacity', live: 25, max: 25 } },
       { error: 'There are already 25 live test accounts, the most allowed at once. Retire one below, then try again.', field: null }],
-    [{ status: 409, body: { error: '… without homeroomBotDm …', code: 'bot_dm_full' } },
-      { error: 'The Homeroom bot\'s list is full. Make the account with "Homeroom bot builds for it" off, or free a place in the Homeroom bot section first.', field: null }],
     [{ status: 403, body: { error: 'Full admin access required' } },
       { error: 'Only a full admin can do this, from this page.', field: null }],
     [{ status: 500, body: { error: 'Internal server error' } },
@@ -453,10 +451,10 @@ test('a full admin gets the form, with the route\'s defaults, and the list loadi
   assert.match(html, /Leave it empty for a placeholder name\. The tester then picks a username at first sign-in/);
   assert.match(html, /id="admin-test-accounts-note"[^>]*maxLength="200"/i);
   assert.match(html, /id="admin-test-accounts-platform-access"[^>]*checked=""/, 'Let in now is on');
-  assert.doesNotMatch(html, /id="admin-test-accounts-bot-dm"[^>]*checked=""/, 'Homeroom bot builds for it is off');
+  assert.doesNotMatch(html, /id="admin-test-accounts-bot-dm"/, 'the bot works for any account let in: nothing to switch');
   assert.doesNotMatch(html, /id="admin-test-accounts-welcome-dm"[^>]*checked=""/, 'Welcome DM is off');
   assert.match(html, />Let in now</);
-  assert.match(html, />Homeroom bot builds for it</);
+  assert.doesNotMatch(html, />Homeroom bot builds for it</);
   assert.match(html, />Welcome DM</);
   assert.match(html, /id="admin-test-accounts-submit"[^>]*>Create test account</);
   assert.doesNotMatch(html, /id="admin-test-accounts-submit"[^>]*disabled/);

@@ -15,6 +15,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
+globalThis.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
 const AppView = require('../public/js/app-view.js');
 
 const ROOT = path.join(__dirname, '..');
@@ -215,6 +216,9 @@ test('the Homeroom bot writes its spec as HTML where the setting says, and store
   assert.ok(!('specHtml' in live.readSpec('# T\n\n## User-facing changes\n\nx')), 'a markdown spec reads as it did');
   const src = read2('src/services/homeroom-bot-live.js');
   assert.match(src, /html: specHtml\.htmlSpecsEnabledFor\(config, session\.app_slug\),/);
-  assert.match(src, /\.\.\.\(html \? \{ contentHtml: html \} : \{\}\), hadSpec: false,/);
+  // #4612: the same call, and `revised` decides hadSpec, so a revised plan's
+  // transcript line says the plan was revised.
+  assert.match(src, /\.\.\.\(html \? \{ contentHtml: html \} : \{\}\), hadSpec: !!revised,/);
+  assert.match(src, /revised = false/, 'the first plan is stored as it always was');
   function read2(rel) { return fs.readFileSync(path.join(ROOT, rel), 'utf8'); }
 });

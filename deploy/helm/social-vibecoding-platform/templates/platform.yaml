@@ -101,6 +101,13 @@ spec:
             # Explicit empty values also override imported config when disabled.
             - {name: PREVIEW_DATABASE_NAMESPACE, value: {{ $previewNamespace | quote }}}
             - {name: PREVIEW_DATABASE_CLUSTER, value: {{ $previewCluster | quote }}}
+            {{- if .Values.previewPostgresql.enabled }}
+            # STAGING_DB_ADMIN_URL itself comes from the Secret: it carries a password.
+            - {name: STAGING_DB_SERVER_DRAIN, value: {{ ternary "1" "" (.Values.previewPostgresql.drain | default false) | quote }}}
+            {{- else }}
+            # An explicit empty value overrides a key left in the imported Secret.
+            - {name: STAGING_DB_ADMIN_URL, value: ""}
+            {{- end }}
             - {name: RUN_MIGRATIONS_ON_STARTUP, value: "false"}
             # During the rollout overlap both old and new platform Pods serve
             # HTTP, but only the Postgres advisory-lock leader runs singleton
@@ -126,6 +133,8 @@ spec:
             - {name: WORKER_CPUS, value: {{ .Values.config.workerCpus | quote }}}
             - {name: CAPTURE_MEMORY, value: {{ .Values.config.captureMemory | quote }}}
             - {name: CAPTURE_CPUS, value: {{ .Values.config.captureCpus | quote }}}
+            - {name: CHECKS_MAX_CONCURRENT_RUNS, value: {{ .Values.config.checksMaxConcurrentRuns | int64 | quote }}}
+            - {name: CHECK_NODE_POOL, value: {{ .Values.config.checkNodePool | quote }}}
             - {name: DB_POOL_MAX, value: {{ .Values.config.dbPoolMax | int64 | quote }}}
             - {name: MAX_GLOBAL_SESSIONS, value: {{ .Values.config.maxGlobalSessions | int64 | quote }}}
             - {name: MAX_USER_SESSIONS, value: {{ .Values.config.maxUserSessions | int64 | quote }}}

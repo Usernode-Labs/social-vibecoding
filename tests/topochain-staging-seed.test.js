@@ -858,8 +858,8 @@ test("the viewer's leaderboard row does not claim a contradictory rank 1", () =>
 
 // ─── The staging season's First challenges (2026-10-01) ────────────────
 //
-// A new account's Getting started card is the season's first four ONBOARDING
-// challenges, so a preview needs some to show the card and the gate. Its own
+// A season's First challenges are its first four ONBOARDING challenges, so a
+// preview needs some to show them in Home's Challenges area. Its own
 // function (seedStagingFirstChallenges), after seedStagingTopochain, whose
 // pinned counts above it leaves alone. Data only: never a credit and never a
 // scoring rule, so nothing in it can fabricate progress for a cloned account.
