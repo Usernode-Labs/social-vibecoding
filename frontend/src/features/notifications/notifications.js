@@ -95,6 +95,11 @@ const Notifications = {
   // path, the grouping transform or the pagination cursor — all of which
   // operate on `items` alone.
   saved: [],
+  // #4769: the pinned section's other half, saved NOTIFICATIONS. Deliberately
+  // NOT folded into `items`, for the same reasons as `saved` above — a save
+  // has no unread state and must not touch the badge, mark-all, grouping or
+  // pagination.
+  savedNotifications: [],
   unread: 0,
   // `open` is a GETTER now, defined beside show()/hide() below — the drawer
   // owns the presentation, so this module derives the state rather than
@@ -214,6 +219,10 @@ const Notifications = {
       Notifications.items = Array.isArray(data.notifications) ? data.notifications : [];
       Notifications.invites = Array.isArray(data.pendingInvites) ? data.pendingInvites : [];
       Notifications.saved = Array.isArray(data.savedMessages) ? data.savedMessages : [];
+      // #4769: the pinned section's other half, saved NOTIFICATIONS. Same
+      // contract as `saved`: whatever the server sent, else an empty list.
+      Notifications.savedNotifications = Array.isArray(data.savedNotifications)
+        ? data.savedNotifications : [];
       Notifications.unread = data.unread || 0;
       Notifications.hasMore = !!data.hasMore;
       Notifications.nextBefore = data.nextBefore || null;
@@ -864,7 +873,9 @@ const Notifications = {
   },
 
   _onItemClick(id) {
-    const item = Notifications.items.find((n) => n.id === id);
+    // #4769: saved rows route the same.
+    const item = Notifications.items.find((n) => n.id === id)
+      || Notifications.savedNotifications.find((n) => n.id === id);
     if (!item) return false;
     // Every notification tap, in-app or a native push (openById), comes
     // through here: the screen it opens was reached by a nudge (#3369).
@@ -1379,8 +1390,20 @@ const Notifications = {
   _renderSaved() {
     const store = Notifications._store;
     if (!store) return;
+    // #4769: ONE section over two kinds of save. Each list arrives
+    // newest-save-first from the server, but the merge has to interleave
+    // them by save time, not concatenate — a message saved today sits
+    // above a notification saved last week wherever each belongs. The
+    // combined cap is messageBookmarks.MAX_SAVED (SAVED_SECTION_CAP),
+    // applied here across both kinds so neither can crowd the other out.
+    const savedAtMs = (v) => Date.parse(v && v.savedAt) || 0;
+    const merged = [
+      ...Notifications.saved.map((s) => ({ ...savedView(s), type: 'message', savedAt: s.savedAt || '' })),
+      ...Notifications.savedNotifications.map((n) => ({ ...savedNotificationView(n), type: 'notification' })),
+    ].sort((a, b) => savedAtMs(b) - savedAtMs(a))
+      .slice(0, SAVED_SECTION_CAP);
     store.set({
-      saved: Notifications.saved.map(savedView),
+      saved: merged,
       touch: isTouchNow(),
     });
   },
@@ -1470,6 +1493,74 @@ const Notifications = {
       }
       console.warn('[notifications] unsave failed', err);
     }
+  },
+
+  // #4769: SAVE / UNSAVE A NOTIFICATION. The bookmark button at the feed
+  // row's right end and the pinned section's Unsave control are two doors
+  // into this one toggle: the row's `saved` flag and the section's list are
+  // two views of one fact, so both move together, and a refusal puts both
+  // back. Saving deliberately does not touch the row's read state.
+  //
+  // Optimistic like _unsave above, with clearNotification's guard: only a
+  // row still in hand and still carrying THIS toggle's stamp is rolled
+  // back, and the saved list is only restored while it is still the very
+  // array this toggle edited — a refresh that landed meanwhile replaced it
+  // with the server's own truth, which already says what is saved.
+  async toggleSave(id) {
+    const item = Notifications.items.find((n) => n.id === id);
+    const savedEntry = Notifications.savedNotifications.find((n) => n.id === id);
+    if (!item && !savedEntry) return;
+    // The feed row is the truth when both views exist; a saved row whose
+    // feed row is out of reach (older pages, a collapsed run that no longer
+    // carries it) still unsaves via its section row.
+    const save = item ? !item.saved : false;
+    const stamp = new Date().toISOString();
+
+    // 1. Optimistic: flip the feed row's flag and grow or shrink the pinned
+    //    section's list, then repaint both.
+    const previousSaved = Notifications.savedNotifications;
+    if (item) {
+      item._saveStamp = stamp;
+      item.saved = save;
+    }
+    let optimisticSaved;
+    if (save) {
+      // The section row is the feed row's own data plus the save time, so
+      // the same per-kind routing opens it on click.
+      optimisticSaved = [{ ...item, savedAt: stamp }, ...previousSaved];
+    } else {
+      optimisticSaved = previousSaved.filter((n) => n.id !== id);
+    }
+    Notifications.savedNotifications = optimisticSaved;
+    Notifications._renderSaved();
+    Notifications._renderList();
+    try {
+      const res = await fetch(`/api/notifications/${id}/save`, {
+        method: save ? 'PUT' : 'DELETE',
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    } catch (err) {
+      // 2. Roll back what this toggle touched, and say so.
+      if (item && item._saveStamp === stamp && Notifications.items.includes(item)) {
+        item.saved = !save;
+        delete item._saveStamp;
+      }
+      if (Notifications.savedNotifications === optimisticSaved) {
+        Notifications.savedNotifications = previousSaved;
+      }
+      Notifications._renderSaved();
+      Notifications._renderList();
+      window.PlatformUI?.toast?.(t(save
+        ? 'notifications:toast.saveFailed'
+        : 'notifications:toast.unsaveFailed'));
+      console.warn('[notifications] save toggle failed', err);
+    }
+  },
+
+  // The pinned section's Unsave control — the same toggle the feed row's
+  // bookmark runs, reached from its other end.
+  async _unsaveNotification(id) {
+    return Notifications.toggleSave(id);
   },
 
   // --- pinned invites section -------------------------------------------
@@ -1677,6 +1768,7 @@ const Notifications = {
         // ever arrived while offering to show you what had.
         empty: Notifications.invites.length === 0
           && Notifications.saved.length === 0
+          && Notifications.savedNotifications.length === 0
           && olderCount === 0,
         // …and this is the new one: caught up, with history behind it.
         caughtUp: olderCount > 0 && !Notifications.showOlder,
@@ -1910,6 +2002,26 @@ function savedView(s) {
     line: SAVED_LINE_IDS[s.author ? 'author' : 'system'][place ? 0 : (conversationId ? 1 : 2)],
     ...stampFields(s.savedAt),
     text: (s.content || '').slice(0, 140),
+  };
+}
+
+// #4769: a saved NOTIFICATION in the same pinned section, as data. The
+// section is one renderer over two kinds of save, so this carries the fields
+// that row needs: the kind line and subject the feed row shows (rowView's
+// `label` and `segments`, by kind) and the feed row's glyph for the tile.
+// `time` is the age of the SAVE — when the user pinned it — not of the
+// notification, for the same reason savedView's is; a week-old notification
+// saved today was saved today.
+const SAVED_SECTION_CAP = 50; // messageBookmarks.MAX_SAVED, applied client-side
+function savedNotificationView(n) {
+  const view = rowView(n);
+  return {
+    id: n.id,
+    icon: view.icon,
+    label: view.label,
+    segments: view.segments,
+    savedAt: n.savedAt || '',
+    ...stampFields(n.savedAt),
   };
 }
 
@@ -2262,6 +2374,12 @@ function plainMarkdown(value) {
     .replace(/\s+/g, ' ')
     .trim();
 }
+// The Homeroom bot's account (services/conversations.js HOMEROOM_BOT_USERNAME): a
+// synthetic account nobody else can hold.
+function isBotUsername(username) {
+  return String(username || '').toLowerCase() === 'homeroom_bot';
+}
+
 // The row's words for one of the bot's notifications: { label, subject, meta },
 // or null when the detail is not the bot's. Its answer is what it wrote,
 // under its name.
@@ -2349,6 +2467,10 @@ function rowView(n) {
   const base = {
     id: n.id,
     unread: !n.readAt,
+    // #4769: whether the user has bookmarked this row — the feed row's
+    // bookmark button and the pinned section both read it. A save is not a
+    // read state; the two flags never derive from each other.
+    saved: !!n.saved,
     unreadCls,
     ...stampFields(n.createdAt),
     // The sheet buckets rows into Today/Earlier and leads each with an
@@ -2439,6 +2561,9 @@ function rowView(n) {
         conversationId: n.conversationId != null ? Number(n.conversationId) : null,
         appLine: bot.meta || t('notifications:row.source.messages'),
         botMoment: true,
+        // Run six: the row wears the bot's own face (the sheet's AvatarChip),
+        // never a letter tile of its handle.
+        bot: true,
         ...headline(bot.label, bot.subject),
       };
     }
@@ -2446,6 +2571,9 @@ function rowView(n) {
       ...base,
       wrap: true,
       icon: icons[n.kind],
+      // A build moment always comes from the bot; so does anything its
+      // account sent, a moment without its detail included.
+      ...(BUILD_KIND_MOMENTS[n.kind] || isBotUsername(n.sourceUsername) ? { bot: true } : {}),
       by: n.sourceUsername || null,
       // What the sheet's Messages tab filters on. Carried as a flag rather
       // than re-deriving it there from `kind`: CONVERSATION_NOTIF_KINDS lives

@@ -28,6 +28,8 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const path = require('node:path');
+const fs = require('node:fs');
 
 const step = require('../worker/usernode-bench-capture');
 const captureMod = require('../src/services/bench/capture');
@@ -138,6 +140,89 @@ test('runDeclaredChecks: one load per route, signed in; status, element, text an
   assert.match(step.checksReport(cut).at(-1), /3 not run \(past the bound or the time\)/);
 });
 
+// App bench run 191: both checks-gate send-backs were a `?demo=1` check whose
+// demo stored the viewer's rows and a `/` check of the empty state, which a
+// proposal's checks run on one database as one viewer. Here the `?demo=1`
+// routes go first, so that pair fails every time, and says why.
+test('runDeclaredChecks: the ?demo=1 routes run first, and a plain route failing after them is told why', async () => {
+  assert.equal(step.isDemoPath('/?demo=1'), true);
+  assert.equal(step.isDemoPath('/feeds?sort=new&demo=1'), true);
+  assert.equal(step.isDemoPath('/'), false);
+  assert.equal(step.isDemoPath('/?demo=0'), false);
+  const tests = step.declaredChecks({
+    tests: [
+      { name: 'Empty state', path: '/', expectText: 'Add your first feed' },
+      { name: 'Settings', path: '/settings' },
+      { name: 'Demo list', path: '/?demo=1', expectSelector: '[data-post]' },
+      { name: 'Demo label', path: '/?demo=1', expectText: 'Staging demo' },
+      { name: 'Demo feeds', path: '/feeds?demo=1' },
+    ],
+  });
+  // The demo stores the viewer's rows: once it has loaded, `/` shows them.
+  let demoLoaded = false;
+  const opened = [];
+  const browser = {
+    async newContext() {
+      return {
+        async newPage() {
+          let url = '';
+          return {
+            on() {},
+            async goto(u) {
+              url = u;
+              opened.push(new URL(u).pathname + new URL(u).search.replace(/[?&]token=[^&]*/, ''));
+              if (/demo=1/.test(u)) demoLoaded = true;
+              return { status: () => 200 };
+            },
+            async waitForLoadState() {},
+            async $(sel) { return sel === '[data-post]' ? {} : null; },
+            async evaluate(_fn, text) {
+              const body = /demo=1/.test(url) ? 'Staging demo · 14 posts' : (demoLoaded ? '14 posts' : 'Add your first feed');
+              return body.toLowerCase().includes(String(text).toLowerCase());
+            },
+          };
+        },
+        async close() {},
+      };
+    },
+  };
+  const out = await step.runDeclaredChecks(browser, 'http://localhost:3191', 't', tests, { settleMs: 1, assertMs: 20, pollMs: 5 });
+  assert.deepEqual(opened.slice(0, 2).sort(), ['/?demo=1', '/feeds?demo=1'], 'the demo routes first, together');
+  assert.deepEqual(opened.slice(2).sort(), ['/', '/settings']);
+  assert.equal(out.ran, 5);
+  assert.deepEqual(out.failed.map((f) => f.name), ['Empty state'], 'every time, not now and then');
+  assert.match(out.failed[0].reason, /^the text "Add your first feed" it expects was not on the page \(It ran after the \?demo=1 checks, as the same viewer on the same database, as on the platform: demo rows stored for the viewer are there\.\)$/);
+  assert.ok(out.failed[0].reason.length <= 300, 'within what the gate shows of a reason');
+  // A long reason keeps the note whole.
+  const long = await step.runDeclaredChecks(fakeBrowser({ '/?demo=1': {}, '/x': { errors: ['E'.repeat(400)] } }), 'http://localhost:3191', 't',
+    step.declaredChecks({ tests: [{ path: '/x' }, { path: '/?demo=1' }] }), { settleMs: 1, assertMs: 5, pollMs: 1 });
+  assert.ok(long.failed[0].reason.endsWith(step.AFTER_DEMO_NOTE));
+  // With no demo route, nothing is said of one.
+  const plain = await step.runDeclaredChecks(fakeBrowser({ '/x': { errors: ['E'] } }), 'http://localhost:3191', 't',
+    step.declaredChecks({ tests: [{ path: '/x' }] }), { settleMs: 1, assertMs: 5, pollMs: 1 });
+  assert.ok(!plain.failed[0].reason.includes('?demo=1'));
+});
+
+// App bench run 191: a check command piped to `head` died on the closed pipe
+// before it stopped its app, and the next run checked that app's old code.
+test('the step stops an earlier run\'s app on its port before it boots, and checks nothing it did not start', async () => {
+  const dir = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'app-check-port-'));
+  const launcher = path.join(dir, 'launcher');
+  const log = path.join(dir, 'calls');
+  fs.writeFileSync(launcher, `require('fs').appendFileSync(${JSON.stringify(log)}, process.argv.slice(2).join(' ') + ' port=' + process.env.INLOOP_PORT + '\\n');`);
+  const cleared = await step.clearPort({ env: { PATH: process.env.PATH }, port: 3191, launcher, answers: async () => 0 });
+  assert.deepEqual(cleared, { ok: true });
+  assert.equal(fs.readFileSync(log, 'utf8'), '--stop port=3191\n', 'the launcher stops what it recorded there');
+  const busy = await step.clearPort({ env: {}, port: 3191, launcher, answers: async () => 200 });
+  assert.equal(busy.ok, false);
+  assert.match(busy.error, /port 3191 is held by a process this step did not start, so it was not checked/);
+  // And a closed output does not end the step before it stops its app.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'worker', 'usernode-bench-capture.js'), 'utf8');
+  assert.match(src, /async function main\(\) \{\n[^]*?process\.stdout\.on\('error', \(\) => \{\}\);/);
+  assert.match(src, /const cleared = await clearPort\(\{ env: appEnv, port \}\);[^]*?const booted = await bootApp\(/);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test('the capture keeps what the declared checks came to, bounded', () => {
   const summary = captureMod.summarize({
     booted: true,
@@ -203,27 +288,41 @@ test('the worker writes the check command for the app, and gives the checks gate
   const src = require('node:fs').readFileSync(require.resolve('../src/services/worker'), 'utf8');
   const gate = src.slice(src.indexOf("if (stopGuard === true && mode === 'build' && runsClaude) {"));
   assert.match(gate.slice(0, 600), /safeEnv\.STOP_GUARD = '1';\s*if \(checksGate && typeof checksGate === 'object'\) \{\s*safeEnv\.STOP_GUARD_CHECKS = APP_CHECK_COMMAND_PATH;/);
+  assert.match(gate.slice(0, 900), /if \(checksGate\.requireTests === true\) safeEnv\.STOP_GUARD_REQUIRE_TESTS = '1';/);
 });
 
 test('the prompts say how to run the app\'s checks, signed in, when the runner holds the turn to them', () => {
   const lines = live.appChecksLines().join('\n');
   assert.match(lines, /sh \/home\/node\/\.claude\/usernode-app-check/);
-  assert.match(lines, /signed in as the proposal's checks are \(a plain in-loop launch is signed out/);
+  assert.match(lines, /signed in as the proposal's checks are, runs every declared\scheck/);
+  // Run 191: three builds wrote their checks under `checks`, which the platform never reads.
+  assert.match(lines, /Every check in dapp\.json's top-level `tests` array runs on the proposal/);
+  assert.ok(!lines.includes('A first version declares'), 'a later change is not told a first version\'s rule');
   const build = live.buildPrompt({ seed: 'ISSUE #1', buildNote: 'x', appChecks: true });
   assert.ok(build.includes(lines));
+  // A first version's: the key, that a turn with none is sent back, and the
+  // checks sharing one account and one database with the `?demo=1` demo.
+  const first = live.appChecksLines({ firstVersion: true }).join('\n');
+  assert.ok(first.startsWith(lines));
+  assert.match(first, /A first version declares two or three checks there \(the platform reads no other key: checks under `checks` never run\),\nand a turn that ends with none is sent back\./);
+  assert.match(first, /The checks run at the same time, signed in as one account, on one\ndatabase: rows the `\?demo=1` demo stores for the viewer are there when a check of a plain route runs\./);
+  assert.match(first, /add them to the `\?demo=1` answers\nwithout storing them, or store them marked as demo and leave those out of every answer without `\?demo=1`\./);
+  assert.ok(live.buildPrompt({ seed: 'ISSUE #1', buildNote: 'x', appChecks: true, firstVersion: true }).includes(first));
+  assert.ok(live.appChecksLines({ lean: true, firstVersion: true }).join('\n').endsWith(live.FIRST_VERSION_CHECKS_LINES.join('\n')));
+  for (const line of live.FIRST_VERSION_CHECKS_LINES) assert.ok(!/—/.test(line), line);
   assert.ok(!live.buildPrompt({ seed: 'ISSUE #1', buildNote: 'x' }).includes('THE APP\'S OWN CHECKS'));
   const fix = review.fixPrompt({ issues: [], appChecks: true });
-  assert.ok(fix.includes(lines));
+  assert.ok(fix.includes(first), 'a review\'s fix is a first version\'s');
   assert.ok(!review.fixPrompt({ issues: [] }).includes('THE APP\'S OWN CHECKS'));
 });
 
 test('the bot\'s runner writes the check before each turn and turns the gate on; not for the platform\'s own repository', async () => {
   const written = [];
   const dispatched = [];
-  const make = (checksGate) => live.buildTurnRunner({
+  const make = (checksGate, firstVersion = false) => live.buildTurnRunner({
     pool: { async query() { return { rows: [], rowCount: 1 }; } },
     config: {}, bot: { id: 7 }, session: { id: 5001, app_id: 42 }, model: 'z-ai/glm-5.3-flash', branchName: 'dev/b', containerName: 'w',
-    checksGate,
+    checksGate, firstVersion,
     deps: {
       worker: {
         async writeAppCheck(id, { source, appId }) { written.push([id, appId, source.includes('runDeclaredChecks')]); },
@@ -240,9 +339,13 @@ test('the bot\'s runner writes the check before each turn and turns the gate on;
   assert.deepEqual(written, [[5001, 42, true]], 'the platform\'s current script, for this app');
   assert.ok(dispatched[0].checksGate.deadlineMs >= before + 600_000, 'with the turn\'s own deadline');
   assert.equal(dispatched[0].stopGuard, true);
+  assert.equal(dispatched[0].checksGate.requireTests, undefined, 'a later change\'s dapp.json is left as it is');
   await make(false)({ prompt: 'p', budgetMs: 600_000, commitMsg: 'm', progress: { note() {} } });
   assert.equal(written.length, 1);
   assert.equal(dispatched[1].checksGate, undefined);
+  // A first version's turns must declare their checks under `tests` too.
+  await make(true, true)({ prompt: 'p', budgetMs: 600_000, commitMsg: 'm', progress: { note() {} } });
+  assert.equal(dispatched.pop().checksGate.requireTests, true);
   // A write that fails runs the turn without the gate.
   const failing = live.buildTurnRunner({
     pool: { async query() { return { rows: [], rowCount: 1 }; } },

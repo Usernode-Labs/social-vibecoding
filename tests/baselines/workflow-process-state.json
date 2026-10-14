@@ -4,7 +4,17 @@
     "timer src/workflow/kernel/stream.ts#Signals setTimeout": "the LISTEN connection's reconnect and a loop's idle sleep; loops poll while it is down",
     "timer src/workflow/kernel/stream.ts#waitForOutcome setTimeout": "a route's bounded wait for an event's outcome; it answers 202 when it runs out"
   },
+  "takenOver": {
+    "app-delivery": {
+      "services | uses src/services/staging.js:deployProduction": "the production deploy, taken over from merge-followups (app.deliver) and governance-proposal (app.rebuildProduction), each of which lists \"services | uses src/services/staging.js:rebuildProduction\" until its work path is deleted with the flag",
+      "services | uses src/services/github.js:getCommitTree": "demo mode's preview image, offered to the deploy when its tree is the merged tree: taken over from merge-followups (app.deliver), which lists the same call until its work path is deleted with the flag"
+    }
+  },
   "machines": {
+    "app-delivery": [
+      "services | uses src/services/github.js:getCommitTree",
+      "services | uses src/services/staging.js:deployProduction"
+    ],
     "governance-proposal": [
       "notifiers | notifier boardChange",
       "notifiers | notifier scoreVote",
@@ -43,10 +53,7 @@
       "notifiers | notifier badgeSync",
       "notifiers | notifier boardChange",
       "notifiers | notifier kickQueue",
-      "notifiers | notifier nudgeDeployer",
-      "notifiers | uses src/services/application-runtime.js:mode",
       "notifiers | uses src/services/conflict-resolver.js:checkAndResolveConflicts",
-      "notifiers | uses src/services/deploy-nudge.js:nudgeHostDeployer",
       "notifiers | uses src/services/mobile-push.js:scheduleBadgeSync",
       "notifiers | uses src/services/ws.js:noteBoardChange",
       "ownership | chat_sessions.included_in_session_id ← src/routes/sessions.js#setHeadlessStep (dynamic SET)",
@@ -103,6 +110,8 @@
       "ownership | chat_sessions.status ← src/services/session-lifecycle.js#unpromoteSession",
       "services | uses src/routes/issues.js:resolveSupersededCloseProposals",
       "services | uses src/services/active-workers.js:isSessionBusy",
+      "services | uses src/services/application-runtime.js:mode",
+      "services | uses src/services/deploy-nudge.js:nudgeHostDeployer",
       "services | uses src/services/github.js (whole module)",
       "services | uses src/services/github.js:closePR",
       "services | uses src/services/github.js:compareCommitAncestry",
@@ -129,6 +138,8 @@
       "shared | uses src/services/github.js:isEnabled"
     ],
     "platform": [
+      "web | state src/workflow/platform.ts#deliveries",
+      "web | state src/workflow/platform.ts#deliveriesAdmitted",
       "web | state src/workflow/platform.ts#kernelPool",
       "web | state src/workflow/platform.ts#log",
       "web | state src/workflow/platform.ts#machine",

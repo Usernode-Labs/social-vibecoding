@@ -34,6 +34,10 @@ const LIVE_PREFIX = '/locales/live/';
 // How long a process trusts its packs before asking whether the cache moved:
 // another instance's translation pass is picked up within this.
 const VERSION_TTL_MS = 60 * 1000;
+// How long a process waits before asking again for a pack name it does not
+// have: a pack the shell still holds by name is a pack of a newer cache
+// version, so a miss rechecks, but at most this often.
+const MISS_RECHECK_MS = 5000;
 
 const isObject = (value) => !!value && typeof value === 'object' && !Array.isArray(value);
 
@@ -170,11 +174,12 @@ let building = null;
 /**
  * What the running build offers now: { languages, namespaces, manifest,
  * files, coverage }. Rebuilt when the cache or the build's catalogs change,
- * asked at most once a VERSION_TTL_MS. Null when this build has no source.
+ * asked at most once a VERSION_TTL_MS; `fresh` asks now whatever the memo
+ * says. Null when this build has no source.
  */
-async function live(pool, { now = Date.now(), source = module.exports.readSource() } = {}) {
+async function live(pool, { now = Date.now(), source = module.exports.readSource(), fresh = false } = {}) {
   if (!source) return null;
-  if (memo && memo.source === source && now - memo.checkedAt < VERSION_TTL_MS) return memo.value;
+  if (!fresh && memo && memo.source === source && now - memo.checkedAt < VERSION_TTL_MS) return memo.value;
   if (building) return building;
   building = (async () => {
     const version = await cacheVersion(pool);
@@ -198,11 +203,24 @@ async function live(pool, { now = Date.now(), source = module.exports.readSource
   }
 }
 
-/** One live pack's bytes by its file name, or null. */
-async function pack(pool, name) {
+// The last miss that asked whether the cache has moved (process-wide; see pack).
+let lastMissCheck = 0;
+
+/**
+ * One live pack's bytes by its file name, or null. A well-formed name this
+ * process has no bytes for is a pack of a newer cache version than the one it
+ * holds: ask whether the cache has moved now, at most once every
+ * MISS_RECHECK_MS, so a shell that booted on an older list is not turned away
+ * for VERSION_TTL_MS more.
+ */
+async function pack(pool, name, { now = Date.now(), source = module.exports.readSource() } = {}) {
   if (typeof name !== 'string' || !packs.PACK_NAME.test(name)) return null;
-  const value = await live(pool);
-  return value?.files.get(name) || null;
+  const value = await live(pool, { now, source });
+  if (value?.files.get(name)) return value.files.get(name);
+  if (!value || (lastMissCheck && now - lastMissCheck < MISS_RECHECK_MS)) return null;
+  lastMissCheck = now;
+  const fresh = await live(pool, { now, source, fresh: true });
+  return fresh?.files.get(name) || null;
 }
 
 // packs.writtenOutEscape's pattern, as a Postgres regular expression.
@@ -251,12 +269,14 @@ async function saveTranslations(pool, entries, { model = null } = {}) {
 function reset() {
   memo = null;
   sourceMemo = null;
+  lastMissCheck = 0;
 }
 
 module.exports = {
   LIVE_PREFIX,
   SOURCE_PATH,
   VERSION_TTL_MS,
+  MISS_RECHECK_MS,
   cacheVersion,
   cachedEntries,
   live,

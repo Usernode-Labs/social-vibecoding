@@ -15,9 +15,9 @@
  * one request, its comments numbered, each with its own pin. A click
  * elsewhere moves the open comment's pin (the words stay). Esc closes what
  * is on top: an open marker, the wait for the next pin, the request (asking
- * first when it has words), then the mode. The page under the layer still
- * scrolls, with the wheel or a finger, and the pins move with what they
- * were put on; a tap is a comment, as a click is.
+ * first when it has words), then the mode. The page under the layer holds
+ * still while the mode is up: a wheel turn or a finger drag does nothing;
+ * a tap is a comment, as a click is.
  *
  * Over the inset picture the bar is that view's header: the picture leaves
  * a band for it at the top and it sits there, the picture's own width, so
@@ -63,12 +63,12 @@
 import {
   createElement, useCallback, useEffect, useLayoutEffect, useRef, useState,
   type ClipboardEvent, type DragEvent, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode,
-  type WheelEvent,
 } from 'react';
+import { flushSync } from 'react-dom';
 
 import { Button } from '@/components/ui/button';
 import {
-  ArrowsPointingInIcon, ArrowsPointingOutIcon, ArrowPathIcon, CheckIcon, ChatIcon, DescriptionIcon, DraftEditIcon,
+  ArrowsPointingInIcon, ArrowsPointingOutIcon, ArrowPathIcon, CheckIcon, ChatIcon, ChevronDownIcon, DescriptionIcon, DraftEditIcon,
   ArrowsMoveIcon, PaperclipIcon, PlusIcon, SparklesIcon, XIcon,
 } from '@/components/ui/icons';
 
@@ -82,7 +82,7 @@ import { PLANE_FILL } from '@/components/ui/grouped-list';
 import { platformSlug } from '../messages/channel-hub';
 import {
   changesPicture, loadLibrary, outOfPicture, textsUnchanged,
-  closeUpView, coverCrop, cropCanvas, describeElement, dragCrop, encodeUnder, FULL_CROP, inRect, insetFrame,
+  closeUpView, coverCrop, cropCanvas, CROP_SHADE, describeElement, dragCrop, encodeUnder, FULL_CROP, inRect, insetFrame,
   isFullCrop, overlaysGone, pictureScale, pinInCrop, placeBeside,
   takeBase, thumbnail, toPage, toScreen,
   type Base, type CropHandle, type ElementInfo, type Point, type Rect, type Size,
@@ -95,6 +95,11 @@ import {
 
 export const HOST_ID = 'comment-pin-host';
 const BOX_WIDTH = 360;
+/** A control on a phone: a 44px target round a 32px grey disc, seen and
+ *  hit. The sheet's ✕ was a 16px grey glyph in a 32px box, easy to miss and
+ *  to tap past (14 Oct 2026). */
+const PHONE_TOOL = 'grid h-11 w-11 shrink-0 place-items-center rounded-full disabled:opacity-40';
+const PHONE_DISC = 'grid h-8 w-8 place-items-center rounded-full bg-zinc-200 text-zinc-700 dark:bg-zinc-700 dark:text-zinc-100';
 /** Room kept clear at the foot for the bar. */
 const BAR_SPACE = 76;
 /** How far the inset picture keeps from the screen's edges. */
@@ -238,17 +243,6 @@ function anchorPoint(a: Anchor, size: Size): Point | null {
   const p = { x: r.left + a.dx, y: r.top + a.dy };
   if (p.x < 0 || p.y < 0 || p.x > size.width || p.y > size.height) return null;
   return p;
-}
-
-/** What the wheel scrolls under a point: the nearest scroller, else the page. */
-function scrollerAt(p: Point, host: HTMLElement): Element | null {
-  for (let el = underPoint(p, host); el && el !== document.body; el = el.parentElement) {
-    if (el.tagName === 'IFRAME') return null;
-    const s = getComputedStyle(el);
-    const scrolls = /(auto|scroll|overlay)/.test(`${s.overflowY} ${s.overflowX}`);
-    if (scrolls && (el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1)) return el;
-  }
-  return document.scrollingElement;
 }
 
 function clampToViewport(p: Point, size: Size): Point {
@@ -498,7 +492,7 @@ function CropFrame({ pic, rect, onRect, frame, page, phone, draft, numbered }: {
         <div
           aria-hidden="true"
           className="absolute border-2 border-white"
-          style={{ left: rect.x * W, top: rect.y * H, width: rect.width * W, height: rect.height * H, boxShadow: '0 0 0 9999px rgba(0,0,0,0.45)' }}
+          style={{ left: rect.x * W, top: rect.y * H, width: rect.width * W, height: rect.height * H, boxShadow: CROP_SHADE }}
         />
         {/* Handles: a visible grip inside a bigger transparent hit box. */}
         {handles.map((h) => {
@@ -569,16 +563,30 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
   const [barSize, setBarSize] = useState({ width: 0, height: 0 });
   /** Cropping in progress: which picture, and the frame's rect as fractions of it. */
   const [cropping, setCropping] = useState<{ picture: number; rect: Rect } | null>(null);
+  // On a phone a comment starts small: its pin, and beside it a box that
+  // looks like a field but is not one, so the keyboard stays down and the
+  // page stays in sight. A tap on that box opens the sheet with the
+  // keyboard; until then the comment can be dragged elsewhere or closed. A
+  // tap that opened the sheet straight away put the keys up over the page
+  // the person was still looking at (14 Oct 2026).
+  const [expanded, setExpanded] = useState(false);
+  /** The open comment's pin, on screen, while a finger drags it. */
+  const [dragAt, setDragAt] = useState<Point | null>(null);
+  const pinDrag = useRef<{ id: number; start: Point; from: Point; moved: boolean } | null>(null);
+  /** When a drag last ended: the click the lift may still send is not a tap. */
+  const draggedAt = useRef(-Infinity);
+  const bubbleRef = useRef<HTMLDivElement>(null);
   const boxRef = useRef<HTMLDivElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
   const barRef = useRef<HTMLDivElement>(null);
+  const layerRef = useRef<HTMLDivElement>(null);
   const textRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const keys = useRef(0);
   const hoverFrame = useRef(0);
   const view = useRef(0);
   const drag = useRef<{ dx: number; dy: number } | null>(null);
-  const touch = useRef<{ id: number; start: Point; last: Point; moved: boolean; scroller: Element | null } | null>(null);
+  const touch = useRef<{ id: number; start: Point; moved: boolean } | null>(null);
   const viewShotKeys = useRef(0);
   const viewShotUrl = useRef<string | null>(null);
   // The page's size as the mode keeps it. The keyboard does not change it:
@@ -593,9 +601,11 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
   // under it. 0 on a computer and in a phone browser.
   const safeRef = useRef<HTMLDivElement>(null);
   const [safeTop, setSafeTop] = useState(0);
-  // When the person last scrolled the page from the layer (the wheel, a
-  // drag), and until when the keyboard is still arriving or leaving.
-  const ownScrollAt = useRef(-Infinity);
+  // And the home indicator's (--platform-safe-bottom): the phone's small box
+  // keeps above it.
+  const safeBottomRef = useRef<HTMLDivElement>(null);
+  const [safeBottom, setSafeBottom] = useState(0);
+  // Until when the keyboard is still arriving or leaving.
   const keyboardUntil = useRef(-Infinity);
   const draftRef = useRef(draft);
   draftRef.current = draft;
@@ -631,6 +641,8 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
   useLayoutEffect(() => {
     const h = safeRef.current?.offsetHeight || 0;
     if (h !== safeTop) setSafeTop(h);
+    const b = safeBottomRef.current?.offsetHeight || 0;
+    if (b !== safeBottom) setSafeBottom(b);
   });
 
   // The pins move with the page: a scroll of the page, or a new page size,
@@ -642,8 +654,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
   //    comment raised it, so every comment's close-up fell back to a
   //    stretched thumbnail (iPhone 17 simulator, 12 Oct 2026);
   //  - a height-only resize while the keyboard is about.
-  // A document scroll while the keyboard is about still counts when the
-  // person made it, from the layer.
+  // A document scroll while the keyboard is about is the keyboard's.
   useEffect(() => {
     let frame = 0;
     const redraw = () => {
@@ -657,7 +668,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
     const onScroll = (e: Event) => {
       const target = e.target;
       if (target instanceof Node && host.contains(target)) return;
-      if (isDocumentScroll(target) && keyboardAbout() && performance.now() - ownScrollAt.current > 300) return;
+      if (isDocumentScroll(target) && keyboardAbout()) return;
       redraw();
     };
     const onResize = () => {
@@ -865,10 +876,18 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
 
   /**
    * A press on the page: the open comment's pin moved there, the request's
-   * next comment there (after "Add a comment"), or a new request there.
+   * next comment there (after "Add a comment"), or a new request there. On
+   * a phone with the sheet open it folds the sheet back to the small box.
    */
   const place = useCallback((at: Point) => {
     if (open != null) { setOpen(null); return; }
+    // The page above the phone's sheet is out of the way of the sheet, not a
+    // new spot: a press there puts the keys down and leaves the pin where it
+    // is, as a tap outside any sheet closes it.
+    if (phone && expanded && draft && draft.active != null) {
+      if (!draft.sending) setExpanded(false);
+      return;
+    }
     // Over the inset picture the press is on the picture, not the page: back
     // to page coordinates, and nothing where the picture is not.
     let where = at;
@@ -904,6 +923,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
       if (draft.comments.length >= MAX_COMMENTS) return;
       const key = ++keys.current;
       const got = pictureFor(draft, p, key);
+      setExpanded(false);
       setDraft({
         ...draft,
         pictures: got.pictures,
@@ -940,13 +960,14 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
     };
     const key = ++keys.current;
     const got = pictureFor(empty, p, key);
+    setExpanded(false);
     setDraft({
       ...empty,
       pictures: got.pictures,
       comments: [{ key, anchor, inApp, preview, screen, picture: got.picture, pin, text: c?.text || '' }],
       active: key,
     });
-  }, [open, host, draft, carry, pictureFor, inset, viewShot, size]);
+  }, [open, phone, expanded, host, draft, carry, pictureFor, inset, viewShot, size]);
 
   /** A field that opens with the keyboard: focused without the pan `autoFocus` would cause. */
   const focusWithoutPan = useCallback((el: HTMLElement | null) => { el?.focus({ preventScroll: true }); }, []);
@@ -955,15 +976,17 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
   // focused without a scroll: a plain focus() had iOS pan the whole page up
   // to reveal the field, the bar and the band with it, and left the sheet
   // over everything (iPhone 17 simulator, 12 Oct 2026). With no pan the
-  // sheet stands on the keys (`.platform-kb-sheet`) under the bar.
+  // sheet stands on the keys (`.platform-kb-sheet`) under the bar. On a
+  // phone that waits for the sheet: the small box has no field.
   const draftKey = draft?.key;
   const activeKey = draft?.active ?? null;
+  const writing = !phone || expanded;
   useEffect(() => {
     const t = textRef.current;
-    if (!t) return;
+    if (!t || !writing) return;
     t.focus({ preventScroll: true });
     t.setSelectionRange(t.value.length, t.value.length);
-  }, [draftKey, activeKey]);
+  }, [draftKey, activeKey, writing]);
 
   // #556: the title, suggested from all the request's words after a pause.
   const words = draft ? draftWords(draft) : '';
@@ -1307,14 +1330,14 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
 
   // The box and an open marker's card sit beside their pins: clear of the
   // header at the top over the picture, clear of the bar at the foot over
-  // the live page.
-  const viewport = () => ({ width: size.width, height: Math.max(200, size.height - (inset || barAt ? 0 : BAR_SPACE)) });
+  // the live page, and above the home indicator.
+  const viewport = () => ({ width: size.width, height: Math.max(200, size.height - (inset || barAt ? 0 : BAR_SPACE) - safeBottom) });
   const boxComment = draft ? activeComment(draft) || draft.comments[draft.comments.length - 1] || null : null;
   // Where the box and card go, in screen coordinates: the anchor reads the
   // live element in page coordinates, so it follows scrolls, and the inset
   // picture scales it back up.
   const boxPointPage = boxComment ? (anchorPoint(boxComment.anchor, size) ?? boxComment.anchor.at) : null;
-  const boxPoint = boxPointPage ? (inset ? toScreen(boxPointPage, inset) : boxPointPage) : null;
+  const boxPoint = dragAt ?? (boxPointPage ? (inset ? toScreen(boxPointPage, inset) : boxPointPage) : null);
   const openPin = open != null ? postedPins.find((p) => p.key === open) || null : null;
   const openRequest = openPin ? posted.find((r) => r.key === openPin.request) || null : null;
   const sentRequest = sent != null ? posted.find((r) => r.key === sent) || null : null;
@@ -1328,7 +1351,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
     ? draft.pictures.find((pic) => pic.key === boxComment.picture) || null
     : null;
   const viewDiffers = !!viewShot && !!activePicture && activePicture.view !== viewShot.view;
-  const closeUpSrc = activePicture?.cut?.url || activePicture?.url || (viewDiffers ? '' : viewShot?.url || '');
+  const closeUpSrc = activePicture?.url || (viewDiffers ? '' : viewShot?.url || '');
   // Beside the marker where there is room for it; on a narrow screen, under
   // the point (or over the marker), never on top of the pin it belongs to.
   const besidePin = (p: Point, size: { width: number; height: number }): Point => {
@@ -1347,7 +1370,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
     return inset ? { x: at.x, y: Math.max(at.y, band + 8) } : at;
   };
   useLayoutEffect(() => {
-    const box = boxRef.current;
+    const box = boxRef.current ?? bubbleRef.current;
     if (box && boxPoint) {
       const at = besidePin(boxPoint, { width: box.offsetWidth || BOX_WIDTH, height: box.offsetHeight || 200 });
       if (at.x !== boxAt.x || at.y !== boxAt.y) setBoxAt(at);
@@ -1374,22 +1397,22 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
   };
   useEffect(() => () => { if (hoverFrame.current) cancelAnimationFrame(hoverFrame.current); }, []);
 
-  const onWheel = (e: WheelEvent<HTMLDivElement>) => {
-    const at = inset ? toPage({ x: e.clientX, y: e.clientY }, inset) : { x: e.clientX, y: e.clientY };
-    const s = scrollerAt(at, host);
-    if (!s) return;
-    const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? size.height : 1;
-    ownScrollAt.current = performance.now();
-    s.scrollBy({ left: e.deltaX * unit, top: e.deltaY * unit });
-  };
+  // The wheel, bound by hand: React's onWheel is passive, and a wheel over
+  // the layer must not reach the page underneath — the page holds still
+  // while the mode is up.
+  useEffect(() => {
+    const layer = layerRef.current;
+    if (!layer) return undefined;
+    const onWheel = (e: WheelEvent) => { e.preventDefault(); };
+    layer.addEventListener('wheel', onWheel, { passive: false });
+    return () => layer.removeEventListener('wheel', onWheel);
+  }, []);
 
-  // A finger: a tap is a comment, a drag scrolls what is under it.
+  // A finger: a tap is a comment, a drag does nothing.
   const onLayerPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
     if (e.pointerType === 'mouse') return;
     e.preventDefault();
-    const start = { x: e.clientX, y: e.clientY };
-    const at = inset ? toPage(start, inset) : start;
-    touch.current = { id: e.pointerId, start, last: start, moved: false, scroller: scrollerAt(at, host) };
+    touch.current = { id: e.pointerId, start: { x: e.clientX, y: e.clientY }, moved: false };
     e.currentTarget.setPointerCapture?.(e.pointerId);
   };
   const onLayerPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
@@ -1397,21 +1420,78 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
     if (!t || e.pointerId !== t.id) return;
     const p = { x: e.clientX, y: e.clientY };
     if (!t.moved && Math.hypot(p.x - t.start.x, p.y - t.start.y) > 8) t.moved = true;
-    if (t.moved && t.scroller) {
-      // Over the inset picture the page is drawn smaller, so it scrolls by
-      // the finger's travel over that scale: what is under the finger stays
-      // under it.
-      const k = inset?.scale || 1;
-      ownScrollAt.current = performance.now();
-      t.scroller.scrollBy((t.last.x - p.x) / k, (t.last.y - p.y) / k);
-    }
-    t.last = p;
   };
   const onLayerPointerUp = (e: ReactPointerEvent<HTMLDivElement>) => {
     const t = touch.current;
     if (!t || e.pointerId !== t.id) return;
     touch.current = null;
     if (!t.moved) place({ x: e.clientX, y: e.clientY });
+  };
+
+  // ── The phone's small box ───────────────────────────────────────────
+  //
+  // A tap on its field opens the sheet, and the field there has the keys at
+  // once: the sheet is drawn inside the tap (flushSync) and focused in it,
+  // since iOS raises the keyboard only for a focus made in the person's own
+  // gesture.
+  const expand = () => {
+    if (!draft || draft.sending || performance.now() - draggedAt.current < 400) return;
+    flushSync(() => setExpanded(true));
+    const field = textRef.current;
+    if (!field) return;
+    field.focus({ preventScroll: true });
+    field.setSelectionRange(field.value.length, field.value.length);
+  };
+  /** The sheet folded back to the small box; the keys go with its field. */
+  const collapse = () => {
+    textRef.current?.blur();
+    setExpanded(false);
+  };
+  /** The small box's ✕: this comment off the request, or the request when it is the only one (asked first when it has words). */
+  const closeSmall = () => {
+    const cur = activeComment(draft);
+    if (!draft || draft.sending || !cur) return;
+    if (draft.comments.length > 1) removeComment(cur.key);
+    else requestDiscard();
+  };
+  /** A point kept on the picture (or on the screen, over the live page). */
+  const onPicture = (p: Point): Point => {
+    const left = inset ? inset.x : 0;
+    const top = inset ? inset.y : 0;
+    const right = left + size.width * (inset?.scale ?? 1);
+    const bottom = top + size.height * (inset?.scale ?? 1);
+    return { x: Math.max(left, Math.min(right, p.x)), y: Math.max(top, Math.min(bottom, p.y)) };
+  };
+  // A finger on the small box or on its pin drags the pin, and the box with
+  // it; a lift that did not move is a tap, left to the click.
+  const onPinDragDown = (e: ReactPointerEvent<HTMLElement>) => {
+    if (!draft || draft.sending || !boxPoint || e.pointerType === 'mouse') return;
+    pinDrag.current = { id: e.pointerId, start: { x: e.clientX, y: e.clientY }, from: boxPoint, moved: false };
+  };
+  const onPinDragMove = (e: ReactPointerEvent<HTMLElement>) => {
+    const d = pinDrag.current;
+    if (!d || e.pointerId !== d.id) return;
+    const dx = e.clientX - d.start.x;
+    const dy = e.clientY - d.start.y;
+    if (!d.moved) {
+      if (Math.hypot(dx, dy) <= 8) return;
+      d.moved = true;
+      e.currentTarget.setPointerCapture?.(e.pointerId);
+    }
+    setDragAt(onPicture({ x: d.from.x + dx, y: d.from.y + dy }));
+  };
+  const onPinDragUp = (e: ReactPointerEvent<HTMLElement>) => {
+    const d = pinDrag.current;
+    if (!d || e.pointerId !== d.id) return;
+    pinDrag.current = null;
+    if (!d.moved) return;
+    draggedAt.current = performance.now();
+    setDragAt(null);
+    place(onPicture({ x: d.from.x + e.clientX - d.start.x, y: d.from.y + e.clientY - d.start.y }));
+  };
+  const onPinDragCancel = () => {
+    pinDrag.current = null;
+    setDragAt(null);
   };
 
   const onBoxKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -1493,18 +1573,106 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
     </div>
   ) : null;
 
+  // The box's head: where the request goes, then its controls.
+  const head = draft && target ? (
+    <div className={phone ? '-mr-1.5 flex items-center gap-0.5' : 'flex min-h-[30px] items-center gap-1.5'}>
+      {app ? (
+        <div className="flex min-w-0 items-center gap-1 text-[13px]" role="radiogroup" aria-label={t('devchat:commentPin.target.groupLabel')}>
+          <span className="text-zinc-500 dark:text-zinc-400">{t('devchat:commentPin.target.to')}</span>
+          {([['app', app.name], ['platform', 'Homeroom']] as Array<[Target, string]>).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              role="radio"
+              aria-checked={target === value}
+              id={`comment-pin-to-${value}`}
+              disabled={draft.sending}
+              onClick={() => update(draft.key, { chosen: value })}
+              className={target === value
+                ? 'max-w-[120px] truncate rounded-full bg-zinc-200 px-2.5 py-1 font-medium text-zinc-900 dark:bg-zinc-700 dark:text-white'
+                : 'max-w-[120px] truncate rounded-full px-2.5 py-1 text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800'}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      ) : (
+        <span className="text-[13px] text-zinc-500 dark:text-zinc-400">{t('devchat:commentPin.target.toHomeroom')}</span>
+      )}
+      <span className="min-w-0 flex-1" />
+      {phone ? (
+        /* On a phone the sheet folds back to the small box rather than
+           handing over to the form: its arrows read as "make this bigger"
+           and left comment mode instead (14 Oct 2026). The bar's Form
+           switch still hands over. */
+        <>
+          <button
+            type="button"
+            title={t('devchat:commentPin.box.minimize')}
+            aria-label={t('devchat:commentPin.box.minimize')}
+            disabled={draft.sending}
+            onClick={collapse}
+            className={PHONE_TOOL}
+          >
+            <span className={PHONE_DISC}><ChevronDownIcon className="h-[18px] w-[18px]" /></span>
+          </button>
+          <button
+            type="button"
+            title={t('devchat:commentPin.box.discardTitle')}
+            aria-label={t('devchat:commentPin.box.discardLabel')}
+            disabled={draft.sending}
+            onClick={requestDiscard}
+            className={PHONE_TOOL}
+          >
+            <span className={PHONE_DISC}><XIcon className="h-4 w-4" /></span>
+          </button>
+        </>
+      ) : (
+        <>
+          <button
+            type="button"
+            title={t('devchat:commentPin.box.toForm')}
+            aria-label={t('devchat:commentPin.box.toForm')}
+            disabled={draft.sending}
+            onClick={() => { void toForm(); }}
+            className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-white"
+          >
+            <ArrowsPointingOutIcon className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            title={t('devchat:commentPin.box.discardTitle')}
+            aria-label={t('devchat:commentPin.box.discardLabel')}
+            disabled={draft.sending}
+            onClick={requestDiscard}
+            className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-white"
+          >
+            <XIcon className="h-4 w-4" />
+          </button>
+        </>
+      )}
+    </div>
+  ) : null;
+  // The phone's small box: the open comment before the sheet.
+  const small = phone && !expanded && !!draft && draft.active != null;
+  const smallComment = small ? activeComment(draft) : null;
+  const smallIndex = draft && smallComment ? draft.comments.indexOf(smallComment) : -1;
+
   return (
     <div
       className={leaving ? 'comment-mode-leaving fixed inset-0' : 'fixed inset-0'}
       style={{ zIndex: 2147483000, ['--comment-band' as string]: `${inset ? band : safeTop}px` }}
     >
-      {/* Measures the status bar's height (see `safeTop`). */}
+      {/* Measure the status bar's height and the home indicator's (see `safeTop`). */}
       <div ref={safeRef} aria-hidden="true" className="pointer-events-none invisible absolute left-0 top-0 w-px" style={{ height: 'var(--platform-safe-top, 0px)' }} />
+      <div ref={safeBottomRef} aria-hidden="true" className="pointer-events-none invisible absolute left-0 top-0 w-px" style={{ height: 'var(--platform-safe-bottom, 0px)' }} />
       {/* The layer: a press anywhere is a comment. Its mousedown is
           prevented, so the box's field keeps the keyboard through it
-          (tests/keyboard-dismiss.test.js); a finger taps or scrolls. */}
+          (tests/keyboard-dismiss.test.js); a finger taps, and a drag does
+          nothing. The wheel is stopped by hand in the effect above. */}
       <div
         id="comment-pin"
+        ref={layerRef}
         aria-hidden="true"
         data-keep-keyboard=""
         className="absolute inset-0"
@@ -1520,7 +1688,6 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
         onPointerCancel={() => { touch.current = null; }}
         onMouseMove={onLayerMove}
         onMouseLeave={() => setHover(null)}
-        onWheel={onWheel}
       />
       {/* The page as the person sees it. Over the inset picture: a grey
           ground, the picture drawn at the inset frame with the cards'
@@ -1596,8 +1763,9 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
       {draft ? draft.comments.map((c, i) => {
         const at = anchorPoint(c.anchor, size) ?? (c.key === draft.active ? c.anchor.at : null);
         if (!at) return null;
-        const s = inset ? toScreen(at, inset) : at;
         const on = c.key === draft.active;
+        const s = on && dragAt ? dragAt : inset ? toScreen(at, inset) : at;
+        const handle = on && small;
         return (
           <button
             key={c.key}
@@ -1606,9 +1774,13 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
             aria-label={listText([t('devchat:commentPin.draftPin.number', { number: i + 1 }), t('devchat:commentPin.draftPin.unposted')])}
             disabled={draft.sending}
             onClick={() => openComment(c.key)}
-            className={on
+            onPointerDown={handle ? onPinDragDown : undefined}
+            onPointerMove={handle ? onPinDragMove : undefined}
+            onPointerUp={handle ? onPinDragUp : undefined}
+            onPointerCancel={handle ? onPinDragCancel : undefined}
+            className={(handle ? 'touch-none ' : '') + (on
               ? `absolute grid h-[30px] w-[30px] place-items-center ${PIN_SHAPE} bg-white text-[13px] font-extrabold text-violet-600 shadow-[0_0_0_2.5px_#0a6ee0,0_3px_10px_rgba(0,0,0,0.2)] dark:bg-zinc-900`
-              : `absolute grid h-[30px] w-[30px] place-items-center ${PIN_SHAPE} bg-white/90 text-[13px] font-extrabold text-violet-600/80 shadow-[0_0_0_2px_rgba(10,110,224,0.55),0_2px_6px_rgba(0,0,0,0.15)] dark:bg-zinc-900/90`}
+              : `absolute grid h-[30px] w-[30px] place-items-center ${PIN_SHAPE} bg-white/90 text-[13px] font-extrabold text-violet-600/80 shadow-[0_0_0_2px_rgba(10,110,224,0.55),0_2px_6px_rgba(0,0,0,0.15)] dark:bg-zinc-900/90`)}
             style={{ left: s.x, top: s.y - 30 }}
           >
             {numbered ? i + 1 : ''}
@@ -1616,7 +1788,52 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
         );
       }) : null}
 
-      {draft && target ? (
+      {draft && target && smallComment ? (
+        /* On a phone, the comment before the sheet: beside its pin, a field
+           that is not one yet. A tap on it opens the sheet with the keys; a
+           drag on it, or on the pin, moves the pin; its ✕ closes it. */
+        <div
+          ref={bubbleRef}
+          id="comment-pin-small"
+          role="group"
+          aria-label={t('devchat:commentPin.box.label')}
+          className="comment-small-in absolute flex w-[300px] max-w-[calc(100vw-24px)] touch-none select-none items-center gap-0.5 rounded-2xl bg-white p-1.5 shadow-[0_8px_30px_rgba(0,0,0,0.18)] ring-1 ring-black/10 dark:bg-zinc-900 dark:ring-white/10"
+          style={{ left: boxAt.x, top: boxAt.y }}
+          onPointerDown={onPinDragDown}
+          onPointerMove={onPinDragMove}
+          onPointerUp={onPinDragUp}
+          onPointerCancel={onPinDragCancel}
+        >
+          <button
+            type="button"
+            id="comment-pin-write"
+            aria-label={smallComment.text.trim() ? undefined : t('devchat:commentPin.box.write')}
+            disabled={draft.sending}
+            onClick={expand}
+            className="flex h-11 min-w-0 flex-1 items-center rounded-xl bg-zinc-100 px-3 text-left text-[15px] dark:bg-zinc-800"
+          >
+            {smallComment.text.trim() ? (
+              <span className="truncate text-zinc-900 dark:text-zinc-100">{smallComment.text.trim()}</span>
+            ) : (
+              <span className="truncate text-zinc-400 dark:text-zinc-500">
+                {smallIndex > 0 ? t('devchat:commentPin.placeholderMore') : t('devchat:commentPin.placeholder')}
+              </span>
+            )}
+          </button>
+          <button
+            type="button"
+            aria-label={draft.comments.length > 1
+              ? t('devchat:commentPin.comment.removeLabel', { number: smallIndex + 1 })
+              : t('devchat:commentPin.box.discardLabel')}
+            disabled={draft.sending}
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={closeSmall}
+            className={PHONE_TOOL}
+          >
+            <span className={PHONE_DISC}><XIcon className="h-4 w-4" /></span>
+          </button>
+        </div>
+      ) : draft && target ? (
         <div
           ref={boxRef}
           id="comment-pin-box"
@@ -1632,7 +1849,15 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
           onDragOver={(e) => { if (Array.from(e.dataTransfer?.types || []).includes('Files')) e.preventDefault(); }}
           onDrop={onDrop}
         >
-          {phone ? <div aria-hidden="true" className="comment-sheet-grabber" /> : null}
+          {phone ? (
+            /* The sheet's head stays at its top while the rest scrolls under
+               it, so its ✕ is where a sheet's ✕ is looked for and never
+               scrolled away with the keys up. */
+            <div className="comment-sheet-head">
+              <div aria-hidden="true" className="comment-sheet-grabber" />
+              {draft.active != null ? head : null}
+            </div>
+          ) : null}
           {phone && draft.active == null ? (
             /* Waiting for the next pin: the sheet holds just that, so most
                of the page stays in sight to tap. */
@@ -1642,55 +1867,10 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
               {phone ? (
                 <CloseUp
                   view={closeUpSrc}
-                  pin={(boxComment ? pinInCrop(boxComment.pin, activePicture?.cut?.rect ?? null) : null) ?? { x: 0.5, y: 0.5 }}
+                  pin={boxComment?.pin ?? { x: 0.5, y: 0.5 }}
+                  crop={activePicture?.cut?.rect ?? null}
                 />
-              ) : null}
-              <div className="flex min-h-[30px] items-center gap-1.5">
-            {app ? (
-              <div className="flex min-w-0 items-center gap-1 text-[13px]" role="radiogroup" aria-label={t('devchat:commentPin.target.groupLabel')}>
-                <span className="text-zinc-500 dark:text-zinc-400">{t('devchat:commentPin.target.to')}</span>
-                {([['app', app.name], ['platform', 'Homeroom']] as Array<[Target, string]>).map(([value, label]) => (
-                  <button
-                    key={value}
-                    type="button"
-                    role="radio"
-                    aria-checked={target === value}
-                    id={`comment-pin-to-${value}`}
-                    disabled={draft.sending}
-                    onClick={() => update(draft.key, { chosen: value })}
-                    className={target === value
-                      ? 'max-w-[120px] truncate rounded-full bg-zinc-200 px-2.5 py-1 font-medium text-zinc-900 dark:bg-zinc-700 dark:text-white'
-                      : 'max-w-[120px] truncate rounded-full px-2.5 py-1 text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800'}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-            ) : (
-              <span className="text-[13px] text-zinc-500 dark:text-zinc-400">{t('devchat:commentPin.target.toHomeroom')}</span>
-            )}
-            <span className="min-w-0 flex-1" />
-            <button
-              type="button"
-              title={t('devchat:commentPin.box.toForm')}
-              aria-label={t('devchat:commentPin.box.toForm')}
-              disabled={draft.sending}
-              onClick={() => { void toForm(); }}
-              className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-white"
-            >
-              <ArrowsPointingOutIcon className="h-4 w-4" />
-            </button>
-            <button
-              type="button"
-              title={t('devchat:commentPin.box.discardTitle')}
-              aria-label={t('devchat:commentPin.box.discardLabel')}
-              disabled={draft.sending}
-              onClick={requestDiscard}
-              className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-white"
-            >
-              <XIcon className="h-4 w-4" />
-            </button>
-          </div>
+              ) : head}
           <div className="flex flex-col gap-1.5" id="comment-pin-comments">
             {draft.comments.map((c, i) => (c.key === draft.active ? (
               <div key={c.key} className="flex items-start gap-2">
@@ -1801,40 +1981,63 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
               // a phone's tall picture in this wide box shows a third of its
               // height at most, and a pin placed as a fraction of the box
               // landed on another part of the page.
-              // A cropped picture previews its crop: the pins are fractions
-              // of the full picture, so they map into the crop first — one
-              // outside it is already gone from the request.
-              const shown = pic.cut?.size || pic.size || size;
-              const pins = draft.comments.filter((c) => c.picture === pic.key)
-                .map((c) => ({ c, at: pinInCrop(c.pin, pic.cut?.rect ?? null) }))
-                .filter((x): x is { c: Comment; at: Point } => x.at !== null);
+              // A cropped picture is drawn whole, the part kept framed and
+              // the rest dimmed (#5020): the pins are fractions of the full
+              // picture and stay put on it — one the crop cut away is already
+              // gone from the request, so it is not drawn.
+              const shown = pic.size || size;
+              const pins = draft.comments
+                .filter((c) => c.picture === pic.key && (!pic.cut || pinInCrop(c.pin, pic.cut.rect) !== null))
+                .map((c) => ({ c, at: c.pin }));
               const focus = pins.length
                 ? { x: pins.reduce((n, x) => n + x.at.x, 0) / pins.length, y: pins.reduce((n, x) => n + x.at.y, 0) / pins.length }
-                : { x: 0.5, y: 0 };
+                : pic.cut
+                  ? { x: pic.cut.rect.x + pic.cut.rect.width / 2, y: pic.cut.rect.y + pic.cut.rect.height / 2 }
+                  : { x: 0.5, y: 0 };
               const crop = coverCrop({ width: 64, height: 42 }, shown, focus);
               return (
               <span key={pic.key} className="relative block h-[42px] w-[64px] shrink-0">
-                {(pic.cut?.thumb || pic.thumb) ? (
+                {pic.thumb ? (
                   <span className="block h-[42px] w-[64px] overflow-hidden rounded-lg ring-1 ring-black/10 dark:ring-white/10">
                     <img
-                      src={pic.cut?.thumb || pic.thumb}
+                      src={pic.thumb}
                       alt=""
                       className="relative block max-w-none"
                       style={{ left: crop.x, top: crop.y, width: crop.width, height: crop.height }}
                     />
+                    {pic.cut ? (
+                      /* What was cropped away stays in sight, dimmed, the
+                         kept part framed in white. */
+                      <span
+                        aria-hidden="true"
+                        className="absolute border border-white"
+                        style={{
+                          left: crop.x + pic.cut.rect.x * crop.width,
+                          top: crop.y + pic.cut.rect.y * crop.height,
+                          width: pic.cut.rect.width * crop.width,
+                          height: pic.cut.rect.height * crop.height,
+                          boxShadow: CROP_SHADE,
+                        }}
+                      />
+                    ) : null}
                   </span>
                 ) : (
                   <span className="block h-[42px] w-[64px] animate-pulse rounded-lg bg-zinc-100 motion-reduce:animate-none dark:bg-zinc-800" />
                 )}
-                {/* The pins over the preview: data beside the picture, as they are posted. */}
-                {pins.map(({ c, at }) => (
-                  <span
-                    key={c.key}
-                    aria-hidden="true"
-                    className={`absolute h-[10px] w-[10px] -translate-y-full ${PIN_SHAPE} bg-violet-600 shadow-[0_0_0_1.5px_#fff]`}
-                    style={{ left: crop.x + at.x * crop.width, top: crop.y + at.y * crop.height }}
-                  />
-                ))}
+                {/* The pins over the preview: data beside the picture, as they are posted.
+                    Only those inside it: two pins far apart on a phone's tall
+                    picture do not both fit the preview's slice, and the one
+                    outside was drawn over the Title and Kudos rows. */}
+                {pins.map(({ c, at }) => ({ c, left: crop.x + at.x * crop.width, top: crop.y + at.y * crop.height }))
+                  .filter(({ left, top }) => left >= 0 && left <= 64 && top >= 0 && top <= 42)
+                  .map(({ c, left, top }) => (
+                    <span
+                      key={c.key}
+                      aria-hidden="true"
+                      className={`absolute h-[10px] w-[10px] -translate-y-full ${PIN_SHAPE} bg-violet-600 shadow-[0_0_0_1.5px_#fff]`}
+                      style={{ left, top }}
+                    />
+                  ))}
                 {pic.base ? (
                   <>
                     <button

@@ -314,9 +314,9 @@ test('launch validation: models, stages, repeats, the $50 default cap and concur
   assert.equal(lane.validateLaunch({ suiteId: 1, models: ['a/b'], stages: ['triage'], capUsd: 5000 }).status, 400);
   assert.equal(lane.validateLaunch({ suiteId: 1, models: ['not a model'], stages: ['triage'] }).status, 400);
   assert.equal(lane.validateLaunch({ suiteId: 1, models: ['a/b'], stages: ['judge'] }).status, 400);
-  assert.equal(lane.validateLaunch({ suiteId: 1, models: ['a/b'], stages: ['triage'], concurrency: 8 }).concurrency, 8, 'up to eight at once');
+  assert.equal(lane.validateLaunch({ suiteId: 1, models: ['a/b'], stages: ['triage'], concurrency: 9 }).concurrency, 9, 'up to nine at once, as a studio run');
   assert.equal(lane.validateLaunch({ suiteId: 1, models: ['a/b'], stages: ['triage'] }).concurrency, 1, 'one when left out');
-  assert.equal(lane.validateLaunch({ suiteId: 1, models: ['a/b'], stages: ['triage'], concurrency: 9 }).status, 400);
+  assert.equal(lane.validateLaunch({ suiteId: 1, models: ['a/b'], stages: ['triage'], concurrency: 10 }).status, 400);
   assert.equal(lane.validateLaunch({ suiteId: 1, models: ['a/b'], stages: ['triage'], concurrency: 0 }).status, 400);
   assert.equal(lane.validateLaunch({ suiteId: 1, models: [], stages: ['triage'] }).status, 400);
 });

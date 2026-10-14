@@ -3401,6 +3401,11 @@ async function execInWorker(sessionId, {
   // (claude-openrouter-request.js pruneStaleToolOutput). LEAN_TURNS=1, for
   // a first version's build that Claude Code runs, and nothing else.
   leanTurns = false,
+  // A first version's build under its configuration's `roomy_context`
+  // tweak: Claude Code compacts its conversation at a larger window
+  // (claude-openrouter-request.js ROOMY_AUTO_COMPACT_TOKEN_LIMIT).
+  // ROOMY_CONTEXT=1, for a first version's build that Claude Code runs.
+  roomyContext = false,
   shotsRunId = null,
   shotsOrigins = null,
   shotsAuthTokens = null,
@@ -3809,10 +3814,13 @@ async function execInWorker(sessionId, {
       safeEnv.STOP_GUARD_CHECKS = APP_CHECK_COMMAND_PATH;
       const deadline = Number(checksGate.deadlineMs);
       if (Number.isFinite(deadline) && deadline > 0) safeEnv.STOP_GUARD_DEADLINE = String(Math.round(deadline));
+      // A first version's turns: dapp.json must declare checks under `tests`.
+      if (checksGate.requireTests === true) safeEnv.STOP_GUARD_REQUIRE_TESTS = '1';
     }
   }
   if (buildProfile === 'first_version' && mode === 'build') safeEnv.BUILD_PROFILE = 'first_version';
   if (leanTurns === true && buildProfile === 'first_version' && mode === 'build' && runsClaude) safeEnv.LEAN_TURNS = '1';
+  if (roomyContext === true && buildProfile === 'first_version' && mode === 'build' && runsClaude) safeEnv.ROOMY_CONTEXT = '1';
   const runner = registry.runnerFor(resolvedBackend, resolvedHarness);
  // Journal transport: the turn runs DETACHED from this process. The
   // wrapper below redirects run-cc.sh's combined output to a journal

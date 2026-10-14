@@ -106,9 +106,12 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 
 import { Button } from '@/components/ui/button';
 import { IconTile } from '@/components/ui/icon-tile';
-import { ChatBubbleTailIcon, ChevronRightIcon, XIcon } from '@/components/ui/icons';
+import {
+  BookmarkIcon, BookmarkSolidIcon, ChatBubbleTailIcon, ChevronRightIcon, XIcon,
+} from '@/components/ui/icons';
 
-import { swatchFor } from '../messages/format';
+import { UserAvatar, swatchFor } from '../messages/format';
+import type { ConversationUser } from '../messages/types';
 
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
@@ -137,9 +140,16 @@ type ScreenRowView = NotificationRowView & {
   by?: string | null;
   /** Set on a conversation row — what the Messages tab filters on. */
   conversation?: boolean;
+  /** Set on a row from the Homeroom bot: it wears the bot's own face. */
+  bot?: boolean;
   /** Set on an agent-status row (#2815) — the Messages tab lists these too. */
   agent?: boolean;
   conversationId?: number | null;
+  /**
+   * #4769: the user has bookmarked this row for later. Independent of the
+   * read state — saving never reads, reading never saves.
+   */
+  saved?: boolean;
   /**
    * How many notifications this row stands for. Present only on a genuine
    * collapse (a run of consecutive same-conversation rows, see
@@ -158,6 +168,9 @@ type Tab = 'all' | 'unread' | 'messages';
 type MessagesEntry =
   | { type: 'notif'; key: string; at: number; view: ScreenRowView }
   | { type: 'session'; key: string; at: number; session: SessionRowView & { sortAt?: number } };
+
+/** The bot as the avatar reads it: a platform account, drawn as its mark. */
+const BOT_SENDER: ConversationUser = { id: 0, username: 'homeroom_bot', avatarUrl: null, bot: true };
 
 function controller(): any {
   return (typeof window !== 'undefined' ? (window as any).Notifications : null) || null;
@@ -179,10 +192,18 @@ function startOfToday(): number {
  * a PERSON speaking, so it gets the square swatch avatar Messages uses
  * (the same colour for the same handle); everything else is an EVENT, so
  * it gets the neutral glyph tile with the kind's icon.
+ *
+ * Run six (14 Oct 2026): the Homeroom bot is drawn as Messages draws it,
+ * the Homeroom mark (../messages/format.tsx UserAvatar), not an orange
+ * tile of the "H" of its handle.
  */
-function AvatarChip({ view }: { view: ScreenRowView }): ReactNode {
+export function AvatarChip({ view }: { view: ScreenRowView }): ReactNode {
   const who = (view.who || '?').replace(/^@/, '');
   const initial = who.charAt(0).toUpperCase() || '?';
+  if (view.conversation && view.bot) {
+    // Its image has no text (alt=""): the row's words say who it is from.
+    return <UserAvatar user={BOT_SENDER} size="lg" shape="square" />;
+  }
   if (view.conversation) {
     return (
       <span
@@ -484,13 +505,16 @@ function ScreenRow({ view, touch, removes }: ScreenRowProps): ReactNode {
   const actions = view.actions || [];
   const row = actions.length ? (
     <div
-      ref={setRow}
+      ref={touch ? undefined : setRow}
       data-notif-id={view.id}
       // #2386: two actions (a friend request's Accept and Decline) stack
       // under the text; see RowActions.
+      // #4769: the row's right padding is pr-12, not the px-4 it was, so the
+      // bookmark button at the slot's right edge never sits under the
+      // chevron or the text.
       className={actions.length > 1
-        ? 'notifications-row w-full px-4 py-3.5 flex flex-col gap-2'
-        : 'notifications-row w-full px-4 py-3.5 flex items-center gap-3'}
+        ? 'notifications-row w-full pl-4 pr-12 py-3.5 flex flex-col gap-2'
+        : 'notifications-row w-full pl-4 pr-12 py-3.5 flex items-center gap-3'}
     >
       <button
         className="min-w-0 flex-1 text-left flex items-center gap-4"
@@ -505,9 +529,9 @@ function ScreenRow({ view, touch, removes }: ScreenRowProps): ReactNode {
     </div>
   ) : (
     <button
-      ref={setRow}
+      ref={touch ? undefined : setRow}
       data-notif-id={view.id}
-      className={'notifications-row w-full text-left px-4 py-3.5 '
+      className={'notifications-row w-full text-left pl-4 pr-12 py-3.5 '
         + 'hover:bg-black/[.03] dark:hover:bg-white/[.04] transition-colors flex items-center gap-4'}
       onClick={(event) => {
         event.stopPropagation();
@@ -517,9 +541,45 @@ function ScreenRow({ view, touch, removes }: ScreenRowProps): ReactNode {
       {body}
     </button>
   );
+  // #4769: the row's own save. Outline until saved, filled violet (the
+  // accent) once it is. Absolutely placed at the slot's right edge,
+  // vertically centred, with a 36px target — a second action on a
+  // phone-width row needs a real one. `stopPropagation` first, for the
+  // reason every handler in this sheet stops its click: this is not a tap
+  // that opens the row.
+  const bookmark = (
+    <button
+      type="button"
+      data-notification-save={view.id}
+      aria-pressed={view.saved ? 'true' : 'false'}
+      aria-label={t(view.saved ? 'notifications:row.unsave' : 'notifications:row.save')}
+      className={'absolute right-0.5 top-1/2 -translate-y-1/2 flex h-9 w-9 items-center justify-center '
+        + 'rounded-full transition-colors hover:bg-black/[.04] dark:hover:bg-white/[.06] '
+        + 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500'}
+      onClick={(event) => {
+        event.stopPropagation();
+        controller()?.toggleSave(view.id);
+      }}
+    >
+      {view.saved
+        ? <BookmarkSolidIcon aria-hidden="true" className="h-5 w-5 text-violet-700 dark:text-violet-400" />
+        : <BookmarkIcon aria-hidden="true" className="h-5 w-5 text-zinc-500 dark:text-zinc-400" />}
+    </button>
+  );
+  // On touch the bookmark is INSIDE the swipe host, so a swipe translates
+  // row and bookmark together; on desktop the slot keeps its flat structure,
+  // which is what dapp.json's selectors read. The row hands `setRow` to the
+  // wrapper on touch and keeps it itself on desktop, because swipeActions
+  // must hold whichever node translates.
+  const swipeHost = touch ? (
+    <div ref={setRow} data-notif-swipe className="relative">
+      {row}
+      {bookmark}
+    </div>
+  ) : row;
   return (
     <div key={`${clearable ? 'unread' : 'read'}:${shape}`} className="notifications-row-slot group/notif relative">
-      {row}
+      {swipeHost}
       {clearable && !touch ? (
         <button
           type="button"
@@ -555,6 +615,11 @@ function ScreenRow({ view, touch, removes }: ScreenRowProps): ReactNode {
           <XIcon aria-hidden="true" className="h-3 w-3" strokeWidth="2.5" />
         </button>
       ) : null}
+      {/* #4769: AFTER the clear button in DOM order — the declared checks
+          read the slot's direct children as row + clear pair, and the
+          bookmark joins at the end. Touch renders it inside the swipe host
+          instead, so it is not here at all. */}
+      {!touch ? bookmark : null}
     </div>
   );
 }

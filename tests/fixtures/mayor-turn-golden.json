@@ -40,8 +40,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "ef58ba12cac62924",
-          "length": 203387
+          "sha": "5c926e4a9ed7b233",
+          "length": 204158
         },
         "tools": [
           "dispatch_claude_code",
@@ -133,8 +133,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "5d2f8d8f54691a28",
-          "length": 201760
+          "sha": "5c0cc45ed386dfe7",
+          "length": 202531
         },
         "tools": [
           "dispatch_claude_code",
@@ -168,8 +168,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "5d2f8d8f54691a28",
-          "length": 201760
+          "sha": "5c0cc45ed386dfe7",
+          "length": 202531
         },
         "tools": [
           "dispatch_claude_code",
@@ -290,8 +290,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "5d2f8d8f54691a28",
-          "length": 201760
+          "sha": "5c0cc45ed386dfe7",
+          "length": 202531
         },
         "tools": [
           "dispatch_claude_code",
@@ -375,8 +375,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "5d2f8d8f54691a28",
-          "length": 201760
+          "sha": "5c0cc45ed386dfe7",
+          "length": 202531
         },
         "tools": [
           "dispatch_claude_code",
@@ -457,8 +457,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "5d2f8d8f54691a28",
-          "length": 201760
+          "sha": "5c0cc45ed386dfe7",
+          "length": 202531
         },
         "tools": [
           "dispatch_claude_code",
@@ -544,8 +544,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "5d2f8d8f54691a28",
-          "length": 201760
+          "sha": "5c0cc45ed386dfe7",
+          "length": 202531
         },
         "tools": [
           "dispatch_claude_code",
@@ -637,8 +637,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "5d2f8d8f54691a28",
-          "length": 201760
+          "sha": "5c0cc45ed386dfe7",
+          "length": 202531
         },
         "tools": [
           "dispatch_claude_code",
@@ -716,8 +716,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "5d2f8d8f54691a28",
-          "length": 201760
+          "sha": "5c0cc45ed386dfe7",
+          "length": 202531
         },
         "tools": [
           "dispatch_claude_code",
@@ -792,8 +792,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "5d2f8d8f54691a28",
-          "length": 201760
+          "sha": "5c0cc45ed386dfe7",
+          "length": 202531
         },
         "tools": [
           "dispatch_claude_code",
@@ -967,8 +967,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "5d2f8d8f54691a28",
-          "length": 201760
+          "sha": "5c0cc45ed386dfe7",
+          "length": 202531
         },
         "tools": [
           "dispatch_claude_code",
@@ -1002,8 +1002,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "0cf8dee392d18372",
-          "length": 202122
+          "sha": "2140f176427e7981",
+          "length": 202893
         },
         "tools": [
           "suggest_replies"
@@ -1192,8 +1192,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "0cf8dee392d18372",
-          "length": 202122
+          "sha": "2140f176427e7981",
+          "length": 202893
         },
         "tools": [
           "dispatch_claude_code",
@@ -1235,8 +1235,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "4f7213f9578cad44",
-          "length": 202856
+          "sha": "959328588c3c0c1b",
+          "length": 203627
         },
         "tools": [
           "suggest_replies"
@@ -1303,7 +1303,7 @@
       "{\"fn\":\"ensureWorkerImage\"}",
       "{\"fn\":\"ensureWorker\",\"id\":4242}",
       "{\"fn\":\"syncUserAgentFiles\"}",
-      "{\"fn\":\"execInWorker\",\"id\":4242,\"mode\":\"build\",\"model\":\"claude-opus-5-5\",\"branchName\":\"dev/tester-4242\",\"resumeSessionId\":\"cc-scout-1\",\"prompt\":{\"sha\":\"ac2a6e7eb1d76231\",\"length\":12306},\"systemPrompt\":null,\"holdTurnRecord\":true,\"telemetryComponent\":\"coding_agent_build\"}",
+      "{\"fn\":\"execInWorker\",\"id\":4242,\"mode\":\"build\",\"model\":\"claude-opus-5-5\",\"branchName\":\"dev/tester-4242\",\"resumeSessionId\":\"cc-scout-1\",\"prompt\":{\"sha\":\"fca00680c9a026ef\",\"length\":12533},\"systemPrompt\":null,\"holdTurnRecord\":true,\"telemetryComponent\":\"coding_agent_build\"}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"prNumber\":42,\"prOpenedEventRecorded\":true},\"opts\":{\"turnId\":\"turn-build-1\"}}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"stagingUrl\":\"https://whiteboard-pr42.staging.test\"},\"opts\":{\"turnId\":\"turn-build-1\"}}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"completionRowPosted\":true},\"opts\":{\"turnId\":\"turn-build-1\"}}",
@@ -1430,8 +1430,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "0cf8dee392d18372",
-          "length": 202122
+          "sha": "2140f176427e7981",
+          "length": 202893
         },
         "tools": [
           "dispatch_claude_code",
@@ -1465,8 +1465,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "0cf8dee392d18372",
-          "length": 202122
+          "sha": "2140f176427e7981",
+          "length": 202893
         },
         "tools": [
           "suggest_replies"
@@ -1535,7 +1535,7 @@
       "{\"fn\":\"ensureWorkerImage\"}",
       "{\"fn\":\"ensureWorker\",\"id\":4242}",
       "{\"fn\":\"syncUserAgentFiles\"}",
-      "{\"fn\":\"execInWorker\",\"id\":4242,\"mode\":\"build\",\"model\":\"claude-opus-5-5\",\"branchName\":\"dev/tester-4242\",\"resumeSessionId\":null,\"prompt\":{\"sha\":\"ac2a6e7eb1d76231\",\"length\":12306},\"systemPrompt\":null,\"holdTurnRecord\":true,\"telemetryComponent\":\"coding_agent_build\"}",
+      "{\"fn\":\"execInWorker\",\"id\":4242,\"mode\":\"build\",\"model\":\"claude-opus-5-5\",\"branchName\":\"dev/tester-4242\",\"resumeSessionId\":null,\"prompt\":{\"sha\":\"fca00680c9a026ef\",\"length\":12533},\"systemPrompt\":null,\"holdTurnRecord\":true,\"telemetryComponent\":\"coding_agent_build\"}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"completionRowPosted\":true},\"opts\":{\"turnId\":\"turn-build-2\"}}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"wrapUpPosted\":true},\"opts\":{\"turnId\":\"turn-build-2\"}}",
       "{\"fn\":\"finishTurn\",\"id\":4242,\"opts\":{\"turnId\":\"turn-build-2\"}}"
@@ -1622,8 +1622,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "0cf8dee392d18372",
-          "length": 202122
+          "sha": "2140f176427e7981",
+          "length": 202893
         },
         "tools": [
           "dispatch_claude_code",
@@ -1664,7 +1664,7 @@
       "{\"fn\":\"ensureWorkerImage\"}",
       "{\"fn\":\"ensureWorker\",\"id\":4242}",
       "{\"fn\":\"syncUserAgentFiles\"}",
-      "{\"fn\":\"execInWorker\",\"id\":4242,\"mode\":\"build\",\"model\":\"claude-opus-5-5\",\"branchName\":\"dev/tester-4242\",\"resumeSessionId\":null,\"prompt\":{\"sha\":\"ac2a6e7eb1d76231\",\"length\":12306},\"systemPrompt\":null,\"holdTurnRecord\":true,\"telemetryComponent\":\"coding_agent_build\"}",
+      "{\"fn\":\"execInWorker\",\"id\":4242,\"mode\":\"build\",\"model\":\"claude-opus-5-5\",\"branchName\":\"dev/tester-4242\",\"resumeSessionId\":null,\"prompt\":{\"sha\":\"fca00680c9a026ef\",\"length\":12533},\"systemPrompt\":null,\"holdTurnRecord\":true,\"telemetryComponent\":\"coding_agent_build\"}",
       "{\"fn\":\"finishTurn\",\"id\":4242,\"opts\":{\"turnId\":\"turn-build-3\"}}"
     ],
     "calls": [
@@ -1723,8 +1723,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "e14ee4a11f663c75",
-          "length": 201822
+          "sha": "0b957c2512bebf4d",
+          "length": 202593
         },
         "tools": [
           "suggest_answers",
@@ -1802,8 +1802,8 @@
         "model": "openai/gpt-5.3-codex",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "5d2f8d8f54691a28",
-          "length": 201760
+          "sha": "5c0cc45ed386dfe7",
+          "length": 202531
         },
         "tools": [
           "dispatch_claude_code",
@@ -1933,8 +1933,8 @@
         "model": "openai/gpt-5.3-codex",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "5d2f8d8f54691a28",
-          "length": 201760
+          "sha": "5c0cc45ed386dfe7",
+          "length": 202531
         },
         "tools": [
           "dispatch_claude_code",
@@ -1964,7 +1964,7 @@
       "{\"fn\":\"ensureWorkerImage\"}",
       "{\"fn\":\"ensureWorker\",\"id\":4242}",
       "{\"fn\":\"syncUserAgentFiles\"}",
-      "{\"fn\":\"execInWorker\",\"id\":4242,\"mode\":\"build\",\"model\":\"openai/gpt-5.3-codex\",\"branchName\":\"dev/tester-4242\",\"resumeSessionId\":null,\"prompt\":{\"sha\":\"a552553f3fa1b7bf\",\"length\":210131},\"systemPrompt\":null,\"holdTurnRecord\":true,\"telemetryComponent\":\"coding_agent_build\"}",
+      "{\"fn\":\"execInWorker\",\"id\":4242,\"mode\":\"build\",\"model\":\"openai/gpt-5.3-codex\",\"branchName\":\"dev/tester-4242\",\"resumeSessionId\":null,\"prompt\":{\"sha\":\"9a7b6a2d63f5cfed\",\"length\":211619},\"systemPrompt\":null,\"holdTurnRecord\":true,\"telemetryComponent\":\"coding_agent_build\"}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"prNumber\":42,\"prOpenedEventRecorded\":true},\"opts\":{\"turnId\":\"turn-or-1\"}}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"stagingUrl\":\"https://whiteboard-pr42.staging.test\"},\"opts\":{\"turnId\":\"turn-or-1\"}}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"completionRowPosted\":true},\"opts\":{\"turnId\":\"turn-or-1\"}}",
@@ -2080,7 +2080,7 @@
       "{\"fn\":\"ensureWorkerImage\"}",
       "{\"fn\":\"ensureWorker\",\"id\":4242}",
       "{\"fn\":\"syncUserAgentFiles\"}",
-      "{\"fn\":\"execInWorker\",\"id\":4242,\"mode\":\"build\",\"model\":\"openai/gpt-5.3-codex\",\"branchName\":\"dev/tester-4242\",\"resumeSessionId\":null,\"prompt\":{\"sha\":\"a552553f3fa1b7bf\",\"length\":210131},\"systemPrompt\":null,\"holdTurnRecord\":true,\"telemetryComponent\":\"coding_agent_build\"}",
+      "{\"fn\":\"execInWorker\",\"id\":4242,\"mode\":\"build\",\"model\":\"openai/gpt-5.3-codex\",\"branchName\":\"dev/tester-4242\",\"resumeSessionId\":null,\"prompt\":{\"sha\":\"9a7b6a2d63f5cfed\",\"length\":211619},\"systemPrompt\":null,\"holdTurnRecord\":true,\"telemetryComponent\":\"coding_agent_build\"}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"prNumber\":42,\"prOpenedEventRecorded\":true},\"opts\":{\"turnId\":\"turn-or-1\"}}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"stagingUrl\":\"https://whiteboard-pr42.staging.test\"},\"opts\":{\"turnId\":\"turn-or-1\"}}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"completionRowPosted\":true},\"opts\":{\"turnId\":\"turn-or-1\"}}",
@@ -2193,7 +2193,7 @@
       "{\"fn\":\"ensureWorkerImage\"}",
       "{\"fn\":\"ensureWorker\",\"id\":4242}",
       "{\"fn\":\"syncUserAgentFiles\"}",
-      "{\"fn\":\"execInWorker\",\"id\":4242,\"mode\":\"build\",\"model\":\"openai/gpt-5.3-codex\",\"branchName\":\"dev/tester-4242\",\"resumeSessionId\":null,\"prompt\":{\"sha\":\"ba0559a4e34e38d2\",\"length\":12493},\"systemPrompt\":{\"sha\":\"f5f32fc4f2a5fb49\",\"length\":189222},\"holdTurnRecord\":true,\"telemetryComponent\":\"coding_agent_build\"}",
+      "{\"fn\":\"execInWorker\",\"id\":4242,\"mode\":\"build\",\"model\":\"openai/gpt-5.3-codex\",\"branchName\":\"dev/tester-4242\",\"resumeSessionId\":null,\"prompt\":{\"sha\":\"a09462f3e381295d\",\"length\":12720},\"systemPrompt\":{\"sha\":\"4cd06bd691884ec2\",\"length\":190327},\"holdTurnRecord\":true,\"telemetryComponent\":\"coding_agent_build\"}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"prNumber\":42,\"prOpenedEventRecorded\":true},\"opts\":{\"turnId\":\"turn-or-1\"}}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"stagingUrl\":\"https://whiteboard-pr42.staging.test\"},\"opts\":{\"turnId\":\"turn-or-1\"}}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"completionRowPosted\":true},\"opts\":{\"turnId\":\"turn-or-1\"}}",

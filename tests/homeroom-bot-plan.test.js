@@ -245,10 +245,22 @@ test('B6: the words of a plan, two questions and the setup message', () => {
     question: 'What time?', questions: [{ question: 'What time?', answers: ['9', '8'] }, { question: 'How?', answers: ['a', 'b'] }],
   }, { appName: 'Plant Pal', issueNumber: 2, issueTitle: 'Reminder' });
   assert.equal(two, '**Plant Pal** · request #2: Reminder\n\nI have two questions before I build this:\n\n1. What time?\n2. How?');
+  // The setup message (run six, 14 Oct 2026): made from the made screen, the
+  // plan's questions are answered there and the first version goes live
+  // without a vote, so it says what comes next and that it tells them here
+  // once it is live; made anywhere else, the plan still comes here first.
+  const early = dm.firstVersionStartedText({ name: 'Plant Pal', earlyPlan: true });
+  assert.equal(early, '**Plant Pal**\n\nThanks! I\'m setting up Plant Pal now. '
+    + 'I\'ll draw its screens, build the first version and tell you here when it\'s live.');
+  const elsewhere = dm.firstVersionStartedText({ name: 'Plant Pal' });
+  assert.equal(elsewhere, '**Plant Pal**\n\nThanks! I\'m setting up Plant Pal now. '
+    + 'Once it\'s ready I\'ll send you my plan here first, then build its first version and tell you here when it\'s live.');
+  for (const said of [early, elsewhere]) assert.doesNotMatch(said, /for you to try/, 'nothing waits on a vote');
+  assert.doesNotMatch(early, /plan/, 'the plan is asked about on the made screen, not here');
   const start = read('src/services/homeroom-bot-dm.js');
-  assert.match(start, /Once it's ready I'll send you my plan here first, `\s*\+ `then build its first version for you to try\./);
   assert.ok(!/I'll build its first version from your/.test(start));
-  for (const s of [text, two]) assert.ok(!/—/.test(s));
+  assert.ok(!/send you my plan here first, `\s*\+ `then build its first version for you to try/.test(start));
+  for (const s of [text, two, early, elsewhere]) assert.ok(!/—/.test(s));
   assert.equal(dm.MOMENTS.plan, 'question', 'a plan needs their answer, and rings once');
 });
 
@@ -793,6 +805,7 @@ test('a first version made from a game starter is specced and built on it; witho
     assert.deepEqual(live.specScopeLines(true, none), live.specScopeLines(true), String(none));
     assert.equal(live.specDesignBrief(true, none), prompts.FIRST_VERSION_SPEC_DESIGN_BRIEF ?? live.specDesignBrief(true), String(none));
     assert.deepEqual(live.firstVersionDesignLines(none), live.firstVersionDesignLines(), String(none));
+    assert.match(live.firstVersionDesignLines(none).join('\n'), /Each screen is one centred column on a window wider than a phone \(the kit's `page-column`\)/);
   }
   assert.deepEqual(live.specScopeLines(false, 'game-board'), live.specScopeLines(false), 'a later change is as small as asked');
   for (const id of ['game-board', 'game-space', 'game-blocks', 'game-trivia']) {
@@ -809,6 +822,10 @@ test('a first version made from a game starter is specced and built on it; witho
     assert.match(lines, /never by deleting it to start over/);
     assert.doesNotMatch(lines, /the starter's screen and default colours are placeholder/);
     assert.match(lines, /keeps its look in `public\/scene\.css`/, `${id}: the scene is restyled, not replaced`);
+    // App bench run 193: other first versions keep each screen one centred
+    // column on a wide window; a game's scene fills the window.
+    assert.doesNotMatch(lines, /page-column/, `${id}: no column for a game's scene`);
+    assert.match(lines, /loading state has the content's own shape/, `${id}: the loading rule stays`);
     const spec = live.specPrompt({ seed: 'seed', buildNote: 'plan', firstVersion: true, starter: id });
     assert.ok(spec.includes(scope) && spec.includes(brief));
     const html = live.specPrompt({ seed: 'seed', buildNote: 'plan', firstVersion: true, starter: id, html: true });

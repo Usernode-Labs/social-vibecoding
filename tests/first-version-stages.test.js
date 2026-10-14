@@ -140,11 +140,12 @@ test('the server answers the stage and the steps, and the screens say them', () 
   const view = read('public/js/app-view.js');
   assert.match(view, /\.\.\.\(phase \? \{ phase \} : \{\}\),\s+\.\.\.\(steps \? \{ steps \} : \{\}\),/);
   const status = read('frontend/src/features/app-frame/app-status.tsx');
-  assert.match(status, /const named = phaseLine\(line, phase, now, listed \? null : note\);/);
-  assert.match(status, /\{steps \? <FirstVersionSteps steps=\{steps\} phase=\{view\.phase \|\| null\} caption=\{line === 'building' \? view\.buildNote \|\| null : null\} \/> : null\}/);
+  assert.match(status, /const named = phaseLine\(line, phase, now, listed \? null : caption, left\);/);
+  assert.match(status, /const caption = line === 'building' \? view\.buildNote \|\| null : null;/);
+  assert.match(status, /\{steps \? <FirstVersionSteps steps=\{steps\} phase=\{view\.phase \|\| null\} caption=\{caption\} estimate=\{estimate\} \/> : null\}/);
   assert.match(status, /if \(waiting \|\| steps\) \{/, 'the screen scrolls with the steps under the card');
   const made = read('frontend/src/features/first-session/made.tsx');
-  assert.match(made, /const named = phaseLine\(line, fv\?\.phase \|\| \(answered && line === 'building' \? \{ key: 'starting' \} : null\), now\);/);
+  assert.match(made, /const phase = fv\?\.phase \|\| \(answered && line === 'building' \? \{ key: 'starting' \} : null\);\s+const named = phaseLine\(line, phase, now, null, left\);/);
   // The stage's words come from one table (build-line-words.js), shared.
   const words = read('frontend/src/features/first-session/build-line-words.js');
   assert.match(words, /export const PHASE_WORDS = Object\.freeze\(\{/);
@@ -181,9 +182,11 @@ test('run five, 5: the Home tile, the hub card and the App tab name the same sta
   assert.match(route, /if \(line && phases && state\.phase\) phases\.set\(Number\(appId\), state\.phase\);/);
   assert.match(route, /phase: state\.phase \|\| null,/);
   const home = read('frontend/src/features/home/home.js');
-  assert.equal((home.match(/buildLineTileWordsOf\(buildLine, app\.first_version_phase\)/g) || []).length, 2, 'both tiles');
+  assert.equal((home.match(/buildLineTileWordsOf\(buildLine, buildPhase\)/g) || []).length, 2, 'both tiles');
+  // The stage is the list's, as the made screen says it (run six, tileStageOf).
+  assert.match(home, /return tileStageOf\(app\.slug, buildLineTileOf\(app\.first_version_line\), app\.first_version_phase\);/);
   const hub = read('frontend/src/features/dev-board/workshop/hub-cards.tsx');
-  assert.match(hub, /const named = phaseLine\(line, fv\.phase, now\);/);
+  assert.match(hub, /const named = phaseLine\(line, fv\.phase, now, null, left\);/);
   assert.match(hub, /lineWords=\{named\.words\}/);
   const { hubFirstVersion } = require('../src/routes/apps');
   assert.deepEqual(hubFirstVersion({ userId: 7, line: 'building', phase: { key: 'starting', since: T(1) } }, 7).phase, { key: 'starting', since: T(1) });

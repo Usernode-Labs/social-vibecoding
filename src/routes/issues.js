@@ -3899,7 +3899,15 @@ async function maybeApplySecretChangeProposal(config, pool, issue, options = {})
       //
       // NEVER for the self-hosted row: rebuildProduction() would treat the
       // platform like a child container (see this function's header).
-      pool.query('SELECT * FROM apps WHERE id = $1', [issue.app_id])
+      //
+      // With the app-delivery machine on, a recorded request it runs (kept
+      // across a restart: the stored key is never left undeployed).
+      const workflow = require('../workflow/platform.ts');
+      if (workflow.deliveryEnabled()) {
+        workflow.requestDeploy(issue.app_id, 'secret_change').catch((err) => {
+          log.warn('issues', 'Post-secret-change redeploy request failed', { slug: issue.app_slug, err: err.message });
+        });
+      } else pool.query('SELECT * FROM apps WHERE id = $1', [issue.app_id])
         .then(({ rows }) => rows[0] && staging.rebuildProduction(config, rows[0]))
         .then(async (result) => {
           if (!result) return;

@@ -159,7 +159,7 @@
     {
       "source": "src/routes/apps.js",
       "kind": "structural-template",
-      "fingerprint": "36c97d735c90dad4c7d2",
+      "fingerprint": "029f6b293ad32baa4104",
       "count": 1,
       "preview": "` SELECT ${appAccess.nonSecretAppColumnList('a')}, COALESCE(msg_counts.cnt, 0) AS message_count, COALESCE(activity.total_seconds, 0) AS total_seconds, COALESCE("
     },
@@ -1293,13 +1293,6 @@
     {
       "source": "src/services/notifications.js",
       "kind": "structural-template",
-      "fingerprint": "a8c248e23b84d7a453ba",
-      "count": 1,
-      "preview": "`SELECT n.id, n.kind, CASE WHEN n.read_at IS NULL AND ${DECIDED_ASK_SETTLED_SQL} THEN COALESCE(cs.merged_at, cs.archived_at, n.created_at) ELSE n.read_at END AS"
-    },
-    {
-      "source": "src/services/notifications.js",
-      "kind": "structural-template",
       "fingerprint": "b56e0e4f868a305aeb53",
       "count": 1,
       "preview": "`UPDATE notifications n SET read_at = NOW() WHERE n.user_id = $1 AND n.conversation_id = $2 AND n.read_at IS NULL AND ${CONVERSATION_ACCESS_SQL}`"
@@ -1310,6 +1303,13 @@
       "fingerprint": "b83117b670d097e6e2dc",
       "count": 1,
       "preview": "`UPDATE notifications SET read_at = NOW() WHERE user_id = $1 AND ${def.scope} = $2 AND kind = ANY($3) AND read_at IS NULL`"
+    },
+    {
+      "source": "src/services/notifications.js",
+      "kind": "structural-template",
+      "fingerprint": "b925d795ab2352676b5a",
+      "count": 1,
+      "preview": "`SELECT n.id, n.kind, CASE WHEN n.read_at IS NULL AND ${DECIDED_ASK_SETTLED_SQL} THEN COALESCE(cs.merged_at, cs.archived_at, n.created_at) ELSE n.read_at END AS"
     },
     {
       "source": "src/services/notifications.js",

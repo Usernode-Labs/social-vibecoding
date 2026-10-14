@@ -276,6 +276,21 @@ const CONNECTOR_ALLOWED_ROUTES = Object.freeze([
   { method: 'POST', pattern: '/api/bot-configs/budget' },
   { method: 'GET', pattern: '/api/bot-configs/pairs/next' },
   { method: 'POST', pattern: '/api/bot-configs/pairs/:token/pick' },
+  // Before & after shots evals (routes/shots-evals.js): the same gate first on
+  // every handler, reads included (an eval shows screenshots of any app,
+  // private ones too); every write limited per person and refused to a
+  // browser on another origin; a launch must name its cap. They change no
+  // app and no proposal: they save a shots configuration, launch or cancel
+  // an eval of merged proposals, and record a pick.
+  { method: 'GET', pattern: '/api/shots-evals' },
+  { method: 'POST', pattern: '/api/shots-evals' },
+  { method: 'GET', pattern: '/api/shots-evals/configs' },
+  { method: 'POST', pattern: '/api/shots-evals/configs' },
+  { method: 'GET', pattern: '/api/shots-evals/pairs/next' },
+  { method: 'POST', pattern: '/api/shots-evals/pairs/:token/pick' },
+  { method: 'GET', pattern: '/api/shots-evals/:id' },
+  { method: 'GET', pattern: '/api/shots-evals/:id/shots' },
+  { method: 'POST', pattern: '/api/shots-evals/:id/cancel' },
   // Test accounts for first-run testing (routes/test-accounts.js). The third
   // deliberate exception: these make, list and retire ACCOUNTS — a new
   // sign-in, handed back once to the admin who asked. They may because of the

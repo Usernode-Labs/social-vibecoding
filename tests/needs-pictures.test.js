@@ -211,3 +211,17 @@ test('staging holds each picture under ?demo=1, and ?shot= opens the feed on it'
   assert.match(check.expectSelector, /:has\(\[data-ws-diagram=rename\] ~ \.dev-ws-item-caption\)/, 'the rename is the picture the caption lies over');
   assert.ok(check.expectSelector.length <= 256, "the runner clips selectors at 256 characters");
 });
+
+test('#5039: an area\'s name stays whole, and the columns size to their longest entry', () => {
+  const css = read('public/css/app.css');
+  // A long name overflows its column rather than breaking mid-word ("Databas"
+  // / "e", the reporter's phone at larger text).
+  assert.match(css, /\.dev-ws-touches-row > \.dev-ws-diagram-what \{ font-size: 15px; overflow-wrap: normal; \}/);
+  // Where the browser can subgrid, the name and count columns are as wide as
+  // the longest entry in any row, so the bars stay aligned.
+  const at = css.indexOf('@supports (grid-template-columns: subgrid)');
+  assert.ok(at > 0, 'the subgrid block is there');
+  const block = css.slice(at, css.indexOf('\n}', at));
+  assert.match(block, /\.dev-ws-touches > \.dev-ws-diagram-rows \{ display: grid; grid-template-columns: max-content minmax\(0, 1fr\) max-content; \}/);
+  assert.match(block, /\.dev-ws-touches-row \{ grid-column: 1 \/ -1; grid-template-columns: subgrid; \}/);
+});

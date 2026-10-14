@@ -48,7 +48,7 @@ import { useDismiss } from '../message-actions/use-dismiss';
 import { ShareItemDialog } from './share-dialog';
 import { ShareToDialog } from './share-to-dialog';
 import { JumpToLatest } from './jump-to-latest';
-import { useStickToBottom } from './stick-to-bottom';
+import { centreInScroller, isNearTop, needsMoreHistory, useStickToBottom } from './stick-to-bottom';
 import {
   firstUnreadId, jumpLabel, lineTopIn, messageRow, newMessagesLabel, openingScrollTop, useLineHold, useUnreadAffordances,
 } from './unread-anchor';
@@ -1792,6 +1792,10 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   const focusId = snap.route.focusMessageId;
   const [flashId, setFlashId] = useState<number | null>(null);
   const shownFocus = useRef<number | null>(null);
+  // #5019: loading earlier messages on scroll. A failed load restores the
+  // button at the top as the manual way back, until it succeeds or the
+  // conversation (or its next-older cursor) changes.
+  const [olderFailed, setOlderFailed] = useState(false);
   // THE "NEW" LINE (./unread-anchor.ts): above the first message after where
   // reading had stopped when this conversation was opened (the store's
   // `unreadMark`). The transcript opens with it near the top.
@@ -1852,7 +1856,7 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
         shownFocus.current = focusId;
         previousLast.current = last;
         pinned.current = false;
-        requestAnimationFrame(() => row.scrollIntoView({ block: 'center' }));
+        requestAnimationFrame(() => centreInScroller(el, row));
         setFlashId(focusId);
         window.setTimeout(() => setFlashId((id) => (id === focusId ? null : id)), 2400);
         return;
@@ -1909,12 +1913,45 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   async function older() {
     const el = scroller.current;
     if (el) initialScroll.current = el.scrollHeight;
-    await loadOlder();
+    const ok = await loadOlder();
     requestAnimationFrame(() => {
       if (el && initialScroll.current !== null) el.scrollTop += el.scrollHeight - initialScroll.current;
       initialScroll.current = null;
     });
+    return ok;
   }
+
+  // #5019: scrolling up near the top reads the previous page in, one at a
+  // time, in place of the button that used to sit there. The latest values
+  // the guard reads go through a ref, so the scroll listener below attaches
+  // once per scroller instead of on every publish.
+  const olderGate = useRef({ conversationId, nextBefore: snap.nextBefore, loadingOlder: snap.loadingOlder, loadingThread: snap.loadingThread, olderFailed });
+  olderGate.current = { conversationId, nextBefore: snap.nextBefore, loadingOlder: snap.loadingOlder, loadingThread: snap.loadingThread, olderFailed };
+  function maybeLoadOlder() {
+    const el = scroller.current;
+    if (!el) return;
+    const gate = olderGate.current;
+    if (!gate.nextBefore || gate.loadingOlder || gate.loadingThread || gate.olderFailed) return;
+    if (!isNearTop(el)) return;
+    void older().then((ok) => { if (!ok) setOlderFailed(true); });
+  }
+  useIsomorphicLayoutEffect(() => { setOlderFailed(false); }, [conversationId, snap.nextBefore]);
+  useIsomorphicLayoutEffect(() => {
+    const el = scroller.current;
+    if (!el) return;
+    const onScroll = () => maybeLoadOlder();
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => el.removeEventListener('scroll', onScroll);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversationId]);
+  // A short thread keeps reading pages in until the screen fills or the
+  // conversation's older end is reached.
+  useIsomorphicLayoutEffect(() => {
+    const el = scroller.current;
+    if (!el) return;
+    if (needsMoreHistory(el)) maybeLoadOlder();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [snap.messages, snap.nextBefore, snap.loadingOlder]);
 
   // #3494: the room is up in its community's page, so this screen (hidden)
   // draws no second copy of it; and the page's copy draws nothing once
@@ -2131,7 +2168,18 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
           ? <button type="button" onClick={() => messagesController.open(null)}>{t('messages:thread.backToMessages')}</button>
           : <button type="button" onClick={() => messagesController.route(conversationId)}>{t('core:common.tryAgain')}</button>}</div> : null}
         {!snap.loadingThread && !snap.threadError && snap.active && snap.active.membershipStatus === 'member' && !snap.messages.length ? <div className="messages-thread-empty"><span aria-hidden="true">👋</span><p>{t('messages:thread.emptyConversation')}</p></div> : null}
-        {snap.nextBefore ? <div className="flex justify-center py-2"><button type="button" disabled={snap.loadingOlder} onClick={() => void older()} className="messages-load-older">{snap.loadingOlder ? t('messages:thread.loadingOlder') : t('messages:thread.loadEarlier')}</button></div> : null}
+        {/* #5019: the old button row holds its height and, while loading, the
+            "Loading…" line where the button was. The button itself returns
+            only to retry a failed load; scrolling up does the rest. */}
+        {snap.nextBefore ? (
+          <div className="flex h-12 items-center justify-center" data-load-older="">
+            {snap.loadingOlder
+              ? <span role="status" className="text-[13px] text-zinc-500 dark:text-zinc-400">{t('messages:thread.loadingOlder')}</span>
+              : olderFailed
+                ? <button type="button" onClick={() => { setOlderFailed(false); void older().then((ok) => { if (!ok) setOlderFailed(true); }); }} className="messages-load-older">{t('messages:thread.loadEarlier')}</button>
+                : null}
+          </div>
+        ) : null}
         {rows}
         {/* #2387: a message link opened the transcript part-way back. */}
         {snap.nextAfter ? (
@@ -2141,12 +2189,15 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
           </div>
         ) : null}
       </div>
-      {/* Jump to latest, over the transcript's foot whenever the reader is
-          not at the bottom, with a dot for what arrived while they were up. */}
+      <div className="messages-typing" aria-live="polite">{typingLine(t, typing)}</div>
+      {/* Jump to latest whenever the reader is not at the bottom, with a dot
+          for what arrived while they were up. Run six: at the right edge,
+          hung just above the composer (below the typing line, which is
+          empty on the right), so it covers the strip under the words rather
+          than a message in the middle of the conversation. */}
       <TranscriptOverlay edge="foot">
         <JumpToLatestButton shown={unread.jump} dot={unread.arrived > 0} aria-label={jumpLabel(unread.arrived)} title={t('messages:thread.jumpToLatest')} onClick={jumpToLatest} />
       </TranscriptOverlay>
-      <div className="messages-typing" aria-live="polite">{typingLine(t, typing)}</div>
       <MessageComposer />
     </section>
   );
@@ -2242,7 +2293,7 @@ function ReplyThreadPanel() {
     if (!row) return;
     shownFocus.current = wanted;
     pinned.current = false;
-    requestAnimationFrame(() => row.scrollIntoView({ block: 'center' }));
+    requestAnimationFrame(() => centreInScroller(el, row));
     setFlashId(wanted);
     window.setTimeout(() => {
       setFlashId((id) => (id === wanted ? null : id));

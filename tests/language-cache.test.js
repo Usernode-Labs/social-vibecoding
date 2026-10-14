@@ -42,16 +42,16 @@ function sourceFor(t, { translations = {}, english = ENGLISH, minimumCoverage = 
   return JSON.parse(fs.readFileSync(writeSource(root, path.join(root, 'out')), 'utf8'));
 }
 
-/** A pool whose language_translations holds `rows`; counts its reads. */
+/** A pool whose language_translations holds `rows`; counts its reads. `db.bump` moves the version without moving the count. */
 function poolWith(rows) {
-  const db = { rows: [...rows], reads: 0, versions: 0 };
+  const db = { rows: [...rows], reads: 0, versions: 0, bump: 0 };
   return {
     db,
     async query(sql, params = []) {
       const text = String(sql);
       if (/SELECT COUNT\(\*\)::int AS n/.test(text)) {
         db.versions += 1;
-        return { rows: [{ n: db.rows.length, at: db.rows.length ? new Date(1700000000000 + db.rows.length) : null }] };
+        return { rows: [{ n: db.rows.length, at: db.rows.length ? new Date(1700000000000 + db.rows.length + db.bump) : null }] };
       }
       if (/SELECT language, namespace, key, source, text FROM language_translations/.test(text)) { db.reads += 1; return { rows: [...db.rows] }; }
       if (/INSERT INTO language_translations/.test(text)) {
@@ -152,6 +152,42 @@ test('the packs are worked out once per cache version; a new translation shows a
   const after = await cache.live(pool, { source, now: 3000 });
   assert.equal(packOf(after).join, 'Unirse');
   assert.equal(await cache.saveTranslations(pool, { es: { core: { join: { text: 'x', source: 'not-a-hash' } } } }), 0, 'never an entry without its English');
+});
+
+test('a pack named by a newer cache version is served at once on every server', async (t) => {
+  cache.reset();
+  const source = sourceFor(t);
+  const pool = poolWith(ALL_SPANISH);
+  const older = await cache.live(pool, { source, now: 1000 });
+  // Another server's translation pass rewords one message: the version moves
+  // (its created_at is later), and the pack is written again under its new name.
+  pool.db.rows = ALL_SPANISH.map((r) => (r.key === 'hello' ? row('hello', 'Hello {{name}}', 'Hola, {{name}}') : r));
+  pool.db.bump = 1;
+  const newer = await cache.live(pool, { source, now: 2000, fresh: true });
+  assert.notEqual(newer.manifest.es.core.url, older.manifest.es.core.url);
+  // This server has not looked since: its memo holds the older packs (rebuilt
+  // here, from the older rows, because `fresh` above replaced it). A shell
+  // that booted on the older list now asks it for the newer pack by name: the
+  // miss asks whether the cache has moved, sees that it has, and serves it.
+  pool.db.rows = ALL_SPANISH;
+  pool.db.bump = 0;
+  await cache.live(pool, { source, now: 3000, fresh: true });
+  pool.db.rows = ALL_SPANISH.map((r) => (r.key === 'hello' ? row('hello', 'Hello {{name}}', 'Hola, {{name}}') : r));
+  pool.db.bump = 1;
+  const name = newer.manifest.es.core.url.slice(cache.LIVE_PREFIX.length);
+  assert.deepEqual(await cache.pack(pool, name, { source, now: 4000 }), newer.files.get(name));
+  assert.equal(pool.db.versions, 4, 'each build asked once: the older, the newer, the memo, the recheck that found it');
+});
+
+test('an unknown pack asks the cache again at most once every MISS_RECHECK_MS', async (t) => {
+  cache.reset();
+  const source = sourceFor(t);
+  const pool = poolWith(ALL_SPANISH);
+  const never = `es.core.${'0'.repeat(64)}.json`;
+  assert.equal(await cache.pack(pool, never, { source, now: 1000 }), null);
+  assert.equal(await cache.pack(pool, never, { source, now: 1000 + cache.MISS_RECHECK_MS - 1 }), null, 'inside the window nothing is asked');
+  assert.equal(await cache.pack(pool, never, { source, now: 1000 + cache.MISS_RECHECK_MS }), null);
+  assert.deepEqual([pool.db.versions, pool.db.reads], [3, 1], 'asked on the first miss and once per window, and the version it held was rebuilt only once');
 });
 
 test('no source, no languages: the build\'s own catalogs stand', async () => {

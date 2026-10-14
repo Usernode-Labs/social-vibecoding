@@ -1695,6 +1695,7 @@
       if (!select) return;
       const value = this.state.locale || '';
       this._appendLiveLanguages(select);
+      this._pruneLiveLanguages(select);
       // A saved value outside the shipped list (chosen when the picker
       // listed more, or set via the API) still needs to render truthfully:
       // inject an option for it, under the language's own name, so the
@@ -1712,14 +1713,30 @@
 
     // A language the server's translation cache offers that this build's
     // catalogs do not (lib/i18n/runtime.ts getLanguages), under its own name,
-    // after the ones the pane lists.
+    // after the ones the pane lists. The tags it has added are remembered
+    // across renders, so a later render can take back exactly what it added:
+    // the fresh list may no longer offer a language this page's older one did.
     _appendLiveLanguages(select) {
+      this._liveLanguageTags ||= new Set();
       for (const { tag, name } of window.PlatformI18n?.getLanguages?.() || []) {
         if ([...select.options].some((o) => o.value === tag)) continue;
         const opt = document.createElement('option');
         opt.value = tag;
         opt.textContent = name;
         select.appendChild(opt);
+        this._liveLanguageTags.add(tag);
+      }
+    },
+
+    // Takes back a live-added option the current list no longer names. The
+    // pane's own options and the saved value's are never touched.
+    _pruneLiveLanguages(select) {
+      const offered = new Set([...(window.PlatformI18n?.getLanguages?.() || []).map((l) => l.tag)]);
+      for (const tag of this._liveLanguageTags || []) {
+        if (offered.has(tag)) continue;
+        const opt = [...select.options].find((o) => o.value === tag);
+        if (opt) opt.remove();
+        this._liveLanguageTags.delete(tag);
       }
     },
 

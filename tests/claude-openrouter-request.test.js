@@ -413,6 +413,24 @@ test('the compaction limit is per model family: Anthropic\'s at 200k, every othe
   assert.equal(glm.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '120000');
 });
 
+// App bench run 191: GLM builds compacted 2 to 3 times each at about 65k
+// tokens of context. A first version's roomy_context tweak (ROOMY_CONTEXT=1)
+// compacts any model at the Anthropic limit instead.
+test('roomy_context: ROOMY_CONTEXT=1 compacts a non-Anthropic model at 200k, still never past its window', () => {
+  const mod = require('../worker/claude-openrouter-request');
+  assert.equal(mod.ROOMY_AUTO_COMPACT_TOKEN_LIMIT, 200_000);
+  assert.equal(mod.autoCompactLimit(GLM, { ROOMY_CONTEXT: '1' }), 200_000);
+  assert.equal(mod.autoCompactLimit(GLM, { ROOMY_CONTEXT: '0' }), 120_000);
+  assert.equal(mod.autoCompactLimit(GLM), 120_000, 'as before without it');
+  assert.equal(mod.autoCompactLimit('anthropic/claude-sonnet-4.5', { ROOMY_CONTEXT: '1' }), 200_000);
+  const base = { baseUrl: 'http://127.0.0.1:4000', localToken: 'local', model: GLM };
+  assert.equal(claudeChildEnv({ AGENT_MODEL_CONTEXT_WINDOW: '1310720', ROOMY_CONTEXT: '1' }, base).CLAUDE_CODE_AUTO_COMPACT_WINDOW, '200000');
+  assert.equal(claudeChildEnv({ ROOMY_CONTEXT: '1' }, base).CLAUDE_CODE_AUTO_COMPACT_WINDOW, '200000', 'no catalog window');
+  assert.equal(claudeChildEnv({ AGENT_MODEL_CONTEXT_WINDOW: '150000', ROOMY_CONTEXT: '1' }, base).CLAUDE_CODE_AUTO_COMPACT_WINDOW, '150000',
+    'never past the model\'s own window');
+  assert.equal(claudeChildEnv({ AGENT_MODEL_CONTEXT_WINDOW: '1310720' }, base).CLAUDE_CODE_AUTO_COMPACT_WINDOW, '120000');
+});
+
 test('redaction is literal and ignores values too short to be secrets', () => {
   const redact = makeRedactor([KEY, 'a+b(c)*grant-value', 'short', null, undefined]);
   assert.equal(redact(`key=${KEY} and ${KEY}`), 'key=**** and ****');

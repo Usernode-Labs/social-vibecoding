@@ -749,13 +749,16 @@ export function jumpToPresent(): void {
   void loadThread(conversationId, true);
 }
 
-export async function loadOlder(): Promise<void> {
+// #5019: resolves `true` when a page was read (or there was nothing to read),
+// `false` only when the request failed — the caller offers the button back as
+// a manual retry on `false`.
+export async function loadOlder(): Promise<boolean> {
   const conversationId = state.route.conversationId;
-  if (!conversationId || !state.nextBefore || state.loadingOlder) return;
+  if (!conversationId || !state.nextBefore || state.loadingOlder) return true;
   publish({ loadingOlder: true });
   try {
     const page = await api.listMessages(conversationId, state.nextBefore);
-    if (state.route.conversationId !== conversationId) return;
+    if (state.route.conversationId !== conversationId) return true;
     const known = new Set(state.messages.map((message) => message.id));
     const older = page.messages.filter((message) => !known.has(message.id));
     publish({
@@ -763,8 +766,10 @@ export async function loadOlder(): Promise<void> {
       nextBefore: page.nextBefore,
       loadingOlder: false,
     });
+    return true;
   } catch (error) {
     publish({ loadingOlder: false, threadError: errorMessage(error, t('messages:store.error.loadOlder')) });
+    return false;
   }
 }
 

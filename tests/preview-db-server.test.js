@@ -46,6 +46,7 @@ function load({
   identifiers = { [MAIN_HOST]: '7001', [PREVIEW_HOST]: '7002' },
   templates = {},            // host → shobj_description comment
   databases = {},            // host → [datname] for pg_database listings
+  leftovers = {},            // host → [database or role names] the other-server check finds
   failures = [],             // [{ host, match, times, error(sql) }]
   privateTables = ['public.vault'],
 } = {}) {
@@ -81,6 +82,8 @@ function load({
       failure.times = (failure.times ?? Infinity) - 1;
       throw failure.error(sql);
     }
+    const asked = sql.match(/^SELECT EXISTS \(SELECT 1 FROM pg_database WHERE datname = '(\w+)'\) OR EXISTS \(SELECT 1 FROM pg_roles WHERE rolname = '(\w+)'\)$/);
+    if (asked) return (leftovers[host] || []).some((name) => name === asked[1] || name === asked[2]) ? 't' : 'f';
     if (/^SHOW server_version_num/.test(sql)) return String(versions[host] || '');
     if (/system_identifier/.test(sql)) return String(identifiers[host] || '');
     if (/shobj_description/.test(sql)) return templates[host] || '';
@@ -154,6 +157,14 @@ function load({
 const SOURCE = 'app_demo';
 const TARGET = 'app_demo_staging_s9_abc123';
 const fresh = () => `staging-template source=${SOURCE} refreshed_at=${new Date().toISOString()}`;
+const oldTargetCheck = (name) => `SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = '${name}') `
+  + `OR EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${name}_owner')`;
+const dropSequence = (name) => [
+  `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${name}' AND pid <> pg_backend_pid()`,
+  `DROP DATABASE IF EXISTS ${name}`,
+  `DROP OWNED BY ${name}_owner CASCADE`,
+  `DROP ROLE IF EXISTS ${name}_owner`,
+];
 const copyStatements = (sqls) => sqls.filter((sql) => /^CREATE DATABASE \S+ TEMPLATE \S+_(stgtmpl|evsrc_[0-9a-f]{12}) /.test(sql));
 
 test('without the setting there is one server and no statement changes', async () => {
@@ -196,7 +207,8 @@ test('with the setting, a preview is built on the preview server from a dump rea
     assert.ok(main.some((sql) => /WITH RECURSIVE priv/.test(sql)), 'what to leave out of the dump is read from the source');
     assert.equal(main.filter((sql) => /^(CREATE|ALTER|COMMENT|REVOKE|GRANT|TRUNCATE|UPDATE)\b/.test(sql)).length, 0,
       'nothing is created or changed on the main server');
-    assert.ok(main.includes(`DROP DATABASE IF EXISTS ${TARGET}`), 'an earlier build of this preview on the main server is dropped');
+    assert.deepEqual(main.filter((sql) => sql.includes(TARGET)), [oldTargetCheck(TARGET)],
+      'the main server is asked once whether it holds an earlier build of this preview; it holds none, so nothing is dropped there');
     // The preview server: everything else.
     const restores = h.on(PREVIEW_HOST).filter((c) => c.via === 'pg_restore');
     assert.equal(restores.length, 1);
@@ -344,16 +356,84 @@ test('draining makes new previews on the main server and still cleans the previe
     const cloned = await h.dbManager.cloneDatabase(SOURCE, TARGET, { viaTemplate: true });
     assert.equal(cloned.server, 'primary');
     assert.deepEqual(copyStatements(h.sqlOn(MAIN_HOST)), [`CREATE DATABASE ${TARGET} TEMPLATE ${SOURCE}_stgtmpl OWNER ${TARGET}_owner`]);
-    assert.deepEqual(h.sqlOn(PREVIEW_HOST), [
-      `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${TARGET}' AND pid <> pg_backend_pid()`,
-      `DROP DATABASE IF EXISTS ${TARGET}`,
-      `DROP OWNED BY ${TARGET}_owner CASCADE`,
-      `DROP ROLE IF EXISTS ${TARGET}_owner`,
-    ], 'the preview server only loses an old database of this name');
+    assert.deepEqual(h.sqlOn(PREVIEW_HOST), [oldTargetCheck(TARGET)],
+      'the preview server holds nothing of this name, so it is only asked');
+    // Teardown drops on both servers without asking first.
     h.calls.length = 0;
     await h.dbManager.dropDatabase(TARGET);
-    assert.ok(h.sqlOn(PREVIEW_HOST).includes(`DROP DATABASE IF EXISTS ${TARGET}`));
-    assert.ok(h.sqlOn(MAIN_HOST).includes(`DROP DATABASE IF EXISTS ${TARGET}`));
+    assert.deepEqual(h.sqlOn(PREVIEW_HOST), dropSequence(TARGET));
+    assert.deepEqual(h.sqlOn(MAIN_HOST), dropSequence(TARGET));
+  } finally { h.restore(); }
+  // An old database of this name IS on the draining server: it goes, as before.
+  const held = load({ drain: true, templates: { [MAIN_HOST]: fresh() }, leftovers: { [PREVIEW_HOST]: [TARGET] } });
+  try {
+    await held.dbManager.cloneDatabase(SOURCE, TARGET, { viaTemplate: true });
+    assert.deepEqual(held.sqlOn(PREVIEW_HOST), [oldTargetCheck(TARGET), ...dropSequence(TARGET)],
+      'the preview server only loses an old database of this name');
+  } finally { held.restore(); }
+});
+
+test('the other server is asked first: what it holds of the name is dropped as before, and nothing is claimed otherwise', async () => {
+  const OTHER = 'app_demo_staging_s10_def456';
+  // An earlier build of the preview on the main server, or only its role
+  // (a drop that stopped half way): dropped there, database and role, on
+  // both copy paths.
+  for (const leftover of [TARGET, `${TARGET}_owner`]) {
+    const h = load({ leftovers: { [MAIN_HOST]: [leftover, OTHER] } });
+    try {
+      assert.equal((await h.dbManager.cloneDatabase(SOURCE, TARGET, { viaTemplate: true })).server, 'preview');
+      assert.equal((await h.dbManager.cloneDatabase(SOURCE, OTHER)).server, 'preview');
+      for (const name of [TARGET, OTHER]) {
+        assert.deepEqual(h.sqlOn(MAIN_HOST).filter((sql) => sql.includes(name)), [oldTargetCheck(name), ...dropSequence(name)], `${leftover}: ${name}`);
+        // The question takes the drop's own way to the server: psql, with
+        // the same libpq environment (address, user, TLS, connect deadline).
+        const there = h.on(MAIN_HOST).filter((c) => c.sql.includes(name));
+        const reach = (c) => JSON.stringify(Object.entries(c.env || {}).filter(([key]) => /^PG/.test(key)).sort());
+        assert.ok(there.every((c) => c.via === 'psql' && reach(c) === reach(there[1])), `${leftover}: ${name}: asked as the drop is sent`);
+      }
+      const dropped = h.logs.filter((l) => l.message === 'Database and role dropped' && l.meta.server === 'primary').map((l) => l.meta.dbName);
+      assert.deepEqual(dropped.filter((name) => name === TARGET || name === OTHER), [TARGET, OTHER], leftover);
+    } finally { h.restore(); }
+  }
+  // Nothing there: one question, no drop, no line saying there was one. The
+  // copy's own server keeps its drop.
+  // libpq settings the main server's psql processes inherit (a CA file, a
+  // connect deadline) reach the question as they reach the drop.
+  const libpq = { PGSSLROOTCERT: '/etc/ssl/main-ca.pem', PGCONNECT_TIMEOUT: '1' };
+  const savedLibpq = Object.fromEntries(Object.keys(libpq).map((key) => [key, process.env[key]]));
+  Object.assign(process.env, libpq);
+  const h = load();
+  try {
+    await h.dbManager.cloneDatabase(SOURCE, TARGET, { viaTemplate: true });
+    await h.dbManager.cloneDatabase(SOURCE, OTHER);
+    for (const name of [TARGET, OTHER]) {
+      assert.deepEqual(h.sqlOn(MAIN_HOST).filter((sql) => sql.includes(name)), [oldTargetCheck(name)], name);
+      const [asked] = h.on(MAIN_HOST).filter((c) => c.sql.includes(name));
+      assert.equal(asked.via, 'psql', `${name}: asked through psql, as the drop was`);
+      assert.deepEqual([asked.env.PGHOST, asked.env.PGUSER, asked.env.PGDATABASE, asked.env.PGSSLROOTCERT, asked.env.PGCONNECT_TIMEOUT],
+        [MAIN_HOST, 'usernode', 'usernode', libpq.PGSSLROOTCERT, libpq.PGCONNECT_TIMEOUT], `${name}: with the main server's own libpq settings`);
+      assert.ok(h.sqlOn(PREVIEW_HOST).includes(`DROP DATABASE IF EXISTS ${name}`), `${name}: its own server keeps its drop`);
+      assert.ok(h.logs.some((l) => l.message === 'Database and role dropped' && l.meta.dbName === name && l.meta.server === 'preview'),
+        `${name}: the drop on its own server is said to be there`);
+    }
+    assert.equal(h.logs.filter((l) => l.message === 'Database and role dropped' && l.meta.server === 'primary'
+      && (l.meta.dbName === TARGET || l.meta.dbName === OTHER)).length, 0, 'no drop is claimed on the main server');
+    assert.deepEqual(h.logs.filter((l) => l.message === 'No old database or role of this name on the other server')
+      .map((l) => [l.meta.dbName, l.meta.server]).filter(([name]) => name === TARGET || name === OTHER), [[TARGET, 'primary'], [OTHER, 'primary']]);
+  } finally {
+    h.restore();
+    for (const [key, value] of Object.entries(savedLibpq)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+  }
+});
+
+test('an other server that cannot be asked is left for the sweep, and the build goes on', async () => {
+  const refused = () => new Error('connection refused');
+  const h = load({ failures: [{ host: MAIN_HOST, match: /^SELECT EXISTS \(SELECT 1 FROM pg_database/, error: refused }] });
+  try {
+    const cloned = await h.dbManager.cloneDatabase(SOURCE, TARGET, { viaTemplate: true });
+    assert.equal(cloned.server, 'preview');
+    assert.equal(h.sqlOn(MAIN_HOST).filter((sql) => /^DROP /.test(sql) && sql.includes(TARGET)).length, 0);
+    assert.equal(h.logs.filter((l) => /Could not drop an old database of this name on the other server/.test(l.message)).length, 1);
   } finally { h.restore(); }
 });
 

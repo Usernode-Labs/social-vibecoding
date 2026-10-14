@@ -76,6 +76,20 @@ test('tweaks are named, kept in one order, each once, and one_look needs a revie
   const noRounds = configs.validateRecipe({ ...REVIEWED, reviewer: { ...REVIEWED.reviewer, maxRounds: 0 }, tweaks: ['one_look'] });
   assert.equal(noRounds.ok, false, 'a capture-only reviewer sweeps nothing');
   assert.equal(configs.validateRecipe({ ...REVIEWED, reviewer: null, tweaks: ['lean_turns'] }).ok, true);
+  // App bench run 191's compactions: roomy_context, after lean_plan in the list's order.
+  const roomy = configs.validateRecipe({ ...REVIEWED, tweaks: ['roomy_context', 'lean_plan'] });
+  assert.equal(roomy.ok, true, roomy.error);
+  assert.deepEqual(roomy.recipe.tweaks, ['lean_plan', 'roomy_context']);
+  assert.equal(configs.validateRecipe({ ...REVIEWED, reviewer: null, tweaks: ['roomy_context'] }).ok, true, 'no reviewer needed');
+});
+
+test('roomy_context changes no prompt: the spec and the build read exactly as without it', () => {
+  for (const html of [true, false]) {
+    const args = { ...SPEC_ARGS, html };
+    assert.equal(live.specPrompt({ ...args, tweaks: ['roomy_context'] }), live.specPrompt(args));
+  }
+  assert.equal(live.buildPrompt({ ...BASE, tweaks: ['roomy_context'] }), live.buildPrompt(BASE));
+  assert.equal(live.buildPrompt({ ...BASE, tweaks: ['lean_plan', 'roomy_context'] }), live.buildPrompt({ ...BASE, tweaks: ['lean_plan'] }));
 });
 
 test('a side recipe that differs by its tweaks is built, never taken from the live round-0 snapshot', () => {
@@ -377,15 +391,23 @@ test('lean_plan: the spec plans the request done well, the platform\'s minimums,
   assert.match(prompt, /A focused first version: what the request asks for, done well, and nothing it does not name\./);
   assert.match(prompt, /It never means more features/);
   // The platform's own minimums, named, so leaving out the rest cuts none of them.
-  for (const minimum of [/populated `\?demo=1`/, /shutdown handler/, /two or three dapp\.json checks/, /a way to report a post wherever people post/,
+  for (const minimum of [/populated `\?demo=1`/, /shutdown handler/, /a way to report a post wherever people post/,
     /`staging:private`/, /a guard on any server fetch of an address a person typed/]) assert.match(prompt, minimum);
+  // Run 191: three builds wrote their checks under `checks`, which the platform never reads.
+  assert.match(prompt, /two or three checks in dapp\.json's `tests` array \(the platform reads no other key\)/);
   // Run 189's plans invented these.
-  assert.match(prompt, /No product policy or lifecycle that the request and what its creator approved do not name: no moderation thresholds or automatic hiding, no closing, archiving or deciding/);
+  assert.match(prompt, /No product policy or lifecycle that the request's words and what its creator approved do not need: no moderation thresholds or automatic hiding, no archiving or expiry, no bulk actions/);
+  // Run 191's lean plans cut what the request's own words needed, and a way to remove what a person added.
+  assert.match(prompt, /What the request names includes what its own words and examples need\. Where it says people choose or decide something, they have the choices to pick from and a way to settle on one; where its result promises a list \(the steps, the items, the amounts\), every entry is there\./);
+  assert.match(prompt, /a person can remove what they added: that is part of adding it, not an extra\./);
+  assert.ok(!/no undo/.test(prompt) && !/closing, archiving or deciding/.test(prompt));
+  // And five of six drew two filled buttons on the empty screen.
+  assert.match(prompt, /one clear primary action on each screen, a filled button \(small on a screen for reading\)\. On an empty screen that action is the empty state's own button, and nothing else there is filled, the header's add button included\./);
   assert.match(prompt, /about 15,000 characters in all, the drawn screens included/);
   assert.match(prompt, /no SQL, no catalogue of error messages, no unit-test suite/);
   assert.match(prompt, /At most five assumptions\./);
   assert.match(prompt, /keep it unless it has a defect you can name/);
-  assert.match(prompt, /tap targets at least 44px tall, and icons as inline SVG, never emoji, the favicon included/);
+  assert.match(prompt, /Tap targets at least 44px tall, and icons as inline SVG, never emoji, the favicon included/);
   assert.match(prompt, /"Not in this version": each idea you left out, one line each\. The build does not implement them, and the user-facing half does not describe them\./);
   assert.ok(!/Nice-to-haves/.test(prompt) && /Nice-to-haves/.test(before), 'no nice-to-haves list');
   assert.ok(!/including the small touches that make it feel finished/.test(prompt) && /including the small touches/.test(before));
@@ -413,7 +435,7 @@ test('lean_plan: the spec plans the request done well, the platform\'s minimums,
 test('lean_plan: the build does the must-haves and nothing under "Not in this version", and writes no unit-test suite it was not asked for', () => {
   const prompt = flat(live.buildPrompt({ ...BASE, tweaks: ['lean_plan'] }));
   assert.match(prompt, /Build the must-haves in the order the spec's "Build order" gives, and nothing it lists under "Not in this version", even with time left/);
-  assert.match(prompt, /Write no unit-test suite unless the spec's technical half asks for one/);
+  assert.match(prompt, /Write no unit-test suite unless the spec's technical half asks for one: a first version's checks are its dapp\.json `tests`\./);
   assert.ok(!/then the nice-to-haves/.test(prompt));
   assert.match(flat(live.buildPrompt(BASE)), /then the nice-to-haves, most valuable first, only while time is left/, 'as before without it');
 });

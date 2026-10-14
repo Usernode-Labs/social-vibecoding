@@ -479,7 +479,9 @@ The list is checked in, with what it allows and why (the kernel's own timers).
 entry disappears until the list is shrunk with `node tests/lib/workflow-boundary.js
 --shrink`, which never adds anything. So the list only shrinks, and a migration step is
 done when its entries are gone. A new machine may enter it only with the other writers of
-its own columns, which go when its legacy paths are deleted.
+its own columns, which go when its legacy paths are deleted, and with calls it took over
+from an older machine, each named in the list's `takenOver` with where it came from (the
+call moves; the older machine's copy goes when its work path is deleted with the flag).
 
 ### In production (Kubernetes)
 
@@ -498,6 +500,7 @@ its own columns, which go when its legacy paths are deleted.
 |---|---|---|---|
 | `WF_GOVERNANCE_ENABLED` | `false` | Helm value `platform.workflowGovernanceEnabled` | The governance-proposal machine decides governance proposals. The ticker and the sweeper's Pass 0b leave them alone. |
 | `WF_MERGE_FOLLOWUPS_ENABLED` | `false` | Helm value `platform.workflowMergeFollowupsEnabled` | The merge-followups machine runs what follows a merge. The follow-up recovery sweep stands down, and a change reads live only once production runs it. |
+| `WF_APP_DELIVERY_ENABLED` | `false` | Helm value `platform.workflowAppDeliveryEnabled` | The app-delivery machine runs every production deploy of an app. Needs `WF_MERGE_FOLLOWUPS_ENABLED`: without it the machine does not run, and Admin → Workflows says so. |
 | `WF_SLOTS` | 4 (1 on a staging preview) | the default | Pipeline slots in each process. |
 | `WF_POOL_MAX` | 6 (2 on a staging preview) | the default | Connections in the runtime's own pool, the outcome listener's included. Keep it above `WF_SLOTS`. |
 | `WF_OWNERSHIP_MODE` | `log` in production, `raise` elsewhere | the default | What a write to an owned column from outside the machine does. |
@@ -584,6 +587,7 @@ A new machine brings the same two layers:
 |---|---|---|---|
 | `governance-proposal` | `issue:<id>`, for the five governance kinds (rename, secret change, close issue, maintenance campaign, featured illustration) | `open` → `applied` / `refused` / `withdrawn` / `superseded` | Behind `WF_GOVERNANCE_ENABLED` |
 | `merge-followups` | `session:<id>`, for each merged proposal and each change that went live inside one | `delivering` → `live`, or `deploy_failed` → `live` | Behind `WF_MERGE_FOLLOWUPS_ENABLED` |
+| `app-delivery` | `app:<id>`, for each app a production deploy was asked for | `idle` ⇄ `deploying` | Behind `WF_APP_DELIVERY_ENABLED`, which needs `WF_MERGE_FOLLOWUPS_ENABLED` |
 
 ### governance-proposal
 
@@ -641,9 +645,54 @@ What a merged pull request still has to do once GitHub has merged it
   with the requests just closed hidden from it. A merge and its close work publish an
   `issues_closed` push, which every web process applies to its own copy (`ws.js`); no
   browser receives it.
+- **With app delivery on,** a merge asks `app-delivery` for its deploy by message instead
+  of running `app.deliver`, and its answer (`Delivered` with the build's sha, or
+  `DeliveryFailed`) decides as the work result did. The platform's own release is still
+  heard at boot; on a Docker host, its host deployer is told by durable work
+  (`host.nudgeDeployer`).
+
+### app-delivery
+
+An app's production deploys (`src/workflow/app-delivery/`), one at a time per app, for
+everyone who asks: a merge and a secret change (by message, from merge-followups and
+governance-proposal), and, with its flag on, the drift poller and **Check for updates**,
+**Redeploy**, heal's rebuild, rollover's rebuild, the legacy secret change and a demo
+reset (`platform.requestDeploy`).
+
+- **A request** (`DeployRequested`) is recorded on the app's instance. The rule for every
+  request is the same: it is satisfied by the first successful deploy that started after
+  it was recorded. A deploy takes main's tip as it starts, so that deploy contains every
+  merge confirmed and every setting or key stored before the request.
+- **One deploy at a time.** Requests that arrive during a deploy are served by one more
+  deploy after it, however many there are. The deploy is the work item `app.deploy`
+  (`staging.deployProduction`: today's deploy, under the cross-process build lock, without
+  the per-process chain and status map). A merge's commit already running is not deployed
+  again, and demo mode's preview image is reused, only when every request the deploy
+  serves offers it.
+- **The answer.** On success the transition writes `main_sha`, `main_pr_number`,
+  `last_deploy_at` and `status`, pushes the end and the version, and answers every
+  request it served. Merges that decided on their own work path hear it as `Deployed`.
+  A failure (missing keys, a broken build, retries spent) is told once to whoever asked;
+  their request stays open, so the next deploy that succeeds, whoever asks for it, still
+  answers it. A request with nobody to tell goes: the drift poller, heal or an admin asks
+  again. Every merge of the app still waiting to go live hears each deploy that did not
+  answer it (`Deployed`), so one whose own answer was not yet shown to contain it goes
+  live with a later one. A request another machine sent that no deploy here can serve
+  (no repository, no app) is answered `DeliveryFailed`.
+- **A deploy that never answers** (a hung build or lock, a result skipped in Admin →
+  Workflows) is ended by an admin there (`EndDeploy`): read as a failure, its late result
+  stale.
+- **"Deploying" is durable.** `apps.deploy_state`, `deploy_started_at` and
+  `deploy_from_sha` are its projection, owned by the machine, with the same
+  `app_redeploy_status` pushes the in-memory tracker sends. The version pill, heal,
+  rollover and the merged list read it beside that tracker (`app-deploy-status.read(slug,
+  row)`), on every Pod and after a restart. Heal's restart and start and rollover's
+  respawn stay old flows, and leave an app alone while it reads deploying; app creation's
+  first deploy and the boot respawn stay old flows too (no request is made for an app
+  still being created).
 
 **Planned order:**
-1. **Previews and required checks.**
+1. **Previews and required checks.** (App delivery, above, came first.)
 2. **Before/after shots.**
 3. **The proposal lifecycle.**
 4. **The merge itself:** the attempt, the queue, production delivery and conflicts.

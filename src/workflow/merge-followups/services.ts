@@ -55,6 +55,17 @@ export function mergeFollowupsServices({ config, pool }: Deps): Record<string, W
       },
     },
 
+    // Docker self-hosting: the host deployer fetches at once instead of on
+    // its poll (Kubernetes releases through Argo CD: nothing to tell).
+    [WORK.nudge]: {
+      maxAttempts: 3,
+      backoffMs: backoff,
+      async run({ input }): Promise<Json> {
+        if (legacy('services/application-runtime').mode(config) === 'kubernetes') return { skipped: 'kubernetes' };
+        return { nudged: !!legacy('services/deploy-nudge').nudgeHostDeployer({ sha: input.sha, prNumber: input.prNumber }) };
+      },
+    },
+
     // Whether a build production now runs contains the merge commit.
     [WORK.verify]: {
       maxAttempts: 6,
@@ -257,10 +268,5 @@ export function mergeFollowupsNotifiers({ config, pool }: Deps): Record<string, 
     // eligible-merge sweeper when this kick is lost).
     kickQueue: (n) => legacy('services/conflict-resolver')
       .checkAndResolveConflicts(config, { app_id: n.appId, excludeSessionId: n.excludeSessionId }),
-    // Docker self-hosting: the host deployer fetches at once instead of on its poll.
-    nudgeDeployer(n) {
-      if (legacy('services/application-runtime').mode(config) === 'kubernetes') return;
-      legacy('services/deploy-nudge').nudgeHostDeployer({ sha: n.sha, prNumber: n.prNumber });
-    },
   };
 }

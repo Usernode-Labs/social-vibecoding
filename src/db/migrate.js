@@ -15,6 +15,14 @@ const { reindexAfterHostMove } = require('./reindex-after-host-move');
 // of seeded sends tracks the rule instead of restating it.
 const mailRateLimit = require('../services/mail/rate-limit');
 
+// What a staging fixture's password is hashed at. Each is a literal written
+// in this file, or random bytes nobody keeps, for an account that exists
+// only in a preview, so a slow hash protects nothing, and at the cost real
+// passwords get (12) the three of them were 0.6 seconds of every preview's
+// start. bcrypt.compare reads the cost from the hash, so signing in with
+// them works as before. Never used for anything a person chose.
+const STAGING_FIXTURE_BCRYPT_COST = 4;
+
 async function migrate(config) {
   const startedAt = Date.now();
   const timings = {};
@@ -168,6 +176,8 @@ async function migrate(config) {
   await seedStagingCloneSpecPills(pool, config);
   await seedStagingRestartRecoveredPills(pool, config);
   await seedStagingGeneralChannel(pool);
+  // After it: this thread's second speaker is that seed's fake person.
+  await seedStagingScrollTestThread(pool);
   await seedStagingQuickReplyFallback(pool, config);
   await seedStagingChatAttachments(pool, config);
   await seedStagingGroupChatAttachments(pool, config);
@@ -1079,26 +1089,76 @@ async function backfillVotesRequired(pool) {
     candidates: sessions.length,
   });
 
+  // The newest merge announcement of each candidate, found in ONE pass over
+  // the chat and handed back as at most one line per candidate.
+  //
+  // This used to be one search of the app's chat per merged row. A preview
+  // starts with nine merged fixtures that have no announcement at all, and
+  // the nine searches of Homeroom's copied chat were 0.8 seconds of each
+  // start. Now the chat of the apps concerned is read once: every merge
+  // line (the two LIKEs; promote / vote / revert lines also mention the PR
+  // but carry neither phrase) gives up the PR numbers it names, those are
+  // matched to the candidates by equality, and the newest line per
+  // candidate wins before its figure is read, as it did.
+  //
+  // "(^|[^0-9])PR #" and a greedy run of digits is the old per-row pattern
+  // "(^|[^0-9])PR #<ref>([^0-9]|$)" read the other way round: "PR #12"
+  // yields 12 and never 1, and the comparison is on text, so "PR #012" is
+  // not PR 12, as before. Only ids and timestamps are held while matching;
+  // a line's text is fetched for the winners alone, so what reaches this
+  // process does not grow with the chat. Both CTEs are MATERIALIZED so the
+  // planner cannot turn the pass back into one chat scan per candidate.
+  //
+  // Two things differ from the per-row search when something else writes
+  // while this runs. The statement sees the chat at ONE moment, where each
+  // search saw its own: a line that arrives too late leaves its row empty
+  // for a later boot, and that boot finds it only if it is still there
+  // (clearAutomatedChannelLines, below in migrate(), deletes a system line
+  // with no sender and no thread; nothing writes one now, see
+  // ws.sendSystemMessage). And `candidate` reads app_id and pr_number
+  // again by id, rather than using the values the query above returned.
+  // PostgreSQL still reads every merge line of these apps once and sorts
+  // their ids, on disk if they outgrow work_mem; what is bounded is what
+  // comes back here.
+  let winners;
+  try {
+    ({ rows: winners } = await pool.query(
+      `WITH candidate AS MATERIALIZED (
+         SELECT id, app_id, COALESCE(NULLIF(pr_number, 0), id)::text AS ref
+           FROM chat_sessions
+          WHERE id = ANY($1::int[])
+       ), named AS MATERIALIZED (
+         SELECT m.id, m.app_id, m.created_at, hit.pr[1] AS ref
+           FROM chat_messages m
+          CROSS JOIN LATERAL regexp_matches(m.content, '(?:^|[^0-9])PR #([0-9]+)', 'g') AS hit(pr)
+          WHERE m.app_id IN (SELECT app_id FROM candidate)
+            AND m.msg_type = 'system'
+            AND (m.content LIKE '%merged and deployed!%'
+                 OR m.content LIKE '%force-merged by admin%')
+       ), winner AS (
+         SELECT DISTINCT ON (c.id) c.id AS session_id, n.id AS message_id
+           FROM candidate c
+           JOIN named n ON n.app_id = c.app_id AND n.ref = c.ref
+          ORDER BY c.id, n.created_at DESC
+       )
+       SELECT w.session_id, m.content
+         FROM winner w
+         JOIN chat_messages m ON m.id = w.message_id`,
+      [sessions.map((s) => s.id)]
+    ));
+  } catch (err) {
+    // One statement now, so one failure: nothing is filled on this boot and
+    // the next one tries again (the per-row search could lose one row and
+    // carry on). Never abort boot here.
+    log.warn('db', 'votes_required backfill skipped (query failed)', { err: err.message });
+    return;
+  }
+  const announcementOf = new Map(winners.map((w) => [w.session_id, w.content]));
+
   let filled = 0;
   for (const s of sessions) {
-    // The announcement label uses `pr_number || session.id` as the PR ref.
-    const ref = s.pr_number || s.id;
     try {
-      // Find the merge announcement for this PR. The word-boundary regex
-      // (`(^|[^0-9])PR #<ref>([^0-9]|$)`) stops "PR #1" from matching
-      // "PR #12", and the two LIKEs restrict to merge/force-merge lines
-      // (promote / vote / revert messages also mention the PR ref but
-      // carry neither phrase).
-      const { rows: msgs } = await pool.query(
-        `SELECT content FROM chat_messages
-          WHERE app_id = $1 AND msg_type = 'system'
-            AND content ~ $2
-            AND (content LIKE '%merged and deployed!%'
-                 OR content LIKE '%force-merged by admin%')
-          ORDER BY created_at DESC
-          LIMIT 1`,
-        [s.app_id, `(^|[^0-9])PR #${ref}([^0-9]|$)`]
-      );
+      const msgs = announcementOf.has(s.id) ? [{ content: announcementOf.get(s.id) }] : [];
       if (!msgs.length) continue;
 
       const m = /\((\d+)\s*\/\s*(\d+)\s+vote/.exec(msgs[0].content);
@@ -1662,6 +1722,84 @@ async function seedStagingGeneralChannel(pool) {
   }
 }
 
+// #5019's before/after shots follow a conversation being paged from its top,
+// which needs a thread longer than one page of fifty: a fresh clone has no
+// such conversation, and typing one through the UI is not a step anybody can
+// take. One direct thread between the shots' own member fixture
+// (usernode-capture) and one of the fake speakers above, its lines marked as
+// a staging demo throughout. Two pages and a tail, so a reader at the bottom
+// starts with real older history to load. Idempotent through the direct pair
+// and the messages' idempotency keys; strictly a no-op outside staging.
+async function seedStagingScrollTestThread(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const people = await pool.query(
+      `SELECT id, username FROM users
+        WHERE username IN ('usernode-capture', 'staging-demo-general-ada')`
+    );
+    const member = people.rows.find((row) => row.username === 'usernode-capture');
+    const other = people.rows.find((row) => row.username === 'staging-demo-general-ada');
+    if (!member || !other || member.id === other.id) {
+      log.warn('db', 'Staging scroll-test thread skipped: fixture users missing');
+      return;
+    }
+    const low = Math.min(member.id, other.id);
+    const high = Math.max(member.id, other.id);
+    const found = await pool.query(
+      `SELECT c.id FROM conversations c
+         JOIN conversation_direct_pairs p ON p.conversation_id = c.id
+        WHERE p.user_low_id = $1 AND p.user_high_id = $2
+        LIMIT 1`,
+      [low, high]
+    );
+    let conversationId = found.rows[0]?.id;
+    if (!conversationId) {
+      const created = await pool.query(
+        `INSERT INTO conversations (kind, created_by) VALUES ('direct', $1) RETURNING id`,
+        [member.id]
+      );
+      conversationId = created.rows[0].id;
+      await pool.query(
+        `INSERT INTO conversation_direct_pairs
+           (conversation_id, user_low_id, user_high_id)
+         VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
+        [conversationId, low, high]
+      );
+    }
+    // Re-asserted even on an existing thread, so a partial earlier boot
+    // self-heals, as the #general seed does for its members.
+    await pool.query(
+      `INSERT INTO conversation_members
+         (conversation_id, user_id, role, status, responded_at, joined_at)
+       SELECT $1, u.id, 'member', 'member', NOW(), NOW()
+         FROM users u WHERE u.id IN ($2, $3)
+       ON CONFLICT (conversation_id, user_id) DO NOTHING`,
+      [conversationId, member.id, other.id]
+    );
+    const inserted = await pool.query(
+      `INSERT INTO conversation_messages
+         (conversation_id, sender_id, content, idempotency_key, created_at)
+       SELECT $1::int,
+              CASE WHEN n % 2 = 0 THEN $3::int ELSE $2::int END,
+              'Staging demo: history line ' || n || ' of 130 of the scroll test.',
+              'staging-scroll-' || n,
+              NOW() - ((131 - n) * INTERVAL '30 seconds')
+         FROM generate_series(1, 130) AS n
+       ON CONFLICT (conversation_id, sender_id, idempotency_key)
+         WHERE sender_id IS NOT NULL AND idempotency_key IS NOT NULL
+       DO NOTHING`,
+      [conversationId, member.id, other.id]
+    );
+    if (inserted.rowCount > 0) {
+      log.info('db', 'Staging scroll-test thread seeded', {
+        conversationId, inserted: inserted.rowCount,
+      });
+    }
+  } catch (err) {
+    log.warn('db', 'Staging scroll-test thread seeding failed', { message: err.message });
+  }
+}
+
 // Declared dapp.json checks are authenticated as this exact view-only user
 // (services/visuals.js), not as the first administrator in the database.
 // Owner-scoped staging fixtures must therefore resolve their owner by
@@ -1879,10 +2017,11 @@ async function seedStagingEmailCodeAccounts(pool) {
   if (process.env.USERNODE_ENV !== 'staging') return;
 
   try {
-    const knownHash = await bcrypt.hash('staging-code-password', 12);
+    const knownHash = await bcrypt.hash('staging-code-password', STAGING_FIXTURE_BCRYPT_COST);
+    // Nobody knows what this one hashes: 32 random bytes, thrown away.
     const unusableHash = await bcrypt.hash(
       crypto.randomBytes(32).toString('hex'),
-      12
+      STAGING_FIXTURE_BCRYPT_COST
     );
 
     await pool.query(
@@ -12280,7 +12419,7 @@ async function seedStagingTopochain(pool, config) {
     // Participant 8 is also the one row with `accept_logs = FALSE` (the
     // column defaults to TRUE), so the users screen shows both values of
     // the flag instead of a column that is the same all the way down.
-    const realHash = await bcrypt.hash('staging-demo-topochain-password', 12);
+    const realHash = await bcrypt.hash('staging-demo-topochain-password', STAGING_FIXTURE_BCRYPT_COST);
     await pool.query(
       `INSERT INTO users
          (id, username, password, email, exclude_podium, accept_logs,
@@ -14190,7 +14329,7 @@ module.exports = {
   seedStagingPlatformMail, auditDuplicatePrSessions,
   migrateWaitlistCountryCodes,
   clearAutomatedChannelLines,
-  backfillProposalIssuerAssignments,
+  backfillProposalIssuerAssignments, backfillVotesRequired,
   seedStagingTopicScrollThreads, seedStagingLlmUsage, seedStagingHomeLayout,
   seedStagingAnalyticsCharts, seedStagingSpendDistribution,
   seedStagingGeneralChannel, seedStagingShotsNoticed,

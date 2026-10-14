@@ -238,6 +238,12 @@ test('the by-line is the caption\'s, in white on the card and in the page\'s ink
   assert.match(CSS, /\n\.dev-ws-item:not\(\.dev-ws-needs-done\) \{\n  --text-primary: #fff;/, 'the card is a dark scheme of its own');
 });
 
+test('#5039: the caption\'s words sit on a soft panel of the card\'s own dark colour', () => {
+  // Every pictured card gets it; a pictureless card, where the words fill
+  // the card and nothing sits behind them, does not.
+  assert.match(CSS, /\n\.dev-ws-item:not\(\[data-ws-picture="none"\]\) > \.dev-ws-item-caption \{\n  padding: 10px 12px; border-radius: 16px;\n  background: rgba\(20, 23, 31, \.55\);\n  -webkit-backdrop-filter: blur\(10px\); backdrop-filter: blur\(10px\);\n\}/);
+});
+
 test('a change with no picture at all is led by its words, with nothing drawn in the picture\'s place', () => {
   const item = body(WORKSHOP, 'const FeedItem = memo(function FeedItem(', '\n});\n');
   // Nothing to draw: no verified shots, no diagram, no capture pair and no

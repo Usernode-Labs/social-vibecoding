@@ -79,6 +79,7 @@ const ROLLOVER_STATES: Record<string, { label: string; cls: string }> = {
   running: { label: 'Rolling over…', cls: 'bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300' },
   rolled: { label: 'Done', cls: 'bg-green-100 dark:bg-green-950/60 text-green-700 dark:text-green-400' },
   rebuilt: { label: 'Rebuilt', cls: 'bg-green-100 dark:bg-green-950/60 text-green-700 dark:text-green-400' },
+  rebuild_requested: { label: 'Rebuild asked of app delivery', cls: NEUTRAL_CHIP },
   skipped_deploying: { label: 'Skipped: deploying', cls: NEUTRAL_CHIP },
   skipped_missing_secrets: { label: 'Skipped: missing secrets', cls: NEUTRAL_CHIP },
   skipped_no_db_password: { label: 'Skipped: no DB role', cls: NEUTRAL_CHIP },

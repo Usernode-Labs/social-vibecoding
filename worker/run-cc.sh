@@ -68,6 +68,10 @@
 #                              on the result line when it stopped any
 #   STOP_GUARD_DEADLINE        when the platform stops the turn (epoch ms):
 #                              the checks are not started with too little left
+#   STOP_GUARD_REQUIRE_TESTS   1, with STOP_GUARD_CHECKS (a first version's
+#                              build and review fixes): a dapp.json with a
+#                              `checks` key or no routed `tests` sends the
+#                              turn back too (build-stop-hook.js)
 #   BUILD_PROFILE              first_version: a build of a project's first
 #                              version (the Homeroom bot's build and review
 #                              fixes) loads only the tools one uses: the
@@ -460,6 +464,22 @@ if [ -n "${HOMEROOM_MCP_TOKEN:-}" ] && [ -f "$HOMEROOM_MCP_CONFIG" ]; then
   fi
 fi
 
+# App bench run 193 (14 Oct 2026): a first version's build called
+# browser_evaluate on a promise nothing settled (the kit's confirm dialog,
+# waiting for a click) and the call held the turn for 1,800 s, Claude Code's
+# own limit on one MCP tool call, before it failed. Every MCP call a build
+# makes (the browser, Homeroom's read tools, visible changes) answers in
+# seconds: none of the run's other browser calls took 20. Two minutes is past
+# every limit Playwright sets itself (5 s an action, 60 s a navigation), so
+# only a call that would never return reaches it, and it fails while the
+# build still has time to go on. A Codex build's browser gets 60 s
+# (run-codex-agent.sh). The shots agent records clips, and keeps Claude
+# Code's own limit. A value already in the environment is kept.
+if [ "$MODE" = "build" ]; then
+  MCP_TOOL_TIMEOUT="${MCP_TOOL_TIMEOUT:-120000}"
+  export MCP_TOOL_TIMEOUT
+fi
+
 SHOTS_PROXY_PID=""
 SHOTS_DIAGNOSTIC_TAIL_PID=""
 SHOTS_TMP=""
@@ -574,7 +594,9 @@ if [ "$MODE" = "build" ] && [ "${STOP_GUARD:-}" = "1" ]; then
       USERNODE_STOP_GUARD_CHECKS_COUNT="$STOP_GUARD_DIR/checks"
       USERNODE_STOP_GUARD_CHECKS_PASSED="$STOP_GUARD_DIR/checks-passed"
       USERNODE_STOP_GUARD_DEADLINE="${STOP_GUARD_DEADLINE:-}"
+      USERNODE_STOP_GUARD_REQUIRE_TESTS="${STOP_GUARD_REQUIRE_TESTS:-}"
       export USERNODE_STOP_GUARD_CHECKS USERNODE_STOP_GUARD_CHECKS_COUNT USERNODE_STOP_GUARD_CHECKS_PASSED USERNODE_STOP_GUARD_DEADLINE
+      export USERNODE_STOP_GUARD_REQUIRE_TESTS
     fi
     STOP_GUARD_FLAGS="--settings $STOP_GUARD_DIR/settings.json"
   else

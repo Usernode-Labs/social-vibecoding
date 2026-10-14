@@ -18,7 +18,9 @@ const { boundary, readBaseline, BASELINE } = require('./lib/workflow-boundary');
 
 // The machines that predate the list. Any other machine may enter it only
 // with the other writers of its own columns (removed by the end of its step,
-// when the legacy paths go); nothing else.
+// when the legacy paths go), and with calls it took over from a machine
+// that lists them, each named in the baseline's `takenOver` with where it
+// came from: the call moves, so the list ends no longer. Nothing else.
 const PREDATE = new Set(['governance-proposal', 'merge-followups', 'platform', 'kernel']);
 
 test('the workflow machines cross no new boundary into code not migrated yet', () => {
@@ -34,8 +36,10 @@ test('the workflow machines cross no new boundary into code not migrated yet', (
       if (!entries.has(entry)) problems.push(`${name}: "${entry}" is gone; remove it from the list (--shrink)`);
     }
     if (!PREDATE.has(name)) {
+      const moved = (baseline.takenOver || {})[name] || {};
       for (const entry of listed) {
-        if (!entry.startsWith('ownership | ')) problems.push(`${name}: a new machine may list only other writers of its columns, not "${entry}"`);
+        if (entry.startsWith('ownership | ') || Object.prototype.hasOwnProperty.call(moved, entry)) continue;
+        problems.push(`${name}: a new machine may list only other writers of its columns and calls it took over, not "${entry}"`);
       }
     }
   }
@@ -43,6 +47,17 @@ test('the workflow machines cross no new boundary into code not migrated yet', (
     if (!now.has(name)) problems.push(`${name}: listed, but no such machine under src/workflow/`);
   }
   assert.deepEqual(problems, [], `${problems.length} difference(s) from ${BASELINE}:\n${problems.join('\n')}`);
+});
+
+test('each call a new machine took over says from where, and is still listed for it', () => {
+  const baseline = readBaseline();
+  for (const [name, moved] of Object.entries(baseline.takenOver || {})) {
+    const listed = new Set(baseline.machines[name] || []);
+    for (const [entry, reason] of Object.entries(moved)) {
+      assert.ok(typeof reason === 'string' && reason.length > 40, `${name}: ${entry}: say which machine it was taken from`);
+      assert.ok(listed.has(entry), `${name}: ${entry}: taken over but no longer listed; remove it from takenOver`);
+    }
+  }
 });
 
 test('each allowed entry says why, and is still there', () => {

@@ -1619,6 +1619,14 @@
     "text": "Turn on notifications",
     "description": "Button shown when notifications are off for Homeroom on this phone: opens the phone's notification settings."
   },
+  "bot.notify.liveOn": {
+    "text": "We’ll tell you when it’s live",
+    "description": "Switch under Homeroom bot's plan for a new project's first version, shown with a check while it is on (it starts on): the person is notified when the first version goes live. Tapping it turns it off."
+  },
+  "bot.notify.liveOff": {
+    "text": "Notify me when it’s live",
+    "description": "The same switch once the person turned it off: tapping it turns notifications for the first version going live back on."
+  },
   "composer.attachLimit_one": {
     "text": "You can attach up to {{count}} file.",
     "description": "Error under the message box when more files were chosen than one message can carry. {{count}} is the most files a message can have."
@@ -3145,11 +3153,11 @@
   },
   "thread.loadingOlder": {
     "text": "Loading…",
-    "description": "Label of the \"Load earlier messages\" button while earlier messages load."
+    "description": "Line at the top of a conversation while earlier messages load after scrolling up."
   },
   "thread.loadEarlier": {
     "text": "Load earlier messages",
-    "description": "Button at the top of a conversation: fetches the messages before the ones shown."
+    "description": "Button at the top of a conversation, shown only after loading earlier messages failed: tries again."
   },
   "thread.loadingNewer": {
     "text": "Loading…",

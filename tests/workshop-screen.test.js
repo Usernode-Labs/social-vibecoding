@@ -221,6 +221,17 @@ test('the visibility filter is GET /api/apps\'s, so the two lists cannot disagre
   assert.match(sql, /\+ COALESCE\(op\.n, 0\) \+ COALESCE\(og\.n, 0\)\) > 0/);
 });
 
+test('#5023: the Workshop asks GET /api/apps for joined rows only, not the whole catalog', () => {
+  const apps = read('src/routes/apps.js');
+  assert.match(apps, /const joinedOnly = req\.query\.scope === 'joined' && userId != null;/);
+  assert.match(apps, /AND \(NOT \$4::boolean OR cm\.user_id IS NOT NULL\)/,
+    'the filter is the is_member column\'s own join, so a kept row is one the client kept before');
+  assert.match(apps, /\[showSelfHosted, userId, isAdmin, joinedOnly\]/);
+  for (const file of ['frontend/src/features/workshop/index.tsx', 'frontend/src/features/workshop/community-scope.ts']) {
+    assert.match(read(file), /fetch\(`\/api\/apps\?scope=joined\$\{/, `${file} reads the joined scope`);
+  }
+});
+
 test('the demo overlay never overwrites a real count', () => {
   const { withDemoCounts, DEMO_COUNTS } = route;
   // `issues` survives the staging clone, so a preview can have genuine
@@ -606,7 +617,7 @@ test('the controller loads both reads and survives losing the counts', async () 
   global.window = { Home: { isJoined: (app) => !!(app && app.is_member) } };
   try {
     const answers = new Map([
-      ['/api/apps', { ok: true, json: async () => ({ apps }) }],
+      ['/api/apps?scope=joined', { ok: true, json: async () => ({ apps }) }],
       ['/api/workshop/counts', { ok: true, json: async () => ({ counts: { b: { working: 1, needs: 2 } } }) }],
     ]);
     global.fetch = async (url) => answers.get(url) || { ok: false, json: async () => ({}) };
@@ -624,14 +635,14 @@ test('the controller loads both reads and survives losing the counts', async () 
     assert.equal(workshopStore.get().error, false);
     assert.deepEqual(workshopStore.get().rows.map((r) => r.needs), [0, 0]);
 
-    answers.set('/api/apps', { ok: false, json: async () => ({}) });
+    answers.set('/api/apps?scope=joined', { ok: false, json: async () => ({}) });
     await workshopController.reload();
     assert.equal(workshopStore.get().error, true);
 
     // A LOAD THAT LANDS AFTER THE VIEWER LEFT PUBLISHES NOTHING. `open` is
     // the liveness flag, not decoration: without the check, a slow fetch
     // repaints a screen nobody is on and races the next entry's own load.
-    answers.set('/api/apps', { ok: true, json: async () => ({ apps }) });
+    answers.set('/api/apps?scope=joined', { ok: true, json: async () => ({ apps }) });
     workshopStore.set({ rows: [{ slug: 'kept', working: 9, needs: 9 }], error: false });
     const inFlight = workshopController.reload();
     workshopController.close();
@@ -669,7 +680,7 @@ test('#4794: re-entering Needs you reloads the feed, and a vote cast in it stays
     };
     const feedAnswer = (items) => answers.set('/api/workshop/needs-feed', { ok: true, json: async () => ({ items, max: 0 }) });
     const countsAnswer = (counts) => answers.set('/api/workshop/counts', { ok: true, json: async () => ({ counts }) });
-    answers.set('/api/apps', { ok: true, json: async () => ({ apps }) });
+    answers.set('/api/apps?scope=joined', { ok: true, json: async () => ({ apps }) });
     feedAnswer([item(7, 2), item(8, 2)]);
     countsAnswer(countsFor([7, 8]));
     // A microtask flush: refreshNeeds() is fired, not awaited, by setTab.
@@ -918,7 +929,7 @@ test('the app\'s own Workshop switches communities through Your communities, the
   assert.match(scope, /switcher: SwitcherFrom \| null;/);
   // The list loads on open, and never during render.
   assert.match(scope, /communityScopeStore\.set\(\{ switcher: from, anchor \}\);\s*void loadCommunities\(\);/);
-  assert.match(scope, /fetch\(`\/api\/apps\$\{q\}`/);
+  assert.match(scope, /fetch\(`\/api\/apps\?scope=joined\$\{q\.replace\('\?', '&'\)\}`/);
 });
 
 // ── 4. The rows behind the counts (#3051) ──────────────────────────────
@@ -1112,7 +1123,7 @@ test('#3270: the controller reads the Needs you feed alongside, and survives los
   global.window = { Home: { isJoined: (app) => !!(app && app.is_member) } };
   try {
     const answers = new Map([
-      ['/api/apps', { ok: true, json: async () => ({ apps: [{ slug: 'a', name: 'A', is_member: true }] }) }],
+      ['/api/apps?scope=joined', { ok: true, json: async () => ({ apps: [{ slug: 'a', name: 'A', is_member: true }] }) }],
       ['/api/workshop/counts', { ok: true, json: async () => ({ counts: { a: { working: 0, needs: 1 } } }) }],
       ['/api/workshop/needs-feed', { ok: true, json: async () => ({ items: [{ kind: 'proposal', id: 1, app: { slug: 'a' } }], max: 60 }) }],
     ]);
@@ -1226,4 +1237,8 @@ test('#4486: the one-row head and the pipeline pin together under the project’
   // would be what it pinned to), so it follows the board's scroll instead.
   assert.match(kanbanTsx, /export function syncStrip\(board: HTMLElement \| null\): void \{/);
   assert.match(appCss, /\.dev-kanban-stages \{[^}]*overflow: hidden;/);
+  // On a phone (#5029) the search keeps its own line and the switch and the
+  // filters share the one under it: the chips fill the space beside the
+  // switch instead of taking a line of their own.
+  assert.match(appCss, /@media \(max-width: 639px\) \{[\s\S]*?\.dev-ws-allbar #dev-kanban-search \{ flex-basis: 100%; max-width: none; min-width: 0; \}\s*\.dev-ws-allbar #dev-filter-chips \{ flex: 1 1 0; min-width: 0; /);
 });

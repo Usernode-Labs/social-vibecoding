@@ -1007,6 +1007,19 @@ async function rebuildProduction(config, app, options = {}) {
   return result;
 }
 
+// The same deploy for the app-delivery workflow machine
+// (src/workflow/app-delivery/), which owns the "deploying" state
+// (apps.deploy_state, with its pushes) and who hears the result (its
+// replies): no in-memory status, no fan-out.
+async function deployProduction(config, app, options = {}) {
+  // The machine runs one deploy of an app at a time; the chain still orders
+  // it against the old flows that deploy in this process (rollover's
+  // respawn, a work item recorded before the flag), which is all that
+  // orders anything on Docker, where the lock is not taken.
+  return serializeRebuild(app.slug, () => withResourceUse(config, PRODUCTION_BUILD_LOCK, app.slug,
+    () => rebuildProductionInner(config, app, { ...options, track: false })));
+}
+
 // Whether an offered image is of the tree that was just cloned, and so the
 // image this rebuild would otherwise spend a build producing. Pure, and the
 // whole guarantee: same tree sha means the same source, byte for byte, so the
@@ -1066,8 +1079,9 @@ async function rebuildProductionInner(config, app, options = {}) {
   // caller (dev-chat merge, drift-poller, manual check-updates) ends up
   // here, so wrapping the body once means the version-pill UI flips to
   // its deploying state regardless of who triggered the rebuild.
-  const appDeployStatus = require('./app-deploy-status');
-  appDeployStatus.markStart(app.slug, { fromSha: app.main_sha || null });
+  // `track: false` (deployProduction): the workflow machine says it instead.
+  const appDeployStatus = options.track === false ? null : require('./app-deploy-status');
+  if (appDeployStatus) appDeployStatus.markStart(app.slug, { fromSha: app.main_sha || null });
   let succeeded = false;
   let resultSha = null;
   let missingSecretsFromErr = null;
@@ -1358,7 +1372,7 @@ async function rebuildProductionInner(config, app, options = {}) {
     }
     throw err;
   } finally {
-    appDeployStatus.markEnd(app.slug, {
+    if (appDeployStatus) appDeployStatus.markEnd(app.slug, {
       toSha: resultSha,
       failed: !succeeded,
       missingSecrets: missingSecretsFromErr,
@@ -1377,6 +1391,7 @@ module.exports = {
   warmStagingCert,
   teardownStaging,
   rebuildProduction,
+  deployProduction,
   // The image-reuse decision and the tree read behind it, unit-tested
   // directly: the decision IS the guarantee, and rebuildProductionInner
   // around it is a clone, a database and a cluster.
