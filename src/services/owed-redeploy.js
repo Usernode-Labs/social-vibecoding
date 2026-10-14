@@ -29,11 +29,13 @@
  *
  * The governance machine (WF_GOVERNANCE_ENABLED) owes its rebuild as durable
  * work of its own (src/workflow/governance-proposal, `app.rebuildProduction`)
- * and never writes these columns. Never for the self-hosted row, which a
- * rebuild would treat as a child container. Not swept in a staging preview,
- * whose database is a clone of production's: an owed mark there is
- * production's, and a preview rebuilding production apps is the last thing
- * either wants.
+ * and never writes these columns; with app delivery on
+ * (WF_APP_DELIVERY_ENABLED), the vote asks that machine for the deploy and
+ * owes nothing here, since nothing may deploy beside it. Never for the
+ * self-hosted row, which a rebuild would treat as a child container. Not
+ * swept in a staging preview, whose database is a clone of production's: an
+ * owed mark there is production's, and a preview rebuilding production apps
+ * is the last thing either wants.
  */
 
 const crypto = require('crypto');

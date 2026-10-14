@@ -3862,8 +3862,11 @@ async function maybeApplySecretChangeProposal(config, pool, issue, options = {})
     // The rebuild that carries the change to the running app is owed in the
     // same commit (services/owed-redeploy.js), so a process that dies before
     // giving it leaves it to the leader rather than losing it: nothing else
-    // would notice, since main_sha does not move for a secret.
-    if (!selfHosted) await owedRedeploy.owe(client, issue.app_id, 'secret_change');
+    // would notice, since main_sha does not move for a secret. With the
+    // app-delivery machine on, the machine is asked for it instead, and
+    // nothing else deploys beside it.
+    const viaDelivery = !selfHosted && workflow().deliveryEnabled();
+    if (!selfHosted && !viaDelivery) await owedRedeploy.owe(client, issue.app_id, 'secret_change');
 
     await client.query('COMMIT');
 
@@ -3908,9 +3911,8 @@ async function maybeApplySecretChangeProposal(config, pool, issue, options = {})
       //
       // With the app-delivery machine on, a recorded request it runs (kept
       // across a restart: the stored key is never left undeployed).
-      const workflow = require('../workflow/platform.ts');
-      if (workflow.deliveryEnabled()) {
-        workflow.requestDeploy(issue.app_id, 'secret_change').catch((err) => {
+      if (viaDelivery) {
+        workflow().requestDeploy(issue.app_id, 'secret_change').catch((err) => {
           log.warn('issues', 'Post-secret-change redeploy request failed', { slug: issue.app_slug, err: err.message });
         });
       } else {

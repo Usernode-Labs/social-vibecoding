@@ -4038,12 +4038,13 @@ async function buildAndPropose({
 
   // The early first look its people have seen, for a first version's spec
   // to draw its main screen from: read once the worker is up, and waited
-  // for a little (forSpec) when it is still being drawn.
-  const startingLook = !presetSpec && firstVersion && typeof earlyLook === 'function'
-    ? await Promise.resolve().then(() => earlyLook()).catch((err) => {
+  // for a little (forSpec) when it is still being drawn. Not once the plan
+  // is kept, and a stop does not wait for it.
+  const startingLook = !presetSpec && firstVersion && typeof earlyLook === 'function' && !steps.has('spec')
+    ? await steps.race(Promise.resolve().then(() => earlyLook()).catch((err) => {
       log.warn('homeroom-bot', 'Could not read the early first look for the spec', { sessionId: session.id, err: err.message });
       return null;
-    })
+    }))
     : null;
   if (startingLook) log.info('homeroom-bot', 'The spec starts its main screen from the early first look', { sessionId: session.id });
 
