@@ -28413,10 +28413,16 @@ const AppView = {
     const slug = AppView.appData?.slug;
     if (!slug) return;
 
-    const reply = (value, error) => {
+    // `code` is the server's structured error code (file_too_large,
+    // app_quota_exceeded, storage_unavailable, …: app-conventions.md), so
+    // the bridge can hand it to the app on the rejection (#5028).
+    const reply = (value, error, code) => {
       try {
         e.source.postMessage(
-          { __usernode_storage: 'response', id: data.id, value: value ?? null, error: error ?? null },
+          {
+            __usernode_storage: 'response', id: data.id, value: value ?? null, error: error ?? null,
+            code: typeof code === 'string' && code ? code : null,
+          },
           '*'
         );
       } catch {}
@@ -28443,7 +28449,7 @@ const AppView = {
         });
         const j = await r.json().catch(() => ({}));
         if (!r.ok) {
-          reply(null, j.error || PlatformI18n.t('changes:bridge.uploadFailed', { status: r.status }));
+          reply(null, j.error || PlatformI18n.t('changes:bridge.uploadFailed', { status: r.status }), j.code);
           return;
         }
         reply(j);
@@ -28462,7 +28468,7 @@ const AppView = {
         });
         const j = await r.json().catch(() => ({}));
         if (!r.ok) {
-          reply(null, j.error || PlatformI18n.t('changes:bridge.deleteFailed', { status: r.status }));
+          reply(null, j.error || PlatformI18n.t('changes:bridge.deleteFailed', { status: r.status }), j.code);
           return;
         }
         reply({ ok: true });
@@ -28475,7 +28481,7 @@ const AppView = {
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) {
-        reply(null, j.error || PlatformI18n.t('changes:bridge.usageFailed', { status: r.status }));
+        reply(null, j.error || PlatformI18n.t('changes:bridge.usageFailed', { status: r.status }), j.code);
         return;
       }
       reply(j);
