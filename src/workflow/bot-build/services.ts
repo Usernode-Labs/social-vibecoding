@@ -11,20 +11,23 @@ import { WORK } from './machine.ts';
 
 interface Deps { config: any; pool: any }
 
+// A build carries itself on from its checkpoint: a restart is not one of its
+// tries. A handler that throws is (a bug, or the platform failing under it):
+// it is tried once more from its checkpoint, then recorded as lost. The
+// handler is told it, so a step refused for now (a proposal the platform
+// could not take) throws only while a try is left (build-runs.js triesLeftOf).
+export const RUN_MAX_ATTEMPTS = 2;
+
 export function botBuildServices(deps: Deps): Record<string, WorkHandler> {
   const runs = () => legacy('services/build-runs');
   return {
     [WORK.run]: {
-      // A build carries itself on from its checkpoint: a restart is not one
-      // of its tries. A handler that throws is (a bug, or the platform
-      // failing under it): it is tried once more from its checkpoint, then
-      // recorded as lost.
       resumable: true,
-      maxAttempts: 2,
+      maxAttempts: RUN_MAX_ATTEMPTS,
       maxLostAttempts: 60,
       // How many run at once is the bot's and the lane's to decide.
       concurrency: 64,
-      run: (ctx) => runs().run(ctx, deps),
+      run: (ctx) => runs().run(ctx, { ...deps, maxAttempts: RUN_MAX_ATTEMPTS }),
     },
     [WORK.lost]: {
       maxAttempts: 5,

@@ -6906,10 +6906,14 @@ async function cleanup() {
     try { stop(); } catch (err) { log.warn('server', `Stopping the ${name} sweep failed`, { err: err.message }); }
   }
   // The bot's builds and the bench's trials under way here are durable
-  // builds (services/build-runs.js): stopping the workflow runtime below
-  // stops each at its next step, its turn left running in its worker, and
-  // gives its work item up, so the next leader carries it on from the step it
-  // saved. Nothing waits for them.
+  // builds (services/build-runs.js). A process finishing its work only
+  // quiesces the workflow runtime below, so each goes on here to its end,
+  // its own steps included (a build's promote passes the drain guard:
+  // lifecycle.js OWN_WORK, after 14 Oct 2026's refused first version), and
+  // the drain waits for it (workflowWorkRunning). Stopping the runtime, at
+  // once without a drain or at the drain's deadline, stops each at its next
+  // step, its turn left running in its worker, and gives its work item up, so
+  // the next leader carries it on from the step it saved.
   const retentionStop = require('./src/services/build-retention').stop();
   const checkRetentionStop = require('./src/services/check-retention').stop();
   const fixedCheckSyncStop = require('./src/services/fixed-check-sync').stop();

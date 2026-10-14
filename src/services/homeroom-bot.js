@@ -9475,8 +9475,12 @@ function start(config) {
 /**
  * True once the loops are stopped or shutdown has begun (lifecycle, set
  * first thing in server.js cleanup): no new read, build, follow-up or checks
- * fix starts. A durable build under way gives its work item up at its next
- * step, and the next leader carries it on (services/build-runs.js).
+ * fix starts. A durable build under way is not new: in a process a release
+ * replaced it goes on to its end there, its own steps included (its promote
+ * passes the drain guard: lifecycle.js OWN_WORK), and the drain waits for
+ * it (docs/plans/draining-releases.md). Only a process that stops at once,
+ * or one whose drain ran out, gives its work item up at the next step, and
+ * the next leader carries it on (services/build-runs.js).
  */
 function refusingNew() {
   if (stopped) return true;
@@ -9485,11 +9489,13 @@ function refusingNew() {
 
 /**
  * Stops both loops; nothing new starts. A durable build under way is its
- * work item's, which the workflow runtime gives up as it stops and the next
- * leader carries on. server.js calls it first thing on shutdown, before the
- * pool closes: a pass or lane drain that started after that read and wrote a
- * closed pool (93 "Cannot use a pool after calling end on the pool" lines
- * from 10-03 to 10-05, and one live build lost at dispatch).
+ * work item's: it finishes in this process while it drains, and only what
+ * the workflow runtime gives up as it stops (no drain, or its deadline) is
+ * carried on by the next leader. server.js calls it first thing on
+ * shutdown, before the pool closes: a pass or lane drain that started after
+ * that read and wrote a closed pool (93 "Cannot use a pool after calling end
+ * on the pool" lines from 10-03 to 10-05, and one live build lost at
+ * dispatch).
  */
 function stop() {
   stopped = true;
