@@ -770,6 +770,7 @@ test('#1130: no credential-SHAPED column name in schema.sql is readable without 
     // because credential hashes are the common case, but these hash
     // CONTENT, not secrets, and several are public by design.
     'session_visuals.commit_hash',         // a git commit sha
+    'check_run_media.commit_hash',         // a git commit sha (a checks run's media before it is published)
     'chains.block_hash',                   // public chain data
     'slot_outcome_reports.block_hash',      // public chain data
     'vrf_obligations.sender_pk_hash',      // a PUBLIC key's digest

@@ -858,7 +858,9 @@ test('#2170: the verdict keeps the finished build and the checking time on the r
   // The stamp the subtraction reads is the one captureForSession writes as
   // the testing half opens, and every run that reaches a verdict opens so.
   const src = read('src/services/visuals.js');
-  assert.match(src, /await setChecksPending\(pool, session\.id, commitHash, 'testing', trigger\)/);
+  assert.match(src, /setChecksPending\(pool, session\.id, commitHash, 'testing', trigger\)/);
+  // A preview machine's run stamps the same clock as its testing half opens.
+  assert.match(src, /function setChecksPhase[\s\S]*?checks_checked_at = CASE WHEN \$3::text = 'testing' THEN NOW\(\) ELSE checks_checked_at END/);
   // An error verdict has no run to cost — it still clears the snapshot, and
   // so does the next run's start (tests/set-checks-pending.test.js).
   await visuals.storeChecks(pool, 7, 'abc', { state: 'error', results: [] }, 'boom');
