@@ -771,6 +771,19 @@ test('with app delivery on, the reset asks it for the deploy', async () => {
   } finally { delivery.on = false; }
 });
 
+test('a deploy request that cannot be recorded does not turn a done reset into an error', async () => {
+  delivery.on = true;
+  const real = require.cache[require.resolve('../src/workflow/platform.ts')].exports.requestDeploy;
+  require.cache[require.resolve('../src/workflow/platform.ts')].exports.requestDeploy = async () => { throw new Error('database down'); };
+  try {
+    const r = await post('/api/apps/demo-app/demo/reset', {});
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+  } finally {
+    delivery.on = false;
+    require.cache[require.resolve('../src/workflow/platform.ts')].exports.requestDeploy = real;
+  }
+});
+
 test('when nothing merged, main is already at the base and nothing rebuilds', async () => {
   state.mainMoves = false;
   const r = await post('/api/apps/demo-app/demo/reset', {});

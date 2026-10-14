@@ -645,9 +645,12 @@ export function mergeFollowups(deps: MachineDeps): Machine<MFState, Facts> {
           guard: (s) => ((s as Going).data.role === 'merge' && !(s as Going).data.selfHosted ? ok() : reject('carrier_delivers')),
           to: (s) => {
             const d = { ...(s as Going).data, deliveries: (s as Going).data.deliveries + 1, failure: null };
-            // Asked again where it was asked first.
-            return d.delivery ? outcome('delivering', d, { messages: [deliveryRequest(d, null)] })
-              : outcome('delivering', d, { work: [deliverWork(d, null)] });
+            // Asked of app-delivery while it runs here; otherwise (its flag
+            // turned off since) the merge's own deploy again.
+            if (d.delivery && viaDelivery()) return outcome('delivering', d, { messages: [deliveryRequest(d, null)] });
+            const { delivery: _, ...own } = d;
+            void _;
+            return outcome('delivering', own, { work: [deliverWork(own, null)] });
           },
         },
         RetryFollowup: retryFollowup,

@@ -300,5 +300,9 @@ test('with app delivery on, drift asks it for the deploy, from durable state: on
     clock += 30 * 60 * 1000;
     assert.equal((await poller.checkAndRedeployOne(config, pool, app)).status, 'deploy_requested');
     assert.deepEqual(delivery.requested.map((r) => r[1]), ['drift', 'check_updates', 'drift']);
+
+    // A failure that names no commit (a clone that failed) waits the same.
+    delivery.row = { deploy_state: null, last_failure: { sha: null, at: new Date(clock - 60 * 1000).toISOString() } };
+    assert.equal((await poller.checkAndRedeployOne(config, pool, app)).status, 'backing_off');
   } finally { delivery.on = false; }
 });

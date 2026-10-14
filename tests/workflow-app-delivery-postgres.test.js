@@ -219,7 +219,7 @@ test('app-delivery machine against the full PostgreSQL schema', { timeout: 12000
     assert.deepEqual(await refusal(appKey(999999), self.id), ['rejected', 'key_mismatch'], 'one instance per app, under its own key');
   });
 
-  await t.test('merges waiting on their own work path hear any deploy that succeeds', async () => {
+  await t.test('merges still waiting to go live hear any deploy that succeeds', async () => {
     reset();
     const a = await app();
     // merge-followups instances as its pipeline writes them.
@@ -240,7 +240,88 @@ test('app-delivery machine against the full PostgreSQL schema', { timeout: 12000
     await settle();
     assert.deepEqual(await told('merge-followups', 'session:77'), [{ type: 'Deployed', payload: { sha: SHA('2') } }]);
     assert.deepEqual(await told('merge-followups', 'session:78'), [], 'a live one waits for nothing');
-    assert.deepEqual(await told('merge-followups', 'session:79'), [], 'one that asked here hears its own answer instead');
+    assert.deepEqual(await told('merge-followups', 'session:79'), [{ type: 'Deployed', payload: { sha: SHA('2') } }],
+      'one that asked here before, and this deploy did not answer, hears it too');
+  });
+
+  await t.test('a merge whose own answer did not make it live hears every later deploy', async () => {
+    reset();
+    const a = await app();
+    // merge-followups instances as its pipeline writes them: one that asked
+    // here, answered by an earlier deploy, still waiting (GitHub had not
+    // said the build contains it).
+    const c = await pool.connect();
+    try {
+      await c.query('BEGIN');
+      await c.query(`SET LOCAL app.wf_writer = 'transition'`);
+      await c.query(`INSERT INTO wf_instances (machine, key, app_id, state, data, version, machine_version)
+        VALUES ('merge-followups', 'session:88', $1, 'delivering', $2, 1, 3)`,
+      [a.id, JSON.stringify({ role: 'merge', delivery: 'app-delivery' })]);
+      await c.query('COMMIT');
+    } finally { c.release(); }
+    const asking = { machine: 'merge-followups', key: 'session:89' };
+    deploys.next.push({ sha: SHA('3') });
+    await ask(a, { reason: 'merge', from: asking, revision: SHA('3') });
+    await settle();
+    assert.deepEqual(await told('merge-followups', 'session:88'), [{ type: 'Deployed', payload: { sha: SHA('3') } }]);
+    assert.deepEqual((await told('merge-followups', 'session:89')).map((m) => m.type), ['Delivered'],
+      'the merge this deploy served hears its answer, not the fan-out too');
+  });
+
+  await t.test('a deploy of the commit already running keeps its pull request on the row and the pill', async () => {
+    reset();
+    const a = await app({ mainSha: SHA('4') });
+    await pool.query('UPDATE apps SET main_pr_number = 12 WHERE id = $1', [a.id]);
+    deploys.next.push({ sha: SHA('4') }, { sha: SHA('5') });
+    await ask(a, { reason: 'redeploy' });
+    await settle();
+    assert.equal((await row(a)).main_pr_number, 12, 'the same commit: still that pull request\'s');
+    assert.ok(pushed.some((p) => p.data.type === 'app_version_changed' && p.data.appSlug === a.slug && p.data.prNumber === 12));
+    await ask(a, { reason: 'drift' });
+    await settle();
+    assert.equal((await row(a)).main_pr_number, null, 'a commit no merge here named');
+  });
+
+  await t.test('one more deploy right after another says it starts from the build that just deployed', async () => {
+    reset();
+    const a = await app({ mainSha: SHA('6') });
+    await ask(a);
+    await rt.drain();
+    await ask(a, { reason: 'drift' });
+    deploys.next.push({ sha: SHA('7') }, { sha: SHA('8') });
+    await settle();
+    const starts = statusPushes(a).filter((p) => p.data.deploying === true).map((p) => p.data.fromSha);
+    assert.deepEqual(starts, [SHA('6'), SHA('7')]);
+  });
+
+  await t.test('a request another machine cannot have served is answered, not refused', async () => {
+    reset();
+    const bare = await app({ repo: false });
+    await ask(bare, { reason: 'merge', from: { machine: 'merge-followups', key: 'session:90' } });
+    await rt.drain();
+    assert.deepEqual(await told('merge-followups', 'session:90'),
+      [{ type: 'DeliveryFailed', payload: { message: 'the app has no repository to deploy from', missingSecrets: null } }]);
+    assert.equal(deploys.calls.length, 0);
+  });
+
+  await t.test('an admin ends a deploy that never answers: whoever asked is told, and its late result is stale', async () => {
+    reset();
+    const a = await app();
+    await ask(a, { reason: 'merge', from: { machine: 'merge-followups', key: 'session:91' } });
+    await rt.drain();
+    assert.equal((await inst(a)).state, 'deploying');
+    await rt.append(machine, appKey(a.id), { type: 'EndDeploy', payload: {} },
+      { requestKey: `t-${++rk}`, appId: a.id, source: { kind: 'admin' } });
+    await rt.drain();
+    assert.equal((await inst(a)).state, 'idle');
+    assert.equal((await row(a)).deploy_state, null);
+    assert.deepEqual((await told('merge-followups', 'session:91')).map((m) => m.type), ['DeliveryFailed']);
+    await settle();   // the deploy it ended still runs, and answers
+    assert.equal((await inst(a)).state, 'idle', 'its result belongs to no deploy now');
+    const forged = await rt.append(machine, appKey(a.id), { type: 'EndDeploy', payload: {} },
+      { requestKey: `t-${++rk}`, appId: a.id, source: { kind: 'system' } });
+    await rt.drain();
+    assert.equal((await pool.query('SELECT reason FROM wf_events WHERE id = $1', [forged])).rows[0].reason, 'admin_only');
   });
 
   await t.test('only the machine writes the deploying state', async () => {

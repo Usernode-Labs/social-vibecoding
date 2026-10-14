@@ -1921,15 +1921,15 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
     try {
       const appVersion = require('../services/app-version');
       const appDeployStatus = require('../services/app-deploy-status');
+      // With the deploy app delivery runs, if any (deploy_state).
       const gated = await appAccess.getAppForUser(
-        pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS
+        pool, req.params.slug, req.user, 'view',
+        `${appAccess.ACCESS_COLUMNS}, deploy_state, deploy_started_at, deploy_from_sha`
       );
       if (!gated) return res.status(404).json({ error: 'App not found' });
       const info = await appVersion.getAppVersion(pool, req.params.slug);
       if (!info) return res.status(404).json({ error: 'App not found' });
-      const { rows: [deployRow] } = await pool.query(
-        'SELECT deploy_state, deploy_started_at, deploy_from_sha FROM apps WHERE slug = $1', [req.params.slug]);
-      res.json({ ...info, deployProgress: appDeployStatus.read(req.params.slug, deployRow || null) });
+      res.json({ ...info, deployProgress: appDeployStatus.read(req.params.slug, gated) });
     } catch (err) {
       log.error('apps', 'Failed to get app version', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });

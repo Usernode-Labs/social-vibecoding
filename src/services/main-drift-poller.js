@@ -338,7 +338,9 @@ async function requestDriftDeploy(config, pool, app, remoteSha, { manual, workfl
   if (row?.deploy_state === 'deploying') return { status: 'in_flight', slug: app.slug };
   const failure = row?.last_failure && typeof row.last_failure === 'object' ? row.last_failure : null;
   const failedAt = failure?.at ? Date.parse(failure.at) : NaN;
-  if (!manual && failure?.sha === remoteSha && Number.isFinite(failedAt)
+  // A failure that names no commit (a clone that failed, a rollover's
+  // respawn) counts as this commit's: what failed is what main is now.
+  if (!manual && failure && (failure.sha == null || failure.sha === remoteSha) && Number.isFinite(failedAt)
       && now() - failedAt < DRIFT_RETRY_AFTER_FAILURE_MS) {
     return { status: 'backing_off', slug: app.slug, from: app.main_sha, attempted: remoteSha,
       retryInMs: DRIFT_RETRY_AFTER_FAILURE_MS - (now() - failedAt) };

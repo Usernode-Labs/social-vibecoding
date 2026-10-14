@@ -380,6 +380,21 @@ test('governance-proposal machine against the full PostgreSQL schema', { timeout
       await rt.drain();
       const done = Object.values(await followup()).filter((f) => f.kind === 'app-delivery').map((f) => f.status);
       assert.deepEqual(done, ['retried', 'done']);
+      // Another secret change whose redeploy failed, retried with app delivery
+      // turned off since: the rebuild is this machine's own work again.
+      const sec2 = await issue(a, author, 'secret_change', { key: 'API_KEY2', action: 'set', valueEnc: secrets.encrypt('w', DATA_KEY) });
+      await file(sec2);
+      await vote(sec2, voter, 'up');
+      await rt.append(machine, issueKey(sec2.id), { type: 'DeliveryFailed', payload: { message: 'the build failed' } },
+        { requestKey: `t-${++rk}`, appId: a.id, source: { kind: 'message', from: { machine: 'app-delivery', key: `app:${a.id}`, eventId: 1 } } });
+      await rt.drain();
+      delivery.on = false;
+      const before = (await asked()).length;
+      await send(sec2, 'RetryFollowup', { workKey: 'rebuild' }, { source: { kind: 'admin' } });
+      await rt.drain();
+      assert.equal((await asked()).length, before, 'nothing asked of a machine that no longer runs');
+      assert.equal((await pool.query(`SELECT count(*)::int AS n FROM wf_work WHERE key = $1 AND kind = 'app.rebuildProduction'`,
+        [issueKey(sec2.id)])).rows[0].n, 1);
     } finally { delivery.on = false; }
   });
 

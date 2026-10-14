@@ -52,6 +52,8 @@ function freshFixtures() {
     rebuildError: null,
     serializeCalls: [],
     lockCalls: [],
+    // What a row reads under its locks, when a deploy changed it meanwhile.
+    current: new Map(),
     // The app-delivery machine's flag, and what was asked of it.
     delivery: false,
     requested: [],
@@ -73,6 +75,11 @@ const fakePool = {
   async query(sql, params = []) {
     fx.queries.push({ sql, params });
     if (/count\(\*\)/.test(sql)) return { rows: [{ n: fx.apps.length }] };
+    // One app's row again, read under its locks: as it is now (fx.current).
+    if (/FROM apps/.test(sql) && /WHERE id = \$1/.test(sql)) {
+      const row = fx.apps.find((a) => a.id === params[0]);
+      return { rows: row ? [{ ...row, ...(fx.current.get(row.id) || {}) }] : [] };
+    }
     if (/FROM apps/.test(sql) && /^\s*SELECT/.test(sql)) return { rows: fx.apps };
     return { rows: [], rowCount: fx.updateRowCount };
   },
@@ -312,6 +319,25 @@ test('on Kubernetes an app with an image is respawned from it, not rebuilt (its 
   assert.match(fx.queries.find((q) => /SELECT id, slug/.test(q.sql)).sql, /image_ref/);
   assert.deepEqual(outcomes(job), { 'kube-app': 'rolled' });
   assert.equal(fx.rebuildCalls.length, 0);
+});
+
+test('a deploy that ran while the job waited is not undone: the respawn runs the image the row has now', async () => {
+  const rollover = setup();
+  fx.apps = [appRow(18, 'redeployed', { image_ref: 'registry/redeployed@sha256:old' })];
+  fx.current.set(18, { image_ref: 'registry/redeployed@sha256:new', main_sha: 'newsha' });
+  const ran = [];
+  require.cache[ids.respawn].exports.runExistingImage = async (_config, app) => { ran.push(app.image_ref); return 'cid'; };
+  await runSweep(rollover, {}, { appRuntime: 'kubernetes' });
+  assert.deepEqual(ran, ['registry/redeployed@sha256:new'], 'not the one the job saw when it started');
+});
+
+test('an app that started deploying while the job waited is skipped', async () => {
+  const rollover = setup();
+  fx.apps = [appRow(19, 'late-deploy')];
+  fx.current.set(19, { deploy_state: 'deploying' });
+  const job = await runSweep(rollover);
+  assert.deepEqual(outcomes(job), { 'late-deploy': 'skipped_deploying' });
+  assert.equal(fx.respawnCalls.length, 0);
 });
 
 test('with app delivery on, a missing image asks it for the rebuild', async () => {

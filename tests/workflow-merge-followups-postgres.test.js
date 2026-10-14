@@ -634,6 +634,22 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
     } finally { delivery.on = false; }
   });
 
+  await t.test('a retry after app delivery was turned off is the merge\'s own deploy again', async () => {
+    delivery.on = true;
+    const a = await app();
+    const s = await proposal(a);
+    try {
+      await merge(s);
+      await deliveryAnswer(s, 'DeliveryFailed', { message: 'the build failed', missingSecrets: null });
+      await settle();
+    } finally { delivery.on = false; }
+    await send(s, 'RetryDelivery', {}, { kind: 'admin' });
+    await settle();
+    assert.equal((await asked(a)).length, 1, 'nothing asked of a machine that no longer runs');
+    assert.ok((await workOf(s)).some((w) => w.kind === WORK.deliver), 'its own deploy');
+    assert.equal((await instance(s)).data.delivery, undefined);
+  });
+
   await t.test('an answer from anyone but app-delivery, or to a merge that did not ask it, is refused', async () => {
     const a = await app();
     const s = await proposal(a);

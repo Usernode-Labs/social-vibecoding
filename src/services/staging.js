@@ -1008,13 +1008,16 @@ async function rebuildProduction(config, app, options = {}) {
 }
 
 // The same deploy for the app-delivery workflow machine
-// (src/workflow/app-delivery/), which owns what the wrapper above does in
-// this process's memory: one deploy at a time per app (its instance), the
-// "deploying" state (apps.deploy_state, with its pushes) and who hears the
-// result (its replies). Only the cross-process lock stays.
+// (src/workflow/app-delivery/), which owns the "deploying" state
+// (apps.deploy_state, with its pushes) and who hears the result (its
+// replies): no in-memory status, no fan-out.
 async function deployProduction(config, app, options = {}) {
-  return withResourceUse(config, PRODUCTION_BUILD_LOCK, app.slug,
-    () => rebuildProductionInner(config, app, { ...options, track: false }));
+  // The machine runs one deploy of an app at a time; the chain still orders
+  // it against the old flows that deploy in this process (rollover's
+  // respawn, a work item recorded before the flag), which is all that
+  // orders anything on Docker, where the lock is not taken.
+  return serializeRebuild(app.slug, () => withResourceUse(config, PRODUCTION_BUILD_LOCK, app.slug,
+    () => rebuildProductionInner(config, app, { ...options, track: false })));
 }
 
 // Whether an offered image is of the tree that was just cloned, and so the

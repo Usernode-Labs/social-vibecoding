@@ -76,12 +76,21 @@ const ELIGIBLE_WHERE = "status = 'running' AND self_hosted IS NOT TRUE";
 
 // slug -> row shape runExistingImage needs (db_password, manifest_snapshot)
 // plus what the fallback and the UI need.
+const ELIGIBLE_COLUMNS = `id, slug, name, db_password, manifest_snapshot, repo_url,
+         self_hosted, main_sha, image_ref, deploy_state, deploy_started_at, deploy_from_sha`;
 const SELECT_ELIGIBLE = `
-  SELECT id, slug, name, db_password, manifest_snapshot, repo_url,
-         self_hosted, main_sha, image_ref, deploy_state, deploy_started_at, deploy_from_sha
+  SELECT ${ELIGIBLE_COLUMNS}
     FROM apps
    WHERE ${ELIGIBLE_WHERE}
    ORDER BY id`;
+// The same row again, read once this app's turn holds the locks: a deploy
+// that ran while the job waited (a merge, Redeploy, the drift poller) may
+// have built a newer image, which the respawn must run rather than the one
+// the job saw when it started (on Kubernetes image_ref is a digest).
+const SELECT_ONE = `
+  SELECT ${ELIGIBLE_COLUMNS}
+    FROM apps
+   WHERE id = $1 AND ${ELIGIBLE_WHERE}`;
 
 // Per-app outcomes, in the spirit of app-heal.checkAndHealOne's documented
 // status enum:
@@ -385,6 +394,11 @@ async function rollOne(config, pool, app) {
   // rebuild in another process, as rebuildProduction takes it.
   const staging = require('./staging');
   return staging.serializeRebuild(app.slug, () => withResourceUse(config, PRODUCTION_BUILD_LOCK, app.slug, async () => {
+    const { rows: [current] } = await pool.query(SELECT_ONE, [app.id]);
+    if (!current) return { outcome: 'skipped_deleted' };
+    const now = appDeployStatus.read(current.slug, current);
+    if (now && now.deploying) return { outcome: 'skipped_deploying' };
+    app = current;
     // markStart/markEnd are the only emitters of app_redeploy_status, so
     // this is what makes the version pills spin during a rollover.
     appDeployStatus.markStart(app.slug, { fromSha: app.main_sha || null });

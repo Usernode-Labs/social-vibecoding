@@ -73,6 +73,11 @@ const optSha = (v: unknown, what: string) => {
 };
 
 const EVENTS = {
+  // An admin ends a deploy that never answers (a build or a lock that hangs,
+  // a result skipped in Admin → Workflows): read as a failure, so whoever
+  // asked is told and the app no longer reads deploying. A late result of
+  // that deploy is stale.
+  EndDeploy: () => ({}),
   DeployRequested: (p: any) => {
     if (typeof p?.reason !== 'string' || !p.reason.trim()) throw new Error('reason is required');
     return {
@@ -100,22 +105,50 @@ function options(covered: Request[]) {
 }
 
 // A deploy of everything recorded so far.
-function start(d: Data, f: Facts, ctx: TransitionContext, x: { messages?: MessageRequest[]; push?: Push[] } = {}): Outcome<DeliveryState> {
+// `fromSha`: what runs as it starts, when the facts read before a deploy
+// that just succeeded do not say (one more deploy right after it).
+function start(d: Data, f: Facts, ctx: TransitionContext,
+  x: { messages?: MessageRequest[]; push?: Push[]; fromSha?: string | null } = {}): Outcome<DeliveryState> {
   const covers = d.requests.map((r) => r.id);
   const n = d.attempts + 1;
-  const attempt: Attempt = { n, covers, startedAt: ctx.now.toISOString(), fromSha: f.app?.mainSha ?? null };
+  const fromSha = x.fromSha !== undefined ? x.fromSha : f.app?.mainSha ?? null;
+  const attempt: Attempt = { n, covers, startedAt: ctx.now.toISOString(), fromSha };
   const work: WorkRequest[] = [{ kind: WORK.deploy, key: `deploy:${n}`, input: { appId: d.appId, ...options(d.requests) } }];
   const push = [...(x.push || []), redeployStatus({ appSlug: d.appSlug, deploying: true, startedAt: attempt.startedAt, fromSha: attempt.fromSha })];
   return { next: { name: 'deploying', data: { ...d, attempts: n, attempt } }, work, messages: x.messages, push };
 }
 
+// What no deploy here can serve: the platform's own app is released by its
+// pipeline (merge-followups hears its release boot), and an app without a
+// repository has nothing to build.
+const UNSERVABLE = new Map([
+  ['no_app', 'the app no longer exists'],
+  ['self_hosted', 'the platform is released by its own pipeline'],
+  ['no_repo', 'the app has no repository to deploy from'],
+]);
+function unservable(f: Facts): string | null {
+  if (!f.app) return 'no_app';
+  if (f.app.selfHosted) return 'self_hosted';
+  if (!f.app.repoUrl) return 'no_repo';
+  return null;
+}
+const asker = (e: Event<any>): Asker | null =>
+  (e.source.kind === 'message' ? { machine: e.source.from.machine, key: e.source.from.key } : null);
+
 // Recorded, and served now if nothing is deploying.
 function requested(s: DeliveryState, e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<DeliveryState> {
   const p = e.payload;
   const d: Data = s.name === NONE
-    ? { appId: p.appId, appSlug: f.app!.slug, requests: [], nextId: 1, attempts: 0, attempt: null, last: null, failure: null }
+    ? { appId: p.appId, appSlug: f.app?.slug ?? '', requests: [], nextId: 1, attempts: 0, attempt: null, last: null, failure: null }
     : { ...(s as Going).data, appSlug: f.app?.slug ?? (s as Going).data.appSlug };
-  const from = e.source.kind === 'message' ? { machine: e.source.from.machine, key: e.source.from.key } : null;
+  const from = asker(e);
+  // Another machine waits for an answer: it hears it cannot be served (a
+  // refusal would leave it waiting). A route or a sweep is refused instead.
+  const cannot = unservable(f);
+  if (cannot) {
+    return { next: { name: s.name === 'deploying' ? 'deploying' : 'idle', data: d },
+      messages: [{ to: from!, event: { type: 'DeliveryFailed', payload: { message: UNSERVABLE.get(cannot)!, missingSecrets: null } } }] };
+  }
   const request: Request = { id: d.nextId, reason: p.reason, from, at: ctx.now.toISOString(), prNumber: p.prNumber,
     revision: p.revision, reuse: p.reuse, told: false };
   const next = { ...d, nextId: d.nextId + 1, requests: [...d.requests, request] };
@@ -138,17 +171,24 @@ function deployed(s: Going, e: Event<WorkResultPayload>, f: Facts, ctx: Transiti
   // Its pull request, when the commit that deployed is a merge's own.
   const prNumber = served.find((r) => r.revision && r.revision === sha)?.prNumber ?? null;
   const messages: MessageRequest[] = served.flatMap((r) => answer(r, 'Delivered', { sha }));
-  // Merges waiting for a deploy from before they asked here (decided on
-  // the work path, or by a process without this machine) hear it as any
-  // deploy was heard before (staging.rebuildProduction's productionDeployed).
-  if (sha) for (const key of f.waitingMerges) messages.push({ to: { machine: 'merge-followups', key }, event: { type: 'Deployed', payload: { sha } } });
+  // Every other merge of the app still waiting to go live hears it, as any
+  // deploy was heard before (staging.rebuildProduction's productionDeployed):
+  // one that decided on the work path, and one whose own answer did not
+  // make it live (GitHub did not say yet that the build contains it).
+  const answered = new Set(served.filter((r) => r.from?.machine === 'merge-followups').map((r) => r.from!.key));
+  if (sha) {
+    for (const key of f.waitingMerges) {
+      if (!answered.has(key)) messages.push({ to: { machine: 'merge-followups', key }, event: { type: 'Deployed', payload: { sha } } });
+    }
+  }
+  // The version pill's new build is pushed by the write, with the pull
+  // request the row keeps.
   const push: Push[] = [
     redeployStatus({ appSlug: d.appSlug, deploying: false, startedAt: d.attempt!.startedAt, fromSha: d.attempt!.fromSha, toSha: sha }),
-    appVersion({ appId: d.appId, appSlug: d.appSlug, sha, prNumber }),
   ];
   const next: Data = { ...d, requests: left, attempt: null, last: { sha, at: ctx.now.toISOString() }, failure: null };
-  const writes = [{ type: 'deployed', appId: d.appId, sha, prNumber }];
-  if (left.length) return { ...start(next, f, ctx, { messages, push }), writes };
+  const writes = [{ type: 'deployed', appId: d.appId, appSlug: d.appSlug, sha, prNumber }];
+  if (left.length) return { ...start(next, f, ctx, { messages, push, fromSha: sha ?? f.app?.mainSha ?? null }), writes };
   return { next: { name: 'idle', data: next }, writes, messages, push };
 }
 
@@ -156,9 +196,10 @@ function deployed(s: Going, e: Event<WorkResultPayload>, f: Facts, ctx: Transiti
 // asked is told once; what they asked for stays open, for the next deploy
 // that succeeds. A request with nobody to tell goes: the drift poller, an
 // admin or heal asks again.
-function failed(s: Going, e: Event<WorkResultPayload>, f: Facts, ctx: TransitionContext): Outcome<DeliveryState> {
+function failed(s: Going, e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<DeliveryState> {
   const d = s.data;
-  const result = (e.payload.result || {}) as { message?: string; missingSecrets?: string[] };
+  const result = (e.type === 'EndDeploy' ? { message: 'an admin ended the deploy' } : e.payload.result || {}) as
+    { message?: string; missingSecrets?: string[] };
   const message = result.message || e.payload.error?.message || 'the deploy failed';
   const missingSecrets = Array.isArray(result.missingSecrets) ? result.missingSecrets.map(String) : null;
   const covered = new Set(d.attempt!.covers);
@@ -185,7 +226,7 @@ const ofAttempt = (s: any, e: Event<WorkResultPayload>): Check =>
 // ── The machine ─────────────────────────────────────────────────────────
 
 export function appDelivery(): Machine<DeliveryState, Facts> {
-  const asker = (e: Event<any>): Check => {
+  const mayAsk = (e: Event<any>): Check => {
     if (e.source.kind === 'system' || e.source.kind === 'admin') return ok();
     if (e.source.kind === 'message' && ASKERS.has(e.source.from.machine)) return ok();
     return reject('internal_only');
@@ -193,12 +234,8 @@ export function appDelivery(): Machine<DeliveryState, Facts> {
   const request = {
     guard: (s: any, e: Event<any>, f: Facts, ctx: TransitionContext): Check => {
       if (ctx.key !== appKey(e.payload.appId)) return reject('key_mismatch');
-      if (!f.app) return reject('no_app');
-      // The platform's own app is released by its pipeline (merge-followups
-      // hears its release boot), never deployed here.
-      if (f.app.selfHosted) return reject('self_hosted');
-      if (!f.app.repoUrl) return reject('no_repo');
-      return ok();
+      const cannot = unservable(f);
+      return cannot && !asker(e) ? reject(cannot) : ok();
     },
     to: (s: any, e: Event<any>, f: Facts, ctx: TransitionContext) => requested(s, e, f, ctx),
   };
@@ -223,17 +260,22 @@ export function appDelivery(): Machine<DeliveryState, Facts> {
     decode: (row) => ({ name: row.state, data: row.data } as DeliveryState),
     facts: (tx, state, event) => readFacts(tx, state.name === NONE ? event.payload.appId : (state as Going).data.appId,
       { waitingMerges: event.type === 'WorkSucceeded' }),
-    authorize: { DeployRequested: asker },
+    authorize: {
+      DeployRequested: mayAsk,
+      EndDeploy: (e) => (e.source.kind === 'admin' ? ok() : reject('admin_only')),
+    },
     transitions: {
       [NONE]: { DeployRequested: request },
       idle: {
         DeployRequested: request,
+        EndDeploy: { ignore: 'not_deploying' },
         WorkSucceeded: noAttempt,
         WorkFailed: noAttempt,
         WorkExhausted: noAttempt,
       },
       deploying: {
         DeployRequested: request,
+        EndDeploy: { to: (s: any, e: Event<any>, f: Facts, ctx: TransitionContext) => failed(s, e, f, ctx) },
         WorkSucceeded: succeeded,
         WorkFailed: result(failed),
         WorkExhausted: result(failed),
@@ -241,12 +283,21 @@ export function appDelivery(): Machine<DeliveryState, Facts> {
     },
     writes: {
       // One writer and one shape for what a deploy leaves on the row
-      // (staging's deploy code writes the runtime's own columns).
-      deployed: async (tx, w) => tx.query(
-        `UPDATE apps SET main_sha = COALESCE($2, main_sha), main_pr_number = $3, last_deploy_at = NOW(),
-                status = CASE WHEN status IN ('awaiting_secrets', 'error') THEN 'running' ELSE status END
-          WHERE id = $1`,
-        [w.appId, w.sha, w.prNumber]),
+      // (staging's deploy code writes the runtime's own columns). The pull
+      // request is the merge's whose commit deployed, kept when the same
+      // commit was deployed again (a Redeploy, a secret change), and gone
+      // with a commit no merge here named. Then the version pill's new build.
+      deployed: async (tx, w, ctx) => {
+        const { rows: [r] } = await tx.query(
+          `UPDATE apps SET main_sha = COALESCE($2, main_sha),
+                  main_pr_number = CASE WHEN $3::int IS NOT NULL THEN $3::int
+                                        WHEN main_sha IS NOT DISTINCT FROM $2 THEN main_pr_number END,
+                  last_deploy_at = NOW(),
+                  status = CASE WHEN status IN ('awaiting_secrets', 'error') THEN 'running' ELSE status END
+            WHERE id = $1 RETURNING main_sha, main_pr_number`,
+          [w.appId, w.sha, w.prNumber]);
+        if (r) ctx.push(appVersion({ appId: w.appId, appSlug: w.appSlug, sha: r.main_sha || null, prNumber: r.main_pr_number ?? null }));
+      },
     },
     async project(tx, before, after) {
       if (after.name === NONE) return;

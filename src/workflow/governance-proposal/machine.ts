@@ -388,9 +388,15 @@ export function governanceProposal(deps: MachineDeps): Machine<GovState, Facts> 
         const prev = s.data.followups[e.payload.workKey] as Followup;
         const key = `${e.payload.workKey.replace(/~\d+$/, '')}~${ctx.version + 1}`;
         const followups = { ...s.data.followups, [e.payload.workKey]: { ...prev, status: 'retried' }, [key]: { ...prev, status: 'pending' } };
-        // A redeploy asked of app-delivery is asked again.
+        // A redeploy asked of app-delivery is asked again while it runs here;
+        // otherwise (its flag turned off since) the rebuild is this machine's work.
         if (prev.kind === DELIVERY_FOLLOWUP) {
-          return { next: { name: s.name, data: { ...s.data, followups } }, messages: [deliveryRequest(Number((prev.input as any).appId))] };
+          if (deps.delivery?.()) {
+            return { next: { name: s.name, data: { ...s.data, followups } }, messages: [deliveryRequest(Number((prev.input as any).appId))] };
+          }
+          const rebuild = { kind: 'app.rebuildProduction', input: prev.input, status: 'pending' as const };
+          return { next: { name: s.name, data: { ...s.data, followups: { ...followups, [key]: rebuild } } },
+            work: [{ kind: rebuild.kind, key, input: prev.input }] };
         }
         // The retry starts from the failed item's checkpoint: a close that
         // already commented does not comment again.

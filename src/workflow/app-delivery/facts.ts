@@ -4,9 +4,9 @@ import type { Tx } from '../kernel/index.ts';
 
 export interface Facts {
   app: { slug: string; selfHosted: boolean; repoUrl: string | null; mainSha: string | null } | null;
-  // Merges of this app waiting for a deploy that did not ask here: the ones
-  // merge-followups decided on its own work path (before this machine ran,
-  // or in a process without it). Read only when a deploy succeeded.
+  // Merges of this app still waiting to go live (delivering or
+  // deploy_failed), whichever way they asked. Read only when a deploy
+  // succeeded: those it did not answer itself hear it.
   waitingMerges: string[];
 }
 
@@ -18,7 +18,7 @@ export async function readFacts(tx: Tx, appId: number, { waitingMerges = false }
   const { rows } = await tx.query(
     `SELECT key FROM wf_instances
       WHERE machine = 'merge-followups' AND app_id = $1 AND state IN ('delivering', 'deploy_failed')
-        AND data->>'role' = 'merge' AND data->>'delivery' IS DISTINCT FROM 'app-delivery'
+        AND data->>'role' = 'merge'
       ORDER BY key`, [appId]);
   return { app, waitingMerges: rows.map((r: { key: string }) => r.key) };
 }

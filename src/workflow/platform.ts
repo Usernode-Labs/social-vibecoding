@@ -490,6 +490,7 @@ export async function requestDeploy(appId: number, reason: string): Promise<numb
 const ADMIN_EVENTS = new Map<string, ReadonlySet<string>>([
   [MACHINE, new Set(['Evaluate', 'AdminApply', 'RetryFollowup'])],
   [MERGE, new Set(['RetryDelivery', 'RetryFollowup'])],
+  [DELIVERY, new Set(['EndDeploy'])],
 ]);
 
 export function adminEvents(): Record<string, string[]> {
@@ -508,7 +509,7 @@ export async function adminEvent(
   if (!ADMIN_EVENTS.get(machineName)?.has(type)) throw new AdminActionError(400, `${type} is not an admin action on ${machineName}`);
   const body = type === 'AdminApply' ? { userId: admin.id, username: admin.username }
     : type === 'RetryFollowup' ? { workKey: String(payload.workKey || '') } : {};
-  const target = machineName === MACHINE ? machine : machineName === MERGE ? merges : null;
+  const target = machineName === MACHINE ? machine : machineName === MERGE ? merges : machineName === DELIVERY ? deliveries : null;
   if (!target) throw new AdminActionError(409, `${machineName} is not running here`);
   return runtime.appendAndWait(target, key, { type, payload: body },
     { requestKey: `admin:${randomUUID()}`, source: { kind: 'admin', name: 'console' }, actor: `user:${admin.id}` });

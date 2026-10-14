@@ -845,7 +845,10 @@ function demoModeRoutes(config) {
       if (main && main.moved && require('../workflow/platform.ts').deliveryEnabled()) {
         // A recorded request the app-delivery machine runs.
         redeploy = 'started';
-        await require('../workflow/platform.ts').requestDeploy(app.id, 'demo_reset');
+        // The reset is done by now: a request that cannot be recorded is
+        // logged, as the legacy rebuild's failure is, not this reset's error.
+        await require('../workflow/platform.ts').requestDeploy(app.id, 'demo_reset')
+          .catch((err) => log.warn('demo-mode', 'Deploy request after reset failed', { slug: app.slug, err: err.message }));
       } else if (main && main.moved) {
         redeploy = 'started';
         staging.rebuildProduction(config, app)
