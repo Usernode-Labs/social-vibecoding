@@ -339,9 +339,9 @@ async function requestDriftDeploy(config, pool, app, remoteSha, { manual, workfl
   const failure = row?.last_failure && typeof row.last_failure === 'object' ? row.last_failure : null;
   const failedAt = failure?.at ? Date.parse(failure.at) : NaN;
   if (!manual && failure?.sha === remoteSha && Number.isFinite(failedAt)
-      && Date.now() - failedAt < DRIFT_RETRY_AFTER_FAILURE_MS) {
+      && now() - failedAt < DRIFT_RETRY_AFTER_FAILURE_MS) {
     return { status: 'backing_off', slug: app.slug, from: app.main_sha, attempted: remoteSha,
-      retryInMs: DRIFT_RETRY_AFTER_FAILURE_MS - (Date.now() - failedAt) };
+      retryInMs: DRIFT_RETRY_AFTER_FAILURE_MS - (now() - failedAt) };
   }
   log.info('drift-poller', 'Detected main-branch drift; asking for a deploy', {
     appId: app.id, slug: app.slug, from: app.main_sha.slice(0, 7), to: remoteSha.slice(0, 7),

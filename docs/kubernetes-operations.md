@@ -672,6 +672,33 @@ An ordinary rolling change, safe in both directions.
 - **Merges the machine already accepted** still finish: the runtime keeps running while
   they have work left, and stops on a later boot once nothing is left.
 
+## Workflow app-delivery machine
+
+`platform.workflowAppDeliveryEnabled` (default `false`) becomes `WF_APP_DELIVERY_ENABLED`.
+It needs `platform.workflowMergeFollowupsEnabled`: without it the machine does not run,
+the boot logs why, and Admin → Workflows lists the flag under "Needs a person". When it
+runs, every production deploy of an app is a request to the app-delivery machine, run one
+at a time per app, and the version pill's "deploying" is `apps.deploy_state`, read by every
+Pod. `docs/workflows.md` explains the machine.
+
+### Activation and rollback
+
+An ordinary rolling change, safe in both directions.
+
+1. **Set the value** in the platform's values in the infra repository, once merge
+   follow-ups is on. Argo CD rolls the Deployment.
+2. **During the rollout overlap.** An old Pod still deploys the old way. The cross-process
+   build lock keeps its deploy and the machine's from running on one app at once.
+3. **Verify.**
+   - **The new Pod's log.** `Workflow runtime started` lists `app-delivery`.
+   - **Admin → Workflows.** The next deploy appears as `app-delivery / app:<id>`,
+     `deploying`, then `idle`, and its problems panel is empty.
+   - **The version pill** spins during the deploy after a page reload, too.
+
+**Rollback.** Set the value back to `false`. Callers deploy themselves again. Requests the
+machine already accepted still run: the runtime keeps running while it has a deploy or a
+request left, and stops on a later boot once nothing is left.
+
 ## Read-only inventory and logs
 
 These examples use the organization namespace and Deployment names. Substitute

@@ -59,7 +59,7 @@ test('workflow machines in a process of their own, and through its crash', { tim
   await procs.prepare(pool);
 
   // The flags, as config.js reads them; the child adds the database URL.
-  const flags = { dataEncryptionKey: DATA_KEY, wfGovernanceEnabled: true, wfMergeFollowupsEnabled: true,
+  const flags = { dataEncryptionKey: DATA_KEY, wfGovernanceEnabled: true, wfMergeFollowupsEnabled: true, wfAppDeliveryEnabled: true,
     wfPoolMax: 4, wfSlots: 2, wfOwnershipMode: 'raise',
     // Phone push on, to a fake Firebase (the fixture fakes its library).
     mobilePushEnabled: true, mobilePushEnvironment: 'production', firebaseProjectId: 'social-test',
@@ -378,17 +378,46 @@ test('workflow machines in a process of their own, and through its crash', { tim
       'the Workshop to hear it', 5000);
   });
 
-  await t.test('the version pill reads "deploying" while the workflow process deploys a merge', {
-    todo: 'app-deploy-status.js#_state lives in the process that deploys (list: services | uses src/services/staging.js:rebuildProduction); step 2 makes it durable',
-  }, async () => {
+  // ── App delivery: the deploy and its "deploying" state ──────────────
+  // A deploy here stops at its clone (`github.clone`), which then fails:
+  // what these show is where the state lives, not a deploy that succeeds.
+  const deployRow = async (a) => (await pool.query(
+    'SELECT deploy_state, deploy_started_at, deploy_from_sha FROM apps WHERE id = $1', [a.id])).rows[0];
+  const deploying = async (a) => require('../src/services/app-deploy-status').read(a.slug, await deployRow(a))?.deploying === true;
+
+  await t.test('the version pill reads "deploying" while the workflow process deploys a merge', async () => {
     const a = await app();
     const s = await proposal(a);
     await procs.arm(pool, 'github.clone');
     await platform.mergeConfirmed({ sessionId: s.id, appId: a.id, mergeSha: SHA('d'), force: false, tally: { yes: 1, required: 1, active: 1 } });
     try {
       await procs.reached(pool, 'github.clone');
-      const pill = require('../src/services/app-deploy-status').read(a.slug);
-      assert.ok(pill, 'the web side sees the deploy under way');
+      assert.equal(await deploying(a), true, 'the web side reads the deploy under way from the row');
+      await procs.until(() => heard.some((e) => e.k === 'global' && e.d?.type === 'app_redeploy_status' && e.d.appSlug === a.slug
+        && e.d.deploying === true), 'browsers to hear it started');
+    } finally {
+      await procs.release(pool, 'github.clone');
+    }
+  });
+
+  await t.test('app delivery, restarted: a deploy asked while the workflow process is down is run, and reads deploying through a crash', async () => {
+    const a = await app();
+    await workflow.kill();
+    // The admin's Redeploy, on the web side, with no workflow process running.
+    await platform.requestDeploy(a.id, 'redeploy');
+    await procs.arm(pool, 'github.clone');
+    await startWorkflow();
+    await procs.reached(pool, 'github.clone');
+    assert.equal(await deploying(a), true);
+    // Killed in the middle of the deploy: nothing says it ended.
+    await workflow.kill();
+    assert.equal(await deploying(a), true, 'still deploying with no process at all: the next one runs it again');
+    await procs.arm(pool, 'github.clone');
+    await procs.expireLeases(pool);
+    await startWorkflow();
+    try {
+      await procs.reached(pool, 'github.clone');
+      assert.equal(await ranIn('app-delivery', `app:${a.id}`, 'app.deploy'), 2, 'the deploy the crash interrupted, run by the next process');
     } finally {
       await procs.release(pool, 'github.clone');
     }

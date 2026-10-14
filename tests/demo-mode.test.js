@@ -121,6 +121,13 @@ stubModule('../src/services/staging', {
     return { containerId: 'cid', sha: 'b'.repeat(40) };
   },
 });
+// The app-delivery workflow machine: its flag in this process, and what was
+// asked of it.
+const delivery = { on: false, requested: [] };
+stubModule('../src/workflow/platform.ts', {
+  deliveryEnabled: () => delivery.on,
+  requestDeploy: async (appId, reason) => { delivery.requested.push([appId, reason]); return 1; },
+});
 stubModule('../src/services/ws', {
   sendSystemMessage: async (...args) => { record('sendSystemMessage')(...args); },
   pushSessionUpdate: record('pushSessionUpdate'),
@@ -749,6 +756,19 @@ test('reset takes the partner\'s proposals down, puts main back, and rebuilds', 
   await settle();
   assert.equal(calls.rebuildProduction[0][1].slug, 'demo-app');
   assert.equal(queriesLike('INSERT INTO app_activity').length, 1, 'standing refreshed for the next take');
+});
+
+test('with app delivery on, the reset asks it for the deploy', async () => {
+  delivery.on = true;
+  delivery.requested.length = 0;
+  try {
+    const r = await post('/api/apps/demo-app/demo/reset', {});
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.redeploy, 'started');
+    assert.deepEqual(delivery.requested, [[1, 'demo_reset']]);
+    await settle();
+    assert.equal(calls.rebuildProduction, undefined, 'no deploy of its own');
+  } finally { delivery.on = false; }
 });
 
 test('when nothing merged, main is already at the base and nothing rebuilds', async () => {

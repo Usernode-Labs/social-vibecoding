@@ -23,6 +23,7 @@ const ids = {
   staging: require.resolve('../src/services/staging'),
   ws: require.resolve('../src/services/ws'),
   conflictResolver: require.resolve('../src/services/conflict-resolver'),
+  platform: require.resolve('../src/workflow/platform.ts'),
 };
 
 const logged = [];
@@ -68,11 +69,18 @@ stub(ids.staging, {
 });
 stub(ids.ws, { broadcastGlobal: () => {} });
 stub(ids.conflictResolver, { checkAndResolveConflicts: async () => {} });
+// The app-delivery machine: its flag here, and what was asked of it.
+const delivery = { on: false, requested: [], row: { deploy_state: null, last_failure: null } };
+stub(ids.platform, {
+  deliveryEnabled: () => delivery.on,
+  requestDeploy: async (appId, reason) => { delivery.requested.push([appId, reason]); return 1; },
+});
 
 const queries = [];
 const pool = {
   query: async (sql, params) => {
     queries.push({ sql: String(sql), params });
+    if (/SELECT deploy_state, last_failure FROM apps/.test(String(sql))) return { rows: [delivery.row], rowCount: 1 };
     return { rows: [], rowCount: 1 };
   },
 };
@@ -267,4 +275,30 @@ test('the failure log line says how many times and when it will try again', asyn
   assert.equal(line[3].failures, 1);
   assert.equal(line[3].retryInMs, POLL_INTERVAL_MS);
   assert.equal(line[3].attempted, RED.slice(0, 7));
+});
+
+test('with app delivery on, drift asks it for the deploy, from durable state: once while it runs, again after a failure has waited', async () => {
+  reset();
+  delivery.on = true;
+  try {
+    delivery.requested.length = 0;
+    delivery.row = { deploy_state: null, last_failure: null };
+    const asked = await poller.checkAndRedeployOne(config, pool, app);
+    assert.equal(asked.status, 'deploy_requested');
+    assert.deepEqual(delivery.requested, [[8, 'drift']]);
+    assert.equal(rebuilds.length, 0, 'no deploy of its own');
+    assert.ok(!queries.some((q) => /UPDATE apps/.test(q.sql)), 'the machine writes main_sha');
+
+    // While it deploys, in any process, nothing is asked again.
+    delivery.row = { deploy_state: 'deploying', last_failure: null };
+    assert.equal((await poller.checkAndRedeployOne(config, pool, app)).status, 'in_flight');
+
+    // The deploy of this commit failed a minute ago: wait, unless an admin asks.
+    delivery.row = { deploy_state: null, last_failure: { sha: RED, at: new Date(clock - 60 * 1000).toISOString() } };
+    assert.equal((await poller.checkAndRedeployOne(config, pool, app)).status, 'backing_off');
+    assert.equal((await poller.checkAndRedeployOne(config, pool, app, { manual: true })).status, 'deploy_requested');
+    clock += 30 * 60 * 1000;
+    assert.equal((await poller.checkAndRedeployOne(config, pool, app)).status, 'deploy_requested');
+    assert.deepEqual(delivery.requested.map((r) => r[1]), ['drift', 'check_updates', 'drift']);
+  } finally { delivery.on = false; }
 });

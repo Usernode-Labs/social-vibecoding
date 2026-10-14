@@ -95,7 +95,9 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
       return typeof r === 'function' ? r(input) : (r || { ok: true });
     },
   });
-  const machine = mergeFollowups({ dataKey: DATA_KEY, notifiers });
+  // Whether a merge asks app-delivery for its deploy (its flag, per process).
+  const delivery = { on: false };
+  const machine = mergeFollowups({ dataKey: DATA_KEY, notifiers, delivery: () => delivery.on });
   const rt = createRuntime({
     pool, machines: [machine], pollMs: 50, publish: async (q, list) => { pushed.push(...list); },
     services: Object.fromEntries(Object.values(WORK).map((k) => [k, fake(k)])),
@@ -580,5 +582,67 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
     assert.equal(await run('planned', { ago: 30 }), true, 'just made, about to be claimed');
     assert.equal(await run('planned', { ago: 3 * 60 }), false, 'a planned row nobody claimed will never start');
     assert.equal(await run('failed', { ago: 0 }), false, 'finished');
+  });
+
+  // ── With app delivery on: the deploy is asked of app-delivery ─────────
+  // Its answers are appended here as app-delivery's messages; the two
+  // machines together run in tests/workflow-processes-postgres.test.js.
+  const deliveryAnswer = (s, type, payload) => rt.append(machine, sessionKey(s.id), { type, payload },
+    { requestKey: `t-${++rk}`, appId: s.app_id, source: { kind: 'message', from: { machine: 'app-delivery', key: `app:${s.app_id}`, eventId: 1 } } });
+  const asked = async (a) => (await pool.query(
+    `SELECT payload, source FROM wf_events WHERE machine = 'app-delivery' AND key = $1 ORDER BY id`, [`app:${a.id}`])).rows;
+
+  await t.test('with app delivery on, a merge asks it for the deploy and goes live on its answer', async () => {
+    delivery.on = true;
+    try {
+      const a = await app();
+      const s = await proposal(a);
+      await merge(s);
+      assert.ok(!(await workOf(s)).some((w) => w.kind === WORK.deliver), 'no deploy of its own');
+      assert.ok(!(await workOf(s)).some((w) => w.kind === WORK.teardown), 'the preview waits for the answer');
+      const [req] = await asked(a);
+      assert.deepEqual(req.payload, { appId: a.id, reason: 'merge', prNumber: s.pr_number, revision: SHA('a'), reuse: null });
+      assert.equal(req.source.from.key, sessionKey(s.id), 'from this merge, which the answer comes back to');
+      assert.equal((await instance(s)).data.delivery, 'app-delivery');
+      await deliveryAnswer(s, 'Delivered', { sha: SHA('a') });
+      await settle();
+      assert.equal((await instance(s)).state, 'live');
+      assert.ok((await workOf(s)).some((w) => w.kind === WORK.teardown), 'its first answer lets the preview go');
+    } finally { delivery.on = false; }
+  });
+
+  await t.test('with app delivery on, a failed deploy is deploy_failed, and its later answer still makes it live', async () => {
+    delivery.on = true;
+    try {
+      const a = await app();
+      const s = await proposal(a);
+      await merge(s);
+      await deliveryAnswer(s, 'DeliveryFailed', { message: 'the build failed', missingSecrets: null });
+      await settle();
+      assert.equal((await instance(s)).state, 'deploy_failed');
+      assert.ok((await lines(s)).some((l) => /the build failed/.test(l.content)));
+      assert.ok((await workOf(s)).some((w) => w.kind === WORK.teardown));
+      // An admin's retry asks again, where it asked first.
+      await send(s, 'RetryDelivery', {}, { kind: 'admin' });
+      await settle();
+      assert.equal((await instance(s)).state, 'delivering');
+      assert.equal((await asked(a)).length, 2);
+      await deliveryAnswer(s, 'Delivered', { sha: SHA('b') });
+      await settle();
+      assert.ok((await workOf(s)).some((w) => w.kind === WORK.verify && w.input.sha === SHA('b')),
+        'a build that is not the merge commit is checked for it, as any deploy is');
+    } finally { delivery.on = false; }
+  });
+
+  await t.test('an answer from anyone but app-delivery, or to a merge that did not ask it, is refused', async () => {
+    const a = await app();
+    const s = await proposal(a);
+    await merge(s);
+    const id = await deliveryAnswer(s, 'Delivered', { sha: SHA('a') });
+    await rt.drain();
+    assert.deepEqual([(await outcome(id)).result, (await outcome(id)).reason], ['rejected', 'not_asked']);
+    const forged = await send(s, 'Delivered', { sha: SHA('a') });
+    await rt.drain();
+    assert.equal((await outcome(forged)).reason, 'internal_only');
   });
 });

@@ -91,7 +91,9 @@ test('governance-proposal machine against the full PostgreSQL schema', { timeout
       return work.result[kind] || { ok: true };
     },
   });
-  const machine = governanceProposal({ dataKey: DATA_KEY, notifiers });
+  // Whether a secret change asks app-delivery for its redeploy (its flag, per process).
+  const delivery = { on: false };
+  const machine = governanceProposal({ dataKey: DATA_KEY, notifiers, delivery: () => delivery.on });
   // What browsers hear: published in the transition's transaction.
   const pushed = [];
   const rt = createRuntime({
@@ -344,6 +346,41 @@ test('governance-proposal machine against the full PostgreSQL schema', { timeout
     await vote(i, lifeguard, 'up');
     assert.equal((await inst(i)).state, 'applied');
     assert.equal((await pool.query('SELECT name FROM apps WHERE id = $1', [a.id])).rows[0].name, 'By the rules');
+  });
+
+  await t.test('with app delivery on, a secret change asks it for the redeploy and records its answer', async () => {
+    delivery.on = true;
+    try {
+      const [author, voter] = [await user(), await user()];
+      const a = await app();
+      const sec = await issue(a, author, 'secret_change', { key: 'API_KEY', action: 'set', valueEnc: secrets.encrypt('v', DATA_KEY) });
+      await file(sec);
+      await vote(sec, voter, 'up');
+      assert.equal((await inst(sec)).state, 'applied');
+      assert.equal((await pool.query(`SELECT count(*)::int AS n FROM wf_work WHERE key = $1 AND kind = 'app.rebuildProduction'`,
+        [issueKey(sec.id)])).rows[0].n, 0, 'no rebuild of its own');
+      const asked = async () => (await pool.query(
+        `SELECT payload, source FROM wf_events WHERE machine = 'app-delivery' AND key = $1 ORDER BY id`, [`app:${a.id}`])).rows;
+      const [req] = await asked();
+      assert.deepEqual(req.payload, { appId: a.id, reason: 'secret_change' });
+      assert.equal(req.source.from.key, issueKey(sec.id));
+      const followup = async () => (await inst(sec)).data.followups;
+      assert.deepEqual((await followup()).rebuild, { kind: 'app-delivery', input: { appId: a.id }, status: 'pending' });
+      // Its answers, as app-delivery's messages.
+      const answer = (type, payload) => rt.append(machine, issueKey(sec.id), { type, payload },
+        { requestKey: `t-${++rk}`, appId: a.id, source: { kind: 'message', from: { machine: 'app-delivery', key: `app:${a.id}`, eventId: 1 } } });
+      await answer('DeliveryFailed', { message: 'missing required secrets: OTHER' });
+      await rt.drain();
+      assert.deepEqual([(await followup()).rebuild.status, (await followup()).rebuild.error], ['failed', 'missing required secrets: OTHER']);
+      // The admin's retry asks again; a later deploy answers it.
+      await send(sec, 'RetryFollowup', { workKey: 'rebuild' }, { source: { kind: 'admin' } });
+      await rt.drain();
+      assert.equal((await asked()).length, 2);
+      await answer('Delivered', { sha: 'a'.repeat(40) });
+      await rt.drain();
+      const done = Object.values(await followup()).filter((f) => f.kind === 'app-delivery').map((f) => f.status);
+      assert.deepEqual(done, ['retried', 'done']);
+    } finally { delivery.on = false; }
   });
 
   await t.test('G9 refusals close the proposal with their reason instead of leaving it open', async () => {
