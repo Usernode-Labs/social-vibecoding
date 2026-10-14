@@ -112,10 +112,12 @@ Nothing in that chain tells open browser tabs about the new build either; the
 Pod being replaced does. The rolling update terminates the old Pod only after
 the new one has been Ready for `minReadySeconds`, and the `preStop` sleep has
 taken it out of the Service before `SIGTERM` arrives. On `SIGTERM`, `server.js`
-`cleanup()` closes the listener, then reads the Deployment's target revision
-through `services/deploy-status.js` and, if it is another build, pushes
+`cleanup()` reads the Deployment's target revision through
+`services/deploy-status.js` and, if it is another build, pushes
 `platform_version` to every open `/ws/events` socket
-(`ws.pushPlatformVersion`). Every events handshake carries the same message
+(`ws.pushPlatformVersion`), then closes the sockets so the tabs reconnect to
+the new Pod. The replaced Pod then finishes the work it started before it
+exits: see "Releases let work finish" below. Every events handshake carries the same message
 with the build the socket landed on. A tab prefetches the announced build into
 its service-worker cache and turns the Settings version row into the reload
 button (`handlePlatformVersion` in `public/js/app.js`); it never reloads
@@ -136,6 +138,56 @@ See the [platform chart](../deploy/helm/social-vibecoding-platform/README.md)
 for configuration and the `infra/prototype/bare-metal-platform` runbooks for
 cluster foundation and database operations. Read the installed image and Argo
 revision when comparing source behavior with a live failure.
+
+## Releases let work finish
+
+A platform Pod a release replaces keeps finishing the work it started rather
+than cutting it (`docs/plans/draining-releases.md`), once another platform
+process that records what it holds is serving (it waits up to a minute for
+one; without one, as after a rollback to a release from before this, it cuts
+over as it always did). On `SIGTERM` it:
+
+1. refuses anything new and marks its row in `platform_processes` `draining`;
+2. stops its leader work (the bot's loops, the bench lane, the eval runner,
+   every sweeper and timer), quiesces the workflow runtime (no slot, timer or
+   claim; its running work goes on) and resigns the leader lock, so the new
+   Pod is promoted within a poll;
+3. announces the new build to its tabs and closes their sockets;
+4. keeps its listener open (a shots worker calls the Pod that runs its run by
+   `POD_IP`) and waits until it holds nothing (`process_holds`), has no
+   registered background work, no running workflow work and no request still
+   answering;
+5. then does what shutdown always did: closes the listener, ends the Mayor's
+   turns still running, stops the workflow runtime (its work items are given
+   up to the next claim), marks what is left interrupted, hands back checks
+   runs, deletes its row and exits.
+
+It waits at most `platform.drainMinutes` (`PLATFORM_DRAIN_TIMEOUT_MS`), and
+ends early when `platform.drainingMax` (`PLATFORM_DRAINING_MAX`) newer Pods are
+draining too. The log says what it is still finishing every minute
+(`Still finishing work before exiting`), and how it ended: `Finished this
+process's work`, or `Drain deadline passed` / `Newer processes are draining
+too`, with what it handed over. What it hands over is adopted by the leader's
+`orphan-turn-sweep` and `orphan-headless-sweep` within a minute or two, and by
+the existing heartbeat sweeps for checks, shots runs, local-agent turns, the
+Mayor's turns, app creation and owed redeploys.
+
+The live processes and what each holds:
+
+```sql
+SELECT p.id, p.release, p.state, p.drain_deadline_at, h.kind, h.ref
+  FROM platform_processes p LEFT JOIN process_holds h ON h.process_id = p.id
+ WHERE p.heartbeat_at > NOW() - interval '45 seconds'
+ ORDER BY p.started_at, h.kind, h.ref;
+```
+
+A schema change has to stay compatible with the code of the release before it
+for as long as such a Pod drains, not only for the seconds of the overlap: the
+migration Job applies the new schema while it still runs. A node drain
+(`kubectl drain`) waits for a platform Pod's drain as well; pass
+`--grace-period` to cut it short. Each draining Pod keeps its database pools
+open until it exits, so with `drainingMax` 2 up to three Pods' pools are open
+at once.
 
 ## Shared app and preview TLS
 
@@ -671,6 +723,39 @@ An ordinary rolling change, safe in both directions.
 - **New merges** take the old tail again.
 - **Merges the machine already accepted** still finish: the runtime keeps running while
   they have work left, and stops on a later boot once nothing is left.
+
+## Workflow app-delivery machine
+
+`platform.workflowAppDeliveryEnabled` (default `false`) becomes `WF_APP_DELIVERY_ENABLED`.
+It needs `platform.workflowMergeFollowupsEnabled`: without it the machine does not run,
+the boot logs why, and Admin → Workflows lists the flag under "Needs a person". When it
+runs, every production deploy of an app is a request to the app-delivery machine, run one
+at a time per app, and the version pill's "deploying" is `apps.deploy_state`, read by every
+Pod. `docs/workflows.md` explains the machine.
+
+### Activation and rollback
+
+An ordinary rolling change, safe in both directions.
+
+1. **Set the value** in the platform's values in the infra repository, once merge
+   follow-ups is on. Argo CD rolls the Deployment.
+2. **During the rollout overlap.** An old Pod still deploys the old way. The cross-process
+   build lock keeps its deploy and the machine's from running on one app at once.
+3. **Verify.**
+   - **The new Pod's log.** `Workflow runtime started` lists `app-delivery`.
+   - **Admin → Workflows.** The next deploy appears as `app-delivery / app:<id>`,
+     `deploying`, then `idle`, and its problems panel is empty.
+   - **The version pill** spins during the deploy after a page reload, too.
+
+**Rollback.** Set the value back to `false`. Callers deploy themselves again. Requests the
+machine already accepted still run: the runtime keeps running while it has a deploy or a
+request left, and stops on a later boot once nothing is left. A retry of a merge's
+delivery or of a secret change's redeploy is then the machine's own deploy again.
+
+Rolling the **release** back (to code from before this machine) is different: the
+merge-followups and governance-proposal instances this release wrote are version 3, and
+older code leaves an instance a newer version wrote alone. With those flags on, such an
+instance waits until the release comes back.
 
 ## Read-only inventory and logs
 

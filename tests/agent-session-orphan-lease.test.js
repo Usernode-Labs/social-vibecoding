@@ -86,6 +86,16 @@ test('recovery hands back its change\'s conversations, and waits out a lease sti
   assert.deepEqual(calls.published.map(([key]) => key), [agentTurn.busKey(5), agentTurn.busKey(8), agentTurn.busKey(8)]);
 });
 
+test('a recovery that did not get to the end hands back without the green "finished" dot', async () => {
+  // resumeDetachedTurn passes finished:false when its recovery threw: the
+  // conversation has no wrap-up to read, so nothing new is "finished".
+  const { deps, calls } = fakes({ stale: new Set([5]), conversations: [{ agentSessionId: 5, userId: 7 }] });
+  await agentTurn.handBackAfterRecovery({ pool: {}, changeId: 4834, deps, retryMs: 10, finished: false });
+  assert.deepEqual(calls.released.map((r) => [r.agentSessionId, r.finished]), [[5, false]]);
+  assert.deepEqual(calls.published.map(([key, event]) => [key, event.type]), [[agentTurn.busKey(5), 'done']],
+    'the screen still settles: the run it follows is over');
+});
+
 test('a recovered build on the active change is the conversation\'s running dispatch', () => {
   const busy = new Set([50]);
   const deps = { isChangeBusy: (changeId) => busy.has(changeId) };

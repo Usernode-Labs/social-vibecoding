@@ -484,6 +484,151 @@ test('no rounds: the first build is only captured, for the side builds it is com
   assert.deepEqual(h.calls.progress, [], 'nothing says "reviewing"');
 });
 
+// ── A last look after the final fix (run seven, 14 Oct 2026) ─────────────
+//
+// Round 2 of run seven found one major issue left; its fix ran and went out
+// unseen, though it had worked. A review stopped by its round limit now takes
+// one last look at the final capture and records which of that round's
+// issues were fixed, and nothing else changes.
+
+test('a last look is due only after a round limit, on a final capture of the last fix that booted', async () => {
+  const limit = loopHarness({ verdicts: ['fix', 'fix'], maxRounds: 2 });
+  const out = await review.runReviewLoop(limit.opts);
+  assert.equal(out.stop, 'round_limit');
+  const due = review.finalLookDue(out);
+  assert.equal(due.round, 2);
+  assert.deepEqual(due.issues.map((i) => i.id), ['r2'], 'the last round\'s issues');
+  assert.equal(due.capture, out.finalCapture);
+  assert.equal(due.capture.shots[0].artifactId, 'a21', 'the capture after the last fix');
+  // The loop itself took no look and recorded none.
+  assert.deepEqual(limit.calls.review.map((r) => r.round), [1, 2]);
+  assert.equal(out.finalLook, undefined);
+  assert.deepEqual(review.summaryOf(out), { rounds: 2, stop: 'round_limit' });
+
+  // Not due: a review that shipped, ran out of time, or rolled a fix back.
+  const shipped = await review.runReviewLoop(loopHarness({ verdicts: ['fix', 'ship'] }).opts);
+  assert.equal(review.finalLookDue(shipped), null);
+  const timed = await review.runReviewLoop(loopHarness({ verdicts: ['fix', 'fix', 'fix'], budgetMinutes: 15, clockStep: 4 * 60_000 }).opts);
+  assert.equal(timed.stop, 'time_budget');
+  assert.equal(review.finalLookDue(timed), null);
+  const regressed = await review.runReviewLoop(loopHarness({ verdicts: ['fix'], maxRounds: 1, captures: { 1: 'down' } }).opts);
+  assert.equal(regressed.stop, 'regressed');
+  assert.equal(review.finalLookDue(regressed), null);
+  // A final capture that did not boot (its rollback failed), a fix that
+  // pushed nothing, a round with no issues, an unfinished or looked-at review.
+  const stuck = await review.runReviewLoop(loopHarness({ verdicts: ['fix'], maxRounds: 1, captures: { 1: 'down' }, rollback: 'fail' }).opts);
+  assert.equal(stuck.stop, 'round_limit');
+  assert.equal(review.finalLookDue(stuck), null);
+  const clone = () => JSON.parse(JSON.stringify(out));
+  const unpushed = clone();
+  unpushed.rounds[1].fix.sha = null;
+  assert.equal(review.finalLookDue(unpushed), null);
+  const noIssues = clone();
+  noIssues.rounds[1].issues = [];
+  assert.equal(review.finalLookDue(noIssues), null);
+  const failedFix = clone();
+  failedFix.rounds[1].fix.ok = false;
+  assert.equal(review.finalLookDue(failedFix), null);
+  assert.equal(review.finalLookDue({ ...clone(), state: 'reviewing' }), null);
+  assert.equal(review.finalLookDue({ ...clone(), finalLook: { fixed: [] } }), null);
+  assert.equal(review.finalLookDue(null), null);
+});
+
+test('a last look records which of the last round\'s issues were fixed, and a failed one records why', async () => {
+  const limit = loopHarness({ verdicts: ['fix', 'fix'], maxRounds: 2 });
+  const out = await review.runReviewLoop(limit.opts);
+  const due = review.finalLookDue({ ...out, rounds: [out.rounds[0], { ...out.rounds[1], issues: [issue('r2'), issue('check-home'), issue('r2b')] }] });
+  let clock = 5_000;
+  const asked = [];
+  const look = await review.takeFinalLook({
+    due,
+    now: () => { clock += 1000; return clock; },
+    review: async (args) => {
+      asked.push(args);
+      return {
+        ok: true, verdict: 'fix', issues: [issue('check-home', 'blocker')], previousFixed: ['r2', 'check-home', 'never-raised'],
+        costUsd: 0.21, ms: 38000, by: 'model',
+      };
+    },
+  });
+  assert.equal(asked.length, 1);
+  assert.equal(asked[0].round, 3, 'the reviewer is told it is the third look');
+  assert.deepEqual(asked[0].previousIssues.map((i) => i.id), ['r2', 'check-home', 'r2b']);
+  assert.equal(asked[0].capture, out.finalCapture);
+  assert.equal(asked[0].timeoutMs, review.FINAL_LOOK_TIMEOUT_MS);
+  assert.deepEqual(look.fixed, ['r2'], 'one it calls fixed but raises again is open');
+  assert.deepEqual(look.open, ['check-home', 'r2b']);
+  assert.equal(look.round, 2, 'the round whose fix it looked at');
+  assert.equal(look.verdict, 'fix');
+  assert.equal(look.costUsd, 0.21);
+  assert.equal(look.ms, 38000);
+  assert.equal(look.error, undefined);
+  assert.match(look.at, /^\d{4}-\d\d-\d\dT/);
+
+  const failed = await review.takeFinalLook({ due, review: async () => ({ ok: false, error: 'HTTP 502', costUsd: 0.05, ms: 100 }) });
+  assert.deepEqual([failed.fixed, failed.open, failed.error, failed.costUsd], [[], [], 'HTTP 502', 0.05]);
+  const threw = await review.takeFinalLook({ due, review: async () => { throw new Error('socket hang up'); } });
+  assert.equal(threw.error, 'socket hang up');
+  assert.deepEqual(threw.fixed, []);
+});
+
+function lookPool({ taken = false, row = true, updated = 1, fail = null } = {}) {
+  const queries = [];
+  return {
+    queries,
+    async query(sql, params) {
+      queries.push({ sql: String(sql), params });
+      if (fail && fail.test(String(sql))) throw new Error('connection reset');
+      if (/AS taken FROM homeroom_bot_runs/.test(sql)) return { rows: row ? [{ taken }] : [] };
+      if (/UPDATE homeroom_bot_runs SET review = jsonb_set/.test(sql)) return { rowCount: updated, rows: [] };
+      return { rows: [] };
+    },
+  };
+}
+
+test('a last look is written into the run\'s stored review once, beside its rounds, and never twice', async () => {
+  const out = await review.runReviewLoop(loopHarness({ verdicts: ['fix', 'fix'], maxRounds: 2 }).opts);
+  let reviewed = 0;
+  const reviewer = async () => {
+    reviewed += 1;
+    return { ok: true, verdict: 'ship', issues: [], previousFixed: ['r2'], costUsd: 0.2, ms: 3000, by: 'model' };
+  };
+  const pool = lookPool();
+  const look = await review.startFinalLook({ pool, runId: 900, state: out, review: reviewer });
+  assert.deepEqual([look.fixed, look.open, look.verdict], [['r2'], [], 'ship']);
+  assert.equal(reviewed, 1);
+  const [check, write] = pool.queries;
+  assert.deepEqual(check.params, [900, out.startedAt], 'the review it was taken for');
+  assert.match(write.sql, /SET review = jsonb_set\(review, '\{finalLook\}', \$3::jsonb\)/);
+  assert.match(write.sql, /review->>'state' = 'done'/);
+  assert.match(write.sql, /review->>'startedAt' = \$2/);
+  assert.match(write.sql, /review->'finalLook' IS NULL/, 'never over one already there');
+  assert.doesNotMatch(write.sql, /review_rounds|review_stop/, 'the rounds and the stop the listing shows are left as they are');
+  assert.deepEqual(write.params.slice(0, 2), [900, out.startedAt]);
+  assert.deepEqual(JSON.parse(write.params[2]).fixed, ['r2']);
+
+  // A restart that hands the same finished review back: the run has its look,
+  // so the reviewer is not called again.
+  const again = lookPool({ taken: true });
+  assert.equal(await review.startFinalLook({ pool: again, runId: 900, state: out, review: reviewer }), null);
+  assert.equal(reviewed, 1);
+  assert.equal(again.queries.length, 1);
+  // Nor for a run whose review is not this one, or a look that is not due.
+  assert.equal(await review.startFinalLook({ pool: lookPool({ row: false }), runId: 900, state: out, review: reviewer }), null);
+  assert.equal(review.startFinalLook({ pool, runId: 900, state: { ...out, stop: 'ship' }, review: reviewer }), null);
+  assert.equal(review.startFinalLook({ pool, runId: null, state: out, review: reviewer }), null, 'a bench trial takes none');
+  assert.equal(reviewed, 1);
+
+  // A reviewer that fails is recorded as the look's error; a write that fails
+  // is logged, and nothing throws.
+  const failing = lookPool();
+  const failed = await review.startFinalLook({ pool: failing, runId: 900, state: out, review: async () => ({ ok: false, error: 'HTTP 503', ms: 5 }) });
+  assert.equal(failed.error, 'HTTP 503');
+  assert.equal(JSON.parse(failing.queries[1].params[2]).error, 'HTTP 503');
+  assert.equal(await review.startFinalLook({ pool: lookPool({ fail: /jsonb_set/ }), runId: 900, state: out, review: reviewer }), null);
+  await review.finalLooksSettled();
+});
+
 test('a run keeps its review slim: where each screenshot is, never the checks\' samples or the boot log', () => {
   const state = { state: 'done', rounds: [{ verdict: 'fix' }, { verdict: null }], stop: 'round_limit', round0: { capture: captureOf(0) }, finalCapture: captureOf(1) };
   const slim = review.slimState(state);
@@ -501,7 +646,7 @@ test('a run keeps its review slim: where each screenshot is, never the checks\' 
 
 // ── One review, against a capture ────────────────────────────────────────
 
-test('reviewCapture: the eight most telling screenshots go to the reviewer as images; a malformed answer fails open', async () => {
+test('reviewCapture: the eight most telling screenshots go to the reviewer as images; a malformed answer, asked for twice, fails open', async () => {
   const seen = [];
   const deps = {
     readArtifacts: async (_pool, ids) => new Map(ids.map((id) => [id, { id, content_type: 'image/png', data: PNG }])),
@@ -518,16 +663,82 @@ test('reviewCapture: the eight most telling screenshots go to the reviewer as im
   assert.equal(images[0].image_url.url, `data:image/png;base64,${PNG.toString('base64')}`);
   assert.match(seen[0].content[1].text, /Phone 390×844, light look, populated/);
 
-  deps.callReviewer = async () => ({ ok: true, text: 'I think it is fine.', costUsd: 0.2, ms: 500 });
+  deps.callReviewer = async () => ({ ok: true, text: 'I think it is fine.', costUsd: 0.25, ms: 500 });
   const bad = await review.reviewCapture({ pool: {}, userId: 7, model: OPUS, capture: captureOf(0), round: 1, maxRounds: 3, deps });
   assert.equal(bad.ok, false);
-  assert.match(bad.error, /JSON/);
-  assert.equal(bad.costUsd, 0.2);
+  assert.match(bad.error, /^the reviewer did not answer with a JSON object \(asked twice\)$/);
+  assert.equal(bad.costUsd, 0.5, 'both calls');
+  assert.equal(bad.retry, 'the reviewer did not answer with a JSON object');
 
   deps.callReviewer = async () => { throw new Error('should not be called'); };
   const boot = await review.reviewCapture({ pool: {}, userId: 7, model: OPUS, capture: captureOf(0, { booted: false }), round: 1, maxRounds: 3, deps });
   assert.deepEqual({ ok: boot.ok, verdict: boot.verdict, by: boot.by, costUsd: boot.costUsd }, { ok: true, verdict: 'fix', by: 'platform', costUsd: 0 });
   assert.equal(boot.issues[0].id, 'app-does-not-boot');
+});
+
+// App bench run 193: one reply in 18 was not the JSON asked for, and that
+// first version went out unreviewed.
+test('reviewCapture: a reply that cannot be used is asked for once more, with the same screens, while the call\'s time allows', async () => {
+  const seen = [];
+  const replies = [];
+  const deps = {
+    readArtifacts: async (_pool, ids) => new Map(ids.map((id) => [id, { id, content_type: 'image/png', data: PNG }])),
+    callReviewer: async (args) => { seen.push(args); return replies.shift(); },
+  };
+  const ask = (extra = {}) => review.reviewCapture({
+    pool: {}, config: {}, userId: 7, model: OPUS, seed: 'REQ', spec: 'SPEC', capture: captureOf(0), round: 1, maxRounds: 3, deps, ...extra,
+  });
+
+  replies.push({ ok: true, text: 'Looks good to me overall.', costUsd: 0.25, ms: 9_000 },
+    { ok: true, text: '{"verdict":"fix","issues":[{"id":"gutter","severity":"major","screen":"desktop","problem":"rows run edge to edge","fix":"centre a column"}]}', costUsd: 0.5, ms: 21_000 });
+  const out = await ask({ timeoutMs: 240_000 });
+  assert.deepEqual({ ok: out.ok, verdict: out.verdict, ids: out.issues.map((i) => i.id), costUsd: out.costUsd, ms: out.ms, by: out.by },
+    { ok: true, verdict: 'fix', ids: ['gutter'], costUsd: 0.75, ms: 30_000, by: 'model' });
+  assert.equal(out.retry, 'the reviewer did not answer with a JSON object', 'what was wrong with the first reply');
+  assert.equal(seen.length, 2);
+  assert.deepEqual(seen[1].content.slice(0, -1), seen[0].content, 'the same request and screens');
+  assert.match(seen[1].content.at(-1).text, /^Your earlier answer to this message could not be used: the reviewer did not answer with a JSON object\. Answer again with ONLY the JSON object/);
+  assert.equal(seen[1].timeoutMs, 240_000 - 9_000, 'within what is left of the call\'s time');
+
+  // A first reply that works is the only call, and carries no retry.
+  seen.length = 0;
+  replies.push({ ok: true, text: '{"verdict":"ship","issues":[]}', costUsd: 0.25, ms: 9_000 });
+  const once = await ask({ timeoutMs: 240_000 });
+  assert.equal(seen.length, 1);
+  assert.equal(once.retry, undefined);
+
+  // Too little time left for another call: it fails open as before.
+  seen.length = 0;
+  replies.push({ ok: true, text: 'no', costUsd: 0.25, ms: 20_000 });
+  const late = await ask({ timeoutMs: 20_000 + review.MIN_REVIEW_RETRY_MS - 1 });
+  assert.equal(seen.length, 1);
+  assert.deepEqual({ ok: late.ok, error: late.error, retry: late.retry }, { ok: false, error: 'the reviewer did not answer with a JSON object', retry: undefined });
+
+  // A call that failed outright (no reply) is not asked again here.
+  seen.length = 0;
+  replies.push({ ok: false, error: 'HTTP 502', ms: 300 });
+  const failed = await ask({ timeoutMs: 240_000 });
+  assert.equal(seen.length, 1);
+  assert.deepEqual({ ok: failed.ok, error: failed.error }, { ok: false, error: 'HTTP 502' });
+
+  // The second call failing outright: its error, after both calls.
+  seen.length = 0;
+  replies.push({ ok: true, text: '```json\n{"verdict":"maybe"}\n```', costUsd: 0.25, ms: 9_000 }, { ok: false, error: 'HTTP 502', ms: 300 });
+  const second = await ask({ timeoutMs: 240_000 });
+  assert.equal(seen.length, 2);
+  assert.deepEqual({ ok: second.ok, error: second.error, retry: second.retry, costUsd: second.costUsd, ms: second.ms },
+    { ok: false, error: 'HTTP 502 (asked twice)', retry: 'the reviewer\'s verdict is neither ship nor fix', costUsd: 0.25, ms: 9_300 });
+});
+
+test('the loop records a round\'s retried reviewer call on the round', async () => {
+  const h = loopHarness({ verdicts: ['ship'] });
+  const reviewOf = h.opts.review;
+  h.opts.review = async (args) => ({ ...(await reviewOf(args)), retry: 'the reviewer did not answer with a JSON object' });
+  const out = await review.runReviewLoop(h.opts);
+  assert.equal(out.stop, 'ship');
+  assert.equal(out.rounds[0].reviewerRetry, 'the reviewer did not answer with a JSON object');
+  const plain = loopHarness({ verdicts: ['ship'] });
+  assert.equal((await review.runReviewLoop(plain.opts)).rounds[0].reviewerRetry, undefined);
 });
 
 test('callReviewer: the bot\'s own key, an image-reading model, and OpenRouter\'s own figure for the cost', async () => {
@@ -743,6 +954,31 @@ test('a reviewer that fails leaves the build exactly as it landed, and a build w
   assert.deepEqual(plain.calls.turns.filter((t) => t.harness).map((t) => t.harness), ['auto', 'auto'], 'every turn keeps the platform\'s CLI');
 });
 
+// Run 196: two first versions built, then their fix turns were refused by
+// OpenRouter for the key's spending limit, and their reviews stopped after
+// one round. The refusal is in the turn's last lines, not its exit code.
+test('a fix turn the provider refused keeps what it last did, so a review it cut short says why', async () => {
+  const h = buildHarness({ verdicts: ['fix'] });
+  const real = h.deps.worker.execInWorker;
+  let builds = 0;
+  h.deps.worker.execInWorker = async (id, opts) => {
+    if (opts.mode === 'build' && ++builds === 2) {
+      opts.onProgress?.('OpenRouter request #1: http_error after 0s, HTTP 403');
+      opts.onProgress?.('Failed to authenticate. API Error: 403 Key limit exceeded (weekly limit).');
+      return { agentHarness: 'claude', ccExit: 1, pushOk: false, ahead: 0, lastResultText: '' };
+    }
+    return real(id, opts);
+  };
+  const out = await live.buildAndPropose({ pool: h.pool, deps: h.deps, ...ARGS, review: { reviewer: REVIEWER, owner: { botRunId: 900 } } });
+  assert.equal(out.ok, true, out.error);
+  assert.equal(out.sha, 'sha1', 'what landed is kept');
+  assert.equal(out.review.stop, 'fix_failed');
+  assert.match(out.review.stopDetail, /^the fix turn failed \(the agent exited with code 1\); last activity: .*403 Key limit exceeded \(weekly limit\)/);
+  assert.equal(out.review.rounds[0].fix.error, out.review.stopDetail);
+  // The bench reads such a trial as the platform's fault (lane.js asPlatformFault).
+  assert.equal(require('../src/services/bench/lane').asPlatformFault({ status: 'ok', parsed: { review: out.review } }).status, 'infra_fail');
+});
+
 test('a review fix that broke the app is rolled back on the session branch before the first version goes on', async () => {
   // The fix turn lands sha2, whose capture does not boot.
   const h = buildHarness({ verdicts: ['fix'] });
@@ -766,6 +1002,59 @@ test('a review fix that broke the app is rolled back on the session branch befor
   assert.deepEqual(benchMoves, [['o', 'r', 'bench/r3-t44', 'a'.repeat(40)]]);
   await assert.rejects(live.rollbackReviewBranch({ github: {}, repo: { owner: 'o', repo: 'r' }, branchName: 'main', sha: 'a'.repeat(40) }), /will not move the branch main/);
   await assert.rejects(live.rollbackReviewBranch({ github: null, repo: { owner: 'o', repo: 'r' }, branchName: 'b1', sha: 'a'.repeat(40) }), /no GitHub client/);
+});
+
+test('run seven: a first version stopped by its round limit gets a last look that changes nothing and says nothing', async () => {
+  const h = buildHarness();
+  const reviewerCalls = [];
+  h.deps.reviewDeps.callReviewer = async ({ content }) => {
+    reviewerCalls.push(content[0].text);
+    if (reviewerCalls.length <= 2) {
+      return { ok: true, text: JSON.stringify({ verdict: 'fix', issues: [issue(`left-${reviewerCalls.length}`)] }), costUsd: 0.2, ms: 10 };
+    }
+    return { ok: true, text: JSON.stringify({ verdict: 'ship', issues: [], previousFixed: ['left-2'] }), costUsd: 0.15, ms: 12 };
+  };
+  const queries = [];
+  const pool = {
+    async query(sql, params) {
+      queries.push({ sql: String(sql), params });
+      if (/AS taken FROM homeroom_bot_runs/.test(sql)) return { rows: [{ taken: false }] };
+      if (/jsonb_set\(review, '\{finalLook\}'/.test(sql)) return { rowCount: 1, rows: [] };
+      return /INSERT INTO chat_sessions/.test(String(sql)) ? { rows: [{ id: 5001 }] } : { rows: [] };
+    },
+  };
+  const states = [];
+  const progress = [];
+  const out = await live.buildAndPropose({
+    pool, deps: h.deps, ...ARGS, harnessOf: live.recipeHarness, onProgress: (line) => progress.push(line),
+    review: { reviewer: { ...REVIEWER, maxRounds: 2 }, owner: { botRunId: 900 }, onState: async (s) => { states.push(s); } },
+  });
+  assert.equal(out.ok, true, out.error);
+  // The build went on as before: two rounds, the round limit, the last fix kept.
+  assert.equal(out.sha, 'sha3');
+  assert.equal(out.review.stop, 'round_limit');
+  assert.equal(out.review.rounds.length, 2);
+  assert.deepEqual(review.summaryOf(out.review), { rounds: 2, stop: 'round_limit' });
+  assert.ok(Math.abs(out.review.costUsd - (0.2 + 0.13 + 0.2 + 0.13)) < 1e-9, 'the review\'s own cost, without the look');
+  await review.finalLooksSettled();
+  // Then the look: the final capture, with round 2's issue as PREVIOUS ISSUES.
+  assert.equal(reviewerCalls.length, 3);
+  assert.match(reviewerCalls[2], /^ROUND 3 of 3\./);
+  assert.match(reviewerCalls[2], /==== PREVIOUS ISSUES ====[\s\S]*left-2/);
+  const write = queries.find((q) => /jsonb_set\(review, '\{finalLook\}'/.test(q.sql));
+  assert.equal(write.params[0], 900);
+  const look = JSON.parse(write.params[2]);
+  assert.deepEqual([look.round, look.fixed, look.open, look.verdict, look.costUsd], [2, ['left-2'], [], 'ship', 0.15]);
+  // Recorded only: no state the build saved has it or a third round, no
+  // stage or progress line names it, and the run's listing columns are
+  // never written by it.
+  assert.ok(states.every((s) => !s.finalLook && s.rounds.length <= 2));
+  assert.equal(out.review.finalLook, undefined);
+  const stages = queries.filter((q) => Array.isArray(q.params) && q.params[2] === 'first_version_stage')
+    .map((q) => JSON.parse(q.params[3])).filter((d) => d.stage === 'review_round');
+  assert.deepEqual(stages.map((d) => d.round), [1, 2], 'no "round 3 of 2"');
+  assert.ok(!progress.some((line) => /round 3/.test(line)), progress.join('\n'));
+  assert.ok(!queries.some((q) => /review_rounds|review_stop/.test(q.sql) && /finalLook/.test(q.sql)));
 });
 
 test('recipeHarness: an Anthropic model runs in Claude Code; everything else keeps the platform\'s choice', () => {

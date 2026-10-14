@@ -219,6 +219,10 @@ const CONSOLE_CREDENTIAL_COLUMNS = {
   // identity (user_oauth_identities), which is what "I cannot sign in with
   // Google" needs.
   sign_in_providers: ['secret_enc'],
+  // The read-only roles the leader sets up (services/debug-access.js): the
+  // prod-debug role's password, encrypted. Whether each setup succeeded,
+  // when and on which release stay readable.
+  platform_db_roles: ['secret_enc'],
   oauth_sign_in_states: ['state_hash', 'binder_hash', 'nonce', 'code_verifier'],
   oauth_signup_sessions: ['token_hash'],
   // A spent native sign-in's ID token, hashed: nothing to read in it, and

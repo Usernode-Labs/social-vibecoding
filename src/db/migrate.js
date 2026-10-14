@@ -223,6 +223,8 @@ async function migrate(config) {
   await seedStagingProfileCustomization(pool, config);
   await seedStagingPhoneFailures(pool);
   await seedStagingPlatformMail(pool);
+  // #4803: feedback is private in clones and GitHub writes are unavailable.
+  await require('../services/staging-feedback').seedStagingFeedback(pool, config);
   finishPhase('stagingFixturesMs');
   await sweepInterruptedDbExports(pool);
   await backfillEvents(pool);

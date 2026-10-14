@@ -102,7 +102,7 @@ function noAnswerReason(task) {
 
 /** The trial: a conversation of triage turns. See the header. */
 async function dmStage(ctx) {
-  const { snapshot, task, repo, trial, deps, pool, config, user, app, model, title } = ctx;
+  const { snapshot, task, deps, app, model } = ctx;
   const runner = require('./runner');
   const live = require('../homeroom-bot-live');
   const dm = require('../homeroom-bot-dm');
@@ -120,63 +120,48 @@ async function dmStage(ctx) {
     ...messages.map((m) => Date.parse(m.createdAt) || 0), ...(thread.comments || []).map((c) => Date.parse(c.createdAt) || 0));
   const tick = () => { clock += 60_000; return new Date(clock || Date.now()).toISOString(); };
 
-  const branch = runner.branchFor(trial);
-  let base;
-  try {
-    base = await runner.pinBranch(deps.github, repo, branch, snapshot.baseSha);
-  } catch (err) {
-    return { status: 'infra_fail', error: `branch: ${err.message}` };
-  }
-  const session = await runner.openSession(pool, config, { user, app, model, branch, title });
-  await ctx.onSession?.(session.id, { baseSha: base, branch });
+  const cut = await runner.cutBranch(ctx, snapshot.baseSha);
+  if (cut.error) return { status: 'infra_fail', error: `branch: ${cut.error}` };
+  const { base, branch } = cut;
+  const session = await runner.trialSession(ctx, 'dm', { model, branch, base });
+  const steps = runner.stepsOf(ctx);
 
-  // Each turn the conversation finished is kept on the trial as it ends
-  // (ctx.onCheckpoint), and a claim after a restart goes on from the last
-  // one: only the turn the restart caught runs again, as the live bot reads
-  // only the DM a restart caught again (each read its own queued job). Until
-  // 13 Oct 2026 the whole conversation ran again, a claim spent, and a
-  // second restart failed it.
-  const was = ctx.checkpoint?.dm && typeof ctx.checkpoint.dm === 'object' ? ctx.checkpoint.dm : null;
-  const appended = Array.isArray(was?.appended) ? [...was.appended] : [];
-  messages.push(...appended);
-  if (Number.isFinite(was?.clock)) clock = was.clock;
-  const sessionIds = [...new Set([...(Array.isArray(was?.sessionIds) ? was.sessionIds : []), Number(session.id)].map(Number))];
-  const conversation = Array.isArray(was?.conversation) ? [...was.conversation] : [];
-  const totals = { cost: null, input: null, output: null, raw: [], ...(was?.totals || {}) };
-  totals.raw = Array.isArray(totals.raw) ? [...totals.raw] : [];
+  // Each turn the conversation finished is a durable step, kept as it ends,
+  // and a restart's next attempt goes on from the last one: only the turn
+  // the restart caught is followed (or run again), as the live bot reads
+  // only the DM a restart caught again. The conversation is rebuilt from the
+  // kept turns as it was built, the replies being chosen by a deterministic
+  // rule (chooseReply). Until 13 Oct 2026 the whole conversation ran again,
+  // a claim spent, and a second restart failed it.
+  const conversation = [];
+  const totals = { cost: null, input: null, output: null, raw: [] };
   const add = (key, v) => { if (Number.isFinite(v)) totals[key] = (totals[key] || 0) + v; };
-  let last = was?.last || null;
-  const keep = async () => {
-    try {
-      await ctx.onCheckpoint?.({
-        dm: { turns: conversation.length, conversation, appended, clock, totals: { ...totals, raw: totals.raw.slice(-maxTurns) }, last, sessionIds },
-      });
-    } catch { /* a checkpoint never stops a trial */ }
-  };
-  const ended = !!was && (!last || last.status !== 'ok' || last.parsed?.verdict !== 'question' || conversation.length >= maxTurns);
-  for (let turn = conversation.length + 1; !ended && turn <= maxTurns; turn += 1) {
+  let last = null;
+  for (let turn = 1; turn <= maxTurns; turn += 1) {
     const seed = buildSeed(snapshot.issueNumber, thread.issue, thread.comments || [], thread.botLogin || null, messages);
     // eslint-disable-next-line no-await-in-loop
-    last = await runner.triageStage({ ...ctx, seedOverride: seed, session, baseSha: base });
+    last = await steps.once(`dm:${turn}`, async () => {
+      const ran = await runner.triageStage({ ...ctx, seedOverride: seed, session, baseSha: base, turnKey: `dm:${turn}` });
+      // Kept slim: what the result below and the next turn read.
+      return {
+        status: ran.status, error: ran.error || null,
+        cost_usd: ran.cost_usd ?? null, input_tokens: ran.input_tokens ?? null, output_tokens: ran.output_tokens ?? null,
+        raw_output: ran.raw_output || null,
+        parsed: ran.parsed ? {
+          verdict: ran.parsed.verdict, buildNote: ran.parsed.buildNote || null, question: ran.parsed.question || null,
+          reason: ran.parsed.reason || null, questionAnswers: ran.parsed.questionAnswers || [],
+        } : null,
+      };
+    });
     add('cost', last.cost_usd);
     add('input', last.input_tokens);
     add('output', last.output_tokens);
     if (last.raw_output) totals.raw.push(`--- turn ${turn} ---\n${last.raw_output}`);
-    // Kept slim: what the result below and the next turn read.
-    last = {
-      status: last.status, error: last.error || null,
-      parsed: last.parsed ? {
-        verdict: last.parsed.verdict, buildNote: last.parsed.buildNote || null, question: last.parsed.question || null,
-        reason: last.parsed.reason || null, questionAnswers: last.parsed.questionAnswers || [],
-      } : null,
-    };
     if (last.status !== 'ok') break;
     const p = last.parsed;
     const entry = { turn, verdict: p.verdict };
     if (p.verdict !== 'question') {
       conversation.push(entry);
-      // eslint-disable-next-line no-await-in-loop
-      await keep();
       break;
     }
     const reply = chooseReply({ answers: p.questionAnswers || [], trueAnswer: script.true_answer, accepted: script.accepted || [] });
@@ -191,22 +176,16 @@ async function dmStage(ctx) {
     conversation.push(entry);
     // The question as the bot posts it on the request, then the answer as
     // a DM answer is posted there: the thread the next turn reads.
-    const asked = [
+    messages.push(
       { author: 'homeroom_bot', body: live.questionText(p), createdAt: tick() },
       { author: requester, body: dm.mirroredText(reply.text, { question: true }), createdAt: tick() },
-    ];
-    messages.push(...asked);
-    appended.push(...asked);
-    // eslint-disable-next-line no-await-in-loop
-    await keep();
+    );
   }
   const parsed = last?.parsed || {};
   return {
     status: last?.status || 'infra_fail',
     error: last?.error || null,
     session_id: session.id,
-    // Every claim's session: the turns kept from before a restart are its cost too.
-    ...(sessionIds.length > 1 ? { session_ids: sessionIds } : {}),
     base_sha: base,
     build_branch: branch,
     cost_usd: totals.cost,

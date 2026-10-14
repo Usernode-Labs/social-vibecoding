@@ -147,6 +147,40 @@ test('a capture with nothing to collect, or one that replaces the run, goes to t
     'not asked, and forced: the lifecycle cancels the run it replaces');
 });
 
+// Without the preview lifecycle too. A restart's recovered turn ends in a
+// capture of the commit its dead process was checking (server.js
+// finalizeRecoveredTurn), and it can run before the harvest's claim. It used
+// to start the run: the harvest then passed the old run's finished Jobs by
+// (listOrphans skips a session in flight here), and its admitted row held a
+// checks slot until its deadline. Now it is asked once it holds the seat
+// (claimed before its first await, as drainQueued counts on), and it gives
+// the seat back, with what queued behind it.
+test('without the lifecycle a capture of a commit still on the cluster gives its seat back and starts nothing', async (t) => {
+  const calls = captureHarness(t, { onCluster: true });
+  stub(t, lifecycle, { enabled: () => false });
+  // The cluster answers once the second request has queued behind the first.
+  let answer;
+  const answered = new Promise((resolve) => { answer = resolve; });
+  stub(t, harvest, {
+    runToCollect: async (_config, _pool, sessionId, commitSha) => {
+      calls.push(['runToCollect', sessionId, commitSha]);
+      await answered;
+      return RUN;
+    },
+  });
+  const first = visuals.captureForSession(config, session, app, 'abc123', null, { trigger: 'boot-reconcile', send: () => {} });
+  assert.equal(visuals.hasInFlightCapture(session.id), true, 'the seat is claimed before the first await');
+  // A newer head arrives meanwhile and waits behind it, as any request does.
+  assert.equal(await visuals.captureForSession(config, session, app, 'def456', null, { trigger: 'commit-push' }), undefined);
+  answer();
+  assert.equal(await first, undefined);
+  // The queued one ran next, and was asked in turn.
+  for (let i = 0; i < 50 && calls.length < 2; i++) await new Promise((r) => setImmediate(r));
+  for (let i = 0; i < 50 && visuals.hasInFlightCapture(session.id); i++) await new Promise((r) => setImmediate(r));
+  assert.deepEqual(calls, [['runToCollect', 7014, 'abc123'], ['runToCollect', 7014, 'def456']]);
+  assert.equal(visuals.hasInFlightCapture(session.id), false, 'the harvest can seat the run it reads');
+});
+
 // ── Wiring ──────────────────────────────────────────────────────────────
 
 test('the preview heals ask the cluster before they rebuild, as the stale sweeps do', () => {

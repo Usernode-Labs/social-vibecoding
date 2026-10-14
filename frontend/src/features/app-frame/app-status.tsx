@@ -9,7 +9,8 @@
  * would have re-attached. A sixth since #15: the first version, being built
  * by the Homeroom bot from the project's description. Since #4053 that is
  * the project's thumbnail (features/first-session/sketch-card.tsx) with its
- * build line one line under it, and "It opens here when it’s ready." below that:
+ * build line one line under it, and "It opens here when it’s ready." below that
+ * (its maker reads "We’ll notify you when it’s live", with a check, run six):
  * no plan, no step count, nothing to press (#4043); a member who is not its
  * maker gets a "While you wait" card under it (#4396, ./waiting-card.tsx).
  * For its members the thumbnail's band shows the first look, then its real
@@ -40,6 +41,7 @@
 import { Suspense, lazy, useCallback, useState, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { CheckIcon } from '@/components/ui/icons';
 
 import { useStoreState } from '../../lib/use-store-state';
 import { type BuildLineState, buildLineOf, phaseLine, useNow } from '../first-session/build-line';
@@ -47,12 +49,13 @@ import { stepsOf } from '../first-session/build-line-words.js';
 import { useTourRunning } from '../first-session/tour-running';
 import { FeaturedCard, sketching, useSketch } from '../first-session/sketch-card';
 import { appStatusStore } from './app-status-store.js';
+import { type FirstVersionEstimate, countsDown, estimateOf, leftNote, plainLineNote } from './first-version-eta';
 import { type FirstVersionScreens, ScreensBand, hasScreens } from './first-version-screens';
 import { FirstVersionSteps } from './first-version-steps';
 import { type FirstVersionLive, LiveSwitch, useLiveChoice } from './live-switch';
 import { type FirstVersionWaiting, WaitingCard, lineNote } from './waiting-card';
 
-// #4449: Live's player (rrweb) is loaded only when somebody opens Live.
+// #4449: Live's player (rrweb) is loaded only once Live is shown.
 const LiveBand = lazy(() => import('./live-band'));
 
 /** The resolved placeholder. `null` means some other owner has the host. */
@@ -94,11 +97,22 @@ export interface AppStatusView {
   /**
    * N4: the stage it is at by its own name, with when it began
    * (`first_version.phase`), said on the build line while it is built
-   * ("Drawing the screens · 2 min so far").
+   * ("Working out the details · 2 min so far").
    */
   phase?: unknown;
   /** N4: every step, done, under way or to come (./first-version-steps.tsx). */
   steps?: unknown;
+  /**
+   * Run six: how long it still has to go (`first_version.estimate`,
+   * ./first-version-eta.ts), said on the build line ("Building it · about
+   * 15 min left") and under the step under way, in place of the time so far.
+   */
+  estimate?: unknown;
+  /**
+   * Run six: its maker's promise under the card, with a small check: "We’ll
+   * notify you when it’s live", in place of the lines.
+   */
+  promise?: string | null;
   /**
    * The lines say what a first-session tour card can say over this screen
    * ("It opens here when it’s ready."), so they hide while a card that says
@@ -151,10 +165,15 @@ export interface FirstVersionThumb {
  * (GET /api/apps/:slug/sketch, as the made screen reads it), else its
  * description.
  */
-function FirstVersionCard({ thumb, line, note = null, screens = null, live = null, phase = null, listed = false }: {
+function FirstVersionCard({ thumb, line, caption = null, usual = null, estimate = null, screens = null, live = null, phase = null, listed = false }: {
   thumb: FirstVersionThumb;
   line: BuildLineState | null;
-  note?: string | null;
+  /** What the build is adding now ("Adding the tier rows"), while it builds. */
+  caption?: string | null;
+  /** How long it usually takes (a member's "usually 10 to 25 min"), said without an estimate. */
+  usual?: string | null;
+  /** Run six: how long it still has to go. */
+  estimate?: FirstVersionEstimate | null;
   screens?: FirstVersionScreens | null;
   live?: FirstVersionLive | null;
   /** N4: the stage by its own name (`first_version.phase`). */
@@ -162,9 +181,11 @@ function FirstVersionCard({ thumb, line, note = null, screens = null, live = nul
   /** N4: the steps are listed under it, the build's phrase with them. */
   listed?: boolean;
 }): ReactNode {
-  // N4: "Drawing the screens · 2 min so far", in place of "Building it".
+  // N4: "Working out the details · 2 min so far", in place of "Building it";
+  // run six: "· about 15 min left" when there is an estimate.
   const now = useNow();
-  const named = phaseLine(line, phase, now, listed ? null : note);
+  const left = countsDown(line) ? leftNote(estimate, now) : null;
+  const named = phaseLine(line, phase, now, listed ? null : caption, left);
   const sketch = useSketch(thumb.sketch === false ? null : thumb.slug);
   const card = sketch.card;
   // Pictures that would not load leave the thumbnail as it was, until there
@@ -173,14 +194,17 @@ function FirstVersionCard({ thumb, line, note = null, screens = null, live = nul
   const [emptyKey, setEmptyKey] = useState<string | null>(null);
   const onEmpty = useCallback(() => setEmptyKey(shownKey), [shownKey]);
   const shows = hasScreens(screens) && emptyKey !== shownKey ? screens : null;
-  // #4449: while it is built, Preview (the above) or Live, as this person
-  // last chose. At "Testing it" the switch goes, and the real screens show;
+  // #4449: while it is built, Preview (the above) or Live, Live unless
+  // Preview was picked for this project (run six). At "Testing it" the
+  // switch goes, and the real screens show;
   // N7: without them, the build's last frame stays (`live.last`), rather
   // than the first look drawn from the plan. The same LiveBand stays
   // mounted from one to the other, so the frame does not start over.
   const lastFrame = !!live && !!live.last && (line === 'testing' || line === 'ready');
   const liveOffered = !!live && !live.last && line === 'building';
-  const [choice, choose] = useLiveChoice(liveOffered ? live.userKey : null);
+  // Run six: Live, once offered (it has frames), unless Preview was picked
+  // for this project.
+  const [choice, choose] = useLiveChoice(liveOffered ? live.userKey : null, liveOffered ? live.slug : null);
   const watching = (liveOffered && choice === 'live') || lastFrame;
   const preview = shows ? <ScreensBand key={shownKey} screens={shows} name={thumb.name} onEmpty={onEmpty} /> : null;
   const band = watching && live ? (
@@ -198,7 +222,7 @@ function FirstVersionCard({ thumb, line, note = null, screens = null, live = nul
         description={thumb.description}
         sketching={!card && !thumb.description && sketching(sketch.state)}
         line={line}
-        lineNote={named.words ? named.note : note}
+        lineNote={named.words ? named.note : plainLineNote(caption, usual, left)}
         lineWords={named.words}
         band={band}
         bandCorner={liveOffered ? <LiveSwitch value={choice} onChange={choose} /> : null}
@@ -276,6 +300,8 @@ export function AppStatusView_({ view: answered }: { view: AppStatusView }): Rea
   const waiting = thumb && view.waiting ? view.waiting : null;
   // N4: the steps, while it is made (never once it is ready to try).
   const steps = thumb && line !== 'ready' && line !== 'live' && stepsOf(view.steps).length ? view.steps : null;
+  const estimate = thumb && countsDown(line) ? estimateOf(view.estimate) : null;
+  const caption = line === 'building' ? view.buildNote || null : null;
   const body = (
     <>
       {view.dot ? <div className={`status-dot ${view.dot}`}></div> : null}
@@ -284,7 +310,9 @@ export function AppStatusView_({ view: answered }: { view: AppStatusView }): Rea
           key={thumb.slug}
           thumb={thumb}
           line={line}
-          note={(line === 'building' && view.buildNote) || (waiting ? lineNote(line) : null)}
+          caption={caption}
+          usual={waiting ? lineNote(line) : null}
+          estimate={estimate}
           screens={view.screens || null}
           live={view.live || null}
           phase={view.phase || null}
@@ -294,7 +322,7 @@ export function AppStatusView_({ view: answered }: { view: AppStatusView }): Rea
         <p className={titled ? 'max-w-sm text-base font-semibold text-zinc-900 dark:text-zinc-100' : 'text-sm'}>{view.message}</p>
       )}
       {action && action.underCard ? actionButton(action) : null}
-      {steps ? <FirstVersionSteps steps={steps} phase={view.phase || null} caption={line === 'building' ? view.buildNote || null : null} /> : null}
+      {steps ? <FirstVersionSteps steps={steps} phase={view.phase || null} caption={caption} estimate={estimate} /> : null}
       {waiting ? <WaitingCard waiting={waiting} line={line} /> : null}
       {titled ? view.lines!.map((line) => (
         <p
@@ -305,6 +333,12 @@ export function AppStatusView_({ view: answered }: { view: AppStatusView }): Rea
           {line}
         </p>
       )) : null}
+      {thumb && view.promise ? (
+        <p data-app-first-version-promise="" className="flex max-w-sm items-center justify-center gap-1.5 pt-1 text-[15px] leading-5">
+          <CheckIcon className="h-4 w-4 shrink-0" aria-hidden="true" />
+          <span>{view.promise}</span>
+        </p>
+      ) : null}
       {view.detail ? (
         <p className="text-xs font-mono text-red-700 max-w-md break-words dark:text-red-400">{view.detail}</p>
       ) : null}

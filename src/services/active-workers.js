@@ -26,18 +26,45 @@ function notifySessionState(sessionId) {
   } catch { /* notifier is best-effort; never break turn bookkeeping */ }
 }
 
+// docs/plans/draining-releases.md: what this process is doing on a session is
+// also its HOLD (services/processes.js), so another process (one finishing
+// its work after a release, or the one that replaced it) sees the session
+// busy and neither adopts, pauses nor tears it down under it.
+function processes() {
+  return require('./processes');
+}
+
 class ActiveWorkerSet extends Set {
+  constructor() {
+    super();
+    this._holds = new Map(); // sessionId -> release
+  }
+
   add(sessionId) {
     const had = this.has(sessionId);
     const out = super.add(sessionId);
-    if (!had) notifySessionState(sessionId);
+    if (!had) {
+      try { this._holds.set(sessionId, processes().hold('session', sessionId)); } catch { /* a ref-less id holds nothing */ }
+      notifySessionState(sessionId);
+    }
     return out;
   }
 
   delete(sessionId) {
     const out = super.delete(sessionId);
-    if (out) notifySessionState(sessionId);
+    if (out) {
+      const release = this._holds.get(sessionId);
+      this._holds.delete(sessionId);
+      if (release) release();
+      notifySessionState(sessionId);
+    }
     return out;
+  }
+
+  clear() {
+    for (const release of this._holds.values()) release();
+    this._holds.clear();
+    super.clear();
   }
 }
 
@@ -52,6 +79,8 @@ function beginSessionOperation(sessionId) {
   const key = Number(sessionId);
   const prior = activeSessionOperations.get(key) || 0;
   activeSessionOperations.set(key, prior + 1);
+  let releaseHold = null;
+  try { releaseHold = processes().hold('session', key); } catch { /* a ref-less id holds nothing */ }
   // Only the 0→1 edge changes the session's observable busy state; nested
   // operations on an already-busy session are invisible to clients.
   if (prior === 0) notifySessionState(key);
@@ -59,6 +88,7 @@ function beginSessionOperation(sessionId) {
   return () => {
     if (released) return;
     released = true;
+    if (releaseHold) releaseHold();
     const remaining = (activeSessionOperations.get(key) || 1) - 1;
     if (remaining > 0) activeSessionOperations.set(key, remaining);
     else {
@@ -77,7 +107,10 @@ function getActiveWorkerCount() {
 }
 
 // Shared "any part of a turn is running" predicate — the same one the
-// /api/sessions/:id/status endpoint and the session-list routes use.
+// /api/sessions/:id/status endpoint and the session-list routes use. For
+// every live platform process: this one's memory, then what the others hold
+// (services/processes.js, at most one refresh behind), so a sweeper on the
+// new leader never pauses a session a draining process is still finishing.
 // `activeWorkers` covers the chat handler's full window (added before
 // ensureWorker, deleted in run(Scout|ClaudeCode)Tool's finally — i.e.
 // including the post-exec PR/staging tail) plus the restart-recovery
@@ -90,6 +123,20 @@ function isSessionBusy(sessionId) {
   // Lazy require: worker.js is pulled in by the route layer that also
   // requires this module — a top-level require here would be a cycle.
   const worker = require('./worker');
+  if (activeWorkers.has(sessionId) || worker.isInFlight(sessionId)) return true;
+  return isSessionBusyElsewhere(sessionId);
+}
+
+/** Whether another live process holds the session (processes.js mirror). */
+function isSessionBusyElsewhere(sessionId) {
+  if (sessionId === null || sessionId === undefined || sessionId === '') return false;
+  try { return processes().heldElsewhere('session', Number(sessionId)); } catch { return false; }
+}
+
+/** Only this process's part of isSessionBusy: what it runs itself. */
+function isSessionBusyHere(sessionId) {
+  if (hasSessionOperation(sessionId)) return true;
+  const worker = require('./worker');
   return activeWorkers.has(sessionId) || worker.isInFlight(sessionId);
 }
 
@@ -99,5 +146,7 @@ module.exports = {
   hasSessionOperation,
   getActiveWorkerCount,
   isSessionBusy,
+  isSessionBusyHere,
+  isSessionBusyElsewhere,
   notifySessionState,
 };

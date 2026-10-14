@@ -401,6 +401,12 @@ function normalizeCodexLine(line, state) {
       const seen = Array.isArray(state.routedProviders) ? state.routedProviders : (state.routedProviders = []);
       if (!seen.includes(host) && seen.length < 8) seen.push(host);
     }
+    // A request its shortlist refused and the listener sent again to every
+    // host, counted per turn as the Claude Code listener's are (run seven,
+    // 14 Oct 2026; worker.js observeCodingProviderResult). Only a request's
+    // first line says so (worker/codex-openrouter-request.js), so a refusal
+    // reported again with its host is not counted twice.
+    state.shortlistFallbacks = (state.shortlistFallbacks || 0) + (ev.diagnostic?.shortlistFallback === true ? 1 : 0);
     return [];
   }
   if (ev.type === 'usernode.openrouter.usage') {

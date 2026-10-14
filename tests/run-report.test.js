@@ -312,6 +312,54 @@ test('the first version\'s timeline: its stages, its maker\'s moments, a refused
   assert.equal(runReport.shapeReport(rows(), { now: at(3600) }).firstVersion.earlyPlanReply, null, 'none when the plan was not refused');
 });
 
+// Run seven (14 Oct 2026): GMICloud at ~18 tokens a second served builds, and
+// the report could neither name every host a turn used nor say how often it
+// left the shortlist; a host with a space in its name was dropped outright.
+test('run seven: a turn\'s hosts, spaces and all, and how many of its requests left the shortlist', () => {
+  const report = runReport.shapeReport(rows({
+    turns: [
+      turnRow({
+        routed_provider: 'Sail Research',
+        routed_providers: ['Fireworks', 'Near AI', 'Sail Research', 'Bad <b>', { x: 1 }],
+        shortlist_fallbacks: '2',
+      }),
+      turnRow({ id: '00000000-0000-4000-8000-000000000002', routed_provider: 'Near AI', metrics: null }),
+    ],
+  }), { now: at(3600) });
+  const [turn, older] = report.turns;
+  assert.equal(turn.routedProvider, 'Sail Research', 'a provider\'s name keeps its space');
+  assert.deepEqual(turn.routedProviders, ['Fireworks', 'Near AI', 'Sail Research'], 'each in a provider\'s shape, in order');
+  assert.equal(turn.shortlistFallbacks, 2);
+  assert.equal(older.routedProvider, 'Near AI');
+  assert.equal(older.routedProviders, null, 'a turn that did not record them says nothing');
+  assert.equal(older.shortlistFallbacks, null);
+  assert.equal(runReport.shapeReport(rows({ turns: [turnRow({ routed_providers: Array.from({ length: 12 }, (_, i) => `Host ${i}`) })] }))
+    .turns[0].routedProviders.length, 8);
+});
+
+test('run seven: a run\'s last look after its final fix, recorded beside its rounds and changing neither', () => {
+  const look = {
+    round: 2, fixed: ['empty-list', 'Not An Id!'], open: ['header-overlap'], verdict: 'ship', costUsd: 0.21, ms: 38000,
+    at: at(1900).toISOString(), retry: 'x', issues: [{ problem: 'never kept' }],
+  };
+  const report = runReport.shapeReport(rows({
+    runs: [runRow({ review_rounds: 2, review_stop: 'round_limit', review_final_look: look })],
+  }), { now: at(3600) });
+  const [run] = report.runs;
+  assert.deepEqual(run.reviewFinalLook, {
+    round: 2, fixed: ['empty-list'], open: ['header-overlap'], verdict: 'ship', costUsd: 0.21, ms: 38000,
+    at: at(1900).toISOString(), error: null,
+  });
+  assert.equal(run.reviewRounds, 2, 'still the rounds the loop ran');
+  assert.equal(run.reviewStop, 'round_limit');
+  assert.equal(report.reviewRounds.length, 2, 'and no round of its own');
+  const failed = runReport.shapeReport(rows({
+    runs: [runRow({ review_final_look: { round: 2, fixed: [], open: [], costUsd: null, ms: 12, error: 'x'.repeat(1000) } })],
+  })).runs[0].reviewFinalLook;
+  assert.match(failed.error, /… \[truncated\]$/);
+  assert.equal(runReport.shapeReport(rows()).runs[0].reviewFinalLook, null, 'none when no look was taken');
+});
+
 test('build reads one app by id or slug, and every list by that app\'s id with its cap', async () => {
   const db = fakeDb([
     ['FROM apps a', [appRow()]],

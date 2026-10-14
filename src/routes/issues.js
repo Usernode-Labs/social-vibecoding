@@ -10,6 +10,7 @@ const appManifest = require('../services/app-manifest');
 const appSecrets = require('../services/app-secrets');
 const platformEnv = require('../services/platform-env');
 const staging = require('../services/staging');
+const owedRedeploy = require('../services/owed-redeploy');
 const { encrypt, decrypt } = require('../services/secrets');
 const { issueKindLimiter, governanceVoteLimiter } = require('../middleware/rate-limits');
 const events = require('../services/events');
@@ -3858,6 +3859,14 @@ async function maybeApplySecretChangeProposal(config, pool, issue, options = {})
       `UPDATE issues SET status = 'closed', payload = $1 WHERE id = $2`,
       [JSON.stringify(auditPayload), locked.id]
     );
+    // The rebuild that carries the change to the running app is owed in the
+    // same commit (services/owed-redeploy.js), so a process that dies before
+    // giving it leaves it to the leader rather than losing it: nothing else
+    // would notice, since main_sha does not move for a secret. With the
+    // app-delivery machine on, the machine is asked for it instead, and
+    // nothing else deploys beside it.
+    const viaDelivery = !selfHosted && workflow().deliveryEnabled();
+    if (!selfHosted && !viaDelivery) await owedRedeploy.owe(client, issue.app_id, 'secret_change');
 
     await client.query('COMMIT');
 
@@ -3899,22 +3908,22 @@ async function maybeApplySecretChangeProposal(config, pool, issue, options = {})
       //
       // NEVER for the self-hosted row: rebuildProduction() would treat the
       // platform like a child container (see this function's header).
-      pool.query('SELECT * FROM apps WHERE id = $1', [issue.app_id])
-        .then(({ rows }) => rows[0] && staging.rebuildProduction(config, rows[0]))
-        .then(async (result) => {
-          if (!result) return;
-          await pool.query(
-            `UPDATE apps SET container_id = $1, main_sha = $2, status = 'running',
-                             last_deploy_at = NOW()
-             WHERE id = $3`,
-            [result.containerId, result.sha || null, issue.app_id]
-          );
-        })
-        .catch((err) => {
-          log.warn('issues', 'Post-secret-change redeploy failed', {
-            slug: issue.app_slug, err: err.message,
-          });
+      //
+      // With the app-delivery machine on, a recorded request it runs (kept
+      // across a restart: the stored key is never left undeployed).
+      if (viaDelivery) {
+        workflow().requestDeploy(issue.app_id, 'secret_change').catch((err) => {
+          log.warn('issues', 'Post-secret-change redeploy request failed', { slug: issue.app_slug, err: err.message });
         });
+      } else {
+        // Not awaited, and owed above: this run takes the mark whoever holds
+        // it, records the new container and clears it; if this process dies
+        // first, the leader's sweep runs it again (services/owed-redeploy.js).
+        void owedRedeploy.kick(config, pool, issue.app_id, {
+          takeover: true,
+          rebuild: (app) => staging.rebuildProduction(config, app),
+        });
+      }
     }
 
     if (locked.github_issue_number) {

@@ -426,5 +426,81 @@
   "sectionColumn.label": {
     "text": "Places",
     "description": "Accessible name of the column beside a project's page on a wide screen that lists its places (its chat, its topics and its tabs)."
+  },
+  "dictation.speak": {
+    "text": "Speak",
+    "description": "Microphone button: records speech to add to the current text field."
+  },
+  "dictation.stop": {
+    "text": "Stop recording",
+    "description": "Button: finishes the recording and transcribes it into the text field."
+  },
+  "dictation.permission": {
+    "text": "Waiting for microphone permission…",
+    "description": "Status while the browser microphone permission prompt is open."
+  },
+  "dictation.transcribing": {
+    "text": "Writing what you said…",
+    "description": "Status while a finished recording is being transcribed."
+  },
+  "dictation.cancel": {
+    "text": "Cancel dictation",
+    "description": "Button: discards the recording or pending transcription and keeps existing text."
+  },
+  "dictation.listening": {
+    "text": "Listening… Press Stop when you finish.",
+    "description": "Status while recording speech, with instructions for finishing."
+  },
+  "dictation.error.permission": {
+    "text": "Allow microphone access in your browser or device settings, then try again.",
+    "description": "Dictation error when microphone access was denied."
+  },
+  "dictation.error.policy": {
+    "text": "Microphone access is blocked on this page. You can still type your message.",
+    "description": "Dictation error when the page's permissions policy prevents microphone access. Browser microphone settings cannot override this restriction."
+  },
+  "dictation.error.unsupported": {
+    "text": "Speaking is unavailable in this browser. You can still type your message.",
+    "description": "Dictation error when recording is unsupported."
+  },
+  "dictation.error.unavailable": {
+    "text": "Your microphone could not start. Check that it is connected, then try again.",
+    "description": "Dictation error when a microphone cannot be opened."
+  },
+  "dictation.error.interrupted": {
+    "text": "Recording stopped unexpectedly. Your existing text is safe. Try again.",
+    "description": "Dictation error when microphone capture is interrupted."
+  },
+  "dictation.error.invalidAudio": {
+    "text": "That recording could not be read. Try a recording under one minute.",
+    "description": "Dictation error for invalid or over-limit audio."
+  },
+  "dictation.error.noSpeech": {
+    "text": "No speech was heard. Try again and speak closer to the microphone.",
+    "description": "Dictation error when the recording was silent or had no transcript."
+  },
+  "dictation.error.keyRequired": {
+    "text": "Your AI connection is unavailable. Check AI usage & models in Settings, then try again.",
+    "description": "Dictation error when the account’s managed or personal AI credential is unavailable."
+  },
+  "dictation.error.credits": {
+    "text": "Your AI credits have run out. Add credits in Settings, then try again.",
+    "description": "Dictation error when the transcription provider reports exhausted credits."
+  },
+  "dictation.error.tooLong": {
+    "text": "Those words would exceed this field’s limit. Shorten your text and try again.",
+    "description": "Dictation error when appending the transcript would exceed the current field character limit."
+  },
+  "dictation.error.timeout": {
+    "text": "Transcription took too long. Your existing text is safe. Try again.",
+    "description": "Dictation error after a transcription timeout."
+  },
+  "dictation.error.busy": {
+    "text": "Please wait a moment before recording again.",
+    "description": "Dictation error for concurrent requests or a rate limit."
+  },
+  "dictation.error.failed": {
+    "text": "Your recording could not be transcribed. Your existing text is safe. Try again.",
+    "description": "Dictation error for an unsuccessful transcription request."
   }
 }

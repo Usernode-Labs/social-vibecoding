@@ -1096,7 +1096,7 @@ async function recordStagingBootFailure({ config, pool, session, commitHash, err
 // `queuedSince` is the place in the checks queue an interrupted run had
 // (check-harvest's re-drive): the direct re-run asks for its slot as of then.
 // A rebuild is a new run and queues anew once its preview is up.
-async function recheckSessionChecks({ config, pool, session, reason, queuedSince = null }) {
+async function recheckSessionChecks({ config, pool, session, reason, queuedSince = null, redrive = null }) {
   // The head is decided from the row as it stands now, never from a pin a
   // run of an earlier commit left behind (recheckHeadSha).
   session = await currentPins(pool, session);
@@ -1171,6 +1171,8 @@ async function recheckSessionChecks({ config, pool, session, reason, queuedSince
     force: FORCED_RECHECK_REASONS.has(reason),
     replaceRun,
     ...(queuedSince ? { queuedSince } : {}),
+    // Why the harvest re-drives it (check-harvest.js), kept in its manifest.
+    ...(redrive ? { redrive } : {}),
   })
     .catch((err) => log.warn('staging-recovery', 'Direct checks re-run failed (non-fatal)', {
       sessionId: session.id, reason, err: err.message,

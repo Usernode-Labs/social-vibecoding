@@ -46,6 +46,8 @@ const applicationRuntime = require('./application-runtime');
 const appOutages = require('./app-outages');
 const appTeardown = require('./app-teardown');
 const { getPool } = require('../db/pool');
+const lifecycle = require('./lifecycle');
+const leaderTimers = require('./leader-timers');
 
 const FIRST_PASS_DELAY_MS = 30_000;
 const MAX_HEALS_PER_TICK = 3;
@@ -55,8 +57,12 @@ const REQUEST_HEAL_DEBOUNCE_MS = 30_000;
 const DEFAULT_INTERVAL_MS = 60_000;
 const DEFAULT_COOLDOWN_MS = 10 * 60 * 1000;
 
-// In-memory state, all keyed by slug (one process owns all heals).
-const inFlight = new Set();          // heal currently running
+// In-memory state, all keyed by slug. The sweep runs on the leader, and a
+// person landing on a down app asks for a heal wherever the request landed
+// (a web process never leads, docs/plans/web-and-conductor.md): a heal under
+// way is held for every process to see (services/processes.js 'app_heal').
+const processes = require('./processes');
+const inFlight = processes.heldSet('app_heal'); // heal currently running
 const healAttempts = new Map();      // slug -> ts of last heal attempt (cooldown)
 const restartingStreak = new Map();  // slug -> consecutive 'restarting' sightings
 const requestDebounce = new Map();   // slug -> ts of last requestHeal
@@ -114,11 +120,23 @@ async function removeRuntimeIfDeleted(config, pool, app) {
   }
 }
 
+async function requestedDeploy(app) {
+  const workflow = require('../workflow/platform.ts');
+  if (!workflow.deliveryEnabled()) return false;
+  await workflow.requestDeploy(app.id, 'heal');
+  log.info('app-heal', 'App rebuild asked of app delivery', { slug: app.slug });
+  return true;
+}
+
 async function rebuildOrRespawn(config, pool, app) {
   const github = require('./github');
   const name = containerName(app.slug);
 
   if (app.repo_url && github.isEnabled()) {
+    // With the app-delivery machine on, the rebuild is a recorded request
+    // it runs; the "deploying" state it writes keeps this sweep off the app
+    // meanwhile.
+    if (await requestedDeploy(app)) return 'deploy_requested';
     const staging = require('./staging');
     const { containerId, sha, runtimeKind = applicationRuntime.mode(config), runtimeName = containerId } = await staging.rebuildProduction(config, app);
     await pool.query(
@@ -252,6 +270,7 @@ async function provisionMissingRepo(config, pool, app) {
     slug: app.slug, repoUrl,
   });
 
+  if (await requestedDeploy(app)) return;
   const staging = require('./staging');
   const { containerId, sha, runtimeKind = applicationRuntime.mode(config), runtimeName = containerId } = await staging.rebuildProduction(config, app);
   await pool.query(
@@ -284,6 +303,7 @@ async function provisionMissingRepo(config, pool, app) {
 //   cooldown        — a recent attempt failed; not retrying yet
 //   started         — stopped container brought back with `docker start`
 //   rebuilt         — full rebuildProduction succeeded
+//   deploy_requested — the rebuild was asked of app delivery (its flag on)
 //   respawned       — existing image re-run succeeded
 //   restarted       — hung-but-running container docker-restarted (probe path)
 //   repo_provisioned — missing GitHub repo created + prod converged
@@ -299,10 +319,12 @@ async function checkAndHealOne(config, pool, app, { probeRunning = false, backgr
   if (appTeardown.isTearingDown(app.slug)) return { status: 'deleting', slug: app.slug };
   const runtimeRef = applicationRuntime.productionRef(config, app);
   config = { ...config, appRuntime: runtimeRef.runtimeKind };
-  if (inFlight.has(app.slug)) return { status: 'in_flight', slug: app.slug };
+  if (inFlight.has(app.slug) || processes.heldElsewhere('app_heal', app.slug)) return { status: 'in_flight', slug: app.slug };
 
+  // A deploy of this app in this process, or one app delivery runs
+  // anywhere (the row's deploy_state).
   const appDeployStatus = require('./app-deploy-status');
-  const deploy = appDeployStatus.read(app.slug);
+  const deploy = appDeployStatus.read(app.slug, app);
   if (deploy && deploy.deploying) return { status: 'deploying', slug: app.slug };
 
   // Repo provisioning comes before the container-state logic: a repo-less
@@ -355,15 +377,27 @@ async function checkAndHealOne(config, pool, app, { probeRunning = false, backgr
     try {
       if (state !== 'not_found') {
         try {
-          await applicationRuntime.restart(config, runtimeRef);
+          // The restart waits for the rollout (up to five minutes), and an
+          // app that cannot start never rolls out. Shutdown does not wait
+          // for that: the drain held a release for 40 s on 14 Oct 2026 for
+          // one such app, then this escalated to a rebuild mid-shutdown.
+          // The next leader's sweep heals it again.
+          const restarted = await Promise.race([
+            applicationRuntime.restart(config, runtimeRef).then(() => true),
+            lifecycle.whenShuttingDown().then(() => false),
+          ]);
+          if (!restarted) return { status: 'shutting_down', slug: app.slug };
           healAttempts.delete(app.slug);
           return { status: 'restarted', slug: app.slug };
         } catch (err) {
           log.warn('app-heal', 'Kubernetes restart failed; escalating to rebuild', { slug: app.slug, err: err.message });
         }
       }
+      if (lifecycle.isShuttingDown()) return { status: 'shutting_down', slug: app.slug };
       const recovered = await recoverFromScratch(config, pool, app);
-      healAttempts.delete(app.slug);
+      // A requested deploy keeps the cooldown: its outcome comes later, and
+      // a failure must not be asked for again every tick.
+      if (recovered !== 'deploy_requested') healAttempts.delete(app.slug);
       return { status: recovered, slug: app.slug };
     } catch (err) {
       log.error('app-heal', 'Kubernetes heal failed', { slug: app.slug, err: err.message });
@@ -443,7 +477,7 @@ async function checkAndHealOne(config, pool, app, { probeRunning = false, backgr
       }
     }
     const status = await recoverFromScratch(config, pool, app);
-    healAttempts.delete(app.slug);
+    if (status !== 'deploy_requested') healAttempts.delete(app.slug);
     restartingStreak.delete(app.slug);
     return { status, slug: app.slug };
   } catch (err) {
@@ -471,10 +505,12 @@ async function poll(config) {
   let attempts = 0;
   for (const app of rows) {
     if (attempts >= MAX_HEALS_PER_TICK) break;
+    // A restart or rebuild started now would die with the process.
+    if (lifecycle.isShuttingDown()) break;
     try {
       const result = await checkAndHealOne(config, pool, app, { background: true });
       appOutages.recordHealed(pool, app, result, 'sweep');
-      if (['started', 'rebuilt', 'respawned', 'repo_provisioned', 'heal_failed'].includes(result.status)) {
+      if (['started', 'rebuilt', 'deploy_requested', 'respawned', 'repo_provisioned', 'heal_failed'].includes(result.status)) {
         attempts++;
       }
     } catch (err) {
@@ -517,12 +553,11 @@ function start(config) {
     return;
   }
   log.info('app-heal', 'Starting', { intervalMs: interval, cooldownMs: cooldownMs(config) });
-  setTimeout(() => {
-    poll(config).catch((err) => log.error('app-heal', 'Initial sweep failed', { err: err.message }));
-  }, FIRST_PASS_DELAY_MS).unref?.();
-  setInterval(() => {
-    poll(config).catch((err) => log.error('app-heal', 'Sweep failed', { err: err.message }));
-  }, interval).unref?.();
+  // A leader timer (services/leader-timers.js): no sweep starts once
+  // shutdown has begun, and one under way is given the drain to finish.
+  leaderTimers.every('app-heal', () => poll(config)
+    .catch((err) => log.error('app-heal', 'Sweep failed', { err: err.message })),
+  interval, { firstDelayMs: FIRST_PASS_DELAY_MS });
 }
 
 // Test hook: clear all in-memory bookkeeping between test cases.

@@ -312,6 +312,12 @@ const EVENT_TYPES = Object.freeze({
   // (a crash, the memory limit, a failed liveness probe): the infra topic's
   // "Homeroom crashes" counts those. A rollout starts new pods instead.
   PLATFORM_BOOTED: 'platform_booted',
+  // A checks run got its slot in the checks queue (services/checks-queue.js
+  // waitForSlot), or went ahead without one because the queue could not be
+  // read or joined: { runId, kind, class, waitedMs, failedOpen }. Admin →
+  // Health & status reads the last day of them for its Checks queue block.
+  // No backfill: a wait left nothing behind before this shipped.
+  CHECKS_SLOT_GRANTED: 'checks_slot_granted',
 });
 
 // Record a single analytics event. Fire-and-forget — returns a promise

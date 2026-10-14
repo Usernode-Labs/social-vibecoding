@@ -412,7 +412,7 @@ test('with the switch on, Suggest an improvement opens comment mode, on a phone 
 test('a plain open of the form goes to comment mode where the switch says so, and nothing else does', () => {
   const fc = read('frontend/src/features/dialogs/feedback-controller.js');
   const open = fc.match(/App\.openFeedbackModal = \(opts = \{\}\) => \{[\s\S]*?\n  \};/)[0];
-  assert.match(open, /const plain = !opts\.firstFeedback && !opts\.description && !opts\.screenshotBlob && !opts\.screenshots\s*&& opts\.mode !== 'form';/);
+  assert.match(open, /const plain = !opts\.edit && !opts\.firstFeedback && !opts\.description && !opts\.screenshotBlob && !opts\.screenshots\s*&& opts\.mode !== 'form';/);
   assert.match(open, /if \(plain && shortcut\?\.opensComment\?\.\(\)\) \{\s*shortcut\.openComment\(\{ via: 'suggest' \}\);\s*return;/);
   const src = read('frontend/src/features/improve/suggest-shortcut.ts');
   assert.match(src, /opensComment: \(\) => suggestOpensComment\(\),/);

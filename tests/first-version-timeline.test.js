@@ -37,9 +37,10 @@ test('the stages, and the build steps that are stages', () => {
   assert.deepEqual(timeline.STAGE_OF_STEP, {
     spec_turn: 'spec_started', build_turn: 'build_started', landed: 'build_done', proposed: 'testing_started',
   });
-  // Every step it names is one the build saves (homeroom-bot-checkpoint.js).
-  const { STEPS } = require('../src/services/homeroom-bot-checkpoint');
-  for (const step of Object.keys(timeline.STAGE_OF_STEP)) assert.ok(STEPS.includes(step), step);
+  // Every step it names is a boundary the build reaches and tells its
+  // caller of (homeroom-bot-live.js buildAndPropose's step).
+  const live = read('src/services/homeroom-bot-live.js');
+  for (const step of Object.keys(timeline.STAGE_OF_STEP)) assert.ok(live.includes(`await step('${step}'`), step);
   assert.equal(require('../src/services/events').EVENT_TYPES.FIRST_VERSION_STAGE, 'first_version_stage');
 });
 
@@ -127,13 +128,12 @@ test('the pipeline writes each stage where it happens', () => {
   assert.match(bot, /const claim = await claimLiveBuild\(pool, \{ runId, sessionId: session\.id \}\);\s+if \(!claim\.claimed\) return LOST_CLAIM;/);
   assert.match(bot, /log\.info\('homeroom-bot', 'A live build took its slot', \{\s+app: app\.slug, issueNumber, runId, sessionId: session\.id, waitedMs, attempt: claims,/);
   assert.match(bot, /stage: 'picked_up', sessionId: session\.id,/);
-  // The build's own steps, for a first version only, before its checkpoint.
-  assert.match(bot, /onStep: \(name, data\) => \{[\s\S]{0,200}if \(firstVersion\) \{\s+void timeline\.recordStep\(pool, \{\s+runId, step: name, sessionId: data\.sessionId,[\s\S]{0,300}return checkpoint\.save\(pool, runId, data\.sessionId, name, data\);\s+\},/);
+  // The build's own steps, for a first version only, and nothing else: the
+  // build keeps its own steps (durable-steps.js).
+  assert.match(bot, /onStep: \(name, data\) => \{[\s\S]{0,200}if \(firstVersion\) \{\s+void timeline\.recordStep\(pool, \{\s+runId, step: name, sessionId: data\.sessionId,[\s\S]{0,300}?\}\);\s+\}\s+\},\n\s+origin: \{ lane: 'live', runId \},/);
   // Its first look, whichever way it was drawn.
   assert.match(bot, /stage: 'first_look_saved', detail: \{ from: 'saved_screen' \}/);
   assert.match(bot, /if \(drawn\) void timeline\.record\(pool, \{ runId, stage: 'first_look_saved', detail: \{ from: 'spec' \} \}\);\s+return drawn;/);
-  // Proposed by restart recovery, as the live path's step says it.
-  assert.match(bot, /await checkpoint\.save\(pool, plan\.runId, sessionId, 'proposed', \{ prNumber: promoted\.body\.prNumber \|\| null \}\);[\s\S]{0,200}void timeline\.recordStep\(pool, \{\s+runId: plan\.runId, step: 'proposed', sessionId,\s+detail: \{ recovered: true,/);
   // Merged, and live: now, or on the later look that finds it answering.
   const dm = read('src/services/homeroom-bot-dm.js');
   assert.match(dm, /SELECT r\.id AS run_id, r\.app_id, r\.issue_number/);

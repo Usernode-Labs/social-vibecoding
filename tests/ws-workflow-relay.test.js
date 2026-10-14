@@ -86,10 +86,10 @@ test('a notification named by a workflow push is read by the relay and reaches i
 test('issues a workflow closed reach this process\'s copy of the open-issues list, and no socket', async () => {
   const github = require('../src/services/github');
   const calls = [];
-  const saved = { note: github.noteIssuesClosed, bust: github.invalidateIssuesCache, show: github.unsuppressIssues };
-  github.noteIssuesClosed = (...a) => { calls.push(['note', ...a]); };
-  github.invalidateIssuesCache = (...a) => { calls.push(['bust', ...a]); };
-  github.unsuppressIssues = (...a) => { calls.push(['show', ...a]); };
+  // Applied here only (github.js applyIssuesChange): every process hears the
+  // transition itself, so none passes it on.
+  const saved = { apply: github.applyIssuesChange };
+  github.applyIssuesChange = (...a) => { calls.push(['apply', ...a]); };
   const sock = await openEvents('author');
   try {
     relay({ kind: 'issues_closed', routing: { owner: 'acme', repo: 'shop' }, data: { numbers: [5, 6] }, fromWorkflow: true });
@@ -98,12 +98,13 @@ test('issues a workflow closed reach this process\'s copy of the open-issues lis
     // Only a machine says so: a peer's publish of this kind is not one.
     relay({ kind: 'issues_closed', routing: { owner: 'acme', repo: 'shop' }, data: { numbers: [7] } });
     await settle();
-    assert.deepEqual(calls, [['note', 'acme', 'shop', [5, 6]], ['bust', 'acme', 'shop'], ['show', 'acme', 'shop', [8]], ['bust', 'acme', 'shop']]);
+    assert.deepEqual(calls, [
+      ['apply', 'acme', 'shop', { closed: [5, 6], open: undefined, invalidate: true }],
+      ['apply', 'acme', 'shop', { closed: [], open: [8], invalidate: true }],
+    ]);
     assert.deepEqual(sock.received.filter((m) => m.type !== 'platform_version'), [], 'nothing for browsers');
   } finally {
-    github.noteIssuesClosed = saved.note;
-    github.invalidateIssuesCache = saved.bust;
-    github.unsuppressIssues = saved.show;
+    github.applyIssuesChange = saved.apply;
     sock.close();
   }
 });

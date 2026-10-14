@@ -116,9 +116,12 @@ test('while the plan waits, the build\'s note says so instead of promising a mes
   // to say, and always in the plain card without one. The sketch's caption
   // calling it the real app is gone.
   // N4 (13 Oct 2026): with the stage's own words and how long it has run.
-  assert.match(src, /<SketchCard made=\{made\} sketch=\{sketch\} line=\{line\} note=\{note\} lineWords=\{named\.words\} lineNote=\{named\.note\} \/>/);
-  // (A little lower while the setup's card stands in for its status line, #4900.)
-  assert.match(src, /<p className=\{settingUp \|\| ranInPlace \? 'mt-3 text-\[13px\] text-zinc-500 dark:text-zinc-400' : 'mt-1 text-\[13px\] text-zinc-500 dark:text-zinc-400'\}>\{note\}<\/p>/);
+  // (Run six: the line only while nothing else on the screen says where it is.)
+  assert.match(src, /<SketchCard made=\{made\} sketch=\{sketch\} line=\{ownLine \? line : null\} note=\{note\} lineWords=\{named\.words\} lineNote=\{named\.note\} \/>/);
+  // (A little lower while the setup's card, or the first look card, stands
+  // in for its status line, #4900, or while nothing does, run six.)
+  assert.match(src, /const rowHidden = settingUp \|\| ranInPlace \|\| !ownLine;/);
+  assert.match(src, /<p className=\{rowHidden \? 'mt-3 text-\[13px\] text-zinc-500 dark:text-zinc-400' : 'mt-1 text-\[13px\] text-zinc-500 dark:text-zinc-400'\}>\{note\}<\/p>/);
   assert.doesNotMatch(src, /sketchCaption/);
   // The plain card's busy dot: not while it waits on them, nor on a setup that stopped (stalledOf).
   assert.match(src, /const busy = appStatus === 'creating' \|\| \(botBuilds && !\(fv && fv\.ready\) && !plan && !stalled\);/);
@@ -206,7 +209,7 @@ test('who joined is the people row, not a line: the community is read once, then
   assert.match(read('src/services/communities.js'), /AS member_count,/);
 });
 
-test('the made screen renders with nothing read yet: no plan, the build\'s first line', () => {
+test('the made screen renders with nothing read yet: no plan, and one thing going on, the check for questions', () => {
   const { MadeScreen } = loadTsx(`${DIR}/made.tsx`);
   const html = renderToHtml(createElement(MadeScreen, {
     made: { slug: 'plant-pal', name: 'Plant Pal', emoji: '🪴', description: null, example: null, conversationId: 12 },
@@ -215,8 +218,9 @@ test('the made screen renders with nothing read yet: no plan, the build\'s first
     onOpenChat() {},
   }));
   assert.ok(!/data-first-session-plan/.test(html), 'no plan until one is read');
-  assert.match(html, /data-build-line="planning"[^>]*>.*Homeroom bot is planning it/);
-  assert.doesNotMatch(html, /Homeroom is making your app/, 'nothing under the thumbnail but the build line');
+  // Run six: not "Homeroom bot is planning it" as well as the checking line.
+  assert.doesNotMatch(html, /data-build-line=|Homeroom bot is planning it/);
+  assert.doesNotMatch(html, /Homeroom is making your app/, 'nothing under the thumbnail');
   // Run five: no way past the questions before they could be read.
   assert.match(html, /Checking whether Homeroom bot needs to ask you anything first\./);
   assert.doesNotMatch(html, /Invite people later/);

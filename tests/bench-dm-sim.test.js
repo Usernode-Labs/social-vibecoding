@@ -16,6 +16,7 @@ const live = require('../src/services/homeroom-bot-live');
 const dm = require('../src/services/homeroom-bot-dm');
 const ws = require('../src/services/ws');
 const githubModule = require('../src/services/github');
+const durableSteps = require('../src/services/durable-steps');
 
 test('the reply rule: the same answer, an accepted phrasing, a close one, or Something else', () => {
   const answers = ['Dark blue', 'Green', 'Keep it as it is'];
@@ -51,17 +52,20 @@ function spySideEffects(t) {
 
 function harness(replies) {
   const prompts = [];
+  const pinned = [];
   let i = 0;
   const pool = {
     async query(sql, params) {
       if (/INSERT INTO chat_sessions/.test(String(sql))) return { rows: [{ id: 8001, branch_name: params[2], agent_model: params[4] }] };
+      // The conversation's session, read back by a later attempt.
+      if (/SELECT \* FROM chat_sessions WHERE id = \$1/.test(String(sql))) return { rows: [{ id: Number(params[0]), branch_name: 'bench/r4-t70', agent_model: null }] };
       return { rows: [], rowCount: 1 };
     },
   };
   const gh = {
     isEnabled: () => true,
     async getBranchSha() { return 'f'.repeat(40); },
-    async ensureBranchAtSha() {},
+    async ensureBranchAtSha(_o, _r, branch, sha) { pinned.push({ branch, sha }); },
   };
   const deps = {
     github: runner.guardedGithub(gh),
@@ -78,7 +82,7 @@ function harness(replies) {
     agentTurn: { async resolveCodexRuntimeContext() { return {}; } },
     activeWorkers: new Set(),
   };
-  return { pool, deps, prompts };
+  return { pool, deps, prompts, pinned };
 }
 
 const QUESTION = '```json\n{"verdict":"question","question":"Which colour should the header be?","default":"Dark blue","blocker":"user_facing","why_default_fails":"taste","answers":["Dark blue","Green"]}\n```';
@@ -177,42 +181,49 @@ test('a DM task with no answer yet never runs: not applicable, never the model\'
 
 test('a conversation a restart caught goes on from the last turn it finished: only the turn caught runs again', async (t) => {
   const side = spySideEffects(t);
-  // The first claim: the bot asks, the person answers, and the turn after is
-  // caught by a restart. What it kept is its first turn.
-  const kept = [];
+  // The first attempt: the bot asks, the person answers, and the turn after
+  // is caught by a restart. Each turn it finished is a durable step.
+  const saves = [];
+  const stop = new AbortController();
+  const steps = durableSteps.durable({ signal: stop.signal, checkpoint: async (state) => { saves.push(state); } });
   const first = harness([QUESTION, READY]);
-  let turns = 0;
   const realExec = first.deps.worker.execInWorker;
   first.deps.worker.execInWorker = async (id, opts) => {
-    turns += 1;
-    if (turns === 2) throw new Error('the platform restarted');
+    if (first.prompts.length === 1) {
+      first.prompts.push(opts.prompt);
+      stop.abort();
+      return new Promise(() => {});
+    }
     return realExec(id, opts);
   };
-  await runner.runStage({ ...ctx(first, { true_answer: 'A dark blue please', max_turns: 3 }), onCheckpoint: async (part) => { kept.push(part); } });
-  const checkpoint = Object.assign({}, ...kept);
-  assert.equal(checkpoint.dm.turns, 1, 'its first turn, kept as it ended');
-  assert.equal(checkpoint.dm.appended.length, 2, 'with the question and the answer the next turn reads');
-  assert.deepEqual(checkpoint.dm.sessionIds, [8001]);
+  await assert.rejects(runner.runStage({ ...ctx(first, { true_answer: 'A dark blue please', max_turns: 3 }), deps: { ...first.deps, durable: steps } }),
+    { code: 'steps_stopped' }, 'a stop is not the trial\'s failure: its next attempt carries it on');
+  const kept = saves.at(-1);
+  assert.equal(kept['dm:1'].parsed.verdict, 'question', 'its first turn, kept as it ended');
+  assert.equal('dm:2' in kept, false, 'the turn the restart caught is not');
+  assert.deepEqual(kept['session:dm'], { id: 8001 });
 
-  // The next claim runs only the turn the restart caught, on the thread as it was.
+  // The next attempt runs only the turn the restart caught, on the thread as
+  // the first turn's answer left it, in the same session.
   const h = harness([READY]);
-  h.pool.query = async (sql, params) => (/INSERT INTO chat_sessions/.test(String(sql))
-    ? { rows: [{ id: 8002, branch_name: params[2], agent_model: params[4] }] } : { rows: [], rowCount: 1 });
-  const out = await runner.runStage({ ...ctx(h, { true_answer: 'A dark blue please', max_turns: 3 }), checkpoint });
+  const again = durableSteps.durable({ resumeFrom: kept, lostAttempts: 1, checkpoint: async (state) => { saves.push(state); } });
+  const out = await runner.runStage({ ...ctx(h, { true_answer: 'A dark blue please', max_turns: 3 }), deps: { ...h.deps, durable: again } });
   assert.equal(out.status, 'ok', out.error);
   assert.equal(h.prompts.length, 1, 'one turn, not the conversation again');
-  assert.match(h.prompts[0], /Dark blue\n\n\(Answered in a chat with Homeroom bot\.\)/, 'it reads the answer the first claim gave');
+  assert.match(h.prompts[0], /Dark blue\n\n\(Answered in a chat with Homeroom bot\.\)/, 'it reads the answer the first attempt gave');
+  assert.equal(h.prompts[0], first.prompts[1], 'the very prompt the turn the restart caught was sent');
   assert.equal(out.parsed.verdict, 'ready');
   assert.equal(out.parsed.turns, 2);
   assert.equal(out.parsed.conversation[0].reply.text, 'Dark blue');
-  assert.deepEqual(out.session_ids, [8001, 8002], 'both claims\' sessions, each charged');
+  assert.equal(out.session_id, 8001, 'its one session, opened once');
+  assert.equal(out.cost_usd, 0.02, 'both turns are the trial\'s cost');
+  assert.deepEqual(h.pinned, [], 'its branch is not cut again');
   assert.deepEqual(side, []);
 
   // A conversation that had ended before the restart is recorded as it ended.
-  const ended = Object.assign({}, checkpoint, { dm: { ...checkpoint.dm, turns: 2, conversation: [...checkpoint.dm.conversation, { turn: 2, verdict: 'ready' }],
-    last: { status: 'ok', error: null, parsed: { verdict: 'ready', buildNote: 'Make the header dark blue.', question: null, reason: null, questionAnswers: [] } } } });
   const h2 = harness([QUESTION]);
-  const out2 = await runner.runStage({ ...ctx(h2, { true_answer: 'Dark blue', max_turns: 3 }), checkpoint: ended });
+  const ended = durableSteps.durable({ resumeFrom: saves.at(-1), lostAttempts: 1, checkpoint: async () => {} });
+  const out2 = await runner.runStage({ ...ctx(h2, { true_answer: 'Dark blue', max_turns: 3 }), deps: { ...h2.deps, durable: ended } });
   assert.equal(h2.prompts.length, 0, 'no turn runs');
   assert.equal(out2.parsed.verdict, 'ready');
   assert.equal(out2.parsed.turns, 2);

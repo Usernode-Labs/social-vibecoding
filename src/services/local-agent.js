@@ -31,6 +31,7 @@
 // whole point of the feature and is not an implementation detail to be
 // optimized away later.
 
+const crypto = require('node:crypto');
 const { EventEmitter } = require('node:events');
 const log = require('./logger');
 const events = require('./events');
@@ -56,6 +57,17 @@ const OFFER_TIMEOUT_MS = 90 * 1000;
 // eventually returns the session to the user rather than pinning it busy
 // forever. The watchdog in routes/sessions.js uses the same number.
 const TURN_TIMEOUT_MS = 60 * 60 * 1000;
+
+// The platform's own side of a turn is a waiter in the process that
+// dispatched it (awaitTurnResult), and a restart kills it while the laptop
+// keeps working. The waiter says it is alive every WAITER_RENEW_MS; one
+// silent for WAITER_STALE_SECONDS is taken over by the leader's recovery
+// pass (services/local-agent-recovery.js), which then finishes the turn.
+// The window is under the agent session's 90-second Mayor lease, so a
+// conversation whose build is being taken over is not first ended as
+// interrupted (mayor/agent-turn.js sweepInterruptedTurns checks too).
+const WAITER_RENEW_MS = 10 * 1000;
+const WAITER_STALE_SECONDS = 45;
 
 const MAX_PROGRESS_LINES = 500;
 const MAX_PROGRESS_LINE_CHARS = 2000;
@@ -414,16 +426,20 @@ async function enqueueTurn(pool, {
   if (!isValidMode(mode)) throw new Error(`Unsupported turn mode: ${mode}`);
   const lease = await activeLease(pool, sessionId);
   if (!lease || lease.user_id !== userId) return null;
+  // The caller is the turn's waiter from this moment: it hands the id to
+  // awaitTurnResult, which keeps it alive and claims the tail with it.
+  const waiterId = crypto.randomUUID();
   try {
     const { rows } = await pool.query(
       `INSERT INTO local_agent_turns
-         (session_id, lease_id, user_id, prompt, base_sha, branch_name, mode)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+         (session_id, lease_id, user_id, prompt, base_sha, branch_name, mode,
+          waiter_id, waiter_seen_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
        RETURNING *`,
-      [sessionId, lease.id, userId, prompt, baseSha || null, branchName || null, mode]
+      [sessionId, lease.id, userId, prompt, baseSha || null, branchName || null, mode, waiterId]
     );
     notifyTurn(sessionId);
-    return { turn: rows[0], lease };
+    return { turn: rows[0], lease, waiterId };
   } catch (err) {
     if (err.code === '23505') return null;
     throw err;
@@ -576,21 +592,39 @@ async function finishTurn(pool, {
 // `onProgress` is called with the turn row whenever anything changes, which
 // is what lets dev chat stream a local run's progress lines the same way it
 // streams a worker's.
+//
+// `waiterId` (enqueueTurn's, or the recovery pass's after it took the
+// turn over) makes this the turn's one waiter: it keeps waiter_seen_at
+// fresh while it waits, and a terminal turn is returned only once its tail
+// is claimed with that id. A waiter that finds its id gone (recovery
+// took the turn over while this process looked dead) or the tail already
+// claimed answers 'adopted': the tail is someone else's to run.
 async function awaitTurnResult(pool, turnId, {
   onProgress,
   offerTimeoutMs = OFFER_TIMEOUT_MS,
   turnTimeoutMs = TURN_TIMEOUT_MS,
   signal,
+  waiterId = null,
 } = {}) {
   const started = Date.now();
   let lastSeenUpdate = null;
+  let lastRenewed = Date.now();
+  const settle = async (outcome, turn) => {
+    if (!waiterId) return { outcome, turn };
+    const claimed = await claimTail(pool, turnId, waiterId);
+    return claimed ? { outcome, turn: claimed } : { outcome: 'adopted', turn };
+  };
   for (;;) {
     const turn = await getTurn(pool, turnId);
     if (!turn) {
       return { outcome: 'missing', turn: null };
     }
     if (TERMINAL_TURN_STATUSES.includes(turn.status)) {
-      return { outcome: turn.status, turn };
+      return settle(turn.status, turn);
+    }
+    if (waiterId && Date.now() - lastRenewed >= WAITER_RENEW_MS) {
+      if (!await renewWaiter(pool, turnId, waiterId)) return { outcome: 'adopted', turn };
+      lastRenewed = Date.now();
     }
     if (onProgress && String(turn.updated_at) !== lastSeenUpdate) {
       lastSeenUpdate = String(turn.updated_at);
@@ -610,7 +644,7 @@ async function awaitTurnResult(pool, turnId, {
             RETURNING *`,
           [turnId, ['queued', 'offered']]
         );
-        return { outcome: 'abandoned', turn: abandoned.rows[0] || turn };
+        return settle('abandoned', abandoned.rows[0] || turn);
       }
     } else if (Date.now() - started > turnTimeoutMs) {
       const timedOut = await pool.query(
@@ -621,11 +655,153 @@ async function awaitTurnResult(pool, turnId, {
           RETURNING *`,
         [turnId, LIVE_TURN_STATUSES]
       );
-      return { outcome: 'failed', turn: timedOut.rows[0] || turn };
+      return settle('failed', timedOut.rows[0] || turn);
     }
     if (signal?.aborted) return { outcome: 'aborted', turn };
     await waitForSignal(turnChannel(turn.session_id), 2000, signal);
   }
+}
+
+// The waiter is still here. Leaves updated_at alone: that is the progress
+// signal awaitTurnResult's onProgress keys on. False when the id is no
+// longer the turn's (recovery took it over) or its tail is already claimed.
+async function renewWaiter(pool, turnId, waiterId) {
+  const { rows } = await pool.query(
+    `UPDATE local_agent_turns SET waiter_seen_at = NOW()
+      WHERE id = $1 AND waiter_id = $2 AND tail_claimed_at IS NULL
+      RETURNING id`,
+    [turnId, waiterId]
+  );
+  return rows.length > 0;
+}
+
+// The one claim on a finished turn's post-turn tail, by the waiter holding
+// its id. Resolves the turn row when this call claimed it, else null.
+async function claimTail(pool, turnId, waiterId) {
+  const { rows } = await pool.query(
+    `UPDATE local_agent_turns SET tail_claimed_at = NOW(), waiter_seen_at = NOW()
+      WHERE id = $1 AND waiter_id = $2 AND tail_claimed_at IS NULL
+      RETURNING *`,
+    [turnId, waiterId]
+  );
+  return rows[0] || null;
+}
+
+// Restart recovery: take over the turns whose waiter died with its process,
+// live or already finished on the laptop. One conditional UPDATE per pass,
+// so two passes (or a pass and a waiter that comes back to life) cannot
+// both hold a turn: the new waiter id is the turn's from here on. Rows written
+// before waiters had ids are never taken. Resolves the taken rows, each
+// with the `waiter_id` the recovery now waits under.
+async function adoptOrphanedTurns(pool, { limit = 10, staleSeconds = WAITER_STALE_SECONDS } = {}) {
+  const { rows } = await pool.query(
+    `UPDATE local_agent_turns t
+        SET waiter_id = gen_random_uuid(), waiter_seen_at = NOW()
+      WHERE t.id IN (
+        SELECT id FROM local_agent_turns
+         WHERE waiter_id IS NOT NULL AND tail_claimed_at IS NULL
+           AND waiter_seen_at < NOW() - make_interval(secs => $1)
+         ORDER BY id ASC
+         LIMIT $2
+         FOR UPDATE SKIP LOCKED
+      )
+      RETURNING t.*`,
+    [staleSeconds, limit]
+  );
+  return rows;
+}
+
+// The recovered tail is still running: it keeps its claim's heartbeat fresh
+// (hasUnfinishedTurn reads it), as its waiting did.
+async function touchWaiter(pool, turnId, waiterId) {
+  await pool.query(
+    'UPDATE local_agent_turns SET waiter_seen_at = NOW() WHERE id = $1 AND waiter_id = $2',
+    [turnId, waiterId]
+  );
+}
+
+// The recovered tail got to its end.
+async function markTailFinished(pool, turnId) {
+  await pool.query(
+    'UPDATE local_agent_turns SET tail_finished_at = NOW() WHERE id = $1 AND tail_claimed_at IS NOT NULL',
+    [turnId]
+  );
+}
+
+// Whether a session has a local turn the platform has not finished with:
+// one still waited for or waiting to be taken over (its tail unclaimed), or
+// one whose recovered tail is running (claimed, unfinished, its heartbeat
+// fresh). What a conversation's interrupted-turn sweep asks, on every pod,
+// before it ends a dead turn whose build is in such hands. A tail whose
+// runner died stops counting once its heartbeat is stale; an unclaimed turn
+// stops counting once it is older than any turn may run.
+async function hasUnfinishedTurn(pool, sessionId) {
+  const { rows } = await pool.query(
+    `SELECT 1 FROM local_agent_turns
+      WHERE session_id = $1 AND waiter_id IS NOT NULL AND tail_finished_at IS NULL
+        AND (tail_claimed_at IS NULL OR waiter_seen_at > NOW() - make_interval(secs => $3))
+        AND created_at > NOW() - make_interval(secs => $2)
+      LIMIT 1`,
+    [sessionId, Math.round(TURN_TIMEOUT_MS / 1000) + WAITER_STALE_SECONDS * 2, WAITER_STALE_SECONDS]
+  );
+  return rows.length > 0;
+}
+
+// What a finished local turn hands the build tail: an execInWorker-shaped
+// result, so the shared tail (live: runClaudeCodeTool; after a restart:
+// finalizeRecoveredTurn) cannot tell a local run from a worker's. `pushOk`
+// is true because a local agent has no push access by design: its commits
+// reached the branch through the platform's own GitHub App (POST
+// /api/cli/agent/turns/:id/commit), so there is nothing left to push.
+//
+// 'declined' and 'abandoned' are the two outcomes that are nobody's fault:
+// the checkout was dirty / on the wrong commit, or the laptop went away
+// mid-turn. Both are reported as an honest error rather than as a silent
+// no-op, because the user is sitting in front of the machine that just
+// refused and can act on the reason. 'completed' needs no explanation and
+// 'failed' already carries the runtime's own words in error_detail, so both
+// are left to the shared tail.
+function buildTurnResult({ turn, outcome, label, behind = 0, mode = 'build' }) {
+  const explain = {
+    declined: `${label} declined this turn`,
+    abandoned: `${label} disconnected before finishing this turn`,
+    stopped: 'Stopped',
+    missing: 'The local turn record disappeared',
+    aborted: `${label} was interrupted`,
+  }[outcome] || null;
+  const detail = turn?.error_detail ? `: ${turn.error_detail}` : '';
+  const common = {
+    exitCode: outcome === 'completed' ? 0 : 1,
+    ccIsError: outcome !== 'completed',
+    fatalError: explain ? `${explain}${detail}` : null,
+    rawStderr: turn?.error_detail || '',
+    // A local run has no cost to the platform. Leaving costUsd absent is
+    // what makes the zero-cost accounting a no-op rather than a special
+    // case: no llm_usage row, no settleTurnSpend, no usage event.
+    sessionId: null,
+    initSessionId: null,
+    markerlessCause: null,
+    localTurnId: turn ? String(turn.id) : null,
+    localOutcome: outcome,
+  };
+  if (mode === 'scout') {
+    // The spec IS the result text here. spec_md is the column the local
+    // agent posts its drafted document into; `summary` carries the
+    // runtime's own closing words, which for a scout run are the spec
+    // again, so prefer the explicit field.
+    return { ...common, lastResultText: turn?.spec_md || turn?.summary || '' };
+  }
+  const headSha = turn?.head_sha || null;
+  return {
+    ...common,
+    sha: headSha,
+    ahead: headSha ? 1 : 0,
+    // Nothing local was fetched, so the platform's existing count is the
+    // best answer; do not let a local turn reset it to zero.
+    behind: behind || 0,
+    pushOk: true,
+    lastResultText: turn?.summary || '',
+  };
 }
 
 // Ask the local agent to stop. There is no way to reach into someone's
@@ -744,6 +920,15 @@ module.exports = {
   recordTurnHead,
   finishTurn,
   awaitTurnResult,
+  WAITER_RENEW_MS,
+  WAITER_STALE_SECONDS,
+  renewWaiter,
+  claimTail,
+  adoptOrphanedTurns,
+  touchWaiter,
+  markTailFinished,
+  hasUnfinishedTurn,
+  buildTurnResult,
   requestStop,
   recordTurnRunner,
   recordTurnEvent,

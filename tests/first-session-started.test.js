@@ -54,8 +54,10 @@ test('C3: who, then the community, then the app, then one line over two buttons'
   // Run five: a project the bot builds checks for questions first, in the
   // buttons' place; one it does not build shows them from the start.
   const buttons = draw({ made: { ...MADE, conversationId: null } });
-  assert.ok(html.indexOf('data-build-line="planning"') < html.indexOf('data-first-session-checking=""'));
-  assert.ok(html.indexOf('data-build-line="planning"') > 0);
+  // Run six: one thing going on while it checks, the checking line under
+  // the project, with no build line and no setup card beside it.
+  assert.doesNotMatch(html, /data-build-line=|data-made-setup/);
+  assert.ok(html.indexOf('data-featured-card=') < html.indexOf('data-first-session-checking=""'));
   assert.doesNotMatch(html, /Share invite|Invite people later/);
   assert.ok(buttons.indexOf('>Invite people to use it and help improve it together.</p>') < buttons.indexOf('>Share invite</button>'));
   assert.ok(buttons.indexOf('>Share invite</button>') < buttons.indexOf('>Invite people later</button>'));
@@ -71,12 +73,16 @@ test('C3: who, then the community, then the app, then one line over two buttons'
   assert.match(CODE, /max-w-sm grow flex-col px-6 pb-\[max\(36px,env\(safe-area-inset-bottom\)\)\]">/);
   // The faces and the heading over the thumbnail, one block centred in the
   // room between the bar and the line over the buttons. The name is the
-  // thumbnail's alone.
-  assert.match(CODE, /<div data-first-session-made-body="" className="flex grow flex-col justify-center gap-4 py-4">/);
+  // thumbnail's alone. Run seven: at the top while it checks or asks
+  // (tests/first-session-one-thing), so this one, checking, stands there.
+  assert.match(CODE, /<div data-first-session-made-body="" className=\{madeBodyClass\(screen\)\}>/);
+  assert.equal(made.madeBodyClass('invite'), 'flex grow flex-col justify-center gap-4 py-4');
+  assert.match(html, /<div data-first-session-made-body="" class="flex flex-col gap-4 py-4">/);
+  assert.match(buttons, /<div data-first-session-made-body="" class="flex grow flex-col justify-center gap-4 py-4">/, 'the invite ask, centred');
   assert.ok(at('data-first-session-made-body=""') < at('data-first-session-people="1"'));
   assert.ok(at('data-first-session-people="1"') < at('<h1 id="first-session-made-title"'));
   assert.ok(at('<h1 id="first-session-made-title"') < at('data-featured-card='));
-  assert.ok(at('data-featured-card=') < at('data-build-line="planning"'));
+  assert.ok(at('data-featured-card=') < at('data-first-session-checking=""'));
   assert.match(html, /<h1 id="first-session-made-title" class="text-\[15px\] font-normal leading-5 text-zinc-600 dark:text-zinc-400">Your new community<\/h1>/);
   assert.equal((html.match(/>Plant Pal</g) || []).length, 1, 'the name once, on the thumbnail');
   assert.match(html, /role="dialog" aria-labelledby="first-session-made-title" data-first-session-made=""/);
@@ -112,7 +118,9 @@ test('#4900: the way on is off until the app runs, for every first-session proje
   assert.match(CODE, /const waits = waitsToRun\(entry, readyMade\);\s+const settingUp = holdsContinue\(waits, appStatus, false\);/);
   // (And while its plan from Make it is written, 13 Oct 2026, and once more
   // at once after Submit: `reread`.)
-  assert.match(CODE, /const t = window\.setInterval\(read, settingUp \|\| planComing \? READY_POLL_MS : 10000\);\s+return \(\) => \{ live = false; window\.clearInterval\(t\); \};\s+\}, \[made\.slug, settingUp, planComing, reread\]\);/);
+  // (Run six: and as often as tour step 9 asks while the first look card
+  // waits for its picture, tests/first-session-first-look.test.js.)
+  assert.match(CODE, /const t = window\.setInterval\(read, settingUp \|\| planComing \? READY_POLL_MS : lookWaits \? FIRST_LOOK_POLL_MS : 10000\);\s+return \(\) => \{ live = false; window\.clearInterval\(t\); \};\s+\}, \[made\.slug, settingUp, planComing, lookWaits, reread\]\);/);
   // The furthest step read, never back to the start on a read without one.
   assert.match(CODE, /setSetupStep\(\(was\) => Math\.max\(was, setupStepOf\(app\.phase\)\)\);/);
   // Slow after a minute, let go after two, counted again after Try again.
@@ -180,14 +188,18 @@ test('#4900: a card under the project says how far its setup has got, in words, 
   assert.match(third, /class="flex h-\[84px\] items-center gap-3 rounded-\[20px\] bg-white py-3 pl-3 pr-4 shadow-\[inset_0_0_0_1px_var\(--app-sheet-line\)\] dark:bg-zinc-900"/);
 
   // On the made screen: under the project, over the line and the buttons.
-  const html = draw();
+  // (A project Homeroom bot builds from its description has its setup's
+  // progress in the first look card instead, from the invite ask on: run
+  // six, tests/first-session-one-thing.test.js.)
+  const html = draw({ made: { ...MADE, conversationId: null } });
   const at = (needle) => { const i = html.indexOf(needle); assert.ok(i >= 0, needle); return i; };
   assert.ok(at('data-featured-card=') < at('data-made-setup="started"'));
-  assert.ok(at('data-made-setup="started"') < at('data-first-session-checking=""'));
-  assert.match(CODE, /\{settingUp \? <SetupProgress step=\{setupStep\} slow=\{slow\} waitedOut=\{waitedOut\} \/> : null\}/);
+  assert.ok(at('data-made-setup="started"') < at('data-first-session-hint=""'));
+  assert.match(CODE, /\{settingUp && setupCard \? <SetupProgress step=\{setupStep\} slow=\{slow\} waitedOut=\{waitedOut\} \/> : null\}/);
   // A plain card's own "Setting it up…" gives way to it while it shows, and
   // once it has run, to the same card in its place (READY IN PLACE).
-  assert.match(CODE, /\{settingUp \|\| ranInPlace \? null : \(\s+<div data-first-session-build-row="" className="mt-4 flex h-5 max-w-full items-center gap-2 text-\[14px\] leading-5 text-zinc-600 dark:text-zinc-300">/);
+  assert.match(CODE, /const rowHidden = settingUp \|\| ranInPlace \|\| !ownLine;/);
+  assert.match(CODE, /\{rowHidden \? null : \(\s+<div data-first-session-build-row="" className="mt-4 flex h-5 max-w-full items-center gap-2 text-\[14px\] leading-5 text-zinc-600 dark:text-zinc-300">/);
 });
 
 test('READY IN PLACE: once the app runs its setup card stays where it was, so nothing over or under it moves (onboarding run two)', () => {
@@ -208,7 +220,7 @@ test('READY IN PLACE: once the app runs its setup card stays where it was, so no
   // Only once it has shown here, and never over a setup that stopped.
   assert.match(CODE, /useEffect\(\(\) => \{ if \(settingUp\) setSetupShown\(true\); \}, \[settingUp\]\);/);
   assert.match(CODE, /const ranInPlace = setupShown && !settingUp && !stalled;/);
-  assert.match(CODE, /\{ranInPlace \? <SetupProgress step=\{setupStep\} slow=\{slow\} waitedOut=\{waitedOut\} done=\{\{ line: card \? t\(SETUP_SET_UP\) : plainLine, busy \}\} \/> : null\}/);
+  assert.match(CODE, /\{ranInPlace && setupCard \? <SetupProgress step=\{setupStep\} slow=\{slow\} waitedOut=\{waitedOut\} done=\{\{ line: card \? t\(SETUP_SET_UP\) : plainLine, busy \}\} \/> : null\}/);
 });
 
 test('C4: the sheet is titled with the community, a small caps label over the invite as they will see it', () => {

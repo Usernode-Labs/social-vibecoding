@@ -55,6 +55,7 @@ let pool = null;
 require('../src/db/pool').getPool = () => pool;
 
 const bot = require('../src/services/homeroom-bot');
+const live = require('../src/services/homeroom-bot-live');
 const { appRoutes } = require('../src/routes/apps');
 
 const QS = [
@@ -240,8 +241,26 @@ test('a first version planned at Make it: answered on the made screen, built wit
     assert.equal(run.awaiting_go_at, null, 'no Build it to wait for');
     assert.deepEqual(run.plan.chosen.map((c) => c.answer), ['Only you', 'As votes come in'], 'the answers, the suggested one for one left alone');
     assert.match(run.build_note, /^One screen: the open polls\. Its primary action is New poll\./);
-    assert.match(run.build_note, /- Make a poll in a few taps/, 'the plan its maker approved, for the spec');
-    assert.match(run.build_note, /- Who can make a poll\? Only you/);
+    // Newcomer run seven (14 Oct 2026): the made screen showed its maker the
+    // questions alone, so the plan's lines are its own, in the sketch, and
+    // only the answers are theirs, winning where a line differs.
+    assert.ok(run.build_note.endsWith([
+      '',
+      '',
+      live.PLAN_LINES_HEAD,
+      '- Make a poll in a few taps',
+      '- Everyone votes once',
+      '- See who won',
+      '',
+      live.MADE_SCREEN_CHOICES_HEAD,
+      '- Who can make a poll? Only you',
+      '- When do results show? As votes come in',
+    ].join('\n')), run.build_note);
+    assert.doesNotMatch(run.build_note, /Approved by the creator, who tapped Build it|from the plan they were shown/, 'never said to be approved under Build it');
+    const split = live.splitApprovedPlan(run.build_note);
+    assert.match(split.sketch, /- Make a poll in a few taps/, 'the lines are the plan\'s sketch');
+    assert.ok(split.approved.startsWith(live.MADE_SCREEN_CHOICES_HEAD));
+    assert.equal(run.plan.planShown, false, 'kept, so a run a restart sends back writes the same note');
     const card = await cardOf(result.runId);
     assert.equal(card.meta.status, 'answered', 'the chat\'s card says it is being built');
     assert.equal(card.meta.chosen, 'build');
@@ -273,6 +292,10 @@ test('a first version planned at Make it: answered on the made screen, built wit
     const run = await runOf(result.runId);
     assert.ok(run.live_build_waiting_at);
     assert.deepEqual(run.plan.chosen.map((c) => c.answer), ['Anyone in the club', 'After everyone votes']);
+    // Run seven: Submit on the made screen, not Build it under the card.
+    assert.ok(run.build_note.endsWith(`\n\n${live.MADE_SCREEN_CHOICES_HEAD}\n- Who can make a poll? Anyone in the club\n- When do results show? After everyone votes`), run.build_note);
+    assert.doesNotMatch(run.build_note, /Approved by the creator/);
+    assert.equal(run.plan.planShown, false);
     const decided = await cardOf(result.runId);
     assert.equal(decided.meta.status, 'answered');
     assert.deepEqual(decided.meta.choices, ['Anyone in the club', 'After everyone votes']);
@@ -286,7 +309,11 @@ test('a first version planned at Make it: answered on the made screen, built wit
     const result = await triage(app);
     assert.equal(result.acted, 'build_queued');
     assert.equal(turns.length, 0);
-    assert.deepEqual((await runOf(result.runId)).plan.chosen, []);
+    const run = await runOf(result.runId);
+    assert.deepEqual(run.plan.chosen, []);
+    // Run seven: nothing was put to its maker, so nothing is approved.
+    assert.ok(run.build_note.endsWith(`\n\n${live.PLAN_LINES_HEAD}\n- Make a poll in a few taps\n- Everyone votes once\n- See who won`), run.build_note);
+    assert.equal(live.splitApprovedPlan(run.build_note).approved, '');
   });
 
   await t.test('a plan that failed at Make it: the triage reads the request, as it always did', async () => {

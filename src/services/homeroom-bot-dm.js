@@ -555,12 +555,17 @@ async function sendDm(pool, {
   // The notification's detail: homeroom-bot-notify-copy.js words the push,
   // the bell and the email from the story's fields (contract 2.1).
   const detail = story ? await notificationDetail(pool, story, stored) : null;
+  // Run six: a first version's ready and live, for a maker who turned
+  // "We'll tell you when it's live" off, are said here and ring nothing.
+  const firstNews = !!metadata?.firstVersion && (story === 'ready' || story === 'live');
+  const muted = firstNews
+    && (await firstVersionNotify(pool, { appSlug: metadata.appSlug, userId }).catch(() => null)) === false;
   const send = (withCards) => conversations.sendMessage(pool, { id: bot.id }, opened.conversationId,
     withCards.length
       ? { ...input, objects: withCards }
       : { ...input, ...(cards.length && withoutCards ? { content: clip(withoutCards, conversations.MAX_MESSAGE_LENGTH || 8000) } : {}) },
     {
-      metadata: stored ? { [META]: stored } : null, notify: !!story, notificationDetail: detail,
+      metadata: stored ? { [META]: stored } : null, notify: !!story && !muted, notificationDetail: detail,
       notificationKind: (story && BUILD_KINDS[story]) || null,
     });
   let result = await send(cards);
@@ -573,7 +578,7 @@ async function sendDm(pool, {
     return null;
   }
   const messageId = result.messageId ?? result.message?.id ?? null;
-  if (!result.duplicate && story === 'ready') {
+  if (!result.duplicate && !muted && story === 'ready' && !metadata?.firstVersion) {
     // WP-E: "ready to try" by email when no phone can take the push.
     void require('./activity-mail').emailIfNoPush(pool, {
       userId, kind: 'build_ready', appName: metadata?.appName || null, appSlug: metadata?.appSlug || null,
@@ -583,6 +588,17 @@ async function sendDm(pool, {
       ...(stored?.requestTitle ? { requestTitle: stored.requestTitle } : {}),
       // Built, but part of it failed when Homeroom tried it: not "ready to try".
       ...(Array.isArray(metadata?.ready?.broken) && metadata.ready.broken.length ? { notWorking: true } : {}),
+    });
+  }
+  if (!result.duplicate && !muted && story === 'live' && metadata?.firstVersion) {
+    // Run six: a first version's email is its LIVE, the moment its maker
+    // was promised. It goes live without a vote a minute or two after it is
+    // ready to try (D1), and two emails that close together would be one
+    // too many (mail/rate-limit.js holds build mail five minutes apart), so
+    // its ready sends none. Worded as its push is, from the detail.
+    void require('./activity-mail').emailIfNoPush(pool, {
+      userId, kind: 'build_ready', appName: metadata?.appName || null, appSlug: metadata?.appSlug || null,
+      conversationId: opened.conversationId, messageId, threadRootId: root, detail,
     });
   }
   if (!result.duplicate) {
@@ -1952,7 +1968,10 @@ async function closePlanCards(pool, runIds, { stopped = false, ws = null, bot = 
  * card then reads "Building it", with its answers, everywhere. Resolves { ok: true,
  * choice, label } or { ok: false, status, error }.
  */
-async function decidePlanTap(pool, { user, action, choice, answers = [], deps = {} }) {
+// Newcomer run seven (14 Oct 2026): `planShown` false when it was decided
+// without the card's Build it (buildFromAnswers): the plan's bullets were
+// never put to its maker, so goAhead writes them as the plan's own lines.
+async function decidePlanTap(pool, { user, action, choice, answers = [], deps = {}, planShown = true }) {
   if (choice !== 'build') return { ok: false, status: 400, error: 'choice must be build' };
   const { rows: [card] } = await pool.query(
     'SELECT run_id, conversation_id FROM homeroom_bot_dm_messages WHERE message_id = $1 AND user_id = $2 AND kind = $3',
@@ -1967,6 +1986,7 @@ async function decidePlanTap(pool, { user, action, choice, answers = [], deps = 
   if (!claimed.length) return { ok: false, status: 409, error: 'already_decided' };
   const went = await (deps.botSvc || settingsModule()).goAhead(pool, {
     runId: Number(card.run_id), answers: Array.isArray(answers) ? answers.slice(0, 2) : [],
+    ...(planShown === false ? { planShown: false } : {}),
   });
   if (!went.ok) {
     await pool.query('UPDATE homeroom_bot_dm_actions SET status = \'failed\', error = $2 WHERE id = $1', [action.id, 'plan_gone']);
@@ -2008,6 +2028,12 @@ async function decidePlanTap(pool, { user, action, choice, answers = [], deps = 
  * the card says it is being built, with the answers it went with), else
  * straight on (goAhead: a card that could not be sent). Resolves what
  * decidePlanTap or goAhead did, or null when nothing waits.
+ *
+ * Newcomer run seven (14 Oct 2026, Club Votes): either way its maker was
+ * not shown the plan's bullets (the made screen shows its questions alone,
+ * and a plan decided before it was sent goes ahead the moment it is), so
+ * they go ahead with `planShown: false` (goAhead): the bullets are the
+ * plan's own lines, and only the answers are theirs.
  */
 async function buildFromAnswers(pool, { appId, issueNumber, runId = null, userId, answers = [], deps = {} }) {
   const { rows: [run] } = await pool.query(
@@ -2027,8 +2053,8 @@ async function buildFromAnswers(pool, { appId, issueNumber, runId = null, userId
     [run.id, PLAN_KIND, userId],
   );
   const picks = Array.isArray(answers) ? answers.slice(0, 2).map((a) => (typeof a === 'string' ? a : null)) : [];
-  if (action) return decidePlanTap(pool, { user: { id: userId }, action, choice: 'build', answers: picks, deps });
-  const went = await (deps.botSvc || settingsModule()).goAhead(pool, { runId: Number(run.id), answers: picks });
+  if (action) return decidePlanTap(pool, { user: { id: userId }, action, choice: 'build', answers: picks, deps, planShown: false });
+  const went = await (deps.botSvc || settingsModule()).goAhead(pool, { runId: Number(run.id), answers: picks, planShown: false });
   if (went.ok) {
     await require('./first-version-plan').noteDecided(pool, {
       appId: went.appId, issueNumber: went.issueNumber, answers: went.chosen.map((c) => c.answer),
@@ -4391,6 +4417,30 @@ function normalizeBrief(raw) {
 }
 
 /**
+ * Pure: what the bot says in its maker's DM at Make it, while the project is
+ * set up (startFirstVersion). #4097: the project's name is a line of its
+ * own, which Messages draws as the project's card (frontend/src/features/
+ * messages/bot-head-card.tsx); with the hello, after it.
+ *
+ * Run six (14 Oct 2026): it described the old flow, a plan sent here first
+ * and a first version "for you to try". Made from a door that lands on the
+ * made screen (`earlyPlan`), the plan's questions are answered THERE, and a
+ * first version goes live without a vote (D1): so it says what comes next
+ * from here, and that it tells them here once it is live. Made anywhere else
+ * (a connector's create), the plan still comes here as a card with Build it.
+ */
+function firstVersionStartedText({ name, hello = false, earlyPlan = false, off = false }) {
+  const head = hello
+    ? `${MAKER_HELLO}\n\n**${name}**\n\nI'm setting up ${name} now.`
+    : `**${name}**\n\nThanks! I'm setting up ${name} now.`;
+  const next = earlyPlan
+    ? 'I\'ll draw its screens, build the first version and tell you here when it\'s live.'
+    : 'Once it\'s ready I\'ll send you my plan here first, then build its first version and tell you here when it\'s live.';
+  const paused = off ? '\n\nI\'m switched off right now, so this waits until I\'m back on.' : '';
+  return `${head} ${next}${paused}`;
+}
+
+/**
  * A project was just created with a description (routes/apps.js): what the
  * create dialog asks as "What should it do?". Recorded, so it is filed as
  * the project's first request once the project is running, under its
@@ -4414,7 +4464,7 @@ async function startFirstVersion(pool, config, { app, user, brief, earlyPlan = f
      ON CONFLICT (app_id) DO NOTHING`,
     [app.id, user.id, text, !!bot],
   );
-  if (bot && earlyPlan) await require('./first-version-plan').startEarlyPlan(pool, { app, user, brief: text });
+  if (bot && earlyPlan) await require('./first-version-plan').startEarlyPlan(pool, { app, user, brief: text, config, bot });
   if (!bot) {
     log.info('homeroom-bot-dm', 'Project will file its description as its first request', { app: app.slug, userId: user.id });
     return null;
@@ -4422,20 +4472,11 @@ async function startFirstVersion(pool, config, { app, user, brief, earlyPlan = f
   const name = app.name || app.slug;
   // B5: a maker's first project is where the bot says hello, once.
   const hello = await claimHello(pool, { userId: user.id, botId: bot.id, kind: 'maker' });
-  const off = settings.mode === 'off' ? '\n\nI\'m switched off right now, so this waits until I\'m back on.' : '';
   const sent = await sendDm(pool, {
     bot,
     userId: user.id,
     idempotencyKey: `hrbot-create-${app.id}`,
-    // B6: the plan comes first, and the build waits for their Build it.
-    // #4097: the project's name is a line of its own, which Messages draws
-    // as the project's card (frontend/src/features/messages/bot-head-card.tsx);
-    // with the hello, after it.
-    content: hello
-      ? `${MAKER_HELLO}\n\n**${name}**\n\nI'm setting up ${name} now. Once it's ready I'll send you my plan here first, `
-        + `then build its first version for you to try.${off}`
-      : `**${name}**\n\nThanks! I'm setting up ${name} now. Once it's ready I'll send you my plan here first, `
-        + `then build its first version for you to try.${off}`,
+    content: firstVersionStartedText({ name, hello: !!hello, earlyPlan, off: settings.mode === 'off' }),
     metadata: {
       kind: 'first_version_started', appSlug: app.slug, appName: name,
       ...(hello ? { hello: MAKER_HELLO, actions: promptActions(MAKER_PROMPTS), status: 'open' } : {}),
@@ -4444,6 +4485,54 @@ async function startFirstVersion(pool, config, { app, user, brief, earlyPlan = f
   if (hello) await noteHelloSent(pool, user.id, sent?.messageId);
   log.info('homeroom-bot-dm', 'Project will be built from its description', { app: app.slug, userId: user.id });
   return sent ? { conversationId: sent.conversationId } : null;
+}
+
+// ── "We'll tell you when it's live" ──────────────────────────────────────
+//
+// Run six (14 Oct 2026): a first version takes about 23 minutes, so its
+// maker leaves, and the tour's last step promised "we'll message you when
+// it's live". Being told is ON from Make it, unless its maker turns it off
+// (homeroom_bot_first_versions.notify_live, true on the row's insert):
+// its "ready to try" and "live" ring (the bell and the phone's push), and
+// when no phone can take the push its live is emailed (sendDm, below).
+// Off, both are still said in the chat, quietly: no bell, no push, no email.
+// The plan card's switch (frontend/src/features/messages/notify-me.tsx)
+// reads and sets it through routes/conversations.js.
+
+function slugOf(value) {
+  return typeof value === 'string' ? value.slice(0, 200) : '';
+}
+
+/**
+ * Whether the maker of `appSlug`'s first version is told when it is ready
+ * and live. Null when `userId` did not make it (or it was made with no
+ * description, so there is none).
+ */
+async function firstVersionNotify(pool, { appSlug, userId }) {
+  const slug = slugOf(appSlug);
+  if (!slug || !Number.isInteger(Number(userId)) || Number(userId) <= 0) return null;
+  const { rows } = await pool.query(
+    `SELECT f.notify_live FROM homeroom_bot_first_versions f JOIN apps a ON a.id = f.app_id
+      WHERE a.slug = $1 AND f.user_id = $2`,
+    [slug, Number(userId)],
+  );
+  return rows.length ? rows[0].notify_live !== false : null;
+}
+
+/** Turn it on or off for the first version's maker. Resolves what it is now, or null when it is not theirs. */
+async function setFirstVersionNotify(pool, { appSlug, userId, on }) {
+  const slug = slugOf(appSlug);
+  if (!slug || !Number.isInteger(Number(userId)) || Number(userId) <= 0 || typeof on !== 'boolean') return null;
+  const { rows } = await pool.query(
+    `UPDATE homeroom_bot_first_versions f SET notify_live = $3
+       FROM apps a
+      WHERE a.id = f.app_id AND a.slug = $1 AND f.user_id = $2
+      RETURNING f.notify_live`,
+    [slug, Number(userId), on],
+  );
+  if (!rows.length) return null;
+  log.info('homeroom-bot-dm', 'First version notifications set', { app: slug, userId: Number(userId), on });
+  return rows[0].notify_live !== false;
 }
 
 /**
@@ -5094,7 +5183,10 @@ module.exports = {
   noteUserMessage,
   normalizeBrief,
   firstVersionIssue,
+  firstVersionStartedText,
   startFirstVersion,
+  firstVersionNotify,
+  setFirstVersionNotify,
   fileFirstVersion,
   sweepFirstVersions,
   firstVersionApproval,

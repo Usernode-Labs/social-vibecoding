@@ -33,7 +33,8 @@ function createDelivery({ runtime = applicationRuntime, progress = appDeployStat
     }
 
     const failedSha = failureSha(app.last_failure);
-    const deploying = progress.read(app.slug)?.deploying === true;
+    // In this process (a legacy deploy), or by app delivery anywhere.
+    const deploying = progress.read(app.slug, app)?.deploying === true;
     const repo = typeof parseRepo === 'function' ? parseRepo(app.repo_url) : null;
     let dir = null;
     let headSha = null;

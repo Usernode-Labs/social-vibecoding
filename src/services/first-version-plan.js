@@ -110,6 +110,18 @@ const PLAN_SYSTEM = [
   '  plain question with 2 to 4 short answers, the one you suggest first. They can pick another; one they leave goes',
   '  with yours. Only a choice they would care about, never the look or the theme. Often there are none: then give',
   '  an empty list.',
+  '- Every answer to a question makes the app do something different from each other answer to it: picking another',
+  '  answer gets them a different app. Never two answers that say the same thing in other words, or that would be',
+  '  built the same way. Read each pair before you give them: where two come to the same thing, keep one, and a',
+  '  question left with fewer than 2 real answers is no choice (leave it out).',
+  // Newcomer run seven (14 Oct 2026, Club Votes): a line said "Vote yes, no
+  // or maybe on each one" beside the question "How should votes be
+  // counted?", its creator kept "Simple yes or no, most wins", and the spec,
+  // bound by both, built a maybe that only yes and no decide.
+  '- A plan line, the build_note and the assumptions never settle a point one of the choices asks: the creator\'s',
+  '  answer decides it. Where a choice decides something, the line says what the app does without the answer',
+  '  ("Vote on each decision", not "Vote yes, no or maybe on each one"), and the build_note leaves that point to the',
+  '  answer.',
   '- build_note: a few plain lines for the spec writer: what the first version does, the screen\'s one job and its',
   '  one primary action, its colours (neutrals, an action colour and any colours the subject itself uses, each',
   '  working in both looks; not the starter\'s default palette), ONE signature element drawn from the app\'s subject',
@@ -365,9 +377,11 @@ const pending = new Map();
  * model in the background. Resolves whether it was started. Only a first
  * version the bot builds, with nothing asked yet; without a model (a
  * staging preview, a local stack) nothing is asked, and the triage plans it
- * as before. Never throws.
+ * as before. Once the plan is written, its early first look is started from
+ * it, drawn in the worker of `bot`'s session for the app (`config` is the
+ * server's). Never throws.
  */
-async function startEarlyPlan(pool, { app, user, brief }, deps = {}) {
+async function startEarlyPlan(pool, { app, user, brief, config = null, bot = null }, deps = {}) {
   try {
     const llm = deps.llm || require('./llm');
     if (!app?.id || !user?.id || !brief) return false;
@@ -390,6 +404,13 @@ async function startEarlyPlan(pool, { app, user, brief }, deps = {}) {
           // there is a run.
           await (deps.timeline || require('./first-version-timeline')).record(pool, {
             appId: app.id, stage: 'plan_written', detail: { source: 'make_it', questions: made.plan.questions.length },
+          });
+          // Newcomer run six (14 Oct 2026): and its first look, drawn from
+          // this plan now, in a call of its own, so it is there by Submit
+          // (first-version-early-look.js). Not waited on: whenReady waits
+          // for the plan alone.
+          void (deps.earlyLook || require('./first-version-early-look')).startEarlyLook(pool, {
+            app, user, brief, plan: made.plan, config, bot,
           });
         } else {
           log.warn('first-version-plan', 'No plan at Make it; the triage plans it', {

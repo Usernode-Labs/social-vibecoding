@@ -22,14 +22,14 @@
 // Both harnesses report a tool call as "Using <tool>": Claude Code with the
 // MCP prefix (mcp__playwright__browser_take_screenshot), Codex without it.
 //
-// A first version goes on after a restart from its checkpoint, so its
-// tracker also keeps the skills and looks there while its turns run (`keep`):
-// at each step, and when they change at most every KEEP_EVERY_MS, so a
-// restart loses only the last few seconds of them. A step's write also says
-// what the counts were when the step began (`stepLooks`): a turn restart
-// recovery follows is replayed from its start, so its looks are added to
-// those, never to counts that already hold some of them (lane.js
-// recoveredLooks).
+// A trial goes on after a restart from its last durable step (lane.js
+// runTrial), so its tracker also keeps the skills and looks there while its
+// turns run (`keep`): at each step, and when they change at most every
+// KEEP_EVERY_MS, so a restart loses only the last few seconds of them. A turn
+// the restart caught is followed from its start, so its looks are counted
+// again on the counts it began with (`replay`), never on counts that already
+// hold some of them, and the lines its transcript got before the restart are
+// not written again.
 
 const STEPS = Object.freeze(['scaffold', 'triage', 'plan', 'spec', 'build', 'review', 'capture']);
 const LINES_KEPT = 4;
@@ -101,15 +101,14 @@ function skillNames(list) {
  * A trial's progress, kept in memory and written to its row. `step(name)`
  * writes at once; `note(line)` within WRITE_EVERY_MS; `close()` writes what
  * is left and stops. A write that fails is logged and never stops the trial.
- * `skills` and `looks` are those an earlier claim of the same trial already
- * saw (a first version going on after a restart), so its record keeps them.
- * `keep(part)`, when given, keeps them on the trial's checkpoint (the caller
- * adds them to `part`): at each new step, with `stepLooks`, and after a new
- * look or skill at most every `keepEveryMs`. A keep that fails is logged.
- * `transcript`, when given, also writes every line and each step's start to
- * the trial's transcript (bench_trial_lines) with the progress, the same few
- * seconds apart; `{ replayed: true, skip }` for restart recovery's replay,
- * whose first `skip` lines the transcript holds already (lane.recoveryWatch).
+ * `skills` and `looks` are those the trial already saw before a restart (it
+ * goes on from its last step), so its record keeps them. `keep()`, when
+ * given, keeps them where the trial goes on from (the caller reads them off
+ * the tracker): at each new step, and after a new look or skill at most every
+ * `keepEveryMs`. A keep that fails is logged. `transcript`, when given, also
+ * writes every line and each step's start to the trial's transcript
+ * (bench_trial_lines) with the progress, the same few seconds apart; a turn
+ * a restart caught is followed through `replay` (above).
  */
 function tracker(pool, trialId, {
   now = () => Date.now(), writeEveryMs = WRITE_EVERY_MS, log = null, skills = null, looks = null,
@@ -118,8 +117,8 @@ function tracker(pool, trialId, {
   const iso = () => new Date(now()).toISOString();
   const seen = { invoked: skillNames(skills?.invoked), read: skillNames(skills?.read) };
   const state = { step: null, stepAt: null, lines: [], skills: seen, updatedAt: iso() };
-  // Carried on from a trial's own progress (lane.js recoveryWatch): its step
-  // and its last lines, as the restart left them.
+  // Carried on from a trial's own progress (lane.js runTrial): its step and
+  // its last lines, as the restart left them.
   if (seed && STEPS.includes(seed.step)) {
     state.step = seed.step;
     state.stepAt = typeof seed.stepAt === 'string' ? seed.stepAt : null;
@@ -133,6 +132,8 @@ function tracker(pool, trialId, {
   const pending = transcript ? [] : null;
   let queued = 0;
   let skip = Math.max(Number(transcript?.skip) || 0, 0);
+  // A turn a restart caught, being followed from its start (replay).
+  let replaying = transcript?.replayed === true;
   const queueLine = (kind, text) => {
     if (!pending || queued >= MAX_TRANSCRIPT_LINES) return false;
     // A replay's first lines are the ones written before the restart.
@@ -140,7 +141,7 @@ function tracker(pool, trialId, {
     const line = kind === 'step' ? String(text) : transcriptLine(text);
     if (!line) return false;
     queued += 1;
-    pending.push({ at: iso(), step: state.step, kind, line, replayed: kind === 'line' && transcript?.replayed === true });
+    pending.push({ at: iso(), step: state.step, kind, line, replayed: kind === 'line' && replaying });
     return true;
   };
   // Keeping them on the checkpoint: when a change last did, and the keep
@@ -192,8 +193,7 @@ function tracker(pool, trialId, {
       if (timer) { clearTimeout(timer); timer = null; }
       const wrote = write();
       if (!keep) return wrote;
-      // Before the step's turn runs: what recovery adds that turn's looks to.
-      return Promise.all([wrote, keepNow({ stepLooks: { step: name, ...state.looks } })]).then(() => undefined);
+      return Promise.all([wrote, keepNow()]).then(() => undefined);
     },
     note(line) {
       if (closed) return;
@@ -219,6 +219,19 @@ function tracker(pool, trialId, {
       state.lines.push(text);
       if (state.lines.length > LINES_KEPT) state.lines.shift();
       later();
+    },
+    // A turn a restart caught is followed from its start: its looks are
+    // counted again on `looks`, the counts when it began, and the first
+    // `skip` lines it shows are the ones its transcript holds already.
+    replay({ looks: began = null, skip: lines = 0 } = {}) {
+      if (began) state.looks = lookCounts(began);
+      skip = Math.max(Number(lines) || 0, 0);
+      replaying = true;
+    },
+    // The followed turn is over: what comes next is new.
+    replayed() {
+      skip = 0;
+      replaying = false;
     },
     skills() {
       return { invoked: [...state.skills.invoked], read: [...state.skills.read] };

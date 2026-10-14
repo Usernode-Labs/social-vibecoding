@@ -301,6 +301,11 @@ prompts, and files such as a theme skill added to the first commit), beside
 hands back. The same connector reads and curates the rest of the Homeroom bot
 benchmark, the live bot, and the platform's recent before/after screenshots.
 The charter's `app-bench-studio` section is the procedure a session follows.
+The **shots evals** (`services/shots-eval.js`, at `/api/shots-evals`, gated
+the same way) try the shots agent with another model, prompt or time budget
+on merged proposals. They are compared with the live agent in the same batch,
+and the charter's `shots-evals` section is their procedure
+(docs/proposal-visuals/shots-evals.md).
 
 | Tool | What it actually does |
 |---|---|
@@ -318,6 +323,10 @@ The charter's `app-bench-studio` section is the procedure a session follows.
 | `get_bench_trial_transcript` | One trial's whole transcript, a page of up to 500 lines at a time, optionally one step's: every activity line its turns reported, with when it came and its step |
 | `get_homeroom_bot`, `rate_homeroom_bot_run` | The bot as its console section shows it (settings, spend, queue, a page of its runs) and a run's rating |
 | `list_recent_shots`, `get_recent_shots` | Merged proposals' before/after screenshots as the console's Screenshot gallery lists them, and one proposal's stills as images |
+| `list_shots_configs`, `save_shots_config` | The live shots agent (model, time budget, prompts) and the saved shots configurations; save the next version of one. Only an eval runs a configuration |
+| `launch_shots_eval`, `cancel_shots_eval` | Reshoots merged proposals (`sessionIds`, or `sameProposalsAs` an earlier eval) with the live agent as the control and each configuration in `configIds`, `repeats` times, billed to the platform. `capUsd` is required; over $100 needs `confirmLargeCap` |
+| `list_shots_evals`, `get_shots_eval`, `get_shots_eval_shots` | The evals; one eval's numbers per arm (ready rate, cost, time, win rate against the control, judged marks) and its trials; one proposal's shots across every arm as images. Read-only |
+| `get_shots_eval_pair`, `submit_shots_eval_pick` | A blind pair (the control and a configuration on one proposal, in random order) and its pick, with marks on each ready change |
 
 The studio's builds run in one private host app the benchmark user owns,
 made once through app creation's own path, so a preview's database is that

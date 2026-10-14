@@ -335,6 +335,10 @@
     "text": "Redeployed to {{sha}}.",
     "description": "Brief notice after \"Check for updates\" found a newer version and deployed it. {{sha}} is the first seven characters of that version's commit id."
   },
+  "check.deployRequested": {
+    "text": "Main has a newer version ({{sha}}). Deploying it now: watch the version pill.",
+    "description": "Brief notice after \"Check for updates\" found a newer version and asked for it to be deployed; the deploy runs in the background. {{sha}} is the first seven characters of that version's commit id. The version pill is the small chip showing the app's version, where progress appears."
+  },
   "check.inFlight": {
     "text": "A redeploy is already in progress for this app.",
     "description": "Brief notice after \"Check for updates\" when the app is already being deployed again."

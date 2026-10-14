@@ -216,6 +216,42 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
     }
   });
 
+  // Run six (14 Oct 2026): "We'll tell you when it's live" under a first
+  // version's plan (frontend/src/features/messages/notify-me.tsx): whether
+  // its maker is told when it is ready and live, on from Make it
+  // (services/homeroom-bot-dm.js firstVersionNotify). The signed-in
+  // person's own first version only: anybody else's, or a project with
+  // none, is not found.
+  //
+  //   GET /api/conversations/homeroom-bot/first-versions/:slug/notify  → { on }
+  //   PUT /api/conversations/homeroom-bot/first-versions/:slug/notify  { on } → { on }
+  router.get('/api/conversations/homeroom-bot/first-versions/:slug/notify', async (req, res) => {
+    try {
+      // The staging demo's plan is a fixture: on, as every new one is.
+      if (isDemo(req)) return res.json({ on: true, demo: true });
+      const on = await require('../services/homeroom-bot-dm').firstVersionNotify(pool, { appSlug: req.params.slug, userId: req.user?.id });
+      if (on === null) return res.status(404).json({ error: 'No such first version' });
+      return res.json({ on });
+    } catch (err) {
+      log.error('conversations', 'first version notify read failed', { err: err.message, userId: req.user?.id });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.put('/api/conversations/homeroom-bot/first-versions/:slug/notify', conversationActionLimiter, sameOriginBrowserOnly, async (req, res) => {
+    try {
+      const on = req.body?.on;
+      if (typeof on !== 'boolean') return res.status(400).json({ error: 'on must be true or false' });
+      if (isDemo(req)) return res.json({ on, demo: true });
+      const now = await require('../services/homeroom-bot-dm').setFirstVersionNotify(pool, { appSlug: req.params.slug, userId: req.user?.id, on });
+      if (now === null) return res.status(404).json({ error: 'No such first version' });
+      return res.json({ on: now });
+    } catch (err) {
+      log.error('conversations', 'first version notify write failed', { err: err.message, userId: req.user?.id });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // #3660: what the Homeroom links in a message are, for this viewer.
   //
   //   POST /api/link-cards  { refs: [{ type, app_slug, issue_number |

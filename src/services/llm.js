@@ -2146,6 +2146,40 @@ async function generateFirstVersionPlan({
   return { text, usage: resp.usage, model: served, reply: reply || null };
 }
 
+// A new project's EARLY first look (services/first-version-early-look.js
+// owns the prompt, the model and the parse): its main screen drawn as one
+// HTML <template> from the plan at Make it, for its maker to see while the
+// project is set up. A Claude model named by the caller, so helperMessage
+// sends it straight to that model (no GLM attempt: a whole screen does not
+// fit its helper ceiling) with the same llm_invocation telemetry. `effort`
+// is the model's output_config effort; `timeoutMs` bounds the request.
+// THROWS with no client or on a provider error; the caller then leaves the
+// first look to the spec, as before.
+async function generateFirstLook({
+  system, user, model, effort = null, maxTokens = 16000, timeoutMs = null, apiKey, telemetryContext,
+}) {
+  const activeClient = apiKey ? new Anthropic({ apiKey }) : client;
+  if (!activeClient) throw new Error('LLM not initialized');
+  if (!model) throw new Error('generateFirstLook: no model');
+  const { response: resp, model: served } = await helperMessage({
+    helper: 'first_version_look',
+    activeClient,
+    model,
+    params: {
+      max_tokens: maxTokens,
+      system,
+      messages: [{ role: 'user', content: String(user || '') }],
+      ...(effort ? { output_config: { effort } } : {}),
+    },
+    ...(timeoutMs ? { requestOptions: { timeout: timeoutMs, maxRetries: 1 } } : {}),
+    telemetryContext,
+    defaults: { backend: 'helper', component: 'first_version_look' },
+    apiKey,
+  });
+  const text = (resp.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('');
+  return { text, usage: resp.usage, model: served, stopReason: resp.stop_reason || null };
+}
+
 // One graded unit for the challenge scorer (services/topochain/
 // challenge-grader.js): a season challenge whose points depend on how useful
 // the thing somebody did was, rather than on whether they did it.
@@ -3574,7 +3608,7 @@ async function reviewContentRules({ system, diff, telemetryContext, apiKey }) {
 module.exports = {
   init, isEnabled, getSystemPrompt, streamChat, estimateCostCents,
   generatePrMetadata, parsePrMetadataText, generateSessionTitle, generateShortDescription, generateAppSketch,
-  generateFirstVersionPlan,
+  generateFirstVersionPlan, generateFirstLook,
   reviewContentRules,
   // The challenge scorer's one model call (services/topochain/
   // challenge-grader.js owns the rubrics; this owns the transport).
