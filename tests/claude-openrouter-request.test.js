@@ -23,6 +23,7 @@ const {
 
 const ROOT = path.join(__dirname, '..');
 const GLM = 'z-ai/glm-5.3-flash';
+const KIMI = 'moonshotai/kimi-k2';
 const OTHER = 'deepseek/deepseek-v4.1-flash';
 // GLM's routing: the preferences every model gets, and its fast hosts.
 const GLM_ROUTED = {
@@ -380,55 +381,88 @@ test('Claude Code gets the adapter and a local token, never the key', () => {
   assert.ok(!Object.values(env).includes(KEY));
 });
 
-test('Claude Code compacts a non-Anthropic model at 120k, or the model\'s window when smaller, and knows the real window', () => {
-  const base = { baseUrl: 'http://127.0.0.1:4000', localToken: 'local', model: GLM };
-  const glm = claudeChildEnv({ PATH: '/bin', AGENT_MODEL_CONTEXT_WINDOW: '1310720' }, base);
-  assert.equal(glm.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '120000', 'a 1.3M GLM window is compacted at 120k, never at 1.2M');
-  assert.equal(glm.CLAUDE_CODE_MAX_CONTEXT_TOKENS, '1310720');
+test('Claude Code compacts a non-Anthropic, non-GLM model at 120k, or the model\'s window when smaller, and knows the real window', () => {
+  const base = { baseUrl: 'http://127.0.0.1:4000', localToken: 'local', model: KIMI };
+  const kimi = claudeChildEnv({ PATH: '/bin', AGENT_MODEL_CONTEXT_WINDOW: '262144' }, base);
+  assert.equal(kimi.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '120000', 'a 262k window is compacted at 120k');
+  assert.equal(kimi.CLAUDE_CODE_MAX_CONTEXT_TOKENS, '262144');
   const small = claudeChildEnv({ AGENT_MODEL_CONTEXT_WINDOW: '100000' }, base);
   assert.equal(small.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '100000');
   const unknown = claudeChildEnv({ AGENT_MODEL_CONTEXT_WINDOW: '' }, base);
   assert.equal(unknown.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '120000', 'no catalog window: still compacted');
   assert.equal(unknown.CLAUDE_CODE_MAX_CONTEXT_TOKENS, undefined, 'and no window is made up');
-  const chosen = claudeChildEnv({ AGENT_MODEL_CONTEXT_WINDOW: '1310720', CLAUDE_CODE_AUTO_COMPACT_WINDOW: '90000' }, base);
+  const chosen = claudeChildEnv({ AGENT_MODEL_CONTEXT_WINDOW: '262144', CLAUDE_CODE_AUTO_COMPACT_WINDOW: '90000' }, base);
   assert.equal(chosen.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '90000', 'a window already set is kept');
   const codex = fs.readFileSync(require.resolve('../worker/build-codex-model-catalog.js'), 'utf8');
   assert.match(codex, /const AUTO_COMPACT_TOKEN_LIMIT = 200_000;/, 'the same limit as Codex');
   assert.equal(require('../worker/claude-openrouter-request').AUTO_COMPACT_TOKEN_LIMIT, 200_000);
 });
 
-test('the compaction limit is per model family: Anthropic\'s at 200k, every other provider\'s at 120k', () => {
+// GLM 5.3 Flash's window is 1M tokens (1,048,576 on OpenRouter). App bench
+// run 196 put 120k against 200k over 9 pairs from the same shared plans:
+// compactions fell from 23 to 4, the build was about 12% faster and blind
+// grades were level. So every GLM coding turn compacts at 200k, not only a
+// first version's.
+test('a GLM turn compacts at 200k with no ROOMY_CONTEXT, still never past its window, and knows the real window', () => {
   const mod = require('../worker/claude-openrouter-request');
-  assert.equal(mod.NON_ANTHROPIC_AUTO_COMPACT_TOKEN_LIMIT, 120_000);
-  for (const model of ['anthropic/claude-sonnet-4.5', '~anthropic/claude-opus-latest']) {
+  for (const model of [GLM, 'z-ai/glm-4.6', 'z-ai/glm-5.3']) {
     assert.equal(mod.autoCompactLimit(model), 200_000, model);
   }
-  for (const model of [GLM, 'z-ai/glm-4.6', 'moonshotai/kimi-k2', 'openai/gpt-5', '', undefined]) {
+  const base = { baseUrl: 'http://127.0.0.1:4000', localToken: 'local', model: GLM };
+  const glm = claudeChildEnv({ PATH: '/bin', AGENT_MODEL_CONTEXT_WINDOW: '1048576' }, base);
+  assert.equal(glm.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '200000', 'a 1M GLM window is compacted at 200k, never at 1M');
+  assert.equal(glm.CLAUDE_CODE_MAX_CONTEXT_TOKENS, '1048576');
+  assert.equal(claudeChildEnv({}, base).CLAUDE_CODE_AUTO_COMPACT_WINDOW, '200000', 'no catalog window');
+  assert.equal(claudeChildEnv({ AGENT_MODEL_CONTEXT_WINDOW: '150000' }, base).CLAUDE_CODE_AUTO_COMPACT_WINDOW, '150000',
+    'never past the model\'s own window');
+  const chosen = claudeChildEnv({ AGENT_MODEL_CONTEXT_WINDOW: '1048576', CLAUDE_CODE_AUTO_COMPACT_WINDOW: '90000' }, base);
+  assert.equal(chosen.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '90000', 'a window already set is kept');
+  assert.equal(chosen.CLAUDE_CODE_MAX_CONTEXT_TOKENS, '1048576');
+  const told = claudeChildEnv({ AGENT_MODEL_CONTEXT_WINDOW: '1048576', CLAUDE_CODE_MAX_CONTEXT_TOKENS: '500000' }, base);
+  assert.equal(told.CLAUDE_CODE_MAX_CONTEXT_TOKENS, '500000', 'a context size already set is kept');
+  assert.equal(told.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '200000');
+});
+
+test('the compaction limit is per model family: Anthropic\'s and GLM\'s at 200k, every other provider\'s at 120k', () => {
+  const mod = require('../worker/claude-openrouter-request');
+  assert.equal(mod.NON_ANTHROPIC_AUTO_COMPACT_TOKEN_LIMIT, 120_000);
+  for (const model of ['anthropic/claude-sonnet-4.5', '~anthropic/claude-opus-latest', GLM, 'z-ai/glm-4.6']) {
+    assert.equal(mod.autoCompactLimit(model), 200_000, model);
+  }
+  for (const model of [KIMI, 'openai/gpt-5', 'deepseek/deepseek-v4.1-flash', 'z-ai/other-model', 'example/z-ai/glm-5', '', undefined]) {
     assert.equal(mod.autoCompactLimit(model), 120_000, String(model));
   }
   const base = { baseUrl: 'http://127.0.0.1:4000', localToken: 'local' };
   const claude = claudeChildEnv({ AGENT_MODEL_CONTEXT_WINDOW: '1000000' }, { ...base, model: 'anthropic/claude-sonnet-4.5' });
   assert.equal(claude.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '200000', 'Anthropic models unchanged');
-  const glm = claudeChildEnv({ AGENT_MODEL_CONTEXT_WINDOW: '1310720' }, { ...base, model: GLM });
-  assert.equal(glm.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '120000');
+  const glm = claudeChildEnv({ AGENT_MODEL_CONTEXT_WINDOW: '1048576' }, { ...base, model: GLM });
+  assert.equal(glm.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '200000');
+  const kimi = claudeChildEnv({ AGENT_MODEL_CONTEXT_WINDOW: '262144' }, { ...base, model: KIMI });
+  assert.equal(kimi.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '120000', 'any other provider unchanged');
 });
 
 // App bench run 191: GLM builds compacted 2 to 3 times each at about 65k
 // tokens of context. A first version's roomy_context tweak (ROOMY_CONTEXT=1)
-// compacts any model at the Anthropic limit instead.
+// compacts any model at 200k instead. GLM has that limit without it now, so
+// for GLM the tweak changes nothing; it still raises every other model.
 test('roomy_context: ROOMY_CONTEXT=1 compacts a non-Anthropic model at 200k, still never past its window', () => {
   const mod = require('../worker/claude-openrouter-request');
   assert.equal(mod.ROOMY_AUTO_COMPACT_TOKEN_LIMIT, 200_000);
+  assert.equal(mod.autoCompactLimit(KIMI, { ROOMY_CONTEXT: '1' }), 200_000);
+  assert.equal(mod.autoCompactLimit(KIMI, { ROOMY_CONTEXT: '0' }), 120_000);
+  assert.equal(mod.autoCompactLimit(KIMI), 120_000, 'as before without it');
   assert.equal(mod.autoCompactLimit(GLM, { ROOMY_CONTEXT: '1' }), 200_000);
-  assert.equal(mod.autoCompactLimit(GLM, { ROOMY_CONTEXT: '0' }), 120_000);
-  assert.equal(mod.autoCompactLimit(GLM), 120_000, 'as before without it');
+  assert.equal(mod.autoCompactLimit(GLM, { ROOMY_CONTEXT: '0' }), 200_000, 'for GLM it changes nothing');
   assert.equal(mod.autoCompactLimit('anthropic/claude-sonnet-4.5', { ROOMY_CONTEXT: '1' }), 200_000);
-  const base = { baseUrl: 'http://127.0.0.1:4000', localToken: 'local', model: GLM };
-  assert.equal(claudeChildEnv({ AGENT_MODEL_CONTEXT_WINDOW: '1310720', ROOMY_CONTEXT: '1' }, base).CLAUDE_CODE_AUTO_COMPACT_WINDOW, '200000');
+  const base = { baseUrl: 'http://127.0.0.1:4000', localToken: 'local', model: KIMI };
+  assert.equal(claudeChildEnv({ AGENT_MODEL_CONTEXT_WINDOW: '262144', ROOMY_CONTEXT: '1' }, base).CLAUDE_CODE_AUTO_COMPACT_WINDOW, '200000');
   assert.equal(claudeChildEnv({ ROOMY_CONTEXT: '1' }, base).CLAUDE_CODE_AUTO_COMPACT_WINDOW, '200000', 'no catalog window');
   assert.equal(claudeChildEnv({ AGENT_MODEL_CONTEXT_WINDOW: '150000', ROOMY_CONTEXT: '1' }, base).CLAUDE_CODE_AUTO_COMPACT_WINDOW, '150000',
     'never past the model\'s own window');
-  assert.equal(claudeChildEnv({ AGENT_MODEL_CONTEXT_WINDOW: '1310720' }, base).CLAUDE_CODE_AUTO_COMPACT_WINDOW, '120000');
+  assert.equal(claudeChildEnv({ AGENT_MODEL_CONTEXT_WINDOW: '262144' }, base).CLAUDE_CODE_AUTO_COMPACT_WINDOW, '120000');
+  const glm = { ...base, model: GLM };
+  assert.equal(claudeChildEnv({ AGENT_MODEL_CONTEXT_WINDOW: '1048576', ROOMY_CONTEXT: '1' }, glm).CLAUDE_CODE_AUTO_COMPACT_WINDOW,
+    claudeChildEnv({ AGENT_MODEL_CONTEXT_WINDOW: '1048576' }, glm).CLAUDE_CODE_AUTO_COMPACT_WINDOW, 'GLM: the same with or without it');
 });
 
 test('redaction is literal and ignores values too short to be secrets', () => {
