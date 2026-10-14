@@ -435,6 +435,37 @@ test('an approved conflict gets a resolution turn, then the new head is measured
   } finally { teardown(); }
 });
 
+test('a conflict on a proposal the preview machine holds is repaired without the old lifecycle (WF_PREVIEWS_ENABLED)', async () => {
+  // The lifecycle's row stopped following the machine's revisions: asked,
+  // it refuses every head it did not record. The machine's own run of the
+  // old head is cancelled by the new revision the sync pushes.
+  const superseded = [];
+  const pass = async (held) => {
+    const run = setup({ candidates: [conflicting(1, 2)] });
+    stub('src/services/preview-workflow.js', { held: async () => held });
+    stub('src/services/preview-lifecycle.js', {
+      async supersede(config, id) {
+        superseded.push(id);
+        throw new Error('Preview revision changed during cancellation');
+      },
+    });
+    try {
+      await run.queue.enqueue({}, 7);
+      return run.events;
+    } finally {
+      unstub('src/services/preview-workflow.js');
+      unstub('src/services/preview-lifecycle.js');
+      teardown();
+    }
+  };
+  const held = await pass(true);
+  assert.deepEqual([held.syncs, held.merges, superseded], [[1], [1], []],
+    'the held proposal gets its resolution turn, and nothing asks the old lifecycle about it');
+  const legacy = await pass(false);
+  assert.deepEqual([legacy.syncs, superseded], [[], [1]],
+    'one the machine does not hold is still superseded the old way, and a refusal keeps a worker off it');
+});
+
 test('the conflict lane holds while the direct lane has work in flight', async () => {
   // A resolution made against a main that is about to move is a resolution
   // made twice. The run's finalizer re-kicks the queue when it reports.
