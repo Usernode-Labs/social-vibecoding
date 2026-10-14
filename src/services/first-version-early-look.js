@@ -131,9 +131,13 @@ const LOOK_RULES = [
   '  label, no placeholder text and nothing about the drawing itself: every word on it is the app\'s own.',
   // Newcomer run seven (14 Oct 2026): Club Votes, whose description never
   // mentioned chess, was drawn titled "Harbour Road Chess Club".
+  // Newcomer run eight (14 Oct 2026): told it "uses APP NAME exactly", the
+  // same project's look printed the words APP NAME above its title. So the
+  // rule points at the name, the user message spells it out
+  // (lookUserPrompt), and a label drawn anyway becomes the name (namedScreen).
   '- Wherever the screen names the app, its group or its place (a header, a title, the line above a title), it uses',
-  '  APP NAME exactly: never invent a name for the club, team, group, household or place. Sample people, posts and',
-  '  numbers are still made up.',
+  '  the app\'s name, given in the user message, exactly: never invent a name for the club, team, group, household or',
+  '  place. Sample people, posts and numbers are still made up.',
   '- Where the plan asks its creator a question, draw its suggested answer, the first: they have not answered yet.',
   '- The plan\'s build note is a first sketch: keep its screen\'s job, its primary action, its colours and its',
   '  signature element unless you can name a defect, and draw everything else as you judge best.',
@@ -177,15 +181,18 @@ function lookSystem() {
 }
 
 /**
- * The drawing's user message: the project's name, its game starter, the
- * language to write in, the plan (its lines, its questions with the
- * suggested answers, its build note) and the description. Pure.
+ * The drawing's user message: the project's name and where to write it,
+ * its game starter, the language to write in, the plan (its lines, its
+ * questions with the suggested answers, its build note) and the
+ * description. Pure.
  */
 function lookUserPrompt({ name, brief, plan, starter = null, locale = null }) {
   const s = starter ? require('./app-templates').botStarter(starter) : null;
   const questions = Array.isArray(plan?.questions) ? plan.questions : [];
+  const named = oneLine(name, 120);
   return [
-    `APP NAME:\n${oneLine(name, 120)}`,
+    `THE APP'S NAME:\n${named}\nWherever the screen names the app, its group or its place, write "${named}": never the `
+      + 'heading above, and never a name you invent.',
     s ? [
       `STARTER:\nIt is made from Homeroom's ${s.title}: ${s.bot.what}. ${s.bot.build}`,
       'Draw the creator\'s game as that starter becomes once it is changed into it, never the starter\'s own example.',
@@ -212,6 +219,25 @@ function screenOf(text) {
   const screen = fvs.savedTemplateOf(text);
   if (!screen || screen.length > SCREEN_MAX_CHARS) return null;
   return fvs.mainScreenOf(fvs.screenDocument(screen)) ? screen : null;
+}
+
+function escapeHtml(value) {
+  return String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// A text that is the words APP NAME and nothing else, in any case.
+const NAME_LABEL_RE = />(\s*)app\s+name(\s*)</gi;
+
+/**
+ * `screen` with every text that is only the words APP NAME (any case,
+ * trimmed) written as the app's `name`, escaped; every other text as drawn
+ * (newcomer run eight printed the label above its title). Pure.
+ */
+function namedScreen(screen, name) {
+  const named = oneLine(name, 120);
+  if (typeof screen !== 'string' || !named) return screen;
+  return screen.replace(NAME_LABEL_RE, (_, before, after) => `>${before}${escapeHtml(named)}${after}<`);
 }
 
 // ── Drawing it ───────────────────────────────────────────────────────────
@@ -262,13 +288,14 @@ async function drawScreen(pool, { app, user, brief, plan }, deps = {}) {
   try {
     if (typeof llm.isEnabled === 'function' && !llm.isEnabled()) return { screen: null, model: null, error: 'no_model' };
     const waitMs = deps.modelWaitMs ?? MODEL_WAIT_MS;
+    const name = app.name || app.slug;
     const [starter, locale] = await Promise.all([
       (deps.bot || require('./homeroom-bot')).starterOfApp(pool, app.id).catch(() => null),
       localeOf(pool, user),
     ]);
     const call = llm.generateFirstLook({
       system: lookSystem(),
-      user: lookUserPrompt({ name: app.name || app.slug, brief, plan, starter, locale }),
+      user: lookUserPrompt({ name, brief, plan, starter, locale }),
       model,
       effort: LOOK_EFFORT,
       maxTokens: LOOK_MAX_TOKENS,
@@ -283,7 +310,7 @@ async function drawScreen(pool, { app, user, brief, plan }, deps = {}) {
     }
     await recordSpend(reply);
     const screen = screenOf(reply && reply.text);
-    if (screen) return { screen, model: reply.model || model, error: null };
+    if (screen) return { screen: namedScreen(screen, name), model: reply.model || model, error: null };
     return { screen: null, model: reply?.model || model, error: reply?.stopReason === 'max_tokens' ? 'cut_off' : 'unusable_reply' };
   } catch (err) {
     log.warn('first-version-early-look', 'The drawing failed', { appId: app?.id, err: err.message });
@@ -544,6 +571,7 @@ module.exports = {
   lookSystem,
   lookUserPrompt,
   screenOf,
+  namedScreen,
   drawScreen,
   prepareWorker,
   drawEarlyLook,
