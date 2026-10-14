@@ -267,10 +267,11 @@ test('the made screen\'s answers go ahead with planShown: false, through the car
 
 // ── The early first look uses the app's name ─────────────────────────────
 
-test('the early first look names the app, its group and its place by APP NAME, never an invented name', () => {
+test('the early first look names the app, its group and its place by the app\'s name, never an invented name', () => {
   const system = flat(early.lookSystem());
-  assert.match(system, /- Wherever the screen names the app, its group or its place \(a header, a title, the line above a title\), it uses APP NAME exactly: never invent a name for the club, team, group, household or place\. Sample people, posts and numbers are still made up\./);
-  assert.match(early.lookUserPrompt({ name: 'Club Votes', brief: 'Decisions for our club', plan: { bullets: ['Vote'], questions: [], buildNote: 'x' } }), /^APP NAME:\nClub Votes/);
+  // Run eight: the rule points at the name itself, not at a label (tests/first-version-early-look.test.js).
+  assert.match(system, /- Wherever the screen names the app, its group or its place \(a header, a title, the line above a title\), it uses the app's name, given in the user message, exactly: never invent a name for the club, team, group, household or place\. Sample people, posts and numbers are still made up\./);
+  assert.match(early.lookUserPrompt({ name: 'Club Votes', brief: 'Decisions for our club', plan: { bullets: ['Vote'], questions: [], buildNote: 'x' } }), /^THE APP'S NAME:\nClub Votes\n/);
   assert.doesNotMatch(system.slice(0, system.indexOf('THE DESIGN KIT')), /—/, 'its own rules, before the kit and the skill');
 });
 

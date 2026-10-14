@@ -220,6 +220,49 @@ test('its picture waits for the project\'s repository, and is drawn the one way 
   assert.match(src, /async function renderFirstLook\([\s\S]*?const png = await drawScreenPng\(\{ worker, containerName, specHtml, timeoutMs \}\);/);
 });
 
+// ── Newcomer run eight: the app's name, never the label ──────────────────
+//
+// Told it "uses APP NAME exactly", Club Votes' early first look printed the
+// words APP NAME above its title "Open decisions".
+
+test('run eight: the drawing is told the app\'s name itself, never pointed at a label', () => {
+  const system = early.lookSystem().replace(/\s+/g, ' ');
+  assert.match(system, /it uses the app's name, given in the user message, exactly: never invent a name for the club/);
+  assert.doesNotMatch(system, /uses APP NAME exactly/);
+  assert.doesNotMatch(system, /APP NAME/, 'no label it could copy');
+  const user = early.lookUserPrompt({ name: 'Club \n Votes ', brief: 'Decisions for our club', plan: PLAN });
+  assert.match(user, /^THE APP'S NAME:\nClub Votes\nWherever the screen names the app, its group or its place, write "Club Votes": never the heading above, and never a name you invent\.\n\n/);
+  assert.doesNotMatch(user, /APP NAME/);
+});
+
+test('run eight: a text that is only the words APP NAME is drawn as the app\'s name, escaped, and nothing else changes', async () => {
+  assert.equal(early.namedScreen('<p class="eyebrow">APP NAME</p><h1>Open decisions</h1>', 'Club Votes'),
+    '<p class="eyebrow">Club Votes</p><h1>Open decisions</h1>');
+  assert.equal(early.namedScreen('<span>\n  app name </span><b>App  Name</b>', 'Club Votes'),
+    '<span>\n  Club Votes </span><b>Club Votes</b>', 'any case, trimmed');
+  assert.equal(early.namedScreen('<h1>APP NAME</h1>', 'Tom & Jo\'s <Club> "$&"'),
+    '<h1>Tom &amp; Jo&#39;s &lt;Club&gt; &quot;$&amp;&quot;</h1>');
+  const untouched = '<template data-screen><style>.x::before{content:"APP NAME"}</style>'
+    + '<div data-side="after" data-change="1" title="APP NAME"><p>APP NAME: Club Votes</p><p>The app name</p><p>Club Votes</p></div></template>';
+  assert.equal(early.namedScreen(untouched, 'Club Votes'), untouched, 'only a text that is the label and nothing else');
+  assert.equal(early.namedScreen('<p>APP NAME</p>', ''), '<p>APP NAME</p>');
+  assert.equal(early.namedScreen(null, 'Club Votes'), null);
+
+  // On its way through: the screen kept for the spec and the picture carry the name.
+  const labelled = SCREEN.replace('<h1>Club Votes</h1>', '<p>APP NAME</p><h1>Open decisions</h1>');
+  const { deps, seen } = workingDeps();
+  deps.llm.generateFirstLook = async (args) => { seen.llm.push(args); return { text: labelled, usage: null, model: 'claude-sonnet-5-5' }; };
+  const pool = lookPool();
+  assert.equal(await early.startEarlyLook(pool, { app: APP, user: USER, brief: 'Decisions for our club', plan: PLAN, config: {}, bot: BOT }, deps), true);
+  assert.deepEqual(await early._pendingForTests.get(APP.id), { ok: true, error: null });
+  assert.match(seen.llm[0].user, /write "Club Votes"/);
+  const drawn = pool.calls.find((c) => /SET status = 'drawn'/.test(c.sql));
+  assert.equal(drawn.params[1], labelled.replace('<p>APP NAME</p>', '<p>Club Votes</p>'));
+  const draw = seen.worker.find(([k]) => k === 'draw');
+  assert.match(draw[2].source, /<p>Club Votes<\/p><h1>Open decisions<\/h1>/);
+  assert.doesNotMatch(draw[2].source, /APP NAME/);
+});
+
 // ── The kill switch ──────────────────────────────────────────────────────
 
 test('HOMEROOM_BOT_EARLY_FIRST_LOOK=0 turns it off: nothing drawn, shown or handed to a spec', async () => {
