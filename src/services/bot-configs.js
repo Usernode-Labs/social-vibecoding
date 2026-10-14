@@ -123,7 +123,14 @@ const MAX_LABEL_CHARS = 80;
 //                   screen, and "Not in this version" in place of the
 //                   nice-to-haves, which the build then leaves out. Run 189's
 //                   builds built 23 of their plans' 26 nice-to-haves.
-const TWEAKS = Object.freeze(['one_look', 'starter_inline', 'lean_turns', 'one_go', 'lean_plan']);
+//   roomy_context   the build and its review fixes compact their context at a
+//                   200k-token window rather than a non-Anthropic model's
+//                   120k (claude-openrouter-request.js). Run 191's GLM builds
+//                   compacted 2 to 3 times each, about 3.3 minutes of a
+//                   15-minute build spent writing summaries and then reading
+//                   files again; the 120k was chosen when every old
+//                   screenshot was still re-sent on each request.
+const TWEAKS = Object.freeze(['one_look', 'starter_inline', 'lean_turns', 'one_go', 'lean_plan', 'roomy_context']);
 const MAX_NOTES_CHARS = 1000;
 // The side builds' own weekly spend, real dollars on the App bench lane's
 // key, in cents: a platform setting, $25 unless an admin sets another.

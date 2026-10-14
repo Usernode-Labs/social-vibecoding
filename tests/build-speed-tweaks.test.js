@@ -76,6 +76,20 @@ test('tweaks are named, kept in one order, each once, and one_look needs a revie
   const noRounds = configs.validateRecipe({ ...REVIEWED, reviewer: { ...REVIEWED.reviewer, maxRounds: 0 }, tweaks: ['one_look'] });
   assert.equal(noRounds.ok, false, 'a capture-only reviewer sweeps nothing');
   assert.equal(configs.validateRecipe({ ...REVIEWED, reviewer: null, tweaks: ['lean_turns'] }).ok, true);
+  // App bench run 191's compactions: roomy_context, after lean_plan in the list's order.
+  const roomy = configs.validateRecipe({ ...REVIEWED, tweaks: ['roomy_context', 'lean_plan'] });
+  assert.equal(roomy.ok, true, roomy.error);
+  assert.deepEqual(roomy.recipe.tweaks, ['lean_plan', 'roomy_context']);
+  assert.equal(configs.validateRecipe({ ...REVIEWED, reviewer: null, tweaks: ['roomy_context'] }).ok, true, 'no reviewer needed');
+});
+
+test('roomy_context changes no prompt: the spec and the build read exactly as without it', () => {
+  for (const html of [true, false]) {
+    const args = { ...SPEC_ARGS, html };
+    assert.equal(live.specPrompt({ ...args, tweaks: ['roomy_context'] }), live.specPrompt(args));
+  }
+  assert.equal(live.buildPrompt({ ...BASE, tweaks: ['roomy_context'] }), live.buildPrompt(BASE));
+  assert.equal(live.buildPrompt({ ...BASE, tweaks: ['lean_plan', 'roomy_context'] }), live.buildPrompt({ ...BASE, tweaks: ['lean_plan'] }));
 });
 
 test('a side recipe that differs by its tweaks is built, never taken from the live round-0 snapshot', () => {
