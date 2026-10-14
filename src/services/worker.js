@@ -3484,8 +3484,11 @@ async function execInWorker(sessionId, {
   leanTurns = false,
   // A first version's build under its configuration's `roomy_context`
   // tweak: Claude Code compacts its conversation at a larger window
-  // (claude-openrouter-request.js ROOMY_AUTO_COMPACT_TOKEN_LIMIT).
-  // ROOMY_CONTEXT=1, for a first version's build that Claude Code runs.
+  // (claude-openrouter-request.js ROOMY_AUTO_COMPACT_TOKEN_LIMIT): 200k
+  // for any model. GLM already compacts at 200k on every turn, so for GLM
+  // it changes nothing; it still raises every other non-Anthropic model
+  // from 120k. ROOMY_CONTEXT=1, for a first version's build that Claude
+  // Code runs.
   roomyContext = false,
   shotsRunId = null,
   shotsOrigins = null,
