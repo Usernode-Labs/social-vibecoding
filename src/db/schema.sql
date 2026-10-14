@@ -10895,6 +10895,27 @@ COMMENT ON TABLE bench_materializations IS 'staging:private';
 -- mid-pass (a redeploy) can be told apart from one still working.
 ALTER TABLE bench_materializations ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMPTZ;
 
+-- The benchmark account's weekly allowance went from $100 to $500 a week
+-- (services/bench/runner.js DEFAULT_BENCH_WEEKLY_CENTS): $100 ran out partway
+-- through a run on 14 Oct 2026, and every trial after that failed on its
+-- first request. The account was made with the old amount, so raise it once.
+-- Its included OpenRouter key follows on the bench's next turn
+-- (agent-turn resolveCodexRuntimeContext syncs the key's limit). Guarded by a
+-- marker row, like weekly_limit_backfilled: an amount an admin sets later in
+-- Admin > Limits stays as they set it.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM platform_settings WHERE key = 'bench_weekly_limit_500') THEN
+    UPDATE users
+       SET weekly_limit_cents = 50000
+     WHERE username = 'homeroom_bench' AND is_synthetic = TRUE
+       AND COALESCE(weekly_limit_cents, 0) < 50000;
+    INSERT INTO platform_settings (key, value)
+      VALUES ('bench_weekly_limit_500', 'true')
+      ON CONFLICT (key) DO NOTHING;
+  END IF;
+END $$;
+
 -- #3654: a benchmark RUN puts a suite's tasks for some stages through some
 -- models, `repeats` times each (a build once), within a dollar cap. Its
 -- TRIALS are one task on one model, one attempt: pending, running, then how
