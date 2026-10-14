@@ -197,11 +197,32 @@ export function scrollBehavior(win: { matchMedia?: (query: string) => { matches:
   }
 }
 
-type Box = { getBoundingClientRect(): { top: number } };
+type Box = { getBoundingClientRect(): { top: number; height?: number } };
 
 /** Where `line` starts in `scroller`'s content: its distance from the top when scrolled to 0. */
 export function lineTopIn(scroller: Box & { scrollTop: number }, line: Box): number {
   return line.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
+}
+
+/**
+ * The scrollTop that centres `row` in `scroller` (#5050): where a focus
+ * scroll wants the scroller, set directly so the browser never goes on to
+ * scroll an ancestor (`scrollIntoView` scrolls every scrolling ancestor,
+ * which used to lift the whole screen when the row could not be centred
+ * inside the transcript alone). A row taller than the scroller aligns to
+ * its top, as `lineTopIn` puts it.
+ */
+export function centredTopIn(
+  scroller: Box & { scrollTop: number; scrollHeight: number; clientHeight: number },
+  row: Box,
+): number {
+  const rowHeight = row.getBoundingClientRect().height ?? 0;
+  const line = lineTopIn(scroller, row);
+  const want = rowHeight >= scroller.clientHeight
+    ? line
+    : line - (scroller.clientHeight - rowHeight) / 2;
+  const bottom = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+  return Math.min(bottom, Math.max(0, Math.round(want)));
 }
 
 /** What the transcript draws over itself. */

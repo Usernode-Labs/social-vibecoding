@@ -16,6 +16,7 @@
 
 import { useMessages } from '../../lib/i18n/react';
 import { issueRefHref } from './channels';
+import { centredTopIn } from './unread-anchor';
 import { ObjectCard } from './format';
 import { pageOf, type HomeroomLink } from './homeroom-links';
 import { linkCardAnswered, useLinkCards } from './link-cards';
@@ -52,7 +53,13 @@ export function findRequestCard(from: Element, appSlug: string, n: number): HTML
 /** Bring a found card into view and light the message it hangs on. */
 export function revealCard(card: HTMLElement): void {
   const still = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  card.scrollIntoView?.({ behavior: still ? 'auto' : 'smooth', block: 'center' });
+  // #5050: scroll the card's own transcript when it has one, never
+  // scrollIntoView, which would lift the screen when the card cannot be
+  // centred in the transcript alone. `findRequestCard` can search the whole
+  // document, so a card outside a thread scroll keeps the old call.
+  const scroller = card.closest('.messages-thread-scroll');
+  if (scroller) (scroller as HTMLElement).scrollTo({ top: centredTopIn(scroller, card), behavior: still ? 'auto' : 'smooth' });
+  else card.scrollIntoView?.({ behavior: still ? 'auto' : 'smooth', block: 'center' });
   if (card.tabIndex >= 0) card.focus({ preventScroll: true });
   const lit = (card.closest('article') as HTMLElement | null) || card;
   lit.classList.remove('messages-message-focus');

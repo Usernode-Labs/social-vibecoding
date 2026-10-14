@@ -20,6 +20,7 @@ import { BotPlanCard, BotTwoQuestions, isPlanMessage, isTwoQuestions } from './b
 import { BotThanksCard, isThanksMessage } from './bot-thanks-card';
 import { BotReadyCard, isReadyMessage } from './bot-ready';
 import { alsoInChat, botRequestNames, botThreadLabel, threadsAllowed, type ChangeBlock } from './bot-shared';
+import { centredTopIn } from './unread-anchor';
 import { BotHeadWords, botHead, isHeadCard } from './bot-head-card';
 import { LinkEmbeds } from './link-cards';
 import { plainText } from './plain-text';
@@ -56,6 +57,20 @@ import { useDismiss } from '../message-actions/use-dismiss';
  * (../dialogs/report.tsx), which feeds the platform's one moderation queue
  * rather than an inline form of its own (issue #2721).
  */
+
+/**
+ * #5050: the transcript's own scrollTop when a quote's tap finds the replied
+ * message, so the screen does not move with it — `scrollIntoView` would also
+ * scroll every scrolling ancestor above the pane.
+ */
+function scrollReplyIntoView(replyId: string | number | undefined): void {
+  if (replyId === undefined) return;
+  const target = document.getElementById(`messages-message-${replyId}`);
+  if (!target) return;
+  const scroll = target.closest('.messages-thread-scroll');
+  if (scroll) (scroll as HTMLElement).scrollTo({ top: centredTopIn(scroll, target), behavior: 'smooth' });
+  else target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
 
 function Attachment({ attachment }: { attachment: ConversationMessage['attachments'][number] }) {
   const t = useMessages('messages');
@@ -320,7 +335,7 @@ export const MessageRow = memo(function MessageRow({
     <p className="messages-deleted">{t('messages:row.deleted')}</p>
   ) : (
     <>
-      {message.reply ? <button type="button" className="messages-quote" onClick={() => document.getElementById(`messages-message-${message.reply?.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })}><span>{senderName(message.reply.sender, { bare })}</span><p>{message.reply.deleted ? t('messages:row.quote.deleted') : plainText(message.reply.content) || t('messages:row.quote.attachment')}</p></button> : null}
+      {message.reply ? <button type="button" className="messages-quote" onClick={() => scrollReplyIntoView(message.reply?.id)}><span>{senderName(message.reply.sender, { bare })}</span><p>{message.reply.deleted ? t('messages:row.quote.deleted') : plainText(message.reply.content) || t('messages:row.quote.attachment')}</p></button> : null}
       {editing ? (
         <div className="messages-edit"><textarea ref={editRef} aria-label={t('messages:row.editLabel')} value={editValue} onChange={(event) => setEditValue(event.target.value.slice(0, 8000))} rows={2} maxLength={8000} autoFocus onKeyDown={(event) => { if (event.key === 'Escape') setEditing(false); if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void saveEdit(); } }} /><div><button type="button" disabled={busy} onClick={() => void saveEdit()}>{t('core:common.save')}</button><button type="button" onClick={() => setEditing(false)}>{t('core:common.cancel')}</button></div></div>
       ) : isThanksMessage(message) ? (

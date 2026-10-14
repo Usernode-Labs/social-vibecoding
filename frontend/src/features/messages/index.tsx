@@ -50,7 +50,7 @@ import { ShareToDialog } from './share-to-dialog';
 import { JumpToLatest } from './jump-to-latest';
 import { isNearTop, needsMoreHistory, useStickToBottom } from './stick-to-bottom';
 import {
-  firstUnreadId, jumpLabel, lineTopIn, messageRow, newMessagesLabel, openingScrollTop, useLineHold, useUnreadAffordances,
+  centredTopIn, firstUnreadId, jumpLabel, lineTopIn, messageRow, newMessagesLabel, openingScrollTop, useLineHold, useUnreadAffordances,
 } from './unread-anchor';
 import {
   agentThreadAddress,
@@ -1856,7 +1856,10 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
         shownFocus.current = focusId;
         previousLast.current = last;
         pinned.current = false;
-        requestAnimationFrame(() => row.scrollIntoView({ block: 'center' }));
+        // #5050: set the scroller's own scrollTop, never scrollIntoView,
+        // which scrolls every scrolling ancestor and, when the row cannot be
+        // centred in the transcript alone, lifts the whole screen.
+        requestAnimationFrame(() => { el.scrollTop = centredTopIn(el, row); });
         setFlashId(focusId);
         window.setTimeout(() => setFlashId((id) => (id === focusId ? null : id)), 2400);
         return;
@@ -2290,7 +2293,9 @@ function ReplyThreadPanel() {
     if (!row) return;
     shownFocus.current = wanted;
     pinned.current = false;
-    requestAnimationFrame(() => row.scrollIntoView({ block: 'center' }));
+    // #5050: the pane's own scrollTop, for the same reason the
+    // conversation's focus scroll above sets it.
+    requestAnimationFrame(() => { el.scrollTop = centredTopIn(el, row); });
     setFlashId(wanted);
     window.setTimeout(() => {
       setFlashId((id) => (id === wanted ? null : id));
@@ -2590,7 +2595,7 @@ export function MessagesScreen() {
   // need a transparent ancestor chain to have anything to blur.
   return (
     <>
-      <main ref={screenRef} id="messages-screen" className="hidden flex-1 min-h-0 overflow-hidden" style={{ position: 'relative' }}>
+      <main ref={screenRef} id="messages-screen" className="hidden flex-1 min-h-0 overflow-clip" style={{ position: 'relative' }}>
         <div ref={layoutRef} className={layout}>
           <ConversationList />
           <ConversationThread />

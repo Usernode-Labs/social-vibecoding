@@ -109,6 +109,30 @@ test('where the line is from the scroller\'s content', () => {
   assert.equal(lineTopIn(scroller, line), 1050);
 });
 
+test('centredTopIn: the scrollTop that centres a row in its scroller (#5050)', () => {
+  const { centredTopIn } = loadTsx(MODULE);
+  // A scroller 600px tall over 4000px of content. Both rects are read with
+  // the scroller at scrollTop 0, so a row's rect top IS its lineTopIn.
+  const scroller = (top = 0) => ({
+    scrollTop: 0,
+    scrollHeight: 4000,
+    clientHeight: 600,
+    getBoundingClientRect: () => ({ top }),
+  });
+  const rowAt = (rowTop, rowHeight = 120) => ({ getBoundingClientRect: () => ({ top: rowTop, height: rowHeight }) });
+  // Centred is lineTop - (600 - 120) / 2 = lineTop - 240.
+  assert.equal(centredTopIn(scroller(), rowAt(300)), 60, 'a short row, centred');
+  // Near the top of the content the centre would be negative: clamped to 0.
+  assert.equal(centredTopIn(scroller(), rowAt(100)), 0, 'clamped at the top of the range');
+  // Near the bottom the centre would run past it: clamped to the bottom.
+  assert.equal(centredTopIn(scroller(), rowAt(3700)), 3400, 'clamped at the bottom of the range');
+  // A row taller than the scroller aligns to its top, as lineTopIn puts it.
+  assert.equal(centredTopIn(scroller(), rowAt(1500, 700)), 1500, 'a tall row, top-aligned');
+  // A row taller than the scroller clamps at the bottom of the range when it
+  // sits at the very end of the content.
+  assert.equal(centredTopIn(scroller(), rowAt(3500, 700)), 3400, 'a tall row at the end, clamped');
+});
+
 // ── 2. The banner ───────────────────────────────────────────────────────
 
 test('the banner says how many in words, and nothing for none', () => {
