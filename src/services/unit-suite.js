@@ -1344,13 +1344,13 @@ async function recordPassForReuse({
  * the outcome the run stores, or null (reuse off, a person's request, no
  * matching pass). Never throws.
  */
-async function reusablePass({ config, pool, appId, repoOwner, repoName, commitSha, trigger }) {
+async function reusablePass({ config, pool, appId, sessionId = null, repoOwner, repoName, commitSha, trigger }) {
   try {
     if (!isEnabled() || !github.isEnabled()) return null;
     const reuse = require('./unit-suite-reuse');
     const key = reuse.keyFor(config, { appId, repoOwner, repoName, commitSha, jobHash: jobHash() });
     if (!key) return null;
-    const pass = await reuse.findPass(pool, key, { trigger });
+    const pass = await reuse.findPass(pool, key, { trigger, sessionId });
     if (!pass) return null;
     return { ...reuse.reusedOutcome(shapeOutcome, pass), snapshot: reuse.reusedSnapshot(pass) };
   } catch (err) {

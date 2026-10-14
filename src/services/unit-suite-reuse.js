@@ -140,17 +140,30 @@ async function recordPass(pool, key, { sessionId = null, runId = null, summary =
  * (visuals.CHECK_TRIGGERS): a person's request never reuses. Never throws:
  * a lookup that fails runs the suite.
  */
-async function findPass(pool, key, { trigger = null } = {}) {
+//
+// Two more conditions, both read from the database so a restart keeps them:
+//   * the pass was observed: the run that passed stored its verdict and
+//     recorded the pass in app_check_history (markObserved). A pass whose
+//     run errored or was discarded has no history row, and the gate a copy
+//     earns its proposal (check-history.recordEarned) would then have none
+//     to become app-wide on merge;
+//   * the proposal reusing it (`sessionId`) is not owed a fresh run of this
+//     head: a person asked for one (chat_sessions.unit_suite_fresh_sha).
+async function findPass(pool, key, { trigger = null, sessionId = null } = {}) {
   if (!pool || !key || !isAutomaticTrigger(trigger)) return null;
   try {
     const { rows } = await pool.query(
-      `SELECT id, session_id, run_id, summary, passed_at
-         FROM unit_suite_passes
-        WHERE app_id = $1 AND repo = $2 AND commit_sha = $3 AND image = $4 AND job_definition = $5
-          AND passed_at > NOW() - make_interval(secs => $6::double precision)
-        ORDER BY passed_at DESC
+      `SELECT p.id, p.session_id, p.run_id, p.summary, p.passed_at
+         FROM unit_suite_passes p
+        WHERE p.app_id = $1 AND p.repo = $2 AND p.commit_sha = $3 AND p.image = $4 AND p.job_definition = $5
+          AND p.passed_at > NOW() - make_interval(secs => $6::double precision)
+          AND p.observed_at IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM chat_sessions cs
+             WHERE cs.id = $7::int AND lower(cs.unit_suite_fresh_sha) = $3)
+        ORDER BY p.passed_at DESC
         LIMIT 1`,
-      [key.appId, key.repo, key.commitSha, key.image, key.jobHash, MAX_AGE_MS / 1000]
+      [key.appId, key.repo, key.commitSha, key.image, key.jobHash, MAX_AGE_MS / 1000, Number(sessionId) || null]
     );
     const row = rows[0];
     if (!row) return null;
@@ -170,31 +183,50 @@ async function findPass(pool, key, { trigger = null } = {}) {
 }
 
 /**
- * A person asked for the suite to run again on this commit ("Run checks
- * again" and every path that reaches 'manual-recheck'): forget the passes
- * a run of it could copy, so that no run of the commit reuses one from now
- * on, whichever run ends up answering: one already waiting for a checks
- * slot, one re-driven after a restart, or the requested run itself. The next
- * pass of the commit, from the run that was asked for, can be reused again.
- * Never throws.
+ * A person asked for the checks of this head again ("Run checks again", and
+ * every path that reaches 'manual-recheck'): the proposal is owed a unit
+ * suite that really runs on it. Stored on the proposal
+ * (chat_sessions.unit_suite_fresh_sha), so it holds whichever run ends up
+ * answering, after a restart too: no run copies a pass for it (findPass),
+ * and no verdict carrying a copied pass is stored for it
+ * (visuals.storeChecks), so the head stays pending and merge-blocked until
+ * a verdict whose suite ran is stored, which clears it. The 'manual-recheck'
+ * pending stamp sets it too (visuals.setChecksPending); this is for the
+ * paths that answer before stamping. Never throws.
  */
-async function forgetPasses(pool, { appId, commitShas = [] } = {}) {
-  const shas = [...new Set((commitShas || []).filter(isSha).map((x) => String(x).toLowerCase()))];
-  if (!pool || !Number(appId) || !shas.length) return 0;
+async function markFreshOwed(pool, { sessionId, commitSha } = {}) {
+  if (!pool || !Number(sessionId) || !isSha(commitSha)) return false;
   try {
     const { rowCount } = await pool.query(
-      'DELETE FROM unit_suite_passes WHERE app_id = $1 AND commit_sha = ANY($2::text[])',
-      [Number(appId), shas]
+      'UPDATE chat_sessions SET unit_suite_fresh_sha = $2 WHERE id = $1',
+      [Number(sessionId), String(commitSha).toLowerCase()]
     );
-    if (rowCount) {
-      log.info('unit-suite-reuse', 'A person asked for the checks again: earlier passes of the commit forgotten', {
-        appId: Number(appId), commits: shas, forgotten: rowCount,
-      });
-    }
+    return rowCount > 0;
+  } catch (err) {
+    log.warn('unit-suite-reuse', 'Could not mark a fresh unit-suite run owed', {
+      sessionId, commitSha, err: err.message,
+    });
+    return false;
+  }
+}
+
+/**
+ * The run of `sessionId` that passed `commitSha` stored its verdict and
+ * recorded the pass in the app's history: its passes may now be reused.
+ * Never throws.
+ */
+async function markObserved(pool, { appId, sessionId, commitSha } = {}) {
+  if (!pool || !Number(appId) || !Number(sessionId) || !isSha(commitSha)) return 0;
+  try {
+    const { rowCount } = await pool.query(
+      `UPDATE unit_suite_passes SET observed_at = NOW()
+        WHERE app_id = $1 AND session_id = $2 AND commit_sha = $3 AND observed_at IS NULL`,
+      [Number(appId), Number(sessionId), String(commitSha).toLowerCase()]
+    );
     return rowCount || 0;
   } catch (err) {
-    log.warn('unit-suite-reuse', 'Could not forget the passes of a re-checked commit', {
-      appId, err: err.message,
+    log.warn('unit-suite-reuse', 'Could not mark a unit-suite pass observed', {
+      appId, sessionId, commitSha, err: err.message,
     });
     return 0;
   }
@@ -275,7 +307,8 @@ module.exports = {
   keyFor,
   recordPass,
   findPass,
-  forgetPasses,
+  markFreshOwed,
+  markObserved,
   reusedOutcome,
   reusedSnapshot,
   checkedOutCommit,

@@ -6239,11 +6239,11 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         } finally { client.release(); }
       }
 
-      // A preview deployed by hand runs its checks as 'manual-recheck': no
-      // run of this commit copies an earlier unit-suite pass from now on
-      // (services/unit-suite-reuse.js).
-      await require('../services/unit-suite-reuse').forgetPasses(pool, {
-        appId: session.app_id, commitShas: [commitHash, session.checks_commit_sha],
+      // A preview deployed by hand runs its checks as 'manual-recheck': the
+      // head is owed a unit suite that really runs (services/unit-suite-
+      // reuse.js), stamped here too for the path that is not coordinated.
+      await require('../services/unit-suite-reuse').markFreshOwed(pool, {
+        sessionId: session.id, commitSha: commitHash,
       });
 
       // Build and deploy staging (async — respond immediately)
@@ -6528,6 +6528,15 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         return res.json({ status: 'unavailable', reason: 'demo' });
       }
 
+      // From this press on the head is owed a unit suite that really runs
+      // (services/unit-suite-reuse.js): whichever run answers it, the one it
+      // is folded into below or its own, copies no earlier pass, and a
+      // verdict that carries a copied pass is not stored. Durable, and set
+      // before any of the answers below.
+      await require('../services/unit-suite-reuse').markFreshOwed(pool, {
+        sessionId, commitSha: session.checks_commit_sha,
+      });
+
       // Coalesce repeat clicks.
       if (recheckInFlight.has(sessionId)) {
         return res.json({ status: 'running' });
@@ -6555,12 +6564,6 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // stored verdict clears its manifest, and a press after that starts a
       // fresh run. `collecting` lets the client say why nothing new started.
       recheckInFlight.add(sessionId);
-      // From this press on, no run of this commit copies an earlier
-      // unit-suite pass, whichever run answers it (one already waiting for a
-      // slot, one collected below, one re-driven after a restart).
-      await require('../services/unit-suite-reuse').forgetPasses(pool, {
-        appId: session.app_id, commitShas: [session.checks_commit_sha],
-      });
       if (await require('../services/check-harvest').runToCollect(config, pool, sessionId, session.checks_commit_sha || null, { forManual: true })) {
         recheckInFlight.delete(sessionId);
         return res.json({ status: 'running', checkState: 'pending', collecting: true });

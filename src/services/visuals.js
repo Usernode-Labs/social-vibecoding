@@ -1243,6 +1243,14 @@ function serializeTestResults(results) {
 // parallel (deriving an advisory clean/errors/unknown from the same run)
 // for one release so a rolling deploy's old readers don't break.
 async function storeChecks(pool, sessionId, commitSha, result, errorDetail = null) {
+  // A person asked for a fresh unit-suite run of this head
+  // (chat_sessions.unit_suite_fresh_sha, services/unit-suite-reuse.js): a
+  // verdict whose unit-suite row was copied from an earlier pass is not
+  // theirs and is not stored ($7, the row stays pending and merge-blocked),
+  // and one whose suite really ran settles the request ($8).
+  const unitRow = Array.isArray(result && result.results) ? result.results.find(unitSuiteRow.isUnitSuiteRow) : null;
+  const unitReused = !!(unitRow && unitRow.reused);
+  const unitRan = !!(unitRow && !unitRow.reused && !unitRow.couldNotRun);
   if (result && result.state === 'error') {
     // A build/boot/capture failure — record a TERMINAL 'error' verdict plus
     // the failure-streak bookkeeping that powers the sweeper's backoff and
@@ -1268,6 +1276,8 @@ async function storeChecks(pool, sessionId, commitSha, result, errorDetail = nul
               check_phase = NULL,
               check_error_detail = COALESCE($5, check_error_detail),
               check_error_platform = $6::boolean,
+              unit_suite_fresh_sha = CASE WHEN $8::boolean AND lower(unit_suite_fresh_sha) = lower($3::text)
+                                          THEN NULL ELSE unit_suite_fresh_sha END,
               consecutive_check_failures = consecutive_check_failures + 1,
               first_check_failure_at = COALESCE(first_check_failure_at, NOW()),
               last_check_failure_at = NOW(),
@@ -1275,9 +1285,10 @@ async function storeChecks(pool, sessionId, commitSha, result, errorDetail = nul
                 secs => LEAST(120 * power(2, LEAST(consecutive_check_failures, 10)), 1800)::double precision)
         WHERE id = $4
           AND status IN ('active', 'paused', 'promoted', 'merging')
+          AND NOT ($7::boolean AND COALESCE(lower(unit_suite_fresh_sha) = lower($3::text), false))
           AND checks_commit_sha IS NOT DISTINCT FROM $3::text`,
       [result.state, serializeTestResults(result.results), commitSha || null, sessionId, errorDetail,
-        result.platformFault === true]
+        result.platformFault === true, unitReused, unitRan]
     );
     return write.rowCount !== 0;
   }
@@ -1313,6 +1324,8 @@ async function storeChecks(pool, sessionId, commitSha, result, errorDetail = nul
            )), '{}'::jsonb),
            check_error_detail = NULL,
            check_error_platform = false,
+           unit_suite_fresh_sha = CASE WHEN $6::boolean AND lower(unit_suite_fresh_sha) = lower($3::text)
+                                       THEN NULL ELSE unit_suite_fresh_sha END,
            consecutive_check_failures = 0,
            first_check_failure_at = NULL,
            last_check_failure_at = NULL,
@@ -1320,8 +1333,9 @@ async function storeChecks(pool, sessionId, commitSha, result, errorDetail = nul
            check_error_notified_at = NULL
      WHERE id = $4
        AND status IN ('active', 'paused', 'promoted', 'merging')
+       AND NOT ($5::boolean AND COALESCE(lower(unit_suite_fresh_sha) = lower($3::text), false))
        AND checks_commit_sha IS NOT DISTINCT FROM $3::text`,
-    [result.state, serializeTestResults(result.results), commitSha || null, sessionId]
+    [result.state, serializeTestResults(result.results), commitSha || null, sessionId, unitReused, unitRan]
   );
   return write.rowCount !== 0;
 }
@@ -1415,6 +1429,11 @@ async function setChecksPending(pool, sessionId, commitSha, phase = null, trigge
        SET check_state = 'pending', checks_commit_sha = $2::text, checks_checked_at = NOW(),
            check_phase = $3::text,
            check_trigger = $4::text,
+           -- A person asked for this run ("Run checks again"): its head is
+           -- owed a unit suite that really runs (services/unit-suite-reuse.js),
+           -- until one settles (storeChecks).
+           unit_suite_fresh_sha = CASE WHEN $4::text = 'manual-recheck' AND $2::text IS NOT NULL
+                                       THEN lower($2::text) ELSE unit_suite_fresh_sha END,
            checks_progress = NULL,
            check_next_retry_at = NULL,
            checks_base_sha = COALESCE(
@@ -1889,6 +1908,32 @@ function hasInFlightCapture(sessionId) {
   return _inFlight.has(key) || _queued.has(key);
 }
 
+// Start the run a person asked for when the run that answered them copied
+// an earlier unit-suite pass and its verdict was refused. Only while the
+// fresh run is still owed on this head; detached, and never throws.
+async function requestOwedFreshRun(config, pool, session, commitHash) {
+  try {
+    const { rows: [row] } = await pool.query(
+      'SELECT unit_suite_fresh_sha, checks_commit_sha FROM chat_sessions WHERE id = $1', [session.id]
+    );
+    const owed = row && row.unit_suite_fresh_sha && commitHash
+      && String(row.unit_suite_fresh_sha).toLowerCase() === String(commitHash).toLowerCase()
+      && String(row.checks_commit_sha || '').toLowerCase() === String(commitHash).toLowerCase();
+    if (!owed) return false;
+    log.info('visuals', 'A copied unit-suite pass was refused: starting the run a person asked for', {
+      sessionId: session.id, commitHash,
+    });
+    require('./staging-recovery').recheckSessionChecks({ config, pool, session, reason: 'manual-recheck' })
+      .catch((err) => log.warn('visuals', 'Owed fresh run could not start (non-fatal)', {
+        sessionId: session.id, err: err.message,
+      }));
+    return true;
+  } catch (err) {
+    log.warn('visuals', 'Owed fresh run check failed (non-fatal)', { sessionId: session.id, err: err.message });
+    return false;
+  }
+}
+
 // Is this process's run for the session one that copied an earlier
 // unit-suite pass instead of running the suite (services/unit-suite-
 // reuse.js), with nothing queued behind it yet? A person's "Run checks
@@ -2191,7 +2236,10 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // shots) is not asked about: it runs forced and cancels that run, as
     // every same-commit request used to.
     if (!opts.replaceRun) {
-      const left = await require('./check-harvest').runToCollect(config, getPool(config), session.id, commitHash);
+      // A person's "Run checks again" is not answered by a run that copied
+      // an earlier unit-suite pass (services/unit-suite-reuse.js).
+      const left = await require('./check-harvest').runToCollect(config, getPool(config), session.id, commitHash,
+        { forManual: opts.trigger === 'manual-recheck' });
       if (left) {
         log.info('visuals', 'A run of this commit is still on the cluster; leaving it to the harvest', {
           sessionId: session.id, commitHash: commitHash || null, trigger: opts.trigger || null, ...left,
@@ -2218,7 +2266,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
         await operation.check();
         return captureForSession(config, fresh, app, operation.revision, stagingResult,
           { ...opts, force: opts.force || !!stagingResult });
-      }, { force: opts.force || !!opts.replaceRun, onError: (err, pool, operation) =>
+      }, { force: opts.force || !!opts.replaceRun, manual: opts.trigger === 'manual-recheck', onError: (err, pool, operation) =>
         publishCaptureError(pool, session.id, operation.revision, err, opts.send) });
       if (completed?.state) {
         maybeAutoMergeAfterChecks(config, getPool(config), session, completed.state);
@@ -2913,7 +2961,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     let reusedUnit = null;
     if (!shotsOnly && !earlyUnit) {
       reusedUnit = await unitSuite.reusablePass({
-        config, pool, appId: app.id, repoOwner, repoName, commitSha: commitHash, trigger,
+        config, pool, appId: app.id, sessionId: session.id, repoOwner, repoName, commitSha: commitHash, trigger,
       });
       if (reusedUnit) {
         log.info('visuals', 'Reusing an earlier unit-suite pass of this commit', {
@@ -3655,6 +3703,11 @@ async function settleCaptureRun(config, pool, run) {
         if (unitOutcome && !unitOutcome.history && unitOutcome.earned) {
           await checkHistory.recordEarned(pool, app.id, session.id, [unitOutcome.earned]);
         }
+        // A suite that ran and passed is in the app's history now: its
+        // recorded pass may be copied (only an observed pass is reused).
+        if (unitOutcome && unitOutcome.history && unitOutcome.history.passed) {
+          await require('./unit-suite-reuse').markObserved(pool, { appId: app.id, sessionId: session.id, commitSha: commitHash });
+        }
       }
       log.info('visuals', 'Checks stored', {
         sessionId: session.id, state: checksResult.state,
@@ -3668,6 +3721,14 @@ async function settleCaptureRun(config, pool, run) {
       log.info('visuals', 'Discarded stale checks result', {
         sessionId: session.id, commitHash: commitHash || null,
       });
+      // Not stale, perhaps, but refused: its unit-suite row was copied from
+      // an earlier pass while a person is owed a run of this head where the
+      // suite really runs (storeChecks, services/unit-suite-reuse.js). The
+      // run they asked for may have been folded into this one, so start it
+      // now, as theirs; a run of theirs already queued here is the same one.
+      if (unitOutcome && unitOutcome.row && unitOutcome.row.reused) {
+        await requestOwedFreshRun(config, pool, session, commitHash);
+      }
     }
   } catch (err) {
     log.warn('visuals', 'Checks store failed (non-fatal)', {

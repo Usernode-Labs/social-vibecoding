@@ -200,24 +200,22 @@ test('the recheck reads the row before it decides, and the verdict store keeps t
   assert.equal((store.match(/AND checks_commit_sha IS NOT DISTINCT FROM \$3::text`/g) || []).length, 2);
 });
 
-test('a re-driven "Run checks again" stays manual: its commit\'s cached unit-suite passes are forgotten, and its run is manual-recheck', async (t) => {
+test('a re-driven "Run checks again" stays manual: the head is marked owed a fresh suite, and its run is manual-recheck', async (t) => {
   const { rec, visuals, db, copy } = harness(t, { stagingCommit: NEW });
-  const forgotten = [];
+  const marked = [];
   const query = db.query.bind(db);
   db.query = async (sql, params) => {
-    if (/DELETE FROM unit_suite_passes/.test(String(sql))) { forgotten.push(params); return { rows: [], rowCount: 1 }; }
+    if (/UPDATE chat_sessions SET unit_suite_fresh_sha = \$2 WHERE id = \$1/.test(String(sql))) { marked.push(params); return { rows: [], rowCount: 1 }; }
     return query(sql, params);
   };
   const captured = [];
   visuals.captureForSession = async (_config, s, _app, commit, _staging, opts) => { captured.push({ commit, trigger: opts.trigger }); };
   assert.equal(await rec.recheckSessionChecks({ config: null, pool: db, session: copy, reason: 'orphaned-manual-run' }), 'rechecked');
   assert.deepEqual(captured, [{ commit: NEW, trigger: 'manual-recheck' }]);
-  assert.equal(forgotten.length, 1);
-  assert.equal(forgotten[0][0], 77);
-  assert.ok(forgotten[0][1].includes(NEW), 'the head this run judges');
+  assert.deepEqual(marked, [[8031, NEW]], 'marked before the run that answers is looked for');
 
-  // An automatic re-drive forgets nothing.
-  forgotten.length = 0;
+  // An automatic re-drive marks nothing.
+  marked.length = 0;
   await rec.recheckSessionChecks({ config: null, pool: db, session: copy, reason: 'orphaned-run' });
-  assert.equal(forgotten.length, 0);
+  assert.equal(marked.length, 0);
 });

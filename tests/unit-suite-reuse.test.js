@@ -36,6 +36,7 @@ const checkHistory = require('../src/services/check-history');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+const read_ = read;
 
 const SHA = 'a'.repeat(40);
 const OTHER = 'b'.repeat(40);
@@ -197,9 +198,11 @@ test('a lookup matches every part of the key and the age limit, and a person\'s 
   const found = await reuse.findPass(pool, key, { trigger: 'boot-reconcile' });
   assert.deepEqual(found, { id: 3, sessionId: 8401, runId: 'run-a', summary: { tests: 5, pass: 5 }, passedAt: '2026-10-14T10:00:00.000Z' });
   const { sql, params } = pool.calls[0];
-  assert.match(sql, /WHERE app_id = \$1 AND repo = \$2 AND commit_sha = \$3 AND image = \$4 AND job_definition = \$5/);
-  assert.match(sql, /passed_at > NOW\(\) - make_interval\(secs => \$6::double precision\)/);
-  assert.deepEqual(params, [10, 'usernode-labs/social-vibecoding', SHA, DIGEST, keyArgs.jobHash, 3 * 3600]);
+  assert.match(sql, /WHERE p\.app_id = \$1 AND p\.repo = \$2 AND p\.commit_sha = \$3 AND p\.image = \$4 AND p\.job_definition = \$5/);
+  assert.match(sql, /AND p\.observed_at IS NOT NULL/);
+  assert.match(sql, /WHERE cs\.id = \$7::int AND lower\(cs\.unit_suite_fresh_sha\) = \$3\)/);
+  assert.match(sql, /p\.passed_at > NOW\(\) - make_interval\(secs => \$6::double precision\)/);
+  assert.deepEqual(params, [10, 'usernode-labs/social-vibecoding', SHA, DIGEST, keyArgs.jobHash, 3 * 3600, null]);
 
   const asked = recordingPool([{ id: 3, passed_at: new Date() }]);
   assert.equal(await reuse.findPass(asked, key, { trigger: 'manual-recheck' }), null);
@@ -378,7 +381,7 @@ test('captureForSession copies the pass instead of launching the suite, and reco
   const at = src.indexOf('let reusedUnit = null;');
   assert.ok(at > 0);
   const tail = src.slice(at, at + 6000);
-  assert.match(tail, /if \(!shotsOnly && !earlyUnit\) \{\s+reusedUnit = await unitSuite\.reusablePass\(\{\s+config, pool, appId: app\.id, repoOwner, repoName, commitSha: commitHash, trigger,/);
+  assert.match(tail, /if \(!shotsOnly && !earlyUnit\) \{\s+reusedUnit = await unitSuite\.reusablePass\(\{\s+config, pool, appId: app\.id, sessionId: session\.id, repoOwner, repoName, commitSha: commitHash, trigger,/);
   assert.match(tail, /progress\.observeUnit\(reusedUnit\.snapshot\)/);
   assert.match(tail, /unitReused: \{ row: reusedUnit\.row, earned: reusedUnit\.earned \|\| null, snapshot: reusedUnit\.snapshot \}/);
   assert.match(tail, /: reusedUnit\s+\? Promise\.resolve\(\{ row: reusedUnit\.row, history: null, earned: reusedUnit\.earned \|\| null \}\) : unitSuite\.maybeRunUnitSuite\(/);
@@ -503,17 +506,28 @@ test('postgres: a proposal that reused a pass blocks its own later head that fai
   }
 });
 
-test('a person\'s request forgets the commit\'s passes, and a manual request does not collect a run that reused one', async () => {
+test('every manual entry marks the head as owed a fresh suite, durably, before it can be answered', async () => {
   const pool = recordingPool();
-  assert.equal(await reuse.forgetPasses(pool, { appId: 10, commitShas: [SHA, SHA.toUpperCase(), 'latest', null] }), 1);
-  assert.match(pool.calls[0].sql, /DELETE FROM unit_suite_passes WHERE app_id = \$1 AND commit_sha = ANY\(\$2::text\[\]\)/);
-  assert.deepEqual(pool.calls[0].params, [10, [SHA]]);
-  assert.equal(await reuse.forgetPasses(recordingPool(), { appId: 10, commitShas: ['latest'] }), 0);
+  assert.equal(await reuse.markFreshOwed(pool, { sessionId: 8465, commitSha: SHA.toUpperCase() }), true);
+  assert.match(pool.calls[0].sql, /UPDATE chat_sessions SET unit_suite_fresh_sha = \$2 WHERE id = \$1/);
+  assert.deepEqual(pool.calls[0].params, [8465, SHA]);
+  assert.equal(await reuse.markFreshOwed(recordingPool(), { sessionId: 8465, commitSha: 'latest' }), false);
   const sessions = read('src/routes/sessions.js');
-  const route = sessions.slice(sessions.indexOf("router.post('/api/sessions/:id/recheck'"));
-  assert.match(route.slice(0, 8000), /\(visuals\.hasInFlightCapture\(sessionId\) && !visuals\.inFlightReusedUnit\(sessionId\)\)/);
-  assert.match(route.slice(0, 8000), /forgetPasses\(pool, \{\s+appId: session\.app_id, commitShas: \[session\.checks_commit_sha\],\s+\}\);\s+if \(await require\('\.\.\/services\/check-harvest'\)\.runToCollect\(config, pool, sessionId, session\.checks_commit_sha \|\| null, \{ forManual: true \}\)\)/);
+  const route = sessions.slice(sessions.indexOf("router.post('/api/sessions/:id/recheck'"), sessions.indexOf("router.post('/api/sessions/:id/recheck'") + 9000);
+  const mark = route.indexOf('markFreshOwed(pool, {');
+  assert.ok(mark > 0 && mark < route.indexOf('if (recheckInFlight.has(sessionId))'), 'set before any coalesced answer');
+  assert.match(route, /\(visuals\.hasInFlightCapture\(sessionId\) && !visuals\.inFlightReusedUnit\(sessionId\)\)/);
+  assert.match(route, /runToCollect\(config, pool, sessionId, session\.checks_commit_sha \|\| null, \{ forManual: true \}\)/);
+  assert.match(sessions, /markFreshOwed\(pool, \{\s+sessionId: session\.id, commitSha: commitHash,\s+\}\);\s+\/\/ Build and deploy staging/);
+  assert.match(read('src/services/staging-recovery.js'), /if \(manual\) \{\s+await require\('\.\/unit-suite-reuse'\)\.markFreshOwed\(pool, \{ sessionId: session\.id, commitSha: head \}\);/);
+  const visualsSrc = read('src/services/visuals.js');
+  assert.match(visualsSrc, /unit_suite_fresh_sha = CASE WHEN \$4::text = 'manual-recheck' AND \$2::text IS NOT NULL\s+THEN lower\(\$2::text\) ELSE unit_suite_fresh_sha END,/,
+    'and the manual pending stamp sets it');
   assert.match(read('src/services/check-harvest.js'), /if \(forManual && row\.manifest && row\.manifest\.unitReused\) continue;/);
+  // The lifecycle boundary carries the same intent.
+  assert.match(visualsSrc, /runToCollect\(config, getPool\(config\), session\.id, commitHash,\s+\{ forManual: opts\.trigger === 'manual-recheck' \}\)/);
+  assert.match(visualsSrc, /manual: opts\.trigger === 'manual-recheck', onError:/);
+  assert.match(read('src/services/preview-lifecycle.js'), /runToCollect\(config, pool, session\.id, revision, \{ forManual: manual \}\)/);
 });
 
 test('postgres: found by the same key alone, within the age limit, and still there after a restart', async (t) => {
@@ -528,8 +542,13 @@ test('postgres: found by the same key alone, within the age limit, and still the
     await pool.query(`CREATE SCHEMA ${schema}`);
     await use(pool);
     await pool.query(DDL);
+    await pool.query('CREATE TABLE chat_sessions (id INTEGER PRIMARY KEY, unit_suite_fresh_sha TEXT)');
+    await pool.query('INSERT INTO chat_sessions (id) VALUES (8401), (8402)');
     const key = reuse.keyFor(config, keyArgs);
     assert.equal(await reuse.recordPass(pool, key, { sessionId: 8401, runId: 'run-a', summary: { tests: 3, pass: 3 } }), true);
+    assert.equal(await reuse.findPass(pool, key, { trigger: 'boot-reconcile' }), null,
+      'not reused until its run stored its verdict and recorded it in history');
+    assert.equal(await reuse.markObserved(pool, { appId: 10, sessionId: 8401, commitSha: SHA }), 1);
 
     // A restart: a new process has nothing in memory, only the database.
     await pool.end();
@@ -551,6 +570,18 @@ test('postgres: found by the same key alone, within the age limit, and still the
       assert.equal(await reuse.findPass(pool, other, { trigger: 'boot-reconcile' }), null, why);
     }
     assert.equal(await reuse.findPass(pool, key, { trigger: 'manual-recheck' }), null, 'a person asked');
+    // A person asked for this head again on proposal 8402: whatever the
+    // trigger of the run that answers, 8402 copies nothing, while another
+    // proposal still may.
+    await reuse.markFreshOwed(pool, { sessionId: 8402, commitSha: SHA });
+    assert.equal(await reuse.findPass(pool, key, { trigger: 'commit-push', sessionId: 8402 }), null, 'owed a fresh run');
+    assert.ok(await reuse.findPass(pool, key, { trigger: 'commit-push', sessionId: 8401 }));
+    // A suite that was already running records a pass after the press: still
+    // not copied for 8402.
+    await reuse.recordPass(pool, key, { sessionId: 8401, runId: 'run-late' });
+    await reuse.markObserved(pool, { appId: 10, sessionId: 8401, commitSha: SHA });
+    assert.equal(await reuse.findPass(pool, key, { trigger: 'boot-reconcile', sessionId: 8402 }), null, 'the overlapping writer');
+    await pool.query("DELETE FROM unit_suite_passes WHERE run_id = 'run-late'");
 
     // Older than the limit: not reused; older than twice it: deleted with
     // the app's next pass.
@@ -566,4 +597,99 @@ test('postgres: found by the same key alone, within the age limit, and still the
     await pool.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`).catch(() => {});
     await pool.end().catch(() => {});
   }
+});
+
+// ── Against the real schema: a person's request and the verdict store ────
+
+test('postgres, full schema: while a fresh run is owed, a verdict with a copied pass is refused and the gate reads pending', async (t) => {
+  const conn = await connect();
+  if (!conn) return t.skip('the pg driver is not installed in this environment');
+  if (conn.error) return t.skip(`no postgres reachable at ${DSN}: ${conn.error}`);
+  const admin = conn.pool;
+  const dbName = `unit_suite_fresh_${process.pid}`;
+  const { Pool } = require('pg');
+  let pool = null;
+  try {
+    await admin.query(`DROP DATABASE IF EXISTS ${dbName}`);
+    await admin.query(`CREATE DATABASE ${dbName}`);
+    const url = new URL(DSN);
+    url.pathname = `/${dbName}`;
+    pool = new Pool({ connectionString: url.toString(), max: 2 });
+    await pool.query(SCHEMA_SQL);
+    const { rows: [u] } = await pool.query("INSERT INTO users (username, password) VALUES ('fresh-test', 'x') RETURNING id");
+    const { rows: [app] } = await pool.query("INSERT INTO apps (slug, name, repo_url) VALUES ('fresh-test', 'T', 'https://github.com/o/r') RETURNING id");
+    const { rows: [s] } = await pool.query(
+      "INSERT INTO chat_sessions (user_id, app_id, status, source) VALUES ($1, $2, 'promoted', 'cli_handoff') RETURNING id",
+      [u.id, app.id]);
+    const unitRow = (extra) => ({ index: -3, name: unitSuite.UNIT_CHECK_NAME, path: 'package.json', status: 'pass', advisory: false, ...extra });
+    const reusedRow = unitRow({ reused: { runId: 'run-a', sessionId: 1, passedAt: new Date().toISOString() } });
+    const read = async () => (await pool.query(
+      'SELECT check_state, checks_commit_sha, unit_suite_fresh_sha, test_results FROM chat_sessions WHERE id = $1', [s.id])).rows[0];
+
+    // An automatic run of the head: no fresh run owed, a copied pass stores.
+    await visuals.setChecksPending(pool, s.id, SHA, 'testing', 'boot-reconcile');
+    assert.equal((await read()).unit_suite_fresh_sha, null);
+    assert.equal(await visuals.storeChecks(pool, s.id, SHA, { state: 'passing', results: [reusedRow] }), true);
+
+    // A person presses "Run checks again" on that head.
+    await visuals.setChecksPending(pool, s.id, SHA, 'building', 'manual-recheck');
+    assert.equal((await read()).unit_suite_fresh_sha, SHA, 'the request is on the row, durably');
+    // The run that answers copied a pass (it decided before the press, or
+    // it was collected): its verdict is refused, the head stays pending.
+    assert.equal(await visuals.storeChecks(pool, s.id, SHA, { state: 'passing', results: [reusedRow] }), false);
+    assert.equal(await visuals.storeChecks(pool, s.id, SHA, { state: 'error', results: [reusedRow] }), false);
+    let row = await read();
+    assert.equal(row.check_state, 'pending', 'merge-blocked');
+    // The gate's reading of a stored copied pass while the request stands.
+    assert.equal(unitSuiteRow.freshSuiteOwed({ ...row, test_results: [reusedRow] }), true);
+    assert.match(read_('src/routes/votes.js'), /const freshSuiteOwed = require\('\.\.\/services\/unit-suite-row'\)\.freshSuiteOwed\(checkRows\[0\]\);/);
+    assert.match(read_('src/routes/votes.js'), /const checkState = checksRevisionMismatch \|\| freshSuiteOwed\s+\? 'pending'/);
+    assert.match(read_('src/routes/votes.js'), /checks_commit_sha, check_phase, unit_suite_fresh_sha\s+FROM chat_sessions WHERE id = \$1/);
+
+    // A suite that could not run does not settle the request either.
+    assert.equal(await visuals.storeChecks(pool, s.id, SHA, { state: 'error', results: [unitRow({ status: 'fail', couldNotRun: true })] }), true);
+    assert.equal((await read()).unit_suite_fresh_sha, SHA);
+    // The suite really runs: stored, and the request is settled.
+    await visuals.setChecksPending(pool, s.id, SHA, 'testing', 'manual-recheck');
+    assert.equal(await visuals.storeChecks(pool, s.id, SHA, { state: 'passing', results: [unitRow({})] }), true);
+    row = await read();
+    assert.equal(row.check_state, 'passing');
+    assert.equal(row.unit_suite_fresh_sha, null);
+    assert.equal(unitSuiteRow.freshSuiteOwed(row), false);
+  } finally {
+    if (pool) await pool.end().catch(() => {});
+    await admin.query(`DROP DATABASE IF EXISTS ${dbName}`).catch(() => {});
+    await admin.end().catch(() => {});
+  }
+});
+
+test('a refused copied verdict starts the run the person asked for; only an observed pass is reusable', () => {
+  const src = read_('src/services/visuals.js');
+  assert.match(src, /if \(unitOutcome && unitOutcome\.row && unitOutcome\.row\.reused\) \{\s+await requestOwedFreshRun\(config, pool, session, commitHash\);/);
+  assert.match(src, /recheckSessionChecks\(\{ config, pool, session, reason: 'manual-recheck' \}\)/);
+  assert.match(src, /if \(unitOutcome && unitOutcome\.history && unitOutcome\.history\.passed\) \{\s+await require\('\.\/unit-suite-reuse'\)\.markObserved\(pool, \{ appId: app\.id, sessionId: session\.id, commitSha: commitHash \}\);/);
+});
+
+test('with the preview lifecycle on, a manual capture does not take a run that copied a pass as its answer', async (t) => {
+  const savedRuntime = process.env.APP_RUNTIME;
+  const savedFlag = process.env.PREVIEW_LIFECYCLE_ENABLED;
+  process.env.APP_RUNTIME = 'kubernetes';
+  process.env.PREVIEW_LIFECYCLE_ENABLED = 'true';
+  t.after(() => {
+    if (savedRuntime === undefined) delete process.env.APP_RUNTIME; else process.env.APP_RUNTIME = savedRuntime;
+    if (savedFlag === undefined) delete process.env.PREVIEW_LIFECYCLE_ENABLED; else process.env.PREVIEW_LIFECYCLE_ENABLED = savedFlag;
+  });
+  const harvest = require('../src/services/check-harvest');
+  const lifecycle = require('../src/services/preview-lifecycle');
+  assert.equal(lifecycle.enabled({}), true);
+  const asked = [];
+  // A run of this head is on the cluster; collection is the harvest's.
+  t.mock.method(harvest, 'runToCollect', async (_c, _p, _id, _sha, opts) => { asked.push(opts || {}); return { runId: 'r', capture: 'running' }; });
+  const session = { id: 99001, app_id: 10 };
+  const app = { id: 10, slug: 'x', repo_url: 'https://github.com/o/r' };
+  const cfg = { databaseUrl: 'postgres://unused/none' };
+  await visuals.captureForSession(cfg, session, app, SHA, null, { trigger: 'manual-recheck', force: true });
+  await visuals.captureForSession(cfg, session, app, SHA, null, { trigger: 'stuck-sweep' });
+  assert.deepEqual(asked.map((o) => !!o.forManual), [true, false]);
+  assert.match(read('src/services/preview-lifecycle.js'), /async function run\(config, session, revision, phase, fn, \{ force = false, onError = null, resolveRevision = null, manual = false \} = \{\}\)/);
 });

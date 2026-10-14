@@ -169,7 +169,7 @@ test('a capture asks before the lifecycle request; a recheck asks before its sta
   const ask = capture.indexOf("require('./check-harvest').runToCollect(");
   const request = capture.indexOf("lifecycle.run(config, session, commitHash, 'capture'");
   assert.ok(ask > 0 && request > ask);
-  assert.match(capture, /\{ force: opts\.force \|\| !!opts\.replaceRun, onError:/);
+  assert.match(capture, /\{ force: opts\.force \|\| !!opts\.replaceRun, manual: opts\.trigger === 'manual-recheck', onError:/);
 
   const recovery = read('src/services/staging-recovery.js');
   const recheck = recovery.slice(recovery.indexOf('async function recheckSessionChecks('));

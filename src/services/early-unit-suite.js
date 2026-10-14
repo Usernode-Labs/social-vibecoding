@@ -138,7 +138,7 @@ async function maybeStart(config, { session, app, commitHash, pool = null, deps 
     // (services/unit-suite-reuse.js), and these Jobs would be thrown away.
     if (typeof unitSuite.reusablePass === 'function') {
       const reusable = await unitSuite.reusablePass({
-        config, pool: db, appId: app.id, repoOwner, repoName, commitSha: sha,
+        config, pool: db, appId: app.id, sessionId, repoOwner, repoName, commitSha: sha,
         trigger: row.check_trigger || null,
       });
       if (reusable) {

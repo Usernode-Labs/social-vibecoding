@@ -176,6 +176,17 @@ function reusedFrom(testResults) {
   };
 }
 
+// Is this stored verdict one the merge gate must not take yet? A person
+// asked for the head's checks again (chat_sessions.unit_suite_fresh_sha
+// names it) and the stored unit-suite row is still a copied pass, not a
+// suite that ran (services/unit-suite-reuse.js). `row` carries
+// unit_suite_fresh_sha, checks_commit_sha and test_results.
+function freshSuiteOwed(row) {
+  if (!row || !row.unit_suite_fresh_sha || !row.checks_commit_sha) return false;
+  if (String(row.unit_suite_fresh_sha).toLowerCase() !== String(row.checks_commit_sha).toLowerCase()) return false;
+  return !!reusedFrom(row.test_results);
+}
+
 module.exports = {
   UNIT_CHECK_NAME,
   UNIT_CHECK_PATH,
@@ -197,4 +208,5 @@ module.exports = {
   notRunError,
   unitSuiteFailures,
   reusedFrom,
+  freshSuiteOwed,
 };

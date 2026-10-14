@@ -1196,6 +1196,13 @@ ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS check_phase VARCHAR(
 -- simply shows no trigger caption then. Advisory/display only, exactly like
 -- check_phase: the merge gate reads check_state and nothing else.
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS check_trigger VARCHAR(32);
+-- The head a person asked to have checked again ("Run checks again"), while
+-- a unit suite that really runs on it is still owed (services/unit-suite-
+-- reuse.js). Set with the 'manual-recheck' pending stamp; cleared when a
+-- verdict whose unit suite ran on that head is stored. While it names the
+-- head, no run copies an earlier pass and no verdict carrying a copied one
+-- is stored. Survives restarts on purpose.
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS unit_suite_fresh_sha TEXT;
 -- Live progress of the run in flight: `{ ran, passed, failed, expected,
 -- updatedAt, unit, build }`, written as the capture container's per-check
 -- frames stream in. `unit` is the repo unit suite's own `{ phase, ran,
@@ -1229,7 +1236,11 @@ CREATE TABLE IF NOT EXISTS unit_suite_passes (
   session_id  INTEGER,
   run_id      TEXT,
   summary     JSONB,
-  passed_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  passed_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  -- When the run that passed stored its verdict and recorded the pass in
+  -- app_check_history. Only an observed pass is reused, so the gate a copy
+  -- earns always has the app's history row behind it.
+  observed_at TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS idx_unit_suite_passes_commit
   ON unit_suite_passes (app_id, commit_sha, passed_at DESC);

@@ -138,7 +138,10 @@ function createLifecycle({
     };
   }
 
-  async function run(config, session, revision, phase, fn, { force = false, onError = null, resolveRevision = null } = {}) {
+  // `manual`: a person's "Run checks again" asked for this run, so a run on
+  // the cluster that copied an earlier unit-suite pass is not taken as its
+  // answer (services/unit-suite-reuse.js).
+  async function run(config, session, revision, phase, fn, { force = false, onError = null, resolveRevision = null, manual = false } = {}) {
     if (!enabled(config)) return fn(null, session);
     const inherited = current();
     if (inherited?.sessionId === Number(session.id)) return fn(inherited, session);
@@ -178,7 +181,7 @@ function createLifecycle({
       // that should wait ask before they start one (visuals.captureForSession,
       // staging-recovery.recheckSessionChecks, the sweeper's preview heal).
       if (phase === 'capture' && !force) {
-        const left = await harvest().runToCollect(config, pool, session.id, revision);
+        const left = await harvest().runToCollect(config, pool, session.id, revision, { forManual: manual });
         if (left) {
           const spared = await harvest().runsOfCommit(pool, session.id, revision);
           await checks().cancelPreviewChecks(config, session.id, null, { spare: runId => spared.has(runId) });

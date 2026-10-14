@@ -1094,12 +1094,11 @@ async function recheckSessionChecks({ config, pool, session, reason, queuedSince
   }
   const replaceRun = REPLACING_RECHECK_REASONS.has(reason);
   const manual = checkTriggerForReason(reason) === 'manual-recheck';
-  // A person asked for the suite to run again: no run of this commit may
-  // copy an earlier pass from now on (services/unit-suite-reuse.js).
+  // A person asked for the suite to run again: the head is owed a unit
+  // suite that really runs (services/unit-suite-reuse.js), set before a run
+  // that may answer is collected below.
   if (manual) {
-    await require('./unit-suite-reuse').forgetPasses(pool, {
-      appId: session.app_id, commitShas: [head, session.checks_commit_sha],
-    });
+    await require('./unit-suite-reuse').markFreshOwed(pool, { sessionId: session.id, commitSha: head });
   }
   // A run of this commit still on the cluster, running or finished but not
   // yet read, is the run a recheck asks for: the harvest collects it
