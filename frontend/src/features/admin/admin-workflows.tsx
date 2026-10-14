@@ -30,7 +30,7 @@ type Work = {
   id: string; kind: string; workKey: string; status: string; attemptCount: number; lastError: any;
   result: any; dueAt: string; attempts: { number: number; outcome: string; service_id: string }[];
 };
-type Guard = { machine: string; flag: string; on: boolean; flagHere: boolean };
+type Guard = { machine: string; flag: string; on: boolean; flagHere: boolean; blocked?: string | null };
 type Overview = {
   running: boolean;
   guards?: Guard[];
@@ -91,8 +91,11 @@ async function turnGuardOff(g: Guard, onChanged: () => void) {
 function Problems({ overview, onOpen, onChanged = () => {} }: { overview: Overview; onOpen: (r: Ref) => void; onChanged?: () => void }) {
   const p = overview.problems;
   const stray = (overview.guards || []).filter((g) => g.on && !g.flagHere);
+  // A flag set here whose machine does not run (app delivery without merge follow-ups).
+  const blocked = (overview.guards || []).filter((g) => g.blocked);
   const canWrite = typeof window !== 'undefined' && !!console_()?.canWrite();
-  const none = !p.flagged.length && !p.overdueDeadlines.length && !p.work.length && !p.ownershipViolations.length && !stray.length;
+  const none = !p.flagged.length && !p.overdueDeadlines.length && !p.work.length && !p.ownershipViolations.length
+    && !stray.length && !blocked.length;
   return (
     <div id="admin-wf-problems" className={`${AdminUI.card} p-4 mb-4`}>
       <div className={AdminUI.cardHeader}>
@@ -137,6 +140,13 @@ function Problems({ overview, onOpen, onChanged = () => {} }: { overview: Overvi
                 Turn the guard off
               </button>
             ) : null}
+          </li>
+        ))}
+        {blocked.map((g) => (
+          <li key={`b:${g.machine}`} data-wf-problem="blocked" className="flex flex-wrap items-center gap-2">
+            <span className={AdminUI.badge.warn}>flag set, machine off</span>
+            <code className="text-xs">{g.machine}</code>
+            <span className={AdminUI.muted}>{`${g.blocked}: it does not run in this process.`}</span>
           </li>
         ))}
         {p.ownershipViolations.map((v) => (
@@ -416,7 +426,7 @@ function WorkflowsSection() {
     <div>
       {!overview.running ? (
         <p id="admin-wf-off" className={`${AdminUI.muted} mb-4`}>
-          No workflow runs in this process (WF_GOVERNANCE_ENABLED is off). What is recorded is still shown.
+          The workflow runtime is not running in this process: it did not start (see the log). The bot's builds run unkept until it does. What is recorded is still shown.
         </p>
       ) : null}
       <Problems overview={overview} onOpen={setAt} onChanged={load} />

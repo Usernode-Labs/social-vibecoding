@@ -274,5 +274,6 @@ test('the live lane wires all three into a first version\'s build, and no other'
   const body = src.slice(at, src.indexOf('\n}\n', at));
   // #4449: the caption watcher now shares the build's progress lines with Live.
   assert.match(body, /\.\.\.\(firstVersion \? \(\(\) => \{[\s\S]*?const caption = firstVersionScreens\(\)\.captionWatcher\(pool, runId\);[\s\S]*?onProgress: \(line\) => \{ caption\(line\);[\s\S]*?onFirstLook: /);
-  assert.match(body, /if \(firstVersion && built\?\.review\?\.finalCapture\) \{\s*await firstVersionScreens\(\)\.keepRealScreens\(pool, runId, built\.review\.finalCapture\);/);
+  // Kept once, as a step of the durable build: a restart after it does not keep them again.
+  assert.match(body, /if \(firstVersion && built\?\.review\?\.finalCapture\) \{\s*await steps\.once\('real_screens', async \(\) => \{\s*await firstVersionScreens\(\)\.keepRealScreens\(pool, runId, built\.review\.finalCapture\);/);
 });

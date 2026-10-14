@@ -26,6 +26,7 @@ const ids = {
   ws: require.resolve('../src/services/ws'),
   pool: require.resolve('../src/db/pool'),
   appHeal: require.resolve('../src/services/app-heal'),
+  platform: require.resolve('../src/workflow/platform.ts'),
 };
 
 // Mutable behavior knobs each test tweaks; the stubs close over `fx`.
@@ -44,6 +45,9 @@ function freshFixtures() {
     respawnCalls: [],
     respawnResult: 'respawned-id',
     deploying: false,
+    // The app-delivery machine's flag, and what was asked of it.
+    delivery: false,
+    requested: [],
     appDeleted: false,
     queries: [],
     poolRows: [],
@@ -103,7 +107,12 @@ stub(ids.respawn, {
   },
 });
 stub(ids.deployStatus, {
-  read: () => (fx.deploying ? { deploying: true } : null),
+  // A deploy in this process (the map), or one app delivery runs (the row).
+  read: (slug, row) => (fx.deploying || row?.deploy_state === 'deploying' ? { deploying: true } : null),
+});
+stub(ids.platform, {
+  deliveryEnabled: () => fx.delivery,
+  requestDeploy: async (appId, reason) => { fx.requested.push([appId, reason]); return 1; },
 });
 stub(ids.github, {
   isEnabled: () => fx.githubEnabled,
@@ -274,6 +283,25 @@ test('missing container rebuilds from repo and persists container_id + main_sha'
   assert.ok(update, 'expected an apps UPDATE');
   assert.equal(update.params[0], 'rebuilt-id');
   assert.equal(update.params[1], 'abc1234def');
+});
+
+test('with app delivery on, a rebuild is asked of it, and the cooldown stays until its outcome', async () => {
+  fx.delivery = true;
+  fx.containerStatus = 'not_found';
+  const r = await appHeal.checkAndHealOne(config, fakePool, app());
+  assert.equal(r.status, 'deploy_requested');
+  assert.deepEqual(fx.requested, [[1, 'heal']]);
+  assert.equal(fx.rebuildCalls.length, 0, 'no deploy of its own');
+  assert.ok(!fx.queries.some((q) => /UPDATE apps SET container_id/.test(q.sql)), 'the machine writes the result');
+  const again = await appHeal.checkAndHealOne(config, fakePool, app());
+  assert.equal(again.status, 'cooldown', 'a failed deploy is not asked for again every tick');
+});
+
+test('an app app delivery is deploying, in any process, is left alone', async () => {
+  fx.containerStatus = 'not_found';
+  const r = await appHeal.checkAndHealOne(config, fakePool, app({ deploy_state: 'deploying' }));
+  assert.equal(r.status, 'deploying');
+  assert.equal(fx.rebuildCalls.length + fx.startCalls.length, 0);
 });
 
 test('failed in-place start escalates to the rebuild path', async () => {

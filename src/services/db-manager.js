@@ -2245,13 +2245,34 @@ async function truncatePrivateTables(targetDb, execute = execInTarget) {
   // to ordinary tables (not views/indexes/sequences). We exclude
   // pg_catalog/information_schema defensively even though they
   // shouldn't have user comments.
+  //
+  // The same query also lists every foreign table among their inheritance
+  // descendants, as `FOREIGN <private table> <foreign table>` (no table
+  // name contains a space). TRUNCATE without ONLY reaches those children,
+  // and for postgres_fdw it sends TRUNCATE to the remote server, which in a
+  // copy is the same server the live app's definition names. Nor can their
+  // emptiness be shown from here: another user mapping, or a policy on the
+  // remote side, may see rows ours does not. So a private table with a
+  // foreign descendant refuses the copy before any TRUNCATE is sent.
   const discoverySql = `
-SELECT n.nspname || '.' || c.relname
-  FROM pg_class c
+WITH RECURSIVE private(name, rel) AS (
+  SELECT n.nspname || '.' || c.relname, c.oid
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+   WHERE obj_description(c.oid, 'pg_class') = 'staging:private'
+     AND c.relkind = 'r'
+     AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+), tree(name, rel) AS (
+  SELECT name, rel FROM private
+  UNION SELECT tree.name, i.inhrelid FROM pg_inherits i JOIN tree ON i.inhparent = tree.rel
+)
+SELECT name FROM private
+UNION ALL
+SELECT DISTINCT 'FOREIGN ' || tree.name || ' ' || n.nspname || '.' || c.relname
+  FROM tree
+  JOIN pg_class c ON c.oid = tree.rel
   JOIN pg_namespace n ON n.oid = c.relnamespace
- WHERE obj_description(c.oid, 'pg_class') = 'staging:private'
-   AND c.relkind = 'r'
-   AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+ WHERE c.relkind = 'f'
  ORDER BY 1`.trim();
 
   let stdout;
@@ -2268,10 +2289,27 @@ SELECT n.nspname || '.' || c.relname
     );
   }
 
-  const qualifiedNames = (stdout || '')
+  const lines = (stdout || '')
     .split('\n')
     .map((s) => s.trim())
     .filter(Boolean);
+  const foreign = lines.filter((line) => line.startsWith('FOREIGN '))
+    .map((line) => line.slice('FOREIGN '.length));
+  const qualifiedNames = lines.filter((line) => !line.startsWith('FOREIGN '));
+
+  const refuseForeign = (pairs) => {
+    log.error('db-manager', 'staging:private table with a foreign-table descendant; copy refused', {
+      targetDb, foreign: pairs,
+    });
+    const err = new Error(
+      `Refusing to empty the staging:private tables in ${targetDb}: ` +
+      pairs.map((pair) => pair.replace(' ', ' has the foreign-table descendant ')).join('; ') +
+      '. Its rows are on another server: they can neither be emptied from a copy safely nor shown to be empty.'
+    );
+    err.refusedForeign = true;
+    return err;
+  };
+  if (foreign.length > 0) throw refuseForeign(foreign);
 
   if (qualifiedNames.length === 0) {
     log.info('db-manager', 'No staging:private tables to truncate', { targetDb });
@@ -2282,12 +2320,12 @@ SELECT n.nspname || '.' || c.relname
     targetDb, count: qualifiedNames.length, tables: qualifiedNames,
   });
 
-  // Per-table failures are collected rather than short-circuiting so
-  // we don't leave half the private tables full because one failed.
-  // After the pass, if anything failed, throw — a partial truncate is
-  // still a leaky clone.
+  // Failures are collected rather than short-circuiting so we don't
+  // leave half the private tables full because one failed. After the
+  // pass, if anything failed, throw — a partial truncate is still a
+  // leaky clone.
   const failures = [];
-  const truncated = [];
+  const safe = [];
   for (const qualified of qualifiedNames) {
     if (!SAFE_QUALIFIED_IDENT.test(qualified)) {
       log.warn('db-manager', 'Refusing to TRUNCATE non-standard identifier', {
@@ -2296,14 +2334,161 @@ SELECT n.nspname || '.' || c.relname
       failures.push({ table: qualified, error: 'unsafe identifier' });
       continue;
     }
+    safe.push(qualified);
+  }
+
+  // All of them in ONE statement, so one round trip and one transaction.
+  // One statement per table (191 for the platform's own database) paid a
+  // network round trip per table — a psql process per table on the
+  // template build — and a WAL flush per table: a TRUNCATE drops relation
+  // files, and Postgres flushes WAL at the commit of any transaction that
+  // does, whatever synchronous_commit says. One statement also truncates
+  // each relation once, where the per-table form re-truncates whatever
+  // several tables' CASCADE reaches.
+  // Do NOT replace this with the per-table statements inside BEGIN/COMMIT:
+  // re-truncating a relation already truncated in the same transaction
+  // flushes WAL every time, which measured slower than autocommit.
+  //
+  // When the statement fails with an error from the server, it rolled back
+  // and every table is as it was; the fallback then runs one statement per
+  // table, in autocommit, to empty all that can be emptied and to name each
+  // table that cannot. A client-side timeout says nothing about the outcome:
+  // the statement may have committed or may still be running. On the one
+  // connection a clone uses, the runner then refuses every later statement,
+  // so the fallback and the check below fail and the pass throws (the
+  // caller may then try the direct copy). Through psql, the process is
+  // killed at its deadline but the server may still be working, and the
+  // fallback's statements can wait behind it.
+  //
+  // AFTER TRUNCATE triggers fire once the whole statement has emptied every
+  // table in it, so a trigger on one private table that writes into another
+  // would refill it after the fact. Hence the check: one query that names
+  // every private table still holding a row. Rows found after the single
+  // statement send the pass to the per-table form; rows found after that
+  // fail the pass, and the copy is not handed out.
+  //
+  // The check runs in two steps, so the usual case costs one query:
+  //   1. File sizes. For every private table and every inheritance child
+  //      (TRUNCATE without ONLY empties those too), a plain heap table whose
+  //      file is zero bytes long holds no row: TRUNCATE leaves a zero-length
+  //      file, and any row written afterwards takes a page. A size reads the
+  //      same for every role, so row-level security cannot hide anything
+  //      here. Every other relation is a suspect: a heap with pages, which
+  //      may hold only dead rows, and anything not a plain heap (another
+  //      access method, a partitioned table; a foreign table was refused
+  //      before any TRUNCATE), whose local file size says nothing about its
+  //      rows.
+  //   2. Only when there are suspects: their rows are read, in one DO block
+  //      with row_security off for that transaction. With it off, a read
+  //      that a policy would filter raises an error instead, so a refill
+  //      hidden by row-level security fails the check rather than passing
+  //      it, and so does a suspect that cannot be read (no privilege, a
+  //      relation gone). The block raises, naming the private
+  //      tables whose suspects hold rows; it returns nothing when none do.
+  // After the single statement, anything but proof of emptiness sends the
+  // pass table by table; after that pass, it fails the pass.
+  // Names in step 2 come from the catalog: they are validated like the
+  // others, double-quoted so they are read exactly, and a name that fails
+  // validation fails the pass.
+  const truncated = [];
+  const perTable = async () => {
+    truncated.length = 0;
+    for (const qualified of safe) {
+      try {
+        await execute(targetDb, `TRUNCATE ${qualified} RESTART IDENTITY CASCADE`);
+        truncated.push(qualified);
+      } catch (err) {
+        log.error('db-manager', 'TRUNCATE failed', {
+          targetDb, table: qualified, err: err.message,
+        });
+        failures.push({ table: qualified, error: err.message });
+      }
+    }
+  };
+  // Names were validated above, so they can be spliced as text too.
+  const sizeSql = 'WITH RECURSIVE targets(name, rel) AS (VALUES '
+    + safe.map((t) => `('${t}', '${t}'::regclass)`).join(', ')
+    + '), tree(name, rel) AS (SELECT name, rel FROM targets'
+    + ' UNION SELECT tree.name, i.inhrelid::regclass FROM pg_inherits i JOIN tree ON i.inhparent = tree.rel)'
+    + " SELECT DISTINCT tree.name, n.nspname || '.' || c.relname, c.relkind FROM tree"
+    + ' JOIN pg_class c ON c.oid = tree.rel JOIN pg_namespace n ON n.oid = c.relnamespace'
+    + ' LEFT JOIN pg_am am ON am.oid = c.relam'
+    + " WHERE c.relkind <> 'r' OR am.amname IS DISTINCT FROM 'heap'"
+    + ' OR pg_relation_size(tree.rel) IS DISTINCT FROM 0 ORDER BY 1, 2';
+  const quoted = (qualified) => qualified.split('.').map((part) => `"${part}"`).join('.');
+  const stillHoldingRows = async () => {
+    const unconfirmed = (err) => new Error(
+      `Could not confirm the staging:private tables in ${targetDb} are empty: ${err.message}`);
+    let out;
     try {
-      await execute(targetDb, `TRUNCATE ${qualified} RESTART IDENTITY CASCADE`);
-      truncated.push(qualified);
+      out = await execute(targetDb, sizeSql, { tuplesOnly: true });
+    } catch (err) { throw unconfirmed(err); }
+    const suspects = [];
+    for (const line of String(out || '').split('\n').map((l) => l.trim()).filter(Boolean)) {
+      const fields = line.split('|');
+      const [name, rel, relkind] = fields;
+      if (fields.length !== 3 || !safe.includes(name) || !SAFE_QUALIFIED_IDENT.test(rel) || !/^[a-z]$/.test(relkind)) {
+        throw unconfirmed(new Error(`a relation under a staging:private table cannot be checked: ${JSON.stringify(line)}`));
+      }
+      suspects.push({ name, rel, relkind });
+    }
+    // A foreign child that appeared after discovery (a TRUNCATE trigger can
+    // create one): refused like one found by discovery, and never handed to
+    // the per-table pass, whose TRUNCATE would reach the remote table.
+    const foreignNow = suspects.filter((x) => x.relkind === 'f');
+    if (foreignNow.length > 0) throw refuseForeign(foreignNow.map(({ name, rel }) => `${name} ${rel}`));
+    if (suspects.length === 0) return [];
+    // The marker is assembled by format(), so the statement's own text, which
+    // a psql failure echoes, never contains it.
+    const readSql = 'DO $staging_check$ DECLARE found text[] := \'{}\'; BEGIN SET LOCAL row_security = off; '
+      + suspects.map(({ name, rel }) => `IF EXISTS (SELECT 1 FROM ONLY ${quoted(rel)}) AND NOT '${name}' = ANY (found) THEN found := found || '${name}'::text; END IF; `).join('')
+      + "IF cardinality(found) > 0 THEN RAISE EXCEPTION '%', format('staging:private %s: %s;', 'rows remain in', array_to_string(found, ', ')); END IF; END $staging_check$";
+    try {
+      await execute(targetDb, readSql);
+      return [];
     } catch (err) {
-      log.error('db-manager', 'TRUNCATE failed', {
-        targetDb, table: qualified, err: err.message,
+      const m = /staging:private rows remain in: ([a-z0-9_., ]+);/i.exec(String(err.message || ''));
+      const names = m ? m[1].split(', ').filter((n) => safe.includes(n)) : [];
+      if (names.length === 0) throw unconfirmed(err);
+      return names;
+    }
+  };
+  if (safe.length > 0) {
+    let batched = false;
+    try {
+      await execute(targetDb, `TRUNCATE ${safe.join(', ')} RESTART IDENTITY CASCADE`);
+      batched = true;
+    } catch (batchErr) {
+      log.warn('db-manager', 'One-statement TRUNCATE failed; truncating table by table', {
+        targetDb, count: safe.length, err: batchErr.message,
       });
-      failures.push({ table: qualified, error: err.message });
+    }
+    let refilled = [];
+    if (batched) {
+      // Anything short of proof that every table is empty, an unreadable
+      // suspect included, sends the pass table by table, as before this
+      // check existed; after that pass the check has the last word.
+      try {
+        refilled = await stillHoldingRows();
+      } catch (err) {
+        if (err.refusedForeign) throw err;
+        refilled = [`(${err.message})`];
+      }
+      if (refilled.length === 0) truncated.push(...safe);
+      else {
+        log.warn('db-manager', 'Rows came back after the one-statement TRUNCATE, or could not be ruled out; truncating table by table', {
+          targetDb, tables: refilled,
+        });
+      }
+    }
+    if (!batched || refilled.length > 0) {
+      const failedBefore = failures.length;
+      await perTable();
+      if (failures.length === failedBefore) {
+        for (const table of await stillHoldingRows()) {
+          failures.push({ table, error: 'still holds rows after TRUNCATE' });
+        }
+      }
     }
   }
 
@@ -2323,13 +2508,17 @@ async function scrubPrivateColumns(targetDb, execute = execInTarget) {
   // obj_description. attnum > 0 filters out system columns; attisdropped
   // skips logically-removed columns that pg keeps as zombies. The
   // information_schema.columns join adds character_maximum_length so we
-  // can size the per-row placeholder to fit (e.g. VARCHAR(64)). Output is
-  // pipe-separated quadruples: <schema.table>|<column>|<not_null t/f>|<max_length or empty>.
+  // can size the per-row placeholder to fit (e.g. VARCHAR(64)).
+  // row_security_active says whether row-level security applies to this
+  // session's role on the table: then an UPDATE, and any check after it,
+  // would see only the rows a policy lets through. Output is pipe-separated:
+  // <schema.table>|<column>|<not_null t/f>|<max_length or empty>|<rls t/f>.
   const discoverySql = `
 SELECT n.nspname || '.' || c.relname,
        a.attname,
        a.attnotnull,
-       COALESCE(ic.character_maximum_length::text, '')
+       COALESCE(ic.character_maximum_length::text, ''),
+       row_security_active(c.oid)
   FROM pg_attribute a
   JOIN pg_class    c ON c.oid = a.attrelid
   JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -2361,13 +2550,13 @@ SELECT n.nspname || '.' || c.relname,
     .map((s) => s.trim())
     .filter(Boolean)
     .map((line) => {
-      // psql -At with the default field separator '|'. Four fields;
-      // the third is exactly 't' or 'f' from a bool column, the fourth
-      // is a character_maximum_length integer or '' when unbounded
+      // psql -At with the default field separator '|'. Five fields;
+      // the third and fifth are exactly 't' or 'f' from a bool column, the
+      // fourth is a character_maximum_length integer or '' when unbounded
       // (e.g. TEXT).
-      const [qualified, column, notNullRaw, maxLengthRaw] = line.split('|');
+      const [qualified, column, notNullRaw, maxLengthRaw, rlsRaw] = line.split('|');
       const maxLength = maxLengthRaw ? Number(maxLengthRaw) : null;
-      return { qualified, column, notNull: notNullRaw === 't', maxLength };
+      return { qualified, column, notNull: notNullRaw === 't', maxLength, rlsRaw };
     });
 
   if (targets.length === 0) {
@@ -2381,71 +2570,134 @@ SELECT n.nspname || '.' || c.relname,
     columns: targets.map((t) => `${t.qualified}.${t.column}`),
   });
 
+  // Every column is checked first; a column that fails a check is never put
+  // into SQL, and it still fails the pass after the others are scrubbed.
   const failures = [];
-  const scrubbed = [];
-  for (const { qualified, column, notNull, maxLength } of targets) {
+  const columns = [];
+  for (const { qualified, column, notNull, maxLength, rlsRaw } of targets) {
+    const target = `${qualified}.${column}`;
     if (!SAFE_QUALIFIED_IDENT.test(qualified) || !SAFE_IDENT.test(column)) {
       log.warn('db-manager', 'Refusing to UPDATE non-standard identifier', {
         targetDb, qualified, column,
       });
-      failures.push({ target: `${qualified}.${column}`, error: 'unsafe identifier' });
+      failures.push({ target, error: 'unsafe identifier' });
       continue;
     }
-    let value;
+    if (rlsRaw !== 'f') {
+      // Row-level security would hide rows from the UPDATE and from every
+      // check after it, so the column cannot be shown to be scrubbed. Fail
+      // closed (an unreadable flag too) and leave the column out of SQL.
+      log.error('db-manager', 'staging:private column is behind row-level security', {
+        targetDb, qualified, column, rls: rlsRaw,
+      });
+      failures.push({
+        target,
+        error: rlsRaw === 't'
+          ? 'row-level security applies to this role, so rows could be hidden from the scrub'
+          : `unreadable row-level security flag ${JSON.stringify(rlsRaw)}`,
+      });
+      continue;
+    }
     if (!notNull) {
-      value = 'NULL';
-    } else if (maxLength != null && (!Number.isInteger(maxLength) || maxLength < 1)) {
+      columns.push({ qualified, column, target, placeholder: null });
+      continue;
+    }
+    if (maxLength != null && (!Number.isInteger(maxLength) || maxLength < 1)) {
       // Unexpected metadata shape — fail closed rather than guess at a
       // placeholder that might not fit the column.
       log.error('db-manager', 'staging:private column has unusable max length', {
         targetDb, qualified, column, maxLength,
       });
-      failures.push({ target: `${qualified}.${column}`, error: `unusable max length ${maxLength}` });
+      failures.push({ target, error: `unusable max length ${maxLength}` });
       continue;
-    } else {
-      // A template is scrubbed when built and again on each clone. Its
-      // existing placeholders contain the rows' OLD ctids; a later UPDATE
-      // can assign one of those values to a different row and hit a UNIQUE
-      // constraint. Give every scrub a fresh namespace, check that it is
-      // absent from the source column, and append the row's current ctid.
-      // Do not truncate the ctid: that would make multiple rows equal.
-      const compact = maxLength != null
-        && maxLength < STAGING_REDACTED_SENTINEL.length + 16 + 1 + MAX_CTID_TEXT_LENGTH;
-      const marker = compact ? '~' : STAGING_REDACTED_SENTINEL;
-      const nonceBytes = compact ? 4 : 8;
-      if (maxLength != null && maxLength < marker.length + nonceBytes * 2 + 1 + MAX_CTID_TEXT_LENGTH) {
-        failures.push({ target: `${qualified}.${column}`, error: `max length ${maxLength} cannot hold unique redaction values` });
-        continue;
-      }
-      let prefix = null;
-      try {
-        for (let attempt = 0; attempt < 5; attempt += 1) {
-          const candidate = `${marker}${crypto.randomBytes(nonceBytes).toString('hex')}:`;
-          const occupied = await execute(targetDb,
-            `SELECT EXISTS (SELECT 1 FROM ${qualified} WHERE left(${column}::text, ${candidate.length}) = '${candidate}')`,
-            { tuplesOnly: true });
-          if (String(occupied).trim() !== 'f') continue;
-          prefix = candidate;
-          break;
-        }
-      } catch (err) {
-        failures.push({ target: `${qualified}.${column}`, error: err.message });
-        continue;
-      }
-      if (!prefix) {
-        failures.push({ target: `${qualified}.${column}`, error: 'could not reserve a unique redaction namespace' });
-        continue;
-      }
-      value = `'${prefix}' || ctid::text`;
     }
-    try {
-      await execute(targetDb, `UPDATE ${qualified} SET ${column} = ${value}`);
-      scrubbed.push(`${qualified}.${column}`);
-    } catch (err) {
-      log.error('db-manager', 'staging:private column UPDATE failed', {
-        targetDb, qualified, column, err: err.message,
+    // A template is scrubbed when built and again on each clone. Its
+    // existing placeholders contain the rows' OLD ctids; a later UPDATE
+    // can assign one of those values to a different row and hit a UNIQUE
+    // constraint. Give every scrub a fresh namespace, check that it is
+    // absent from the source column, and append the row's current ctid.
+    // Do not truncate the ctid: that would make multiple rows equal.
+    const compact = maxLength != null
+      && maxLength < STAGING_REDACTED_SENTINEL.length + 16 + 1 + MAX_CTID_TEXT_LENGTH;
+    const marker = compact ? '~' : STAGING_REDACTED_SENTINEL;
+    const nonceBytes = compact ? 4 : 8;
+    if (maxLength != null && maxLength < marker.length + nonceBytes * 2 + 1 + MAX_CTID_TEXT_LENGTH) {
+      failures.push({ target, error: `max length ${maxLength} cannot hold unique redaction values` });
+      continue;
+    }
+    columns.push({ qualified, column, target, placeholder: { marker, nonceBytes } });
+  }
+
+  let scrubbed = [];
+  if (columns.length > 0) {
+    // All of them in ONE statement first: one round trip instead of one or
+    // two per column. Through psql (template build, direct copy) that is
+    // one process instead of one per statement.
+    const oneStatement = scrubInOneStatementSql(columns.map((c) => ({
+      ...c, prefix: c.placeholder ? newRedactionPrefix(c.placeholder) : null,
+    })));
+    let batchError = null;
+    let tooLong = false;
+    if (Buffer.byteLength(oneStatement) > MAX_SCRUB_STATEMENT_BYTES) {
+      // Hundreds of columns: psql takes the statement as one argument, which
+      // Linux caps at 128 KiB, so it is never sent; column by column instead.
+      tooLong = true;
+      log.warn('db-manager', 'Too many staging:private columns for one statement; scrubbing column by column', {
+        targetDb, count: columns.length, bytes: Buffer.byteLength(oneStatement),
       });
-      failures.push({ target: `${qualified}.${column}`, error: err.message });
+    } else {
+      try {
+        await execute(targetDb, oneStatement);
+        scrubbed = columns.map((c) => c.target);
+      } catch (err) {
+        batchError = err;
+      }
+    }
+    if (batchError && !databaseAnsweredWithError(batchError)) {
+      // No answer, a lost connection, or psql stopped at its deadline: the
+      // statement may have committed, failed or still be running. Nothing
+      // more is sent, because the column-by-column pass could wait behind it
+      // or, on the clone's single connection, is refused anyway. The copy is
+      // not handed out.
+      log.error('db-manager', 'One-statement column scrub got no answer from the database', {
+        targetDb, count: columns.length, err: briefError(batchError),
+      });
+      throw new Error(
+        `Failed to scrub staging:private columns in ${targetDb}: no answer to the one-statement scrub of ` +
+        `${columns.length} column(s), so whether it changed anything is unknown; ` +
+        `the column-by-column pass was not tried: ${briefError(batchError)}`
+      );
+    }
+    if (batchError || tooLong) {
+      // The database refused the statement, so it rolled back and changed
+      // nothing (or it was never sent). Today's column-by-column pass then
+      // scrubs every column it can and names each one it cannot; a check
+      // afterwards names any column a trigger or rule left unscrubbed. Each
+      // statement commits on its own, so deferred triggers have run by then.
+      if (batchError) {
+        log.warn('db-manager', 'One-statement column scrub failed; scrubbing column by column', {
+          targetDb, count: columns.length, err: briefError(batchError),
+        });
+      }
+      const byColumn = await scrubColumnByColumn(targetDb, columns, execute);
+      failures.push(...byColumn.failures);
+      scrubbed = byColumn.scrubbed;
+      if (byColumn.failures.length === 0) {
+        const done = columns.filter((c) => scrubbed.includes(c.target))
+          .map((c) => ({ ...c, prefix: byColumn.prefixes.get(c.target) || null }));
+        try {
+          for (const { target, rowSecurity } of await columnsNotScrubbed(targetDb, done, execute)) {
+            failures.push({
+              target,
+              error: rowSecurity
+                ? 'row-level security applies to this role now, so rows could have been hidden from the scrub'
+                : 'still holds a value after its UPDATE',
+            });
+          }
+        } catch (err) {
+          failures.push({ target: 'the check after the column-by-column pass', error: err.message });
+        }
+      }
     }
   }
 
@@ -2457,6 +2709,178 @@ SELECT n.nspname || '.' || c.relname,
   }
 
   return { scrubbed };
+}
+
+// A fresh placeholder namespace: the marker, a random nonce, and ':'. The
+// row's ctid follows it, so every value in one scrub is distinct, and the
+// namespace is checked to be absent from the column before it is used.
+function newRedactionPrefix({ marker, nonceBytes }) {
+  return `${marker}${crypto.randomBytes(nonceBytes).toString('hex')}:`;
+}
+
+// What a column holds once scrubbed: NULL, or its placeholder namespace.
+// Names were validated and prefixes are [~_a-z0-9:], so both splice as text.
+// IS DISTINCT FROM NULL, not IS NOT NULL: for a composite value IS NOT NULL
+// asks whether every field is non-null, so ROW('secret', NULL) would pass.
+function unscrubbedRowSql({ column, prefix }) {
+  return prefix
+    ? `left(${column}::text, ${prefix.length}) IS DISTINCT FROM '${prefix}'`
+    : `${column} IS DISTINCT FROM NULL`;
+}
+
+// Above this the one statement is not sent, and the check after the
+// column-by-column pass is split into queries below it: psql receives a
+// statement as one command-line argument, and Linux refuses an argument over
+// 128 KiB (spawn E2BIG) before the database sees anything. About 400
+// columns fit.
+const MAX_SCRUB_STATEMENT_BYTES = 96 * 1024;
+
+// The whole column pass as one statement. A DO block runs as one statement,
+// so it commits or rolls back as a whole, and an error inside it reaches the
+// caller as the database's error. In order:
+//   1. each NOT NULL column's new namespace must be absent from the column;
+//   2. one UPDATE per table, setting all of that table's private columns;
+//   3. each column must now hold only NULL or its namespace.
+// Step 3 is there because one UPDATE per table is not the same as one per
+// column: a BEFORE UPDATE trigger or a rule sees every column change at once,
+// and could, for instance, copy an old private value into another private
+// column that a later per-column UPDATE would have cleared. Any of the three
+// raises, the block rolls back, and the caller scrubs column by column.
+// Two settings make step 3 see what will be committed:
+//   - SET CONSTRAINTS ALL IMMEDIATE: a DEFERRABLE INITIALLY DEFERRED
+//     constraint trigger would otherwise fire at commit, after step 3, and
+//     could write a private value back. Set first, so such triggers run at
+//     the end of each UPDATE, and again before step 3 in case one of them
+//     deferred anything again.
+//   - SET LOCAL row_security = off: a query that row-level security would
+//     filter raises instead of silently skipping rows. Discovery already
+//     refuses tables where it applies; this keeps the block fail-closed too.
+function scrubInOneStatementSql(columns) {
+  const reserve = columns.filter((c) => c.prefix).map((c) =>
+    `  IF EXISTS (SELECT 1 FROM ${c.qualified} WHERE left(${c.column}::text, ${c.prefix.length}) = '${c.prefix}') THEN\n` +
+    `    RAISE EXCEPTION 'staging:private scrub: placeholder namespace is taken in %', '${c.target}';\n` +
+    '  END IF;');
+  const tables = new Map();
+  for (const c of columns) {
+    if (!tables.has(c.qualified)) tables.set(c.qualified, []);
+    tables.get(c.qualified).push(`${c.column} = ${c.prefix ? `'${c.prefix}' || ctid::text` : 'NULL'}`);
+  }
+  const updates = [...tables].map(([qualified, sets]) => `  UPDATE ${qualified} SET ${sets.join(', ')};`);
+  const verify = columns.map((c) =>
+    `  IF EXISTS (SELECT 1 FROM ${c.qualified} WHERE ${unscrubbedRowSql(c)}) THEN\n` +
+    `    RAISE EXCEPTION 'staging:private scrub: % still holds a value after its UPDATE', '${c.target}';\n` +
+    '  END IF;');
+  return ['DO $staging_scrub$', 'BEGIN',
+    '  SET LOCAL row_security = off;', '  SET CONSTRAINTS ALL IMMEDIATE;',
+    ...reserve, ...updates,
+    '  SET CONSTRAINTS ALL IMMEDIATE;',
+    ...verify, 'END', '$staging_scrub$'].join('\n');
+}
+
+// The one statement is long (a few kB for the platform's own database), and
+// psql's failure repeats it in full. Log and report what the database said
+// (psql's stderr), or the start of the message.
+function briefError(err) {
+  const said = err && typeof err.stderr === 'string' ? err.stderr.trim() : '';
+  return (said || String(err && err.message || err)).slice(0, 500);
+}
+
+// True only when the database answered the statement with an ERROR: it ran,
+// failed and rolled back, so running the column-by-column pass next is safe.
+// node-postgres carries the server's severity and SQLSTATE; psql exits with
+// status 1 and prints the server's ERROR. A FATAL (the session ended), a
+// client-side timeout, a lost connection, psql stopped at its deadline or
+// exiting 2: none of those says what happened to the statement.
+function databaseAnsweredWithError(err) {
+  if (!err || typeof err !== 'object') return false;
+  if (typeof err.severity === 'string') {
+    return err.severity === 'ERROR' && /^[0-9A-Z]{5}$/.test(String(err.code || ''));
+  }
+  const stderr = typeof err.stderr === 'string' ? err.stderr : '';
+  return err.code === 1 && err.killed !== true && !err.signal && /(^|\n)ERROR: {2}/.test(stderr);
+}
+
+// Today's pass, one column at a time: reserve a namespace for a NOT NULL
+// column (one probe, up to five), then UPDATE it. Used only when the
+// one-statement scrub was refused by the database; it names each column it
+// cannot scrub and goes on with the others.
+async function scrubColumnByColumn(targetDb, columns, execute) {
+  const failures = [];
+  const scrubbed = [];
+  const prefixes = new Map();
+  for (const { qualified, column, target, placeholder } of columns) {
+    let value = 'NULL';
+    if (placeholder) {
+      let prefix = null;
+      try {
+        for (let attempt = 0; attempt < 5; attempt += 1) {
+          const candidate = newRedactionPrefix(placeholder);
+          const occupied = await execute(targetDb,
+            `SELECT EXISTS (SELECT 1 FROM ${qualified} WHERE left(${column}::text, ${candidate.length}) = '${candidate}')`,
+            { tuplesOnly: true });
+          if (String(occupied).trim() !== 'f') continue;
+          prefix = candidate;
+          break;
+        }
+      } catch (err) {
+        failures.push({ target, error: err.message });
+        continue;
+      }
+      if (!prefix) {
+        failures.push({ target, error: 'could not reserve a unique redaction namespace' });
+        continue;
+      }
+      prefixes.set(target, prefix);
+      value = `'${prefix}' || ctid::text`;
+    }
+    try {
+      await execute(targetDb, `UPDATE ${qualified} SET ${column} = ${value}`);
+      scrubbed.push(target);
+    } catch (err) {
+      log.error('db-manager', 'staging:private column UPDATE failed', {
+        targetDb, qualified, column, err: err.message,
+      });
+      failures.push({ target, error: err.message });
+    }
+  }
+  return { failures, scrubbed, prefixes };
+}
+
+// One query naming every column that still holds something other than NULL
+// or its placeholder namespace (step 3 of the one-statement scrub, for the
+// column-by-column pass). It also names any column whose table row-level
+// security now applies to: discovery's flag is from before the pass, and a
+// trigger fired by one of its UPDATEs can turn row-level security on, after
+// which this role's UPDATEs and this very check see only some rows. The
+// flag is read in the same query, so it is current when the pass ends. If the query itself fails, the caller counts that
+// as a failure: nothing is confirmed.
+async function columnsNotScrubbed(targetDb, columns, execute) {
+  // As few queries as fit under MAX_SCRUB_STATEMENT_BYTES (one for any
+  // ordinary schema).
+  const queries = [];
+  let parts = [];
+  let bytes = 0;
+  for (const c of columns) {
+    const rls = `row_security_active('${c.qualified}'::regclass)`;
+    const part = `SELECT '${c.target}', ${rls} WHERE ${rls} OR EXISTS (SELECT 1 FROM ${c.qualified} WHERE ${unscrubbedRowSql(c)})`;
+    if (parts.length > 0 && bytes + part.length + 11 > MAX_SCRUB_STATEMENT_BYTES) {
+      queries.push(parts.join(' UNION ALL '));
+      parts = [];
+      bytes = 0;
+    }
+    parts.push(part);
+    bytes += part.length + 11;
+  }
+  if (parts.length > 0) queries.push(parts.join(' UNION ALL '));
+  const found = [];
+  for (const sql of queries) {
+    const out = await execute(targetDb, sql, { tuplesOnly: true });
+    for (const line of String(out || '').split('\n').map((s) => s.trim()).filter(Boolean)) {
+      const [target, rowSecurity] = line.split('|');
+      found.push({ target, rowSecurity: rowSecurity === 't' });
+    }
+  }
+  return found;
 }
 
 // ─── Per-app database storage cap (#2253) ───────────────────────────────

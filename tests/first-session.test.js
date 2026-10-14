@@ -64,20 +64,21 @@ test('starting a community and joining one share their cards, word for word, the
   assert.deepEqual(maker[6], invited[5]);
   // The same hub, the maker's asking them to open their app.
   for (const f of ['screen', 'target', 'alongside', 'endsAbove', 'title', 'place']) assert.deepEqual(maker[7][f], invited[6][f], f);
-  // Never "group" for the people of a community, on any card of any tour.
-  // Suggest an improvement's card (#4225, merged on main) still says "brings
-  // it to the group": its words are not part of this check until they change.
+  // Never "group" for the people of a community, on any card of any tour,
+  // Suggest an improvement's included since run six shortened it.
   const { lookAroundSteps } = loadTsx(`${DIR}/tour-steps.ts`);
-  const all = JSON.stringify([...invitedSteps(project), ...makerSteps(project), ...makerSteps({ ...project, conversationId: null }), ...lookAroundSteps()]).replaceAll(JSON.stringify(SUGGEST_TEXT).slice(1, -1), '');
+  assert.equal(SUGGEST_TEXT, 'Homeroom bot starts building it for you.');
+  const all = JSON.stringify([...invitedSteps(project), ...makerSteps(project), ...makerSteps({ ...project, conversationId: null }), ...lookAroundSteps()]);
   assert.doesNotMatch(all, /\bgroup\b/i);
   assert.doesNotMatch(all, /!|\u2014/, 'no exclamation marks, no em dashes');
 });
 
 // #4225: both paths show where Suggest an improvement lives, inside the app,
-// and say honestly what happens to one: not a feedback box, the bot starts on
-// it or brings it to the group. #4390: the app is shown first, then the
-// reader taps the Homeroom mark and the real menu opens, its Suggest button
-// pointed at but not pressed (Next, so no suggestion starts), and ✕ last.
+// and say what happens to one (run six, 14 Oct 2026: in one short sentence,
+// "Homeroom bot starts building it for you."). #4390: the app is shown first,
+// then the reader taps the Homeroom mark and the real menu opens, its Suggest
+// button pointed at but not pressed (Next, so no suggestion starts), and ✕
+// last.
 test('the invited and maker tours open the Homeroom menu for Suggest an improvement, after the app and before ✕', () => {
   const { invitedSteps, makerSteps, MENU_TEXT: MENU_ID, SUGGEST_TEXT: SUGGEST_ID, APP_MENU } = loadTsx(`${DIR}/tour-steps.ts`);
   const [MENU_TEXT, SUGGEST_TEXT] = [message(MENU_ID), message(SUGGEST_ID)];
@@ -91,7 +92,9 @@ test('the invited and maker tours open the Homeroom menu for Suggest an improvem
     assert.equal(at, 2, 'on the app screen, after the card that shows it');
     assert.equal(steps[at - 1].target, '#app-view');
     assert.deepEqual(steps[at], { screen: 'app', target: '#platform-mark-btn', title: 'Suggest an improvement', text: MENU_TEXT, tap: 'Tap the menu' });
-    assert.deepEqual(steps[at + 1], { screen: 'app', target: '#improve-row-feedback', inMenu: true, ringed: true, title: 'Suggest an improvement', text: SUGGEST_TEXT });
+    // Run six: its card stands clear of the whole menu (place: { clear }),
+    // never over the sheet's top (tests/first-session-card-placement.test.js).
+    assert.deepEqual(steps[at + 1], { screen: 'app', target: '#improve-row-feedback', inMenu: true, ringed: true, place: { clear: APP_MENU }, title: 'Suggest an improvement', text: SUGGEST_TEXT });
     assert.deepEqual(steps[at + 2], { screen: 'app', target: '#back-btn', title: '✕ takes you back to Home', text: 'Open X again from Home any time.', tap: 'Tap ✕' });
     assert.equal(steps.filter((s) => s.inMenu).length, 1, 'only the Suggest button\'s step is in the menu');
   }
@@ -110,8 +113,9 @@ test('the invited and maker tours open the Homeroom menu for Suggest an improvem
   const ctx = read('frontend/src/features/app-context/index.tsx');
   assert.match(ctx, /const FIRST_SESSION_TOUR = '\[data-first-session-tour\]';/);
   assert.match(ctx, /tour\?\.contains\(t\) \|\| firstSession\?\.contains\(t\)\)\) return;/);
-  assert.match(SUGGEST_TEXT, /doesn't vanish into a feedback box/);
-  assert.match(SUGGEST_TEXT, /Homeroom bot starts building it for you, or brings it to the group, and you can follow along\./);
+  // Run six (14 Oct 2026): one short sentence, the title above it unchanged.
+  assert.equal(SUGGEST_TEXT, 'Homeroom bot starts building it for you.');
+  assert.equal(message('onboarding:firstSession.tour.suggest.title'), 'Suggest an improvement');
   assert.doesNotMatch(SUGGEST_TEXT, /—/);
 });
 

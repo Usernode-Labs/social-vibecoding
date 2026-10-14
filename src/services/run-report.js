@@ -6,7 +6,8 @@
 // is analysed from what the platform wrote down along the way:
 //
 //   app            the app and its first-version row (the plan written at
-//                  Make it, its status and timing, the answers its maker chose)
+//                  Make it, its status and timing, the answers its maker
+//                  chose, and the early first look drawn from that plan)
 //   runs           the bot's runs on it (verdict, times, sessions, build,
 //                  costs, spec sizes, review rounds and why the review stopped)
 //   reviewRounds   each review round's verdict and issues
@@ -172,6 +173,18 @@ function firstVersionOut(row) {
     answers: Array.isArray(row.answers)
       ? row.answers.slice(0, LIMITS.answers).map((a) => (a == null ? null : clip(a, TEXT.answer)))
       : null,
+    // Newcomer run six: the early first look (first-version-early-look.js),
+    // drawn from the plan at Make it: how far it got, seconds from Make it to
+    // its drawing and to its picture, and its size. Never the screen itself.
+    earlyLook: row.early_look_status ? {
+      status: code(row.early_look_status),
+      model: code(row.early_look_model, MODEL_RE),
+      error: clip(row.early_look_error, TEXT.error),
+      drawnSecs: num(row.look_drawn_secs),
+      savedSecs: num(row.look_saved_secs),
+      screenChars: num(row.early_look_chars),
+      bytes: num(row.early_look_bytes),
+    } : null,
   };
 }
 
@@ -497,10 +510,15 @@ const APP_SQL = `
          fv.early_plan_error, fv.early_plan_reply,
          CASE WHEN jsonb_typeof(fv.early_plan->'questions') = 'array'
               THEN jsonb_array_length(fv.early_plan->'questions') ELSE 0 END AS plan_questions,
-         fv.answered_at, fv.answers
+         fv.answered_at, fv.answers,
+         el.status AS early_look_status, el.model AS early_look_model, el.error AS early_look_error,
+         ROUND(EXTRACT(EPOCH FROM el.drawn_at - fv.created_at)::numeric, 1) AS look_drawn_secs,
+         ROUND(EXTRACT(EPOCH FROM el.saved_at - fv.created_at)::numeric, 1) AS look_saved_secs,
+         length(el.screen) AS early_look_chars, el.bytes AS early_look_bytes
     FROM apps a
     LEFT JOIN users u ON u.id = a.created_by
     LEFT JOIN homeroom_bot_first_versions fv ON fv.app_id = a.id
+    LEFT JOIN first_version_early_looks el ON el.app_id = a.id
    WHERE a.id = COALESCE($1::int, (SELECT x.id FROM apps x WHERE x.slug = $2::text))`;
 
 // Lengths only of the spec; of the review, its rounds and a few numbers,

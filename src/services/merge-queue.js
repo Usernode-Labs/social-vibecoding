@@ -77,6 +77,8 @@ const { runSyncMain } = require('./sync-main');
 const { currentVotePredicateSql, countedVotePredicateSql, reviewedHeadSql, sameSha } = require('./pr-vote-revision');
 const { firstVersionSql } = require('./first-version-rule');
 const { getPool } = require('../db/pool');
+const lifecycle = require('./lifecycle');
+const inflightWork = require('./inflight-work');
 
 // App-level single-flight. Every trigger — a vote crossing threshold, a
 // post-merge cascade, the drift poller, the eligible-merge sweep — funnels
@@ -94,6 +96,12 @@ function isIntegrating(appId) {
  * Ask the app's queue to make progress. Safe to call from anywhere, as often
  * as you like: a call while a pass is running flags a re-kick rather than
  * starting a second one, and the re-kick runs a fresh pass once this one ends.
+ *
+ * Each pass is held in services/inflight-work.js, so a shutdown's drain lets
+ * a merge under way finish instead of exiting from under it, whichever
+ * trigger started it (most answer their request first and never await it).
+ * A re-kick is dropped once shutdown has begun: the next leader's boot
+ * reconcile (reconcileEligibleMerges) drains every app with open proposals.
  */
 function enqueue(config, appId, options = {}) {
   if (appId == null) return Promise.resolve();
@@ -105,14 +113,14 @@ function enqueue(config, appId, options = {}) {
     .catch((err) => log.error('merge-queue', 'queue pass threw', { appId, err: err.message }))
     .finally(() => {
       _running.delete(appId);
-      if (_rekick.delete(appId)) {
+      if (_rekick.delete(appId) && !lifecycle.isShuttingDown()) {
         enqueue(config, appId).catch((err) => log.error('merge-queue', 're-kick failed', {
           appId, err: err.message,
         }));
       }
     });
   _running.set(appId, run);
-  return run;
+  return inflightWork.track('merge-queue', run);
 }
 
 // ── The line ─────────────────────────────────────────────────────────────

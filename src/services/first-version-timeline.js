@@ -20,7 +20,10 @@
 //   spec_started      the spec turn is dispatched: the screens are drawn
 //   first_look_saved  its first look was drawn and kept
 //                     (first-version-screens.js). { from: 'saved_screen' |
-//                     'spec' }
+//                     'spec' }; or its EARLY first look, drawn from the plan
+//                     at Make it before there is a run
+//                     (first-version-early-look.js). { from: 'early',
+//                     drawMs: the drawing, ms: drawing and picture }
 //   build_started     the build turn is dispatched
 //   build_done        the build turn (and any nudge) pushed. { partial }
 //   review_round      a review round began (homeroom-bot-live.js
@@ -33,7 +36,7 @@
 //                     { late: answered on a later look, not at the merge }
 //
 // Every row also carries { runId, issueNumber } (no runId for a plan written
-// at Make it), the first version's maker as user_id and its project as
+// at Make it or an early first look), the first version's maker as user_id and its project as
 // app_id, and, where there is one, the build's session as session_id.
 //
 // Only a first version's: the insert reads the run's first-version row, so a
@@ -51,7 +54,7 @@ const STAGES = Object.freeze([
 ]);
 
 // The build's step boundaries (homeroom-bot-live.js buildAndPropose's
-// `onStep`, homeroom-bot-checkpoint.js STEPS) that are stages.
+// `onStep`) that are stages.
 const STAGE_OF_STEP = Object.freeze({
   spec_turn: 'spec_started',
   build_turn: 'build_started',

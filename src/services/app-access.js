@@ -89,6 +89,9 @@ const NON_SECRET_APP_COLUMNS = [
   // The community the app belongs to (services/communities.js). An id, and
   // the community's members are the app's own collaborators and joiners.
   'community_id',
+  // A production deploy app delivery is running (src/workflow/app-delivery/):
+  // the version pill's "deploying".
+  'deploy_state', 'deploy_started_at', 'deploy_from_sha',
 ];
 
 // `NON_SECRET_APP_COLUMNS` rendered as a bare comma-joined column list

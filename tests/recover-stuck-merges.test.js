@@ -297,3 +297,104 @@ test('the timer revisits an old attempt once an hour, a recent one or a merging 
   await withStubs(pool, github, () => recoverStuckMerges({}, { now }));
   assert.deepEqual(lookedUp.sort(), [51, 52, 53], 'the boot scan looks every open row up');
 });
+
+// ── What a healed merge still owes (legacy path) ───────────────────────────
+// A child app's finalizer spends minutes in its production rebuild, and a
+// restart cut it off there: the heal used to record the status and nothing
+// else. tests/recover-stuck-merges-postgres.test.js runs the follow-ups
+// themselves against the full schema; these pin the order and the switch.
+
+const votes = require('../src/routes/votes');
+const platformId = require.resolve('../src/workflow/platform.ts');
+
+function withMergeFollowups(t, { machine = false } = {}) {
+  const seen = [];
+  const saved = {
+    apply: votes.applyDeclaredValues, run: votes.runOwedMergeFollowups, resume: votes.resumeOwedMergeFollowups,
+  };
+  votes.applyDeclaredValues = async ({ session }) => { seen.push(['apply', session.id, session.app_id]); };
+  votes.runOwedMergeFollowups = async (_config, _pool, id) => { seen.push(['followups', id]); return { ran: true }; };
+  votes.resumeOwedMergeFollowups = async () => { seen.push(['resume']); return [77]; };
+  const prevPlatform = require.cache[platformId];
+  stub(platformId, {
+    mergeFollowupsEnabled: () => machine,
+    mergeObserved: async (m) => { seen.push(['observed', m.sessionId]); },
+  });
+  t.after(() => {
+    Object.assign(votes, { applyDeclaredValues: saved.apply, runOwedMergeFollowups: saved.run, resumeOwedMergeFollowups: saved.resume });
+    if (prevPlatform) require.cache[platformId] = prevPlatform; else delete require.cache[platformId];
+  });
+  return seen;
+}
+
+test('a healed merge gets its declared values before it is recorded, then its follow-ups, its watch among them', async (t) => {
+  const seen = withMergeFollowups(t);
+  const pool = makePool([{ ...ROWS[0], app_id: 5 }]);
+  const order = [];
+  const query = pool.query;
+  pool.query = async (sql, params) => {
+    if (/SET\s+status = 'merged'/.test(String(sql))) {
+      order.push(...seen.map((s) => s[0]), 'recorded');
+      assert.match(String(sql), /merge_followups_due_at = NOW\(\)/, 'owing its follow-ups from the status move');
+    }
+    return query(sql, params);
+  };
+  const out = await withStubs(pool, {
+    isEnabled: () => true,
+    getPR: async () => GH[52],
+  }, () => recoverStuckMerges({}));
+  assert.deepEqual(order, ['resume', 'apply', 'recorded']);
+  assert.deepEqual(seen, [['resume'], ['apply', 1, 5], ['followups', 1]]);
+  assert.deepEqual(out.followedUp.sort(), [1, 77], 'the boot\'s issue-close resume leaves these to the heal');
+});
+
+test('with the merge-followups machine on, the heal reports the merge and runs no legacy follow-up', async (t) => {
+  const seen = withMergeFollowups(t, { machine: true });
+  const pool = makePool([{ ...ROWS[0], app_id: 5 }]);
+  const out = await withStubs(pool, {
+    isEnabled: () => true,
+    getPR: async () => GH[52],
+  }, () => recoverStuckMerges({}));
+  assert.deepEqual(seen, [['observed', 1]]);
+  assert.deepEqual(pool.updates, [], 'the machine moves the status');
+  assert.deepEqual(out.followedUp, []);
+});
+
+test('owed follow-ups are resumed without GitHub, and a demoted claim owes none', async (t) => {
+  const seen = withMergeFollowups(t);
+  const pool = makePool([ROWS[1]]);
+  const out = await withStubs(pool, { isEnabled: () => false, getPR: async () => assert.fail('no lookup') }, () => recoverStuckMerges({}));
+  assert.deepEqual(seen, [['resume']]);
+  assert.deepEqual(out.followedUp, [77]);
+});
+
+test('the boot resumes the issue-close watches after the heal, leaving out what it followed up', () => {
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'server.js'), 'utf8');
+  const boot = src.indexOf("checkHarvest.sweep(config, { reason: 'boot' })");
+  const heal = src.indexOf('.then(() => recoverStuckMerges(config))', boot);
+  const resume = src.indexOf('resumeIssueCloseWatches(config, { skip: reconciled?.followedUp })', heal);
+  const next = src.indexOf('.then(() => reconcileEligibleMerges(config))', heal);
+  assert.ok(boot > 0 && heal > boot && resume > heal && next > resume, 'chained after the heal, before the merge reconcile');
+  const gate = src.indexOf('if (config.wfMergeFollowupsEnabled) return;', heal);
+  assert.ok(gate > heal && gate < resume, 'and only with the merge-followups machine off');
+  assert.equal(src.match(/(?<!function )resumeIssueCloseWatches\(config/g).length, 1, 'and nowhere beside it');
+});
+
+test('resumeIssueCloseWatches leaves the sessions it is told the heal already watches', async (t) => {
+  const { resumeIssueCloseWatches } = require('../server');
+  const watcher = require('../src/services/issue-close-watcher');
+  const saved = watcher.watchIssuesClosedAfterMerge;
+  const watched = [];
+  watcher.watchIssuesClosedAfterMerge = async (args) => { watched.push(args.prNumber); };
+  t.after(() => { watcher.watchIssuesClosedAfterMerge = saved; });
+  const pool = {
+    async query() {
+      return { rows: [
+        { id: 1, pr_number: 11, linked_issues: [], repo_url: 'https://github.com/acme/a', app_slug: 'a', app_id: 1 },
+        { id: 2, pr_number: 22, linked_issues: [], repo_url: 'https://github.com/acme/a', app_slug: 'a', app_id: 1 },
+      ] };
+    },
+  };
+  await withStubs(pool, { isEnabled: () => true }, () => resumeIssueCloseWatches({}, { skip: [1] }));
+  assert.deepEqual(watched, [22]);
+});

@@ -175,11 +175,14 @@ test('the live build draws the first look from the saved screen, and from the wh
   assert.match(src, /onScreen: \(\{ n, markup, containerName \}\) => \{\s+if \(Number\(n\) !== 1\) return;\s+void firstVersionScreens\(\)\.renderSavedFirstLook\(\{/);
   assert.match(src, /onFirstLook: \(\{ specHtml, containerName \}\) => \(drewEarly \? false : firstVersionScreens\(\)\.renderFirstLook\(\{/);
   assert.match(src, /onFirstLook: null, onScreen: null,/, 'the retry drew none');
-  // A spec a restart caught gets its saved screens back off its worker too.
-  assert.match(src, /plan\.result = await live\.fillSavedScreens\(\{\s+fvScreens: firstVersionScreens\(\), screens: null, worker,\s+containerName: typeof worker\.workerRuntimeName === 'function' \? worker\.workerRuntimeName\(Number\(sessionId\)\) : null,/);
-  assert.ok(src.indexOf('plan.result = await live.fillSavedScreens(') < src.indexOf('const specRead = plan.mode === \'scout\''));
   const liveSrc = read('src/services/homeroom-bot-live.js');
   assert.match(liveSrc, /locale, onScreen,/);
+  // A spec a restart caught is followed by its durable turn, and its result
+  // gets its saved screens back off its worker as a spec seen through does.
+  const draft = liveSrc.slice(liveSrc.indexOf('async function draftSpec('), liveSrc.indexOf('\nasync function ', liveSrc.indexOf('async function draftSpec(') + 1));
+  const turnAt = draft.indexOf("durableTurn.runTurn(steps, 'spec', {");
+  const fillAt = draft.indexOf('await fillSavedScreens({ fvScreens, screens: savedScreens, worker, containerName, result: routed.result })');
+  assert.ok(turnAt > 0 && fillAt > turnAt, 'the saved screens are filled into whatever the turn resolved, followed or not');
 });
 
 // Newcomer run five (13 October 2026): the spec saved nothing and drew both

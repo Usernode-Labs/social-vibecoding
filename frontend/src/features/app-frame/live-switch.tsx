@@ -2,9 +2,16 @@
  * #4449: the "Preview | Live" switch a first version's thumbnail shows while
  * it is built ("Building it"), top-right of its colour band, for its maker
  * and its members alike, while the Admin setting is on (routes/apps.js
- * firstVersionLiveFields). Preview is #4387's first look, and the default;
- * Live is the app itself taking shape (./live-band.tsx, loaded only once
- * somebody opens it). The choice is remembered per person, in this browser.
+ * firstVersionLiveFields). Preview is #4387's first look; Live is the app
+ * itself taking shape (./live-band.tsx, loaded only once Live is shown).
+ *
+ * LIVE IS THE DEFAULT (newcomer run six, 14 Oct 2026). Preview was, and it
+ * stayed chosen after the build had booted the app, so the card kept the
+ * picture drawn from the plan while the real app was there one tap away.
+ * Live is offered only once its watcher has a frame to show (N6), so from
+ * the moment there is one, Live is what the card shows. Somebody who picks
+ * either keeps it: the choice is remembered per person and per project, in
+ * this browser.
  */
 
 import { useCallback, useState, type ReactNode } from 'react';
@@ -28,37 +35,53 @@ export interface FirstVersionLive {
   last?: boolean;
 }
 
-const STORE_PREFIX = 'usernode.firstVersionLive.v1.';
+// v2: per project. v1 was one choice per person for every project, made
+// while Preview was the default; it is not read.
+const STORE_PREFIX = 'usernode.firstVersionLive.v2.';
 
-export function choiceKey(userKey: string): string {
-  return `${STORE_PREFIX}${userKey || 'guest'}`;
+export function choiceKey(userKey: string, slug: string): string {
+  return `${STORE_PREFIX}${userKey || 'guest'}.${slug}`;
 }
 
-/** The remembered choice, Preview unless Live was chosen. */
-export function readChoice(userKey: string): LiveChoice {
-  try { return localStorage.getItem(choiceKey(userKey)) === 'live' ? 'live' : 'preview'; } catch { return 'preview'; }
+/** The choice somebody made for this project, or null for none. */
+export function readChoice(userKey: string, slug: string): LiveChoice | null {
+  try {
+    const v = localStorage.getItem(choiceKey(userKey, slug));
+    return v === 'live' || v === 'preview' ? v : null;
+  } catch { return null; }
 }
 
-export function writeChoice(userKey: string, choice: LiveChoice): void {
-  try { localStorage.setItem(choiceKey(userKey), choice); } catch { /* private mode: this visit only */ }
+export function writeChoice(userKey: string, slug: string, choice: LiveChoice): void {
+  try { localStorage.setItem(choiceKey(userKey, slug), choice); } catch { /* private mode: this visit only */ }
 }
 
 /**
- * The choice for `userKey` (null: Live is not offered, Preview). Read for
- * whoever it is offered to, not once when the card first drew: N6 offers
- * Live only once there is a frame to show, and the card stays mounted
- * across the App tab's rechecks, so it is often offered after the card
- * drew. A choice made here holds for the same person.
+ * Pure: what the card shows when Live is `offered` (it has frames): the
+ * choice made for the project, else Live. Not offered: Preview.
  */
-export function useLiveChoice(userKey: string | null): [LiveChoice, (c: LiveChoice) => void] {
+export function shownChoice(offered: boolean, chosen: LiveChoice | null): LiveChoice {
+  return offered ? (chosen || 'live') : 'preview';
+}
+
+/**
+ * The choice for `userKey` on project `slug` (a null key: Live is not
+ * offered, Preview). Read for whoever it is offered to, not once when the
+ * card first drew: N6 offers Live only once there is a frame to show, and
+ * the card stays mounted across the App tab's rechecks, so it is often
+ * offered after the card drew, and then it turns to Live. A choice made
+ * here holds for the same person on the same project.
+ */
+export function useLiveChoice(userKey: string | null, slug: string | null): [LiveChoice, (c: LiveChoice) => void] {
+  const offered = userKey != null && !!slug;
+  const key = offered ? `${userKey} ${slug}` : null;
   const [picked, setPicked] = useState<{ key: string | null; choice: LiveChoice } | null>(null);
-  const choice: LiveChoice = picked && picked.key === userKey
+  const choice: LiveChoice = picked && picked.key === key
     ? picked.choice
-    : (userKey != null ? readChoice(userKey) : 'preview');
+    : shownChoice(offered, offered ? readChoice(userKey as string, slug as string) : null);
   const choose = useCallback((c: LiveChoice) => {
-    setPicked({ key: userKey, choice: c });
-    if (userKey != null) writeChoice(userKey, c);
-  }, [userKey]);
+    setPicked({ key, choice: c });
+    if (userKey != null && slug) writeChoice(userKey, slug, c);
+  }, [key, userKey, slug]);
   return [choice, choose];
 }
 

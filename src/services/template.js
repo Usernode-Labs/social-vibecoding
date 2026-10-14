@@ -1531,6 +1531,9 @@ function escapeHtml(str) {
 module.exports = {
   getTemplateFiles,
   getConnectorScaffoldFiles,
+  // The Empty starter's design kit (its tokens and components), for the
+  // early first look's prompt (first-version-early-look.js).
+  DESIGN_KIT_CSS,
   getCanonicalRepoFile,
   canonicalRepoUrl,
   CANONICAL_REPO_PATH,

@@ -85,3 +85,69 @@ test('terminal cleanup selection, retry backoff and retention against PostgreSQL
   assert.equal(done.trace_summary.cleanupComplete, true);
   assert.equal(done.trace_summary.cleanupVersion, RESOURCE_CLEANUP_VERSION);
 });
+
+// A day with bursts of rollouts: production redeploys on every merge to
+// main, and a run lives in the process that started it. The interrupted
+// retries' ceiling was six, which back-to-back restarts spent, and the
+// proposal then ended on "Homeroom restarted… take them again" for no reason
+// but the restarts. A graceful shutdown's interruption now reaches only a
+// much larger backstop; an interruption nothing explained keeps its two
+// retries. The real retryInterrupted query, against temporary tables.
+test('rollouts do not spend a head\'s shots retries; unexplained interruptions still do', async (t) => {
+  const client = new Client({
+    connectionString: process.env.TEST_DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres',
+    connectionTimeoutMillis: 2000,
+  });
+  try { await client.connect(); } catch (error) {
+    await client.end();
+    if (process.env.TEST_DATABASE_URL) throw error;
+    t.skip('PostgreSQL unavailable; set TEST_DATABASE_URL to require this check');
+    return;
+  }
+  t.after(async () => { try { await client.query('ROLLBACK'); } finally { await client.end(); } });
+  await client.query(`BEGIN;
+    CREATE TEMP TABLE chat_sessions (
+      id int PRIMARY KEY, status text, source text, imported_pr_head_sha text, reviewed_head_sha text,
+      checks_commit_sha text, handoff_head_sha text, shots_run_id text
+    ) ON COMMIT DROP;
+    CREATE TEMP TABLE shot_runs (
+      id varchar(32) PRIMARY KEY, session_id int, head_sha text, state text, trigger text,
+      failure_code text, trace_summary jsonb, created_at timestamptz, updated_at timestamptz
+    ) ON COMMIT DROP;`);
+  const head = (c) => c.repeat(40);
+  let n = 0;
+  const runId = () => (++n).toString(16).padStart(32, '0');
+  const long = new Date(Date.now() - 60 * 60 * 1000);
+  // `interruptions`: the causes of the head's interrupted runs, oldest first;
+  // each after the first is an interrupted-retry of the one before.
+  async function proposal(sessionId, c, interruptions) {
+    let last = null;
+    for (const [i, cause] of interruptions.entries()) {
+      last = runId();
+      await client.query(
+        `INSERT INTO shot_runs VALUES ($1, $2, $3, 'failed', $4, 'shots_run_interrupted', $5, $6, $6)`,
+        [last, sessionId, head(c), i === 0 ? 'checks' : 'interrupted-retry',
+          cause === 'shutdown' ? { interruptedBy: 'shutdown' } : {}, long]);
+    }
+    await client.query(`INSERT INTO chat_sessions VALUES ($1, 'promoted', 'native', NULL, $2, $2, NULL, $3)`,
+      [sessionId, head(c), last]);
+  }
+  const rollouts = (count) => Array.from({ length: count }, () => 'shutdown');
+  await proposal(1, 'a', rollouts(11));                                // ten rollout retries so far
+  await proposal(2, 'b', [...rollouts(4), 'crash', 'crash', 'crash']); // a third crash
+  await proposal(3, 'c', ['crash', ...rollouts(8)]);                    // one crash among rollouts
+  await proposal(4, 'd', rollouts(gc.MAX_INTERRUPTED_RETRIES + 1));     // the backstop
+
+  const retried = [];
+  const result = await gc.retryInterrupted({ shots: { execute: true } }, client, {
+    isShuttingDown: () => false, limit: 50,
+    stateService: { rerunSameHead: async (_pool, id) => { retried.push(id); return { id }; } },
+    schedule: async () => ({ scheduled: true }),
+  });
+  const { rows } = await client.query('SELECT id, shots_run_id FROM chat_sessions');
+  const sessionOf = new Map(rows.map((r) => [r.shots_run_id, r.id]));
+  assert.deepEqual(retried.map((id) => sessionOf.get(id)).sort(), [1, 3],
+    'ten rollouts in a row, or one crash among rollouts, are retried again');
+  assert.equal(result.scheduled, 2);
+  assert.ok(gc.MAX_INTERRUPTED_RETRIES >= 20, 'a backstop against a loop, not a budget a day of merges spends');
+});

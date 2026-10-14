@@ -127,8 +127,14 @@ test('a first version\'s timings are recorded where a run report reads them', { 
     assert.equal(claimed.live_build_waiting_at, null, 'the wait is over');
     assert.ok(claimed.go_ahead_at, 'and when it went ahead is kept');
     assert.equal(Number(claimed.build_session_id), Number(session.id));
-    // Once: a second claim is refused, and says nothing about waiting.
-    assert.deepEqual(await bot.claimLiveBuild(pool, { runId, sessionId: session.id }), { claimed: false, waitedMs: null });
+    // Once: another build's claim is refused, and says nothing about waiting.
+    const { rows: [other] } = await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, session_title) VALUES ($1, $2, 'bot-2', 'active', 'x') RETURNING id`,
+      [clubVotes.id, maker.id],
+    );
+    assert.deepEqual(await bot.claimLiveBuild(pool, { runId, sessionId: other.id }), { claimed: false, waitedMs: null });
+    // The same build claiming again (a restart before it saved its claim) keeps its claim.
+    assert.equal((await bot.claimLiveBuild(pool, { runId, sessionId: session.id })).claimed, true);
     await pool.query(`DELETE FROM events WHERE event_type = 'first_version_stage'`);
   });
 

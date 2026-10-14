@@ -2,9 +2,9 @@
 
 // A build turn that changed nothing, and its nudge (homeroom-bot-live.js
 // buildNudgePrompt), recorded against the FULL PostgreSQL schema: kept on
-// its run before the nudge starts, completed by the outcome or by restart
-// recovery, read by the console's runs query and left out of the CSV
-// export; counted as `events` rows that hold no text.
+// its run before the nudge starts, completed by the outcome, read by the
+// console's runs query and left out of the CSV export; counted as `events`
+// rows that hold no text.
 //
 // Like the repository's other postgres tests it skips when no database is
 // reachable, unless TEST_DATABASE_URL insists on one.
@@ -72,10 +72,10 @@ test('a build turn that changed nothing is kept on its run and counted, against 
      VALUES ($1, $2, $3, 'paused', FALSE, '{}', 'z-ai/glm-5.3-flash') RETURNING *`,
     [app.id, botUser.id, `dev/homeroom_bot-${crypto.randomBytes(3).toString('hex')}`],
   )).rows[0];
-  const newRun = async (sessionId, { lane = false } = {}) => (await pool.query(
-    `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, build_note, build_session_id, build_at)
-     VALUES ($1, 1, $2, 'ready', 'build it', $3, $4) RETURNING id`,
-    [app.id, lane ? 'shadow' : 'live', sessionId, lane ? new Date() : null],
+  const newRun = async (sessionId) => (await pool.query(
+    `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, build_note, build_session_id)
+     VALUES ($1, 1, 'live', 'ready', 'build it', $2) RETURNING id`,
+    [app.id, sessionId],
   )).rows[0].id;
   const kept = async (runId) => (await pool.query(
     'SELECT build_no_change, build_ok, build_error FROM homeroom_bot_runs WHERE id = $1', [runId],
@@ -93,25 +93,22 @@ test('a build turn that changed nothing is kept on its run and counted, against 
     turns: [{ ...live.turnFacts({ routed: { result: QUIT } }, { turn: 'build', model: 'z-ai/glm-5.3-flash', seconds: 34 }), said: QUIT.lastResultText }],
     nudged: true, notNudged: null, committed: null,
   };
+  const counts = { appId: app.id, sessionId: session.id, userId: botUser.id, issueNumber: 1, origin: { lane: 'live', runId } };
   await bot.keepNoChange(pool, runId, first);
-  await live.recordNoChange(pool, {
-    appId: app.id, sessionId: session.id, userId: botUser.id, issueNumber: 1,
-    origin: { lane: 'live', runId }, noChange: first, which: 'first',
-  });
+  await live.recordNoChange(pool, { ...counts, noChange: first, which: 'first' });
   assert.deepEqual((await kept(runId)).build_no_change, first);
 
-  // A restart catches the nudge, which built it: recovery completes the
-  // record from what was kept, and counts the nudge.
-  const merged = await bot.recoveredNoChange(pool, {
-    runId, session, result: { ...BUILT }, component: live.BUILD_NUDGE_TELEMETRY,
-    origin: { lane: 'live', runId }, appId: app.id, issueNumber: 1,
-  });
+  // The nudge built it: its turn is added to the record and counted, as
+  // buildAndPropose does once the nudge ends, and the outcome keeps it.
+  const nudge = live.turnFacts({ routed: { result: BUILT } }, { turn: 'nudge', model: 'z-ai/glm-5.3-flash', seconds: 600 });
+  const merged = { ...first, turns: [...first.turns, { ...nudge, said: null }], committed: nudge.ended === 'changed' };
   assert.deepEqual(merged.turns.map((x) => [x.turn, x.ended, x.said]), [
     ['build', 'no_change', QUIT.lastResultText], ['nudge', 'changed', null],
   ]);
   assert.equal(merged.committed, true);
+  await live.recordNoChange(pool, { ...counts, noChange: merged, which: 'nudge' });
   await bot.recordLiveBuild(pool, runId, { ok: true, sessionId: session.id, sha: BUILT.sha, commits: 3, noChange: merged });
-  let row = await kept(runId);
+  const row = await kept(runId);
   assert.equal(row.build_ok, true);
   assert.equal(row.build_no_change.committed, true);
   assert.equal(row.build_no_change.turns[1].provider, 'Together');
@@ -129,7 +126,7 @@ test('a build turn that changed nothing is kept on its run and counted, against 
   assert.equal(events[0].metadata.lane, 'live');
   assert.equal(events[0].metadata.runId, runId);
   assert.equal(events[1].metadata.committed, true);
-  assert.equal(events[1].metadata.recovered, true);
+  assert.equal(events[1].metadata.recovered, false);
   for (const e of events) assert.ok(!JSON.stringify(e.metadata).includes('Shall I go ahead'), 'no text in a counter');
 
   // The rate per provider, the way a weekly query reads it.
@@ -146,24 +143,4 @@ test('a build turn that changed nothing is kept on its run and counted, against 
   const listed = exported.find((r) => r.id === runId);
   assert.equal(listed.build_no_change.turns[0].said, QUIT.lastResultText);
   assert.ok(!bot.exportRow(listed).some((v) => String(v).includes('Shall I go ahead')));
-
-  // The lane's own recovery of a build turn that changed nothing, which it
-  // does not nudge: recorded on the run, with the outcome said as before.
-  const laneSession = await newSession();
-  const laneRun = await newRun(laneSession.id, { lane: true });
-  const outcome = await bot.finishRecoveredTurn({
-    pool, session: laneSession, activeTurn: { mode: 'build', telemetryComponent: 'homeroom_bot_build' },
-    result: { ...QUIT },
-  });
-  assert.equal(outcome, 'shadow_failed');
-  row = await kept(laneRun);
-  assert.equal(row.build_ok, false);
-  assert.equal(row.build_error, 'the build produced no change to propose (finished after a restart)');
-  assert.equal(row.build_no_change.recovered, true);
-  assert.equal(row.build_no_change.nudged, false);
-  assert.equal(row.build_no_change.turns[0].said, QUIT.lastResultText);
-  const laneEvents = await counted(laneSession.id);
-  assert.deepEqual(laneEvents.map((e) => [e.event_type, e.metadata.lane, e.metadata.recovered]), [
-    ['bot_build_no_change', 'shadow', true],
-  ]);
 });

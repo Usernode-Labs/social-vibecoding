@@ -12,7 +12,7 @@ import { botMeta, postedNote } from './bot-question';
 import { AnsweredChoices, PlanCardView, type AnsweredChoice, type PlanCardState, type PlanProgress } from './bot-plan-view';
 import { BotHeadWords, botHead } from './bot-head-card';
 import { MessageMarkdown } from './format';
-import { NotifyMe, notifyMeChosen } from './notify-me';
+import { NotifyLive, NotifyMe, notifyMeChosen } from './notify-me';
 import { answerBotQuestion, quoteInComposer, useMessagesSnapshot } from './store';
 import type { ConversationMessage, HomeroomBotActivity, HomeroomBotMeta } from './types';
 
@@ -41,7 +41,8 @@ import type { ConversationMessage, HomeroomBotActivity, HomeroomBotMeta } from '
  * the app's thumbnail row and build line); one moved before the thanks
  * existed (no `thanks` in its metadata) is still not drawn. While it is
  * being built, "Notify me when it's ready" is inside the plan card
- * (BotPlanCard's footer, ./notify-me.tsx).
+ * (BotPlanCard's footer, ./notify-me.tsx); for a first version (run six),
+ * the switch "We'll tell you when it's live", on until its maker turns it off.
  *
  * #4046: ONE SET OF SUGGESTIONS. While a plan or a question offers its own
  * answers, the bot's generic questions to tap (its hello's "How long will
@@ -255,6 +256,18 @@ function quote(message: ConversationMessage, conversationId: number) {
   quoteInComposer(message, conversationId);
 }
 
+/**
+ * Pure (run six): what sits under a plan while what it planned is built. A
+ * first version's switch, on from Make it, whatever this device chose
+ * before; a complicated change's plan keeps the one-time offer.
+ */
+export function notifyFooter(meta: HomeroomBotMeta, offer: boolean, userId: number | null) {
+  if (!meta.plan?.complicated && meta.appSlug) {
+    return <div className="mt-3"><NotifyLive appSlug={meta.appSlug} /></div>;
+  }
+  return offer ? <div className="mt-3"><NotifyMe userId={userId} /></div> : null;
+}
+
 export function BotPlanCard({ message, conversationId, cardId = null }: {
   message: ConversationMessage;
   conversationId: number;
@@ -295,7 +308,9 @@ export function BotPlanCard({ message, conversationId, cardId = null }: {
       onBuild={build}
       onChange={() => quote(message, conversationId)}
       progress={planProgress(card, state)}
-      footer={offer && state === 'built' && card && card.state !== 'done' ? <div className="mt-3"><NotifyMe userId={userId} /></div> : null}
+      footer={state === 'built' && card && card.state !== 'done'
+        ? notifyFooter(meta, offer, userId)
+        : null}
     />
   );
 }

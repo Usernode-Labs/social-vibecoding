@@ -1321,8 +1321,12 @@ test('New for you: of what moved since your last visit, the requests filed since
   AppView._ghIssues.push({ number: 14, title: 'Old but busy', createdAt: at(10), updatedAt: at(1), lastMessageAt: at(1), user: 'dana', htmlUrl: 'https://github.com/x/y/issues/14' });
   const html = workshopHtml(AppView, 'workshop');
   const fresh = html.slice(html.indexOf('data-ws-fresh=""'), html.indexOf('data-ws-happened-head'));
-  // A part of What's happening's one card, headed as What happened's weeks are.
-  assert.match(fresh, /^data-ws-fresh=""><div class="dev-ws-hweek-head"><span class="dev-ws-week-head"><b>New for you<\/b><span>1 since your last visit<\/span><\/span><\/div>/);
+  // A part of What's happening's one card, headed as What happened's weeks
+  // are, with its own Mark all seen at the head's right end (#5056): it
+  // clears the same baseline What happened's does.
+  assert.match(fresh, /^data-ws-fresh=""><div class="dev-ws-hweek-head"><span class="dev-ws-week-head"><b>New for you<\/b><span>1 since your last visit<\/span><\/span><button type="button" class="dev-ws-since-clear un-touch-target" data-ws-fresh-clear="">Mark all seen<\/button><\/div>/);
+  assert.match(WORKSHOP, /data-ws-fresh-clear=""\s+onClick=\{clearSince\}/, 'the card\'s own clear is the existing one');
+  assert.ok(!fresh.includes('data-ws-since-clear=""'), 'What happened\'s button still selects exactly one element');
   const rows = [...fresh.matchAll(/data-ws-row="([^"]+)"/g)].map((m) => m[1]);
   assert.deepEqual(rows, ['since:issue:12'], 'a request filed before the visit is not new for you, and the vote is Needs you\'s');
   // The request: what it is, who filed it, and Build it — the request
@@ -1349,8 +1353,8 @@ test('New for you: of what moved since your last visit, the requests filed since
   mine._proposals[0].username = 'me';
   mine._proposals[0].user_id = 1;
   assert.ok(!workshopHtml(mine, 'workshop').slice(0, workshopHtml(mine, 'workshop').indexOf('data-ws-happened-head')).includes('since:proposal:34'));
-  assert.deepEqual(['workshop.fresh.title', 'workshop.fresh.buildIt'].map((k) => message(`project:${k}`)),
-    ['New for you', 'Build it']);
+  assert.deepEqual(['workshop.fresh.title', 'workshop.fresh.buildIt', 'workshop.fresh.markAllSeen'].map((k) => message(`project:${k}`)),
+    ['New for you', 'Build it', 'Mark all seen']);
 });
 
 test('the vote deck is its own tab; the unclaimed suggestion stays with the status', () => {

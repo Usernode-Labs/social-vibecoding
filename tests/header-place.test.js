@@ -155,10 +155,17 @@ test('the header\'s merged controls are the bar\'s, sized to the header\'s row',
     'the name paints nowhere by default');
   assert.match(CSS, /@media \(max-width: 767\.98px\) \{[^@]*?#platform-header \.header-place-name \{\n    display: inline-block;/,
     'and only a phone shows it');
-  assert.match(CSS, /#platform-header \.header-place-name \{[^}]*align-self: flex-end;/,
-    'lowered to the chip\'s foot, a subscript beside the switcher');
-  assert.match(CSS, /#platform-header \.header-place-name \{[^}]*font-size: 11px; font-weight: 600; line-height: 1; color: #fff;/,
-    'small, the header subtitle\'s size, still in the header\'s white ink');
+  // Run six (14 Oct 2026): "Club Votes ⌄ Hub" read as a word slipped under
+  // the name's baseline. It is a small quiet tag now, centred on the row.
+  assert.match(CSS, /#platform-header \.header-place-name \{[^}]*align-self: center;/,
+    'centred on the title\'s line, beside the switcher');
+  assert.doesNotMatch(CSS, /#platform-header \.header-place-name \{[^}]*align-self: flex-end;/,
+    'no longer dropped to the chip\'s foot');
+  assert.match(CSS, /#platform-header \.header-place-name \{[^}]*padding: 2px 8px; border-radius: 999px;\s+background: var\(--brand-tint\); color: var\(--brand-ink\);\s+font-size: 12px; font-weight: 600; line-height: 16px;/,
+    'a pill in the header\'s own ink, small');
+  // On a project's page that ink is white on the community's tint, as the
+  // bell's and the back disc's are.
+  assert.match(CSS, /html\[data-community-tint\] body:has\(#app-view:not\(\.hidden\)\) #platform-header \{\n  --fake-glass-tint: var\(--community-tint\);\n  --brand-ink: #fff;\n  --brand-tint: rgba\(255, 255, 255, \.16\);/);
   // The dot's ring is the community tint it sits on, as the band's was.
   assert.match(CSS, /\.dev-ws-places-dot \{[^}]*box-shadow: 0 0 0 2px var\(--community-tint, #2a2e34\);/);
 });

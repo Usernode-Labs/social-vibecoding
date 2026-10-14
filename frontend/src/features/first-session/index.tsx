@@ -494,6 +494,23 @@ export function footTop(bars: Box[], viewport: { width: number; height: number }
 }
 
 /**
+ * The surface a `{ clear }` step keeps its card off (./card-placement.ts
+ * clearOf), as the reader sees it: the first element it names that is on
+ * the page, or, on touch, the kit's sheet that presents it (native.js
+ * presentSheet lifts the menu into `.un-sheet`, whose grabber and rounded
+ * top sit above the menu's own box; ../home/tour/spotlight.ts panelBox
+ * measures the same surface). Null when none is drawn.
+ */
+export function surfaceBox(selectors: string, root: Pick<Document, 'querySelectorAll'> = document): Box | null {
+  for (const el of Array.from(root.querySelectorAll(selectors))) {
+    const surface = (typeof el.closest === 'function' ? el.closest('.un-sheet') : null) || el;
+    const r = surface.getBoundingClientRect();
+    if (r.width > 0 && r.height > 0) return { left: r.left, top: r.top, width: r.width, height: r.height };
+  }
+  return null;
+}
+
+/**
  * The coach card's position for a target box, as inline style
  * (./card-placement.ts does the arithmetic, over what this measures). It
  * never covers the tab bar, and it is always whole on the screen, on a
@@ -508,10 +525,12 @@ export function cardPlacement(
   const place = step.place;
   const above = place && typeof place === 'object' && 'above' in place ? document.querySelector(place.above) : null;
   const [below] = place && typeof place === 'object' && 'below' in place ? visibleBoxes(place.below) : [];
+  const clear = place && typeof place === 'object' && 'clear' in place ? surfaceBox(place.clear) : null;
   return cardPosition(box, place, viewport, {
     foot,
     aboveTop: above ? above.getBoundingClientRect().top : null,
     belowBottom: below ? below.top + below.height : null,
+    clear,
     pad: PAD,
   });
 }

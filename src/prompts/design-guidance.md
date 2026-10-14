@@ -22,6 +22,8 @@ Words and naming (one idea, one word, across the whole app)
 
 States: every list or data view has an empty state that offers the primary action, a loading state, an error state that says what happened and what to do next, and the populated state.
 
+Forms on a phone: keep a form's primary action and its Cancel visible while the keyboard is up, at the top of the form or sheet as iOS does (Cancel, the title, Post), never only at its foot, where the keyboard and the browser's bar cover them. While a form that adds the first item is open, hide the empty state's own button for it.
+
 Consistency pass before you commit: compare what you built with the screens around it. Same header pattern, same place for the primary action, same component and the same word for the same concept. If the app's screens already disagree, follow the kit and mention the drift in your final message.
 
 Quality floor: works at 360px wide, visible keyboard focus, respects reduced motion, readable contrast. Animate only to show the result of something the user did.

@@ -170,10 +170,19 @@ test('the server’s own lines parse, in the messages the bot sends', () => {
   // The offers' lines (homeroom-bot-mayor.js offer).
   assert.match(mayor, /`\*\*\$\{name\}\*\* · proposal: \$\{o\.title\}`/);
   assert.match(mayor, /`\*\*\$\{name\}\*\* · new request: \$\{o\.title\}`/);
-  // A maker's first project: the hello, then the project's line (homeroom-bot-dm.js startFirstVersion).
-  const source = read('src/services/homeroom-bot-dm.js');
-  assert.match(source, /\? `\$\{MAKER_HELLO\}\\n\\n\*\*\$\{name\}\*\*\\n\\nI'm setting up \$\{name\} now\./);
-  assert.match(source, /: `\*\*\$\{name\}\*\*\\n\\nThanks! I'm setting up \$\{name\} now\./);
+  // A maker's first project: the hello, then the project's line (homeroom-bot-dm.js
+  // firstVersionStartedText), with and without the made screen's plan.
+  const started = { kind: 'first_version_started', appSlug: 'todo-list-b91765', appName: 'Todo List' };
+  for (const earlyPlan of [true, false]) {
+    const greeted = dm.firstVersionStartedText({ name: 'Todo List', hello: true, earlyPlan });
+    const head = botHead(greeted, { ...started, hello: dm.MAKER_HELLO });
+    assert.equal(head.kind, 'project');
+    assert.equal(head.before, dm.MAKER_HELLO);
+    assert.match(head.rest, /^I'm setting up Todo List now\. /);
+    const again = botHead(dm.firstVersionStartedText({ name: 'Todo List', earlyPlan }), started);
+    assert.equal(again.kind, 'project');
+    assert.match(again.rest, /^Thanks! I'm setting up Todo List now\. /);
+  }
 });
 
 // ── 2. The card ─────────────────────────────────────────────────────────

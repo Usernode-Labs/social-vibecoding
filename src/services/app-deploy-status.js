@@ -29,6 +29,11 @@
  *   it — there's nothing to track. A fresh process should naturally
  *   show no in-flight deploys, exactly the same as if the deploy had
  *   never started.
+ *
+ * With the app-delivery workflow machine on (WF_APP_DELIVERY_ENABLED), a
+ * deploy is the machine's, and so is its state: apps.deploy_state, which
+ * every process reads and which outlives a restart (the deploy is retried).
+ * `read(slug, row)` answers from either, given the app's row.
  */
 
 const log = require('./logger');
@@ -91,10 +96,19 @@ function markEnd(slug, opts) {
   });
 }
 
-function read(slug) {
+// The deploy app delivery runs for this app, from its row (null when the
+// row was not read with its deploy columns, or nothing is deploying). Not
+// stale after 30 minutes: the machine retries a deploy whose process died.
+function fromRow(row) {
+  if (!row || row.deploy_state !== 'deploying') return null;
+  const started = row.deploy_started_at instanceof Date ? row.deploy_started_at.toISOString() : row.deploy_started_at;
+  return { deploying: true, startedAt: started || null, fromSha: row.deploy_from_sha || null };
+}
+
+function read(slug, row = null) {
   if (!slug) return null;
   const entry = _state.get(slug);
-  if (!entry) return null;
+  if (!entry) return fromRow(row);
   // Stale-deploy gate. Don't auto-delete here — the caller of
   // rebuildProduction owns the lifecycle, and pretending the entry
   // doesn't exist anymore is enough to unstick the UI.
@@ -103,13 +117,14 @@ function read(slug) {
   return { ...entry };
 }
 
-function readMany(slugs) {
+// `rows`: the apps' rows by slug (a Map), when the caller has them.
+function readMany(slugs, rows = null) {
   const out = {};
   for (const slug of slugs || []) {
-    const entry = read(slug);
+    const entry = read(slug, rows ? rows.get(slug) || null : null);
     if (entry) out[slug] = entry;
   }
   return out;
 }
 
-module.exports = { markStart, markEnd, read, readMany };
+module.exports = { markStart, markEnd, read, readMany, fromRow };

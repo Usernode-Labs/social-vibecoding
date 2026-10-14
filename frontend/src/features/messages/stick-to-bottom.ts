@@ -57,6 +57,33 @@ export function needsMoreHistory(el: ScrollBox, slack: number = LOAD_OLDER_SLACK
   return el.scrollHeight - el.clientHeight <= slack;
 }
 
+/** A row and the scroller it sits in, as far as `centreInScroller` reads them. */
+export interface CentreBox extends ScrollBox {
+  getBoundingClientRect(): { top: number; height: number };
+  scrollTo(options: { top: number; behavior: 'auto' | 'smooth' }): void;
+}
+
+/*
+ * #5050: a message link centres its row by scrolling THIS scroller only.
+ * `row.scrollIntoView({ block: 'center' })` scrolls every ancestor that can
+ * scroll, `overflow: hidden` ones included. A row near the bottom of its
+ * conversation cannot be centred by the transcript alone, so the browser
+ * scrolled `#messages-screen` by the rest: opening a Homeroom bot row's
+ * thread left the whole Messages layout 85px up, its top under the header
+ * and a strip of empty page below it.
+ */
+export function centreInScroller(
+  scroller: CentreBox,
+  row: { getBoundingClientRect(): { top: number; height: number } },
+  behavior: 'auto' | 'smooth' = 'auto',
+): void {
+  const box = scroller.getBoundingClientRect();
+  const at = row.getBoundingClientRect();
+  const top = scroller.scrollTop + (at.top - box.top) - (scroller.clientHeight - at.height) / 2;
+  const max = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+  scroller.scrollTo({ top: Math.max(0, Math.min(max, top)), behavior });
+}
+
 type Observer = { observe(target: Element, options?: { box: 'border-box' }): void; unobserve(target: Element): void; disconnect(): void };
 type MutationLike = { observe(target: Node, options: { childList: boolean }): void; disconnect(): void };
 type MutationRecordLike = { addedNodes: ArrayLike<Node>; removedNodes: ArrayLike<Node> };
