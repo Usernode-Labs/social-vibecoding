@@ -449,7 +449,7 @@ function fixPrompt({
     ...(platformRepo ? live.PLATFORM_TEST_NOTE : []),
     ...fixBrowserLines({ readsImages, issues, lean }),
     ...live.APP_SERVER_LINES,
-    ...(appChecks ? live.appChecksLines({ lean }) : []),
+    ...(appChecks ? live.appChecksLines({ lean, firstVersion: true }) : []),
     '',
     `End with two or three sentences saying what you changed. ${live.localeRule(locale)} Do not write a DESCRIPTION block: the proposal's description`,
     'is the build\'s own.',

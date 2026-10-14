@@ -601,29 +601,44 @@ const FIRST_VERSION_SIZE_LINES = Object.freeze([
 // out too (LEAN_PLAN_ORDER_LINES). These replace the complete-first-version,
 // design and size lines below; everything else a first version's spec is
 // told stays as it is.
+//
+// Run 191 (14 Oct 2026), its lean plans' three misses: some cut what the
+// request's own words needed (a poll to settle where to meet drawn as Yes and
+// No, no way to settle it; a promised ingredient list missing entries), one
+// left no way to remove what a person added, and five of six drew two filled
+// buttons on the empty screen (the header's and the empty state's). And three
+// builds wrote their checks under `checks`, which the platform never reads,
+// so the key is named here.
 const LEAN_PLAN_SCOPE_LINES = Object.freeze([
   '- A focused first version: what the request asks for, done well, and nothing it does not name. Done well means',
   '  its own flow works end to end, with honest loading, empty and error states (never a blank loading screen, a',
   '  made-up zero or a raw server error), the phone layout (nothing covering or cutting off content), the populated',
   '  demo and the signature element. It never means more features: the group asks for more once they have used it.',
+  '- What the request names includes what its own words and examples need. Where it says people choose or decide',
+  '  something, they have the choices to pick from and a way to settle on one; where its result promises a list (the',
+  '  steps, the items, the amounts), every entry is there. And a person can remove what they added: that is part of',
+  '  adding it, not an extra.',
   '- The platform\'s own minimums are in scope whether the request names them or not: the populated `?demo=1`, the',
-  '  shutdown handler, two or three dapp.json checks, a way to report a post wherever people post (a Report that',
-  '  records the report, with no thresholds or automatic hiding of its own), `staging:private` on tables of',
-  '  personal data, and a guard on any server fetch of an address a person typed.',
-  '- No product policy or lifecycle that the request and what its creator approved do not name: no moderation',
-  '  thresholds or automatic hiding, no closing, archiving or deciding, no undo or bulk actions, no caps, quotas or',
-  '  retention windows, no polling or live refresh, no saved preferences or local storage, no discovery or import,',
-  '  no sharing or notifications. Where one seems needed, leave it out and name it under "Not in this version".',
+  '  shutdown handler, two or three checks in dapp.json\'s `tests` array (the platform reads no other key), a way to',
+  '  report a post wherever people post (a Report that records the report, with no thresholds or automatic hiding of',
+  '  its own), `staging:private` on tables of personal data, and a guard on any server fetch of an address a person',
+  '  typed.',
+  '- No product policy or lifecycle that the request\'s words and what its creator approved do not need: no moderation',
+  '  thresholds or automatic hiding, no archiving or expiry, no bulk actions, no caps, quotas or retention windows, no',
+  '  polling or live refresh, no saved preferences or local storage, no discovery or import, no sharing or',
+  '  notifications. Where one seems needed, leave it out and name it under "Not in this version".',
   '- Yours to design. The plan\'s look, layout and scope are the triage\'s first sketch: keep it unless it has a',
   '  defect you can name, and say under Assumptions what you replaced and why. What binds you is the request',
   '  itself and what its creator approved, above.',
   '- Short, so the build starts sooner and builds only this: about 15,000 characters in all, the drawn screens',
   '  included. The technical half is about 4,000 characters: the files, each table\'s columns, one line per route.',
   '  Leave the implementation to the build: no SQL, no catalogue of error messages, no unit-test suite (a first',
-  '  version\'s checks are its dapp.json checks), and no server route for the demo of an app that stores nothing.',
+  '  version\'s checks are its dapp.json `tests`), and no server route for the demo of an app that stores nothing.',
   '  At most five assumptions.',
-  '- Within the platform\'s checks: one clear primary action on the main screen, a filled button (small on a screen',
-  '  for reading), tap targets at least 44px tall, and icons as inline SVG, never emoji, the favicon included.',
+  '- Within the platform\'s checks: one clear primary action on each screen, a filled button (small on a screen for',
+  '  reading). On an empty screen that action is the empty state\'s own button, and nothing else there is filled, the',
+  '  header\'s add button included. Tap targets at least 44px tall, and icons as inline SVG, never emoji, the favicon',
+  '  included.',
   '- Ranked. End the technical half with a "Build order" subsection of two short lists. "Must-haves", in order: the',
   '  main action working end to end, the loading, empty and error states, the phone layout, the populated demo and',
   '  the signature element. Then "Not in this version": each idea you left out, one line each. The build does not',
@@ -2378,7 +2393,7 @@ const LEAN_PLAN_ORDER_LINES = Object.freeze([
   '',
   'Build the must-haves in the order the spec\'s "Build order" gives, and nothing it lists under "Not in this',
   'version", even with time left: that time goes to checking and finishing what is there. Write no unit-test suite',
-  'unless the spec\'s technical half asks for one: a first version\'s checks are its dapp.json checks.',
+  'unless the spec\'s technical half asks for one: a first version\'s checks are its dapp.json `tests`.',
 ]);
 
 // Newcomer run five, item 8: a first version's build starts from the
@@ -2575,8 +2590,28 @@ function detachedCaptureOn(env = process.env) {
 // L2: the app's own declared checks, run before a bot build or fix turn ends
 // (worker.js writeAppCheck, build-stop-hook.js's checks gate): how the
 // turn runs them itself, and that the platform runs them too.
-function appChecksLines({ lean = false } = {}) {
+//
+// A first version's (App bench run 191, 14 Oct 2026): three of eighteen
+// builds wrote their checks under `checks`, which the platform never reads,
+// and the gate now sends that back (build-stop-hook.js manifestProblem). And
+// both of the run's checks-gate send-backs were one pair: a `?demo=1` check
+// whose demo stored the viewer's rows, and a check of `/` expecting the
+// empty state, which the platform's checks run at the same time, signed in
+// as the same account, on the same database. The check command runs the
+// `?demo=1` checks first (usernode-bench-capture.js runDeclaredChecks), so
+// that pair fails every time rather than now and then; these lines say why.
+const FIRST_VERSION_CHECKS_LINES = Object.freeze([
+  'A first version declares two or three checks there (the platform reads no other key: checks under `checks` never run),',
+  'and a turn that ends with none is sent back. The checks run at the same time, signed in as one account, on one',
+  'database: rows the `?demo=1` demo stores for the viewer are there when a check of a plain route runs. So a check that a',
+  'plain route shows its empty state needs the viewer\'s demo rows kept off that route: add them to the `?demo=1` answers',
+  'without storing them, or store them marked as demo and leave those out of every answer without `?demo=1`.',
+]);
+
+function appChecksLines({ lean = false, firstVersion = false } = {}) {
   const { APP_CHECK_COMMAND_PATH } = require('./worker');
+  const declared = 'THE APP\'S OWN CHECKS. Every check in dapp.json\'s top-level `tests` array runs on the proposal, signed in, and a';
+  const firstVersionLines = firstVersion ? FIRST_VERSION_CHECKS_LINES : [];
   // The `lean_turns` tweak (bot-configs.js TWEAKS): the gate runs the checks
   // once, when the turn tries to end (build-stop-hook.js), so the build does
   // not run them by hand along the way as well. Each run is a model call and
@@ -2584,19 +2619,22 @@ function appChecksLines({ lean = false } = {}) {
   if (lean) {
     return [
       '',
-      'THE APP\'S OWN CHECKS. Every check dapp.json declares runs on the proposal, signed in, and a failing one blocks its',
-      'merge. Do not run them yourself along the way: when you try to finish, the platform runs every declared check on a',
-      'fresh copy of the app, signed in, and sends you back with what failed. Fix that in the app and finish again. To',
-      `confirm one fix before you finish, \`sh ${APP_CHECK_COMMAND_PATH}\` from the repository root runs them the same way.`,
+      declared,
+      'failing one blocks its merge. Do not run them yourself along the way: when you try to finish, the platform runs every',
+      'declared check on a fresh copy of the app, signed in, and sends you back with what failed. Fix that in the app and',
+      `finish again. To confirm one fix before you finish, \`sh ${APP_CHECK_COMMAND_PATH}\` from the repository root runs them`,
+      'the same way.',
+      ...firstVersionLines,
     ];
   }
   return [
     '',
-    'THE APP\'S OWN CHECKS. Every check dapp.json declares runs on the proposal, signed in, and a failing one blocks its',
-    `merge. Before you finish, run \`sh ${APP_CHECK_COMMAND_PATH}\` from the repository root: it boots a fresh copy of the`,
-    'app on a port and a database of its own, signed in as the proposal\'s checks are (a plain in-loop launch is signed out,',
-    'so its pages are not what the checks see), runs every declared check and prints each result. Fix what fails, in the',
-    'app, and run it again. When you try to finish, the platform may run it too and send you back while a check fails.',
+    declared,
+    `failing one blocks its merge. Before you finish, run \`sh ${APP_CHECK_COMMAND_PATH}\` from the repository root: it boots a`,
+    'fresh copy of the app on a port and a database of its own, signed in as the proposal\'s checks are, runs every declared',
+    'check and prints each result. Fix what fails, in the app, and run it again. When you try to finish, the platform may run',
+    'it too and send you back while a check fails.',
+    ...firstVersionLines,
   ];
 }
 
@@ -2699,7 +2737,7 @@ function buildPrompt({
     ...(platformRepo ? PLATFORM_TEST_NOTE : []),
     ...time,
     ...browserLines({ readsImages, clocked: time.length > 0, reviewed, oneLook, lean }),
-    ...(appChecks ? appChecksLines({ lean }) : []),
+    ...(appChecks ? appChecksLines({ lean, firstVersion }) : []),
     '',
     // #3737: the same design guidance the dev chat builds with (#2817).
     getDesignGuidance({ readsImages }),
@@ -3411,7 +3449,9 @@ function buildTurnRunner({
     if (checksGate && typeof worker.writeAppCheck === 'function') {
       try {
         await worker.writeAppCheck(session.id, { source: require('./bench/capture').scriptSource(), appId: session.app_id });
-        gate = { deadlineMs: null };
+        // A first version must also declare its checks where the platform
+        // reads them (build-stop-hook.js manifestProblem).
+        gate = { deadlineMs: null, ...(firstVersion ? { requireTests: true } : {}) };
       } catch (err) {
         log.warn('homeroom-bot', 'Could not write the app\'s check command; this turn runs without the checks gate', {
           sessionId: session.id, err: err.message,
@@ -4398,6 +4438,7 @@ module.exports = {
   FIRST_VERSION_DESIGN_LINES,
   FIRST_VERSION_PROGRESS_LINES,
   appChecksLines,
+  FIRST_VERSION_CHECKS_LINES,
   appChecksOn,
   detachedCaptureOn,
   guidanceLines,
