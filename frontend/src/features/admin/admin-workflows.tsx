@@ -416,7 +416,7 @@ function WorkflowsSection() {
     <div>
       {!overview.running ? (
         <p id="admin-wf-off" className={`${AdminUI.muted} mb-4`}>
-          No workflow runs in this process (WF_GOVERNANCE_ENABLED is off). What is recorded is still shown.
+          The workflow runtime is not running in this process: it did not start (see the log). The bot's builds run unkept until it does. What is recorded is still shown.
         </p>
       ) : null}
       <Problems overview={overview} onOpen={setAt} onChanged={load} />
