@@ -414,6 +414,28 @@ work alone, and a Stop clicked on one Pod reaches the Pod that runs the turn.
 This is intentionally implemented with the built-in Deployment controller;
 the cluster does not need Caddy, Argo Rollouts, or another rollout CRD.
 
+`platform.conductor.enabled` (on by default) splits the platform in two
+([docs/plans/web-and-conductor.md](../../../docs/plans/web-and-conductor.md)).
+The Deployment above runs `PROCESS_ROLE=web`: it serves people's requests and
+never stands for leader. A second Deployment, `<fullname>-conductor`
+(`platform.conductor.replicas`, 1 by default; more are standbys), runs
+`PROCESS_ROLE=conductor`: it holds the leader lock and runs the leader's work,
+on Pods the Service sends no requests to. Both use the same image, Pod and
+drain. The conductor's Pods keep the platform's `component` label, so every
+network policy that admits the platform admits them; the Service and the
+platform PodDisruptionBudget select `social.usernode.io/serves-requests:
+"true"`, which only the serving Pods carry. The Service is in Argo CD sync wave
+1, after the Deployments are healthy, so the release that first requires that
+label (or drops it, switching the split off) changes the selector only once
+the Pods it selects are rolled out and Ready. The platform Deployment's
+immutable selector also matches the conductor's Pods (ownership keeps them
+apart); select them by `social.usernode.io/process-role` rather than
+`deploy/<fullname>`. A release that switches the split off has the old
+conductor finish its work beside the new Pods, which lead again. The release
+that first switches it on replaces Pods running a build from before the split,
+which do not know a conductor as their successor: they hand over with the
+minute's cutover they had before draining releases, once.
+
 If the candidate never becomes Ready, the Deployment times out without taking
 the old ReplicaSet down. Roll back by restoring the previous OCI chart version
 in the Argo CD source; the same readiness-gated rollout then moves traffic back

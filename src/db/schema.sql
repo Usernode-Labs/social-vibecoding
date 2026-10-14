@@ -14149,6 +14149,38 @@ CREATE TABLE IF NOT EXISTS process_holds (
 CREATE INDEX IF NOT EXISTS idx_process_holds_ref ON process_holds (kind, ref);
 COMMENT ON TABLE process_holds IS 'staging:private';
 
+-- The read-only database roles the leader sets up at its election
+-- (services/debug-access.js usernode_debug_ro, topochain/db-console-role.js
+-- topochain_console_ro), as every other process reads them: a web process
+-- never leads (docs/plans/web-and-conductor.md), and answers the prod-debug
+-- and SQL console routes with what the leader made. `ok` is whether its last
+-- setup succeeded. `secret_enc` is a LOGIN role's password, encrypted with
+-- the data key (services/secrets.js), as app secrets are; a NOLOGIN role has
+-- none. The prod-debug role may not read this table (its deny list says
+-- so), the SQL console masks `secret_enc`, and a staging copy gets no rows.
+CREATE TABLE IF NOT EXISTS platform_db_roles (
+  role       TEXT PRIMARY KEY,
+  ok         BOOLEAN NOT NULL,
+  reason     TEXT,
+  secret_enc TEXT,
+  release    TEXT,
+  ensured_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+COMMENT ON TABLE platform_db_roles IS 'staging:private';
+
+-- What the leader keeps in memory and an admin screen reads, written by the
+-- leader for the processes that do not lead (services/leader-status.js,
+-- docs/plans/web-and-conductor.md): the bench lane, the domain sweep, the
+-- preview reaper, ... One row per status, rewritten every few seconds while
+-- its leader leads; a row nobody rewrote for two minutes is read as none.
+CREATE TABLE IF NOT EXISTS leader_status (
+  key          TEXT PRIMARY KEY,
+  value        JSONB NOT NULL,
+  process_id   TEXT,
+  published_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+COMMENT ON TABLE leader_status IS 'staging:private';
+
 -- Before & after shots EVALS (services/shots-eval.js, its runner in
 -- services/shots-eval-runner.js): an admin trying the shots agent with
 -- another model, prompt or time budget on proposals that have already

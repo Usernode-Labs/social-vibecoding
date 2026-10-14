@@ -82,6 +82,12 @@ app.kubernetes.io/component: postgresql
     {{- if or (lt $draining 0.0) (ne (float64 (int $draining)) $draining) -}}
       {{- fail "platform.drainingMax must be a whole number, 0 or more" -}}
     {{- end -}}
+    {{- if .Values.platform.conductor.enabled -}}
+      {{- $conductors := float64 .Values.platform.conductor.replicas -}}
+      {{- if or (lt $conductors 1.0) (ne (float64 (int $conductors)) $conductors) -}}
+        {{- fail "platform.conductor.replicas must be a whole number, 1 or more" -}}
+      {{- end -}}
+    {{- end -}}
     {{- range $name, $image := dict "platform.workerImage" .Values.platform.workerImage "platform.captureImage" .Values.platform.captureImage -}}
       {{- if not (regexMatch "^sha256:[a-f0-9]{64}$" $image.digest) -}}
         {{- fail (printf "%s.digest must be an immutable sha256 digest when platform is enabled" $name) -}}

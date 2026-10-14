@@ -389,7 +389,7 @@ function invalidateActionsSecretsCache(owner, repo) {
 // linked_issues, optimistically — GitHub reliably closes them, just
 // late) and from the issue-close watcher (with observed closes).
 // Returns how many numbers were recorded.
-function noteIssuesClosed(owner, repo, numbers, ttlMs = ISSUES_CLOSED_SUPPRESS_TTL_MS) {
+function noteIssuesClosedHere(owner, repo, numbers, ttlMs = ISSUES_CLOSED_SUPPRESS_TTL_MS) {
   if (!owner || !repo || !Array.isArray(numbers) || !numbers.length) return 0;
   const key = normRepoKey(owner, repo);
   let entry = closedIssueSuppressions.get(key);
@@ -417,7 +417,7 @@ function noteIssuesClosed(owner, repo, numbers, ttlMs = ISSUES_CLOSED_SUPPRESS_T
 // numbers that turned out to still be open after its polling gave up,
 // so a `Closes #N` GitHub didn't honor doesn't hide a live issue for
 // the full suppression TTL. Returns how many entries were removed.
-function unsuppressIssues(owner, repo, numbers) {
+function unsuppressIssuesHere(owner, repo, numbers) {
   if (!owner || !repo || !Array.isArray(numbers) || !numbers.length) return 0;
   const entry = closedIssueSuppressions.get(normRepoKey(owner, repo));
   if (!entry) return 0;
@@ -2788,7 +2788,7 @@ function clipIssueComments(comments, { max = ISSUE_COMMENTS_KEEP, bodyMax = ISSU
 // because GitHub treats those as case-insensitive while the cache key
 // preserves whatever casing the caller passed. No-op when the repo has no
 // cache entry. Returns true if an entry was expired.
-function invalidateIssuesCache(owner, repo) {
+function invalidateIssuesCacheHere(owner, repo) {
   if (!owner || !repo) return false;
   const target = `${owner}/${repo}`.toLowerCase();
   // Single reads of the repo's issues go too: the merge that closed them is
@@ -2809,6 +2809,55 @@ function invalidateIssuesCache(owner, repo) {
     }
   }
   return false;
+}
+
+// The open-issues copy, its closed-issue suppressions and its single-issue
+// reads are this process's own; what one process learns about a repo's
+// issues, the others hear over the bus (ws.js 'issues_cache', applied with
+// applyIssuesChange, which publishes nothing). A merge, a heal or a close a
+// leader sweep made reaches the lists a web process serves at once, as it
+// did when one process did both (docs/plans/web-and-conductor.md).
+function shareIssuesChange(owner, repo, data) {
+  try { require('./ws-bus').publish('issues_cache', { owner, repo }, data); } catch { /* the TTL still bounds it */ }
+}
+
+function noteIssuesClosed(owner, repo, numbers, ttlMs = ISSUES_CLOSED_SUPPRESS_TTL_MS) {
+  const recorded = noteIssuesClosedHere(owner, repo, numbers, ttlMs);
+  if (recorded) {
+    shareIssuesChange(owner, repo, {
+      closed: numbers.map(Number).filter((n) => Number.isInteger(n) && n > 0),
+      ...(ttlMs !== ISSUES_CLOSED_SUPPRESS_TTL_MS ? { ttlMs } : {}),
+    });
+  }
+  return recorded;
+}
+
+function unsuppressIssues(owner, repo, numbers) {
+  const removed = unsuppressIssuesHere(owner, repo, numbers);
+  if (owner && repo && Array.isArray(numbers) && numbers.length) {
+    shareIssuesChange(owner, repo, { open: numbers.map(Number).filter((n) => Number.isInteger(n) && n > 0) });
+  }
+  return removed;
+}
+
+function invalidateIssuesCache(owner, repo) {
+  const expired = invalidateIssuesCacheHere(owner, repo);
+  if (owner && repo) shareIssuesChange(owner, repo, { invalidate: true });
+  return expired;
+}
+
+/** What another process shared (shareIssuesChange), applied here only. */
+function applyIssuesChange(owner, repo, data = {}) {
+  if (!owner || !repo || !data) return;
+  const numbers = (list) => (Array.isArray(list) ? list.map(Number).filter((n) => Number.isInteger(n) && n > 0) : []);
+  const closed = numbers(data.closed);
+  if (closed.length) {
+    const ttl = Number(data.ttlMs);
+    noteIssuesClosedHere(owner, repo, closed, Number.isFinite(ttl) && ttl > 0 ? ttl : ISSUES_CLOSED_SUPPRESS_TTL_MS);
+  }
+  const open = numbers(data.open);
+  if (open.length) unsuppressIssuesHere(owner, repo, open);
+  if (data.invalidate || closed.length || open.length) invalidateIssuesCacheHere(owner, repo);
 }
 
 // Record a just-created issue so every fetchPublicIssues result includes
@@ -2941,6 +2990,7 @@ module.exports = {
   refreshPublicIssues,
   truncateIssueBodies,
   invalidateIssuesCache,
+  applyIssuesChange,
   noteIssueCreated,
   noteIssuesClosed,
   unsuppressIssues,

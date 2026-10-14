@@ -132,6 +132,36 @@ test('the leader adopts only what no live process holds', { timeout: 120000 }, a
     assert.ok(!adopted.includes(heldLive));
   });
 
+  await t.test('the warm workers a process left behind are adopted; one kept warm or busy elsewhere, or with a turn, is not', async () => {
+    // docs/plans/web-and-conductor.md: a web process's release or crash
+    // elects nobody, so this sweep is what adopts (and later evicts) them.
+    async function idle(label) {
+      const { rows: [s] } = await pool.query(
+        `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, session_title)
+         VALUES ($1, $2, $3, 'active', $4) RETURNING id`, [app.id, user.id, `b-${label}`, label]);
+      return s.id;
+    }
+    const leftWarm = await idle('left-warm');
+    const warmThere = await idle('warm-there');
+    const busyThere = await idle('busy-there');
+    const stopped = await idle('stopped');
+    await pool.query(`INSERT INTO process_holds (process_id, kind, ref) VALUES ('pod-old', 'warm', $1), ('pod-old', 'shots', $2)`,
+      [String(warmThere), String(busyThere)]);
+    await pool.query(`UPDATE platform_processes SET heartbeat_at = NOW() WHERE id = 'pod-old'`);
+    const list = async () => [leftWarm, warmThere, busyThere, left].map((id) => ({ name: `usernode-worker-${id}`, sessionId: id, state: 'running' }))
+      .concat([{ name: `usernode-worker-${stopped}`, sessionId: stopped, state: 'exited' }]);
+    const adopted = [];
+    const n = await server.sweepLeftWarmWorkers({}, { list, adopt: async (w) => { adopted.push(w.sessionId); } });
+    assert.equal(n, 1);
+    assert.deepEqual(adopted, [leftWarm], 'not one warm or busy on a live process, nor one with a turn (the turn sweep\'s), nor one not running');
+    // Nor one this process keeps warm itself.
+    const release = processes.hold('warm', leftWarm);
+    try {
+      adopted.length = 0;
+      assert.equal(await server.sweepLeftWarmWorkers({}, { list, adopt: async (w) => { adopted.push(w.sessionId); } }), 0);
+    } finally { release(); }
+  });
+
   await t.test('nor what this process itself holds', async () => {
     const release = processes.hold('session', left);
     try {

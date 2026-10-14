@@ -2708,9 +2708,28 @@ function _inFlightHold(sessionId, inFlight) {
     release();
   }
 }
+// And while it is registered at all, its worker is warm here: a marker
+// (services/processes.js 'warm', which no drain waits for) so another
+// process neither reports the worker as an orphan, nor adopts it, nor
+// evicts it from under this one (docs/plans/web-and-conductor.md).
+const _warmHolds = new Map(); // sessionId -> release
+function _warmHold(sessionId, warm) {
+  if (warm && !_warmHolds.has(sessionId)) {
+    try { _warmHolds.set(sessionId, require('./processes').hold('warm', Number(sessionId))); } catch { /* no ref */ }
+  } else if (!warm && _warmHolds.has(sessionId)) {
+    const release = _warmHolds.get(sessionId);
+    _warmHolds.delete(sessionId);
+    release();
+  }
+}
 class WarmRegistry extends Map {
-  delete(sessionId) { _inFlightHold(sessionId, false); return super.delete(sessionId); }
-  clear() { for (const id of [..._inFlightHolds.keys()]) _inFlightHold(id, false); super.clear(); }
+  set(sessionId, value) { _warmHold(sessionId, true); return super.set(sessionId, value); }
+  delete(sessionId) { _inFlightHold(sessionId, false); _warmHold(sessionId, false); return super.delete(sessionId); }
+  clear() {
+    for (const id of [..._inFlightHolds.keys()]) _inFlightHold(id, false);
+    for (const id of [..._warmHolds.keys()]) _warmHold(id, false);
+    super.clear();
+  }
 }
 const _warmRegistry = new WarmRegistry();
 
@@ -2781,6 +2800,12 @@ function warmRegistrySnapshot() {
 
 // Register a warm container that already exists (either spawned by us
 // earlier in this process, or adopted from a previous server run).
+// Drop this process's record of a session's worker and leave the worker
+// as it is: another process keeps it warm too (server.js idle eviction).
+function forgetWorker(sessionId) {
+  return _warmRegistry.delete(sessionId);
+}
+
 function adoptWarmWorker(sessionId, containerName = null) {
   _registryUpsert(sessionId, {
     containerName: containerName || workerContainerName(sessionId),
@@ -5933,6 +5958,7 @@ module.exports = {
   BENCH_CAPTURE_SCRIPT_PATH,
   warmRegistrySnapshot,
   adoptWarmWorker,
+  forgetWorker,
   isInFlight,
   isWorkerExecuting,
   getActiveTurnMode,

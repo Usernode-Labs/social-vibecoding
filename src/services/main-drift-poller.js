@@ -60,7 +60,11 @@ const POLL_INTERVAL_MS = parseInt(process.env.MAIN_DRIFT_POLL_MS, 10) || 5 * 60 
 // settle first).
 const FIRST_POLL_DELAY_MS = 30_000;
 
-const inFlight = new Set();
+// A rebuild under way, for every process to see (services/processes.js
+// 'drift_rebuild'): the poll runs on the leader, and an admin's "Check for
+// updates" wherever the request landed (docs/plans/web-and-conductor.md).
+const processes = require('./processes');
+const inFlight = processes.heldSet('drift_rebuild');
 
 // Back off a rebuild that keeps failing for the same commit.
 //
@@ -186,7 +190,7 @@ async function fetchRemoteHead(owner, repo) {
 //
 // `manual: true` (the admin's "Check for updates") skips the backoff wait.
 async function checkAndRedeployOne(config, pool, app, { manual = false } = {}) {
-  if (inFlight.has(app.id)) {
+  if (inFlight.has(app.id) || processes.heldElsewhere('drift_rebuild', app.id)) {
     return { status: 'in_flight', slug: app.slug };
   }
 

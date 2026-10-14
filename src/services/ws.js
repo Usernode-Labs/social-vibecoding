@@ -88,13 +88,18 @@ function _onBusMessage({ kind, routing, data, oversize, fromWorkflow }) {
       // this process's own copy of the open-issues list (github.js keeps one
       // per process). Nothing is sent to sockets; the transition's own
       // issue_update tells browsers to re-read.
+      // Applied here only: every process hears the transition itself.
       if (fromWorkflow && r.owner && r.repo) {
-        const github = require('./github');
-        const numbers = Array.isArray(payload.numbers) ? payload.numbers : [];
-        if (numbers.length) github.noteIssuesClosed(r.owner, r.repo, numbers);
-        if (Array.isArray(payload.open) && payload.open.length) github.unsuppressIssues(r.owner, r.repo, payload.open);
-        github.invalidateIssuesCache(r.owner, r.repo);
+        require('./github').applyIssuesChange(r.owner, r.repo, {
+          closed: payload.numbers, open: payload.open, invalidate: true,
+        });
       }
+      return;
+    case 'issues_cache':
+      // What another process learned of a repo's issues (github.js
+      // shareIssuesChange), for this process's own copy. Nothing is sent to
+      // sockets: the sender's issue_update tells browsers to re-read.
+      if (!oversize && r.owner && r.repo) require('./github').applyIssuesChange(r.owner, r.repo, payload);
       return;
     case 'homeroom_bot':
       // Not a socket event at all: the Homeroom bot's loop runs on one Pod
@@ -120,6 +125,14 @@ function _onBusMessage({ kind, routing, data, oversize, fromWorkflow }) {
     case 'bench_cancel':
       if (!oversize) void Promise.resolve(require('./bench/lane').receiveCancel(payload))
         .catch((err) => log.warn('ws', 'A bench cancel here failed', { err: err.message }));
+      return;
+    // Wakes for the leader's loops, asked by a process that does not run
+    // them (docs/plans/web-and-conductor.md): the one running each passes.
+    case 'bench_wake':
+      require('./bench/lane').wakeHere();
+      return;
+    case 'shots_eval_wake':
+      require('./shots-eval-runner').wakeHere();
       return;
     default:
       log.warn('ws', 'unknown bus kind', { kind });

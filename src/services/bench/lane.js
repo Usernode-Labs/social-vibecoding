@@ -1566,8 +1566,21 @@ function stop() {
   timer = null;
 }
 
-/** A pass now; a no-op on a Pod that is not running the lane. */
+/**
+ * A pass now. The lane runs on the leader, and a launch, a cancel or a
+ * reopen lands wherever the request did (a web process never leads,
+ * docs/plans/web-and-conductor.md): a process not running the lane asks the
+ * others over the bus (ws.js 'bench_wake'), and the one running it passes.
+ * True when the pass was scheduled here.
+ */
 function wake() {
+  if (wakeHere()) return true;
+  try { require('../ws-bus').publish('bench_wake', null, {}); } catch { /* the lane polls anyway */ }
+  return false;
+}
+
+/** The bus half of wake(): a pass if the lane runs here, never a publish. */
+function wakeHere() {
   if (!laneOn) return false;
   schedule(0);
   return true;
@@ -1600,6 +1613,7 @@ function laneStatus() {
 
 module.exports = {
   receiveCancel,
+  wakeHere,
   MAX_CONCURRENCY,
   HEAVY_STAGES,
   MAX_HEAVY_PER_RUN,
