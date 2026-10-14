@@ -85,8 +85,12 @@ const _stagingBuilds = new Map(); // sessionId -> { commitHash, promise, tail }
 // check the sweep could classify a mid-build clone as orphaned and drop
 // it out from under pg_restore — the exact friendly-fire failure the
 // per-session build serialization above exists to prevent.
+// For every live platform process: this one's builds, then the ones the
+// others hold (services/processes.js), so a process finishing its work after
+// a release and the one that replaced it never drop each other's clones.
 function hasInFlightBuild(sessionId) {
-  return _stagingBuilds.has(Number(sessionId));
+  if (_stagingBuilds.has(Number(sessionId))) return true;
+  try { return require('./processes').heldElsewhere('staging_build', Number(sessionId)); } catch { return false; }
 }
 
 // Every session with a staging build in flight (or queued) in this process.
@@ -184,7 +188,11 @@ async function buildAndDeployStaging(config, session, app, commitHash) {
   const tail = promise.then(() => {}, () => {});
   const entry = { commitHash, promise, tail };
   _stagingBuilds.set(key, entry);
+  // Held until it settles: what a draining process finishes, and what the
+  // other processes see as building (hasInFlightBuild).
+  const releaseHold = require('./processes').hold('staging_build', key);
   tail.then(() => {
+    releaseHold();
     // Self-clean once we're the last link so idle sessions don't leak
     // entries. Identity-guarded so a newer queued build isn't dropped.
     if (_stagingBuilds.get(key) === entry) _stagingBuilds.delete(key);

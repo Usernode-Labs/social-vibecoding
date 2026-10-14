@@ -256,17 +256,31 @@ function createLeadership({
     stopped = true;
     if (pollHandle) { clearInterval(pollHandle); pollHandle = null; }
     if (heartbeatHandle) { clearInterval(heartbeatHandle); heartbeatHandle = null; }
-    if (client) {
+    const c = client;
+    client = null;
+    if (c) {
       try {
-        if (isLeader) await client.query('SELECT pg_advisory_unlock($1)', [LEADER_LOCK_KEY]);
+        if (isLeader) await c.query('SELECT pg_advisory_unlock($1)', [LEADER_LOCK_KEY]);
       } catch (_) { /* best effort */ }
-      try { await client.end(); } catch (_) { /* best effort */ }
+      try { await c.end(); } catch (_) { /* best effort */ }
     }
+    isLeader = false;
+  }
+
+  // Stop leading now, while the process goes on finishing its work
+  // (docs/plans/draining-releases.md): the standby promotes within a poll.
+  // The connection's end is no longer a lost lock, and nothing here stands
+  // for election again. Its leader work must already have stopped.
+  async function resign() {
+    const was = isLeader;
+    await stop();
+    if (was) log.info('leadership', 'Resigned leadership; this process finishes its work and exits', { identity });
   }
 
   return {
     start,
     stop,
+    resign,
     get isLeader() { return isLeader; },
     get enabled() { return enabled; },
     get identity() { return identity; },

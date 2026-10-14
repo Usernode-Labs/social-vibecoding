@@ -133,7 +133,9 @@ const SET_FOCUS_APP_TOOL = Object.freeze({
 });
 
 // Stop handles for the turns this process is running, by agent session id.
-const stopRegistry = new Map();
+// Each is this process's hold on the turn (services/processes.js): a
+// draining process finishes it before it exits.
+const stopRegistry = require('../processes').heldMap('agent_turn');
 
 // Whether this turn's model can look at pictures: a Claude model always can,
 // an OpenRouter one when the catalog lists image input (openrouter-mayor.js).

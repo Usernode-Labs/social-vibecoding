@@ -146,12 +146,15 @@ test('an eval trial\'s shots turn bills the platform, within its eval\'s cap, an
 test('the proxy sends an eval trial\'s calls on the platform key, gated by the eval, and adds them to the trial', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'anthropic-proxy.js'), 'utf8');
   const branch = src.slice(src.indexOf('let shotsEval = null;'), src.indexOf('const isSyncTurn = '));
-  assert.match(branch, /getActiveTurnMode\(sessionId\) === 'shots'/, 'an eval turn is a shots turn the runner is running');
-  assert.match(branch, /evalRunner\.billsSession\(sessionId\)/);
-  assert.match(branch, /shotsEval\.overCap\(sessionId, 0\)[\s\S]*budget_exceeded/, 'an eval at its cap is refused before the call');
+  assert.match(branch, /turnMode = workerMod \? await workerMod\.turnModeFor\(sessionId\)/, 'the turn\'s mode, whichever process runs it');
+  assert.match(branch, /if \(turnMode === 'shots'\)/, 'an eval turn is a shots turn');
+  assert.match(branch, /evalRunner\.billsSession\(sessionId\)/, 'the runner here bills the trial');
+  assert.match(branch, /evalRunner\.remoteTrialFor\(pool, sessionId\)[\s\S]*evalRunner\.remoteOverCap\(remote, extra\)[\s\S]*evalRunner\.noteRemoteSpend\(pool, remote\.trialId, cents\)/,
+    'a trial another process runs is billed on its row (docs/plans/draining-releases.md)');
+  assert.match(branch, /shotsEval\.overCap\(0\)[\s\S]*budget_exceeded/, 'an eval at its cap is refused before the call');
   assert.match(branch, /apiKey: config\.anthropicApiKey/, 'the platform key pays');
-  assert.match(branch, /shouldKill: \(currentCallCents\) => \(shotsEval\.overCap\(sessionId, currentCallCents\)/, 'a call that would pass the cap is cut off');
-  assert.match(branch, /shotsEval\.noteSpend\(sessionId, result\.costCents\);\s*return;/, 'each priced call is added to the trial, and nothing else');
+  assert.match(branch, /shouldKill: \(currentCallCents\) => \(shotsEval\.overCap\(currentCallCents\)/, 'a call that would pass the cap is cut off');
+  assert.match(branch, /shotsEval\.noteSpend\(result\.costCents\);\s*return;/, 'each priced call is added to the trial, and nothing else');
   assert.doesNotMatch(branch, /noteAgentSpend|userBudgetCache|systemBudgetCache|loadUserApiKey/,
     'never the author\'s allowance or key, the system bucket, or the change\'s ledger');
   assert.ok(src.indexOf('let shotsEval = null;') < src.indexOf('limits.resolveCaps('), 'it is decided before any allowance is read');

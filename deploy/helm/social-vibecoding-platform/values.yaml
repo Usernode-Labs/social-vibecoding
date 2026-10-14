@@ -35,6 +35,16 @@ platform:
   # app (docs/workflows.md). Needs workflowMergeFollowupsEnabled. A rolling
   # change is safe in both directions; see docs/kubernetes-operations.md.
   workflowAppDeliveryEnabled: false
+  # How long a platform Pod a release replaced keeps finishing the work it
+  # started (turns and what follows them, previews, checks, shots runs,
+  # merges) before it hands the rest over and exits. It exits as soon as it
+  # holds nothing, so this is a ceiling, not a cost; the Pod's grace period
+  # is this plus a minute (docs/plans/draining-releases.md).
+  drainMinutes: 40
+  # How many replaced Pods may finish work at once, beside the one serving.
+  # When releases come faster than work finishes, the oldest hands its work
+  # over first rather than keep one Pod per release.
+  drainingMax: 2
   replicas: 1
   image:
     repository: ghcr.io/replace-me/social-vibecoding-platform

@@ -110,7 +110,10 @@ const TWICE_INTERRUPTED = 'interrupted: the platform restarted during it twice';
 // A later change's side builds' runs (services/bot-configs.js LATER_SIDE_RUN_KIND).
 const LATER_SIDE_RUN_KIND = 'bot_config_later';
 
-const inFlight = new Map(); // trialId -> { runId, est, sessionId, promise, heavy, recovered? }
+// trialId -> { runId, est, sessionId, promise, heavy, recovered? }. Each is
+// this process's hold on the trial (services/processes.js), so a cancel on
+// another platform process reaches it (receiveCancel).
+const inFlight = require('../processes').heldMap('bench_trial');
 let laneOn = false;
 let laneConfig = null;
 let timer = null;
@@ -481,13 +484,46 @@ async function cancelRun(pool, runId, deps = {}) {
     "UPDATE bench_trials SET status = 'cancelled', finished_at = NOW() WHERE run_id = $1 AND status = 'pending'",
     [Number(runId)],
   );
+  stopRunHere(runId, deps);
+  // Trials of the run another platform process is running (one finishing its
+  // work after a release): it stops them the same way, told over the bus.
+  require('../ws-bus').publish('bench_cancel', null, { runId: Number(runId) });
+  return { ok: true };
+}
+
+function stopRunHere(runId, deps = {}) {
   const worker = deps.worker || require('../worker');
+  let n = 0;
   for (const [trialId, f] of inFlight) {
     if (f.runId !== Number(runId) || !f.sessionId) continue;
     Promise.resolve(worker.stopTurn(f.sessionId)).catch(() => {});
     log.info('bench', 'Stopping a trial of a cancelled run', { trialId });
+    n += 1;
   }
-  return { ok: true };
+  return n;
+}
+
+function stopTrialHere(id, deps = {}) {
+  const f = inFlight.get(id);
+  if (!f) return false;
+  f.cancelled = true;
+  if (f.sessionId) {
+    const worker = deps.worker || require('../worker');
+    Promise.resolve(worker.stopTurn(f.sessionId)).catch(() => {});
+  }
+  log.info('bench', 'Stopping one trial', { trialId: id });
+  return true;
+}
+
+/**
+ * The bus's `bench_cancel` (services/ws.js): a run or a trial was cancelled
+ * on another process, which has marked it in the database; whatever of it
+ * runs here stops.
+ */
+function receiveCancel(payload) {
+  if (Number.isInteger(Number(payload?.trialId)) && payload.trialId != null) return stopTrialHere(Number(payload.trialId));
+  if (Number.isInteger(Number(payload?.runId)) && payload.runId != null) return stopRunHere(Number(payload.runId)) > 0;
+  return false;
 }
 
 /**
@@ -504,19 +540,16 @@ async function cancelTrial(pool, trialId, deps = {}) {
     [id],
   );
   if (pending) { wake(); return { ok: true, status: 'cancelled' }; }
-  const f = inFlight.get(id);
-  if (!f) {
-    const { rows: [t] } = await pool.query('SELECT status FROM bench_trials WHERE id = $1', [id]);
-    if (!t) return httpError(404, 'No such trial');
-    return httpError(409, t.status === 'running' ? 'That trial is running on another process' : `That trial is already ${t.status}`);
+  if (stopTrialHere(id, deps)) return { ok: true, status: 'stopping' };
+  // Running on another platform process: that process stops it.
+  if (require('../processes').heldElsewhere('bench_trial', id)) {
+    require('../ws-bus').publish('bench_cancel', null, { trialId: id });
+    log.info('bench', 'Cancel forwarded to the process running the trial', { trialId: id });
+    return { ok: true, status: 'stopping' };
   }
-  f.cancelled = true;
-  if (f.sessionId) {
-    const worker = deps.worker || require('../worker');
-    Promise.resolve(worker.stopTurn(f.sessionId)).catch(() => {});
-  }
-  log.info('bench', 'Stopping one trial', { trialId: id });
-  return { ok: true, status: 'stopping' };
+  const { rows: [t] } = await pool.query('SELECT status FROM bench_trials WHERE id = $1', [id]);
+  if (!t) return httpError(404, 'No such trial');
+  return httpError(409, t.status === 'running' ? 'That trial is running on another process' : `That trial is already ${t.status}`);
 }
 
 /**
@@ -1490,6 +1523,7 @@ function laneStatus() {
 }
 
 module.exports = {
+  receiveCancel,
   MAX_CONCURRENCY,
   HEAVY_STAGES,
   MAX_HEAVY_PER_RUN,

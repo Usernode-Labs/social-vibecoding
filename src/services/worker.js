@@ -4169,6 +4169,41 @@ function getActiveTurnMode(sessionId) {
   return (meta && meta.inFlight) ? (meta.activeTurnMode || null) : null;
 }
 
+// docs/plans/draining-releases.md: a turn another platform process runs (one
+// finishing its work after a release, or the one that replaced it) still
+// calls back through whichever process the Service picks. What the proxy
+// must know about it (its mode, its id) comes from its durable record, cached
+// for REMOTE_TURN_TTL_MS: the proxy asks on every model call. Null for a turn
+// this process runs, and for a session no live process holds.
+const REMOTE_TURN_TTL_MS = 5000;
+const _remoteTurns = new Map(); // sessionId -> { at, turn: { mode, turnId } | null }
+
+async function remoteTurn(sessionId) {
+  const sid = Number(sessionId);
+  const meta = _warmRegistry.get(sid);
+  if (meta && meta.inFlight) return null;
+  if (!require('./processes').heldElsewhere('session', sid)) return null;
+  const cached = _remoteTurns.get(sid);
+  if (cached && Date.now() - cached.at < REMOTE_TURN_TTL_MS) return cached.turn;
+  const pool = _getPoolSafe();
+  if (!pool) return null;
+  let turn = null;
+  try {
+    const record = await turnLifecycle.loadActiveTurn(pool, sid);
+    turn = record ? { mode: record.mode || null, turnId: record.turnId || null } : null;
+  } catch { turn = null; }
+  if (_remoteTurns.size > 500) _remoteTurns.clear();
+  _remoteTurns.set(sid, { at: Date.now(), turn });
+  return turn;
+}
+
+// The mode of the turn in flight on a session, whichever process runs it.
+async function turnModeFor(sessionId) {
+  const mode = getActiveTurnMode(sessionId);
+  if (mode) return mode;
+  return (await remoteTurn(sessionId))?.mode || null;
+}
+
 // ──────────────────────────────────────────────────────────────────────
 // #664: per-turn BYOK spillover accounting
 // ──────────────────────────────────────────────────────────────────────
@@ -4188,6 +4223,17 @@ function noteTurnByokSpend(sessionId, cents) {
   const sid = Number(sessionId);
   if (!(cents > 0)) return;
   const meta = _warmRegistry.get(sid);
+  // A turn another process runs: the durable mirror here, and that process's
+  // tally for its settlement told over the bus (receiveTurnByok).
+  if (!(meta && meta.inFlight) && require('./processes').heldElsewhere('session', sid)) {
+    void remoteTurn(sid).then(async (turn) => {
+      if (!turn?.turnId) return;
+      const pool = _getPoolSafe();
+      if (pool) await turnLifecycle.incrementByokCents(pool, { sessionId: sid, turnId: turn.turnId, cents });
+      require('./ws-bus').publish('turn_byok', null, { sessionId: sid, turnId: turn.turnId, cents });
+    }).catch((err) => log.warn('worker', 'Failed to record byok spend for a turn elsewhere', { sessionId: sid, err: err.message }));
+    return;
+  }
   _registryUpsert(sid, { turnByokCents: ((meta && meta.turnByokCents) || 0) + cents });
   const pool = _getPoolSafe();
   const activeTurnId = meta?.activeTurnId || null;
@@ -4217,8 +4263,33 @@ function getTurnByokCents(sessionId) {
 function markTurnByokSwitched(sessionId) {
   const sid = Number(sessionId);
   const meta = _warmRegistry.get(sid);
+  // A turn another process runs: no registry entry is made for it here; once
+  // per session per REMOTE_SWITCH_MS stands in for once per turn.
+  if (!(meta && meta.inFlight) && require('./processes').heldElsewhere('session', sid)) {
+    const at = _remoteByokSwitched.get(sid);
+    if (at && Date.now() - at < REMOTE_SWITCH_MS) return false;
+    if (_remoteByokSwitched.size > 500) _remoteByokSwitched.clear();
+    _remoteByokSwitched.set(sid, Date.now());
+    return true;
+  }
   if (meta && meta.turnByokSwitched) return false;
   _registryUpsert(sid, { turnByokSwitched: true });
+  return true;
+}
+const REMOTE_SWITCH_MS = 10 * 60 * 1000;
+const _remoteByokSwitched = new Map(); // sessionId -> when
+
+// The bus's `turn_byok` (services/ws.js): another process's proxy paid a call
+// of the turn this process runs with the owner's key, and recorded it
+// durably. Added to this process's tally for the turn-end settlement only
+// when it is still the same turn.
+function receiveTurnByok(payload) {
+  const sid = Number(payload?.sessionId);
+  const cents = Number(payload?.cents);
+  if (!Number.isInteger(sid) || !(cents > 0)) return false;
+  const meta = _warmRegistry.get(sid);
+  if (!meta || !meta.inFlight || !meta.activeTurnId || String(meta.activeTurnId) !== String(payload.turnId)) return false;
+  _registryUpsert(sid, { turnByokCents: (meta.turnByokCents || 0) + cents });
   return true;
 }
 
@@ -5832,6 +5903,9 @@ module.exports = {
   isInFlight,
   isWorkerExecuting,
   getActiveTurnMode,
+  turnModeFor,
+  remoteTurn,
+  receiveTurnByok,
   // #664: per-turn BYOK spillover accounting (worker Anthropic proxy +
   // turn-end settlement)
   noteTurnByokSpend,

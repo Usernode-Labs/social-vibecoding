@@ -262,6 +262,18 @@ export async function startWorkflowLoops(): Promise<void> {
   if (rows.length) log!.info('workflow', 'Enrolled open governance proposals', { count: rows.length });
 }
 
+// The process stops leading but finishes its running work
+// (docs/plans/draining-releases.md): no slot, timer or claim from here on;
+// stopWorkflow() later aborts whatever is still running.
+export async function quiesceWorkflow(): Promise<void> {
+  if (runtime) await runtime.quiesce();
+}
+
+// The work items this process is running now (the drain waits for them).
+export function workflowWorkRunning(): number {
+  return runtime ? runtime.running() : 0;
+}
+
 export async function stopWorkflow(): Promise<void> {
   const r = runtime;
   runtime = null;

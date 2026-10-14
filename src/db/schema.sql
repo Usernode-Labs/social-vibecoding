@@ -14054,6 +14054,47 @@ CREATE TABLE IF NOT EXISTS leader_sweeps (
   last_run_at TIMESTAMPTZ NOT NULL
 );
 
+-- The platform's processes, and what each one is doing that no other may
+-- adopt, tear down, duplicate or call idle (services/processes.js,
+-- docs/plans/draining-releases.md). A release no longer cuts the Pod it
+-- replaces: that Pod finishes its work while the new one serves, so two
+-- processes run live work at once and each must see the other's. A process
+-- writes its row at boot, beats it every 10 seconds, marks it `draining`
+-- (with its deadline) as shutdown begins and deletes it as it exits; one
+-- whose beat is older than 45 seconds is gone, whatever the row says, and the
+-- leader deletes such rows (holds go with them). Private to staging clones:
+-- a preview copying production's rows would believe production's work its
+-- own, live.
+CREATE TABLE IF NOT EXISTS platform_processes (
+  id                TEXT PRIMARY KEY,
+  release           TEXT,
+  role              TEXT NOT NULL DEFAULT 'all',
+  host              TEXT,
+  ip                TEXT,
+  state             TEXT NOT NULL DEFAULT 'serving',
+  started_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  heartbeat_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  drain_started_at  TIMESTAMPTZ,
+  drain_deadline_at TIMESTAMPTZ,
+  CONSTRAINT platform_processes_state_check CHECK (state IN ('serving', 'draining'))
+);
+CREATE INDEX IF NOT EXISTS idx_platform_processes_heartbeat ON platform_processes (heartbeat_at);
+COMMENT ON TABLE platform_processes IS 'staging:private';
+
+-- One row per thing a process holds: `kind` (a session's turn, a preview
+-- build, a shots run, ...; processes.js KINDS) for `ref` (its id). Written
+-- on the process's first hold of it and removed on its last release, and the
+-- whole set written again with every beat.
+CREATE TABLE IF NOT EXISTS process_holds (
+  process_id TEXT NOT NULL REFERENCES platform_processes(id) ON DELETE CASCADE,
+  kind       TEXT NOT NULL,
+  ref        TEXT NOT NULL,
+  since      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (process_id, kind, ref)
+);
+CREATE INDEX IF NOT EXISTS idx_process_holds_ref ON process_holds (kind, ref);
+COMMENT ON TABLE process_holds IS 'staging:private';
+
 -- Before & after shots EVALS (services/shots-eval.js, its runner in
 -- services/shots-eval-runner.js): an admin trying the shots agent with
 -- another model, prompt or time budget on proposals that have already
@@ -14148,6 +14189,11 @@ CREATE TABLE IF NOT EXISTS shots_eval_trials (
     CHECK (state IN ('planned', 'provisioning', 'exploring', 'reviewing', 'verified', 'failed', 'cancelled')),
   CONSTRAINT shots_eval_trials_repetition_check CHECK (repetition BETWEEN 1 AND 3)
 );
+-- What the Anthropic proxy billed for the trial on a process other than the
+-- one running it (services/shots-eval-runner.js noteRemoteSpend): during a
+-- release the runner may finish a trial on a Pod the Service no longer sends
+-- its shots agent's calls to. Settled into cost_cents with the rest.
+ALTER TABLE shots_eval_trials ADD COLUMN IF NOT EXISTS proxy_cents NUMERIC(12,4) NOT NULL DEFAULT 0;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_shots_eval_trials_arm
   ON shots_eval_trials (eval_run_id, session_id, COALESCE(config_id, 0), repetition);
 CREATE INDEX IF NOT EXISTS idx_shots_eval_trials_planned
