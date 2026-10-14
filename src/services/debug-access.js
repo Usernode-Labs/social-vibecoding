@@ -514,16 +514,18 @@ async function runQuery(sql, { config = null } = {}) {
     throw err;
   }
   let res;
-  try {
-    res = await _getRoPool(config).query(sql);
-  } catch (err) {
-    // 28P01: the password was rotated by a newer leader's setup. Its record
-    // has the new one; ask once more with it.
-    if (err.code !== '28P01') throw err;
-    const before = _roPassword;
-    await loadShared(config, { force: true });
-    if (!_available || _roPassword === before) throw err;
-    res = await _getRoPool(config).query(sql);
+  for (let attempt = 1; ; attempt++) {
+    try {
+      res = await _getRoPool(config).query(sql);
+      break;
+    } catch (err) {
+      // 28P01: the password was rotated by a newer leader's setup. Its
+      // record has the new one; ask once more with it.
+      if (err.code !== '28P01' || attempt > 1) throw err;
+      const before = _roPassword;
+      await loadShared(config, { force: true });
+      if (!_available || _roPassword === before) throw err;
+    }
   }
   // Multi-statement strings resolve to an array of results; report the
   // last one (writes are impossible regardless — see role setup).
