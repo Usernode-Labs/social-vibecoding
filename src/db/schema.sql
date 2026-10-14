@@ -13519,9 +13519,14 @@ CREATE TRIGGER wf_events_writer
 -- guard below checks before it guards a row. Code outside the machine that
 -- must leave such a row alone (a legacy migration, a backfill) asks the same
 -- question in its WHERE clause, so the two cannot disagree.
+-- An instance a machine has handed back holds nothing: 'detached' (its flag
+-- was turned off and the old paths own the row again) and the preview
+-- machine's 'retired' (a retired preview's row is the old paths' again, as
+-- an unarchived proposal's must be until its next event).
 CREATE OR REPLACE FUNCTION wf_holds(machine_name TEXT, instance_key TEXT) RETURNS BOOLEAN AS $$
   SELECT EXISTS (SELECT 1 FROM wf_settings WHERE key = 'enabled:' || machine_name)
-     AND EXISTS (SELECT 1 FROM wf_instances WHERE machine = machine_name AND key = instance_key)
+     AND EXISTS (SELECT 1 FROM wf_instances WHERE machine = machine_name AND key = instance_key
+                    AND NOT (state = 'detached' OR (machine_name = 'preview' AND state = 'retired')))
 $$ LANGUAGE sql STABLE;
 
 CREATE OR REPLACE FUNCTION wf_guard_owned_columns() RETURNS TRIGGER AS $$
@@ -13677,6 +13682,66 @@ CREATE TRIGGER apps_wf_delivery_owned
         OR OLD.deploy_from_sha IS DISTINCT FROM NEW.deploy_from_sha)
   EXECUTE FUNCTION wf_guard_owned_columns('@enrolled=app-delivery/app:',
     'deploy_state', 'deploy_started_at', 'deploy_from_sha');
+
+-- preview (src/workflow/preview/): a proposal's preview and its required
+-- checks, one instance per session. For a session it holds, it owns the
+-- preview's columns (what serves, from the serving attempt's receipt) and
+-- the checks' (which revision the verdict is for, and the verdict), and
+-- writes them in the transition that decides. checks_progress and
+-- check_phase stay the run's progress stream (a run says while it waits for
+-- a checks slot, and when it starts testing) and are not guarded.
+DROP TRIGGER IF EXISTS chat_sessions_wf_preview_owned ON chat_sessions;
+CREATE TRIGGER chat_sessions_wf_preview_owned
+  BEFORE UPDATE ON chat_sessions
+  FOR EACH ROW
+  WHEN (OLD.staging_url IS DISTINCT FROM NEW.staging_url
+        OR OLD.staging_container_id IS DISTINCT FROM NEW.staging_container_id
+        OR OLD.staging_image_ref IS DISTINCT FROM NEW.staging_image_ref
+        OR OLD.staging_build_ref IS DISTINCT FROM NEW.staging_build_ref
+        OR OLD.staging_runtime_kind IS DISTINCT FROM NEW.staging_runtime_kind
+        OR OLD.staging_runtime_name IS DISTINCT FROM NEW.staging_runtime_name
+        OR OLD.staging_commit_sha IS DISTINCT FROM NEW.staging_commit_sha
+        OR OLD.checks_commit_sha IS DISTINCT FROM NEW.checks_commit_sha
+        OR OLD.check_state IS DISTINCT FROM NEW.check_state
+        OR OLD.test_results IS DISTINCT FROM NEW.test_results
+        OR OLD.check_error_detail IS DISTINCT FROM NEW.check_error_detail
+        OR OLD.consecutive_check_failures IS DISTINCT FROM NEW.consecutive_check_failures
+        OR OLD.check_next_retry_at IS DISTINCT FROM NEW.check_next_retry_at
+        OR OLD.console_check_state IS DISTINCT FROM NEW.console_check_state
+        OR OLD.capture_state IS DISTINCT FROM NEW.capture_state)
+  EXECUTE FUNCTION wf_guard_owned_columns('@enrolled=preview/session:',
+    'staging_url', 'staging_container_id', 'staging_image_ref', 'staging_build_ref', 'staging_runtime_kind',
+    'staging_runtime_name', 'staging_commit_sha', 'checks_commit_sha', 'check_state',
+    'test_results', 'check_error_detail', 'consecutive_check_failures', 'check_next_retry_at',
+    'console_check_state', 'capture_state');
+
+-- A checks run's media (screenshots, recordings) while the run is under
+-- way: its handler stores them here under the run's id, and the transition
+-- that settles the run publishes them to session_visuals with its verdict,
+-- in one transaction. A run that is cancelled or superseded never reaches
+-- session_visuals; what it held goes when the session's next run settles,
+-- or when its preview is retired. Same columns as session_visuals.
+CREATE TABLE IF NOT EXISTS check_run_media (
+  id                   VARCHAR(32) PRIMARY KEY,
+  run_id               TEXT        NOT NULL,
+  session_id           INTEGER     NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  commit_hash          VARCHAR(64),
+  kind                 VARCHAR(8)  NOT NULL,
+  media                VARCHAR(8)  NOT NULL,
+  content_type         VARCHAR(32) NOT NULL,
+  data                 BYTEA       NOT NULL,
+  captured_path        VARCHAR(512),
+  capture_index        SMALLINT    NOT NULL DEFAULT 0,
+  captured_viewport    VARCHAR(16),
+  shot_status          SMALLINT,
+  before_fell_back     BOOLEAN     NOT NULL DEFAULT FALSE,
+  scenario_id          VARCHAR(96),
+  scenario_fingerprint VARCHAR(64),
+  created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS check_run_media_run_idx ON check_run_media (run_id);
+CREATE INDEX IF NOT EXISTS check_run_media_session_idx ON check_run_media (session_id);
+COMMENT ON TABLE check_run_media IS 'staging:private';
 
 -- platform_live_at: a merge into Homeroom itself, when a production build
 -- that carries it first started serving. Homeroom ships in a release cut
