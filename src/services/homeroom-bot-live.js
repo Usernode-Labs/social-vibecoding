@@ -3458,8 +3458,11 @@ function buildTurnRunner({
   // the turn succeeded: discardFailedTurn).
   const observe = async ({ tip }) => {
     let ahead = 1;
+    // A guarded client (a bench trial's) refuses the read by throwing at
+    // once: that, like any failure, leaves the count at one.
     if (typeof deps.github?.compareCommitAncestry === 'function') {
-      ahead = await deps.github.compareCommitAncestry(repoOwner, repoName, 'main', tip)
+      ahead = await Promise.resolve()
+        .then(() => deps.github.compareCommitAncestry(repoOwner, repoName, 'main', tip))
         .then((c) => Math.max(1, Number(c.aheadBy) || 1)).catch(() => 1);
     }
     return { result: { pushOk: true, sha: tip, ahead, lastResultText: '', observed: true }, estimatedCostUsd: null, logicalTurnId: null };

@@ -224,6 +224,9 @@ async function runTurn(steps, key, {
     arm(budgetMs);
     try {
       return { routed: await dispatch({}), stopped, followed: false };
+    } catch (err) {
+      // The dispatch failing is the turn failing, as a durable step reads it.
+      return { routed: { error: `dispatch: ${err.message}` }, stopped, followed: false };
     } finally {
       disarm();
     }

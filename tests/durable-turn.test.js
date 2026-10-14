@@ -77,6 +77,15 @@ test('with the inert context the turn is dispatched and timed as before, and not
   assert.deepEqual(out, { routed: { result: { pushOk: true } }, stopped: false, followed: false });
 });
 
+test('with the inert context a dispatch that throws is the turn failing, as on a durable step', async () => {
+  const out = await durableTurn.runTurn(durableSteps.none(), 'triage', {
+    pool: pool(), session: SESSION, mode: 'scout', budgetMs: 1000,
+    dispatch: async () => { throw new Error('boom'); },
+    deps: { worker: fakeWorker() },
+  });
+  assert.deepEqual(out, { routed: { error: 'dispatch: boom' }, stopped: false, followed: false });
+});
+
 test('the clock stops a turn that runs past its budget', async () => {
   let stops = 0;
   const out = await durableTurn.runTurn(durableSteps.none(), 'build', {
