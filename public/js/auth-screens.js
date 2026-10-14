@@ -213,8 +213,13 @@
       // An invite link a visitor signed in from (App.restoreFromHash
       // remembers it): back to it, so it is followed as the new session.
       if (/^\/invite\/[A-Za-z0-9_-]{22}$/.test(value)) return value;
-      if (value.startsWith('#')) return '/' + value;
-      return '/';
+      // A fragment link keeps the address's query, the way every other
+      // screen change does (App._rootUrl): a shared demo link is
+      // `/?demo=1#app/<slug>/board`, and without its `?demo=1` the screen it
+      // names has no demo in it, or falls back to Home (#4789).
+      const root = typeof App !== 'undefined' ? App._rootUrl : null;
+      if (value.startsWith('#')) return typeof root === 'function' ? root(value) : '/' + value;
+      return typeof root === 'function' ? root('') : '/';
     },
 
     // Anonymous boot entry (App.enterAnonymous). Routing lives in
