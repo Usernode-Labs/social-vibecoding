@@ -365,7 +365,7 @@ test('the preview build asks for the template and records how the clone went', (
 test('template clone uses two bounded connections for 101 redactions and closes both', async () => {
   const fixture = loadDbManager({ templateComment: fresh(),
     privateTables: Array.from({ length: 82 }, (_, i) => `public.private_${i}`),
-    privateColumns: Array.from({ length: 19 }, (_, i) => `public.users|secret_${i}|f|`),
+    privateColumns: Array.from({ length: 19 }, (_, i) => `public.users|secret_${i}|f||f`),
   });
   try {
     const result = await fixture.dbManager.cloneDatabase('app_demo', 'app_demo_staging_s8_abc123', { viaTemplate: true });
@@ -378,22 +378,25 @@ test('template clone uses two bounded connections for 101 redactions and closes 
       assert.equal(c.config.query_timeout, 30000);
     }
     assert.equal(fixture.calls.filter((c) => c.cmd === 'pg' && /^TRUNCATE/.test(c.sql)).length, 82);
-    assert.equal(fixture.calls.filter((c) => c.cmd === 'pg' && /^UPDATE/.test(c.sql)).length, 19);
-    assert.ok(!fixture.calls.some((c) => c.cmd === 'psql' && /TRUNCATE|UPDATE/.test(c.sql)));
+    const scrubs = fixture.calls.filter((c) => c.cmd === 'pg' && /^DO \$staging_scrub\$/.test(c.sql));
+    assert.equal(scrubs.length, 1, 'the 19 private columns are scrubbed by one statement');
+    assert.equal((scrubs[0].sql.match(/still holds a value after its UPDATE/g) || []).length, 19);
+    assert.ok(!fixture.calls.some((c) => /^UPDATE/.test(c.sql)), 'no column-by-column fallback');
+    assert.ok(!fixture.calls.some((c) => c.cmd === 'psql' && /TRUNCATE|UPDATE|^DO /.test(c.sql)));
     assert.ok(!fixture.calls.some((c) => /^(BEGIN|COMMIT)/.test(c.sql || '')), 'CREATE DATABASE stays outside transactions');
   } finally { fixture.restore(); }
 });
 
 test('reused connection preserves bool/null discovery and unique private-column redaction', async () => {
   const fixture = loadDbManager({ templateComment: fresh(), privateColumns: [
-    'public.users|token|t|64', 'public.users|password|f|',
+    'public.users|token|t|64|f', 'public.users|password|f||f',
   ] });
   try {
     await fixture.dbManager.cloneDatabase('app_demo', 'app_demo_staging_s8_abc123', { viaTemplate: true });
-    const updates = fixture.calls.filter((c) => c.cmd === 'pg' && /^UPDATE/.test(c.sql)).map((c) => c.sql);
-    assert.equal(updates.length, 2);
-    assert.match(updates[0], /^UPDATE public\.users SET token = '__staging_redacted__[0-9a-f]{16}:' \|\| ctid::text$/);
-    assert.equal(updates[1], 'UPDATE public.users SET password = NULL');
+    const scrubs = fixture.calls.filter((c) => c.cmd === 'pg' && /^DO /.test(c.sql)).map((c) => c.sql);
+    assert.equal(scrubs.length, 1);
+    // Discovery's t/f decides placeholder or NULL; one UPDATE for the table.
+    assert.match(scrubs[0], /\n {2}UPDATE public\.users SET token = '__staging_redacted__[0-9a-f]{16}:' \|\| ctid::text, password = NULL;\n/);
   } finally { fixture.restore(); }
 });
 
