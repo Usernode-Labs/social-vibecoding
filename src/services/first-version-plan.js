@@ -114,6 +114,14 @@ const PLAN_SYSTEM = [
   '  answer gets them a different app. Never two answers that say the same thing in other words, or that would be',
   '  built the same way. Read each pair before you give them: where two come to the same thing, keep one, and a',
   '  question left with fewer than 2 real answers is no choice (leave it out).',
+  // Newcomer run seven (14 Oct 2026, Club Votes): a line said "Vote yes, no
+  // or maybe on each one" beside the question "How should votes be
+  // counted?", its creator kept "Simple yes or no, most wins", and the spec,
+  // bound by both, built a maybe that only yes and no decide.
+  '- A plan line, the build_note and the assumptions never settle a point one of the choices asks: the creator\'s',
+  '  answer decides it. Where a choice decides something, the line says what the app does without the answer',
+  '  ("Vote on each decision", not "Vote yes, no or maybe on each one"), and the build_note leaves that point to the',
+  '  answer.',
   '- build_note: a few plain lines for the spec writer: what the first version does, the screen\'s one job and its',
   '  one primary action, its colours (neutrals, an action colour and any colours the subject itself uses, each',
   '  working in both looks; not the starter\'s default palette), ONE signature element drawn from the app\'s subject',

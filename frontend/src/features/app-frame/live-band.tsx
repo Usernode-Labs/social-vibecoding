@@ -17,7 +17,8 @@
  * showing the last good screen", or, once the build's watcher has stopped,
  * "Last screen from the build" (N7: the card keeps that frame while the
  * build is reviewed and tested, and asks only now and then whether a new
- * build has begun).
+ * build has begun). Once a frame is drawn, "Sample data" in the opposite
+ * corner says what fills it (SAMPLE DATA, below).
  *
  * Measured (events.js): Live opened, and the time watched, sent when it is
  * closed or the page is hidden.
@@ -65,6 +66,36 @@ export function fitRecording(rec: { width: number; height: number } = REC, frame
   const height = Number.isFinite(rec.height) && rec.height > 0 ? rec.height : REC.height;
   const scale = frame.width / width;
   return { scale, width, height: Math.max(height, Math.ceil(frame.height / scale)) };
+}
+
+/*
+ * SAMPLE DATA (newcomer run seven, 14 Oct 2026, iPhone Safari, Club Votes).
+ * The recording is of the app's staging preview opened with ?demo=1, filled
+ * with sample data, and built apps label that demo themselves with a small
+ * "Staging demo: …" line, which on the App tab read as part of their app.
+ * Apps now mark that label `data-usernode-demo-note` (a build convention),
+ * and the replay hides it (REPLAY_RULES, inserted into the replayed
+ * document beside the glow's, so a stored recording is covered once its app
+ * carries the marker). The picture says it once instead, in the platform's
+ * own words: a "Sample data" chip in the band's bottom-left corner, in the
+ * Live pill's look, once a frame is drawn (the first look under "Starting
+ * the app…" is a drawing, not data). Only here: the real screens' band
+ * (./first-version-screens.tsx) has no chip.
+ */
+export const DEMO_NOTE_ATTR = 'data-usernode-demo-note';
+export const REPLAY_RULES: string[] = [...GLOW_RULES, `[${DEMO_NOTE_ATTR}] { display: none !important; }`];
+
+/** The "Sample data" chip: the Live pill's shape, colours and type, in the band's bottom-left corner. */
+export function SampleDataChip(): ReactNode {
+  const t = useMessages('agent');
+  return (
+    <span
+      data-first-version-sample=""
+      className="pointer-events-none absolute bottom-3 left-3 max-w-[calc(50%-4.75rem)] rounded-full bg-black/55 px-2.5 py-1 text-[12px] font-semibold leading-4 text-white"
+    >
+      {t('agent:appFrame.live.sampleData')}
+    </span>
+  );
 }
 
 /** A size the player reports (its `resize`, from the recording's meta event), or null. */
@@ -159,7 +190,7 @@ export default function LiveBand({ live, firstLook, name }: {
           triggerFocus: false,
           pauseAnimation: false,
           UNSAFE_replayCanvas: false,
-          insertStyleRules: GLOW_RULES,
+          insertStyleRules: REPLAY_RULES,
         });
         replayer.on('fullsnapshot-rebuilded', () => {
           goodFrame = true;
@@ -279,6 +310,7 @@ export default function LiveBand({ live, firstLook, name }: {
       >
         {livePill(phase, age)}
       </span>
+      {drawn ? <SampleDataChip /> : null}
     </div>
   );
 }

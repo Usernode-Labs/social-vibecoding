@@ -111,6 +111,13 @@ const TWICE_INTERRUPTED = 'interrupted: the platform restarted during it twice';
 const LATER_SIDE_RUN_KIND = 'bot_config_later';
 
 const inFlight = new Map(); // trialId -> { runId, est, sessionId, promise, heavy, recovered? }
+// The trials whose build this process executes (runTrial), each this
+// process's hold (services/processes.js), so a cancel asked of another
+// platform process reaches it (receiveCancel). inFlight above counts slots,
+// wherever a trial runs; this is where it runs.
+const executing = require('../processes').heldMap('bench_trial');
+// Trials executing here an admin cancelled, whatever slot entry they have.
+const cancelledHere = new Set();
 let laneOn = false;
 let laneConfig = null;
 let timer = null;
@@ -481,13 +488,50 @@ async function cancelRun(pool, runId, deps = {}) {
     "UPDATE bench_trials SET status = 'cancelled', finished_at = NOW() WHERE run_id = $1 AND status = 'pending'",
     [Number(runId)],
   );
+  stopRunHere(runId, deps);
+  // Trials of the run another platform process is running (one finishing its
+  // work after a release): it stops them the same way, told over the bus.
+  require('../ws-bus').publish('bench_cancel', null, { runId: Number(runId) });
+  return { ok: true };
+}
+
+function stopRunHere(runId, deps = {}) {
   const worker = deps.worker || require('../worker');
+  let n = 0;
   for (const [trialId, f] of inFlight) {
     if (f.runId !== Number(runId) || !f.sessionId) continue;
     Promise.resolve(worker.stopTurn(f.sessionId)).catch(() => {});
     log.info('bench', 'Stopping a trial of a cancelled run', { trialId });
+    n += 1;
   }
-  return { ok: true };
+  return n;
+}
+
+function stopTrialHere(id, deps = {}) {
+  const f = inFlight.get(id);
+  if (!f && !executing.has(id)) return false;
+  if (f) f.cancelled = true;
+  if (executing.has(id)) cancelledHere.add(id);
+  if (f?.sessionId) {
+    const worker = deps.worker || require('../worker');
+    Promise.resolve(worker.stopTurn(f.sessionId)).catch(() => {});
+  }
+  log.info('bench', 'Stopping one trial', { trialId: id });
+  return true;
+}
+
+/**
+ * The bus's `bench_cancel` (services/ws.js): a run or a trial was cancelled
+ * on another process, which has marked it in the database; whatever of it
+ * runs here stops.
+ */
+function receiveCancel(payload) {
+  if (Number.isInteger(Number(payload?.trialId)) && payload.trialId != null) {
+    const id = Number(payload.trialId);
+    return executing.has(id) ? stopTrialHere(id) : false;
+  }
+  if (Number.isInteger(Number(payload?.runId)) && payload.runId != null) return stopRunHere(Number(payload.runId)) > 0;
+  return false;
 }
 
 /**
@@ -504,19 +548,18 @@ async function cancelTrial(pool, trialId, deps = {}) {
     [id],
   );
   if (pending) { wake(); return { ok: true, status: 'cancelled' }; }
-  const f = inFlight.get(id);
-  if (!f) {
-    const { rows: [t] } = await pool.query('SELECT status FROM bench_trials WHERE id = $1', [id]);
-    if (!t) return httpError(404, 'No such trial');
-    return httpError(409, t.status === 'running' ? 'That trial is running on another process' : `That trial is already ${t.status}`);
+  const here = stopTrialHere(id, deps);
+  // Executed by another platform process (one finishing its work after a
+  // release, while this one only counts its slot): that process stops it.
+  const elsewhere = !executing.has(id) && require('../processes').heldElsewhere('bench_trial', id);
+  if (elsewhere) {
+    require('../ws-bus').publish('bench_cancel', null, { trialId: id });
+    log.info('bench', 'Cancel forwarded to the process running the trial', { trialId: id });
   }
-  f.cancelled = true;
-  if (f.sessionId) {
-    const worker = deps.worker || require('../worker');
-    Promise.resolve(worker.stopTurn(f.sessionId)).catch(() => {});
-  }
-  log.info('bench', 'Stopping one trial', { trialId: id });
-  return { ok: true, status: 'stopping' };
+  if (here || elsewhere) return { ok: true, status: 'stopping' };
+  const { rows: [t] } = await pool.query('SELECT status FROM bench_trials WHERE id = $1', [id]);
+  if (!t) return httpError(404, 'No such trial');
+  return httpError(409, t.status === 'running' ? 'That trial is running on another process' : `That trial is already ${t.status}`);
 }
 
 /**
@@ -559,7 +602,7 @@ async function loadTrialContext(pool, trialId) {
   const { rows: [row] } = await pool.query(
     `SELECT tr.*, t.stage, t.snapshot_id, t.reference, t.tags, t.issue_number AS task_issue,
             a.id AS app_id, a.slug AS app_slug, a.name AS app_name, a.repo_url, a.self_hosted,
-            r.baseline_model AS run_baseline, r.kind AS run_kind
+            r.baseline_model AS run_baseline, r.kind AS run_kind, r.shared_plans AS run_shared_plans
        FROM bench_trials tr
        JOIN bench_tasks t ON t.id = tr.task_id
        JOIN bench_runs r ON r.id = tr.run_id
@@ -626,6 +669,12 @@ async function studioContext(pool, config, row, settings) {
     if (!out.stageModels.build) throw new Error('no model is set for the bot\'s stages');
   }
   if (row.reference_label) out.sessionModel = row.run_baseline || catalog.BASELINE;
+  // A run that shares its plans (bench/shared-plans.js): which of its
+  // brief's plans this trial builds from, the attempt it was launched as
+  // (a rerun keeps its trial's).
+  if (row.run_shared_plans && row.stage === 'first_version' && !row.reference_label) {
+    out.sharedPlan = { key: Number(row.plan_key) || Number(row.attempt) || 1 };
+  }
   return out;
 }
 
@@ -674,7 +723,15 @@ async function runTrial({ pool, config, id, steps, deps = {} }) {
   const trialRow = deps.inProcessRow
     || (await pool.query('SELECT id, run_id FROM bench_trials WHERE id = $1', [Number(id)])).rows[0];
   if (!trialRow) return { status: 'gone' };
-  return { status: await executeTrial(pool, config, trialRow, { ...deps, durable: steps }) };
+  const key = Number(trialRow.id);
+  executing.set(key, (executing.get(key) || 0) + 1);
+  try {
+    return { status: await executeTrial(pool, config, trialRow, { ...deps, durable: steps }) };
+  } finally {
+    const left = (executing.get(key) || 1) - 1;
+    if (left > 0) executing.set(key, left);
+    else { executing.delete(key); cancelledHere.delete(key); }
+  }
 }
 
 /**
@@ -800,7 +857,7 @@ async function executeTrial(pool, config, trialRow, deps = {}) {
         watch.replayed();
       }
     });
-    const cancelled = () => !!inFlight.get(row.id)?.cancelled;
+    const cancelled = () => !!inFlight.get(row.id)?.cancelled || cancelledHere.has(Number(row.id));
     patch = await runner.runStage({
       pool, config, stage: row.stage, task, snapshot, model, user, app, repo,
       trial: {
@@ -836,6 +893,7 @@ async function executeTrial(pool, config, trialRow, deps = {}) {
     // Its time from its first attempt, restarts included.
     if (patch.duration_ms != null) patch.duration_ms = Math.max(Date.now() - startedMs, 0);
     if (cancelled()) patch = { ...patch, status: 'cancelled', error: 'cancelled by an admin' };
+    patch = asPlatformFault(patch);
   } catch (err) {
     durableSteps.rethrowStop(err, `trial ${trialRow.id}`);
     patch = { status: 'infra_fail', error: `setup: ${err.message}` };
@@ -869,8 +927,10 @@ async function recordTrial(pool, { trialRow, row, patch, user, d }) {
   const sessionIds = [...new Set([patch.session_id, ...(patch.session_ids || [])].filter(Boolean))];
   let cost = Number.isFinite(patch.cost_usd) ? patch.cost_usd : null;
   // What the trial spent beside its agent turns, which the ledger below
-  // does not hold: a first version's reviewer calls (services/bot-review.js).
-  const besideLedger = Number.isFinite(Number(patch.review_cost_usd)) ? Math.max(Number(patch.review_cost_usd), 0) : 0;
+  // does not hold: a first version's reviewer calls (services/bot-review.js),
+  // and its plan at Make it and early first look (bench/runner.js earlySteps).
+  const beside = (v) => (Number.isFinite(Number(v)) ? Math.max(Number(v), 0) : 0);
+  const besideLedger = beside(patch.review_cost_usd) + beside(patch.helper_cost_usd);
   let inputTokens = patch.input_tokens ?? null;
   let outputTokens = patch.output_tokens ?? null;
   const routedModels = new Set();
@@ -886,6 +946,9 @@ async function recordTrial(pool, { trialRow, row, patch, user, d }) {
     for (const m of usage.routed_models || []) routedModels.add(m);
   }
   if (ledger.priced > 0) cost = ledger.cost + besideLedger;
+  // A trial that ran no turn (its plan was written, then it was cancelled)
+  // still paid for the plan.
+  else if (beside(patch.helper_cost_usd) > 0) cost = (Number.isFinite(cost) ? cost : 0) + beside(patch.helper_cost_usd);
   if (ledger.input > 0) inputTokens = ledger.input;
   if (ledger.output > 0) outputTokens = ledger.output;
   const charge = cost;
@@ -1270,6 +1333,50 @@ async function settleSideResults(pool) {
   }
 }
 
+// A provider refusing the bench's key for its spending limit (run 196:
+// OpenRouter's "403 Key limit exceeded (weekly limit)" on its last ten
+// trials, each failed on its first request). It is the platform's fault,
+// not the model's: the trial is an infra_fail, out of its arm's build rate,
+// and the lane starts nothing new for PROVIDER_LIMIT_PAUSE_MS after it
+// (providerLimitPause), as it waits on the bench user's own allowance.
+const PROVIDER_LIMIT_RE = /key limit exceeded|insufficient credits|requires more credits/i;
+const PROVIDER_LIMIT_PAUSE_MS = 30 * 60 * 1000;
+
+/** Whether a trial's error is its provider refusing the key for its spending limit. Pure. */
+function providerLimitHit(error) {
+  return PROVIDER_LIMIT_RE.test(String(error || ''));
+}
+
+/** A trial's result, its model's failure read as the platform's when providerLimitHit says so. Pure. */
+function asPlatformFault(patch) {
+  return patch && patch.status === 'model_fail' && providerLimitHit(patch.error) ? { ...patch, status: 'infra_fail' } : patch;
+}
+
+/**
+ * The lane's pause after a provider refused the key for its spending
+ * limit: { until } while the last trial the bench finished (any run: they
+ * share the key) was refused that way less than PROVIDER_LIMIT_PAUSE_MS
+ * ago, else null. Read from the trials, so it holds in every process and
+ * through a restart; once it is over, the next trial is the one that finds
+ * out whether the key works again, and one that ends any other way lifts
+ * it. Never throws.
+ */
+async function providerLimitPause(pool, { now = Date.now() } = {}) {
+  try {
+    const { rows: [last] } = await pool.query(
+      `SELECT error, finished_at FROM bench_trials
+        WHERE finished_at IS NOT NULL AND status NOT IN ('not_applicable', 'skipped_cap', 'cancelled')
+        ORDER BY finished_at DESC LIMIT 1`,
+    );
+    if (!last || !providerLimitHit(last.error)) return null;
+    const until = new Date(last.finished_at).getTime() + PROVIDER_LIMIT_PAUSE_MS;
+    return until > now ? { until: new Date(until).toISOString() } : null;
+  } catch (err) {
+    log.warn('bench', 'Could not read whether the provider refused the bench key', { err: err.message });
+    return null;
+  }
+}
+
 /**
  * Whether the next trial fits the cap: what was spent, plus every trial
  * under way at its estimate, plus this one's. Pure.
@@ -1303,6 +1410,7 @@ async function tick(pool, config, deps = {}) {
     );
     const limits = deps.limits || require('../limits');
     let user = null;
+    const limited = runs.length ? await providerLimitPause(pool) : null;
     for (const run of runs) {
       const mine = [...inFlight.values()].filter((f) => f.runId === run.id);
       const { rows: [left] } = await pool.query(
@@ -1333,6 +1441,7 @@ async function tick(pool, config, deps = {}) {
         // eslint-disable-next-line no-await-in-loop
         const budget = await limits.checkBudget(pool, user.id);
         if (budget.error) { out.paused = 'bench_allowance'; break; }
+        if (limited) { out.paused = 'provider_limit'; out.until = limited.until; break; }
         // eslint-disable-next-line no-await-in-loop
         // Its next trial in order, passing over heavy ones while three of
         // its heavy trials are under way.
@@ -1457,8 +1566,21 @@ function stop() {
   timer = null;
 }
 
-/** A pass now; a no-op on a Pod that is not running the lane. */
+/**
+ * A pass now. The lane runs on the leader, and a launch, a cancel or a
+ * reopen lands wherever the request did (a web process never leads,
+ * docs/plans/web-and-conductor.md): a process not running the lane asks the
+ * others over the bus (ws.js 'bench_wake'), and the one running it passes.
+ * True when the pass was scheduled here.
+ */
 function wake() {
+  if (wakeHere()) return true;
+  try { require('../ws-bus').publish('bench_wake', null, {}); } catch { /* the lane polls anyway */ }
+  return false;
+}
+
+/** The bus half of wake(): a pass if the lane runs here, never a publish. */
+function wakeHere() {
   if (!laneOn) return false;
   schedule(0);
   return true;
@@ -1490,6 +1612,8 @@ function laneStatus() {
 }
 
 module.exports = {
+  receiveCancel,
+  wakeHere,
   MAX_CONCURRENCY,
   HEAVY_STAGES,
   MAX_HEAVY_PER_RUN,
@@ -1534,6 +1658,10 @@ module.exports = {
   capRun,
   settleSideResults,
   fitsCap,
+  PROVIDER_LIMIT_PAUSE_MS,
+  providerLimitHit,
+  asPlatformFault,
+  providerLimitPause,
   tick,
   start,
   stop,
@@ -1548,7 +1676,8 @@ module.exports = {
     }
   },
   _resetForTests() {
-    inFlight.clear(); laneOn = false; laneConfig = null; ticking = false; tickAgain = false; lastTick = null; lastSweepAt = 0;
+    inFlight.clear(); executing.clear(); cancelledHere.clear();
+    laneOn = false; laneConfig = null; ticking = false; tickAgain = false; lastTick = null; lastSweepAt = 0;
     if (timer) clearTimeout(timer);
     timer = null;
   },

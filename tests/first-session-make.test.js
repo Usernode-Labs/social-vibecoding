@@ -340,7 +340,7 @@ test('nothing under Make it says what you write is public on GitHub', () => {
 // and with the keyboard up the screen scrolled "Start from an example" up
 // behind the status bar.
 
-test('"Make it" looks pale only while making: a press with an answer missing goes to that field and says what it needs', () => {
+test('"Make it" waits while making or dictating: a press with an answer missing goes to that field and says what it needs', () => {
   const make = loadTsx(`${DIR}/make.tsx`);
   assert.equal(make.missingAnswer('', ''), 'brief');
   assert.equal(make.missingAnswer('too short', 'Page Turners'), 'brief', 'under BRIEF_MIN');
@@ -357,9 +357,9 @@ test('"Make it" looks pale only while making: a press with an answer missing goe
     assert.doesNotMatch(line, /\u2014/, 'no em dash');
   }
   const src = read(`${DIR}/make.tsx`);
-  // Pale while making, or at the allowance's limit (the server would refuse
+  // Pale while making, dictating, or at the allowance's limit (the server would refuse
   // it), never for a missing answer.
-  assert.match(src, /disabled=\{busy \|\| quotaBlocks\}/, 'never disabled for a missing answer');
+  assert.match(src, /disabled=\{dictating \|\| busy \|\| quotaBlocks\}/, 'never disabled for a missing answer');
   assert.doesNotMatch(src, /disabled=\{!valid/);
   // (preventScroll since 5 Oct 2026: the keyboard surface reveals the field, with Make it.)
   // The caret goes to what is missing: the name, a template's blank, or the plain box.
@@ -829,14 +829,16 @@ test('the waitlist answer is read for the account\'s linked row only, and /me se
   assert.match(read('src/routes/auth.js'), /storyFirstSession,\s+\/\/[^\n]*\n\s+\/\/[^\n]*\n\s+waitlistIdea,/);
 });
 
-test('run six: a long description scrolls inside its own box, under its label, thinning out at the top', () => {
+test('runs six and seven: a long description scrolls inside its own box, under its label, hidden at its top edge', () => {
   // Newcomer run six (14 Oct 2026, iPhone Safari, keyboard up): about 200
   // characters scrolled the description's text up to the label's own bottom
   // edge, and the line cut off there read as text passing under "What should
   // it do?". Both fields keep 8px between label and writing; while the
   // description is scrolled from its top, its top line fades out.
   const make = loadTsx(`${DIR}/make.tsx`);
-  assert.equal(make.BRIEF_FADE, '[mask-image:linear-gradient(to_bottom,transparent,#000_22px)]');
+  // Run seven (14 Oct 2026): the gap became a margin, outside the
+  // description's scroll box, and the fade hides the box's top 6px outright.
+  assert.equal(make.BRIEF_FADE, '[mask-image:linear-gradient(to_bottom,transparent_6px,#000_24px)]');
   assert.equal(make.briefFades({ scrollTop: 0 }), false, 'at its top, the first line drawn whole');
   assert.equal(make.briefFades({ scrollTop: 13 }), true);
   assert.equal(make.briefFades(null), false);
@@ -846,16 +848,22 @@ test('run six: a long description scrolls inside its own box, under its label, t
   const classOf = (tag) => tag.match(/class="([^"]*)"/)[1].split(' ');
   for (const [field, tag] of [['brief', brief], ['name', name]]) {
     const cls = classOf(tag);
-    assert.ok(cls.includes('pt-2') && cls.includes('pb-1'), `${field}: 8px under its label`);
+    assert.ok(cls.includes('pb-1'), field);
     assert.ok(!cls.includes('py-1'), field);
     assert.ok(!cls.includes(make.BRIEF_FADE), `${field}: no fade unscrolled`);
   }
+  // 8px under its label: the name as padding, the description as a margin,
+  // so its box's clip edge sits 8px under the label and its scrolled text
+  // never rises to the label's edge. Its first line starts where it did.
+  assert.ok(classOf(name).includes('pt-2') && !classOf(name).includes('mt-2'), 'name: 8px of padding');
+  assert.ok(classOf(brief).includes('mt-2') && classOf(brief).includes('pt-0'), 'brief: 8px of margin');
+  assert.ok(!classOf(brief).includes('pt-2'), 'brief: no padding inside its scroll box');
   // Read on its scroll, and after every render (a box swapped in, or a
   // shorter description, can land it back at its top with no scroll event).
   const src = read(`${DIR}/make.tsx`);
   assert.match(src, /const \[briefScrolled, setBriefScrolled\] = useState\(false\);\s+useEffect\(\(\) => \{ setBriefScrolled\(briefFades\(briefRef\.current\)\); \}\);/);
   assert.match(src, /onScroll=\{\(e\) => setBriefScrolled\(briefFades\(e\.currentTarget\)\)\}/);
-  assert.match(src, /className=\{`\$\{INPUT\}\$\{briefScrolled \? ` \$\{BRIEF_FADE\}` : ''\} resize-none leading-\[22px\]`\}/);
+  assert.match(src, /className=\{`\$\{BRIEF_INPUT\}\$\{briefScrolled \? ` \$\{BRIEF_FADE\}` : ''\} resize-none leading-\[22px\]`\}/);
   // A box of its own under the label, which stays where it is.
   assert.match(html, /<label for="first-session-brief" class="block text-\[13px\] text-zinc-500 dark:text-zinc-400">What should it do\?<\/label><textarea/);
   assert.match(brief, /rows="3"/);

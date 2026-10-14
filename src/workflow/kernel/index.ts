@@ -58,6 +58,8 @@ export function createRuntime(opts: RuntimeOptions) {
     versions: new Map([...machines].map(([name, m]) => [name, m.version])) };
   const signals = new Signals(opts.pool, log);
   const stopping = new AbortController();
+  // Set by quiesce(): the loops end, the work they started does not.
+  let quiesced = false;
   const loops: Promise<void>[] = [];
   const running = new Map<string, Set<Promise<void>>>();
   let listening = false;
@@ -77,19 +79,19 @@ export function createRuntime(opts: RuntimeOptions) {
   function loop(name: string, body: () => Promise<boolean>, channel: string, dueIn: () => Promise<number | null>,
     wakesFor?: (payload: string, until: number) => boolean) {
     loops.push((async () => {
-      while (!stopping.signal.aborted) {
+      while (!stopping.signal.aborted && !quiesced) {
         let busy = false;
         try { busy = await body(); } catch (err) {
           log.error('workflow', `${name} loop failed`, { message: (err as Error).message });
         }
-        if (busy || stopping.signal.aborted) continue;
+        if (busy || stopping.signal.aborted || quiesced) continue;
         let ms = idleMs();
         try {
           const due = await dueIn();
           if (due !== null) ms = Math.min(ms, Math.max(due, 250));
         } catch { /* the fallback still bounds the wait */ }
         const until = Date.now() + ms;
-        if (!stopping.signal.aborted) await signals.sleep(channel, ms, wakesFor && ((payload) => wakesFor(payload, until)));
+        if (!stopping.signal.aborted && !quiesced) await signals.sleep(channel, ms, wakesFor && ((payload) => wakesFor(payload, until)));
       }
     })());
   }
@@ -193,6 +195,24 @@ export function createRuntime(opts: RuntimeOptions) {
       if (handlers.size) {
         loop('services', async () => (await startServices()).length > 0, 'wf_work', () => nextDueMs(opts.pool, kindsWithRoom()));
       }
+    },
+
+    // A process that stops leading but finishes what it runs
+    // (docs/plans/draining-releases.md): its slots, timer and claims end, so
+    // every event and every new work item is another process's, and the
+    // work it claimed goes on, its lease renewed, until it ends or stop()
+    // aborts it. Resolves once the loops have ended.
+    async quiesce() {
+      quiesced = true;
+      signals.wakeAll();
+      await Promise.all(loops);
+    },
+
+    // The work items this process is running now.
+    running(): number {
+      let n = 0;
+      for (const set of running.values()) n += set.size;
+      return n;
     },
 
     async stop() {

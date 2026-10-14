@@ -88,19 +88,51 @@ function _onBusMessage({ kind, routing, data, oversize, fromWorkflow }) {
       // this process's own copy of the open-issues list (github.js keeps one
       // per process). Nothing is sent to sockets; the transition's own
       // issue_update tells browsers to re-read.
+      // Applied here only: every process hears the transition itself.
       if (fromWorkflow && r.owner && r.repo) {
-        const github = require('./github');
-        const numbers = Array.isArray(payload.numbers) ? payload.numbers : [];
-        if (numbers.length) github.noteIssuesClosed(r.owner, r.repo, numbers);
-        if (Array.isArray(payload.open) && payload.open.length) github.unsuppressIssues(r.owner, r.repo, payload.open);
-        github.invalidateIssuesCache(r.owner, r.repo);
+        require('./github').applyIssuesChange(r.owner, r.repo, {
+          closed: payload.numbers, open: payload.open, invalidate: true,
+        });
       }
+      return;
+    case 'issues_cache':
+      // What another process learned of a repo's issues (github.js
+      // shareIssuesChange), for this process's own copy. Nothing is sent to
+      // sockets: the sender's issue_update tells browsers to re-read.
+      if (!oversize && r.owner && r.repo) require('./github').applyIssuesChange(r.owner, r.repo, payload);
       return;
     case 'homeroom_bot':
       // Not a socket event at all: the Homeroom bot's loop runs on one Pod
       // and an issue event can land on any, so the wake rides this bus.
       // The bot ignores it on every Pod but the one running the loop.
       require('./homeroom-bot').onBusMessage(payload);
+      return;
+    // Stops for work another platform process runs (docs/plans/
+    // draining-releases.md): the process that holds it does what a stop in
+    // its own process does; every other one finds nothing and ignores it.
+    // Never a socket event, and the sender has already checked who may stop.
+    case 'session_stop':
+      if (!oversize) void Promise.resolve(require('../routes/sessions').receiveSessionStop?.(payload))
+        .catch((err) => log.warn('ws', 'A stop for a turn here failed', { err: err.message }));
+      return;
+    case 'shots_stop':
+      if (!oversize) void require('./shots-orchestrator').receiveStop(payload)
+        .catch((err) => log.warn('ws', 'A stop for a shots run here failed', { err: err.message }));
+      return;
+    case 'turn_byok':
+      if (!oversize) require('./worker').receiveTurnByok(payload);
+      return;
+    case 'bench_cancel':
+      if (!oversize) void Promise.resolve(require('./bench/lane').receiveCancel(payload))
+        .catch((err) => log.warn('ws', 'A bench cancel here failed', { err: err.message }));
+      return;
+    // Wakes for the leader's loops, asked by a process that does not run
+    // them (docs/plans/web-and-conductor.md): the one running each passes.
+    case 'bench_wake':
+      require('./bench/lane').wakeHere();
+      return;
+    case 'shots_eval_wake':
+      require('./shots-eval-runner').wakeHere();
       return;
     default:
       log.warn('ws', 'unknown bus kind', { kind });
@@ -146,6 +178,23 @@ function disconnectUser(userId) {
       client.ws.terminate();
     }
   }
+}
+
+// A release is replacing this process, which finishes its work without
+// serving anyone (docs/plans/draining-releases.md). Every socket is closed
+// with 1012 (service restart): each tab reconnects, which the Service sends
+// to the new Pod, and re-reads what it shows, as on any dropped socket.
+// Returns how many were closed.
+let _closedForRelease = false;
+function closeAllForRelease() {
+  _closedForRelease = true;
+  let n = 0;
+  for (const clients of [globalClients, ...rooms.values()]) {
+    for (const client of [...clients]) {
+      try { client.ws.close(1012, 'Service restart'); n += 1; } catch { /* already gone */ }
+    }
+  }
+  return n;
 }
 
 function connectedUserIds() {
@@ -293,6 +342,9 @@ function attach(server, config) {
   wss = new WebSocketServer({ noServer: true });
 
   server.on('upgrade', async (req, socket, head) => {
+    // A process finishing its work after a release serves no new socket: the
+    // tab tries again and reaches the new Pod (closeAllForRelease).
+    if (_closedForRelease) { socket.destroy(); return; }
     // Caddy's forward_auth PRESERVES the Connection/Upgrade headers on its
     // auth subrequest while rewriting the URI to /__caddy/access. Node
     // routes any upgrade-flagged request to this 'upgrade' event instead of
@@ -2480,4 +2532,4 @@ function pushConversationEvent(memberUserIds, payload, { excludeUserId = null } 
 
 const pushNotificationToUser = pushToUser;
 
-module.exports = { noteBoardChange, broadcastThreadSummary, connectedUserIds, disconnectUser, attach, broadcast, _onBusMessage, _onBusListening, broadcastGlobal, broadcastSessionEvent, sessionEventAudience, canWatchSessionRow, SESSION_FANOUT_EVENTS, MAX_WATCHED_SESSIONS_PER_SOCKET, SLOW_CLIENT_MAX_BUFFERED, SLOW_CLIENT_RESUME_BUFFERED, _checkLaggingClients: checkLaggingClients, _sessionMetaCache: sessionMetaCache, broadcastGlobalScoped, broadcastToAdmins, sendSystemMessage, sendBotMessage, sendFirstVersionMessage, getOnlineUsers, pushAppStatusUpdate, pushAppCreationPhase, pushSessionUpdate, pushSessionState, sessionStateAudience, pushVoteUpdate, pushKudosUpdate, pushAppUpdate, pushIssueUpdate, pushBoardOrderUpdate, pushWorkshopUpdate, onBoardChange, pushToUser, pushConversationEvent, pushNotificationToUser, pushPlatformVersion, getReactionsForMessages, validateThread, TOPIC_CLOSED_MESSAGE, handleMessage, admitSocketFrame, SOCKET_RATE_BUDGETS, SOCKET_RATE_WINDOW_MS, MAX_CHAT_LEN };
+module.exports = { noteBoardChange, broadcastThreadSummary, connectedUserIds, disconnectUser, closeAllForRelease, attach, broadcast, _onBusMessage, _onBusListening, broadcastGlobal, broadcastSessionEvent, sessionEventAudience, canWatchSessionRow, SESSION_FANOUT_EVENTS, MAX_WATCHED_SESSIONS_PER_SOCKET, SLOW_CLIENT_MAX_BUFFERED, SLOW_CLIENT_RESUME_BUFFERED, _checkLaggingClients: checkLaggingClients, _sessionMetaCache: sessionMetaCache, broadcastGlobalScoped, broadcastToAdmins, sendSystemMessage, sendBotMessage, sendFirstVersionMessage, getOnlineUsers, pushAppStatusUpdate, pushAppCreationPhase, pushSessionUpdate, pushSessionState, sessionStateAudience, pushVoteUpdate, pushKudosUpdate, pushAppUpdate, pushIssueUpdate, pushBoardOrderUpdate, pushWorkshopUpdate, onBoardChange, pushToUser, pushConversationEvent, pushNotificationToUser, pushPlatformVersion, getReactionsForMessages, validateThread, TOPIC_CLOSED_MESSAGE, handleMessage, admitSocketFrame, SOCKET_RATE_BUDGETS, SOCKET_RATE_WINDOW_MS, MAX_CHAT_LEN };

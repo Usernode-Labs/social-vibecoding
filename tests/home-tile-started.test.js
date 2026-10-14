@@ -108,7 +108,7 @@ test('run six: from Submit on, the tile says the build is starting, in grey, on 
 
   // The list catches up: its own stage from then on, and the note is spent.
   const drawing = clubVotes({ first_version_line: 'building', first_version_phase: { key: 'drawing', since: '2026-10-14T18:02:00Z' } });
-  assert.deepEqual([Home.appView(drawing).buildLine, Home.appView(drawing).statusLabel], ['building', 'Drawing']);
+  assert.deepEqual([Home.appView(drawing).buildLine, Home.appView(drawing).statusLabel], ['building', 'Planning']);
   // A plan that waits on them again after that (one they asked to change,
   // in the chat) is theirs to review again: blue.
   assert.deepEqual([Home.appView(app).buildLine, Home.appView(app).statusLabel], ['plan', 'Plan ready']);

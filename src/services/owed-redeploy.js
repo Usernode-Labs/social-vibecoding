@@ -65,7 +65,9 @@ function isStaging() {
 
 // The apps a rebuild in THIS process is giving: the sweep never runs a second
 // one beside its own process's, whatever the heartbeat says.
-const giving = new Map(); // appId -> how many
+// Each app is also this process's hold (services/processes.js): a draining
+// process finishes the rebuild before it exits.
+const giving = require('./processes').heldMap('redeploy'); // appId -> how many
 const startGiving = (id) => giving.set(id, (giving.get(id) || 0) + 1);
 const stopGiving = (id) => {
   const left = (giving.get(id) || 1) - 1;

@@ -340,10 +340,31 @@ function validateLaunch(body = {}) {
       return httpError(400, `concurrency is 1 to ${MAX_CONCURRENCY}`);
     }
   }
+  if (body.sharedPlans != null && typeof body.sharedPlans !== 'boolean') return httpError(400, 'sharedPlans is true or false');
   return {
     ok: true, models, packIds, references, repeats, capUsd: Math.round(capUsd * 100) / 100, concurrency,
     note: body.note ? String(body.note).slice(0, MAX_NOTE_CHARS) : null,
+    sharedPlans: body.sharedPlans === true,
   };
+}
+
+/**
+ * How an arm plans (bench/shared-plans.js mismatchOf): its triage and spec
+ * models, `lean_plan`, and its configuration's own pack. Pure but for the
+ * live bot's settings a `today` arm reads.
+ */
+function planningOf(model, recipe, { settings, config }) {
+  const bot = require('../homeroom-bot');
+  if (recipe) {
+    return {
+      label: model, triage: recipe.models.triage, spec: recipe.models.spec,
+      leanPlan: require('../bot-configs').tweaksOf(recipe).includes('lean_plan'), pack: recipe.pack || null,
+    };
+  }
+  if (model === TODAY) {
+    return { label: model, triage: bot.stageModel(settings, config, 'triage'), spec: bot.stageModel(settings, config, 'spec'), leanPlan: false, pack: null };
+  }
+  return { label: model, triage: model, spec: model, leanPlan: false, pack: null };
 }
 
 /**
@@ -370,6 +391,14 @@ async function launch(pool, config, body = {}, { actorId = null, deps = {} } = {
     if (!recipe) return httpError(404, `No configuration version ${id} with a recipe that still validates`);
     recipes.set(m, recipe);
   }
+  const bot = require('../homeroom-bot');
+  const settings = await bot.readSettings(pool);
+  // A run that shares its plans builds every arm from one plan per brief,
+  // pack and repeat, so its arms must all plan alike.
+  if (v.sharedPlans) {
+    const why = require('./shared-plans').mismatchOf(v.models.map((m) => planningOf(m, recipes.get(m) || null, { settings, config })));
+    if (why) return httpError(400, why);
+  }
   const briefs = await resolveBriefs(pool, body);
   if (!briefs.ok) return briefs;
   const loaded = await packs.loadForLaunch(pool, v.packIds);
@@ -384,9 +413,7 @@ async function launch(pool, config, body = {}, { actorId = null, deps = {} } = {
     if (!t.ok) return t;
     tasks.push({ ...item, taskId: t.task.id });
   }
-  const bot = require('../homeroom-bot');
   const catalog = require('./catalog');
-  const settings = await bot.readSettings(pool);
   const priced = (m) => (m === TODAY ? bot.stageModel(settings, config, 'build') : m);
   const models = await catalog.listModels(pool, [
     ...v.models.filter((m) => !recipes.has(m)).map(priced).filter(Boolean),
@@ -425,14 +452,17 @@ async function launch(pool, config, body = {}, { actorId = null, deps = {} } = {
     await client.query('BEGIN');
     ({ rows: [run] } = await client.query(
       `INSERT INTO bench_runs (suite_id, models, baseline_model, stages, repeats, cap_usd, concurrency, note, started_by,
-                               kind, context_pack_ids, references_per_brief)
-       VALUES ($1, $2::text[], $3, ARRAY['first_version'], $4, $5, $6, $7, $8, 'studio', $9::int[], $10)
+                               kind, context_pack_ids, references_per_brief, shared_plans)
+       VALUES ($1, $2::text[], $3, ARRAY['first_version'], $4, $5, $6, $7, $8, 'studio', $9::int[], $10, $11)
        RETURNING *`,
-      [suiteId, v.models, v.models[0], v.repeats, v.capUsd, concurrency, v.note, actorId, v.packIds, v.references],
+      [suiteId, v.models, v.models[0], v.repeats, v.capUsd, concurrency, v.note, actorId, v.packIds, v.references, v.sharedPlans],
     ));
+    // Each trial's plan is its brief's `attempt`th (shared-plans.js), kept
+    // through a rerun.
     await client.query(
-      `INSERT INTO bench_trials (run_id, task_id, model, attempt, status, error, est_cost_usd, item_token, context_pack_id, finished_at)
-       SELECT $1, t, m, a, s, e, est, tok, pk, CASE WHEN s = 'not_applicable' THEN NOW() ELSE NULL END
+      `INSERT INTO bench_trials (run_id, task_id, model, attempt, status, error, est_cost_usd, item_token, context_pack_id, finished_at,
+                                 plan_key)
+       SELECT $1, t, m, a, s, e, est, tok, pk, CASE WHEN s = 'not_applicable' THEN NOW() ELSE NULL END, a
          FROM UNNEST($2::int[], $3::text[], $4::int[], $5::text[], $6::text[], $7::numeric[], $8::text[], $9::int[])
               AS p(t, m, a, s, e, est, tok, pk)`,
       [run.id, plan.task, plan.model, plan.attempt, plan.status, plan.error, plan.est, plan.token, plan.pack],
@@ -449,7 +479,10 @@ async function launch(pool, config, body = {}, { actorId = null, deps = {} } = {
   log.info('bench', 'Studio run launched', { runId: run.id, briefs: tasks.length, models: v.models, packs: v.packIds, trials: plan.task.length });
   return {
     ok: true,
-    run: { id: run.id, status: run.status, capUsd: Number(run.cap_usd), concurrency, models: v.models, contextPackIds: v.packIds, repeats: v.repeats },
+    run: {
+      id: run.id, status: run.status, capUsd: Number(run.cap_usd), concurrency, models: v.models, contextPackIds: v.packIds, repeats: v.repeats,
+      sharedPlans: v.sharedPlans,
+    },
     trials: plan.task.length,
     notApplicable: plan.status.filter((s) => s === 'not_applicable').length,
     estimateUsd: Math.round(estimate * 100) / 100,
@@ -682,6 +715,19 @@ function trialOut(row, { preview = null, grades = [], buildTurns = null } = {}) 
     // watch while it runs.
     sight: parsed.sight || (p.looks ? { told: null, passed: null, ...p.looks } : null),
     triage: parsed.triage ? { verdict: parsed.triage.verdict || null, question: parsed.triage.question ? clip(parsed.triage.question, 300) : null } : null,
+    // How its plan was made (runner.planFirstVersion): at Make it, with its
+    // early first look, or by the triage; and, in a run that shares its
+    // plans, which one it built from and whether it made it.
+    planFrom: parsed.earlyPlan || parsed.sharedPlan || parsed.earlyLook ? {
+      makeIt: parsed.triage?.fromMakeIt === true,
+      earlyLook: parsed.earlyLook
+        ? { chars: Number(parsed.earlyLook.chars) || 0, error: parsed.earlyLook.error || null, shared: parsed.earlyLook.shared === true }
+        : null,
+      shared: parsed.sharedPlan ? {
+        id: Number(parsed.sharedPlan.id), key: Number(parsed.sharedPlan.key), made: parsed.sharedPlan.made === true,
+        makerTrialId: parsed.sharedPlan.makerTrialId == null ? null : Number(parsed.sharedPlan.makerTrialId),
+      } : null,
+    } : null,
     built: parsed.built === true,
     booted: row.capture ? row.capture.booted === true : null,
     shots,
@@ -729,11 +775,16 @@ async function watchRun(pool, runId, { since = null } = {}) {
     `SELECT task_id, context_pack_id, status, sha, branch, error FROM bench_scaffolds WHERE run_id = $1 ORDER BY id`,
     [Number(runId)],
   );
+  // An open run whose new trials wait because the provider refused the
+  // bench's key for its spending limit (lane.js providerLimitPause).
+  const limited = ['queued', 'running'].includes(run.status) ? await require('./lane').providerLimitPause(pool) : null;
   return {
     ok: true,
     run: {
       id: Number(run.id), kind: run.kind, status: run.status, suite: run.suite_name, models: run.models,
       contextPackIds: run.context_pack_ids || [], referencesPerBrief: Number(run.references_per_brief) || 0,
+      sharedPlans: run.shared_plans === true,
+      waiting: limited ? { reason: 'provider_limit', until: limited.until } : null,
       capUsd: run.cap, spentUsd: run.spent, concurrency: run.concurrency,
       createdAt: iso(run.created_at), startedAt: iso(run.started_at), finishedAt: iso(run.finished_at),
     },
@@ -991,12 +1042,14 @@ async function rerunTrial(pool, trialId) {
   if (t.reference_label && !t.capture_sha) return httpError(409, 'That reference has no commit to capture');
   const { rows: [made] } = await pool.query(
     `INSERT INTO bench_trials (run_id, task_id, model, attempt, status, item_token, est_cost_usd, context_pack_id,
-                               reference_label, capture_sha, base_sha, build_commits)
-     SELECT $1, $2, $3, COALESCE(MAX(attempt), 0) + 1, 'pending', $4, $5, $6, $7, $8, $9, $10
+                               reference_label, capture_sha, base_sha, build_commits, plan_key)
+     SELECT $1, $2, $3, COALESCE(MAX(attempt), 0) + 1, 'pending', $4, $5, $6, $7, $8, $9, $10, $11
        FROM bench_trials WHERE run_id = $1 AND task_id = $2 AND model = $3 AND COALESCE(context_pack_id, 0) = COALESCE($6::int, 0)
      RETURNING id, attempt`,
     [t.run_id, t.task_id, t.model, token(), t.est_cost_usd, t.context_pack_id, t.reference_label,
-      t.reference_label ? t.capture_sha : null, t.reference_label ? t.base_sha : null, t.reference_label ? t.build_commits : null],
+      t.reference_label ? t.capture_sha : null, t.reference_label ? t.base_sha : null, t.reference_label ? t.build_commits : null,
+      // The same plan as the trial it runs again (shared-plans.js).
+      t.plan_key ?? t.attempt],
   );
   await require('./lane').reopenRun(pool, t.run_id);
   return { ok: true, trialId: Number(made.id), attempt: Number(made.attempt), runId: Number(t.run_id) };

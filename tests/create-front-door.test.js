@@ -176,7 +176,7 @@ test('the make screen from Create: New project, a close, a small "Import from a 
   assert.match(src, /useState<'make' \| 'import'>\(fromCreate && startImport \? 'import' : 'make'\)/, 'only Create imports');
   assert.match(src, /if \(e\.key === 'Escape'\) onClose\(\);/);
   // One request at a time, as the dialog's Create (QA 2026-09-24 Q5).
-  assert.match(src, /if \(busy \|\| makingRef\.current\) return;/);
+  assert.match(src, /if \(dictating \|\| busy \|\| makingRef\.current\) return;/);
   assert.match(src, /makingRef\.current = true;\s+setBusy\(true\);/);
   assert.match(src, /\} finally \{\s+makingRef\.current = false;\s+setBusy\(false\);\s+\}/);
 });

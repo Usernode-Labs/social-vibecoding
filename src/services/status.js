@@ -167,6 +167,13 @@ async function gatherFull(config) {
       if (warm.bootstrapping) workerMode = 'bootstrapping';
       else if (warm.inFlight) workerMode = 'in-flight';
       else workerMode = 'warm-idle';
+    } else if (sessionId != null) {
+      // Another live process's worker (a web process's, or the conductor's:
+      // docs/plans/web-and-conductor.md), not an orphan: what it holds says
+      // what it is doing (services/processes.js).
+      const processes = require('./processes');
+      if (processes.heldElsewhere('session', sessionId)) workerMode = 'in-flight';
+      else if (processes.heldElsewhere('warm', sessionId)) workerMode = 'warm-idle';
     }
     const idleMs = warm && !warm.inFlight ? Date.now() - warm.lastUsedMs : null;
     return {

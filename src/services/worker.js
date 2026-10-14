@@ -1346,10 +1346,12 @@ function codingProviderCount(value, maximum) {
 }
 // What one model request came to, as the Claude Code listener reports it
 // (worker/claude-openrouter-request.js, provider_request_result): kept as
-// the turn's routed provider for its ledger row, and, when it failed, said
-// on the progress line and logged with the ids that find it in OpenRouter's
-// own log. Nothing here is the request's content: the listener sends a
-// status, ids, a provider name and an error's type and clipped message.
+// the turn's routed provider for its ledger row (with every other host the
+// turn used, and whether the request left the shortlist), and, when it
+// failed, said on the progress line and logged with the ids that find it in
+// OpenRouter's own log. Nothing here is the request's content: the listener
+// sends a status, ids, a provider name and an error's type and clipped
+// message.
 const SAFE_PROVIDER_ID = /^[a-zA-Z0-9._:-]{1,160}$/;
 const SAFE_PROVIDER_NAME = /^[a-zA-Z0-9 ._:/()-]{1,80}$/;
 const SAFE_PROVIDER_ERROR_TYPE = /^[a-z0-9_.-]{1,64}$/i;
@@ -1366,10 +1368,18 @@ function observeCodingProviderResult(event, ordinal, onProgress, state) {
     state.routedProvider = providerName;
     // Every provider the turn's requests went to, in order, not only the
     // last: whether a build that quits early follows a provider is read
-    // from this (homeroom-bot-live.js turnFacts). A few names at most.
+    // from this (homeroom-bot-live.js turnFacts). A few names at most, first
+    // seen first; since run seven (14 Oct 2026) the turn's ledger row keeps
+    // them all (agent_turns.metadata.routed_providers), not only the last.
     const seen = Array.isArray(state.routedProviders) ? state.routedProviders : (state.routedProviders = []);
     if (!seen.includes(providerName) && seen.length < 8) seen.push(providerName);
   }
+  // How many of the turn's requests the shortlist refused and the listener
+  // sent again to every host (run seven, 14 Oct 2026: slow hosts still
+  // served builds, and nothing said how often a build left the shortlist).
+  // Zero once any request is seen, so "none" reads apart from "not known";
+  // the turn's ledger row keeps it (agent_turns.metadata.shortlist_fallbacks).
+  state.shortlistFallbacks = (state.shortlistFallbacks || 0) + (event.shortlistFallback === true ? 1 : 0);
   noteCodingProviderUsage(event.usage, state);
   noteCodingProviderImages(event.images, state);
   noteCodingProviderToolOutput(event.toolOutput, state);
@@ -2681,7 +2691,47 @@ async function finishTurn(sessionId, { journal = null, turnId = null } = {}) {
 //   - adoptWarmWorker() → server restart picked up an existing warm
 //                         container; register it so the next exec
 //                         doesn't try to re-bootstrap on top.
-const _warmRegistry = new Map();
+// docs/plans/draining-releases.md: a turn this process is executing holds
+// its session (services/processes.js) for as long as `inFlight` is set,
+// whatever started it (a person's turn, a sync, the shots agent, an eval
+// trial, a bot build): the cross-process twin of isInFlight, so another
+// process's leader never adopts or tears it down, and another process's
+// proxy reads its mode (remoteTurn). Taken on the flag's rise, given back on
+// its fall or when the entry goes.
+const _inFlightHolds = new Map(); // sessionId -> release
+function _inFlightHold(sessionId, inFlight) {
+  if (inFlight && !_inFlightHolds.has(sessionId)) {
+    try { _inFlightHolds.set(sessionId, require('./processes').hold('session', Number(sessionId))); } catch { /* no ref */ }
+  } else if (!inFlight && _inFlightHolds.has(sessionId)) {
+    const release = _inFlightHolds.get(sessionId);
+    _inFlightHolds.delete(sessionId);
+    release();
+  }
+}
+// And while it is registered at all, its worker is warm here: a marker
+// (services/processes.js 'warm', which no drain waits for) so another
+// process neither reports the worker as an orphan, nor adopts it, nor
+// evicts it from under this one (docs/plans/web-and-conductor.md).
+const _warmHolds = new Map(); // sessionId -> release
+function _warmHold(sessionId, warm) {
+  if (warm && !_warmHolds.has(sessionId)) {
+    try { _warmHolds.set(sessionId, require('./processes').hold('warm', Number(sessionId))); } catch { /* no ref */ }
+  } else if (!warm && _warmHolds.has(sessionId)) {
+    const release = _warmHolds.get(sessionId);
+    _warmHolds.delete(sessionId);
+    release();
+  }
+}
+class WarmRegistry extends Map {
+  set(sessionId, value) { _warmHold(sessionId, true); return super.set(sessionId, value); }
+  delete(sessionId) { _inFlightHold(sessionId, false); _warmHold(sessionId, false); return super.delete(sessionId); }
+  clear() {
+    for (const id of [..._inFlightHolds.keys()]) _inFlightHold(id, false);
+    for (const id of [..._warmHolds.keys()]) _warmHold(id, false);
+    super.clear();
+  }
+}
+const _warmRegistry = new WarmRegistry();
 
 function _registryGet(sessionId) {
   return _warmRegistry.get(sessionId) || null;
@@ -2698,6 +2748,7 @@ function _registryUpsert(sessionId, patch) {
   };
   const next = { ...prev, ...patch };
   _warmRegistry.set(sessionId, next);
+  _inFlightHold(sessionId, !!next.inFlight);
   // #1038: the inner docker-exec window is one of the two signals
   // isSessionBusy() ORs together, so a change here can flip a session's
   // working state for every client. Only the actual transition notifies —
@@ -2749,6 +2800,12 @@ function warmRegistrySnapshot() {
 
 // Register a warm container that already exists (either spawned by us
 // earlier in this process, or adopted from a previous server run).
+// Drop this process's record of a session's worker and leave the worker
+// as it is: another process keeps it warm too (server.js idle eviction).
+function forgetWorker(sessionId) {
+  return _warmRegistry.delete(sessionId);
+}
+
 function adoptWarmWorker(sessionId, containerName = null) {
   _registryUpsert(sessionId, {
     containerName: containerName || workerContainerName(sessionId),
@@ -4169,6 +4226,42 @@ function getActiveTurnMode(sessionId) {
   return (meta && meta.inFlight) ? (meta.activeTurnMode || null) : null;
 }
 
+// docs/plans/draining-releases.md: a turn another platform process runs (one
+// finishing its work after a release, or the one that replaced it) still
+// calls back through whichever process the Service picks. What the proxy
+// must know about it (its mode, its id) comes from its durable record, cached
+// for REMOTE_TURN_TTL_MS: the proxy asks on every model call. Null for a turn
+// this process runs, and for a session no live process holds.
+const REMOTE_TURN_TTL_MS = 5000;
+const _remoteTurns = new Map(); // sessionId -> { at, turn: { mode, turnId } | null }
+
+async function remoteTurn(sessionId) {
+  const sid = Number(sessionId);
+  const meta = _warmRegistry.get(sid);
+  if (meta && meta.inFlight) return null;
+  const processes = require('./processes');
+  if (!processes.heldElsewhere('session', sid) && !processes.heldElsewhere('shots', sid)) return null;
+  const cached = _remoteTurns.get(sid);
+  if (cached && Date.now() - cached.at < REMOTE_TURN_TTL_MS) return cached.turn;
+  const pool = _getPoolSafe();
+  if (!pool) return null;
+  let turn = null;
+  try {
+    const record = await turnLifecycle.loadActiveTurn(pool, sid);
+    turn = record ? { mode: record.mode || null, turnId: record.turnId || null } : null;
+  } catch { turn = null; }
+  if (_remoteTurns.size > 500) _remoteTurns.clear();
+  _remoteTurns.set(sid, { at: Date.now(), turn });
+  return turn;
+}
+
+// The mode of the turn in flight on a session, whichever process runs it.
+async function turnModeFor(sessionId) {
+  const mode = getActiveTurnMode(sessionId);
+  if (mode) return mode;
+  return (await remoteTurn(sessionId))?.mode || null;
+}
+
 // ──────────────────────────────────────────────────────────────────────
 // #664: per-turn BYOK spillover accounting
 // ──────────────────────────────────────────────────────────────────────
@@ -4188,6 +4281,17 @@ function noteTurnByokSpend(sessionId, cents) {
   const sid = Number(sessionId);
   if (!(cents > 0)) return;
   const meta = _warmRegistry.get(sid);
+  // A turn another process runs: the durable mirror here, and that process's
+  // tally for its settlement told over the bus (receiveTurnByok).
+  if (!(meta && meta.inFlight) && require('./processes').heldElsewhere('session', sid)) {
+    void remoteTurn(sid).then(async (turn) => {
+      if (!turn?.turnId) return;
+      const pool = _getPoolSafe();
+      if (pool) await turnLifecycle.incrementByokCents(pool, { sessionId: sid, turnId: turn.turnId, cents });
+      require('./ws-bus').publish('turn_byok', null, { sessionId: sid, turnId: turn.turnId, cents });
+    }).catch((err) => log.warn('worker', 'Failed to record byok spend for a turn elsewhere', { sessionId: sid, err: err.message }));
+    return;
+  }
   _registryUpsert(sid, { turnByokCents: ((meta && meta.turnByokCents) || 0) + cents });
   const pool = _getPoolSafe();
   const activeTurnId = meta?.activeTurnId || null;
@@ -4217,8 +4321,33 @@ function getTurnByokCents(sessionId) {
 function markTurnByokSwitched(sessionId) {
   const sid = Number(sessionId);
   const meta = _warmRegistry.get(sid);
+  // A turn another process runs: no registry entry is made for it here; once
+  // per session per REMOTE_SWITCH_MS stands in for once per turn.
+  if (!(meta && meta.inFlight) && require('./processes').heldElsewhere('session', sid)) {
+    const at = _remoteByokSwitched.get(sid);
+    if (at && Date.now() - at < REMOTE_SWITCH_MS) return false;
+    if (_remoteByokSwitched.size > 500) _remoteByokSwitched.clear();
+    _remoteByokSwitched.set(sid, Date.now());
+    return true;
+  }
   if (meta && meta.turnByokSwitched) return false;
   _registryUpsert(sid, { turnByokSwitched: true });
+  return true;
+}
+const REMOTE_SWITCH_MS = 10 * 60 * 1000;
+const _remoteByokSwitched = new Map(); // sessionId -> when
+
+// The bus's `turn_byok` (services/ws.js): another process's proxy paid a call
+// of the turn this process runs with the owner's key, and recorded it
+// durably. Added to this process's tally for the turn-end settlement only
+// when it is still the same turn.
+function receiveTurnByok(payload) {
+  const sid = Number(payload?.sessionId);
+  const cents = Number(payload?.cents);
+  if (!Number.isInteger(sid) || !(cents > 0)) return false;
+  const meta = _warmRegistry.get(sid);
+  if (!meta || !meta.inFlight || !meta.activeTurnId || String(meta.activeTurnId) !== String(payload.turnId)) return false;
+  _registryUpsert(sid, { turnByokCents: (meta.turnByokCents || 0) + cents });
   return true;
 }
 
@@ -5829,9 +5958,13 @@ module.exports = {
   BENCH_CAPTURE_SCRIPT_PATH,
   warmRegistrySnapshot,
   adoptWarmWorker,
+  forgetWorker,
   isInFlight,
   isWorkerExecuting,
   getActiveTurnMode,
+  turnModeFor,
+  remoteTurn,
+  receiveTurnByok,
   // #664: per-turn BYOK spillover accounting (worker Anthropic proxy +
   // turn-end settlement)
   noteTurnByokSpend,

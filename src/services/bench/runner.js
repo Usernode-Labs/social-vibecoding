@@ -61,11 +61,14 @@ const snapshots = require('../homeroom-bot-snapshots');
 const stageCosts = require('../stage-costs');
 const durableSteps = require('../durable-steps');
 const durableTurn = require('../durable-turn');
+const sharedPlans = require('./shared-plans');
 
 const BENCH_USERNAME = 'homeroom_bench';
 // The bench user's own weekly allowance: a backstop behind every run's cap
-// (an admin can change it on the user in Admin > Limits).
-const DEFAULT_BENCH_WEEKLY_CENTS = 10000;
+// (an admin can change it on the user in Admin > Limits). Its included
+// OpenRouter key carries the same weekly limit. $500: $100 ran out partway
+// through a run (14 Oct 2026); src/db/schema.sql raised the existing account.
+const DEFAULT_BENCH_WEEKLY_CENTS = 50000;
 const RAW_OUTPUT_CHARS = 20000;
 const DIFF_CHARS = 60000;
 const TELEMETRY = 'homeroom_bench';
@@ -737,10 +740,16 @@ async function buildStage(ctx) {
       // The build's own steps, apart from the stage's.
       durable: steps.scope('build'),
     },
-    // Never proposed, never posted: no ceiling, no votes router, no onSpec.
+    // Never proposed, never posted: no ceiling, no votes router, and no
+    // onSpec but a shared plan's maker's, which hands its spec to the other
+    // arms (firstVersionStage).
     propose: false,
-    onSpec: null,
+    onSpec: ctx.onSpec || null,
     proposalCeiling: null,
+    // A first version's early first look, for its spec to start its main
+    // screen from, and a shared plan's spec, built from as it is.
+    ...(ctx.earlyLook ? { earlyLook: () => ctx.earlyLook } : {}),
+    ...(ctx.presetSpec ? { presetSpec: ctx.presetSpec, ...(ctx.presetSpecHtml ? { presetSpecHtml: ctx.presetSpecHtml } : {}) } : {}),
     platformRepo: !!snapshot.extra?.platformRepo,
     firstVersion: !!snapshot.extra?.firstVersion,
     starter: snapshot.extra?.starter || null,
@@ -1047,6 +1056,195 @@ function firstVersionModels(ctx) {
 }
 
 /**
+ * A first version's plan and its early first look, as a live first version
+ * gets them since newcomer run six (#5062): the plan written from the
+ * description in one call at Make it (first-version-plan.js makePlan), and
+ * its main screen drawn from that plan in a call of its own
+ * (first-version-early-look.js drawScreen), which the spec then starts its
+ * own main screen from. Each is a durable step, and neither writes the
+ * project's own rows: the trial keeps what they made. What they cost is the
+ * trial's, beside its turns' ledger (helper_cost_usd); it is metered here
+ * and not also recorded against the bench user, which the lane charges once
+ * for the whole trial (lane.recordTrial). Resolves { planned, looked }:
+ * `planned.plan` is null when no plan could be written, and `looked.screen`
+ * null when no look was drawn (or HOMEROOM_BOT_EARLY_FIRST_LOOK=0).
+ */
+async function earlySteps(ctx, { input, starter }) {
+  const { pool, user, app, deps } = ctx;
+  const steps = stepsOf(ctx);
+  const fvPlan = deps.firstVersionPlan || require('../first-version-plan');
+  const early = deps.earlyLook || require('../first-version-early-look');
+  // The project as a plan at Make it sees it: its own name, nobody else in
+  // it yet, and the task's game starter when it has one.
+  const project = { ...app, name: input.appName };
+  const botView = { projectMembers: async () => null, starterOfApp: async () => starter || null };
+  const metered = () => {
+    let cents = 0;
+    return {
+      limits: { recordSpend: async (_pool, _userId, c) => { cents += Number(c) || 0; } },
+      usd: () => Math.round(cents * 1e4) / 1e6,
+    };
+  };
+  const planned = await steps.once('early_plan', async () => {
+    const meter = metered();
+    const t0 = Date.now();
+    const made = await fvPlan.makePlan(pool, {
+      app: project, user, brief: input.brief, deps: { ...(deps.planDeps || {}), limits: meter.limits, bot: botView },
+    });
+    return {
+      plan: made && made.plan ? made.plan : null, model: made?.model || null,
+      error: made && made.plan ? null : String(made?.error || 'failed').slice(0, 200), usd: meter.usd(), ms: Date.now() - t0,
+    };
+  });
+  if (!planned.plan) return { planned, looked: null };
+  const looked = !early.enabled() ? null : await steps.once('early_look', async () => {
+    const meter = metered();
+    const t0 = Date.now();
+    const drawn = await early.drawScreen(pool, { app: project, user, brief: input.brief, plan: planned.plan }, {
+      ...(deps.lookDeps || {}), limits: meter.limits, bot: botView,
+    });
+    return {
+      screen: drawn && drawn.screen ? String(drawn.screen) : null, model: drawn?.model || null,
+      error: drawn && drawn.screen ? null : String(drawn?.error || 'failed').slice(0, 200), usd: meter.usd(), ms: Date.now() - t0,
+    };
+  });
+  return { planned, looked };
+}
+
+/**
+ * The plan a first version is built from, the way a live one gets it: the
+ * plan at Make it with its early first look (earlySteps) or, when no plan
+ * could be written, the triage turn, as the live bot reads the request when
+ * its plan from Make it failed (homeroom-bot.js planFromEarly). Then its
+ * creator answers the plan's questions with the suggested answers, so the
+ * build note gets exactly the lines Build it adds for them
+ * (creatorChoiceNote). Resolves { triage, plan, chosen, buildNote,
+ * earlyLook, triaged, planPart, helperUsd, meta } to build from, or with
+ * `outcome` (the trial's status, error, session and cost) when nothing is to
+ * be built: a triage that failed or did not answer `ready`.
+ */
+async function planFirstVersion(ctx, { input, starter, replay, base, models }) {
+  const bot = require('../homeroom-bot');
+  const steps = stepsOf(ctx);
+  const step = (name) => { try { ctx.onStep?.(name); } catch { /* a watcher never stops a trial */ } };
+  step('plan');
+  const { planned, looked } = await earlySteps(ctx, { input, starter });
+  const helperUsd = (Number(planned.usd) || 0) + (Number(looked?.usd) || 0);
+  const meta = {
+    earlyPlan: { model: planned.model, ms: planned.ms, costUsd: planned.usd, error: planned.error },
+    earlyLook: looked
+      ? { model: looked.model, ms: looked.ms, costUsd: looked.usd, error: looked.error, chars: looked.screen ? looked.screen.length : 0 }
+      : null,
+  };
+  let triaged = null;
+  let triage;
+  let plan;
+  if (planned.plan) {
+    triage = {
+      verdict: 'ready', question: null, buildNote: planned.plan.buildNote, reason: null,
+      assumptions: planned.plan.assumptions || [], fromMakeIt: true,
+    };
+    plan = { bullets: planned.plan.bullets, questions: planned.plan.questions };
+  } else {
+    step('triage');
+    triaged = await steps.once('triage', async () => keptTriage(await triageStage({
+      ...ctx, model: models.triage, snapshot: replay, baseSha: base,
+    })));
+    triage = triaged.parsed ? {
+      verdict: triaged.parsed.verdict, question: triaged.parsed.question || null, buildNote: triaged.parsed.buildNote || null,
+      reason: triaged.parsed.reason || null, assumptions: triaged.parsed.assumptions || [],
+    } : null;
+    const outcomeOf = (status) => ({
+      status, error: triaged.error || null, session_id: triaged.session_id || null,
+      cost_usd: triaged.cost_usd ?? null, raw_output: triaged.raw_output ?? null,
+    });
+    if (triaged.status !== 'ok') return { triage, triaged, helperUsd, meta, outcome: outcomeOf(triaged.status) };
+    if (triage.verdict !== 'ready') return { triage, triaged, helperUsd, meta, outcome: outcomeOf('ok') };
+    plan = bot.planFor(triaged.parsed);
+  }
+  const chosen = bot.choicesFrom(plan.questions, []);
+  const buildNote = `${triage.buildNote || ''}${bot.creatorChoiceNote(chosen, { bullets: plan.bullets })}`;
+  return {
+    triage, plan, chosen, buildNote, triaged, helperUsd, meta,
+    earlyLook: looked?.screen || null,
+    planPart: planned.plan ? stageCosts.part({ usd: planned.usd, model: planned.model }) : null,
+  };
+}
+
+/**
+ * A first version's plan in a run that shares its plans (bench/shared-plans.js):
+ * the first trial of its brief, pack and repeat to need it makes it
+ * (planFirstVersion) and hands its spec to the others as it is written; the
+ * others wait for that spec and build from it as it is, with the plan and
+ * build note it went with. Resolves what planFirstVersion does, with
+ * `makes` (the shared plan's id) for its maker, `presetSpec` and
+ * `presetSpecHtml` for the others, and `meta.sharedPlan` either way.
+ */
+async function sharedFirstVersionPlan(ctx, args) {
+  const { pool, trial, task } = ctx;
+  const steps = stepsOf(ctx);
+  const where = { runId: trial.run_id, taskId: task?.id, packId: ctx.pack?.id || null, key: ctx.sharedPlan.key };
+  const which = (id, made, makerTrialId) => ({ id, key: where.key, made, makerTrialId: makerTrialId ?? null });
+  let role = await steps.once('shared_plan', () => sharedPlans.claim(pool, { ...where, trialId: trial.id }));
+  for (;;) {
+    if (role.role === 'maker') {
+      // eslint-disable-next-line no-await-in-loop
+      const planned = await planFirstVersion(ctx, args);
+      const meta = { ...planned.meta, sharedPlan: which(role.id, true, trial.id) };
+      if (planned.outcome) {
+        // eslint-disable-next-line no-await-in-loop
+        await sharedPlans.saveFailed(pool, role.id, planned.outcome.error || `the triage answered ${planned.triage?.verdict || 'nothing'}`);
+        return { ...planned, meta };
+      }
+      // eslint-disable-next-line no-await-in-loop
+      await steps.once('shared_planned', async () => {
+        await sharedPlans.savePlanned(pool, role.id, {
+          plan: { ...planned.plan, chosen: planned.chosen, triage: planned.triage },
+          buildNote: planned.buildNote, earlyLook: planned.earlyLook,
+          planUsd: planned.meta?.earlyPlan?.costUsd ?? null, lookUsd: planned.meta?.earlyLook?.costUsd ?? null,
+        });
+        return true;
+      });
+      return { ...planned, meta, makes: role.id };
+    }
+    // eslint-disable-next-line no-await-in-loop
+    const got = role.role === 'ready'
+      ? { row: await sharedPlans.readById(pool, role.id) }
+      // eslint-disable-next-line no-await-in-loop
+      : await sharedPlans.waitFor(pool, role.id, { trialId: trial.id, stopped: ctx.skipCheck || null, ...(ctx.deps.sharedPlanWait || {}) });
+    if (got.take) {
+      role = { role: 'maker', id: role.id };
+      // eslint-disable-next-line no-await-in-loop
+      await steps.set('shared_plan', role);
+      continue;
+    }
+    if (!got.row || !got.row.specMd) {
+      return {
+        triage: null, helperUsd: 0, meta: { sharedPlan: which(role.id, false) },
+        outcome: { status: got.stopped ? 'cancelled' : 'infra_fail', error: `shared plan: ${got.error || 'it has no spec'}` },
+      };
+    }
+    const { row } = got;
+    const kept = row.plan || {};
+    return {
+      triage: kept.triage ? { ...kept.triage, shared: true } : { verdict: 'ready', buildNote: row.buildNote, shared: true },
+      plan: { bullets: kept.bullets || [], questions: kept.questions || [] },
+      chosen: kept.chosen || [],
+      buildNote: row.buildNote,
+      presetSpec: row.specMd,
+      presetSpecHtml: row.specHtml,
+      triaged: null,
+      helperUsd: 0,
+      planPart: null,
+      meta: {
+        sharedPlan: which(row.id, false, row.makerTrialId),
+        ...(row.earlyLook ? { earlyLook: { chars: row.earlyLook.length, shared: true } } : {}),
+      },
+    };
+  }
+}
+
+/**
  * A first-version trial: the bot's real first-version path from a brief,
  * the way a project's first version is made today.
  *
@@ -1056,14 +1254,19 @@ function firstVersionModels(ctx) {
  *      and shared by every arm; the trial's branch is cut at it.
  *   2. The brief filed as the project's first request, quoting the card as
  *      the live one does (homeroom-bot-dm firstVersionIssue).
- *   3. The triage with the first-version note (and the pack's guidance).
- *   4. The plan. The live bot shows it to the creator and waits for Build it
- *      (homeroom-bot.js awaitGo, goAhead); here the creator taps Build it
- *      without changing anything, so the build note gets exactly the lines
- *      goAhead adds for the plan and its suggested answers (creatorChoiceNote).
- *   5. The spec and the build on the first version's longer clocks
- *      (buildAndPropose, never proposed), each on its own model.
- *   6. The screenshot step on the build's worker.
+ *   3. The plan, as a live first version gets it since newcomer run six
+ *      (#5062): written from the description in one call at Make it, and
+ *      its main screen drawn from it as the early first look (earlySteps).
+ *      When no plan could be written, the triage reads the request with the
+ *      first-version note (and the pack's guidance), as the live bot does.
+ *      The creator's answers are the suggested ones, so the build note gets
+ *      exactly the lines Build it adds for them (creatorChoiceNote).
+ *   4. The spec, starting its main screen from the early first look, and the
+ *      build, on the first version's longer clocks (buildAndPropose, never
+ *      proposed), each on its own model. In a run that shares its plans the
+ *      plan and the spec are made once per brief, pack and repeat, and every
+ *      arm builds from that spec (sharedFirstVersionPlan).
+ *   5. The screenshot step on the build's worker.
  *
  * A triage that does not answer `ready` builds nothing, as the bot would
  * not, and the trial says what it answered instead.
@@ -1075,7 +1278,6 @@ function firstVersionModels(ctx) {
 async function firstVersionStage(ctx) {
   const { pool, snapshot, repo, deps, budgets } = ctx;
   const taste = require('./taste');
-  const bot = require('../homeroom-bot');
   const scaffold = require('./scaffold');
   const steps = stepsOf(ctx);
   const input = taste.inputOf(snapshot);
@@ -1112,32 +1314,33 @@ async function firstVersionStage(ctx) {
     models,
     ...(steps.lostAttempts > 0 ? { resumedAfterRestart: steps.lostAttempts } : {}),
   };
-  step('triage');
-  const triaged = await steps.once('triage', async () => keptTriage(await triageStage({
-    ...ctx, model: models.triage, snapshot: replay, baseSha: base,
-  })));
-  const sessionIds = [triaged.session_id].filter(Boolean);
+  // The plan it is built from: the plan at Make it and its early first
+  // look, the way a live first version starts since newcomer run six, or the
+  // triage when no plan could be written (planFirstVersion); in a run that
+  // shares its plans, made once for every arm (sharedFirstVersionPlan).
+  const starter = replay.extra.starter || null;
+  const planned = ctx.sharedPlan
+    ? await sharedFirstVersionPlan(ctx, { input, starter, replay, base, models })
+    : await planFirstVersion(ctx, { input, starter, replay, base, models });
+  const sessionIds = [planned.triaged?.session_id].filter(Boolean);
   const common = { base_sha: base, build_branch: branch, session_ids: sessionIds };
-  const triage = triaged.parsed ? {
-    verdict: triaged.parsed.verdict, question: triaged.parsed.question || null, buildNote: triaged.parsed.buildNote || null,
-    reason: triaged.parsed.reason || null, assumptions: triaged.parsed.assumptions || [],
-  } : null;
-  if (triaged.status !== 'ok') return { ...triaged, ...common, parsed: { ...started, triage, built: false } };
-  if (triage.verdict !== 'ready') {
-    return {
-      ...common, session_id: triaged.session_id, status: 'ok', cost_usd: triaged.cost_usd,
-      raw_output: triaged.raw_output, parsed: { ...started, triage, built: false },
-    };
+  const { triage } = planned;
+  const before = {
+    ...started, triage, ...(planned.meta || {}),
+  };
+  if (planned.outcome) {
+    return { ...planned.outcome, ...common, helper_cost_usd: planned.helperUsd || 0, parsed: { ...before, built: false } };
   }
   // An admin's cancel (services/bench/lane.js cancelTrial) ends it here.
   const stopped = ctx.skipCheck ? await ctx.skipCheck() : null;
   if (stopped) {
-    return { ...common, session_id: triaged.session_id, status: 'cancelled', error: stopped, cost_usd: triaged.cost_usd, parsed: { ...started, triage, built: false } };
+    if (planned.makes) await sharedPlans.saveFailed(pool, planned.makes, stopped);
+    return {
+      ...common, session_id: planned.triaged?.session_id || null, status: 'cancelled', error: stopped,
+      cost_usd: planned.triaged?.cost_usd ?? null, helper_cost_usd: planned.helperUsd || 0, parsed: { ...before, built: false },
+    };
   }
-  step('plan');
-  const plan = bot.planFor(triaged.parsed);
-  const chosen = bot.choicesFrom(plan.questions, []);
-  const buildNote = `${triage.buildNote || ''}${bot.creatorChoiceNote(chosen, { bullets: plan.bullets })}`;
+  const { plan, chosen, buildNote } = planned;
   step('spec');
   const built = await buildStage({
     ...ctx,
@@ -1146,18 +1349,36 @@ async function firstVersionStage(ctx) {
     snapshot: { ...replay, texts: { seed, build_note: buildNote } },
     // A first version's own clocks (homeroom-bot buildBudgets, firstVersion).
     budgets: budgets.firstVersion || budgets,
+    // Its spec starts its main screen from the early first look, as a live
+    // one's does (homeroom-bot.js buildLive earlyLook); a shared plan's spec
+    // is built from as it is (buildAndPropose's presetSpec), and the maker
+    // of one hands its spec to the other arms the moment it is written.
+    ...(planned.earlyLook ? { earlyLook: planned.earlyLook } : {}),
+    ...(planned.presetSpec ? { presetSpec: planned.presetSpec, presetSpecHtml: planned.presetSpecHtml || null } : {}),
+    ...(planned.makes ? {
+      onSpec: async ({ specMd, specHtml }) => sharedPlans.saveSpec(pool, planned.makes, { specMd, specHtml }),
+    } : {}),
   });
+  // A maker whose spec was never written leaves the plan to the next arm.
+  if (planned.makes && !built.parsed?.spec) await sharedPlans.saveFailed(pool, planned.makes, built.error || 'no spec was written');
   const ids = [...sessionIds, built.session_id].filter(Boolean).map(Number);
-  const cost = [triaged.cost_usd, built.cost_usd].filter(Number.isFinite);
-  // The triage's part of the cost breakdown, from its own session's ledger.
-  const triagePart = await stageCosts.sessionPart(pool, triaged.session_id, models.triage)
-    || stageCosts.part({ usd: triaged.cost_usd, model: models.triage });
+  const cost = [planned.triaged?.cost_usd, built.cost_usd].filter(Number.isFinite);
+  // The plan's part of the cost breakdown under the triage it replaces: the
+  // plan at Make it's call, or the triage's own session's ledger.
+  const triagePart = planned.triaged
+    ? (await stageCosts.sessionPart(pool, planned.triaged.session_id, models.triage)
+      || stageCosts.part({ usd: planned.triaged.cost_usd, model: models.triage }))
+    : planned.planPart || null;
   const costParts = { ...(triagePart ? { triage: triagePart } : {}), ...(built.parsed?.costParts || {}) };
   const merged = {
-    ...built, base_sha: base, build_branch: branch, session_id: built.session_id || triaged.session_id, session_ids: [...new Set(ids)],
+    ...built, base_sha: base, build_branch: branch, session_id: built.session_id || planned.triaged?.session_id || null,
+    session_ids: [...new Set(ids)],
     cost_usd: cost.length ? cost.reduce((a, b) => a + b, 0) : null,
+    // The plan's and the early first look's calls, beside the turns' ledger
+    // (lane.recordTrial).
+    helper_cost_usd: planned.helperUsd || 0,
     parsed: {
-      ...started, ...(built.parsed || {}), triage, plan: { bullets: plan.bullets, questions: plan.questions, chosen },
+      ...before, ...(built.parsed || {}), plan: { bullets: plan.bullets, questions: plan.questions, chosen },
       ...(Object.keys(costParts).length ? { costParts } : {}),
     },
   };
@@ -1319,4 +1540,7 @@ module.exports = {
   followupResult,
   buildResult,
   keptTriage,
+  earlySteps,
+  planFirstVersion,
+  sharedFirstVersionPlan,
 };

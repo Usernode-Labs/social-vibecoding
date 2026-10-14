@@ -85,15 +85,16 @@ function fakePool({ endImpl } = {}) {
   };
 }
 
-async function runCleanup(server, { listener, pool }) {
+async function runCleanup(server, { listener, pool, ...drainOptions }) {
   const order = [];
   const realExit = process.exit;
   process.exit = (code) => { order.push(`exit:${code}`); };
-  server.__setShutdownTargets({ server: listener, pool });
+  server.__setShutdownTargets({ server: listener, pool, ...drainOptions });
   try {
     await server.cleanup();
   } finally {
     process.exit = realExit;
+    if (drainOptions.leadership !== undefined) server.__setShutdownTargets({ leadership: null });
   }
   return order;
 }
@@ -433,14 +434,26 @@ test('a bot build under way does not hold the shutdown, and nothing is recorded 
   }
 });
 
-test('the workflow runtime is stopped as shutdown begins, and the pool closes only once it has', () => {
+test('the workflow runtime stops its loops as shutdown begins, its work only after the drain, and the pool closes only once it has', () => {
   const fs = require('node:fs');
   const path = require('node:path');
   const src = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
   const body = src.slice(src.indexOf('async function cleanup()'), src.indexOf("process.on('SIGTERM', cleanup);"));
-  const stop = body.indexOf("const workflowStop = require('./src/workflow/platform.ts').stopWorkflow()");
-  const listenerClose = body.indexOf('httpServer.close(');
-  assert.ok(stop > 0 && stop < listenerClose, 'stopped with the bot\'s loops, before the listener closes');
+  // docs/plans/draining-releases.md: a process finishing its work quiesces
+  // the runtime (no slot, timer or claim) with the bot's loops, and stops
+  // its running work only once drainUntilIdle has let it finish; one with the
+  // short drain stops it at once, before its listener closes.
+  const chosen = body.indexOf('let workflowStop = finishesWork');
+  const quiesce = body.indexOf("require('./src/workflow/platform.ts').quiesceWorkflow()");
+  const stopNow = body.indexOf(': stopWorkflowNow();');
+  const shortClose = body.indexOf('if (!finishesWork) closeListener(drainMs);');
+  const drained = body.indexOf('await drainUntilIdle(');
+  const stoppedAfter = body.indexOf('workflowStop = stopWorkflowNow();');
+  const longClose = body.indexOf('closeListener(DRAIN_TIMEOUT_MS);');
+  assert.ok(chosen > 0 && quiesce > chosen && stopNow > quiesce && shortClose > stopNow,
+    'chosen with the bot\'s loops, before the short drain\'s listener closes');
+  assert.ok(drained > shortClose && longClose > drained && stoppedAfter > drained,
+    'a process finishing its work closes its listener and stops its workflow work after the drain');
   assert.match(body, /await Promise\.race\(\[\n\s+Promise\.all\(\[[^\]]*\bworkflowStop\b[^\]]*\]\)\.then\(\(\) => shutdownPool\.end\(\)\),/,
     'its stop (each build\'s lease given up) is awaited before the pool ends, inside the pool close\'s bound');
   assert.doesNotMatch(body, /homeroom-bot-drain|waitForSafePoint|botDeadlineMs/, 'and nothing waits for the bot\'s builds');
@@ -742,8 +755,10 @@ test('the drain deadline is long only on the platform\'s Kubernetes Pods, and cl
   assert.equal(d({ kubernetes: true, shortMs: short, env: {} }), lifecycleModule.KUBERNETES_DRAIN_DEFAULT_MS);
   assert.ok(lifecycleModule.KUBERNETES_DRAIN_DEFAULT_MS >= 30000, 'a real window for a merge or a sweep to finish');
   assert.equal(d({ kubernetes: true, shortMs: short, env: { PLATFORM_DRAIN_TIMEOUT_MS: '20000' } }), 20000);
-  assert.equal(d({ kubernetes: true, shortMs: short, env: { PLATFORM_DRAIN_TIMEOUT_MS: '600000' } }),
-    lifecycleModule.KUBERNETES_DRAIN_MAX_MS, 'never past the ceiling the grace period allows');
+  assert.equal(d({ kubernetes: true, shortMs: short, env: { PLATFORM_DRAIN_TIMEOUT_MS: '2400000' } }), 2400000,
+    'the chart\'s drainMinutes, unclamped (docs/plans/draining-releases.md)');
+  assert.equal(d({ kubernetes: true, shortMs: short, env: { PLATFORM_DRAIN_TIMEOUT_MS: String(10 * 60 * 60 * 1000) } }),
+    lifecycleModule.KUBERNETES_DRAIN_MAX_MS, 'never past the ceiling the chart allows');
   assert.equal(d({ kubernetes: true, shortMs: short, env: { PLATFORM_DRAIN_TIMEOUT_MS: '-5' } }), 0);
   assert.equal(d({ kubernetes: true, shortMs: short, env: { PLATFORM_DRAIN_TIMEOUT_MS: 'soon' } }),
     lifecycleModule.KUBERNETES_DRAIN_DEFAULT_MS, 'a value that is not a number is ignored');
@@ -756,28 +771,50 @@ test('the drain deadline is long only on the platform\'s Kubernetes Pods, and cl
   });
 });
 
-test('preStop, the longest drain and the rest of cleanup fit inside the platform Pod\'s grace period', () => {
+test('preStop, the drain and the rest of cleanup fit inside the platform Pod\'s grace period', () => {
   const fs = require('node:fs');
   const path = require('node:path');
-  const chart = fs.readFileSync(path.join(__dirname, '..', 'deploy', 'helm', 'social-vibecoding-platform',
-    'templates', 'platform.yaml'), 'utf8');
-  const grace = chart.match(/terminationGracePeriodSeconds: (\d+)/);
+  const chartDir = path.join(__dirname, '..', 'deploy', 'helm', 'social-vibecoding-platform');
+  const chart = fs.readFileSync(path.join(chartDir, 'templates', 'platform.yaml'), 'utf8');
+  const values = fs.readFileSync(path.join(chartDir, 'values.yaml'), 'utf8');
+  const helpers = fs.readFileSync(path.join(chartDir, 'templates', '_helpers.tpl'), 'utf8');
+  // docs/plans/draining-releases.md: one value, platform.drainMinutes, sets
+  // both the drain (PLATFORM_DRAIN_TIMEOUT_MS) and the grace (that plus a
+  // margin), so they cannot drift apart.
+  const grace = chart.match(/terminationGracePeriodSeconds: \{\{ add \(mul \(int \.Values\.platform\.drainMinutes\) 60\) (\d+) \}\}/);
+  const drainEnv = chart.match(/\{name: PLATFORM_DRAIN_TIMEOUT_MS, value: \{\{ mul \(int \.Values\.platform\.drainMinutes\) 60000 \| quote \}\}\}/);
   const preStop = chart.match(/preStop: \{exec: \{command: \["sh", "-c", "sleep (\d+)"\]\}\}/);
-  assert.ok(grace && preStop, 'the chart still sets both');
-  const graceMs = Number(grace[1]) * 1000;
+  const minutes = values.match(/^  drainMinutes: (\d+)$/m);
+  const cap = helpers.match(/\(gt \$drain (\d+)\.0\)/);
+  const floor = helpers.match(/\(lt \$drain (\d+)\.0\)/);
+  assert.ok(grace && drainEnv && preStop && minutes && cap && floor, 'the chart sets the grace and the drain from drainMinutes, and bounds it');
+  const marginMs = Number(grace[1]) * 1000;
   const preStopMs = Number(preStop[1]) * 1000;
+  assert.ok(Number(minutes[1]) >= 10, 'a real window for a turn and what follows it to finish');
+  assert.ok(Number(cap[1]) * 60 * 1000 <= lifecycleModule.KUBERNETES_DRAIN_MAX_MS,
+    'the largest drain the chart allows is not clamped by the process');
   // Kubernetes counts the grace from the start of termination, preStop
   // included. After the drain, cleanup takes each of its bounded steps in
-  // turn (the shots mark, the build marks and the checks hand-over, the pool
-  // close), then releases the leader lock: a second is allowed for that.
-  const afterDrainMs = serverModule.SHOTS_SHUTDOWN_MARK_TIMEOUT_MS
+  // turn: the handler drain and the worker wait (together), the Mayor's
+  // turns ended, the shots mark, the build marks, the checks hand-over and
+  // this process's row, the pool close; then the leader lock: a second is
+  // allowed for that.
+  const afterDrainMs = serverModule.DRAIN_TIMEOUT_MS
+    + 3000
+    + serverModule.SHOTS_SHUTDOWN_MARK_TIMEOUT_MS
     + 3 * serverModule.BUILD_SHUTDOWN_MARK_TIMEOUT_MS
     + serverModule.POOL_CLOSE_TIMEOUT_MS
     + 1000;
-  const total = preStopMs + lifecycleModule.KUBERNETES_DRAIN_MAX_MS + afterDrainMs;
-  assert.ok(total < graceMs,
-    `preStop ${preStopMs} + drain ceiling ${lifecycleModule.KUBERNETES_DRAIN_MAX_MS} + the rest ${afterDrainMs} ` +
-    `= ${total}ms must stay below terminationGracePeriodSeconds (${graceMs}ms), or the kubelet SIGKILLs mid-cleanup`);
+  assert.ok(preStopMs + afterDrainMs < marginMs,
+    `preStop ${preStopMs} + the rest ${afterDrainMs} = ${preStopMs + afterDrainMs}ms must stay below the grace's margin `
+    + `over the drain (${marginMs}ms), or the kubelet SIGKILLs mid-cleanup`);
+  // With no successor that registers what it holds (a rollback across the
+  // registry, an eviction whose replacement never came up), the old cutover:
+  // the wait for one, a minute's drain and the same steps, inside the
+  // shortest grace the chart allows.
+  const shortestGraceMs = Number(floor[1]) * 60 * 1000 + marginMs;
+  const fallbackMs = preStopMs + serverModule.SUCCESSOR_WAIT_MS + lifecycleModule.KUBERNETES_DRAIN_DEFAULT_MS + afterDrainMs;
+  assert.ok(fallbackMs < shortestGraceMs, `the fallback cutover (${fallbackMs}ms) fits the shortest grace (${shortestGraceMs}ms)`);
 });
 
 // Last, though every cleanup() above has already set it: lifecycle's flag
@@ -807,4 +844,77 @@ test('the gate: once shutdown has begun the bot dispatches nothing, its build la
   const bench = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'bench', 'lane.js'), 'utf8');
   assert.match(bench, /function shuttingDown\(\) \{\n\s+try \{ return !!require\('\.\.\/lifecycle'\)\.isShuttingDown\(\); \} catch \{ return false; \}\n\}/);
   assert.match(bench, /if \(shuttingDown\(\)\) \{ out\.paused = 'stopped'; break; \}/, 'checked before each trial the lane would start');
+});
+
+// docs/plans/draining-releases.md: on the platform's own Kubernetes Pods a
+// release no longer cuts the work the Pod started. It stops leading at once,
+// keeps its listener open (a shots worker calls it by its own address) and
+// finishes what it holds; only then does it close, hand over what is left and
+// exit.
+test('a Pod a release replaced resigns at once, keeps listening while it finishes what it holds, then exits', async () => {
+  const { server, logs } = loadServer();
+  const processes = require('../src/services/processes');
+  const seq = [];
+  const listener = fakeListener();
+  const leadership = {
+    identity: 'test', isLeader: true,
+    resign: async () => { seq.push('resign'); },
+    stop: async () => { seq.push('lock released'); },
+  };
+  const release = processes.hold('session', 4242);
+  setTimeout(() => {
+    seq.push(`turn finished (listener ${listener.events.includes('close') ? 'closed' : 'open'})`);
+    release();
+  }, 300);
+  const startedAt = Date.now();
+  const order = await runCleanup(server, {
+    listener, pool: fakePool(), finishesWork: true, drainMs: 20000, successor: async () => true, leadership,
+  });
+  assert.deepEqual(order, ['exit:0']);
+  assert.deepEqual(seq, ['resign', 'turn finished (listener open)', 'lock released'],
+    'leadership goes first, the work finishes with the listener open, and the exit follows');
+  assert.ok(Date.now() - startedAt >= 300, 'it waited for the turn');
+  assert.ok(listener.events.includes('close'), 'the listener closes once the work is done');
+  assert.ok(logs.some((l) => l.msg === "Finished this process's work"), 'and says so');
+});
+
+test('a Pod a release replaced hands over what it still holds at its drain deadline', async () => {
+  const { server, logs } = loadServer();
+  const processes = require('../src/services/processes');
+  const release = processes.hold('staging_build', 5151);
+  try {
+    const startedAt = Date.now();
+    const order = await runCleanup(server, {
+      listener: fakeListener(), pool: fakePool(), finishesWork: true, drainMs: 400, successor: async () => true,
+      leadership: { identity: 'test', resign: async () => {}, stop: async () => {} },
+    });
+    assert.deepEqual(order, ['exit:0']);
+    assert.ok(Date.now() - startedAt < 15000, 'bounded by the deadline, not by the work');
+    const handed = logs.find((l) => l.msg === "Drain deadline passed; handing the rest of this process's work over");
+    assert.ok(handed, 'it says it is handing the work over');
+    assert.deepEqual(handed.data.holds, [{ kind: 'staging_build', ref: '5151' }], 'and what it held');
+  } finally {
+    release();
+  }
+});
+
+test('with no successor that registers what it holds, a Pod keeps the cutover it always had', async () => {
+  const { server, logs } = loadServer();
+  const processes = require('../src/services/processes');
+  const seq = [];
+  const listener = fakeListener();
+  const release = processes.hold('session', 6161);
+  try {
+    const order = await runCleanup(server, {
+      listener, pool: fakePool(), finishesWork: true, drainMs: 20000, successor: async () => false,
+      leadership: { identity: 'test', resign: async () => { seq.push('resign'); }, stop: async () => { seq.push('lock released'); } },
+    });
+    assert.deepEqual(order, ['exit:0']);
+    assert.deepEqual(seq, ['lock released'], 'it leads until it exits, as before');
+    assert.ok(listener.events.includes('close'));
+    assert.ok(logs.some((l) => l.msg === 'No process that knows what this one holds is serving; cutting over without finishing the work'));
+    assert.ok(!logs.some((l) => l.msg === "Finishing this process's work before exiting"), 'and does not wait for its work');
+  } finally {
+    release();
+  }
 });

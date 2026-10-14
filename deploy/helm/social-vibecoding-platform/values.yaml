@@ -35,7 +35,31 @@ platform:
   # app (docs/workflows.md). Needs workflowMergeFollowupsEnabled. A rolling
   # change is safe in both directions; see docs/kubernetes-operations.md.
   workflowAppDeliveryEnabled: false
+  # How long a platform Pod a release replaced keeps finishing the work it
+  # started (turns and what follows them, previews, checks, shots runs,
+  # merges) before it hands the rest over and exits. It exits as soon as it
+  # holds nothing, so this is a ceiling, not a cost; the Pod's grace period
+  # is this plus a minute (docs/plans/draining-releases.md).
+  drainMinutes: 40
+  # How many replaced Pods may finish work at once, beside the one serving.
+  # When releases come faster than work finishes, the oldest hands its work
+  # over first rather than keep one Pod per release.
+  drainingMax: 2
   replicas: 1
+  # The web and conductor split (docs/plans/web-and-conductor.md). On, the
+  # Pods above serve people's requests and never lead (PROCESS_ROLE=web), and
+  # a Deployment of its own runs the conductor (PROCESS_ROLE=conductor): the
+  # leader, its timers, sweeps, merge queue, workflow loops, Homeroom bot and
+  # bench lane, on Pods the Service sends no requests to. Off, the Pods above
+  # serve and stand for leader, as they always did. Either way round, the
+  # Service's selector changes only after the Deployments are healthy (its
+  # Argo CD sync wave), so the release that flips it keeps serving.
+  conductor:
+    enabled: true
+    # More than one is a standby: it waits for the leader lock.
+    replicas: 1
+    # Empty: the platform's resources above.
+    resources: {}
   image:
     repository: ghcr.io/replace-me/social-vibecoding-platform
     digest: ""
@@ -138,7 +162,8 @@ migration:
       ephemeral-storage: 2Gi
 
 config:
-  # Prefer the external CNPG primary's node for previews, with normal scheduler
+  # Prefer the external CNPG primary's zone for previews, production apps and
+  # the platform's own Pods (web and conductor), with normal scheduler
   # fallback. Uses postgresql.namespace and podSelector["cnpg.io/cluster"].
   # No effect for bundled PostgreSQL or external databases without that label.
   previewFollowDatabasePrimary: true

@@ -555,7 +555,10 @@ test('queueWait: its own refusal, then its payer\'s week, then the bot\'s fault 
   const src = read('src/services/homeroom-bot.js');
   assert.match(src, /q\.held_until, q\.wait_reason, q\.wait_until, q\.waiting_total, q\.running_total,\n\s+a\.slug AS app_slug/);
   assert.match(src, /const items = rows\.map\(\(\{ waiting_total: _w, running_total: _r, \.\.\.q \}\) => \(\{ \.\.\.q, waiting: queueWait\(q, ctx\) \}\)\);/);
-  assert.match(src, /fault: faultBackoff\(now\), now, off: settings\.mode === 'off'/);
+  // The fault pause from the loop's memory, wherever the loop runs
+  // (memoryStatus, loopMemory: docs/plans/web-and-conductor.md).
+  assert.match(src, /fault: mem\.fault, now, off: settings\.mode === 'off'/);
+  assert.match(src, /function memoryStatus\(now = Date\.now\(\)\) \{\n\s+const fault = faultBackoff\(now\);/);
   assert.match(read('src/db/schema.sql'), /ALTER TABLE homeroom_bot_queue ADD COLUMN IF NOT EXISTS wait_reason TEXT;\nALTER TABLE homeroom_bot_queue ADD COLUMN IF NOT EXISTS wait_until TIMESTAMPTZ;/);
 });
 

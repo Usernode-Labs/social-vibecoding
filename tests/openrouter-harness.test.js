@@ -417,9 +417,80 @@ test('both ledger completions pass the routed provider the listener saw', () => 
   const fs = require('node:fs');
   const sessions = fs.readFileSync(require.resolve('../src/routes/sessions'), 'utf8');
   assert.match(sessions, /usageScope: agentTurn\.usageScopeForHarness\(runtimeContext\.agentHarness\),[\s\S]{0,240}routedProvider: result\?\.routedProvider \|\| null,/);
+  // Run seven: and every host it used, with its shortlist fallbacks.
+  assert.match(sessions, /routedProvider: result\?\.routedProvider \|\| null,[\s\S]{0,200}routedProviders: result\?\.routedProviders \|\| null,\n\s+shortlistFallbacks: result\?\.shortlistFallbacks \?\? null,/);
   const ledger = fs.readFileSync(require.resolve('../src/services/agent-turn'), 'utf8');
-  assert.match(ledger, /usageScope: usageScopeForHarness\(activeTurn\.harness\),\n\s+routedProvider: result\?\.routedProvider \|\| null,/,
+  assert.match(ledger, /usageScope: usageScopeForHarness\(activeTurn\.harness\),\n\s+routedProvider: result\?\.routedProvider \|\| null,\n\s+routedProviders: result\?\.routedProviders \|\| null,\n\s+shortlistFallbacks: result\?\.shortlistFallbacks \?\? null,/,
     'and a recovered turn\'s');
+});
+
+// Run seven (14 Oct 2026): slow hosts still served builds, and a turn's row
+// kept only the last host it was routed to, so neither the hosts a build used
+// nor how often it left the shortlist could be read back.
+test('run seven: a turn\'s ledger row keeps every host its requests used and how many left the shortlist', async () => {
+  const state = worker.newWatchState();
+  state.agentBackend = 'codex_openrouter';
+  state.agentHarness = 'claude';
+  const provider = (event) => worker.parseLine(`__USERNODE_CODING_PROVIDER__ ${JSON.stringify(event)}`, () => {}, state);
+  assert.equal(state.shortlistFallbacks, undefined, 'not known before any request is seen');
+  provider({ kind: 'provider_request_result', requestOrdinal: 1, httpStatus: 200, outcome: 'ok', providerName: 'Fireworks' });
+  assert.equal(state.shortlistFallbacks, 0, 'none, once a request is seen');
+  provider({ kind: 'provider_request_result', requestOrdinal: 2, httpStatus: 200, outcome: 'ok', providerName: 'Sail Research', shortlistFallback: true });
+  provider({ kind: 'provider_request_result', requestOrdinal: 3, httpStatus: 200, outcome: 'ok', providerName: 'Fireworks' });
+  provider({ kind: 'provider_request_result', requestOrdinal: 4, httpStatus: 200, outcome: 'ok', providerName: 'GMICloud', shortlistFallback: true });
+  provider({ kind: 'provider_request_result', requestOrdinal: 5, httpStatus: 200, outcome: 'ok', shortlistFallback: 'yes' });
+  assert.deepEqual(state.routedProviders, ['Fireworks', 'Sail Research', 'GMICloud'], 'each once, first seen first');
+  assert.equal(state.routedProvider, 'GMICloud', 'the last, as before');
+  assert.equal(state.shortlistFallbacks, 2);
+
+  const ledgerRow = () => {
+    const row = {
+      session_id: 8, status: 'running', agent_thread_id: null, reasoning_effort: null, metadata: { pricing: null },
+      input_tokens: 0, cached_input_tokens: 0, cache_write_input_tokens: 0, output_tokens: 0, reasoning_output_tokens: 0,
+    };
+    const client = {
+      async query(text, params) {
+        if (/FOR UPDATE/.test(text)) return { rows: [row] };
+        if (/^\s*UPDATE agent_turns/.test(text)) { row.updateParams = params; return { rowCount: 1 }; }
+        return { rows: [] };
+      },
+      release() {},
+    };
+    return { row, pool: { async connect() { return client; } } };
+  };
+  // The live completion, as the attempt loop calls it.
+  const live = ledgerRow();
+  await agentTurn.completeCodexAttempt({
+    pool: live.pool, turnUuid: 'u-hosts', status: 'completed', usageScope: 'run',
+    routedProvider: state.routedProvider, routedProviders: state.routedProviders, shortlistFallbacks: state.shortlistFallbacks,
+  });
+  const meta = JSON.parse(live.row.updateParams[18]);
+  assert.deepEqual(meta.routed_providers, ['Fireworks', 'Sail Research', 'GMICloud']);
+  assert.equal(meta.shortlist_fallbacks, 2);
+  assert.equal(live.row.updateParams[20], 'GMICloud', 'routed_provider is the last, as before');
+
+  // A turn a restart recovered: the same, from the journal's result.
+  const recovered = ledgerRow();
+  await agentTurn.settleRecoveredAgentAttempt({
+    pool: recovered.pool, activeTurn: { backend: 'codex_openrouter', turnUuid: 'u-hosts-2', harness: 'claude' }, result: state,
+  });
+  const kept = JSON.parse(recovered.row.updateParams[18]);
+  assert.deepEqual(kept.routed_providers, ['Fireworks', 'Sail Research', 'GMICloud']);
+  assert.equal(kept.shortlist_fallbacks, 2);
+
+  // Only names in a provider's shape, each once and at most eight; a count
+  // that is not one, or nothing reported, leaves the row as it was.
+  assert.deepEqual(agentTurn.routedProvidersOf(['Near AI', '<b>x</b>', 'Near AI', 42, 'Z.AI']), ['Near AI', 'Z.AI']);
+  assert.equal(agentTurn.routedProvidersOf(Array.from({ length: 12 }, (_, i) => `Host ${i}`)).length, 8);
+  assert.equal(agentTurn.routedProvidersOf([]), null);
+  assert.equal(agentTurn.shortlistFallbacksOf(-1), null);
+  assert.equal(agentTurn.shortlistFallbacksOf(1.5), null);
+  assert.equal(agentTurn.shortlistFallbacksOf(0), 0);
+  const none = ledgerRow();
+  await agentTurn.completeCodexAttempt({ pool: none.pool, turnUuid: 'u-none', status: 'completed', usageScope: 'run' });
+  const bare = JSON.parse(none.row.updateParams[18]);
+  assert.equal('routed_providers' in bare, false);
+  assert.equal('shortlist_fallbacks' in bare, false);
 });
 
 // ── Worker: capability env ────────────────────────────────────────────

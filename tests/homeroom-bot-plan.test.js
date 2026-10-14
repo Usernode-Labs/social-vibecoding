@@ -513,6 +513,11 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
     // bullets reached neither the spec nor the build.
     assert.match(run.build_note, /\n\nApproved by the creator, who tapped Build it under this plan:\n- A list of your plants\n- A Today view\nThe creator chose/);
     assert.deepEqual(live.splitApprovedPlan(run.build_note).approved.split('\n').slice(1, 3), ['- A list of your plants', '- A Today view']);
+    // Newcomer run seven (14 Oct 2026): Build it under the card is the one
+    // go-ahead whose bullets were shown, so only it says they were approved;
+    // the made screen's Submit writes them as the plan's own lines.
+    assert.equal(run.plan.planShown, undefined);
+    assert.ok(!run.build_note.includes(live.PLAN_LINES_HEAD) && !run.build_note.includes(live.MADE_SCREEN_CHOICES_HEAD));
     const after = await planMessage(first);
     assert.deepEqual([after.meta.status, after.meta.chosen, after.meta.choices], ['answered', 'build', ['Phone alert', 'Just me']]);
     const again = await mayor.decideOfferTap(pool, {}, { user: maya, actionId: card.meta.actionId, choice: 'build' });

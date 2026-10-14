@@ -126,7 +126,7 @@ test('run reports against the full PostgreSQL schema', { timeout: 180000 }, asyn
       [a.id, tester.userId]
     );
     const review = {
-      state: 'done', stop: 'ship', stopDetail: null, costUsd: 0.42, resumes: 1,
+      state: 'done', stop: 'ship', stopDetail: null, costUsd: 0.42, resumes: 1, startedAt: '2026-10-14T10:00:00.000Z',
       round0: { sha: 'aaaaaaa', capture: { booted: true, shots: [{ html: 'CAPTURE-never-in-a-report' }] } },
       rounds: [
         {
@@ -152,12 +152,15 @@ test('run reports against the full PostgreSQL schema', { timeout: 180000 }, asyn
       `INSERT INTO agent_turns (id, session_id, user_id, backend, requested_model, routed_provider, reasoning_effort,
                                 status, input_tokens, cached_input_tokens, output_tokens, actual_cost_usd,
                                 started_at, completed_at, metadata)
-       VALUES ($1, $2, $3, 'codex_openrouter', 'anthropic/claude-opus-5.5', 'Anthropic', 'high',
+       VALUES ($1, $2, $3, 'codex_openrouter', 'anthropic/claude-opus-5.5', 'Sail Research', 'high',
                'completed', 120000, 90000, 9000, 3.1,
                NOW() - INTERVAL '47 minutes', NOW() - INTERVAL '47 minutes' + INTERVAL '812.5 seconds', $4::jsonb)`,
       [crypto.randomUUID(), cs.id, tester.userId, JSON.stringify({
         telemetry_component: 'homeroom_bot_build',
         prompt: 'PROMPT-never-in-a-report',
+        // Run seven: every host the turn used, and its shortlist fallbacks.
+        routed_providers: ['Fireworks', 'Sail Research'],
+        shortlist_fallbacks: 1,
         telemetry_metrics: { tool_calls: 31, browser_phase_ms: 41000, tool_sequence: ['Read', 'Edit', 'Bash'] },
       })]
     );
@@ -232,7 +235,9 @@ test('run reports against the full PostgreSQL schema', { timeout: 180000 }, asyn
     assert.equal(report.turns.length, 1);
     assert.equal(report.turns[0].component, 'homeroom_bot_build');
     assert.equal(report.turns[0].secs, 812.5);
-    assert.equal(report.turns[0].routedProvider, 'Anthropic');
+    assert.equal(report.turns[0].routedProvider, 'Sail Research', 'a host\'s name keeps its space');
+    assert.deepEqual(report.turns[0].routedProviders, ['Fireworks', 'Sail Research']);
+    assert.equal(report.turns[0].shortlistFallbacks, 1);
     assert.equal(report.turns[0].costUsd, 3.1);
     assert.deepEqual(report.turnMetrics[0].metrics, { browser_phase_ms: 41000, tool_calls: 31, tool_sequence: '["Read","Edit","Bash"]' });
     assert.equal(report.invocations.length, 1);
@@ -273,6 +278,45 @@ test('run reports against the full PostgreSQL schema', { timeout: 180000 }, asyn
     assert.equal(missing.status, 404);
     assert.equal((await missing.json()).code, 'no_report');
     assert.equal((await call('GET', '/api/test-accounts/run-report')).status, 400);
+  });
+
+  // Run seven (14 Oct 2026): the last look after a final fix, written into
+  // the run's stored review by the real SQL, once, and read back beside its
+  // rounds without changing them or the run's listing columns.
+  await t.test('run seven: a last look is written into the run\'s review once, and the report shows it', async () => {
+    const botReview = require('../src/services/bot-review');
+    const { rows: [stored] } = await pool.query('SELECT review FROM homeroom_bot_runs WHERE id = $1', [seeded.runId]);
+    const left = { id: 'empty-list', severity: 'major', screen: 'Home', problem: 'The list is empty.', fix: 'Seed it.' };
+    const state = {
+      ...stored.review, stop: 'round_limit', finalSha: 'ccccccc', finalCapture: { booted: true, shots: [] },
+      rounds: [stored.review.rounds[0], { round: 2, verdict: 'fix', issues: [left], fix: { ok: true, sha: 'ccccccc' } }],
+    };
+    let asked = 0;
+    const look = await botReview.startFinalLook({
+      pool, runId: seeded.runId, state,
+      review: async ({ previousIssues }) => {
+        asked += 1;
+        assert.deepEqual(previousIssues.map((i) => i.id), ['empty-list']);
+        return { ok: true, verdict: 'ship', issues: [], previousFixed: ['empty-list'], costUsd: 0.15, ms: 900, by: 'model' };
+      },
+    });
+    assert.deepEqual(look.fixed, ['empty-list']);
+    assert.equal(await botReview.startFinalLook({ pool, runId: seeded.runId, state, review: async () => { asked += 1; } }), null);
+    assert.equal(asked, 1, 'a run that has its look is not looked at again');
+    assert.equal(await botReview.recordFinalLook(pool, seeded.runId, state.startedAt, { fixed: [] }), false, 'never over one already there');
+    assert.equal(await botReview.recordFinalLook(pool, seeded.runId, '2026-01-01T00:00:00.000Z', { fixed: [] }), false, 'nor into another review');
+    const { rows: [after] } = await pool.query(
+      `SELECT review_rounds, review_stop, jsonb_array_length(review->'rounds') AS rounds, review->'finalLook' AS look
+         FROM homeroom_bot_runs WHERE id = $1`,
+      [seeded.runId]
+    );
+    assert.deepEqual([after.review_rounds, after.review_stop, after.rounds], [2, 'ship', 2], 'its rounds and stop as they were');
+    assert.deepEqual(after.look.fixed, ['empty-list']);
+    const report = await runReport.build(pool, { slug: 'tester-plant-pal' });
+    assertReport(report, seeded);
+    assert.deepEqual(report.runs[0].reviewFinalLook, {
+      round: 2, fixed: ['empty-list'], open: [], verdict: 'ship', costUsd: 0.15, ms: 900, at: after.look.at, error: null,
+    });
   });
 
   await t.test('retiring keeps the report first, and it outlives the app', async () => {

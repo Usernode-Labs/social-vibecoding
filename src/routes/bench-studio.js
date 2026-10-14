@@ -83,6 +83,7 @@ function benchStudioRoutes(config) {
     const out = await studio.launch(pool, config, {
       briefSet: b.briefSet, refs: b.refs, briefs: b.briefs, models: b.models, contextPackIds: b.contextPackIds,
       references: b.references, repeats: b.repeats, capUsd: b.capUsd, concurrency: b.concurrency, note: b.note,
+      sharedPlans: b.sharedPlans,
     }, { actorId: req.user.id });
     if (out.ok) log.info('bench', 'Studio run launched', { by: req.user.username, via, runId: out.run.id, trials: out.trials, capUsd: out.run.capUsd });
     return out;

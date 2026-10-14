@@ -2029,9 +2029,14 @@ async function resumePausedSession({ pool, config, user, sessionId }) {
   return { ok: true };
 }
 
+// What a stop forwarded from another platform process runs with here
+// (receiveSessionStop): this process's pool and recovery scheduler.
+let forwardedStopDeps = null;
+
 function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   const router = Router();
   const pool = getPool(config);
+  forwardedStopDeps = { pool, scheduleInteractiveRecovery };
 
   // #1038: the notifier needs a pool to resolve a touched session's app /
   // owner / share state before it can decide who a `session_state` event
@@ -7059,7 +7064,16 @@ async function settleHeadlessMayorUsage({
   return costCents;
 }
 
-async function runHeadlessSession({
+// The whole run holds its session (services/processes.js), planning and
+// wrap-up included, not only its coding turn: a process that replaced this
+// one at a release must not resume a run this one is still carrying
+// (resumeHeadlessRuns), and a draining process finishes it before it exits.
+function runHeadlessSession(args) {
+  const release = require('../services/processes').hold('session', Number(args.session.id));
+  return runHeadlessSessionInner(args).finally(release);
+}
+
+async function runHeadlessSessionInner({
   pool, config, session, user, selectedModel,
   repoOwner, repoName, userApiKey, issueNumber, issue,
   comments = [], botUsername = null,
@@ -8342,7 +8356,11 @@ async function runRecoveredWrapUp({
 //                transcript.
 // Anything that can't be carried forward is marked 'failed' — same
 // terminal state as before, just no longer the only possibility.
-async function resumeHeadlessRuns(config) {
+//
+// `minIdleMs` (the leader's periodic pass, server.js orphan-headless-sweep):
+// only runs that have not moved for that long, so a run starting in some
+// process is never taken before its hold is seen.
+async function resumeHeadlessRuns(config, { minIdleMs = 0 } = {}) {
   const pool = getPool(config);
   let rows;
   try {
@@ -8354,12 +8372,34 @@ async function resumeHeadlessRuns(config) {
        JOIN users u ON cs.user_id = u.id
        WHERE cs.is_headless = TRUE
          AND (cs.headless_status = 'generating'
-              OR cs.active_turn->>'phase' = 'cleanup_pending')`
+              OR cs.active_turn->>'phase' = 'cleanup_pending')
+         AND ($1::double precision = 0
+              OR cs.last_activity_at < NOW() - make_interval(secs => $1::double precision / 1000.0))`,
+      [Number(minIdleMs) || 0]
     ));
   } catch (err) {
     log.error('sessions', 'resumeHeadlessRuns query failed', { err: err.message });
     return;
   }
+  if (!rows.length) return;
+  // A run a live process still carries (the Pod a release replaced, finishing
+  // its work) is that process's, not a restart's to resume. Read exactly; a
+  // run whose holders cannot be read waits for the next pass.
+  const processes = require('../services/processes');
+  const free = [];
+  for (const row of rows) {
+    try {
+      if (!(await processes.holders('session', row.id, pool)).length) free.push(row);
+    } catch (err) {
+      log.warn('sessions', 'Could not read who holds a headless run; leaving it for the next pass', { sessionId: row.id, err: err.message });
+    }
+  }
+  if (free.length < rows.length && !minIdleMs) {
+    log.info('sessions', 'Leaving headless runs live processes still carry', {
+      sessionIds: rows.filter((r) => !free.includes(r)).map((r) => r.id),
+    });
+  }
+  rows = free;
   if (!rows.length) return;
   log.info('sessions', 'Resuming headless runs after restart', {
     count: rows.length, sessionIds: rows.map((r) => r.id),
@@ -10245,6 +10285,10 @@ async function runCodexAttemptLoop({
       // The upstream provider OpenRouter named for the turn's requests, when
       // the Claude Code listener saw one (worker.js observeCodingProviderResult).
       routedProvider: result?.routedProvider || null,
+      // Run seven (14 Oct 2026): and every one it used, with how many of its
+      // requests left the shortlist, for the row's metadata.
+      routedProviders: result?.routedProviders || null,
+      shortlistFallbacks: result?.shortlistFallbacks ?? null,
       telemetryComponent: result?.providerDispatched === true
         ? (telemetryComponent
           || (mode === 'scout' ? 'coding_agent_scout' : 'coding_agent_build'))
@@ -10501,7 +10545,7 @@ const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
 // receives an HTTP-shaped result with common ownership, durable intent and
 // confirmation. Agent conversations request immediate hard cancellation;
 // classic sessions retain their existing stop/force escalation policy.
-async function requestSessionStop({ pool, sessionId, user, force = false, immediate = false, expectedTurnId = null, scheduleInteractiveRecovery = null }) {
+async function requestSessionStop({ pool, sessionId, user, force = false, immediate = false, expectedTurnId = null, scheduleInteractiveRecovery = null, forwarded = false }) {
     // #1378: owner OR an admin who is allowed to WRITE. GET
     // /api/sessions/:id is admin-readable and GET .../status has no
     // ownership guard at all, so an admin could already watch someone
@@ -10540,6 +10584,26 @@ async function requestSessionStop({ pool, sessionId, user, force = false, immedi
     const forceRequested = force === true;
 
     const handle = stopRegistry.get(sessionId);
+    // docs/plans/draining-releases.md: the turn may run in another platform
+    // process (one finishing its work after a release, or the one that
+    // replaced it), which holds the session. The process with the turn's
+    // handle does what this one would with it, told over the bus
+    // (receiveSessionStop); this one still takes its own durable path below
+    // (the stamp, and the kill inside the worker, which reach the turn from
+    // any process), but never answers "nothing to stop" or clears the
+    // bookkeeping of a turn it handed on. A forwarded stop is never forwarded
+    // again.
+    let handedOn = false;
+    if (!handle && !forwarded && require('../services/processes').heldElsewhere('session', Number(sessionId))) {
+      require('../services/ws-bus').publish('session_stop', null, {
+        sessionId: Number(sessionId),
+        user: { id: user.id, username: user.username, canAdminWrite: user.canAdminWrite === true },
+        force: force === true, immediate: immediate === true, expectedTurnId: expectedTurnId || null,
+      });
+      handedOn = true;
+      log.info('sessions', 'Stop forwarded to the process running the turn', { sessionId, by: user.username });
+    }
+    const stoppingThere = { status: 202, body: { ok: true, stopped: true, stopping: true, phase: null } };
     if (expectedTurnId) {
       const current = await turnLifecycle.loadActiveTurn(pool, sessionId);
       if (turnLifecycle.turnIdentity(current) !== expectedTurnId) {
@@ -10552,6 +10616,7 @@ async function requestSessionStop({ pool, sessionId, user, force = false, immedi
       ? (handle?.phase === 'mayor2' ? 'wrap_up_not_stoppable' : handle ? 'force' : 'force_orphan')
       : stopPolicy.classifyStopRequest({ handle, force: forceRequested });
 
+    if (handedOn && (action === 'force_orphan' || action === 'force_without_stop')) return stoppingThere;
     if (immediate && action !== 'wrap_up_not_stoppable') {
       const durable = await turnLifecycle.loadActiveTurn(pool, sessionId);
       if (expectedTurnId && turnLifecycle.turnIdentity(durable) !== expectedTurnId) {
@@ -10596,6 +10661,7 @@ async function requestSessionStop({ pool, sessionId, user, force = false, immedi
       try {
         hasDurableTurn = !!(await turnLifecycle.loadActiveTurn(pool, sessionId));
       } catch {}
+      if (handedOn) return stoppingThere;
       log.warn('sessions', 'Stop request had no active turn', {
         sessionId,
         busy: isSessionBusy(sessionId),
@@ -10771,6 +10837,31 @@ async function requestSessionStop({ pool, sessionId, user, force = false, immedi
     }
 
     return { status: 200, body: { ok: true, stopped: true, phase: handle.phase } };
+}
+
+// The bus's `session_stop` (services/ws.js): another process was asked to
+// stop a turn this one may be running. The sender checked the stop's user;
+// requestSessionStop checks them again here, against the same rows.
+async function receiveSessionStop(payload) {
+  const sessionId = Number(payload?.sessionId);
+  const user = payload?.user;
+  if (!forwardedStopDeps || !Number.isInteger(sessionId) || !user || !Number.isInteger(Number(user.id))) return null;
+  // Only where the turn's handle is: a process that merely holds the session
+  // (a hand-off, a retained recovery) has nothing of the turn to stop, and
+  // the sender's own durable path already reached the worker.
+  if (!stopRegistry.get(sessionId)) return null;
+  const result = await requestSessionStop({
+    pool: forwardedStopDeps.pool,
+    scheduleInteractiveRecovery: forwardedStopDeps.scheduleInteractiveRecovery,
+    sessionId,
+    user: { id: Number(user.id), username: String(user.username || ''), canAdminWrite: user.canAdminWrite === true },
+    force: payload.force === true,
+    immediate: payload.immediate === true,
+    expectedTurnId: payload.expectedTurnId || null,
+    forwarded: true,
+  });
+  log.info('sessions', 'Ran a stop another process forwarded', { sessionId, status: result?.status });
+  return result;
 }
 
 async function confirmStopLanded(sessionId, handle) {
@@ -13668,7 +13759,7 @@ const MAYOR_TURN_DEPS = Object.freeze({
   switchSessionAgent,
 });
 
-module.exports = { requestSessionStop, changePlanFor, MAYOR_TURN_DEPS, canViewSession, BUILD_VENUES, summarizeFailingChecks, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, captureSpecOutput, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, publishStagingOutcome, retireVotesForNewCommit, notifySessionDone, notifySessionStalled, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, codexMaxTokensRetry, codexProviderFailureText, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildHostedCodingWorkflowGuidance, buildCodingAgentBuildGuidance, OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE, OPENROUTER_PLATFORM_ISSUE_GUIDANCE, DISPATCHED_TURN_INSTRUCTIONS, DEV_CHAT_SUMMARY_RULE, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, SUGGEST_REPLIES_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, switchSessionAgent, resumePausedSession, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };
+module.exports = { requestSessionStop, receiveSessionStop, changePlanFor, MAYOR_TURN_DEPS, canViewSession, BUILD_VENUES, summarizeFailingChecks, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, captureSpecOutput, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, publishStagingOutcome, retireVotesForNewCommit, notifySessionDone, notifySessionStalled, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, codexMaxTokensRetry, codexProviderFailureText, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildHostedCodingWorkflowGuidance, buildCodingAgentBuildGuidance, OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE, OPENROUTER_PLATFORM_ISSUE_GUIDANCE, DISPATCHED_TURN_INSTRUCTIONS, DEV_CHAT_SUMMARY_RULE, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, SUGGEST_REPLIES_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, switchSessionAgent, resumePausedSession, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };
 // #4524: the topic page's fast open asks GET /api/apps/:slug/proposals/:id
 // for its item beside the board load, and production serves an active or
 // paused session there when it is the viewer's own or shared. The demo rows

@@ -132,7 +132,7 @@ export function buildLineDone(state: BuildLineState): boolean {
  * `note`, after the words: how long it usually takes, where a screen says so
  * (#4392, Homeroom bot's thanks: "Building it · usually 10 to 25 min").
  * `words` (N4): the stage's own words in place of the line's, already in
- * the language on screen ("Drawing the screens" while it is `building`).
+ * the language on screen ("Working out the details" while it is `building`).
  */
 export function BuildLine({ state, note = null, words: own = null, className = '' }: {
   state: BuildLineState; note?: string | null; words?: string | null; className?: string;

@@ -76,20 +76,27 @@ export function buildLineTileClass(state) {
  * build named for what is happening (`first_version.phase`,
  * services/homeroom-bot-progress.js firstVersionPhase), said in place of
  * "Building it" while the line is `building`, with how long that stage has
- * run ("Drawing the screens · 2 min so far"). In English:
+ * run ("Building it · 2 min so far"). In English:
  *
  *   starting   Starting the build
- *   drawing    Drawing the screens
- *   writing    Writing the plan
+ *   drawing    Working out the details
+ *   writing    Working out the details
  *   building   Building it
  *   built      Built. Checking the screens…
  *   checking   Checking the screens · round 1 of 2
  *   testing    Testing it
+ *
+ * Run seven (14 Oct 2026, iPhone Safari, Club Votes): the plan and the
+ * first look are both made at Make it now, so while the spec ran the line
+ * said "Drawing the screens" beside a screen already drawn, then "Writing
+ * the plan" under a "Plan written" step already ticked. The spec's two
+ * phases say one thing, "Working out the details", which is what it is
+ * doing, and the Home tile says "Planning" for both.
  */
 export const PHASE_WORDS = Object.freeze({
   starting: 'onboarding:buildLine.phase.starting',
-  drawing: 'onboarding:buildLine.phase.drawing',
-  writing: 'onboarding:buildLine.phase.writing',
+  drawing: 'onboarding:buildLine.phase.details',
+  writing: 'onboarding:buildLine.phase.details',
   building: 'onboarding:buildLine.building',
   built: 'onboarding:buildLine.phase.built',
   checking: 'onboarding:buildLine.phase.checking',
@@ -100,12 +107,13 @@ export const PHASE_WORDS = Object.freeze({
  * Run five (13 Oct 2026): the Home tile says the phase too, in its short
  * word, so the tile, the hub card and the App tab name the same moment
  * (the tile said "Building" while the App tab said "Drawing the screens").
- * Message ids, one per PHASE_WORDS key.
+ * Message ids, one per PHASE_WORDS key. Run seven: the spec's two phases
+ * are "Planning", the word the tile says while the plan is made.
  */
 export const PHASE_TILE_WORDS = Object.freeze({
   starting: 'onboarding:buildLine.tile.phase.starting',
-  drawing: 'onboarding:buildLine.tile.phase.drawing',
-  writing: 'onboarding:buildLine.tile.phase.writing',
+  drawing: 'onboarding:buildLine.tile.planning',
+  writing: 'onboarding:buildLine.tile.planning',
   building: 'onboarding:buildLine.tile.building',
   built: 'onboarding:buildLine.tile.phase.checking',
   checking: 'onboarding:buildLine.tile.phase.checking',

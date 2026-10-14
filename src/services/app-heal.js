@@ -57,8 +57,12 @@ const REQUEST_HEAL_DEBOUNCE_MS = 30_000;
 const DEFAULT_INTERVAL_MS = 60_000;
 const DEFAULT_COOLDOWN_MS = 10 * 60 * 1000;
 
-// In-memory state, all keyed by slug (one process owns all heals).
-const inFlight = new Set();          // heal currently running
+// In-memory state, all keyed by slug. The sweep runs on the leader, and a
+// person landing on a down app asks for a heal wherever the request landed
+// (a web process never leads, docs/plans/web-and-conductor.md): a heal under
+// way is held for every process to see (services/processes.js 'app_heal').
+const processes = require('./processes');
+const inFlight = processes.heldSet('app_heal'); // heal currently running
 const healAttempts = new Map();      // slug -> ts of last heal attempt (cooldown)
 const restartingStreak = new Map();  // slug -> consecutive 'restarting' sightings
 const requestDebounce = new Map();   // slug -> ts of last requestHeal
@@ -315,7 +319,7 @@ async function checkAndHealOne(config, pool, app, { probeRunning = false, backgr
   if (appTeardown.isTearingDown(app.slug)) return { status: 'deleting', slug: app.slug };
   const runtimeRef = applicationRuntime.productionRef(config, app);
   config = { ...config, appRuntime: runtimeRef.runtimeKind };
-  if (inFlight.has(app.slug)) return { status: 'in_flight', slug: app.slug };
+  if (inFlight.has(app.slug) || processes.heldElsewhere('app_heal', app.slug)) return { status: 'in_flight', slug: app.slug };
 
   // A deploy of this app in this process, or one app delivery runs
   // anywhere (the row's deploy_state).
@@ -373,13 +377,23 @@ async function checkAndHealOne(config, pool, app, { probeRunning = false, backgr
     try {
       if (state !== 'not_found') {
         try {
-          await applicationRuntime.restart(config, runtimeRef);
+          // The restart waits for the rollout (up to five minutes), and an
+          // app that cannot start never rolls out. Shutdown does not wait
+          // for that: the drain held a release for 40 s on 14 Oct 2026 for
+          // one such app, then this escalated to a rebuild mid-shutdown.
+          // The next leader's sweep heals it again.
+          const restarted = await Promise.race([
+            applicationRuntime.restart(config, runtimeRef).then(() => true),
+            lifecycle.whenShuttingDown().then(() => false),
+          ]);
+          if (!restarted) return { status: 'shutting_down', slug: app.slug };
           healAttempts.delete(app.slug);
           return { status: 'restarted', slug: app.slug };
         } catch (err) {
           log.warn('app-heal', 'Kubernetes restart failed; escalating to rebuild', { slug: app.slug, err: err.message });
         }
       }
+      if (lifecycle.isShuttingDown()) return { status: 'shutting_down', slug: app.slug };
       const recovered = await recoverFromScratch(config, pool, app);
       // A requested deploy keeps the cooldown: its outcome comes later, and
       // a failure must not be asked for again every tick.

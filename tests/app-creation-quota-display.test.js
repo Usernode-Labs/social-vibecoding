@@ -130,7 +130,7 @@ test('the make screen loads and renders the quota without reset copy', () => {
   assert.equal(message('dialogs:allowance.headline.used', { count: 1, used: 1 }), '1 of 1 app slot used');
   // Make it and Import it are pale at the limit, and only then or while busy.
   assert.match(source, /const \{ blocked: quotaBlocks \} = useAppAllowance\(\);/);
-  assert.match(source, /disabled=\{busy \|\| quotaBlocks\}/,
+  assert.match(source, /disabled=\{dictating \|\| busy \|\| quotaBlocks\}/,
     'the visible at-limit screen must not offer a submit the server will refuse');
   assert.match(source, /blocked=\{quotaBlocks\}/);
   assert.match(read('frontend/src/features/first-session/import-repo.tsx'), /disabled=\{busy \|\| blocked\}/);

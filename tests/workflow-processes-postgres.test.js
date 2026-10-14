@@ -316,7 +316,8 @@ test('workflow machines in a process of their own, and through its crash', { tim
     await procs.until(() => settled('merge-followups', mergeKey(carrier), 'included.find'), 'the search for carried changes');
     const refusal = async () => (await pool.query(
       `SELECT result, reason FROM wf_events WHERE machine = 'merge-followups' AND key = $1 AND type = 'Included'`, [mergeKey(moved)])).rows[0];
-    await procs.until(refusal, 'the carried message to be decided');
+    // Decided, not only appended: the row exists before the pipeline applies it.
+    await procs.until(async () => (await refusal())?.result, 'the carried message to be decided');
     assert.deepEqual({ ...await refusal() }, { result: 'rejected', reason: 'head_moved' });
     const { rows: [row] } = await pool.query('SELECT status, included_in_session_id FROM chat_sessions WHERE id = $1', [moved.id]);
     assert.deepEqual({ ...row }, { status: 'promoted', included_in_session_id: null }, 'left to merge on its own');
