@@ -778,10 +778,15 @@ restores the template that served, so the older revision keeps serving.
 ### Activation and rollback
 
 1. **Set the value** in the platform's values in the infra repository. Argo CD rolls the
-   Deployment.
-2. **During the rollout overlap.** An old Pod may still build a preview the old way. Once a
-   new Pod has recorded the flag, the ownership trigger logs such writes in
-   `wf_ownership_violations` (`log` mode in production).
+   Deployments.
+2. **While the replaced Pods drain.** A Pod the release replaced finishes the previews it
+   was building the old way, for up to `platform.drainMinutes`. Once a new Pod has recorded
+   the flag, the ownership trigger logs such writes in `wf_ownership_violations` (`log`
+   mode in production).
+   - **Where the work runs.** The machine's builds and checks runs are its work items,
+     which only the leader runs: with the web and conductor split, the conductor Pod.
+     Each build clones the proposal into that Pod's `/tmp` and follows its rollout there,
+     so size `platform.conductor.resources` for the previews built at once.
 3. **Verify.**
    - **The new Pod's log.** `Workflow runtime started` lists `preview`.
    - **Admin → Workflows.** The next revision appears as `preview / session:<id>`, goes
