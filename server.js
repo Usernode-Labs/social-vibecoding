@@ -1590,12 +1590,16 @@ async function becomeLeader() {
       log.warn('server', 'Boot check-harvest sweep failed (non-fatal)', { err: err.message });
     })
     .then(() => recoverStuckMerges(config))
-    .then(() => {
+    .then((reconciled) => {
       // With the merge-followups machine on, a merge's follow-ups are its
       // durable work, and this sweep would only race its delivery.
       if (config.wfMergeFollowupsEnabled) return;
       mergeFollowups.recover(config).catch((err) => {
         log.warn('server', 'Boot merge follow-up recovery failed', { err: err.message });
+      });
+      // #144, after the heal: see below.
+      resumeIssueCloseWatches(config, { skip: reconciled?.followedUp }).catch((err) => {
+        log.warn('server', 'Issue-close watch resume failed', { err: err.message });
       });
     })
     .then(() => reconcileEligibleMerges(config))
@@ -1638,10 +1642,14 @@ async function becomeLeader() {
   // until someone happens to reload after the cache TTL. Re-watching
   // recently-merged sessions on boot closes that gap (and covers crash
   // restarts mid-watch for ordinary apps too).
-  // With the merge-followups machine on, the watch is its durable work.
-  if (!config.wfMergeFollowupsEnabled) resumeIssueCloseWatches(config).catch((err) => {
-    log.warn('server', 'Issue-close watch resume failed', { err: err.message });
-  });
+  //
+  // It runs in the chain above, after recoverStuckMerges rather than beside
+  // it: a merge the heal records as merged reads as merged only once the
+  // heal's GitHub round trips are done, and one it records later, on the
+  // eligible-merge timer, is past this boot's look. So the heal watches each
+  // merge it records itself, with the rest of its follow-ups, and the resume
+  // leaves those (`followedUp`) out. With the merge-followups machine on,
+  // the watch is its durable work.
 
   // Fallback recovery: for sessions whose container is already gone but
   // whose branch is ahead of main (i.e. CC pushed commits during an old
@@ -1835,6 +1843,7 @@ module.exports = {
   finalizeRecoveredTurn,
   restoreMissingQuickReplies,
   recoverStuckMerges,
+  resumeIssueCloseWatches,
   reconcileEligibleMerges,
   reconcileStuckChecks,
   cleanup,
@@ -1965,12 +1974,31 @@ const OLD_MERGE_ATTEMPT_RECHECK_MS = 60 * 60 * 1000;
 // sessionId -> when the timer sweep last looked up its old attempt.
 const oldMergeAttemptLookedUpAt = new Map();
 
+// On the legacy path (WF_MERGE_FOLLOWUPS_ENABLED off) a heal also runs what
+// the merge still owed (routes/votes.js runMergeFollowups), and the sweep
+// first resumes the follow-ups of merges recorded as merged that a restart
+// cut off (merge_followups_due_at). Resolves { followedUp }: the sessions
+// whose follow-ups this sweep ran, the request watch among them, which the
+// boot's resumeIssueCloseWatches then leaves alone.
 async function recoverStuckMerges(config, { attemptedOnly = false, now = Date.now } = {}) {
   const { getPool } = require('./src/db/pool');
   const github = require('./src/services/github');
   const githubBudget = require('./src/services/github-budget');
   const mergeLock = require('./src/services/merge-finalization-lock');
   const pool = getPool(config);
+  const workflow = require('./src/workflow/platform.ts');
+  const followedUp = [];
+  const result = { followedUp };
+
+  // Owed follow-ups need no GitHub lookup, so they are resumed first and
+  // whatever GitHub's state.
+  if (!workflow.mergeFollowupsEnabled()) {
+    try {
+      followedUp.push(...await require('./src/routes/votes').resumeOwedMergeFollowups(config, pool));
+    } catch (err) {
+      log.warn('server', 'recoverStuckMerges: resuming owed merge follow-ups failed', { err: err.message });
+    }
+  }
 
   let rows;
   try {
@@ -1986,16 +2014,16 @@ async function recoverStuckMerges(config, { attemptedOnly = false, now = Date.no
     ));
   } catch (err) {
     log.warn('server', 'recoverStuckMerges query failed', { err: err.message });
-    return;
+    return result;
   }
-  if (!rows.length) return;
+  if (!rows.length) return result;
 
   // Without GitHub auth the outcome is unknown. Keep the claim until a
   // later sweep can ask GitHub; a blind demotion can reopen a merged PR.
   if (!github.isEnabled()) {
     const merging = rows.filter((row) => row.status === 'merging').length;
     if (merging) log.warn('server', 'Cannot reconcile merging sessions without GitHub auth', { count: merging });
-    return;
+    return result;
   }
 
   // An old attempt the timer looked up within the hour waits its turn.
@@ -2012,7 +2040,7 @@ async function recoverStuckMerges(config, { attemptedOnly = false, now = Date.no
       if (last && now() - last < OLD_MERGE_ATTEMPT_RECHECK_MS) { deferred++; return false; }
       return true;
     });
-    if (!rows.length) return;
+    if (!rows.length) return result;
   }
 
   log.info('server', 'Reconciling open PR sessions against GitHub', { count: rows.length, deferred });
@@ -2048,7 +2076,6 @@ async function recoverStuckMerges(config, { attemptedOnly = false, now = Date.no
         try {
           const pr = await github.getPR(owner, repo, row.pr_number);
           if (attemptedOnly) oldMergeAttemptLookedUpAt.set(row.id, now());
-          const workflow = require('./src/workflow/platform.ts');
           if (pr && pr.merged && workflow.mergeFollowupsEnabled()) {
             // The merge-followups machine records the merge and runs every
             // follow-up the lost report would have (F2), not only the status.
@@ -2061,12 +2088,23 @@ async function recoverStuckMerges(config, { attemptedOnly = false, now = Date.no
               sessionId: row.id, prNumber: row.pr_number, repo: `${owner}/${repo}`, mergeSha: pr.merge_commit_sha || null,
             });
           } else if (pr && pr.merged) {
+            // The merge that did this never finished: most often a restart
+            // cut off a child app's finalizer in its production rebuild.
+            // What it still owes is done here, as finalizeMerge does it
+            // (routes/votes.js): the values the proposal declared first, so
+            // the delivery merge-followup-recovery makes next has them; then
+            // the status, owing the follow-ups (merge_followups_due_at); then
+            // the follow-ups, the request watch among them (#144). Delivery
+            // and the combined-main check are merge-followup-recovery's.
+            const votes = require('./src/routes/votes');
+            await votes.applyDeclaredValues({ config, pool, session: { id: row.id, app_id: row.app_id } });
             const { rowCount } = await pool.query(
               `UPDATE chat_sessions
                   SET status = 'merged',
                       merged_at = COALESCE(merged_at, $2, NOW()),
                       live_at = COALESCE(live_at, NOW()),
-                      merge_commit_sha = COALESCE(merge_commit_sha, $3)
+                      merge_commit_sha = COALESCE(merge_commit_sha, $3),
+                      merge_followups_due_at = NOW()
                 WHERE id = $1 AND status IN ('promoted', 'merging')`,
               [row.id, pr.merged_at || null, pr.merge_commit_sha || null]
             );
@@ -2076,6 +2114,15 @@ async function recoverStuckMerges(config, { attemptedOnly = false, now = Date.no
                 sessionId: row.id, prNumber: row.pr_number,
                 repo: `${owner}/${repo}`, mergeSha: pr.merge_commit_sha || null,
               });
+              // Under the lock this worker holds. A failure leaves the row
+              // owing them, for the next sweep's resume.
+              try {
+                if ((await votes.runOwedMergeFollowups(config, pool, row.id)).ran) followedUp.push(Number(row.id));
+              } catch (err) {
+                log.warn('server', 'recoverStuckMerges: the follow-ups of a healed merge failed; the next sweep resumes them', {
+                  sessionId: row.id, err: err.message,
+                });
+              }
             }
           } else if (row.status === 'merging' && oldAttempt) {
             // Not merged on GitHub and stuck in 'merging' (crash mid-merge):
@@ -2127,6 +2174,7 @@ async function recoverStuckMerges(config, { attemptedOnly = false, now = Date.no
     scanned: rows.length, healed, demoted, errors,
     ...(held ? { heldForGithubBudget: held } : {}),
   });
+  return result;
 }
 
 // Boot-time auto-merge reconcile sweep (#390). recoverStuckMerges above
@@ -2447,13 +2495,15 @@ function startLocalAgentLeaseSweeper(config) {
 // 15-minute window comfortably covers the merge → GHA build → rolling
 // restart sequence of the self-edits app; re-watching an issue GitHub
 // already closed is cheap (first poll confirms, one cache bust + panel
-// broadcast) and idempotent.
-async function resumeIssueCloseWatches(config) {
+// broadcast) and idempotent. `skip` names sessions whose watch the boot's
+// recoverStuckMerges already started with the rest of their follow-ups.
+async function resumeIssueCloseWatches(config, { skip = [] } = {}) {
   const github = require('./src/services/github');
   if (!github.isEnabled()) return;
+  const watched = new Set((skip || []).map(Number));
   const { getPool } = require('./src/db/pool');
   const pool = getPool(config);
-  const { rows } = await pool.query(
+  let { rows } = await pool.query(
     `SELECT cs.id, cs.pr_number, cs.linked_issues,
             a.repo_url, a.slug AS app_slug, a.id AS app_id
        FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
@@ -2461,6 +2511,7 @@ async function resumeIssueCloseWatches(config) {
         AND cs.merged_at > NOW() - INTERVAL '15 minutes'
         AND cs.pr_number IS NOT NULL`
   );
+  rows = rows.filter((row) => !watched.has(Number(row.id)));
   if (!rows.length) return;
   const { watchIssuesClosedAfterMerge } = require('./src/services/issue-close-watcher');
   log.info('server', 'Resuming post-merge issue-close watches', {

@@ -182,7 +182,9 @@ async function claimRun(pool, row, base) {
 // log line: 'settled' (a verdict was stored from the Job's output), 'redriven'
 // (nothing readable — a fresh run was requested), 'moot' (the session no
 // longer wants this run), 'busy' (a live run here has the session),
-// 'contested' (another harvester took the row first), or 'failed'.
+// 'contested' (another harvester took the row first), 'deferred' (what it
+// needed to judge could not be read now; the next sweep adopts it again), or
+// 'failed'.
 // `hold` is the seat claimRun() took; without one the claim happens here.
 async function adopt(config, pool, row, { reason = 'sweep', hold = null } = {}) {
   const visuals = require('./visuals');
@@ -366,12 +368,21 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null } = {}) 
     // that ended in setup, or with an empty log, is a suite that never ran
     // (unit-suite.js notRunOutcome), and one past its deadline a suite that
     // timed out, as on the live path.
+    //
+    // A lookup that fails says nothing either way, and reading it as "not
+    // graduated" failed open: a missing unit suite was settled without, and
+    // a red one read as advisory, the shape of #4996 and #4973 below. So the
+    // run waits instead. Nothing is stored and the manifest stays, claimed
+    // by this process and no longer heartbeated, so the next sweep adopts it
+    // again at once (check-runs.listOrphans) and reads its Jobs once more,
+    // and a lifecycle row still names it as running.
     let graduated = false;
     try {
-      graduated = (await checkHistory.loadGraduated(pool, app.id, { sessionId }))
+      graduated = (await checkHistory.loadGraduated(pool, app.id, { sessionId, strict: true }))
         .has(appManifest.checkKey(unitSuite.UNIT_CHECK_NAME, unitSuite.UNIT_CHECK_PATH));
     } catch (err) {
-      log.warn('check-harvest', 'Graduation lookup failed — unit row advisory', { ...base, err: err.message });
+      log.warn('check-harvest', 'Graduation lookup failed — the run waits for the next sweep', { ...base, err: err.message });
+      return { outcome: 'deferred', why: 'graduation lookup failed', ...base };
     }
     let unitOutcome = null;
     if (unit && (unit.state === 'succeeded' || unit.state === 'failed' || unit.state === 'timeout')) {
@@ -397,7 +408,13 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null } = {}) 
     // A capture Job that failed without a frame to salvage, or one the
     // cluster never ended, is a run that could not judge — the live path
     // records 'error' for that (fail-closed, "couldn't run", retried by the
-    // stale sweeper's error lane), and so does this.
+    // stale sweeper's error lane), and so does this. It is the platform's
+    // fault (check_error_platform): a Job that wrote nothing at all, not even
+    // its runner's first line, or that its deadline did not end, says nothing
+    // about the proposal, and its process died under it. So it is not held
+    // to the six automatic retries a proposal's own errors get
+    // (staging-recovery.errorWithinAutoRetries), which a day of restarts
+    // spent.
     const unreadable = capture && ((capture.state === 'failed' && !capture.stdout.trim()) || capture.state === 'timeout');
     if (unreadable) {
       const why = capture.state === 'timeout'
@@ -406,7 +423,8 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null } = {}) 
       log.warn('check-harvest', 'Orphaned run produced nothing to judge — recording an error verdict', { ...base, why });
       const writePool = operation ? operation.pool : pool;
       await visuals.storeCaptureOutcome(writePool, sessionId, 'failed', { reason: why.slice(0, 300) }).catch(() => {});
-      const stored = await visuals.storeChecks(writePool, sessionId, commitSha, { state: 'error', results: [] }, why);
+      const stored = await visuals.storeChecks(writePool, sessionId, commitSha,
+        { state: 'error', results: [], platformFault: true }, why);
       if (stored) visuals.notifyChecks(sessionId, { state: 'error', results: [] }, commitSha, null);
       // A live capture schedules shots from its finally block. This run's
       // launcher is gone, so the harvester must perform that hand-off itself.

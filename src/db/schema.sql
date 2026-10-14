@@ -1226,6 +1226,22 @@ ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS merge_commit_sha    
 -- A recovery sweep may release a failed merge claim only after its GitHub
 -- request has had time to finish. The timestamp is set with the claim.
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS merge_attempt_at   TIMESTAMPTZ;
+-- What a merge still owes once it is recorded (routes/votes.js
+-- runMergeFollowups: the PR_MERGED event, the changes it carried, the bell,
+-- the bot's news, the bounties, the requests and their watch, the
+-- announcement), on the legacy path (WF_MERGE_FOLLOWUPS_ENABLED off). They
+-- run in the process that merged, and a restart can cut them off.
+--   merge_followups_due_at  set with the status move to 'merged' (the merge's
+--                           own, or recoverStuckMerges' heal of one GitHub
+--                           merged), cleared once they have all run.
+--                           recoverStuckMerges runs a row that still has it.
+--   merge_followups_done    the follow-ups not safe to run twice that have
+--                           run ('pr_merged', 'agent_note', 'merged_line'),
+--                           so a resumed run skips them.
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS merge_followups_due_at TIMESTAMPTZ;
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS merge_followups_done TEXT[];
+CREATE INDEX IF NOT EXISTS chat_sessions_merge_followups_due_idx
+  ON chat_sessions (merge_followups_due_at) WHERE merge_followups_due_at IS NOT NULL;
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS revert_of_session_id INTEGER REFERENCES chat_sessions(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS chat_sessions_revert_of_idx ON chat_sessions(revert_of_session_id);
 

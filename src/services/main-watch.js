@@ -367,6 +367,10 @@ const ADOPT_SLACK_MS = 2 * 60 * 1000;
  * verdict as runSuite does, 'superseded' when another process took it
  * first, or null when there is nothing to adopt and the suite must run
  * again. Never throws.
+ *
+ * The queue row is cleared only by the adopter that claimed it. One that
+ * lost the claim leaves it alone: the winner heartbeats that row while its
+ * Jobs run, and the row is the queue slot they hold (checks-queue.js).
  */
 async function adoptRun(config, pool, app, mergeSha, dead) {
   if (config?.workerRuntime !== 'kubernetes' || !dead || !dead.runId) return null;
@@ -374,8 +378,10 @@ async function adoptRun(config, pool, app, mergeSha, dead) {
   const harvest = require('./check-harvest');
   const sessionId = mainSessionId(app);
   let stopHeartbeat = () => {};
+  let claimed = false;
   try {
     if (!(await checkRuns.claim(pool, dead.runId, dead.owner))) return { state: 'superseded', detail: {} };
+    claimed = true;
     stopHeartbeat = checkRuns.startHeartbeat(pool, dead.runId);
     const jobs = await kubernetes.findCheckJobs(config, { sessionId, previewRunId: dead.runId });
     const unitJobs = Array.isArray(jobs.unitSuites) && jobs.unitSuites.length
@@ -420,7 +426,7 @@ async function adoptRun(config, pool, app, mergeSha, dead) {
     return null;
   } finally {
     stopHeartbeat();
-    await checkRuns.finish(pool, dead.runId).catch(() => {});
+    if (claimed) await checkRuns.finish(pool, dead.runId).catch(() => {});
   }
 }
 
