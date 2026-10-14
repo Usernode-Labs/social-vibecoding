@@ -1162,6 +1162,15 @@ and reason, and a bounded trace:
   side, how each copy answered the bootstrap's request for its first-view
   demo data (`outcome`, `httpStatus`).
 
+## Evals on merged proposals
+
+A full platform admin's connector can try the shots agent with another
+model, prompt or time budget on proposals that have already merged. Each
+eval reshoots those proposals with the live agent and with each
+configuration, side by side, on the platform and billed to the platform.
+Blind pairs and per-change marks compare them.
+[shots-evals.md](shots-evals.md) describes it.
+
 ## Dry run on local builds
 
 `npm run shots:pair -- up --before SHA --after SHA` stands up those two

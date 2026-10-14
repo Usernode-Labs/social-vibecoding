@@ -692,6 +692,9 @@ app.use(require('./src/routes/homeroom-bench').homeroomBenchRoutes(config));
 app.use(require('./src/routes/bench-studio').benchStudioRoutes(config));
 // The Homeroom bot's first-version configurations, and their blind pairs.
 app.use(require('./src/routes/bot-configs').botConfigRoutes(config));
+// Before & after shots evals: the shots agent's configurations compared with
+// the live one on merged proposals, through the admin connector.
+app.use(require('./src/routes/shots-evals').shotsEvalRoutes(config));
 // Test accounts for first-run testing, minted by a full admin's connector
 // session (services/test-accounts.js).
 app.use(require('./src/routes/test-accounts').testAccountRoutes(config));
@@ -1398,6 +1401,10 @@ async function becomeLeader() {
   // #3654: its benchmark lane. Leader-only like the bot (a trial runs a
   // container turn that costs money) and inert until an admin launches a run.
   require('./src/services/bench/lane').start(config);
+  // Before & after shots evals' runner (services/shots-eval-runner.js).
+  // Leader-only for the same reason: a trial builds two copies and runs the
+  // shots agent, which costs money. Inert until an admin launches an eval.
+  require('./src/services/shots-eval-runner').startRunner(config);
   // #3654 Core v1: the default suite, made from its checked-in definition in
   // the background a little after boot (reads GitHub only; a no-op once it
   // is done). Production and staging, when GitHub is configured.
@@ -6594,6 +6601,9 @@ async function cleanup() {
   }
   try { require('./src/services/bench/lane').stop(); } catch (err) {
     log.warn('server', 'Stopping the benchmark lane failed', { err: err.message });
+  }
+  try { require('./src/services/shots-eval-runner').stopRunner(); } catch (err) {
+    log.warn('server', 'Stopping the shots eval runner failed', { err: err.message });
   }
   try { require('./src/services/homeroom-bot-welcome').stop(); } catch (err) {
     log.warn('server', 'Stopping the Homeroom bot welcome failed', { err: err.message });

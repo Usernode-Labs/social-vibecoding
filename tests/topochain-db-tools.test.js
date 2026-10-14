@@ -755,6 +755,10 @@ test('#1130: no credential-SHAPED column name in schema.sql is readable without 
     // (services/bot-configs.js): it hides which side is which from the admin
     // picking, and the pick route also requires an admin who can write.
     'bot_config_pairs.token',
+    // And for a shots eval's blind pair (services/shots-eval.js): it hides
+    // which side is the live shots agent, and the pick route also requires an
+    // admin who can write.
+    'shots_eval_pairs.token',
 
     // Foreign keys TO a credential row. The id is a row number; the secret
     // itself lives in a column that IS denied (or, for user_ai_credentials,
@@ -777,6 +781,7 @@ test('#1130: no credential-SHAPED column name in schema.sql is readable without 
     'app_workshop_themes.input_hash',      // same: digest of the board the themes were grouped from
     'chat_sessions.pr_summary_source_body_hash', // digest of the public PR description, not a credential
     'shot_runs.plan_hash',                 // SHA-256 naming the published shots, not authentication material
+    'shots_eval_trials.plan_hash',         // the same, for a shots eval's trial's saved shots
     'homeroom_bot_run_snapshots.prompt_hash', // #3654: SHA-256 of the bot's prompt text, to group runs by prompt
     'wf_receipts.payload_hash',            // SHA-256 of a workflow event's type, payload and actor, to recognise a retried request
 

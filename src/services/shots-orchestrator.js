@@ -302,7 +302,10 @@ async function loadSession(pool, sessionId) {
   return rows[0];
 }
 
-async function resolveRevisionContext(session, explicitHead = null, githubService = github) {
+// `baseSha` pins the before revision instead of resolving it: a shots eval's
+// trial (shots-eval-runner.js) shoots the revisions its proposal's own run
+// shot.
+async function resolveRevisionContext(session, explicitHead = null, githubService = github, { baseSha: explicitBase = null } = {}) {
   const headSha = headForSession(session, explicitHead);
   if (!headSha) {
     throw new ShotsOrchestrationError(
@@ -311,7 +314,7 @@ async function resolveRevisionContext(session, explicitHead = null, githubServic
     );
   }
   const { owner, repo } = environment.repoParts(session.repo_url);
-  let baseSha = exactSha(session.handoff_base_sha);
+  let baseSha = exactSha(explicitBase) || exactSha(session.handoff_base_sha);
   let comparison = null;
   if (!baseSha) {
     const repository = await githubService.getRepoHead(owner, repo);
@@ -1218,6 +1221,9 @@ async function executeRun(config, options, injected = {}) {
     shotsStarter: injected.shotsStarter || shotsStarter,
     worker: injected.worker || worker,
     waitForSessionIdle: injected.waitForSessionIdle || waitForSessionIdle,
+    // A shots eval's trial is not its proposal's shots, so it tells nobody
+    // watching the proposal (shots-eval-runner.js passes a no-op).
+    notifyShots: injected.notifyShots || notifyShots,
   };
   const { pool, revision, onProgress = null } = options;
   let run = options.run;
@@ -1303,7 +1309,7 @@ async function executeRun(config, options, injected = {}) {
         'stale_shots_operation', 'This run is no longer available to build.'
       );
     }
-    notifyShots(session, app, 'provisioning');
+    deps.notifyShots(session, app, 'provisioning');
     pair = await deps.environment.preparePair(config, { pool, run, session, app, onProgress });
     failurePhase = 'exploration_reset';
     stage(failurePhase);
@@ -1339,7 +1345,7 @@ async function executeRun(config, options, injected = {}) {
       headImageDigest: pair.sides.head.imageDigest,
     });
     addTiming(metrics, 'provisioning', provisioningStartedAt);
-    notifyShots(session, app, 'exploring');
+    deps.notifyShots(session, app, 'exploring');
     stage('exploring');
 
     // Each side's tile on Homeroom's home screen, from its own dapp.json. A
@@ -1601,7 +1607,7 @@ async function executeRun(config, options, injected = {}) {
         planHash: summary.manifestHash, runs: 1, stories: summary.verdict.stories,
       }),
     });
-    notifyShots(session, app, 'reviewing');
+    deps.notifyShots(session, app, 'reviewing');
     const artifactPersistStartedAt = Date.now();
     failurePhase = 'store_artifacts';
     stage(failurePhase);
@@ -1643,7 +1649,7 @@ async function executeRun(config, options, injected = {}) {
       runId: run.id,
       trace: logFinalTrace,
     });
-    notifyShots(session, app, 'verified');
+    deps.notifyShots(session, app, 'verified');
     progress('Before/after shots are ready.');
     return deps.state.getForSession(pool, session.id, { headSha: run.head_sha });
   } catch (error) {
@@ -1688,7 +1694,7 @@ async function executeRun(config, options, injected = {}) {
       failureTrace
     );
     if (failed && session && app) {
-      notifyShots(session, app, 'failed', { failureCode: errorCode(error) });
+      deps.notifyShots(session, app, 'failed', { failureCode: errorCode(error) });
     }
     // The final model answer is for the proposal owner and app managers only;
     // do not copy its potentially app-derived text into the general log ring.
@@ -1954,6 +1960,7 @@ module.exports = {
   intentForSession,
   uiFileHeuristic,
   loadSession,
+  publicSessionAndApp,
   resolveRevisionContext,
   declaredCheckSummary,
   INSTALL_STRIP,
