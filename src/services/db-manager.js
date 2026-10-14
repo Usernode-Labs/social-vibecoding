@@ -2266,16 +2266,19 @@ SELECT DISTINCT 'FOREIGN ' || tree.name || ' ' || n.nspname || '.' || c.relname
     .map((line) => line.slice('FOREIGN '.length));
   const qualifiedNames = lines.filter((line) => !line.startsWith('FOREIGN '));
 
-  if (foreign.length > 0) {
-    log.error('db-manager', 'staging:private table with a foreign-table descendant; nothing truncated', {
-      targetDb, foreign,
+  const refuseForeign = (pairs) => {
+    log.error('db-manager', 'staging:private table with a foreign-table descendant; copy refused', {
+      targetDb, foreign: pairs,
     });
-    throw new Error(
+    const err = new Error(
       `Refusing to empty the staging:private tables in ${targetDb}: ` +
-      foreign.map((pair) => pair.replace(' ', ' has the foreign-table descendant ')).join('; ') +
+      pairs.map((pair) => pair.replace(' ', ' has the foreign-table descendant ')).join('; ') +
       '. Its rows are on another server: they can neither be emptied from a copy safely nor shown to be empty.'
     );
-  }
+    err.refusedForeign = true;
+    return err;
+  };
+  if (foreign.length > 0) throw refuseForeign(foreign);
 
   if (qualifiedNames.length === 0) {
     log.info('db-manager', 'No staging:private tables to truncate', { targetDb });
@@ -2376,7 +2379,7 @@ SELECT DISTINCT 'FOREIGN ' || tree.name || ' ' || n.nspname || '.' || c.relname
     + safe.map((t) => `('${t}', '${t}'::regclass)`).join(', ')
     + '), tree(name, rel) AS (SELECT name, rel FROM targets'
     + ' UNION SELECT tree.name, i.inhrelid::regclass FROM pg_inherits i JOIN tree ON i.inhparent = tree.rel)'
-    + " SELECT DISTINCT tree.name, n.nspname || '.' || c.relname FROM tree"
+    + " SELECT DISTINCT tree.name, n.nspname || '.' || c.relname, c.relkind FROM tree"
     + ' JOIN pg_class c ON c.oid = tree.rel JOIN pg_namespace n ON n.oid = c.relnamespace'
     + ' LEFT JOIN pg_am am ON am.oid = c.relam'
     + " WHERE c.relkind <> 'r' OR am.amname IS DISTINCT FROM 'heap'"
@@ -2391,13 +2394,18 @@ SELECT DISTINCT 'FOREIGN ' || tree.name || ' ' || n.nspname || '.' || c.relname
     } catch (err) { throw unconfirmed(err); }
     const suspects = [];
     for (const line of String(out || '').split('\n').map((l) => l.trim()).filter(Boolean)) {
-      const [name, ...rest] = line.split('|');
-      const rel = rest.join('|');
-      if (!safe.includes(name) || !SAFE_QUALIFIED_IDENT.test(rel)) {
+      const fields = line.split('|');
+      const [name, rel, relkind] = fields;
+      if (fields.length !== 3 || !safe.includes(name) || !SAFE_QUALIFIED_IDENT.test(rel) || !/^[a-z]$/.test(relkind)) {
         throw unconfirmed(new Error(`a relation under a staging:private table cannot be checked: ${JSON.stringify(line)}`));
       }
-      suspects.push({ name, rel });
+      suspects.push({ name, rel, relkind });
     }
+    // A foreign child that appeared after discovery (a TRUNCATE trigger can
+    // create one): refused like one found by discovery, and never handed to
+    // the per-table pass, whose TRUNCATE would reach the remote table.
+    const foreignNow = suspects.filter((x) => x.relkind === 'f');
+    if (foreignNow.length > 0) throw refuseForeign(foreignNow.map(({ name, rel }) => `${name} ${rel}`));
     if (suspects.length === 0) return [];
     // The marker is assembled by format(), so the statement's own text, which
     // a psql failure echoes, never contains it.
@@ -2432,6 +2440,7 @@ SELECT DISTINCT 'FOREIGN ' || tree.name || ' ' || n.nspname || '.' || c.relname
       try {
         refilled = await stillHoldingRows();
       } catch (err) {
+        if (err.refusedForeign) throw err;
         refilled = [`(${err.message})`];
       }
       if (refilled.length === 0) truncated.push(...safe);

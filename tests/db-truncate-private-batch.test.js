@@ -31,7 +31,7 @@ function recorder(tables, { failOn = null, holding = () => [], allocated = [], l
     if (/obj_description/.test(sql)) return [...tables, ...foreign.map((f) => `FOREIGN ${f}`)].join('\n') + '\n';
     if (failOn && failOn(sql)) throw new Error(`boom: ${sql.slice(0, 60)}`);
     if (/pg_relation_size/.test(sql)) {
-      return [...holding(calls), ...allocated].map((n) => `${n}|${n}`).concat(listed).join('\n');
+      return [...holding(calls), ...allocated].map((n) => `${n}|${n}|r`).concat(listed).join('\n');
     }
     if (/^DO \$staging_check\$/.test(sql)) {
       if (readError) throw new Error(readError);
@@ -110,9 +110,9 @@ test('a suspect that cannot be read (a policy with row_security off, no privileg
 });
 
 test('a relation under a private table whose name cannot be checked fails the pass', async () => {
-  const r = recorder(['public.a'], { listed: ['public.a|public.weird name'] });
+  const r = recorder(['public.a'], { listed: ['public.a|public.weird name|r'] });
   await assert.rejects(truncatePrivateTables('app_demo_staging_s1_abc', r.execute),
-    /Could not confirm .* cannot be checked: "public\.a\|public\.weird name"/);
+    /Could not confirm .* cannot be checked: "public\.a\|public\.weird name\|r"/);
   assert.equal(r.reads().length, 0);
 });
 
@@ -125,6 +125,14 @@ test('a read error that only echoes the statement is not mistaken for named rows
   assert.doesNotMatch(doSql, /staging:private rows remain in: /);
   const r2 = recorder(['public.a'], { allocated: ['public.a'], readError: `Command failed: psql -c ${doSql}\nERROR:  could not connect to server "remote"` });
   await assert.rejects(truncatePrivateTables('app_demo_staging_s1_abc', r2.execute), /Could not confirm/);
+});
+
+test('a foreign child the check finds after the single statement refuses the copy, with no per-table pass', async () => {
+  const r = recorder(['public.a', 'public.b'], { listed: ['public.b|public.b_dyn|f'] });
+  await assert.rejects(truncatePrivateTables('app_demo_staging_s1_abc', r.execute),
+    /Refusing to empty the staging:private tables in app_demo_staging_s1_abc: public\.b has the foreign-table descendant public\.b_dyn/);
+  assert.equal(r.truncates().length, 1, 'only the single statement, which did not reach it');
+  assert.equal(r.reads().length, 0);
 });
 
 test('a check that cannot run fails the pass', async () => {
@@ -367,6 +375,39 @@ test('real server: a refilled inheritance child of a private table is caught', {
   await truncatePrivateTables(s.name, s.execute);
   assert.ok(s.statements.includes('TRUNCATE public.parent RESTART IDENTITY CASCADE'), 'the per-table pass ran');
   assert.equal((await s.client.query('SELECT count(*)::int AS n FROM parent')).rows[0].n, 0);
+});
+
+// A foreign child can also appear after discovery: a TRUNCATE trigger may
+// create one. Found by the check, it refuses the copy at once; it is never
+// handed to the per-table pass, whose TRUNCATE would reach the remote table.
+test('real server: a foreign child created by a TRUNCATE trigger after discovery is refused', { timeout: 60000 }, async (t) => {
+  const s = await scratchDatabase(t, 'trunc_dynforeign');
+  if (!s) return;
+  const live = await scratchDatabase(t, 'trunc_dynforeign_live');
+  try { await s.client.query('CREATE EXTENSION postgres_fdw'); } catch (err) {
+    if (process.env.TEST_DATABASE_URL) throw err;
+    t.skip(`postgres_fdw unavailable: ${err.message}`); return;
+  }
+  await live.client.query('CREATE TABLE store (id int); INSERT INTO store VALUES (1), (2)');
+  const url = new URL(DSN);
+  const lit = (v) => `'${String(v).replace(/'/g, "''")}'`;
+  await s.client.query(`
+    CREATE SERVER live_app FOREIGN DATA WRAPPER postgres_fdw
+      OPTIONS (host ${lit(url.hostname)}, port ${lit(url.port || '5432')}, dbname ${lit(live.name)});
+    CREATE USER MAPPING FOR CURRENT_USER SERVER live_app
+      OPTIONS (user ${lit(decodeURIComponent(url.username))}, password ${lit(decodeURIComponent(url.password))});
+    CREATE TABLE a (id int); CREATE TABLE b (id int);
+    COMMENT ON TABLE a IS 'staging:private'; COMMENT ON TABLE b IS 'staging:private';
+    CREATE FUNCTION add_foreign_child() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+      CREATE FOREIGN TABLE IF NOT EXISTS b_dyn () INHERITS (b) SERVER live_app OPTIONS (table_name 'store');
+      RETURN NULL; END $$;
+    CREATE TRIGGER a_adds_child AFTER TRUNCATE ON a FOR EACH STATEMENT EXECUTE FUNCTION add_foreign_child();
+  `);
+  s.statements.length = 0;
+  await assert.rejects(truncatePrivateTables(s.name, s.execute),
+    /Refusing to empty the staging:private tables in trunc_dynforeign_[0-9a-f]+: public\.b has the foreign-table descendant public\.b_dyn/);
+  assert.equal(s.statements.filter((sql) => /^TRUNCATE/.test(sql)).length, 1, 'no per-table pass');
+  assert.equal((await live.client.query('SELECT count(*)::int AS n FROM store')).rows[0].n, 2, 'the remote rows are untouched');
 });
 
 test('real server: a table left with pages but no live row passes without the per-table pass', { timeout: 60000 }, async (t) => {
