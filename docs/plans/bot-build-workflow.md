@@ -138,21 +138,33 @@ workflow runtime is put back in the queue after a restart, as before.
 
 ## Verifying it
 
-`tests/bot-build-crash-postgres.test.js` runs a build in a child process
-against the real schema, with a fake worker and a fake GitHub that live in
-the test process:
+`tests/bot-build-crash-postgres.test.js` (with `tests/lib/bot-build-crash*.js`
+and `tests/fixtures/bot-build-crash-fakes.js`) runs real builds in child
+processes against the real schema and the real workflow runtime, with a
+fake worker, GitHub, promotion and models whose state lives in the
+database, so a turn under way keeps going (and pushes) after its process
+is killed:
 
-- it runs the build once without interruption and records every step it
-  saved;
-- for each step boundary, before and after the save, it runs the build
-  again and SIGKILLs the child there, while the fake worker keeps going
-  (a turn under way finishes and pushes after the kill);
-- a new child takes the build over, and the end is compared with the
-  uninterrupted run: the same proposal, one of each effect (a pull request,
-  a post, a debit, a recorded trial), the branch at the commit the
-  uninterrupted run left;
-- invariants hold on every run: at most one live claim per build, no turn
-  dispatched twice for one step, no work left once the instance has ended.
+- a later change, a reviewed first version, a build from a kept plan, and
+  a reviewed first-version bench trial each run once uninterrupted, and
+  every durable save they make is numbered;
+- each is run again and SIGKILLed before and after each save, at the
+  fakes' own points (a turn registered, a turn under way, a comment made,
+  a pull request opened, a first commit made) and with a clean stop at
+  each turn; a new child takes the build over;
+- the end is compared with the uninterrupted run: the same outcome and
+  proposal, one pull request and one promotion, the same posts and
+  comments, at most one debit, the branch at the same tip, the same turns
+  per step, a trial recorded and charged once; and nothing is left running
+  or held (no work item, turn record, ledger attempt or extra session).
+
+Run 193's shape (a fix turn still running when the next process attaches),
+a refused push re-sent from the worker, and two restarts in a row have
+points of their own. Under `npm test` the suite stops starting points after
+150 s; `BOT_BUILD_CRASH_BUDGET_MS` runs them all (367, about three and a
+half minutes on four lanes). `tests/durable-steps.test.js`,
+`tests/durable-turn.test.js`, `tests/build-runs.test.js` and
+`tests/workflow-bot-build-platform-postgres.test.js` cover the pieces.
 
 ## What is not on the machine
 
