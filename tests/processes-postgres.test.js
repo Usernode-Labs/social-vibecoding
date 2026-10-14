@@ -178,6 +178,12 @@ test('processes and their holds, against the full schema', { timeout: 120000 }, 
     // the one this replaced, or a peer).
     await pool.query(`INSERT INTO platform_processes (id, state, started_at) VALUES ('pod-older', 'serving', NOW() - interval '1 hour')`);
     assert.equal(await processes.servingOthers(), 1);
+    // A conductor leads in an 'all' process's place (process-role.js
+    // successorRoles): it is a successor, and a fellow drainer.
+    await other('pod-conductor', { state: 'serving', role: 'conductor' });
+    assert.equal(await processes.servingOthers(), 2, 'the conductor takes over leading');
+    await other('pod-newer-conductor', { state: 'draining', role: 'conductor', drainStartedAt: new Date(Date.now() + 1000) });
+    assert.equal(await processes.newerDraining(), 2, 'and drains beside it');
     // A beat keeps the drain: it does not put the row back to serving.
     await processes.beat();
     assert.equal((await pool.query('SELECT state FROM platform_processes WHERE id = $1', [processes.ID])).rows[0].state, 'draining');

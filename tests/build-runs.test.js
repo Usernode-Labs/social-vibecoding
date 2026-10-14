@@ -145,3 +145,43 @@ test('a build that failed for good is recorded where it is read, and its end ann
 test('with no workflow runtime there are no builds under way to hold slots for', async () => {
   assert.deepEqual(await buildRuns.underWay('trial'), []);
 });
+
+// 14 Oct 2026: a step the platform refuses for now (the proposal, which a
+// draining process once refused its own build) throws while the kernel gives
+// the build another try, and ends as it always did on its last. The steps
+// know which: the handler is told its maxAttempts
+// (src/workflow/bot-build/services.ts RUN_MAX_ATTEMPTS), and an attempt that
+// ended with its process is not a try (the kernel's `resumable` rule).
+test('the steps know whether the kernel gives the build another try', async () => {
+  const seen = [];
+  await withTarget('live', {
+    run: async ({ steps }) => { seen.push(steps.triesLeft); return null; },
+    lost: async () => {},
+  }, async () => {
+    for (const [attempt, lostAttempts, maxAttempts] of [[1, 0, 2], [2, 0, 2], [2, 1, 2], [3, 1, 2], [1, 0, null]]) {
+      // eslint-disable-next-line no-await-in-loop
+      await buildRuns.run({
+        input: { target: 'live', id: 21 }, resumeFrom: null, attempt, lostAttempts,
+        checkpoint: async () => {}, signal: new AbortController().signal,
+      }, { config: {}, pool: {}, maxAttempts });
+    }
+  });
+  assert.deepEqual(seen, [1, 0, 1, 0, 0], 'first try, last try, a lost attempt then the first try, then the last; unknown is none');
+  assert.equal(durableSteps.none().triesLeft, 0, 'a build run unkept is never tried again');
+  const src = require('node:fs').readFileSync(require.resolve('../src/workflow/bot-build/services.ts'), 'utf8');
+  assert.match(src, /maxAttempts: RUN_MAX_ATTEMPTS,/);
+  assert.match(src, /run: \(ctx\) => runs\(\)\.run\(ctx, \{ \.\.\.deps, maxAttempts: RUN_MAX_ATTEMPTS \}\),/);
+});
+
+test('whether a durable build under way holds a session is read from its owner, and false when it cannot be', async () => {
+  const asked = [];
+  const pool = (held) => ({ async query(sql, params) { asked.push({ sql: String(sql), params }); return { rows: held == null ? [] : [{ held }] }; } });
+  assert.equal(await buildRuns.holdsSession(pool(true), 8550), true);
+  assert.equal(await buildRuns.holdsSession(pool(false), 8550), false);
+  assert.equal(await buildRuns.holdsSession(pool(null), 8550), false, 'no such session');
+  assert.equal(await buildRuns.holdsSession({ async query() { throw new Error('connection refused'); } }, 8550), false);
+  assert.equal(await buildRuns.holdsSession(null, 8550), false);
+  assert.equal(await buildRuns.holdsSession(pool(true), null), false);
+  assert.match(asked[0].sql, /WHERE w\.machine = split_part\(cs\.workflow_owner, '\/', 1\)/);
+  assert.deepEqual(asked[0].params, [8550]);
+});

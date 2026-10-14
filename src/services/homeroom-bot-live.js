@@ -353,25 +353,62 @@ const PROGRESS_LINE_CHARS = 160;
 // sketch, which the spec may improve on; what the creator approved is not,
 // so the spec and the build read it apart, labelled, and never clipped off
 // the end of a long note. A note approved before the bullets were written
-// down carries the choices alone.
+// down carries the choices alone. A plan gone ahead with from the made
+// screen's Submit carries its bullets as the plan's own lines and only the
+// answers as approved (run seven, below).
 const APPROVED_PLAN_HEAD = 'Approved by the creator, who tapped Build it under this plan:';
 const CREATOR_CHOICES_HEAD = 'The creator chose, from the plan they were shown:';
+// Newcomer run seven (14 Oct 2026, Club Votes): since run six the made
+// screen shows its maker the plan's questions alone, never its lines, with
+// Submit, and a plan gone ahead with from there (homeroom-bot-dm.js
+// buildFromAnswers) still wrote its lines as approved under Build it. The
+// spec, told never to contradict them, kept a line ("Vote yes, no or maybe on
+// each one") the creator's answer ("Simple yes or no, most wins") ruled out.
+// Lines nobody was shown are the plan's own, written under PLAN_LINES_HEAD
+// into the sketch part; only the answers are the creator's, and where a line
+// differs, the answer wins.
+const PLAN_LINES_HEAD = 'The plan\'s lines, not shown to its creator (a first sketch, not approved):';
+const MADE_SCREEN_CHOICES_HEAD = 'The creator chose these answers on the made screen (where a plan line differs, the answer wins):';
 // #4488: a complicated change's requester approves its plan the same way,
 // and the spec they were shown is the build's, never drawn again. The
 // choices are what they picked; where one differs from the spec's suggested
 // answer, the choice wins.
 const APPROVED_BY_REQUESTER_HEAD = 'Approved by the person who asked for it, who said Build it under this plan and its spec:';
 const REQUESTER_CHOICES_HEAD = 'The person who asked for it chose (where this differs from the spec\'s suggested answer, this wins):';
+// Run seven: what a first version's spec and build are told beside what its
+// creator approved (specPlanLines, planNoteText). Bullet 5 of run seven's
+// plan ("Close a vote once it's decided") could have clashed with its
+// second question the same way, had another answer been kept.
+const ANSWER_WINS_LINE = 'Where a plan line, even an approved one, and one of the creator\'s answers differ, the answer wins: never add an '
+  + 'option or a behaviour an answer ruled out.';
 
-/** A build note as { sketch, approved }: the triage's note, and what its creator approved ('' when nothing). Pure. */
+/**
+ * A build note as { sketch, approved }: the triage's note, and what its
+ * creator approved ('' when nothing). A plan's lines its creator was not
+ * shown (PLAN_LINES_HEAD) stay in the sketch. Pure.
+ */
 function splitApprovedPlan(buildNote) {
   const note = String(buildNote || '');
-  for (const head of [APPROVED_PLAN_HEAD, CREATOR_CHOICES_HEAD, APPROVED_BY_REQUESTER_HEAD, REQUESTER_CHOICES_HEAD]) {
+  for (const head of [APPROVED_PLAN_HEAD, CREATOR_CHOICES_HEAD, MADE_SCREEN_CHOICES_HEAD, APPROVED_BY_REQUESTER_HEAD, REQUESTER_CHOICES_HEAD]) {
     const at = note.lastIndexOf(`\n\n${head}`);
     if (at >= 0) return { sketch: note.slice(0, at).trim(), approved: note.slice(at).trim() };
     if (note.startsWith(head)) return { sketch: '', approved: note.trim() };
   }
   return { sketch: note, approved: '' };
+}
+
+/**
+ * Run seven: a first version's sketch, clipped as a note is, but for the
+ * plan's lines its creator was not shown (PLAN_LINES_HEAD), which are kept
+ * whole at its end, as approved lines are. Pure.
+ */
+function clipSketch(sketch, max = 4000) {
+  const text = String(sketch || '');
+  const at = text.lastIndexOf(`\n\n${PLAN_LINES_HEAD}`);
+  if (at < 0) return clipText(text, max);
+  const before = clipText(text.slice(0, at).trim(), max);
+  const lines = text.slice(at).trim();
+  return before ? [before, '', lines].join('\n') : lines;
 }
 
 /** The plan as a prompt shows it: clipped, but for what a creator or requester approved, kept whole. Pure. */
@@ -381,8 +418,11 @@ function planNoteText(buildNote, firstVersion = false) {
   // #4488: a later change's requester can approve its plan too; with
   // nothing they approved, a later change's note reads as it always did.
   const requesterApproved = approved.startsWith(APPROVED_BY_REQUESTER_HEAD) || approved.startsWith(REQUESTER_CHOICES_HEAD);
-  if (!approved || (!firstVersion && !requesterApproved)) return clipText(buildNote, 4000) || none;
-  return [clipText(sketch, 4000) || none, '', approved].join('\n');
+  if (!approved) return (firstVersion ? clipSketch(buildNote, 4000) : clipText(buildNote, 4000)) || none;
+  if (!firstVersion && !requesterApproved) return clipText(buildNote, 4000) || none;
+  if (requesterApproved) return [clipText(sketch, 4000) || none, '', approved].join('\n');
+  // Run seven: a first version's answers win over its plan's lines.
+  return [clipSketch(sketch, 4000) || none, '', ANSWER_WINS_LINE, '', approved].join('\n');
 }
 
 /**
@@ -545,10 +585,13 @@ function specPlanLines(buildNote, firstVersion = false) {
     'You are the Homeroom bot. Your triage of this request concluded it is ready to build. It is a new project\'s',
     'FIRST VERSION, and this is the triage\'s plan for it, a first sketch written before anyone looked closely:',
     '',
-    clipText(sketch, 4000) || '(no plan recorded: work from the request itself)',
+    clipSketch(sketch, 4000) || '(no plan recorded: work from the request itself)',
     ...(approved ? [
       '',
       'WHAT ITS CREATOR APPROVED, below, binds the spec as the request does: never contradict it.',
+      // Newcomer run seven: the spec kept an approved line ("Vote yes, no or
+      // maybe") over the creator's answer ("Simple yes or no, most wins").
+      ANSWER_WINS_LINE,
       '',
       approved,
     ] : []),
@@ -2046,6 +2089,10 @@ function promoteAsBot({ config, bot, sessionId, router = null, ceiling = null })
     const req = {
       method: 'POST', url, originalUrl: url, baseUrl: '', path: url,
       headers: {}, query: {}, params: {}, body: {}, cookies: {},
+      // A step of a build this process runs, which a process a release
+      // replaced finishes: the drain guard lets it through (lifecycle.js
+      // OWN_WORK; 14 Oct 2026, bot run 2027's "Server is restarting").
+      [require('./lifecycle').OWN_WORK]: true,
       // The marker app-access and the membership gate honour for the bot's
       // own session only: it proposes on apps in its live list whether or
       // not it is a collaborator or member there. Never an admin.
@@ -2431,6 +2478,12 @@ const FIRST_VERSION_DESIGN_LINES = Object.freeze([
   'real screen has (never a view-only demo), labelled "Staging demo" once, plainly, as a banner or a line at the top of',
   'the screen or in the name of its list, not on each row, with every row still obviously made up. On staging and with',
   '`?demo=1` only, and idempotent, as the platform conventions\' "Staging mock data" says.',
+  // Newcomer run seven (14 Oct 2026): Homeroom shows a first version with
+  // its sample data under a label of its own (the App tab's Live replay),
+  // and hides the app's own by this attribute.
+  'The element that carries the "Staging demo" label gets the attribute `data-usernode-demo-note` (the banner or the',
+  'line itself; in a list\'s name, a `<span data-usernode-demo-note>` around the label\'s own words, so the name',
+  'stays), so Homeroom can hide it where it shows the app with its sample data.',
 ]);
 
 // #4387: the people waiting on a first version see what it is adding now,
@@ -3741,6 +3794,70 @@ async function proposedAlready(pool, sessionId) {
   return { status: 200, body: { ok: true, prNumber: Number(row.pr_number), error: null, message: null } };
 }
 
+// ── A refusal is not a result ────────────────────────────────────────────
+//
+// 14 Oct 2026: a newcomer's first version (bot run 2027) was built to the
+// end, and its promote answered 503 "Server is restarting" (lifecycle.js
+// OWN_WORK says why). The `promoted` step kept that answer as what the
+// promotion came to, so the build ended "built but could not be proposed",
+// the newcomer was told it had stopped, and a later attempt would have read
+// the same 503 back. An answer of 5xx says the platform could not take the
+// proposal just then, not what the proposal is: it is tried again here a few
+// times, and then, while the build's work item has a try left
+// (durable-steps.js triesLeft), thrown (ProposalDeferred), so that nothing is
+// kept for the step, nothing is said, and the next try goes on from the
+// build's last step (`prepared`) and proposes. On its last try, or run
+// unkept, a build still refused ends as it always has: built, not proposed,
+// its session left for a person to propose.
+const PROPOSE_RETRY_MS = Object.freeze([2000, 5000, 15000]);
+
+/** What a refused proposal throws while its build has a try left. Never a stop. */
+class ProposalDeferred extends Error {
+  constructor({ status, why }) {
+    super(`the proposal could not be made now (${status}: ${why}); the build goes on from its last step on its next try`);
+    this.code = 'proposal_deferred';
+    this.status = status;
+  }
+}
+
+function proposalUnavailable(out) {
+  return Number(out?.status) >= 500;
+}
+
+/**
+ * promoteAsBot, tried again after an answer of 5xx (PROPOSE_RETRY_MS, or
+ * `waits`), and resolved as it answered; a session that went up for a vote
+ * meanwhile (an answer lost after the route had done its work) is read
+ * rather than promoted twice. Throws ProposalDeferred when every try was
+ * refused and `steps` will be tried again; a stop ends the waits. `waits`
+ * are a test's own (buildAndPropose's `deps.proposeRetryMs`).
+ */
+async function promoteOwnBuild({ pool, steps, waits = PROPOSE_RETRY_MS, ...args }) {
+  for (let i = 0; ; i += 1) {
+    // eslint-disable-next-line no-await-in-loop
+    const out = await promoteAsBot(args);
+    if (!proposalUnavailable(out)) return out;
+    const why = out.body?.error || out.body?.message || `promotion answered ${out.status}`;
+    if (i >= waits.length) {
+      if (steps.active && steps.triesLeft > 0) {
+        log.warn('homeroom-bot', 'The proposal was refused on every try; the build tries again from its last step', {
+          sessionId: args.sessionId, status: out.status, why, triesLeft: steps.triesLeft,
+        });
+        throw new ProposalDeferred({ status: out.status, why });
+      }
+      return out;
+    }
+    log.warn('homeroom-bot', 'The proposal was refused for now; trying again', {
+      sessionId: args.sessionId, status: out.status, why, inMs: waits[i],
+    });
+    // eslint-disable-next-line no-await-in-loop
+    await steps.race(new Promise((resolve) => { setTimeout(resolve, waits[i]); }));
+    // eslint-disable-next-line no-await-in-loop
+    const already = await proposedAlready(pool, args.sessionId);
+    if (already) return already;
+  }
+}
+
 async function buildAndPropose({
   pool, config, bot, app, repo, issueNumber, issue, seed, buildNote,
   turnBudgetMs, model, deps, propose = true, onSpec = null, specBudgetMs = SPEC_TURN_MAX_MS,
@@ -4465,11 +4582,14 @@ async function buildAndPropose({
     return true;
   });
   // Once, and never twice for one session: a restart between the promotion
-  // and its save finds the session up for a vote already, and reads it.
+  // and its save finds the session up for a vote already, and reads it. An
+  // answer of 5xx is not kept (promoteOwnBuild): tried again, then thrown
+  // while the build has a try left, so its next try proposes from here.
   const promoted = await steps.once('promoted', async () => {
     const already = await proposedAlready(pool, session.id);
     if (already) return already;
-    const out = await promoteAsBot({
+    const out = await promoteOwnBuild({
+      pool, steps, ...(Array.isArray(deps.proposeRetryMs) ? { waits: deps.proposeRetryMs } : {}),
       config, bot, sessionId: session.id, router: deps.votesRouter || null, ceiling: proposalCeiling,
     });
     return { status: out.status, body: out.body ? { ok: !!out.body.ok, prNumber: out.body.prNumber ?? null, error: out.body.error ?? null, message: out.body.message ?? null } : null };
@@ -4583,12 +4703,39 @@ async function reviewLanded({
   // back here, so the review carries on from the step it was at.
   const steps = durableSteps.of(deps);
   const keptState = steps.get('review_state');
+  const owner = review.owner || {};
+  // Run seven (14 Oct 2026): a review that stopped on its round limit gets
+  // one last look at its final fix, recorded on the live run and nothing
+  // else (bot-review.js startFinalLook). Started, never waited on: the build
+  // goes on to its proposal as it would have. The reviewer is called
+  // directly, not through the loop's `review` below, so no 'review_round'
+  // stage is written for it.
+  const lookOnceMore = (state) => {
+    if (!owner.botRunId || !state) return;
+    const model = state.reviewer?.model || review.reviewer?.model;
+    if (!model) return;
+    try {
+      botReview.startFinalLook({
+        pool, runId: owner.botRunId, state,
+        review: ({ round, capture: shot, previousIssues, timeoutMs }) => botReview.reviewCapture({
+          pool, config, userId: bot.id, model, seed, spec, capture: shot, previousIssues,
+          round, maxRounds: round, appId: app.id, sessionId: session.id, timeoutMs, locale,
+          deps: deps.reviewDeps || {},
+        }),
+      });
+    } catch (err) {
+      log.warn('homeroom-bot', 'Could not start the last look after the final fix (going on)', { sessionId: session.id, err: err.message });
+    }
+  };
   // One that had finished when the restart came (its end saved, the build's
-  // `reviewed` step not yet): taken as it ended, never reviewed again.
-  if (!resumeFrom && keptState?.state === 'done') return keptState;
+  // `reviewed` step not yet): taken as it ended, never reviewed again (its
+  // last look only if the run has none).
+  if (!resumeFrom && keptState?.state === 'done') {
+    lookOnceMore(keptState);
+    return keptState;
+  }
   if (!resumeFrom && keptState && keptState.state && keptState.state !== 'done') resumeFrom = keptState;
   const reviewer = (resumeFrom && resumeFrom.reviewer && resumeFrom.reviewer.maxRounds != null) ? resumeFrom.reviewer : review.reviewer;
-  const owner = review.owner || {};
   const ensure = async () => {
     await worker.ensureWorkerImage();
     return worker.ensureWorker(session.id, {
@@ -4619,6 +4766,7 @@ async function reviewLanded({
       worker.clearPendingStop?.(session.id);
     }
     const fixBudgetMs = Math.max(1000, Math.min(budgetMs, turnBudgetMs));
+    const progress = lastActivity();
     const turn = await runBuildTurn({
       key: `fix:${round}`,
       prompt: botReview.fixPrompt({
@@ -4628,7 +4776,7 @@ async function reviewLanded({
       budgetMs: fixBudgetMs,
       resumeThreadId: null,
       commitMsg: FIX_COMMIT_MESSAGES.review(round),
-      progress: lastActivity(),
+      progress,
     });
     const r = (turn.routed && turn.routed.result) || {};
     const costUsd = Number.isFinite(turn.routed && turn.routed.estimatedCostUsd) ? turn.routed.estimatedCostUsd : null;
@@ -4637,13 +4785,20 @@ async function reviewLanded({
     if (turn.stopped) return { ok: false, stopped: true, costUsd, ms };
     if (turn.routed?.error) return { ok: false, error: `the fix turn failed (${turn.routed.error})`, costUsd, ms };
     const failed = failedClaudeTurn(r);
-    if (failed) return { ok: false, error: `the fix turn failed (${failed})`, costUsd, ms };
+    // With what it was last doing and its final message, as a failed build
+    // turn's (failureDetail): a provider refusing the key for its spending
+    // limit ("Failed to authenticate. API Error: 403 Key limit exceeded")
+    // is only there, not in its exit code.
+    if (failed) {
+      const reason = `the fix turn failed (${failed})`;
+      return { ok: false, error: `${reason}${failureDetail({ progress, result: r, reason })}`, costUsd, ms };
+    }
     return {
       ok: true, sha: r.pushOk ? (r.sha || null) : null, commits: Number(r.ahead) > 0 ? Number(r.ahead) : null, costUsd, ms,
     };
   };
   try {
-    return await botReview.runReviewLoop({
+    const finished = await botReview.runReviewLoop({
       reviewer,
       start,
       resumeFrom,
@@ -4677,6 +4832,8 @@ async function reviewLanded({
       fence: steps.active ? steps.fence : null,
       onProgress,
     });
+    lookOnceMore(finished);
+    return finished;
   } catch (err) {
     durableSteps.rethrowStop(err, 'review');
     log.warn('homeroom-bot', 'The review could not run; proposing what is built', { sessionId: session.id, err: err.message });
@@ -4734,6 +4891,9 @@ module.exports = {
   botUsernameOf,
   openBotProposal,
   promoteAsBot,
+  promoteOwnBuild,
+  ProposalDeferred,
+  PROPOSE_RETRY_MS,
   prepareProposal,
   proposalTitle,
   specUserFacing,
@@ -4815,8 +4975,12 @@ module.exports = {
   firstVersionScreensBrief,
   splitApprovedPlan,
   planNoteText,
+  clipSketch,
   APPROVED_PLAN_HEAD,
   CREATOR_CHOICES_HEAD,
+  PLAN_LINES_HEAD,
+  MADE_SCREEN_CHOICES_HEAD,
+  ANSWER_WINS_LINE,
   APPROVED_BY_REQUESTER_HEAD,
   REQUESTER_CHOICES_HEAD,
   specTitle,

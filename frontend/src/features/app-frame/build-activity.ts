@@ -25,12 +25,17 @@
  *
  *   Building it, Testing it   `active`, with the stage in the build line's
  *                             own words (phaseLine, BUILD_LINE_WORDS: never
- *                             words of its own), and the estimate's `etaAt`
- *                             while the screen counts down. Once the step
- *                             under way runs past its own estimate the screen
- *                             says it is taking a little longer than usual,
- *                             and the activity drops its countdown with it.
- *                             These two lines may start one.
+ *                             words of its own), and the time to live the
+ *                             line counts down to (liveAt): the estimate's
+ *                             `etaAt`, and once the step under way runs
+ *                             past its own estimate, now plus the later
+ *                             steps' usual time, moving out with the clock
+ *                             as the line's "about N min left" holds (run
+ *                             seven). Once no later step is left to count
+ *                             the line says it is taking a little longer
+ *                             than usual, and the activity drops its
+ *                             countdown with it. These two lines may start
+ *                             one.
  *   Ready to try              `active` while it goes live on its own
  *                             (`approval.noVote` or `soon`), else `ended`,
  *                             "<name> is ready to try": it waits for
@@ -45,7 +50,8 @@
  *
  * WHEN. Only inside the app, on a build that advertises `setBuildActivity`;
  * only for the maker (`first_version.mine`); only when what it would show
- * changed (the line, the stage's words, the minute the countdown ends);
+ * changed (the line, the stage's words, the minute the countdown ends: at
+ * most once a minute while a step runs long and that minute moves out);
  * `ended` once per build, and nothing for that build after it. A
  * `started: false` (ActivityKit starts one only in the foreground) is tried
  * again the next time the page comes back to the foreground. Nothing here
@@ -63,7 +69,7 @@
 import { t as translate } from '../../lib/i18n/runtime';
 import { BUILD_LINE_WORDS, buildLineOf, phaseLine } from '../first-session/build-line';
 import { stepsOf } from '../first-session/build-line-words.js';
-import { countsDown, estimateOf } from './first-version-eta';
+import { countsDown, estimateOf, liveAt } from './first-version-eta';
 
 /** The bridge capability that says the call has a visible effect. */
 export const BUILD_ACTIVITY_CAPABILITY = 'setBuildActivity';
@@ -176,17 +182,17 @@ export function buildStartOf(steps: unknown): number | null {
 }
 
 /**
- * When it should be live, for the countdown: the estimate's `etaAt` while
- * the screen counts down (Building it, Testing it, the step under way not
- * yet past its own estimate), else null. Never at or before `startedAt`. Pure.
+ * When it should be live, for the countdown: what the line counts down to
+ * (first-version-eta.ts liveAt) while the screen counts down (Building it,
+ * Testing it): the estimate's `etaAt`, or past the step under way's own
+ * estimate, now plus the later steps' usual time. Null once no later step
+ * is left to count (the line says it is taking a little longer than
+ * usual). Never at or before `startedAt`. Pure.
  */
 export function etaOf(line: string | null, estimate: unknown, startedAt: number, now: number): number | null {
   if (!countsDown(line)) return null;
-  const e = estimateOf(estimate);
-  if (!e) return null;
-  const stepEnd = Date.parse(e.stepEtaAt);
-  const end = Date.parse(e.etaAt);
-  if (!(now < stepEnd)) return null;
+  const end = liveAt(estimateOf(estimate), now);
+  if (end == null) return null;
   if (!(end > startedAt) || end > MAX_EPOCH_MS) return null;
   return end;
 }

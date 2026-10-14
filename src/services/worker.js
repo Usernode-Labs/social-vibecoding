@@ -1346,10 +1346,12 @@ function codingProviderCount(value, maximum) {
 }
 // What one model request came to, as the Claude Code listener reports it
 // (worker/claude-openrouter-request.js, provider_request_result): kept as
-// the turn's routed provider for its ledger row, and, when it failed, said
-// on the progress line and logged with the ids that find it in OpenRouter's
-// own log. Nothing here is the request's content: the listener sends a
-// status, ids, a provider name and an error's type and clipped message.
+// the turn's routed provider for its ledger row (with every other host the
+// turn used, and whether the request left the shortlist), and, when it
+// failed, said on the progress line and logged with the ids that find it in
+// OpenRouter's own log. Nothing here is the request's content: the listener
+// sends a status, ids, a provider name and an error's type and clipped
+// message.
 const SAFE_PROVIDER_ID = /^[a-zA-Z0-9._:-]{1,160}$/;
 const SAFE_PROVIDER_NAME = /^[a-zA-Z0-9 ._:/()-]{1,80}$/;
 const SAFE_PROVIDER_ERROR_TYPE = /^[a-z0-9_.-]{1,64}$/i;
@@ -1366,10 +1368,18 @@ function observeCodingProviderResult(event, ordinal, onProgress, state) {
     state.routedProvider = providerName;
     // Every provider the turn's requests went to, in order, not only the
     // last: whether a build that quits early follows a provider is read
-    // from this (homeroom-bot-live.js turnFacts). A few names at most.
+    // from this (homeroom-bot-live.js turnFacts). A few names at most, first
+    // seen first; since run seven (14 Oct 2026) the turn's ledger row keeps
+    // them all (agent_turns.metadata.routed_providers), not only the last.
     const seen = Array.isArray(state.routedProviders) ? state.routedProviders : (state.routedProviders = []);
     if (!seen.includes(providerName) && seen.length < 8) seen.push(providerName);
   }
+  // How many of the turn's requests the shortlist refused and the listener
+  // sent again to every host (run seven, 14 Oct 2026: slow hosts still
+  // served builds, and nothing said how often a build left the shortlist).
+  // Zero once any request is seen, so "none" reads apart from "not known";
+  // the turn's ledger row keeps it (agent_turns.metadata.shortlist_fallbacks).
+  state.shortlistFallbacks = (state.shortlistFallbacks || 0) + (event.shortlistFallback === true ? 1 : 0);
   noteCodingProviderUsage(event.usage, state);
   noteCodingProviderImages(event.images, state);
   noteCodingProviderToolOutput(event.toolOutput, state);
@@ -2698,9 +2708,28 @@ function _inFlightHold(sessionId, inFlight) {
     release();
   }
 }
+// And while it is registered at all, its worker is warm here: a marker
+// (services/processes.js 'warm', which no drain waits for) so another
+// process neither reports the worker as an orphan, nor adopts it, nor
+// evicts it from under this one (docs/plans/web-and-conductor.md).
+const _warmHolds = new Map(); // sessionId -> release
+function _warmHold(sessionId, warm) {
+  if (warm && !_warmHolds.has(sessionId)) {
+    try { _warmHolds.set(sessionId, require('./processes').hold('warm', Number(sessionId))); } catch { /* no ref */ }
+  } else if (!warm && _warmHolds.has(sessionId)) {
+    const release = _warmHolds.get(sessionId);
+    _warmHolds.delete(sessionId);
+    release();
+  }
+}
 class WarmRegistry extends Map {
-  delete(sessionId) { _inFlightHold(sessionId, false); return super.delete(sessionId); }
-  clear() { for (const id of [..._inFlightHolds.keys()]) _inFlightHold(id, false); super.clear(); }
+  set(sessionId, value) { _warmHold(sessionId, true); return super.set(sessionId, value); }
+  delete(sessionId) { _inFlightHold(sessionId, false); _warmHold(sessionId, false); return super.delete(sessionId); }
+  clear() {
+    for (const id of [..._inFlightHolds.keys()]) _inFlightHold(id, false);
+    for (const id of [..._warmHolds.keys()]) _warmHold(id, false);
+    super.clear();
+  }
 }
 const _warmRegistry = new WarmRegistry();
 
@@ -2771,6 +2800,12 @@ function warmRegistrySnapshot() {
 
 // Register a warm container that already exists (either spawned by us
 // earlier in this process, or adopted from a previous server run).
+// Drop this process's record of a session's worker and leave the worker
+// as it is: another process keeps it warm too (server.js idle eviction).
+function forgetWorker(sessionId) {
+  return _warmRegistry.delete(sessionId);
+}
+
 function adoptWarmWorker(sessionId, containerName = null) {
   _registryUpsert(sessionId, {
     containerName: containerName || workerContainerName(sessionId),
@@ -3253,12 +3288,12 @@ async function ensureWorker(sessionId, {
     const labels = kubernetesWorkers
       ? { 'usernode.proxy': runtime.contractVersion }
       : await docker.getContainerLabels(containerName);
+    const storageStale = kubernetesWorkers && runtime.storageMode !== (temporary ? 'temporary' : 'persistent');
     const staleReason = labels['usernode.proxy'] !== WORKER_BOOTSTRAP_ENV_VERSION
       ? 'runtime-contract'
       : (kubernetesWorkers && runtime.imageRef !== workerConfig.kubernetes.workerImage
         ? 'worker-image'
-        : (kubernetesWorkers && runtime.storageMode !== (temporary ? 'temporary' : 'persistent')
-          ? 'storage-mode' : null));
+        : (storageStale ? 'storage-mode' : null));
     if (staleReason) {
       // A recovered/in-flight turn owns this worker until it settles. Normal
       // dispatch serialization means this is defensive, but keep the image
@@ -3272,6 +3307,31 @@ async function ensureWorker(sessionId, {
         log.info('worker', 'Deferring stale warm worker replacement until turn completion', {
           containerName, staleReason,
         });
+        return containerName;
+      }
+      // A durable build (services/build-runs.js) holds its session for its
+      // whole run, not only while a turn runs: between its build turn and a
+      // review's fix, a capture or its proposal no turn is in flight, and the
+      // check above let a new image take its worker. 14 Oct 2026: a
+      // newcomer's first version (bot run 2027, carried into a newer release
+      // by a restart) lost its worker that way just before its review's fix
+      // turn: the Pod was recreated with its scratch workspace, the fix
+      // turn's resume failed, and the build stopped. A newer image alone is
+      // not a reason to take a run's worker: the contract is the same
+      // (checked first), so the image it has still serves this host. It is
+      // replaced at the first ensure after the run ends. Not a contract
+      // change, which an older worker cannot serve (its turns would fail
+      // anyway), nor storage: those are replaced as before.
+      if (staleReason === 'worker-image' && !storageStale
+          && await require('./build-runs').holdsSession(_getPoolSafe(), sessionId)) {
+        log.info('worker', 'Keeping a durable build\'s worker on its image until the build ends', {
+          containerName, sessionId, staleReason,
+          currentImage: runtime?.imageRef || null,
+          expectedImage: workerConfig?.kubernetes.workerImage || null,
+        });
+        if (!existing) {
+          _registryUpsert(sessionId, { containerName, lastUsedMs: Date.now(), inFlight: false });
+        }
         return containerName;
       }
       log.info('worker', kubernetesWorkers
@@ -5923,6 +5983,7 @@ module.exports = {
   BENCH_CAPTURE_SCRIPT_PATH,
   warmRegistrySnapshot,
   adoptWarmWorker,
+  forgetWorker,
   isInFlight,
   isWorkerExecuting,
   getActiveTurnMode,

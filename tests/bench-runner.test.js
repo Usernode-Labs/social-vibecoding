@@ -327,6 +327,38 @@ test('the cap holds the next trial when what is spent, under way and next would 
   assert.equal(lane.fitsCap({ spentUsd: 50.01, capUsd: 50 }), false);
 });
 
+// Run 196's last ten trials, failed on their first request by the bench
+// key's weekly limit at OpenRouter: the platform's fault, not the model's.
+test('a provider refusing the key for its spending limit fails the trial as the platform, never as the model', () => {
+  const run196 = 'the build turn failed (the agent exited with code 1); last activity: Failed to authenticate. API Error: 403 Key limit exceeded (weekly limit). Manage it using https://openrouter.ai/workspaces/default/';
+  for (const error of [run196, '402 Insufficient credits', 'This request requires more credits, or fewer max_tokens']) {
+    assert.equal(lane.providerLimitHit(error), true, error);
+    assert.deepEqual(lane.asPlatformFault({ status: 'model_fail', error, cost_usd: 0.04 }), { status: 'infra_fail', error, cost_usd: 0.04 });
+  }
+  for (const error of ['the build produced no change to propose', 'unparseable: no action block', '403 Forbidden', null]) {
+    assert.equal(lane.providerLimitHit(error), false, String(error));
+    assert.equal(lane.asPlatformFault({ status: 'model_fail', error }).status, 'model_fail');
+  }
+  assert.equal(lane.asPlatformFault({ status: 'timeout', error: run196 }).status, 'timeout', 'only a model failure is read again');
+  assert.equal(lane.asPlatformFault({ status: 'ok', error: null }).status, 'ok');
+  // A first version that built, whose review fix turn was refused (trials
+  // 1498 and 1504): its review never finished, so it is the platform's too.
+  const refusedFix = 'the fix turn failed (the agent exited with code 1); last activity: Failed to authenticate. API Error: 403 Key limit exceeded (weekly limit).';
+  const cut = lane.asPlatformFault({ status: 'ok', error: null, parsed: { built: true, review: { stop: 'fix_failed', stopDetail: refusedFix } } });
+  assert.equal(cut.status, 'infra_fail');
+  assert.equal(cut.error, `the review was cut short: ${refusedFix}`);
+  assert.equal(lane.providerLimitHit(cut.error), true, 'the lane\'s pause reads it from the trial\'s error');
+  const reviewer402 = lane.asPlatformFault({ status: 'ok', parsed: { review: { stop: 'reviewer_error', stopDetail: 'HTTP 402: Insufficient credits' } } });
+  assert.equal(reviewer402.status, 'infra_fail');
+  for (const review of [
+    { stop: 'fix_failed', stopDetail: 'the fix turn failed (the agent exited with code 1)' },
+    { stop: 'ship', stopDetail: null },
+    { stop: 'round_limit', stopDetail: refusedFix },
+  ]) {
+    assert.equal(lane.asPlatformFault({ status: 'ok', parsed: { review } }).status, 'ok', JSON.stringify(review));
+  }
+});
+
 test('launch validation: models, stages, repeats, the $50 default cap and concurrency', () => {
   const ok = lane.validateLaunch({ suiteId: 1, models: ['qwen/qwen3.8-flash', 'z-ai/glm-5.3-flash'], stages: ['triage'] });
   assert.equal(ok.ok, true);

@@ -13,6 +13,8 @@
 //                on a durable context over the work item's checkpoint
 //   lost()       its `build.lost` handler: a build that failed for good is
 //                recorded where it is read
+//   holdsSession() whether a build under way owns a session, wherever it
+//                runs: its worker is kept for it (worker.js ensureWorker)
 //
 // A build is a target (live, shadow, trial) and an id (the run, or the
 // trial). What each target runs is its own module's: homeroom-bot.js for a
@@ -159,14 +161,32 @@ async function start({ pool, config, target, id, nonce = null, appId = null, inp
   return wait;
 }
 
-/** The machine's `build.run` handler (src/workflow/bot-build/services.ts). */
-async function run(ctx, { config, pool }) {
+/**
+ * How many more tries the kernel gives a build if this attempt throws: its
+ * `maxAttempts` less the tries so far, an attempt that ended with its
+ * process not being one (the kernel's `resumable` rule). 0 when the handler
+ * was not told its `maxAttempts`.
+ */
+function triesLeftOf(ctx, maxAttempts) {
+  const max = Number(maxAttempts);
+  if (!Number.isInteger(max) || max <= 0) return 0;
+  const tries = (Number(ctx.attempt) || 1) - (Number(ctx.lostAttempts) || 0);
+  return Math.max(0, max - tries);
+}
+
+/**
+ * The machine's `build.run` handler (src/workflow/bot-build/services.ts),
+ * told the handler's `maxAttempts` so its steps know whether a try is left
+ * (durable-steps.js triesLeft).
+ */
+async function run(ctx, { config, pool, maxAttempts = null }) {
   const { target, id, nonce } = ctx.input || {};
   const t = targetOf(target);
   const key = keyOf(target, id, nonce);
   const steps = durableSteps.durable({
     resumeFrom: ctx.resumeFrom, checkpoint: ctx.checkpoint, signal: ctx.signal,
     attempt: ctx.attempt, lostAttempts: ctx.lostAttempts || 0, owner: `bot-build/${key}`,
+    triesLeft: triesLeftOf(ctx, maxAttempts),
   });
   if (ctx.resumeFrom) {
     log.info('build-runs', 'Carrying a build on from its last saved step', {
@@ -197,6 +217,34 @@ async function lost(ctx, { config, pool }) {
   return { recorded: true };
 }
 
+/**
+ * Whether a durable build under way owns session `sessionId`, wherever it
+ * runs: the session carries the build that opened it
+ * (chat_sessions.workflow_owner, `bot-build/<key>`) and that build's
+ * instance is still building. It holds the session for its whole run, its
+ * turns and the time between them (a review, its captures, its proposal).
+ * The same question server.js's restart recovery asks of a worker it would
+ * adopt. Resolves false when it cannot be read; never throws.
+ */
+async function holdsSession(pool, sessionId) {
+  if (!pool || typeof pool.query !== 'function' || !(Number(sessionId) > 0)) return false;
+  try {
+    const { rows: [row] = [] } = await pool.query(
+      `SELECT (cs.workflow_owner IS NOT NULL AND EXISTS (
+                SELECT 1 FROM wf_instances w
+                 WHERE w.machine = split_part(cs.workflow_owner, '/', 1)
+                   AND w.key = substr(cs.workflow_owner, length(split_part(cs.workflow_owner, '/', 1)) + 2)
+                   AND w.state = 'building')) AS held
+         FROM chat_sessions cs WHERE cs.id = $1`,
+      [Number(sessionId)],
+    );
+    return row?.held === true;
+  } catch (err) {
+    log.warn('build-runs', 'Could not read whether a durable build holds a session', { sessionId, err: err.message });
+    return false;
+  }
+}
+
 /** The builds under way of `target`, for slots taken again after a restart. */
 async function underWay(target) {
   try {
@@ -208,4 +256,6 @@ async function underWay(target) {
   }
 }
 
-module.exports = { start, whenEnded, run, lost, underWay, keyOf, notStarted, TARGETS, _ended: ended };
+module.exports = {
+  start, whenEnded, run, lost, underWay, keyOf, notStarted, triesLeftOf, holdsSession, TARGETS, _ended: ended,
+};

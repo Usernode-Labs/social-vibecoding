@@ -149,6 +149,8 @@ const leaderTimers = require('./src/services/leader-timers');
 // The platform's processes and what each holds (docs/plans/draining-releases.md).
 const processes = require('./src/services/processes');
 const drain = require('./src/services/drain');
+const processRole = require('./src/services/process-role');
+const { singleFlight } = require('./src/services/single-flight');
 const inflightWork = require('./src/services/inflight-work');
 const inflightRequests = require('./src/middleware/inflight-requests');
 const chainPoller = require('./src/services/chain-poller');
@@ -1120,15 +1122,32 @@ app.use(errorHandler);
 // is gated to the leader so it never double-runs. See services/leadership.js.
 let leadership = null;
 
+// What every process does for itself, whatever its role
+// (services/process-role.js) and whether or not it leads: each one sweeps
+// what only it holds. A staging preview runs none of it, as it runs no
+// leader duties (config.runsClusterMaintenance).
+function startProcessDuties() {
+  // Idle-eviction sweeper. Warm workers cost ~256MB resident; eviction
+  // reclaims that memory after a tunable idle period. The CC volume
+  // (cc-volume-<sessionId>) is preserved so the next dispatch's
+  // re-warm replays prior conversation state via `claude --resume`.
+  //
+  // WORKER_IDLE_EVICTION_MS is the only knob (default 10min). Lower it
+  // if memory headroom shrinks; raise it if we're seeing frequent
+  // re-warms in production logs.
+  startIdleEvictionSweeper();
+}
+
 // Leader-only singleton work. Runs exactly once per cluster — at boot for
 // the leader / the single-instance case (PLATFORM_LEADER_LOCK unset), or at
 // promotion for a follower whose old leader has exited (blue-green handoff).
 // EVERYTHING here either mutates shared cluster state (worker containers,
 // PR/merge rows, staging, Postgres roles, GitHub) or is a singleton
 // poller/sweeper that must never double-run across the two colors. The
-// follower serves HTTP from boot; the couple of leader-scoped capabilities
-// (prod-debug SQL, whose role password lives in the leader's memory) degrade
-// to a clean 503 on the follower for the seconds until promotion.
+// follower serves HTTP from boot, and so does a web process, which never
+// leads (docs/plans/web-and-conductor.md): what the leader sets up or keeps
+// in memory and a route reads (the read-only database roles, the admin
+// statuses) is recorded for them (platform_db_roles, services/leader-status.js).
 async function becomeLeader() {
   log.info('server', 'Running leader duties (role bootstraps, recovery, sweepers)', {
     identity: leadership && leadership.identity,
@@ -1140,6 +1159,20 @@ async function becomeLeader() {
   await require('./src/workflow/platform.ts').startWorkflowLoops().catch((err) => {
     log.error('server', 'Workflow loops failed to start', { err: err.message });
   });
+
+  // What leader work keeps in memory and an admin screen reads, written for
+  // the processes that do not lead (services/leader-status.js): a web process
+  // never does (docs/plans/web-and-conductor.md), and a follower of a rollout
+  // reads the same copy.
+  const leaderStatus = require('./src/services/leader-status');
+  leaderStatus.provide(require('./src/services/homeroom-bot').MEMORY_STATUS_KEY,
+    () => require('./src/services/homeroom-bot').memoryStatus());
+  leaderStatus.provide('bench-lane', () => require('./src/services/bench/lane').laneStatus());
+  leaderStatus.provide('staging-reap.automatic', () => stagingReap.readAutomatic());
+  leaderStatus.provide('app-domains.sweep', () => require('./src/services/app-domains').getStatus());
+  leaderStatus.provide(require('./src/services/app-storage-cap').LAST_SWEEP_STATUS_KEY,
+    () => require('./src/services/app-storage-cap').lastSweep());
+  leaderStatus.start({ pool: getPool(config) });
 
   // #2045: reconcile the shared hosted-asset backend once per rollout.
   //
@@ -1504,6 +1537,12 @@ async function becomeLeader() {
     .resumeHeadlessRuns(config, { minIdleMs: ORPHAN_MIN_AGE_MS })
     .catch((err) => log.warn('server', 'Orphan headless sweep failed', { err: err.message })),
   ORPHAN_SWEEP_MS, { firstDelayMs: ORPHAN_SWEEP_MS });
+  // And the warm workers of a process that exited: a web process's release
+  // or crash elects nobody (docs/plans/web-and-conductor.md), so nobody would
+  // adopt and later evict them.
+  leaderTimers.every('left-warm-worker-sweep', () => sweepLeftWarmWorkers(config)
+    .catch((err) => log.warn('server', 'Left-behind warm worker sweep failed', { err: err.message })),
+  LEFT_WARM_SWEEP_MS, { firstDelayMs: LEFT_WARM_SWEEP_MS });
 
   // Durable deletion tasks survive provider outages and platform restarts.
   const runAccountDeletionCleanup = () => require('./src/services/account-deletion-cleanup')
@@ -1531,16 +1570,6 @@ async function becomeLeader() {
     .then((n) => { if (n) log.info('mcp', 'Pruned ended delegated grants', { count: n }); })
     .catch((err) => log.warn('mcp', 'Delegated-grant prune failed', { code: err.code, message: err.message }));
   leaderTimers.every('delegation-prune', runDelegationPrune, 60 * 60 * 1000, { durable: getPool(config) });
-
-  // Idle-eviction sweeper. Warm workers cost ~256MB resident; eviction
-  // reclaims that memory after a tunable idle period. The CC volume
-  // (cc-volume-<sessionId>) is preserved so the next dispatch's
-  // re-warm replays prior conversation state via `claude --resume`.
-  //
-  // WORKER_IDLE_EVICTION_MS is the only knob (default 10min). Lower it
-  // if memory headroom shrinks; raise it if we're seeing frequent
-  // re-warms in production logs.
-  startIdleEvictionSweeper();
 
   // Session auto-pause sweeper (separate, longer timer than worker
   // eviction above). Flips long-idle 'active' sessions to 'paused' so
@@ -1741,6 +1770,9 @@ async function becomeLeader() {
 
 async function start() {
   const startedAt = Date.now();
+  // web, conductor or all (services/process-role.js): read before anything
+  // starts, so a value that names no role fails boot here.
+  const ownRole = processRole.processRole();
   const migrationsOnStartup = process.env.RUN_MIGRATIONS_ON_STARTUP !== 'false';
   let migration = null;
   // Schema migration is serialized across colors with an advisory lock so
@@ -1758,7 +1790,7 @@ async function start() {
   // This process, and what it holds, for every other one to see
   // (docs/plans/draining-releases.md): before anything here can start work.
   // Never fatal: holds stay this process's own until the database takes them.
-  await processes.start({ pool: getPool(config), role: 'all' });
+  await processes.start({ pool: getPool(config), role: ownRole });
   // The clients every process that runs the workflow machines makes
   // (src/workflow/setup.ts): the push sender, GitHub, the model.
   await require('./src/workflow/setup.ts').startWorkflowClients(config);
@@ -1791,10 +1823,11 @@ async function start() {
   // for the entire drain, then exited from under them.
   const server = app.listen(config.port, () => {
     log.info('server', `Listening on :${config.port}`);
-    // The merges into Homeroom this build carries are live now that it serves,
-    // and this process is up (a second boot in one pod is a crash).
+    // The merges into Homeroom this build carries are live now that it serves
+    // (a conductor serves nobody: its web processes say so), and this process
+    // is up (a second boot in one pod is a crash).
     const platformRelease = require('./src/services/platform-release');
-    platformRelease.recordRunning(getPool(config));
+    if (processRole.servesRequests(ownRole)) platformRelease.recordRunning(getPool(config));
     platformRelease.recordBoot(getPool(config));
   });
   // Let Envoy retire idle upstream connections at 60s before Node closes them.
@@ -1826,8 +1859,17 @@ async function start() {
   // that never stops. Previews last touched a week ago were measured still
   // holding six warm Postgres connections each, on a server whose
   // max_connections is the stock 100. See config.runsClusterMaintenance.
+  //
+  // A web process (PROCESS_ROLE=web, docs/plans/web-and-conductor.md) never
+  // stands either: the conductor leads, and a release of the web Pods leaves
+  // its leader work where it is. What every process does for itself (the
+  // idle eviction of its own warm workers, ...) runs from
+  // startProcessDuties(), whatever its role.
+  if (runsClusterMaintenance()) startProcessDuties();
   if (!runsClusterMaintenance()) {
     log.info('server', 'Leader duties skipped — staging preview serves requests only');
+  } else if (!processRole.standsForLeader(ownRole)) {
+    log.info('server', 'Leader duties run on the conductor — this web process serves requests only', { role: ownRole });
   } else {
     leadership = createLeadership({ databaseUrl: config.databaseUrl });
     leadership.start(becomeLeader).catch((err) => {
@@ -1871,6 +1913,8 @@ module.exports = {
   // docs/plans/draining-releases.md: the leader's sweep for turns their
   // process left behind.
   sweepOrphanTurns,
+  // docs/plans/web-and-conductor.md: and for idle warm workers.
+  sweepLeftWarmWorkers,
   // #1378: the detached-turn resume itself, so tests can prove a stop that
   // lands on an ADOPTED turn terminalizes it as a stop instead of narrating
   // an interruption (or retrying it). Driving it through adoptOrphanWorker
@@ -2895,6 +2939,47 @@ async function recoverActiveWorkers(config) {
 const ORPHAN_SWEEP_MS = 60 * 1000;
 const ORPHAN_MIN_AGE_MS = 2 * 60 * 1000;
 
+// docs/plans/web-and-conductor.md: a worker left running by a process that
+// exited, with no turn on it (a turn is sweepOrphanTurns'), that no live
+// process keeps warm or runs anything in: adopted here as an election would,
+// so this process's idle eviction reclaims it in its time. Read exactly
+// (holders), and a session whose holders cannot be read is left for the next
+// pass.
+const LEFT_WARM_SWEEP_MS = 5 * 60 * 1000;
+const HELD_WORKER_KINDS = ['warm', 'session', 'shots', 'sync'];
+
+async function sweepLeftWarmWorkers(config, { list = () => worker.listOrphanWorkers(), adopt = adoptOrphanWorker } = {}) {
+  const pool = getPool(config);
+  const mine = new Set(worker.warmRegistrySnapshot().map((m) => Number(m.sessionId)));
+  const candidates = [];
+  for (const w of await list()) {
+    const id = Number(w.sessionId);
+    if (!Number.isInteger(id) || id <= 0 || w.state !== 'running' || mine.has(id)) continue;
+    if (HELD_WORKER_KINDS.some((kind) => processes.heldHere(kind, id))) continue;
+    if (activeWorkersSvc.isSessionBusyHere(id) || worker.getActiveTurnMode(id)) continue;
+    let holders;
+    try { holders = await processes.holders(HELD_WORKER_KINDS, id, pool); } catch { continue; }
+    if (!holders.length) candidates.push(w);
+  }
+  if (!candidates.length) return 0;
+  const { rows } = await pool.query(
+    'SELECT id FROM chat_sessions WHERE id = ANY($1::int[]) AND active_turn IS NOT NULL',
+    [candidates.map((w) => Number(w.sessionId))]);
+  const withTurn = new Set(rows.map((r) => Number(r.id)));
+  const deps = { config, pool, staging: require('./src/services/staging'), ghub: require('./src/services/github'),
+    broadcastGlobal: require('./src/services/ws').broadcastGlobal };
+  let adopted = 0;
+  for (const w of candidates) {
+    if (withTurn.has(Number(w.sessionId))) continue;
+    log.info('server', 'Adopting a warm worker its process left behind', { sessionId: w.sessionId, containerName: w.name });
+    adopted += 1;
+    await Promise.resolve().then(() => adopt(w, deps)).catch((err) => {
+      log.warn('server', 'Adopting a left-behind warm worker failed', { sessionId: w.sessionId, err: err.message });
+    });
+  }
+  return adopted;
+}
+
 async function sweepOrphanTurns(config, { adopt = adoptOrphanWorker } = {}) {
   const pool = getPool(config);
   const { rows } = await pool.query(
@@ -3508,6 +3593,14 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
         });
         await narrateDanglingTail({ config, pool, session, sessionId, broadcastGlobal });
         worker.adoptWarmWorker(sessionId, containerName);
+        return;
+      }
+      // Kept warm by a live process (a web process's, which never leads,
+      // docs/plans/web-and-conductor.md): its own, and its idle eviction's.
+      let warmThere = [];
+      try { warmThere = await processes.holders('warm', sessionId, pool); } catch { warmThere = []; }
+      if (warmThere.some((id) => id !== processes.ID)) {
+        log.info('server', 'A live process keeps this idle worker warm; not adopting it', { containerName, sessionId });
         return;
       }
       log.info('server', 'Adopting warm-idle worker (no in-flight exec)', {
@@ -5323,6 +5416,11 @@ const SWEEP_INTERVAL_MS = 30 * 1000;
 
 let sweeperHandle = null;
 
+// Every process sweeps its own warm registry (startProcessDuties): a web
+// process never leads, and its turns' workers are its own. A session busy
+// anywhere is left alone: a turn on another process may be using the very
+// worker this registry last used (a session's turns land wherever the
+// Service sends them).
 function startIdleEvictionSweeper() {
   if (sweeperHandle) return;
   log.info('server', 'Worker idle-eviction sweeper started', {
@@ -5337,6 +5435,17 @@ function startIdleEvictionSweeper() {
       if (meta.inFlight) continue;
       if (meta.bootstrapping) continue;
       if (now - meta.lastUsedMs < WORKER_IDLE_EVICTION_MS) continue;
+      if (activeWorkersSvc.isSessionBusyElsewhere(meta.sessionId)) continue;
+      // Warm in another process too: forget it here and leave it to them;
+      // the last one keeping it warm evicts it. If they all forget it at
+      // once, the leader's sweep for left-behind workers adopts it.
+      if (processes.heldElsewhere('warm', meta.sessionId)) {
+        worker.forgetWorker(meta.sessionId);
+        log.info('server', 'Idle warm worker left to another process that keeps it warm', {
+          sessionId: meta.sessionId, containerName: meta.containerName,
+        });
+        continue;
+      }
       try {
         await worker.evictWorker(meta.sessionId);
         log.info('server', 'Idle warm worker evicted', {
@@ -5463,8 +5572,9 @@ function startSessionAutoPauseSweeper(config) {
   // it), and waiting for one held a release's drain to its 60s deadline on
   // 14 Oct 2026. Its long loops stop at their next row once shutdown begins,
   // and the proposal measurement, whose write the closing pool cut, is held
-  // on its own below.
-  sessionSweeperHandle = setInterval(async () => {
+  // on its own below. One pass at a time (services/single-flight.js): a pass
+  // minutes into a staging heal had later ticks start beside it.
+  sessionSweeperHandle = setInterval(singleFlight('session-sweeper', async () => {
     if (lifecycle.isShuttingDown()) return;
 
     // Pass 1: auto-pause idle 'active' sessions (worker + slot only;
@@ -5949,7 +6059,9 @@ function startSessionAutoPauseSweeper(config) {
         // A getPR per imported proposal: background work, held while
         // GitHub's hourly budget is nearly used up (services/github-budget.js).
         if (!githubBudget.budgetAllows('background')) break;
-        if (worker.isInFlight(session.id)) continue;
+        // A turn on any process (a web process runs the turns its routes
+        // start, docs/plans/web-and-conductor.md), not only this one's.
+        if (worker.isInFlight(session.id) || activeWorkersSvc.isSessionBusy(session.id)) continue;
         const last = importedHeadSyncAttempts.get(session.id) || 0;
         if (Date.now() - last < IMPORTED_HEAD_SYNC_COOLDOWN_MS) continue;
         // Stamp BEFORE the getPR (+ possible minutes-long rebuild) so a
@@ -6000,8 +6112,9 @@ function startSessionAutoPauseSweeper(config) {
         for (const session of rows) {
           if (lifecycle.isShuttingDown()) break;
           // A session mid-turn is about to move its own head; measuring it now
-          // records an answer that is wrong before it is written.
-          if (worker.isInFlight(session.id)) continue;
+          // records an answer that is wrong before it is written. Mid-turn on
+          // any process, not only this one.
+          if (worker.isInFlight(session.id) || activeWorkersSvc.isSessionBusy(session.id)) continue;
           const written = await integrationSvc.measure({ pool, session }, { force: true });
           if (written && !written.skipped) measured++;
         }
@@ -6073,7 +6186,7 @@ function startSessionAutoPauseSweeper(config) {
     } catch (err) {
       log.warn('server', 'Connection-pressure sweep failed', { err: err.message });
     }
-  }, config.sessionSweepIntervalMs).unref();
+  }), config.sessionSweepIntervalMs).unref();
 }
 
 let governanceApplyTickerHandle = null;
@@ -6763,6 +6876,13 @@ async function cleanup() {
   if (finishesWork) {
     await boundedStep(processes.markDraining(new Date(cleanupStartedAt + drainMs)), 1000)
       .catch((err) => log.warn('server', 'Could not mark this process draining', { err: err.message }));
+    // Its idle warm workers are no longer its own: it starts no turn, and
+    // its idle eviction stops. Forgotten here, before it resigns, so the
+    // next leader adopts them (adoptOrphanWorker) rather than leave them to
+    // a process that will not evict them.
+    for (const meta of worker.warmRegistrySnapshot()) {
+      if (!meta.inFlight && !meta.bootstrapping) worker.forgetWorker(meta.sessionId);
+    }
   }
   const askSuccessor = shutdownOverrides?.successor ?? successorServing;
   if (finishesWork && !(await askSuccessor())) {
@@ -6786,6 +6906,8 @@ async function cleanup() {
   // The Homeroom bot's loops and its benchmark lane: nothing new is claimed
   // or dispatched on a process whose pool is about to close. Their turns
   // already running are restart recovery's to finish.
+  // The leader's statuses stop being written: the new leader's replace them.
+  require('./src/services/leader-status').stop();
   try { require('./src/services/homeroom-bot').stop(); } catch (err) {
     log.warn('server', 'Stopping the Homeroom bot failed', { err: err.message });
   }
@@ -6809,10 +6931,14 @@ async function cleanup() {
     try { stop(); } catch (err) { log.warn('server', `Stopping the ${name} sweep failed`, { err: err.message }); }
   }
   // The bot's builds and the bench's trials under way here are durable
-  // builds (services/build-runs.js): stopping the workflow runtime below
-  // stops each at its next step, its turn left running in its worker, and
-  // gives its work item up, so the next leader carries it on from the step it
-  // saved. Nothing waits for them.
+  // builds (services/build-runs.js). A process finishing its work only
+  // quiesces the workflow runtime below, so each goes on here to its end,
+  // its own steps included (a build's promote passes the drain guard:
+  // lifecycle.js OWN_WORK, after 14 Oct 2026's refused first version), and
+  // the drain waits for it (workflowWorkRunning). Stopping the runtime, at
+  // once without a drain or at the drain's deadline, stops each at its next
+  // step, its turn left running in its worker, and gives its work item up, so
+  // the next leader carries it on from the step it saved.
   const retentionStop = require('./src/services/build-retention').stop();
   const checkRetentionStop = require('./src/services/check-retention').stop();
   const fixedCheckSyncStop = require('./src/services/fixed-check-sync').stop();

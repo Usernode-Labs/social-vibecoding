@@ -99,7 +99,7 @@ test('queueSnapshot: the counts and the rows listed come from one statement, and
 
   // The snapshot reads the rules liveCandidates applies, from the same constants.
   const src = read('src/services/homeroom-bot.js');
-  assert.match(src, /const queue = await queueSnapshot\(pool, settings, \{ botId: botRow\?\.id \?\? null \}\);/);
+  assert.match(src, /const queue = await queueSnapshot\(pool, settings, \{ botId: botRow\?\.id \?\? null, memory \}\);/);
   assert.match(src, /queue: \{ \.\.\.queue, buildsWaiting: builds\.waiting \},/);
   assert.doesNotMatch(src, /SELECT COUNT\(\*\)::int AS depth FROM homeroom_bot_queue/, 'no second count of another set');
   const snap = src.slice(src.indexOf('const QUEUE_SNAPSHOT_SQL'), src.indexOf('async function queueSnapshot'));

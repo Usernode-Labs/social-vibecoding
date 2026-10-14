@@ -10895,6 +10895,27 @@ COMMENT ON TABLE bench_materializations IS 'staging:private';
 -- mid-pass (a redeploy) can be told apart from one still working.
 ALTER TABLE bench_materializations ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMPTZ;
 
+-- The benchmark account's weekly allowance went from $100 to $500 a week
+-- (services/bench/runner.js DEFAULT_BENCH_WEEKLY_CENTS): $100 ran out partway
+-- through a run on 14 Oct 2026, and every trial after that failed on its
+-- first request. The account was made with the old amount, so raise it once.
+-- Its included OpenRouter key follows on the bench's next turn
+-- (agent-turn resolveCodexRuntimeContext syncs the key's limit). Guarded by a
+-- marker row, like weekly_limit_backfilled: an amount an admin sets later in
+-- Admin > Limits stays as they set it.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM platform_settings WHERE key = 'bench_weekly_limit_500') THEN
+    UPDATE users
+       SET weekly_limit_cents = 50000
+     WHERE username = 'homeroom_bench' AND is_synthetic = TRUE
+       AND COALESCE(weekly_limit_cents, 0) < 50000;
+    INSERT INTO platform_settings (key, value)
+      VALUES ('bench_weekly_limit_500', 'true')
+      ON CONFLICT (key) DO NOTHING;
+  END IF;
+END $$;
+
 -- #3654: a benchmark RUN puts a suite's tasks for some stages through some
 -- models, `repeats` times each (a build once), within a dollar cap. Its
 -- TRIALS are one task on one model, one attempt: pending, running, then how
@@ -14192,6 +14213,38 @@ CREATE TABLE IF NOT EXISTS process_holds (
 );
 CREATE INDEX IF NOT EXISTS idx_process_holds_ref ON process_holds (kind, ref);
 COMMENT ON TABLE process_holds IS 'staging:private';
+
+-- The read-only database roles the leader sets up at its election
+-- (services/debug-access.js usernode_debug_ro, topochain/db-console-role.js
+-- topochain_console_ro), as every other process reads them: a web process
+-- never leads (docs/plans/web-and-conductor.md), and answers the prod-debug
+-- and SQL console routes with what the leader made. `ok` is whether its last
+-- setup succeeded. `secret_enc` is a LOGIN role's password, encrypted with
+-- the data key (services/secrets.js), as app secrets are; a NOLOGIN role has
+-- none. The prod-debug role may not read this table (its deny list says
+-- so), the SQL console masks `secret_enc`, and a staging copy gets no rows.
+CREATE TABLE IF NOT EXISTS platform_db_roles (
+  role       TEXT PRIMARY KEY,
+  ok         BOOLEAN NOT NULL,
+  reason     TEXT,
+  secret_enc TEXT,
+  release    TEXT,
+  ensured_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+COMMENT ON TABLE platform_db_roles IS 'staging:private';
+
+-- What the leader keeps in memory and an admin screen reads, written by the
+-- leader for the processes that do not lead (services/leader-status.js,
+-- docs/plans/web-and-conductor.md): the bench lane, the domain sweep, the
+-- preview reaper, ... One row per status, rewritten every few seconds while
+-- its leader leads; a row nobody rewrote for two minutes is read as none.
+CREATE TABLE IF NOT EXISTS leader_status (
+  key          TEXT PRIMARY KEY,
+  value        JSONB NOT NULL,
+  process_id   TEXT,
+  published_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+COMMENT ON TABLE leader_status IS 'staging:private';
 
 -- Before & after shots EVALS (services/shots-eval.js, its runner in
 -- services/shots-eval-runner.js): an admin trying the shots agent with

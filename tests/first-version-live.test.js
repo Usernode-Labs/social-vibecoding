@@ -480,6 +480,47 @@ test('the pill and the remembered choice', () => {
   }
 });
 
+// Run seven (14 Oct 2026, iPhone Safari, Club Votes): the recording is of
+// the staging preview opened with ?demo=1, and built apps label that demo
+// themselves ("Staging demo: …"), which on the App tab read as part of their
+// app. The replay hides the label apps mark `data-usernode-demo-note`, and a
+// "Sample data" chip in the Live pill's look says it in the band's corner.
+test('run seven: the replay hides the app\'s own demo note, and the band says "Sample data" in the pill\'s look', () => {
+  const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+  const band = loadTsx('frontend/src/features/app-frame/live-band.tsx');
+  const glow = loadTsx('frontend/src/features/app-frame/live-glow.ts');
+  assert.equal(band.DEMO_NOTE_ATTR, 'data-usernode-demo-note');
+  assert.deepEqual(band.REPLAY_RULES.slice(0, glow.GLOW_RULES.length), glow.GLOW_RULES, 'the glow\'s rules, kept');
+  assert.equal(band.REPLAY_RULES.at(-1), '[data-usernode-demo-note] { display: none !important; }');
+  const src = read('frontend/src/features/app-frame/live-band.tsx');
+  assert.match(src, /insertStyleRules: REPLAY_RULES,/, 'inserted into every replayed document, stored recordings too');
+  // The marker reaches the player: the server's sanitiser keeps it.
+  const kept = live.sanitizeEvents([{ type: 2, timestamp: 1, data: { initialOffset: { top: 0, left: 0 }, node: doc([
+    { type: 2, id: 40, tagName: 'p', attributes: { 'data-usernode-demo-note': '', class: 'note' }, childNodes: [{ type: 3, id: 41, textContent: 'Staging demo: sample members' }] },
+  ]) } }]);
+  assert.match(JSON.stringify(kept), /"data-usernode-demo-note":""/);
+  // The chip: the Live pill's shape, colours and type, bottom-left.
+  const chip = renderToHtml(createElement(band.SampleDataChip));
+  assert.match(chip, /^<span data-first-version-sample="" class="([^"]*)">Sample data<\/span>$/);
+  const chipClass = chip.match(/class="([^"]*)"/)[1].split(' ');
+  const pillClass = src.match(/data-first-version-pill=""\s+className="([^"]*)"/)[1].split(' ');
+  for (const cls of ['rounded-full', 'bg-black/55', 'px-2.5', 'py-1', 'text-[12px]', 'font-semibold', 'leading-4', 'text-white', 'pointer-events-none', 'absolute']) {
+    assert.ok(pillClass.includes(cls) && chipClass.includes(cls), cls);
+  }
+  assert.ok(chipClass.includes('bottom-3') && chipClass.includes('left-3'), 'the band\'s bottom-left corner');
+  assert.ok(pillClass.includes('top-3') && pillClass.includes('left-3'), 'the pill keeps the top-left');
+  // Once a frame is drawn: the first look under "Starting the app…" is a drawing.
+  assert.match(src, /\{drawn \? <SampleDataChip \/> : null\}/);
+  const starting = renderToHtml(createElement(band.default, { live: { slug: 'club-votes', userKey: '1' }, firstLook: null, name: 'Club Votes' }));
+  assert.match(starting, /data-first-version-live="starting"/);
+  assert.doesNotMatch(starting, /data-first-version-sample|Sample data/);
+  // Only on the Live band, not the real screens'.
+  assert.doesNotMatch(read('frontend/src/features/app-frame/first-version-screens.tsx'), /sampleData|data-first-version-sample|SampleDataChip/);
+  const en = JSON.parse(read('frontend/locales/en/agent.json'));
+  assert.equal(en['appFrame.live.sampleData'].text, 'Sample data');
+  assert.ok(en['appFrame.live.sampleData'].description.length > 60, 'a translator\'s description');
+});
+
 // ── What glows ───────────────────────────────────────────────────────────
 
 // Just enough of an element for the signatures: a tag, a parent, text.

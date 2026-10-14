@@ -57,8 +57,12 @@ const REQUEST_HEAL_DEBOUNCE_MS = 30_000;
 const DEFAULT_INTERVAL_MS = 60_000;
 const DEFAULT_COOLDOWN_MS = 10 * 60 * 1000;
 
-// In-memory state, all keyed by slug (one process owns all heals).
-const inFlight = new Set();          // heal currently running
+// In-memory state, all keyed by slug. The sweep runs on the leader, and a
+// person landing on a down app asks for a heal wherever the request landed
+// (a web process never leads, docs/plans/web-and-conductor.md): a heal under
+// way is held for every process to see (services/processes.js 'app_heal').
+const processes = require('./processes');
+const inFlight = processes.heldSet('app_heal'); // heal currently running
 const healAttempts = new Map();      // slug -> ts of last heal attempt (cooldown)
 const restartingStreak = new Map();  // slug -> consecutive 'restarting' sightings
 const requestDebounce = new Map();   // slug -> ts of last requestHeal
@@ -315,7 +319,7 @@ async function checkAndHealOne(config, pool, app, { probeRunning = false, backgr
   if (appTeardown.isTearingDown(app.slug)) return { status: 'deleting', slug: app.slug };
   const runtimeRef = applicationRuntime.productionRef(config, app);
   config = { ...config, appRuntime: runtimeRef.runtimeKind };
-  if (inFlight.has(app.slug)) return { status: 'in_flight', slug: app.slug };
+  if (inFlight.has(app.slug) || processes.heldElsewhere('app_heal', app.slug)) return { status: 'in_flight', slug: app.slug };
 
   // A deploy of this app in this process, or one app delivery runs
   // anywhere (the row's deploy_state).

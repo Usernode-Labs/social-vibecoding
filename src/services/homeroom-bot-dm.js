@@ -1968,7 +1968,10 @@ async function closePlanCards(pool, runIds, { stopped = false, ws = null, bot = 
  * card then reads "Building it", with its answers, everywhere. Resolves { ok: true,
  * choice, label } or { ok: false, status, error }.
  */
-async function decidePlanTap(pool, { user, action, choice, answers = [], deps = {} }) {
+// Newcomer run seven (14 Oct 2026): `planShown` false when it was decided
+// without the card's Build it (buildFromAnswers): the plan's bullets were
+// never put to its maker, so goAhead writes them as the plan's own lines.
+async function decidePlanTap(pool, { user, action, choice, answers = [], deps = {}, planShown = true }) {
   if (choice !== 'build') return { ok: false, status: 400, error: 'choice must be build' };
   const { rows: [card] } = await pool.query(
     'SELECT run_id, conversation_id FROM homeroom_bot_dm_messages WHERE message_id = $1 AND user_id = $2 AND kind = $3',
@@ -1983,6 +1986,7 @@ async function decidePlanTap(pool, { user, action, choice, answers = [], deps = 
   if (!claimed.length) return { ok: false, status: 409, error: 'already_decided' };
   const went = await (deps.botSvc || settingsModule()).goAhead(pool, {
     runId: Number(card.run_id), answers: Array.isArray(answers) ? answers.slice(0, 2) : [],
+    ...(planShown === false ? { planShown: false } : {}),
   });
   if (!went.ok) {
     await pool.query('UPDATE homeroom_bot_dm_actions SET status = \'failed\', error = $2 WHERE id = $1', [action.id, 'plan_gone']);
@@ -2024,6 +2028,12 @@ async function decidePlanTap(pool, { user, action, choice, answers = [], deps = 
  * the card says it is being built, with the answers it went with), else
  * straight on (goAhead: a card that could not be sent). Resolves what
  * decidePlanTap or goAhead did, or null when nothing waits.
+ *
+ * Newcomer run seven (14 Oct 2026, Club Votes): either way its maker was
+ * not shown the plan's bullets (the made screen shows its questions alone,
+ * and a plan decided before it was sent goes ahead the moment it is), so
+ * they go ahead with `planShown: false` (goAhead): the bullets are the
+ * plan's own lines, and only the answers are theirs.
  */
 async function buildFromAnswers(pool, { appId, issueNumber, runId = null, userId, answers = [], deps = {} }) {
   const { rows: [run] } = await pool.query(
@@ -2043,8 +2053,8 @@ async function buildFromAnswers(pool, { appId, issueNumber, runId = null, userId
     [run.id, PLAN_KIND, userId],
   );
   const picks = Array.isArray(answers) ? answers.slice(0, 2).map((a) => (typeof a === 'string' ? a : null)) : [];
-  if (action) return decidePlanTap(pool, { user: { id: userId }, action, choice: 'build', answers: picks, deps });
-  const went = await (deps.botSvc || settingsModule()).goAhead(pool, { runId: Number(run.id), answers: picks });
+  if (action) return decidePlanTap(pool, { user: { id: userId }, action, choice: 'build', answers: picks, deps, planShown: false });
+  const went = await (deps.botSvc || settingsModule()).goAhead(pool, { runId: Number(run.id), answers: picks, planShown: false });
   if (went.ok) {
     await require('./first-version-plan').noteDecided(pool, {
       appId: went.appId, issueNumber: went.issueNumber, answers: went.chosen.map((c) => c.answer),

@@ -153,7 +153,7 @@
   },
   "buildLine.tile.planning": {
     "text": "Planning",
-    "description": "Very short status under a new project's name on its Home screen icon while its first version is being made: the assistant called Homeroom bot is writing the plan for it. Must fit one short line under a small app icon, so keep it to one or two short words."
+    "description": "Very short status under a new project's name on its Home screen icon while its first version is being made: the assistant called Homeroom bot is planning it, writing its plan or working out its details before it builds it. Must fit one short line under a small app icon, so keep it to one or two short words."
   },
   "buildLine.tile.plan": {
     "text": "Plan ready",
@@ -187,14 +187,6 @@
     "text": "Starting",
     "description": "Very short status under a new project's name on its Home screen icon: Homeroom bot is starting to build its first version. A verb in progress. Must fit one short line under a small app icon."
   },
-  "buildLine.tile.phase.drawing": {
-    "text": "Drawing",
-    "description": "Very short status under a new project's name on its Home screen icon: Homeroom bot is drawing pictures of the app's main screens, before it builds it. A verb in progress. Must fit one short line under a small app icon."
-  },
-  "buildLine.tile.phase.writing": {
-    "text": "Writing plan",
-    "description": "Very short status under a new project's name on its Home screen icon: Homeroom bot is writing the detailed plan its build follows, after it drew the screens. Must fit one short line under a small app icon."
-  },
   "buildLine.tile.phase.checking": {
     "text": "Checking",
     "description": "Very short status under a new project's name on its Home screen icon: its first version is built and its screens are being looked at and fixed. A verb in progress. Must fit one short line under a small app icon."
@@ -211,13 +203,9 @@
     "text": "Starting the build",
     "description": "One-line status under a new project's card, on its hub and in the app's own tab while its first version is made: its plan is decided and the assistant called Homeroom bot is starting to build it, before it draws any screens."
   },
-  "buildLine.phase.drawing": {
-    "text": "Drawing the screens",
-    "description": "One-line status under a new project's card while its first version is made: the assistant called Homeroom bot is drawing pictures of the app's main screens, before it builds it. \"Drawing\" is a verb in progress."
-  },
-  "buildLine.phase.writing": {
-    "text": "Writing the plan",
-    "description": "One-line status under a new project's card while its first version is made: the assistant called Homeroom bot is writing the detailed plan the build follows, after it drew the screens."
+  "buildLine.phase.details": {
+    "text": "Working out the details",
+    "description": "One-line status under a new project's card, on its hub and in the app's own tab while its first version is made: the plan and a first picture of the app are done, and the assistant called Homeroom bot is now deciding the finer points of how the app will work, before it builds it. \"Working out\" is a verb in progress: figuring out, not exercising."
   },
   "buildLine.phase.built": {
     "text": "Built. Checking the screens…",

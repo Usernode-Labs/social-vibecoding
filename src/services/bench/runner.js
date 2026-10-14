@@ -65,8 +65,10 @@ const sharedPlans = require('./shared-plans');
 
 const BENCH_USERNAME = 'homeroom_bench';
 // The bench user's own weekly allowance: a backstop behind every run's cap
-// (an admin can change it on the user in Admin > Limits).
-const DEFAULT_BENCH_WEEKLY_CENTS = 10000;
+// (an admin can change it on the user in Admin > Limits). Its included
+// OpenRouter key carries the same weekly limit. $500: $100 ran out partway
+// through a run (14 Oct 2026); src/db/schema.sql raised the existing account.
+const DEFAULT_BENCH_WEEKLY_CENTS = 50000;
 const RAW_OUTPUT_CHARS = 20000;
 const DIFF_CHARS = 60000;
 const TELEMETRY = 'homeroom_bench';

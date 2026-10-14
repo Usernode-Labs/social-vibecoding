@@ -179,7 +179,7 @@ export function FirstVersionCard({ slug, data, emoji = null, onSeePlan }: {
   const line: BuildLineState = held ? 'working' : firstVersionLine(fv);
   const action = held ? null : asked;
   // Run five: the stage by its own name while it is built, as the App tab
-  // and the Home tile name it ("Starting the build", "Drawing the screens").
+  // and the Home tile name it ("Starting the build", "Working out the details").
   // Run six: the time left, as the App tab says it, when there is an estimate.
   const left = countsDown(line) ? leftNote(estimateOf(fv.estimate), now) : null;
   const named = phaseLine(line, fv.phase, now, null, left);

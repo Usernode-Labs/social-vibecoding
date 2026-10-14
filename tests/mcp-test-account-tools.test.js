@@ -222,14 +222,20 @@ function reportBody(attack) {
     generatedAt: '2026-10-13T10:00:00.000Z',
     app: { id: 41, slug: 'plant-pal-1', name: attack, status: 'running', createdAt: '2026-10-13T09:00:00.000Z', createdBy: { id: 7, username: 'tester_7' } },
     firstVersion: { status: 'filed', planSecs: 6.2, earlyPlanStatus: 'ready', earlyPlanError: attack, error: null, answers: [attack, null] },
-    runs: [{ id: 5, verdict: 'ready', costUsd: 1.25, error: attack, buildError: null, review: { state: 'done', stopDetail: attack, costUsd: 0.4, resumes: 0 } }],
+    runs: [{
+      id: 5, verdict: 'ready', costUsd: 1.25, error: attack, buildError: null, review: { state: 'done', stopDetail: attack, costUsd: 0.4, resumes: 0 },
+      reviewFinalLook: { round: 2, fixed: ['empty-list'], open: [], verdict: 'ship', costUsd: 0.2, ms: 30000, at: null, error: attack },
+    }],
     reviewRounds: [{
       runId: 5, round: 1, verdict: 'fix', reviewerMs: 42000, reviewerError: null,
       fix: { ok: false, commits: 0, costUsd: 0.1, ms: 1000, error: attack, stopped: false },
       issueCount: 1, issues: [{ id: 'empty-list', severity: 'major', screen: 'Home', problem: attack }],
     }],
     sessions: [{ id: 9, status: 'promoted', branchName: 'bot/issue-1' }],
-    turns: [{ id: 't1', sessionId: 9, component: 'homeroom_bot_build', secs: 812.5, outputTokens: 9000 }],
+    turns: [{
+      id: 't1', sessionId: 9, component: 'homeroom_bot_build', secs: 812.5, outputTokens: 9000,
+      routedProvider: 'Sail Research', routedProviders: ['Fireworks', 'Sail Research'], shortlistFallbacks: 1,
+    }],
     turnMetrics: [{ turnId: 't1', sessionId: 9, component: 'homeroom_bot_build', count: 1, metrics: { tool_calls: 31 } }],
     invocations: [{ component: 'first_version_plan', durationMs: 5100 }],
     screens: [{ runId: 5, kind: 'first_look', position: 0, bytes: 51200 }],
@@ -257,6 +263,7 @@ test('get_run_report asks the route for the slug, and what people and models wro
   const wrapped = [
     r.app.name, r.firstVersion.earlyPlanError, r.firstVersion.answers[0], r.runs[0].error, r.runs[0].review.stopDetail,
     r.reviewRounds[0].fix.error, r.reviewRounds[0].issues[0].problem, r.reviewRounds[0].issues[0].screen, r.incidents[0].why,
+    r.runs[0].reviewFinalLook.error,
   ];
   for (const text of wrapped) {
     assert.match(text, /^<untrusted-content>[\s\S]*<\/untrusted-content>$/);
@@ -267,6 +274,11 @@ test('get_run_report asks the route for the slug, and what people and models wro
   assert.equal(r.runs[0].costUsd, 1.25);
   assert.equal(r.reviewRounds[0].issues[0].severity, 'major');
   assert.equal(r.turns[0].secs, 812.5);
+  // Run seven: a turn's hosts and its shortlist fallbacks, and a run's last look.
+  assert.deepEqual(r.turns[0].routedProviders, ['Fireworks', 'Sail Research']);
+  assert.equal(r.turns[0].shortlistFallbacks, 1);
+  assert.deepEqual(r.runs[0].reviewFinalLook.fixed, ['empty-list']);
+  assert.equal(r.runs[0].reviewFinalLook.verdict, 'ship');
   assert.deepEqual(r.turnMetrics[0].metrics, { tool_calls: 31 });
   assert.equal(r.screens[0].bytes, 51200);
   assert.equal(r.incidents[0].kind, 'build_interrupted');

@@ -110,13 +110,18 @@ test('#1771: becomeLeader is still where the fleet duties live', () => {
   const body = src.slice(src.indexOf('async function becomeLeader()'), src.indexOf('async function start()'));
   assert.ok(body.length > 1000, 'becomeLeader must still exist');
   for (const starter of [
-    'startIdleEvictionSweeper', 'startConversationAttachmentSweeper',
+    'startConversationAttachmentSweeper',
     'startSessionAutoPauseSweeper', 'startStalePrSweeper', 'startWorkshopThemeSweeper',
     'startLocalAgentLeaseSweeper', 'startGovernanceApplyTicker', 'startEligibleMergeSweeper',
     'startTitleHealSweeper',
   ]) {
     assert.ok(body.includes(`${starter}(`), `${starter} is started under the leader gate`);
   }
+  // What each process sweeps of its own (the idle eviction of its warm
+  // workers) runs whether or not it leads, and still never on a preview.
+  assert.match(src, /if \(runsClusterMaintenance\(\)\) startProcessDuties\(\);/);
+  const duties = src.slice(src.indexOf('function startProcessDuties()'), src.indexOf('async function becomeLeader()'));
+  assert.ok(duties.includes('startIdleEvictionSweeper('), 'the idle eviction is a process duty');
 });
 
 // ─── a preview's pool ceiling ───────────────────────────────────────

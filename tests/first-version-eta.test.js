@@ -221,19 +221,35 @@ test('the screen counts down in whole minutes, never "0", and says plainly when 
   assert.deepEqual(m.estimateOf({ ...e, samples: 9, sameConfig: true, remainingMs: 1 }), e, 'cleaned to what the screen reads');
   assert.equal(m.leftNote(e, now), 'about 15 min left');
   assert.equal(m.leftNote(e, now, { step: true }), 'about 12 min left');
-  assert.equal(m.stepLeftNote(e, 'build', now), 'about 12 min left');
-  assert.equal(m.stepLeftNote(e, 'check', now), null, 'only under the step it is for');
+  // Run seven: the step under way says no time of its own while it is
+  // within its usual time (the line says the one time on the screen).
+  assert.equal(m.stepOverrunNote(e, 'build', now), null);
+  assert.equal(m.stepOverrunNote(e, 'build', now + 12 * MIN + 10000), 'taking a little longer than usual');
+  assert.equal(m.stepOverrunNote(e, 'check', now + 13 * MIN), null, 'only under the step it is for');
+  assert.equal(m.stepOverrunNote(null, 'build', now + 13 * MIN), null);
+  assert.equal('stepLeftNote' in m, false, 'no step counts down beside the line');
   // Counting down.
   assert.equal(m.leftNote(e, now + 5 * MIN), 'about 10 min left');
   assert.equal(m.leftNote(e, now + 11 * MIN + 50000, { step: true }), 'about 1 min left', 'the last minute is not "0"');
   assert.equal(m.minutesLeft(now + 20000, now), 1);
   assert.equal(m.minutesLeft(now + 14.4 * MIN, now), 14);
   assert.equal(m.minutesLeft(now + 14.6 * MIN, now), 15);
-  // Past the step's own estimate: never frozen at 0 or below it.
+  // Past the step's own estimate: never frozen at 0 or below it. The step
+  // says it is taking longer; the line (run seven) goes on counting the
+  // later steps' usual time, as if the step under way ended now: 3 minutes.
   for (const later of [now + 12 * MIN + 10000, now + 13 * MIN, now + 60 * MIN]) {
-    assert.equal(m.leftNote(e, later), 'taking a little longer than usual');
+    assert.equal(m.leftNote(e, later), 'about 3 min left');
+    assert.equal(m.liveAt(e, later), later + 3 * MIN);
     assert.equal(m.leftNote(e, later, { step: true }), 'taking a little longer than usual');
   }
+  assert.equal(m.liveAt(e, now), Date.parse(e.etaAt), 'within the step: the estimate\'s own');
+  // No later step left to count (under a minute): only then the line says it.
+  const last = { step: 'live', stepEtaAt: new Date(now + 2 * MIN).toISOString(), etaAt: new Date(now + 2 * MIN + 50000).toISOString() };
+  assert.equal(m.leftNote(last, now), 'about 3 min left');
+  assert.equal(m.leftNote(last, now + 2 * MIN), 'taking a little longer than usual');
+  assert.equal(m.liveAt(last, now + 2 * MIN), null);
+  const oneMore = { ...last, etaAt: new Date(now + 3 * MIN).toISOString() };
+  assert.equal(m.leftNote(oneMore, now + 40 * MIN), 'about 1 min left', 'a later step of a minute is still counted');
   // No estimate: nothing about time left.
   assert.equal(m.leftNote(null, now), null);
   for (const bad of [null, 'soon', {}, { ...e, step: 'nap' }, { ...e, etaAt: 'later' }, { ...e, etaAt: new Date(now).toISOString() }]) {
@@ -249,7 +265,7 @@ test('the screen counts down in whole minutes, never "0", and says plainly when 
   assert.equal(m.plainLineNote('Adding the tier rows', 'usually 10 to 25 min', null), 'Adding the tier rows');
 });
 
-test('the line says the time left in place of the time so far, and the step under way says its own', () => {
+test('the line says the time left in place of the time so far, and the step under way says no time beside it', () => {
   const { phaseLine } = loadTsx('frontend/src/features/first-session/build-line.tsx');
   const now = Date.parse(at(10));
   assert.deepEqual(phaseLine('building', { key: 'building', since: at(3) }, now, null, 'about 15 min left'), { words: 'Building it', note: 'about 15 min left' });
@@ -258,10 +274,17 @@ test('the line says the time left in place of the time so far, and the step unde
   assert.deepEqual(phaseLine('building', { key: 'building', since: at(3) }, now), { words: 'Building it', note: '7 min so far' }, 'no estimate: as before');
   const { stepNote } = loadTsx('frontend/src/features/app-frame/first-version-steps.tsx');
   const e = { step: 'check', stepEtaAt: new Date(now + 12 * MIN + 10000).toISOString(), etaAt: new Date(now + 15 * MIN + 10000).toISOString() };
-  assert.equal(stepNote({ key: 'check', state: 'now', since: at(5) }, now, { phase: { key: 'checking', round: 1, rounds: 2 }, estimate: e }), 'Round 1 of 2 · about 12 min left');
-  assert.equal(stepNote({ key: 'check', state: 'now', since: at(5) }, now, { estimate: e }), 'about 12 min left');
+  // Run seven (ONE TIME PER SCREEN): with an estimate the line says the
+  // time to live, and the step under way its words only.
+  assert.equal(stepNote({ key: 'check', state: 'now', since: at(5) }, now, { phase: { key: 'checking', round: 1, rounds: 2 }, estimate: e }), 'Round 1 of 2');
+  assert.equal(stepNote({ key: 'check', state: 'now', since: at(5) }, now, { estimate: e }), null);
+  // Past its usual end, it says so.
+  const over = now + 13 * MIN;
+  assert.equal(stepNote({ key: 'check', state: 'now', since: at(5) }, over, { phase: { key: 'checking', round: 1, rounds: 2 }, estimate: e }), 'Round 1 of 2 · taking a little longer than usual');
+  assert.equal(stepNote({ key: 'check', state: 'now', since: at(5) }, over, { estimate: e }), 'taking a little longer than usual');
   assert.equal(stepNote({ key: 'check', state: 'now', since: at(5) }, now, { phase: { key: 'checking', round: 1, rounds: 2 } }), 'Round 1 of 2 · 5 min so far', 'no estimate: as before');
-  assert.equal(stepNote({ key: 'build', state: 'now', since: at(5) }, now, { estimate: e }), '5 min so far', 'an estimate for another step is not this one\'s');
+  assert.equal(stepNote({ key: 'build', state: 'now', since: at(5) }, over, { estimate: e }), null, 'an estimate for another step is not this one\'s, and the line has the time');
+  assert.equal(stepNote({ key: 'build', state: 'now', since: at(5) }, now, { phase: { key: 'writing' }, estimate: { ...e, step: 'build' } }), 'Working out the details');
   assert.equal(stepNote({ key: 'test', state: 'next' }, now, { estimate: e }), null);
   assert.equal(stepNote({ key: 'screens', state: 'done', minutes: 2 }, now, { estimate: e }), '2 min');
 });
@@ -317,7 +340,7 @@ function building(fv = {}, app = {}) {
   };
 }
 
-test('on the App tab: "Building it · about 15 min left", and the step under way says its own time left', () => {
+test('on the App tab: "Building it · about 15 min left", and the step under way says no second time', () => {
   const { AppView } = makeAppView();
   const now = Date.now();
   const since = new Date(now - 3 * MIN).toISOString();
@@ -327,13 +350,15 @@ test('on the App tab: "Building it · about 15 min left", and the step under way
   assert.deepEqual(view.estimate, estimate);
   const out = html(view);
   assert.match(out, /data-build-line="building"[^>]*>.*<span class="truncate">Building it · about 15 min left<\/span>/);
-  assert.match(out, /data-step="build" data-step-state="now"[\s\S]*?>Building<[\s\S]*?>about 12 min left</);
-  assert.doesNotMatch(out, /so far/);
+  // Run seven: one time on the screen, the line's.
+  assert.match(out, /data-step="build" data-step-state="now"[\s\S]*?>Building</);
+  assert.equal((out.match(/min left/g) || []).length, 1, 'the line\'s only');
+  assert.doesNotMatch(out, /so far|about 12 min left/);
   // Testing too, with no stage named on the line.
   const tested = { phase: { key: 'testing', since }, steps: stepsAt('test', since), estimate: { ...estimate, step: 'test' } };
   const testing = html(JSON.parse(JSON.stringify(AppView._appStatusView(building({ ...tested, line: 'testing', step: 5 })))));
   assert.match(testing, /<span class="truncate">Testing it · about 15 min left<\/span>/);
-  assert.match(testing, /data-step="test" data-step-state="now"[\s\S]*?>about 12 min left</);
+  assert.equal((testing.match(/min left/g) || []).length, 1, 'the line\'s only');
   // A member's "usually 10 to 25 min" gives way to it.
   const member = { mine: false, conversationId: null, member: true, creator: 'ada', phase: null, steps: null, estimate };
   assert.match(html(JSON.parse(JSON.stringify(AppView._appStatusView(building(member))))), /<span class="truncate">Building it · about 15 min left<\/span>/);
@@ -346,9 +371,18 @@ test('on the App tab: past its estimate it says so; without one it says the time
   const late = { step: 'build', stepEtaAt: new Date(now - MIN).toISOString(), etaAt: new Date(now + 8 * MIN).toISOString() };
   const fv = { phase: { key: 'building', since }, steps: stepsAt('build', since) };
   const over = html(JSON.parse(JSON.stringify(AppView._appStatusView(building({ ...fv, estimate: late })))));
-  assert.match(over, /<span class="truncate">Building it · taking a little longer than usual<\/span>/);
+  // Run seven: the step says it runs long; the line goes on counting the
+  // later steps' usual 9 minutes, as if the build ended now.
+  assert.match(over, /<span class="truncate">Building it · about 9 min left<\/span>/);
   assert.match(over, /data-step="build" data-step-state="now"[\s\S]*?>taking a little longer than usual</);
-  assert.doesNotMatch(over, /min left|-\d+ min|\b0 min/);
+  assert.equal((over.match(/longer than usual/g) || []).length, 1, 'the step\'s only');
+  assert.doesNotMatch(over, /-\d+ min|\b0 min/);
+  // The last step past its own: no later step to count, so the line says it too.
+  const lastLate = { step: 'test', stepEtaAt: new Date(now - MIN).toISOString(), etaAt: new Date(now - MIN + 30000).toISOString() };
+  const tested = { phase: { key: 'testing', since }, steps: stepsAt('test', since), estimate: lastLate, line: 'testing', step: 5 };
+  const longer = html(JSON.parse(JSON.stringify(AppView._appStatusView(building(tested)))));
+  assert.match(longer, /<span class="truncate">Testing it · taking a little longer than usual<\/span>/);
+  assert.doesNotMatch(longer, /min left/);
   const none = html(JSON.parse(JSON.stringify(AppView._appStatusView(building(fv)))));
   assert.match(none, /<span class="truncate">Building it · 20 min so far<\/span>/);
   assert.doesNotMatch(none, /min left|longer than usual/);
@@ -418,11 +452,22 @@ test('the live picture fits the phone frame\'s width, as the real screens do: no
 
 // ── 4. The status strip ─────────────────────────────────────────────────
 
-test('on the App tab the bar is sticky at the top in an iOS browser tab, so Safari takes its colour, not the hub\'s', () => {
+test('on the App tab and the other screens the document does not scroll, the bar is sticky at the top in an iOS browser tab, so Safari takes its colour, not the hub\'s', () => {
   const css = read('public/css/app.css');
   const block = css.slice(css.indexOf('/* …AND ON THE APP TAB, WHERE THE PAGE IS NOT THE SCROLLER'));
   const rule = block.slice(block.indexOf('*/') + 2, block.indexOf('}') + 1);
-  assert.match(rule, /^\s*html\.un-ios\.web-browser-chrome:not\(\[data-community-tint\]\):not\(\[data-browser-scroller\]\) body:has\(#app-view:not\(\.hidden\)\[data-app-surface="platform"\]\) #platform-header \{\s+position: sticky;\s+top: 0;\s+\}$/);
+  const scope = 'html\\.un-ios\\.web-browser-chrome:not\\(\\[data-community-tint\\]\\):not\\(\\[data-browser-scroller\\]\\)';
+  assert.match(rule, new RegExp(`^\\s*${scope} body:has\\(:is\\(([^)]*)\\):not\\(\\.hidden\\)\\) #platform-header,\\s+${scope} body:has\\(#app-view:not\\(\\.hidden\\)\\[data-app-surface="platform"\\]\\) #platform-header \\{\\s+position: sticky;\\s+top: 0;\\s+\\}$`));
+  // Run seven (14 Oct 2026): from the hub to Messages the strip stayed teal
+  // too. Every other glass-bar route the document does not scroll gets the
+  // same sticky bar; none of them is a page scroller (browser-scroll.ts PAGES).
+  const sticky = /body:has\(:is\(([^)]*)\):not\(\.hidden\)\) #platform-header,/.exec(rule)[1].split(',').map((id) => id.trim());
+  assert.deepEqual(sticky, ['#messages-screen', '#workshop-screen', '#global-chat-screen', '#agent-session-screen', '#profile-proposals-screen']);
+  const scroll = read('frontend/src/lib/browser-scroll.ts');
+  const pages = JSON.parse(/const PAGES = (\[[^\]]*\]);/.exec(scroll)[1].replace(/'/g, '"'));
+  assert.deepEqual(pages, ['home-screen', 'browse-screen', 'leaderboard-screen', 'profile-screen', 'settings-screen']);
+  const glass = /THE STRIP OVER THE BAR FOLLOWS IT HOME[\s\S]*?body:has\(:is\(([^)]*)\):not\(\.hidden\)\) #platform-header,/.exec(css)[1].split(',').map((id) => id.trim());
+  assert.deepEqual(glass.filter((id) => !pages.includes(id.slice(1))), sticky, 'every opaque-ground route that is not a page scroller, and only those');
   // Its ground is the opaque one the strip takes (run three's rule), and the
   // hub keeps its tinted, sticky bar: the strip turns teal there again.
   assert.match(css, /html\.un-ios\.web-browser-chrome:not\(\[data-community-tint\]\) body:has\(#app-view:not\(\.hidden\)\[data-app-surface="platform"\]\) #platform-header \{\s+background-color: var\(--dc-sheet-solid\);\s+\}/);
