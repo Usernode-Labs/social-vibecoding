@@ -2298,14 +2298,28 @@ SELECT n.nspname || '.' || c.relname
   // statement send the pass to the per-table form; rows found after that
   // fail the pass, and the copy is not handed out.
   //
-  // The check reads the size of each table's file (and its inheritance
-  // children's, which TRUNCATE empties too), not its rows. A SELECT is
-  // filtered by row-level security for an administrator that does not
-  // bypass it, and would call a refilled table empty. A file size answers
-  // the same for every role: TRUNCATE leaves a zero-length file, and any row
-  // a trigger writes, visible to us or not, takes a page. A file holding
-  // only dead rows reads as not empty, which costs the per-table pass and
-  // nothing else.
+  // The check runs in two steps, so the usual case costs one query:
+  //   1. File sizes. For every private table and every inheritance child
+  //      (TRUNCATE without ONLY empties those too), a plain heap table whose
+  //      file is zero bytes long holds no row: TRUNCATE leaves a zero-length
+  //      file, and any row written afterwards takes a page. A size reads the
+  //      same for every role, so row-level security cannot hide anything
+  //      here. Every other relation is a suspect: a heap with pages, which
+  //      may hold only dead rows, and anything not a plain heap (a foreign
+  //      table, another access method, a partitioned table), whose local
+  //      file size says nothing about its rows.
+  //   2. Only when there are suspects: their rows are read, in one DO block
+  //      with row_security off for that transaction. With it off, a read
+  //      that a policy would filter raises an error instead, so a refill
+  //      hidden by row-level security fails the check rather than passing
+  //      it, and so does a suspect that cannot be read (an unreachable
+  //      foreign server, no privilege). The block raises, naming the private
+  //      tables whose suspects hold rows; it returns nothing when none do.
+  // After the single statement, anything but proof of emptiness sends the
+  // pass table by table; after that pass, it fails the pass.
+  // Names in step 2 come from the catalog: they are validated like the
+  // others, double-quoted so they are read exactly, and a name that fails
+  // validation fails the pass.
   const truncated = [];
   const perTable = async () => {
     truncated.length = 0;
@@ -2322,19 +2336,47 @@ SELECT n.nspname || '.' || c.relname
     }
   };
   // Names were validated above, so they can be spliced as text too.
-  const checkSql = 'WITH RECURSIVE targets(name, rel) AS (VALUES '
+  const sizeSql = 'WITH RECURSIVE targets(name, rel) AS (VALUES '
     + safe.map((t) => `('${t}', '${t}'::regclass)`).join(', ')
     + '), tree(name, rel) AS (SELECT name, rel FROM targets'
     + ' UNION SELECT tree.name, i.inhrelid::regclass FROM pg_inherits i JOIN tree ON i.inhparent = tree.rel)'
-    + ' SELECT DISTINCT name FROM tree WHERE pg_relation_size(rel) > 0 ORDER BY 1';
+    + " SELECT DISTINCT tree.name, n.nspname || '.' || c.relname FROM tree"
+    + ' JOIN pg_class c ON c.oid = tree.rel JOIN pg_namespace n ON n.oid = c.relnamespace'
+    + ' LEFT JOIN pg_am am ON am.oid = c.relam'
+    + " WHERE c.relkind <> 'r' OR am.amname IS DISTINCT FROM 'heap'"
+    + ' OR pg_relation_size(tree.rel) IS DISTINCT FROM 0 ORDER BY 1, 2';
+  const quoted = (qualified) => qualified.split('.').map((part) => `"${part}"`).join('.');
   const stillHoldingRows = async () => {
+    const unconfirmed = (err) => new Error(
+      `Could not confirm the staging:private tables in ${targetDb} are empty: ${err.message}`);
     let out;
     try {
-      out = await execute(targetDb, checkSql, { tuplesOnly: true });
-    } catch (err) {
-      throw new Error(`Could not confirm the staging:private tables in ${targetDb} are empty: ${err.message}`);
+      out = await execute(targetDb, sizeSql, { tuplesOnly: true });
+    } catch (err) { throw unconfirmed(err); }
+    const suspects = [];
+    for (const line of String(out || '').split('\n').map((l) => l.trim()).filter(Boolean)) {
+      const [name, ...rest] = line.split('|');
+      const rel = rest.join('|');
+      if (!safe.includes(name) || !SAFE_QUALIFIED_IDENT.test(rel)) {
+        throw unconfirmed(new Error(`a relation under a staging:private table cannot be checked: ${JSON.stringify(line)}`));
+      }
+      suspects.push({ name, rel });
     }
-    return String(out || '').split('\n').map((s) => s.trim()).filter(Boolean);
+    if (suspects.length === 0) return [];
+    // The marker is assembled by format(), so the statement's own text, which
+    // a psql failure echoes, never contains it.
+    const readSql = 'DO $staging_check$ DECLARE found text[] := \'{}\'; BEGIN SET LOCAL row_security = off; '
+      + suspects.map(({ name, rel }) => `IF EXISTS (SELECT 1 FROM ONLY ${quoted(rel)}) AND NOT '${name}' = ANY (found) THEN found := found || '${name}'::text; END IF; `).join('')
+      + "IF cardinality(found) > 0 THEN RAISE EXCEPTION '%', format('staging:private %s: %s;', 'rows remain in', array_to_string(found, ', ')); END IF; END $staging_check$";
+    try {
+      await execute(targetDb, readSql);
+      return [];
+    } catch (err) {
+      const m = /staging:private rows remain in: ([a-z0-9_., ]+);/i.exec(String(err.message || ''));
+      const names = m ? m[1].split(', ').filter((n) => safe.includes(n)) : [];
+      if (names.length === 0) throw unconfirmed(err);
+      return names;
+    }
   };
   if (safe.length > 0) {
     let batched = false;
@@ -2348,10 +2390,17 @@ SELECT n.nspname || '.' || c.relname
     }
     let refilled = [];
     if (batched) {
-      refilled = await stillHoldingRows();
+      // Anything short of proof that every table is empty, an unreadable
+      // suspect included, sends the pass table by table, as before this
+      // check existed; after that pass the check has the last word.
+      try {
+        refilled = await stillHoldingRows();
+      } catch (err) {
+        refilled = [`(${err.message})`];
+      }
       if (refilled.length === 0) truncated.push(...safe);
       else {
-        log.warn('db-manager', 'Rows came back after the one-statement TRUNCATE; truncating table by table', {
+        log.warn('db-manager', 'Rows came back after the one-statement TRUNCATE, or could not be ruled out; truncating table by table', {
           targetDb, tables: refilled,
         });
       }
