@@ -15,6 +15,10 @@
 //   questions  the project, then the questions and Submit;
 //   invite     the project, then one card with the first look and how far it
 //              has got (the setup, then the stage), then the invite ask.
+//
+// Run seven (14 Oct 2026): while it checks or asks the project stands at
+// the top, so the spinner sits just under it and the questions come in the
+// same place without the card moving.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -86,6 +90,34 @@ test('checking: the project, then one spinner over the checking line, and nothin
   assert.match(line, /<p>Checking whether Homeroom bot needs to ask you anything first\.<\/p><\/div>$/);
   // Setup goes on underneath: read as before, its card simply not drawn.
   assert.match(CODE, /const settingUp = holdsContinue\(waits, appStatus, false\);/);
+});
+
+test('run seven: while it checks or asks, the project stands at the top, the spinner and then the questions just under it', () => {
+  // Newcomer run seven (14 Oct 2026, iPhone Safari, Club Votes): the body
+  // grew and centred the card, so the spinner sat about 150px under it, by
+  // the toolbar, and the card jumped when the questions came. Now the body
+  // takes its own height at the top while it checks or asks; the invite ask
+  // and a stopped setup are centred as before.
+  const { madeBodyClass, MADE_BODY, MADE_BODY_TOP } = made;
+  assert.equal(MADE_BODY, 'flex grow flex-col justify-center gap-4 py-4');
+  assert.equal(MADE_BODY_TOP, 'flex flex-col gap-4 py-4');
+  assert.equal(madeBodyClass('checking'), MADE_BODY_TOP);
+  assert.equal(madeBodyClass('questions'), MADE_BODY_TOP, 'the same place, so the card does not move');
+  assert.equal(madeBodyClass('invite'), MADE_BODY);
+  assert.equal(madeBodyClass('stalled'), MADE_BODY);
+  for (const cls of MADE_BODY_TOP.split(' ')) assert.ok(!['grow', 'justify-center', 'mt-auto'].includes(cls), cls);
+  // Wired from the state, with its data attribute kept.
+  assert.match(CODE, /<div data-first-session-made-body="" className=\{madeBodyClass\(screen\)\}>/);
+  // Checking, drawn: the body at the top, then the checking line straight
+  // after it (16px, the body's own bottom padding), nothing between.
+  const html = draw();
+  const body = html.indexOf('<div data-first-session-made-body="" class="flex flex-col gap-4 py-4">');
+  assert.ok(body >= 0, 'at the top while it checks');
+  assert.ok(body < html.indexOf('data-featured-card='));
+  assert.ok(html.indexOf('data-featured-card=') < html.indexOf('data-first-session-checking=""'));
+  // The questions take the checking line's place, after the same body.
+  const footer = CODE.slice(CODE.indexOf('data-first-session-made-body'));
+  assert.ok(footer.indexOf('<QuickQuestions ') < footer.indexOf('<CheckingLine />'), 'one slot, the questions or the line');
 });
 
 test('questions: the project, then the questions and Submit, with no planning line and no setup card', () => {

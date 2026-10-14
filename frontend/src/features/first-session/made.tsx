@@ -1046,8 +1046,9 @@ export function SetupProgress({ step, slow, waitedOut, done = null }: {
  * description, on the first session (`firstLookHere`), says one thing at a
  * time (screenOf):
  *
- *   checking   the project, then one spinner over the checking line;
- *   questions  the project, then the questions and Submit;
+ *   checking   the project, then one spinner over the checking line, just
+ *              under it (IN ONE PLACE, run seven);
+ *   questions  the project, then the questions and Submit, in that place;
  *   invite     the project, then one card that carries both the first look
  *              and how far it has got (FirstLookCard), then the invite line
  *              and its buttons.
@@ -1082,6 +1083,25 @@ export function madeParts(screen: MadeScreenState, firstLookHere: boolean): { ow
   const quiet = screen === 'checking' || screen === 'questions';
   const firstLook = firstLookHere && screen === 'invite';
   return { ownLine: !quiet && !firstLook, setupCard: !quiet && !firstLookHere, firstLook };
+}
+
+/*
+ * IN ONE PLACE (newcomer run seven, 14 Oct 2026, iPhone Safari, Club Votes):
+ * the body grew and centred the project in the room above the footer, so
+ * while it checked the spinner sat about 150px under the card, by the
+ * toolbar, and when the questions came about 3 seconds later the card
+ * jumped up to make room for them. While it checks or asks, the body now
+ * stands at the top and takes only its own height (MADE_BODY_TOP), so the
+ * spinner line is 16px under the card and the questions come in its place,
+ * with the card where it was. The invite ask (and a stopped setup) is
+ * centred as before (MADE_BODY).
+ */
+export const MADE_BODY = 'flex grow flex-col justify-center gap-4 py-4';
+export const MADE_BODY_TOP = 'flex flex-col gap-4 py-4';
+
+/** The made screen's body for a state: at the top while it checks or asks, else centred. Pure. */
+export function madeBodyClass(screen: MadeScreenState): string {
+  return screen === 'checking' || screen === 'questions' ? MADE_BODY_TOP : MADE_BODY;
 }
 
 /**
@@ -1591,8 +1611,9 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
       )}
       <div className="mx-auto flex w-full max-w-sm grow flex-col px-6 pb-[max(36px,env(safe-area-inset-bottom))]">
         {/* The community and its app, one block, centred between the logo bar
-            and the line over the buttons (canvas C3-started, C5-shared). */}
-        <div data-first-session-made-body="" className="flex grow flex-col justify-center gap-4 py-4">
+            and the line over the buttons (canvas C3-started, C5-shared);
+            at the top while it checks or asks (IN ONE PLACE). */}
+        <div data-first-session-made-body="" className={madeBodyClass(screen)}>
           <div className="flex flex-col items-center gap-2.5 text-center">
             <PeopleRow people={peopleOf(community, me)} />
             <h1 id="first-session-made-title" className="text-[15px] font-normal leading-5 text-zinc-600 dark:text-zinc-400">{t(COMMUNITY_LABEL)}</h1>
@@ -1628,7 +1649,8 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
           {plan && !stalled && fromCreate && !asked ? <PlanWaitsCard name={made.name} onOpenChat={() => onOpenChat(plan.conversationId ?? made.conversationId)} /> : null}
         </div>
         {/* QUICK QUESTIONS: in place of the invite line and its buttons
-            until they are answered. */}
+            until they are answered, right under the project while the body
+            stands at the top (madeBodyClass), where the checking line was. */}
         {asked && !stalled ? (
           <QuickQuestions key={asked.map((q) => q.question).join('|')} name={made.name} questions={asked} busy={answering} error={answerError} onSubmit={(answers) => { void submitAnswers(answers); }} />
         ) : checking ? (

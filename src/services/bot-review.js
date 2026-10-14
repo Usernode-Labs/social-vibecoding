@@ -45,7 +45,9 @@
 // What is recorded (the `review` state, on the live run or on a side
 // trial): the round-0 snapshot, and per round its commit, its capture's
 // artifact ids, the verdict, issues and previousFixed, and what the reviewer
-// call and the fix turn cost and took; then why it stopped.
+// call and the fix turn cost and took; then why it stopped; and on a live
+// run stopped by its round limit, what one last look at the final fix found
+// (`finalLook`, recorded only: see "A last look after the final fix").
 //
 // A REVIEW SURVIVES A RESTART (R5). Releases restart the platform many times
 // a day, and a review takes up to its budget. Each step saves the state
@@ -1048,6 +1050,149 @@ async function runReviewLoop({
   return state;
 }
 
+// ── A last look after the final fix ─────────────────────────────────────
+//
+// Run seven (14 Oct 2026): a review that stops on its round limit ends on a
+// fix nobody looks at. Round 2 found one major issue left, its fix ran (81 s,
+// 4 commits) and went out unseen; it had in fact worked, but nothing said
+// so. So when the loop stopped there, its final capture booted, and the last
+// round's fix landed on a list of issues, the reviewer looks once more at
+// that final capture with those issues as its PREVIOUS ISSUES, and the run
+// records which it saw fixed and which it saw open (`finalLook`).
+//
+// It is a record and nothing else. No round is added and nothing is stopped,
+// fixed or rolled back for it, so summaryOf, review_rounds and review_stop
+// are what they were; no timeline stage or progress line says it ran (the
+// App tab would read "round 3 of 2"). It never holds the build up: a live run
+// takes it in the background once the loop is over and the build has gone on
+// to its proposal (homeroom-bot-live.js reviewLanded, startFinalLook), and
+// writes it into the run's stored review on its own (recordFinalLook). Its
+// cost stays on it (finalLook.costUsd), out of the review's costUsd and
+// reviewerCost: the build has counted and debited those by the time the look
+// ends, and the side builds it is compared with take no last look.
+
+// The reviewer call's own limit: in the background it can take what a
+// round's call may.
+const FINAL_LOOK_TIMEOUT_MS = REVIEW_TIMEOUT_MS;
+
+/**
+ * What a finished review's last look would look at: { round (the round whose
+ * fix it checks), capture (the final capture), issues (that round's) }, or
+ * null when it earns none: not stopped on its round limit, a final capture
+ * that did not boot or is not of that fix's commit, a fix that did not land,
+ * no issues, or a look already taken. Pure.
+ */
+function finalLookDue(state) {
+  if (!state || typeof state !== 'object' || state.state !== 'done' || state.stop !== STOPS.rounds) return null;
+  if (state.finalLook || state.rolledBack || !state.startedAt) return null;
+  const capture = state.finalCapture;
+  if (!capture || typeof capture !== 'object' || capture.booted !== true) return null;
+  const rounds = Array.isArray(state.rounds) ? state.rounds.filter((r) => r && typeof r === 'object') : [];
+  const last = rounds[rounds.length - 1];
+  if (!last || last.verdict !== 'fix' || !last.fix || last.fix.ok !== true) return null;
+  // The final capture shows the fix only when the fix moved the branch:
+  // one that pushed nothing leaves the capture before it as the final one.
+  if (!last.fix.sha || last.fix.sha !== state.finalSha) return null;
+  const issues = (Array.isArray(last.issues) ? last.issues : []).filter((it) => it && typeof it.id === 'string' && it.id);
+  if (!issues.length) return null;
+  return { round: Number(last.round) || rounds.length, capture, issues };
+}
+
+/**
+ * Take the last look `due` describes (finalLookDue) with `review`, called as
+ * runReviewLoop's is ({ round, capture, previousIssues, timeoutMs }), and
+ * resolve what it found: { round, fixed, open, verdict, costUsd, ms, at },
+ * `fixed` the issues it listed as fixed and did not raise again, `open` the
+ * rest, or with `error` (and nothing fixed or open) when the call failed.
+ * Never throws.
+ */
+async function takeFinalLook({ due, review, now = Date.now }) {
+  const t0 = now();
+  const asked = due.issues.map((it) => it.id);
+  const done = (fields) => ({
+    round: due.round, fixed: [], open: [], verdict: null, costUsd: null, ms: Math.max(0, now() - t0),
+    ...fields, at: new Date(now()).toISOString(),
+  });
+  try {
+    const rev = await review({
+      round: due.round + 1, capture: due.capture, previousIssues: due.issues, timeoutMs: FINAL_LOOK_TIMEOUT_MS,
+    });
+    const spent = { costUsd: num(rev?.costUsd), ...(num(rev?.ms) != null ? { ms: num(rev.ms) } : {}) };
+    if (!rev?.ok) return done({ ...spent, error: clip(rev?.error || 'the reviewer failed', 300) });
+    const said = new Set(Array.isArray(rev.previousFixed) ? rev.previousFixed : []);
+    const raised = new Set((Array.isArray(rev.issues) ? rev.issues : []).map((it) => it && it.id));
+    const fixed = asked.filter((id) => said.has(id) && !raised.has(id));
+    return done({
+      ...spent, fixed, open: asked.filter((id) => !fixed.includes(id)),
+      verdict: VERDICTS.includes(rev.verdict) ? rev.verdict : null,
+      ...(rev.retry ? { retry: clip(rev.retry, 300) } : {}),
+    });
+  } catch (err) {
+    return done({ error: clip(err?.message || String(err), 300) });
+  }
+}
+
+/**
+ * Write a last look into a live run's stored review (homeroom_bot_runs.review
+ * .finalLook), and only there: never review_rounds or review_stop. Only into
+ * the review it was taken for (its startedAt), once it is done, and only
+ * when none is recorded yet. Resolves whether it wrote. Throws on a failed
+ * write.
+ */
+async function recordFinalLook(pool, runId, startedAt, look) {
+  const { rowCount } = await pool.query(
+    `UPDATE homeroom_bot_runs SET review = jsonb_set(review, '{finalLook}', $3::jsonb)
+      WHERE id = $1 AND jsonb_typeof(review) = 'object' AND review->>'state' = 'done'
+        AND review->>'startedAt' = $2 AND review->'finalLook' IS NULL`,
+    [Number(runId), String(startedAt), JSON.stringify(look)],
+  );
+  return rowCount > 0;
+}
+
+// The last looks still running in this process: a build never waits on
+// them; finalLooksSettled is for a test, or a shutdown that wants them in.
+const pendingFinalLooks = new Set();
+
+/**
+ * Take a finished review's last look for the live run `runId` in the
+ * background, when it earns one (finalLookDue) and the run has none yet: a
+ * restart that hands the same finished review back calls the reviewer no
+ * second time. Returns the look's promise (resolving the look, or null when
+ * none was taken), or null when none is due; the caller does not wait on
+ * it. Never rejects.
+ */
+function startFinalLook({ pool, runId, state, review, now = Date.now }) {
+  const due = runId ? finalLookDue(state) : null;
+  if (!due) return null;
+  const job = (async () => {
+    try {
+      const { rows: [row] } = await pool.query(
+        `SELECT review->'finalLook' IS NOT NULL AS taken FROM homeroom_bot_runs
+          WHERE id = $1 AND jsonb_typeof(review) = 'object' AND review->>'state' = 'done' AND review->>'startedAt' = $2`,
+        [Number(runId), String(state.startedAt)],
+      );
+      if (!row || row.taken) return null;
+      const look = await takeFinalLook({ due, review, now });
+      await recordFinalLook(pool, runId, state.startedAt, look);
+      log.info('bot-review', 'Took a last look after the final fix (recorded only)', {
+        runId: Number(runId), round: look.round, fixed: look.fixed.length, open: look.open.length, error: look.error || null,
+      });
+      return look;
+    } catch (err) {
+      log.warn('bot-review', 'Could not take or record the last look after the final fix', { runId: Number(runId), err: err.message });
+      return null;
+    }
+  })();
+  pendingFinalLooks.add(job);
+  job.finally(() => pendingFinalLooks.delete(job));
+  return job;
+}
+
+/** Resolves once every last look this process started has ended. */
+function finalLooksSettled() {
+  return Promise.allSettled([...pendingFinalLooks]);
+}
+
 /**
  * Whether restart recovery should carry a review on (runReviewLoop's
  * `resumeFrom`) rather than propose what is committed as it stands: it is
@@ -1191,6 +1336,12 @@ module.exports = {
   storeRoundShots,
   artifactIdsOf,
   runReviewLoop,
+  FINAL_LOOK_TIMEOUT_MS,
+  finalLookDue,
+  takeFinalLook,
+  recordFinalLook,
+  startFinalLook,
+  finalLooksSettled,
   canResume,
   recoveredFixOf,
   awaitsFix,

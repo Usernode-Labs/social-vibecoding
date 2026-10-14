@@ -224,8 +224,9 @@ test('the bot builds from the plan at Make it with no triage turn, and goes ahea
   assert.match(src, /if \(acted === PLAN_ACTED\.waiting \|\| acted === PLAN_ACTED\.unsent\) \{\s+const went = await goAheadIfDecided/);
   const dm = read('src/services/homeroom-bot-dm.js');
   assert.match(dm, /\.\.\.\(quiet \? \{ moment: null \} : \{\}\),/);
-  // Through its card when it has one: the same decision Build it makes.
-  assert.match(dm, /if \(action\) return decidePlanTap\(pool, \{ user: \{ id: userId \}, action, choice: 'build', answers: picks, deps \}\);/);
+  // Through its card when it has one: the same decision Build it makes,
+  // but with the plan's bullets never shown to its maker (run seven).
+  assert.match(dm, /if \(action\) return decidePlanTap\(pool, \{ user: \{ id: userId \}, action, choice: 'build', answers: picks, deps, planShown: false \}\);/);
   // And Build it in the chat notes the plan decided, for the steps.
   assert.match(dm, /await require\('\.\/first-version-plan'\)\.noteDecided\(pool, \{\s+appId: went\.appId, issueNumber: went\.issueNumber, answers: went\.chosen\.map\(\(c\) => c\.answer\),/);
 });

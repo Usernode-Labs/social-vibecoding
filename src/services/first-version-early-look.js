@@ -129,6 +129,11 @@ const LOOK_RULES = [
   '- Its content is realistic and varied: the viewer\'s own things as well as other people\'s, filling the screen. The',
   '  viewer is "You"; anybody else has a plain first name. Dates, times and numbers are plausible. No "Staging demo"',
   '  label, no placeholder text and nothing about the drawing itself: every word on it is the app\'s own.',
+  // Newcomer run seven (14 Oct 2026): Club Votes, whose description never
+  // mentioned chess, was drawn titled "Harbour Road Chess Club".
+  '- Wherever the screen names the app, its group or its place (a header, a title, the line above a title), it uses',
+  '  APP NAME exactly: never invent a name for the club, team, group, household or place. Sample people, posts and',
+  '  numbers are still made up.',
   '- Where the plan asks its creator a question, draw its suggested answer, the first: they have not answered yet.',
   '- The plan\'s build note is a first sketch: keep its screen\'s job, its primary action, its colours and its',
   '  signature element unless you can name a defect, and draw everything else as you judge best.',

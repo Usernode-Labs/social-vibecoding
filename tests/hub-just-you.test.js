@@ -78,7 +78,7 @@ test('a just-you project being built: the thumbnail and its build line, and no s
     'the made screen\'s and the App tab\'s words, with a spinner');
   assert.match(html, /animate-spin/);
   // Run five: the stage the App tab names.
-  assert.match(card(building({ phase: { key: 'drawing', since: null } })), /<span class="truncate">Drawing the screens<\/span>/);
+  assert.match(card(building({ phase: { key: 'drawing', since: null } })), /<span class="truncate">Working out the details<\/span>/);
   assert.match(card(building({ phase: { key: 'starting', since: null } })), /<span class="truncate">Starting the build<\/span>/);
   // #4053: no "Step 4 of 7" and no ring counting it: step numbers stay in
   // Homeroom bot's chat. Evan, 5 Oct 2026: no average build time either.

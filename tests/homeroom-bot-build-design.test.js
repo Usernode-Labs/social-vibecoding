@@ -143,7 +143,7 @@ test('a first version\'s spec decides its colours, signature element, layout and
   // (b) The populated demo, from the viewer's own seat.
   assert.match(brief, /what the populated demo shows, the staging preview opened with \?demo=1, which is how this first version is first seen: the viewer's own data and not only other people's/);
   // Labelled once, not on every row (every row's pill cluttered all nine test drawings).
-  assert.match(brief, /varied and realistic rows filling about a screen and a half at phone width, and every control the real populated screen has \(a view-only demo that hides actions is not a populated screen\), labelled "Staging demo" once, plainly and visibly, in a banner or a line at the top of the screen or in the name of the list or collection its rows belong to, rather than on each row, with the rows themselves still obviously made up \(no real people and no real private data\);/);
+  assert.match(brief, /varied and realistic rows filling about a screen and a half at phone width, and every control the real populated screen has \(a view-only demo that hides actions is not a populated screen\), labelled "Staging demo" once, plainly and visibly, in a banner or a line at the top of the screen or in the name of the list or collection its rows belong to, rather than on each row, with the rows themselves still obviously made up \(no real people and no real private data\), and the element that carries the label marked with the attribute `data-usernode-demo-note` \(in a list's name, a span around the label's own words\) so Homeroom can hide it where it shows the app with its sample data;/);
   assert.doesNotMatch(brief, /every demo row labelled/);
   assert.match(brief, /on staging and with \?demo=1 only, idempotent, either added to those responses or written once for the viewing account on its first \?demo=1 request \(the platform conventions' "Staging mock data"/);
   assert.match(brief, /records it in the app's CLAUDE\.md/);
@@ -184,7 +184,8 @@ test('a first version\'s spec owns its design and scope; what its creator approv
     assert.match(flat, /It is a new project's FIRST VERSION, and this is the triage's plan for it, a first sketch written before anyone looked closely: A plant log\./);
     assert.match(flat, /- Yours to design\. The plan's look, layout and scope are the triage's first sketch: keep what is good in it, replace what a careful senior product designer would do better, and say under Assumptions what you replaced and why\. What binds you is the request itself and what its creator approved, above\./);
     // ...but what its creator approved under it binds the spec.
-    assert.match(flat, /WHAT ITS CREATOR APPROVED, below, binds the spec as the request does: never contradict it\. Approved by the creator, who tapped Build it under this plan: - See each plant and when it was last watered - Get a reminder when one is due The creator chose, from the plan they were shown: - Reminders\? Phone alert/);
+    // Newcomer run seven: and where one of its lines and an answer differ, the answer wins.
+    assert.match(flat, /WHAT ITS CREATOR APPROVED, below, binds the spec as the request does: never contradict it\. Where a plan line, even an approved one, and one of the creator's answers differ, the answer wins: never add an option or a behaviour an answer ruled out\. Approved by the creator, who tapped Build it under this plan: - See each plant and when it was last watered - Get a reminder when one is due The creator chose, from the plan they were shown: - Reminders\? Phone alert/);
     // The scope: a complete first version, not "as small as the request".
     assert.match(flat, /- A complete first version of what the request asks for, done fully and well, including the small touches that make it feel finished\. Not a new feature, screen or setting the request does not imply\./);
     assert.doesNotMatch(first, /As small as the request/);
@@ -268,6 +269,8 @@ test('a first version\'s build uses the starter\'s design kit and records its lo
   assert.match(flat, /In your look-and-fix rounds, compare your screenshots with the drawn screens and fix what differs\. Where a drawing and the spec's words disagree, the words decide what the app does and the drawing decides how it looks\./);
   // The populated demo (b).
   assert.match(flat, /Build the populated demo the spec describes, the staging preview opened with `\?demo=1`: the viewer's own data as well as other people's, varied realistic rows filling about a screen and a half at phone width, every control the real screen has \(never a view-only demo\), labelled "Staging demo" once, plainly, as a banner or a line at the top of the screen or in the name of its list, not on each row, with every row still obviously made up\. On staging and with `\?demo=1` only, and idempotent/);
+  // Newcomer run seven: the label's element is marked, so Homeroom can hide it.
+  assert.match(flat, /The element that carries the "Staging demo" label gets the attribute `data-usernode-demo-note` \(the banner or the line itself; in a list's name, a `<span data-usernode-demo-note>` around the label's own words, so the name stays\), so Homeroom can hide it where it shows the app with its sample data\./);
   assert.doesNotMatch(flat, /each row labelled/);
   assert.doesNotMatch(flat, BENCH_SUBJECTS);
   // The record: the starter's "## Design" section, which a starter other

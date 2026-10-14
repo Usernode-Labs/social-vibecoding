@@ -353,25 +353,62 @@ const PROGRESS_LINE_CHARS = 160;
 // sketch, which the spec may improve on; what the creator approved is not,
 // so the spec and the build read it apart, labelled, and never clipped off
 // the end of a long note. A note approved before the bullets were written
-// down carries the choices alone.
+// down carries the choices alone. A plan gone ahead with from the made
+// screen's Submit carries its bullets as the plan's own lines and only the
+// answers as approved (run seven, below).
 const APPROVED_PLAN_HEAD = 'Approved by the creator, who tapped Build it under this plan:';
 const CREATOR_CHOICES_HEAD = 'The creator chose, from the plan they were shown:';
+// Newcomer run seven (14 Oct 2026, Club Votes): since run six the made
+// screen shows its maker the plan's questions alone, never its lines, with
+// Submit, and a plan gone ahead with from there (homeroom-bot-dm.js
+// buildFromAnswers) still wrote its lines as approved under Build it. The
+// spec, told never to contradict them, kept a line ("Vote yes, no or maybe on
+// each one") the creator's answer ("Simple yes or no, most wins") ruled out.
+// Lines nobody was shown are the plan's own, written under PLAN_LINES_HEAD
+// into the sketch part; only the answers are the creator's, and where a line
+// differs, the answer wins.
+const PLAN_LINES_HEAD = 'The plan\'s lines, not shown to its creator (a first sketch, not approved):';
+const MADE_SCREEN_CHOICES_HEAD = 'The creator chose these answers on the made screen (where a plan line differs, the answer wins):';
 // #4488: a complicated change's requester approves its plan the same way,
 // and the spec they were shown is the build's, never drawn again. The
 // choices are what they picked; where one differs from the spec's suggested
 // answer, the choice wins.
 const APPROVED_BY_REQUESTER_HEAD = 'Approved by the person who asked for it, who said Build it under this plan and its spec:';
 const REQUESTER_CHOICES_HEAD = 'The person who asked for it chose (where this differs from the spec\'s suggested answer, this wins):';
+// Run seven: what a first version's spec and build are told beside what its
+// creator approved (specPlanLines, planNoteText). Bullet 5 of run seven's
+// plan ("Close a vote once it's decided") could have clashed with its
+// second question the same way, had another answer been kept.
+const ANSWER_WINS_LINE = 'Where a plan line, even an approved one, and one of the creator\'s answers differ, the answer wins: never add an '
+  + 'option or a behaviour an answer ruled out.';
 
-/** A build note as { sketch, approved }: the triage's note, and what its creator approved ('' when nothing). Pure. */
+/**
+ * A build note as { sketch, approved }: the triage's note, and what its
+ * creator approved ('' when nothing). A plan's lines its creator was not
+ * shown (PLAN_LINES_HEAD) stay in the sketch. Pure.
+ */
 function splitApprovedPlan(buildNote) {
   const note = String(buildNote || '');
-  for (const head of [APPROVED_PLAN_HEAD, CREATOR_CHOICES_HEAD, APPROVED_BY_REQUESTER_HEAD, REQUESTER_CHOICES_HEAD]) {
+  for (const head of [APPROVED_PLAN_HEAD, CREATOR_CHOICES_HEAD, MADE_SCREEN_CHOICES_HEAD, APPROVED_BY_REQUESTER_HEAD, REQUESTER_CHOICES_HEAD]) {
     const at = note.lastIndexOf(`\n\n${head}`);
     if (at >= 0) return { sketch: note.slice(0, at).trim(), approved: note.slice(at).trim() };
     if (note.startsWith(head)) return { sketch: '', approved: note.trim() };
   }
   return { sketch: note, approved: '' };
+}
+
+/**
+ * Run seven: a first version's sketch, clipped as a note is, but for the
+ * plan's lines its creator was not shown (PLAN_LINES_HEAD), which are kept
+ * whole at its end, as approved lines are. Pure.
+ */
+function clipSketch(sketch, max = 4000) {
+  const text = String(sketch || '');
+  const at = text.lastIndexOf(`\n\n${PLAN_LINES_HEAD}`);
+  if (at < 0) return clipText(text, max);
+  const before = clipText(text.slice(0, at).trim(), max);
+  const lines = text.slice(at).trim();
+  return before ? [before, '', lines].join('\n') : lines;
 }
 
 /** The plan as a prompt shows it: clipped, but for what a creator or requester approved, kept whole. Pure. */
@@ -381,8 +418,11 @@ function planNoteText(buildNote, firstVersion = false) {
   // #4488: a later change's requester can approve its plan too; with
   // nothing they approved, a later change's note reads as it always did.
   const requesterApproved = approved.startsWith(APPROVED_BY_REQUESTER_HEAD) || approved.startsWith(REQUESTER_CHOICES_HEAD);
-  if (!approved || (!firstVersion && !requesterApproved)) return clipText(buildNote, 4000) || none;
-  return [clipText(sketch, 4000) || none, '', approved].join('\n');
+  if (!approved) return (firstVersion ? clipSketch(buildNote, 4000) : clipText(buildNote, 4000)) || none;
+  if (!firstVersion && !requesterApproved) return clipText(buildNote, 4000) || none;
+  if (requesterApproved) return [clipText(sketch, 4000) || none, '', approved].join('\n');
+  // Run seven: a first version's answers win over its plan's lines.
+  return [clipSketch(sketch, 4000) || none, '', ANSWER_WINS_LINE, '', approved].join('\n');
 }
 
 /**
@@ -545,10 +585,13 @@ function specPlanLines(buildNote, firstVersion = false) {
     'You are the Homeroom bot. Your triage of this request concluded it is ready to build. It is a new project\'s',
     'FIRST VERSION, and this is the triage\'s plan for it, a first sketch written before anyone looked closely:',
     '',
-    clipText(sketch, 4000) || '(no plan recorded: work from the request itself)',
+    clipSketch(sketch, 4000) || '(no plan recorded: work from the request itself)',
     ...(approved ? [
       '',
       'WHAT ITS CREATOR APPROVED, below, binds the spec as the request does: never contradict it.',
+      // Newcomer run seven: the spec kept an approved line ("Vote yes, no or
+      // maybe") over the creator's answer ("Simple yes or no, most wins").
+      ANSWER_WINS_LINE,
       '',
       approved,
     ] : []),
@@ -2431,6 +2474,12 @@ const FIRST_VERSION_DESIGN_LINES = Object.freeze([
   'real screen has (never a view-only demo), labelled "Staging demo" once, plainly, as a banner or a line at the top of',
   'the screen or in the name of its list, not on each row, with every row still obviously made up. On staging and with',
   '`?demo=1` only, and idempotent, as the platform conventions\' "Staging mock data" says.',
+  // Newcomer run seven (14 Oct 2026): Homeroom shows a first version with
+  // its sample data under a label of its own (the App tab's Live replay),
+  // and hides the app's own by this attribute.
+  'The element that carries the "Staging demo" label gets the attribute `data-usernode-demo-note` (the banner or the',
+  'line itself; in a list\'s name, a `<span data-usernode-demo-note>` around the label\'s own words, so the name',
+  'stays), so Homeroom can hide it where it shows the app with its sample data.',
 ]);
 
 // #4387: the people waiting on a first version see what it is adding now,
@@ -4583,12 +4632,39 @@ async function reviewLanded({
   // back here, so the review carries on from the step it was at.
   const steps = durableSteps.of(deps);
   const keptState = steps.get('review_state');
+  const owner = review.owner || {};
+  // Run seven (14 Oct 2026): a review that stopped on its round limit gets
+  // one last look at its final fix, recorded on the live run and nothing
+  // else (bot-review.js startFinalLook). Started, never waited on: the build
+  // goes on to its proposal as it would have. The reviewer is called
+  // directly, not through the loop's `review` below, so no 'review_round'
+  // stage is written for it.
+  const lookOnceMore = (state) => {
+    if (!owner.botRunId || !state) return;
+    const model = state.reviewer?.model || review.reviewer?.model;
+    if (!model) return;
+    try {
+      botReview.startFinalLook({
+        pool, runId: owner.botRunId, state,
+        review: ({ round, capture: shot, previousIssues, timeoutMs }) => botReview.reviewCapture({
+          pool, config, userId: bot.id, model, seed, spec, capture: shot, previousIssues,
+          round, maxRounds: round, appId: app.id, sessionId: session.id, timeoutMs, locale,
+          deps: deps.reviewDeps || {},
+        }),
+      });
+    } catch (err) {
+      log.warn('homeroom-bot', 'Could not start the last look after the final fix (going on)', { sessionId: session.id, err: err.message });
+    }
+  };
   // One that had finished when the restart came (its end saved, the build's
-  // `reviewed` step not yet): taken as it ended, never reviewed again.
-  if (!resumeFrom && keptState?.state === 'done') return keptState;
+  // `reviewed` step not yet): taken as it ended, never reviewed again (its
+  // last look only if the run has none).
+  if (!resumeFrom && keptState?.state === 'done') {
+    lookOnceMore(keptState);
+    return keptState;
+  }
   if (!resumeFrom && keptState && keptState.state && keptState.state !== 'done') resumeFrom = keptState;
   const reviewer = (resumeFrom && resumeFrom.reviewer && resumeFrom.reviewer.maxRounds != null) ? resumeFrom.reviewer : review.reviewer;
-  const owner = review.owner || {};
   const ensure = async () => {
     await worker.ensureWorkerImage();
     return worker.ensureWorker(session.id, {
@@ -4643,7 +4719,7 @@ async function reviewLanded({
     };
   };
   try {
-    return await botReview.runReviewLoop({
+    const finished = await botReview.runReviewLoop({
       reviewer,
       start,
       resumeFrom,
@@ -4677,6 +4753,8 @@ async function reviewLanded({
       fence: steps.active ? steps.fence : null,
       onProgress,
     });
+    lookOnceMore(finished);
+    return finished;
   } catch (err) {
     durableSteps.rethrowStop(err, 'review');
     log.warn('homeroom-bot', 'The review could not run; proposing what is built', { sessionId: session.id, err: err.message });
@@ -4815,8 +4893,12 @@ module.exports = {
   firstVersionScreensBrief,
   splitApprovedPlan,
   planNoteText,
+  clipSketch,
   APPROVED_PLAN_HEAD,
   CREATOR_CHOICES_HEAD,
+  PLAN_LINES_HEAD,
+  MADE_SCREEN_CHOICES_HEAD,
+  ANSWER_WINS_LINE,
   APPROVED_BY_REQUESTER_HEAD,
   REQUESTER_CHOICES_HEAD,
   specTitle,

@@ -1346,10 +1346,12 @@ function codingProviderCount(value, maximum) {
 }
 // What one model request came to, as the Claude Code listener reports it
 // (worker/claude-openrouter-request.js, provider_request_result): kept as
-// the turn's routed provider for its ledger row, and, when it failed, said
-// on the progress line and logged with the ids that find it in OpenRouter's
-// own log. Nothing here is the request's content: the listener sends a
-// status, ids, a provider name and an error's type and clipped message.
+// the turn's routed provider for its ledger row (with every other host the
+// turn used, and whether the request left the shortlist), and, when it
+// failed, said on the progress line and logged with the ids that find it in
+// OpenRouter's own log. Nothing here is the request's content: the listener
+// sends a status, ids, a provider name and an error's type and clipped
+// message.
 const SAFE_PROVIDER_ID = /^[a-zA-Z0-9._:-]{1,160}$/;
 const SAFE_PROVIDER_NAME = /^[a-zA-Z0-9 ._:/()-]{1,80}$/;
 const SAFE_PROVIDER_ERROR_TYPE = /^[a-z0-9_.-]{1,64}$/i;
@@ -1366,10 +1368,18 @@ function observeCodingProviderResult(event, ordinal, onProgress, state) {
     state.routedProvider = providerName;
     // Every provider the turn's requests went to, in order, not only the
     // last: whether a build that quits early follows a provider is read
-    // from this (homeroom-bot-live.js turnFacts). A few names at most.
+    // from this (homeroom-bot-live.js turnFacts). A few names at most, first
+    // seen first; since run seven (14 Oct 2026) the turn's ledger row keeps
+    // them all (agent_turns.metadata.routed_providers), not only the last.
     const seen = Array.isArray(state.routedProviders) ? state.routedProviders : (state.routedProviders = []);
     if (!seen.includes(providerName) && seen.length < 8) seen.push(providerName);
   }
+  // How many of the turn's requests the shortlist refused and the listener
+  // sent again to every host (run seven, 14 Oct 2026: slow hosts still
+  // served builds, and nothing said how often a build left the shortlist).
+  // Zero once any request is seen, so "none" reads apart from "not known";
+  // the turn's ledger row keeps it (agent_turns.metadata.shortlist_fallbacks).
+  state.shortlistFallbacks = (state.shortlistFallbacks || 0) + (event.shortlistFallback === true ? 1 : 0);
   noteCodingProviderUsage(event.usage, state);
   noteCodingProviderImages(event.images, state);
   noteCodingProviderToolOutput(event.toolOutput, state);

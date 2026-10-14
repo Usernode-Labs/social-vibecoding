@@ -507,6 +507,13 @@ const FIRST_VERSION_NOTE = [
   'you would otherwise make yourself that change what they will see or do, each a plain question with 2 to 4 short',
   '`answers`, the one you suggest first. They can tap another; one they leave goes with yours. Only a choice they would',
   'care about, never the look or the theme. Often there are none: then give `choices` as an empty list.',
+  // Newcomer run seven (14 Oct 2026, Club Votes): a plan line settled what
+  // a question asked ("Vote yes, no or maybe on each one" beside "How should
+  // votes be counted?"), and the spec, bound by both, built a maybe that the
+  // creator's answer had ruled out (first-version-plan.js PLAN_SYSTEM).
+  'A `plan` line, `build_note` and `assumptions` never settle a point one of the `choices` asks: their answer decides',
+  'it. Where a choice decides something, the line says what the app does without the answer ("Vote on each',
+  'decision", not "Vote yes, no or maybe on each one"), and `build_note` leaves that point to the answer.',
 ].join('\n');
 
 /**
@@ -6848,7 +6855,9 @@ async function queueLiveBuild(pool, { runId, appId }) {
 // something (homeroom-bot-dm.js sendPlanCard), and its run waits with
 // `awaiting_go_at`. Build it (goAhead) sets live_build_waiting_at, as a
 // ready verdict does, with the plan and its choices written into the build
-// note as what the creator approved.
+// note as what the creator approved. (The made screen's Submit, which shows
+// the questions alone, writes the bullets as the plan's own lines and only
+// the answers as theirs: creatorChoiceNote's `planShown`, run seven.)
 // Change something (dm.changePlan) and a new look at the request
 // (retireWaitingPlans) end the wait; so does a week with no tap
 // (settleStalePlans). A waiting plan is not a build: a new look at its
@@ -6891,13 +6900,28 @@ function choicesFrom(questions, answers = []) {
  */
 // #4488: `requester` for a complicated change on an existing project, whose
 // requester approved it: said as theirs, under its own heads.
-function creatorChoiceNote(chosen, { bullets = [], requester = false } = {}) {
+// Newcomer run seven (14 Oct 2026, Club Votes): `planShown` false for a plan
+// gone ahead with from the made screen's Submit, which shows its questions
+// and never its bullets (homeroom-bot-dm.js buildFromAnswers). Its bullets
+// are then the plan's own lines, in the sketch the spec may improve on
+// (live.PLAN_LINES_HEAD), and only the answers are the creator's, under a
+// head that says they win over a line (live.MADE_SCREEN_CHOICES_HEAD). The
+// default is Build it under the plan card, word for word as before.
+function creatorChoiceNote(chosen, { bullets = [], requester = false, planShown = true } = {}) {
   const plan = (Array.isArray(bullets) ? bullets : []).map((b) => String(b || '').trim()).filter(Boolean);
   const picks = Array.isArray(chosen) ? chosen : [];
+  const answers = picks.map((c) => `- ${c.question} ${c.answer}`);
+  if (!planShown && !requester) {
+    const blocks = [
+      ...(plan.length ? [[live.PLAN_LINES_HEAD, ...plan.map((b) => `- ${b}`)].join('\n')] : []),
+      ...(picks.length ? [[live.MADE_SCREEN_CHOICES_HEAD, ...answers].join('\n')] : []),
+    ];
+    return blocks.length ? `\n\n${blocks.join('\n\n')}` : '';
+  }
   const lines = [];
   if (plan.length) lines.push(requester ? live.APPROVED_BY_REQUESTER_HEAD : live.APPROVED_PLAN_HEAD, ...plan.map((b) => `- ${b}`));
   if (picks.length) {
-    lines.push(requester ? live.REQUESTER_CHOICES_HEAD : live.CREATOR_CHOICES_HEAD, ...picks.map((c) => `- ${c.question} ${c.answer}`));
+    lines.push(requester ? live.REQUESTER_CHOICES_HEAD : live.CREATOR_CHOICES_HEAD, ...answers);
   }
   return lines.length ? `\n\n${lines.join('\n')}` : '';
 }
@@ -7086,7 +7110,9 @@ async function carryApprovedPlan(pool, { runId, appId, issueNumber }) {
     );
     if (!prev || !Array.isArray(prev.plan?.chosen)) return false;
     if (!String(prev.build_error || '').endsWith(RESTARTED_BUILD_NOTE)) return false;
-    const note = creatorChoiceNote(prev.plan.chosen, { bullets: prev.plan.bullets });
+    // Run seven: the same note goAhead wrote, for a plan its maker was not
+    // shown as for one they tapped Build it under.
+    const note = creatorChoiceNote(prev.plan.chosen, { bullets: prev.plan.bullets, planShown: prev.plan.planShown !== false });
     const { rowCount } = await pool.query(
       `UPDATE homeroom_bot_runs SET build_note = CONCAT(build_note, $2::text), plan = $3::jsonb
         WHERE id = $1 AND build_ok IS NULL AND build_session_id IS NULL AND awaiting_go_at IS NULL`,
@@ -7351,8 +7377,16 @@ async function buildItOnRequest(pool, { appId, issueNumber, requester, deps = {}
  * any ready verdict's does. Once: a plan already built, replaced or stopped
  * is `gone`. Resolves { ok: true,
  * appId, issueNumber, chosen } or { ok: false, why }.
+ *
+ * Newcomer run seven (14 Oct 2026): `planShown` false when its maker went
+ * ahead without being shown the bullets (the made screen's Submit, or a
+ * plan decided before it was sent: homeroom-bot-dm.js buildFromAnswers).
+ * The bullets are then written as the plan's own lines and only the answers
+ * as theirs (creatorChoiceNote), and the plan keeps `planShown: false` next
+ * to `chosen`, so a run a restart sent back writes the same note
+ * (carryApprovedPlan).
  */
-async function goAhead(pool, { runId, answers = [] }) {
+async function goAhead(pool, { runId, answers = [], planShown = true }) {
   const { rows: [run] } = await pool.query(
     `SELECT plan FROM homeroom_bot_runs
       WHERE id = $1 AND awaiting_go_at IS NOT NULL AND build_ok IS NULL AND build_session_id IS NULL`,
@@ -7360,17 +7394,21 @@ async function goAhead(pool, { runId, answers = [] }) {
   );
   if (!run) return { ok: false, why: 'gone' };
   const chosen = choicesFrom(run.plan?.questions, answers);
-  const note = creatorChoiceNote(chosen, { bullets: run.plan?.bullets, requester: run.plan?.complicated === true });
+  const requester = run.plan?.complicated === true;
+  // A complicated change's plan is only ever gone ahead with by its
+  // requester's own Build it, under the plan they were shown.
+  const shown = planShown !== false || requester;
+  const note = creatorChoiceNote(chosen, { bullets: run.plan?.bullets, requester, planShown: shown });
   // `go_ahead_at` keeps when, after live_build_waiting_at is cleared (the
   // build's start): how long the build waited for its slot (buildLive).
   const { rows: [went] } = await pool.query(
     `UPDATE homeroom_bot_runs
         SET awaiting_go_at = NULL, live_build_waiting_at = NOW(), go_ahead_at = NOW(),
             build_note = CONCAT(build_note, $2::text),
-            plan = COALESCE(plan, '{}'::jsonb) || jsonb_build_object('chosen', $3::jsonb)
+            plan = COALESCE(plan, '{}'::jsonb) || jsonb_build_object('chosen', $3::jsonb) || $4::jsonb
       WHERE id = $1 AND awaiting_go_at IS NOT NULL AND build_ok IS NULL AND build_session_id IS NULL
       RETURNING app_id, issue_number`,
-    [runId, note, JSON.stringify(chosen)],
+    [runId, note, JSON.stringify(chosen), JSON.stringify(shown ? {} : { planShown: false })],
   );
   if (!went) return { ok: false, why: 'gone' };
   void timeline.record(pool, { runId, stage: 'go_ahead', detail: { answers: chosen.length } });
@@ -7386,7 +7424,7 @@ async function goAhead(pool, { runId, answers = [] }) {
   wakeLiveBuilds();
   publishWake({ appId: Number(went.app_id), buildRunId: Number(runId) });
   log.info('homeroom-bot', 'Build it: a first version\'s plan goes ahead', {
-    appId: Number(went.app_id), issueNumber: Number(went.issue_number), runId, choices: chosen.length,
+    appId: Number(went.app_id), issueNumber: Number(went.issue_number), runId, choices: chosen.length, planShown: shown,
   });
   return { ok: true, appId: Number(went.app_id), issueNumber: Number(went.issue_number), chosen };
 }

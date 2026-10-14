@@ -552,8 +552,9 @@ Seed rules:
   `ON CONFLICT DO NOTHING`.
 - **Obviously fake.** Give seeded rows a consistent "Staging demo …"
   prefix so they can't be mistaken for real user content. (A first
-  version's `?demo=1` demo is labelled once instead: see "A first
-  version's populated demo" below.)
+  version's `?demo=1` demo is labelled once instead, on an element
+  marked `data-usernode-demo-note`: see "A first version's populated
+  demo" below.)
 - **Small.** A handful of rows — just enough for the testing steps.
   (A project's first version is the one exception: see "A first
   version's populated demo" below.)
@@ -584,6 +585,11 @@ seed rules change. Every later change keeps the rules above.
   on every row only clutters the screen), and this replaces the
   "Staging demo …" prefix above for these rows. The rows themselves
   stay obviously made up: no real people and no real private data.
+  The element that carries the label gets the attribute
+  `data-usernode-demo-note`: the banner or the line itself, or, in a
+  list's name, a `<span data-usernode-demo-note>` around the label's
+  own words, so the name stays. Homeroom hides that element where it
+  shows the app with its sample data under a label of its own.
 - **The viewer's own data too.** What the app keeps for a person
   (their items, choices, progress, saved things) is shown as the
   viewer's: a demo where only made-up people have done anything shows
