@@ -385,8 +385,11 @@ test('the other server is asked first: what it holds of the name is dropped as b
       assert.equal((await h.dbManager.cloneDatabase(SOURCE, OTHER)).server, 'preview');
       for (const name of [TARGET, OTHER]) {
         assert.deepEqual(h.sqlOn(MAIN_HOST).filter((sql) => sql.includes(name)), [oldTargetCheck(name), ...dropSequence(name)], `${leftover}: ${name}`);
+        // The question takes the drop's own way to the server: psql, with
+        // the same libpq environment (address, user, TLS, connect deadline).
         const there = h.on(MAIN_HOST).filter((c) => c.sql.includes(name));
-        assert.ok(there.every((c) => c.via === 'pg' && c.session === there[0].session), `${leftover}: ${name}: the question and the drop share one connection`);
+        const reach = (c) => JSON.stringify(Object.entries(c.env || {}).filter(([key]) => /^PG/.test(key)).sort());
+        assert.ok(there.every((c) => c.via === 'psql' && reach(c) === reach(there[1])), `${leftover}: ${name}: asked as the drop is sent`);
       }
       const dropped = h.logs.filter((l) => l.message === 'Database and role dropped' && l.meta.server === 'primary').map((l) => l.meta.dbName);
       assert.deepEqual(dropped.filter((name) => name === TARGET || name === OTHER), [TARGET, OTHER], leftover);
@@ -394,13 +397,21 @@ test('the other server is asked first: what it holds of the name is dropped as b
   }
   // Nothing there: one question, no drop, no line saying there was one. The
   // copy's own server keeps its drop.
+  // libpq settings the main server's psql processes inherit (a CA file, a
+  // connect deadline) reach the question as they reach the drop.
+  const libpq = { PGSSLROOTCERT: '/etc/ssl/main-ca.pem', PGCONNECT_TIMEOUT: '1' };
+  const savedLibpq = Object.fromEntries(Object.keys(libpq).map((key) => [key, process.env[key]]));
+  Object.assign(process.env, libpq);
   const h = load();
   try {
     await h.dbManager.cloneDatabase(SOURCE, TARGET, { viaTemplate: true });
     await h.dbManager.cloneDatabase(SOURCE, OTHER);
     for (const name of [TARGET, OTHER]) {
       assert.deepEqual(h.sqlOn(MAIN_HOST).filter((sql) => sql.includes(name)), [oldTargetCheck(name)], name);
-      assert.equal(h.on(MAIN_HOST).filter((c) => c.sql.includes(name) && c.via !== 'pg').length, 0, `${name}: no psql process on the main server`);
+      const [asked] = h.on(MAIN_HOST).filter((c) => c.sql.includes(name));
+      assert.equal(asked.via, 'psql', `${name}: asked through psql, as the drop was`);
+      assert.deepEqual([asked.env.PGHOST, asked.env.PGUSER, asked.env.PGDATABASE, asked.env.PGSSLROOTCERT, asked.env.PGCONNECT_TIMEOUT],
+        [MAIN_HOST, 'usernode', 'usernode', libpq.PGSSLROOTCERT, libpq.PGCONNECT_TIMEOUT], `${name}: with the main server's own libpq settings`);
       assert.ok(h.sqlOn(PREVIEW_HOST).includes(`DROP DATABASE IF EXISTS ${name}`), `${name}: its own server keeps its drop`);
       assert.ok(h.logs.some((l) => l.message === 'Database and role dropped' && l.meta.dbName === name && l.meta.server === 'preview'),
         `${name}: the drop on its own server is said to be there`);
@@ -409,7 +420,10 @@ test('the other server is asked first: what it holds of the name is dropped as b
       && (l.meta.dbName === TARGET || l.meta.dbName === OTHER)).length, 0, 'no drop is claimed on the main server');
     assert.deepEqual(h.logs.filter((l) => l.message === 'No old database or role of this name on the other server')
       .map((l) => [l.meta.dbName, l.meta.server]).filter(([name]) => name === TARGET || name === OTHER), [[TARGET, 'primary'], [OTHER, 'primary']]);
-  } finally { h.restore(); }
+  } finally {
+    h.restore();
+    for (const [key, value] of Object.entries(savedLibpq)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+  }
 });
 
 test('an other server that cannot be asked is left for the sweep, and the build goes on', async () => {

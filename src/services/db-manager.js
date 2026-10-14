@@ -941,26 +941,22 @@ async function cloneDatabaseOn(server, sourceDb, targetDb, { viaTemplate }) {
 // likely while it is being drained) must not stop a build that does not use
 // it. It stays for the orphan sweep.
 //
-// On the other server this is one connection: it asks, in one statement,
-// whether the server holds anything of this name, and runs the drop on that
-// same connection only when it does. The drop used to run every time, as
-// four statements with a connection each, on the build's critical path, and
-// nearly every build finds nothing there. An answer other than a plain "no"
-// drops as before.
+// The other server is asked first, in one statement, whether it holds
+// anything of this name; the four-statement drop runs only when it does. The
+// drop used to run every time, on the build's critical path, and nearly
+// every build finds nothing there. An answer other than a plain "no" drops
+// as before. The question goes through the same runner as the drop (one psql
+// process), so it reaches the same server with the same identity, TLS
+// settings and connect deadline that the drop does.
 async function dropOldTarget(targetDb, server, { ownServer = true } = {}) {
   for (const other of serversHolding(targetDb)) {
     if (other === serverKey(server)) continue;
     try {
-      let maintenanceDb;
-      try { maintenanceDb = adminDatabase(other); } catch (err) { throw fromPreviewServer(err, other); }
-      await withDatabaseConnection(maintenanceDb, async (execute) => {
-        const admin = singleConnection((sql, opts) => execute(maintenanceDb, sql, opts));
-        if (await holdsNothingOfName(targetDb, admin)) {
-          log.debug('db-manager', 'No old database or role of this name on the other server', { dbName: targetDb, server: other });
-          return;
-        }
-        await dropDatabase(targetDb, { strict: true, execute: admin, server: other });
-      }, { server: other });
+      if (await holdsNothingOfName(targetDb, adminExecutor(other))) {
+        log.debug('db-manager', 'No old database or role of this name on the other server', { dbName: targetDb, server: other });
+        continue;
+      }
+      await dropDatabase(targetDb, { strict: true, server: other });
     } catch (err) {
       log.warn('db-manager', 'Could not drop an old database of this name on the other server; leaving it for the sweep', {
         dbName: targetDb, server: other, err: err.message,

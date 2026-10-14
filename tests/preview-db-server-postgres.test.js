@@ -355,10 +355,8 @@ test('a rebuild drops what the other server holds of its name, and builds when i
     sent.length = 0;
     const cloned = await dbManager.cloneDatabase(source, name, { viaTemplate: true });
     assert.equal(cloned.server, 'preview', name);
-    const onMain = sent.filter((q) => q.port === ctx.mainPort && q.text.includes(name));
-    assert.equal(new Set(onMain.map((q) => q.client)).size, 1, `${name}: one connection to the main server`);
-    if (name === absent) assert.equal(onMain.length, 1, 'nothing there: one question, no drop');
-    else assert.ok(onMain.some((q) => q.text.startsWith('DROP DATABASE IF EXISTS')), `${name}: dropped`);
+    assert.equal(sent.filter((q) => q.port === ctx.mainPort && q.text.includes(name)).length, 0,
+      `${name}: the main server is asked and cleared through psql, as before, not node-postgres`);
   }
   assert.deepEqual(await names(main, `%${tok}%`), [source], 'the earlier build is gone from the main server');
   assert.deepEqual(await roles(main, `%${tok}%`), [`${source}_owner`], 'and so are its role and the left-behind one');
