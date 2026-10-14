@@ -10,6 +10,11 @@
 // refused dial for 30s: a connection refused during the drain is re-dialled
 // into the new container rather than 502'd.
 //
+// The Homeroom bot's builds and the bench's trials are not waited for: they
+// are durable builds, which the workflow runtime gives up as it stops, for
+// the next leader to carry on (the bot's own drain is gone). Once shutdown
+// has begun, nothing new of the bot's or the bench's starts.
+//
 // Everything here is modelled — stubbed listener, stubbed pool, stubbed
 // process.exit — so the ordering assertions never depend on wall clock.
 //
@@ -384,59 +389,27 @@ test('shutdown hands its checks runs to the next harvest before closing the pool
   }
 });
 
-// The Homeroom bot's builds under way are waited on until they reach a saved
-// point (homeroom-bot-drain.js). One still between steps at the deadline is
-// logged and recorded as an incident, and the shutdown goes on to its exit.
-test('a bot build still mid-step at the deadline is logged, recorded and does not hold the exit', async () => {
-  const { server, logs, restore } = loadServer();
-  const drain = require('../src/services/homeroom-bot-drain');
-  const savedEnv = process.env.HOMEROOM_BOT_DRAIN_TIMEOUT_MS;
-  process.env.HOMEROOM_BOT_DRAIN_TIMEOUT_MS = '150';
+// The Homeroom bot's builds and the bench's trials under way are durable
+// builds (services/build-runs.js, docs/plans/bot-build-workflow.md), and
+// nothing in cleanup() waits for them. With the workflow runtime, stopping
+// it stops each at its next step, its turn left running in its worker, and
+// gives its work item up, so the next leader claims it at once and carries
+// it on from the step it saved. Without one, a build runs in this process,
+// unkept, and the restart loses it, as builds always were lost before.
+test('a bot build under way does not hold the shutdown, and nothing is recorded for it', async () => {
+  const { server, restore } = loadServer();
+  const bot = require('../src/services/homeroom-bot');
+  const buildRuns = require('../src/services/build-runs');
+  const realRun = bot.runShadowBuild;
+  let started = false;
   let release;
-  const pipeline = drain.run({ kind: 'live_build', runId: 77, appId: 4, issueNumber: 9 },
-    () => new Promise((resolve) => { release = resolve; }));
+  bot.runShadowBuild = () => { started = true; return new Promise((resolve) => { release = resolve; }); };
+  // No workflow runtime here: the build runs in this process.
+  const build = buildRuns.start({ pool: null, config: {}, target: 'shadow', id: 78 });
+  let ended = false;
+  build.then(() => { ended = true; }, () => { ended = true; });
   try {
-    const listener = fakeListener();
-    const writes = [];
-    const pool = { ...fakePool(), query: async (sql, params) => { writes.push({ sql, params }); return { rows: [] }; } };
-
-    const startedAt = Date.now();
-    const order = await runCleanup(server, { listener, pool });
-    const elapsed = Date.now() - startedAt;
-
-    assert.deepEqual(order, ['exit:0']);
-    assert.ok(elapsed >= 140, `cleanup took ${elapsed}ms; it must wait out the bot deadline`);
-    const warned = logs.find((l) => l.msg === 'Shutdown deadline passed with Homeroom bot builds mid-step');
-    assert.ok(warned, 'the deadline passing is logged');
-    assert.equal(warned.data.deadlineMs, 150);
-    assert.deepEqual(warned.data.midStep.map((p) => p.runId), [77]);
-    const incident = writes.find((w) => /INSERT INTO events/.test(w.sql));
-    assert.ok(incident, 'an incident is recorded for the build');
-    const meta = JSON.parse(incident.params[4]);
-    assert.equal(meta.kind, 'build_interrupted');
-    assert.equal(meta.why, 'shutdown deadline passed during its first step');
-  } finally {
-    release();
-    await pipeline;
-    if (savedEnv === undefined) delete process.env.HOMEROOM_BOT_DRAIN_TIMEOUT_MS;
-    else process.env.HOMEROOM_BOT_DRAIN_TIMEOUT_MS = savedEnv;
-    restore();
-  }
-});
-
-// By default the wait is gone: each build's step boundaries are saved
-// (homeroom-bot-checkpoint.js) and the next leader carries it on, so a
-// redeploy does not wait for the bot, and records no incident for leaving
-// it. HOMEROOM_BOT_DRAIN_TIMEOUT_MS (above) restores the wait.
-test('by default a bot build mid-step does not hold the shutdown, and nothing is recorded for it', async () => {
-  const { server, logs, restore } = loadServer();
-  const drain = require('../src/services/homeroom-bot-drain');
-  const savedEnv = process.env.HOMEROOM_BOT_DRAIN_TIMEOUT_MS;
-  delete process.env.HOMEROOM_BOT_DRAIN_TIMEOUT_MS;
-  let release;
-  const pipeline = drain.run({ kind: 'live_build', runId: 78, appId: 4, issueNumber: 10 },
-    () => new Promise((resolve) => { release = resolve; }));
-  try {
+    assert.ok(await until(() => started), 'the build is under way');
     const listener = fakeListener();
     const writes = [];
     const pool = { ...fakePool(), query: async (sql, params) => { writes.push({ sql, params }); return { rows: [] }; } };
@@ -447,20 +420,28 @@ test('by default a bot build mid-step does not hold the shutdown, and nothing is
 
     assert.deepEqual(order, ['exit:0']);
     assert.ok(elapsed < 2000, `cleanup took ${elapsed}ms; it must not wait for the bot`);
-    const started = logs.find((l) => l.msg === 'Shutdown initiated, draining handlers');
-    assert.equal(started.data.botDeadlineMs, 0);
-    assert.equal(logs.some((l) => l.msg === 'Shutdown deadline passed with Homeroom bot builds mid-step'), false);
-    const left = logs.find((l) => l.msg === 'Left Homeroom bot builds between steps for the next leader to carry on from their checkpoints');
-    assert.ok(left, 'leaving it is logged');
-    assert.deepEqual(left.data.midStep.map((p) => p.runId), [78]);
-    assert.equal(writes.some((w) => /INSERT INTO events/.test(w.sql)), false, 'no incident for a build its checkpoint carries on');
+    assert.equal(ended, false, 'the build was still running when the exit came');
+    assert.deepEqual(writes, [], 'nothing is recorded for it: no incident, no run written');
+    assert.deepEqual(pool.events, ['end']);
   } finally {
-    release();
-    await pipeline;
-    if (savedEnv === undefined) delete process.env.HOMEROOM_BOT_DRAIN_TIMEOUT_MS;
-    else process.env.HOMEROOM_BOT_DRAIN_TIMEOUT_MS = savedEnv;
+    release({ acted: 'shadow_built' });
+    await build;
+    bot.runShadowBuild = realRun;
     restore();
   }
+});
+
+test('the workflow runtime is stopped as shutdown begins, and the pool closes only once it has', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+  const body = src.slice(src.indexOf('async function cleanup()'), src.indexOf("process.on('SIGTERM', cleanup);"));
+  const stop = body.indexOf("const workflowStop = require('./src/workflow/platform.ts').stopWorkflow()");
+  const listenerClose = body.indexOf('httpServer.close(');
+  assert.ok(stop > 0 && stop < listenerClose, 'stopped with the bot\'s loops, before the listener closes');
+  assert.match(body, /await Promise\.race\(\[\n\s+Promise\.all\(\[[^\]]*\bworkflowStop\b[^\]]*\]\)\.then\(\(\) => shutdownPool\.end\(\)\),/,
+    'its stop (each build\'s lease given up) is awaited before the pool ends, inside the pool close\'s bound');
+  assert.doesNotMatch(body, /homeroom-bot-drain|waitForSafePoint|botDeadlineMs/, 'and nothing waits for the bot\'s builds');
 });
 
 test('cleanup survives a listener that throws on close', async () => {
@@ -795,4 +776,33 @@ test('preStop, the longest drain and the rest of cleanup fit inside the platform
   assert.ok(total < graceMs,
     `preStop ${preStopMs} + drain ceiling ${lifecycleModule.KUBERNETES_DRAIN_MAX_MS} + the rest ${afterDrainMs} ` +
     `= ${total}ms must stay below terminationGracePeriodSeconds (${graceMs}ms), or the kubelet SIGKILLs mid-cleanup`);
+});
+
+// Last, though every cleanup() above has already set it: lifecycle's flag
+// cannot be unset. Once shutdown has begun nothing new starts on a process
+// whose pool is about to close, whether or not the bot's loops were stopped
+// (lifecycle is set first thing in cleanup()). A build already under way is
+// its work item's, which the next leader carries on.
+test('the gate: once shutdown has begun the bot dispatches nothing, its build lane starts nothing, and the bench lane starts no trial', async () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const bot = require('../src/services/homeroom-bot');
+  // Not stopped (cleanup's stop() is undone): the gate is shutdown's own.
+  bot._resetForTests();
+  lifecycleModule.setShuttingDown();
+  const touched = [];
+  const pool = { query: async (sql) => { touched.push(sql); return { rows: [] }; } };
+  try {
+    const started = await bot.dispatch(pool, {}, { settings: { mode: 'live' }, bot: { id: 1 } });
+    assert.deepEqual(started, []);
+    const lane = await bot.drainBuilds(pool, {});
+    assert.equal(lane.paused, 'stopped');
+    assert.equal(lane.started, 0);
+    assert.deepEqual(touched, [], 'nothing is read or claimed');
+  } finally {
+    bot._resetForTests();
+  }
+  const bench = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'bench', 'lane.js'), 'utf8');
+  assert.match(bench, /function shuttingDown\(\) \{\n\s+try \{ return !!require\('\.\.\/lifecycle'\)\.isShuttingDown\(\); \} catch \{ return false; \}\n\}/);
+  assert.match(bench, /if \(shuttingDown\(\)\) \{ out\.paused = 'stopped'; break; \}/, 'checked before each trial the lane would start');
 });
