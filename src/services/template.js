@@ -116,19 +116,17 @@ const DESIGN_CLAUDE_SECTION = `## Design
 This app's look. The first real version fills in the blanks; every later
 change follows it, and updates it when a request changes the look on purpose.
 
-- **Palette:** Homeroom's, the default: cream page, black text and
-  actions, yellow highlight, blue focus ring; in the dark look a black page,
-  cream text and yellow actions. _(Keep it unless this app's request or its
-  builders choose another look; then name the new accent, any second colour
-  and the neutrals here.)_
+- **Palette:** Homeroom's, the default: cream page, black text and actions,
+  yellow highlight, blue focus ring; dark: black page, cream text, yellow
+  actions. _(Keep it unless this app's request or its builders choose another
+  look; then name the new accent, any second colour and the neutrals here.)_
 - **Typefaces:** Homeroom's: Source Serif 4 for titles and headings, Geist
   for the rest. _(Name the app's own here if it chooses them.)_
 - **Signature element:** _(the one thing on screen drawn from this app's
   subject, which no other app would have)_
 - **Type scale:** \`text-title\`, \`text-heading\`, \`text-body\`, \`text-small\`
   _(change their sizes in \`tailwind.config.js\` if you must, not their number)_
-- **One fixed look:** _(only for an app drawn as its own scene, such as a
-  game: which look, and why. Otherwise delete this line.)_
+- **One fixed look:** _(only for an app drawn as its own scene, or delete)_
 
 The kit is in \`styles/tailwind-input.css\`: colour tokens with a light and
 a dark value (named in \`tailwind.config.js\`), and a few components
