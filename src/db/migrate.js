@@ -163,6 +163,8 @@ async function migrate(config) {
   await seedStagingCloneSpecPills(pool, config);
   await seedStagingRestartRecoveredPills(pool, config);
   await seedStagingGeneralChannel(pool);
+  // After it: this thread's second speaker is that seed's fake person.
+  await seedStagingScrollTestThread(pool);
   await seedStagingQuickReplyFallback(pool, config);
   await seedStagingChatAttachments(pool, config);
   await seedStagingGroupChatAttachments(pool, config);
@@ -1544,6 +1546,84 @@ async function seedStagingGeneralChannel(pool) {
     log.info('db', 'Staging #general fixtures seeded');
   } catch (err) {
     log.warn('db', 'Staging #general seeding failed', { message: err.message });
+  }
+}
+
+// #5019's before/after shots follow a conversation being paged from its top,
+// which needs a thread longer than one page of fifty: a fresh clone has no
+// such conversation, and typing one through the UI is not a step anybody can
+// take. One direct thread between the shots' own member fixture
+// (usernode-capture) and one of the fake speakers above, its lines marked as
+// a staging demo throughout. Two pages and a tail, so a reader at the bottom
+// starts with real older history to load. Idempotent through the direct pair
+// and the messages' idempotency keys; strictly a no-op outside staging.
+async function seedStagingScrollTestThread(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const people = await pool.query(
+      `SELECT id, username FROM users
+        WHERE username IN ('usernode-capture', 'staging-demo-general-ada')`
+    );
+    const member = people.rows.find((row) => row.username === 'usernode-capture');
+    const other = people.rows.find((row) => row.username === 'staging-demo-general-ada');
+    if (!member || !other || member.id === other.id) {
+      log.warn('db', 'Staging scroll-test thread skipped: fixture users missing');
+      return;
+    }
+    const low = Math.min(member.id, other.id);
+    const high = Math.max(member.id, other.id);
+    const found = await pool.query(
+      `SELECT c.id FROM conversations c
+         JOIN conversation_direct_pairs p ON p.conversation_id = c.id
+        WHERE p.user_low_id = $1 AND p.user_high_id = $2
+        LIMIT 1`,
+      [low, high]
+    );
+    let conversationId = found.rows[0]?.id;
+    if (!conversationId) {
+      const created = await pool.query(
+        `INSERT INTO conversations (kind, created_by) VALUES ('direct', $1) RETURNING id`,
+        [member.id]
+      );
+      conversationId = created.rows[0].id;
+      await pool.query(
+        `INSERT INTO conversation_direct_pairs
+           (conversation_id, user_low_id, user_high_id)
+         VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
+        [conversationId, low, high]
+      );
+    }
+    // Re-asserted even on an existing thread, so a partial earlier boot
+    // self-heals, as the #general seed does for its members.
+    await pool.query(
+      `INSERT INTO conversation_members
+         (conversation_id, user_id, role, status, responded_at, joined_at)
+       SELECT $1, u.id, 'member', 'member', NOW(), NOW()
+         FROM users u WHERE u.id IN ($2, $3)
+       ON CONFLICT (conversation_id, user_id) DO NOTHING`,
+      [conversationId, member.id, other.id]
+    );
+    const inserted = await pool.query(
+      `INSERT INTO conversation_messages
+         (conversation_id, sender_id, content, idempotency_key, created_at)
+       SELECT $1::int,
+              CASE WHEN n % 2 = 0 THEN $3::int ELSE $2::int END,
+              'Staging demo: history line ' || n || ' of 130 of the scroll test.',
+              'staging-scroll-' || n,
+              NOW() - ((131 - n) * INTERVAL '30 seconds')
+         FROM generate_series(1, 130) AS n
+       ON CONFLICT (conversation_id, sender_id, idempotency_key)
+         WHERE sender_id IS NOT NULL AND idempotency_key IS NOT NULL
+       DO NOTHING`,
+      [conversationId, member.id, other.id]
+    );
+    if (inserted.rowCount > 0) {
+      log.info('db', 'Staging scroll-test thread seeded', {
+        conversationId, inserted: inserted.rowCount,
+      });
+    }
+  } catch (err) {
+    log.warn('db', 'Staging scroll-test thread seeding failed', { message: err.message });
   }
 }
 

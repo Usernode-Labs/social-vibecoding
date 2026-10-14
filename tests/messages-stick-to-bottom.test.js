@@ -81,6 +81,29 @@ test('isNearBottom: at the bottom, or within about two lines of it', () => {
   assert.equal(isNearBottom({ scrollHeight: 2000, clientHeight: 600, scrollTop: 1300 }, 40), false, 'a slack of its own');
 });
 
+// ── 1b. #5019: the allowance at the top ─────────────────────────────────
+
+test('isNearTop: at the top, or within the load-older allowance of it', () => {
+  const { isNearTop, LOAD_OLDER_SLACK_PX } = loadTsx(MODULE);
+  assert.equal(LOAD_OLDER_SLACK_PX, 200);
+  const at = (scrollTop) => isNearTop({ scrollHeight: 2000, clientHeight: 600, scrollTop });
+  assert.equal(at(0), true, 'exactly at the top');
+  assert.equal(at(200), true, 'the edge of the allowance');
+  assert.equal(at(201), false, 'past it');
+  assert.equal(at(1400), false, 'reading the middle');
+  assert.equal(isNearTop({ scrollHeight: 2000, clientHeight: 600, scrollTop: 100 }, 40), false, 'a slack of its own');
+});
+
+test('needsMoreHistory: whether what is drawn fills the scroller', () => {
+  const { needsMoreHistory } = loadTsx(MODULE);
+  const at = (scrollHeight) => needsMoreHistory({ scrollHeight, clientHeight: 600, scrollTop: 0 });
+  assert.equal(at(600), true, 'exactly one screen: nothing to scroll');
+  assert.equal(at(750), true, 'within the allowance');
+  assert.equal(at(801), false, 'a full screen plus the allowance');
+  assert.equal(at(2000), false, 'a long thread');
+  assert.equal(needsMoreHistory({ scrollHeight: 750, clientHeight: 600, scrollTop: 0 }, 40), false, 'a slack of its own');
+});
+
 // ── 2. The module, executed ─────────────────────────────────────────────
 
 test('a tall reply that lands while the reader is at the bottom is followed', () => {
@@ -255,7 +278,7 @@ test('useStickToBottom follows the scroller React draws, and the present with it
 // ── 3. The conversation uses it ─────────────────────────────────────────
 
 test('the conversation follows a reader who was at the bottom before the message arrived', () => {
-  assert.match(THREAD, /import \{ useStickToBottom \} from '\.\/stick-to-bottom';/);
+  assert.match(THREAD, /import \{ isNearTop, needsMoreHistory, useStickToBottom \} from '\.\/stick-to-bottom';/);
   assert.match(THREAD, /const pinned = useStickToBottom\(scroller, !snap\.nextAfter\);/,
     'the thread scroller is watched, and a linked window is not the present');
   assert.match(THREAD, /if \(previousLast\.current === null \|\| sentNow \|\| pinned\.current\) \{\s*(?:\/\/[^\n]*\n\s*)*pinned\.current = sentNow \|\| !snap\.nextAfter;\s*el\.scrollTop = el\.scrollHeight;/,
