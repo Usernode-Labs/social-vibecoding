@@ -377,7 +377,9 @@ test('template clone uses two bounded connections for 101 redactions and closes 
       assert.equal(c.config.statement_timeout, 30000);
       assert.equal(c.config.query_timeout, 30000);
     }
-    assert.equal(fixture.calls.filter((c) => c.cmd === 'pg' && /^TRUNCATE/.test(c.sql)).length, 82);
+    const truncates = fixture.calls.filter((c) => c.cmd === 'pg' && /^TRUNCATE/.test(c.sql));
+    assert.equal(truncates.length, 1, 'the 82 private tables are emptied by one statement');
+    assert.equal(truncates[0].sql.split(', ').length, 82);
     const scrubs = fixture.calls.filter((c) => c.cmd === 'pg' && /^DO \$staging_scrub\$/.test(c.sql));
     assert.equal(scrubs.length, 1, 'the 19 private columns are scrubbed by one statement');
     assert.equal((scrubs[0].sql.match(/still holds a value after its UPDATE/g) || []).length, 19);
