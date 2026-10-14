@@ -154,8 +154,15 @@ test('previews through the platform runtime', { timeout: 120000 }, async (t) => 
     assert.equal(rows.length, 0);
     await pool.query(`UPDATE chat_sessions SET staging_url = NULL WHERE id = $1`, [s.id]);
     await quiet();
+    const detaches = async () => (await pool.query(
+      `SELECT count(*)::int AS n FROM wf_events WHERE machine = 'preview' AND type = 'Detach'`)).rows[0].n;
+    const before = await detaches();
     await platform.stopWorkflow();
     await platform.startWorkflow({ ...config, wfPreviewsEnabled: false }, { loops: true });
-    assert.equal(platform.workflowRunning(), false, 'nothing left to detach: no runtime');
+    // The runtime runs anyway (bot builds always do); the preview machine
+    // has nothing left to hand back, so it is not registered.
+    assert.equal(platform.previewsEnabled(), false);
+    await quiet();
+    assert.equal(await detaches(), before, 'nothing left to detach');
   });
 });
