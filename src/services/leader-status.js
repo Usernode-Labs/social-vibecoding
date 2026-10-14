@@ -99,6 +99,12 @@ async function read(key, db) {
   }
 }
 
+/** read(), or `own()` (this process's own, empty, status) when there is no copy. */
+async function readOr(key, db, own) {
+  const value = await read(key, db);
+  return value ?? own();
+}
+
 /** Tests: forget everything. */
 function _reset() {
   stop();
@@ -107,4 +113,4 @@ function _reset() {
   publishing = null;
 }
 
-module.exports = { PUBLISH_MS, STALE_MS, provide, provides, publish, start, stop, read, _reset };
+module.exports = { PUBLISH_MS, STALE_MS, provide, provides, publish, start, stop, read, readOr, _reset };

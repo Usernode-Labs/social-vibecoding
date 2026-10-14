@@ -610,8 +610,21 @@ function stopRunner() {
   timer = null;
 }
 
-/** A pass now; a no-op on a process that is not running the runner. */
+/**
+ * A pass now. The runner runs on the leader, and an eval is launched
+ * wherever the request landed (a web process never leads,
+ * docs/plans/web-and-conductor.md): a process not running it asks the
+ * others over the bus (ws.js 'shots_eval_wake'). True when the pass was
+ * scheduled here.
+ */
 function wake() {
+  if (wakeHere()) return true;
+  try { require('./ws-bus').publish('shots_eval_wake', null, {}); } catch { /* the runner polls anyway */ }
+  return false;
+}
+
+/** The bus half of wake(): a pass if the runner runs here, never a publish. */
+function wakeHere() {
   if (!on) return false;
   schedule(0);
   return true;
@@ -652,6 +665,7 @@ module.exports = {
   startRunner,
   stopRunner,
   wake,
+  wakeHere,
   inFlightAttemptIds,
   _inFlight: inFlight,
   _resetForTests: resetForTests,

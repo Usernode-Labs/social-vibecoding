@@ -1158,6 +1158,20 @@ async function becomeLeader() {
     log.error('server', 'Workflow loops failed to start', { err: err.message });
   });
 
+  // What leader work keeps in memory and an admin screen reads, written for
+  // the processes that do not lead (services/leader-status.js): a web process
+  // never does (docs/plans/web-and-conductor.md), and a follower of a rollout
+  // reads the same copy.
+  const leaderStatus = require('./src/services/leader-status');
+  leaderStatus.provide(require('./src/services/homeroom-bot').MEMORY_STATUS_KEY,
+    () => require('./src/services/homeroom-bot').memoryStatus());
+  leaderStatus.provide('bench-lane', () => require('./src/services/bench/lane').laneStatus());
+  leaderStatus.provide('staging-reap.automatic', () => stagingReap.readAutomatic());
+  leaderStatus.provide('app-domains.sweep', () => require('./src/services/app-domains').getStatus());
+  leaderStatus.provide(require('./src/services/app-storage-cap').LAST_SWEEP_STATUS_KEY,
+    () => require('./src/services/app-storage-cap').lastSweep());
+  leaderStatus.start({ pool: getPool(config) });
+
   // #2045: reconcile the shared hosted-asset backend once per rollout.
   //
   // It is otherwise only reconciled from deployApplication, which means a
@@ -1801,10 +1815,11 @@ async function start() {
   // for the entire drain, then exited from under them.
   const server = app.listen(config.port, () => {
     log.info('server', `Listening on :${config.port}`);
-    // The merges into Homeroom this build carries are live now that it serves,
-    // and this process is up (a second boot in one pod is a crash).
+    // The merges into Homeroom this build carries are live now that it serves
+    // (a conductor serves nobody: its web processes say so), and this process
+    // is up (a second boot in one pod is a crash).
     const platformRelease = require('./src/services/platform-release');
-    platformRelease.recordRunning(getPool(config));
+    if (processRole.servesRequests(ownRole)) platformRelease.recordRunning(getPool(config));
     platformRelease.recordBoot(getPool(config));
   });
   // Let Envoy retire idle upstream connections at 60s before Node closes them.
@@ -3527,6 +3542,14 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
         });
         await narrateDanglingTail({ config, pool, session, sessionId, broadcastGlobal });
         worker.adoptWarmWorker(sessionId, containerName);
+        return;
+      }
+      // Kept warm by a live process (a web process's, which never leads,
+      // docs/plans/web-and-conductor.md): its own, and its idle eviction's.
+      let warmThere = [];
+      try { warmThere = await processes.holders('warm', sessionId, pool); } catch { warmThere = []; }
+      if (warmThere.some((id) => id !== processes.ID)) {
+        log.info('server', 'A live process keeps this idle worker warm; not adopting it', { containerName, sessionId });
         return;
       }
       log.info('server', 'Adopting warm-idle worker (no in-flight exec)', {
@@ -5339,6 +5362,17 @@ function startIdleEvictionSweeper() {
       if (meta.bootstrapping) continue;
       if (now - meta.lastUsedMs < WORKER_IDLE_EVICTION_MS) continue;
       if (activeWorkersSvc.isSessionBusyElsewhere(meta.sessionId)) continue;
+      // Warm in another process too: one of them evicts it, the one with
+      // the highest id, so two never both let it go (nor both delete it from
+      // under the other); the rest forget it.
+      const alsoWarm = processes.heldElsewhereBy('warm', meta.sessionId);
+      if (alsoWarm.some((id) => id > processes.ID)) {
+        worker.forgetWorker(meta.sessionId);
+        log.info('server', 'Idle warm worker left to another process that keeps it warm', {
+          sessionId: meta.sessionId, containerName: meta.containerName,
+        });
+        continue;
+      }
       try {
         await worker.evictWorker(meta.sessionId);
         log.info('server', 'Idle warm worker evicted', {
@@ -5951,7 +5985,9 @@ function startSessionAutoPauseSweeper(config) {
         // A getPR per imported proposal: background work, held while
         // GitHub's hourly budget is nearly used up (services/github-budget.js).
         if (!githubBudget.budgetAllows('background')) break;
-        if (worker.isInFlight(session.id)) continue;
+        // A turn on any process (a web process runs the turns its routes
+        // start, docs/plans/web-and-conductor.md), not only this one's.
+        if (worker.isInFlight(session.id) || activeWorkersSvc.isSessionBusy(session.id)) continue;
         const last = importedHeadSyncAttempts.get(session.id) || 0;
         if (Date.now() - last < IMPORTED_HEAD_SYNC_COOLDOWN_MS) continue;
         // Stamp BEFORE the getPR (+ possible minutes-long rebuild) so a
@@ -6002,8 +6038,9 @@ function startSessionAutoPauseSweeper(config) {
         for (const session of rows) {
           if (lifecycle.isShuttingDown()) break;
           // A session mid-turn is about to move its own head; measuring it now
-          // records an answer that is wrong before it is written.
-          if (worker.isInFlight(session.id)) continue;
+          // records an answer that is wrong before it is written. Mid-turn on
+          // any process, not only this one.
+          if (worker.isInFlight(session.id) || activeWorkersSvc.isSessionBusy(session.id)) continue;
           const written = await integrationSvc.measure({ pool, session }, { force: true });
           if (written && !written.skipped) measured++;
         }
@@ -6788,6 +6825,8 @@ async function cleanup() {
   // The Homeroom bot's loops and its benchmark lane: nothing new is claimed
   // or dispatched on a process whose pool is about to close. Their turns
   // already running are restart recovery's to finish.
+  // The leader's statuses stop being written: the new leader's replace them.
+  require('./src/services/leader-status').stop();
   try { require('./src/services/homeroom-bot').stop(); } catch (err) {
     log.warn('server', 'Stopping the Homeroom bot failed', { err: err.message });
   }

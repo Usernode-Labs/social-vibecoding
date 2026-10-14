@@ -39,7 +39,37 @@ is one for its whole life, so what a follower could not do had to move:
   it). The SQL console's role has no password: a web process takes the
   leader's word that it was set up.
 - **What the leader keeps in memory and an admin screen reads** is published
-  for the web processes (see "Leader status" below).
+  for the others (`services/leader-status.js`, table `leader_status`): the
+  leader rewrites each status every 10 seconds, a route reads it from memory
+  where the work runs and from the table elsewhere, and a copy nobody rewrote
+  for two minutes is none. The Homeroom bot's loop (its last pass, refusals,
+  what runs, backoffs, the platform fault, the budget pause, the build lane),
+  the bench lane, the preview reaper's automatic pass, the custom-domain
+  sweep and the storage cap's last sweep.
+- **The leader's loops are woken over the bus** from wherever a request
+  landed: the bench lane (`bench_wake`) and the shots eval runner
+  (`shots_eval_wake`), as the bot's wakes already were. A process not running
+  one asks; the one running it passes; nobody passes a wake on.
+- **What one process learns about a repo's issues, the others hear**
+  (`issues_cache`): a close, a reopen or an invalidation leaves every
+  process's open-issues copy, so a list a web process serves is as fresh as
+  the merge or the heal the conductor made.
+- **A DM answer the bot promised to ask again** is held by the process that
+  will ask it (`dm_defer`) until the try has run: a release lets it finish,
+  the leader's resume leaves it alone, and a minute's sweep picks up what a
+  process that died left.
+- **A worker warm in one process** is a marker for the others (`warm`, which
+  no drain waits for): the admin status shows another process's worker as
+  in flight or warm, not as an orphan; adoption at an election leaves it; and
+  when two processes keep the same worker warm, the one with the highest id
+  evicts it and the rest forget it.
+- **A heal or a drift rebuild under way** is held (`app_heal`,
+  `drift_rebuild`), so a request on a web process and the conductor's sweep
+  never start the same one twice.
+- **Sweeps that check a session is not mid-turn** before acting on it (the
+  imported-PR head sync, the proposal measurement) check every process.
+- **A conductor does not say a release is live**: only a process that serves
+  requests records the merges it carries as running.
 
 What already worked across processes (docs/plans/draining-releases.md) is
 what makes the split safe: every process registers what it holds, stops reach
@@ -68,6 +98,18 @@ them, in the chart and outside it; the Service selects
 `social.usernode.io/serves-requests: "true"`, which only the serving Pods
 carry. That label ships with this change; switch the split on in a later
 release, or the Service drops the old Pods before the new ones are Ready.
+
+## Still per process
+
+What a web process shows of work the conductor runs, and the other way
+round, is less detailed than what it shows of its own:
+
+- the GitHub budget page counts the requests of the process that answered;
+- a turn's live phase, spend and estimate show on the process that runs it
+  (elsewhere it is busy, from the registry, without them), and a recovered
+  turn's events reach other processes' tabs over the bus but not their
+  `Last-Event-Id` replay;
+- an admin's preview sweep and the automatic one keep their own job records.
 
 ## Not in this change
 

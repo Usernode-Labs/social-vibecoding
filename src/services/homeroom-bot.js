@@ -600,6 +600,10 @@ let wakeRequested = false;
 // (lastBuildDrain), which run five (13 Oct 2026) first read it as.
 let lastPass = null;
 let passStartedAt = null;
+// The minute sweep for DM answers a process that died had promised
+// (homeroom-bot-mayor.js resumeDeferred).
+let deferResumeTimer = null;
+const DEFER_RESUME_MS = 60 * 1000;
 
 // Failures the platform, not the model, produced: the worker could not be
 // bootstrapped, the bot has no key or model, the ledger refused the turn.
@@ -5183,7 +5187,8 @@ function isLiveLaneSaturated(settings = null, counts = null) {
   return live + (Number(counts?.besides) || 0) >= limit;
 }
 
-async function buildLaneSummary(pool) {
+async function buildLaneSummary(pool, memory = null) {
+  const mem = memory || memoryStatus();
   const { rows } = await pool.query(
     `SELECT COUNT(*) FILTER (WHERE build_at IS NULL AND build_ok IS NULL)::int AS queued,
             COUNT(*) FILTER (WHERE build_at IS NOT NULL AND build_ok IS NULL)::int AS building,
@@ -5200,8 +5205,8 @@ async function buildLaneSummary(pool) {
     built: t.built || 0,
     failed: t.failed || 0,
     costUsd: Number(t.cost_usd) || 0,
-    lane: lastBuildDrain,
-    fault: buildFault ? { error: buildFault.error, retryAt: new Date(buildFault.until).toISOString() } : null,
+    lane: mem.buildLane,
+    fault: mem.buildFault,
   };
 }
 
@@ -9416,6 +9421,17 @@ function start(config) {
     require('./homeroom-bot-mayor').resumeDeferred(getPool(config), config);
   }, FIRST_PASS_DELAY_MS);
   if (typeof resume.unref === 'function') resume.unref();
+  // And every minute after: the web processes answer DMs and never lead
+  // (docs/plans/web-and-conductor.md), so one that died left its promises
+  // with no election to pick them up. What a live process holds is its own.
+  if (!deferResumeTimer) {
+    deferResumeTimer = setInterval(() => {
+      if (refusingNew()) return;
+      const { getPool } = require('../db/pool');
+      require('./homeroom-bot-mayor').resumeDeferred(getPool(config), config, {}, { minAgeSeconds: 60 });
+    }, DEFER_RESUME_MS);
+    if (typeof deferResumeTimer.unref === 'function') deferResumeTimer.unref();
+  }
 }
 
 /**
@@ -9441,6 +9457,8 @@ function stop() {
   stopped = true;
   if (timer) clearTimeout(timer);
   timer = null;
+  if (deferResumeTimer) clearInterval(deferResumeTimer);
+  deferResumeTimer = null;
   buildLaneOn = false;
   if (buildTimer) clearTimeout(buildTimer);
   buildTimer = null;
@@ -9837,30 +9855,28 @@ const QUEUE_SNAPSHOT_SQL = `
  * running rows first, each waiting row with why it waits (queueWait).
  * `depth` keeps its name: it has always been the rows not running.
  */
-async function queueSnapshot(pool, settings = {}, { botId = null, now = Date.now() } = {}) {
+async function queueSnapshot(pool, settings = {}, { botId = null, now = Date.now(), memory = null } = {}) {
   const { rows } = await pool.query(QUEUE_SNAPSHOT_SQL, [
     settings.pausedApps || [], ABANDONED_LIVE_WINDOW_DAYS, SETTLE_MS / 1000,
     botId, QUEUE_LISTED, QUEUE_RUNNING_LISTED,
   ]);
+  const mem = memory || memoryStatus(now);
   const running = rows.filter((q) => q.started_at);
   // The apps whose one session is taken: a read running there (not a
   // follow-up, which runs on its proposal's), from the snapshot and from
-  // this Pod's own record, and the apps backed off after a refusal.
+  // the loop's own record, and the apps backed off after a refusal.
   const busyApps = new Map();
   for (const q of running) if (q.follow_up_session_id == null) busyApps.set(Number(q.app_id), null);
-  for (const e of inFlight.values()) if (!e.followUp && !e.build) busyApps.set(Number(e.appId), null);
-  for (const [appId] of appBackoff) {
-    const b = backoffFor(appId, now);
-    if (b) busyApps.set(Number(appId), b.until);
-  }
-  // Live work running per person: the reads running, and the builds this
-  // Pod runs (they run from their runs, not the queue).
+  for (const e of mem.inFlight) if (!e.followUp && !e.build) busyApps.set(Number(e.appId), null);
+  for (const [appId, until] of mem.backoff) if (Number(until) > now) busyApps.set(Number(appId), Number(until));
+  // Live work running per person: the reads running, and the builds the
+  // loop runs (they run from their runs, not the queue).
   const personCounts = new Map();
   const bump = (key) => personCounts.set(key, (personCounts.get(key) || 0) + 1);
   for (const q of running) bump(personKeyOf(q));
-  for (const e of inFlight.values()) if (e.build && e.lane === 'live' && e.person) bump(e.person);
+  for (const e of mem.inFlight) if (e.build && e.lane === 'live' && e.person) bump(e.person);
   const ctx = {
-    fault: faultBackoff(now), now, off: settings.mode === 'off', budgetUntil: budgetPausedUntil,
+    fault: mem.fault, now, off: settings.mode === 'off', budgetUntil: mem.budgetUntil,
     busyApps, personCounts, perPerson: settings.perPerson || DEFAULTS.perPerson,
   };
   const items = rows.map(({ waiting_total: _w, running_total: _r, ...q }) => ({ ...q, waiting: queueWait(q, ctx) }));
@@ -9873,10 +9889,61 @@ async function queueSnapshot(pool, settings = {}, { botId = null, now = Date.now
   };
 }
 
+// What the loop keeps in memory and the console and get_homeroom_bot show,
+// as one plain object: the last pass and its refusals, what runs, the apps
+// backed off, the platform fault, the budget pause and the build lane's
+// last drain. The process running the loop publishes it
+// (services/leader-status.js); one that does not (a web process, which never
+// leads: docs/plans/web-and-conductor.md) reads that copy (loopMemory).
+const MEMORY_STATUS_KEY = 'homeroom-bot';
+
+function memoryStatus(now = Date.now()) {
+  const fault = faultBackoff(now);
+  return {
+    // A refusal shows while its app is still backed off (#3624 stage 2:
+    // work ends between passes now, so the list is pruned here).
+    loop: lastPass ? {
+      ...lastPass,
+      refusals: lastRefusals.filter((r) => !r.appId || backoffFor(r.appId, now))
+        .map((r) => (r.appId && backoffFor(r.appId, now) ? { ...r, retryInMs: Math.max(0, appBackoff.get(Number(r.appId)).until - now) } : r)),
+      // The pass running now, if one is: a long one is a sweep.
+      runningSince: passStartedAt,
+    } : lastPass,
+    inFlight: [...inFlight.values()].map((e) => ({
+      appId: Number(e.appId), followUp: !!e.followUp, build: !!e.build, lane: e.lane || null, person: e.person || null,
+    })),
+    backoff: [...appBackoff.keys()].map((appId) => [Number(appId), backoffFor(appId, now)?.until || 0])
+      .filter(([, until]) => until > now),
+    fault: fault ? { attempts: fault.attempts, until: fault.until, error: fault.error, at: fault.at } : null,
+    budgetUntil: budgetPausedUntil,
+    buildLane: lastBuildDrain,
+    buildFault: buildFault ? { error: buildFault.error, retryAt: new Date(buildFault.until).toISOString() } : null,
+  };
+}
+
+/** Whether the loop runs in this process (start() and not stop()). */
+function runsHere() {
+  return !!loopConfig && !stopped;
+}
+
+/**
+ * The loop's memory wherever it runs: this process's own when the loop runs
+ * here, else the copy its process published, else this process's (empty)
+ * own, which is what a follower always showed.
+ */
+async function loopMemory(pool, now = Date.now()) {
+  if (!runsHere()) {
+    const published = await require('./leader-status').read(MEMORY_STATUS_KEY, pool);
+    if (published && Array.isArray(published.inFlight) && Array.isArray(published.backoff)) return published;
+  }
+  return memoryStatus(now);
+}
+
 async function adminPayload(pool, config, {
   app = null, verdict = null, before = null, limit = RUNS_PAGE, budgetOnly = false,
 } = {}) {
   const settings = await readSettings(pool);
+  const memory = await loopMemory(pool);
   const limits = require('./limits');
   const managedOpenRouter = require('./openrouter-managed-keys');
 
@@ -9952,7 +10019,7 @@ async function adminPayload(pool, config, {
   // run, and the rows listed, read by one statement so the counts and the
   // lists describe the same set. #4533 and after: why each one that is not
   // running waits, and until when.
-  const queue = await queueSnapshot(pool, settings, { botId: botRow?.id ?? null });
+  const queue = await queueSnapshot(pool, settings, { botId: botRow?.id ?? null, memory });
   // Running now and Waiting count builds too: they run from their runs, not
   // from the queue, and were left out of both while the bot was busy.
   const builds = await buildsNow(pool);
@@ -9981,15 +10048,7 @@ async function adminPayload(pool, config, {
     modes: MODES,
     defaultModel: config.openrouterDefaultCodexModel || null,
     bot,
-    // A refusal shows while its app is still backed off (#3624 stage 2:
-    // work ends between passes now, so the list is pruned here).
-    loop: lastPass ? {
-      ...lastPass,
-      refusals: lastRefusals.filter((r) => !r.appId || backoffFor(r.appId))
-        .map((r) => (r.appId && backoffFor(r.appId) ? { ...r, retryInMs: Math.max(0, appBackoff.get(r.appId).until - Date.now()) } : r)),
-      // The pass running now, if one is: a long one is a sweep.
-      runningSince: passStartedAt,
-    } : lastPass,
+    loop: memory.loop,
     totals,
     queue: { ...queue, buildsWaiting: builds.waiting },
     runs: runRows.map((r) => ({
@@ -10007,7 +10066,7 @@ async function adminPayload(pool, config, {
     // (13 Oct 2026) the lane's figures left at 0 while one built. The live
     // build loop's own last pass is the loop's status (`loop`), which the
     // connector carries as live.lastPass (bench/connector-data.js, #4993).
-    builds: { ...await buildLaneSummary(pool), live: { building: builds.building.length, waiting: builds.waiting } },
+    builds: { ...await buildLaneSummary(pool, memory), live: { building: builds.building.length, waiting: builds.waiting } },
     mentionOptOuts: await mentionOptOutList(pool),
     // #3624 stage 2: what runs now, and what the DM's answers cost.
     workingNow: [...await workingNow(pool, settings), ...builds.building],
@@ -10317,6 +10376,9 @@ module.exports = {
   validateSettingsPatch,
   parseSettings,
   adminPayload,
+  memoryStatus,
+  loopMemory,
+  MEMORY_STATUS_KEY,
   iterateRunsForExport,
   exportRow,
   EXPORT_COLUMNS,
@@ -10569,6 +10631,7 @@ module.exports = {
     passStartedAt = null; liveDispatchRunning = false; liveDispatchAgain = false; liveDispatchDone = Promise.resolve();
     liveKick = null; liveKickSeams = {};
     if (timer) clearTimeout(timer);
+    if (deferResumeTimer) clearInterval(deferResumeTimer); deferResumeTimer = null;
     timer = null; loopConfig = null; pendingApps.clear(); refreshAllRequested = false; wakeRequested = false;
     buildsInFlight.clear(); buildLaneOn = false; buildDrainRunning = false; buildDrainAgain = false;
     buildFault = null; lastBuildDrain = null;

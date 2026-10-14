@@ -2129,13 +2129,19 @@ function defaultSchedule(work, ms) {
   return handle;
 }
 
-/** Ask the turn for `message` again, try `attempt`, after its delay. Never throws. */
+/**
+ * Ask the turn for `message` again, try `attempt`, after its delay. Never
+ * throws. The process holds the message until that try has run
+ * (services/processes.js 'dm_defer'): resumeDeferred elsewhere leaves it
+ * alone, and a release lets this process ask it before it exits.
+ */
 function scheduleDeferred(pool, config, args, attempt) {
   const schedule = args.deps?.schedule || defaultSchedule;
+  const release = args.message?.id != null ? require('./processes').hold('dm_defer', args.message.id) : () => {};
   schedule(() => deferredTurn(pool, config, args, attempt).catch((err) => {
     log.warn('homeroom-bot-mayor', 'A DM answer asked again failed', { userId: args.user?.id, attempt, err: err.message });
     return null;
-  }), DEFER_DELAYS_MS[attempt - 1]);
+  }).finally(release), DEFER_DELAYS_MS[attempt - 1]);
 }
 
 /**
@@ -2168,19 +2174,23 @@ async function deferredTurn(pool, config, { bot, user, conversationId, message, 
  * After a restart: the answers a process that has gone was to ask again. A
  * message whose newest turn said it would answer later ('deferred', or a
  * plain answer marked `later`) and has had fewer than every try is asked
- * again, soon. Called once by the leader as the bot starts
- * (homeroom-bot.js start). Never throws; resolves how many it picked up.
+ * again, soon, unless a live process still holds it (scheduleDeferred: a web
+ * process, which answers DMs and never leads, docs/plans/web-and-conductor.md,
+ * or the replaced leader finishing its work). Called by the leader as the
+ * bot starts (homeroom-bot.js start), and every minute after for what a
+ * process that died left (`minAgeSeconds`: a turn just written is not yet
+ * held). Never throws; resolves how many it picked up.
  */
-async function resumeDeferred(pool, config, deps = {}) {
+async function resumeDeferred(pool, config, deps = {}, { minAgeSeconds = 0 } = {}) {
   try {
     const bot = await dmModule(deps).botAccount(pool);
     if (!bot) return 0;
-    const { rows } = await pool.query(
+    const { rows: found } = await pool.query(
       `SELECT t.message_id, t.conversation_id, t.tries, u.id AS user_id, u.username,
               u.is_synthetic, u.has_platform_access, u.is_admin, u.private_member_since,
               m.content, m.reply_to_id
          FROM (
-           SELECT DISTINCT ON (message_id) message_id, conversation_id, user_id, fallback,
+           SELECT DISTINCT ON (message_id) message_id, conversation_id, user_id, fallback, created_at,
                   COUNT(*) OVER (PARTITION BY message_id)::int AS tries
              FROM homeroom_bot_dm_turns
             WHERE message_id IS NOT NULL AND created_at > NOW() - INTERVAL '20 minutes'
@@ -2188,9 +2198,19 @@ async function resumeDeferred(pool, config, deps = {}) {
          ) t
          JOIN users u ON u.id = t.user_id
          JOIN conversation_messages m ON m.id = t.message_id AND m.deleted_at IS NULL
-        WHERE t.fallback IN ('deferred', 'plain_later') AND t.tries <= $1`,
-      [DEFER_DELAYS_MS.length],
+        WHERE t.fallback IN ('deferred', 'plain_later') AND t.tries <= $1
+          AND t.created_at < NOW() - make_interval(secs => $2)`,
+      [DEFER_DELAYS_MS.length, Math.max(0, Number(minAgeSeconds) || 0)],
     );
+    const processes = deps.processes || require('./processes');
+    const rows = [];
+    for (const row of found) {
+      if (processes.heldHere('dm_defer', row.message_id)) continue;
+      // Exact, not the mirror: a duplicate answer is what this prevents.
+      let holders = [];
+      try { holders = await processes.holders('dm_defer', row.message_id, pool); } catch { holders = []; }
+      if (!holders.length) rows.push(row);
+    }
     for (const row of rows) {
       // What dm.hasBot reads about the person (deferredTurn checks it), as the
       // auth middleware builds it: with only an id and a name, every answer a
@@ -4008,6 +4028,7 @@ module.exports = {
   commentOnRequest,
   startRequest,
   resumeDeferred,
+  scheduleDeferred,
   deferredTurn,
   // #11 (WP3)
   withdrawGate,

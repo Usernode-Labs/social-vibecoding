@@ -35,6 +35,12 @@ function standsForLeader(role) {
   return role !== 'web';
 }
 
+// Whether a Service sends this process people's requests: what a release
+// makes live is what these run (platform-release.js recordRunning).
+function servesRequests(role) {
+  return role !== 'conductor';
+}
+
 // The roles that take over what a process of `role` does when a release
 // replaces it, and that count among its successors and its fellow drainers
 // (services/processes.js servingOthers, newerDraining). What a release must
@@ -52,4 +58,4 @@ function successorRoles(role) {
   return SUCCESSORS[role] || SUCCESSORS.all;
 }
 
-module.exports = { ROLES, processRole, standsForLeader, successorRoles };
+module.exports = { ROLES, processRole, standsForLeader, servesRequests, successorRoles };
