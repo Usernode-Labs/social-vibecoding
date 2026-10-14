@@ -150,6 +150,7 @@ const leaderTimers = require('./src/services/leader-timers');
 const processes = require('./src/services/processes');
 const drain = require('./src/services/drain');
 const processRole = require('./src/services/process-role');
+const { singleFlight } = require('./src/services/single-flight');
 const inflightWork = require('./src/services/inflight-work');
 const inflightRequests = require('./src/middleware/inflight-requests');
 const chainPoller = require('./src/services/chain-poller');
@@ -5548,8 +5549,9 @@ function startSessionAutoPauseSweeper(config) {
   // it), and waiting for one held a release's drain to its 60s deadline on
   // 14 Oct 2026. Its long loops stop at their next row once shutdown begins,
   // and the proposal measurement, whose write the closing pool cut, is held
-  // on its own below.
-  sessionSweeperHandle = setInterval(async () => {
+  // on its own below. One pass at a time (services/single-flight.js): a pass
+  // minutes into a staging heal had later ticks start beside it.
+  sessionSweeperHandle = setInterval(singleFlight('session-sweeper', async () => {
     if (lifecycle.isShuttingDown()) return;
 
     // Pass 1: auto-pause idle 'active' sessions (worker + slot only;
@@ -6161,7 +6163,7 @@ function startSessionAutoPauseSweeper(config) {
     } catch (err) {
       log.warn('server', 'Connection-pressure sweep failed', { err: err.message });
     }
-  }, config.sessionSweepIntervalMs).unref();
+  }), config.sessionSweepIntervalMs).unref();
 }
 
 let governanceApplyTickerHandle = null;
