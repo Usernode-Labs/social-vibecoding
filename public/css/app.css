@@ -17570,6 +17570,12 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 .dev-ws-item[data-ws-open] > .dev-ws-item-caption {
   overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none;
 }
+/* #5039: a diagram's picture is words too, so its caption sits below it in
+   the flow, still clear of the rail. Open ("more") it keeps the overlay. */
+.dev-ws-item:not([data-ws-open]):has(> .dev-ws-diagram) > .dev-ws-item-caption {
+  position: relative; left: auto; right: auto; bottom: auto;
+  flex: none; margin: 12px 80px 16px 14px;
+}
 .dev-ws-item-by {
   display: flex; align-items: center; gap: 8px; margin: 0; min-width: 0;
   font-size: 13px; color: var(--text-muted);
@@ -17628,6 +17634,15 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
    when the words run long), in a larger size, and the summary runs to eight
    lines before "more" is offered. No art stands in for the picture. */
 .dev-ws-item[data-ws-picture="none"] > .dev-ws-item-caption { top: 56px; }
+/* #5039: the caption's words sit on a soft panel of the card's own dark
+   colour, so they never lie on the picture's own words. Every pictured card
+   gets it; a pictureless card, where the words fill the card and nothing
+   sits behind them, does not. */
+.dev-ws-item:not([data-ws-picture="none"]) > .dev-ws-item-caption {
+  padding: 10px 12px; border-radius: 16px;
+  background: rgba(20, 23, 31, .55);
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+}
 .dev-ws-item[data-ws-picture="none"] > .dev-ws-item-caption > :first-child { margin-top: auto; }
 .dev-ws-item[data-ws-picture="none"] > .dev-ws-item-caption > :last-child { margin-bottom: auto; }
 .dev-ws-item[data-ws-picture="none"] .dev-ws-item-title { font-size: 22px; line-height: 1.2; -webkit-line-clamp: 4; }
@@ -18155,7 +18170,7 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
   color: var(--text-primary); overflow-wrap: anywhere;
 }
 .dev-ws-item > .dev-ws-diagram {
-  flex: 1 1 auto; min-height: 0; margin: 16px 0 0; padding: 0 24px 16px; overflow: hidden;
+  flex: 1 1 auto; min-height: 0; margin: 16px 0 0; padding: 0 80px 16px 24px; overflow: hidden;
   gap: 14px; border-radius: 0; background: none; box-shadow: none;
 }
 .dev-ws-item > .dev-ws-diagram .dev-ws-diagram-src { margin: 2px 0 0; font-size: 12.5px; }
@@ -18220,8 +18235,15 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
   display: grid; grid-template-columns: 84px minmax(0, 1fr) 64px; gap: 10px; align-items: center; opacity: .45;
 }
 .dev-ws-touches-row[data-touched] { opacity: 1; }
-.dev-ws-touches-row > .dev-ws-diagram-what { font-size: 15px; }
+.dev-ws-touches-row > .dev-ws-diagram-what { font-size: 15px; overflow-wrap: normal; }
 .dev-ws-touches-n { font-size: 13px; color: var(--text-muted); text-align: right; white-space: nowrap; }
+/* #5039: where the browser can subgrid, the name and count columns are as
+   wide as the longest entry in any row, so the bars stay aligned and an
+   area's name is never cut ("Database" whole, whatever the text size). */
+@supports (grid-template-columns: subgrid) {
+  .dev-ws-touches > .dev-ws-diagram-rows { display: grid; grid-template-columns: max-content minmax(0, 1fr) max-content; }
+  .dev-ws-touches-row { grid-column: 1 / -1; grid-template-columns: subgrid; }
+}
 /* Mermaid: the library's SVG, scaled to the sheet. */
 .dev-ws-diagram-svg { display: flex; justify-content: center; min-height: 0; }
 .dev-ws-diagram-svg > svg { display: block; max-width: 100%; height: auto; max-height: 360px; }
@@ -19850,6 +19872,8 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
   .dev-ws-needs[data-ws-end] .dev-ws-needs-scroll { box-shadow: none; }
   .dev-ws-item-top { margin: 26px 16px 0; }
   .dev-ws-item-caption { left: 18px; right: 18px; bottom: 20px; gap: 8px; }
+  /* #5039: beside the card, the caption below a diagram needs no rail lane. */
+  .dev-ws-item:not([data-ws-open]):has(> .dev-ws-diagram) > .dev-ws-item-caption { margin: 12px 18px 20px; }
   .dev-ws-item-avatar { width: 32px; height: 32px; font-size: 13px; }
   .dev-ws-item-by b { font-size: 15px; }
   .dev-ws-item-title { font-size: 21px; line-height: 1.2; }
