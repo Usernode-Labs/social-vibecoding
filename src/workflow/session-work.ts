@@ -7,10 +7,12 @@
 //   a shots run              shot_runs, heard from lately (LIVE_SHOTS_RUN)
 //   a preview build or a     the preview machine's build or run item,
 //     checks run               while outstanding (alive while its lease is)
-//   a turn, or anything else a platform process's hold on the session
-//     an old flow does (a      (process_holds, kind 'session': services/
-//     sync, a dispatch, an     active-workers.js), while that process
-//     upload)                  beats (services/processes.js)
+//   anything else an old     the preview machine's instance's operations,
+//     flow does (a sync,       recorded by services/active-workers.js, each
+//     a dispatch, an upload)   counted while the process that holds it is
+//                              alive (rules/presence.ts)
+
+import { holderAliveSql } from './rules/presence.ts';
 
 // A shots run still using its proposal's worker, read from its own row
 // (`r`, shot_runs): not finished, and heard from lately. A live run renews
@@ -39,18 +41,12 @@ export function previewWorkingSql(sessionId: string): string {
                      AND p.status IN ('queued', 'running', 'reported'))`;
 }
 
-// A platform process that has not beaten (platform_processes.heartbeat_at)
-// for this long is gone, whatever it held. services/processes.js reads it
-// from here.
-export const PROCESS_LIVE_SECONDS = 45;
-
-// True while a live platform process holds the session `sessionId` (an SQL
-// expression): a turn or an operation of an old flow runs on it there. A
-// hold is written as its work starts; with the preview machine on, the work
-// waits for that write (services/active-workers.js), so a decision in
-// another process sees it.
-export function sessionHeldSql(sessionId: string): string {
-  return `EXISTS (SELECT 1 FROM process_holds h JOIN platform_processes p ON p.id = h.process_id
-                   WHERE h.kind = 'session' AND h.ref = (${sessionId})::text
-                     AND p.heartbeat_at > NOW() - make_interval(secs => ${PROCESS_LIVE_SECONDS}))`;
+// True while an operation recorded on that instance is held by a live
+// process.
+export function operationsLiveSql(sessionId: string): string {
+  return `EXISTS (SELECT 1 FROM wf_instances p,
+                         jsonb_array_elements(COALESCE(p.data->'operations', '[]'::jsonb)) AS o
+                   WHERE p.machine = 'preview' AND p.key = 'session:' || ${sessionId}
+                     AND p.state NOT IN ('detached', 'retired')
+                     AND ${holderAliveSql(`(o->>'holder')`)})`;
 }

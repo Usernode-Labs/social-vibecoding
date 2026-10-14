@@ -10,10 +10,12 @@
 // verdict is for are separate facts here; the legacy columns are written
 // from them, so every reader keeps working.
 //
-// Who else works on the session is read, not recorded here: old flows'
-// own durable records and the platform processes' holds on it
-// (session-work.ts). Its own build or run is its work item, alive while
-// that item's lease is.
+// The instance is also the session's durable record of who is working on
+// it: its own build or run while it is preparing or checking (alive while
+// its work's lease is), and the operations of old flows that keep no record
+// of their own (a sync with main, a dispatch, an upload), recorded by
+// services/active-workers.js and counted while the process holding each is
+// alive (rules/presence.ts, session-work.ts).
 //
 // workflow-foundation's design-previews-and-checks.md is the design.
 
@@ -75,6 +77,7 @@ export interface Run { key: string; n: number; head: string }
 // creating things until its handler stops).
 export interface Retiring extends Attempt { key: string; cancelled?: boolean }
 // What an old flow is doing on the session, and which process does it.
+export interface Operation { id: string; kind: string; holder: string; since: string }
 
 export interface Data {
   sessionId: number;
@@ -98,6 +101,7 @@ export interface Data {
   exit: { reason: string; terminal: boolean; key: string; attempts: Attempt[]; failed?: string } | null;
   pending: { head: string; trigger: string | null } | null;  // a revision that arrived during an idle retirement
   closedAt: string | null;
+  operations: Operation[];
 }
 
 const STATES = ['idle', 'preparing', 'checking', 'deferred', 'settled', 'failed', 'retiring', 'retired', 'detached'] as const;
@@ -165,6 +169,13 @@ const EVENTS = {
     return { attempt: p.attempt as number, detail: optWord(p?.detail) };
   },
   RetireRequested: (p: any) => ({ reason: word(p?.reason, 'reason'), terminal: p?.terminal === true }),
+  // An old flow starts or ends work on the session that keeps no record of
+  // its own (services/active-workers.js): recorded, never refused.
+  OperationStarted: (p: any) => ({
+    sessionId: int(p?.sessionId, 'sessionId'), id: text(p?.id, 'id', 80), kind: word(p?.kind, 'kind'),
+    holder: text(p?.holder, 'holder', 200),
+  }),
+  OperationEnded: (p: any) => ({ id: text(p?.id, 'id', 80) }),
   Detach: () => ({}),
   AdminRetry: () => ({}),
   AdminRetire: () => ({}),
@@ -387,6 +398,7 @@ function adopt(e: Event<any>, f: Facts, prior: Data | null): Data {
     head: serving?.head ?? s.checks.commitSha, trigger: null, last: prior?.last ?? 0,
     preparing: null, serving, run: null, verdict: null, failure: null, platformFault: false, streak: 0,
     firstFailureAt: null, episode: prior?.episode ?? 0, retiring: [], exit: null, pending: null, closedAt: null,
+    operations: prior?.operations ?? [],
   };
 }
 
@@ -458,10 +470,11 @@ function sameHead(s: Live, head: string): boolean {
 }
 
 // Someone is working on the session (an old flow's own durable record, or
-// a live platform process's hold on it): idle and pressure retirement wait.
-function worked(f: Facts): boolean {
+// an operation a live process holds): idle and pressure retirement wait.
+function worked(s: Live, f: Facts): boolean {
   const x = f.session;
-  return !!x && (x.turnRunning || x.localTurnRunning || x.shotsRunning || x.held);
+  if (x && (x.turnRunning || x.localTurnRunning || x.shotsRunning)) return true;
+  return s.data.operations.some((o) => f.alive.has(o.holder));
 }
 
 // ── Transitions ─────────────────────────────────────────────────────────
@@ -589,7 +602,7 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
       if (e.payload.terminal) return ok();
       if (s.name === 'preparing' || s.name === 'checking') return reject('busy');
       if (f.session && ['promoted', 'merging'].includes(f.session.status)) return reject('under_review');
-      if (worked(f)) return reject('worked_on');
+      if (worked(s, f)) return reject('worked_on');
       return ok();
     },
     to: (s, e, f, ctx) => toRetiring(s, e.payload.reason, e.payload.terminal, ctx, deps),
@@ -605,8 +618,8 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
         ...d.retiring.map((a) => ({ kind: WORK.retireAttempt, key: a.key })),
         ...(d.exit ? [{ kind: WORK.retire, key: d.exit.key }] : []),
       ];
-      return step({ name: 'detached', data: { ...d, preparing: null, run: null, retiring: [], exit: null, pending: null },
-        cancel, timer: null });
+      return step({ name: 'detached', data: { ...d, preparing: null, run: null, retiring: [], exit: null, pending: null,
+        operations: [] }, cancel, timer: null });
     },
   };
 
@@ -632,6 +645,32 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
       : ran(s, e, 'ended', f, ctx, deps)),
   };
 
+  // An old flow's operation: recorded on any instance (one that does not
+  // exist yet starts from its row), and a record whose process has died is
+  // dropped whenever one is.
+  const opStarted: Entry = {
+    guard: (s, e, f, ctx) => {
+      if (ctx.key !== sessionKey(e.payload.sessionId)) return reject('key_mismatch');
+      return (s.name === NONE || s.name === 'detached') && (!f.session || !f.app) ? reject('no_session') : ok();
+    },
+    to: (s, e, f, ctx) => {
+      // An operation is recorded only while the flag is on: a session handed
+      // back while it was off starts again from its row, as a revision would.
+      const live: Live = s.name === NONE || s.name === 'detached' ? standing(adopt(e, f, priorOf(s)), f) : s;
+      const p = e.payload;
+      const operations = [
+        ...live.data.operations.filter((o) => o.id !== p.id && f.alive.has(o.holder)),
+        { id: p.id, kind: p.kind, holder: p.holder, since: ctx.now.toISOString() },
+      ];
+      return step({ name: live.name, data: { ...live.data, operations } });
+    },
+  };
+  const opEnded: Entry = {
+    guard: (s, e) => (s.data.operations.some((o: Operation) => o.id === e.payload.id) ? ok() : reject('no_such_operation')),
+    to: (s, e, f) => step({ name: s.name, data: { ...s.data,
+      operations: s.data.operations.filter((o: Operation) => o.id !== e.payload.id && f.alive.has(o.holder)) } }),
+  };
+  const ops = { OperationStarted: opStarted, OperationEnded: opEnded };
 
   const works = (name: Name): Record<string, Entry> => ({
     WorkSucceeded: workResult(name, 'succeeded', deps),
@@ -647,9 +686,10 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
       RevisionSubmitted: revision,
       PreviewRequested: request,
       ChecksSkipped: skipped,
+      OperationStarted: opStarted,
     },
     idle: {
-      ...created,
+      ...created, ...ops,
       ChecksSkipped: skipped,
       RecheckRequested: recheck,
       ConflictResolved: notHere('not_deferred'),
@@ -661,7 +701,7 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
       ...works('idle'),
     },
     preparing: {
-      ...created,
+      ...created, ...ops,
       ChecksSkipped: notHere('in_progress'),
       RecheckRequested: notHere('run_outstanding'),
       ConflictResolved: notHere('not_deferred'),
@@ -673,7 +713,7 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
       ...works('preparing'),
     },
     checking: {
-      ...created,
+      ...created, ...ops,
       ChecksSkipped: notHere('in_progress'),
       RecheckRequested: replacing,
       ConflictResolved: notHere('not_deferred'),
@@ -685,7 +725,7 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
       ...works('checking'),
     },
     deferred: {
-      ...created,
+      ...created, ...ops,
       ChecksSkipped: skipped,
       RecheckRequested: recheck,
       ConflictResolved: {
@@ -700,7 +740,7 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
       ...works('deferred'),
     },
     settled: {
-      ...created,
+      ...created, ...ops,
       ChecksSkipped: skipped,
       RecheckRequested: recheck,
       ConflictResolved: notHere('not_deferred'),
@@ -712,7 +752,7 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
       ...works('settled'),
     },
     failed: {
-      ...created,
+      ...created, ...ops,
       ChecksSkipped: skipped,
       RecheckRequested: recheck,
       ConflictResolved: notHere('not_deferred'),
@@ -733,6 +773,7 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
         },
         to: (s, e) => step({ name: 'retiring', data: { ...s.data, pending: { head: e.payload.head, trigger: e.payload.trigger } } }),
       },
+      ...ops,
       PreviewRequested: notHere('retiring'),
       ChecksSkipped: notHere('retiring'),
       RecheckRequested: notHere('retiring'),
@@ -752,13 +793,15 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
     },
     retired: {
       '*': notHere('retired'),
-      ...created,
+      ...created, ...ops,
       ChecksSkipped: skipped,
       ...works('retired'),
     },
     detached: {
       ...created,
       ChecksSkipped: skipped,
+      OperationStarted: opStarted,
+      OperationEnded: notHere('detached'),
       RecheckRequested: notHere('detached'),
       ConflictResolved: notHere('detached'),
       ChecksCleared: notHere('detached'),
@@ -1013,13 +1056,16 @@ export function preview(deps: Deps): Machine<PState, Facts> {
     name: MACHINE,
     version: 1,
     events: EVENTS,
-    create: ['RevisionSubmitted', 'PreviewRequested', 'ChecksSkipped'],
+    create: ['RevisionSubmitted', 'PreviewRequested', 'ChecksSkipped', 'OperationStarted'],
     terminal: ['retired'],
     decode: (row) => ({ name: row.state, data: row.data } as PState),
     facts: (tx, state, event) => {
       const id = state.name === NONE ? Number((event.payload as any)?.sessionId) : (state.data as Data).sessionId;
-      if (!Number.isInteger(id) || id <= 0) return Promise.resolve({ session: null, app: null });
-      return readFacts(tx, id);
+      if (!Number.isInteger(id) || id <= 0) return Promise.resolve({ session: null, app: null, alive: new Set<string>() });
+      const operation = event.type === 'OperationStarted' || event.type === 'OperationEnded';
+      const holders = state.name === NONE ? [] : (state.data as Data).operations.map((o) => o.holder);
+      // An operation's own record locks nothing: it only notes who works here.
+      return readFacts(tx, id, { lock: !operation, holders: [...new Set(holders)] });
     },
     authorize: {
       RevisionSubmitted: produced,
@@ -1030,6 +1076,8 @@ export function preview(deps: Deps): Machine<PState, Facts> {
       ChecksCleared: produced,
       PreviewLost: system,
       RetireRequested: system,
+      OperationStarted: system,
+      OperationEnded: system,
       Detach: system,
       AdminRetry: admin,
       AdminRetire: admin,

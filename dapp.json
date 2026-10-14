@@ -315,7 +315,7 @@
       "key": "WF_PREVIEWS_ENABLED",
       "group": "Proposals & retention",
       "default": "false",
-      "description": "The workflow preview machine (docs/workflows.md). true: a proposal's preview and required checks are durable work, one build and one run at a time, and a turn or an operation on a session goes on only once its hold is written. false (default): the old paths run. Off at boot hands its sessions back to them. On Kubernetes, set by the Helm value platform.workflowPreviewsEnabled."
+      "description": "The workflow preview machine (docs/workflows.md). true: a proposal's preview and required checks are durable work, one build and one run at a time, and who works on a session is recorded. false (default): the old paths run. Off at boot hands its sessions back to them. On Kubernetes, set by the Helm value platform.workflowPreviewsEnabled."
     },
     {
       "key": "WF_SLOTS",

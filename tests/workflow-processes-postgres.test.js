@@ -47,11 +47,9 @@ test('workflow machines in a process of their own, and through its crash', { tim
   let workflow = null;
   let listener = null;
   let platform = null;
-  let processes = null;
   t.after(async () => {
     await workflow?.stop();
     await platform?.stopWorkflow();
-    await processes?.stop();
     await listener?.end();
     await pool.end();
     await admin.query(`DROP DATABASE ${dbName} WITH (FORCE)`);
@@ -78,10 +76,6 @@ test('workflow machines in a process of their own, and through its crash', { tim
   const stub = (p, exports) => { const id = require.resolve(p); require.cache[id] = { id, filename: id, loaded: true, exports, paths: [] }; };
   stub('../src/db/pool', { getPool: () => pool });
   platform = require('../src/workflow/platform.ts');
-  // Its platform-process registry, started as server.js starts it: the
-  // child's decisions read what this process's turns and operations hold.
-  processes = require('../src/services/processes');
-  await processes.start({ pool });
   // What browsers hear, as every web process does.
   const heard = [];
   listener = new Client({ connectionString: databaseUrl });
@@ -339,14 +333,11 @@ test('workflow machines in a process of their own, and through its crash', { tim
     await pool.query(`INSERT INTO wf_test_effects (kind, data) VALUES ('github.prCommits', $1)`,
       [JSON.stringify({ number: carrier.pr_number, shas: [SHA('8')] })]);
     // A sync with main starting its worker here: no active_turn yet, head
-    // unchanged. This process holds the session, and the hold is written
-    // before the work goes on.
-    const held = async () => (await pool.query(
-      `SELECT count(*)::int AS n FROM process_holds WHERE kind = 'session' AND ref = $1`, [String(busy.id)])).rows[0].n;
+    // unchanged. The preview machine records it, held by this process.
     const done = require('../src/services/active-workers').beginSessionOperation(busy.id);
     try {
       await done.recorded;
-      assert.equal(await held(), 1, 'written by the time the caller goes on');
+      assert.deepEqual((await instance('preview', `session:${busy.id}`)).data.operations.map((o) => o.kind), ['operation']);
       await platform.mergeConfirmed({ sessionId: carrier.id, appId: a.id, mergeSha: SHA('9'), force: false, tally: { yes: 1, required: 1, active: 1 } });
       await procs.until(() => settled('merge-followups', mergeKey(carrier), 'included.find'), 'the search for carried changes');
       const read = async () => (await pool.query('SELECT status, included_in_session_id FROM chat_sessions WHERE id = $1', [busy.id])).rows[0];
@@ -354,12 +345,12 @@ test('workflow machines in a process of their own, and through its crash', { tim
       assert.deepEqual({ ...await read() }, { status: 'promoted', included_in_session_id: null }, 'left as it is while busy');
       const refusal = (await pool.query(
         `SELECT result, reason FROM wf_events WHERE machine = 'merge-followups' AND key = $1 AND type = 'Included'`, [mergeKey(busy)])).rows[0];
-      assert.deepEqual({ ...refusal }, { result: 'rejected', reason: 'worked_on' }, 'refused by the change\'s own guard, from the hold');
+      assert.deepEqual({ ...refusal }, { result: 'rejected', reason: 'worked_on' }, 'refused by the change\'s own guard, from the record');
     } finally {
       done();
     }
-    // Once it ends, the hold goes.
-    await procs.until(async () => (await held()) === 0, 'the operation to end');
+    // Once it ends, the record goes.
+    await procs.until(async () => (await instance('preview', `session:${busy.id}`)).data.operations.length === 0, 'the operation to end');
   });
 
   // ── Previews: who reads a build under way, and a build through a crash ─

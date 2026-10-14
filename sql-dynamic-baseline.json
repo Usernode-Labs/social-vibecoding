@@ -1727,16 +1727,16 @@
     {
       "source": "src/workflow/merge-followups/facts.ts",
       "kind": "structural-template",
-      "fingerprint": "3e1f8f8353b3a8d76270",
+      "fingerprint": "c914efdf0597f6339694",
       "count": 1,
-      "preview": "`SELECT cs.id, cs.app_id, cs.status, cs.user_id, cs.pr_number, cs.pr_title, cs.linked_issues, cs.agent_session_id, cs.active_turn IS NOT NULL AS active_turn, cs"
+      "preview": "`SELECT r.id FROM shot_runs r WHERE r.session_id = $1 AND ${LIVE_SHOTS_RUN} ORDER BY r.created_at DESC LIMIT 1`"
     },
     {
       "source": "src/workflow/merge-followups/facts.ts",
       "kind": "structural-template",
-      "fingerprint": "c914efdf0597f6339694",
+      "fingerprint": "fa05f9e0f0982408d8c9",
       "count": 1,
-      "preview": "`SELECT r.id FROM shot_runs r WHERE r.session_id = $1 AND ${LIVE_SHOTS_RUN} ORDER BY r.created_at DESC LIMIT 1`"
+      "preview": "`SELECT cs.id, cs.app_id, cs.status, cs.user_id, cs.pr_number, cs.pr_title, cs.linked_issues, cs.agent_session_id, cs.active_turn IS NOT NULL AS active_turn, cs"
     },
     {
       "source": "src/workflow/merge-followups/services.ts",
@@ -1755,9 +1755,16 @@
     {
       "source": "src/workflow/preview/facts.ts",
       "kind": "structural-template",
-      "fingerprint": "c60d7e81ea8c1229059d",
+      "fingerprint": "3ed3ffeecbde5a9523e0",
       "count": 1,
       "preview": "`SELECT cs.id, cs.app_id, cs.user_id, cs.status, cs.source, cs.is_headless, cs.shared_at, cs.branch_name, cs.pr_number, cs.imported_pr_head_sha, cs.reviewed_hea"
+    },
+    {
+      "source": "src/workflow/preview/facts.ts",
+      "kind": "structural-template",
+      "fingerprint": "b07755383912776139d2",
+      "count": 1,
+      "preview": "`SELECT h AS holder FROM unnest($1::text[]) AS h WHERE ${holderAliveSql('h')}`"
     },
     {
       "source": "src/workflow/rules/change-notifications.ts",

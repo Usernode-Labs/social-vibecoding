@@ -39,8 +39,7 @@ const { successorRoles } = require('./process-role');
 
 const HEARTBEAT_MS = 10 * 1000;
 // A process that has not beaten for this long is gone (four beats missed).
-// One value with the workflow's readers of these holds (session-work.ts).
-const { PROCESS_LIVE_SECONDS: LIVE_SECONDS } = require('../workflow/session-work.ts');
+const LIVE_SECONDS = 45;
 const MIRROR_MS = 2 * 1000;
 // Rows the leader deletes: long gone, so nothing could still read them as live.
 const REAP_AFTER_SECONDS = 10 * 60;
@@ -136,9 +135,6 @@ function queue(label, fn) {
  * This process holds `kind` for `ref` until the returned function is called
  * (idempotent). Never throws for a database problem: the hold is this
  * process's at once, and the database's as soon as it takes it.
- * `release.written` resolves once the hold's row has been written (or its
- * write given up, to the next beat), for a caller that must not go on
- * before another process can see it.
  */
 function hold(kind, ref) {
   checkKind(kind);
@@ -146,13 +142,13 @@ function hold(kind, ref) {
   const key = keyOf(kind, r);
   const n = local.get(key) || 0;
   local.set(key, n + 1);
-  const written = n === 0
-    ? queue(`hold ${kind}`, (db) => db.query(
+  if (n === 0) {
+    queue(`hold ${kind}`, (db) => db.query(
       `INSERT INTO process_holds (process_id, kind, ref) VALUES ($1, $2, $3)
-       ON CONFLICT (process_id, kind, ref) DO NOTHING`, [ID, kind, r]))
-    : writes;
+       ON CONFLICT (process_id, kind, ref) DO NOTHING`, [ID, kind, r]));
+  }
   let released = false;
-  const release = function release() {
+  return function release() {
     if (released) return;
     released = true;
     const left = (local.get(key) || 1) - 1;
@@ -161,8 +157,6 @@ function hold(kind, ref) {
     queue(`release ${kind}`, (db) => db.query(
       'DELETE FROM process_holds WHERE process_id = $1 AND kind = $2 AND ref = $3', [ID, kind, r]));
   };
-  release.written = Promise.resolve(written).then(() => undefined);
-  return release;
 }
 
 /**

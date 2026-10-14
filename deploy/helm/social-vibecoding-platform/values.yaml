@@ -36,7 +36,7 @@ platform:
   # change is safe in both directions; see docs/kubernetes-operations.md.
   workflowAppDeliveryEnabled: false
   # The workflow preview machine builds, checks and retires proposals'
-  # previews (docs/workflows.md).
+  # previews, and records who works on a session (docs/workflows.md).
   # Turning it off hands its sessions back to the old paths at the next
   # boot; see docs/kubernetes-operations.md.
   workflowPreviewsEnabled: false

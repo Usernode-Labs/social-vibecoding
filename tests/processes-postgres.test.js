@@ -87,9 +87,6 @@ test('processes and their holds, against the full schema', { timeout: 120000 }, 
     const { rows: [me] } = await pool.query('SELECT * FROM platform_processes WHERE id = $1', [processes.ID]);
     assert.equal(me.state, 'serving');
     const late = processes.hold('session', 12);
-    await late.written;
-    assert.equal((await pool.query(`SELECT 1 FROM process_holds WHERE process_id = $1 AND ref = '12'`, [processes.ID])).rows.length, 1,
-      'written by the time `written` resolves');
     await processes.flush();
     const { rows } = await pool.query('SELECT kind, ref FROM process_holds WHERE process_id = $1 ORDER BY kind', [processes.ID]);
     assert.deepEqual(rows.map((r) => `${r.kind}:${r.ref}`), ['session:12', 'staging_build:11']);
@@ -122,12 +119,6 @@ test('processes and their holds, against the full schema', { timeout: 120000 }, 
     assert.deepEqual(processes.refsElsewhere('session'), ['30']);
     assert.deepEqual(await processes.holders('session', 30), ['pod-old']);
     assert.deepEqual(await processes.holders('session', 32), []);
-    // The workflow's machines read the same holds in SQL, with the same
-    // liveness (src/workflow/session-work.ts).
-    const { sessionHeldSql, PROCESS_LIVE_SECONDS } = require('../src/workflow/session-work.ts');
-    assert.equal(PROCESS_LIVE_SECONDS, processes.LIVE_SECONDS);
-    const heldSql = async (id) => (await pool.query(`SELECT ${sessionHeldSql('$1::int')} AS held`, [id])).rows[0].held;
-    assert.deepEqual([await heldSql(30), await heldSql(32)], [true, false]);
     // A copy that could not be refreshed for longer than a process lives
     // vouches for nobody.
     const realNow = Date.now;

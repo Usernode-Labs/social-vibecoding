@@ -1,11 +1,10 @@
 'use strict';
 
-// services/active-workers.js: a turn or an operation on a session is this
-// process's hold (services/processes.js), which another process reads. With
-// the preview machine on, the work goes on only once that hold is written,
-// so a decision elsewhere (the preview machine's retirement guard, the
-// carry search for a merge) cannot miss work that has already begun. Off,
-// as [main]: nothing waits.
+// services/active-workers.js with the preview machine on: each turn and each
+// operation is recorded on the session's instance under an id of its own (a
+// record's request keys last the instance's life, so a second turn under the
+// first one's id was never recorded), and its end is recorded even when
+// waiting for its start failed.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -15,53 +14,43 @@ const stub = (path, exports) => {
   require.cache[id] = { id, filename: id, loaded: true, exports, paths: [] };
 };
 
-const flag = { on: true };
-stub('../src/workflow/platform.ts', { previewsEnabled: () => flag.on });
-// A hold whose row is written only when the test says so.
-let write = null;
-stub('../src/services/processes', {
-  hold() {
-    let done;
-    const release = () => {};
-    release.written = new Promise((r) => { done = r; });
-    write = done;
-    return release;
-  },
-  heldElsewhere: () => false,
+const sent = [];
+const answer = { start: async () => {} };
+stub('../src/workflow/platform.ts', {
+  previewsEnabled: () => true,
+  async operationStarted(o) { sent.push(['start', o.sessionId, o.id, o.kind]); return answer.start(o); },
+  async operationEnded(o) { sent.push(['end', o.sessionId, o.id]); },
 });
+stub('../src/services/process-presence', {
+  holder: () => 'test-host', ensure: async () => {}, hold() {}, release() {},
+});
+stub('../src/db/pool', { getPool: () => ({ options: { connectionString: 'postgres://x' } }) });
 
 const { activeWorkers, beginSessionOperation } = require('../src/services/active-workers');
-const settled = async (p) => {
-  let out = false;
-  p.then(() => { out = true; });
-  await new Promise((r) => setImmediate(r));
-  return out;
-};
+const settle = () => new Promise((r) => setTimeout(r, 10));
 
-test('with the preview machine on, an operation goes on only once its hold is written', async () => {
-  flag.on = true;
-  const release = beginSessionOperation(42);
-  assert.equal(await settled(release.recorded), false, 'waiting for the write');
-  write();
-  assert.equal(await settled(release.recorded), true);
-  release();
-});
-
-test('with the preview machine on, a turn goes on only once its hold is written', async () => {
-  flag.on = true;
-  const entered = activeWorkers.enter(41);
-  assert.equal(await settled(entered), false, 'waiting for the write');
-  write();
-  assert.equal(await settled(entered), true);
+test('each turn on a session is a record of its own', async () => {
+  sent.length = 0;
+  await activeWorkers.enter(41);
   activeWorkers.delete(41);
+  await settle();
+  await activeWorkers.enter(41);
+  activeWorkers.delete(41);
+  await settle();
+  const starts = sent.filter((s) => s[0] === 'start');
+  assert.equal(starts.length, 2);
+  assert.notEqual(starts[0][2], starts[1][2], 'a new id per turn');
+  assert.deepEqual(sent.filter((s) => s[0] === 'end').map((s) => s[2]), starts.map((s) => s[2]), 'each ended, in order');
 });
 
-test('with it off, nothing waits for the write, as on [main]', async () => {
-  flag.on = false;
-  const release = beginSessionOperation(43);
-  assert.equal(await settled(release.recorded), true);
+test('an operation is recorded before its caller goes on, and ends even when the wait for its start failed', async () => {
+  sent.length = 0;
+  answer.start = async () => { throw new Error('timed out waiting'); };
+  const release = beginSessionOperation(42, 'sync');
+  await release.recorded;
+  assert.deepEqual(sent.map((s) => s[0]), ['start']);
   release();
-  assert.equal(await settled(activeWorkers.enter(44)), true);
-  activeWorkers.delete(44);
-  flag.on = true;
+  await settle();
+  assert.deepEqual(sent.map((s) => s[0]), ['start', 'end'], 'the start may have been appended: its end is too');
+  answer.start = async () => {};
 });

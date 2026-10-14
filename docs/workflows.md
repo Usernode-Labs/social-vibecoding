@@ -524,7 +524,7 @@ Two more kinds, decided with the preview machine (each named with a reason, and 
 | `WF_GOVERNANCE_ENABLED` | `false` | Helm value `platform.workflowGovernanceEnabled` | The governance-proposal machine decides governance proposals. The ticker and the sweeper's Pass 0b leave them alone. |
 | `WF_MERGE_FOLLOWUPS_ENABLED` | `false` | Helm value `platform.workflowMergeFollowupsEnabled` | The merge-followups machine runs what follows a merge. The follow-up recovery sweep stands down, and a change reads live only once production runs it. |
 | `WF_APP_DELIVERY_ENABLED` | `false` | Helm value `platform.workflowAppDeliveryEnabled` | The app-delivery machine runs every production deploy of an app. Needs `WF_MERGE_FOLLOWUPS_ENABLED`: without it the machine does not run, and Admin → Workflows says so. |
-| `WF_PREVIEWS_ENABLED` | `false` | Helm value `platform.workflowPreviewsEnabled` | The preview machine runs every proposal's preview and required checks; a turn or an operation on a session goes on only once its hold is written. Off at boot hands its sessions back to the old paths. |
+| `WF_PREVIEWS_ENABLED` | `false` | Helm value `platform.workflowPreviewsEnabled` | The preview machine runs every proposal's preview and required checks, and records who works on a session. Off at boot hands its sessions back to the old paths. |
 | `WF_SLOTS` | 4 (1 on a staging preview) | the default | Pipeline slots in each process. |
 | `WF_POOL_MAX` | 6 (2 on a staging preview) | the default | Connections in the runtime's own pool, the outcome listener's included. Keep it above `WF_SLOTS`. |
 | `WF_OWNERSHIP_MODE` | `log` in production, `raise` elsewhere | the default | What a write to an owned column from outside the machine does. |
@@ -661,10 +661,12 @@ What a merged pull request still has to do once GitHub has merged it
   still heard from (its `shot_runs` row, heartbeated; `facts.ts liveShotsRun`), asking
   again two minutes later (`notBefore`). A change is carried only if, under its own lock,
   its head is still the one the carrier listed and no turn, shots run or checks run is
-  working on it. Nor is one that a platform process holds (a turn, a sync with main or a
-  dispatch starting its worker, a hand-off's commit upload: `services/processes.js`) or a
-  local agent works on (`worked_on`): the guard reads the holds from the database, in
-  whichever process decides (`session-work.ts sessionHeldSql`).
+  working on it. An operation that keeps no durable record while it runs (a sync with main
+  or a dispatch starting its worker, a hand-off's commit upload, a local agent run) is
+  seen only in the process running it (`isSessionBusy`, as before the machine): during a
+  rollout's overlap, the other Pod's are not. With the preview machine on, those
+  operations are recorded on its instance and read by the guard instead (`worked_on`,
+  below), in whichever process decides.
 - **Every web process's issue lists.** GitHub's open-issues list is cached per process,
   with the requests just closed hidden from it. A merge and its close work publish an
   `issues_closed` push, which every web process applies to its own copy (`ws.js`); no
@@ -759,21 +761,14 @@ serves and which revision the verdict is for are separate facts on the instance;
   for good; idle and connection pressure only when nobody is working on the session (a
   refusal reads as busy to the sweep that asked). The runtime and its Secrets are deleted
   by the identities read first, every attempt's database by name.
-- **Who is working on a session.** Its own build or run is its work item, outstanding
-  while it is `preparing` or `checking`. Everything else is read from where it is already
-  recorded (`session-work.ts`, which the other machines read too): a turn's journal, a
-  local agent's turn, a shots run, and the platform processes' holds
-  (`services/processes.js`). Every turn and every operation of an old flow on a session
-  (a sync with main or a dispatch starting its worker, an upload, a promote, a turn
-  before its container starts) is its process's `session` hold
-  (`services/active-workers.js`), counted while that process beats. With the flag on, the
-  work goes on only once its hold is written, so a decision in another process does not
-  miss it.
-  - **Known limits, to adjust if they matter.** With the flag off, a hold is written just
-    behind its work (as on [main]), so a carry decided in another process in that moment
-    can miss it; making the wait unconditional in `active-workers.js written()` closes
-    that. A process that died keeps counting until it has missed its beats
-    (`PROCESS_LIVE_SECONDS`, 45 seconds), which only delays an idle retirement or a carry.
+- **Who is working on a session.** The instance is also its durable record: its own build
+  or run while it is `preparing` or `checking`, and the operations old flows keep no
+  record of (a sync with main or a dispatch starting its worker, an upload, a promote, a
+  turn before its container starts), recorded by `services/active-workers.js`
+  (`OperationStarted` / `OperationEnded`). Such a record names the process that holds it
+  and counts only while that process holds its presence lock
+  (`services/process-presence.js`, `rules/presence.ts`): a crash or a release ends it at
+  once, without a heartbeat. `session-work.ts` is what other machines read.
 - **Coexistence.** Old flows that ask whether a build or run is under way read the row
   (`check_phase = 'building'`, the preview display state) or the instance; the stuck-checks
   sweep, the harvest and the reapers leave its sessions alone. With the flag off at boot,

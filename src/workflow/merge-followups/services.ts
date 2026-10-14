@@ -121,10 +121,12 @@ export function mergeFollowupsServices({ config, pool }: Deps): Record<string, W
     // A change busy with an operation that keeps no durable record while it
     // runs (a sync with main or a dispatch starting its worker, a hand-off's
     // commit upload, a local agent run, a push not yet reconciled into its
-    // head) is left out too, as [main] did: isSessionBusy, which answers for
-    // every live platform process (services/processes.js, a copy at most a
-    // refresh behind). The guard then reads the same holds from the
-    // database, under the change's lock (machine.ts notIncludable).
+    // head) is left out too. With the preview machine on (`durableWork`,
+    // recorded when the merge was), the machine's guard reads those
+    // operations from its record, in whichever process runs it. Without it,
+    // as [main] did: isSessionBusy, which knows only this process's
+    // operations (with one replica, every operation but those of the other
+    // Pod during a rollout's overlap).
     [WORK.find]: {
       maxAttempts: 6,
       backoffMs: backoff,
@@ -133,7 +135,7 @@ export function mergeFollowupsServices({ config, pool }: Deps): Record<string, W
         if (!gh.isEnabled()) return { ids: [], found: [] };
         const changes = legacy('services/included-changes');
         const { rows: candidates } = await pool.query(changes.CANDIDATES_SQL, [input.appId, input.sessionId]);
-        const busy = legacy('services/active-workers').isSessionBusy;
+        const busy = input.durableWork ? () => false : legacy('services/active-workers').isSessionBusy;
         const rows = candidates.filter((c: { id: number }) => !busy(Number(c.id)));
         if (!rows.length) return { ids: [], found: [] };
         const listed = await gh.listPullRequestCommitShas(input.owner, input.repo, input.prNumber);

@@ -106,8 +106,15 @@ const MERGE_QUEUE_PASS_LOCK = 991016;
 // stall, and then replace a newer attempt's container. Kubernetes has its
 // fence in the Deployment write itself (a replace on the version read).
 const PREVIEW_DOCKER_DEPLOY_LOCK = 991017;
+// A platform process's presence: the CLASSIFIER half of
+// `pg_advisory_lock(classifier, key)`, session-scoped, held on one
+// connection for the process's whole life (services/process-presence.js).
+// What the process records as working on a session counts while it is held
+// (src/workflow/rules/presence.ts, where the id is defined: the workflow's
+// readers test it in SQL).
+const { PROCESS_PRESENCE_LOCK } = require('../workflow/rules/presence.ts');
 
 module.exports = { ADMIN_MUTATION_LOCK, EXTERNAL_TASK_SUBMIT_LOCK, PROPOSAL_UPDATE_LOCK, MERGE_FINALIZATION_LOCK, BUILD_RETENTION_LOCK,
   STAGING_BUILD_LOCK, PRODUCTION_BUILD_LOCK, STAGING_TEMPLATE_LOCK, PREVIEW_LIFECYCLE_LOCK,
   VOTE_DIGEST_LOCK, CHALLENGE_SCORER_LOCK, WEEKLY_DIGEST_LOCK, HOMEROOM_BOT_LOCK, HOMEROOM_BOT_CARDS_LOCK,
-  CHECKS_QUEUE_LOCK, MERGE_QUEUE_PASS_LOCK, PREVIEW_DOCKER_DEPLOY_LOCK };
+  CHECKS_QUEUE_LOCK, MERGE_QUEUE_PASS_LOCK, PREVIEW_DOCKER_DEPLOY_LOCK, PROCESS_PRESENCE_LOCK };
