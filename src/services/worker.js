@@ -3288,12 +3288,12 @@ async function ensureWorker(sessionId, {
     const labels = kubernetesWorkers
       ? { 'usernode.proxy': runtime.contractVersion }
       : await docker.getContainerLabels(containerName);
+    const storageStale = kubernetesWorkers && runtime.storageMode !== (temporary ? 'temporary' : 'persistent');
     const staleReason = labels['usernode.proxy'] !== WORKER_BOOTSTRAP_ENV_VERSION
       ? 'runtime-contract'
       : (kubernetesWorkers && runtime.imageRef !== workerConfig.kubernetes.workerImage
         ? 'worker-image'
-        : (kubernetesWorkers && runtime.storageMode !== (temporary ? 'temporary' : 'persistent')
-          ? 'storage-mode' : null));
+        : (storageStale ? 'storage-mode' : null));
     if (staleReason) {
       // A recovered/in-flight turn owns this worker until it settles. Normal
       // dispatch serialization means this is defensive, but keep the image
@@ -3307,6 +3307,31 @@ async function ensureWorker(sessionId, {
         log.info('worker', 'Deferring stale warm worker replacement until turn completion', {
           containerName, staleReason,
         });
+        return containerName;
+      }
+      // A durable build (services/build-runs.js) holds its session for its
+      // whole run, not only while a turn runs: between its build turn and a
+      // review's fix, a capture or its proposal no turn is in flight, and the
+      // check above let a new image take its worker. 14 Oct 2026: a
+      // newcomer's first version (bot run 2027, carried into a newer release
+      // by a restart) lost its worker that way just before its review's fix
+      // turn: the Pod was recreated with its scratch workspace, the fix
+      // turn's resume failed, and the build stopped. A newer image alone is
+      // not a reason to take a run's worker: the contract is the same
+      // (checked first), so the image it has still serves this host. It is
+      // replaced at the first ensure after the run ends. Not a contract
+      // change, which an older worker cannot serve (its turns would fail
+      // anyway), nor storage: those are replaced as before.
+      if (staleReason === 'worker-image' && !storageStale
+          && await require('./build-runs').holdsSession(_getPoolSafe(), sessionId)) {
+        log.info('worker', 'Keeping a durable build\'s worker on its image until the build ends', {
+          containerName, sessionId, staleReason,
+          currentImage: runtime?.imageRef || null,
+          expectedImage: workerConfig?.kubernetes.workerImage || null,
+        });
+        if (!existing) {
+          _registryUpsert(sessionId, { containerName, lastUsedMs: Date.now(), inFlight: false });
+        }
         return containerName;
       }
       log.info('worker', kubernetesWorkers
@@ -3459,8 +3484,11 @@ async function execInWorker(sessionId, {
   leanTurns = false,
   // A first version's build under its configuration's `roomy_context`
   // tweak: Claude Code compacts its conversation at a larger window
-  // (claude-openrouter-request.js ROOMY_AUTO_COMPACT_TOKEN_LIMIT).
-  // ROOMY_CONTEXT=1, for a first version's build that Claude Code runs.
+  // (claude-openrouter-request.js ROOMY_AUTO_COMPACT_TOKEN_LIMIT): 200k
+  // for any model. GLM already compacts at 200k on every turn, so for GLM
+  // it changes nothing; it still raises every other non-Anthropic model
+  // from 120k. ROOMY_CONTEXT=1, for a first version's build that Claude
+  // Code runs.
   roomyContext = false,
   shotsRunId = null,
   shotsOrigins = null,

@@ -150,6 +150,7 @@ const leaderTimers = require('./src/services/leader-timers');
 const processes = require('./src/services/processes');
 const drain = require('./src/services/drain');
 const processRole = require('./src/services/process-role');
+const { singleFlight } = require('./src/services/single-flight');
 const inflightWork = require('./src/services/inflight-work');
 const inflightRequests = require('./src/middleware/inflight-requests');
 const chainPoller = require('./src/services/chain-poller');
@@ -329,6 +330,7 @@ app.use((req, res, next) => {
   // also carries an app's state snapshot. Both routes check the length
   // themselves and refuse an oversized body with the numbers.
   if ((req.method === 'POST' && req.path === '/api/feedback')
+      || (req.method === 'PATCH' && /^\/api\/feedback\/\d+$/.test(req.path))
       || (req.method === 'PATCH' && /^\/api\/apps\/[^/]+\/github-issues\/[^/]+\/body$/.test(req.path))) {
     return express.json({ limit: '1mb' })(req, res, next);
   }
@@ -4345,7 +4347,15 @@ async function finalizeRecoveredTurn({
     // expensive build known to have failed.
     const publishRecoveredStaging = async ({ outcome, stagingUrl = null, failure = null }) => {
       const succeeded = outcome === 'success';
-      const metadata = succeeded
+      const metadata = outcome === 'building'
+        ? {
+            changesReady: true,
+            stagingBuild: 'running',
+            prNumber: prResult?.prNumber || session.pr_number || null,
+            prUrl: prResult?.prUrl || session.pr_url || null,
+            recovered: true,
+          }
+        : succeeded
         ? {
             stagingUrl,
             changesReady: true,
@@ -4395,7 +4405,7 @@ async function finalizeRecoveredTurn({
           testingMd: session.testing_md || null,
           testingPath: session.testing_path || null,
         });
-      } else if (applied) {
+      } else if (applied && value.outcome !== 'building') {
         emit('staging_failed', {
           error: value.metadata.error,
           errorName: value.metadata.stagingErrorName,
@@ -4439,6 +4449,21 @@ async function finalizeRecoveredTurn({
     }
 
     if (!reusedStaging) emit('status', { text: 'Building staging preview...' });
+
+    // With WF_PREVIEWS_ENABLED on the preview machine builds and checks the
+    // recovered commit (a preview it already serves for it is joined). A
+    // promoted proposal's votes are retired first: its reviewed head is the
+    // pin the machine checks a revision against.
+    if (require('./src/services/preview-workflow').enabled()) {
+      await retireVotesOnceStaged();
+      if (await require('./src/services/preview-workflow').revision({
+        pool, session, head: result.sha, source: 'turn', trigger: 'boot-reconcile',
+      })) {
+        await publishRecoveredStaging({ outcome: 'building' });
+        summaryParts.push('The staging preview is building; its checks run once it is up.');
+        return { outcome: 'done', summary: summaryParts.join('\n\n') };
+      }
+    }
 
     // A reused preview is the one the live tail built for this commit, and
     // its checks may already have a verdict for it: the live tail pended
@@ -4654,7 +4679,7 @@ async function resumeDetachedTurn(args) {
   // sweepers see the session as busy — the sessions 2391/2386 incident
   // was the sweeper pausing sessions and destroying their workers in
   // the window between the journal tail ending and finalize completing.
-  activeWorkersSvc.activeWorkers.add(sessionId);
+  await activeWorkersSvc.activeWorkers.enter(sessionId);
   // Whether the recovery got to the end of the turn's work: only then has
   // the conversation that dispatched it something new to read.
   let recoveredToEnd = false;
@@ -5548,8 +5573,9 @@ function startSessionAutoPauseSweeper(config) {
   // it), and waiting for one held a release's drain to its 60s deadline on
   // 14 Oct 2026. Its long loops stop at their next row once shutdown begins,
   // and the proposal measurement, whose write the closing pool cut, is held
-  // on its own below.
-  sessionSweeperHandle = setInterval(async () => {
+  // on its own below. One pass at a time (services/single-flight.js): a pass
+  // minutes into a staging heal had later ticks start beside it.
+  sessionSweeperHandle = setInterval(singleFlight('session-sweeper', async () => {
     if (lifecycle.isShuttingDown()) return;
 
     // Pass 1: auto-pause idle 'active' sessions (worker + slot only;
@@ -6161,7 +6187,7 @@ function startSessionAutoPauseSweeper(config) {
     } catch (err) {
       log.warn('server', 'Connection-pressure sweep failed', { err: err.message });
     }
-  }, config.sessionSweepIntervalMs).unref();
+  }), config.sessionSweepIntervalMs).unref();
 }
 
 let governanceApplyTickerHandle = null;
@@ -6906,10 +6932,14 @@ async function cleanup() {
     try { stop(); } catch (err) { log.warn('server', `Stopping the ${name} sweep failed`, { err: err.message }); }
   }
   // The bot's builds and the bench's trials under way here are durable
-  // builds (services/build-runs.js): stopping the workflow runtime below
-  // stops each at its next step, its turn left running in its worker, and
-  // gives its work item up, so the next leader carries it on from the step it
-  // saved. Nothing waits for them.
+  // builds (services/build-runs.js). A process finishing its work only
+  // quiesces the workflow runtime below, so each goes on here to its end,
+  // its own steps included (a build's promote passes the drain guard:
+  // lifecycle.js OWN_WORK, after 14 Oct 2026's refused first version), and
+  // the drain waits for it (workflowWorkRunning). Stopping the runtime, at
+  // once without a drain or at the drain's deadline, stops each at its next
+  // step, its turn left running in its worker, and gives its work item up, so
+  // the next leader carries it on from the step it saved.
   const retentionStop = require('./src/services/build-retention').stop();
   const checkRetentionStop = require('./src/services/check-retention').stop();
   const fixedCheckSyncStop = require('./src/services/fixed-check-sync').stop();

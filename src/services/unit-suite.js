@@ -761,7 +761,7 @@ function notRunSentence(lead, cause, lastLine = '') {
 // they are the container's two streams.
 function notRunOutcome({
   stdout = '', stderr = '', error = null, timedOut = false, runtime = 'kubernetes', reachedTests = false,
-  exitCode = error?.code,
+  exitCode = error?.code, podStart = error?.podStart ?? null,
 } = {}) {
   if (reachedTests) return null;
   const out = String(stdout || '');
@@ -818,6 +818,13 @@ function notRunOutcome({
     if (fault.fault === 'proposal') return { ...outcome, ownFailure: true };
     return fault.unrecognised ? { ...outcome, unrecognised: plainText(lastLine, NOT_RUN_RAW_MAX) } : outcome;
   }
+  // Its Pod never started the container (never scheduled, its image or its
+  // configuration refused, or it waited out the deadline), or was evicted,
+  // and the log is empty: the platform's, which the error lane keeps
+  // retrying (check-pod-start.js, isPlatformNotRun). A Pod whose state is
+  // unknown keeps the reading below.
+  const pod = !docker && !out.trim() ? require('./check-pod-start').podStartCause(podStart) : null;
+  if (pod) return build(NOT_RUN_LEAD[pod.lead], pod.cause, raw([jobReason]));
   // The Job ended and its log held nothing at all.
   if (!docker && !out.trim()) {
     const cause = oom ? 'its job ran out of memory without printing anything'
@@ -1136,9 +1143,9 @@ async function storeExpectedTests(pool, appId, total) {
 // with its last line, so the list can grow.
 function readFailure({
   sessionId = null, stdout, stderr, error = null, timedOut = false, runtime, reachedTests = false,
-  exitCode = undefined, fallback,
+  exitCode = undefined, fallback, podStart = error?.podStart ?? null,
 }) {
-  const setup = notRunOutcome({ stdout, stderr, error, timedOut, runtime, reachedTests, exitCode });
+  const setup = notRunOutcome({ stdout, stderr, error, timedOut, runtime, reachedTests, exitCode, podStart });
   if (setup?.unrecognised) {
     log.warn('unit-suite', 'Unrecognised install failure, read as the platform\'s', {
       sessionId, lastLine: setup.unrecognised,
@@ -1161,17 +1168,31 @@ function readFailure({
 //
 // `jobNamePrefix` names the Job outside a preview run's own check Jobs: an
 // early unit suite started with the preview build (services/early-unit-suite.js).
-async function maybeRunUnitSuite({ config, pool, appId, sessionId, repoOwner, repoName, ref, prNumber, onProgress = null, signal = null, previewRunId = null, jobNamePrefix = null }) {
+//
+// `strict` (the preview machine's checks run): only a package.json that is
+// verifiably absent (GitHub's 404, which getFileContent answers with null)
+// means there is no suite. Any other failure to read it is a suite that
+// could not run, the row an 'error' once the suite blocks merges, rather
+// than a run that passes without its suite.
+async function maybeRunUnitSuite({ config, pool, appId, sessionId, repoOwner, repoName, ref, prNumber, onProgress = null, signal = null, previewRunId = null, jobNamePrefix = null, strict = false }) {
   if (!isEnabled() || !github.isEnabled() || !repoOwner || !repoName || !ref) return null;
 
   let rawPkg = null;
   try {
     rawPkg = await github.getFileContent(repoOwner, repoName, UNIT_CHECK_PATH, ref);
   } catch (err) {
-    log.warn('unit-suite', 'package.json fetch failed — skipping unit suite', {
+    log.warn('unit-suite', strict ? 'package.json could not be read — the unit suite could not run'
+      : 'package.json fetch failed — skipping unit suite', {
       sessionId, repo: `${repoOwner}/${repoName}`, ref, err: err.message,
     });
-    return null;
+    if (!strict) return null;
+    let graduated = false;
+    try {
+      graduated = (await checkHistory.loadGraduated(pool, appId, { sessionId }))
+        .has(appManifest.checkKey(UNIT_CHECK_NAME, UNIT_CHECK_PATH));
+    } catch { /* advisory on any doubt, as below */ }
+    const reason = `package.json could not be read (${String(err.message || 'unknown error').slice(0, 200)})`;
+    return shapeOutcome({ passed: false, reason, graduated, summary: null, notRun: { reason, detail: reason } });
   }
   if (!hasRunnableTestScript(rawPkg)) return null;
 
@@ -1384,9 +1405,13 @@ function shapeOutcome({ passed, reason, graduated, summary, unitDetails = null, 
 // the history has not moved since. A caller that streamed the log while the
 // Job was still running passes its `tracker`; the summary counters are
 // re-fed regardless, which is idempotent (they replace, never add).
+// `podStart` is the Job's Pod's start state as the harvest saw it
+// (check-pod-start.js); `shardNotRun` says one shard of a split suite never
+// got going, whatever the tracker heard from the others, as the live path's
+// runUnitSuiteShards does.
 async function outcomeFromLog({
   pool, appId, sessionId, succeeded, stdout, stderr = '', timedOut = false, exitCode = undefined,
-  graduated = false, tracker = null,
+  graduated = false, tracker = null, podStart = null, shardNotRun = false,
 }) {
   const t = tracker || makeUnitSuiteTracker(await loadExpectedTests(pool, appId));
   for (const line of String(stdout || '').split('\n')) {
@@ -1396,8 +1421,8 @@ async function outcomeFromLog({
   // A Job that ended in setup, or with nothing in its log, never ran the
   // suite: the same reading the live path takes (readFailure).
   const { reason = '', unitDetails = null, notRun = null, setupFailed = false } = passed ? {} : readFailure({
-    sessionId, stdout, stderr, timedOut, runtime: 'kubernetes', exitCode,
-    reachedTests: typeof t.reachedTests === 'function' && t.reachedTests(),
+    sessionId, stdout, stderr, timedOut, runtime: 'kubernetes', exitCode, podStart,
+    reachedTests: !shardNotRun && typeof t.reachedTests === 'function' && t.reachedTests(),
     fallback: timedOut ? 'npm test timed out' : 'npm test failed',
   });
   const finalSnap = t.finish(passed, { notRun: !!(notRun || setupFailed) });
@@ -1425,6 +1450,8 @@ module.exports = {
   failureDetailFromLines,
   failureOutcomeParts,
   notRunOutcome,
+  notRunSentence,
+  runnerCause,
   installFault,
   INSTALL_FAILURES,
   unitFailureDetails,

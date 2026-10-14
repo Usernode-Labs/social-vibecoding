@@ -339,7 +339,8 @@ test('Suggest an improvement: Return in the title goes on to the description; ‚å
     stubs: { './feedback-controller': { Feedback: {}, init() {} } },
   });
   const html = renderToHtml(createElement(mod.FeedbackDialog));
-  assert.deepEqual(hints(html), [['feedback-title', 'next'], ['feedback-text', null]]);
+  assert.deepEqual(hints(html), [['feedback-title', 'next'], ['feedback-text', null],
+    ['feedback-edit-title', 'next'], ['feedback-edit-text', null]]);
   assert.match(read('frontend/src/features/dialogs/feedback.tsx'), /<div id="feedback-form" onKeyDown=\{returnKeyHandler\(\)\}>/);
   const controller = read('frontend/src/features/dialogs/feedback-controller.js');
   assert.match(controller, /feedbackTitle\.addEventListener\('keydown', \(e\) => \{\s+if \(e\.key === 'Enter' && \(e\.metaKey \|\| e\.ctrlKey\)\)/);

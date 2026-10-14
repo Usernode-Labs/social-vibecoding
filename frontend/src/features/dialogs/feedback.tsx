@@ -79,6 +79,8 @@ interface OpenOptions {
   /** 'form': this form, even where "Suggest an improvement" would open comment mode. */
   mode?: 'form';
   firstFeedback?: { userId: number; appSlug: string | null; issueNumber: number; canFix: boolean };
+  edit?: { reportId: number; version: number; title: string; description: string; secondsLeft: number };
+  onEditSaved?: () => void;
 }
 
 /** The form the drop zone listens on; the controller's node, found by id. */
@@ -107,11 +109,12 @@ export function FeedbackDialog() {
   const dialog = useDialog<OpenOptions>('feedback', {
     phoneSheet: true,
     onOpen: (opts) => {
-      setOffersComment(formOffersComment());
+      if (opts?.edit) setOffersComment(false);
+      else setOffersComment(formOffersComment());
       Feedback._open(opts || {});
       // The page under the form is drawn now for its Comment switch, as the
       // menu does for "Suggest an improvement" (a no-op where the switch is off).
-      prepareComment();
+      if (!opts?.edit) prepareComment();
     },
     onClose: () => Feedback._reset(),
   });
@@ -551,6 +554,19 @@ export function FeedbackDialog() {
           </Button>
         </div>
         </div>
+        <section id="feedback-edit" className="hidden" aria-labelledby="feedback-edit-heading" tabIndex={-1} onKeyDown={returnKeyHandler()}>
+          <h2 id="feedback-edit-heading" className="text-xl font-bold mb-1">{t('dialogs:feedback.edit.heading')}</h2>
+          <p id="feedback-edit-window" className="text-xs text-zinc-500 dark:text-zinc-400 mb-4"></p>
+          <Label htmlFor="feedback-edit-title" className="mb-1">{t('dialogs:feedback.edit.titleLabel')}</Label>
+          <Input id="feedback-edit-title" maxLength={200} enterKeyHint="next" className="mb-3" />
+          <Label htmlFor="feedback-edit-text" className="mb-1">{t('dialogs:feedback.description.label')}</Label>
+          <Textarea id="feedback-edit-text" rows={5} maxLength={FEEDBACK_DESCRIPTION_MAX} />
+          <p id="feedback-edit-status" role="status" className="hidden text-sm text-red-700 dark:text-red-400 mt-2"></p>
+          <div className="feedback-actions flex gap-3 mt-4">
+            <Button id="feedback-edit-cancel" variant="neutral" ink="neutral" layout="flex" className="min-h-[44px]">{t('core:common.cancel')}</Button>
+            <Button id="feedback-edit-save" layout="flex" disabledStyle="block" className="min-h-[44px]"><ControllerText id="dialogs:feedback.edit.save" /></Button>
+          </div>
+        </section>
         <section id="feedback-first-success" className="hidden" aria-labelledby="feedback-first-title" tabIndex={-1}>
           <h2 id="feedback-first-title" className="text-xl font-bold mb-3">
             {t('dialogs:feedback.first.title')}
@@ -567,6 +583,7 @@ export function FeedbackDialog() {
             <Button id="feedback-first-board" variant="neutral" ink="neutral" disabledStyle="block" className="min-h-[44px]">{t('dialogs:feedback.first.board')}</Button>
             {/* #3186: the Me screen's list, where this report now is. */}
             <Button id="feedback-first-mine" variant="neutral" ink="neutral" className="min-h-[44px]">{t('dialogs:feedback.first.mine')}</Button>
+            <Button id="feedback-first-edit" variant="neutral" ink="neutral" className="hidden min-h-[44px]">{t('dialogs:feedback.edit.button')}</Button>
             <Button id="feedback-first-done" variant="unstyled" ink="muted" className="min-h-[44px]">{t('core:common.done')}</Button>
           </div>
         </section>
@@ -608,6 +625,7 @@ export function FeedbackDialog() {
           <div className="flex flex-col gap-3">
             <Button id="feedback-sent-chat" className="hidden min-h-[44px]">{t('dialogs:feedback.sent.chat')}</Button>
             <Button id="feedback-sent-mine" variant="neutral" ink="neutral" className="min-h-[44px]">{t('dialogs:feedback.sent.mine')}</Button>
+            <Button id="feedback-sent-edit" variant="neutral" ink="neutral" className="hidden min-h-[44px]">{t('dialogs:feedback.edit.button')}</Button>
             <Button id="feedback-sent-done" variant="unstyled" ink="muted" className="min-h-[44px]">{t('core:common.done')}</Button>
             <button id="feedback-sent-fix" type="button" className="hidden self-center text-xs text-zinc-500 underline underline-offset-2 dark:text-zinc-400">
               {t('dialogs:feedback.sent.fix')}

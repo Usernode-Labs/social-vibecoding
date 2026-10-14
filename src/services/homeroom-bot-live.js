@@ -673,8 +673,9 @@ const LEAN_PLAN_SCOPE_LINES = Object.freeze([
   '  polling or live refresh, no saved preferences or local storage, no discovery or import, no sharing or',
   '  notifications. Where one seems needed, leave it out and name it under "Not in this version".',
   '- Yours to design. The plan\'s look, layout and scope are the triage\'s first sketch: keep it unless it has a',
-  '  defect you can name, and say under Assumptions what you replaced and why. What binds you is the request',
-  '  itself and what its creator approved, above.',
+  '  defect you can name, and say under Assumptions what you replaced and why. A plan that cannot do one of the',
+  '  request\'s own examples has such a defect: widen it to fit. What binds you is the request itself and what its',
+  '  creator approved, above.',
   '- Short, so the build starts sooner and builds only this: about 15,000 characters in all, the drawn screens',
   '  included. The technical half is about 4,000 characters: the files, each table\'s columns, one line per route.',
   '  Leave the implementation to the build: no SQL, no catalogue of error messages, no unit-test suite (a first',
@@ -682,12 +683,13 @@ const LEAN_PLAN_SCOPE_LINES = Object.freeze([
   '  At most five assumptions.',
   '- Within the platform\'s checks: one clear primary action on each screen, a filled button (small on a screen for',
   '  reading). On an empty screen that action is the empty state\'s own button, and nothing else there is filled, the',
-  '  header\'s add button included. Tap targets at least 44px tall, and icons as inline SVG, never emoji, the favicon',
-  '  included.',
+  '  header\'s add button and a pinned or floating one included; on an error screen nothing but Retry is filled. Tap',
+  '  targets at least 44px tall, and icons as inline SVG, never emoji, the favicon included.',
   '- Ranked. End the technical half with a "Build order" subsection of two short lists. "Must-haves", in order: the',
   '  main action working end to end, the loading, empty and error states, the phone layout, the populated demo and',
-  '  the signature element. Then "Not in this version": each idea you left out, one line each. The build does not',
-  '  implement them, and the user-facing half does not describe them.',
+  '  the signature element. Then "Not in this version": each idea you left out, one line each, and never what the',
+  '  request\'s own words or examples need. The build does not implement them, and the user-facing half does not',
+  '  describe them.',
 ]);
 
 /** What the spec's scope is: a later change's, as small as the request; a first version's, complete (or, under `lean_plan`, focused), and its design the spec's own. Pure. */
@@ -2089,6 +2091,10 @@ function promoteAsBot({ config, bot, sessionId, router = null, ceiling = null })
     const req = {
       method: 'POST', url, originalUrl: url, baseUrl: '', path: url,
       headers: {}, query: {}, params: {}, body: {}, cookies: {},
+      // A step of a build this process runs, which a process a release
+      // replaced finishes: the drain guard lets it through (lifecycle.js
+      // OWN_WORK; 14 Oct 2026, bot run 2027's "Server is restarting").
+      [require('./lifecycle').OWN_WORK]: true,
       // The marker app-access and the membership gate honour for the bot's
       // own session only: it proposes on apps in its live list whether or
       // not it is a collaborator or member there. Never an admin.
@@ -2437,7 +2443,8 @@ const FIRST_VERSION_DESIGN_LINES = Object.freeze([
   'spec, the plan) sets it, and the starter\'s screen and default colours are placeholder, not a look to copy. Build',
   'it with the starter\'s design kit (`styles/tailwind-input.css`): set its colour tokens to this app\'s palette (its',
   'neutrals, its action colour and any set of colours its subject uses, adding a token for a colour the kit has no',
-  'name for), a light and a dark value each, unless the app keeps one fixed look; every text pair at 4.5:1 or more.',
+  'name for), a light and a dark value each, the dark one in the light one\'s hue, unless the app keeps one fixed',
+  'look; every text pair at 4.5:1 or more.',
   'Use only those tokens and the kit\'s components, its loading, empty and error states included: the design',
   'guidance\'s "no new colours" means none beyond them, and every token the spec defines is one of them. Then fill',
   'in the "## Design" section of the app\'s `CLAUDE.md` (add it if it is missing): the palette by name, the signature',
@@ -2467,13 +2474,20 @@ const FIRST_VERSION_DESIGN_LINES = Object.freeze([
   ...FIRST_VERSION_COLUMN_LINES,
   'A screen\'s loading state has the content\'s own shape: the same list and rows at their height, with the kit\'s',
   '`skeleton` bars where their text goes, so nothing moves when the data arrives.',
+  // Run 196's blind grades: two filled buttons on an empty or error screen
+  // (the empty state's own and a floating one) in builds of every arm.
+  'The empty and error screens fill one button at most, the empty state\'s own action or Retry: a pinned or floating',
+  'primary button is hidden on both.',
   // And the populated demo the spec describes, which is how a first version
   // is first seen (the staging preview with ?demo=1).
   'Build the populated demo the spec describes, the staging preview opened with `?demo=1`: the viewer\'s own data as',
   'well as other people\'s, varied realistic rows filling about a screen and a half at phone width, every control the',
-  'real screen has (never a view-only demo), labelled "Staging demo" once, plainly, as a banner or a line at the top of',
-  'the screen or in the name of its list, not on each row, with every row still obviously made up. On staging and with',
-  '`?demo=1` only, and idempotent, as the platform conventions\' "Staging mock data" says.',
+  'real screen has (never a view-only demo), and the app\'s main result already there (the scores added up, the',
+  'schedule filled in, the totals worked out), not only what goes into it. It is labelled "Staging demo" once, plainly,',
+  'as a banner or a line of its own at the top of the screen (never the app\'s name, nor in place of its tagline) or',
+  'in the name of its list, not on each row, and rows the app seeds on boot carry no label of their own either; every',
+  'row stays obviously made up. On staging and with `?demo=1` only, and idempotent, as the platform conventions\'',
+  '"Staging mock data" says.',
   // Newcomer run seven (14 Oct 2026): Homeroom shows a first version with
   // its sample data under a label of its own (the App tab's Live replay),
   // and hides the app's own by this attribute.
@@ -3790,6 +3804,70 @@ async function proposedAlready(pool, sessionId) {
   return { status: 200, body: { ok: true, prNumber: Number(row.pr_number), error: null, message: null } };
 }
 
+// ── A refusal is not a result ────────────────────────────────────────────
+//
+// 14 Oct 2026: a newcomer's first version (bot run 2027) was built to the
+// end, and its promote answered 503 "Server is restarting" (lifecycle.js
+// OWN_WORK says why). The `promoted` step kept that answer as what the
+// promotion came to, so the build ended "built but could not be proposed",
+// the newcomer was told it had stopped, and a later attempt would have read
+// the same 503 back. An answer of 5xx says the platform could not take the
+// proposal just then, not what the proposal is: it is tried again here a few
+// times, and then, while the build's work item has a try left
+// (durable-steps.js triesLeft), thrown (ProposalDeferred), so that nothing is
+// kept for the step, nothing is said, and the next try goes on from the
+// build's last step (`prepared`) and proposes. On its last try, or run
+// unkept, a build still refused ends as it always has: built, not proposed,
+// its session left for a person to propose.
+const PROPOSE_RETRY_MS = Object.freeze([2000, 5000, 15000]);
+
+/** What a refused proposal throws while its build has a try left. Never a stop. */
+class ProposalDeferred extends Error {
+  constructor({ status, why }) {
+    super(`the proposal could not be made now (${status}: ${why}); the build goes on from its last step on its next try`);
+    this.code = 'proposal_deferred';
+    this.status = status;
+  }
+}
+
+function proposalUnavailable(out) {
+  return Number(out?.status) >= 500;
+}
+
+/**
+ * promoteAsBot, tried again after an answer of 5xx (PROPOSE_RETRY_MS, or
+ * `waits`), and resolved as it answered; a session that went up for a vote
+ * meanwhile (an answer lost after the route had done its work) is read
+ * rather than promoted twice. Throws ProposalDeferred when every try was
+ * refused and `steps` will be tried again; a stop ends the waits. `waits`
+ * are a test's own (buildAndPropose's `deps.proposeRetryMs`).
+ */
+async function promoteOwnBuild({ pool, steps, waits = PROPOSE_RETRY_MS, ...args }) {
+  for (let i = 0; ; i += 1) {
+    // eslint-disable-next-line no-await-in-loop
+    const out = await promoteAsBot(args);
+    if (!proposalUnavailable(out)) return out;
+    const why = out.body?.error || out.body?.message || `promotion answered ${out.status}`;
+    if (i >= waits.length) {
+      if (steps.active && steps.triesLeft > 0) {
+        log.warn('homeroom-bot', 'The proposal was refused on every try; the build tries again from its last step', {
+          sessionId: args.sessionId, status: out.status, why, triesLeft: steps.triesLeft,
+        });
+        throw new ProposalDeferred({ status: out.status, why });
+      }
+      return out;
+    }
+    log.warn('homeroom-bot', 'The proposal was refused for now; trying again', {
+      sessionId: args.sessionId, status: out.status, why, inMs: waits[i],
+    });
+    // eslint-disable-next-line no-await-in-loop
+    await steps.race(new Promise((resolve) => { setTimeout(resolve, waits[i]); }));
+    // eslint-disable-next-line no-await-in-loop
+    const already = await proposedAlready(pool, args.sessionId);
+    if (already) return already;
+  }
+}
+
 async function buildAndPropose({
   pool, config, bot, app, repo, issueNumber, issue, seed, buildNote,
   turnBudgetMs, model, deps, propose = true, onSpec = null, specBudgetMs = SPEC_TURN_MAX_MS,
@@ -4514,11 +4592,14 @@ async function buildAndPropose({
     return true;
   });
   // Once, and never twice for one session: a restart between the promotion
-  // and its save finds the session up for a vote already, and reads it.
+  // and its save finds the session up for a vote already, and reads it. An
+  // answer of 5xx is not kept (promoteOwnBuild): tried again, then thrown
+  // while the build has a try left, so its next try proposes from here.
   const promoted = await steps.once('promoted', async () => {
     const already = await proposedAlready(pool, session.id);
     if (already) return already;
-    const out = await promoteAsBot({
+    const out = await promoteOwnBuild({
+      pool, steps, ...(Array.isArray(deps.proposeRetryMs) ? { waits: deps.proposeRetryMs } : {}),
       config, bot, sessionId: session.id, router: deps.votesRouter || null, ceiling: proposalCeiling,
     });
     return { status: out.status, body: out.body ? { ok: !!out.body.ok, prNumber: out.body.prNumber ?? null, error: out.body.error ?? null, message: out.body.message ?? null } : null };
@@ -4695,6 +4776,7 @@ async function reviewLanded({
       worker.clearPendingStop?.(session.id);
     }
     const fixBudgetMs = Math.max(1000, Math.min(budgetMs, turnBudgetMs));
+    const progress = lastActivity();
     const turn = await runBuildTurn({
       key: `fix:${round}`,
       prompt: botReview.fixPrompt({
@@ -4704,7 +4786,7 @@ async function reviewLanded({
       budgetMs: fixBudgetMs,
       resumeThreadId: null,
       commitMsg: FIX_COMMIT_MESSAGES.review(round),
-      progress: lastActivity(),
+      progress,
     });
     const r = (turn.routed && turn.routed.result) || {};
     const costUsd = Number.isFinite(turn.routed && turn.routed.estimatedCostUsd) ? turn.routed.estimatedCostUsd : null;
@@ -4713,7 +4795,14 @@ async function reviewLanded({
     if (turn.stopped) return { ok: false, stopped: true, costUsd, ms };
     if (turn.routed?.error) return { ok: false, error: `the fix turn failed (${turn.routed.error})`, costUsd, ms };
     const failed = failedClaudeTurn(r);
-    if (failed) return { ok: false, error: `the fix turn failed (${failed})`, costUsd, ms };
+    // With what it was last doing and its final message, as a failed build
+    // turn's (failureDetail): a provider refusing the key for its spending
+    // limit ("Failed to authenticate. API Error: 403 Key limit exceeded")
+    // is only there, not in its exit code.
+    if (failed) {
+      const reason = `the fix turn failed (${failed})`;
+      return { ok: false, error: `${reason}${failureDetail({ progress, result: r, reason })}`, costUsd, ms };
+    }
     return {
       ok: true, sha: r.pushOk ? (r.sha || null) : null, commits: Number(r.ahead) > 0 ? Number(r.ahead) : null, costUsd, ms,
     };
@@ -4812,6 +4901,9 @@ module.exports = {
   botUsernameOf,
   openBotProposal,
   promoteAsBot,
+  promoteOwnBuild,
+  ProposalDeferred,
+  PROPOSE_RETRY_MS,
   prepareProposal,
   proposalTitle,
   specUserFacing,

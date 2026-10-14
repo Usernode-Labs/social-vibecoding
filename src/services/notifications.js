@@ -932,24 +932,14 @@ async function createStalePrNotification(pool, { userId, appId, sessionId }) {
 // pile up if the owner hasn't looked yet. The streak gate in
 // staging-recovery.recordStagingBootFailure already limits this to once per
 // failure streak; the dedup is belt-and-suspenders against re-fires.
-async function createCheckFailedNotification(pool, { userId, appId, sessionId }) {
-  if (!userId || !sessionId) return [];
-  // #1374. allowsKind fails OPEN on a read error: the quiet failure mode of
-  // this whole feature is a notification silently not arriving, and this one
-  // is telling somebody their proposal cannot merge.
-  if (!await notificationPreferences.allowsKind(pool, { userId, appId, kind: 'check_failed' })) return [];
-  const { rows } = await pool.query(
-    `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind)
-     SELECT $1, $2, $3, NULL, 'check_failed'
-      WHERE NOT EXISTS (
-        SELECT 1 FROM notifications n
-        WHERE n.user_id = $1 AND n.session_id = $3
-          AND n.kind = 'check_failed' AND n.read_at IS NULL
-      )
-     RETURNING id, user_id, app_id, session_id, source_user_id, kind, created_at`,
-    [userId, appId, sessionId]
-  );
-  return rows;
+// One copy, shared with the preview machine
+// (src/workflow/rules/change-notifications.ts). #1374: allowsKind fails
+// OPEN on a read error here: the quiet failure mode of this whole feature
+// is a notification silently not arriving, and this one is telling
+// somebody their proposal cannot merge.
+function createCheckFailedNotification(pool, { userId, appId, sessionId }) {
+  return changeNotifications.createCheckFailedNotification(pool, { userId, appId, sessionId },
+    notificationPreferences.allowsKind);
 }
 
 // #161: dev-session completion notification (kind='session_done').

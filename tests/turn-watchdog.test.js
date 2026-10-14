@@ -198,7 +198,7 @@ test('server.js sweepers use the shared busy predicate, not bare isInFlight', ()
 
 test('server.js recovery flow registers in activeWorkers and bumps last_activity_at', () => {
   assert.ok(
-    /activeWorkersSvc\.activeWorkers\.add\(sessionId\)/.test(serverSrc),
+    /activeWorkersSvc\.activeWorkers\.enter\(sessionId\)/.test(serverSrc),
     'resumeDetachedTurn must add the session to activeWorkers'
   );
   assert.ok(

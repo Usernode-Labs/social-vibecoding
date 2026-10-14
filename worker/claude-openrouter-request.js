@@ -969,29 +969,45 @@ function makeRedactor(secrets) {
 // compacts at (build-codex-model-catalog.js AUTO_COMPACT_TOKEN_LIMIT). An
 // OpenRouter model is one Claude Code does not know: an older Claude Code
 // compacted only once the provider refused a prompt as too long, which GLM
-// 5.3 Flash's 1,310,720-token window never does, and a newer one assumes a
-// window of its own. A bot build resent its whole history on every request,
-// 0.5 to 1.2 MB each, and 13 of the week's builds to 2026-10-09 ran out of
-// time doing it (one, at $5.77, was on its 317th request, of 540 KB).
+// 5.3 Flash's 1M-token window (1,048,576 on OpenRouter) almost never does,
+// and a newer one assumes a window of its own. A bot build resent its whole
+// history on every request, 0.5 to 1.2 MB each, and 13 of the week's builds
+// to 2026-10-09 ran out of time doing it (one, at $5.77, was on its 317th
+// request, of 540 KB).
 const AUTO_COMPACT_TOKEN_LIMIT = 200_000;
 
-// Any other provider's model (GLM among them) compacts sooner. Its images
-// were sent again on every request (only the latest few are now:
-// pruneOldImages) and first-version builds that failed on their clock carried
-// 600 to 870 KB requests, so it compacts at 120k. Anthropic's models keep the
-// limit above.
+// Anthropic's models and the GLM family (z-ai/glm-...) compact at the limit
+// above. GLM 5.3 Flash's window is 1M tokens (Z.ai's model page; 1,048,576 on
+// OpenRouter's endpoints), and Z.ai's own Claude Code guide sets
+// CLAUDE_CODE_AUTO_COMPACT_WINDOW to 1000000. GLM compacted at 120k until
+// October 2026, a limit chosen when every old screenshot was still re-sent on
+// every request. App bench run 196 put 120k (configuration 11) against 200k
+// (configuration 13, roomy_context) over 9 pairs built from the same shared
+// plans: at 200k compactions fell from 23 to 4 and the build was about 12%
+// faster (faster in 7 of 9), blind grades were level (7 of 9 passed on each;
+// 94 vs 92 of 108 rubric criteria), and build plus review cost about 16%
+// more, with 86 to 88% of input served from cache. Configuration 13 is now
+// the live first-version configuration.
+const GLM_MODEL = /^~?z-ai\/glm-/;
+
+// Any other provider's model compacts sooner. Its images were sent again on
+// every request (only the latest few are now: pruneOldImages) and
+// first-version builds that failed on their clock carried 600 to 870 KB
+// requests, so it compacts at 120k.
 const NON_ANTHROPIC_AUTO_COMPACT_TOKEN_LIMIT = 120_000;
 
 // A first version's `roomy_context` tweak (ROOMY_CONTEXT=1, worker.js): the
-// Anthropic limit for any model. App bench run 191's GLM builds compacted 2
-// to 3 times each at about 65k tokens of context, and each compaction was a
-// one-to-three-minute reply writing the summary, then files read again. Only
-// the latest few images are sent now, so a bench arm tries compacting later.
+// 200k limit for any model. App bench run 191's GLM builds compacted 2 to 3
+// times each at about 65k tokens of context, and each compaction was a
+// one-to-three-minute reply writing the summary, then files read again; run
+// 196 (above) is why GLM now has that limit without it. For GLM the tweak
+// changes nothing; it still raises every other non-Anthropic model to 200k.
 const ROOMY_AUTO_COMPACT_TOKEN_LIMIT = AUTO_COMPACT_TOKEN_LIMIT;
 
 function autoCompactLimit(model, env = {}) {
   if (env.ROOMY_CONTEXT === '1') return ROOMY_AUTO_COMPACT_TOKEN_LIMIT;
-  return ANTHROPIC_MODEL.test(String(model || '')) ? AUTO_COMPACT_TOKEN_LIMIT : NON_ANTHROPIC_AUTO_COMPACT_TOKEN_LIMIT;
+  const id = String(model || '');
+  return ANTHROPIC_MODEL.test(id) || GLM_MODEL.test(id) ? AUTO_COMPACT_TOKEN_LIMIT : NON_ANTHROPIC_AUTO_COMPACT_TOKEN_LIMIT;
 }
 
 // Claude Code's compaction settings for this turn: the model's real window

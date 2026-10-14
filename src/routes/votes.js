@@ -98,6 +98,8 @@ function strandedPendingChecks(session, {
   activeWorkers = require('../services/active-workers'),
 } = {}) {
   if (session?.check_state !== 'pending' || session.check_phase === 'deferred') return false;
+  // The preview machine's 'pending' always has its work outstanding.
+  if (require('../services/preview-workflow').enabled()) return false;
   const id = Number(session.id);
   return !visuals.hasInFlightCapture(id)
     && !activeWorkers.hasSessionOperation(id)
@@ -1736,6 +1738,10 @@ function nativeGithubTarget(session) {
 }
 
 async function kickNativeRevisionChecks({ config, pool, session, headSha }) {
+  // With WF_PREVIEWS_ENABLED on the preview machine builds and checks it.
+  if (await require('../services/preview-workflow').revision({
+    pool, session, head: headSha, source: 'reviewed-head', trigger: 'commit-push',
+  })) return;
   const visuals = require('../services/visuals');
   await visuals.setChecksPending(pool, session.id, headSha, 'building', 'commit-push')
     .catch((err) => log.warn('votes', 'Native revision setChecksPending failed (non-fatal)', {
@@ -1760,6 +1766,9 @@ async function kickNativeRevisionChecks({ config, pool, session, headSha }) {
 // gate independently compares the verdict SHA, so even a failed pending write
 // cannot let an older green result authorize this head.
 async function kickImportedRevisionChecks({ config, pool, session, headSha }) {
+  if (await require('../services/preview-workflow').revision({
+    pool, session, head: headSha, source: 'imported', trigger: 'pr-import',
+  })) return;
   const visuals = require('../services/visuals');
   await visuals.setChecksPending(pool, session.id, headSha, 'building', 'pr-import')
     .catch((err) => log.warn('votes', 'Imported revision setChecksPending failed (non-fatal)', {
@@ -2062,7 +2071,17 @@ async function reconcileNativeReviewedHead({
     && sameSha(session.checks_commit_sha, oldHead)
     && ['passing', 'skipped'].includes(session.check_state);
   const needsChecks = !sameSha(session.checks_commit_sha, liveHead) && !checksCarry;
-  if (needsChecks) {
+  // With WF_PREVIEWS_ENABLED on the machine decides both: it carries a green
+  // verdict of the old head, else checks the new one. A deferred caller
+  // hands off the build itself once its own pins are written.
+  const previewWorkflow = require('../services/preview-workflow');
+  if (previewWorkflow.enabled()) {
+    if (checksCarry || (needsChecks && !deferChecks)) {
+      await previewWorkflow.revision({ pool, session, head: liveHead, source: 'reviewed-head', trigger: 'commit-push',
+        carryFrom: checksCarry ? oldHead : null });
+    }
+    if (checksCarry) session.checks_commit_sha = liveHead;
+  } else if (needsChecks) {
     if (deferChecks) {
       const visuals = require('../services/visuals');
       await visuals.setChecksPending(pool, session.id, liveHead, 'building', 'commit-push')
@@ -2480,6 +2499,7 @@ function mergedRowSelect() {
            -- #237: when checks are in 'error' (staging preview wouldn't boot),
            -- the captured reason powers the "Preview won't boot" badge tooltip.
            cs.check_error_detail,
+            cs.check_error_platform, cs.consecutive_check_failures, cs.first_check_failure_at,
            -- #58: the vote threshold + active-user count snapshotted at merge
            -- time. The merged-PR pill renders against votes_required (falling
            -- back to the live majority for legacy rows where it's NULL), and a
@@ -2863,7 +2883,9 @@ function voteRoutes(config) {
             // Keep the session active so the new head can be rebuilt; never
             // open voting on code that did not produce the ready verdict.
             const detail = 'The proposal branch changed after checks. Rebuild the new head locally or from the web Dev session before promoting.';
-            await pool.query(
+            // The preview machine owns the verdict when it is on; the 409
+            // below says the same to the author.
+            if (!require('../services/preview-workflow').enabled()) await pool.query(
               `UPDATE chat_sessions SET check_state = 'error', check_error_detail = $1
                 WHERE id = $2 AND status = $4 AND source = 'cli_handoff'
                   AND COALESCE(checks_commit_sha, handoff_head_sha)
@@ -3078,6 +3100,11 @@ function voteRoutes(config) {
             } catch {}
           }
           const app = { id: session.app_id, slug: session.app_slug, name: session.app_name, repo_url: session.repo_url };
+          // With WF_PREVIEWS_ENABLED on the preview machine builds and checks
+          // the reviewed head.
+          if (await require('../services/preview-workflow').revision({
+            pool, session, head: commitHash === 'latest' ? null : commitHash, source: 'promote', trigger: 'promote-kick',
+          })) return;
           // #607: stamp 'pending' + broadcast before the (minutes-long)
           // staging build so the freshly promoted proposal's card shows
           // "Checks running…" instead of a bare NULL-verdict "Re-run
@@ -4493,6 +4520,9 @@ function voteRoutes(config) {
            -- #237: captured reason when checks are 'error' (staging preview
            -- failed to boot) — drives the "Preview won't boot" badge tooltip.
            cs.check_error_detail,
+           -- #5054: an 'error' that is the platform's fault and still runs
+           -- again on its own reads as in progress (merge-requirements).
+           cs.check_error_platform, cs.consecutive_check_failures, cs.first_check_failure_at,
            -- #788: does this proposal change a protected dapp.json block
            -- (admins, governance, visibility, platform_env, secrets)? A
            -- flagged row loses the time-based merge paths (the gate below
@@ -6999,7 +7029,8 @@ async function checkAndMerge(config, pool, session, options = {}) {
     // build's verdict. Admin force-merge bypasses (skipped under !force).
     const { rows: checkRows } = await pool.query(
       `SELECT check_state, test_results, checks_checked_at,
-              check_error_detail, checks_commit_sha, check_phase
+              check_error_detail, checks_commit_sha, check_phase,
+              check_error_platform, consecutive_check_failures, first_check_failure_at
          FROM chat_sessions WHERE id = $1`,
       [session.id]
     );
@@ -7092,11 +7123,18 @@ async function checkAndMerge(config, pool, session, options = {}) {
       // started fine, so the sentence must not blame it.
       const unitNotRun = checkState === 'error'
         && !!require('../services/unit-suite-row').notRunError({ ...checkRows[0], check_state: checkState });
+      // #5054: an 'error' that is the platform's fault (a check Job refused,
+      // a test Pod that never started) and that the error lane still runs
+      // again on its own needs nobody, like a rollout retry.
+      const platformRetry = checkState === 'error' && checkRows[0]?.check_error_platform === true
+        && require('../services/staging-recovery').errorWithinAutoRetries(checkRows[0]);
       const reason = checkState === 'failing'
         ? `has ${failingCount || 'failing'} test${failingCount === 1 ? '' : 's'} failing`
         : checkState === 'error'
           ? (rolloutRetry
             ? 'ran its tests while Homeroom was updating, so they will run again on their own'
+            : platformRetry
+              ? `couldn't start its checks, so they will run again on their own (${errorDetail})`
             : unitNotRun
               ? `couldn't run its unit suite, so its checks have no verdict yet (${errorDetail})`
               : errorDetail
@@ -7130,15 +7168,18 @@ async function checkAndMerge(config, pool, session, options = {}) {
       dstep({ phase: 'gate:checks', level: 'warn', message: `Merge blocked: checks not passing (state = ${checkState || 'pending'}${failingCount ? `, ${failingCount} failing` : ''}).`, detail: { checkState: checkState || 'pending', failingCount, checksRevisionMismatch } });
       // 'pending' is in flight and needs nobody; 'failing' and 'error' need
       // the author. The card tones them differently for exactly that reason.
-      // A rollout retry is an 'error' that needs nobody either.
+      // A rollout retry, or a platform fault the error lane still runs again,
+      // is an 'error' that needs nobody either.
       gateTrace.stop('checks',
-        ((checkState === 'failing' || checkState === 'error') && !rolloutRetry) ? 'blocked' : 'active',
+        ((checkState === 'failing' || checkState === 'error') && !rolloutRetry && !platformRetry) ? 'blocked' : 'active',
         {
           checkState: checkState || 'pending', failingCount,
           note: checkState === 'failing'
             ? `${failingCount || 'some'} failing. They re-run on the next push`
             : rolloutRetry
               ? 'they ran while Homeroom was updating and will run again'
+              : platformRetry
+                ? 'the checks could not start, so they will run again'
               : unitNotRun
                 ? 'the unit suite could not run, so there is no verdict yet'
                 : checkState === 'error'

@@ -111,7 +111,17 @@ read, and what was saved is only a lower bound.
 - A session a durable build opens carries `chat_sessions.workflow_owner`
   (`bot-build/<key>`). While that build is under way, `server.js` leaves the
   session's worker and its turn to it when it adopts workers at promotion,
-  and the stale-turn watchdog passes it by.
+  and the stale-turn watchdog passes it by. `worker.ensureWorker` keeps its
+  worker on an older worker image until the build ends
+  (`build-runs.holdsSession`): a replacement between two of its turns took
+  a first version's workspace on 14 Oct 2026. A changed runtime contract or
+  storage mode still replaces it.
+- A step the platform refuses for now is not kept as its result. The
+  proposal step tries a promote that answered 5xx again, then throws
+  (`ProposalDeferred`) while the work item has a try left
+  (`steps.triesLeft`), so the next try goes on from `prepared` and
+  proposes; nothing is said meanwhile. On the last try it ends as it always
+  did, built and not proposed.
 - A turn this process is following itself (its worker registry, or the
   session busy here) is no orphan: a promoted follower no longer adopts the
   turns it started during a rollout's overlap.

@@ -22,10 +22,31 @@ function whenShuttingDown() {
   return shutdownBegins;
 }
 
+// The mark of a request this process makes to itself, in-process, as a step
+// of work it already holds: the Homeroom bot's build proposing what it built
+// (homeroom-bot-live.js promoteAsBot, the only in-process dispatch of a
+// drain-guarded route). That is the held work going on, not new work, and a
+// process a release replaced finishes its work
+// (docs/plans/draining-releases.md).
+// 14 Oct 2026: a newcomer's first version (bot run 2027) was built to the
+// end by the process a release had just replaced, and its own promote was
+// then refused here, "Server is restarting": the process kept alive to
+// finish the build refused the build's last step, and the newcomer saw it
+// stop. It is a Symbol on the request object, so nothing a client sends can
+// set it: Express builds `req` from the socket, and no header, body, query,
+// cookie or token becomes a Symbol-keyed property. A request over HTTP,
+// loopback included, never carries it.
+const OWN_WORK = Symbol('lifecycle-own-work');
+
+function isOwnWork(req) {
+  return !!req && req[OWN_WORK] === true;
+}
+
 // Express middleware that 503s any request hitting a drain-guarded route
-// once shutdown has been initiated.
-function drainGuard(_req, res, next) {
-  if (shuttingDown) {
+// once shutdown has been initiated, except a step of work this process
+// already holds (OWN_WORK).
+function drainGuard(req, res, next) {
+  if (shuttingDown && !isOwnWork(req)) {
     return res.status(503).json({ error: 'Server is restarting, try again in a few seconds' });
   }
   next();
@@ -79,6 +100,8 @@ module.exports = {
   setShuttingDown,
   whenShuttingDown,
   drainGuard,
+  OWN_WORK,
+  isOwnWork,
   waitFor,
   drainDeadlineMs,
   KUBERNETES_DRAIN_DEFAULT_MS,

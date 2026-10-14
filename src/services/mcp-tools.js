@@ -1610,7 +1610,11 @@ function shapeProposal(session, origin, viewerId = null) {
     // previous run.
     pendingWrite: {
       buildInFlight: (() => {
-        try { return !!require('./staging').hasInFlightBuild(session.id); } catch { return null; }
+        try {
+          // With WF_PREVIEWS_ENABLED on, the preview machine's phase says it.
+          return !!require('./staging').hasInFlightBuild(session.id)
+            || (require('./preview-workflow').enabled() && session.check_state === 'pending' && session.check_phase === 'building');
+        } catch { return null; }
       })(),
     },
     externalAgent: session.external_agent || null,
@@ -6414,10 +6418,12 @@ function registerTools(server, ctx) {
 
     server.registerTool('list_bench_grading_queue', {
       title: 'Benchmark: what is waiting for the judge',
-      description: 'Admin only. The Homeroom bot benchmark items waiting for a judge. kind "grade" (the default) lists trial outputs a rule could not settle; kind "label" lists tasks with no reference yet, to label before their suite is frozen. Returns opaque item ids and stages only, in an order that says nothing about which model produced what. Read each with get_bench_item. Call get_connector_guidance for the grading procedure first.',
+      description: 'Admin only. The Homeroom bot benchmark items waiting for a judge. kind "grade" (the default) lists trial outputs a rule could not settle; kind "label" lists tasks with no reference yet, to label before their suite is frozen. runId narrows the grade queue to one run\'s items (every arm\'s, just as opaque), so a run can be judged on its own when it ends. Returns opaque item ids and stages only, in an order that says nothing about which model produced what. Read each with get_bench_item. Call get_connector_guidance for the grading procedure first.',
       inputSchema: {
         kind: z.enum(['grade', 'label']).optional().describe('"grade" (default) or "label".'),
         limit: z.number().int().positive().max(50).optional().describe('How many ids to return, at most 50.'),
+        // Added after clients cached the tool list, so it takes its digits as text too (#4345).
+        runId: positiveIntId().optional().describe('With kind "grade": only this run\'s items.'),
       },
       outputSchema: {
         kind: z.string(),
@@ -6426,10 +6432,11 @@ function registerTools(server, ctx) {
         nextStep: z.string(),
       },
       annotations: readAnnotations,
-    }, async ({ kind = 'grade', limit = 20 }) => {
+    }, async ({ kind = 'grade', limit = 20, runId }) => {
       const guard = scopeGuard(READ_SCOPE) || benchAdminOnly();
       if (guard) return guard;
-      const r = await callPlatform(baseUrl, accessToken, 'GET', `/api/bot-bench/queue?kind=${kind === 'label' ? 'label' : 'grade'}&limit=${Math.min(Number(limit) || 20, 50)}`);
+      const run = kind !== 'label' && runId ? `&runId=${Number(runId)}` : '';
+      const r = await callPlatform(baseUrl, accessToken, 'GET', `/api/bot-bench/queue?kind=${kind === 'label' ? 'label' : 'grade'}&limit=${Math.min(Number(limit) || 20, 50)}${run}`);
       if (!r.ok) return platformError(r);
       const b = r.body || {};
       const items = (Array.isArray(b.items) ? b.items : []).map((i) => ({
@@ -8004,7 +8011,7 @@ function registerTools(server, ctx) {
 
     server.registerTool('save_bot_config', {
       title: 'Bot configurations: save a version',
-      description: 'Admin only. Save a new version of a Homeroom bot configuration in `scope`: "first_version" (the default: how a project\'s first version is built) or "later" (every other build, live or shadow). It is the next version of `key` (or a new key, made from the label when none is given), with its recipe and role; a key belongs to one scope. A version is never edited; this is how a recipe changes, and its numbers start again. Roles move with it, within its scope: saved as "current", it builds every build of its scope from now on and the version current until now becomes a side version (or is retired, when it is this key\'s own earlier version); saved as "side", it is built silently beside each build of its scope for comparison, within that scope\'s side builds\' weekly budget, and this key\'s other side versions are retired. The recipe names an OpenRouter model id for triage, spec and build, a reviewer (model, maxRounds 0 to 5, budgetMinutes 1 to 60) or null, an App bench context pack id or null, and optionally a first version\'s tweaks, named changes to how its plan or build works that are benched before anyone\'s default: one_look (the build boots once, looks at each main screen once at one width, fixes only what is broken and leaves the sweep to the reviewer; needs a reviewer), starter_inline (the starter\'s file map and the files every build reads are in the build prompt) lean_turns (the declared checks are left to the platform\'s gate and stale tool output is cut from what each model call re-sends) one_go (the whole first version is written from the spec in a few replies of whole files before anything is booted, with the repository in the prompt), lean_plan (the spec plans a focused first version: what the request asks for and the platform\'s minimums, about a third of the length, one drawn screen, and "Not in this version" in place of nice-to-haves, which the build leaves out) and roomy_context (the build and its review fixes compact their context at a 200k-token window rather than a non-Anthropic model\'s 120k). Save a version as "retired" to build it only where it is named, such as a studio arm (models ["config:<its id>"]), and never beside live builds. A later recipe\'s reviewer is null (the review is a first version\'s), and its triage model is not run (a later change\'s triage keeps its per-stage model). A version saved as "current" must name only models in the OpenRouter catalog, and its reviewer\'s must read images; when the catalog cannot be read it can only be saved as side. Saving "current" changes what the bot builds with and what it costs: ask the person first, and say the recipe and the scope back. It changes no app.',
+      description: 'Admin only. Save a new version of a Homeroom bot configuration in `scope`: "first_version" (the default: how a project\'s first version is built) or "later" (every other build, live or shadow). It is the next version of `key` (or a new key, made from the label when none is given), with its recipe and role; a key belongs to one scope. A version is never edited; this is how a recipe changes, and its numbers start again. Roles move with it, within its scope: saved as "current", it builds every build of its scope from now on and the version current until now becomes a side version (or is retired, when it is this key\'s own earlier version); saved as "side", it is built silently beside each build of its scope for comparison, within that scope\'s side builds\' weekly budget, and this key\'s other side versions are retired. The recipe names an OpenRouter model id for triage, spec and build, a reviewer (model, maxRounds 0 to 5, budgetMinutes 1 to 60) or null, an App bench context pack id or null, and optionally a first version\'s tweaks, named changes to how its plan or build works that are benched before anyone\'s default: one_look (the build boots once, looks at each main screen once at one width, fixes only what is broken and leaves the sweep to the reviewer; needs a reviewer), starter_inline (the starter\'s file map and the files every build reads are in the build prompt) lean_turns (the declared checks are left to the platform\'s gate and stale tool output is cut from what each model call re-sends) one_go (the whole first version is written from the spec in a few replies of whole files before anything is booted, with the repository in the prompt), lean_plan (the spec plans a focused first version: what the request asks for and the platform\'s minimums, about a third of the length, one drawn screen, and "Not in this version" in place of nice-to-haves, which the build leaves out) and roomy_context (the build and its review fixes compact their context at a 200k-token window rather than 120k; Anthropic and GLM models already compact at 200k). Save a version as "retired" to build it only where it is named, such as a studio arm (models ["config:<its id>"]), and never beside live builds. A later recipe\'s reviewer is null (the review is a first version\'s), and its triage model is not run (a later change\'s triage keeps its per-stage model). A version saved as "current" must name only models in the OpenRouter catalog, and its reviewer\'s must read images; when the catalog cannot be read it can only be saved as side. Saving "current" changes what the bot builds with and what it costs: ask the person first, and say the recipe and the scope back. It changes no app.',
       inputSchema: {
         key: z.string().max(40).optional(), label: z.string().max(80).optional(), recipe: recipeShape,
         role: z.enum(['current', 'side', 'retired']), notes: z.string().max(1000).optional(), scope: scopeInput,

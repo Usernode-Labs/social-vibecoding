@@ -69,7 +69,12 @@ always had: a minute's drain, the lock released last.
 
 1. Refuse new work (`lifecycle.setShuttingDown`: the drain-guarded routes
    answer 503, leader timers start nothing, the loops claim nothing) and say
-   so (`processes.markDraining`).
+   so (`processes.markDraining`). A step of work the process already holds
+   is not new: the Homeroom bot's build proposes in-process
+   (`promoteAsBot`), and that request carries `lifecycle.OWN_WORK`, which
+   the drain guard lets through. On 14 Oct 2026 a first version built to the
+   end in a draining Pod was refused its own promote and stopped. A request
+   over HTTP never carries the mark.
 2. Stop being leader: the Homeroom bot's loops, the bench lane, the shots
    eval runner, the sweepers and timers stop starting things; the workflow
    runtime stops its loops (`quiesceWorkflow`: no slot, timer or claim) but

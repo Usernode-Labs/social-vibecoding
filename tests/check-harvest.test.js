@@ -1137,8 +1137,8 @@ test('captureForSession records a manifest before its Jobs exist and clears it o
   const launch = src.indexOf('kubernetes.runCaptureJob(');
   assert.ok(provisional > 0 && full > provisional && launch > full,
     'provisional manifest, then the full one, then the Job launch — in that order');
-  assert.match(src, /finally \{[\s\S]{0,1200}if \(harvestable\) await checkRuns\.finish\(operation\?\.cleanupPool \|\| pool, runId\);/,
-    'the manifest is cleared in the run\'s finally');
+  assert.match(src, /finally \{[\s\S]{0,1400}if \(harvestable && \(!workflow \|\| settledRun\)\) await checkRuns\.finish\(operation\?\.cleanupPool \|\| pool, runId\);/,
+    'the manifest is cleared in the run\'s finally (a preview machine\'s run keeps it unless it settled: its retry collects it)');
   assert.match(src, /previewRunId: runId/, 'the Jobs carry the manifest\'s run id, which is how the harvester finds them');
 });
 

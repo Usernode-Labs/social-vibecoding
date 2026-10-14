@@ -129,7 +129,10 @@ const MAX_LABEL_CHARS = 80;
 //                   compacted 2 to 3 times each, about 3.3 minutes of a
 //                   15-minute build spent writing summaries and then reading
 //                   files again; the 120k was chosen when every old
-//                   screenshot was still re-sent on each request.
+//                   screenshot was still re-sent on each request. After run
+//                   196, GLM compacts at 200k on every turn, so for GLM the
+//                   tweak now changes nothing; it still raises every other
+//                   non-Anthropic model to 200k.
 const TWEAKS = Object.freeze(['one_look', 'starter_inline', 'lean_turns', 'one_go', 'lean_plan', 'roomy_context']);
 const MAX_NOTES_CHARS = 1000;
 // The side builds' own weekly spend, real dollars on the App bench lane's

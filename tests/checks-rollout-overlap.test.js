@@ -406,7 +406,9 @@ test('the merge gate blocks on it as an error and words it as a retry', () => {
   const gate = src.slice(src.indexOf("const errorDetail = checkState === 'error'"));
   assert.match(gate, /const rolloutRetry = errorDetail === require\('\.\.\/services\/staging-recovery'\)\.ROLLOUT_RETRY_DETAIL;/);
   assert.match(gate, /'ran its tests while Homeroom was updating, so they will run again on their own'/);
-  assert.match(gate, /\(\(checkState === 'failing' \|\| checkState === 'error'\) && !rolloutRetry\) \? 'blocked' : 'active'/);
+  // A platform fault the error lane still runs again needs nobody either
+  // (#5054, tests/checks-platform-fault.test.js).
+  assert.match(gate, /\(\(checkState === 'failing' \|\| checkState === 'error'\) && !rolloutRetry && !platformRetry\) \? 'blocked' : 'active'/);
   // It is still not 'passing' or 'skipped', so the gate above it blocks the
   // merge exactly as for any other error.
   assert.match(src, /if \(checkState !== 'passing' && checkState !== 'skipped'\) \{/);
