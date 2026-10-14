@@ -634,6 +634,32 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
     } finally { delivery.on = false; }
   });
 
+  await t.test('with app delivery on, a merge counts no other deploy before its own request is answered, whatever the order', async () => {
+    delivery.on = true;
+    try {
+      const a = await app();
+      const s = await proposal(a);
+      await merge(s);
+      // An earlier deploy's result reaches it before its own request was
+      // even recorded there (queued behind that result): that deploy started
+      // before this merge applied its declared keys.
+      const early = await deliveryAnswer(s, 'Deployed', { sha: SHA('a') });
+      const fromRelease = await send(s, 'Deployed', { sha: SHA('a') });
+      await settle();
+      assert.deepEqual([(await outcome(early)).reason, (await outcome(fromRelease)).reason], ['awaiting_own_answer', 'awaiting_own_answer']);
+      assert.equal((await instance(s)).state, 'delivering');
+      // Its own deploy's answer counts, and the preview goes with it.
+      await deliveryAnswer(s, 'DeliveryFailed', { message: 'missing required secrets: API_KEY', missingSecrets: ['API_KEY'] });
+      await settle();
+      assert.equal((await instance(s)).state, 'deploy_failed');
+      assert.ok((await workOf(s)).some((w) => w.kind === WORK.teardown));
+      // Answered once, any later deploy that contains it makes it live.
+      await deliveryAnswer(s, 'Deployed', { sha: SHA('a') });
+      await settle();
+      assert.equal((await instance(s)).state, 'live');
+    } finally { delivery.on = false; }
+  });
+
   await t.test('a retry after app delivery was turned off is the merge\'s own deploy again', async () => {
     delivery.on = true;
     const a = await app();

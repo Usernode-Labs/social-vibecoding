@@ -77,6 +77,7 @@ export interface Data {
   included: number[];              // role 'merge': the changes it carried, as found
   deliveries: number;              // app.deliver items or app-delivery requests so far (retries get new keys)
   delivery?: typeof DELIVERY;      // the deploy is asked of app-delivery (absent: app.deliver work)
+  answered?: boolean;              // app-delivery has answered this merge's own request
   deliveredSha: string | null;
   liveAt: string | null;
   failure: string | null;
@@ -514,6 +515,11 @@ const verifyWork = (d: Data, sha: string): WorkRequest =>
 const deployed = {
   guard: (s: any, e: Event<any>): Check => {
     if (s.data.role !== 'merge') return reject('carrier_delivers');
+    // A merge that asked app-delivery waits for its own deploy's answer
+    // before any other deploy counts: one that started before its request
+    // was recorded (however the events were ordered) ran without the keys
+    // this merge declared, applied when it merged.
+    if (s.data.delivery === DELIVERY && !s.data.answered) return reject('awaiting_own_answer');
     if (!s.data.mergeSha) return reject('no_merge_commit');
     if (s.data.followups[`verify:${e.payload.sha}`]) return reject('already_checking');
     return ok();
@@ -531,12 +537,14 @@ const withTeardown = (s: any, out: Outcome<MFState>) => (s.data.followups.teardo
 const delivered = {
   guard: fromDelivery,
   to: (s: any, e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<MFState> =>
-    withTeardown(s, deployedBuild(e, s.name, s.data, e.payload.sha, ctx)),
+    withTeardown(s, deployedBuild(e, s.name, { ...s.data, answered: true }, e.payload.sha, ctx)),
 };
 const deliveryFailed = {
   guard: fromDelivery,
-  to: (s: any, e: Event<any>): Outcome<MFState> =>
-    withTeardown(s, s.name === 'delivering' ? toFailed(e, s.data, e.payload.message) : { next: { name: s.name, data: s.data } }),
+  to: (s: any, e: Event<any>): Outcome<MFState> => {
+    const d = { ...s.data, answered: true };
+    return withTeardown(s, s.name === 'delivering' ? toFailed(e, d, e.payload.message) : { next: { name: s.name, data: d } });
+  },
 };
 
 const retryFollowup = {
