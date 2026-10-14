@@ -14387,7 +14387,7 @@ CREATE TABLE IF NOT EXISTS security_bot_probes (
   probe_key   TEXT NOT NULL,
   variant     BOOLEAN NOT NULL DEFAULT FALSE,
   outcome     TEXT NOT NULL,
-  detail      JSONB NOT NULL DEFAULT '{}'::jsonb,
+  detail      JSONB DEFAULT '{}'::jsonb,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT security_bot_probes_outcome_check CHECK (outcome IN
     ('passed','blocked','variant-confirmed','failed','skipped','unsupported','simulated')),
@@ -14421,7 +14421,7 @@ CREATE TABLE IF NOT EXISTS security_bot_finding_occurrences (
   id           SERIAL PRIMARY KEY,
   finding_id   INTEGER NOT NULL REFERENCES security_bot_findings(id) ON DELETE CASCADE,
   run_id       INTEGER NOT NULL REFERENCES security_bot_runs(id) ON DELETE CASCADE,
-  context      JSONB NOT NULL DEFAULT '{}'::jsonb,
+  context      JSONB DEFAULT '{}'::jsonb,
   created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE (finding_id, run_id)
 );
