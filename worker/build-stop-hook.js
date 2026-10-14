@@ -81,6 +81,15 @@
 // reports as stop_hook_servers_stopped, and it fails open: anything it
 // cannot read is left alone.
 //
+// A FIRST VERSION DECLARES ITS CHECKS (App bench run 191, 14 Oct 2026).
+// Three of eighteen first versions wrote their checks under `checks`, a key
+// the platform never reads, and the gate let each end, as it lets an app
+// with no checks end: nothing ran, here or on their proposals. So with
+// USERNODE_STOP_GUARD_REQUIRE_TESTS (a first version's build and review
+// fixes), a dapp.json with a `checks` key, or whose `tests` array holds no
+// check with a route, sends the turn back before anything is booted
+// (manifestProblem), within the same CHECK_MAX_BLOCKS.
+//
 // And checks that passed are not run again on the same tree: a turn that
 // carries on after its stop was allowed (a background task's end wakes it)
 // would otherwise boot the app and run every check a second time. The tree
@@ -182,6 +191,59 @@ function checksReason({ failed, total, command }) {
       + ' changed what it pins; never loosen, skip or delete one to make it pass.',
     `You can run the same checks yourself with \`sh ${command}\` from the repository root; it prints each result.`,
   ].join('\n');
+}
+
+// A test the platform would run: an object with a route (app-manifest.js
+// readTests and the check script's declaredChecks keep the same ones).
+function routedTest(t) {
+  return !!t && typeof t === 'object' && typeof t.path === 'string' && /^\/(?!\/)/.test(t.path.trim());
+}
+
+const CHECK_SHAPE = 'a name, a path, and expectSelector or expectText; one of them with an id, visual: true and impact';
+
+/**
+ * What keeps a first version's dapp.json (its text, or null when there is
+ * none) from declaring checks the platform runs, or null when nothing does
+ * (see A FIRST VERSION DECLARES ITS CHECKS). Pure.
+ *
+ * @returns {null | { why: string, reason: string }}
+ */
+function manifestProblem(text) {
+  if (text == null) {
+    return {
+      why: 'checks_none',
+      reason: `This app has no dapp.json, so it declares no checks. A first version ships two or three in dapp.json's top-level \`tests\` array (${CHECK_SHAPE}), and the platform runs them on every proposal. Add them and finish again.`,
+    };
+  }
+  let manifest;
+  try { manifest = JSON.parse(text); } catch (err) {
+    return {
+      why: 'checks_manifest_invalid',
+      reason: `This app's dapp.json is not valid JSON (${String(err && err.message).slice(0, 160)}), so the platform cannot read its checks, its icon or its secrets. Fix it and finish again.`,
+    };
+  }
+  if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) {
+    return { why: 'checks_manifest_invalid', reason: 'This app\'s dapp.json is not a JSON object, so the platform cannot read its checks. Fix it and finish again.' };
+  }
+  if (Object.prototype.hasOwnProperty.call(manifest, 'checks')) {
+    return {
+      why: 'checks_misplaced',
+      reason: `This app's dapp.json declares checks under \`checks\`, a key the platform does not read: they would never run, here or on the proposal. Move them into the top-level \`tests\` array (the same objects: ${CHECK_SHAPE}), delete the \`checks\` key, and finish again.`,
+    };
+  }
+  const tests = Array.isArray(manifest.tests) ? manifest.tests.filter(routedTest) : [];
+  if (!tests.length) {
+    return {
+      why: 'checks_none',
+      reason: `This app's dapp.json declares no checks: its top-level \`tests\` array is missing, empty or has no check with a path. A first version ships two or three there (${CHECK_SHAPE}), and the platform runs them on every proposal. Add them under \`tests\` (the platform reads no other key) and finish again.`,
+    };
+  }
+  return null;
+}
+
+/** The repository's dapp.json, or null when there is none or it cannot be read. Never throws. */
+function readManifestText(repo, fsImpl = fs) {
+  try { return fsImpl.readFileSync(path.join(repo || '.', 'dapp.json'), 'utf8'); } catch { return null; }
 }
 
 /**
@@ -410,6 +472,17 @@ function runChecksGate({ env, input, git, fsImpl, checks, now, verdict }) {
     const facts = { command, blocks: countFile ? readBlocks(countFile) : null, changed, leftMs };
     const before = decideChecks(facts);
     if (before.why !== 'run') return { ...verdict, checks: before.why };
+    // A first version's checks, declared where the platform reads them,
+    // before anything is booted to run them.
+    const problem = env.USERNODE_STOP_GUARD_REQUIRE_TESTS === '1' ? manifestProblem(readManifestText(repo, fsImpl)) : null;
+    if (problem) {
+      try {
+        fsImpl.writeFileSync(countFile, String(facts.blocks + 1));
+      } catch {
+        return { ...verdict, checks: 'no_count' };
+      }
+      return { block: true, why: problem.why, reason: problem.reason, checkBlocks: facts.blocks + 1 };
+    }
     // Passed already on this very tree: not booted and run again.
     const passedFile = env.USERNODE_STOP_GUARD_CHECKS_PASSED;
     const tree = passedFile ? treeOf(repo, `${passedFile}.index`, git) : null;
@@ -543,6 +616,7 @@ module.exports = {
   decide,
   decideChecks,
   checksReason,
+  manifestProblem,
   runChecks,
   runGuard,
   listeningInodes,

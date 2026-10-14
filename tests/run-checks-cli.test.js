@@ -191,3 +191,28 @@ test('expectText matches rendered text case-insensitively', async () => {
   ]);
   assert.equal(results[0].pass, true);
 });
+
+// App bench run 191: with no inLoopCheckAuth, these checks ran signed out and
+// failed on every protected route, though the launch now signs its app in.
+test('without inLoopCheckAuth, the checks sign in as the in-loop launch signed its app in', () => {
+  const { launchToken, withToken } = require(path.join(__dirname, '..', 'worker', 'usernode-run-checks'));
+  const calls = [];
+  const inloop = {
+    LOCAL_APP_ID: '1',
+    readLaunch(port) { calls.push(port); return port === 3100 ? { pid: 9, signedIn: true, appId: '7' } : (port === 3101 ? { pid: 9 } : null); },
+    localIdentity() { return { privateKeyPem: 'k' }; },
+    viewerToken(identity, appId) { return `token-for-${appId}`; },
+  };
+  assert.equal(launchToken('http://127.0.0.1:3100', { inloop }), 'token-for-7');
+  assert.equal(launchToken('http://localhost:3100/', { inloop }), 'token-for-7');
+  assert.equal(launchToken('http://127.0.0.1:3101', { inloop }), null, 'a launch made without the sign-in');
+  assert.equal(launchToken('http://127.0.0.1:3999', { inloop }), null, 'no launch on that port');
+  assert.equal(launchToken('https://example.com', { inloop }), null, 'never a token to another host');
+  assert.deepEqual(calls, [3100, 3100, 3101, 3999]);
+  assert.equal(launchToken('not a url', { inloop }), null);
+  assert.equal(withToken('http://127.0.0.1:3100/?demo=1#/feeds', 't'), 'http://127.0.0.1:3100/?demo=1&token=t#/feeds');
+  assert.equal(withToken('http://127.0.0.1:3100/', null), 'http://127.0.0.1:3100/');
+  // And the real launcher's: the same token the launch's link carries.
+  const real = require(path.join(__dirname, '..', 'worker', 'usernode-run-inloop'));
+  for (const name of ['readLaunch', 'localIdentity', 'viewerToken', 'LOCAL_APP_ID']) assert.ok(real[name] != null, name);
+});
