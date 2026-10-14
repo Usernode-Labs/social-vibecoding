@@ -954,6 +954,31 @@ test('a reviewer that fails leaves the build exactly as it landed, and a build w
   assert.deepEqual(plain.calls.turns.filter((t) => t.harness).map((t) => t.harness), ['auto', 'auto'], 'every turn keeps the platform\'s CLI');
 });
 
+// Run 196: two first versions built, then their fix turns were refused by
+// OpenRouter for the key's spending limit, and their reviews stopped after
+// one round. The refusal is in the turn's last lines, not its exit code.
+test('a fix turn the provider refused keeps what it last did, so a review it cut short says why', async () => {
+  const h = buildHarness({ verdicts: ['fix'] });
+  const real = h.deps.worker.execInWorker;
+  let builds = 0;
+  h.deps.worker.execInWorker = async (id, opts) => {
+    if (opts.mode === 'build' && ++builds === 2) {
+      opts.onProgress?.('OpenRouter request #1: http_error after 0s, HTTP 403');
+      opts.onProgress?.('Failed to authenticate. API Error: 403 Key limit exceeded (weekly limit).');
+      return { agentHarness: 'claude', ccExit: 1, pushOk: false, ahead: 0, lastResultText: '' };
+    }
+    return real(id, opts);
+  };
+  const out = await live.buildAndPropose({ pool: h.pool, deps: h.deps, ...ARGS, review: { reviewer: REVIEWER, owner: { botRunId: 900 } } });
+  assert.equal(out.ok, true, out.error);
+  assert.equal(out.sha, 'sha1', 'what landed is kept');
+  assert.equal(out.review.stop, 'fix_failed');
+  assert.match(out.review.stopDetail, /^the fix turn failed \(the agent exited with code 1\); last activity: .*403 Key limit exceeded \(weekly limit\)/);
+  assert.equal(out.review.rounds[0].fix.error, out.review.stopDetail);
+  // The bench reads such a trial as the platform's fault (lane.js asPlatformFault).
+  assert.equal(require('../src/services/bench/lane').asPlatformFault({ status: 'ok', parsed: { review: out.review } }).status, 'infra_fail');
+});
+
 test('a review fix that broke the app is rolled back on the session branch before the first version goes on', async () => {
   // The fix turn lands sha2, whose capture does not boot.
   const h = buildHarness({ verdicts: ['fix'] });
