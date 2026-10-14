@@ -1,3 +1,5 @@
+import { useAutoGrow } from '../../lib/use-auto-grow';
+import { SpeakButton } from '../dictation/speak-button';
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 
 import {
@@ -264,13 +266,15 @@ function Composer({ id }: { id: string }) {
   const t = useMessages('chat');
   const snapshot = useGlobalChatState();
   const [value, setValue] = useState('');
+  const [dictating, setDictating] = useState(false);
   const textarea = useRef<HTMLTextAreaElement | null>(null);
   const sending = snapshot.phase === 'sending';
+  useAutoGrow(textarea, value);
 
   function submit(event?: FormEvent) {
     event?.preventDefault();
     const prompt = value.trim();
-    if (!prompt || sending) return;
+    if (!prompt || sending || dictating) return;
     setValue('');
     if (textarea.current) textarea.current.style.height = '';
     void sendGlobalChatMessage(prompt);
@@ -307,10 +311,11 @@ function Composer({ id }: { id: string }) {
           }
         }}
       />
+      <SpeakButton scope={`global:${snapshot.bootstrap?.thread?.id || id}`} getText={() => textarea.current?.value || ''} onText={setValue} maxLength={12000} onBusyChange={setDictating} disabled={!snapshot.bootstrap?.available || snapshot.phase === 'loading'} />
       <button
         type={sending ? 'button' : 'submit'}
         className="global-chat-send"
-        disabled={!sending && !value.trim()}
+        disabled={!sending && (dictating || !value.trim())}
         aria-label={sending ? t('chat:global.composer.stopLabel') : t('chat:global.composer.sendLabel')}
         title={sending ? t('chat:global.composer.stop') : t('chat:global.composer.send')}
         // The field keeps focus through the press, so the keyboard and the

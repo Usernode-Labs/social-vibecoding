@@ -1,3 +1,4 @@
+import { SpeakButton } from '../dictation/speak-button';
 /**
  * "What do you want to make?": the first thing an account made from the
  * signed-out story is asked (../auth/story.tsx sets the session's
@@ -291,6 +292,7 @@ export function MakeScreen({
   // Sent only when it is another, as the project's own governance block.
   const [rule, setRule] = useState<PresetKey>(DEFAULT_PRESET);
   const [busy, setBusy] = useState(false);
+  const [dictating, setDictating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // The answer a press of "Make it" found missing, said under its field
   // until it changes.
@@ -442,7 +444,7 @@ export function MakeScreen({
   };
 
   const make = useCallback(async () => {
-    if (busy || makingRef.current) return;
+    if (dictating || busy || makingRef.current) return;
     const gap: Missing = templated && said?.blank ? 'blank' : missingAnswer(text, name);
     if (gap) {
       setMissing(gap);
@@ -495,7 +497,7 @@ export function MakeScreen({
       makingRef.current = false;
       setBusy(false);
     }
-  }, [busy, templated, said, text, name, template, choice, rule, entry, onMade]);
+  }, [dictating, busy, templated, said, text, name, template, choice, rule, entry, onMade]);
   const needed = neededLine(missing, text, !!template?.finish);
   // The chips under the sentence: Your own… last, or first for the game.
   const ownChip = { key: OWN, label: 'onboarding:firstSession.make.ownChip' };
@@ -724,6 +726,14 @@ export function MakeScreen({
                   {waitlistIdea && brief === waitlistIdea ? <p data-make-waitlist-idea="" className={HINT}>{t(WAITLIST_IDEA_LINE)}</p> : null}
                 </>
               )}
+              <div className="flex justify-end">
+                <SpeakButton scope={`make:${mode}:${template?.key || 'idea'}:${written === null ? choice : 'written'}`} disabled={busy || mode !== 'make'} onBusyChange={setDictating}
+                  getText={() => templated ? words : brief} maxLength={templated ? template?.finish ? BRIEF_MAX - 200 : 60 : BRIEF_MAX}
+                  onText={(next) => {
+                    if (templated) { setChoice(OWN); changeWords(next); if (template && !nameTyped) setName(suggestedName(template, OWN, next)); }
+                    else { setBrief(next); setPicked(OWN_IDEA); setWritten(null); setError(null); setMissing(null); }
+                  }} />
+              </div>
               {missing === 'brief' || missing === 'blank' ? <p id="first-session-brief-needed" role="alert" className={NEEDED}>{needed}</p> : null}
             </div>
             <div className={FIELD}>
@@ -756,7 +766,7 @@ export function MakeScreen({
           <Button
             type="submit"
             data-make-submit=""
-            disabled={busy || quotaBlocks}
+            disabled={dictating || busy || quotaBlocks}
             layout="full"
             variant="pillAccent"
             size="pillLg"

@@ -646,6 +646,7 @@ app.use(illustrationRoutes(config));
 app.use(appFileShellRoutes(config));
 app.use(chatRoutes(config));
 app.use(conversationRoutes(config));
+app.use(require('./src/routes/dictation').dictationRoutes(config));
 // #2386: mutual friends — the viewer's own lists, requests and answers.
 app.use(friendRoutes(config));
 app.use(contentReportRoutes(config));

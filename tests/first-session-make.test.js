@@ -340,7 +340,7 @@ test('nothing under Make it says what you write is public on GitHub', () => {
 // and with the keyboard up the screen scrolled "Start from an example" up
 // behind the status bar.
 
-test('"Make it" looks pale only while making: a press with an answer missing goes to that field and says what it needs', () => {
+test('"Make it" waits while making or dictating: a press with an answer missing goes to that field and says what it needs', () => {
   const make = loadTsx(`${DIR}/make.tsx`);
   assert.equal(make.missingAnswer('', ''), 'brief');
   assert.equal(make.missingAnswer('too short', 'Page Turners'), 'brief', 'under BRIEF_MIN');
@@ -357,9 +357,9 @@ test('"Make it" looks pale only while making: a press with an answer missing goe
     assert.doesNotMatch(line, /\u2014/, 'no em dash');
   }
   const src = read(`${DIR}/make.tsx`);
-  // Pale while making, or at the allowance's limit (the server would refuse
+  // Pale while making, dictating, or at the allowance's limit (the server would refuse
   // it), never for a missing answer.
-  assert.match(src, /disabled=\{busy \|\| quotaBlocks\}/, 'never disabled for a missing answer');
+  assert.match(src, /disabled=\{dictating \|\| busy \|\| quotaBlocks\}/, 'never disabled for a missing answer');
   assert.doesNotMatch(src, /disabled=\{!valid/);
   // (preventScroll since 5 Oct 2026: the keyboard surface reveals the field, with Make it.)
   // The caret goes to what is missing: the name, a template's blank, or the plain box.
