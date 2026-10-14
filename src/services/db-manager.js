@@ -333,7 +333,10 @@ function targetExecutor(server = PRIMARY_SERVER) {
   return (dbName, sql, opts = {}) => execInTarget(dbName, sql, { ...opts, server });
 }
 
-function postgresEnv(dbName, server = PRIMARY_SERVER) {
+// `as` ({ user, password }) runs the child as a different role than the
+// administrator — the copy's own unprivileged owner role for the redaction
+// passes — keeping the server's address, TLS and the rest of the environment.
+function postgresEnv(dbName, server = PRIMARY_SERVER, as = null) {
   const admin = adminConnection(server);
   // For the preview server the URL is the whole connection. libpq also reads
   // its own environment, and some of it outranks what is set below: a
@@ -350,8 +353,8 @@ function postgresEnv(dbName, server = PRIMARY_SERVER) {
     ...inherited,
     PGHOST: admin.hostname,
     PGPORT: admin.port || '5432',
-    PGUSER: decodeURIComponent(admin.username || DB_USER),
-    PGPASSWORD: decodeURIComponent(admin.password || ''),
+    PGUSER: as && as.user ? as.user : decodeURIComponent(admin.username || DB_USER),
+    PGPASSWORD: as && as.password != null ? as.password : decodeURIComponent(admin.password || ''),
     PGDATABASE: dbName,
     // The preview server: plain, said outright (libpq's own default would
     // try TLS first and the other two clients would not).
@@ -1139,8 +1142,13 @@ async function cloneDatabaseDirect(sourceDb, targetDb, { server = PRIMARY_SERVER
   // container is strictly safer than spawning one that leaks. Tables
   // truncated in pass 1 are no-ops for pass 2 (UPDATE on empty), so
   // tagging both levels on the same table is harmless.
-  await truncatePrivateTables(targetDb, inTarget);
-  await scrubPrivateColumns(targetDb, inTarget);
+  // The two passes run AS the clone's own owner role, not the administrator
+  // (see redactPrivateData): app-defined code a TRUNCATE or UPDATE evaluates
+  // then runs with that unprivileged role's rights. The reassign above moved
+  // every object to it, so it owns these tables and can empty them.
+  const asOwner = (db, sql, opts = {}) =>
+    execInTarget(db, sql, { ...opts, server, as: { user: targetRole, password } });
+  await redactPrivateData(targetDb, asOwner);
 
   log.info('db-manager', 'Database cloned with new role', { sourceDb, targetDb, targetRole, server });
   return { password };
@@ -1262,8 +1270,34 @@ async function buildRedactedCopy(sourceDb, targetDb, ownerRole, { server = PRIMA
     if (serverKey(server) !== PRIMARY_SERVER) throw err;   // see cloneDatabaseDirect
     log.warn('db-manager', 'template reassign from superuser failed', { targetDb, err: err.message });
   });
-  await truncatePrivateTables(targetDb, inTarget);
-  await scrubPrivateColumns(targetDb, inTarget);
+  // Redact AS the copy's owner role, not the administrator (see
+  // redactPrivateData). This role is NOLOGIN (a template / prepared-source
+  // role is shared and never logs in), so give it a login for the passes and
+  // take it away again afterwards — a template or prepared source must never
+  // be left with a login-capable role.
+  const inAdmin = adminExecutor(server);
+  const redactionPassword = generatePassword();
+  await inAdmin(`ALTER ROLE ${ownerRole} LOGIN PASSWORD '${redactionPassword}'`);
+  const asOwner = (db, sql, opts = {}) =>
+    execInTarget(db, sql, { ...opts, server, as: { user: ownerRole, password: redactionPassword } });
+  let redactErr = null;
+  try {
+    await redactPrivateData(targetDb, asOwner);
+  } catch (err) {
+    redactErr = err;
+  }
+  try {
+    await inAdmin(`ALTER ROLE ${ownerRole} NOLOGIN PASSWORD NULL`);
+  } catch (err) {
+    if (redactErr) {
+      log.error('db-manager', 'Could not return the redaction role to NOLOGIN after a failed build', {
+        ownerRole, err: err.message,
+      });
+    } else {
+      redactErr = err;
+    }
+  }
+  if (redactErr) throw redactErr;
   return excludeData;
 }
 
@@ -1430,23 +1464,30 @@ async function cloneFromTemplate(templateDb, targetDb, {
     await admin(`REVOKE CONNECT ON DATABASE ${targetDb} FROM PUBLIC`);
     await admin(`GRANT ALL PRIVILEGES ON DATABASE ${targetDb} TO ${targetRole}`);
   }, { queryTimeoutMs, server });
-  // One connection for the whole ownership/redaction pass, including discovery.
-  // Never pool it: the caller may need to drop this database immediately on
-  // failure, and a later preview must not inherit an administrative session.
+  // Ownership moves to the clone's own role AS the administrator (only it can
+  // reassign objects the template role owns); a short-lived psql process, so
+  // no administrative session lingers afterwards.
+  onProgress?.('reassign_ownership');
+  try {
+    await reassignUserObjectsTo(targetDb, templateRole, targetRole, targetExecutor(server));
+  } catch (error) {
+    error.message = `Database clone reassign_ownership: ${error.message}`;
+    throw error;
+  }
+  // The redaction then runs over one connection AUTHENTICATED AS that clone
+  // role (see redactPrivateData): app-defined code a TRUNCATE or UPDATE
+  // evaluates runs with its unprivileged rights, never the administrator's.
+  // Never pooled: the caller may need to drop this database immediately on
+  // failure, and a later preview must not inherit this session.
   await withDatabaseConnection(targetDb, async (execute) => {
-    for (const [phase, run] of [
-      ['reassign_ownership', () => reassignUserObjectsTo(targetDb, templateRole, targetRole, execute)],
-      ['truncate_private', () => truncatePrivateTables(targetDb, execute)],
-      ['scrub_private', () => scrubPrivateColumns(targetDb, execute)],
-    ]) {
-      onProgress?.(phase);
-      try { await run(); }
-      catch (error) {
-        error.message = `Database clone ${phase}: ${error.message}`;
-        throw error;
+    try { await redactPrivateData(targetDb, execute, { onProgress }); }
+    catch (error) {
+      if (!/^Database clone /.test(String(error.message || ''))) {
+        error.message = `Database clone redact_private: ${error.message}`;
       }
+      throw error;
     }
-  }, { queryTimeoutMs, server });
+  }, { queryTimeoutMs, server, as: { user: targetRole, password } });
   onProgress?.('redaction_complete');
   log.info('db-manager', 'Database cloned from staging template', {
     templateDb, targetDb, targetRole, durationMs: Date.now() - startedAt,
@@ -1900,12 +1941,21 @@ async function assertPreviewServerReachable(server) {
 // connection within one clone phase. Other administration keeps its existing
 // one-shot behavior. SQL stays in autocommit: CREATE/DROP DATABASE cannot run
 // inside a transaction, and a failed redaction must not abort later attempts.
-async function withDatabaseConnection(dbName, fn, { queryTimeoutMs = 30_000, server = PRIMARY_SERVER } = {}) {
+async function withDatabaseConnection(dbName, fn, { queryTimeoutMs = 30_000, server = PRIMARY_SERVER, as = null } = {}) {
   if (!SAFE_IDENT.test(dbName)) throw new Error(`Unsafe connection database: ${dbName}`);
   const timeoutMs = Math.max(30_000, Math.min(120_000, Number(queryTimeoutMs) || 30_000));
   let url;
   try { url = adminConnection(server); } catch (err) { throw fromPreviewServer(err, server); }
   url.pathname = `/${dbName}`;
+  // `as` authenticates as a specific role (the copy's unprivileged owner, for
+  // the redaction passes) rather than the administrator. The role and
+  // password go in the authority; any administrative user/password left in
+  // the URL's query would otherwise override it (see connectionUrl).
+  if (as && as.user) {
+    url.username = as.user;
+    url.password = as.password || '';
+    for (const key of ['user', 'password']) if (url.searchParams.has(key)) url.searchParams.delete(key);
+  }
   const client = new Client({
     ...pgClientConfig(url, server),
     connectionTimeoutMillis: 30000,
@@ -1998,7 +2048,7 @@ async function execInTarget(dbName, sql, opts = {}) {
   const timeoutMs = Math.max(30_000, Math.min(120_000, Number(opts.timeoutMs) || 30_000));
   let ran;
   try {
-    ran = await execFileAsync('psql', args, { timeout: timeoutMs, env: postgresEnv(dbName, opts.server) });
+    ran = await execFileAsync('psql', args, { timeout: timeoutMs, env: postgresEnv(dbName, opts.server, opts.as) });
   } catch (err) {
     throw fromPreviewServer(psqlFailure(err, { sql, timeoutMs }), opts.server);
   }
@@ -2239,23 +2289,13 @@ function pgRestoreArgs(targetDb) {
   return ['--exit-on-error', '--no-owner', '--no-privileges', '--dbname', targetDb];
 }
 
-async function truncatePrivateTables(targetDb, execute = execInTarget) {
-  // Discovery query. obj_description on pg_class returns the comment
-  // attached via `COMMENT ON TABLE foo IS '...'`. relkind='r' filters
-  // to ordinary tables (not views/indexes/sequences). We exclude
-  // pg_catalog/information_schema defensively even though they
-  // shouldn't have user comments.
-  //
-  // The same query also lists every foreign table among their inheritance
-  // descendants, as `FOREIGN ["<private table>", "<foreign table>"]`: JSON,
-  // so no name, however odd, breaks the line or hides the prefix.
-  // TRUNCATE without ONLY reaches those children,
-  // and for postgres_fdw it sends TRUNCATE to the remote server, which in a
-  // copy is the same server the live app's definition names. Nor can their
-  // emptiness be shown from here: another user mapping, or a policy on the
-  // remote side, may see rows ours does not. So a private table with a
-  // foreign descendant refuses the copy before any TRUNCATE is sent.
-  const discoverySql = `
+// ── Shared staging:private emptiness logic ───────────────────────────────
+// The TRUNCATE pass (truncatePrivateTables) proves the private tables empty
+// right after emptying them; the re-check after the column pass
+// (verifyPrivateTablesEmpty) proves it again. Both use the SAME discovery
+// query and the SAME size-then-read proof, kept here once so the two cannot
+// drift. Only the TRUNCATE itself lives in the pass.
+const PRIVATE_TABLES_DISCOVERY_SQL = `
 WITH RECURSIVE private(name, rel) AS (
   SELECT n.nspname || '.' || c.relname, c.oid
     FROM pg_class c
@@ -2276,6 +2316,304 @@ SELECT DISTINCT 'FOREIGN ' || json_build_array(tree.name, n.nspname || '.' || c.
  WHERE c.relkind = 'f'
  ORDER BY 1`.trim();
 
+function refuseForeignCopy(targetDb, pairs) {
+  log.error('db-manager', 'staging:private table with a foreign-table descendant; copy refused', {
+    targetDb, foreign: pairs,
+  });
+  const err = new Error(
+    `Refusing to empty the staging:private tables in ${targetDb}: ` +
+    pairs.map(([parent, child]) => `${parent} has the foreign-table descendant ${child}`).join('; ') +
+    '. Its rows are on another server: they can neither be emptied from a copy safely nor shown to be empty.'
+  );
+  err.noFallback = true;
+  return err;
+}
+
+// Split the discovery answer into the [private table] names and the
+// [private, foreign] descendant pairs; an unreadable pair is still a foreign
+// descendant, shown as it came.
+function parsePrivateDiscovery(stdout) {
+  const lines = (stdout || '').split('\n').map((s) => s.trim()).filter(Boolean);
+  const foreignPair = (text) => {
+    try {
+      const pair = JSON.parse(text);
+      if (Array.isArray(pair) && pair.length === 2) return pair.map(String);
+    } catch { /* shown raw below */ }
+    return ['?', text];
+  };
+  const foreign = lines.filter((line) => line.startsWith('FOREIGN '))
+    .map((line) => foreignPair(line.slice('FOREIGN '.length)));
+  const qualifiedNames = lines.filter((line) => !line.startsWith('FOREIGN '));
+  return { foreign, qualifiedNames };
+}
+
+// Each statement as few parts as fit under the psql argument ceiling
+// (MAX_SCRUB_STATEMENT_BYTES): psql takes a statement as one command-line
+// argument, which Linux caps at 128 KiB (spawn E2BIG).
+function chunkedStatements(items, render, join, wrap) {
+  const statements = [];
+  let parts = [];
+  for (const item of items) {
+    const part = render(item);
+    if (parts.length > 0 && Buffer.byteLength(wrap(parts.concat(part).join(join))) > MAX_SCRUB_STATEMENT_BYTES) {
+      statements.push(wrap(parts.join(join)));
+      parts = [];
+    }
+    parts.push(part);
+  }
+  if (parts.length > 0) statements.push(wrap(parts.join(join)));
+  return statements;
+}
+
+// Names were validated by the caller, so they splice as text too.
+function privateSizeSqls(safe) {
+  return chunkedStatements(safe, (t) => `('${t}', '${t}'::regclass)`, ', ', (values) =>
+    `WITH RECURSIVE targets(name, rel) AS (VALUES ${values}), tree(name, rel) AS (SELECT name, rel FROM targets`
+    + ' UNION SELECT tree.name, i.inhrelid::regclass FROM pg_inherits i JOIN tree ON i.inhparent = tree.rel)'
+    + " SELECT DISTINCT json_build_array(tree.name, c.oid::bigint, c.relkind, n.nspname || '.' || c.relname)::text FROM tree"
+    + ' JOIN pg_class c ON c.oid = tree.rel JOIN pg_namespace n ON n.oid = c.relnamespace'
+    + ' LEFT JOIN pg_am am ON am.oid = c.relam'
+    + " WHERE c.relkind <> 'r' OR am.amname IS DISTINCT FROM 'heap'"
+    + ' OR pg_relation_size(tree.rel) IS DISTINCT FROM 0 ORDER BY 1');
+}
+
+// The staging:private tables (by name, in `safe`) that still hold a row:
+// proven by a zero-length heap file for the common case, and for any
+// "suspect" (pages present, a non-heap access method, a partitioned table) a
+// read with row_security off, so a refill hidden by row-level security raises
+// rather than passing. Throws (noFallback) on a foreign descendant surfaced
+// now or a line that cannot be read — the per-table TRUNCATE must not reach
+// either. `safe` is the validated list of private table names; `sizeSqls`
+// comes from privateSizeSqls(safe).
+async function listPrivateTablesHoldingRows(targetDb, safe, sizeSqls, execute) {
+  const unconfirmed = (err) => new Error(
+    `Could not confirm the staging:private tables in ${targetDb} are empty: ${err.message}`);
+  const suspects = [];
+  const foreignNow = [];
+  for (const sql of sizeSqls) {
+    let out;
+    try {
+      out = await execute(targetDb, sql, { tuplesOnly: true });
+    } catch (err) { throw unconfirmed(err); }
+    for (const line of String(out || '').split('\n').map((l) => l.trim()).filter(Boolean)) {
+      let row = null;
+      try { row = JSON.parse(line); } catch { /* below */ }
+      const [name, oid, relkind, display] = Array.isArray(row) ? row : [];
+      // Classified before anything else is checked: a foreign table is
+      // refused whatever its name.
+      if (relkind === 'f') { foreignNow.push([String(name), String(display)]); continue; }
+      if (!Array.isArray(row) || row.length !== 4 || !safe.includes(name)
+          || !Number.isSafeInteger(oid) || oid <= 0 || typeof relkind !== 'string' || !/^[a-z]$/.test(relkind)) {
+        const err = unconfirmed(new Error(`a relation under a staging:private table cannot be checked: ${JSON.stringify(line)}`));
+        err.noFallback = true;
+        throw err;
+      }
+      suspects.push({ name, oid, display: String(display) });
+    }
+  }
+  if (foreignNow.length > 0) throw refuseForeignCopy(targetDb, foreignNow);
+  if (suspects.length === 0) return [];
+  // The marker is assembled by format(), so the statement's own text, which
+  // a psql failure echoes, never contains it.
+  const readSqls = chunkedStatements(suspects,
+    ({ name, oid }) => `EXECUTE format('SELECT EXISTS (SELECT 1 FROM ONLY %s)', ${oid}::oid::regclass) INTO present; `
+      + `IF present AND NOT '${name}' = ANY (found) THEN found := found || '${name}'::text; END IF; `,
+    '',
+    (body) => 'DO $staging_check$ DECLARE found text[] := \'{}\'; present boolean; BEGIN SET LOCAL row_security = off; '
+      + body
+      + "IF cardinality(found) > 0 THEN RAISE EXCEPTION '%', format('staging:private %s: %s;', 'rows remain in', array_to_string(found, ', ')); END IF; END $staging_check$");
+  const holding = new Set();
+  for (const sql of readSqls) {
+    try {
+      await execute(targetDb, sql);
+    } catch (err) {
+      const m = /staging:private rows remain in: ([a-z0-9_., ]+);/i.exec(String(err.message || ''));
+      const names = m ? m[1].split(', ').filter((n) => safe.includes(n)) : [];
+      if (names.length === 0) throw unconfirmed(err);
+      names.forEach((n) => holding.add(n));
+    }
+  }
+  return [...holding];
+}
+
+// ── Running the redaction without the platform's database rights ─────────
+//
+// The copy's redaction (the TRUNCATE and UPDATE passes) used to run over the
+// administrative connection. On the preview server that administrator is a
+// SUPERUSER, and a TRUNCATE or UPDATE makes the server evaluate app-defined
+// code attached to the table — triggers (statement- and row-level, and those
+// a CASCADE reaches), CHECK and domain functions, generated-column and index
+// expressions, RLS policy expressions, rules — AS THE SESSION USER. An app
+// author controls that code through the app's own schema, so it ran with the
+// administrator's rights over every app's preview copies.
+//
+// So the redaction now runs over a connection AUTHENTICATED AS the copy's own
+// owner role, which every path already creates as an ordinary LOGIN role with
+// a generated password and no attributes (not SUPERUSER, not CREATEROLE, not
+// CREATEDB) and no rights outside this one database. Authenticating as it is
+// the boundary: SET ROLE / SET SESSION AUTHORIZATION do not hold, because a
+// superuser session can RESET them; only the session's real identity cannot
+// be shed, and here it is the unprivileged role. If a private table FORCEs
+// row-level security, it then applies to the owner too, and the fail-closed
+// checks above refuse the copy rather than leak.
+//
+// Belt and braces, and to keep "every private table is empty in every copy
+// handed out" true even when a trigger would refill one: user triggers are
+// switched OFF on the affected tables for the duration and put back exactly
+// as they were, so the preview behaves as production does.
+
+// Switch user triggers off on every regular table the passes touch — each
+// staging:private table, its inheritance descendants, and each table with a
+// staging:private column — capturing each trigger's prior state so it can be
+// restored precisely (ENABLE loses ALWAYS/REPLICA). FK/RI internal triggers
+// are left alone, so CASCADE still works. Returns { restore }. `execute` is
+// the owner-authenticated runner, which owns these tables after the reassign
+// pass and so may disable their triggers.
+const REDACTION_TABLE_OIDS_SQL = `
+WITH RECURSIVE roots(rel) AS (
+  SELECT c.oid FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+   WHERE c.relkind = 'r' AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+     AND (obj_description(c.oid, 'pg_class') = 'staging:private'
+          OR EXISTS (SELECT 1 FROM pg_attribute a
+                      WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+                        AND col_description(a.attrelid, a.attnum) = 'staging:private'))
+), tree(rel) AS (
+  SELECT rel FROM roots
+  UNION SELECT i.inhrelid FROM pg_inherits i JOIN tree ON i.inhparent = tree.rel
+)
+SELECT DISTINCT c.oid::bigint FROM tree JOIN pg_class c ON c.oid = tree.rel
+ WHERE c.relkind = 'r' ORDER BY 1`.trim();
+
+async function captureAndDisableUserTriggers(targetDb, execute) {
+  let out;
+  try {
+    out = await execute(targetDb, REDACTION_TABLE_OIDS_SQL, { tuplesOnly: true });
+  } catch (err) {
+    throw new Error(`Could not list the tables to clean in ${targetDb}: ${err.message}`);
+  }
+  const oids = String(out || '').split('\n').map((s) => s.trim()).filter(Boolean)
+    .map(Number).filter((n) => Number.isSafeInteger(n) && n > 0);
+  if (oids.length === 0) return { restore: async () => {} };
+  const arr = `ARRAY[${oids.join(',')}]::oid[]`;
+  let stateOut;
+  try {
+    stateOut = await execute(targetDb,
+      `SELECT json_build_array(tgrelid::bigint, tgname, tgenabled)::text FROM pg_trigger`
+      + ` WHERE NOT tgisinternal AND tgenabled <> 'D' AND tgrelid = ANY(${arr}) ORDER BY tgrelid, tgname`,
+      { tuplesOnly: true });
+  } catch (err) {
+    throw new Error(`Could not read trigger state in ${targetDb}: ${err.message}`);
+  }
+  const prior = [];
+  for (const line of String(stateOut || '').split('\n').map((s) => s.trim()).filter(Boolean)) {
+    let row = null;
+    try { row = JSON.parse(line); } catch { /* below */ }
+    if (!Array.isArray(row) || row.length !== 3 || !Number.isSafeInteger(Number(row[0]))
+        || typeof row[1] !== 'string' || !/^[OAR]$/.test(String(row[2]))) {
+      throw new Error(`Unreadable trigger state in ${targetDb}: ${JSON.stringify(line)}`);
+    }
+    prior.push({ oid: Number(row[0]), name: String(row[1]), state: String(row[2]) });
+  }
+  // Switch every user trigger off, by oid, in one statement. format(%I)
+  // quotes each (arbitrary) trigger name; the table is named by oid::regclass.
+  await execute(targetDb,
+    `DO $sv_trig_off$ DECLARE r oid; BEGIN FOR r IN SELECT unnest(${arr}) LOOP`
+    + ` EXECUTE format('ALTER TABLE %s DISABLE TRIGGER USER', r::regclass); END LOOP; END $sv_trig_off$`);
+  const restore = async () => {
+    if (prior.length === 0) return;
+    // Put each trigger back to its exact prior state: ENABLE keeps O,
+    // ENABLE ALWAYS keeps A, ENABLE REPLICA keeps R. Names go through
+    // format(%I); the keyword is from the validated single letter.
+    const rows = chunkedStatements(prior,
+      (p) => `(${p.oid},'${p.name.replace(/'/g, "''")}','${p.state === 'A' ? 'ENABLE ALWAYS'
+        : p.state === 'R' ? 'ENABLE REPLICA' : 'ENABLE'}')`,
+      ', ',
+      (values) => `DO $sv_trig_on$ DECLARE r record; BEGIN FOR r IN SELECT * FROM (VALUES ${values})`
+        + ' AS v(rel, nm, kw) LOOP'
+        + " EXECUTE format('ALTER TABLE %s %s TRIGGER %I', r.rel::oid::regclass, r.kw, r.nm); END LOOP; END $sv_trig_on$");
+    for (const sql of rows) await execute(targetDb, sql);
+  };
+  return { restore };
+}
+
+// The whole redaction of a copy, over an owner-authenticated `execute`: user
+// triggers off, the two passes, the after-the-column-pass re-check, and the
+// triggers put back (always, even on failure — a copy or template must never
+// be left with its triggers disabled). `onProgress` names the two passes for
+// the clone-progress surface.
+async function redactPrivateData(targetDb, execute, { onProgress = null } = {}) {
+  const { restore } = await captureAndDisableUserTriggers(targetDb, execute);
+  let bodyErr = null;
+  try {
+    onProgress?.('truncate_private');
+    await truncatePrivateTables(targetDb, execute);
+    onProgress?.('scrub_private');
+    await scrubPrivateColumns(targetDb, execute);
+    // The column pass runs UPDATEs, which can fire a trigger that writes a
+    // private value into a private table (an audit row of the old value). The
+    // TRUNCATE pass proved the private tables empty; prove it again here,
+    // after the UPDATEs. With user triggers off above this is defence in
+    // depth, and it is one round trip when nothing refilled.
+    const refilled = await verifyPrivateTablesEmpty(targetDb, execute);
+    if (refilled.length > 0) {
+      const err = new Error(
+        `staging:private table(s) refilled during the column pass in ${targetDb}: ${refilled.join(', ')}`);
+      err.noFallback = true;
+      throw err;
+    }
+  } catch (err) {
+    bodyErr = err;
+  }
+  try {
+    await restore();
+  } catch (restoreErr) {
+    if (bodyErr) {
+      log.error('db-manager', 'Could not re-enable user triggers after a failed redaction', {
+        targetDb, err: restoreErr.message,
+      });
+    } else {
+      bodyErr = restoreErr;
+    }
+  }
+  if (bodyErr) throw bodyErr;
+}
+
+// The re-check after the column pass: re-discover the staging:private tables
+// (refusing a foreign descendant) and prove they still hold no row. Returns
+// the names that do (empty in the normal case); throws when emptiness cannot
+// be proven.
+async function verifyPrivateTablesEmpty(targetDb, execute) {
+  let stdout;
+  try {
+    stdout = await execute(targetDb, PRIVATE_TABLES_DISCOVERY_SQL, { tuplesOnly: true });
+  } catch (err) {
+    throw new Error(`Failed to re-check staging:private tables in ${targetDb}: ${err.message}`);
+  }
+  const { foreign, qualifiedNames } = parsePrivateDiscovery(stdout);
+  if (foreign.length > 0) throw refuseForeignCopy(targetDb, foreign);
+  const safe = qualifiedNames.filter((n) => SAFE_QUALIFIED_IDENT.test(n));
+  if (safe.length === 0) return [];
+  return listPrivateTablesHoldingRows(targetDb, safe, privateSizeSqls(safe), execute);
+}
+
+async function truncatePrivateTables(targetDb, execute = execInTarget) {
+  // Discovery query. obj_description on pg_class returns the comment
+  // attached via `COMMENT ON TABLE foo IS '...'`. relkind='r' filters
+  // to ordinary tables (not views/indexes/sequences). We exclude
+  // pg_catalog/information_schema defensively even though they
+  // shouldn't have user comments.
+  //
+  // The same query also lists every foreign table among their inheritance
+  // descendants, as `FOREIGN ["<private table>", "<foreign table>"]`: JSON,
+  // so no name, however odd, breaks the line or hides the prefix.
+  // TRUNCATE without ONLY reaches those children,
+  // and for postgres_fdw it sends TRUNCATE to the remote server, which in a
+  // copy is the same server the live app's definition names. Nor can their
+  // emptiness be shown from here: another user mapping, or a policy on the
+  // remote side, may see rows ours does not. So a private table with a
+  // foreign descendant refuses the copy before any TRUNCATE is sent.
+  const discoverySql = PRIVATE_TABLES_DISCOVERY_SQL;
+
   let stdout;
   try {
     stdout = await execute(targetDb, discoverySql, { tuplesOnly: true });
@@ -2290,36 +2628,8 @@ SELECT DISTINCT 'FOREIGN ' || json_build_array(tree.name, n.nspname || '.' || c.
     );
   }
 
-  const lines = (stdout || '')
-    .split('\n')
-    .map((s) => s.trim())
-    .filter(Boolean);
-  // [private table, foreign table] pairs; an unreadable pair is still a
-  // foreign descendant, shown as it came.
-  const foreignPair = (text) => {
-    try {
-      const pair = JSON.parse(text);
-      if (Array.isArray(pair) && pair.length === 2) return pair.map(String);
-    } catch { /* shown raw below */ }
-    return ['?', text];
-  };
-  const foreign = lines.filter((line) => line.startsWith('FOREIGN '))
-    .map((line) => foreignPair(line.slice('FOREIGN '.length)));
-  const qualifiedNames = lines.filter((line) => !line.startsWith('FOREIGN '));
-
-  const refuseForeign = (pairs) => {
-    log.error('db-manager', 'staging:private table with a foreign-table descendant; copy refused', {
-      targetDb, foreign: pairs,
-    });
-    const err = new Error(
-      `Refusing to empty the staging:private tables in ${targetDb}: ` +
-      pairs.map(([parent, child]) => `${parent} has the foreign-table descendant ${child}`).join('; ') +
-      '. Its rows are on another server: they can neither be emptied from a copy safely nor shown to be empty.'
-    );
-    err.noFallback = true;
-    return err;
-  };
-  if (foreign.length > 0) throw refuseForeign(foreign);
+  const { foreign, qualifiedNames } = parsePrivateDiscovery(stdout);
+  if (foreign.length > 0) throw refuseForeignCopy(targetDb, foreign);
 
   if (qualifiedNames.length === 0) {
     log.info('db-manager', 'No staging:private tables to truncate', { targetDb });
@@ -2425,80 +2735,8 @@ SELECT DISTINCT 'FOREIGN ' || json_build_array(tree.name, n.nspname || '.' || c.
       }
     }
   };
-  // Each check query as few statements as fit under the ceiling.
-  const chunked = (items, render, join, wrap) => {
-    const statements = [];
-    let parts = [];
-    for (const item of items) {
-      const part = render(item);
-      if (parts.length > 0 && Buffer.byteLength(wrap(parts.concat(part).join(join))) > MAX_SCRUB_STATEMENT_BYTES) {
-        statements.push(wrap(parts.join(join)));
-        parts = [];
-      }
-      parts.push(part);
-    }
-    if (parts.length > 0) statements.push(wrap(parts.join(join)));
-    return statements;
-  };
-  // Names were validated above, so they can be spliced as text too.
-  const sizeSqls = chunked(safe, (t) => `('${t}', '${t}'::regclass)`, ', ', (values) =>
-    `WITH RECURSIVE targets(name, rel) AS (VALUES ${values}), tree(name, rel) AS (SELECT name, rel FROM targets`
-    + ' UNION SELECT tree.name, i.inhrelid::regclass FROM pg_inherits i JOIN tree ON i.inhparent = tree.rel)'
-    + " SELECT DISTINCT json_build_array(tree.name, c.oid::bigint, c.relkind, n.nspname || '.' || c.relname)::text FROM tree"
-    + ' JOIN pg_class c ON c.oid = tree.rel JOIN pg_namespace n ON n.oid = c.relnamespace'
-    + ' LEFT JOIN pg_am am ON am.oid = c.relam'
-    + " WHERE c.relkind <> 'r' OR am.amname IS DISTINCT FROM 'heap'"
-    + ' OR pg_relation_size(tree.rel) IS DISTINCT FROM 0 ORDER BY 1');
-  const stillHoldingRows = async () => {
-    const unconfirmed = (err) => new Error(
-      `Could not confirm the staging:private tables in ${targetDb} are empty: ${err.message}`);
-    const suspects = [];
-    const foreignNow = [];
-    for (const sql of sizeSqls) {
-      let out;
-      try {
-        out = await execute(targetDb, sql, { tuplesOnly: true });
-      } catch (err) { throw unconfirmed(err); }
-      for (const line of String(out || '').split('\n').map((l) => l.trim()).filter(Boolean)) {
-        let row = null;
-        try { row = JSON.parse(line); } catch { /* below */ }
-        const [name, oid, relkind, display] = Array.isArray(row) ? row : [];
-        // Classified before anything else is checked: a foreign table is
-        // refused whatever its name.
-        if (relkind === 'f') { foreignNow.push([String(name), String(display)]); continue; }
-        if (!Array.isArray(row) || row.length !== 4 || !safe.includes(name)
-            || !Number.isSafeInteger(oid) || oid <= 0 || typeof relkind !== 'string' || !/^[a-z]$/.test(relkind)) {
-          const err = unconfirmed(new Error(`a relation under a staging:private table cannot be checked: ${JSON.stringify(line)}`));
-          err.noFallback = true;
-          throw err;
-        }
-        suspects.push({ name, oid, display: String(display) });
-      }
-    }
-    if (foreignNow.length > 0) throw refuseForeign(foreignNow);
-    if (suspects.length === 0) return [];
-    // The marker is assembled by format(), so the statement's own text, which
-    // a psql failure echoes, never contains it.
-    const readSqls = chunked(suspects,
-      ({ name, oid }) => `EXECUTE format('SELECT EXISTS (SELECT 1 FROM ONLY %s)', ${oid}::oid::regclass) INTO present; `
-        + `IF present AND NOT '${name}' = ANY (found) THEN found := found || '${name}'::text; END IF; `,
-      '',
-      (body) => 'DO $staging_check$ DECLARE found text[] := \'{}\'; present boolean; BEGIN SET LOCAL row_security = off; '
-        + body
-        + "IF cardinality(found) > 0 THEN RAISE EXCEPTION '%', format('staging:private %s: %s;', 'rows remain in', array_to_string(found, ', ')); END IF; END $staging_check$");
-    const holding = new Set();
-    for (const sql of readSqls) {
-      try {
-        await execute(targetDb, sql);
-      } catch (err) {
-        const m = /staging:private rows remain in: ([a-z0-9_., ]+);/i.exec(String(err.message || ''));
-        const names = m ? m[1].split(', ').filter((n) => safe.includes(n)) : [];
-        if (names.length === 0) throw unconfirmed(err);
-        names.forEach((n) => holding.add(n));
-      }
-    }
-    return [...holding];
-  };
+  const sizeSqls = privateSizeSqls(safe);
+  const stillHoldingRows = () => listPrivateTablesHoldingRows(targetDb, safe, sizeSqls, execute);
   if (safe.length > 0) {
     let batched = false;
     const oneStatement = `TRUNCATE ${safe.join(', ')} RESTART IDENTITY CASCADE`;
@@ -3274,6 +3512,8 @@ module.exports = {
   roleExists,
   truncatePrivateTables,
   scrubPrivateColumns,
+  redactPrivateData,
+  verifyPrivateTablesEmpty,
   privateDataExclusions,
   pgRestoreArgs,
   // Staging templates.

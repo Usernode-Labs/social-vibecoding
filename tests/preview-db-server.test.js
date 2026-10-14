@@ -655,7 +655,11 @@ test('a preview-side child process takes its connection from the URL alone, what
       assert.deepEqual(pg, ['PGDATABASE', 'PGHOST', 'PGPASSWORD', 'PGPORT', 'PGSSLMODE', 'PGUSER'], `${call.via}: only what the URL says`);
       assert.equal(call.env.PGSSLMODE, 'disable');
       assert.equal(call.env.PGHOST, PREVIEW_HOST);
-      assert.equal(call.env.PGUSER, 'previewadmin');
+      // Administrative work connects as the preview admin; the redaction
+      // passes connect as the copy's own unprivileged owner role (see
+      // redactPrivateData), never the admin.
+      assert.ok(call.env.PGUSER === 'previewadmin' || /_owner$/.test(call.env.PGUSER),
+        `${call.via}: unexpected PGUSER ${call.env.PGUSER}`);
       assert.equal(call.env.PATH, process.env.PATH, 'the rest of the environment is kept');
     }
     // The main server's processes inherit the environment as they always did.
