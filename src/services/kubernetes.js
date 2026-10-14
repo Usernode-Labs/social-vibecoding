@@ -7,6 +7,7 @@ const { collectPodDiagnostics, conditionDetails, boundedText } = require('./kube
 const { waitForWorkerBootstrap } = require('./kubernetes-worker-bootstrap');
 const buildkit = require('./kubernetes-buildkit');
 const { watchDeployment } = require('./kubernetes-deployment-watch');
+const { readPodStart, mergePodStart } = require('./check-pod-start');
 
 // The client is 967 ES modules: about a quarter of a second and 70 MB to
 // load. Most processes that load this file never reach the cluster (341 of
@@ -2501,6 +2502,11 @@ async function runCheckJob(config, {
   // Follow state lives outside the try so the finally can close the stream.
   let following = false;
   let followAbort = null;
+  // The Pod's start state (check-pod-start.js), read while the Job waits and
+  // kept on what this returns or throws as `podStart`: a Pod that never
+  // started its container is the platform's fault, and a DeadlineExceeded
+  // Job may have taken its Pod by the time its failure is read.
+  let podStart = null;
   const retainPartial = !unitSuite && salvagePartial;
   const retained = createCheckOutputAccumulator(maxBuffer);
   const reportLine = line => {
@@ -2516,6 +2522,15 @@ async function runCheckJob(config, {
   const create = async (call) => {
     try { return await call(); } catch (err) {
       if (err && typeof err === 'object') err.checkJobNotCreated = true;
+      throw err;
+    }
+  };
+  // An API call after the create that failed for any reason but a cancel:
+  // the Job may run on, but this runner lost it before it ended, which is
+  // the platform's fault too (check-pod-start.js checkStartFault).
+  const lost = async (call) => {
+    try { return await call(); } catch (err) {
+      if (!signal?.aborted && err && typeof err === 'object') err.checkJobApiLost = true;
       throw err;
     }
   };
@@ -2543,10 +2558,12 @@ async function runCheckJob(config, {
     // returned, without reading it back, so that window is these two calls;
     // services/check-retention.js removes what a crash leaves in it.
     if (inputSecretName && createdJob?.metadata?.uid) {
-      const secret = inputSecret?.metadata?.resourceVersion
-        ? inputSecret : await core.readNamespacedSecret({ name: inputSecretName, namespace });
-      secret.metadata.ownerReferences = [{ apiVersion: 'batch/v1', kind: 'Job', name, uid: createdJob.metadata.uid }];
-      await core.replaceNamespacedSecret({ name: inputSecretName, namespace, body: secret });
+      await lost(async () => {
+        const secret = inputSecret?.metadata?.resourceVersion
+          ? inputSecret : await core.readNamespacedSecret({ name: inputSecretName, namespace });
+        secret.metadata.ownerReferences = [{ apiVersion: 'batch/v1', kind: 'Job', name, uid: createdJob.metadata.uid }];
+        await core.replaceNamespacedSecret({ name: inputSecretName, namespace, body: secret });
+      });
     }
     const deadline = Date.now() + timeoutMs + 15000;
     // Progress observer state. Two ways to see the container's stdout as it
@@ -2618,13 +2635,27 @@ async function runCheckJob(config, {
         consumed += lastNl + 1;
       } catch { /* progress is best-effort */ }
     };
+    // One reading of the Pod's start state, until its container is seen
+    // started. Best-effort: a failed read leaves the last reading.
+    const watchStart = async () => {
+      if (podStart?.started) return;
+      try {
+        const pods = await observeCheck(core.listNamespacedPod({ namespace, labelSelector: `job-name=${name}` }), signal);
+        const pod = pods.items?.[0];
+        if (pod) {
+          progressPodName = progressPodName || pod.metadata?.name || null;
+          podStart = mergePodStart(podStart, readPodStart(pod, kind));
+        }
+      } catch { signal?.throwIfAborted(); }
+    };
     while (Date.now() < deadline) {
       signal?.throwIfAborted();
-      const job = await observeCheck(batch.readNamespacedJob({ name, namespace }), signal);
+      const job = await lost(() => observeCheck(batch.readNamespacedJob({ name, namespace }), signal));
       signal?.throwIfAborted();
       if (job.status?.failed || job.status?.conditions?.some(c => c.type === 'Failed' && c.status === 'True')) {
         const pods = await observeCheck(core.listNamespacedPod({ namespace, labelSelector: `job-name=${name}` }), signal);
         const pod = pods.items?.[0];
+        if (pod) podStart = mergePodStart(podStart, readPodStart(pod, kind));
         const err = new Error(`${kind} Job ${name} failed`);
         err.stdout = pod ? await observeCheck(core.readNamespacedPodLog({ name: pod.metadata.name, namespace, container: kind, limitBytes: maxBuffer }), signal).catch(() => '') : '';
         const terminated = pod?.status?.containerStatuses?.find(c => c.name === kind)?.state?.terminated;
@@ -2633,6 +2664,7 @@ async function runCheckJob(config, {
         err.stderr = [jobReason, terminated?.reason].filter(Boolean).join(': ');
         err.killed = jobReason === 'DeadlineExceeded' || terminated?.reason === 'OOMKilled';
         err.captureJobTerminated = true;
+        err.podStart = podStart;
         throw err;
       }
       if (job.status?.succeeded) {
@@ -2651,6 +2683,7 @@ async function runCheckJob(config, {
         return { stdout, runtimeName: name };
       }
       tick += 1;
+      if (tick % PROGRESS_EVERY_TICKS === 1) await watchStart();
       if (!following) await startFollow();
       if (!following && tick % PROGRESS_EVERY_TICKS === 0) await observeProgress();
       await new Promise((resolve) => setTimeout(resolve, 2000));
@@ -2658,13 +2691,17 @@ async function runCheckJob(config, {
     const err = new Error(`Timed out waiting for ${kind} Job ${name}`);
     err.killed = true;
     // Read before deletion: deleting the Job can immediately remove the Pod
-    // and the only durable copy of completed capture frames.
+    // and the only durable copy of completed capture frames, and with it
+    // whether its container ever started.
     err.stdout = await readOutput().catch(() => '');
+    await watchStart();
+    err.podStart = podStart;
     // A coordinated owner confirms foreground termination before replacement.
     if (!signal) await deleteIfPresent(batch, 'deleteNamespacedJob', name, namespace, { propagationPolicy: 'Background' });
     throw err;
   } catch (err) {
     signal?.throwIfAborted();
+    if (err && typeof err === 'object' && err.podStart === undefined) err.podStart = podStart;
     const stdout = boundedOutput(reconcileCheckOutput(retained.output(), err.stdout));
     // Capture output is a frame protocol, so every runtime-level ending can
     // be settled honestly even when it produced zero complete frames. Keep
@@ -2680,7 +2717,7 @@ async function runCheckJob(config, {
         || err.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' || captureTerminated)) {
       const termination = [err.stderr, Number.isInteger(err.code) ? `exit code ${err.code}` : '']
         .filter(Boolean).join(', ');
-      return { stdout, stderr: err.stderr || '', runtimeName: name, partial: true,
+      return { stdout, stderr: err.stderr || '', runtimeName: name, partial: true, podStart: err.podStart || null,
         partialReason: err.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' ? 'output over maxBuffer'
           : err.captureLogFailed ? 'capture log unavailable'
             : err.stderr?.includes('OOMKilled') ? 'capture OOM killed'
@@ -2790,7 +2827,7 @@ async function stopCheckJobs(config, { sessionId, spare = () => false }) {
 
 // Wait for a check Job to end and return its whole output. Same shape a
 // runCheckJob caller sees, minus the throw: `{ state, stdout, stderr,
-// exitCode, timedOut, partial, partialReason }`, where `state` is 'succeeded'
+// exitCode, timedOut, partial, partialReason, podStart }`, where `state` is 'succeeded'
 // | 'failed' | 'gone' (the Job disappeared — a newer run cancelled it, or
 // the TTL collected it) | 'timeout' (our own wait ran out; the Job's
 // activeDeadline should have ended it long before, so this is a stuck
@@ -2812,12 +2849,26 @@ async function collectCheckJob(config, {
   let podName = null;
   let consumed = 0;
   let tick = 0;
+  // The Pod's start state, as runCheckJob keeps it (check-pod-start.js),
+  // returned with every state: the harvest needs it most when the Job ended
+  // by its deadline and took the Pod with it.
+  let podStart = null;
+  const notePod = (pod) => { if (pod) podStart = mergePodStart(podStart, readPodStart(pod, kind)); };
   const retained = createCheckOutputAccumulator(maxBuffer);
   const findPod = async () => {
     if (podName) return podName;
     const pods = await core.listNamespacedPod({ namespace, labelSelector: `job-name=${name}` });
     podName = pods.items?.[0]?.metadata?.name || null;
+    notePod(pods.items?.[0]);
     return podName;
+  };
+  const watchStart = async () => {
+    if (podStart?.started) return;
+    try {
+      const pods = await core.listNamespacedPod({ namespace, labelSelector: `job-name=${name}` });
+      podName = podName || pods.items?.[0]?.metadata?.name || null;
+      notePod(pods.items?.[0]);
+    } catch { /* the last reading stands */ }
   };
   const readLog = async ({ limitBytes }) => {
     if (!(await findPod())) return '';
@@ -2854,6 +2905,7 @@ async function collectCheckJob(config, {
     let terminatedReason = null;
     try {
       const pods = await core.listNamespacedPod({ namespace, labelSelector: `job-name=${name}` });
+      notePod(pods.items?.[0]);
       const terminated = pods.items?.[0]?.status?.containerStatuses?.find(c => c.name === kind)?.state?.terminated;
       if (terminated) { exitCode = terminated.exitCode ?? null; terminatedReason = terminated.reason || null; }
     } catch { /* the Job's own status is enough */ }
@@ -2871,10 +2923,11 @@ async function collectCheckJob(config, {
           : logFailed ? 'capture log unavailable'
             : terminatedReason === 'OOMKilled' ? 'capture OOM killed'
               : timedOut ? 'run timed out' : `job ${described.failedReason || 'failed'}`,
+      podStart,
     };
   };
   const empty = (state, partialReason) => ({
-    state, stdout: '', stderr: '', exitCode: null, timedOut: false, partial: true, partialReason,
+    state, stdout: '', stderr: '', exitCode: null, timedOut: false, partial: true, partialReason, podStart,
   });
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -2889,17 +2942,22 @@ async function collectCheckJob(config, {
     if (described.state !== 'running') return finish(job);
     tick += 1;
     if (tick % PROGRESS_EVERY_TICKS === 1) {
+      await watchStart();
       try { deliverNew(await readLog({ limitBytes: maxBuffer })); } catch { /* progress is best-effort */ }
     }
     await new Promise((resolve) => setTimeout(resolve, 2000));
   }
+  await watchStart();
   let stdout = '';
   try {
     const raw = await readLog({ limitBytes: maxBuffer });
     deliverNew(raw);
     stdout = boundedOutput(reconcileCheckOutput(retained.output(), raw));
   } catch { stdout = retained.output(); }
-  return { state: 'timeout', stdout, stderr: '', exitCode: null, timedOut: true, partial: true, partialReason: 'run timed out' };
+  return {
+    state: 'timeout', stdout, stderr: '', exitCode: null, timedOut: true, partial: true, partialReason: 'run timed out',
+    podStart,
+  };
 }
 
 // A settled run's Jobs: its verdict is stored and the manifest a harvest

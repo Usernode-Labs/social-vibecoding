@@ -932,7 +932,9 @@ function connectionExhaustionDetail(rows, { origin = '', census = null } = {}) {
 //   'failing' — a blocking check failed an assertion / had console errors
 //   'error'   — the run cannot be trusted: no frames at all, or a check
 //               that has earned gating produced no verdict → the gate
-//               blocks fail-closed, the UI shows "couldn't run"
+//               blocks fail-closed, the UI shows "couldn't run". Those two
+//               carry `missingResults`, which settleCaptureRun reads to
+//               blame a test Pod that never started (#5054)
 //
 // Two call shapes:
 //
@@ -990,9 +992,9 @@ function classifyTests(frames, expectedCount, options) {
       failureReason: String(f.failureReason || '').slice(0, CONSOLE_MAX_MSG_LEN),
     }));
     const expected = Number.isInteger(expectedCount) ? expectedCount : results.length;
-    if (!results.length) return { state: 'error', results: extraRows.slice() };
+    if (!results.length) return { state: 'error', results: extraRows.slice(), missingResults: true };
     if (expected > 0 && results.length < expected) {
-      return { state: 'error', results: results.concat(extraRows) };
+      return { state: 'error', results: results.concat(extraRows), missingResults: true };
     }
     const all = results.concat(extraRows);
     // A merge-blocking unit suite that never ran gave no verdict: 'error'.
@@ -1117,7 +1119,7 @@ function classifyTests(frames, expectedCount, options) {
   // stdout was lost. Never a verdict.
   if (!rows.length && dispatched.length) {
     return {
-      state: 'error', results: extraRows.slice(),
+      state: 'error', results: extraRows.slice(), missingResults: true,
       blockingCount: 0, advisoryCount: 0, passingCount: 0,
       ranCount: 0, declaredCount: dispatched.filter((d) => d.repeatOf == null).length,
     };
@@ -1140,6 +1142,7 @@ function classifyTests(frames, expectedCount, options) {
     return {
       state: 'error',
       results: rows.concat(extraRows),
+      missingResults: true,
       errorDetail: `${missingGraduated.length} merge-blocking check${missingGraduated.length === 1 ? '' : 's'} produced no result: ${names.join(', ')}${more}`,
       blockingCount: blockingFailures, advisoryCount: advisoryFailures, passingCount: passed,
       ranCount: rows.length, declaredCount: dispatched.filter((d) => d.repeatOf == null).length,
@@ -2013,12 +2016,16 @@ async function checksAlreadyDecided(pool, sessionId, commitHash) {
 // the whole point of the request — a human pressing "Re-run checks", and the
 // promote-time kick that must not merge on a verdict it did not just take.
 async function publishCaptureError(pool, sessionId, revision, err, send) {
+  // A capture Job the API refused, or lost, or whose Pod never started its
+  // container: the platform's fault, worded as such (check-pod-start.js).
+  const fault = require('./check-pod-start').checkStartFault(err);
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     await storeCaptureOutcome(client, sessionId, 'failed', { reason: String(err.message).slice(0, 300) });
     const stored = await storeChecks(client, sessionId, revision,
-      { state: 'error', results: [] }, err.message);
+      { state: 'error', results: [], ...(fault ? { platformFault: true } : {}) },
+      fault ? require('./check-pod-start').browserNotRunSentence(fault) : err.message);
     await client.query('COMMIT');
     if (stored) notifyChecks(sessionId, { state: 'error', results: [] }, revision, send);
   } catch (error) {
@@ -2903,6 +2910,10 @@ async function captureForSession(config, session, app, commitHash, stagingResult
         manifest: {
           launched: true,
           trigger: trigger || null,
+          // Why the harvest re-drove this run, when it did (check-harvest.js):
+          // a run re-driven because a test Pod never started is not re-driven
+          // for that again.
+          ...(opts.redrive ? { redrive: opts.redrive } : {}),
           debugRunId,
           startedAt: runStartedAt,
           shotsOnly,
@@ -2971,6 +2982,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     let captureStderr = '';
     let runPartial = false;
     let runPartialReason = '';
+    let notStarted = [];
     const captureStartedAt = Date.now();
     try {
       // #47 payload routing: a Linux exec caps any single argv/env string at
@@ -3090,6 +3102,8 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       runPartial = !!res.partial;
       runPartialReason = res.partialReason || '';
       captureStderr = res.stderr || '';
+      notStarted = Array.isArray(res.notStarted) ? res.notStarted
+        : [captureNotStarted({ res: { ...res, stdout } })].filter(Boolean);
       if (runPartial) {
         log.warn('visuals', 'Capture run cut short — parsing partial output', {
           sessionId: session.id, reason: runPartialReason,
@@ -3130,7 +3144,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       visualScenarios,
       prodRunning, stagingOrigin, targets,
       testsCount: tests.length, dispatched, ceilingDropped: declared.ceilingDropped,
-      stdout, stderr: captureStderr, runPartial, runPartialReason, unitOutcome,
+      stdout, stderr: captureStderr, runPartial, runPartialReason, unitOutcome, notStarted,
     });
     traceStatus = settled.traceStatus;
     settledRun = true;
@@ -3155,13 +3169,18 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // 'error' so the gate blocks fail-closed with a visible "couldn't run"
     // rather than an indefinite spinner. Best-effort.
     try {
-      const errorDetail = captureFailureDetail({
-        stdout: err.stdout,
-        stderr: err.stderr,
-        fallbackReason: err.message,
-      });
+      // A Job the API refused or lost, or a Pod that never started, is the
+      // platform's fault and says so (check-pod-start.js, as publishCaptureError).
+      const fault = require('./check-pod-start').checkStartFault(err);
+      const errorDetail = fault
+        ? require('./check-pod-start').browserNotRunSentence(fault)
+        : captureFailureDetail({
+          stdout: err.stdout,
+          stderr: err.stderr,
+          fallbackReason: err.message,
+        });
       const stored = await storeChecks(
-        pool, session.id, commitHash, { state: 'error', results: [] }, errorDetail
+        pool, session.id, commitHash, { state: 'error', results: [], ...(fault ? { platformFault: true } : {}) }, errorDetail
       );
       if (stored) notifyChecks(session.id, { state: 'error', results: [] }, commitHash, send);
     } catch { /* nothing more we can do */ }
@@ -3236,9 +3255,14 @@ async function runCaptureShards(config, {
   signal?.throwIfAborted();
   const outs = [];
   const lost = [];
+  // Shards that reported nothing because their Pod never started (#5054):
+  // the settle step reads them when the run is left with checks missing.
+  const notStarted = [];
   settled.forEach((r, shard) => {
     if (r.status === 'fulfilled') outs.push(r.value || {});
     else lost.push({ shard, err: r.reason });
+    const never = r.status === 'fulfilled' ? captureNotStarted({ res: r.value, shard }) : captureNotStarted({ err: r.reason, shard });
+    if (never) notStarted.push(never);
   });
   let stdout = outs.map((o) => String(o.stdout || '')).join('\n');
   const stderr = outs.map((o) => String(o.stderr || '')).filter(Boolean).join('\n');
@@ -3263,8 +3287,30 @@ async function runCaptureShards(config, {
     stdout = `${stdout}\n${String(sweep.stdout || '')}`;
     partial = partial || !!sweep.partial;
     if (sweep.partialReason) reasons.push(sweep.partialReason);
+    // The sweep ran the lost checks: a shard it covered is no longer the
+    // reason anything is missing. One it did not cover still is, and so is
+    // a sweep that never started itself.
+    const reportedAfter = reportedTestIndexes(stdout);
+    if (tests.every((t) => reportedAfter.has(t.index))) notStarted.length = 0;
+    else {
+      const never = captureNotStarted({ res: sweep, shard: shards });
+      if (never) notStarted.push(never);
+    }
   }
-  return { stdout, stderr, partial, partialReason: [...new Set(reasons)].join('; '), shards };
+  return { stdout, stderr, partial, partialReason: [...new Set(reasons)].join('; '), shards, notStarted };
+}
+
+// A capture Job, or one shard of one, that reported no check because its Pod
+// never started its container or was evicted (check-pod-start.js), as
+// `{ shard, lead, cause }`, or null. `res` is what the Job resolved (a
+// partial result carries its podStart), `err` what it threw.
+function captureNotStarted({ res = null, err = null, shard = 0 } = {}) {
+  const podStart = require('./check-pod-start');
+  const fault = err ? podStart.checkStartFault(err)
+    : (res && res.partial ? podStart.podStartCause(res.podStart) : null);
+  if (!fault) return null;
+  const said = err ? err.stdout : res.stdout;
+  return reportedTestIndexes(String(said || '')).size ? null : { shard, ...fault };
 }
 
 // Best-effort and detached: a Job left behind still goes with its TTL.
@@ -3338,6 +3384,7 @@ async function settleCaptureRun(config, pool, run) {
     visualScenarios = [], prodRunning, stagingOrigin, targets,
     testsCount, dispatched = null, ceilingDropped = 0,
     stdout, stderr = '', runPartial = false, runPartialReason = '', unitOutcome = null,
+    notStarted = [],
   } = run;
   const [, repoOwner, repoName] = (app.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
   let traceStatus = 'error';
@@ -3486,6 +3533,25 @@ async function settleCaptureRun(config, pool, run) {
     // The capture produced nothing, which the proposal's preview can cause:
     // not the platform's fault alone, whatever the unit suite said.
     checksResult.platformFault = false;
+  }
+
+  // #5054: the checks that produced no result were on a test Pod that never
+  // started its container, or was evicted (`notStarted`, check-pod-start.js).
+  // Nothing of the proposal's ran there, so it is the platform's fault: the
+  // error lane retries it past the proposal's own retries, and the card says
+  // the browser checks could not start. Only when results are missing; a
+  // run whose checks reported, or whose Pods started, keeps today's reading.
+  const neverStarted = (Array.isArray(notStarted) ? notStarted : []).filter((n) => n && n.cause);
+  if (checksResult.state === 'error' && checksResult.missingResults && neverStarted.length) {
+    const fault = neverStarted.find((n) => n.lead === 'start') || neverStarted[0];
+    const sentence = require('./check-pod-start').browserNotRunSentence(fault);
+    const joined = checksResult.errorDetail ? `${sentence} | ${checksResult.errorDetail}` : sentence;
+    checksResult.platformFault = true;
+    checksResult.errorDetail = joined.length > unitSuiteRow.FAILURE_DETAIL_MAX
+      ? `${joined.slice(0, unitSuiteRow.FAILURE_DETAIL_MAX - 1)}…` : joined;
+    log.warn('visuals', 'Browser checks could not start — recorded as the platform\'s fault', {
+      sessionId: session.id, commitHash: commitHash || null, shards: neverStarted.map((n) => n.shard), cause: fault.cause,
+    });
   }
 
   // Re-label a whole-origin outage as 'error' rather than 'failing'
@@ -4248,6 +4314,7 @@ module.exports = {
   runCaptureShards,
   captureShardCount,
   reportedTestIndexes,
+  captureNotStarted,
   CAPTURE_SHARD_MIN_TESTS,
   holdCapture,
   notifyChecks,

@@ -11,6 +11,7 @@ const applicationRuntime = require('./application-runtime');
 const runtimeStatus = require('./runtime-status');
 const activeWorkers = require('./active-workers');
 const stagingSvc = require('./staging');
+const checksQueue = require('./checks-queue');
 
 const WORKER_PREFIX = 'usernode-worker-';
 const APP_PREFIX = 'usernode-app-';
@@ -57,7 +58,7 @@ async function gatherFull(config) {
   const pool = getPool(config);
   const isAdmin = true; // Always build the full payload; redact at serve time.
 
-  const [appsQ, sessionsQ, llmQ, sessionCountsQ, runtimeQ] = await Promise.all([
+  const [appsQ, sessionsQ, llmQ, sessionCountsQ, runtimeQ, checksQueueSnapshot] = await Promise.all([
     pool.query(
       `SELECT a.id, a.name, a.slug, a.repo_url, a.container_id, a.status, a.created_at,
               a.image_ref, a.build_ref, a.runtime_kind, a.runtime_name, a.self_hosted,
@@ -104,6 +105,10 @@ async function gatherFull(config) {
        FROM chat_sessions`
     ),
     runtimeStatus.snapshot(config),
+    // The checks queue: who holds the CHECKS_MAX_CONCURRENT_RUNS slots, who
+    // waits, and how the last day's slots went. Null when it could not be
+    // read; it never costs the rest of the payload.
+    checksQueue.snapshot(pool).catch(() => null),
   ]);
 
   const apps = appsQ.rows;
@@ -472,6 +477,7 @@ async function gatherFull(config) {
     capacity,
     host,
     db: dbPool,
+    checksQueue: checksQueueSnapshot,
     apps: appTree,
     workers,
     stuckSessions,
@@ -506,9 +512,12 @@ function redact(full, { isAdmin }) {
     const { lastProgress, lastProgressAt, model, ...rest } = w;
     return rest;
   };
-  // Drop host RAM/load + pg pool internals (operational signal we only
-  // want admins to see) along with the existing admin-only blocks.
-  const { llmUsage, events, summary, limits, apps, workers, host, db, capacity, ...rest } = full;
+  // Drop host RAM/load + pg pool internals and the checks queue (operational
+  // signal we only want admins to see; the queue names sessions and pull
+  // requests) along with the existing admin-only blocks.
+  const {
+    llmUsage, events, summary, limits, apps, workers, host, db, capacity, checksQueue: _queue, ...rest
+  } = full;
   const {
     globalSpendCents, globalSpendCap,
     hostMemUsedPct, hostLoadAvg1, dbPoolWaiting,
