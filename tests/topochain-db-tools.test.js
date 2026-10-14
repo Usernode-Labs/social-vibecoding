@@ -1036,8 +1036,11 @@ test('execute: the SQL console degrades to 503 (never runs unscoped) if the cons
       assert.equal(body.success, false);
       assert.equal(body.code, 'console_unavailable');
       // Never ran the query unscoped: no BEGIN/SET ROLE/wrapped-query
-      // calls should have reached the pool at all.
-      assert.equal(currentMockPool.calls.length, 0);
+      // calls reached the pool. The one read is of the leader's record of
+      // the role (db-console-role.js loadShared), which a process that
+      // never led asks before it refuses.
+      assert.ok(!currentMockPool.calls.some((c) => /^(BEGIN|SET LOCAL ROLE)/i.test(String(c).trim()) || String(c).includes('_topochain_console_q')));
+      assert.ok(currentMockPool.calls.every((c) => /FROM platform_db_roles/.test(String(c))), 'only the leader\'s record is read');
     } finally { server.close(); }
   } finally {
     consoleRoleMod.isAvailable = original;
