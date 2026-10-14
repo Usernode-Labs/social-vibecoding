@@ -3,6 +3,8 @@
 // has started. The main server drains in-flight work before actually exiting.
 
 let shuttingDown = false;
+let shutdownBegan = null;
+const shutdownBegins = new Promise((resolve) => { shutdownBegan = resolve; });
 
 function isShuttingDown() {
   return shuttingDown;
@@ -10,6 +12,14 @@ function isShuttingDown() {
 
 function setShuttingDown() {
   shuttingDown = true;
+  shutdownBegan();
+}
+
+// Resolves once shutdown has begun. For work that waits on something slow it
+// does not own (a rollout, a remote), to stop waiting rather than hold the
+// shutdown drain for it: race it against this.
+function whenShuttingDown() {
+  return shutdownBegins;
 }
 
 // Express middleware that 503s any request hitting a drain-guarded route
@@ -67,6 +77,7 @@ function drainDeadlineMs({ kubernetes = false, shortMs = 5000, env = process.env
 module.exports = {
   isShuttingDown,
   setShuttingDown,
+  whenShuttingDown,
   drainGuard,
   waitFor,
   drainDeadlineMs,

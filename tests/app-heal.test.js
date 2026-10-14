@@ -206,6 +206,34 @@ for (const scenario of ['respawn', 'rebuild', 'restart-fallback', 'probe-running
   });
 }
 
+// 14 Oct 2026: shutdown began while a heal waited on a rollout that could
+// never finish (the app's container cannot start). The drain waited 40 s for
+// it, and then it escalated to a rebuild mid-shutdown. Shutdown ends the wait
+// and the heal, and the next leader's sweep heals the app again.
+test('a Kubernetes heal stops waiting on the rollout when shutdown begins, and never escalates to a rebuild then', async (t) => {
+  const kube = require('../src/services/kubernetes');
+  const lifecycle = require('../src/services/lifecycle');
+  t.mock.method(kube, 'getApplicationStatus', async () => 'created');
+  let begin;
+  const begins = new Promise((resolve) => { begin = resolve; });
+  let shutting = false;
+  t.mock.method(lifecycle, 'whenShuttingDown', () => begins);
+  t.mock.method(lifecycle, 'isShuttingDown', () => shutting);
+  t.mock.method(kube, 'restartApplication', () => new Promise(() => {}));
+  const healing = appHeal.checkAndHealOne({ ...config, appRuntime: 'kubernetes' }, fakePool, app());
+  await new Promise((r) => setImmediate(r));
+  shutting = true;
+  begin();
+  assert.equal((await healing).status, 'shutting_down');
+  assert.deepEqual(fx.rebuildCalls, [], 'no rebuild started during shutdown');
+
+  // A restart that failed outright during shutdown is not escalated either.
+  appHeal._resetForTests();
+  t.mock.method(kube, 'restartApplication', async () => { throw new Error('replacement failed'); });
+  assert.equal((await appHeal.checkAndHealOne({ ...config, appRuntime: 'kubernetes' }, fakePool, app())).status, 'shutting_down');
+  assert.deepEqual(fx.rebuildCalls, []);
+});
+
 test('failed Kubernetes recovery retains cooldown and does not persist success', async (t) => {
   t.mock.method(require('../src/services/kubernetes'), 'getApplicationStatus', async () => 'not_found');
   fx.rebuildError = new Error('build failed');

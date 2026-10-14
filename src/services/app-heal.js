@@ -373,13 +373,23 @@ async function checkAndHealOne(config, pool, app, { probeRunning = false, backgr
     try {
       if (state !== 'not_found') {
         try {
-          await applicationRuntime.restart(config, runtimeRef);
+          // The restart waits for the rollout (up to five minutes), and an
+          // app that cannot start never rolls out. Shutdown does not wait
+          // for that: the drain held a release for 40 s on 14 Oct 2026 for
+          // one such app, then this escalated to a rebuild mid-shutdown.
+          // The next leader's sweep heals it again.
+          const restarted = await Promise.race([
+            applicationRuntime.restart(config, runtimeRef).then(() => true),
+            lifecycle.whenShuttingDown().then(() => false),
+          ]);
+          if (!restarted) return { status: 'shutting_down', slug: app.slug };
           healAttempts.delete(app.slug);
           return { status: 'restarted', slug: app.slug };
         } catch (err) {
           log.warn('app-heal', 'Kubernetes restart failed; escalating to rebuild', { slug: app.slug, err: err.message });
         }
       }
+      if (lifecycle.isShuttingDown()) return { status: 'shutting_down', slug: app.slug };
       const recovered = await recoverFromScratch(config, pool, app);
       // A requested deploy keeps the cooldown: its outcome comes later, and
       // a failure must not be asked for again every tick.
