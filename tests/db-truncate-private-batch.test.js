@@ -26,13 +26,13 @@ function recorder(tables, { failOn = null, holding = () => [] } = {}) {
     calls.push({ db, sql, opts });
     if (/obj_description/.test(sql)) return tables.join('\n') + '\n';
     if (failOn && failOn(sql)) throw new Error(`boom: ${sql.slice(0, 60)}`);
-    if (/WHERE EXISTS/.test(sql)) return holding(calls).join('\n');
+    if (/pg_relation_size/.test(sql)) return holding(calls).join('\n');
     return '';
   };
   return {
     calls, execute,
     truncates: () => calls.filter((c) => /^TRUNCATE/.test(c.sql)).map((c) => c.sql),
-    checks: () => calls.filter((c) => /WHERE EXISTS/.test(c.sql)),
+    checks: () => calls.filter((c) => /pg_relation_size/.test(c.sql)),
   };
 }
 
@@ -45,14 +45,15 @@ test('every private table is emptied by one TRUNCATE statement', async () => {
   assert.ok(r.calls.every((c) => c.db === 'app_demo_staging_s1_abc'));
   assert.equal(r.checks().length, 1, 'one query confirms they are empty');
   assert.equal(r.calls.length, 3, 'discovery, the statement and the check: three round trips');
-  assert.match(r.checks()[0].sql, /^SELECT 'public\.private_000' WHERE EXISTS \(SELECT 1 FROM public\.private_000\) UNION ALL /);
+  assert.match(r.checks()[0].sql, /^WITH RECURSIVE targets\(name, rel\) AS \(VALUES \('public\.private_000', 'public\.private_000'::regclass\), /);
+  assert.match(r.checks()[0].sql, /pg_inherits/, 'inheritance children, which TRUNCATE empties too, are checked');
   assert.equal(r.checks()[0].opts.tuplesOnly, true);
 });
 
 test('rows back after the one statement: the per-table pass runs, then the check again', async () => {
   const tables = ['public.a', 'public.b'];
   // Refilled once (an AFTER TRUNCATE trigger), empty after the per-table pass.
-  const r = recorder(tables, { holding: (calls) => (calls.filter((c) => /WHERE EXISTS/.test(c.sql)).length === 1 ? ['public.b'] : []) });
+  const r = recorder(tables, { holding: (calls) => (calls.filter((c) => /pg_relation_size/.test(c.sql)).length === 1 ? ['public.b'] : []) });
   const result = await truncatePrivateTables('app_demo_staging_s1_abc', r.execute);
   assert.deepEqual(result.truncated, tables);
   assert.deepEqual(r.truncates(), [
@@ -69,8 +70,16 @@ test('rows still there after the per-table pass fail it, naming the table', asyn
     /Failed to truncate 1 staging:private table\(s\) in app_demo_staging_s1_abc: public\.a \(still holds rows after TRUNCATE\)/);
 });
 
+test('after a failed statement, rows the per-table pass leaves behind still fail it', async () => {
+  // The check also runs on the fallback path, not only after the single statement.
+  const r = recorder(['public.a', 'public.b'], { failOn: (sql) => sql.includes(', public.'), holding: () => ['public.a'] });
+  await assert.rejects(truncatePrivateTables('app_demo_staging_s1_abc', r.execute),
+    /public\.a \(still holds rows after TRUNCATE\)/);
+  assert.equal(r.checks().length, 1);
+});
+
 test('a check that cannot run fails the pass', async () => {
-  const r = recorder(['public.a'], { failOn: (sql) => /WHERE EXISTS/.test(sql) });
+  const r = recorder(['public.a'], { failOn: (sql) => /pg_relation_size/.test(sql) });
   await assert.rejects(truncatePrivateTables('app_demo_staging_s1_abc', r.execute),
     /Could not confirm the staging:private tables in app_demo_staging_s1_abc are empty: boom/);
 });
@@ -97,7 +106,7 @@ test('a failed statement falls back to one per table and names the table that fa
 
 test('a failed statement whose tables all empty one by one is not a failure', async () => {
   const tables = ['public.a', 'public.b'];
-  const r = recorder(tables, { failOn: (sql) => sql.includes(', ') });
+  const r = recorder(tables, { failOn: (sql) => sql.startsWith('TRUNCATE') && sql.includes(', ') });
   const result = await truncatePrivateTables('app_demo_staging_s1_abc', r.execute);
   assert.deepEqual(result.truncated, tables);
   assert.equal(r.truncates().length, 3);
@@ -225,6 +234,81 @@ test('real server: a trigger that refills an earlier table even table by table f
   `);
   await assert.rejects(truncatePrivateTables(s.name, s.execute),
     /Failed to truncate 1 staging:private table\(s\) in trunc_trigger_rev_[0-9a-f]+: public\.a \(still holds rows after TRUNCATE\)/);
+});
+
+// The check must not trust a SELECT: row-level security filters it for an
+// administrator that neither is a superuser nor bypasses RLS, and a refilled
+// table would read as empty.
+test('real server: a refill hidden by row-level security is still caught', { timeout: 60000 }, async (t) => {
+  const s = await scratchDatabase(t, 'trunc_rls');
+  if (!s) return;
+  const role = `trunc_rls_admin_${crypto.randomBytes(4).toString('hex')}`;
+  await s.client.query(`CREATE ROLE ${role} LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD 'local-test-only'`);
+  t.after(async () => {
+    const url = new URL(DSN);
+    const admin = new Client({ connectionString: String(url) });
+    await admin.connect();
+    await admin.query(`DROP OWNED BY ${role}`).catch(() => {});
+    await admin.query(`DROP ROLE IF EXISTS ${role}`).catch(() => {});
+    await admin.end();
+  });
+  await s.client.query(`GRANT ALL ON SCHEMA public TO ${role}`);
+  const url = new URL(DSN); url.pathname = `/${s.name}`; url.username = role; url.password = 'local-test-only';
+  const ordinary = new Client({ connectionString: String(url) });
+  // The scratch database is dropped WITH (FORCE) first, which ends this session.
+  ordinary.on('error', () => {});
+  await ordinary.connect();
+  t.after(() => ordinary.end().catch(() => {}));
+  await ordinary.query(`
+    CREATE TABLE a (id serial PRIMARY KEY); CREATE TABLE b (id serial PRIMARY KEY, secret text);
+    COMMENT ON TABLE a IS 'staging:private'; COMMENT ON TABLE b IS 'staging:private';
+    CREATE FUNCTION refill_b() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN INSERT INTO b (secret) VALUES ('fixture'); RETURN NULL; END $$;
+    CREATE TRIGGER a_refills_b AFTER TRUNCATE ON a FOR EACH STATEMENT EXECUTE FUNCTION refill_b();
+    ALTER TABLE b ENABLE ROW LEVEL SECURITY; ALTER TABLE b FORCE ROW LEVEL SECURITY;
+    CREATE POLICY can_insert ON b FOR INSERT WITH CHECK (true);
+    CREATE POLICY cannot_read ON b FOR SELECT USING (false);
+    INSERT INTO a DEFAULT VALUES; INSERT INTO b (secret) VALUES ('secret');
+  `);
+  const statements = [];
+  const execute = async (db, sql, opts = {}) => {
+    statements.push(sql);
+    const result = await ordinary.query({ text: sql, rowMode: 'array' });
+    return opts.tuplesOnly ? result.rows.map((row) => row.join('|')).join('\n') : '';
+  };
+  assert.equal((await ordinary.query('SELECT count(*)::int AS n FROM b')).rows[0].n, 0, 'the role cannot see b\'s rows');
+  await truncatePrivateTables(s.name, execute);
+  assert.ok(statements.includes('TRUNCATE public.b RESTART IDENTITY CASCADE'), 'the refill was seen, and the per-table pass ran');
+  assert.equal((await s.client.query('SELECT count(*)::int AS n FROM b')).rows[0].n, 0, 'b is empty, as a superuser sees it');
+});
+
+test('real server: after a failed statement, a refill left by the per-table pass fails it', { timeout: 60000 }, async (t) => {
+  const s = await scratchDatabase(t, 'trunc_fallback_check');
+  if (!s) return;
+  await s.client.query(`
+    CREATE TABLE a (id int); CREATE TABLE b (id int);
+    COMMENT ON TABLE a IS 'staging:private'; COMMENT ON TABLE b IS 'staging:private';
+    CREATE FUNCTION refuse_many() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN IF current_query() LIKE '%, %' THEN RAISE EXCEPTION 'refused'; END IF; RETURN NULL; END $$;
+    CREATE TRIGGER refuse BEFORE TRUNCATE ON a FOR EACH STATEMENT EXECUTE FUNCTION refuse_many();
+    CREATE FUNCTION refill_a() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN INSERT INTO a VALUES (1); RETURN NULL; END $$;
+    CREATE TRIGGER b_refills_a AFTER TRUNCATE ON b FOR EACH STATEMENT EXECUTE FUNCTION refill_a();
+  `);
+  await assert.rejects(truncatePrivateTables(s.name, s.execute), /public\.a \(still holds rows after TRUNCATE\)/);
+});
+
+test('real server: a refilled inheritance child of a private table is caught', { timeout: 60000 }, async (t) => {
+  const s = await scratchDatabase(t, 'trunc_inherit');
+  if (!s) return;
+  await s.client.query(`
+    CREATE TABLE a (id int); CREATE TABLE parent (id int); CREATE TABLE child () INHERITS (parent);
+    COMMENT ON TABLE a IS 'staging:private'; COMMENT ON TABLE parent IS 'staging:private';
+    INSERT INTO child VALUES (1);
+    CREATE FUNCTION refill_child() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN INSERT INTO child VALUES (2); RETURN NULL; END $$;
+    CREATE TRIGGER a_refills_child AFTER TRUNCATE ON a FOR EACH STATEMENT EXECUTE FUNCTION refill_child();
+  `);
+  await truncatePrivateTables(s.name, s.execute);
+  assert.ok(s.statements.includes('TRUNCATE public.parent RESTART IDENTITY CASCADE'), 'the per-table pass ran');
+  assert.equal((await s.client.query('SELECT count(*)::int AS n FROM parent')).rows[0].n, 0);
 });
 
 test('real server: the platform schema\'s private tables, in one statement', { timeout: 180000 }, async (t) => {

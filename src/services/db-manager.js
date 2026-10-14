@@ -2297,6 +2297,15 @@ SELECT n.nspname || '.' || c.relname
   // every private table still holding a row. Rows found after the single
   // statement send the pass to the per-table form; rows found after that
   // fail the pass, and the copy is not handed out.
+  //
+  // The check reads the size of each table's file (and its inheritance
+  // children's, which TRUNCATE empties too), not its rows. A SELECT is
+  // filtered by row-level security for an administrator that does not
+  // bypass it, and would call a refilled table empty. A file size answers
+  // the same for every role: TRUNCATE leaves a zero-length file, and any row
+  // a trigger writes, visible to us or not, takes a page. A file holding
+  // only dead rows reads as not empty, which costs the per-table pass and
+  // nothing else.
   const truncated = [];
   const perTable = async () => {
     truncated.length = 0;
@@ -2313,12 +2322,15 @@ SELECT n.nspname || '.' || c.relname
     }
   };
   // Names were validated above, so they can be spliced as text too.
+  const checkSql = 'WITH RECURSIVE targets(name, rel) AS (VALUES '
+    + safe.map((t) => `('${t}', '${t}'::regclass)`).join(', ')
+    + '), tree(name, rel) AS (SELECT name, rel FROM targets'
+    + ' UNION SELECT tree.name, i.inhrelid::regclass FROM pg_inherits i JOIN tree ON i.inhparent = tree.rel)'
+    + ' SELECT DISTINCT name FROM tree WHERE pg_relation_size(rel) > 0 ORDER BY 1';
   const stillHoldingRows = async () => {
     let out;
     try {
-      out = await execute(targetDb,
-        safe.map((t) => `SELECT '${t}' WHERE EXISTS (SELECT 1 FROM ${t})`).join(' UNION ALL '),
-        { tuplesOnly: true });
+      out = await execute(targetDb, checkSql, { tuplesOnly: true });
     } catch (err) {
       throw new Error(`Could not confirm the staging:private tables in ${targetDb} are empty: ${err.message}`);
     }
