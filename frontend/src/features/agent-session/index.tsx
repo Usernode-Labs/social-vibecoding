@@ -2179,6 +2179,7 @@ function Composer({ id }: { id: string }) {
             key="save"
             type="submit"
             data-agent-session-send="save"
+            disabled={dictating}
             onMouseDown={(event) => event.preventDefault()}
             variant="unstyled"
             ink="solid"
@@ -2203,7 +2204,7 @@ function Composer({ id }: { id: string }) {
             size="icon"
             ink={running ? 'dangerTint' : 'solid'}
             className="inline-flex h-10 w-10 shrink-0 items-center justify-center"
-            disabled={running ? (snapshot.stopping || snapshot.turnPhase === 'mayor2') : (!sendable || uploading)}
+            disabled={running ? (snapshot.stopping || snapshot.turnPhase === 'mayor2') : (dictating || !sendable || uploading)}
             aria-label={running ? t('agent:session.composer.stop') : uploading ? t('agent:session.composer.sendWaitingLabel') : t('agent:session.composer.send')}
             title={running
               ? (snapshot.turnPhase === 'mayor2' ? t('agent:session.composer.stopUnavailableTitle') : t('agent:session.composer.stop'))
