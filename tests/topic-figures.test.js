@@ -455,7 +455,7 @@ test('a process on Kubernetes says it came up and in which pod; staging and anyt
 });
 
 test('the triggers counted as the same code again are check triggers, and none of them moves the code', () => {
-  const declared = [...read('src/services/visuals.js').match(/const CHECK_TRIGGERS = new Set\(\[([\s\S]*?)\]\);/)[1].matchAll(/'([a-z-]+)'/g)].map((m) => m[1]);
+  const declared = [...read('src/workflow/rules/check-store.ts').match(/const CHECK_TRIGGERS: ReadonlySet<string> = new Set\(\[([\s\S]*?)\]\);/)[1].matchAll(/'([a-z-]+)'/g)].map((m) => m[1]);
   for (const trigger of figures.SAME_CODE_TRIGGERS) assert.ok(declared.includes(trigger), trigger);
   for (const moves of ['proposal-open', 'commit-push', 'sync-main', 'pr-import', 'conflict-resolved', 'fleet-maintenance']) {
     assert.ok(!figures.SAME_CODE_TRIGGERS.includes(moves), moves);

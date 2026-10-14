@@ -913,13 +913,6 @@
       "preview": "`INSERT INTO app_check_history (app_id, check_key, check_name, check_path, first_passed_at, last_passed_at, last_seen_at, consecutive_passes, merged_pass_at, me"
     },
     {
-      "source": "src/services/check-history.js",
-      "kind": "structural-template",
-      "fingerprint": "2c4e52c5068d710d3719",
-      "count": 1,
-      "preview": "`INSERT INTO app_check_history AS h (app_id, check_key, check_name, check_path, first_passed_at, last_passed_at, last_failed_at, last_seen_at, pass_count, fail_"
-    },
-    {
       "source": "src/services/cli-handoff-sync.js",
       "kind": "structural-template",
       "fingerprint": "468267d2ba00b7bc7ac5",
@@ -1751,6 +1744,13 @@
       "fingerprint": "d81e1b5402d7ea2e1750",
       "count": 1,
       "preview": "`INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind, detail) SELECT v.user_id, v.app_id, v.session_id, v.source_user_id, v.kind, v.det"
+    },
+    {
+      "source": "src/workflow/rules/check-store.ts",
+      "kind": "structural-template",
+      "fingerprint": "9003bfe93e34a954816d",
+      "count": 1,
+      "preview": "`INSERT INTO app_check_history AS h (app_id, check_key, check_name, check_path, first_passed_at, last_passed_at, last_failed_at, last_seen_at, pass_count, fail_"
     },
     {
       "source": "src/workflow/rules/merge-credits.ts",

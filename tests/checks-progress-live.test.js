@@ -158,7 +158,8 @@ test('setChecksProgress writes only while this run is the pending one', async ()
 });
 
 test('setChecksPending resets progress and every verdict write clears it', () => {
-  const src = read('src/services/visuals.js');
+  // The statements live in one copy shared with the preview machine.
+  const src = read('src/workflow/rules/check-store.ts');
   const pendingSql = /async function setChecksPending[\s\S]*?UPDATE chat_sessions[\s\S]*?checks_progress = NULL/;
   assert.match(src, pendingSql, 'a new run starts with no stale progress');
   // Three verdict writes: error/partial, the normal result, and skipped.
