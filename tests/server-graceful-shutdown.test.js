@@ -404,8 +404,10 @@ test('a bot build under way does not hold the shutdown, and nothing is recorded 
   let started = false;
   let release;
   bot.runShadowBuild = () => { started = true; return new Promise((resolve) => { release = resolve; }); };
-  // No workflow runtime here: the build runs in this process.
-  const build = buildRuns.start({ pool: null, config: {}, target: 'shadow', id: 78 });
+  // No workflow runtime here: the build runs in this process (started before
+  // the shutdown, which an earlier test of this file began: a stopping process
+  // starts none).
+  const build = buildRuns.start({ pool: null, config: {}, target: 'shadow', id: 78, deps: { inProcess: true } });
   let ended = false;
   build.then(() => { ended = true; }, () => { ended = true; });
   try {

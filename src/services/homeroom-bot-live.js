@@ -1637,7 +1637,8 @@ async function post({
   // again): its row is taken up, and what of it went out already is not sent
   // twice. The row is pending until the post has gone out, so the build's
   // "said once" (homeroom-bot.js runPosted) never counts a post half sent.
-  const had = runId ? (await pool.query(
+  // ("looking" is claimed by its insert, once per issue, and is not taken up.)
+  const had = runId && kind !== 'looking' ? (await pool.query(
     `SELECT id, github_comment_id, thread_message_id, created_at FROM homeroom_bot_posts
       WHERE run_id = $1 AND kind = $2 AND pending IS TRUE ORDER BY id DESC LIMIT 1`,
     [runId, kind],
@@ -1654,7 +1655,6 @@ async function post({
     if (!rows.length) return null;
     postId = rows[0].id;
   }
-  const noted = (sql, value) => pool.query(sql, [postId, value]).catch(() => {});
   let comment = had?.github_comment_id ? { id: had.github_comment_id } : null;
   let message = had?.thread_message_id ? { id: had.thread_message_id } : null;
   // Its thread message went out before the restart: so did what it tagged.
@@ -1669,7 +1669,9 @@ async function post({
         log.warn('homeroom-bot', 'GitHub comment failed (continuing)', { app: app.slug, issueNumber, kind, err: err.message });
       }
     }
-    if (comment?.id != null) await noted('UPDATE homeroom_bot_posts SET github_comment_id = $2 WHERE id = $1', comment.id);
+    if (comment?.id != null) {
+      await pool.query('UPDATE homeroom_bot_posts SET github_comment_id = $2 WHERE id = $1', [postId, comment.id]).catch(() => {});
+    }
   }
   // #3624: the same news, in the requester's DM with the bot, when they
   // are somebody it talks to there. A post that carries `dm` is one worth
@@ -1722,7 +1724,9 @@ async function post({
     } catch (err) {
       log.warn('homeroom-bot', 'Thread post failed (continuing)', { app: app.slug, issueNumber, kind, err: err.message });
     }
-    if (message?.id != null) await noted('UPDATE homeroom_bot_posts SET thread_message_id = $2 WHERE id = $1', message.id);
+    if (message?.id != null) {
+      await pool.query('UPDATE homeroom_bot_posts SET thread_message_id = $2 WHERE id = $1', [postId, message.id]).catch(() => {});
+    }
   }
   // A system message fires no mention notifications of its own, so the
   // mention row is written here, as the "needs a conversation" prompt does

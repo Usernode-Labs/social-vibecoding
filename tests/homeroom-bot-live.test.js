@@ -259,10 +259,39 @@ test('a post goes to both surfaces, scoped to the issue, and is recorded', async
   assert.deepEqual(h.calls.comments, [{ owner: 'usernode-bot', repo: 'rss-reader', n: 12, body: 'Which feed?' }]);
   assert.deepEqual(h.calls.messages[0].thread, { type: 'issue', ref: 12 });
   assert.equal(h.calls.messages[0].msgType, 'system');
-  const insert = h.calls.queries[0];
+  // A run's post first looks for one of its own a restart cut short.
+  assert.match(h.calls.queries[0].sql, /WHERE run_id = \$1 AND kind = \$2 AND pending IS TRUE/);
+  const insert = h.calls.queries[1];
   assert.match(insert.sql, /ON CONFLICT \(app_id, issue_number\) WHERE kind = 'looking' DO NOTHING/,
-    'the row is written first: for "looking" the insert is the claim');
+    'then its row is written, before anything is sent: for "looking" the insert is the claim');
+  assert.match(insert.sql, /VALUES \(\$1, \$2, \$3, \$4, TRUE\)/, 'pending until it has gone out');
+  assert.match(h.calls.queries.at(-1).sql, /pending = NULL/, 'and said once it has');
   assert.ok(h.calls.queries.some((q) => /UPDATE homeroom_bot_posts SET github_comment_id/.test(q.sql) && q.params[1] === 1234 && q.params[2] === 777));
+});
+
+test('a post a restart cut short is finished, its comment found on the issue rather than made twice', async () => {
+  const h = postHarness();
+  const at = '2026-10-14T10:00:00Z';
+  h.pool.query = async (sql, params) => {
+    h.calls.queries.push({ sql: String(sql), params });
+    if (/pending IS TRUE/.test(sql)) return { rows: [{ id: 41, github_comment_id: null, thread_message_id: null, created_at: at }] };
+    return { rows: [] };
+  };
+  h.github.fetchIssueComments = async () => ({ comments: [{ id: 990, body: 'Which feed?', createdAt: '2026-10-14T10:00:01Z' }] });
+  const out = await live.post({ ...h, app: APP, repo: REPO, issueNumber: 12, kind: 'question', runId: 900, text: 'Which feed?' });
+  assert.equal(out.postId, 41, 'its row is taken up');
+  assert.deepEqual(h.calls.comments, [], 'the comment it made before the restart is not made again');
+  assert.ok(!h.calls.queries.some((q) => /INSERT INTO homeroom_bot_posts/.test(q.sql)));
+  assert.equal(h.calls.messages.length, 1, 'what had not gone out goes now');
+  const end = h.calls.queries.at(-1);
+  assert.match(end.sql, /pending = NULL/);
+  assert.deepEqual(end.params.slice(0, 3), [41, 990, 777]);
+  // One whose comment had not gone out yet is commented now.
+  const h2 = postHarness();
+  h2.pool.query = async (sql) => (/pending IS TRUE/.test(sql) ? { rows: [{ id: 42, github_comment_id: null, thread_message_id: null, created_at: at }] } : { rows: [] });
+  h2.github.fetchIssueComments = async () => ({ comments: [] });
+  await live.post({ ...h2, app: APP, repo: REPO, issueNumber: 12, kind: 'question', runId: 900, text: 'Which feed?' });
+  assert.equal(h2.calls.comments.length, 1);
 });
 
 test('"looking" is posted once per issue: a second claim sends nothing', async () => {
@@ -745,7 +774,7 @@ test('WP1: a build whose request was answered or closed while it ran is not prop
   assert.ok(h.calls.queries.some((q) => /SET status = 'archived'/.test(q.sql)));
   // The check is the step right before the proposal is prepared and put up.
   const fn = LIVE_SRC.slice(LIVE_SRC.indexOf('async function buildAndPropose('));
-  const check = fn.indexOf('const skipped = await skipNow();');
+  const check = fn.indexOf("const skipped = await skipNow('built');");
   const turn = fn.indexOf("let { routed, stopped } = await runBuildTurn({ prompt, budgetMs: turnBudgetMs, commitMsg, progress, key: 'build' });");
   assert.ok(turn > -1 && check > turn, 'after the build turn');
   const prepared = fn.indexOf('await prepareProposal({');
@@ -928,8 +957,8 @@ test('a second build of one run stops at its link and leaves the run to the firs
   assert.equal(await build(h, { verdict: 'ready', buildNote: 'x' }), 'lost_claim');
   assert.equal(refused, bot.LOST_CLAIM);
   const claim = h.queries.find((q) => /SET build_session_id = \$2, live_build_waiting_at = NULL\s+WHERE id = \$1/.test(q.sql));
-  assert.match(claim.sql, /WHERE id = \$1\s+AND build_session_id IS NULL AND build_ok IS NULL AND proposal_session_id IS NULL\s+RETURNING id/,
-    'once: only a run no build has linked, still waiting for its outcome');
+  assert.match(claim.sql, /AND \(build_session_id IS NULL OR build_session_id = \$2\)\s+AND build_ok IS NULL AND proposal_session_id IS NULL\s+RETURNING id/,
+    'once: only a run no other build has linked (its own link again, after a restart), still waiting for its outcome');
   assert.deepEqual(claim.params, [900, 5009]);
   assert.ok(!h.queries.some((q) => /SET build_ok = \$2, build_error = \$3/.test(q.sql)), 'the run keeps the first build\'s record');
   assert.ok(!h.queries.some((q) => /^UPDATE homeroom_bot_runs SET (live_build_waiting_at|build_spec_md|proposal_session_id) = /.test(q.sql)));
