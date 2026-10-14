@@ -559,7 +559,7 @@ async function loadTrialContext(pool, trialId) {
   const { rows: [row] } = await pool.query(
     `SELECT tr.*, t.stage, t.snapshot_id, t.reference, t.tags, t.issue_number AS task_issue,
             a.id AS app_id, a.slug AS app_slug, a.name AS app_name, a.repo_url, a.self_hosted,
-            r.baseline_model AS run_baseline, r.kind AS run_kind
+            r.baseline_model AS run_baseline, r.kind AS run_kind, r.shared_plans AS run_shared_plans
        FROM bench_trials tr
        JOIN bench_tasks t ON t.id = tr.task_id
        JOIN bench_runs r ON r.id = tr.run_id
@@ -626,6 +626,12 @@ async function studioContext(pool, config, row, settings) {
     if (!out.stageModels.build) throw new Error('no model is set for the bot\'s stages');
   }
   if (row.reference_label) out.sessionModel = row.run_baseline || catalog.BASELINE;
+  // A run that shares its plans (bench/shared-plans.js): which of its
+  // brief's plans this trial builds from, the attempt it was launched as
+  // (a rerun keeps its trial's).
+  if (row.run_shared_plans && row.stage === 'first_version' && !row.reference_label) {
+    out.sharedPlan = { key: Number(row.plan_key) || Number(row.attempt) || 1 };
+  }
   return out;
 }
 
@@ -869,8 +875,10 @@ async function recordTrial(pool, { trialRow, row, patch, user, d }) {
   const sessionIds = [...new Set([patch.session_id, ...(patch.session_ids || [])].filter(Boolean))];
   let cost = Number.isFinite(patch.cost_usd) ? patch.cost_usd : null;
   // What the trial spent beside its agent turns, which the ledger below
-  // does not hold: a first version's reviewer calls (services/bot-review.js).
-  const besideLedger = Number.isFinite(Number(patch.review_cost_usd)) ? Math.max(Number(patch.review_cost_usd), 0) : 0;
+  // does not hold: a first version's reviewer calls (services/bot-review.js),
+  // and its plan at Make it and early first look (bench/runner.js earlySteps).
+  const beside = (v) => (Number.isFinite(Number(v)) ? Math.max(Number(v), 0) : 0);
+  const besideLedger = beside(patch.review_cost_usd) + beside(patch.helper_cost_usd);
   let inputTokens = patch.input_tokens ?? null;
   let outputTokens = patch.output_tokens ?? null;
   const routedModels = new Set();
@@ -886,6 +894,9 @@ async function recordTrial(pool, { trialRow, row, patch, user, d }) {
     for (const m of usage.routed_models || []) routedModels.add(m);
   }
   if (ledger.priced > 0) cost = ledger.cost + besideLedger;
+  // A trial that ran no turn (its plan was written, then it was cancelled)
+  // still paid for the plan.
+  else if (beside(patch.helper_cost_usd) > 0) cost = (Number.isFinite(cost) ? cost : 0) + beside(patch.helper_cost_usd);
   if (ledger.input > 0) inputTokens = ledger.input;
   if (ledger.output > 0) outputTokens = ledger.output;
   const charge = cost;
