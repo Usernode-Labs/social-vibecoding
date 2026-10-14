@@ -2,6 +2,8 @@ import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type Chan
 
 import { ArrowUpIcon, ArrowUpTrayIcon, PaperClipIcon, PlusIcon } from '@/components/ui/icons';
 import { RichMessage, useMessages } from '../../lib/i18n/react';
+import { getLanguage } from '../../lib/i18n/runtime';
+import { joinDictation, useDictation } from '../../lib/use-dictation';
 import * as api from './api';
 import { waitingFor } from './waiting-for';
 import { channels, draftFor, notifyTyping, replyFor, scopeKey, send, setDraft, setReply, takePendingAttach, takePendingShare, useMessagesSnapshot } from './store';
@@ -17,6 +19,7 @@ import { prefixLookup, type PrefixLookup } from '../../lib/prefix-lookup';
 import { orderFriendsFirst, useFriendIds } from '../friends/store';
 import { wantsKeyboardFocus } from '../message-actions/focus';
 import { completedShortcodeAt, findShortcodeToken, matchShortcodes, replaceShortcodeToken } from '../message-actions/emoji-shortcodes';
+import { SpeakButton } from './speak-button';
 
 const MAX_ATTACHMENTS = 4;
 // People asked for per `@` prefix in a channel (#3361).
@@ -104,9 +107,38 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   const reply = replyFor(scope);
   // #2386: friends lead the @ list (features/friends/store.ts).
   const friendIds = useFriendIds();
+  // #4389: speak to the bot. The button mounts only in the chat with Homeroom
+  // bot — the main composer and each request thread's, which is this same
+  // component with a `threadRootId`. Chats with people, groups and channels
+  // never ask the hook for anything but a no-op stop, so they behave exactly
+  // as they did. `supported` is read in an effect (lib/use-dictation.ts),
+  // so the first render carries neither the button nor a hint.
+  const botChat = active?.kind === 'direct' && active.homeroomBot === true;
+  // What was in the box when dictation began: spoken words append after it,
+  // one space between (joinDictation). A ref, not state — the words the
+  // recogniser lands come through `onText`, and reading `value` there through
+  // a callback re-created each render is what the ref in the hook is for.
+  const dictationBaseRef = useRef('');
+  const dictation = useDictation({
+    lang: getLanguage(),
+    onText: (finalText, interimText) => {
+      updateValue(joinDictation(dictationBaseRef.current, joinDictation(finalText, interimText)));
+    },
+  });
+  function toggleDictation() {
+    if (dictation.listening) { dictation.stop(); return; }
+    dictationBaseRef.current = value;
+    dictation.start();
+  }
 
   useEffect(() => {
     setValue(draftFor(scope)); setAttachments([]); setObject(null); setPrompt(null); setError('');
+    // #4389: a conversation or thread switch ends dictation — words mid-air
+    // belong to the box they were spoken into, not to the next one.
+    dictation.stop();
+    // `stop` is a stable callback (lib/use-dictation.ts); it is here for the
+    // lint, and the effect still runs on the scope change alone.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scope]);
 
   // Reply puts the caret here where there is a hardware keyboard, so the
@@ -350,6 +382,9 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   }
 
   function onComposerChange(event: ChangeEvent<HTMLTextAreaElement>) {
+    // #4389: typing takes over from speaking — the button lights again if the
+    // words in the box need a second go.
+    dictation.stop();
     const input = event.target;
     const done = (event.nativeEvent as InputEvent).data === ':' ? completedShortcodeAt(input.value, input.selectionStart) : null;
     if (!done) { updateValue(input.value); return; }
@@ -461,6 +496,9 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   // `preventScroll` for the same reason.
   function submit() {
     if (uploading || (!value.trim() && !attachments.length && !object)) return;
+    // #4389: the message goes, so listening stops with it — nothing sends
+    // automatically from a live dictation either way.
+    dictation.stop();
     setError(''); notifyTyping(false); setPrompt(null);
     const input = { content: value.trim(), attachmentIds: attachments.map((item) => item.id), attachments, object: object ? referenceOf(object) : undefined };
     setValue(''); setAttachments([]); setObject(null);
@@ -512,6 +550,15 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
           will be — so the composer turning into a notice after it is no
           surprise. */}
       {awaiting ? <p className="messages-composer-hint" data-awaiting-acceptance="">{waitingUnknown ? t('messages:composer.firstMessageHintUnknown') : waitingOn ? t('messages:composer.firstMessageHintNamed', { username: waitingOn }) : t('messages:composer.firstMessageHintUnnamed')}</p> : null}
+      {/* #4389: what dictation is doing, said above the box the words land in.
+          The listening line goes while it is running, in the main composer and
+          a thread's alike. The unsupported line stands in for the button this
+          browser cannot offer — while the box is empty and not in a thread,
+          where speaking would have been — and is absent from the first render
+          (`ready` is false until the effect has asked), so it never flashes in
+          a browser that does support it. */}
+      {botChat && dictation.listening ? <p className="messages-composer-hint" data-dictation-hint="">{t('messages:composer.dictation.listening')}</p> : null}
+      {botChat && dictation.ready && !dictation.supported && !dictation.error && !inThread && !value ? <p className="messages-composer-hint" data-dictation-hint="">{t('messages:composer.dictation.unsupported')}</p> : null}
       {/* The white card. The bar around it is what carries the home-indicator
           inset (`platform-safe-bar`), so the card keeps its own padding on a
           notched phone instead of growing a tall blank foot. */}
@@ -557,9 +604,14 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
           ) : null}
         </div>
         <textarea ref={inputRef} value={value} onChange={onComposerChange} onPaste={(event) => { const files = [...event.clipboardData.files]; if (files.length) { event.preventDefault(); void addFiles(files); } }} onKeyDown={(event) => { if (onEmojiKeyDown(event)) return; if (suggestionKeys(event)) return; if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); submit(); } else if (event.key === 'Escape' && reply) setReply(scope, null); }} onBlur={() => notifyTyping(false)} rows={1} maxLength={8000} placeholder={inThread ? threadPlaceholder : (prompt || t('messages:composer.placeholder'))} aria-label={inThread ? t('messages:composer.labelThread') : t('messages:composer.label')} aria-autocomplete="list" aria-controls={suggestions.length ? listId : undefined} aria-activedescendant={activeOption >= 0 ? optionId(activeOption) : undefined} className="messages-composer-input" />
+        {botChat && dictation.supported ? <SpeakButton listening={dictation.listening} onToggle={toggleDictation} /> : null}
         <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={submit} disabled={!!uploading || (!value.trim() && !attachments.length && !object)} className="messages-send" aria-label={t('messages:composer.send')}><ArrowUpIcon aria-hidden="true" /></button>
       </div>
       {error ? <p role="alert" className="mt-1 text-xs text-red-700 dark:text-red-400">{error}</p> : null}
+      {/* #4389: dictation's own troubles, in the same line the composer's
+          others use. Blocked stays offerable — the permission can still be
+          granted, and the button is the retry. */}
+      {botChat && dictation.error && !error ? <p role="alert" className="mt-1 text-xs text-red-700 dark:text-red-400" data-dictation-error={dictation.error}>{t(dictation.error === 'blocked' ? 'messages:composer.dictation.blocked' : dictation.error === 'unsupported' ? 'messages:composer.dictation.unsupported' : 'messages:composer.dictation.failed')}</p> : null}
       {/* The count's line is not laid out until the text nears the limit
           (`data-near-limit`, app.css): on a phone since #3735, and at every
           width since #4202, so the card stays one row and the first

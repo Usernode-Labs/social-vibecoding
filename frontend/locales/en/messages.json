@@ -1775,6 +1775,30 @@
     "text": "Send message",
     "description": "Accessible name of the arrow button beside the message box: sends the message."
   },
+  "composer.dictation.start": {
+    "text": "Speak your message",
+    "description": "Accessible name and tooltip of the microphone button beside the message box in the chat with Homeroom bot: starts dictation."
+  },
+  "composer.dictation.stop": {
+    "text": "Stop listening",
+    "description": "Accessible name and tooltip of the microphone button while dictation is running in the chat with Homeroom bot: taps it again to stop."
+  },
+  "composer.dictation.listening": {
+    "text": "Listening… tap the microphone again to stop.",
+    "description": "Hint line above the message box in the chat with Homeroom bot while dictation is running."
+  },
+  "composer.dictation.unsupported": {
+    "text": "Speaking a message isn't available in this browser, so type it instead.",
+    "description": "Hint line above the message box in the chat with Homeroom bot, in a browser that offers no speech recognition, while the box is empty."
+  },
+  "composer.dictation.blocked": {
+    "text": "Homeroom can't use your microphone. Allow it for this site in your browser, then try again.",
+    "description": "Error line under the message box in the chat with Homeroom bot when the microphone permission was refused."
+  },
+  "composer.dictation.failed": {
+    "text": "Your words weren't caught. Try again, or type your message.",
+    "description": "Error line under the message box in the chat with Homeroom bot when dictation failed for another reason."
+  },
   "object.kind.app": {
     "text": "App",
     "description": "Small label on a card for something shared in a message, and on the item waiting in the message box: the item is an app."

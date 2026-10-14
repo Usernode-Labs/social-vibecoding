@@ -471,6 +471,14 @@ export const ArrowUpTrayIcon = stroked(
   'M12 3v12m0-12l-4 4m4-4l4 4M5 13v7h14v-7',
 );
 
+// Speak to the composer: start or stop dictation (#4389). The Messages
+// composer draws it in the chat with Homeroom bot; the make screen is to
+// reuse the same mark (#4385).
+export const MicrophoneIcon = stroked(
+  'MicrophoneIcon',
+  'M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z',
+);
+
 /** Download a file onto the device: the arrow into the tray (#4055). */
 export const DownloadIcon = stroked(
   'DownloadIcon',

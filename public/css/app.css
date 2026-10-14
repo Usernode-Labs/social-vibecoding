@@ -1778,6 +1778,23 @@ form.agent-session-composer:focus-within {
 .messages-composer-action svg { stroke-width: 1.8; }
 .messages-composer-action:hover { background: var(--messages-surface-2); }
 .messages-composer-action:disabled { opacity: .35; }
+/* #4389 — the microphone button while dictation runs: lit in the app's blue,
+   a ring around the glyph breathing through the accent tint. Nothing else in
+   the row is ever lit this way, so "it is listening" reads at a glance; a
+   person who said no to motion keeps the lit state without the breathing. */
+.messages-composer-speak[aria-pressed="true"] {
+  color: var(--accent);
+  background: var(--accent-tint);
+  box-shadow: 0 0 0 2px var(--accent);
+  animation: messages-speak-pulse 1.6s ease-in-out infinite;
+}
+@keyframes messages-speak-pulse {
+  0%, 100% { box-shadow: 0 0 0 2px var(--accent), 0 0 0 0 var(--accent-tint); }
+  50% { box-shadow: 0 0 0 2px var(--accent), 0 0 0 5px var(--accent-tint); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .messages-composer-speak[aria-pressed="true"] { animation: none; }
+}
 /* #1955 — the one "+" and the two named rows it opens. The wrapper is the
    positioning context AND the outside-press boundary, so the menu has to
    live inside it rather than beside the button. */

@@ -48,9 +48,15 @@ const WORDMARK = read('frontend/@/components/ui/wordmark.tsx');
 const HTML = shellMarkup();
 const PKG = JSON.parse(read('frontend/package.json'));
 
-/** Every single-quoted string in the module that looks like SVG path data. */
+/**
+ * Every single-quoted string in the module that looks like SVG path data.
+ * The lookahead for a digit is what makes that true rather than approximate:
+ * an icon's own name is passed to `stroked()` as a quoted string too, and
+ * MicrophoneIcon (#4389) is the first one that starts with M — without it the
+ * name is read as path data and shows up as a glyph that never ships.
+ */
 function modulePaths() {
-  return new Set(ICONS.match(/'M[^'\\\n]*'/g).map((s) => s.slice(1, -1)));
+  return new Set(ICONS.match(/'M(?=[^'\\\n]*\d)[^'\\\n]*'/g).map((s) => s.slice(1, -1)));
 }
 
 /** The same read, over the wordmark primitive — see the note beside WORDMARK. */
@@ -417,6 +423,11 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     'M6 7a4 4 0 108 0 4 4 0 10-8 0z',
     'M21.38 16.63a2.12 2.12 0 00-3-3l-4.01 4a2 2 0 00-.51.86l-.84 2.87a.5.5 0 00.62.62l2.87-.84a2 2 0 00.86-.51z',
     'M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z',
+    // #4389: the microphone beside Send in the chat with Homeroom bot. The
+    // composer reads speech-recognition support in an effect
+    // (frontend/src/lib/use-dictation.ts), so the first render — and with it
+    // the prerendered document — carries no button, whatever the browser.
+    'M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z',
   ];
   assert.deepEqual(absent.sort(), expected.sort());
 });
