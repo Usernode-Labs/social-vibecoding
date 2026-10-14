@@ -29,7 +29,9 @@
 // queue lets runs go at once (services/checks-queue.js), so a burst of
 // builds cannot fill the worker namespace's quota ahead of the runs the
 // queue admits. Not started at all, the run launches its own suite as it
-// always did. EARLY_UNIT_SUITE=0 turns this off.
+// always did. EARLY_UNIT_SUITE=0 turns this off. Nor for a head whose suite
+// already passed under the same conditions when nobody asked for a fresh
+// run: the checks run copies that pass (services/unit-suite-reuse.js).
 //
 // In-process: the build and the checks run that follows it run in the same
 // process. A run in another process, or after a restart, finds nothing here
@@ -107,7 +109,7 @@ async function maybeStart(config, { session, app, commitHash, pool = null, deps 
     if (!repoOwner || !repoName) return null;
     const db = pool || require('../db/pool').getPool(config);
     const { rows } = await db.query(
-      `SELECT id, status, check_state, checks_commit_sha, branch_name, pr_number, source,
+      `SELECT id, status, check_state, checks_commit_sha, check_trigger, branch_name, pr_number, source,
               handoff_head_sha, imported_pr_head_sha, consecutive_check_failures
          FROM chat_sessions WHERE id = $1`,
       [sessionId]
@@ -131,6 +133,21 @@ async function maybeStart(config, { session, app, commitHash, pool = null, deps 
     }
     const ref = (deps.sessionGitRef || require('./visuals').sessionGitRef)({ ...session, ...row }, sha);
     if (!ref) return null;
+    // Not a head whose suite already passed under the same conditions, when
+    // nobody asked for a fresh run: the checks run copies that pass instead
+    // (services/unit-suite-reuse.js), and these Jobs would be thrown away.
+    if (typeof unitSuite.reusablePass === 'function') {
+      const reusable = await unitSuite.reusablePass({
+        config, pool: db, appId: app.id, repoOwner, repoName, commitSha: sha,
+        trigger: row.check_trigger || null,
+      });
+      if (reusable) {
+        log.info('early-unit-suite', 'Not starting the unit suite early: this commit already passed it', {
+          sessionId, commitHash: sha, trigger: row.check_trigger || null, from: reusable.reused,
+        });
+        return null;
+      }
+    }
 
     const kubernetes = deps.kubernetes || require('./kubernetes');
     const cap = (deps.checksQueue || require('./checks-queue')).maxConcurrentRuns();
@@ -161,6 +178,7 @@ async function maybeStart(config, { session, app, commitHash, pool = null, deps 
         }
       },
       signal: entry.controller.signal, previewRunId: entry.runId, jobNamePrefix: JOB_NAME_PREFIX,
+      commitSha: sha,
     }).catch((err) => {
       if (!entry.abandoned) {
         log.warn('early-unit-suite', 'Early unit suite failed to run (non-fatal)', {

@@ -135,6 +135,11 @@ const SETUP_DONE_SENTINEL = '__UNIT_SUITE_SETUP_DONE__';
 // Printed once the checkout is in place, before `npm ci`. Only the live
 // phase reads it ("cloning" vs "installing"); the verdict never does.
 const CLONED_SENTINEL = '__UNIT_SUITE_CLONED__';
+// Printed as `<sentinel>=<sha>` just before it: the commit this Job checked
+// out. A native proposal's ref is its branch name, which can move on while a
+// run goes, so a pass is recorded for reuse (services/unit-suite-reuse.js)
+// only when every shard names the commit the run was judging.
+const HEAD_SENTINEL = '__UNIT_SUITE_HEAD__';
 // Printed as `<sentinel>=<workspace>` before anything else. node:test's
 // `location:` is an absolute path inside a mktemp workspace; failureDetail
 // strips this prefix so the reason names `tests/foo.test.js`, the path a fix
@@ -850,6 +855,7 @@ else
   exit 90
 fi
 git submodule update --init --recursive --depth 1 >/dev/null 2>&1 || true
+echo "${HEAD_SENTINEL}=$(git rev-parse HEAD)"
 echo "${CLONED_SENTINEL}"
 if [ -f package-lock.json ]; then
   npm ci --no-audit --no-fund --loglevel=error
@@ -1026,12 +1032,15 @@ function makeUnitSuiteTracker(expected = null) {
   // 'skip'), for the suite line that owns it to take back; the YAML block
   // comes straight after its own result line.
   let lastCounter = null;
+  // Every HEAD_SENTINEL line seen, one per Job that checked out its commit.
+  const heads = [];
   const total = Number.isInteger(expected) && expected > 0 ? expected : null;
   return {
     // Returns true when the line changed the state.
     feed(line) {
       const l = String(line || '');
       if (l === CLONED_SENTINEL) { phase = 'installing'; return true; }
+      if (l.startsWith(`${HEAD_SENTINEL}=`)) { heads.push(l); return false; }
       if (l === SETUP_DONE_SENTINEL) { phase = 'running'; return true; }
       // The recap repeats failures already counted.
       if (l.startsWith(`${RECAP_SENTINEL}=`)) { recap = true; return false; }
@@ -1073,6 +1082,8 @@ function makeUnitSuiteTracker(expected = null) {
     // seen on the stream says so even when the final log comes back without
     // either.
     reachedTests() { return phase === 'running'; },
+    // The HEAD_SENTINEL lines streamed so far, as printed.
+    headLines() { return heads.slice(); },
     snapshot() {
       const s = summary;
       // The summary's `pass` excludes skipped/todo, and `tests` counts both
@@ -1161,7 +1172,12 @@ function readFailure({
 //
 // `jobNamePrefix` names the Job outside a preview run's own check Jobs: an
 // early unit suite started with the preview build (services/early-unit-suite.js).
-async function maybeRunUnitSuite({ config, pool, appId, sessionId, repoOwner, repoName, ref, prNumber, onProgress = null, signal = null, previewRunId = null, jobNamePrefix = null }) {
+//
+// `commitSha` is the commit the run judges. When it is given and the suite
+// passes on Kubernetes, the pass is recorded for reuse
+// (services/unit-suite-reuse.js), provided every Job said it checked out
+// exactly that commit.
+async function maybeRunUnitSuite({ config, pool, appId, sessionId, repoOwner, repoName, ref, prNumber, onProgress = null, signal = null, previewRunId = null, jobNamePrefix = null, commitSha = null }) {
   if (!isEnabled() || !github.isEnabled() || !repoOwner || !repoName || !ref) return null;
 
   let rawPkg = null;
@@ -1208,6 +1224,8 @@ async function maybeRunUnitSuite({ config, pool, appId, sessionId, repoOwner, re
   let unitDetails = null;
   let notRun = null;
   let setupFailed = false;
+  let shards = 1;
+  let resultStdout = '';
   try {
     const cloneUrl = await github.getCloneUrl(repoOwner, repoName);
     const options = {
@@ -1220,16 +1238,14 @@ async function maybeRunUnitSuite({ config, pool, appId, sessionId, repoOwner, re
         REPO_URL: cloneUrl,
         GIT_REF: ref,
         PR_NUMBER: prNumber ? String(prNumber) : '',
-        CI: 'true',
-        NODE_ENV: 'test',
-        npm_config_update_notifier: 'false',
+        ...JOB_ENV,
       },
       memory: UNIT_SUITE_MEMORY,
       cpus: UNIT_SUITE_CPUS,
       timeoutMs: UNIT_SUITE_TIMEOUT_MS,
       maxBuffer: UNIT_SUITE_MAX_BUFFER,
     };
-    const shards = runtime === 'kubernetes' && hasShardScript(rawPkg) ? unitSuiteShardCount() : 1;
+    shards = runtime === 'kubernetes' && hasShardScript(rawPkg) ? unitSuiteShardCount() : 1;
     const result = shards > 1
       ? await runUnitSuiteShards(config, {
         sessionId, options, shards, tracker, expected: tracker.snapshot().expected, report, signal,
@@ -1238,6 +1254,7 @@ async function maybeRunUnitSuite({ config, pool, appId, sessionId, repoOwner, re
         ? await kubernetes.runUnitSuiteJob(config, { sessionId, ...options })
         : await docker.runOneShot(`usernode-unit-suite-${sessionId}`, options);
     readSummary(result?.stdout);
+    resultStdout = String(result?.stdout || '');
     passed = true;
   } catch (err) {
     if (signal?.aborted) throw signal.reason;
@@ -1259,7 +1276,87 @@ async function maybeRunUnitSuite({ config, pool, appId, sessionId, repoOwner, re
     ...(notRun ? { reason: notRun.reason } : {}),
   });
 
+  if (passed && commitSha) {
+    await recordPassForReuse({
+      config, pool, appId, sessionId, repoOwner, repoName, commitSha, runId: previewRunId, summary, shards,
+      headLines: [resultStdout.split('\n'), tracker.headLines()],
+    });
+  }
+
   return shapeOutcome({ passed, reason, graduated, summary, unitDetails, notRun, setupFailed });
+}
+
+// ── Reusing a pass (services/unit-suite-reuse.js) ────────────────────────
+//
+// The env every Job of the suite gets beside its source (REPO_URL, GIT_REF,
+// PR_NUMBER, which the commit already identifies).
+const JOB_ENV = Object.freeze({ CI: 'true', NODE_ENV: 'test', npm_config_update_notifier: 'false' });
+
+// What the platform wraps around a commit's tests when it runs them, beyond
+// the commit and the image: a pass is reused only under the same one. The
+// script itself (its install, SQL lint and Postgres settings), how the suite
+// is split and what each Job is given (CPU decides how many test files
+// node:test runs at once, memory what gets OOM-killed), its deadline, and
+// its env. What the repository decides (its `test` and `test:shard` scripts,
+// Node flags, the `pretest` preflight, the lockfile) is in the commit; Node
+// and PostgreSQL are in the image.
+function jobDefinition() {
+  return {
+    v: 1,
+    runtime: 'kubernetes',
+    script: require('crypto').createHash('sha256').update(RUN_SCRIPT).digest('hex'),
+    shards: unitSuiteShardCount(),
+    cpus: String(UNIT_SUITE_CPUS),
+    memory: String(UNIT_SUITE_MEMORY),
+    shardCpuRequest: String(UNIT_SUITE_SHARD_CPU_REQUEST),
+    shardMemory: String(UNIT_SUITE_SHARD_MEMORY),
+    timeoutMs: UNIT_SUITE_TIMEOUT_MS,
+    env: { ...JOB_ENV },
+  };
+}
+
+function jobHash() {
+  return require('./unit-suite-reuse').jobHashOf(jobDefinition());
+}
+
+// Record a pass the suite's own process saw end. `headLines` are the places
+// the Jobs' HEAD_SENTINEL lines may be read from, best first (the final
+// output, then the live stream, which keeps them when a long log lost its
+// start). Nothing is recorded unless all `shards` named `commitSha`.
+async function recordPassForReuse({
+  config, pool, appId, sessionId, repoOwner, repoName, commitSha, runId, summary, shards = 1, headLines = [],
+}) {
+  const reuse = require('./unit-suite-reuse');
+  const key = reuse.keyFor(config, { appId, repoOwner, repoName, commitSha, jobHash: jobHash() });
+  if (!key) return false;
+  const seen = headLines.map((lines) => reuse.checkedOutCommit(lines, HEAD_SENTINEL, shards)).find(Boolean) || null;
+  if (seen !== key.commitSha) {
+    log.info('unit-suite', 'Unit-suite pass not recorded for reuse: its checkout is not the judged commit', {
+      sessionId, commitSha, checkedOut: seen,
+    });
+    return false;
+  }
+  return reuse.recordPass(pool, key, { sessionId, runId, summary });
+}
+
+/**
+ * A pass of this commit the run may copy instead of starting the suite, as
+ * the outcome the run stores, or null (reuse off, a person's request, no
+ * matching pass). Never throws.
+ */
+async function reusablePass({ config, pool, appId, repoOwner, repoName, commitSha, trigger }) {
+  try {
+    if (!isEnabled() || !github.isEnabled()) return null;
+    const reuse = require('./unit-suite-reuse');
+    const key = reuse.keyFor(config, { appId, repoOwner, repoName, commitSha, jobHash: jobHash() });
+    if (!key) return null;
+    const pass = await reuse.findPass(pool, key, { trigger });
+    if (!pass) return null;
+    return { ...reuse.reusedOutcome(shapeOutcome, pass), snapshot: reuse.reusedSnapshot(pass) };
+  } catch (err) {
+    log.warn('unit-suite', 'Unit-suite reuse lookup failed — running the suite', { commitSha, err: err.message });
+    return null;
+  }
 }
 
 // The suite as `shards` Jobs at once (see UNIT_SUITE_SHARDS above), each
@@ -1446,4 +1543,10 @@ module.exports = {
   RECAP_MAX_TESTS,
   FAILURE_DETAIL_MAX,
   RUN_SCRIPT,
+  HEAD_SENTINEL,
+  JOB_ENV,
+  jobDefinition,
+  jobHash,
+  recordPassForReuse,
+  reusablePass,
 };

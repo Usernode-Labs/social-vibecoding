@@ -1060,6 +1060,9 @@ function shapeChecks(session) {
     // run itself was capped): get_check_output returns the whole stored text.
     detailsTruncated,
     total: results.length,
+    // The unit suite's pass was copied from an earlier run of the same
+    // commit instead of being run again (services/unit-suite-reuse.js).
+    unitSuiteReused: unitSuiteRow.reusedFrom(results),
     error: session.check_error_detail
       ? untrusted(session.check_error_detail, MAX_CHECK_ERROR_CHARS)
       : null,
@@ -3880,6 +3883,15 @@ function registerTools(server, ctx) {
         total: z.number()
           .describe('How many tests reported. While pending, 0 means none has reported yet — never that this '
             + 'proposal has no checks.'),
+        unitSuiteReused: z.object({
+          runId: z.string().nullable(),
+          sessionId: z.number().nullable(),
+          passedAt: z.string().nullable(),
+        }).nullable()
+          .describe('Set when this run did not run the repo unit suite but copied an earlier pass of the SAME '
+            + 'commit, worker image and suite setup (from the run `runId` at `passedAt`, on proposal `sessionId`). '
+            + 'The merge gate treats it as that pass. Only automatic re-runs reuse; recheck_change always runs '
+            + 'the suite again. Null when the suite ran in this run.'),
         error: z.string().nullable()
           .describe('What broke when a run errored before any test could report — a build or preview failure, not '
             + 'a test failure, so there is no test to fix.'),

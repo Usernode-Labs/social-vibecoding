@@ -1211,6 +1211,29 @@ ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS checks_progress JSON
 -- The unit suite's size from its last completed run (`# tests`), so the
 -- next run's live bar has a denominator before the suite finishes.
 ALTER TABLE apps                   ADD COLUMN IF NOT EXISTS unit_suite_last_tests INTEGER;
+-- Unit-suite passes a later checks run of the same commit may copy instead
+-- of running the suite again (services/unit-suite-reuse.js). One row per
+-- pass the suite's own process saw end, keyed on everything the verdict
+-- depends on beside the clock: the repository and full commit, the worker
+-- image by digest, and a hash of the Job the platform wraps around the
+-- tests (unit-suite.jobDefinition). Rows older than twice the reuse age
+-- limit are deleted with the app's next pass. Platform bookkeeping with no
+-- use in a preview, so a preview's copy starts empty.
+CREATE TABLE IF NOT EXISTS unit_suite_passes (
+  id          BIGSERIAL PRIMARY KEY,
+  app_id      INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  repo        TEXT NOT NULL,
+  commit_sha  VARCHAR(40) NOT NULL,
+  image       TEXT NOT NULL,
+  job_definition VARCHAR(64) NOT NULL,
+  session_id  INTEGER,
+  run_id      TEXT,
+  summary     JSONB,
+  passed_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_unit_suite_passes_commit
+  ON unit_suite_passes (app_id, commit_sha, passed_at DESC);
+COMMENT ON TABLE unit_suite_passes IS 'staging:private';
 -- #11: vote-to-undo a merged PR. When the undo majority is reached we
 -- open a `git revert <merge_commit_sha>` PR and insert a new
 -- chat_sessions row pointing back here via revert_of_session_id.

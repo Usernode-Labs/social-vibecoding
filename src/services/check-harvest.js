@@ -325,6 +325,12 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null } = {}) 
       },
     });
     const unitTracker = unitSuite.makeUnitSuiteTracker(await unitSuite.loadExpectedTests(pool, app.id));
+    // A run that copied an earlier pass of its commit instead of running the
+    // suite (services/unit-suite-reuse.js) has no unit-suite Job: the row it
+    // copied is in its manifest, and is stored exactly as the live run would.
+    const reusedUnit = manifest.unitReused && manifest.unitReused.row && manifest.unitReused.row.reused
+      && manifest.unitReused.row.status === 'pass' ? manifest.unitReused : null;
+    if (reusedUnit && reusedUnit.snapshot) progress.observeUnit(reusedUnit.snapshot);
     let capture = null;
     let unit = null;
     try {
@@ -334,7 +340,7 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null } = {}) 
           timeoutMs: visuals.RUN_TIMEOUT_MS + DEADLINE_SLACK_MS, maxBuffer: visuals.RUN_MAX_BUFFER,
           onStdoutLine: progress.observeCapture, signal: controller.signal,
         }))).then(joinCaptures) : Promise.resolve(null),
-        unitJobs.length ? Promise.all(unitJobs.map((job) => kubernetes.collectCheckJob(config, {
+        !reusedUnit && unitJobs.length ? Promise.all(unitJobs.map((job) => kubernetes.collectCheckJob(config, {
           name: job.name, kind: 'unit-suite',
           timeoutMs: unitSuite.UNIT_SUITE_TIMEOUT_MS + DEADLINE_SLACK_MS, maxBuffer: unitSuite.UNIT_SUITE_MAX_BUFFER,
           // Shards' summaries would replace one another here; the joined
@@ -372,8 +378,8 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null } = {}) 
     } catch (err) {
       log.warn('check-harvest', 'Graduation lookup failed — unit row advisory', { ...base, err: err.message });
     }
-    let unitOutcome = null;
-    if (unit && (unit.state === 'succeeded' || unit.state === 'failed' || unit.state === 'timeout')) {
+    let unitOutcome = reusedUnit ? { row: reusedUnit.row, history: null } : null;
+    if (!unitOutcome && unit && (unit.state === 'succeeded' || unit.state === 'failed' || unit.state === 'timeout')) {
       unitOutcome = await unitSuite.outcomeFromLog({
         pool, appId: app.id, sessionId,
         succeeded: unit.state === 'succeeded',

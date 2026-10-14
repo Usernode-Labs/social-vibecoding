@@ -1296,7 +1296,10 @@ async function storeChecks(pool, sessionId, commitSha, result, errorDetail = nul
   // UPDATE reads the row's old value on its right-hand side, so it is
   // NOW() minus that even though the same statement overwrites it. The
   // counts are not kept — test_results carries the verdict — and the next
-  // run's setChecksPending clears the whole thing, as it always did.
+  // run's setChecksPending clears the whole thing, as it always did. One
+  // exception: a unit suite this run copied from an earlier pass of the
+  // commit (services/unit-suite-reuse.js) keeps its snapshot, which says so,
+  // because the card has no other place that reads a passing row.
   const write = await pool.query(
     `UPDATE chat_sessions
        SET check_state = $1, test_results = $2, checks_commit_sha = $3::text, checks_checked_at = NOW(),
@@ -1304,6 +1307,8 @@ async function storeChecks(pool, sessionId, commitSha, result, errorDetail = nul
            checks_progress = NULLIF(jsonb_strip_nulls(jsonb_build_object(
              'build', CASE WHEN checks_progress #>> '{build,step}' = 'done'
                            THEN checks_progress -> 'build' END,
+             'unit', CASE WHEN checks_progress #> '{unit,reused}' IS NOT NULL
+                          THEN checks_progress -> 'unit' END,
              'checksMs', ROUND(EXTRACT(EPOCH FROM (NOW() - checks_checked_at)) * 1000)::bigint
            )), '{}'::jsonb),
            check_error_detail = NULL,
@@ -2890,6 +2895,23 @@ async function captureForSession(config, session, app, commitHash, stagingResult
         onProgress: progress.observeUnit, signal: operation?.signal,
       });
     }
+    // Or no suite at all: this commit already passed it under the same
+    // conditions, and nobody asked for a fresh run (services/unit-suite-
+    // reuse.js). The pass is copied, marked as reused, and the run settles
+    // as soon as the browser checks are done.
+    let reusedUnit = null;
+    if (!shotsOnly && !earlyUnit) {
+      reusedUnit = await unitSuite.reusablePass({
+        config, pool, appId: app.id, repoOwner, repoName, commitSha: commitHash, trigger,
+      });
+      if (reusedUnit) {
+        log.info('visuals', 'Reusing an earlier unit-suite pass of this commit', {
+          sessionId: session.id, commitHash, trigger, from: reusedUnit.reused,
+        });
+        traceStep('unit_suite', 'Unit suite reused from an earlier pass of this commit', reusedUnit.reused);
+        progress.observeUnit(reusedUnit.snapshot);
+      }
+    }
 
     // The full manifest, written before either Job exists: everything the
     // verdict needs that the Jobs' own output does not carry, so a process
@@ -2927,6 +2949,9 @@ async function captureForSession(config, session, app, commitHash, stagingResult
           captureShards,
           // Where the harvest finds the unit suite when it is the early one.
           ...(earlyUnit ? { unitRunId: earlyUnit.runId } : {}),
+          // Or the pass it copied instead of running one: the harvest stores
+          // the same row, and looks for no unit-suite Job.
+          ...(reusedUnit ? { unitReused: { row: reusedUnit.row, snapshot: reusedUnit.snapshot } } : {}),
         },
       });
       // This run is now the one the session waits on. The Jobs of its runs
@@ -2944,12 +2969,13 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // is already running, started with the preview build (earlyUnit). The
     // .catch collapses every failure mode to null (no row) — the checks
     // run must never die because the unit-suite runner did.
-    const unitSuitePromise = shotsOnly ? Promise.resolve(null) : earlyUnit ? earlyUnit.promise : unitSuite.maybeRunUnitSuite({
+    const unitSuitePromise = shotsOnly ? Promise.resolve(null) : earlyUnit ? earlyUnit.promise : reusedUnit
+      ? Promise.resolve({ row: reusedUnit.row, history: null }) : unitSuite.maybeRunUnitSuite({
       config, pool, appId: app.id, sessionId: session.id,
       repoOwner, repoName, ref: gitRef,
       prNumber: Number(session.pr_number) || null,
       onProgress: progress.observeUnit,
-      signal: operation?.signal, previewRunId: runId,
+      signal: operation?.signal, previewRunId: runId, commitSha: commitHash,
     }).catch((err) => {
       log.warn('visuals', 'Unit-suite check failed to run (non-fatal)', {
         sessionId: session.id, err: err.message,

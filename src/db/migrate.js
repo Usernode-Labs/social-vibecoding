@@ -11119,6 +11119,25 @@ async function seedStagingImportedPrProposal(pool, config) {
         [id2, headSha2]
       );
     }
+    // Its run part-way through, with a unit suite it did not run again: the
+    // same commit passed it 25 minutes earlier on the same worker image and
+    // setup, and the run copied that pass (services/unit-suite-reuse.js). So
+    // the Checks step's Unit tests row reads "Reused: … (run 5e1f0c2a)".
+    // Re-stamped on every boot, so the age stays 25 minutes.
+    await pool.query(
+      `UPDATE chat_sessions
+          SET checks_progress = jsonb_build_object(
+                'ran', 312, 'passed', 312, 'failed', 0, 'expected', 840, 'done', false,
+                'unit', jsonb_build_object(
+                  'phase', 'done', 'ran', 23402, 'passed', 23380, 'failed', 0, 'skipped', 22,
+                  'expected', 23402, 'done', true, 'exitOk', true,
+                  'reused', jsonb_build_object(
+                    'runId', '5e1f0c2a-9311-4a7b-8c3d-000000009311', 'sessionId', id,
+                    'passedAt', to_char((NOW() - INTERVAL '25 minutes') AT TIME ZONE 'UTC',
+                                        'YYYY-MM-DD"T"HH24:MI:SS"Z"'))))
+        WHERE id = $1`,
+      [id2]
+    );
     // Tally reset: this row deliberately carries NO pr_votes. Post the
     // re-review note into the proposal's own thread (idempotent — only when
     // the thread has no message yet).

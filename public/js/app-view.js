@@ -18165,9 +18165,22 @@ const AppView = {
     const phase = typeof u.phase === 'string' ? u.phase : 'running';
     const done = !!u.done;
     const counts = { count: ran, expected, passed, failed, skipped };
+    // A pass copied from an earlier run of the same commit instead of running
+    // the suite again (services/unit-suite-reuse.js): when that run passed,
+    // and which run it was, by the start of its id.
+    const from = done && u.exitOk !== false && u.reused && typeof u.reused === 'object' ? u.reused : null;
+    const reused = from ? {
+      when: from.passedAt ? relTime(from.passedAt) : '',
+      run: from.runId ? String(from.runId).slice(0, 8) : '?',
+      runId: from.runId ? String(from.runId) : null,
+      at: from.passedAt ? String(from.passedAt) : null,
+    } : null;
     let sub;
     let sentence;
-    if (done && u.notRun === true) {
+    if (reused) {
+      sub = PlatformI18n.t('changes:progress.unit.sub.reused', { count: passed, when: reused.when, run: reused.run });
+      sentence = PlatformI18n.t('changes:progress.unit.sentence.reused', { count: passed, when: reused.when, run: reused.run });
+    } else if (done && u.notRun === true) {
       // Its Job was refused or its setup stopped before any test ran
       // (services/unit-suite.js notRunOutcome): no test failed, and the
       // verdict says why once it lands.
@@ -18191,7 +18204,7 @@ const AppView = {
       sub = failed ? PlatformI18n.t('changes:progress.unit.sub.soFarFailed', counts) : PlatformI18n.t('changes:progress.unit.sub.soFar', counts);
       sentence = failed ? PlatformI18n.t('changes:progress.unit.sentence.soFarFailed', counts) : PlatformI18n.t('changes:progress.unit.sentence.soFar', counts);
     }
-    return { bar: { phase, ran, passed, failed, skipped, expected, done }, sub, sentence };
+    return { bar: { phase, ran, passed, failed, skipped, expected, done, ...(reused ? { reused } : {}) }, sub, sentence };
   },
 
   _checksStatusNotes(pr) {

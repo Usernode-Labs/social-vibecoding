@@ -1242,6 +1242,8 @@ function RunPanel({ run, id }: { run: StepRun; id: string }): ReactNode {
   const unitPhase = u && !u.done && (u.phase === 'cloning' || u.phase === 'installing') ? u.phase : null;
   const unitExpected = u && u.expected ? `~${fmtCount(u.expected)}` : '?';
   const unitValue = !u ? '' : unitPhase ? t(UNIT_PHASE[unitPhase])
+    : u.done && u.reused
+      ? t('project:topic.run.unit.reused', { count: u.passed, passed: fmtCount(u.passed), when: u.reused.when, run: u.reused.run })
     : u.done
       ? (u.failed
         ? t('project:topic.run.unit.passedFailed', { count: u.failed, passed: fmtCount(u.passed), failed: u.failed })
@@ -1266,7 +1268,7 @@ function RunPanel({ run, id }: { run: StepRun; id: string }): ReactNode {
         <span className={`dev-step-run-v${c && c.failed ? ' is-bad' : ''}`}>{checksValue}</span>
       </div>
       {u ? (
-        <div className="dev-step-run-row" data-unit-phase={u.phase}>
+        <div className="dev-step-run-row" data-unit-phase={u.phase} data-unit-reused={u.reused ? (u.reused.runId || '') : undefined}>
           <span className="dev-step-run-k">{t('project:topic.run.unit.label')}</span>
           <RunTrack c={unitPhase ? null : u} busy={!!unitPhase || (!u.done && u.ran === 0)} />
           <span className={`dev-step-run-v${u.failed ? ' is-bad' : ''}`}>{unitValue}</span>

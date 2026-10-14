@@ -2779,6 +2779,14 @@
     "text": "{{passed}} passed",
     "description": "Result at the end of the Unit tests row when the tests finished with no failure. {{passed}} is how many tests passed, already formatted (\"13,214\"). {{count}} is the same number, for the plural."
   },
+  "topic.run.unit.reused_one": {
+    "text": "Reused: {{passed}} passed {{when}} (run {{run}})",
+    "description": "Result at the end of the Unit tests row when this run did not run the unit tests again but reused an earlier pass of the same commit. {{passed}} is how many tests passed then, already formatted (\"13,214\"); {{count}} is the same number, for the plural. {{when}} is how long ago that was (for example \"12m ago\"), {{run}} the start of that run's id (for example \"832c9d27\")."
+  },
+  "topic.run.unit.reused_other": {
+    "text": "Reused: {{passed}} passed {{when}} (run {{run}})",
+    "description": "Result at the end of the Unit tests row when this run did not run the unit tests again but reused an earlier pass of the same commit. {{passed}} is how many tests passed then, already formatted (\"13,214\"); {{count}} is the same number, for the plural. {{when}} is how long ago that was (for example \"12m ago\"), {{run}} the start of that run's id (for example \"832c9d27\")."
+  },
   "topic.run.unit.passedFailed_one": {
     "text": "{{passed}} passed · {{failed}} failed",
     "description": "Result at the end of the Unit tests row when the tests finished with failures. {{passed}} is how many tests passed, already formatted (\"13,214\"), and {{failed}} how many failed. {{count}} is the number that failed, for the plural. Keep the dot."

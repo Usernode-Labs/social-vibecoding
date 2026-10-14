@@ -184,6 +184,12 @@ export interface LedgerUnitProgress {
   /** Last completed run's `# tests`, when known; null while it is not. */
   expected: number | null;
   done?: boolean;
+  /**
+   * Set when this run did not run the suite but reused an earlier pass of the
+   * same commit (services/unit-suite-reuse.js): how long ago that pass was,
+   * the start of its run id, the whole id and its time.
+   */
+  reused?: { when: string; run: string; runId: string | null; at: string | null };
 }
 
 /** One phase inside the image build (a buildpack lifecycle phase). */

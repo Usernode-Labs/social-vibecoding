@@ -3571,6 +3571,14 @@
     "text": "npm test finished: {{count}} failed",
     "description": "One short line under the \"Checks\" label on a proposal's page about the project's own unit tests, which run beside the browser checks. \"npm test\" is the command that runs them and is not translated. The tests finished with failures; {{count}} is how many failed."
   },
+  "progress.unit.sub.reused_one": {
+    "text": "npm test reused: {{count}} passed {{when}} (run {{run}})",
+    "description": "One short line under the \"Checks\" label on a proposal's page about the project's own unit tests. \"npm test\" is the command that runs them and is not translated. This run did not run them again: the same commit already passed them in an earlier run, which is reused. {{count}} is how many passed then, {{when}} how long ago (for example \"12m ago\"), {{run}} the start of that run's id (for example \"832c9d27\")."
+  },
+  "progress.unit.sub.reused_other": {
+    "text": "npm test reused: {{count}} passed {{when}} (run {{run}})",
+    "description": "One short line under the \"Checks\" label on a proposal's page about the project's own unit tests. \"npm test\" is the command that runs them and is not translated. This run did not run them again: the same commit already passed them in an earlier run, which is reused. {{count}} is how many passed then, {{when}} how long ago (for example \"12m ago\"), {{run}} the start of that run's id (for example \"832c9d27\")."
+  },
   "progress.unit.sentence.finishedPassed_one": {
     "text": "The repo unit suite (npm test) finished: {{count}} passed.",
     "description": "Sentence in the checks note on a proposal's page about the project's own unit tests, which run beside the browser checks. \"npm test\" is the command that runs them and is not translated. The tests finished without a failure; {{count}} is how many passed. \"repo\" is the project's code repository."
@@ -3586,6 +3594,14 @@
   "progress.unit.sentence.finishedPassedSkipped_other": {
     "text": "The repo unit suite (npm test) finished: {{count}} passed, {{skipped}} skipped.",
     "description": "Sentence in the checks note on a proposal's page about the project's own unit tests, which run beside the browser checks. \"npm test\" is the command that runs them and is not translated. The tests finished without a failure; {{count}} is how many passed and {{skipped}} how many were left out on purpose."
+  },
+  "progress.unit.sentence.reused_one": {
+    "text": "The repo unit suite (npm test) did not run again: this commit passed it {{when}} in run {{run}}, with {{count}} test, on the same image and setup, and that pass is reused.",
+    "description": "Sentence in the checks note on a proposal's page about the project's own unit tests. \"npm test\" is the command that runs them and is not translated. This run did not run them again: the same commit already passed them in an earlier run, with the same test machine image and setup, and that pass is reused. {{count}} is how many tests passed then, {{when}} how long ago (for example \"12m ago\"), {{run}} the start of that run's id (for example \"832c9d27\"). \"repo\" is the project's code repository."
+  },
+  "progress.unit.sentence.reused_other": {
+    "text": "The repo unit suite (npm test) did not run again: this commit passed it {{when}} in run {{run}}, with {{count}} tests, on the same image and setup, and that pass is reused.",
+    "description": "Sentence in the checks note on a proposal's page about the project's own unit tests. \"npm test\" is the command that runs them and is not translated. This run did not run them again: the same commit already passed them in an earlier run, with the same test machine image and setup, and that pass is reused. {{count}} is how many tests passed then, {{when}} how long ago (for example \"12m ago\"), {{run}} the start of that run's id (for example \"832c9d27\"). \"repo\" is the project's code repository."
   },
   "progress.unit.sentence.finishedFailed_one": {
     "text": "The repo unit suite (npm test) finished with failures: {{count}} failed, {{passed}} passed.",

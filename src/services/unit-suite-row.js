@@ -155,6 +155,27 @@ function unitSuiteFailures(testResults, { max = 2 } = {}) {
   return { count, first: (details.length ? details : grouped).slice(0, max) };
 }
 
+// Where a stored run's unit-suite row came from when the run copied an
+// earlier pass of the same commit instead of running the suite
+// (services/unit-suite-reuse.js): `{ runId, sessionId, passedAt }`, or null
+// for a suite this run ran itself. `testResults` is a stored run's rows,
+// as an array or its JSON text.
+function reusedFrom(testResults) {
+  let rows = testResults;
+  if (typeof rows === 'string') {
+    try { rows = JSON.parse(rows); } catch { return null; }
+  }
+  if (!Array.isArray(rows)) return null;
+  const row = rows.find(isUnitSuiteRow);
+  const r = row && row.status === 'pass' && row.reused && typeof row.reused === 'object' ? row.reused : null;
+  if (!r) return null;
+  return {
+    runId: r.runId ? String(r.runId) : null,
+    sessionId: Number.isInteger(Number(r.sessionId)) && Number(r.sessionId) > 0 ? Number(r.sessionId) : null,
+    passedAt: r.passedAt ? String(r.passedAt) : null,
+  };
+}
+
 module.exports = {
   UNIT_CHECK_NAME,
   UNIT_CHECK_PATH,
@@ -175,4 +196,5 @@ module.exports = {
   isPlatformNotRun,
   notRunError,
   unitSuiteFailures,
+  reusedFrom,
 };
