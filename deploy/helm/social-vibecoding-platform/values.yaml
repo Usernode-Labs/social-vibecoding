@@ -162,7 +162,8 @@ migration:
       ephemeral-storage: 2Gi
 
 config:
-  # Prefer the external CNPG primary's node for previews, with normal scheduler
+  # Prefer the external CNPG primary's zone for previews, production apps and
+  # the platform's own Pods (web and conductor), with normal scheduler
   # fallback. Uses postgresql.namespace and podSelector["cnpg.io/cluster"].
   # No effect for bundled PostgreSQL or external databases without that label.
   previewFollowDatabasePrimary: true
