@@ -268,6 +268,27 @@ test('app-delivery machine against the full PostgreSQL schema', { timeout: 12000
       'the merge this deploy served hears its answer, not the fan-out too');
   });
 
+  await t.test('a merge that asked during a deploy waits for its own: that deploy started before its keys were applied', async () => {
+    reset();
+    const a = await app();
+    const c = await pool.connect();
+    try {
+      await c.query('BEGIN');
+      await c.query(`SET LOCAL app.wf_writer = 'transition'`);
+      await c.query(`INSERT INTO wf_instances (machine, key, app_id, state, data, version, machine_version)
+        VALUES ('merge-followups', 'session:93', $1, 'delivering', $2, 1, 3)`,
+      [a.id, JSON.stringify({ role: 'merge', delivery: 'app-delivery' })]);
+      await c.query('COMMIT');
+    } finally { c.release(); }
+    await ask(a, { reason: 'drift' });
+    await rt.drain();
+    await ask(a, { reason: 'merge', from: { machine: 'merge-followups', key: 'session:93' }, revision: SHA('9') });
+    deploys.next.push({ sha: SHA('8') }, { throw: 'the build failed', permanent: true });
+    await settle();
+    assert.deepEqual((await told('merge-followups', 'session:93')).map((m) => m.type), ['DeliveryFailed'],
+      'not the earlier deploy\'s Deployed: its own deploy\'s answer');
+  });
+
   await t.test('a deploy of the commit already running keeps its pull request on the row and the pill', async () => {
     reset();
     const a = await app({ mainSha: SHA('4') });

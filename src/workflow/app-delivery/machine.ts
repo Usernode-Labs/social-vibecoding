@@ -174,11 +174,14 @@ function deployed(s: Going, e: Event<WorkResultPayload>, f: Facts, ctx: Transiti
   // Every other merge of the app still waiting to go live hears it, as any
   // deploy was heard before (staging.rebuildProduction's productionDeployed):
   // one that decided on the work path, and one whose own answer did not
-  // make it live (GitHub did not say yet that the build contains it).
-  const answered = new Set(served.filter((r) => r.from?.machine === 'merge-followups').map((r) => r.from!.key));
+  // make it live (GitHub did not say yet that the build contains it). Not
+  // one with a request open here: this deploy answered it, or started
+  // before it was recorded (before the merge applied its declared keys), so
+  // it waits for its own deploy's answer.
+  const asking = new Set(d.requests.filter((r) => r.from?.machine === 'merge-followups').map((r) => r.from!.key));
   if (sha) {
     for (const key of f.waitingMerges) {
-      if (!answered.has(key)) messages.push({ to: { machine: 'merge-followups', key }, event: { type: 'Deployed', payload: { sha } } });
+      if (!asking.has(key)) messages.push({ to: { machine: 'merge-followups', key }, event: { type: 'Deployed', payload: { sha } } });
     }
   }
   // The version pill's new build is pushed by the write, with the pull
