@@ -217,6 +217,9 @@ test('B5: its name and its one hello, against the full PostgreSQL schema', { tim
     // #4097: the project's name is a line of its own after the hello, which
     // Messages draws as the project's card.
     assert.match(msg.content, /\n\n\*\*Plant Pal\*\*\n\nI'm setting up Plant Pal now\./);
+    // Run six: what comes next, as it happens now (no "for you to try").
+    assert.ok(msg.content.includes('I\'m setting up Plant Pal now. Once it\'s ready I\'ll send you my plan here first, '
+      + 'then build its first version and tell you here when it\'s live.'), msg.content);
     const meta = msg.metadata.homeroomBot;
     assert.equal(meta.status, 'open');
     assert.deepEqual(meta.actions.map((a) => a.label), ['How long will this take?', 'What can I ask for?', 'How do I invite friends?']);

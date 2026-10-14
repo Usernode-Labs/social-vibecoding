@@ -1811,6 +1811,12 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
             const liveFields = await firstVersionLiveFields(pool, appRow.id, req.user?.id, {
               mine, line: state.line || null, realScreens: showcase.screens?.kind === 'real',
             }).catch(() => ({}));
+            // Run six: how long it still has to go, from the first versions
+            // that went live lately (services/first-version-eta.js), while
+            // it is built or tested. None without enough of them.
+            const estimate = state.line === 'building' || state.line === 'testing'
+              ? await require('../services/first-version-eta').estimateFor(pool, appRow.id, state.steps)
+              : null;
             firstVersion = {
               building: true,
               mine,
@@ -1830,6 +1836,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
               // N4: the stage named, with when it began, and the steps.
               ...(state.phase ? { phase: state.phase } : {}),
               ...(Array.isArray(state.steps) ? { steps: state.steps } : {}),
+              ...(estimate ? { estimate } : {}),
               // #4396: for a member who is not its maker, while it is not
               // ready, what the App tab's "While you wait" card offers.
               ...(!mine && !state.ready ? await waitingMemberFields(pool, appRow.id, req.user?.id, state).catch(() => ({ member: false })) : {}),
@@ -4183,6 +4190,12 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         try {
           const state = await botDm.firstVersionState(pool, app.id, { viewerId: req.user?.id ?? null });
           firstVersion = hubFirstVersion(state, req.user?.id ?? null, { member: !!membership?.is_member });
+          // Run six: the hub card says the time left as the App tab does
+          // (services/first-version-eta.js), while it is built or tested.
+          if (firstVersion && (state.line === 'building' || state.line === 'testing')) {
+            const estimate = await require('../services/first-version-eta').estimateFor(pool, app.id, state.steps);
+            if (estimate) firstVersion.estimate = estimate;
+          }
           if (!firstVersion && firstWeek) firstVersion = await liveFirstVersion(pool, app.id, req.user?.id ?? null);
         } catch (err) {
           log.warn('apps', 'Could not read the first version for the hub', { slug: app.slug, message: err.message });

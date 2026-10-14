@@ -818,6 +818,90 @@ test('native sign-in is a top-frame privileged action, and says when the sheet w
   assert.match(childReplies[0].value.error, /top-level page/);
 });
 
+// Run six: the maker's first version as an iOS Live Activity
+// (NATIVE-BRIDGE.md, "Build Live Activity"). Privileged, no session claim,
+// and fail-safe: every way of showing nothing resolves { supported: false }.
+const BUILD_ACTIVITY = {
+  activityId: 'first-version:club-votes',
+  state: 'active',
+  title: 'Club Votes',
+  stage: 'Drawing the screens',
+  startedAt: 1792000000000,
+  etaAt: 1792001200000,
+  deepLink: 'https://social.example/app/club-votes',
+};
+
+test('the build Live Activity is a top-frame privileged action with no session claim', async () => {
+  const loaded = loadBridge({
+    capabilities: ['privilegedBridgeCapability', 'establishNativeSession', 'setBuildActivity'],
+    responseMethods: { setBuildActivity: { supported: true, started: true, pushToken: 'ab12', extra: 'dropped' } },
+  });
+  // Before any session: it touches none, so it needs none.
+  const reply = await loaded.sandbox.usernode.setBuildActivity({ ...BUILD_ACTIVITY, secret: 'not sent' });
+  assert.deepEqual(JSON.parse(JSON.stringify(reply)), { supported: true, started: true, pushToken: 'ab12' },
+    'only the contract\'s keys come back');
+  const posts = loaded.nativePosts.map((post) => post.method);
+  assert.deepEqual(posts.filter((m) => m !== 'getBridgeInfo'), ['getPrivilegedBridgeCapability', 'setBuildActivity']);
+  const call = loaded.nativePosts[loaded.nativePosts.length - 1];
+  assert.equal(call.privilegedCapability, 'navigation-capability');
+  assert.equal('realmSessionClaim' in call, false, 'not a session-bound method');
+  assert.deepEqual(call.args, BUILD_ACTIVITY, 'only the contract\'s keys go across');
+
+  // Native refuses arguments outside the contract: the code reaches the caller.
+  const refused = loadBridge({
+    capabilities: ['privilegedBridgeCapability', 'setBuildActivity'],
+    errorMethods: { setBuildActivity: 'stage is required' },
+    errorInfoMethods: { setBuildActivity: { code: 'invalid_args' } },
+  });
+  await assert.rejects(
+    refused.sandbox.usernode.setBuildActivity({ ...BUILD_ACTIVITY, stage: '' }),
+    (error) => error.usernodeCode === 'invalid_args'
+  );
+  assert.ok(refused.sandbox.usernode.getLastNativeReadError('setBuildActivity'), 'and the failure is on record');
+
+  // An embedded app cannot put words on the Lock Screen.
+  const relayed = loadBridge();
+  const childReplies = [];
+  const child = ownedAppFrame(relayed, childReplies);
+  relayed.dispatchMessage({
+    source: child,
+    origin: 'https://child.example',
+    data: { __usernode_relay: 'request', id: 'activity', method: 'setBuildActivity', args: BUILD_ACTIVITY },
+  });
+  assert.equal(relayed.nativePosts.length, 0, 'an iframe cannot start a Live Activity');
+  assert.match(childReplies[0].value.error, /top-level page/);
+});
+
+test('the build Live Activity resolves { supported: false } wherever nothing can show', async () => {
+  // A build that does not advertise it (Android, iOS before 16.1, an older
+  // build): asked nothing beyond the probe.
+  const old = loadBridge({ capabilities: ['privilegedBridgeCapability'] });
+  assert.deepEqual(JSON.parse(JSON.stringify(await old.sandbox.usernode.setBuildActivity(BUILD_ACTIVITY))), { supported: false });
+  assert.deepEqual(old.nativePosts.map((post) => post.method), ['getBridgeInfo']);
+
+  // A build that drops the call: the timeout is the answer, not a rejection.
+  const silent = loadBridge({
+    capabilities: ['privilegedBridgeCapability', 'setBuildActivity'],
+    silentMethods: ['setBuildActivity'],
+    timeoutScale: 0.001,
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(await silent.sandbox.usernode.setBuildActivity(BUILD_ACTIVITY))), { supported: false });
+  assert.equal(silent.sandbox.usernode.getLastNativeReadError('setBuildActivity').kind, 'timeout');
+
+  // Live Activities switched off: native's own answer, passed on as is.
+  const off = loadBridge({
+    capabilities: ['privilegedBridgeCapability', 'setBuildActivity'],
+    responseMethods: { setBuildActivity: { supported: false, started: true } },
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(await off.sandbox.usernode.setBuildActivity(BUILD_ACTIVITY))), { supported: false });
+
+  // Outside the app: nothing is posted at all.
+  const web = loadBridge({ capabilities: ['setBuildActivity'] });
+  web.sandbox.usernode.isNative = false;
+  assert.deepEqual(JSON.parse(JSON.stringify(await web.sandbox.usernode.setBuildActivity(BUILD_ACTIVITY))), { supported: false });
+  assert.equal(web.nativePosts.length, 0);
+});
+
 test('native screenshot capture is a top-frame privileged action', async () => {
   const loaded = loadBridge({
     capabilities: ['privilegedBridgeCapability', 'captureScreenshot'],

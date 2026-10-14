@@ -741,6 +741,36 @@ const FIRST_VERSION_SCREENS_FIRST = [
   'does not answer "Saved screen N", draw that screen in the figure in full instead.',
 ].join('\n');
 
+/*
+ * THE EARLY FIRST LOOK (newcomer run six, 14 October 2026). A first
+ * version's main screen is drawn from its plan at Make it, in a short call
+ * of its own (services/first-version-early-look.js), and its maker sees it
+ * through the tour and the App tab before this spec starts. The spec draws
+ * its main screen FROM that drawing rather than afresh, so the app the build
+ * makes keeps the promise the picture made; what its maker answered
+ * differently from the suggested answers is in what they approved, above.
+ * The spec's saved screen 1 then replaces the early one as the first look.
+ * A drawing longer than EARLY_LOOK_MAX_CHARS is not handed over.
+ */
+const EARLY_LOOK_MAX_CHARS = 40 * 1000;
+
+/** The lines that hand a first version's spec the early first look's screen, or [] for none. Pure. */
+function earlyLookLines(screen) {
+  const markup = typeof screen === 'string' ? screen.trim() : '';
+  if (!markup || markup.length > EARLY_LOOK_MAX_CHARS) return [];
+  return [
+    'START FROM THE FIRST LOOK ITS PEOPLE HAVE SEEN. While the plan was written, this app\'s main screen was drawn from',
+    'the plan and the request, with the suggested answer to each of the plan\'s questions, and the people who asked for',
+    'it have been looking at that drawing since, as the picture of what they are getting. Draw your main screen FROM it,',
+    'so the app keeps the promise it made: keep its layout, its colours, its signature element, its icons and its words,',
+    'and change only what the request, what its creator approved (an answer they chose other than the suggested one,',
+    'say) or the design kit needs, or a defect you can name; say under Assumptions what you changed and why. Save it',
+    'with `usernode-screen 1` as above: it replaces the drawing they see. Here it is, exactly as drawn:',
+    '',
+    markup,
+  ];
+}
+
 function specPrompt({
   seed, buildNote, firstVersion = false, html = false, platformStyles = false, guidance = null, starter = null,
   // #4645: the requester's locale, for the language rule below.
@@ -748,8 +778,11 @@ function specPrompt({
   // A first version's configuration's tweaks (bot-configs.js TWEAKS): only
   // `lean_plan` changes the spec; [] is the spec as it always was.
   tweaks = [],
+  // Newcomer run six: a first version's early first look, the screen its
+  // HTML spec starts its main screen from (earlyLookLines), or null.
+  earlyLook = null,
 }) {
-  if (html) return specHtmlPrompt({ seed, buildNote, firstVersion, platformStyles, guidance, starter, locale, tweaks });
+  if (html) return specHtmlPrompt({ seed, buildNote, firstVersion, platformStyles, guidance, starter, locale, tweaks, earlyLook });
   const leanPlan = firstVersion && Array.isArray(tweaks) && tweaks.includes('lean_plan');
   return [
     seed,
@@ -804,7 +837,7 @@ function specPrompt({
   ].join('\n');
 }
 
-function specHtmlPrompt({ seed, buildNote, firstVersion, platformStyles, guidance = null, starter = null, locale = null, tweaks = [] }) {
+function specHtmlPrompt({ seed, buildNote, firstVersion, platformStyles, guidance = null, starter = null, locale = null, tweaks = [], earlyLook = null }) {
   const leanPlan = firstVersion && Array.isArray(tweaks) && tweaks.includes('lean_plan');
   return [
     seed,
@@ -821,6 +854,7 @@ function specHtmlPrompt({ seed, buildNote, firstVersion, platformStyles, guidanc
       'must run it.',
       '',
       FIRST_VERSION_SCREENS_FIRST,
+      ...(earlyLookLines(earlyLook).length ? ['', ...earlyLookLines(earlyLook)] : []),
     ] : []),
     '',
     'The spec must be:',
@@ -3096,6 +3130,9 @@ async function draftSpec({
   // A first version's configuration's tweaks (bot-configs.js TWEAKS), of
   // which `lean_plan` is the spec's (specPrompt).
   tweaks = [],
+  // Newcomer run six: the early first look's screen, to start the main
+  // screen from (specPrompt `earlyLook`), or null.
+  earlyLook = null,
 }) {
   const { worker, sessions, agentTurn, activeWorkers } = deps;
   const budgetMs = Math.min(turnBudgetMs, specBudgetMs);
@@ -3120,7 +3157,7 @@ async function draftSpec({
   activeWorkers.add(session.id);
   const startedAt = Date.now();
   const prompt = specPrompt({
-    seed, buildNote, firstVersion, guidance, starter, locale, tweaks,
+    seed, buildNote, firstVersion, guidance, starter, locale, tweaks, earlyLook: firstVersion ? earlyLook : null,
     html: specHtml.htmlSpecsEnabledFor(config, session.app_slug),
     platformStyles: specHtml.specStylesFor({ slug: session.app_slug, self_hosted: session.app_self_hosted }) === 'platform',
   });
@@ -3618,6 +3655,11 @@ async function buildAndPropose({
   // 13 Oct 2026: a screen the spec saved as soon as it was drawn
   // (draftSpec `onScreen`), for its first look before the spec is in.
   onScreen = null,
+  // Newcomer run six (14 Oct 2026): resolves the first version's early first
+  // look's screen for its spec to start from (first-version-early-look.js
+  // forSpec), or null. Asked once the worker is up, before the spec turn
+  // starts; a failure is no early look.
+  earlyLook = null,
   // #4449: a first version's Live (services/first-version-live.js), handed
   // the worker as its build turn starts ({ containerName }) and answering
   // { end({ buildTurnMs, turnsMs, nudged }) }, called once the build turn
@@ -3809,6 +3851,17 @@ async function buildAndPropose({
     return fail(`the worker would not start: ${err.message}`);
   }
 
+  // The early first look its people have seen, for a first version's spec
+  // to draw its main screen from: read once the worker is up, and waited
+  // for a little (forSpec) when it is still being drawn.
+  const startingLook = !presetSpec && firstVersion && typeof earlyLook === 'function'
+    ? await Promise.resolve().then(() => earlyLook()).catch((err) => {
+      log.warn('homeroom-bot', 'Could not read the early first look for the spec', { sessionId: session.id, err: err.message });
+      return null;
+    })
+    : null;
+  if (startingLook) log.info('homeroom-bot', 'The spec starts its main screen from the early first look', { sessionId: session.id });
+
   // A spec already written, by a spec turn a restart interrupted and
   // recovery finished (#3401), is built from as it is, not written again.
   // A live build's (`propose`) was never said: the process that wrote it
@@ -3832,7 +3885,7 @@ async function buildAndPropose({
     : await draftSpec({
       pool, config, bot, session, containerName, seed, buildNote, turnBudgetMs,
       model: specModel || model, deps, specBudgetMs, firstVersion, starter, guidance: specGuidance, onProgress,
-      locale, onScreen, tweaks: buildTweaks,
+      locale, onScreen, tweaks: buildTweaks, earlyLook: typeof startingLook === 'string' ? startingLook : null,
       ...(telemetry ? { telemetryComponent: telemetry } : {}),
       ...(harnessOf ? {
         harness: harnessOf(specModel || model, config),
@@ -4498,6 +4551,8 @@ module.exports = {
   draftSpec,
   fillSavedScreens,
   FIRST_VERSION_SCREENS_FIRST,
+  EARLY_LOOK_MAX_CHARS,
+  earlyLookLines,
   noteSavedScreens,
   specPrompt,
   specPlanLines,
