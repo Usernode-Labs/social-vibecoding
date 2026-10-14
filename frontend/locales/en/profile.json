@@ -958,5 +958,17 @@
   "breakdown.bonus": {
     "text": "Bonus points",
     "description": "Row in the list of where a person's points came from: points awarded by hand, outside any event."
+  },
+  "feedback.edit": {
+    "text": "Edit this request",
+    "description": "Action or time remaining beside a recent request in Your feedback. {{count}}, when present, is the number of minutes rounded up."
+  },
+  "feedback.editLeft_one": {
+    "text": "You can edit it for {{count}} more minute.",
+    "description": "Action or time remaining beside a recent request in Your feedback. {{count}}, when present, is the number of minutes rounded up."
+  },
+  "feedback.editLeft_other": {
+    "text": "You can edit it for {{count}} more minutes.",
+    "description": "Action or time remaining beside a recent request in Your feedback. {{count}}, when present, is the number of minutes rounded up."
   }
 }

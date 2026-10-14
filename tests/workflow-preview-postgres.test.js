@@ -285,6 +285,17 @@ test('preview machine against the full PostgreSQL schema', { timeout: 120000 }, 
     assert.equal(rows.length, 0);
     assert.deepEqual((await workOf(s, WORK.followUps)).map((w) => w.input.state), ['error'],
       'its follow-ups hear an error: nothing for the merge queue');
+    assert.equal(r.check_error_platform, false, 'an unreadable run is the proposal\'s error');
+    // A run whose Pods never started is the platform's fault, as [main] says
+    // it (check-pod-start.js): the automatic retries a proposal's own errors
+    // get are not spent on it.
+    const t2 = await proposal(await app(), { status: 'active' });
+    work.answer.set(WORK.run, { outcome: 'blocked', reason: 'The browser checks could not start', platformFault: true });
+    await submit(t2, SHA('e'));
+    await settle();
+    work.answer.set(WORK.run, verdict('passing'));
+    const r2 = await row(t2.id);
+    assert.deepEqual([r2.check_state, r2.check_error_platform], ['error', true]);
   });
 
   await t.test('P6 a deferred head waits for ConflictResolved, once per episode', async () => {

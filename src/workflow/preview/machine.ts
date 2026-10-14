@@ -953,7 +953,7 @@ function ran(s: Live, e: Event<any>, outcome: string, f: Facts, ctx: TransitionC
       ? (r?.reason || (outcome === 'succeeded' ? 'The checks run produced no result' : 'The checks run was lost before it finished'))
       : (r!.errorDetail ?? null);
   const streakBefore = d0.streak;
-  const platformFault = state === 'error' && !blocked && !!r?.platformFault;
+  const platformFault = state === 'error' && !!r?.platformFault;
   const d: Data = {
     ...d0, run: null, verdict: state, failure: state === 'error' ? detail : null, platformFault,
     streak: state === 'error' ? streakBefore + 1 : 0,

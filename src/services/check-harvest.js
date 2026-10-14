@@ -106,10 +106,23 @@ function stillCurrent(session, commitSha) {
 // A run's capture shards, collected, read as one capture Job: their output
 // joined in shard order, as the live run joins it (visuals.runCaptureShards).
 // One shard gone, aborted or past its deadline is the run's state; the run
-// failed only if every shard did.
+// failed only if every shard did. `notStarted` names the shards that
+// reported nothing because their Pod never started its container, or was
+// evicted (check-pod-start.js), as the live run's do.
+function capturePodNeverStarted(result, shard) {
+  if (!result || result.state === 'succeeded') return null;
+  const fault = require('./check-pod-start').podStartCause(result.podStart);
+  if (!fault) return null;
+  return require('./visuals').reportedTestIndexes(String(result.stdout || '')).size ? null : { shard, ...fault };
+}
+
 function joinCaptures(results) {
   const list = (results || []).filter(Boolean);
-  if (list.length <= 1) return list[0] || null;
+  const notStarted = list.map((r, shard) => capturePodNeverStarted(r, shard)).filter(Boolean);
+  if (list.length <= 1) {
+    const one = list[0] || null;
+    return one && notStarted.length ? { ...one, notStarted } : one;
+  }
   const worst = ['gone', 'aborted', 'timeout'].find((state) => list.some((r) => r.state === state));
   return {
     state: worst || (list.every((r) => r.state === 'failed') ? 'failed' : 'succeeded'),
@@ -117,6 +130,7 @@ function joinCaptures(results) {
     stderr: list.map((r) => String(r.stderr || '')).filter(Boolean).join('\n'),
     partial: list.some((r) => r.partial),
     partialReason: [...new Set(list.map((r) => r.partialReason).filter(Boolean))].join('; '),
+    notStarted,
   };
 }
 
@@ -130,6 +144,12 @@ function joinCaptures(results) {
 function joinUnitResults(results, expectedShards = 1) {
   const list = (results || []).filter(Boolean);
   if (list.length <= 1 && expectedShards <= 1) return list[0] || null;
+  // A shard whose Pod never started its container and printed nothing: the
+  // suite did not run, whatever the others say, as the live path reads it
+  // (unit-suite.runUnitSuiteShards). Its own empty log is what is read.
+  const neverRan = list.find((r) => r.state !== 'succeeded' && !String(r.stdout || '').trim()
+    && require('./check-pod-start').podStartCause(r.podStart));
+  if (neverRan) return { ...neverRan, shardNotRun: true };
   const red = list.filter((r) => r.state === 'failed' || r.state === 'timeout');
   if (list.length < expectedShards && !red.length) return null;
   const worst = ['gone', 'aborted'].find((state) => list.some((r) => r.state === state));
@@ -145,6 +165,10 @@ function joinUnitResults(results, expectedShards = 1) {
     exitCode: failed ? failed.exitCode : 0,
   };
 }
+
+// The mark a run re-driven because a test Pod never started carries in its
+// manifest (visuals.captureForSession `redrive`), so it goes again once only.
+const POD_NEVER_STARTED = 'pod-never-started';
 
 function describeRow(row, reason) {
   const manifest = row.manifest || {};
@@ -232,7 +256,7 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null } = {}) 
   // one first did, so a restart, or Jobs lost under it, does not send it to
   // the back of the line.
   const queuedSince = row.queued_at || null;
-  const redrive = async (session, why) => {
+  const redrive = async (session, why, { mark = null } = {}) => {
     log.info('check-harvest', 'Orphaned run has nothing to read — re-driving its checks now', {
       ...base, why, ...(row.admitted_at === null ? { waitingForSlot: true } : {}),
     });
@@ -246,6 +270,7 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null } = {}) 
     release(null);
     await stagingRecovery.recheckSessionChecks({
       config, pool, session, reason: 'orphaned-run', ...(queuedSince ? { queuedSince } : {}),
+      ...(mark ? { redrive: mark } : {}),
     });
     return { outcome: 'redriven', why, ...base };
   };
@@ -392,6 +417,7 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null } = {}) 
         stdout: unit.stdout, stderr: unit.stderr,
         timedOut: unit.timedOut || unit.state === 'timeout', exitCode: unit.exitCode,
         graduated, tracker: unitTracker,
+        podStart: unit.podStart || null, shardNotRun: unit.shardNotRun === true,
       });
     }
     // A suite that blocks merges and cannot be read here, its Jobs gone or
@@ -405,6 +431,20 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null } = {}) 
       return await redrive(session, unit ? `unit-suite Job ${unit.state}` : 'unit-suite Job not found');
     }
 
+    // A browser-check shard whose Pod never started its container: the live
+    // path would have run its checks again in a sweep, which nothing does
+    // after a restart. So the run goes again once, in its place in line,
+    // rather than settle with checks missing. A run already re-driven for
+    // that settles as the platform's fault below, and the error lane takes
+    // it from there.
+    const notStarted = capture && Array.isArray(capture.notStarted) ? capture.notStarted : [];
+    if (notStarted.length && manifest.redrive !== POD_NEVER_STARTED) {
+      const again = stillCurrent(await loadSession(pool, sessionId), commitSha);
+      if (!again.current) return await moot(again.why);
+      return await redrive(session, 'a test pod never started', { mark: POD_NEVER_STARTED });
+    }
+    const startFault = notStarted.find((n) => n.lead === 'start') || notStarted[0] || null;
+
     // A capture Job that failed without a frame to salvage, or one the
     // cluster never ended, is a run that could not judge — the live path
     // records 'error' for that (fail-closed, "couldn't run", retried by the
@@ -417,9 +457,10 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null } = {}) 
     // spent.
     const unreadable = capture && ((capture.state === 'failed' && !capture.stdout.trim()) || capture.state === 'timeout');
     if (unreadable) {
-      const why = capture.state === 'timeout'
-        ? 'capture Job still running past its deadline'
-        : `capture Job failed${capture.stderr ? ` (${capture.stderr})` : ''}`;
+      const why = startFault ? require('./check-pod-start').browserNotRunSentence(startFault)
+        : capture.state === 'timeout'
+          ? 'capture Job still running past its deadline'
+          : `capture Job failed${capture.stderr ? ` (${capture.stderr})` : ''}`;
       log.warn('check-harvest', 'Orphaned run produced nothing to judge — recording an error verdict', { ...base, why });
       const writePool = operation ? operation.pool : pool;
       await visuals.storeCaptureOutcome(writePool, sessionId, 'failed', { reason: why.slice(0, 300) }).catch(() => {});
@@ -467,6 +508,7 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null } = {}) 
       runPartial: capture ? !!capture.partial : false,
       runPartialReason: capture ? (capture.partialReason || '') : '',
       unitOutcome,
+      notStarted,
     });
     verdict = settled.traceStatus;
     // The live capture's finally block does not run after adoption. Without
