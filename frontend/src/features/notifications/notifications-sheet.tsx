@@ -110,7 +110,8 @@ import {
   BookmarkIcon, BookmarkSolidIcon, ChatBubbleTailIcon, ChevronRightIcon, XIcon,
 } from '@/components/ui/icons';
 
-import { swatchFor } from '../messages/format';
+import { UserAvatar, swatchFor } from '../messages/format';
+import type { ConversationUser } from '../messages/types';
 
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
@@ -139,6 +140,8 @@ type ScreenRowView = NotificationRowView & {
   by?: string | null;
   /** Set on a conversation row — what the Messages tab filters on. */
   conversation?: boolean;
+  /** Set on a row from the Homeroom bot: it wears the bot's own face. */
+  bot?: boolean;
   /** Set on an agent-status row (#2815) — the Messages tab lists these too. */
   agent?: boolean;
   conversationId?: number | null;
@@ -166,6 +169,9 @@ type MessagesEntry =
   | { type: 'notif'; key: string; at: number; view: ScreenRowView }
   | { type: 'session'; key: string; at: number; session: SessionRowView & { sortAt?: number } };
 
+/** The bot as the avatar reads it: a platform account, drawn as its mark. */
+const BOT_SENDER: ConversationUser = { id: 0, username: 'homeroom_bot', avatarUrl: null, bot: true };
+
 function controller(): any {
   return (typeof window !== 'undefined' ? (window as any).Notifications : null) || null;
 }
@@ -186,10 +192,18 @@ function startOfToday(): number {
  * a PERSON speaking, so it gets the square swatch avatar Messages uses
  * (the same colour for the same handle); everything else is an EVENT, so
  * it gets the neutral glyph tile with the kind's icon.
+ *
+ * Run six (14 Oct 2026): the Homeroom bot is drawn as Messages draws it,
+ * the Homeroom mark (../messages/format.tsx UserAvatar), not an orange
+ * tile of the "H" of its handle.
  */
-function AvatarChip({ view }: { view: ScreenRowView }): ReactNode {
+export function AvatarChip({ view }: { view: ScreenRowView }): ReactNode {
   const who = (view.who || '?').replace(/^@/, '');
   const initial = who.charAt(0).toUpperCase() || '?';
+  if (view.conversation && view.bot) {
+    // Its image has no text (alt=""): the row's words say who it is from.
+    return <UserAvatar user={BOT_SENDER} size="lg" shape="square" />;
+  }
   if (view.conversation) {
     return (
       <span

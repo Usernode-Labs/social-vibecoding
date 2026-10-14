@@ -10,6 +10,9 @@
 //                 a phone-sized PNG in the build's own worker
 //                 (worker/usernode-first-look.js: scripts off, no network)
 //                 and stored for the run. Nobody is ever sent the HTML.
+//                 Until then (newcomer run six, 14 Oct 2026), the EARLY
+//                 first look drawn the same way from the plan at Make it
+//                 (first-version-early-look.js) stands in for it.
 //   CAPTION       while it builds. The build agent runs
 //                 `usernode-progress "Adding the tier rows"` as it starts
 //                 each point of the plan (homeroom-bot-live.js
@@ -175,18 +178,31 @@ function readRendered(stdout) {
 }
 
 /**
+ * The main screen of a spec (or of a saved screen as one, screenDocument)
+ * drawn to a phone-sized PNG in a worker: { data, width, height }, or null
+ * when there is no screen, no worker or no picture. Stores nothing. The one
+ * way a first look is drawn: the spec's (renderFirstLook) and the early one
+ * from the plan at Make it (first-version-early-look.js). Throws only what
+ * the worker throws.
+ */
+async function drawScreenPng({ worker, containerName, specHtml, timeoutMs = RENDER_TIMEOUT_MS }) {
+  const screen = mainScreenOf(specHtml);
+  if (!screen || !containerName || !worker || typeof worker.runBenchCapture !== 'function') return null;
+  const input = { html: firstLookDocument(screen), width: screen.width, height: screen.height };
+  const source = `'use strict';\nconst FIRST_LOOK = ${JSON.stringify(input)};\n${script()}`;
+  const stdout = await worker.runBenchCapture(containerName, { source, env: {}, timeoutMs, scriptPath: SCRIPT_PATH, maxBuffer: 16 * 1024 * 1024 });
+  return readRendered(stdout);
+}
+
+/**
  * Draw the spec's main screen in the build's worker and keep it as the
  * run's first look. Resolves true when it was kept; never throws (a first
  * look that could not be drawn is simply not there).
  */
 async function renderFirstLook({ pool, worker, containerName, runId, specHtml, timeoutMs = RENDER_TIMEOUT_MS }) {
   try {
-    const screen = mainScreenOf(specHtml);
-    if (!screen || !containerName || !worker || typeof worker.runBenchCapture !== 'function') return false;
-    const input = { html: firstLookDocument(screen), width: screen.width, height: screen.height };
-    const source = `'use strict';\nconst FIRST_LOOK = ${JSON.stringify(input)};\n${script()}`;
-    const stdout = await worker.runBenchCapture(containerName, { source, env: {}, timeoutMs, scriptPath: SCRIPT_PATH, maxBuffer: 16 * 1024 * 1024 });
-    const png = readRendered(stdout);
+    if (!mainScreenOf(specHtml) || !containerName || !worker || typeof worker.runBenchCapture !== 'function') return false;
+    const png = await drawScreenPng({ worker, containerName, specHtml, timeoutMs });
     if (!png) {
       // Warned (newcomer run five): a first look that quietly is not there
       // was hard to tell from one that was never asked for.
@@ -427,7 +443,7 @@ async function storeScreens(pool, runId, kind, images) {
 // on its proposal (a fix of its failing checks is a run of its own,
 // verdict 'revise', with no screens), so the card keeps the build's screens
 // through it.
-const RUN_SQL = `SELECT r.id, r.build_caption
+const RUN_SQL = `SELECT r.id, r.build_caption, r.build_note
                    FROM homeroom_bot_first_versions f
                    JOIN homeroom_bot_runs r ON r.app_id = f.app_id AND r.issue_number = f.issue_number
                   WHERE f.app_id = $1 AND f.bot_builds = TRUE
@@ -435,21 +451,40 @@ const RUN_SQL = `SELECT r.id, r.build_caption
                   ORDER BY r.id DESC
                   LIMIT 1`;
 
+function earlyLooks() {
+  return require('./first-version-early-look');
+}
+
 /**
  * What a first version's run has to show: its caption and, per kind, how
- * many screens and when they were taken. Null when there is no run.
+ * many screens and when they were taken. Newcomer run six (14 Oct 2026):
+ * until its run has a first look of its own, the EARLY one drawn from its
+ * plan at Make it (first-version-early-look.js), before there is a run at
+ * all, or while its run is the one built from that plan; the spec's own
+ * replaces it the moment it is saved. Null when there is neither a run nor
+ * an early look.
  */
 async function showcaseOf(pool, appId) {
   const { rows: [run] } = await pool.query(RUN_SQL, [Number(appId)]);
-  if (!run) return null;
-  const { rows } = await pool.query(
-    `SELECT kind, COUNT(*)::int AS count, MAX(created_at) AS at
-       FROM first_version_screens WHERE bot_run_id = $1 GROUP BY kind`,
-    [Number(run.id)],
-  );
   const screens = {};
-  for (const r of rows) screens[r.kind] = { count: Math.min(Number(r.count) || 0, MAX_SCREENS), at: r.at ? new Date(r.at).toISOString() : null };
-  return { runId: Number(run.id), caption: captionOf(`$ usernode-progress ${run.build_caption || ''}`), screens };
+  if (run) {
+    const { rows } = await pool.query(
+      `SELECT kind, COUNT(*)::int AS count, MAX(created_at) AS at
+         FROM first_version_screens WHERE bot_run_id = $1 GROUP BY kind`,
+      [Number(run.id)],
+    );
+    for (const r of rows) screens[r.kind] = { count: Math.min(Number(r.count) || 0, MAX_SCREENS), at: r.at ? new Date(r.at).toISOString() : null };
+  }
+  if (!screens.first_look?.count) {
+    const early = await earlyLooks().shownFor(pool, appId, run || null).catch(() => null);
+    if (early) screens.first_look = { count: 1, at: early.at ? new Date(early.at).toISOString() : null };
+  }
+  if (!run && !screens.first_look) return null;
+  return {
+    runId: run ? Number(run.id) : null,
+    caption: run ? captionOf(`$ usernode-progress ${run.build_caption || ''}`) : null,
+    screens,
+  };
 }
 
 /**
@@ -474,17 +509,24 @@ function firstVersionShowcase(showcase, line) {
   return out;
 }
 
-/** One screen's image for the project's first version: { content_type, data }, or null. */
+/**
+ * One screen's image for the project's first version: { content_type, data },
+ * or null. The first look is the run's own, else the early one showcaseOf
+ * offers in its place.
+ */
 async function readScreen(pool, appId, kind, position) {
   if (!KINDS.includes(kind) || !Number.isInteger(position) || position < 0 || position >= MAX_SCREENS) return null;
   const { rows: [run] } = await pool.query(RUN_SQL, [Number(appId)]);
-  if (!run) return null;
-  const { rows: [row] } = await pool.query(
-    `SELECT content_type, data FROM first_version_screens
-      WHERE bot_run_id = $1 AND kind = $2 AND position = $3`,
-    [Number(run.id), kind, position],
-  );
-  return row || null;
+  if (run) {
+    const { rows: [row] } = await pool.query(
+      `SELECT content_type, data FROM first_version_screens
+        WHERE bot_run_id = $1 AND kind = $2 AND position = $3`,
+      [Number(run.id), kind, position],
+    );
+    if (row) return row;
+  }
+  if (kind !== 'first_look' || position !== 0) return null;
+  return earlyLooks().pictureFor(pool, appId, run || null).catch(() => null);
 }
 
 module.exports = {
@@ -500,6 +542,7 @@ module.exports = {
   mainScreenOf,
   firstLookDocument,
   readRendered,
+  drawScreenPng,
   renderFirstLook,
   // 13 Oct 2026: the first look, drawn first.
   SAVED_DIR,

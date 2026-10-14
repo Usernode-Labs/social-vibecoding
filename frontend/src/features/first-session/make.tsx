@@ -156,7 +156,25 @@ export type Made = {
 
 const FIELD = 'px-4 pt-3 pb-2 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800';
 const LABEL = 'block text-[13px] text-zinc-500 dark:text-zinc-400';
-const INPUT = 'w-full border-0 bg-transparent px-0 py-1 text-[17px] text-zinc-900 dark:text-zinc-100 placeholder-zinc-500 focus:outline-none';
+/*
+ * UNDER ITS LABEL (newcomer run six, 14 Oct 2026, iPhone Safari, keyboard
+ * up): a description of about 200 characters is longer than the three rows
+ * the box shows, so the box scrolls, and its text ran up to the box's top
+ * edge, which was the label's own bottom edge. The line cut off there read
+ * as text passing under "What should it do?". Both fields keep 8px between
+ * their label and their writing (`pt-2`), and while the description is
+ * scrolled from its top its text fades out over the box's top line
+ * (BRIEF_FADE, `briefScrolled`), so a line scrolling up thins out inside its
+ * own box, below the label, never against it. Unscrolled there is no fade
+ * and the first line is drawn whole. The name is one line, which scrolls
+ * sideways and never up, so it needs the gap only.
+ */
+const INPUT = 'w-full border-0 bg-transparent px-0 pb-1 pt-2 text-[17px] text-zinc-900 dark:text-zinc-100 placeholder-zinc-500 focus:outline-none';
+export const BRIEF_FADE = '[mask-image:linear-gradient(to_bottom,transparent,#000_22px)]';
+/** Whether the description's box is scrolled from its top, so its top edge fades (BRIEF_FADE). Pure. */
+export function briefFades(box: { scrollTop: number } | null | undefined): boolean {
+  return !!box && box.scrollTop > 0;
+}
 // Where the bar and the form start, and where they settle (see the header).
 const ARRIVING = 'translate-y-6 opacity-0 transition-[transform,opacity] duration-300 ease-out motion-reduce:transition-none';
 const ARRIVED = 'translate-y-0 opacity-100 transition-[transform,opacity] duration-300 ease-out motion-reduce:transition-none';
@@ -288,6 +306,11 @@ export function MakeScreen({
   const wordsFieldRef = useRef<HTMLInputElement>(null);
   const wordsBoxRef = useRef<HTMLTextAreaElement>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
+  // UNDER ITS LABEL: the description's top edge fades while it is scrolled.
+  // Read on its scroll, and again after each render, since a box swapped in
+  // or a shorter description can land it back at its top without a scroll.
+  const [briefScrolled, setBriefScrolled] = useState(false);
+  useEffect(() => { setBriefScrolled(briefFades(briefRef.current)); });
   // Home holds still under it, and takes no tap or focus (lib/page-lock.ts).
   // From Create the header and what stands above this screen stay in use, so
   // only the scrolling stops there.
@@ -694,8 +717,9 @@ export function MakeScreen({
                       setMissing(null);
                     }}
                     onKeyDown={toName}
+                    onScroll={(e) => setBriefScrolled(briefFades(e.currentTarget))}
                     placeholder={t('onboarding:firstSession.make.briefPlaceholder')}
-                    className={`${INPUT} resize-none leading-[22px]`}
+                    className={`${INPUT}${briefScrolled ? ` ${BRIEF_FADE}` : ''} resize-none leading-[22px]`}
                   />
                   {waitlistIdea && brief === waitlistIdea ? <p data-make-waitlist-idea="" className={HINT}>{t(WAITLIST_IDEA_LINE)}</p> : null}
                 </>

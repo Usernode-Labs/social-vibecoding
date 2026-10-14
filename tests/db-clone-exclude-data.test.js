@@ -266,14 +266,14 @@ test('truncate + scrub still run after the copy, and still reset identities', as
   const { dbManager, calls, restore } = loadDbManager({
     discovery: ['public.chat_sessions'],
     truncateDiscovery: ['public.chat_sessions'],
-    columnDiscovery: ['public.users|password_hash|f|'],
+    columnDiscovery: ['public.users|password_hash|f||f'],
   });
   try {
     await dbManager.cloneDatabase('app_demo', 'app_demo_staging_x_abc123');
     const truncate = calls.find((c) => /^TRUNCATE/.test(c.sql));
     assert.ok(truncate, 'the truncate backstop still runs');
     assert.equal(truncate.sql, 'TRUNCATE public.chat_sessions RESTART IDENTITY CASCADE');
-    assert.ok(calls.some((c) => /^UPDATE public\.users SET password_hash/.test(c.sql)),
+    assert.ok(calls.some((c) => /^DO [\s\S]*\n {2}UPDATE public\.users SET password_hash = NULL;/.test(c.sql)),
       'the column scrub still runs');
     const dumpAt = calls.findIndex((c) => c.cmd === 'pg_dump');
     assert.ok(dumpAt < calls.indexOf(truncate), 'the copy precedes the scrub passes');

@@ -461,14 +461,20 @@ test('the pill and the remembered choice', () => {
   assert.equal(m.livePill('live', 12.7), 'Live · updated 12 s ago');
   assert.equal(m.livePill('live', 130), 'Live · updated 2 min ago');
   assert.equal(m.livePill('failed', 3), 'A restart failed · showing the last good screen');
-  assert.equal(m.choiceKey('7'), 'usernode.firstVersionLive.v1.7');
-  assert.equal(m.readChoice('7'), 'preview', 'no storage: Preview');
-  const store = new Map();
+  // Run six: per person AND per project, and nothing picked is no choice
+  // (Live, once offered: shownChoice).
+  assert.equal(m.choiceKey('7', 'club-votes'), 'usernode.firstVersionLive.v2.7.club-votes');
+  assert.equal(m.readChoice('7', 'club-votes'), null, 'no storage: no choice');
+  const store = new Map([['usernode.firstVersionLive.v1.7', 'preview']]);
   global.localStorage = { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, v) };
   try {
-    m.writeChoice('7', 'live');
-    assert.equal(m.readChoice('7'), 'live');
-    assert.equal(m.readChoice('8'), 'preview', 'per person');
+    assert.equal(m.readChoice('7', 'club-votes'), null, 'the old per-person choice, made while Preview was the default, is not read');
+    m.writeChoice('7', 'club-votes', 'preview');
+    assert.equal(m.readChoice('7', 'club-votes'), 'preview');
+    assert.equal(m.readChoice('7', 'tier-list'), null, 'per project');
+    assert.equal(m.readChoice('8', 'club-votes'), null, 'per person');
+    store.set(m.choiceKey('7', 'tier-list'), 'nonsense');
+    assert.equal(m.readChoice('7', 'tier-list'), null);
   } finally {
     delete global.localStorage;
   }

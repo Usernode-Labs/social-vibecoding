@@ -10440,6 +10440,11 @@ CREATE INDEX IF NOT EXISTS idx_homeroom_bot_first_versions_waiting
 COMMENT ON TABLE homeroom_bot_first_versions IS 'staging:private';
 -- Every row before the column was one the bot builds, so the default is true.
 ALTER TABLE homeroom_bot_first_versions ADD COLUMN IF NOT EXISTS bot_builds BOOLEAN NOT NULL DEFAULT TRUE;
+-- Run six (14 Oct 2026): whether its maker is told when it is ready and
+-- live ("We'll tell you when it's live" under its plan in their chat with
+-- Homeroom bot). On from Make it; off, those two are said in the chat and
+-- ring nothing (services/homeroom-bot-dm.js firstVersionNotify).
+ALTER TABLE homeroom_bot_first_versions ADD COLUMN IF NOT EXISTS notify_live BOOLEAN NOT NULL DEFAULT TRUE;
 -- The plan written at Make it (services/first-version-plan.js), while the
 -- project is still being set up: one model call from the description, in
 -- the shape a first version's triage gives (`plan` bullets, up to two
@@ -13159,6 +13164,34 @@ CREATE TABLE IF NOT EXISTS first_version_screens (
   UNIQUE (bot_run_id, kind, position)
 );
 COMMENT ON TABLE first_version_screens IS 'staging:private';
+-- Newcomer run six (14 Oct 2026): a first version's EARLY first look
+-- (services/first-version-early-look.js). Its main screen, drawn from the
+-- plan written at Make it in one short model call while the project is set
+-- up (the plan's suggested answers stand in for the ones not given yet), and
+-- rendered to a phone-sized PNG in the worker of the app's bot session, as
+-- the spec's screens are. Kept by project, since there is no run yet: the
+-- App tab reads it as the first look (first-version-screens.js showcaseOf)
+-- until the build's spec saves its own, and that spec starts its main screen
+-- from `screen`. `status` is pending while it is drawn, drawn once the model
+-- answered, ready with its picture, failed without one (`error` says why).
+-- `screen` is the model's <template data-screen>, read only by the platform
+-- (the spec's prompt) and never served; `png` is read back only by the
+-- project's members. Private: a drawn screen shows what its maker described.
+CREATE TABLE IF NOT EXISTS first_version_early_looks (
+  app_id        INTEGER PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE,
+  status        VARCHAR(16) NOT NULL CHECK (status IN ('pending', 'drawn', 'ready', 'failed')),
+  model         TEXT,
+  screen        TEXT,
+  png           BYTEA,
+  width         INTEGER CHECK (width IS NULL OR width > 0),
+  height        INTEGER CHECK (height IS NULL OR height > 0),
+  bytes         INTEGER CHECK (bytes IS NULL OR bytes > 0),
+  error         TEXT,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  drawn_at      TIMESTAMPTZ,
+  saved_at      TIMESTAMPTZ
+);
+COMMENT ON TABLE first_version_early_looks IS 'staging:private';
 -- #4387: the build agent's latest "Adding …" phrase (usernode-progress),
 -- the App tab's build line note while a first version is built.
 ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_caption TEXT;

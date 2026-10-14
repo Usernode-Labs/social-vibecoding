@@ -2886,9 +2886,9 @@ const AppView = {
   // real screens. Every picture is a plainly made-up sample
   // (_firstVersionSampleScreen), never a real app.
   //
-  // #4449: 'live', the member's own being built with Live offered: Preview
-  // selected, and Live, when chosen, plays a plainly made-up recording
-  // (features/app-frame/live-band.tsx sampleRecording).
+  // #4449: 'live', the member's own being built with Live offered: Live
+  // selected (run six: the default once it has frames), playing a plainly
+  // made-up recording (features/app-frame/live-band.tsx sampleRecording).
   showFirstVersionShot(variant = false) {
     const withPlan = variant === true || variant === 'plan';
     const ready = variant === 'ready' || variant === 'approved';
@@ -3128,6 +3128,26 @@ const AppView = {
       cached = !!(res && res.headers && typeof res.headers.get === 'function' && res.headers.get('sw-cached-at'));
     } catch { cached = false; }
     AppView._firstVersionReads.set(record, { asked: askedAt, got: Date.now(), cached, stale: false, heldAt: 0 });
+    // Run six: the maker's Live Activity follows every answer the server
+    // gave, never the worker's copy (a project live since would start one).
+    if (!cached) AppView._syncBuildActivity(record);
+  },
+
+  /**
+   * Run six (14 Oct 2026): hand an app record to the maker's Live Activity
+   * for their first version (features/app-frame/build-activity.ts). Every
+   * read of the project lands here, the App tab's ten-second recheck
+   * included, so the stage on the Lock Screen moves when the screen's does,
+   * and an answer with no first version on a running app ends it as live.
+   * It decides for itself whether to call the app (inside it, on a build
+   * that has the capability, for the maker, on a change), and never throws.
+   */
+  _syncBuildActivity(record) {
+    try {
+      const react = typeof window !== 'undefined' ? window.UsernodeReact : null;
+      const activity = react && react.buildActivity;
+      if (activity && typeof activity.syncRecord === 'function') activity.syncRecord(record);
+    } catch { /* the screen comes first */ }
   },
 
   /** What a vote or a merge has made old: the next paint asks again first. */
@@ -3247,6 +3267,10 @@ const AppView = {
     // first-version-steps.tsx), as the server says them.
     const phase = fv.phase && typeof fv.phase === 'object' ? fv.phase : null;
     const steps = Array.isArray(fv.steps) ? fv.steps : null;
+    // Run six: how long it still has to go, when the server could say
+    // (routes/apps.js, services/first-version-eta.js): the line and the step
+    // under way count down to it (features/app-frame/first-version-eta.ts).
+    const estimate = fv.estimate && typeof fv.estimate === 'object' ? fv.estimate : null;
     return {
       thumb: {
         name: appData.name || appData.slug,
@@ -3261,6 +3285,7 @@ const AppView = {
       ...(live ? { live } : {}),
       ...(phase ? { phase } : {}),
       ...(steps ? { steps } : {}),
+      ...(estimate ? { estimate } : {}),
     };
   },
 
@@ -3340,9 +3365,11 @@ const AppView = {
 
   /**
    * #4053: while it is being built, the thumbnail with its build line one
-   * line under it, and one line below that, for everyone: "It opens here
-   * when it’s ready." The build line says where it is ("Your plan is ready
-   * to review" to the person who started it). The plan and the bot's
+   * line under it, and one line below that: "It opens here when it’s
+   * ready.", or for its maker, who is told when it is live, "We’ll notify
+   * you when it’s live" with a small check (run six). The build line says
+   * where it is ("Your plan is ready to review" to the person who started
+   * it). The plan and the bot's
    * questions are answered in the creator's chat with Homeroom bot, so the
    * creator, and only they, gets a way there under the card: "Review the
    * plan" while their plan waits (the build line asks them, in blue), else
@@ -3375,12 +3402,23 @@ const AppView = {
         underCard: true,
       }
       : null;
+    // Run six (14 Oct 2026): a first version takes about 23 minutes, so its
+    // maker puts the phone down while it builds. They are told when it goes
+    // live (Homeroom bot's Live, in the bell: homeroom-bot-dm.js
+    // 'build_live'), so their screen promises that, with a small check, in
+    // place of "It opens here when it’s ready." Nobody else is told (#4396),
+    // so everyone else keeps that line. `tourSays` stays on both: it is also
+    // how the tour knows this screen is the one its card is for
+    // (first-session/tour-wait.ts).
+    const told = fv.mine === true;
     return {
       dot: null,
       message: appData.name || appData.slug,
       detail: null,
       ...thumb,
-      lines: [PlatformI18n.t('changes:firstVersion.opensWhenReady')],
+      ...(told
+        ? { promise: PlatformI18n.t('changes:firstVersion.notifyWhenLive') }
+        : { lines: [PlatformI18n.t('changes:firstVersion.opensWhenReady')] }),
       tourSays: true,
       action: chat,
       ...(waiting ? { waiting } : {}),
@@ -3622,6 +3660,34 @@ const AppView = {
     if (AppView._firstVersionTimer) clearTimeout(AppView._firstVersionTimer);
     AppView._firstVersionTimer = null;
     AppView._firstVersionRecord = null;
+    AppView._listenFirstVersionReturn(false);
+  },
+
+  // Run six (14 Oct 2026): back in Safari from the background, Live's
+  // switch came about 12 s after the first frame. A page in the background
+  // asks nothing (_readFirstVersion), so the screen waited for its next
+  // ten-second tick. While the watch is armed, coming back asks now.
+  _firstVersionReturnListening: false,
+  _listenFirstVersionReturn(on) {
+    const want = !!on;
+    if (want === AppView._firstVersionReturnListening) return;
+    // Both halves or neither: a listener added must be removable.
+    const both = (t) => !!t && typeof t.addEventListener === 'function' && typeof t.removeEventListener === 'function';
+    const doc = typeof document !== 'undefined' && both(document) ? document : null;
+    if (!doc) return;
+    const win = typeof window !== 'undefined' && both(window) ? window : null;
+    AppView._firstVersionReturnListening = want;
+    const method = want ? 'addEventListener' : 'removeEventListener';
+    doc[method]('visibilitychange', AppView._onFirstVersionReturn);
+    if (win) win[method]('pageshow', AppView._onFirstVersionReturn);
+  },
+
+  _onFirstVersionReturn(event) {
+    // A page's first `pageshow` is its load, not a return to it.
+    if (event && event.type === 'pageshow' && !event.persisted) return null;
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return null;
+    const record = AppView._firstVersionRecord;
+    return record && record === AppView.appData ? AppView._recheckFirstVersion(record, { now: true }) : null;
   },
 
   // Re-asked while the screen is up, like _watchCreatingStatus: no event
@@ -3636,6 +3702,7 @@ const AppView = {
     if (AppView._firstVersionRecord === appData && AppView._firstVersionTimer) return;
     AppView._stopFirstVersionWatch();
     AppView._firstVersionRecord = appData;
+    AppView._listenFirstVersionReturn(true);
     AppView._firstVersionTimer = setTimeout(() => {
       AppView._firstVersionTimer = null;
       AppView._recheckFirstVersion(appData);

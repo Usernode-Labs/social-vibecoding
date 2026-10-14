@@ -115,6 +115,7 @@
     setSocialBadgeCount: true,
     manageStaking: true,
     signInWithProvider: true,
+    setBuildActivity: true,
   };
   var _REALM_SESSION_METHODS = {
     getNodeAddress: true,
@@ -5602,6 +5603,91 @@
     return callNativeChromeAction(
       "setSocialBadgeCount", { count: count }, _SOCIAL_PUSH_TIMEOUT_MS
     );
+  };
+
+  // setBuildActivity(activity) → { supported, started?, pushToken? }. The
+  // iOS Live Activity for a project's first version being built: its name,
+  // the stage and the time left on the Lock Screen and in the Dynamic
+  // Island, ending with "<name> is live". The caller is the maker's App tab
+  // and made screen (frontend/src/features/app-frame/build-activity.ts);
+  // the contract is NATIVE-BRIDGE.md, "Build Live Activity".
+  //
+  // Privileged and top-frame only: it puts the page's words on the Lock
+  // Screen, which no hosted app may do. It touches no native session, so it
+  // carries no realm claim.
+  //
+  // Additive capability, and fail-safe rather than fail-closed: nothing
+  // waits on it, so every way of not showing anything resolves
+  // `{ supported: false }`. Outside the app, on a build that does not
+  // advertise `setBuildActivity` (iOS before 16.1, Android, an older
+  // build), or when the call is dropped and the timeout passes. A native
+  // answer that refuses the call (`errorInfo.code` `invalid_args` or
+  // `failed`) rejects with that code as `err.usernodeCode`, for the caller
+  // to log. Only the contract's keys cross, in both directions.
+  var _BUILD_ACTIVITY_TIMEOUT_MS = 10000;
+  var _BUILD_ACTIVITY_KEYS = [
+    "activityId", "state", "title", "stage", "detail",
+    "startedAt", "etaAt", "deepLink", "endedTitle",
+  ];
+
+  function buildActivityReply(value) {
+    if (!value || value.supported !== true) return { supported: false };
+    var reply = { supported: true, started: value.started === true };
+    if (typeof value.pushToken === "string" && value.pushToken) {
+      reply.pushToken = value.pushToken;
+    }
+    return reply;
+  }
+
+  window.usernode.setBuildActivity = function (activity) {
+    if (!window.usernode.isNative || _inIframe) {
+      return Promise.resolve({ supported: false });
+    }
+    var args = {};
+    for (var i = 0; i < _BUILD_ACTIVITY_KEYS.length; i++) {
+      var key = _BUILD_ACTIVITY_KEYS[i];
+      if (activity && activity[key] !== undefined) args[key] = activity[key];
+    }
+    var known = _lastBridgeInfo
+      ? Promise.resolve(_lastBridgeInfo)
+      : window.usernode.getBridgeInfo();
+    return known.then(function (info) {
+      var capabilities = info && info.capabilities;
+      if (!Array.isArray(capabilities) ||
+          capabilities.indexOf("setBuildActivity") === -1) {
+        return { supported: false };
+      }
+      return new Promise(function (resolve, reject) {
+        var done = false;
+        var timer = setTimeout(function () {
+          if (done) return;
+          done = true;
+          recordNativeReadError(
+            "setBuildActivity", "timeout",
+            "setBuildActivity is not supported by this app build"
+          );
+          resolve({ supported: false });
+        }, _BUILD_ACTIVITY_TIMEOUT_MS);
+        callNative("setBuildActivity", args).then(
+          function (value) {
+            if (done) return;
+            done = true;
+            clearTimeout(timer);
+            delete _lastNativeReadErrors.setBuildActivity;
+            resolve(buildActivityReply(value));
+          },
+          function (err) {
+            if (done) return;
+            done = true;
+            clearTimeout(timer);
+            recordNativeReadError(
+              "setBuildActivity", nativeReadErrorKind(err), err && err.message
+            );
+            reject(err);
+          }
+        );
+      });
+    });
   };
 
   // setAppearance({ scheme, background }) → tells the native shell which

@@ -145,7 +145,7 @@ test('the review record: round 0, then each round\'s verdict, issues, fixes and 
   assert.deepEqual(r.round0, { sha: 'sha1', commits: 2, booted: true, captureError: null, costUsd: 0.92, activeMs: 1500000 });
   assert.equal(r.rounds.length, 2);
   assert.deepEqual(r.rounds[0].issues, [{ id: 'empty-mine', severity: 'major', screen: 'phone light populated', problem: 'My list shows six empty rows', fix: 'Seed the viewer\'s own picks' }]);
-  assert.deepEqual(r.rounds[0].reviewer, { costUsd: 0.31, ms: 42000, error: null });
+  assert.deepEqual(r.rounds[0].reviewer, { costUsd: 0.31, ms: 42000, error: null, retry: null });
   assert.deepEqual(r.rounds[0].fix, { ok: true, costUsd: 0.44, ms: 300000, sha: 'sha2', commits: 3, error: null });
   assert.deepEqual([r.rounds[1].verdict, r.rounds[1].previousFixed, r.rounds[1].fix], ['ship', ['empty-mine'], null]);
   assert.deepEqual([r.stop, r.finalSha, r.costUsd], ['ship', 'sha2', 1.02]);
