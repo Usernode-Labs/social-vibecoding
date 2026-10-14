@@ -111,6 +111,13 @@ const TWICE_INTERRUPTED = 'interrupted: the platform restarted during it twice';
 const LATER_SIDE_RUN_KIND = 'bot_config_later';
 
 const inFlight = new Map(); // trialId -> { runId, est, sessionId, promise, heavy, recovered? }
+// The trials whose build this process executes (runTrial), each this
+// process's hold (services/processes.js), so a cancel asked of another
+// platform process reaches it (receiveCancel). inFlight above counts slots,
+// wherever a trial runs; this is where it runs.
+const executing = require('../processes').heldMap('bench_trial');
+// Trials executing here an admin cancelled, whatever slot entry they have.
+const cancelledHere = new Set();
 let laneOn = false;
 let laneConfig = null;
 let timer = null;
@@ -481,13 +488,50 @@ async function cancelRun(pool, runId, deps = {}) {
     "UPDATE bench_trials SET status = 'cancelled', finished_at = NOW() WHERE run_id = $1 AND status = 'pending'",
     [Number(runId)],
   );
+  stopRunHere(runId, deps);
+  // Trials of the run another platform process is running (one finishing its
+  // work after a release): it stops them the same way, told over the bus.
+  require('../ws-bus').publish('bench_cancel', null, { runId: Number(runId) });
+  return { ok: true };
+}
+
+function stopRunHere(runId, deps = {}) {
   const worker = deps.worker || require('../worker');
+  let n = 0;
   for (const [trialId, f] of inFlight) {
     if (f.runId !== Number(runId) || !f.sessionId) continue;
     Promise.resolve(worker.stopTurn(f.sessionId)).catch(() => {});
     log.info('bench', 'Stopping a trial of a cancelled run', { trialId });
+    n += 1;
   }
-  return { ok: true };
+  return n;
+}
+
+function stopTrialHere(id, deps = {}) {
+  const f = inFlight.get(id);
+  if (!f && !executing.has(id)) return false;
+  if (f) f.cancelled = true;
+  if (executing.has(id)) cancelledHere.add(id);
+  if (f?.sessionId) {
+    const worker = deps.worker || require('../worker');
+    Promise.resolve(worker.stopTurn(f.sessionId)).catch(() => {});
+  }
+  log.info('bench', 'Stopping one trial', { trialId: id });
+  return true;
+}
+
+/**
+ * The bus's `bench_cancel` (services/ws.js): a run or a trial was cancelled
+ * on another process, which has marked it in the database; whatever of it
+ * runs here stops.
+ */
+function receiveCancel(payload) {
+  if (Number.isInteger(Number(payload?.trialId)) && payload.trialId != null) {
+    const id = Number(payload.trialId);
+    return executing.has(id) ? stopTrialHere(id) : false;
+  }
+  if (Number.isInteger(Number(payload?.runId)) && payload.runId != null) return stopRunHere(Number(payload.runId)) > 0;
+  return false;
 }
 
 /**
@@ -504,19 +548,18 @@ async function cancelTrial(pool, trialId, deps = {}) {
     [id],
   );
   if (pending) { wake(); return { ok: true, status: 'cancelled' }; }
-  const f = inFlight.get(id);
-  if (!f) {
-    const { rows: [t] } = await pool.query('SELECT status FROM bench_trials WHERE id = $1', [id]);
-    if (!t) return httpError(404, 'No such trial');
-    return httpError(409, t.status === 'running' ? 'That trial is running on another process' : `That trial is already ${t.status}`);
+  const here = stopTrialHere(id, deps);
+  // Executed by another platform process (one finishing its work after a
+  // release, while this one only counts its slot): that process stops it.
+  const elsewhere = !executing.has(id) && require('../processes').heldElsewhere('bench_trial', id);
+  if (elsewhere) {
+    require('../ws-bus').publish('bench_cancel', null, { trialId: id });
+    log.info('bench', 'Cancel forwarded to the process running the trial', { trialId: id });
   }
-  f.cancelled = true;
-  if (f.sessionId) {
-    const worker = deps.worker || require('../worker');
-    Promise.resolve(worker.stopTurn(f.sessionId)).catch(() => {});
-  }
-  log.info('bench', 'Stopping one trial', { trialId: id });
-  return { ok: true, status: 'stopping' };
+  if (here || elsewhere) return { ok: true, status: 'stopping' };
+  const { rows: [t] } = await pool.query('SELECT status FROM bench_trials WHERE id = $1', [id]);
+  if (!t) return httpError(404, 'No such trial');
+  return httpError(409, t.status === 'running' ? 'That trial is running on another process' : `That trial is already ${t.status}`);
 }
 
 /**
@@ -680,7 +723,15 @@ async function runTrial({ pool, config, id, steps, deps = {} }) {
   const trialRow = deps.inProcessRow
     || (await pool.query('SELECT id, run_id FROM bench_trials WHERE id = $1', [Number(id)])).rows[0];
   if (!trialRow) return { status: 'gone' };
-  return { status: await executeTrial(pool, config, trialRow, { ...deps, durable: steps }) };
+  const key = Number(trialRow.id);
+  executing.set(key, (executing.get(key) || 0) + 1);
+  try {
+    return { status: await executeTrial(pool, config, trialRow, { ...deps, durable: steps }) };
+  } finally {
+    const left = (executing.get(key) || 1) - 1;
+    if (left > 0) executing.set(key, left);
+    else { executing.delete(key); cancelledHere.delete(key); }
+  }
 }
 
 /**
@@ -806,7 +857,7 @@ async function executeTrial(pool, config, trialRow, deps = {}) {
         watch.replayed();
       }
     });
-    const cancelled = () => !!inFlight.get(row.id)?.cancelled;
+    const cancelled = () => !!inFlight.get(row.id)?.cancelled || cancelledHere.has(Number(row.id));
     patch = await runner.runStage({
       pool, config, stage: row.stage, task, snapshot, model, user, app, repo,
       trial: {
@@ -1501,6 +1552,7 @@ function laneStatus() {
 }
 
 module.exports = {
+  receiveCancel,
   MAX_CONCURRENCY,
   HEAVY_STAGES,
   MAX_HEAVY_PER_RUN,
@@ -1559,7 +1611,8 @@ module.exports = {
     }
   },
   _resetForTests() {
-    inFlight.clear(); laneOn = false; laneConfig = null; ticking = false; tickAgain = false; lastTick = null; lastSweepAt = 0;
+    inFlight.clear(); executing.clear(); cancelledHere.clear();
+    laneOn = false; laneConfig = null; ticking = false; tickAgain = false; lastTick = null; lastSweepAt = 0;
     if (timer) clearTimeout(timer);
     timer = null;
   },

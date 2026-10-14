@@ -74,6 +74,14 @@ app.kubernetes.io/component: postgresql
     {{- end -}}
   {{- end -}}
   {{- if .Values.platform.enabled -}}
+    {{- $drain := float64 .Values.platform.drainMinutes -}}
+    {{- if or (lt $drain 5.0) (gt $drain 240.0) (ne (float64 (int $drain)) $drain) -}}
+      {{- fail "platform.drainMinutes must be a whole number of minutes from 5 to 240" -}}
+    {{- end -}}
+    {{- $draining := float64 .Values.platform.drainingMax -}}
+    {{- if or (lt $draining 0.0) (ne (float64 (int $draining)) $draining) -}}
+      {{- fail "platform.drainingMax must be a whole number, 0 or more" -}}
+    {{- end -}}
     {{- range $name, $image := dict "platform.workerImage" .Values.platform.workerImage "platform.captureImage" .Values.platform.captureImage -}}
       {{- if not (regexMatch "^sha256:[a-f0-9]{64}$" $image.digest) -}}
         {{- fail (printf "%s.digest must be an immutable sha256 digest when platform is enabled" $name) -}}

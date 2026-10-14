@@ -170,6 +170,7 @@ function loadProxy(pool, { turnMode = 'build', forwardResult = {} } = {}) {
     })],
     [paths.worker, stubModule(paths.worker, {
       getActiveTurnMode: () => turnMode,
+      turnModeFor: async () => turnMode,
       markTurnByokSwitched: () => {
         state.switchMarks += 1;
         if (state.alreadySwitched) return false;

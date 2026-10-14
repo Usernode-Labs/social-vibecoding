@@ -38,7 +38,10 @@
 
 const sessionState = require('./session-state');
 
-const registry = new Map();
+// A turn with a stop handle holds its session (services/processes.js), from
+// the Mayor's first token: another platform process sees it busy, and a
+// draining one finishes it before it exits (docs/plans/draining-releases.md).
+const registry = require('./processes').heldMap('session');
 
 function get(sessionId) {
   return registry.get(Number(sessionId));

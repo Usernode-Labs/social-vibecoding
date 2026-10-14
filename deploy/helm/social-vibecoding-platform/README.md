@@ -390,12 +390,27 @@ Platform upgrades use a Kubernetes-native blue/green equivalent: a
 requires two consecutive readiness successes plus `minReadySeconds`, and keeps
 `maxUnavailable: 0`. The stable Service starts routing to the new Pod only
 after it is Ready; Kubernetes removes and terminates the old Pod after the new
-ReplicaSet is Available. Existing connections receive the platform's normal
-pre-stop and SIGTERM drain budget.
+ReplicaSet is Available.
 
-Both Pods may serve independent requests during the brief overlap. That is safe
-because `PLATFORM_LEADER_LOCK=1` uses the platform's PostgreSQL advisory-lock
+The terminated Pod does not cut the work it started
+([docs/plans/draining-releases.md](../../../docs/plans/draining-releases.md)).
+On SIGTERM it hands leadership to the new Pod at once, closes its tabs' sockets
+so they reconnect there, refuses anything new, and finishes its turns, previews,
+checks, shots runs and merges. It exits as soon as it holds nothing, or after
+`platform.drainMinutes` (40 by default), whichever comes first, handing over
+whatever is left. `terminationGracePeriodSeconds` is that plus a minute.
+Kubernetes keeps a terminating Pod out of the Service and out of the
+Deployment's replica count, so the rollout completes without waiting for it.
+When releases come faster than work finishes, at most `platform.drainingMax`
+replaced Pods finish at once; the oldest hands its work over first.
+
+Both Pods may serve independent requests during the brief overlap, and a
+replaced Pod may still run work for as long as it drains. That is safe because
+`PLATFORM_LEADER_LOCK=1` uses the platform's PostgreSQL advisory-lock
 coordinator: only one Pod runs singleton recovery, sweepers and reconcilers.
+Each process also records what it is working on (`platform_processes`,
+`process_holds`), so the new leader's recovery leaves a replaced Pod's live
+work alone, and a Stop clicked on one Pod reaches the Pod that runs the turn.
 This is intentionally implemented with the built-in Deployment controller;
 the cluster does not need Caddy, Argo Rollouts, or another rollout CRD.
 

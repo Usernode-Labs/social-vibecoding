@@ -45,8 +45,10 @@ const log = require('./logger');
 // non-deploying state than a permanently spinning pill.
 const DEPLOY_STALE_AFTER_MS = 30 * 60 * 1000;
 
-// slug → { deploying, startedAt: ISO, fromSha, toSha? }
-const _state = new Map();
+// slug → { deploying, startedAt: ISO, fromSha, toSha? }. Each is this
+// process's hold on the app's deploy (services/processes.js), so another
+// platform process reads it as deploying (and its heal leaves it alone).
+const _state = require('./processes').heldMap('deploy');
 
 // Lazy-required to dodge a require-cycle: ws.js doesn't import this
 // module, but rebuildProduction (which calls into here) is reachable
@@ -108,7 +110,13 @@ function fromRow(row) {
 function read(slug, row = null) {
   if (!slug) return null;
   const entry = _state.get(slug);
-  if (!entry) return fromRow(row);
+  if (!entry) {
+    const delivered = fromRow(row);
+    if (delivered) return delivered;
+    let elsewhere = false;
+    try { elsewhere = require('./processes').heldElsewhere('deploy', slug); } catch { /* none */ }
+    return elsewhere ? { deploying: true, startedAt: null, fromSha: null } : null;
+  }
   // Stale-deploy gate. Don't auto-delete here — the caller of
   // rebuildProduction owns the lifecycle, and pretending the entry
   // doesn't exist anymore is enough to unstick the UI.

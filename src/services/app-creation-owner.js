@@ -97,7 +97,9 @@ function newOwner() {
 // dropped, say) still has its attempt running: the sweep never takes a row
 // over from its own process, so the two can never build one project side by
 // side in one working directory.
-const driving = new Map(); // appId -> how many
+// Each app is also this process's hold (services/processes.js): a draining
+// process finishes the creation before it exits.
+const driving = require('./processes').heldMap('app_creation'); // appId -> how many
 const startDriving = (id) => driving.set(id, (driving.get(id) || 0) + 1);
 const stopDriving = (id) => {
   const left = (driving.get(id) || 1) - 1;
