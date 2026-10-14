@@ -19,15 +19,21 @@ const { Client } = require('pg');
 process.env.DATABASE_URL ||= 'postgres://usernode:test@db.example.test:5432/usernode';
 const { truncatePrivateTables } = require('../src/services/db-manager');
 
-function recorder(tables, { failOn = null } = {}) {
+// `holding` answers the emptiness check: the tables it names still hold rows.
+function recorder(tables, { failOn = null, holding = () => [] } = {}) {
   const calls = [];
   const execute = async (db, sql, opts = {}) => {
     calls.push({ db, sql, opts });
     if (/obj_description/.test(sql)) return tables.join('\n') + '\n';
     if (failOn && failOn(sql)) throw new Error(`boom: ${sql.slice(0, 60)}`);
+    if (/WHERE EXISTS/.test(sql)) return holding(calls).join('\n');
     return '';
   };
-  return { calls, execute, truncates: () => calls.filter((c) => /^TRUNCATE/.test(c.sql)).map((c) => c.sql) };
+  return {
+    calls, execute,
+    truncates: () => calls.filter((c) => /^TRUNCATE/.test(c.sql)).map((c) => c.sql),
+    checks: () => calls.filter((c) => /WHERE EXISTS/.test(c.sql)),
+  };
 }
 
 test('every private table is emptied by one TRUNCATE statement', async () => {
@@ -37,6 +43,36 @@ test('every private table is emptied by one TRUNCATE statement', async () => {
   assert.deepEqual(r.truncates(), [`TRUNCATE ${tables.join(', ')} RESTART IDENTITY CASCADE`]);
   assert.deepEqual(result.truncated, tables);
   assert.ok(r.calls.every((c) => c.db === 'app_demo_staging_s1_abc'));
+  assert.equal(r.checks().length, 1, 'one query confirms they are empty');
+  assert.equal(r.calls.length, 3, 'discovery, the statement and the check: three round trips');
+  assert.match(r.checks()[0].sql, /^SELECT 'public\.private_000' WHERE EXISTS \(SELECT 1 FROM public\.private_000\) UNION ALL /);
+  assert.equal(r.checks()[0].opts.tuplesOnly, true);
+});
+
+test('rows back after the one statement: the per-table pass runs, then the check again', async () => {
+  const tables = ['public.a', 'public.b'];
+  // Refilled once (an AFTER TRUNCATE trigger), empty after the per-table pass.
+  const r = recorder(tables, { holding: (calls) => (calls.filter((c) => /WHERE EXISTS/.test(c.sql)).length === 1 ? ['public.b'] : []) });
+  const result = await truncatePrivateTables('app_demo_staging_s1_abc', r.execute);
+  assert.deepEqual(result.truncated, tables);
+  assert.deepEqual(r.truncates(), [
+    'TRUNCATE public.a, public.b RESTART IDENTITY CASCADE',
+    'TRUNCATE public.a RESTART IDENTITY CASCADE',
+    'TRUNCATE public.b RESTART IDENTITY CASCADE',
+  ]);
+  assert.equal(r.checks().length, 2);
+});
+
+test('rows still there after the per-table pass fail it, naming the table', async () => {
+  const r = recorder(['public.a', 'public.b'], { holding: () => ['public.a'] });
+  await assert.rejects(truncatePrivateTables('app_demo_staging_s1_abc', r.execute),
+    /Failed to truncate 1 staging:private table\(s\) in app_demo_staging_s1_abc: public\.a \(still holds rows after TRUNCATE\)/);
+});
+
+test('a check that cannot run fails the pass', async () => {
+  const r = recorder(['public.a'], { failOn: (sql) => /WHERE EXISTS/.test(sql) });
+  await assert.rejects(truncatePrivateTables('app_demo_staging_s1_abc', r.execute),
+    /Could not confirm the staging:private tables in app_demo_staging_s1_abc are empty: boom/);
 });
 
 test('no private tables: no TRUNCATE at all', async () => {
@@ -156,6 +192,39 @@ test('real server: a table that refuses TRUNCATE is named, and the others are st
   assert.equal((await s.client.query('SELECT count(*)::int AS n FROM a')).rows[0].n, 0);
   assert.equal((await s.client.query('SELECT count(*)::int AS n FROM c')).rows[0].n, 0);
   assert.equal((await s.client.query('SELECT count(*)::int AS n FROM b')).rows[0].n, 1);
+});
+
+// AFTER TRUNCATE triggers fire once the whole statement is done, so one on
+// `a` that writes into `b` refills `b` after the single statement emptied it.
+test('real server: an AFTER TRUNCATE trigger that refills a private table is caught and undone', { timeout: 60000 }, async (t) => {
+  const s = await scratchDatabase(t, 'trunc_trigger');
+  if (!s) return;
+  await s.client.query(`
+    CREATE TABLE a (id serial PRIMARY KEY, v text); CREATE TABLE b (id serial PRIMARY KEY, v text);
+    COMMENT ON TABLE a IS 'staging:private'; COMMENT ON TABLE b IS 'staging:private';
+    INSERT INTO a (v) VALUES ('x'); INSERT INTO b (v) VALUES ('y');
+    CREATE FUNCTION refill_b() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN INSERT INTO b (v) VALUES ('fixture'); RETURN NULL; END $$;
+    CREATE TRIGGER a_refills_b AFTER TRUNCATE ON a FOR EACH STATEMENT EXECUTE FUNCTION refill_b();
+  `);
+  const result = await truncatePrivateTables(s.name, s.execute);
+  assert.deepEqual(result.truncated, ['public.a', 'public.b']);
+  for (const table of ['a', 'b']) {
+    assert.equal((await s.client.query(`SELECT count(*)::int AS n FROM ${table}`)).rows[0].n, 0, `${table} is empty`);
+  }
+  assert.ok(s.statements.includes('TRUNCATE public.b RESTART IDENTITY CASCADE'), 'the per-table pass ran');
+});
+
+test('real server: a trigger that refills an earlier table even table by table fails the pass', { timeout: 60000 }, async (t) => {
+  const s = await scratchDatabase(t, 'trunc_trigger_rev');
+  if (!s) return;
+  await s.client.query(`
+    CREATE TABLE a (id serial PRIMARY KEY, v text); CREATE TABLE b (id serial PRIMARY KEY, v text);
+    COMMENT ON TABLE a IS 'staging:private'; COMMENT ON TABLE b IS 'staging:private';
+    CREATE FUNCTION refill_a() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN INSERT INTO a (v) VALUES ('fixture'); RETURN NULL; END $$;
+    CREATE TRIGGER b_refills_a AFTER TRUNCATE ON b FOR EACH STATEMENT EXECUTE FUNCTION refill_a();
+  `);
+  await assert.rejects(truncatePrivateTables(s.name, s.execute),
+    /Failed to truncate 1 staging:private table\(s\) in trunc_trigger_rev_[0-9a-f]+: public\.a \(still holds rows after TRUNCATE\)/);
 });
 
 test('real server: the platform schema\'s private tables, in one statement', { timeout: 180000 }, async (t) => {

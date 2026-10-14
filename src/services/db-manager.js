@@ -2279,27 +2279,77 @@ SELECT n.nspname || '.' || c.relname
   // Do NOT replace this with the per-table statements inside BEGIN/COMMIT:
   // re-truncating a relation already truncated in the same transaction
   // flushes WAL every time, which measured slower than autocommit.
-  // It is all or nothing, so a failure leaves every table as it was; the
-  // fallback then runs today's statement per table, in autocommit, to empty
-  // all that can be emptied and to name each table that cannot.
+  //
+  // When the statement fails with an error from the server, it rolled back
+  // and every table is as it was; the fallback then runs one statement per
+  // table, in autocommit, to empty all that can be emptied and to name each
+  // table that cannot. A client-side timeout says nothing about the outcome:
+  // the statement may have committed or may still be running. On the one
+  // connection a clone uses, the runner then refuses every later statement,
+  // so the fallback and the check below fail and the pass throws (the
+  // caller may then try the direct copy). Through psql, the process is
+  // killed at its deadline but the server may still be working, and the
+  // fallback's statements can wait behind it.
+  //
+  // AFTER TRUNCATE triggers fire once the whole statement has emptied every
+  // table in it, so a trigger on one private table that writes into another
+  // would refill it after the fact. Hence the check: one query that names
+  // every private table still holding a row. Rows found after the single
+  // statement send the pass to the per-table form; rows found after that
+  // fail the pass, and the copy is not handed out.
   const truncated = [];
+  const perTable = async () => {
+    truncated.length = 0;
+    for (const qualified of safe) {
+      try {
+        await execute(targetDb, `TRUNCATE ${qualified} RESTART IDENTITY CASCADE`);
+        truncated.push(qualified);
+      } catch (err) {
+        log.error('db-manager', 'TRUNCATE failed', {
+          targetDb, table: qualified, err: err.message,
+        });
+        failures.push({ table: qualified, error: err.message });
+      }
+    }
+  };
+  // Names were validated above, so they can be spliced as text too.
+  const stillHoldingRows = async () => {
+    let out;
+    try {
+      out = await execute(targetDb,
+        safe.map((t) => `SELECT '${t}' WHERE EXISTS (SELECT 1 FROM ${t})`).join(' UNION ALL '),
+        { tuplesOnly: true });
+    } catch (err) {
+      throw new Error(`Could not confirm the staging:private tables in ${targetDb} are empty: ${err.message}`);
+    }
+    return String(out || '').split('\n').map((s) => s.trim()).filter(Boolean);
+  };
   if (safe.length > 0) {
+    let batched = false;
     try {
       await execute(targetDb, `TRUNCATE ${safe.join(', ')} RESTART IDENTITY CASCADE`);
-      truncated.push(...safe);
+      batched = true;
     } catch (batchErr) {
       log.warn('db-manager', 'One-statement TRUNCATE failed; truncating table by table', {
         targetDb, count: safe.length, err: batchErr.message,
       });
-      for (const qualified of safe) {
-        try {
-          await execute(targetDb, `TRUNCATE ${qualified} RESTART IDENTITY CASCADE`);
-          truncated.push(qualified);
-        } catch (err) {
-          log.error('db-manager', 'TRUNCATE failed', {
-            targetDb, table: qualified, err: err.message,
-          });
-          failures.push({ table: qualified, error: err.message });
+    }
+    let refilled = [];
+    if (batched) {
+      refilled = await stillHoldingRows();
+      if (refilled.length === 0) truncated.push(...safe);
+      else {
+        log.warn('db-manager', 'Rows came back after the one-statement TRUNCATE; truncating table by table', {
+          targetDb, tables: refilled,
+        });
+      }
+    }
+    if (!batched || refilled.length > 0) {
+      const failedBefore = failures.length;
+      await perTable();
+      if (failures.length === failedBefore) {
+        for (const table of await stillHoldingRows()) {
+          failures.push({ table, error: 'still holds rows after TRUNCATE' });
         }
       }
     }
