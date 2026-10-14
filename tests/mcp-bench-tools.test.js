@@ -249,6 +249,15 @@ test('the run tools are a full admin\'s only; launch and cancel are writes; the 
   assert.equal(input.repeats.safeParse(lane.MAX_REPEATS).success, true);
   assert.equal(input.repeats.safeParse(lane.MAX_REPEATS + 1).success, false);
   assert.equal(input.concurrency.safeParse(lane.MAX_CONCURRENCY + 1).success, false);
+  // A studio run's limit is the studio's own, and fits in the lane with room beside it.
+  const studio = require('../src/services/bench/studio');
+  const studioInput = specs.get('launch_bench_studio').inputSchema;
+  assert.equal(studioInput.concurrency.safeParse(studio.MAX_CONCURRENCY).success, true);
+  assert.equal(studioInput.concurrency.safeParse(studio.MAX_CONCURRENCY + 1).success, false);
+  assert.match(specs.get('launch_bench_studio').inputSchema.concurrency.description, new RegExp(`at most ${studio.MAX_CONCURRENCY}\\)`));
+  assert.equal(studio.MAX_CONCURRENCY, 9, 'a three-arm run of 18 trials in two rounds');
+  assert.ok(lane.MAX_CONCURRENCY >= studio.MAX_CONCURRENCY, 'a run may hold what its launch asked for');
+  assert.ok(lane.MAX_IN_FLIGHT >= studio.MAX_CONCURRENCY + 2, 'two slots beside a full studio run, for side builds');
   // The slice keys are the report's connector keys: no app_slug.
   const report = require('../src/services/bench/report');
   assert.deepEqual(specs.get('get_bench_run').inputSchema.slice.unwrap().options, [...report.CONNECTOR_SLICE_KEYS]);

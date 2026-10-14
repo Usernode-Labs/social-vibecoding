@@ -630,17 +630,18 @@ test('the benchmark lane against the full PostgreSQL schema', { timeout: 180000 
     await finishAll(g, [run.id]);
   });
 
-  await t.test('at most eight trials in flight across every run', async () => {
+  await t.test('at most eleven trials in flight across every run', async () => {
     lane._resetForTests();
     const g = gated();
-    const a = (await lane.launchRun(pool, { suiteId: suite.id, models: ['z-ai/glm-5.3-flash'], stages: ['triage'], repeats: 3, concurrency: 5 })).run;
-    const b = (await lane.launchRun(pool, { suiteId: suite.id, models: ['z-ai/glm-5.3-flash'], stages: ['triage'], repeats: 3, concurrency: 5 })).run;
+    assert.equal(lane.MAX_IN_FLIGHT, 11, 'a full studio run of nine and two beside it');
+    const a = (await lane.launchRun(pool, { suiteId: suite.id, models: ['z-ai/glm-5.3-flash'], stages: ['triage'], repeats: 3, concurrency: 7 })).run;
+    const b = (await lane.launchRun(pool, { suiteId: suite.id, models: ['z-ai/glm-5.3-flash'], stages: ['triage'], repeats: 3, concurrency: 7 })).run;
     const out = await lane.tick(pool, {}, deps);
-    assert.equal(out.started, 8);
+    assert.equal(out.started, 11);
     assert.equal(out.paused, 'lane_full');
     const flying = [...lane._inFlightForTests().values()];
-    assert.equal(flying.filter((f) => f.runId === a.id).length, 5);
-    assert.equal(flying.filter((f) => f.runId === b.id).length, 3, 'the second run gets what is left of the eight');
+    assert.equal(flying.filter((f) => f.runId === a.id).length, 7);
+    assert.equal(flying.filter((f) => f.runId === b.id).length, 4, 'the second run gets what is left of the eleven');
     await finishAll(g, [a.id, b.id]);
   });
 

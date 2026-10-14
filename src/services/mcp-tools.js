@@ -7185,7 +7185,7 @@ function registerTools(server, ctx) {
         repeats: z.number().int().min(1).max(3).optional().describe('Attempts per brief, model and pack (default 1).'),
         capUsd: z.number().positive().describe(`The most the run may spend, in US dollars. Required. Over ${STUDIO_CONFIRM_CAP_USD} needs confirmLargeCap.`),
         confirmLargeCap: z.boolean().optional(),
-        concurrency: z.number().int().min(1).max(6).optional().describe('Builds at once (default: all of them, at most 6).'),
+        concurrency: z.number().int().min(1).max(9).optional().describe('Builds at once (default: all of them, at most 9).'),
         note: z.string().optional(),
       },
       outputSchema: {

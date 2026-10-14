@@ -84,15 +84,19 @@ const progress = require('./progress');
 const snapshots = require('../homeroom-bot-snapshots');
 const drain = require('../homeroom-bot-drain');
 
-const MAX_CONCURRENCY = 8;
+// One run's trials at once: a studio run's own limit (studio.js
+// MAX_CONCURRENCY, 9) must fit under it.
+const MAX_CONCURRENCY = 9;
 // Heavy stages: at most this many of one run's at once.
 // A taste trial (#3737) is a container of many minutes too: a first
 // version's triage, spec and build, or a capture's install, boot and
 // screenshots.
 const HEAVY_STAGES = Object.freeze(['build', 'checks_fix', 'spec', 'first_version', 'capture']);
 const MAX_HEAVY_PER_RUN = 3;
-// Every trial in flight in this process, across runs.
-const MAX_IN_FLIGHT = 8;
+// Every trial in flight in this process, across runs: a full studio run (9)
+// and two more, the room it left before (6 of 8), so a live first version's
+// side builds and other runs are not held behind it.
+const MAX_IN_FLIGHT = 11;
 const MAX_MODELS = 10;
 const MAX_REPEATS = 5;
 const MIN_CAP_USD = 0.5;
