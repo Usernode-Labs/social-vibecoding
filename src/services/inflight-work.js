@@ -30,7 +30,7 @@ let nextId = 1;
 const wakers = new Set();
 
 function wakeIfIdle() {
-  if (entries.size) return;
+  // Every settle may be the last one a narrowed wait was waiting for.
   for (const wake of [...wakers]) wake();
 }
 
@@ -72,8 +72,12 @@ function snapshot(now = Date.now()) {
  * settles; `also` (the drain's count of open HTTP handlers, which has no
  * event of its own) is polled every `pollMs`.
  */
-function waitIdle({ timeoutMs = 0, also = null, pollMs = 100 } = {}) {
-  const idle = () => entries.size === 0 && (!also || also());
+//
+// `only(name)`, when given, narrows "nothing is held" to the entries it
+// accepts: the leader's own ticks, say, before a process stops leading.
+function waitIdle({ timeoutMs = 0, also = null, pollMs = 100, only = null } = {}) {
+  const held = () => (only ? [...entries.values()].some((e) => only(e.name)) : entries.size > 0);
+  const idle = () => !held() && (!also || also());
   if (idle()) return Promise.resolve(true);
   const deadline = Date.now() + Math.max(0, Number(timeoutMs) || 0);
   return new Promise((resolve) => {

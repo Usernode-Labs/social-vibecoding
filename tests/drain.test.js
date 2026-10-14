@@ -116,3 +116,15 @@ test('what a session is doing here holds it, and isSessionBusyHere tells this pr
   assert.equal(processes.heldHere('session', 78), false, 'an operation released twice releases its hold once');
   assert.equal(aw.isSessionBusyElsewhere(79), false, 'nothing elsewhere while the registry has not started');
 });
+
+test('a turn this process executes holds its session for as long as it is in flight, whatever started it', () => {
+  processes._reset();
+  const worker = require('../src/services/worker');
+  worker._registryUpsertForTests(9101, { inFlight: true, activeTurnMode: 'shots' });
+  assert.equal(processes.heldHere('session', 9101), true, 'the shots agent (or an eval trial) is seen like any turn');
+  worker._registryUpsertForTests(9101, { lastUsedMs: Date.now() });
+  assert.equal(processes.heldHere('session', 9101), true, 'a bookkeeping update keeps it');
+  worker._registryUpsertForTests(9101, { inFlight: false });
+  assert.equal(processes.heldHere('session', 9101), false, 'the exec ended');
+  assert.equal(processes.localCount(), 0);
+});

@@ -70,8 +70,20 @@ test('processes and their holds, against the full schema', { timeout: 120000 }, 
   });
 
   await t.test('registered: the row, the holds taken before, and those after, all reach the database', async () => {
+    // In a Kubernetes Pod, this container's dead predecessor (same Pod name)
+    // is removed as it starts, its holds with it.
+    await other('predecessor', { holds: [['session', 99]] });
+    await pool.query(`UPDATE platform_processes SET host = $1 WHERE id = 'predecessor'`, [require('node:os').hostname()]);
+    const kube = process.env.KUBERNETES_SERVICE_HOST;
+    process.env.KUBERNETES_SERVICE_HOST = '10.0.0.1';
     const early = processes.hold('staging_build', 11);
-    await processes.start({ pool, role: 'all' });
+    try {
+      await processes.start({ pool, role: 'all' });
+    } finally {
+      if (kube === undefined) delete process.env.KUBERNETES_SERVICE_HOST; else process.env.KUBERNETES_SERVICE_HOST = kube;
+    }
+    assert.equal((await pool.query(`SELECT 1 FROM platform_processes WHERE id = 'predecessor'`)).rows.length, 0);
+    assert.equal((await pool.query(`SELECT 1 FROM process_holds WHERE process_id = 'predecessor'`)).rows.length, 0);
     const { rows: [me] } = await pool.query('SELECT * FROM platform_processes WHERE id = $1', [processes.ID]);
     assert.equal(me.state, 'serving');
     const late = processes.hold('session', 12);
@@ -152,6 +164,10 @@ test('processes and their holds, against the full schema', { timeout: 120000 }, 
     await other('pod-successor', { state: 'serving' });
     await other('pod-web', { state: 'serving', role: 'web' });
     await other('pod-successor-dead', { state: 'serving', ageSeconds: 600 });
+    // One serving that started before this one is no successor (a replica
+    // stopping beside it would be marked draining; an older one serving is
+    // the one this replaced, or a peer).
+    await pool.query(`INSERT INTO platform_processes (id, state, started_at) VALUES ('pod-older', 'serving', NOW() - interval '1 hour')`);
     assert.equal(await processes.servingOthers(), 1);
     // A beat keeps the drain: it does not put the row back to serving.
     await processes.beat();

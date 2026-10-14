@@ -28,7 +28,8 @@ build in flight" or "stop this turn" used to read this process's memory only.
   `HEARTBEAT_MS`, says when it starts draining (`draining`, with its
   deadline) and deletes its row as it exits. A process whose beat is older
   than `LIVE_SECONDS` is gone, whatever its row says; the leader deletes such
-  rows (their holds go with them).
+  rows (their holds go with them). In a Kubernetes Pod a process starting
+  deletes the rows of its Pod's previous process: the container restarted.
 - A HOLD is a thing a process is doing that nothing elsewhere may adopt,
   tear down, duplicate or call idle: `hold(kind, ref)` returns its release,
   counted per process, written to `process_holds` on the first hold and
@@ -46,8 +47,13 @@ build in flight" or "stop this turn" used to read this process's memory only.
 
 A stop for something another process runs travels to it over the WebSocket
 bus (`ws-bus.js`), and the holder does exactly what a stop in its own process
-does: a turn (`session_stop`), a shots run (`shots_stop`), a bench trial or
-run (`bench_cancel`). What a worker turn calls back (the Anthropic proxy, its
+does: a turn (`session_stop`, acted on by the process with the turn's stop
+handle, while the one asked still takes its durable path: the stamp, and the
+kill inside the worker), a shots run (`shots_stop`), a bench trial or run
+(`bench_cancel`, from wherever the trial's slot is counted to wherever its
+build executes). A worker turn in flight holds its session whatever started
+it (the warm registry's `inFlight`), so the shots agent and an eval trial are
+seen too. What a worker turn calls back (the Anthropic proxy, its
 BYOK spend, a shots eval's bill) reaches whichever Pod the Service picks, so
 those read the turn from the database when it is not in this process.
 
@@ -67,9 +73,10 @@ always had: a minute's drain, the lock released last.
 2. Stop being leader: the Homeroom bot's loops, the bench lane, the shots
    eval runner, the sweepers and timers stop starting things; the workflow
    runtime stops its loops (`quiesceWorkflow`: no slot, timer or claim) but
-   not its running work; the timer ticks under way finish (bounded); then the
-   leader lock is released (`leadership.resign`). The new Pod is promoted
-   within a poll and starts its leader work.
+   not its running work; the leader timer ticks and merge passes under way
+   finish (up to the deadline); then the leader lock is released
+   (`leadership.resign`). The new Pod is promoted within a poll and starts its
+   leader work.
 3. Tell open tabs where traffic went and close their sockets, so they
    reconnect to the new Pod. The listener stays open: Kubernetes has already
    taken this Pod out of the Service, and a shots worker calls the Pod that
@@ -79,7 +86,8 @@ always had: a minute's drain, the lock released last.
    answering; or until the drain deadline (`PLATFORM_DRAIN_TIMEOUT_MS`,
    default `KUBERNETES_DRAIN_DEFAULT_MS`); or until `PLATFORM_DRAINING_MAX`
    newer processes are draining too (releases faster than work finishes:
-   the oldest hands its work over rather than pile up Pods).
+   the oldest hands its work over rather than pile up Pods); or until no
+   successor is serving any more (it died, and nothing leads).
 5. Then what shutdown always did: close the listener, end the Mayor's turns,
    stop the workflow runtime (its work items given up to the next claim),
    mark what is left interrupted, hand back checks runs, close the pool,

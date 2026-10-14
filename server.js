@@ -2905,6 +2905,15 @@ async function sweepOrphanTurns(config, { adopt = adoptOrphanWorker } = {}) {
           SELECT 1 FROM process_holds h JOIN platform_processes p ON p.id = h.process_id
            WHERE h.kind = ANY($3::text[]) AND h.ref = cs.id::text
              AND p.heartbeat_at > NOW() - make_interval(secs => $4))
+        -- What adoption leaves as it is, and so would come back every pass:
+        -- a headless run (resumeHeadlessRuns carries it), and a durable
+        -- build's session (its build carries it, wherever it runs).
+        AND cs.is_headless IS NOT TRUE
+        AND NOT (cs.workflow_owner IS NOT NULL AND EXISTS (
+          SELECT 1 FROM wf_instances w
+           WHERE w.machine = split_part(cs.workflow_owner, '/', 1)
+             AND w.key = substr(cs.workflow_owner, length(split_part(cs.workflow_owner, '/', 1)) + 2)
+             AND w.state = 'building'))
       ORDER BY cs.id
       LIMIT 20`,
     [[...turnLifecycle.RECOVERABLE_PHASES], new Date(Date.now() - ORPHAN_MIN_AGE_MS).toISOString(),
@@ -6713,6 +6722,12 @@ async function cleanup() {
   // it led (a rollback across it), and a Pod evicted before its replacement
   // is up would leave nobody leading. Without one, the cutover it always had:
   // a minute's drain, the lock released last.
+  // Draining first, so a process stopping beside this one (a scale to zero,
+  // a restart of every replica) never counts it as its successor.
+  if (finishesWork) {
+    await boundedStep(processes.markDraining(new Date(cleanupStartedAt + drainMs)), 1000)
+      .catch((err) => log.warn('server', 'Could not mark this process draining', { err: err.message }));
+  }
   const askSuccessor = shutdownOverrides?.successor ?? successorServing;
   if (finishesWork && !(await askSuccessor())) {
     finishesWork = false;
@@ -6721,10 +6736,6 @@ async function cleanup() {
   }
   // From SIGTERM, not from here: waiting for a successor spends the drain.
   const drainDeadline = cleanupStartedAt + drainMs;
-  if (finishesWork) {
-    await boundedStep(processes.markDraining(new Date(drainDeadline)), 1000)
-      .catch((err) => log.warn('server', 'Could not mark this process draining', { err: err.message }));
-  }
   // The Mayor's turns in agent sessions end with this process: each one
   // records what it had said and that it was interrupted (with Retry), and
   // hands its lease back, so the conversation is never left looking busy
@@ -7087,9 +7098,11 @@ function closeListener(timeoutMs) {
   }
 }
 
-// How long the leader's ticks already running get before the lock goes:
-// the new leader would run the same sweep beside them.
-const LEADER_TICKS_WAIT_MS = 15 * 1000;
+// What of this process's background work is its leader work: a leader
+// timer's tick (services/leader-timers.js) and a merge pass (merge-queue.js).
+// The lock goes only once they are done, or at the drain deadline: the new
+// leader would run the same sweep, or the same app's merges, beside them.
+const isLeaderWork = (name) => name.startsWith('timer:') || name === 'merge-queue';
 
 // A release replaced this process: stop leading, send its tabs to the new
 // Pod, and finish what it holds (services/processes.js), its background work
@@ -7100,7 +7113,12 @@ const LEADER_TICKS_WAIT_MS = 15 * 1000;
 // (lifecycle.setShuttingDown).
 async function drainUntilIdle({ deadline, announced }) {
   const workflowPlatform = require('./src/workflow/platform.ts');
-  await inflightWork.waitIdle({ timeoutMs: LEADER_TICKS_WAIT_MS });
+  const leaderWorkDone = await inflightWork.waitIdle({ timeoutMs: Math.max(0, deadline - Date.now()), only: isLeaderWork });
+  if (!leaderWorkDone) {
+    log.warn('server', 'Resigning with leader work still running at the drain deadline', {
+      work: inflightWork.snapshot().filter((e) => isLeaderWork(e.name)).slice(0, 20),
+    });
+  }
   if (leadership) await leadership.resign().catch((err) => log.warn('server', 'Resigning leadership failed', { err: err.message }));
   await announced;
   const closed = ws.closeAllForRelease();
@@ -7114,21 +7132,27 @@ async function drainUntilIdle({ deadline, announced }) {
     sockets: closed, deadlineMs: Math.max(0, deadline - Date.now()), ...busy(),
   });
   const maxDraining = drain.drainingMax();
+  let why = null;
   const outcome = await drain.untilIdle({
     deadline,
     idle: () => processes.localCount() === 0 && inflightWork.size() === 0
       && workflowPlatform.workflowWorkRunning() === 0 && inflightRequests.pending() === 0,
-    superseded: async () => (await processes.newerDraining()) >= maxDraining,
+    // Too many newer processes draining, or no successor serving any more
+    // (it died, and nothing leads): hand the rest over now.
+    superseded: async () => {
+      if ((await processes.newerDraining()) >= maxDraining) { why = 'crowded'; return true; }
+      if ((await processes.servingOthers()) === 0) { why = 'alone'; return true; }
+      return false;
+    },
     describe: busy,
   });
   if (outcome.reason === 'idle') {
     log.info('server', 'Finished this process\'s work', { waitedMs: outcome.waitedMs });
   } else {
-    log.warn('server', outcome.reason === 'superseded'
-      ? 'Newer processes are draining too; handing the rest of this one\'s work over'
-      : 'Drain deadline passed; handing the rest of this process\'s work over', {
-      waitedMs: outcome.waitedMs, maxDraining, ...busy(),
-    });
+    const message = outcome.reason === 'deadline' ? 'Drain deadline passed; handing the rest of this process\'s work over'
+      : why === 'alone' ? 'No successor is serving any more; handing the rest of this process\'s work over'
+        : 'Newer processes are draining too; handing the rest of this one\'s work over';
+    log.warn('server', message, { waitedMs: outcome.waitedMs, maxDraining, ...busy() });
   }
   return outcome;
 }

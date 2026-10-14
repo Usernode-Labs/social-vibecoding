@@ -340,6 +340,19 @@ async function start({ pool: db, role: r = 'all' } = {}) {
   if (started) return;
   pool = db;
   role = r;
+  // In a Kubernetes Pod the host is the Pod's name, and a Pod runs one
+  // platform process: a row of the same host is this container's
+  // predecessor, which died (an OOM kill, a failed liveness probe) and must
+  // not be read as live, holding its sessions, for LIVE_SECONDS after its last
+  // beat. Elsewhere one machine may run several (tests, local development).
+  if (process.env.KUBERNETES_SERVICE_HOST) {
+    try {
+      const { rowCount } = await pool.query('DELETE FROM platform_processes WHERE host = $1 AND id <> $2', [os.hostname(), ID]);
+      if (rowCount) log.info('processes', 'Removed the row of this Pod\'s previous process', { count: rowCount });
+    } catch (err) {
+      log.warn('processes', 'Could not remove this Pod\'s previous process', { err: err.message });
+    }
+  }
   // The row before any hold's write can reach the queue (a hold references
   // it); holds taken until now are written by the first beat, all at once.
   try { await writeRow(pool); } catch (err) {
@@ -382,18 +395,20 @@ async function newerDraining() {
 }
 
 /**
- * How many other live processes of this role are serving (not draining):
- * a successor that registers what it holds, so that this process may stop
- * leading and finish its work beside it. A process of a release from before
- * the registry writes no row: it is never counted, and a process it replaces
- * keeps the cutover it always had (docs/plans/draining-releases.md).
+ * How many live processes of this role started after this one and are
+ * serving (not draining): a successor that registers what it holds, so that
+ * this process may stop leading and finish its work beside it. A process of
+ * a release from before the registry writes no row: it is never counted, and
+ * a process it replaces keeps the cutover it always had. Neither is one older
+ * than this one, nor one stopping with it (docs/plans/draining-releases.md).
  */
 async function servingOthers() {
   if (!started || !pool) return 0;
   const { rows: [row] } = await pool.query(
-    `SELECT count(*)::int AS n FROM platform_processes
-      WHERE id <> $1 AND role = $2 AND state = 'serving'
-        AND heartbeat_at > NOW() - make_interval(secs => $3)`,
+    `SELECT count(*)::int AS n FROM platform_processes p
+      WHERE p.id <> $1 AND p.role = $2 AND p.state = 'serving'
+        AND p.heartbeat_at > NOW() - make_interval(secs => $3)
+        AND p.started_at > COALESCE((SELECT started_at FROM platform_processes WHERE id = $1), '-infinity'::timestamptz)`,
     [ID, role, LIVE_SECONDS]);
   return row?.n || 0;
 }

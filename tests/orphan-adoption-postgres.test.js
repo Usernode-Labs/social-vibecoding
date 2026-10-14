@@ -93,6 +93,18 @@ test('the leader adopts only what no live process holds', { timeout: 120000 }, a
   const fresh = await session('fresh', { at: now });
   const left = await session('left');
   const quarantined = await session('quarantined', { phase: 'quarantined' });
+  const headless = await session('headless');
+  await pool.query('UPDATE chat_sessions SET is_headless = TRUE WHERE id = $1', [headless]);
+  const building = await session('building');
+  await pool.query(`UPDATE chat_sessions SET workflow_owner = 'bot-build/run:9' WHERE id = $1`, [building]);
+  // The build that owns it, written as the kernel's pipeline writes it.
+  const c = await pool.connect();
+  try {
+    await c.query('BEGIN');
+    await c.query(`SET LOCAL app.wf_writer = 'transition'`);
+    await c.query(`INSERT INTO wf_instances (machine, key, state, machine_version) VALUES ('bot-build', 'run:9', 'building', 1)`);
+    await c.query('COMMIT');
+  } finally { c.release(); }
   await pool.query(`INSERT INTO platform_processes (id, state, heartbeat_at, drain_started_at) VALUES ('pod-old', 'draining', NOW(), NOW())`);
   await pool.query(`INSERT INTO platform_processes (id, heartbeat_at) VALUES ('pod-dead', NOW() - interval '10 minutes')`);
   await pool.query(`INSERT INTO process_holds (process_id, kind, ref) VALUES ('pod-old', 'session', $1), ('pod-dead', 'session', $2)`,
@@ -115,6 +127,8 @@ test('the leader adopts only what no live process holds', { timeout: 120000 }, a
     assert.equal(out.adopted, 2);
     assert.ok(!adopted.includes(fresh), 'a turn whose record just moved may be one being dispatched');
     assert.ok(!adopted.includes(quarantined), 'a quarantined turn is not recoverable');
+    assert.ok(!adopted.includes(headless) && !adopted.includes(building),
+      'nor what adoption leaves as it is: a headless run, a durable build\'s session');
     assert.ok(!adopted.includes(heldLive));
   });
 

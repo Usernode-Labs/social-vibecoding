@@ -2681,7 +2681,28 @@ async function finishTurn(sessionId, { journal = null, turnId = null } = {}) {
 //   - adoptWarmWorker() → server restart picked up an existing warm
 //                         container; register it so the next exec
 //                         doesn't try to re-bootstrap on top.
-const _warmRegistry = new Map();
+// docs/plans/draining-releases.md: a turn this process is executing holds
+// its session (services/processes.js) for as long as `inFlight` is set,
+// whatever started it (a person's turn, a sync, the shots agent, an eval
+// trial, a bot build): the cross-process twin of isInFlight, so another
+// process's leader never adopts or tears it down, and another process's
+// proxy reads its mode (remoteTurn). Taken on the flag's rise, given back on
+// its fall or when the entry goes.
+const _inFlightHolds = new Map(); // sessionId -> release
+function _inFlightHold(sessionId, inFlight) {
+  if (inFlight && !_inFlightHolds.has(sessionId)) {
+    try { _inFlightHolds.set(sessionId, require('./processes').hold('session', Number(sessionId))); } catch { /* no ref */ }
+  } else if (!inFlight && _inFlightHolds.has(sessionId)) {
+    const release = _inFlightHolds.get(sessionId);
+    _inFlightHolds.delete(sessionId);
+    release();
+  }
+}
+class WarmRegistry extends Map {
+  delete(sessionId) { _inFlightHold(sessionId, false); return super.delete(sessionId); }
+  clear() { for (const id of [..._inFlightHolds.keys()]) _inFlightHold(id, false); super.clear(); }
+}
+const _warmRegistry = new WarmRegistry();
 
 function _registryGet(sessionId) {
   return _warmRegistry.get(sessionId) || null;
@@ -2698,6 +2719,7 @@ function _registryUpsert(sessionId, patch) {
   };
   const next = { ...prev, ...patch };
   _warmRegistry.set(sessionId, next);
+  _inFlightHold(sessionId, !!next.inFlight);
   // #1038: the inner docker-exec window is one of the two signals
   // isSessionBusy() ORs together, so a change here can flip a session's
   // working state for every client. Only the actual transition notifies —
@@ -4182,7 +4204,8 @@ async function remoteTurn(sessionId) {
   const sid = Number(sessionId);
   const meta = _warmRegistry.get(sid);
   if (meta && meta.inFlight) return null;
-  if (!require('./processes').heldElsewhere('session', sid)) return null;
+  const processes = require('./processes');
+  if (!processes.heldElsewhere('session', sid) && !processes.heldElsewhere('shots', sid)) return null;
   const cached = _remoteTurns.get(sid);
   if (cached && Date.now() - cached.at < REMOTE_TURN_TTL_MS) return cached.turn;
   const pool = _getPoolSafe();

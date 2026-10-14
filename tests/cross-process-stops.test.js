@@ -109,6 +109,17 @@ test('a cancel for a bench trial another process runs is forwarded; one nobody r
   assert.equal(refused.status ?? refused.statusCode ?? refused.code, 409);
   assert.deepEqual(bus.sent, []);
   assert.equal(lane.receiveCancel({ trialId: 77 }), false, 'the holder side: nothing of it runs in this process');
+  // A slot this process only counts (a durable trial another process
+  // executes, as holdDurableTrials takes after a release): marked, and the
+  // cancel still goes to the process running it.
+  lane._resetForTests();
+  bus.sent.length = 0;
+  const slot = { runId: 1, est: 0, sessionId: null, promise: null, durable: true };
+  lane._inFlightForTests().set(77, slot);
+  assert.deepEqual(await lane.cancelTrial(running, 77), { ok: true, status: 'stopping' });
+  assert.equal(slot.cancelled, true);
+  assert.deepEqual(bus.sent.map((m) => [m.kind, m.data]), [['bench_cancel', { trialId: 77 }]]);
+  lane._resetForTests();
 });
 
 test('the bus delivers each stop to its receiver, and a turn\'s BYOK spend to the process running it', async (t) => {

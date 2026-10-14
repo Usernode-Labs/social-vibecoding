@@ -10580,21 +10580,26 @@ async function requestSessionStop({ pool, sessionId, user, force = false, immedi
     const forceRequested = force === true;
 
     const handle = stopRegistry.get(sessionId);
-    // docs/plans/draining-releases.md: the turn runs in another platform
+    // docs/plans/draining-releases.md: the turn may run in another platform
     // process (one finishing its work after a release, or the one that
-    // replaced it), which holds the session. That process does exactly what
-    // this one would with the handle it has, told over the bus
-    // (receiveSessionStop); this one has nothing to stop and says so. A stop
-    // forwarded here is never forwarded again.
+    // replaced it), which holds the session. The process with the turn's
+    // handle does what this one would with it, told over the bus
+    // (receiveSessionStop); this one still takes its own durable path below
+    // (the stamp, and the kill inside the worker, which reach the turn from
+    // any process), but never answers "nothing to stop" or clears the
+    // bookkeeping of a turn it handed on. A forwarded stop is never forwarded
+    // again.
+    let handedOn = false;
     if (!handle && !forwarded && require('../services/processes').heldElsewhere('session', Number(sessionId))) {
       require('../services/ws-bus').publish('session_stop', null, {
         sessionId: Number(sessionId),
         user: { id: user.id, username: user.username, canAdminWrite: user.canAdminWrite === true },
         force: force === true, immediate: immediate === true, expectedTurnId: expectedTurnId || null,
       });
+      handedOn = true;
       log.info('sessions', 'Stop forwarded to the process running the turn', { sessionId, by: user.username });
-      return { status: 202, body: { ok: true, stopped: true, stopping: true, phase: null } };
     }
+    const stoppingThere = { status: 202, body: { ok: true, stopped: true, stopping: true, phase: null } };
     if (expectedTurnId) {
       const current = await turnLifecycle.loadActiveTurn(pool, sessionId);
       if (turnLifecycle.turnIdentity(current) !== expectedTurnId) {
@@ -10607,6 +10612,7 @@ async function requestSessionStop({ pool, sessionId, user, force = false, immedi
       ? (handle?.phase === 'mayor2' ? 'wrap_up_not_stoppable' : handle ? 'force' : 'force_orphan')
       : stopPolicy.classifyStopRequest({ handle, force: forceRequested });
 
+    if (handedOn && (action === 'force_orphan' || action === 'force_without_stop')) return stoppingThere;
     if (immediate && action !== 'wrap_up_not_stoppable') {
       const durable = await turnLifecycle.loadActiveTurn(pool, sessionId);
       if (expectedTurnId && turnLifecycle.turnIdentity(durable) !== expectedTurnId) {
@@ -10651,6 +10657,7 @@ async function requestSessionStop({ pool, sessionId, user, force = false, immedi
       try {
         hasDurableTurn = !!(await turnLifecycle.loadActiveTurn(pool, sessionId));
       } catch {}
+      if (handedOn) return stoppingThere;
       log.warn('sessions', 'Stop request had no active turn', {
         sessionId,
         busy: isSessionBusy(sessionId),
@@ -10835,7 +10842,10 @@ async function receiveSessionStop(payload) {
   const sessionId = Number(payload?.sessionId);
   const user = payload?.user;
   if (!forwardedStopDeps || !Number.isInteger(sessionId) || !user || !Number.isInteger(Number(user.id))) return null;
-  if (!stopRegistry.get(sessionId) && !require('../services/processes').heldHere('session', sessionId)) return null;
+  // Only where the turn's handle is: a process that merely holds the session
+  // (a hand-off, a retained recovery) has nothing of the turn to stop, and
+  // the sender's own durable path already reached the worker.
+  if (!stopRegistry.get(sessionId)) return null;
   const result = await requestSessionStop({
     pool: forwardedStopDeps.pool,
     scheduleInteractiveRecovery: forwardedStopDeps.scheduleInteractiveRecovery,
