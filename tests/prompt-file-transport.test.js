@@ -128,7 +128,8 @@ test('hosted Claude references system build guidance while local and Codex share
   assert.equal(local.browserGuidance, IN_LOOP_BROWSER_GUIDANCE);
   assert.equal(
     crypto.createHash('sha256').update(localText).digest('hex'),
-    'df23834071c27331c2cdb3d4638688d52df79667ff239a5c9d4eceb8121799e8',
+    // App bench run 191: the in-loop launch signs an app in and prints its link.
+    '6a3e61f32987026d4c3173c23f4680ced7d2b9e92a365418e16b241265d27c63',
     'the non-system-prompt backends retain their exact reviewed guidance',
   );
   assert.match(localText, /falls back to the home page and records that\n\s+default/);

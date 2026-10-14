@@ -1303,7 +1303,7 @@
       "{\"fn\":\"ensureWorkerImage\"}",
       "{\"fn\":\"ensureWorker\",\"id\":4242}",
       "{\"fn\":\"syncUserAgentFiles\"}",
-      "{\"fn\":\"execInWorker\",\"id\":4242,\"mode\":\"build\",\"model\":\"claude-opus-5-5\",\"branchName\":\"dev/tester-4242\",\"resumeSessionId\":\"cc-scout-1\",\"prompt\":{\"sha\":\"ac2a6e7eb1d76231\",\"length\":12306},\"systemPrompt\":null,\"holdTurnRecord\":true,\"telemetryComponent\":\"coding_agent_build\"}",
+      "{\"fn\":\"execInWorker\",\"id\":4242,\"mode\":\"build\",\"model\":\"claude-opus-5-5\",\"branchName\":\"dev/tester-4242\",\"resumeSessionId\":\"cc-scout-1\",\"prompt\":{\"sha\":\"fca00680c9a026ef\",\"length\":12533},\"systemPrompt\":null,\"holdTurnRecord\":true,\"telemetryComponent\":\"coding_agent_build\"}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"prNumber\":42,\"prOpenedEventRecorded\":true},\"opts\":{\"turnId\":\"turn-build-1\"}}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"stagingUrl\":\"https://whiteboard-pr42.staging.test\"},\"opts\":{\"turnId\":\"turn-build-1\"}}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"completionRowPosted\":true},\"opts\":{\"turnId\":\"turn-build-1\"}}",
@@ -1535,7 +1535,7 @@
       "{\"fn\":\"ensureWorkerImage\"}",
       "{\"fn\":\"ensureWorker\",\"id\":4242}",
       "{\"fn\":\"syncUserAgentFiles\"}",
-      "{\"fn\":\"execInWorker\",\"id\":4242,\"mode\":\"build\",\"model\":\"claude-opus-5-5\",\"branchName\":\"dev/tester-4242\",\"resumeSessionId\":null,\"prompt\":{\"sha\":\"ac2a6e7eb1d76231\",\"length\":12306},\"systemPrompt\":null,\"holdTurnRecord\":true,\"telemetryComponent\":\"coding_agent_build\"}",
+      "{\"fn\":\"execInWorker\",\"id\":4242,\"mode\":\"build\",\"model\":\"claude-opus-5-5\",\"branchName\":\"dev/tester-4242\",\"resumeSessionId\":null,\"prompt\":{\"sha\":\"fca00680c9a026ef\",\"length\":12533},\"systemPrompt\":null,\"holdTurnRecord\":true,\"telemetryComponent\":\"coding_agent_build\"}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"completionRowPosted\":true},\"opts\":{\"turnId\":\"turn-build-2\"}}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"wrapUpPosted\":true},\"opts\":{\"turnId\":\"turn-build-2\"}}",
       "{\"fn\":\"finishTurn\",\"id\":4242,\"opts\":{\"turnId\":\"turn-build-2\"}}"
@@ -1664,7 +1664,7 @@
       "{\"fn\":\"ensureWorkerImage\"}",
       "{\"fn\":\"ensureWorker\",\"id\":4242}",
       "{\"fn\":\"syncUserAgentFiles\"}",
-      "{\"fn\":\"execInWorker\",\"id\":4242,\"mode\":\"build\",\"model\":\"claude-opus-5-5\",\"branchName\":\"dev/tester-4242\",\"resumeSessionId\":null,\"prompt\":{\"sha\":\"ac2a6e7eb1d76231\",\"length\":12306},\"systemPrompt\":null,\"holdTurnRecord\":true,\"telemetryComponent\":\"coding_agent_build\"}",
+      "{\"fn\":\"execInWorker\",\"id\":4242,\"mode\":\"build\",\"model\":\"claude-opus-5-5\",\"branchName\":\"dev/tester-4242\",\"resumeSessionId\":null,\"prompt\":{\"sha\":\"fca00680c9a026ef\",\"length\":12533},\"systemPrompt\":null,\"holdTurnRecord\":true,\"telemetryComponent\":\"coding_agent_build\"}",
       "{\"fn\":\"finishTurn\",\"id\":4242,\"opts\":{\"turnId\":\"turn-build-3\"}}"
     ],
     "calls": [

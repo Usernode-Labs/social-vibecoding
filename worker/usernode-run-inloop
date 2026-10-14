@@ -39,6 +39,20 @@
 // open. Only a launch this command recorded is stopped, and only while it is
 // still this command (its command line says so).
 
+// SIGNED IN (App bench run 191, 14 Oct 2026). An app behind the platform's
+// identity token verifies it with USERNODE_JWT_PUBLIC_KEY, which a worker
+// does not have, so every page this launch served answered a visitor who was
+// signed out, and 11 of 17 builds read the platform's check script to learn
+// to mint a token of their own. So, for an app (not the platform's own
+// repository) whose worker environment sets no such key, the launch hands the
+// app the public half of a key pair of its own as the platform would, with
+// USERNODE_APP_ID, and prints a link that opens the app signed in as the
+// checks' viewer; `usernode-run-inloop --link [route]` prints one for any
+// route, and usernode-run-checks signs its checks in with it. The pair is made
+// once (LAUNCH_DIR/identity.json, readable by this user alone) so a relaunch
+// keeps earlier links working. Nothing but this local launch trusts it.
+
+const crypto = require('crypto');
 const fs = require('fs');
 const http = require('http');
 const https = require('https');
@@ -65,6 +79,86 @@ const BUILD_TIMEOUT_MS = 5 * 60 * 1000;
 const LAUNCH_DIR = '/tmp/usernode-inloop';
 const STOP_WAIT_MS = 5000;
 const STOP_POLL_MS = 100;
+
+// The viewer the platform's check script signs in as (usernode-bench-capture.js
+// VIEWER), and the app id a local launch uses when the worker names none.
+const VIEWER = Object.freeze({ id: 900001, username: 'staging-demo-viewer' });
+const LOCAL_APP_ID = '1';
+const IDENTITY_FILE = 'identity.json';
+const LINK_TTL_S = 8 * 60 * 60;
+
+function base64url(input) {
+  return Buffer.from(input).toString('base64').replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');
+}
+
+/**
+ * This worker's local identity (see SIGNED IN): the key pair kept in `dir`,
+ * made the first time. Returns { publicKeyPem, privateKeyPem } or null when
+ * it can be neither read nor made.
+ */
+function localIdentity({ dir = LAUNCH_DIR, fsImpl = fs } = {}) {
+  const file = path.join(dir, IDENTITY_FILE);
+  try {
+    const kept = JSON.parse(fsImpl.readFileSync(file, 'utf8'));
+    if (kept && typeof kept.publicKeyPem === 'string' && typeof kept.privateKeyPem === 'string') return kept;
+  } catch { /* made below */ }
+  try {
+    const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
+    const made = {
+      publicKeyPem: publicKey.export({ type: 'spki', format: 'pem' }).toString(),
+      privateKeyPem: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
+    };
+    fsImpl.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    // Written whole or not at all: a launch beside this one reads either the
+    // old file or the new.
+    const tmp = `${file}.${process.pid}.tmp`;
+    fsImpl.writeFileSync(tmp, JSON.stringify(made), { mode: 0o600 });
+    fsImpl.renameSync(tmp, file);
+    return made;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The viewer's identity token for app `appId`, signed with `identity`: the
+ * shape services/platform-jwt.js signs (RS256, issuer `usernode`, audience
+ * `usernode:app:<id>`, `pur: 'iframe'`). Pure apart from the signature.
+ */
+function viewerToken(identity, appId, { now = Date.now(), ttlSeconds = LINK_TTL_S } = {}) {
+  const iat = Math.floor(now / 1000);
+  const header = { alg: 'RS256', typ: 'JWT' };
+  const payload = {
+    id: VIEWER.id, username: VIEWER.username, usernode_pubkey: null, locale: null, pur: 'iframe',
+    iat, exp: iat + ttlSeconds, aud: `usernode:app:${appId}`, iss: 'usernode',
+  };
+  const signingInput = `${base64url(JSON.stringify(header))}.${base64url(JSON.stringify(payload))}`;
+  const signature = crypto.sign('RSA-SHA256', Buffer.from(signingInput), identity.privateKeyPem);
+  return `${signingInput}.${base64url(signature)}`;
+}
+
+/**
+ * A signed-in link to `route` on the launch at `port`, the token added to its
+ * query (a hash route keeps its hash). `localhost`, as the platform's check
+ * script browses: the bridge reads a dotted host as the app's own public
+ * domain and pins a mark no screen inside Homeroom shows. Pure apart from the
+ * signature.
+ */
+function signedInLink(identity, appId, port, route = '/', opts = {}) {
+  const url = new URL(String(route || '/').startsWith('/') ? route : `/${route}`, `http://localhost:${Number(port)}/`);
+  url.searchParams.set('token', viewerToken(identity, appId, opts));
+  return url.toString();
+}
+
+/**
+ * Whether this launch signs its app in (see SIGNED IN): an app's checkout
+ * (routeAssets: not the platform's own) whose worker environment carries no
+ * identity key of its own. Pure.
+ */
+function signsIn(env, routeAssets) {
+  return routeAssets === true && !String(env.USERNODE_JWT_PUBLIC_KEY || '').trim()
+    && String(env.INLOOP_SIGN_IN || '').trim() !== '0';
+}
 
 function environmentForInLoop(manifest, workerEnv) {
   if (workerEnv.INLOOP_BROWSER !== '1' || workerEnv.INLOOP_ENV !== 'staging'
@@ -353,10 +447,26 @@ async function main() {
       : `usernode-run-inloop: no app it launched is running on ${port}.\n`);
     return;
   }
-  if (!command) {
+  if (command === '--link') {
+    const port = Number(process.env.INLOOP_PORT);
+    const launch = Number.isInteger(port) && port > 0 ? readLaunch(port) : null;
+    const identity = launch && launch.signedIn ? localIdentity() : null;
+    if (!identity) {
+      process.stderr.write(launch
+        ? 'usernode-run-inloop: the app on this port was launched without a local sign-in (its worker sets its own '
+          + 'USERNODE_JWT_PUBLIC_KEY, or it is the platform\'s own repository).\n'
+        : `usernode-run-inloop: no app it launched is running on ${process.env.INLOOP_PORT || '$INLOOP_PORT'}; launch it first.\n`);
+      process.exitCode = 2;
+      return;
+    }
+    process.stdout.write(`${signedInLink(identity, launch.appId || LOCAL_APP_ID, port, process.argv[3] || '/')}\n`);
+    return;
+  }
+  if (!command || command === '--help' || command === '-h') {
     process.stderr.write('usage: usernode-run-inloop <app command> [args...]\n'
-      + '       usernode-run-inloop --stop    (stops the app it launched on $INLOOP_PORT)\n');
-    process.exitCode = 2;
+      + '       usernode-run-inloop --stop           (stops the app it launched on $INLOOP_PORT)\n'
+      + '       usernode-run-inloop --link [route]   (prints a link to that route, signed in)\n');
+    process.exitCode = command ? 0 : 2;
     return;
   }
   let manifest;
@@ -398,6 +508,13 @@ async function main() {
   }
   const routeAssets = routesPlatformAssets(process.cwd(), env);
   const assetOrigin = platformAssetOrigin(env);
+  // Signed in as the platform would sign a person in (see SIGNED IN).
+  const identity = signsIn(env, routeAssets) ? localIdentity() : null;
+  const appId = String(env.USERNODE_APP_ID || '').trim() || LOCAL_APP_ID;
+  if (identity) {
+    env.USERNODE_JWT_PUBLIC_KEY = identity.publicKeyPem;
+    env.USERNODE_APP_ID = appId;
+  }
   const proxy = createFrontProxy({ appPort, assetOrigin, routeAssets });
   // The launch before this one on the same port, stopped first: a relaunch
   // after an edit is how an app is looked at again.
@@ -421,6 +538,11 @@ async function main() {
   process.stderr.write(`usernode-run-inloop: open http://127.0.0.1:${publicPort} — `
     + (routeAssets ? 'the platform\'s /usernode-* assets are served there as in production, and ' : '')
     + `the app itself listens on internal port ${appPort}; browse ${publicPort}, not ${appPort}.\n`);
+  if (identity) {
+    process.stderr.write(`usernode-run-inloop: signed in as ${VIEWER.username}, as Homeroom signs a person in: open `
+      + `${signedInLink(identity, appId, publicPort, '/')} (the app keeps the token as it does in Homeroom). `
+      + '`usernode-run-inloop --link /some/route?demo=1` prints the same link for any route.\n');
+  }
 
   const child = spawn(command, process.argv.slice(3), {
     env: { ...env, PORT: String(appPort) }, stdio: 'inherit',
@@ -431,6 +553,9 @@ async function main() {
       // the pid is still this app.
       pid: process.pid, childPid: child.pid, childCommand: [command, ...process.argv.slice(3)].join(' '),
       startedAt: new Date().toISOString(),
+      // Whether it was signed in, and as which app: --link and
+      // usernode-run-checks sign their links for it.
+      ...(identity ? { signedIn: true, appId } : {}),
     });
   }
   const stop = (signal) => { try { child.kill(signal); } catch { /* already gone */ } };
@@ -465,4 +590,10 @@ module.exports = {
   PLATFORM_ASSET_PREFIXES,
   readLaunch,
   stopLaunch,
+  VIEWER,
+  LOCAL_APP_ID,
+  localIdentity,
+  viewerToken,
+  signedInLink,
+  signsIn,
 };

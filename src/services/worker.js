@@ -3809,6 +3809,8 @@ async function execInWorker(sessionId, {
       safeEnv.STOP_GUARD_CHECKS = APP_CHECK_COMMAND_PATH;
       const deadline = Number(checksGate.deadlineMs);
       if (Number.isFinite(deadline) && deadline > 0) safeEnv.STOP_GUARD_DEADLINE = String(Math.round(deadline));
+      // A first version's turns: dapp.json must declare checks under `tests`.
+      if (checksGate.requireTests === true) safeEnv.STOP_GUARD_REQUIRE_TESTS = '1';
     }
   }
   if (buildProfile === 'first_version' && mode === 'build') safeEnv.BUILD_PROFILE = 'first_version';

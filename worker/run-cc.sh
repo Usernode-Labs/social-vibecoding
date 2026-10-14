@@ -68,6 +68,10 @@
 #                              on the result line when it stopped any
 #   STOP_GUARD_DEADLINE        when the platform stops the turn (epoch ms):
 #                              the checks are not started with too little left
+#   STOP_GUARD_REQUIRE_TESTS   1, with STOP_GUARD_CHECKS (a first version's
+#                              build and review fixes): a dapp.json with a
+#                              `checks` key or no routed `tests` sends the
+#                              turn back too (build-stop-hook.js)
 #   BUILD_PROFILE              first_version: a build of a project's first
 #                              version (the Homeroom bot's build and review
 #                              fixes) loads only the tools one uses: the
@@ -574,7 +578,9 @@ if [ "$MODE" = "build" ] && [ "${STOP_GUARD:-}" = "1" ]; then
       USERNODE_STOP_GUARD_CHECKS_COUNT="$STOP_GUARD_DIR/checks"
       USERNODE_STOP_GUARD_CHECKS_PASSED="$STOP_GUARD_DIR/checks-passed"
       USERNODE_STOP_GUARD_DEADLINE="${STOP_GUARD_DEADLINE:-}"
+      USERNODE_STOP_GUARD_REQUIRE_TESTS="${STOP_GUARD_REQUIRE_TESTS:-}"
       export USERNODE_STOP_GUARD_CHECKS USERNODE_STOP_GUARD_CHECKS_COUNT USERNODE_STOP_GUARD_CHECKS_PASSED USERNODE_STOP_GUARD_DEADLINE
+      export USERNODE_STOP_GUARD_REQUIRE_TESTS
     fi
     STOP_GUARD_FLAGS="--settings $STOP_GUARD_DIR/settings.json"
   else
