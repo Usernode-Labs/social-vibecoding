@@ -1226,4 +1226,8 @@ test('#4486: the one-row head and the pipeline pin together under the project’
   // would be what it pinned to), so it follows the board's scroll instead.
   assert.match(kanbanTsx, /export function syncStrip\(board: HTMLElement \| null\): void \{/);
   assert.match(appCss, /\.dev-kanban-stages \{[^}]*overflow: hidden;/);
+  // On a phone (#5029) the search keeps its own line and the switch and the
+  // filters share the one under it: the chips fill the space beside the
+  // switch instead of taking a line of their own.
+  assert.match(appCss, /@media \(max-width: 639px\) \{[\s\S]*?\.dev-ws-allbar #dev-kanban-search \{ flex-basis: 100%; max-width: none; min-width: 0; \}\s*\.dev-ws-allbar #dev-filter-chips \{ flex: 1 1 0; min-width: 0; /);
 });
