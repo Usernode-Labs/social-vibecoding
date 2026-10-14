@@ -92,7 +92,7 @@ import {
   ApprovalLine, CommunityCard, ShareItCard, canLeave,
   communityPending, leaveCommunity, useCommunity,
 } from './community-card';
-import { FirstVersionCard, ForYouCard, RecentlyLive, hubAlone, hubWorkEmpty, owesVote } from './hub-cards';
+import { FirstLookCard, FirstVersionCard, ForYouCard, RecentlyLive, hubAlone, hubWorkEmpty, owesVote } from './hub-cards';
 import { ProjectDiscussion } from './project-discussion';
 import {
   channelPlace, findChannel, isChannelPlace, isPlaceKey, placeHandle, placeHref, unreadTotal, type PlaceKey,
@@ -4805,6 +4805,10 @@ export function DevWorkshop(): ReactNode {
         />
       ) : null}
       {slug ? <ShareItCard slug={slug} name={app.name || undefined} /> : null}
+      {/* Run six: the maker's first look while it is built, under Share it,
+          with the way to watch it built on the App tab. See ./hub-cards.tsx
+          FirstLookCard. */}
+      {slug ? <FirstLookCard slug={slug} data={community} /> : null}
       {slug ? <RecentlyLive slug={slug} rows={v.recentLive} onAll={() => openTab('workshop')} /> : null}
       {/* Start a new change was the hub's last line; it is the hero's ⋯
           now (../actions-row.tsx), as well as the Homeroom menu's. */}
