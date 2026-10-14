@@ -14529,3 +14529,12 @@ COMMENT ON TABLE security_bot_model_calls IS 'staging:private';
 COMMENT ON TABLE security_bot_daily_budgets IS 'staging:private';
 COMMENT ON COLUMN security_bot_probes.detail IS 'staging:private';
 COMMENT ON COLUMN security_bot_finding_occurrences.context IS 'staging:private';
+
+-- #4678 checkpoint one: a run is created under a caller-chosen idempotency
+-- key (a repeated "Run now" or a repeated scheduler tick finds the run it
+-- already made), and every claim bumps lease_generation so a controller that
+-- lost its lease is fenced out of every later write (services/security-bot/runs.js).
+ALTER TABLE security_bot_runs ADD COLUMN IF NOT EXISTS idempotency_key TEXT;
+ALTER TABLE security_bot_runs ADD COLUMN IF NOT EXISTS lease_generation INTEGER NOT NULL DEFAULT 0;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_security_bot_runs_idempotency
+  ON security_bot_runs(idempotency_key) WHERE idempotency_key IS NOT NULL;
