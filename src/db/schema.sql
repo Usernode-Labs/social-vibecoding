@@ -11166,6 +11166,39 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_bench_scaffolds_arm
 ALTER TABLE bench_scaffolds ADD COLUMN IF NOT EXISTS claimed_by TEXT;
 COMMENT ON TABLE bench_scaffolds IS 'staging:private';
 
+-- A studio run's shared plans (services/bench/shared-plans.js): with
+-- `shared_plans` on the run, each brief's plan is made once per pack and
+-- repeat (`plan_key`, the attempt a trial was launched as; a rerun keeps
+-- its trial's) and every arm builds from it: the plan from the description,
+-- its early first look and the spec. `making` is claimed by one trial (its
+-- maker); the others wait for `ready` and build from its spec.
+ALTER TABLE bench_runs ADD COLUMN IF NOT EXISTS shared_plans BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE bench_trials ADD COLUMN IF NOT EXISTS plan_key INTEGER;
+CREATE TABLE IF NOT EXISTS bench_shared_plans (
+  id                SERIAL PRIMARY KEY,
+  run_id            INTEGER NOT NULL REFERENCES bench_runs(id) ON DELETE CASCADE,
+  task_id           INTEGER NOT NULL REFERENCES bench_tasks(id) ON DELETE CASCADE,
+  context_pack_id   INTEGER REFERENCES bench_context_packs(id) ON DELETE SET NULL,
+  plan_key          INTEGER NOT NULL,
+  status            TEXT NOT NULL DEFAULT 'making',
+  claimed_by        TEXT,
+  claimed_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  maker_trial_id    INTEGER REFERENCES bench_trials(id) ON DELETE SET NULL,
+  plan              JSONB,
+  build_note        TEXT,
+  early_look        TEXT,
+  spec_md           TEXT,
+  spec_html         TEXT,
+  plan_usd          NUMERIC(12,6),
+  look_usd          NUMERIC(12,6),
+  error             TEXT,
+  ready_at          TIMESTAMPTZ,
+  CONSTRAINT bench_shared_plans_status_check CHECK (status IN ('making', 'ready', 'failed'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_bench_shared_plans_key
+  ON bench_shared_plans(run_id, task_id, COALESCE(context_pack_id, 0), plan_key);
+COMMENT ON TABLE bench_shared_plans IS 'staging:private';
+
 -- The studio's one host app: a private project the benchmark user made
 -- through the ordinary create path, whose repository carries every studio
 -- branch and whose own database is empty, so a preview of a studio build
