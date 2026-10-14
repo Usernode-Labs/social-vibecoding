@@ -1425,6 +1425,9 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
 .messages-bot-answers .messages-bot-tint { color: var(--accent-tint-ink); background: var(--accent-tint); }
 /* Tapped, it turns grey and says so, with a check: settled, not pressable. */
 .messages-bot-answers .messages-bot-done { color: var(--text-muted); background: var(--dc-raised); cursor: default; filter: none; }
+/* Run six: a first version's "We'll tell you when it's live", on. Settled,
+   so grey with a check as Done is; but a switch, so a tap turns it off. */
+.messages-bot-answers .messages-bot-on { color: var(--text-muted); background: var(--dc-raised); }
 /* B6: an answer tapped as a choice (a plan's, or one of two questions)
    takes the same accent fill. Nothing is sent until Build it. */
 .messages-bot-answers button[aria-pressed="true"] { color: var(--accent-ink); background: var(--accent); }
@@ -4305,6 +4308,23 @@ html.un-ios.web-browser-chrome:not([data-community-tint]) body:has(:is(#home-scr
              #profile-proposals-screen):not(.hidden)) #platform-header,
 html.un-ios.web-browser-chrome:not([data-community-tint]) body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header {
   background-color: var(--dc-sheet-solid);
+}
+/* …AND ON THE APP TAB, WHERE THE PAGE IS NOT THE SCROLLER (newcomer run
+   six, 14 Oct 2026, iPhone Safari 26). Safari takes the strip's colour from
+   a bar FIXED (or sticky) at the top. On the routes above a phone browser
+   scrolls the document (lib/browser-scroll.ts), so the bar is sticky
+   (`html[data-browser-scroller]`) and the strip follows its ground. The App
+   tab of a first version being built is the platform's own page, but the
+   document is not its scroller (pageScroller answers only the project's own
+   pages, #dev-forum-scroll), so its bar sat in the flow, Safari found no bar
+   to take a colour from, and the strip stayed the hub's teal over the App
+   tab's light bar. Sticky at the top here as well: the page does not
+   scroll, so the bar stays exactly where it was, and the strip takes the
+   opaque ground the rule above gives it. Back on the hub the bar is sticky
+   and tinted again (`data-community-tint`), and the strip turns teal. */
+html.un-ios.web-browser-chrome:not([data-community-tint]):not([data-browser-scroller]) body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header {
+  position: sticky;
+  top: 0;
 }
 /* THE BAR TAKES THE APP'S TONE (#1945). A dark app under the light shell
    used to sit beneath a cream strip, and a light app under the dark shell
@@ -18050,6 +18070,32 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 }
 .dev-ws-share:has(.dev-ws-join-pop) { position: relative; z-index: 5; }
 
+/* ── First look (hub-cards.tsx FirstLookCard, newcomer run six) ──────
+   The maker's, under Share it, while their first version is built: the
+   picture Homeroom bot drew of its main screen, small and phone-shaped
+   (cropped from the top, as a phone shows a screen), beside a small-caps
+   kicker, the card's sentence-case title and line in Share it's own type,
+   and its one button. The picture's box is fixed, so nothing moves as it
+   loads. */
+.dev-ws-strip.dev-ws-first-look { flex-direction: row; align-items: flex-start; gap: 14px; }
+.dev-ws-first-look-shot {
+  flex: none; width: 64px; height: 138px; border-radius: 12px;
+  object-fit: cover; object-position: top;
+  background: var(--bg-secondary);
+  box-shadow: 0 0 0 1px var(--app-sheet-line);
+}
+.dev-ws-first-look-body {
+  flex: 1 1 auto; min-width: 0;
+  display: flex; flex-direction: column; align-items: flex-start; gap: 4px;
+}
+.dev-ws-first-look-kicker {
+  margin: 0; font-size: 12px; font-weight: 700; line-height: 16px;
+  letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-muted);
+}
+.dev-ws-first-look-body .dev-ws-head-title { margin: 0; }
+.dev-ws-first-look-body .dev-ws-strip-text { color: var(--text-muted); }
+.dev-ws-first-look-body > button { margin-top: 8px; }
+
 /* ── Approval rules (community-card.tsx ApprovalRules) ─────────────── */
 .dev-ws-rules-line { margin: 0; font-size: 14px; line-height: 1.45; color: var(--text-primary); }
 
@@ -18970,9 +19016,8 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
    screen readers and the declared checks, and the band's button is hidden.
    The header draws its own button (place-bar.tsx HeaderPlace), 28px like the
    header's other controls, and the place's name beside the switcher as a
-   small lowered label, a subscript to the chip rather than a second title;
-   the tint they sit on and the dot's ring are the community's, as the band's
-   were. The place name holds its ground (`flex-shrink: 0`, capped) so a long
+   small quiet tag (below); the tint they sit on and the dot's ring are the
+   community's, as the band's were. The place name holds its ground (`flex-shrink: 0`, capped) so a long
    community name shortens in the switcher first, which is the name the old
    second row did not show. On Homeroom's own pages that name is the
    wordmark drawing, which has no shorten-with-ellipsis of its own: it scales
@@ -18994,11 +19039,18 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
     display: inline-block;
     flex-shrink: 0; min-width: 0; max-width: 45%; overflow: hidden;
     text-overflow: ellipsis; white-space: nowrap;
-    /* A subscript-style label (evan's ask): small, like the header's own
-       subtitle tuning, and dropped to the chip's foot rather than centred
-       as a second title would be. White still, on the tint it sits on. */
-    align-self: flex-end; margin-bottom: 2px;
-    font-size: 11px; font-weight: 600; line-height: 1; color: #fff;
+    /* A SMALL QUIET TAG, CENTRED ON THE TITLE'S LINE (newcomer run six,
+       14 Oct 2026). It was a subscript dropped to the chip's foot, 11px
+       with `align-self: flex-end`, and "Club Votes ⌄ Hub" read as a word
+       that had slipped a few points under the name's baseline. Now it is a
+       pill in the header's own ink, as the bell and the back disc are
+       (`--brand-tint` / `--brand-ink`: white on the community's tint
+       here), centred on the row beside the switcher, so it reads as a
+       label on the name rather than a second line. */
+    align-self: center;
+    padding: 2px 8px; border-radius: 999px;
+    background: var(--brand-tint); color: var(--brand-ink);
+    font-size: 12px; font-weight: 600; line-height: 16px;
   }
 }
 

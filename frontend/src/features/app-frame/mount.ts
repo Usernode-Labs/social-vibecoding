@@ -34,6 +34,7 @@ import { appFrameStore } from './app-frame-store.js';
 import { publishAppTone } from './app-tone.js';
 import { AppStatus, type AppStatusView } from './app-status';
 import { appStatusStore } from './app-status-store.js';
+import { syncBuildActivity, syncBuildActivityRecord } from './build-activity';
 
 // `beginLaunch` does `frame.mount(…)` and then immediately `frame.frame()`, to
 // assign `src` and arm the reveal ladder in the same tick as the tap. Without a
@@ -97,6 +98,10 @@ if (typeof window !== 'undefined') {
   bridge.appActivity = appActivity;
   bridge.appFrame = appFrameBridge;
   bridge.appStatus = appStatusBridge;
+  // Run six: the maker's Live Activity for their first version
+  // (./build-activity.ts). AppView hands it every app record the server
+  // answered (_noteAppRecordRead); the made screen imports it directly.
+  bridge.buildActivity = { sync: syncBuildActivity, syncRecord: syncBuildActivityRecord };
 
   // The phone wallet relay in the shared bridge (public/usernode-bridge.js)
   // forwards a frame's calls only when this names the frame as one of the

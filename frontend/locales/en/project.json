@@ -1403,6 +1403,26 @@
     "text": "See the plan",
     "description": "Quiet link on the first-version card of a project's Hub, for a member who did not start the project: opens the plan for the first version to read, without being able to answer it."
   },
+  "hub.firstLook.kicker": {
+    "text": "First look",
+    "description": "Small label in capitals at the top of a card on a project's Hub, shown to the person who started the project while its first version is being built, beside a small picture of the app's main screen that the assistant called Homeroom bot drew before building it. \"Look\" is a noun: a first view of the app."
+  },
+  "hub.firstLook.title": {
+    "text": "Here's what you're making",
+    "description": "Title of the first-look card on a project's Hub, shown to the person who started the project while its first version is being built, beside a small picture of the app's main screen that Homeroom bot drew from their answers."
+  },
+  "hub.firstLook.text": {
+    "text": "Drawn from your answers. We'll tell you when the working app is live.",
+    "description": "Text of the first-look card on a project's Hub, under its title: the picture beside it was drawn from the answers the person gave when they made the project, the real app is still being built, and they will be told once it is published (\"live\")."
+  },
+  "hub.firstLook.watch": {
+    "text": "Watch Homeroom bot build it",
+    "description": "Button on the first-look card of a project's Hub: opens the project's App tab, where the app can be seen taking shape while the assistant called Homeroom bot builds it. \"It\" is the app; Homeroom bot is a name."
+  },
+  "hub.firstLook.alt": {
+    "text": "The first look at {{app}}'s main screen",
+    "description": "Description, for screen readers, of the small picture on the first-look card of a project's Hub: a drawing of the app's main screen, made before the app was built. {{app}} is the project's name."
+  },
   "hub.needs.title": {
     "text": "Needs you",
     "description": "Heading of the card on a project's Hub that leads to the Needs you tab: the proposals waiting for this person's vote."

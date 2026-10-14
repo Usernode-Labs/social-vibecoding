@@ -58,7 +58,9 @@ export const BUILD_LINE_TILE_WORDS = Object.freeze({
 
 /**
  * The caption's class (in place of the red "Spinning up..."): blue when the
- * line waits on the reader, else quiet. One line, so the project's name
+ * line waits on the reader (its plan, or a question), else quiet grey, every
+ * stage under way included (run six: blue is for something to act on, and a
+ * build going on by itself asks nothing). One line, so the project's name
  * keeps its two (app.css, the --home-cell-h derivation: a two-line name and
  * one caption line fill the tile's 38px), and a longer translation ends in
  * an ellipsis rather than painting over the tile below.
@@ -120,6 +122,59 @@ export function phaseKeyOf(line, value) {
 export function buildLineTileWordsOf(line, phase) {
   const key = phaseKeyOf(line, phase);
   return key ? PHASE_TILE_WORDS[key] : BUILD_LINE_TILE_WORDS[line];
+}
+
+/*
+ * STARTED HERE (newcomer run six, 14 Oct 2026, iPhone 17 Safari). The made
+ * screen's Submit starts the build, and that screen says so at once
+ * ("Starting the build", ./made.tsx: answered, the line is `building`).
+ * The tour's first card then stood over the project's Home tile, which said
+ * "Plan ready", in blue, as if the plan still waited on them: its words came
+ * from the list Home had read before Submit (GET /api/apps
+ * `first_version_line`), until Home read it again a minute later and it
+ * said "Drawing".
+ *
+ * So a Submit that went through is noted here, on this page
+ * (noteBuildStarted), and the tile says what the made screen says from that
+ * moment: a line still read as `plan` or `planning` is the build starting,
+ * its first stage, quiet grey. The note lasts until the list names a later
+ * line (the server has caught up), and at most STARTED_HOLD_MS. Kept on
+ * `globalThis`, as ./tour-running.ts is, so a chunk that bundles its own
+ * copy of this module reads the same notes.
+ */
+export const STARTED_HOLD_MS = 10 * 60 * 1000;
+
+/** Its first stage, as the server names it before the build is picked up. */
+export const STARTING_PHASE = Object.freeze({ key: 'starting', since: null, round: null, rounds: null });
+
+const STARTED_KEY = '__usernodeFirstVersionStartedHere';
+
+function startedNotes() {
+  const g = globalThis;
+  if (!(g[STARTED_KEY] instanceof Map)) g[STARTED_KEY] = new Map();
+  return g[STARTED_KEY];
+}
+
+/** The made screen's Submit went through for `slug`: its build starts now. */
+export function noteBuildStarted(slug, now = Date.now()) {
+  if (typeof slug === 'string' && slug) startedNotes().set(slug, now);
+}
+
+/**
+ * A Home tile's first version as the made screen would say it: { line,
+ * phase }, the list's own, or, for a project whose Submit went through on
+ * this page while the list still reads a plan, `building` from its first
+ * stage. A line past the plan ends the note. Pure but for that.
+ */
+export function tileStageOf(slug, line, phase, now = Date.now()) {
+  const notes = startedNotes();
+  const at = notes.get(slug);
+  if (at === undefined) return { line, phase };
+  if ((line !== 'plan' && line !== 'planning') || !(now - at <= STARTED_HOLD_MS)) {
+    notes.delete(slug);
+    return { line, phase };
+  }
+  return { line: 'building', phase: STARTING_PHASE };
 }
 
 /**

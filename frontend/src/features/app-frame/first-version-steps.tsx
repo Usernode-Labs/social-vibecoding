@@ -17,9 +17,11 @@
  * ("3 min"; none under a minute: zero says nothing), with no fill: a done
  * thing is never the loudest thing on screen. The step under way turns, its
  * line saying what it is doing now (the review's round, the build's
- * "Adding …") and for how long ("7 min so far"). The rest are hollow and say
- * nothing. A review that did not run is left out. No accent: nothing here
- * asks the viewer for anything.
+ * "Adding …") and how long it still has to go ("about 12 min left", run six:
+ * ./first-version-eta.ts), or, with no estimate to go on, how long it has
+ * run ("7 min so far"). The rest are hollow and say nothing. A review that
+ * did not run is left out. No accent: nothing here asks the viewer for
+ * anything.
  */
 
 import type { ReactNode } from 'react';
@@ -31,16 +33,18 @@ import { useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
 import { soFarNote, useNow } from '../first-session/build-line';
 import { STEP_WORDS, phaseOf, stepsOf } from '../first-session/build-line-words.js';
+import { type FirstVersionEstimate, stepLeftNote } from './first-version-eta';
 
 export type FirstVersionStep = { key: keyof typeof STEP_WORDS; state: 'done' | 'now' | 'next'; minutes?: number; since?: string };
 
 /**
  * Pure: the line under one step's title, in the language on screen, at
  * `now` (ms): how long a done step took; for the step under way, what it is
- * doing (the review's round, the build's phrase) and for how long; nothing
- * for a step still to come.
+ * doing (the review's round, the build's phrase) and how long it still has
+ * to go by `estimate`, else for how long it has run; nothing for a step
+ * still to come.
  */
-export function stepNote(step: FirstVersionStep, now: number, { phase = null, caption = null }: { phase?: unknown; caption?: string | null } = {}): string | null {
+export function stepNote(step: FirstVersionStep, now: number, { phase = null, caption = null, estimate = null }: { phase?: unknown; caption?: string | null; estimate?: FirstVersionEstimate | null } = {}): string | null {
   if (step.state === 'done') return step.minutes ? translate('onboarding:buildLine.step.took', { count: step.minutes }) : null;
   if (step.state !== 'now') return null;
   const p = phaseOf(phase) as { key: string; round: number | null; rounds: number | null } | null;
@@ -49,9 +53,9 @@ export function stepNote(step: FirstVersionStep, now: number, { phase = null, ca
     : step.key === 'build' && p && p.key === 'writing'
       ? translate('onboarding:buildLine.phase.writing')
       : step.key === 'build' && caption ? caption : null;
-  const soFar = soFarNote(step.since, now);
-  if (doing && soFar) return translate('onboarding:buildLine.withNote', { line: doing, note: soFar });
-  return doing || soFar;
+  const time = stepLeftNote(estimate, step.key, now) || soFarNote(step.since, now);
+  if (doing && time) return translate('onboarding:buildLine.withNote', { line: doing, note: time });
+  return doing || time;
 }
 
 function Marker({ state }: { state: FirstVersionStep['state'] }): ReactNode {
@@ -68,7 +72,9 @@ const TITLE = {
 } as const;
 
 /** The list, or nothing when the answer has no steps to list. */
-export function FirstVersionSteps({ steps: raw, phase = null, caption = null }: { steps: unknown; phase?: unknown; caption?: string | null }): ReactNode {
+export function FirstVersionSteps({ steps: raw, phase = null, caption = null, estimate = null }: {
+  steps: unknown; phase?: unknown; caption?: string | null; estimate?: FirstVersionEstimate | null;
+}): ReactNode {
   const t = useMessages('onboarding');
   const now = useNow();
   const steps = stepsOf(raw) as FirstVersionStep[];
@@ -87,7 +93,7 @@ export function FirstVersionSteps({ steps: raw, phase = null, caption = null }: 
             leading={<Marker state={step.state} />}
             title={t(STEP_WORDS[step.key])}
             titleClassName={TITLE[step.state]}
-            subtitle={stepNote(step, now, { phase, caption })}
+            subtitle={stepNote(step, now, { phase, caption, estimate })}
             {...(step.state === 'now' ? { 'aria-current': 'step' as const } : {})}
           />
         ))}

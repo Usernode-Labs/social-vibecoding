@@ -2189,12 +2189,15 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
           </div>
         ) : null}
       </div>
-      {/* Jump to latest, over the transcript's foot whenever the reader is
-          not at the bottom, with a dot for what arrived while they were up. */}
+      <div className="messages-typing" aria-live="polite">{typingLine(t, typing)}</div>
+      {/* Jump to latest whenever the reader is not at the bottom, with a dot
+          for what arrived while they were up. Run six: at the right edge,
+          hung just above the composer (below the typing line, which is
+          empty on the right), so it covers the strip under the words rather
+          than a message in the middle of the conversation. */}
       <TranscriptOverlay edge="foot">
         <JumpToLatestButton shown={unread.jump} dot={unread.arrived > 0} aria-label={jumpLabel(unread.arrived)} title={t('messages:thread.jumpToLatest')} onClick={jumpToLatest} />
       </TranscriptOverlay>
-      <div className="messages-typing" aria-live="polite">{typingLine(t, typing)}</div>
       <MessageComposer />
     </section>
   );
