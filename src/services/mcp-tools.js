@@ -6414,10 +6414,12 @@ function registerTools(server, ctx) {
 
     server.registerTool('list_bench_grading_queue', {
       title: 'Benchmark: what is waiting for the judge',
-      description: 'Admin only. The Homeroom bot benchmark items waiting for a judge. kind "grade" (the default) lists trial outputs a rule could not settle; kind "label" lists tasks with no reference yet, to label before their suite is frozen. Returns opaque item ids and stages only, in an order that says nothing about which model produced what. Read each with get_bench_item. Call get_connector_guidance for the grading procedure first.',
+      description: 'Admin only. The Homeroom bot benchmark items waiting for a judge. kind "grade" (the default) lists trial outputs a rule could not settle; kind "label" lists tasks with no reference yet, to label before their suite is frozen. runId narrows the grade queue to one run\'s items (every arm\'s, just as opaque), so a run can be judged on its own when it ends. Returns opaque item ids and stages only, in an order that says nothing about which model produced what. Read each with get_bench_item. Call get_connector_guidance for the grading procedure first.',
       inputSchema: {
         kind: z.enum(['grade', 'label']).optional().describe('"grade" (default) or "label".'),
         limit: z.number().int().positive().max(50).optional().describe('How many ids to return, at most 50.'),
+        // Added after clients cached the tool list, so it takes its digits as text too (#4345).
+        runId: positiveIntId().optional().describe('With kind "grade": only this run\'s items.'),
       },
       outputSchema: {
         kind: z.string(),
@@ -6426,10 +6428,11 @@ function registerTools(server, ctx) {
         nextStep: z.string(),
       },
       annotations: readAnnotations,
-    }, async ({ kind = 'grade', limit = 20 }) => {
+    }, async ({ kind = 'grade', limit = 20, runId }) => {
       const guard = scopeGuard(READ_SCOPE) || benchAdminOnly();
       if (guard) return guard;
-      const r = await callPlatform(baseUrl, accessToken, 'GET', `/api/bot-bench/queue?kind=${kind === 'label' ? 'label' : 'grade'}&limit=${Math.min(Number(limit) || 20, 50)}`);
+      const run = kind !== 'label' && runId ? `&runId=${Number(runId)}` : '';
+      const r = await callPlatform(baseUrl, accessToken, 'GET', `/api/bot-bench/queue?kind=${kind === 'label' ? 'label' : 'grade'}&limit=${Math.min(Number(limit) || 20, 50)}${run}`);
       if (!r.ok) return platformError(r);
       const b = r.body || {};
       const items = (Array.isArray(b.items) ? b.items : []).map((i) => ({
