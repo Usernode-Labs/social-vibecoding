@@ -11,9 +11,11 @@
 // What this pins:
 //
 //   1. The shared control itself (frontend/src/lib/use-dictation.ts): how
-//      spoken words join a draft, when a browser counts as able, and the
-//      recogniser's events — what the words do, what each failure means,
-//      and what a stop or an unmount does to a live recogniser.
+//      spoken words join a draft, when a browser counts as able (the native
+//      app's webview does not), and the recogniser's events — what the
+//      words do, what each failure means, what a stop or an unmount does
+//      to a live recogniser, and what a replaced session's late end and
+//      error may not do to the session that replaced it.
 //   2. The composer's side: the button mounts only in the chat with the bot
 //      and only once support is known (effects do not run in the cold
 //      render, so neither the button nor a hint is in the prerendered
@@ -152,12 +154,15 @@ function withWindow(t, win) {
 // The hook, mounted against a fake browser that offers speech recognition.
 // Every load evaluates a fresh module (tests/lib/render-tsx.js), so the
 // visit-wide `service-not-allowed` flag below never leaks between tests.
-function mountDictation(t, { lang = 'en', onText = () => {} } = {}) {
+function mountDictation(t, { lang = 'en', onText = () => {}, native = false } = {}) {
   const fake = createFakeReact();
   const mod = loadTsx('frontend/src/lib/use-dictation.ts', { stubs: { react: fake.React } });
   const instances = [];
   const Recogniser = fakeRecognisers(instances);
-  withWindow(t, { SpeechRecognition: Recogniser });
+  const win = { SpeechRecognition: Recogniser };
+  // The native app's bridge, as the real shell sees it inside the app.
+  if (native) win.usernode = { isNative: true };
+  withWindow(t, win);
   let current = null;
   fake.mount(() => { current = mod.useDictation({ lang, onText }); });
   return { mod, fake, instances, hook: () => current };
@@ -197,6 +202,8 @@ test('a browser without speech recognition is not able; one with either name is'
   assert.equal(supported({}), false, 'no recogniser, no dictation');
   assert.equal(supported({ SpeechRecognition: function R() {} }), true);
   assert.equal(supported({ webkitSpeechRecognition: function R() {} }), true);
+  assert.equal(supported({ SpeechRecognition: function R() {}, usernode: { isNative: true } }), false,
+    'the native app counts as unable, whatever its engine offers');
 });
 
 test('the words heard since start reach onText: interim guesses, then the settled sentence', (t) => {
@@ -257,6 +264,44 @@ test('a stop is an abort, not a finish: nothing unreviewed lands after it', (t) 
   assert.equal(hook().listening, false);
   rec.result(final(' words after the stop'));
   assert.deepEqual(heard, [], 'the aborted recogniser reports nothing');
+});
+
+test('a replaced session\'s late end and error cannot settle its successor', (t) => {
+  // The browser delivers a recogniser's `end`, and its last error, as
+  // events of their own, after the abort that caused them: when a quick
+  // second tap has already started a new session, the stale events arrive
+  // while the new one is live. The old recogniser's handlers are captured
+  // before the stop and fired after the new start, which is that timing.
+  const { instances, hook } = mountDictation(t, {});
+  hook().start();
+  const first = instances[0];
+  const firstOnError = first.onerror;
+  const firstOnEnd = first.onend;
+  hook().stop();
+  hook().start();
+  const second = instances[1];
+  assert.equal(hook().listening, true, 'the new session is live');
+  firstOnEnd();
+  assert.equal(hook().listening, true, 'the old end does not clear the new session');
+  assert.equal(hook().error, null);
+  firstOnError({ error: 'not-allowed' });
+  assert.equal(hook().error, null, 'the old error does not mark the new session');
+  second.error('not-allowed');
+  assert.equal(hook().error, 'blocked', 'the live session\'s own error still lands');
+  second.ends();
+  assert.equal(hook().listening, false, 'and its own end settles the state');
+});
+
+test('inside the native app the hook answers unable and never starts', (t) => {
+  // The app's webview never answers a permission request and the app
+  // declares no microphone permission, so a button there would appear and
+  // never work: the hook's support answer is no, and the hint takes over.
+  const { instances, hook } = mountDictation(t, { native: true });
+  assert.equal(hook().supported, false, 'the app counts as unable, however present the engine API is');
+  assert.equal(hook().ready, true, 'the probe has run, so the hint may show');
+  hook().start();
+  assert.equal(instances.length, 0, 'no recogniser is made to fail');
+  assert.equal(hook().listening, false);
 });
 
 test('a refused speech service ends dictation for the whole visit', (t) => {
@@ -407,6 +452,15 @@ test('the group chat\'s composer — people, groups, channels — is untouched',
   assert.doesNotMatch(GROUP_CHAT, /use-dictation|SpeakButton|MicrophoneIcon|messages-composer-speak/);
 });
 
+test('support is decided once, and the native app is counted out there', () => {
+  // One answer, one place: the composer reads `dictation.supported` and
+  // never has to know about the app at all.
+  const HOOK = read('frontend/src/lib/use-dictation.ts');
+  assert.match(HOOK, /import \{ isNativeApp \} from '\.\.\/features\/mobile-install\/environment';/,
+    'the app detector is the shared one, not a second bridge read');
+  assert.match(HOOK, /!visitUnsupported && recogniserCtor\(\) !== null && !isNativeApp\(\)/);
+});
+
 // ── 4. The words the change speaks ─────────────────────────────────────
 
 test('every dictation line is a catalog entry with text and a description', () => {
@@ -417,6 +471,13 @@ test('every dictation line is a catalog entry with text and a description', () =
     assert.ok(entry.description && entry.description.length > 0, `${id} says where it appears`);
     assert.equal(message(`messages:${id}`), entry.text, `${id} resolves to the same English the render shows`);
   }
+});
+
+test('the "not available" line serves the app too, so it names no browser', () => {
+  // It shows wherever speech recognition cannot run, and one of those
+  // places (the native app) has no browser to name.
+  assert.ok(!/browser/i.test(CATALOG['composer.dictation.unsupported'].text),
+    `got: ${CATALOG['composer.dictation.unsupported'].text}`);
 });
 
 // ── The rendered composer ──────────────────────────────────────────────

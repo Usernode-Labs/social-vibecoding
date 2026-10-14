@@ -1788,8 +1788,8 @@
     "description": "Hint line above the message box in the chat with Homeroom bot while dictation is running."
   },
   "composer.dictation.unsupported": {
-    "text": "Speaking a message isn't available in this browser, so type it instead.",
-    "description": "Hint line above the message box in the chat with Homeroom bot, in a browser that offers no speech recognition, while the box is empty."
+    "text": "Speaking a message isn't available here, so type it instead.",
+    "description": "Hint line above the message box in the chat with Homeroom bot when speech recognition is not available: a browser that offers none, or the native app whose webview cannot grant the microphone. Shown while the box is empty."
   },
   "composer.dictation.blocked": {
     "text": "Homeroom can't use your microphone. Allow it for this site in your browser, then try again.",

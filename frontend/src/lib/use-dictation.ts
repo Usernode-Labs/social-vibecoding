@@ -22,8 +22,17 @@
 // false from then on: the button goes and the "type it instead" hint takes
 // over for the rest of the visit. `not-allowed` is different in kind: it is
 // the microphone permission, which can be granted, so the button stays.
+//
+// Inside the Homeroom native app the answer is false from the start. The
+// app's webview never answers a permission request and the app declares no
+// microphone permission, so a button there would appear and never work, and
+// its failure would tell a person to allow something in a browser they are
+// not using. `dictationSupported()` counts the app out, the button never
+// mounts, and the same hint offers the box instead.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+
+import { isNativeApp } from '../features/mobile-install/environment';
 
 // ── The Web Speech API, declared locally ──────────────────────────────
 //
@@ -63,9 +72,13 @@ function recogniserCtor(): DictationRecogniserCtor | null {
 // does not offer the button to fail again.
 let visitUnsupported = false;
 
-/** Whether this browser offers speech recognition and this visit may use it. */
+/** Whether this host offers speech recognition and this visit may use it. */
 export function dictationSupported(): boolean {
-  return !visitUnsupported && recogniserCtor() !== null;
+  // `recogniserCtor()` answers first: it is the check that knows there may
+  // be no `window` at all (the prerender pass). The native app's webview
+  // cannot grant the microphone to the page, so it counts as unable
+  // however present `SpeechRecognition` is in its engine.
+  return !visitUnsupported && recogniserCtor() !== null && !isNativeApp();
 }
 
 /**
@@ -104,8 +117,15 @@ export type Dictation = {
  * Listen to the microphone and report everything heard since `start()`:
  * `onText(finalText, interimText)` where `finalText` is the sentences the
  * recogniser has settled and `interimText` the words it is still guessing.
- * Nothing is sent anywhere and nothing clears a box — the caller composes the
- * value it wants, typically `joinDictation(whatWasThere, joinDictation(final, interim))`.
+ *
+ * What the person says does not stay on the page: the browser hands the
+ * audio to its own speech service before any words come back, and that
+ * service is the engine maker's, not Homeroom's (Chrome uses Google's,
+ * Safari may use Apple's). Homeroom runs no listener and uploads nothing,
+ * and nothing here sends a message; the words land in the box for review
+ * and go only when the person sends. Nothing clears a box either: the
+ * caller composes the value it wants, typically
+ * `joinDictation(whatWasThere, joinDictation(final, interim))`.
  *
  * `lang` is the tag to hear, read at `start()` time so a language change
  * between listens is honoured without remounting anything.
@@ -141,7 +161,10 @@ export function useDictation({ lang, onText }: {
   }, []);
 
   const start = useCallback(() => {
-    if (listeningRef.current || visitUnsupported) return;
+    // The live support answer, not the mount-time probe: a refusal that has
+    // happened since, or a host that cannot listen (the native app), is
+    // refused here too, belt as well as braces behind the hidden button.
+    if (listeningRef.current || !dictationSupported()) return;
     const Ctor = recogniserCtor();
     if (!Ctor) return;
     setError(null);
@@ -165,6 +188,10 @@ export function useDictation({ lang, onText }: {
       onTextRef.current(finalsRef.current.join(' '), interim);
     };
     recogniser.onerror = (event) => {
+      // A session that has been replaced (a quick stop and start) or torn
+      // down (unmount) can still deliver its failure after the fact; it
+      // must not mark the session that took its place.
+      if (recogniserRef.current !== recogniser) return;
       if (event.error === 'not-allowed') {
         setError('blocked');
       } else if (event.error === 'service-not-allowed') {
@@ -177,9 +204,14 @@ export function useDictation({ lang, onText }: {
       }
     };
     recogniser.onend = () => {
+      // `end` arrives after the abort, as its own browser event: when a quick
+      // second tap has already started a new session, this stale end must
+      // not clear the new one's listening state. Only the recogniser still
+      // holding the ref is the live one.
+      if (recogniserRef.current !== recogniser) return;
       listeningRef.current = false;
       setListening(false);
-      if (recogniserRef.current === recogniser) recogniserRef.current = null;
+      recogniserRef.current = null;
     };
     recogniserRef.current = recogniser;
     listeningRef.current = true;
