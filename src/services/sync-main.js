@@ -167,7 +167,9 @@ async function runSyncMain(config, pool, sessionId, opts = {}) {
   const releaseOperation = beginSessionOperation(key);
   const entry = { phase: 'starting', startedAt: Date.now(), promise: null };
   _inFlightSyncs.set(key, entry);
-  entry.promise = runSyncMainInner(config, pool, sessionId, opts, entry)
+  // Recorded where another process sees it (active-workers.js) before the
+  // sync starts its worker.
+  entry.promise = releaseOperation.recorded.then(() => runSyncMainInner(config, pool, sessionId, opts, entry))
     .finally(() => {
       if (_inFlightSyncs.get(key) === entry) _inFlightSyncs.delete(key);
       releaseOperation();
@@ -314,7 +316,7 @@ async function runSyncMainInner(config, pool, sessionId, { sessionRow, trigger, 
         onProgress,
     });
 
-    activeWorkers.add(session.id);
+    await activeWorkers.enter(session.id);
     // #937: a sync turn is a NEW turn, so it owns the pending-stop
     // boundary the same way a chat turn does. Without this, a stop
     // requested against an earlier chat turn would still be pending in the
