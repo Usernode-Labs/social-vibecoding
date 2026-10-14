@@ -377,6 +377,13 @@ export function init() {
     const bountyRow = document.getElementById('feedback-bounty-row');
     const bountyCheckbox = document.getElementById('feedback-bounty-checkbox');
     const bountyNote = document.getElementById('feedback-bounty-note');
+    // #5048: the full admin's "Private request" box. Ticked, the request is
+    // kept in Homeroom (POST /api/private-requests) and never filed on
+    // GitHub, so the rows that only mean something on a GitHub issue hide.
+    const privateRow = document.getElementById('feedback-private-row');
+    const privateCheckbox = document.getElementById('feedback-private-checkbox');
+    const privateChosen = () => !!privateCheckbox && privateCheckbox.checked
+      && !privateRow.classList.contains('hidden');
     // Paint the row from the viewer's live weekly allowance and return it to
     // its unchecked default. Budget state is null only when the first-load
     // fetch failed — show the row enabled with no count rather than hiding a
@@ -405,6 +412,22 @@ export function init() {
       } else bountyNote.textContent = t('dialogs:feedback.bounty.costRemaining', { count: remaining, limit });
       bountyRow.classList.remove('hidden');
     };
+    // Shown to full admins only, unticked on every open.
+    const resetPrivateRow = () => {
+      privateCheckbox.checked = false;
+      privateRow.classList.toggle('hidden', !App.user?.canAdminWrite);
+    };
+    privateCheckbox.addEventListener('change', () => {
+      if (privateCheckbox.checked) {
+        bountyCheckbox.checked = false;
+        bountyRow.classList.add('hidden');
+        stateRow.classList.add('hidden');
+      } else {
+        resetBountyRow();
+        stateRow.classList.toggle('hidden', !(stateAvailable && feedbackTarget === 'app'));
+      }
+      if (!submitBusy) feedbackBtn.textContent = restingSubmitLabel();
+    });
     // The selected option uses a darker violet on hover so it keeps its
     // active look; the unselected option uses the neutral zinc hover.
     const activeTargetClasses = ['bg-violet-600', 'text-white', 'border-violet-600', 'hover:bg-violet-500'];
@@ -505,7 +528,7 @@ export function init() {
       feedbackCaretPlatform.classList.toggle('hidden', !onPlatform);
       // #685: app state only travels with app-targeted feedback — the
       // shell has no provider of its own, so the row hides on Platform.
-      stateRow.classList.toggle('hidden', !(stateAvailable && onApp));
+      stateRow.classList.toggle('hidden', !(stateAvailable && onApp) || privateChosen());
       // #2707: a tap is the answer, so it clears the gate, the hint and —
       // #2888 — the red.
       if (target && awaitingTarget) setAwaitingTarget(false);
@@ -1635,7 +1658,8 @@ export function init() {
     // that is the newer and more specific thing to say, so the line is only
     // rewritten while it is hidden or still showing our own text.
     // The submit button's words while nothing is in flight.
-    const restingSubmitLabel = () => (isOfflineNow()
+    // A private request is never saved for later (#5048), so it keeps Post.
+    const restingSubmitLabel = () => (isOfflineNow() && !privateChosen()
       ? t('dialogs:feedback.submit.saveForLater')
       : t('dialogs:feedback.submit.post'));
 
@@ -1780,6 +1804,59 @@ export function init() {
     // A 4xx is about what was sent ("Description is required", "This app has
     // no repository yet…") and is already written for the person, so it is
     // shown as it is.
+    // #5048: file the dialog's words as a private request. No outbox: an
+    // offline or failed submit says so and keeps the words in the form,
+    // because the outbox files on GitHub, in public.
+    const submitPrivate = async (body, { submittedPresentation, submittedBy, telemetryAttempt }) => {
+      const fail = (message, errorCode) => {
+        window.UITelemetry?.outcome?.(telemetryAttempt, 'failure', { errorCode });
+        feedbackStatus.textContent = message;
+        feedbackStatus.className = 'text-sm mt-2 text-red-400';
+        feedbackStatus.classList.remove('hidden');
+        enableSubmit();
+        feedbackBtn.textContent = restingSubmitLabel();
+      };
+      if (isOfflineNow()) return fail(t('dialogs:feedback.private.offline'), 'offline');
+      let res;
+      let data;
+      try {
+        res = await fetch('/api/private-requests', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            target: body.target,
+            ...(body.appSlug ? { appSlug: body.appSlug } : {}),
+            ...(body.title ? { title: body.title } : {}),
+            description: body.description,
+          }),
+        });
+        data = await res.json().catch(() => ({}));
+      } catch {
+        return fail(t('dialogs:feedback.private.offline'), 'network');
+      }
+      if (submittedPresentation !== presentation || submittedBy !== App.user?.id) {
+        window.UITelemetry?.cancel?.(telemetryAttempt);
+        return;
+      }
+      if (!res.ok) return fail(submitErrorText(res.status, data.error), window.UITelemetry?.errorCodeFor?.(res.status));
+      window.UITelemetry?.outcome?.(telemetryAttempt, 'success');
+      forgetSentDraft(body.description);
+      feedbackText.value = '';
+      feedbackTitle.value = '';
+      clearDescriptionError();
+      clearCaptureDraft();
+      clearSavedDraft();
+      resetTitleGenState();
+      resetScreenshotState();
+      resetVideoState();
+      setComposerLocked(true);
+      feedbackBtn.textContent = t('dialogs:feedback.submit.posted');
+      // The Workshop's Private requests section lists it without a reload.
+      window.dispatchEvent(new CustomEvent('usernode:private-requests-changed', {
+        detail: { slug: data.appSlug || null },
+      }));
+      showSent(t('dialogs:feedback.private.sentTitle'), t('dialogs:feedback.private.sentNote'));
+    };
     const submitErrorText = (status, error) => {
       if (status >= 500 || !error) {
         try { console.warn('[feedback] submit refused', status, error || '(no message)'); } catch { /* console is optional */ }
@@ -1955,6 +2032,13 @@ export function init() {
         const customTitle = feedbackTitle.value.trim();
         if (customTitle && (titleDirty || text === lastGeneratedFor)) body.title = customTitle;
         if (target === 'app') body.appSlug = App.currentApp;
+        // #5048: a private request goes to Homeroom alone. It never takes
+        // the outbox or /api/feedback, both of which file a public GitHub
+        // issue, and nothing attached goes with it.
+        if (privateChosen()) {
+          await submitPrivate(body, { submittedPresentation, submittedBy, telemetryAttempt });
+          return;
+        }
         // #964: pledge a kudos bounty on the issue this submit files.
         // Captured at submit time alongside the target, and only when the
         // box is both ticked and enabled — a disabled (allowance-spent)
@@ -2263,11 +2347,12 @@ export function init() {
       // immediate paint and the post-refresh repaint reset the checkbox to
       // unchecked, which is the whole point of the row: a pledge is always
       // a deliberate tick, never a side effect of filing feedback.
+      resetPrivateRow();
       resetBountyRow();
       Promise.resolve(window.Kudos?.Budget?.refresh?.()).then(() => {
         // Only if the dialog is still open and untouched by the user.
         const modal = document.getElementById('feedback-modal');
-        if (!modal.classList.contains('hidden') && !bountyCheckbox.checked) resetBountyRow();
+        if (!modal.classList.contains('hidden') && !bountyCheckbox.checked && !privateChosen()) resetBountyRow();
       }).catch(() => { /* budget unavailable — row stays as painted */ });
       applyTargetAvailability(canTargetApp, appData);
       // A caller whose own button already named the app opens on it, with

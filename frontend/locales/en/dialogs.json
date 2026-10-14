@@ -1403,6 +1403,26 @@
     "text": "<0>Put a kudos on this</0> to thank whoever solves it",
     "description": "Label of a checkbox in the \"Suggest an improvement\" dialog: attaches one kudos (a token of thanks, of which a person has a weekly allowance) to the request as a reward. Keep \"kudos\" as the product uses it. The numbered tag makes the first part darker."
   },
+  "feedback.private.label": {
+    "text": "<0>Private request</0>: only platform admins can see it",
+    "description": "Label of a checkbox in the \"Suggest an improvement\" dialog, shown only to platform admins. Ticked, the request is hidden from everyone who is not a platform admin. The numbered tag makes the first part darker."
+  },
+  "feedback.private.note": {
+    "text": "Kept in Homeroom only, never posted on GitHub. Pictures, clips and kudos are not attached.",
+    "description": "Small grey note under the \"Private request\" checkbox in the \"Suggest an improvement\" dialog. GitHub is the public site where ordinary requests are posted."
+  },
+  "feedback.private.offline": {
+    "text": "Couldn't file the private request. Check your connection and try again; your words are still here.",
+    "description": "Error under the \"Suggest an improvement\" form when a private request could not be sent because the connection failed. Private requests are never saved to send later."
+  },
+  "feedback.private.sentTitle": {
+    "text": "Filed privately",
+    "description": "Heading of the confirmation after a platform admin filed a private request from the \"Suggest an improvement\" dialog."
+  },
+  "feedback.private.sentNote": {
+    "text": "Only platform admins can see it. It is under Private requests in the project's Workshop.",
+    "description": "Sentence under the \"Filed privately\" confirmation. \"Private requests\" is the name of the section on the Workshop page (the project's work overview) where it is listed."
+  },
   "feedback.bounty.cost": {
     "text": "Costs 1 kudos",
     "description": "Note under the kudos checkbox in the \"Suggest an improvement\" dialog when the person's remaining weekly allowance is not known."

@@ -1637,9 +1637,13 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // 730 → 731: +1: the admin console's Apps & usage section (#admin/apps),
   // a route no other check reaches. 731 leaves 149 slots.
   //
+  // 731 → 732: +1 (#5048): the Workshop's Private requests section, which
+  // only platform admins see (the checker is a view-only admin) and only
+  // when there is one: the staging seed writes one. 732 leaves 148 slots.
+  //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 731);
+  checkCap.assertPinned(DAPP.tests.length, 732);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

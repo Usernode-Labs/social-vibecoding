@@ -700,6 +700,8 @@ app.use(adminUserMergeRoutes(config));
 app.use(dashboardRoutes(config));
 app.use(uiTelemetryRoutes(config));
 app.use(feedbackRoutes(config));
+// #5048: requests only platform admins can see, kept off GitHub.
+app.use(require('./src/routes/private-requests').privateRequestRoutes(config));
 app.use(notificationsRoutes(config));
 app.use(collaboratorRoutes(config));
 // Session-authenticated user directory for the shell's iframe bridge

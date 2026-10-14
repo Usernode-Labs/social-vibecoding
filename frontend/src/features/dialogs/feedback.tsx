@@ -475,6 +475,26 @@ export function FeedbackDialog() {
           </label>
         </div>
         {/*
+            #5048: file it as a private request, which only platform admins
+            can see. Shown to full admins only (the controller unhides it);
+            ticked, the request is kept in Homeroom and never becomes a
+            GitHub issue, so the bounty and app-state rows hide and nothing
+            attached goes with it. Same utility classes as the rows around it.
+        */}
+        <div id="feedback-private-row" className="hidden mt-2">
+          <label className="flex items-start gap-2 cursor-pointer select-none">
+            <input id="feedback-private-checkbox" type="checkbox" className="accent-violet-500 w-4 h-4 mt-0.5" />
+            <span className="text-xs text-zinc-600 dark:text-zinc-400">
+              <RichMessage
+                id="dialogs:feedback.private.label"
+                components={[<span className="font-medium text-zinc-700 dark:text-zinc-300" />]}
+              />
+              <br />
+              <span className="text-zinc-500 dark:text-zinc-500">{t('dialogs:feedback.private.note')}</span>
+            </span>
+          </label>
+        </div>
+        {/*
             #964: opt-in kudos bounty on the issue this dialog is about to
             file. Starts UNCHECKED on every open (the controller's _open) —
             filing feedback must never quietly spend someone's weekly

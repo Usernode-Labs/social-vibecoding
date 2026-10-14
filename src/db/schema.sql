@@ -13895,3 +13895,40 @@ CREATE INDEX IF NOT EXISTS idx_test_run_reports_slug
 CREATE INDEX IF NOT EXISTS idx_test_run_reports_user
   ON test_run_reports (test_user_id, created_at DESC);
 COMMENT ON TABLE test_run_reports IS 'staging:private';
+
+-- Private requests (#5048): requests only platform admins can see, for
+-- security and confidential work. Every other request is a GitHub issue, and
+-- the platform's repository is public, so a private request is never filed
+-- there: it lives in these two tables alone and is read and written only
+-- through routes/private-requests.js, which answers 404 to anyone who is not
+-- a platform admin. `status` is 'open' or 'closed'. Private, so a staging
+-- copy gets the tables without the rows (seedStagingPrivateRequest writes the
+-- one demo row there).
+CREATE TABLE IF NOT EXISTS private_requests (
+  id          SERIAL PRIMARY KEY,
+  app_id      INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  title       VARCHAR(200) NOT NULL,
+  description TEXT NOT NULL,
+  status      VARCHAR(16) NOT NULL DEFAULT 'open',
+  created_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  closed_by   INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  closed_at   TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_private_requests_app
+  ON private_requests (app_id, status, created_at DESC);
+COMMENT ON TABLE private_requests IS 'staging:private';
+
+-- Its discussion: a comment list, not a chat thread, because chat threads
+-- are read by every viewer of the app and fanned out to its whole room.
+CREATE TABLE IF NOT EXISTS private_request_comments (
+  id                 SERIAL PRIMARY KEY,
+  private_request_id INTEGER NOT NULL REFERENCES private_requests(id) ON DELETE CASCADE,
+  user_id            INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  body               TEXT NOT NULL,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_private_request_comments_request
+  ON private_request_comments (private_request_id, id);
+COMMENT ON TABLE private_request_comments IS 'staging:private';

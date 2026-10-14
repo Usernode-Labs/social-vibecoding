@@ -2621,6 +2621,12 @@
       "expectText": "Discussion"
     },
     {
+      "name": "#5048: an admin sees the Workshop's Private requests, each with a lock and a Private badge, last on the tab",
+      "path": "/?demo=1&ws=workshop#app/usernode-2d5619/workshop",
+      "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"workshop\"] [data-ws-part=\"private\"] ~ [data-ws-private] [data-private-request=\"900501\"] [data-private-badge]",
+      "expectText": "Staging demo private request"
+    },
+    {
       "name": "The Workshop tab opens on its Overview: All items with the approval rule as its last line, then What's happening, with no notices panel (#3487, #3528)",
       "path": "/?demo=1&ws=workshop#app/usernode-2d5619/workshop",
       "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"workshop\"] > .dev-ws-tabbody > [data-ws-part=\"overview\"]:first-child + [data-ws-dashboard]:has(> [data-ws-approval-rules]:last-child > [data-ws-community-rule]) + [data-ws-part=\"happening\"]",

@@ -360,6 +360,9 @@ const RETIRED_IDS = {
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
+  // ── #5048: private requests ──────────────────────────────────────────────
+  'feedback-private-row': '#5048: the Suggest an improvement dialog\'s "Private request" box, which files the request in Homeroom only (POST /api/private-requests) where only platform admins can see it, never as a GitHub issue. Ships hidden; feedback-controller.js shows it to full admins on each open.',
+  'feedback-private-checkbox': '#5048: the box itself, unticked on every open.',
   // ── #4405: custom domains ───────────────────────────────────────────────
   'app-domain-modal': '#4405: the Custom domain dialog (features/dialogs/app-domain.tsx), opened from the hub\'s ⋯ menu\'s Settings & rules row for whoever manages the project, or by `?shot=app-domain`. Ships hidden and EMPTY but for its title, its error line and the Close pill; everything else arrives from GET /api/apps/:slug/domain in its onOpen, so the prerender and the first client render agree. The ids that render behind that read (and so are not in the prerender, nor here): #app-domain-input and #app-domain-add (the claim form), #app-domain-section with #app-domain-status (the state in words and the sentence that says why), #app-domain-records (the CNAME and TXT rows dapp.json\'s declared check selects on), #app-domain-check, #app-domain-open and #app-domain-remove.',
   'app-domain-error': '#4405: the dialog\'s error line, hidden until a request fails.',
