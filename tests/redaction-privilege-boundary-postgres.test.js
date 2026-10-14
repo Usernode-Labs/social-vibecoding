@@ -179,6 +179,23 @@ function harness(t) {
   return dbManager;
 }
 
+// db-manager's administrative connection uses a `usernode` maintenance
+// database. Create it if the server does not have one (as the two-server
+// postgres suite does), connecting on the default database. Returns a control
+// connection on the default database and whether we created usernode (so the
+// caller drops it on cleanup).
+async function adminControl() {
+  const admin = await connect(BASE);
+  let created = (await admin.query("SELECT 1 FROM pg_database WHERE datname = 'usernode'")).rowCount === 0;
+  if (created) {
+    // Another postgres suite on the same server may create it first; that is
+    // not ours to drop.
+    try { await admin.query('CREATE DATABASE usernode'); }
+    catch (err) { if (/already exists/.test(err.message)) created = false; else throw err; }
+  }
+  return { admin, created };
+}
+
 test('app code on private tables runs without the admin role, on every clone path', async (t) => {
   if (!(await reachable(t))) return;
   const dbManager = harness(t);
@@ -187,8 +204,7 @@ test('app code on private tables runs without the admin role, on every clone pat
   const direct = `${source}_staging_s1_abcdef`;
   const viaTmpl = `${source}_staging_s2_abcdef`;
   const template = dbManager.stagingTemplateDbName(source);
-  const admin = await connect(at(BASE, 'postgres').replace('/postgres', '/usernode').includes('usernode')
-    ? process.env.DB_ADMIN_URL : at(BASE, 'usernode'));
+  const { admin, created } = await adminControl();
   const wipe = async () => {
     const dbs = (await admin.query("SELECT datname FROM pg_database WHERE datname LIKE $1", [`%${tok}%`])).rows;
     for (const { datname } of dbs) {
@@ -198,7 +214,12 @@ test('app code on private tables runs without the admin role, on every clone pat
     const roles = (await admin.query("SELECT rolname FROM pg_roles WHERE rolname LIKE $1", [`%${tok}%`])).rows;
     for (const { rolname } of roles) await admin.query(`DROP ROLE IF EXISTS ${rolname}`).catch(() => {});
   };
-  t.after(async () => { await dbManager._templateIdleForTest(source).catch(() => {}); await wipe(); await admin.end(); });
+  t.after(async () => {
+    await dbManager._templateIdleForTest(source).catch(() => {});
+    await wipe();
+    if (created) await admin.query('DROP DATABASE IF EXISTS usernode WITH (FORCE)').catch(() => {});
+    await admin.end();
+  });
 
   // Build the source and seed it.
   await admin.query(`CREATE DATABASE ${source}`);
@@ -252,9 +273,10 @@ test('the after-the-column-pass re-check fails a copy whose private table was re
   const dbManager = harness(t);
   const tok = crypto.randomBytes(4).toString('hex');
   const db = `app_rfl${tok}`;
-  const admin = await connect(at(BASE, 'usernode'));
+  const { admin, created } = await adminControl();
   t.after(async () => {
     await admin.query(`DROP DATABASE IF EXISTS ${db} WITH (FORCE)`).catch(() => {});
+    if (created) await admin.query('DROP DATABASE IF EXISTS usernode WITH (FORCE)').catch(() => {});
     await admin.end();
   });
   await admin.query(`CREATE DATABASE ${db}`);
@@ -284,7 +306,7 @@ test('FORCE row-level security on a private column fails the copy closed when re
   const tok = crypto.randomBytes(4).toString('hex');
   const source = `app_rls${tok}`;
   const target = `${source}_staging_s1_abcdef`;
-  const admin = await connect(at(BASE, 'usernode'));
+  const { admin, created } = await adminControl();
   const wipe = async () => {
     for (const { datname } of (await admin.query("SELECT datname FROM pg_database WHERE datname LIKE $1", [`%${tok}%`])).rows) {
       await admin.query(`DROP DATABASE IF EXISTS ${datname} WITH (FORCE)`).catch(() => {});
@@ -293,7 +315,11 @@ test('FORCE row-level security on a private column fails the copy closed when re
       await admin.query(`DROP ROLE IF EXISTS ${rolname}`).catch(() => {});
     }
   };
-  t.after(async () => { await wipe(); await admin.end(); });
+  t.after(async () => {
+    await wipe();
+    if (created) await admin.query('DROP DATABASE IF EXISTS usernode WITH (FORCE)').catch(() => {});
+    await admin.end();
+  });
   await admin.query(`CREATE DATABASE ${source}`);
   const src = await connect(at(BASE, source));
   // A private column on a table whose row-level security is FORCEd (so it
