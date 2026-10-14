@@ -227,6 +227,16 @@ export function FeedbackDialog() {
             selects the single available destination when there is only one:
             an extra tap that cannot disambiguate anything is just a tax.
         */}
+        {/*
+            #4968: opened from a writing challenge's "Send it", this line
+            names the challenge the report is for ("For your challenge:
+            Write a short tutorial"). Renders EMPTY and hidden for the same
+            hydration reason as #feedback-status and #feedback-text-error:
+            ./feedback-controller owns the text, filled on open and dropped
+            with the tag on close, file, or a plain reopen.
+        */}
+        <p id="feedback-challenge-for" className="hidden mb-3 text-sm text-zinc-700 dark:text-zinc-300">
+        </p>
         {/* WHERE SHOULD THIS GO? (UI overhaul): the question the row asks,
             as its label, where the grey hint under it used to ask it. Each
             option leads with the NAME of the place (the app's, or

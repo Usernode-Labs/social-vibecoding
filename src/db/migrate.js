@@ -57,6 +57,11 @@ async function migrate(config) {
   await reindexAfterHostMove(pool);
   finishPhase('reindexMs');
 
+  // #4968: the daily and weekly challenge templates, once per database, in
+  // every environment; staging's own challenge rows hang off them further
+  // down (seedStagingDailyChallenges, after seedStagingFirstChallenges).
+  await seedDailyWeeklyChallengeTemplates(pool);
+
   await seedAdmin(pool, config);
   await seedCaptureUser(pool);
   await seedCaptureAdminUser(pool);
@@ -207,6 +212,8 @@ async function migrate(config) {
   await seedStagingTopochain(pool, config);
   // After it: the First challenges hang off its season-type event.
   await seedStagingFirstChallenges(pool);
+  // And the Daily and Weekly challenges (#4968) off the same one.
+  await seedStagingDailyChallenges(pool);
   // Must run AFTER seedStagingTopochain (it decorates the same three viewer
   // identities) and AFTER seedStagingLeaderboardProfile (it decorates that
   // seed's 900001 / 900002 fixture accounts).
@@ -645,6 +652,114 @@ async function migrateWaitlistCountryCodes(pool) {
     }
   } catch (err) {
     log.warn('db', 'waitlist country-code migration skipped', { err: err.message });
+  }
+}
+
+// ── Daily and weekly challenge templates (#4968) ────────────────────────
+//
+// Eight templates: five DAILY (reset every day at midnight UTC) and three
+// WEEKLY (reset every Monday). They carry the whole card — goal, task,
+// reward, the CTA and its artwork — so an organiser attaching one to a
+// season event has nothing left to fill in. The five writing and reporting
+// challenges CTA to `#feedback/challenge`: the feedback form opened WITH the
+// challenge's tag, because their measures read `feedback_reports.challenge_id`
+// and an untagged report can never count for them. "Help a newcomer" reads
+// chat messages directly, so it CTAs to the Communities tab instead.
+//
+// Guarded by a platform_settings marker, in the same style as
+// migrateWaitlistCountryCodes above, because this runs on every boot. The
+// guard is also what keeps a template an organiser has since deleted from
+// being re-created behind their back: it runs once per database, and after
+// that the console owns these rows like any other.
+//
+// Outside staging each template also gets its one enabled scoring rule,
+// template-bound, so attaching the template to an event wires the scoring
+// without a second step (the rule's unique index allows one rule per
+// template). Staging's copy of this change seeds its challenge rows WITHOUT
+// rules — data only, per the platform's seed rule, so the shots see the
+// cards promise nothing that nothing scores.
+async function seedDailyWeeklyChallengeTemplates(pool) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT 1 FROM platform_settings WHERE key = 'challenge_templates_seeded_4968'`
+    );
+    if (rows.length) return;
+
+    await pool.query(
+      `INSERT INTO challenge_templates
+         (id, category, goal, task, reward, description, cta_label, cta_link,
+          metric_type, metric_target, metric_label, illustration, created_at, updated_at)
+       VALUES
+         (900740, 'DAILY', 'Report a bug with a screenshot',
+          'File a bug report with a screenshot attached, from the Suggest an improvement form.',
+          '250 pts', 'Daily challenge: report a reproducible bug with a screenshot.',
+          'Send a report', '#feedback/challenge',
+          'count', 1, 'Reports', 'useful-feedback', NOW(), NOW()),
+         (900741, 'DAILY', 'Test something new',
+          'Try a change that went live on somebody else''s project in the last 7 days, and report what you found.',
+          '250 pts', 'Daily challenge: test something newly released and report on it.',
+          'Send a report', '#feedback/challenge',
+          'count', 1, 'Reports', 'try-three-apps', NOW(), NOW()),
+         (900742, 'DAILY', 'Write a short tutorial',
+          'Write a short tutorial that walks somebody through something in a project, and send it from this challenge.',
+          'Up to 500 pts', 'Daily challenge: write a short tutorial.',
+          'Send it', '#feedback/challenge',
+          'count', 1, 'Tutorials', 'make-a-proposal', NOW(), NOW()),
+         (900743, 'DAILY', 'Help a newcomer',
+          'Reply to a message from somebody who joined in the last 14 days, in a project channel.',
+          '250 pts', 'Daily challenge: help a newcomer in a project channel.',
+          'Find a community', '#communities',
+          'count', 1, 'Replies', 'connect-participants', NOW(), NOW()),
+         (900744, 'DAILY', 'Share a discovery',
+          'Send in something surprising or useful you found while using a project.',
+          'Up to 250 pts', 'Daily challenge: share a discovery.',
+          'Send it', '#feedback/challenge',
+          'count', 1, 'Discoveries', 'invite-to-network', NOW(), NOW()),
+         (900745, 'WEEKLY', 'Run a usability test',
+          'Sit with how somebody else''s project actually works, and report what confused you and what worked.',
+          'Up to 1,000 pts', 'Weekly challenge: run a usability test.',
+          'Send it', '#feedback/challenge',
+          'count', 1, 'Tests', 'ten-minutes-in-apps', NOW(), NOW()),
+         (900746, 'WEEKLY', 'Compare two features',
+          'Compare two features that do a similar job, and report which one works better and why.',
+          'Up to 750 pts', 'Weekly challenge: compare two features.',
+          'Send it', '#feedback/challenge',
+          'count', 1, 'Comparisons', 'proposal-accepted', NOW(), NOW()),
+         (900747, 'WEEKLY', 'Review a new app',
+          'Review an app made in the last 14 days: what it does, what works, and what to change.',
+          'Up to 750 pts', 'Weekly challenge: review a new app.',
+          'Send it', '#feedback/challenge',
+          'count', 1, 'Reviews', 'try-three-apps', NOW(), NOW())
+       ON CONFLICT (id) DO NOTHING`
+    );
+
+    if (process.env.USERNODE_ENV !== 'staging') {
+      await pool.query(
+        `INSERT INTO challenge_scoring_rules
+           (name, measure, challenge_template_id, target, points, enabled, notes)
+         VALUES
+           ('Daily: report a bug with a screenshot', 'BUG_REPORT_SCREENSHOT', 900740, 1, 250, TRUE, 'Seeded with the #4968 daily challenge templates.'),
+           ('Daily: test something new', 'NEW_FEATURE_FEEDBACK', 900741, 1, 250, TRUE, 'Seeded with the #4968 daily challenge templates.'),
+           ('Daily: write a short tutorial', 'TUTORIAL_SHARED', 900742, 1, 500, TRUE, 'Seeded with the #4968 daily challenge templates.'),
+           ('Daily: help a newcomer', 'NEWCOMER_HELPED', 900743, 1, 250, TRUE, 'Seeded with the #4968 daily challenge templates.'),
+           ('Daily: share a discovery', 'DISCOVERY_SHARED', 900744, 1, 250, TRUE, 'Seeded with the #4968 daily challenge templates.'),
+           ('Weekly: run a usability test', 'USABILITY_TEST', 900745, 1, 1000, TRUE, 'Seeded with the #4968 weekly challenge templates.'),
+           ('Weekly: compare two features', 'FEATURE_COMPARISON', 900746, 1, 750, TRUE, 'Seeded with the #4968 weekly challenge templates.'),
+           ('Weekly: review a new app', 'APP_REVIEW', 900747, 1, 750, TRUE, 'Seeded with the #4968 weekly challenge templates.')
+         ON CONFLICT (challenge_template_id) WHERE challenge_template_id IS NOT NULL DO NOTHING`
+      );
+    }
+
+    await pool.query(
+      `INSERT INTO platform_settings (key, value, description) VALUES
+         ('challenge_templates_seeded_4968', 'true',
+          'Marker: the eight #4968 daily and weekly challenge templates have been seeded. Do not delete — deleting re-runs the seed, which would re-create a template an organiser has deleted.')
+       ON CONFLICT (key) DO NOTHING`
+    );
+
+    log.info('db', 'Daily and weekly challenge templates seeded (#4968)');
+  } catch (err) {
+    log.warn('db', 'daily/weekly challenge template seed skipped', { message: err.message });
   }
 }
 
@@ -13348,6 +13463,48 @@ async function seedStagingFirstChallenges(pool) {
   }
 }
 
+// The Daily and Weekly challenge cards (#4968) in staging previews, beside
+// seedStagingFirstChallenges above and hanging off the same fixture
+// season-type event. Data only: no credits and no scoring rules, per the
+// platform's seed rule — a card's progress is what a person did, so the
+// shots see the Daily and This week groups empty and open, and the
+// five-report and three-writing challenges promise nothing that nothing
+// scores. (Their rules exist only outside staging; see
+// seedDailyWeeklyChallengeTemplates above.) The CTAs come from the
+// templates, which seedDailyWeeklyChallengeTemplates seeds in every
+// environment; a staging clone that somehow lacks them skips only this, like
+// the First challenges seed's own failure domain.
+//
+// Fixed ids above every range the fixture uses (challenges 900724-900731,
+// clear of the viewer window at 900520-900579 and of the First challenges'
+// 900720-900723), and ON CONFLICT (id) DO NOTHING, so a reboot changes
+// nothing.
+async function seedStagingDailyChallenges(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  const EVENT_SEASON_ID = 900501;
+  try {
+    await pool.query(
+      `INSERT INTO challenges
+         (id, season_event_id, challenge_template_id, enabled, display_order, completed,
+          created_at, updated_at)
+       VALUES
+         (900724, $1, 900740, TRUE, 5, FALSE, NOW(), NOW()),
+         (900725, $1, 900741, TRUE, 6, FALSE, NOW(), NOW()),
+         (900726, $1, 900742, TRUE, 7, FALSE, NOW(), NOW()),
+         (900727, $1, 900743, TRUE, 8, FALSE, NOW(), NOW()),
+         (900728, $1, 900744, TRUE, 9, FALSE, NOW(), NOW()),
+         (900729, $1, 900745, TRUE, 10, FALSE, NOW(), NOW()),
+         (900730, $1, 900746, TRUE, 11, FALSE, NOW(), NOW()),
+         (900731, $1, 900747, TRUE, 12, FALSE, NOW(), NOW())
+       ON CONFLICT (id) DO NOTHING`,
+      [EVENT_SEASON_ID]
+    );
+    log.info('db', 'Staging Daily and Weekly challenges seeded (#4968)', { event: EVENT_SEASON_ID });
+  } catch (err) {
+    log.warn('db', 'Staging Daily and Weekly challenges seed skipped', { message: err.message });
+  }
+}
+
 // Profile customization fixtures (issue #982).
 //
 // TWO of the three "missing in staging" categories apply here:
@@ -14028,6 +14185,7 @@ async function seedStagingPlatformMail(pool) {
 // meant to be called from anywhere else in the app.
 module.exports = {
   migrate, seedStagingTopochain, seedStagingFirstChallenges, seedStagingProfileCustomization,
+  seedDailyWeeklyChallengeTemplates, seedStagingDailyChallenges,
   seedStagingBotChatRequest,
   seedStagingPlatformMail, auditDuplicatePrSessions,
   migrateWaitlistCountryCodes,

@@ -327,14 +327,15 @@ test('every door runs the measures it can complete, and only those', () => {
   assert.deepEqual(JSON.parse(JSON.stringify(scorer.ON_THE_SPOT)), {
     join: ['COMMUNITY_JOINED', 'COMMUNITY_APP_CREATED'],
     vote: ['VOTE_CAST'],
-    feedback: ['FEEDBACK_SENT'],
+    feedback: ['FEEDBACK_SENT', 'BUG_REPORT_SCREENSHOT', 'NEW_FEATURE_FEEDBACK', 'NEWCOMER_HELPED'],
     appTime: ['TRY_APPS'],
   });
   assert.equal(scorer.JOIN_MEASURES, scorer.ON_THE_SPOT.join);
   const all = Object.values(scorer.ON_THE_SPOT).flat();
   for (const measure of all) assert.equal(rules.MEASURES[measure].graded, false, measure);
-  assert.deepEqual(all.filter((m) => rules.MEASURES[m].counted), ['TRY_APPS'],
-    'the one counted measure on the spot is the one scoreOn locks for');
+  assert.deepEqual(all.filter((m) => rules.MEASURES[m].counted),
+    ['BUG_REPORT_SCREENSHOT', 'NEW_FEATURE_FEEDBACK', 'NEWCOMER_HELPED', 'TRY_APPS'],
+    'the counted measures are the ones scoreOn locks for (#4968 adds the three report ones)');
   assert.ok(!all.includes('INVITES_JOINED'), 'its "three and no more" waits for the locked schedule');
 });
 
@@ -447,4 +448,23 @@ test('the junk filter is the grader\'s, applied by the flag the scorer reads', (
   const src = read('src/services/topochain/challenge-scorer.js');
   assert.match(src, /if \(MEASURES\[rule\.measure\]\.screened\) \{/);
   assert.equal(grader.preFilter('VOTE_CAST', { text: '' }, new Set()), null, 'a vote has no text to judge');
+});
+
+// ─── #4968: the daily and weekly challenges ────────────────────────────
+
+test('the daily and weekly report challenges count at the door, and the graded ones wait for the tick', () => {
+  // Filing the report is the whole action for the three ungraded report
+  // measures, exactly as it is for FEEDBACK_SENT, so they join it in the
+  // feedback door's measure list. NEWCOMER_HELPED rides along too — a reply
+  // is its own action, and the reply it reads is already written by the time
+  // any report is filed.
+  const feedbackMeasures = scorer.ON_THE_SPOT.feedback;
+  assert.deepEqual([...feedbackMeasures].sort(),
+    ['BUG_REPORT_SCREENSHOT', 'FEEDBACK_SENT', 'NEWCOMER_HELPED', 'NEW_FEATURE_FEEDBACK']);
+  // The five graded ones are dropped by scoreOn like every graded measure —
+  // nobody's tap waits on a model call — so none of them may sit in a door's
+  // list even though scoreOn would filter them out.
+  for (const measure of ['TUTORIAL_SHARED', 'DISCOVERY_SHARED', 'USABILITY_TEST', 'FEATURE_COMPARISON', 'APP_REVIEW']) {
+    assert.equal(feedbackMeasures.includes(measure), false, measure);
+  }
 });

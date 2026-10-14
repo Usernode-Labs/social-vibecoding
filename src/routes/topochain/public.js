@@ -63,7 +63,7 @@ const {
 } = require('./helpers');
 const { TEMPLATE_JOIN_COLUMNS_SQL, buildChallengeListItem } = require('./challenge-view');
 const {
-  loadOnboarding, challengeCategory, resolveProgress, loadEventBlocks, COUNTS_THIS_WEEK_SQL,
+  loadOnboarding, challengeCategory, resolveProgress, loadEventBlocks, COUNTS_CURRENT_PERIOD_SQL,
 } = require('../../services/topochain/challenge-onboarding');
 const { loadRuleFacts, intervalMinutes } = require('../../services/topochain/challenge-scorer');
 const events = require('../../services/events');
@@ -797,7 +797,7 @@ function topochainPublicRoutes(config) {
              JOIN challenges c ON c.id = ua.challenge_id
              LEFT JOIN challenge_templates ct ON ct.id = c.challenge_template_id
             WHERE ua.user_id = $1 AND ua.challenge_id = ANY($2::bigint[])
-              AND ${COUNTS_THIS_WEEK_SQL}
+              AND ${COUNTS_CURRENT_PERIOD_SQL}
             GROUP BY ua.challenge_id`,
           [req.user.id, visible.map((r) => Number(r.id))]
         );

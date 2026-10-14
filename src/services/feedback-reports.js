@@ -85,17 +85,29 @@ async function createPlatformIssue({ owner, repo, title, body, pat = process.env
 // person has been helped, so a bookkeeping failure must not turn their
 // submission into an error and invite a duplicate. `source` is null for the
 // feedback dialog, and 'homeroom_bot' for a report the bot filed for them.
-async function recordFeedbackReport(pool, { user, app, owner, repo, issueNumber, title, description, source = null }) {
+// `challengeId` (#4968) tags the report with the daily or weekly challenge it
+// was sent from, and `screenshotCount` says how many screenshots it carried
+// (the bug-report challenge's read needs at least one); the scorer reads both
+// columns, and the routes validate them before getting here. The count column
+// is NOT NULL: a caller that leaves it off (the bot's filePlatformReport)
+// stores 0, so the receipt never fails on the tag columns.
+async function recordFeedbackReport(pool, {
+  user, app, owner, repo, issueNumber, title, description, source = null,
+  challengeId = null, screenshotCount = null,
+}) {
   if (!user?.id) return;
   try {
     await pool.query(
       `INSERT INTO feedback_reports
-         (user_id, target, app_id, issue_owner, issue_repo, issue_number, title, description, source)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+         (user_id, target, app_id, issue_owner, issue_repo, issue_number, title, description, source,
+          challenge_id, screenshot_count)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
       [user.id, app ? 'app' : 'platform', app ? app.id : null,
         owner || null, repo || null,
         Number.isSafeInteger(issueNumber) ? issueNumber : null,
-        title ? String(title).slice(0, 512) : null, description, source]
+        title ? String(title).slice(0, 512) : null, description, source,
+        Number.isSafeInteger(challengeId) ? challengeId : null,
+        Number.isSafeInteger(screenshotCount) ? screenshotCount : 0]
     );
   } catch (err) {
     log.warn('feedback', 'Feedback report record failed', { issueNumber, message: err.message });

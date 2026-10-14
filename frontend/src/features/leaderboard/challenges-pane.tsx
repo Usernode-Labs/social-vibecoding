@@ -160,10 +160,18 @@ type EntriesView =
 
 // `route` is one of the shell's own hash routes (#2893): it navigates in
 // place, never in a new tab — see TopochainChallenges.ctaView.
+//
+// `feedback` (#4968) does not navigate at all: it opens the Send-feedback
+// dialog from the tap, with `mode: 'form'` so the comment-mode shortcut
+// cannot swallow it. `tagged` opens the form carrying the challenge's tag
+// (`#feedback/challenge`), so the report counts for THIS challenge and not
+// also for Send useful feedback; the goal is the line the dialog names it
+// by.
 type CtaView =
   | { kind: 'link'; href: string; label: string }
   | { kind: 'route'; href: string; label: string }
-  | { kind: 'text'; label: string };
+  | { kind: 'text'; label: string }
+  | { kind: 'feedback'; tagged: boolean; challengeId: number | null; goal: string; label: string };
 
 // The block-production challenge's step for THIS viewer (#2493), shaped by
 // TopochainChallenges.blockProductionStep. Null on every other challenge,
@@ -466,6 +474,30 @@ function Cta({ view }: { view: CtaView }): ReactNode {
           components={[<span className="italic" />]}
         />
       </p>
+    );
+  }
+  // #4968: the feedback dialog opens from the tap itself (a user gesture),
+  // with the challenge's tag and goal when the CTA is the challenge's own
+  // "Send it" (#feedback/challenge), and the plain form when it is a report
+  // challenge's door (#feedback). Same anchor look as every other CTA.
+  if (view.kind === 'feedback') {
+    return (
+      <a
+        href="#feedback"
+        className={CTA_LINK}
+        onClick={(e) => {
+          e.preventDefault();
+          (window as any).App?.openFeedbackModal?.({
+            mode: 'form',
+            // Only a tagged open carries the tag: a plain `#feedback` door
+            // opens the ordinary form, whose report counts as usual.
+            challengeId: view.tagged && view.challengeId ? view.challengeId : undefined,
+            goal: view.tagged ? view.goal : undefined,
+          });
+        }}
+      >
+        {view.label}
+      </a>
     );
   }
   // `href` reached here only by passing TopochainChallenges.safeHref — an

@@ -65,6 +65,77 @@ function buildScreenshotEmbed(id, domain, fragment = '') {
 // this bounds the issue body and the per-submit lookup, not upload volume.
 const MAX_SCREENSHOTS_PER_ISSUE = 3;
 
+// #4968: the challenge a report sent from a challenge's "Send it" is tagged
+// with. Only the measures whose candidates read feedback_reports BY THE TAG
+// can be earned that way: the scorer's tagged SQL matches
+// `fr.challenge_id = <the challenge>`, so an untagged report counts for
+// none of them, and NEWCOMER_HELPED (which reads the chat, not reports) and
+// FEEDBACK_SENT (the untagged read) are not earnable by tag. The graded
+// five are in the list: their tag gates candidacy, and grading happens on
+// the rule's next pass, never inside this request.
+const TAGGED_REPORT_MEASURES = Object.freeze([
+  'BUG_REPORT_SCREENSHOT',
+  'NEW_FEATURE_FEEDBACK',
+  'TUTORIAL_SHARED',
+  'DISCOVERY_SHARED',
+  'USABILITY_TEST',
+  'FEATURE_COMPARISON',
+  'APP_REVIEW',
+]);
+
+// The tag is honoured only when it names a challenge that is real, enabled,
+// a DAILY or WEEKLY template, open now (its own schedule, else its
+// template's, else its season event's — resolveWindow's precedence), and
+// whose rule actually reads tagged reports. The rule is the one bound to the
+// challenge, or its template's when the challenge has none of its own — the
+// same binding the scorer scores by. The end grace is the scorer's own
+// WINDOW_GRACE_MS (24h): a tag accepted a little past the end simply finds
+// no window and earns nothing, while a tag dropped near midnight would take
+// a genuine submission's credit with it.
+const CHALLENGE_TAG_SQL = `
+  SELECT c.id
+    FROM challenges c
+    JOIN challenge_templates ct ON ct.id = c.challenge_template_id
+    JOIN season_events se ON se.id = c.season_event_id
+   WHERE c.id = $1
+     AND c.enabled = TRUE
+     AND UPPER(TRIM(ct.category)) IN ('DAILY', 'WEEKLY')
+     AND (COALESCE(c.schedule_start, ct.schedule_start, se.starts_at) IS NULL
+          OR COALESCE(c.schedule_start, ct.schedule_start, se.starts_at) <= NOW())
+     AND (COALESCE(c.schedule_end, ct.schedule_end, se.ends_at) IS NULL
+          OR COALESCE(c.schedule_end, ct.schedule_end, se.ends_at) > NOW() - INTERVAL '24 hours')
+     AND EXISTS (
+       SELECT 1
+         FROM challenge_scoring_rules r
+        WHERE r.enabled = TRUE
+          AND r.measure = ANY($2::text[])
+          AND (r.challenge_id = c.id
+               OR (r.challenge_template_id = c.challenge_template_id
+                   AND NOT EXISTS (
+                     SELECT 1 FROM challenge_scoring_rules rc
+                      WHERE rc.enabled = TRUE AND rc.challenge_id = c.id))))`;
+
+// Returns the challenge id to store on feedback_reports.challenge_id, or
+// null to file the report untagged. A malformed or stale tag is DROPPED,
+// never a 400: the report itself is good, and the client shows its own
+// confirmation either way. (The dialog also sends `challengeGoal`, the
+// challenge's own words it painted the line with; this route reads only the
+// fields it knows, so that one rides through unused.)
+async function resolveChallengeTag(pool, rawChallengeId) {
+  if (rawChallengeId === undefined || rawChallengeId === null || rawChallengeId === '') return null;
+  const id = Number(rawChallengeId);
+  if (!Number.isSafeInteger(id) || id <= 0) return null;
+  try {
+    const { rows } = await pool.query(CHALLENGE_TAG_SQL, [id, TAGGED_REPORT_MEASURES]);
+    return rows.length ? id : null;
+  } catch (err) {
+    log.warn('feedback', 'Challenge tag lookup failed; filing untagged', {
+      challengeId: id, message: err.message,
+    });
+    return null;
+  }
+}
+
 // Pure (exported for tests): the image ids a POST /api/feedback body asks to
 // attach. `screenshotIds` is the array the dialog sends; `screenshotId` is
 // the single id every client sent before #3027, which an outbox entry queued
@@ -795,6 +866,12 @@ function feedbackRoutes(config) {
     }
     const wantsBounty = req.body.bounty === true;
 
+    // #4968: the challenge the report counts for, when it was sent from a
+    // challenge's "Send it". Validated before any GitHub call like every
+    // other optional field, and dropped (not refused) when it names nothing
+    // the scorer can read — see resolveChallengeTag.
+    const challengeTag = await resolveChallengeTag(pool, req.body.challengeId);
+
     // Normalise the feedback target. Anything other than the explicit
     // 'app' opt-in falls back to platform feedback (today's behaviour).
     const target = req.body.target === 'app' ? 'app' : 'platform';
@@ -1022,6 +1099,7 @@ function feedbackRoutes(config) {
         await recordFeedbackReport(pool, {
           user: req.user, app: appContext, owner: issueOwner, repo: issueRepo,
           issueNumber: issue.number, title, description: description.trim(),
+          challengeId: challengeTag, screenshotCount: screenshotIds.length,
         });
         // "Suggest an improvement" counts the report just recorded, now
         // rather than on the rule's next pass: #3568 was this step still
@@ -1099,6 +1177,7 @@ function feedbackRoutes(config) {
       await recordFeedbackReport(pool, {
         user: req.user, app: null, owner: issueOwner, repo: issueRepo,
         issueNumber: issue.number, title, description: description.trim(),
+        challengeId: challengeTag, screenshotCount: screenshotIds.length,
       });
       // The same count for platform feedback (#3568).
       await challengeScorer.scoreOnFeedback(pool, config);
@@ -1177,4 +1256,8 @@ module.exports = {
   FEEDBACK_DESCRIPTION_MAX,
   normalizeQueuedAt,
   MAX_QUEUED_AT_CHARS,
+  // #4968: the challenge tag — tests/feedback-challenge-tag.test.js.
+  resolveChallengeTag,
+  CHALLENGE_TAG_SQL,
+  TAGGED_REPORT_MEASURES,
 };

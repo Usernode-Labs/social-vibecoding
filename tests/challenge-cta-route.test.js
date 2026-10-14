@@ -142,6 +142,30 @@ test('the pane renders a route in place and an external link in a new tab', () =
   assert.match(linkHtml, /<a href="https:\/\/example\.com\/node" target="_blank" rel="noopener" class="flex h-12 w-full/);
 });
 
+// ─── #4968: a writing challenge's report goes through the feedback form ──
+
+test('a writing challenge opens the feedback form in place, tagged only from #feedback/challenge', () => {
+  const WRITER = { id: 12, card_preview: { goal: 'Report a bug you can reproduce' } };
+  // The tagged form: the report is tagged with THIS challenge, so it counts
+  // for it and not also for Send useful feedback.
+  for (const link of ['#feedback/challenge', '/#feedback/challenge', `${ORIGIN}/#feedback/challenge`]) {
+    assert.deepEqual(cta(link, WRITER),
+      { kind: 'feedback', tagged: true, challengeId: 12, goal: 'Report a bug you can reproduce', label: 'Open block production settings' },
+      `${link} opens the tagged feedback dialog`);
+  }
+  // Bare #feedback opens the plain form: the CTA chooses, the challenge does
+  // not tag itself.
+  assert.deepEqual(cta('#feedback', WRITER),
+    { kind: 'feedback', tagged: false, challengeId: 12, goal: 'Report a bug you can reproduce', label: 'Open block production settings' });
+  // No id, no goal: the dialog still opens, tagged of nothing.
+  assert.deepEqual(cta('#feedback/challenge', SHARE),
+    { kind: 'feedback', tagged: true, challengeId: 8, goal: 'Share the post', label: 'Open block production settings' });
+  assert.deepEqual(cta('#feedback/challenge', undefined),
+    { kind: 'feedback', tagged: true, challengeId: null, goal: '', label: 'Open block production settings' });
+  // A non-integer id is left out rather than passed on.
+  assert.equal(cta('#feedback/challenge', { id: 'x', card_preview: { goal: 'g' } }).challengeId, null);
+});
+
 test('CTA data written for my.onhomeroom.com still routes in place on app.onhomeroom.com', () => {
   const App = loadModule('https://app.onhomeroom.com');
   const ctaOn = (link, challenge) => {

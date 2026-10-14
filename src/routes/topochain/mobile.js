@@ -46,7 +46,7 @@ const { nativeWebSessionIsLive } = require('../../services/web-session-auth');
 const {
   loadOnboarding, challengeCategory, resolveProgress, loadEventBlocks,
 } = require('../../services/topochain/challenge-onboarding');
-const { isWeekly, weekStartMs } = require('../../services/topochain/challenge-rules');
+const { isWeekly, isDaily, weekStartMs, dayStartMs } = require('../../services/topochain/challenge-rules');
 
 const { Router } = require('express');
 const bcrypt = require('bcrypt');
@@ -1377,14 +1377,17 @@ function topochainMobileRoutes(config) {
         // showed the real number. The snapshot count is passed in here, and
         // the done rule, the clamp and the target stay the shared ones.
         // A WEEKLY challenge counts this week's credits only (from Monday
-        // 00:00 UTC), the week the scorer caps by, like every other surface
-        // (challenge-onboarding COUNTS_THIS_WEEK_SQL).
+        // 00:00 UTC), and a DAILY one counts today's only (from midnight UTC),
+        // the period the scorer caps by, like every other surface
+        // (challenge-onboarding COUNTS_CURRENT_PERIOD_SQL).
         const metricKind = item.metric ? item.metric.kind : null;
         const credits = activitiesByChallenge.get(Number(item.id)) || [];
-        const thisWeek = weekStartMs(Date.now());
+        const nowMs = Date.now();
         const counted = isWeekly({ category: item.category })
-          ? credits.filter((a) => new Date(a.activity_at).getTime() >= thisWeek)
-          : credits;
+          ? credits.filter((a) => new Date(a.activity_at).getTime() >= weekStartMs(nowMs))
+          : isDaily({ category: item.category })
+            ? credits.filter((a) => new Date(a.activity_at).getTime() >= dayStartMs(nowMs))
+            : credits;
         item.progress = resolveProgress({
           metricKind,
           metricTarget: item.metric ? item.metric.target : null,

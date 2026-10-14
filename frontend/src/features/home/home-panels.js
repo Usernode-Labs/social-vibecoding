@@ -152,7 +152,8 @@ const HomePanels = {
   // from it (visibleSlots).
   //
   // The keys, in order: the group (groupRankOf: First challenges while unfinished,
-  // This week, Always open, Season challenges, then a finished First challenges group),
+  // Daily (#4968), This week, Always open, Season challenges, then a finished First
+  // challenges group),
   // then unfinished challenges first (orderDone, the tab's _isDone: the
   // viewer's own progress on every card), then organiser-featured (`featured`, the
   // flag the tab's personalization row carries), then the tab's public list
@@ -580,20 +581,23 @@ const HomePanels = {
   // ── The groups ─────────────────────────────────────────────────────
   //
   // The ITERATION 03 board sorts challenges into groups by category: Get
-  // started, This week, Always open, and the season's other challenges. The
+  // started, Daily, This week, Always open, and the season's other challenges.
+  // The
   // Challenges tab's controller (TopochainChallenges) holds the same table
   // and the same rank rule; two classic scripts cannot import one another, so
   // both spell them out, and tests/challenge-group-parity.test.js holds the
   // two copies to the same answers. The keys are not the headings: the tab's
   // ids (`tc-se-group-<key>`) and the tests name the keys. `order` is each
   // group's rank while setup is unfinished; groupRankOf moves a finished Get
-  // started to the end.
+  // started to the end. Daily (#4968) sits under Get started and above This
+  // week: a Daily challenge resets every day at midnight UTC.
   CHALLENGE_GROUPS: {
     ONBOARDING: { key: 'setup', heading: 'home:challenges.group.setup', order: 0 },
-    WEEKLY: { key: 'week', heading: 'home:challenges.group.week', order: 1 },
-    PERSISTENT: { key: 'always', heading: 'home:challenges.group.always', order: 2 },
+    DAILY: { key: 'day', heading: 'home:challenges.group.day', order: 1 },
+    WEEKLY: { key: 'week', heading: 'home:challenges.group.week', order: 2 },
+    PERSISTENT: { key: 'always', heading: 'home:challenges.group.always', order: 3 },
   },
-  OTHER_GROUP: { key: 'other', heading: 'home:challenges.group.other', order: 3 },
+  OTHER_GROUP: { key: 'other', heading: 'home:challenges.group.other', order: 4 },
   // The collapsed block's finished fill (visibleSlots' `doneFrom`), headed
   // after every group that still has something to do (#2490). Home only: the
   // tab draws every card, so a finished card stays in its own group there. No
@@ -610,13 +614,22 @@ const HomePanels = {
   // When a row's time runs out, for its countdown: its own `ends_at`, else
   // `fallback` (the season's end). A This week challenge's cap starts again
   // every Monday 00:00 UTC, the week the scorer counts by, so its clock runs
-  // to the end of this week when that comes first. The same rule as the
-  // Challenges tab's TopochainChallenges._endOf.
+  // to the end of this week when that comes first; a Daily one's (#4968)
+  // resets every day at midnight UTC, the day the scorer caps by, so its
+  // clock runs to the end of today when that comes first. The same rule as
+  // the Challenges tab's TopochainChallenges._endOf.
   endsOf(c, fallback = null) {
     const raw = (c && c.ends_at) || fallback || null;
-    if (HomePanels.groupOf(c).key !== 'week') return raw;
-    const weekEnd = HomePanels.weekEnd();
-    return !raw || Date.parse(weekEnd) < Date.parse(raw) ? weekEnd : raw;
+    const key = HomePanels.groupOf(c).key;
+    if (key === 'week') {
+      const weekEnd = HomePanels.weekEnd();
+      return !raw || Date.parse(weekEnd) < Date.parse(raw) ? weekEnd : raw;
+    }
+    if (key === 'day') {
+      const dayEnd = HomePanels.dayEnd();
+      return !raw || Date.parse(dayEnd) < Date.parse(raw) ? dayEnd : raw;
+    }
+    return raw;
   },
 
   // The next Monday 00:00 UTC, as an ISO string.
@@ -624,6 +637,14 @@ const HomePanels = {
     const d = new Date(now);
     const sinceMonday = (d.getUTCDay() + 6) % 7;
     return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - sinceMonday + 7)).toISOString();
+  },
+
+  // The next midnight UTC, as an ISO string — when a Daily challenge's cap
+  // starts again (#4968), the day the scorer caps by (challenge-rules
+  // .dayStartMs).
+  dayEnd(now = Date.now()) {
+    const d = new Date(now);
+    return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1)).toISOString();
   },
 
   // Whether setup is behind the viewer, which decides where the First challenges group sits.
@@ -652,13 +673,13 @@ const HomePanels = {
   },
 
   // A group's rank in the board's order, the tab's _groupRankOf: First challenges
-  // while unfinished (0), This week (1), Always open (2), Season challenges
-  // (3), then First challenges once finished (4, last), so the block leads with
-  // what is left to do. Pure: a group from CHALLENGE_GROUPS/OTHER_GROUP and
-  // the setupFinished answer.
+  // while unfinished (0), Daily (1), This week (2), Always open (3), Season
+  // challenges (4), then First challenges once finished (5, last), so the block
+  // leads with what is left to do. Pure: a group from CHALLENGE_GROUPS/OTHER_GROUP
+  // and the setupFinished answer.
   groupRankOf(group, setupFinished) {
     const g = group || HomePanels.OTHER_GROUP;
-    return g.key === 'setup' && setupFinished === true ? 4 : g.order;
+    return g.key === 'setup' && setupFinished === true ? 5 : g.order;
   },
 
   // The drawn rows under the board's group headers: contiguous and in rank

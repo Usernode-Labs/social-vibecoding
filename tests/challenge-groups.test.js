@@ -137,12 +137,15 @@ test('a grouped grid runs First challenges, This week, Always open, Season chall
 
 test('the rank rule: First challenges leads while unfinished and goes last once finished', () => {
   const { pane } = loadPane();
-  const { ONBOARDING, WEEKLY, PERSISTENT } = pane.GROUPS;
-  const ranks = (finished) => [ONBOARDING, WEEKLY, PERSISTENT, pane.OTHER_GROUP]
+  const { ONBOARDING, DAILY, WEEKLY, PERSISTENT } = pane.GROUPS;
+  // #4968: Daily sits between the two, above This week.
+  assert.deepEqual({ ...pane.GROUPS.DAILY }, { key: 'day', heading: 'leaderboard:challenges.group.day', order: 1 },
+    'the key stays `day`: ids and tests name it');
+  const ranks = (finished) => [ONBOARDING, DAILY, WEEKLY, PERSISTENT, pane.OTHER_GROUP]
     .map((g) => pane._groupRankOf(g, finished));
-  assert.deepEqual(ranks(false), [0, 1, 2, 3]);
-  assert.deepEqual(ranks(true), [4, 1, 2, 3], 'only First challenges moves');
-  assert.equal(pane._groupRankOf(null, false), 3, 'no group ranks as Season challenges');
+  assert.deepEqual(ranks(false), [0, 1, 2, 3, 4]);
+  assert.deepEqual(ranks(true), [5, 1, 2, 3, 4], 'only First challenges moves');
+  assert.equal(pane._groupRankOf(null, false), 4, 'no group ranks as Season challenges');
   assert.equal(message('leaderboard:challenges.group.setup'), 'First challenges');
   assert.deepEqual({ ...pane.GROUPS.ONBOARDING }, { key: 'setup', heading: 'leaderboard:challenges.group.setup', order: 0 },
     'the key stays `setup`: ids and tests name it');

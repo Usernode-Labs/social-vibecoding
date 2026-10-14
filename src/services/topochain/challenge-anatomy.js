@@ -128,6 +128,70 @@ const READS = {
       + 'one that gets past the junk filter is the credit. On a First challenge (the one-time Getting '
       + 'started list) a report on their own project counts too.',
   },
+  // The #4968 measures. Seven read only reports tagged with the challenge
+  // (`feedback_reports.challenge_id`, set by the challenge's own Send it
+  // button), so a report counts for its own challenge and for nothing else;
+  // NEWCOMER_HELPED reads chat replies instead.
+  BUG_REPORT_SCREENSHOT: {
+    tables: ['feedback_reports', 'apps', 'community_members', 'app_collaborators'],
+    key: 'feedback:',
+    keyLabel: 'feedback:<report id>',
+    text: () => 'Reports sent through this challenge\'s form inside the day, tagged with it, with at least '
+      + 'one screenshot attached, about the platform or somebody else\'s project — not a project they made '
+      + 'or one only they can see.',
+  },
+  NEW_FEATURE_FEEDBACK: {
+    tables: ['feedback_reports', 'apps', 'community_members', 'app_collaborators', 'events'],
+    key: 'feedback:',
+    keyLabel: 'feedback:<report id>',
+    text: () => 'Reports sent through this challenge\'s form inside the day, tagged with it, about somebody '
+      + 'else\'s project that had a change merged within the last 7 days — so what they tested was new. A '
+      + 'report on a project they made, or one only they can see, is left out.',
+  },
+  NEWCOMER_HELPED: {
+    tables: ['chat_messages', 'users', 'apps'],
+    key: 'help:',
+    keyLabel: 'help:<message id>',
+    text: () => 'Replies of at least 20 characters, inside the day, under a message by an account less than '
+      + '14 days old, in a project channel. A reply to their own messages is left out, and so is anything '
+      + 'deleted or hidden by moderation.',
+  },
+  TUTORIAL_SHARED: {
+    tables: ['feedback_reports', 'apps'],
+    key: 'feedback:',
+    keyLabel: 'feedback:<report id>',
+    text: () => 'Short tutorials sent through this challenge\'s form inside the day and tagged with it. Each '
+      + 'one is graded on how well a newcomer could follow it.',
+  },
+  DISCOVERY_SHARED: {
+    tables: ['feedback_reports', 'apps'],
+    key: 'feedback:',
+    keyLabel: 'feedback:<report id>',
+    text: () => 'Discoveries sent through this challenge\'s form inside the day and tagged with it. Each one '
+      + 'is graded on how useful it is to somebody who has not seen it.',
+  },
+  USABILITY_TEST: {
+    tables: ['feedback_reports', 'apps'],
+    key: 'feedback:',
+    keyLabel: 'feedback:<report id>',
+    text: () => 'Usability tests sent through this challenge\'s form inside the week and tagged with it, on an '
+      + 'app. Each one is graded on how usable a picture it gives the app\'s builders.',
+  },
+  FEATURE_COMPARISON: {
+    tables: ['feedback_reports', 'apps'],
+    key: 'feedback:',
+    keyLabel: 'feedback:<report id>',
+    text: () => 'Feature comparisons sent through this challenge\'s form inside the week and tagged with it. '
+      + 'Each one is graded on how even and how useful the comparison is.',
+  },
+  APP_REVIEW: {
+    tables: ['feedback_reports', 'apps'],
+    key: 'feedback:',
+    keyLabel: 'feedback:<report id>',
+    text: () => 'Reviews sent through this challenge\'s form inside the week and tagged with it, of an app made '
+      + 'within the last 14 days. Each one is graded on how useful it is to somebody deciding whether to '
+      + 'try it.',
+  },
 };
 
 // What the interval is for, on a measure an action also runs on the spot

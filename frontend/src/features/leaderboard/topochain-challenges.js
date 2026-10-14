@@ -537,13 +537,16 @@ const TopochainChallenges = {
   // screen reader says the words. The keys are not the headings: ids
   // (`tc-se-group-<key>`) and tests name the keys, so a heading can change
   // without them. `order` is each group's rank while setup is unfinished;
-  // _groupRankOf moves a finished First challenges group to the end.
+  // _groupRankOf moves a finished First challenges group to the end. Daily
+  // (#4968) sits above This week: its challenges reset at midnight UTC, so
+  // it is the freshest list to act on.
   GROUPS: {
     ONBOARDING: { key: 'setup', heading: 'leaderboard:challenges.group.setup', order: 0 },
-    WEEKLY: { key: 'week', heading: 'leaderboard:challenges.group.week', order: 1 },
-    PERSISTENT: { key: 'always', heading: 'leaderboard:challenges.group.always', order: 2 },
+    DAILY: { key: 'day', heading: 'leaderboard:challenges.group.day', order: 1 },
+    WEEKLY: { key: 'week', heading: 'leaderboard:challenges.group.week', order: 2 },
+    PERSISTENT: { key: 'always', heading: 'leaderboard:challenges.group.always', order: 3 },
   },
-  OTHER_GROUP: { key: 'other', heading: 'leaderboard:challenges.group.other', order: 3 },
+  OTHER_GROUP: { key: 'other', heading: 'leaderboard:challenges.group.other', order: 4 },
 
   _groupOf(c) {
     const label = c && c.card_preview ? c.card_preview.label : null;
@@ -574,14 +577,14 @@ const TopochainChallenges = {
   },
 
   // A group's rank in the board's order: First challenges while unfinished (0),
-  // This week (1), Always open (2), Season challenges (3), then First challenges
-  // once finished (4, last), so the grid leads with what is left to do.
+  // Daily (1), This week (2), Always open (3), Season challenges (4), then First
+  // challenges once finished (5, last), so the grid leads with what is left to do.
   // Pure: a group from GROUPS/OTHER_GROUP and the _setupFinished answer.
   // HomePanels keeps the same rule for Home's block, and
   // tests/challenge-group-parity.test.js holds the two to the same results.
   _groupRankOf(group, setupFinished) {
     const g = group || TopochainChallenges.OTHER_GROUP;
-    return g.key === 'setup' && setupFinished === true ? 4 : g.order;
+    return g.key === 'setup' && setupFinished === true ? 5 : g.order;
   },
 
   // A card's group rank; 0 for every card of an ungrouped grid, so the key
@@ -591,7 +594,7 @@ const TopochainChallenges = {
   },
 
   // The group first (a grouped grid only, by _groupRankOf: First challenges while
-  // unfinished, This week, Always open, Season challenges, then a finished
+  // unfinished, Daily, This week, Always open, Season challenges, then a finished
   // First challenges), then unfinished challenges, then organiser-featured, then
   // the public payload's order (display_order, then id) — the retired
   // #challenges screen's ordering with the completed split added in front of
@@ -818,7 +821,9 @@ const TopochainChallenges = {
   //
   // A This week challenge's cap starts again every Monday 00:00 UTC, the week
   // the scorer counts by, so its end is the end of this week when that comes
-  // first: "This week · 6d left", not the season's 90 days.
+  // first: "This week · 6d left", not the season's 90 days. A Daily challenge's
+  // cap (#4968) starts again at midnight UTC, the day the scorer counts by, so
+  // its end is tonight's reset when that comes first: "Daily · 11h left".
   _endRaw(c, key = null) {
     const own = c && c.effective && c.effective.schedule_end;
     let raw = own || null;
@@ -827,7 +832,12 @@ const TopochainChallenges = {
       const ev = ctx && typeof ctx.selectedEvent === 'function' ? ctx.selectedEvent() : null;
       raw = (ev && ev.ends_at) || null;
     }
-    if ((key || TopochainChallenges._groupOf(c).key) !== 'week') return raw;
+    const keyOrGroup = key || TopochainChallenges._groupOf(c).key;
+    if (keyOrGroup === 'day') {
+      const dayEnd = TopochainChallenges._dayEnd();
+      return !raw || Date.parse(dayEnd) < Date.parse(raw) ? dayEnd : raw;
+    }
+    if (keyOrGroup !== 'week') return raw;
     const weekEnd = TopochainChallenges._weekEnd();
     return !raw || Date.parse(weekEnd) < Date.parse(raw) ? weekEnd : raw;
   },
@@ -977,7 +987,14 @@ const TopochainChallenges = {
     const figures = { count: cap, cap: cap.toLocaleString('en-US') };
     // A This week challenge's cap is this week's (the scorer counts per week,
     // and `progress` is this week's credits), so the limit is the week, and
-    // it starts again on Monday.
+    // it starts again on Monday. A Daily challenge's cap (#4968) is today's
+    // (the scorer counts per day), so the limit is the day, and it starts
+    // again at midnight UTC.
+    if (TopochainChallenges._groupOf(c).key === 'day') {
+      return accepted
+        ? PlatformI18n.t('leaderboard:challenges.countNote.dayAccepted', figures)
+        : PlatformI18n.t('leaderboard:challenges.countNote.day', figures);
+    }
     if (TopochainChallenges._groupOf(c).key === 'week') {
       return accepted
         ? PlatformI18n.t('leaderboard:challenges.countNote.weekAccepted', figures)
@@ -1017,6 +1034,14 @@ const TopochainChallenges = {
     const d = new Date(now);
     const sinceMonday = (d.getUTCDay() + 6) % 7;
     return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - sinceMonday + 7)).toISOString();
+  },
+
+  // The next midnight UTC, as an ISO string: the moment a Daily challenge's
+  // cap rolls over. The same rule as HomePanels.dayEnd and the scorer's
+  // challenge-rules.dayStartMs.
+  _dayEnd(now = Date.now()) {
+    const d = new Date(now);
+    return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1)).toISOString();
   },
 
   // The same rule and words as HomePanels.timeLeft, so a challenge says the
@@ -1519,6 +1544,21 @@ const TopochainChallenges = {
     if (!dm.cta_link) return null;
     const route = TopochainChallenges._inAppRoute(dm.cta_link);
     if (route) {
+      // A writing challenge (#4968) sends its report through the feedback
+      // form: bare `#feedback` opens the plain form, `#feedback/challenge`
+      // the form WITH the challenge's tag, so the report counts for this
+      // challenge and not also for Send useful feedback. The pane opens the
+      // dialog rather than navigating; `goal` is the line it draws above the
+      // description ("For your challenge: …"), the card's own goal words.
+      if (route === '#feedback' || route === '#feedback/challenge') {
+        return {
+          kind: 'feedback',
+          tagged: route === '#feedback/challenge',
+          challengeId: challenge && Number.isFinite(Number(challenge.id)) ? Number(challenge.id) : null,
+          goal: TopochainChallenges.str(challenge && challenge.card_preview && challenge.card_preview.goal || ''),
+          label,
+        };
+      }
       const href = route === '#settings' && TopochainChallenges._isBlockProduction(challenge)
         ? TopochainChallenges.BLOCK_PRODUCTION_ROUTE : route;
       return { kind: 'route', href, label };

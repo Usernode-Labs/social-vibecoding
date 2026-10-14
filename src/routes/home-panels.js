@@ -68,7 +68,7 @@ const { parseRewardPoints } = require('../services/topochain/challenge-rules');
 // single row. It is the most honest signal available today; when a real
 // per-user progress feed lands, THIS is the one function to replace.
 const {
-  resolveProgress, loadOnboarding, challengeCategory, NEWEST_EVENT_BLOCKS_SQL, COUNTS_THIS_WEEK_SQL,
+  resolveProgress, loadOnboarding, challengeCategory, NEWEST_EVENT_BLOCKS_SQL, COUNTS_CURRENT_PERIOD_SQL,
 } = require('../services/topochain/challenge-onboarding');
 
 // resolveProgress's done rule, in SQL. It has to exist in both languages:
@@ -99,7 +99,7 @@ const DONE_SQL = `
 // so they're substituted in rather than named).
 const MY_COUNT_SQL = `(SELECT COUNT(*) FROM user_activities ua
               WHERE ua.user_id = $1 AND ua.challenge_id = c.id
-                AND ${COUNTS_THIS_WEEK_SQL})`;
+                AND ${COUNTS_CURRENT_PERIOD_SQL})`;
 // The snapshot read now lives beside resolveProgress, because the challenge
 // LISTS need the same number and a second copy of it is how the tab and Home
 // came to disagree (#2492). This name is kept: profile.js imports it from

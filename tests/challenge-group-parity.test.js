@@ -87,29 +87,32 @@ const said = (table) => JSON.parse(JSON.stringify(table),
 test('the two group tables are the same table', () => {
   assert.deepEqual(plain(HOME.CHALLENGE_GROUPS), {
     ONBOARDING: { key: 'setup', heading: 'home:challenges.group.setup', order: 0 },
-    WEEKLY: { key: 'week', heading: 'home:challenges.group.week', order: 1 },
-    PERSISTENT: { key: 'always', heading: 'home:challenges.group.always', order: 2 },
+    DAILY: { key: 'day', heading: 'home:challenges.group.day', order: 1 },
+    WEEKLY: { key: 'week', heading: 'home:challenges.group.week', order: 2 },
+    PERSISTENT: { key: 'always', heading: 'home:challenges.group.always', order: 3 },
   }, 'Home holds the ids of its own headings');
-  assert.deepEqual(plain(HOME.OTHER_GROUP), { key: 'other', heading: 'home:challenges.group.other', order: 3 });
+  assert.deepEqual(plain(HOME.OTHER_GROUP), { key: 'other', heading: 'home:challenges.group.other', order: 4 });
   assert.deepEqual(plain(TAB.GROUPS), {
     ONBOARDING: { key: 'setup', heading: 'leaderboard:challenges.group.setup', order: 0 },
-    WEEKLY: { key: 'week', heading: 'leaderboard:challenges.group.week', order: 1 },
-    PERSISTENT: { key: 'always', heading: 'leaderboard:challenges.group.always', order: 2 },
+    DAILY: { key: 'day', heading: 'leaderboard:challenges.group.day', order: 1 },
+    WEEKLY: { key: 'week', heading: 'leaderboard:challenges.group.week', order: 2 },
+    PERSISTENT: { key: 'always', heading: 'leaderboard:challenges.group.always', order: 3 },
   }, 'the tab holds the ids of its own');
-  assert.deepEqual(plain(TAB.OTHER_GROUP), { key: 'other', heading: 'leaderboard:challenges.group.other', order: 3 });
+  assert.deepEqual(plain(TAB.OTHER_GROUP), { key: 'other', heading: 'leaderboard:challenges.group.other', order: 4 });
   // The same table once each id is read: keys, order and words, exactly.
   assert.deepEqual(said(HOME.CHALLENGE_GROUPS), said(TAB.GROUPS));
   assert.deepEqual(said(HOME.OTHER_GROUP), said(TAB.OTHER_GROUP));
   assert.deepEqual(said(TAB.GROUPS), {
     ONBOARDING: { key: 'setup', heading: 'First challenges', order: 0 },
-    WEEKLY: { key: 'week', heading: 'This week', order: 1 },
-    PERSISTENT: { key: 'always', heading: 'Always open', order: 2 },
+    DAILY: { key: 'day', heading: 'Daily', order: 1 },
+    WEEKLY: { key: 'week', heading: 'This week', order: 2 },
+    PERSISTENT: { key: 'always', heading: 'Always open', order: 3 },
   }, 'the owner-decided headings, with the keys unchanged');
-  assert.deepEqual(said(TAB.OTHER_GROUP), { key: 'other', heading: 'Season challenges', order: 3 });
+  assert.deepEqual(said(TAB.OTHER_GROUP), { key: 'other', heading: 'Season challenges', order: 4 });
 });
 
 test('the two rank rules agree for every group, setup unfinished and finished', () => {
-  const groups = (tbl, other) => [tbl.ONBOARDING, tbl.WEEKLY, tbl.PERSISTENT, other, null];
+  const groups = (tbl, other) => [tbl.ONBOARDING, tbl.DAILY, tbl.WEEKLY, tbl.PERSISTENT, other, null];
   const tabGroups = groups(TAB.GROUPS, TAB.OTHER_GROUP);
   const homeGroups = groups(HOME.CHALLENGE_GROUPS, HOME.OTHER_GROUP);
   // `undefined` and a truthy non-boolean too: both rules read `=== true`.
@@ -118,9 +121,9 @@ test('the two rank rules agree for every group, setup unfinished and finished', 
     const homeRanks = homeGroups.map((g) => HOME.groupRankOf(g, finished));
     assert.deepEqual(homeRanks, tabRanks, `setupFinished=${String(finished)}`);
   }
-  assert.deepEqual(tabGroups.map((g) => TAB._groupRankOf(g, false)), [0, 1, 2, 3, 3],
-    'unfinished: First challenges leads; no group ranks as Season challenges');
-  assert.deepEqual(tabGroups.map((g) => TAB._groupRankOf(g, true)), [4, 1, 2, 3, 3],
+  assert.deepEqual(tabGroups.map((g) => TAB._groupRankOf(g, false)), [0, 1, 2, 3, 4, 4],
+    'unfinished: First challenges leads, Daily above This week (#4968); no group ranks as Season challenges');
+  assert.deepEqual(tabGroups.map((g) => TAB._groupRankOf(g, true)), [5, 1, 2, 3, 4, 4],
     'finished: only First challenges moves, to the end');
 });
 

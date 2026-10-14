@@ -373,6 +373,8 @@ const ADDED_IDS = {
   'feedback-attach-btn': '#4127: the paperclip in Send feedback\'s attachment row. It opens #feedback-attach-menu, which holds the Photo (#feedback-screenshot-picker-btn) and Video (#feedback-video-btn) rows that were two buttons of their own, so the row fits on one line. dapp.json\'s feedback check selects on it.',
   'feedback-attach-menu': '#4127: the paperclip\'s popover, in the vote popover\'s frame. Opened and closed by ./feedback-controller (outside click, Escape, a choice).',
   'report-modal': '#2721 shared reporting dialog',
+  // ── #4968: the challenge line on the feedback form ──────────────────────
+  'feedback-challenge-for': '#4968: the "For your challenge: <goal>" line above the Send feedback form\'s fields, shown when the dialog is opened from a writing challenge\'s "Send it" (the tag rides the open through openFeedbackModal). Ships hidden and EMPTY but for its class, like #feedback-status and #feedback-text-error: ./feedback-controller owns the text, filled on open and dropped with the tag on close, file, or a plain reopen.',
   // ── B8: Suggest an improvement answered by Homeroom bot ─────────────────
   'feedback-sent-line': 'B8: the line under the filed-request confirmation\'s heading, worded by the controller: "Your idea is on the board now. Find it on your profile…", or, where Homeroom bot builds it, "Homeroom bot is building it now, usually about 8 minutes…" (#3971).',
   'feedback-sent-chat': 'B8: Open chat, the confirmation\'s main button when Homeroom bot builds the request: the chat where its card is.',

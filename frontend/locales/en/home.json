@@ -719,6 +719,10 @@
     "text": "This week",
     "description": "Heading over the group of challenges that end with the current week, in Home's Challenges section."
   },
+  "challenges.group.day": {
+    "text": "Daily",
+    "description": "Heading over the group of challenges that reset every day at midnight UTC (#4968), in Home's Challenges section. Sits under \"First challenges\" and above \"This week\"."
+  },
   "challenges.group.always": {
     "text": "Always open",
     "description": "Heading over the group of challenges with no deadline, in Home's Challenges section. \"Open\" is an adjective: available."

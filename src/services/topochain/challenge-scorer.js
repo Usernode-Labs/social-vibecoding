@@ -229,12 +229,18 @@ const PROPOSAL_ACCEPTED_SQL = `
 // and the project they made in their first session is the one they have
 // something to say about. It is paid once in a life, so it is never paid
 // twice; the weekly and repeatable challenges still leave it out.
+//
+// And never a report FILED FOR A CHALLENGE (#4968): the daily and weekly
+// forms write `feedback_reports.challenge_id`, and the measures below read
+// only tagged reports. A tagged report has its own challenge paying for it;
+// counting it here too would pay one report twice.
 const USEFUL_FEEDBACK_SQL = `
   SELECT fr.id, fr.user_id, fr.created_at, fr.title, fr.description, a.name AS app_name
     FROM feedback_reports fr
     LEFT JOIN apps a ON a.id = fr.app_id
    WHERE fr.created_at >= $1 AND fr.created_at <= $2
      AND fr.issue_number IS NOT NULL
+     AND fr.challenge_id IS NULL
      AND (fr.app_id IS NULL
           OR $4::boolean
           OR (a.created_by IS DISTINCT FROM fr.user_id
@@ -420,6 +426,132 @@ const VOTE_CAST_SQL = `
 // a copy of it. What differs is what the plan does with them: one credit,
 // ungraded (#3568).
 
+// ── The daily and weekly challenge measures (#4968) ──────────────────────
+//
+// Seven of the eight read reports FILED FOR THE CHALLENGE: the form is opened
+// from the challenge's own Send it button and the report carries that
+// challenge's tag (`feedback_reports.challenge_id = $4`). The tag decides
+// everything a report needs for its challenge to pay for it, so what each
+// statement adds is only the extra test its own challenge names:
+//
+//   BUG_REPORT_SCREENSHOT — a screenshot attached, and the audience test
+//     USEFUL_FEEDBACK_SQL spells out (a report on a project they made, or
+//     one only they can see, has nobody else to help).
+//   NEW_FEATURE_FEEDBACK — the app had a change merged in the last 7 days,
+//     which is what makes what they tested NEW. A forced merge is still a
+//     change live in the app, so it counts here.
+//   APP_REVIEW — the app is at most 14 days old.
+//
+// The graded ones (TUTORIAL_SHARED, DISCOVERY_SHARED, USABILITY_TEST,
+// FEATURE_COMPARISON) add nothing beyond the tag: the grade decides the
+// points, and the junk pre-filter (too short, or a duplicate) runs before
+// the plan. The tag is the challenge's own id, so a challenge reads only
+// reports filed for it — a rule bound to the template reads every challenge
+// made from it through the row's own id.
+const CHALLENGE_BUG_REPORT_SQL = `
+  SELECT fr.id, fr.user_id, fr.created_at, fr.title, fr.description, a.name AS app_name
+    FROM feedback_reports fr
+    LEFT JOIN apps a ON a.id = fr.app_id
+   WHERE fr.created_at >= $1 AND fr.created_at <= $2
+     AND fr.challenge_id = $4
+     AND fr.screenshot_count >= 1
+     AND (fr.app_id IS NULL
+          OR (a.created_by IS DISTINCT FROM fr.user_id
+              AND (a.view_visibility = 'public'
+                   OR (SELECT COUNT(*) FROM community_members o WHERE o.community_id = a.community_id) > 1
+                   OR EXISTS (SELECT 1 FROM app_collaborators ic
+                               WHERE ic.app_id = a.id AND ic.status = 'invited'))))
+   ORDER BY fr.user_id ASC, fr.created_at ASC, fr.id ASC
+   LIMIT $3
+`;
+
+const CHALLENGE_NEW_FEATURE_SQL = `
+  SELECT fr.id, fr.user_id, fr.created_at, fr.title, fr.description, a.name AS app_name
+    FROM feedback_reports fr
+    LEFT JOIN apps a ON a.id = fr.app_id
+   WHERE fr.created_at >= $1 AND fr.created_at <= $2
+     AND fr.challenge_id = $4
+     AND (fr.app_id IS NULL
+          OR (a.created_by IS DISTINCT FROM fr.user_id
+              AND (a.view_visibility = 'public'
+                   OR (SELECT COUNT(*) FROM community_members o WHERE o.community_id = a.community_id) > 1
+                   OR EXISTS (SELECT 1 FROM app_collaborators ic
+                               WHERE ic.app_id = a.id AND ic.status = 'invited'))))
+     AND (fr.app_id IS NULL
+          OR EXISTS (SELECT 1 FROM events e
+                      WHERE e.event_type = 'pr_merged'
+                        AND e.app_id = fr.app_id
+                        AND e.created_at >= NOW() - INTERVAL '7 days'))
+   ORDER BY fr.user_id ASC, fr.created_at ASC, fr.id ASC
+   LIMIT $3
+`;
+
+const CHALLENGE_TUTORIAL_SQL = `
+  SELECT fr.id, fr.user_id, fr.created_at, fr.title, fr.description, a.name AS app_name
+    FROM feedback_reports fr
+    LEFT JOIN apps a ON a.id = fr.app_id
+   WHERE fr.created_at >= $1 AND fr.created_at <= $2
+     AND fr.challenge_id = $4
+   ORDER BY fr.user_id ASC, fr.created_at ASC, fr.id ASC
+   LIMIT $3
+`;
+
+// A review names an app, and the app is new: made within the last 14 days.
+const CHALLENGE_APP_REVIEW_SQL = `
+  SELECT fr.id, fr.user_id, fr.created_at, fr.title, fr.description, a.name AS app_name
+    FROM feedback_reports fr
+    JOIN apps a ON a.id = fr.app_id
+   WHERE fr.created_at >= $1 AND fr.created_at <= $2
+     AND fr.challenge_id = $4
+     AND a.created_at >= NOW() - INTERVAL '14 days'
+   ORDER BY fr.user_id ASC, fr.created_at ASC, fr.id ASC
+   LIMIT $3
+`;
+
+// NEWCOMER_HELPED reads chat replies instead of reports. A reply is a
+// message with thread_type 'message' whose thread_ref is the message it
+// answers — a root (thread_type NULL) or a topic channel's own thread
+// ('category'). The newcomer is the ROOT's author, and an account is new
+// while it is less than 14 days old. A reply to their own messages does not
+// count, and neither does a reply outside a project's channel — on
+// chat_messages that means app_id is set. The length test is the
+// pre-filter's 20 characters, enforced here because this measure is not
+// screened: its text is never graded, so no grader call would ever read it.
+const NEWCOMER_HELPED_SQL = `
+  SELECT m.id, m.user_id, m.created_at, m.content, a.name AS app_name
+    FROM chat_messages m
+    JOIN chat_messages root ON root.id = m.thread_ref
+    JOIN users newcomer ON newcomer.id = root.user_id
+    LEFT JOIN apps a ON a.id = m.app_id
+   WHERE m.created_at >= $1 AND m.created_at <= $2
+     AND m.thread_type = 'message'
+     AND (root.thread_type IS NULL OR root.thread_type = 'category')
+     AND m.deleted_at IS NULL AND root.deleted_at IS NULL
+     AND m.moderation_hidden_at IS NULL AND root.moderation_hidden_at IS NULL
+     AND m.user_id IS NOT NULL
+     AND m.user_id IS DISTINCT FROM root.user_id
+     AND m.app_id IS NOT NULL
+     AND newcomer.created_at >= NOW() - INTERVAL '14 days'
+     AND LENGTH(TRIM(m.content)) >= 20
+   ORDER BY m.user_id ASC, m.created_at ASC, m.id ASC
+   LIMIT $3
+`;
+
+// USABILITY_TEST reads tagged reports too, and its report is OF an app — the
+// report names the app they exercised. FEATURE_COMPARISON can be across apps
+// or against the platform, so its statement adds nothing beyond the tag (it
+// is TUTORIAL_SQL's statement, aliased so each measure's name finds its own).
+const CHALLENGE_USABILITY_SQL = `
+  SELECT fr.id, fr.user_id, fr.created_at, fr.title, fr.description, a.name AS app_name
+    FROM feedback_reports fr
+    JOIN apps a ON a.id = fr.app_id
+   WHERE fr.created_at >= $1 AND fr.created_at <= $2
+     AND fr.challenge_id = $4
+   ORDER BY fr.user_id ASC, fr.created_at ASC, fr.id ASC
+   LIMIT $3
+`;
+const CHALLENGE_COMPARISON_SQL = CHALLENGE_TUTORIAL_SQL;
+
 // The query each measure runs, by measure. loadCandidates below names the
 // constants directly — that is what keeps them statically checkable
 // (scripts/check-sql.js) — and this map is for the one reader that needs them
@@ -439,6 +571,14 @@ const MEASURE_SQL = Object.freeze({
   INVITES_JOINED: INVITES_JOINED_SQL,
   VOTE_CAST: VOTE_CAST_SQL,
   FEEDBACK_SENT: USEFUL_FEEDBACK_SQL,
+  BUG_REPORT_SCREENSHOT: CHALLENGE_BUG_REPORT_SQL,
+  NEW_FEATURE_FEEDBACK: CHALLENGE_NEW_FEATURE_SQL,
+  NEWCOMER_HELPED: NEWCOMER_HELPED_SQL,
+  TUTORIAL_SHARED: CHALLENGE_TUTORIAL_SQL,
+  DISCOVERY_SHARED: CHALLENGE_TUTORIAL_SQL,
+  USABILITY_TEST: CHALLENGE_USABILITY_SQL,
+  FEATURE_COMPARISON: CHALLENGE_COMPARISON_SQL,
+  APP_REVIEW: CHALLENGE_APP_REVIEW_SQL,
 });
 
 const isoOf = (v) => (v instanceof Date ? v.toISOString() : (v == null ? null : String(v)));
@@ -464,7 +604,10 @@ const dateToIso = (v) => {
 // `ownApps`: the challenge is a First challenge (RULE_CHALLENGES_SQL's
 // `first_challenge`), on which the person's own apps count for TRY_APPS and
 // the feedback measures. False everywhere else.
-async function loadCandidates(pool, measure, window, { target, ownApps = false }) {
+// `challengeId`: the challenge the rule is being scored for, which the
+// tagged report measures (#4968) filter on — a report counts only for the
+// challenge its form tagged.
+async function loadCandidates(pool, measure, window, { target, ownApps = false, challengeId = null } = {}) {
   const own = ownApps === true;
   const spec = MEASURES[measure];
   if (!spec) return [];
@@ -593,6 +736,95 @@ async function loadCandidates(pool, measure, window, { target, ownApps = false }
         gradeInput: { appName: r.app_name, title: r.title, text: r.description },
       }));
     }
+    // The tagged report measures (#4968). The graded ones carry the same
+    // gradeInput USEFUL_FEEDBACK does; the two ungraded report ones carry it
+    // for the junk pre-filter alone. All filter on the challenge's tag.
+    case 'BUG_REPORT_SCREENSHOT': {
+      const { rows } = await pool.query(CHALLENGE_BUG_REPORT_SQL,
+        [startIso, endIso, CANDIDATE_LIMIT, challengeId]);
+      return rows.map((r) => ({
+        userId: r.user_id,
+        sourceKey: `feedback:${r.id}`,
+        activityAt: isoOf(r.created_at),
+        description: r.app_name ? `Bug report on ${r.app_name}` : 'Bug report on Homeroom',
+        gradeInput: { appName: r.app_name, title: r.title, text: r.description },
+      }));
+    }
+    case 'NEW_FEATURE_FEEDBACK': {
+      const { rows } = await pool.query(CHALLENGE_NEW_FEATURE_SQL,
+        [startIso, endIso, CANDIDATE_LIMIT, challengeId]);
+      return rows.map((r) => ({
+        userId: r.user_id,
+        sourceKey: `feedback:${r.id}`,
+        activityAt: isoOf(r.created_at),
+        description: r.app_name ? `Tested a new change to ${r.app_name}` : 'Tested something new',
+        gradeInput: { appName: r.app_name, title: r.title, text: r.description },
+      }));
+    }
+    case 'NEWCOMER_HELPED': {
+      const { rows } = await pool.query(NEWCOMER_HELPED_SQL, [startIso, endIso, CANDIDATE_LIMIT]);
+      return rows.map((r) => ({
+        userId: r.user_id,
+        sourceKey: `help:${r.id}`,
+        activityAt: isoOf(r.created_at),
+        description: r.app_name ? `Helped a newcomer in ${r.app_name}` : 'Helped a newcomer',
+      }));
+    }
+    case 'TUTORIAL_SHARED': {
+      const { rows } = await pool.query(CHALLENGE_TUTORIAL_SQL,
+        [startIso, endIso, CANDIDATE_LIMIT, challengeId]);
+      return rows.map((r) => ({
+        userId: r.user_id,
+        sourceKey: `feedback:${r.id}`,
+        activityAt: isoOf(r.created_at),
+        description: 'Wrote a short tutorial',
+        gradeInput: { appName: r.app_name, title: r.title, text: r.description },
+      }));
+    }
+    case 'DISCOVERY_SHARED': {
+      const { rows } = await pool.query(CHALLENGE_TUTORIAL_SQL,
+        [startIso, endIso, CANDIDATE_LIMIT, challengeId]);
+      return rows.map((r) => ({
+        userId: r.user_id,
+        sourceKey: `feedback:${r.id}`,
+        activityAt: isoOf(r.created_at),
+        description: 'Shared a discovery',
+        gradeInput: { appName: r.app_name, title: r.title, text: r.description },
+      }));
+    }
+    case 'USABILITY_TEST': {
+      const { rows } = await pool.query(CHALLENGE_USABILITY_SQL,
+        [startIso, endIso, CANDIDATE_LIMIT, challengeId]);
+      return rows.map((r) => ({
+        userId: r.user_id,
+        sourceKey: `feedback:${r.id}`,
+        activityAt: isoOf(r.created_at),
+        description: r.app_name ? `Usability test of ${r.app_name}` : 'Ran a usability test',
+        gradeInput: { appName: r.app_name, title: r.title, text: r.description },
+      }));
+    }
+    case 'FEATURE_COMPARISON': {
+      const { rows } = await pool.query(CHALLENGE_COMPARISON_SQL,
+        [startIso, endIso, CANDIDATE_LIMIT, challengeId]);
+      return rows.map((r) => ({
+        userId: r.user_id,
+        sourceKey: `feedback:${r.id}`,
+        activityAt: isoOf(r.created_at),
+        description: 'Compared two features',
+        gradeInput: { appName: r.app_name, title: r.title, text: r.description },
+      }));
+    }
+    case 'APP_REVIEW': {
+      const { rows } = await pool.query(CHALLENGE_APP_REVIEW_SQL,
+        [startIso, endIso, CANDIDATE_LIMIT, challengeId]);
+      return rows.map((r) => ({
+        userId: r.user_id,
+        sourceKey: `feedback:${r.id}`,
+        activityAt: isoOf(r.created_at),
+        description: r.app_name ? `Review of ${r.app_name}` : 'Reviewed a new app',
+        gradeInput: { appName: r.app_name, title: r.title, text: r.description },
+      }));
+    }
     default:
       return [];
   }
@@ -603,13 +835,15 @@ async function loadCredited(pool, challengeId) {
   const map = new Map();
   for (const r of rows) {
     const userId = Number(r.user_id);
-    const state = map.get(userId) || { keys: new Set(), count: 0, weeks: new Map() };
+    const state = map.get(userId) || { keys: new Set(), count: 0, weeks: new Map(), days: new Map() };
     state.keys.add(r.source_key);
     state.count += 1;
     const at = r.activity_at instanceof Date ? r.activity_at.getTime() : Date.parse(r.activity_at);
     if (Number.isFinite(at)) {
       const week = rules.weekStartMs(at);
       state.weeks.set(week, (state.weeks.get(week) || 0) + 1);
+      const day = rules.dayStartMs(at);
+      state.days.set(day, (state.days.get(day) || 0) + 1);
     }
     map.set(userId, state);
   }
@@ -705,16 +939,23 @@ async function scoreChallenge(pool, row, rule, run) {
   const window = rules.resolveWindow(row, { now: run.now });
   const target = rules.effectiveTarget(rule, row);
   // A WEEKLY challenge is scored a week at a time (rules.weeklyWindows): this
-  // week, plus last week while its grace lasts. The measure's own query runs
-  // once per week, so "10 minutes" means 10 minutes in that week and each
-  // week's unit has a key of its own.
-  const windows = rules.isWeekly(row) ? rules.weeklyWindows(window, { now: run.now }) : [window];
+  // week, plus last week while its grace lasts. A DAILY one (#4968) is scored
+  // a day at a time the same way (rules.dailyWindows): today, plus yesterday
+  // while its shorter grace lasts. The measure's own query runs once per
+  // period, so "10 minutes" means 10 minutes in that week and each week's
+  // unit has a key of its own.
+  const windows = rules.isDaily(row)
+    ? rules.dailyWindows(window, { now: run.now })
+    : rules.isWeekly(row) ? rules.weeklyWindows(window, { now: run.now }) : [window];
   let candidates;
   try {
     candidates = [];
     for (const w of windows) {
       candidates = candidates.concat(await loadCandidates(pool, rule.measure, w, {
         target, ownApps: row.first_challenge === true,
+        // The tagged report measures (#4968) filter on the challenge its form
+        // tagged; a measure that ignores the tag leaves this null.
+        challengeId: row.challenge_id,
       }));
     }
   } catch (err) {
@@ -1190,7 +1431,9 @@ async function tick(pool, config, { now = Date.now() } = {}) {
 //
 //   a join              COMMUNITY_JOINED, COMMUNITY_APP_CREATED  scoreOnJoin
 //   a vote              VOTE_CAST       routes/votes.js, routes/issues.js
-//   a report            FEEDBACK_SENT   routes/feedback.js
+//   a report            FEEDBACK_SENT and the three ungraded tagged daily
+//                       measures (#4968: bug report, new-feature test,
+//                       newcomer help)   routes/feedback.js
 //   an app's heartbeat  TRY_APPS, on the crossing only (scoreOnAppTime)
 //
 // The same guarantees at every door. A no-op when the deployment has
@@ -1219,7 +1462,17 @@ async function tick(pool, config, { now = Date.now() } = {}) {
 //   never twice.
 const JOIN_MEASURES = Object.freeze(['COMMUNITY_JOINED', 'COMMUNITY_APP_CREATED']);
 const VOTE_MEASURES = Object.freeze(['VOTE_CAST']);
-const FEEDBACK_MEASURES = Object.freeze(['FEEDBACK_SENT']);
+// The ungraded tagged report measures (#4968): like FEEDBACK_SENT, filing the
+// report is the whole action, so it can be counted at the door rather than on
+// the next tick. The graded ones (TUTORIAL_SHARED, DISCOVERY_SHARED,
+// USABILITY_TEST, FEATURE_COMPARISON, APP_REVIEW) are dropped by scoreOn like
+// every graded measure — nobody's tap should wait on a model call.
+const FEEDBACK_MEASURES = Object.freeze([
+  'FEEDBACK_SENT',
+  'BUG_REPORT_SCREENSHOT',
+  'NEW_FEATURE_FEEDBACK',
+  'NEWCOMER_HELPED',
+]);
 const APP_TIME_MEASURES = Object.freeze(['TRY_APPS']);
 // Every door and what it runs, as data for the one reader that needs the
 // whole map: the admin's "How it scores" panel (./challenge-anatomy.js),

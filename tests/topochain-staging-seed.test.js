@@ -892,3 +892,118 @@ test('the First challenges seed: staging only, idempotent, four ONBOARDING rows 
   const boot = src.indexOf('await seedStagingTopochain(pool, config);');
   assert.ok(boot > 0 && src.indexOf('await seedStagingFirstChallenges(pool);', boot) > boot);
 });
+
+// ─── The Daily and Weekly challenge templates (#4968) ──────────────────
+//
+// Five daily and three weekly challenge templates, seeded ONCE PER DATABASE
+// in EVERY environment (a production boot needs the templates for its
+// scoring rules to bind to; staging's challenge rows hang off them further
+// down). Outside staging each template also gets its one template-bound
+// scoring rule; staging seeds its rows data only, per the platform's seed
+// rule. The platform-settings marker makes the whole thing idempotent.
+test('the daily/weekly template seed: once per database, every environment, rules only outside staging', async () => {
+  const { seedDailyWeeklyChallengeTemplates } = require('../src/db/migrate');
+
+  // The marker short-circuits: a database that already carries it issues
+  // nothing past the SELECT, so a template an organiser deleted is never
+  // re-created.
+  let asked = false;
+  const seeded = {
+    calls: [],
+    query: async (sql) => {
+      seeded.calls.push({ sql });
+      return { rows: (asked = !asked) ? [{ '?column?': 1 }] : [] };
+    },
+  };
+  await seedDailyWeeklyChallengeTemplates(seeded);
+  assert.equal(seeded.calls.length, 1, 'a seeded database gets only the guard read');
+  assert.match(seeded.calls[0].sql, /challenge_templates_seeded_4968/);
+
+  // Unseeded, in production: the eight templates, the eight rules, the marker.
+  process.env.USERNODE_ENV = 'production';
+  const pool = mockPool();
+  await seedDailyWeeklyChallengeTemplates(pool);
+  assert.equal(pool.calls.length, 4, 'guard read, templates, rules, marker');
+  assert.match(pool.calls[0].sql, /challenge_templates_seeded_4968/);
+
+  const templateSql = pool.calls[1].sql;
+  assert.match(templateSql, /^\s*INSERT INTO challenge_templates/);
+  assert.match(templateSql, /ON CONFLICT \(id\) DO NOTHING/);
+  const categories = [...templateSql.matchAll(/\(90074\d, '(DAILY|WEEKLY)'/g)].map((m) => m[1]);
+  assert.deepEqual(categories,
+    ['DAILY', 'DAILY', 'DAILY', 'DAILY', 'DAILY', 'WEEKLY', 'WEEKLY', 'WEEKLY'],
+    'five daily challenges then three weekly (#4968)');
+  assert.equal((templateSql.match(/'#feedback\/challenge'/g) || []).length, 7,
+    'seven of the eight open the tagged feedback form');
+  assert.match(templateSql, /'Help a newcomer',[\s\S]*?'#communities'/,
+    'the newcomer challenge sends people to Communities, where the reply is written');
+
+  const ruleSql = pool.calls[2].sql;
+  assert.match(ruleSql, /^\s*INSERT INTO challenge_scoring_rules/);
+  assert.match(ruleSql, /ON CONFLICT \(challenge_template_id\) WHERE challenge_template_id IS NOT NULL DO NOTHING/,
+    'one rule per template, never a second');
+  const rules = [...ruleSql.matchAll(/'([A-Z_]+)', (90074\d), \d+, (\d+), TRUE/g)]
+    .map((m) => [m[1], Number(m[2]), Number(m[3])]);
+  assert.deepEqual(rules, [
+    ['BUG_REPORT_SCREENSHOT', 900740, 250],
+    ['NEW_FEATURE_FEEDBACK', 900741, 250],
+    ['TUTORIAL_SHARED', 900742, 500],
+    ['NEWCOMER_HELPED', 900743, 250],
+    ['DISCOVERY_SHARED', 900744, 250],
+    ['USABILITY_TEST', 900745, 1000],
+    ['FEATURE_COMPARISON', 900746, 750],
+    ['APP_REVIEW', 900747, 750],
+  ], 'the spec\'s eight measures, bound to their templates at the spec\'s points');
+  assert.match(pool.calls[3].sql, /^\s*INSERT INTO platform_settings/, 'the marker, last');
+
+  // Staging skips the rules: data only, per the platform's seed rule.
+  process.env.USERNODE_ENV = 'staging';
+  const staging = mockPool();
+  await seedDailyWeeklyChallengeTemplates(staging);
+  assert.equal(staging.calls.length, 3, 'guard read, templates, marker — no scoring rule');
+  for (const call of staging.calls.slice(1)) {
+    assert.doesNotMatch(call.sql, /challenge_scoring_rules|user_activities/, 'no signal in staging');
+  }
+
+  // And it runs in the boot before anything that hangs off it.
+  const boot = src.indexOf('await seedDailyWeeklyChallengeTemplates(pool);');
+  assert.ok(boot > 0);
+  const stagingBoot = src.indexOf('await seedStagingFirstChallenges(pool);');
+  assert.ok(stagingBoot > boot, 'templates before the staging rows that hang off them');
+});
+
+// The staging rows for those templates: five Daily and three Weekly
+// challenges on the fixture season's season-type event, so a preview shows
+// the new groups. Staging only, data only, idempotent — the same three
+// rules the First challenges seed above holds to.
+test('the staging Daily/Weekly challenge seed: staging only, idempotent, data only, after the First challenges', async () => {
+  const { seedStagingDailyChallenges } = require('../src/db/migrate');
+
+  process.env.USERNODE_ENV = 'production';
+  const off = mockPool();
+  await seedStagingDailyChallenges(off);
+  assert.equal(off.calls.length, 0, 'no query outside staging');
+
+  process.env.USERNODE_ENV = 'staging';
+  const pool = mockPool();
+  await seedStagingDailyChallenges(pool);
+  assert.equal(pool.calls.length, 1);
+  const [challenges] = pool.calls;
+  assert.match(challenges.sql, /^\s*INSERT INTO challenges/);
+  assert.match(challenges.sql, /ON CONFLICT \(id\) DO NOTHING/);
+  assert.doesNotMatch(challenges.sql, /user_activities|challenge_scoring_rules/, 'data only, no signal');
+  assert.deepEqual(challenges.params, [900501], 'on the fixture season\'s season-type event');
+  assert.deepEqual(
+    [...challenges.sql.matchAll(/\((9007\d\d), \$1, (90074\d), TRUE, (\d+), FALSE/g)]
+      .map((m) => [Number(m[1]), Number(m[2]), Number(m[3])]),
+    [
+      [900724, 900740, 5], [900725, 900741, 6], [900726, 900742, 7],
+      [900727, 900743, 8], [900728, 900744, 9], [900729, 900745, 10],
+      [900730, 900746, 11], [900731, 900747, 12],
+    ],
+    'five Daily then three Weekly, on the template seed\'s ids, clear of the other fixture ranges');
+  // And it runs after the First challenges, on the same event.
+  const firstBoot = src.indexOf('await seedStagingFirstChallenges(pool);');
+  assert.ok(firstBoot > 0);
+  assert.ok(src.indexOf('await seedStagingDailyChallenges(pool);', firstBoot) > firstBoot);
+});

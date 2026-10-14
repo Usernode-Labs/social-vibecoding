@@ -26,7 +26,7 @@
 //
 // ── Windowed measures vs state measures ────────────────────────────────
 //
-// Eight measures score ACTIONS and count only what happened inside the
+// Most measures score ACTIONS and count only what happened inside the
 // challenge's own window. Without that rule, opening a season would
 // retroactively pay everyone who had ever promoted a proposal, and the first
 // tick would hand the onboarding points to people who never saw the
@@ -311,6 +311,114 @@ const MEASURES = {
     graded: false,
     screened: true,
   },
+  // The daily and weekly challenge measures (#4968). Seven of the eight read
+  // reports FILED FOR THE CHALLENGE: the form is opened from the challenge's
+  // own Send it button and the report carries that challenge's tag
+  // (`feedback_reports.challenge_id`), so a report counts for its own
+  // challenge and for nothing else — USEFUL_FEEDBACK and FEEDBACK_SENT leave
+  // tagged reports out (their SQL requires `challenge_id IS NULL`), so one
+  // report is never paid twice. NEWCOMER_HELPED reads chat replies instead.
+  //
+  // All are capped at one credit per period, and what repeats is the
+  // challenge: its row is one row for the whole season like a weekly one's,
+  // so the cap lives in planCredits' period slot (per day for a DAILY row,
+  // per week for a WEEKLY one), not in the measure. Target 1, counted, is
+  // what makes that slot read rather than the lifetime count.
+  BUG_REPORT_SCREENSHOT: {
+    label: 'Reported a bug with a screenshot',
+    phrase: 'sends a bug report with a screenshot',
+    summary: 'Filed a bug report with at least one screenshot through the challenge form inside the day, about the platform or somebody else\'s project. A report on a project they made, or one only they can see, does not count. One a day.',
+    unit: 'report',
+    targetUnit: 'reports',
+    counted: true,
+    payout: 'full',
+    windowed: true,
+    graded: false,
+    screened: true,
+  },
+  NEW_FEATURE_FEEDBACK: {
+    label: 'Tested something new',
+    phrase: 'sends a report on a change that went live this week',
+    summary: 'Filed a report through the challenge form inside the day about somebody else\'s project that had a change merged within the last 7 days, so what they tested was new. A report on a project they made, or one only they can see, does not count. One a day.',
+    unit: 'report',
+    targetUnit: 'reports',
+    counted: true,
+    payout: 'full',
+    windowed: true,
+    graded: false,
+    screened: true,
+  },
+  NEWCOMER_HELPED: {
+    label: 'Helped a newcomer',
+    phrase: 'replies to a message by an account under 14 days old',
+    summary: 'Sent a reply of at least 20 characters under a message by an account less than 14 days old, in a project channel, inside the day. A reply to their own messages does not count. One a day.',
+    unit: 'reply',
+    targetUnit: 'replies',
+    counted: true,
+    payout: 'full',
+    windowed: true,
+    graded: false,
+  },
+  TUTORIAL_SHARED: {
+    label: 'Wrote a short tutorial',
+    phrase: 'sends a tutorial worth following',
+    summary: 'Sent a short tutorial through the challenge form inside the day: how to do one thing, step by step. Each one is graded on how well somebody else could follow it. One a day.',
+    unit: 'tutorial',
+    targetUnit: 'tutorials',
+    counted: true,
+    payout: 'graded',
+    windowed: true,
+    graded: true,
+    screened: true,
+  },
+  DISCOVERY_SHARED: {
+    label: 'Shared a discovery',
+    phrase: 'shares a discovery worth knowing',
+    summary: 'Sent something they found that other people would want to know — a trick, a project, a way of working — through the challenge form inside the day. Each one is graded on how useful it is to somebody who has not seen it. One a day.',
+    unit: 'discovery',
+    targetUnit: 'discoveries',
+    counted: true,
+    payout: 'graded',
+    windowed: true,
+    graded: true,
+    screened: true,
+  },
+  USABILITY_TEST: {
+    label: 'Ran a usability test',
+    phrase: 'runs a usability test worth reading',
+    summary: 'Used an app long enough to exercise it and sent what they found through the challenge form inside the week: what they tried, what worked, what did not. Each one is graded on how usable a picture it gives. One a week.',
+    unit: 'test',
+    targetUnit: 'tests',
+    counted: true,
+    payout: 'graded',
+    windowed: true,
+    graded: true,
+    screened: true,
+  },
+  FEATURE_COMPARISON: {
+    label: 'Compared two features',
+    phrase: 'compares two features worth reading',
+    summary: 'Sent a comparison of two features, in one app or across apps, through the challenge form inside the week: what each does, where each falls short. Each one is graded on how even and how useful the comparison is. One a week.',
+    unit: 'comparison',
+    targetUnit: 'comparisons',
+    counted: true,
+    payout: 'graded',
+    windowed: true,
+    graded: true,
+    screened: true,
+  },
+  APP_REVIEW: {
+    label: 'Reviewed a new app',
+    phrase: 'reviews a new app worth reading',
+    summary: 'Sent a review of an app made within the last 14 days through the challenge form inside the week: what it is for, what it does well, what it is missing. Each one is graded on how useful it is to somebody deciding whether to try it. One a week.',
+    unit: 'review',
+    targetUnit: 'reviews',
+    counted: true,
+    payout: 'graded',
+    windowed: true,
+    graded: true,
+    screened: true,
+  },
 };
 
 const MEASURE_KEYS = Object.keys(MEASURES);
@@ -388,6 +496,50 @@ function weeklyWindows(window, { now = Date.now(), graceMs = WINDOW_GRACE_MS } =
     const from = window.startMs == null ? start : Math.max(start, window.startMs);
     const to = window.endMs == null ? end : Math.min(end, window.endMs);
     if (from <= to) out.push({ startMs: from, endMs: to, open: window.open, weekStartMs: start });
+  }
+  return out;
+}
+
+// ── Daily challenges ───────────────────────────────────────────────────
+//
+// A challenge in the DAILY category (#4968) is a new set every day: five
+// things, each once, resetting at midnight UTC. The row is one row for the
+// whole season like a weekly one's, so the cap is per day
+// (challenge-rules.planCredits, the period slot), keyed by the UTC midnight
+// that starts the day `ms` falls in — the same "same for everyone whatever
+// their time zone" choice the week makes.
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+// A day's grace is shorter than a week's. The runs a midnight sits between
+// are a minute apart, so two hours is plenty for the tick after midnight to
+// pay for something done at 23:55, and a day later the window is gone.
+const DAY_GRACE_MS = 2 * 60 * 60 * 1000;
+
+function isDaily(row) {
+  const category = (row && (row.category || row.t_category)) || '';
+  return String(category).trim().toUpperCase() === 'DAILY';
+}
+
+// The UTC midnight that starts the day `ms` falls in.
+function dayStartMs(ms) {
+  const d = new Date(ms);
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+}
+
+// The days a run scores a daily challenge over: today, and yesterday too for
+// DAY_GRACE_MS after midnight, so a late-night action is still paid by the
+// run that comes after the reset. Each is clipped to the challenge's own
+// window; a day wholly outside it is left out. Same shape as weeklyWindows,
+// whose caller in challenge-scorer.scoreChallenge picks between them.
+function dailyWindows(window, { now = Date.now(), graceMs = DAY_GRACE_MS } = {}) {
+  const current = dayStartMs(now);
+  const starts = now - current < graceMs ? [current - DAY_MS, current] : [current];
+  const out = [];
+  for (const start of starts) {
+    const end = start + DAY_MS - 1;
+    const from = window.startMs == null ? start : Math.max(start, window.startMs);
+    const to = window.endMs == null ? end : Math.min(end, window.endMs);
+    if (from <= to) out.push({ startMs: from, endMs: to, open: window.open, dayStartMs: start });
   }
   return out;
 }
@@ -487,14 +639,16 @@ function unitPoints({ payout, points, target, index }) {
 // `candidates` are in arrival order per person (oldest first) and each names
 // itself with a `sourceKey`. `credited` says what the ledger already holds
 // for this challenge: the keys already paid for, and how many credits each
-// person has, in all and per week (`weeks`, keyed by weekStartMs). Both are
+// person has, in all and per week (`weeks`, keyed by weekStartMs) and per
+// day (`days`, keyed by dayStartMs). Both are
 // what make the scorer safe to run every ten minutes — the plan for a person
 // already fully credited is empty.
 //
 // On a WEEKLY challenge the cap is counted inside the candidate's own week,
-// and a single-completion measure is not marked as THE completion: the
+// and on a DAILY one inside the candidate's own day (both keyed in UTC), and
+// a single-completion measure is not marked as THE completion: the
 // database allows one completion per person per challenge, and a weekly
-// challenge is completed again every week.
+// challenge is completed again every week, a daily one every day.
 //
 // A graded measure returns credits marked `needsGrade`, with `points` as the
 // ceiling; the caller grades them and drops any the grader could not score.
@@ -510,17 +664,18 @@ function planCredits(rule, row, { candidates = [], credited = new Map(), now = D
 
   const window = resolveWindow(row, { now });
   const weekly = isWeekly(row);
+  const daily = isDaily(row);
   const out = [];
   // How many credits each person will have once this run's own plan is
   // applied — without it, two candidates in the same run would both be
-  // "the second account" and the challenge would overpay. On a weekly
-  // challenge the tally is per person per week.
+  // "the second account" and the challenge would overpay. On a weekly or
+  // daily challenge the tally is per person per week, or per day.
   const running = new Map();
 
   for (const c of candidates) {
     const userId = Number(c.userId);
     if (!Number.isFinite(userId)) continue;
-    const state = credited.get(userId) || { keys: new Set(), count: 0, weeks: new Map() };
+    const state = credited.get(userId) || { keys: new Set(), count: 0, weeks: new Map(), days: new Map() };
     if (state.keys.has(c.sourceKey)) continue;
     let slot = userId;
     let held = state.count;
@@ -529,6 +684,11 @@ function planCredits(rule, row, { candidates = [], credited = new Map(), now = D
       const week = weekStartMs(Number.isFinite(at) ? at : now);
       slot = `${userId}:${week}`;
       held = (state.weeks && state.weeks.get(week)) || 0;
+    } else if (daily) {
+      const at = c.activityAt != null ? Date.parse(c.activityAt) : NaN;
+      const day = dayStartMs(Number.isFinite(at) ? at : now);
+      slot = `${userId}:${day}`;
+      held = (state.days && state.days.get(day)) || 0;
     }
     const already = held + (running.get(slot) || 0);
     if (already >= target) continue;
@@ -544,7 +704,7 @@ function planCredits(rule, row, { candidates = [], credited = new Map(), now = D
       points: unitPoints({ payout: spec.payout, points, target, index: already }),
       activityAt: c.activityAt,
       description: c.description || null,
-      completion: !spec.counted && !weekly,
+      completion: !spec.counted && !weekly && !daily,
       needsGrade: spec.graded === true,
       gradeInput: c.gradeInput || null,
     });
@@ -696,6 +856,11 @@ module.exports = {
   isWeekly,
   weekStartMs,
   weeklyWindows,
+  DAY_MS,
+  DAY_GRACE_MS,
+  isDaily,
+  dayStartMs,
+  dailyWindows,
   skipReason,
   effectiveTarget,
   effectivePoints,

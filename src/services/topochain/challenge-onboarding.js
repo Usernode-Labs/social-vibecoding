@@ -45,9 +45,14 @@ const NEWEST_EVENT_BLOCKS_SQL = `(SELECT ls.event_total_produced_blocks FROM lea
 // condition on `ua` (the ledger row) and `ct` (the challenge's template). A
 // WEEKLY challenge counts this week's credits only, from Monday 00:00 UTC,
 // the week the scorer caps by (challenge-rules.weekStartMs), so its progress
-// starts again every Monday. Every other challenge counts all of them.
-const COUNTS_THIS_WEEK_SQL = `(UPPER(TRIM(COALESCE(ct.category, ''))) <> 'WEEKLY'
-                OR ua.activity_at >= date_trunc('week', NOW() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')`;
+// starts again every Monday; a DAILY one (#4968) counts today's only, from
+// midnight UTC, the day the scorer caps by (challenge-rules.dayStartMs), so
+// yesterday's credit does not tick a challenge that reset an hour ago. Every
+// other challenge counts all of them.
+const COUNTS_CURRENT_PERIOD_SQL = `(CASE UPPER(TRIM(COALESCE(ct.category, '')))
+                 WHEN 'DAILY' THEN ua.activity_at >= date_trunc('day', NOW() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+                 WHEN 'WEEKLY' THEN ua.activity_at >= date_trunc('week', NOW() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+                 ELSE TRUE END)`;
 
 // Match the home panel's existing ledger-based progress rule. Numeric
 // challenges require the target number of credits, not merely some points.
@@ -174,6 +179,6 @@ function challengeCategory(id, category, onboarding) {
 }
 
 module.exports = {
-  ONBOARDING_LIMIT, NEWEST_EVENT_BLOCKS_SQL, COUNTS_THIS_WEEK_SQL, resolveProgress, buildOnboarding,
+  ONBOARDING_LIMIT, NEWEST_EVENT_BLOCKS_SQL, COUNTS_CURRENT_PERIOD_SQL, resolveProgress, buildOnboarding,
   loadOnboarding, loadEventBlocks, challengeCategory,
 };

@@ -47,7 +47,7 @@
 // `window.ScreenshotSelect`, which the capture path below reads by name.
 import './screenshot-select';
 
-import { t } from '../../lib/i18n/runtime';
+import { htmlRich, t } from '../../lib/i18n/runtime';
 import { publishVisibility } from '../../lib/visibility-store';
 
 // The shell globals this block reaches for. Resolved in `init()` rather than
@@ -364,6 +364,31 @@ export function init() {
     // charging a tax of one tap for it would only train people to tap past
     // the question this change exists to ask.
     let awaitingTarget = false;
+    // #4968: the writing challenge a "Send it" on a challenge's page opened
+    // this form for — { id, goal } — or null for an ordinary open. A tagged
+    // report counts for its challenge and NOT also for Send useful feedback
+    // (the scorer's untagged read requires challenge_id IS NULL), so the tag
+    // is earned, not decorative. Per-open, like the destination: the saved
+    // draft deliberately carries neither, so a draft restored into a plain
+    // open files untagged rather than claiming a challenge the person is no
+    // longer looking at.
+    let challengeTag = null;
+    const paintChallengeTag = () => {
+      const el = document.getElementById('feedback-challenge-for');
+      if (!el) return;
+      if (!challengeTag) {
+        el.textContent = '';
+        el.classList.add('hidden');
+        return;
+      }
+      el.innerHTML = htmlRich('dialogs:feedback.challenge.for', { goal: challengeTag.goal },
+        [(inner) => `<strong class="font-semibold text-zinc-900 dark:text-zinc-100">${inner}</strong>`]);
+      el.classList.remove('hidden');
+    };
+    const setChallengeTag = (tag) => {
+      challengeTag = tag;
+      paintChallengeTag();
+    };
     // #685: whether the open app announced a usernode.issueState provider
     // from the mounted iframe. Computed on each modal open; the "Include
     // app state" row shows only while this holds AND the target is 'app'.
@@ -1829,6 +1854,9 @@ export function init() {
       clearCaptureDraft();
       // #2796: and the outbox owns the words now, so the saved draft goes too.
       clearSavedDraft();
+      // #4968: the queued body carries the tag (see submitFeedback), so the
+      // retry counts for the challenge even though the line is gone.
+      setChallengeTag(null);
       resetTitleGenState();
       resetScreenshotState();
       resetVideoState();
@@ -1954,6 +1982,14 @@ export function init() {
         // typed or edited (titleDirty) is always sent verbatim.
         const customTitle = feedbackTitle.value.trim();
         if (customTitle && (titleDirty || text === lastGeneratedFor)) body.title = customTitle;
+        // #4968: the report counts for the challenge it was opened from. The
+        // goal rides along only for the offline hand-back below, which shows
+        // the line again when the server refuses the send outright; the
+        // server reads neither it nor any other field it does not know.
+        if (challengeTag && challengeTag.id) {
+          body.challengeId = challengeTag.id;
+          if (challengeTag.goal) body.challengeGoal = challengeTag.goal;
+        }
         if (target === 'app') body.appSlug = App.currentApp;
         // #964: pledge a kudos bounty on the issue this submit files.
         // Captured at submit time alongside the target, and only when the
@@ -2114,6 +2150,9 @@ export function init() {
           clearCaptureDraft();
           // #2796: sent — the only thing that ends a saved draft.
           clearSavedDraft();
+          // #4968: filed with the tag the body carried; a follow-up report
+          // typed into this same open is an ordinary one.
+          setChallengeTag(null);
           // Discard any in-flight title preview so it can't repopulate
           // the cleared field while the "Thanks!" confirmation is up.
           resetTitleGenState();
@@ -2270,6 +2309,15 @@ export function init() {
         if (!modal.classList.contains('hidden') && !bountyCheckbox.checked) resetBountyRow();
       }).catch(() => { /* budget unavailable — row stays as painted */ });
       applyTargetAvailability(canTargetApp, appData);
+      // #4968: opened from a writing challenge's "Send it". The line names
+      // the challenge, and the submit below carries its id; the server
+      // re-checks the tag, so one that has closed since the open just files
+      // as ordinary feedback. Per-open, like the destination: passing only
+      // the tag (no description, no screenshot) keeps `mode: 'form'` from
+      // the CTA so the comment-mode shortcut cannot swallow the open.
+      setChallengeTag(opts.challengeId
+        ? { id: Number(opts.challengeId), goal: String(opts.goal || '') }
+        : null);
       // A caller whose own button already named the app opens on it, with
       // `target: 'app'` (Home's Getting started card's Suggest did, until
       // #4635 retired the card). That press was the choice #2707 asks for,
@@ -2340,6 +2388,11 @@ export function init() {
           feedbackText.value = p.description || '';
           if (p.title) { feedbackTitle.value = p.title; titleDirty = true; }
           restoreChosenTarget(p.target);
+          // #4968: the refused send carried the challenge; the words come
+          // back with it, so a resubmit from here counts for it too.
+          setChallengeTag(p.challengeId
+            ? { id: Number(p.challengeId), goal: String(p.challengeGoal || '') }
+            : null);
           feedbackStatus.textContent = failed.lastError
             ? t('dialogs:feedback.queue.rejectedReason', { reason: failed.lastError })
             : t('dialogs:feedback.queue.rejected');
@@ -2440,6 +2493,9 @@ export function init() {
         clearDescriptionError();
         resetTitleGenState();
         clearCaptureDraft();
+        // #4968: the tag was per-open, so the close drops it with the
+        // destination it came from — a draft restored later files untagged.
+        setChallengeTag(null);
       }
       setComposerLocked(false);
       hideSent();
@@ -2491,6 +2547,9 @@ export function init() {
         titleDirty = false;
         resetScreenshotState();
         bountyCheckbox.checked = false;
+        // #4968: the words left for comment mode, which files by its own
+        // path — the tag is not taken with them, so it goes.
+        setChallengeTag(null);
       }
       return draft;
     };
@@ -2603,6 +2662,7 @@ export function init() {
       const modal = document.getElementById('feedback-modal');
       if (!modal || modal.classList.contains('hidden')) return;
       labelAppTarget(labelledApp);
+      paintChallengeTag();
       paintScreenshotActions();
       paintVideoActions();
       paintQueueRetry();

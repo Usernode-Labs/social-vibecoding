@@ -402,18 +402,21 @@ test('the rank rule is named on HomePanels, as the tab names its own', () => {
   const { HP } = makeHomePanels();
   const G = HP.CHALLENGE_GROUPS;
   assert.deepEqual(
-    [G.ONBOARDING, G.WEEKLY, G.PERSISTENT, HP.OTHER_GROUP].map((g) => g.heading),
-    ['home:challenges.group.setup', 'home:challenges.group.week', 'home:challenges.group.always', 'home:challenges.group.other'],
+    [G.ONBOARDING, G.DAILY, G.WEEKLY, G.PERSISTENT, HP.OTHER_GROUP].map((g) => g.heading),
+    ['home:challenges.group.setup', 'home:challenges.group.day', 'home:challenges.group.week', 'home:challenges.group.always', 'home:challenges.group.other'],
     'the table holds message ids');
   assert.deepEqual(
-    [G.ONBOARDING, G.WEEKLY, G.PERSISTENT, HP.OTHER_GROUP].map((g) => message(g.heading)),
-    ['First challenges', 'This week', 'Always open', 'Season challenges']);
+    [G.ONBOARDING, G.DAILY, G.WEEKLY, G.PERSISTENT, HP.OTHER_GROUP].map((g) => message(g.heading)),
+    ['First challenges', 'Daily', 'This week', 'Always open', 'Season challenges']);
   assert.deepEqual(
-    [G.ONBOARDING, G.WEEKLY, G.PERSISTENT, HP.OTHER_GROUP].map((g) => g.key),
-    ['setup', 'week', 'always', 'other'], 'the keys do not change');
+    [G.ONBOARDING, G.DAILY, G.WEEKLY, G.PERSISTENT, HP.OTHER_GROUP].map((g) => g.key),
+    ['setup', 'day', 'week', 'always', 'other'], 'the keys do not change');
+  // #4968: the Daily group sits between First challenges and This week, so
+  // every group below it moved down a rank, and a finished First challenges
+  // now goes to 5.
   for (const [group, finished, want] of [
-    [G.ONBOARDING, false, 0], [G.WEEKLY, false, 1], [G.PERSISTENT, false, 2], [HP.OTHER_GROUP, false, 3],
-    [G.ONBOARDING, true, 4], [G.WEEKLY, true, 1], [G.PERSISTENT, true, 2], [HP.OTHER_GROUP, true, 3],
+    [G.ONBOARDING, false, 0], [G.DAILY, false, 1], [G.WEEKLY, false, 2], [G.PERSISTENT, false, 3], [HP.OTHER_GROUP, false, 4],
+    [G.ONBOARDING, true, 5], [G.DAILY, true, 1], [G.WEEKLY, true, 2], [G.PERSISTENT, true, 3], [HP.OTHER_GROUP, true, 4],
   ]) {
     assert.equal(HP.groupRankOf(group, finished), want, `${group.key}, finished ${finished}`);
   }

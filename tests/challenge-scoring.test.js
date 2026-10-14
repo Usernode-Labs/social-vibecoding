@@ -1069,12 +1069,17 @@ test('the rubric, the model and the input limits printed are the ones the grader
   assert.ok(step.text.includes(`${grader.GRADE_FALLBACK_MODEL} when it does not answer in time`));
 });
 
-test('a measure that calls no model says so, and only feedback has a junk filter', () => {
-  // Both feedback measures since #3568: FEEDBACK_SENT reads the same reports
-  // ungraded, through the same filter. The panel keys on the `screened` flag
-  // the scorer runs the filter by, so the two cannot disagree.
+test('a measure that calls no model says so, and the report ones share a junk filter', () => {
+  // USEFUL_FEEDBACK and FEEDBACK_SENT since #3568; the seven #4968 report
+  // measures join them — FEEDBACK_SENT reads the same reports ungraded,
+  // through the same filter, and the new daily and weekly ones read reports
+  // tagged for their own challenge. NEWCOMER_HELPED stays unscreened: it
+  // reads chat replies, never graded, so no grader call would read its text.
+  // The panel keys on the `screened` flag the scorer runs the filter by, so
+  // the two cannot disagree.
   assert.deepEqual(rules.MEASURE_KEYS.filter((m) => rules.MEASURES[m].screened === true),
-    ['USEFUL_FEEDBACK', 'FEEDBACK_SENT']);
+    ['USEFUL_FEEDBACK', 'FEEDBACK_SENT', 'BUG_REPORT_SCREENSHOT', 'NEW_FEATURE_FEEDBACK',
+      'TUTORIAL_SHARED', 'DISCOVERY_SHARED', 'USABILITY_TEST', 'FEATURE_COMPARISON', 'APP_REVIEW']);
   for (const measure of rules.MEASURE_KEYS) {
     const shown = anatomy(measure, { points: 1000, target: 4 });
     const kinds = shown.steps.map((s) => s.kind);
@@ -1463,11 +1468,14 @@ const weeklyRow = (extra = {}) => challengeRow({
 const credits = (entries) => {
   const map = new Map();
   for (const [userId, key, at] of entries) {
-    const state = map.get(userId) || { keys: new Set(), count: 0, weeks: new Map() };
+    const state = map.get(userId) || { keys: new Set(), count: 0, weeks: new Map(), days: new Map() };
     state.keys.add(key);
     state.count += 1;
-    const week = rules.weekStartMs(Date.parse(at));
+    const atMs = Date.parse(at);
+    const week = rules.weekStartMs(atMs);
     state.weeks.set(week, (state.weeks.get(week) || 0) + 1);
+    const day = rules.dayStartMs(atMs);
+    state.days.set(day, (state.days.get(day) || 0) + 1);
     map.set(userId, state);
   }
   return map;
@@ -1535,15 +1543,190 @@ test('the scorer loads a weekly challenge a week at a time, and counts what is h
 test('progress on a weekly challenge counts this week’s credits only, on every list', () => {
   const onboarding = require('../src/services/topochain/challenge-onboarding');
   const panels = require('../src/routes/home-panels');
-  const sql = onboarding.COUNTS_THIS_WEEK_SQL.replace(/\s+/g, ' ');
-  assert.match(sql, /UPPER\(TRIM\(COALESCE\(ct\.category, ''\)\)\) <> 'WEEKLY'/, 'any other challenge counts every credit');
-  assert.match(sql, /ua\.activity_at >= date_trunc\('week', NOW\(\) AT TIME ZONE 'UTC'\) AT TIME ZONE 'UTC'/,
+  const sql = onboarding.COUNTS_CURRENT_PERIOD_SQL.replace(/\s+/g, ' ');
+  assert.match(sql, /WHEN 'WEEKLY' THEN ua\.activity_at >= date_trunc\('week', NOW\(\) AT TIME ZONE 'UTC'\) AT TIME ZONE 'UTC'/,
     'a weekly one from Monday 00:00 UTC, the week the scorer caps by');
-  assert.ok(panels.MY_COUNT_SQL.includes(onboarding.COUNTS_THIS_WEEK_SQL), 'Home and the profile');
+  assert.match(sql, /WHEN 'DAILY' THEN ua\.activity_at >= date_trunc\('day', NOW\(\) AT TIME ZONE 'UTC'\) AT TIME ZONE 'UTC'/,
+    'a daily one (#4968) from midnight UTC, the day the scorer caps by');
+  assert.match(sql, /ELSE TRUE END/, 'any other challenge counts every credit');
+  assert.ok(panels.MY_COUNT_SQL.includes(onboarding.COUNTS_CURRENT_PERIOD_SQL), 'Home and the profile');
   const fs = require('fs');
   const path = require('path');
   const pub = fs.readFileSync(path.join(__dirname, '..', 'src/routes/topochain/public.js'), 'utf8');
-  assert.match(pub, /AND \$\{COUNTS_THIS_WEEK_SQL\}/, 'the Challenges tab’s list');
+  assert.match(pub, /AND \$\{COUNTS_CURRENT_PERIOD_SQL\}/, 'the Challenges tab’s list');
   const mobile = fs.readFileSync(path.join(__dirname, '..', 'src/routes/topochain/mobile.js'), 'utf8');
   assert.match(mobile, /isWeekly\(\{ category: item\.category \}\)/, 'and the phone app’s, in JS');
+  assert.match(mobile, /isDaily\(\{ category: item\.category \}\)/, 'so is the daily one (#4968)');
+});
+
+// ─── #4968: the daily and weekly challenges ────────────────────────────
+//
+// A daily challenge is a weekly one with a day for a week: the row sits in
+// the season once, the measure is counted at target 1, and the cap lives in
+// planCredits' per-period slot — per day for a DAILY row. The helpers and
+// the statement tests sit beside the weekly ones above.
+
+const dailyRow = (extra = {}) => challengeRow({
+  measure: 'BUG_REPORT_SCREENSHOT', metric_target: 1, t_metric_target: 1,
+  reward: '250 pts', t_reward: '250 pts', t_category: 'DAILY',
+  schedule_start: '2026-10-01T00:00:00Z', schedule_end: '2026-12-31T23:59:00Z', ...extra,
+});
+
+test('a daily challenge’s helpers: UTC midnight days, yesterday in the grace window', () => {
+  const noon = Date.parse('2026-10-14T12:00:00Z');
+  assert.equal(rules.dayStartMs(noon), Date.parse('2026-10-14T00:00:00Z'));
+  assert.equal(rules.dayStartMs(Date.parse('2026-10-14T23:59:59.999Z')), Date.parse('2026-10-14T00:00:00Z'));
+  assert.equal(rules.dayStartMs(Date.parse('2026-10-14T00:00:00Z')), Date.parse('2026-10-14T00:00:00Z'));
+  assert.equal(rules.isDaily({ category: 'daily' }), true);
+  assert.equal(rules.isDaily({ t_category: ' Daily ' }), true);
+  assert.equal(rules.isDaily({ category: 'WEEKLY' }), false);
+  assert.equal(rules.isDaily(null), false);
+
+  // Mid-afternoon: today only, ending at the day's last millisecond.
+  assert.deepEqual(rules.dailyWindows({ open: true }, { now: noon }).map((w) => iso(w.startMs)),
+    ['2026-10-14T00:00:00.000Z']);
+  assert.deepEqual(rules.dailyWindows({ open: true }, { now: noon }).map((w) => iso(w.endMs)),
+    ['2026-10-14T23:59:59.999Z']);
+  // Half an hour past midnight: yesterday too, so the first tick of the new
+  // day still pays a late-night action — the same idea as the weekly grace,
+  // at a day's scale. With no grace, today only.
+  const justAfter = Date.parse('2026-10-14T00:30:00Z');
+  assert.deepEqual(rules.dailyWindows({ open: true }, { now: justAfter }).map((w) => iso(w.startMs)),
+    ['2026-10-13T00:00:00.000Z', '2026-10-14T00:00:00.000Z']);
+  assert.deepEqual(rules.dailyWindows({ open: true }, { now: justAfter, graceMs: 0 }).map((w) => iso(w.startMs)),
+    ['2026-10-14T00:00:00.000Z']);
+  // The challenge's own window clips each day: a challenge that opened at
+  // noon does not reach back into the morning.
+  const [only] = rules.dailyWindows({ open: true, startMs: noon, endMs: null },
+    { now: Date.parse('2026-10-14T13:00:00Z'), graceMs: 0 });
+  assert.equal(only.startMs, noon);
+  assert.equal(only.dayStartMs, Date.parse('2026-10-14T00:00:00Z'));
+});
+
+test('the daily cap counts only the candidate’s own day, and never as THE completion', () => {
+  const now = Date.parse('2026-10-14T12:00:00Z');
+  // One already credited yesterday: today is free again.
+  const held = credits([[17, 'feedback:1', '2026-10-13T20:00:00Z']]);
+  const plan = rules.planCredits(rule({ measure: 'BUG_REPORT_SCREENSHOT', target: 1 }), dailyRow(), {
+    candidates: [
+      candidate(17, 'feedback:2', '2026-10-13T22:00:00Z'),
+      candidate(17, 'feedback:3', '2026-10-14T09:00:00Z'),
+      candidate(17, 'feedback:4', '2026-10-14T10:00:00Z'),
+    ],
+    credited: held, now,
+  });
+  assert.deepEqual(plan.map((c) => c.sourceKey), ['feedback:3'],
+    'yesterday’s report was paid yesterday; today takes one and the second waits for midnight');
+  assert.equal(plan[0].points, 250, 'a full-payout measure pays the rule’s own points');
+  assert.equal(plan[0].completion, false, 'a daily challenge is completed again every day');
+  assert.equal(plan[0].needsGrade, false);
+
+  // The same credits on a challenge that is not daily still cap it for good,
+  // exactly as a weekly one's do on a persistent row.
+  const persistent = rules.planCredits(rule({ measure: 'BUG_REPORT_SCREENSHOT', target: 1 }),
+    dailyRow({ t_category: 'PERSISTENT' }), {
+      candidates: [candidate(17, 'feedback:3', '2026-10-14T09:00:00Z')], credited: held, now,
+    });
+  assert.equal(persistent.length, 0);
+});
+
+test('a graded daily challenge plans the ceiling and marks the unit for grading', () => {
+  const now = Date.parse('2026-10-14T12:00:00Z');
+  const row = dailyRow({ measure: 'TUTORIAL_SHARED', reward: 'Up to 500 pts', t_reward: 'Up to 500 pts' });
+  const plan = rules.planCredits(rule({ measure: 'TUTORIAL_SHARED', target: 1 }), row, {
+    candidates: [candidate(7, 'feedback:9', '2026-10-14T09:00:00Z')],
+    credited: new Map(), now,
+  });
+  assert.equal(plan.length, 1);
+  assert.equal(plan[0].needsGrade, true, 'the grader decides the points');
+  assert.equal(plan[0].points, 500, 'the plan carries the ceiling the grade is clamped to');
+  assert.equal(plan[0].completion, false);
+});
+
+test('the scorer loads a daily challenge a day at a time, and counts what is held per day', async () => {
+  const seen = [];
+  const pool = { async query(sql, params) { seen.push(params); return { rows: [{ user_id: 17, id: 3, created_at: new Date('2026-10-14T09:00:00Z') }] }; } };
+  const [c] = await scorer.loadCandidates(pool, 'BUG_REPORT_SCREENSHOT',
+    { startMs: Date.parse('2026-10-14T00:00:00Z'), endMs: Date.parse('2026-10-14T23:59:59.999Z') },
+    { target: 1, challengeId: 900724 });
+  assert.equal(c.sourceKey, 'feedback:3');
+  assert.equal(c.gradeInput.text, undefined, 'the fake row carries no description; the shape still holds');
+  assert.equal(seen[0][3], 900724, 'the tagged measures filter on the challenge the rule scores');
+  const credited = await scorer.loadCredited({
+    async query() {
+      return { rows: [
+        { user_id: 17, source_key: 'feedback:1', activity_at: new Date('2026-10-13T20:00:00Z') },
+        { user_id: 17, source_key: 'feedback:2', activity_at: new Date('2026-10-14T09:00:00Z') },
+      ] };
+    },
+  }, 900724);
+  const state = credited.get(17);
+  assert.equal(state.count, 2);
+  assert.equal(state.days.get(Date.parse('2026-10-13T00:00:00Z')), 1);
+  assert.equal(state.days.get(Date.parse('2026-10-14T00:00:00Z')), 1);
+  assert.equal(state.weeks.get(Date.parse('2026-10-12T00:00:00Z')), 2, 'both days sit in the same week, too');
+});
+
+test('the #4968 report measures read only their own challenge’s tagged reports', async () => {
+  const TAGGED = ['BUG_REPORT_SCREENSHOT', 'NEW_FEATURE_FEEDBACK', 'TUTORIAL_SHARED',
+    'DISCOVERY_SHARED', 'USABILITY_TEST', 'FEATURE_COMPARISON', 'APP_REVIEW'];
+  const row = { id: 3, user_id: 7, created_at: new Date(NOW), title: 'How to', description: 'Step one.', app_name: 'Notes' };
+  for (const measure of TAGGED) {
+    const seen = [];
+    const pool = { async query(sql, params) { seen.push({ sql, params }); return { rows: [row] }; } };
+    const [c] = await scorer.loadCandidates(pool, measure,
+      { startMs: NOW - DAY, endMs: NOW + DAY }, { target: 1, challengeId: 900724 });
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0].params[3], 900724, `${measure}: the tag is the challenge being scored`);
+    assert.equal(seen[0].sql, scorer.MEASURE_SQL[measure], `${measure}: MEASURE_SQL is what runs`);
+    assert.equal(c.sourceKey, 'feedback:3', measure);
+    assert.deepEqual(c.gradeInput, { appName: 'Notes', title: 'How to', text: 'Step one.' }, measure);
+  }
+  // Each statement filters on the tag; the two measures the untagged feedback
+  // challenge reads leave tagged reports out, so one report is never paid
+  // twice.
+  for (const measure of TAGGED) {
+    assert.match(scorer.MEASURE_SQL[measure], /fr\.challenge_id = \$4/, measure);
+  }
+  assert.match(scorer.MEASURE_SQL.USEFUL_FEEDBACK, /fr\.challenge_id IS NULL/,
+    'Send useful feedback leaves the tagged ones out');
+  assert.match(scorer.MEASURE_SQL.FEEDBACK_SENT, /fr\.challenge_id IS NULL/, 'so does Send feedback');
+});
+
+test('each #4968 measure’s statement carries the filter the challenge promises', () => {
+  assert.match(scorer.MEASURE_SQL.BUG_REPORT_SCREENSHOT, /fr\.screenshot_count >= 1/,
+    'the bug-report challenge asks for a screenshot, and the statement checks for one');
+  assert.match(scorer.MEASURE_SQL.NEW_FEATURE_FEEDBACK, /e\.event_type = 'pr_merged'/,
+    'tested something new means a change went live');
+  assert.match(scorer.MEASURE_SQL.NEW_FEATURE_FEEDBACK, /INTERVAL '7 days'/, 'live within the last 7 days');
+  assert.match(scorer.MEASURE_SQL.APP_REVIEW, /a\.created_at >= NOW\(\) - INTERVAL '14 days'/,
+    'a new app is one made in the last 14 days');
+  // Both weekly report measures name the app they are about.
+  assert.match(scorer.MEASURE_SQL.USABILITY_TEST, /JOIN apps a ON a\.id = fr\.app_id/);
+  assert.match(scorer.MEASURE_SQL.APP_REVIEW, /JOIN apps a ON a\.id = fr\.app_id/);
+  // DISCOVERY_SHARED and FEATURE_COMPARISON add nothing beyond the tag; the
+  // latter is the tutorial statement aliased so each name finds its own.
+  assert.equal(scorer.MEASURE_SQL.FEATURE_COMPARISON, scorer.MEASURE_SQL.TUTORIAL_SHARED);
+  // The newcomer measure reads chat, not reports, and carries the newcomer's
+  // own limits: a reply of at least 20 characters, under somebody else's
+  // message, in a project's channel, to an account less than 14 days old.
+  const newcomer = scorer.MEASURE_SQL.NEWCOMER_HELPED.replace(/\s+/g, ' ');
+  assert.match(newcomer, /FROM chat_messages m/, 'chat, not reports');
+  assert.match(newcomer, /m\.thread_type = 'message'/, 'a reply, not a message of its own');
+  assert.match(newcomer, /m\.user_id IS DISTINCT FROM root\.user_id/, 'not a reply to their own message');
+  assert.match(newcomer, /m\.app_id IS NOT NULL/, 'inside a project channel');
+  assert.match(newcomer, /newcomer\.created_at >= NOW\(\) - INTERVAL '14 days'/, 'the newcomer is new');
+  assert.match(newcomer, /LENGTH\(TRIM\(m\.content\)\) >= 20/, 'the pre-filter’s 20 characters, enforced in SQL');
+});
+
+test('NEWCOMER_HELPED takes no tag and no grade, and its candidates carry none', async () => {
+  const seen = [];
+  const pool = { async query(sql, params) { seen.push({ sql, params }); return { rows: [{ id: 5, user_id: 7, created_at: new Date(NOW), content: 'a reply of at least twenty characters', app_name: 'Notes' }] }; } };
+  const [c] = await scorer.loadCandidates(pool, 'NEWCOMER_HELPED',
+    { startMs: NOW - DAY, endMs: NOW + DAY }, { target: 1, challengeId: 900724 });
+  assert.equal(seen[0].params.length, 3, 'the tag is not a parameter: a reply counts wherever it was written');
+  assert.equal(c.sourceKey, 'help:5');
+  assert.equal(c.gradeInput, undefined, 'never graded, so nothing to grade');
+  assert.equal(rules.MEASURES.NEWCOMER_HELPED.screened, undefined);
+  assert.equal(rules.MEASURES.NEWCOMER_HELPED.graded, false);
 });

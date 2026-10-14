@@ -1135,6 +1135,10 @@
     "text": "See your requests",
     "description": "Small link under the intro line of the Suggest an improvement form: closes the form and opens the list of this person's own requests on their profile."
   },
+  "feedback.challenge.for": {
+    "text": "For your challenge: <0>{{goal}}</0>",
+    "description": "Line at the top of the Suggest an improvement form when it was opened from a challenge's \"Send it\" (#4968): the report counts for that challenge. {{goal}} is the challenge's own words, such as \"Write a short tutorial\". The tag <0> makes the challenge's name stand out."
+  },
   "feedback.dropLabel": {
     "text": "Drop images or a clip to attach",
     "description": "Shown over the \"Suggest an improvement\" dialog while files are dragged over it. A clip is a short video."

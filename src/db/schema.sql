@@ -13865,3 +13865,21 @@ CREATE INDEX IF NOT EXISTS idx_test_run_reports_slug
 CREATE INDEX IF NOT EXISTS idx_test_run_reports_user
   ON test_run_reports (test_user_id, created_at DESC);
 COMMENT ON TABLE test_run_reports IS 'staging:private';
+
+-- #4968: the daily and weekly challenge forms. A report filed from a
+-- challenge's own Send it button carries that challenge's tag, and the
+-- measures that pay a challenge read only tagged reports (a tagged report
+-- counts for its own challenge and for nothing else — USEFUL_FEEDBACK and
+-- FEEDBACK_SENT require challenge_id IS NULL). SET NULL, not CASCADE: a
+-- challenge row leaving the season must not take the reports with it.
+-- Private comment inherited from the table above: the description is free
+-- text, and the challenge grader reads it verbatim.
+ALTER TABLE feedback_reports ADD COLUMN IF NOT EXISTS challenge_id BIGINT
+  REFERENCES challenges(id) ON DELETE SET NULL;
+-- How many screenshots the report attached (0 to 3, same ceiling as the
+-- ids), so "Report a bug with a screenshot" does not have to join
+-- issue_screenshots to count them.
+ALTER TABLE feedback_reports ADD COLUMN IF NOT EXISTS screenshot_count SMALLINT NOT NULL DEFAULT 0;
+-- The scorer's reads are by tag and window; this keeps them off a scan.
+CREATE INDEX IF NOT EXISTS idx_feedback_reports_challenge_created
+  ON feedback_reports (challenge_id, created_at) WHERE challenge_id IS NOT NULL;
