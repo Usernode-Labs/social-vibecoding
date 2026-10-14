@@ -343,9 +343,15 @@ function homeroomBenchRoutes(config) {
   // person's.
   const graderOf = (req) => (req.cliAuthenticated ? 'opus' : 'human');
 
+  // `runId` narrows a grade queue to one run's items: every arm's, as
+  // opaque and as shuffled as the whole queue, so a run can be judged on
+  // its own as soon as it ends.
   router.get('/api/bot-bench/queue', requireAdminWrite, handler('Bench grading queue', async (req) => {
     const kind = req.query?.kind === 'label' ? 'label' : 'grade';
-    return grading.queue(pool, { kind, limit: Number(req.query?.limit) || 20 });
+    const raw = req.query?.runId;
+    if (raw != null && raw !== '' && !/^[1-9]\d{0,9}$/.test(String(raw))) return { ok: false, status: 400, error: 'runId is a run\'s number' };
+    const runId = raw != null && raw !== '' ? Number(raw) : null;
+    return grading.queue(pool, { kind, limit: Number(req.query?.limit) || 20, runId });
   }));
 
   // `images=1` (the connector's get_bench_item) puts a taste item's
