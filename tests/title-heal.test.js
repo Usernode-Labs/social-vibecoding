@@ -233,6 +233,33 @@ function loadTitleHealWithStubs({ llm: llmStub, github: ghStub, prMetadata: pmSt
 
 const noopWs = { pushVoteUpdate: () => {}, pushIssueUpdate: () => {} };
 
+function transactionalPool(pool) {
+  return { ...pool, connect: async () => ({ query: pool.query.bind(pool), release() {} }) };
+}
+
+test('a correction during title generation cancels a stale generated title', async () => {
+  for (const cancelled of [true, false]) {
+    let changed = false;
+    const calls = [];
+    const row = { id: 5, owner: 'acme', repo: 'app', issue_number: 12, description: 'Old words', attempts: 0 };
+    const { subject, restore } = loadTitleHealWithStubs({
+      llm: { generateIssueTitle: async () => { changed = true; return { title: 'Stale generated title' }; } },
+      github: { patchIssueTitle: async () => calls.push('patch'), invalidateIssuesCache() {} },
+      prMetadata: {}, ws: noopWs,
+    });
+    try {
+      const pool = transactionalPool({ async query(sql) {
+        if (/FROM title_heal_queue/.test(sql)) {
+          return { rows: !changed ? [row] : cancelled ? [] : [{ ...row, description: 'Corrected words' }] };
+        }
+        return { rows: [] };
+      } });
+      assert.deepEqual(await subject.healIssueTitles(pool), { scanned: 1, healed: 0 });
+      assert.deepEqual(calls, [], 'never send an already-generated title based on old words');
+    } finally { restore(); }
+  }
+});
+
 test('healIssueTitles: success retitles the issue, deletes the queue row, announces', async () => {
   // The PAT-vs-installation fallback now lives in github.patchIssueTitle
   // (#556) — the sweeper just calls it.
@@ -268,7 +295,7 @@ test('healIssueTitles: success retitles the issue, deletes the queue row, announ
         return { rows: [] };
       },
     };
-    const res = await subject.healIssueTitles(pool);
+    const res = await subject.healIssueTitles(transactionalPool(pool));
     assert.deepEqual(res, { scanned: 1, healed: 1 });
     assert.deepEqual(ghCalls, [{ owner: 'acme', repo: 'app', n: 12, title: 'Fix broken button on mobile' }]);
     assert.ok(queries.some((q) => /DELETE FROM title_heal_queue/.test(q.sql)), 'queue row deleted');
@@ -315,7 +342,7 @@ test('healIssueTitles: a refusal reply is never PATCHed; the reporter\'s words a
         return { rows: [] };
       },
     };
-    const res = await subject.healIssueTitles(pool);
+    const res = await subject.healIssueTitles(transactionalPool(pool));
     assert.deepEqual(res, { scanned: 1, healed: 1 });
     assert.deepEqual(ghCalls, ['Feedback: Lfg']);
     assert.ok(queries.some((q) => /DELETE FROM title_heal_queue/.test(q.sql)), 'queue row deleted');
@@ -457,4 +484,28 @@ test('healPrTitles: no broadcast when the heal attempt falls back again', async 
   } finally {
     restore();
   }
+});
+
+test('title healing preserves a remote correction whose local commit failed', async () => {
+  const calls = [], queries = [];
+  const row = { id: 5, owner: 'acme', repo: 'app', issue_number: 12, description: 'Old words', attempts: 0 };
+  const { subject, restore } = loadTitleHealWithStubs({
+    llm: { generateIssueTitle: async () => ({ title: 'Generated from old words' }) },
+    github: { safeMention: value => value,
+      getIssue: async () => ({ title: 'User correction', body: 'Source\n\nCorrected words\n\nScreenshot' }),
+      patchIssueTitle: async () => calls.push('patch'), invalidateIssuesCache() {} },
+    prMetadata: {}, ws: noopWs,
+  });
+  try {
+    const pool = transactionalPool({ async query(sql) {
+      queries.push(sql);
+      if (/FROM title_heal_queue/.test(sql)) return { rows: [row] };
+      if (/FROM feedback_reports/.test(sql)) return { rows: [{ title: 'Fallback title', description: 'Old words',
+        body_prefix: 'Source\n\n', body_suffix: '\n\nScreenshot' }] };
+      return { rows: [] };
+    } });
+    assert.deepEqual(await subject.healIssueTitles(pool), { scanned: 1, healed: 0 });
+    assert.equal(calls.length, 0);
+    assert.ok(queries.some(sql => /DELETE FROM title_heal_queue/.test(sql)));
+  } finally { restore(); }
 });

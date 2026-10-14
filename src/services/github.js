@@ -2027,6 +2027,31 @@ async function patchIssueBody(owner, repo, issueNumber, body) {
   await updateIssueBody(owner, repo, issueNumber, safeBody);
 }
 
+// #4803: a correction saves both fields in one remote write. Two independent
+// PATCHes could save the words and then fail to save the title.
+async function patchIssueContent(owner, repo, issueNumber, { title, body }) {
+  const content = { title: safeMention(title), body: safeMention(body) };
+  const pat = process.env.GITHUB_BOT_TOKEN;
+  if (pat) {
+    const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/issues/${issueNumber}`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `token ${pat}`,
+        'User-Agent': 'usernode-social-vibecoding',
+      },
+      body: JSON.stringify(content),
+    });
+    recordFetchResponse('pat', res, { method: 'PATCH', url: `/repos/${owner}/${repo}/issues/${issueNumber}` });
+    if (res.ok) return;
+    log.warn('github', 'PAT issue correction failed; trying installation token', {
+      repo: `${owner}/${repo}`, issueNumber, status: res.status,
+    });
+  }
+  const octokit = await getOctokit(owner);
+  await octokit.rest.issues.update({ owner, repo, issue_number: issueNumber, ...content });
+}
+
 async function closeIssue(owner, repo, issueNumber) {
   const octokit = await getOctokit(owner);
   const { data } = await octokit.rest.issues.update({
@@ -2915,6 +2940,7 @@ module.exports = {
   patchIssueTitle,
   updateIssueBody,
   patchIssueBody,
+  patchIssueContent,
   closeIssue,
   getCloneUrl,
   safeMention,
