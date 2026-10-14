@@ -1359,6 +1359,23 @@ async function reusablePass({ config, pool, appId, sessionId = null, repoOwner, 
   }
 }
 
+/**
+ * Does the repository at `ref` have a unit suite this platform runs? true,
+ * false (confirmed: the feature or GitHub is off, or package.json has no
+ * runnable `test` script), or null when it could not be told (package.json
+ * unreadable). Never throws.
+ */
+async function suiteApplies({ repoOwner, repoName, ref }) {
+  if (!isEnabled() || !github.isEnabled()) return false;
+  if (!repoOwner || !repoName || !ref) return null;
+  try {
+    const raw = await github.getFileContent(repoOwner, repoName, UNIT_CHECK_PATH, ref);
+    return hasRunnableTestScript(raw);
+  } catch {
+    return null;
+  }
+}
+
 // The suite as `shards` Jobs at once (see UNIT_SUITE_SHARDS above), each
 // with TEST_SHARD=k/n. Resolves `{ stdout, stderr }` joined as one Job's
 // would be when every shard passed; otherwise throws as one failed Job
@@ -1549,4 +1566,5 @@ module.exports = {
   jobHash,
   recordPassForReuse,
   reusablePass,
+  suiteApplies,
 };

@@ -1250,10 +1250,14 @@ async function storeChecks(pool, sessionId, commitSha, result, errorDetail = nul
   // and one whose suite really ran settles the request ($8).
   const unitRow = Array.isArray(result && result.results) ? result.results.find(unitSuiteRow.isUnitSuiteRow) : null;
   const unitReused = !!(unitRow && unitRow.reused);
-  // Whatever else this run did, it did not copy a pass: the request is
-  // answered. Except a suite that could not run on an 'error' verdict, which
-  // the error lane runs again (that run answers it).
-  const unitRan = !unitReused && !(unitRow && unitRow.couldNotRun && result && result.state === 'error');
+  // The request is answered by a suite that ran (pass or fail), or by a
+  // run that confirmed the suite does not apply (settleCaptureRun sets
+  // `unitSuiteAbsent`). Not by a copied pass, not by a missing row whose
+  // reason is unknown, and not by a suite that could not run on an 'error'
+  // verdict, which the error lane runs again.
+  const unitRan = unitRow
+    ? (!unitReused && !(unitRow.couldNotRun && result && result.state === 'error'))
+    : !!(result && result.unitSuiteAbsent === true);
   if (result && result.state === 'error') {
     // A build/boot/capture failure — record a TERMINAL 'error' verdict plus
     // the failure-streak bookkeeping that powers the sweeper's backoff and
@@ -1912,6 +1916,22 @@ function captureKey(sessionId) {
 function hasInFlightCapture(sessionId) {
   const key = captureKey(sessionId);
   return _inFlight.has(key) || _queued.has(key);
+}
+
+// Is a run of `commitHash` where the unit suite really runs owed to a
+// person on this proposal (chat_sessions.unit_suite_fresh_sha)? False when
+// unreadable: then the verdict is stored as it is.
+async function freshRunOwedFor(pool, sessionId, commitHash) {
+  if (!commitHash) return false;
+  try {
+    const { rows: [row] } = await pool.query(
+      'SELECT unit_suite_fresh_sha FROM chat_sessions WHERE id = $1', [sessionId]
+    );
+    return !!(row && row.unit_suite_fresh_sha
+      && String(row.unit_suite_fresh_sha).toLowerCase() === String(commitHash).toLowerCase());
+  } catch {
+    return false;
+  }
 }
 
 // Start the run a person asked for when the run that answered them copied
@@ -3653,6 +3673,30 @@ async function settleCaptureRun(config, pool, run) {
     }
   }
 
+  // A run with no unit-suite row while a person is owed a run of this head
+  // where the suite really runs (services/unit-suite-reuse.js). Only a suite
+  // confirmed not to apply (no runnable `test` script, or the suite turned
+  // off) answers the request; storeChecks then settles it. Any other missing
+  // row (package.json unreadable, the runner failed before a Job, an outcome
+  // nobody could read) did not run the suite they asked for: the verdict is
+  // a retryable 'error' and the request stands.
+  if (!unitOutcome) {
+    const owed = await freshRunOwedFor(pool, session.id, commitHash);
+    if (owed) {
+      const applies = await unitSuite.suiteApplies({ repoOwner, repoName, ref: commitHash });
+      if (applies === false) {
+        checksResult.unitSuiteAbsent = true;
+      } else if (checksResult.state !== 'error') {
+        checksResult.state = 'error';
+        checksResult.errorDetail = 'The unit suite asked for with "Run checks again" did not run, so the checks will run again.';
+        checksResult.platformFault = true;
+        log.warn('visuals', 'A fresh unit suite was owed and this run has none: recorded as a retryable error', {
+          sessionId: session.id, commitHash, applies,
+        });
+      }
+    }
+  }
+
   const blockingCount = Number.isInteger(checksResult.blockingCount)
     ? checksResult.blockingCount
     : checksResult.results.filter((r) => r.status !== 'pass' && !r.advisory).length;
@@ -3731,7 +3775,11 @@ async function settleCaptureRun(config, pool, run) {
         // the error): then the pass stays unobserved, and a later run of
         // the commit runs the suite rather than copy a pass with no history
         // row behind the gate it would earn.
-        if (recorded > 0 && unitOutcome && unitOutcome.history && unitOutcome.history.passed) {
+        // And only when the unit row was among those written: recordRun
+        // keeps the first MAX_ROWS_PER_RUN rows, and the unit row comes
+        // after the browser checks.
+        const unitAt = unitOutcome && unitOutcome.history ? historyRows.indexOf(unitOutcome.history) : -1;
+        if (recorded > 0 && unitAt >= 0 && unitAt < checkHistory.MAX_ROWS_PER_RUN && unitOutcome.history.passed) {
           await require('./unit-suite-reuse').markObserved(pool, { appId: app.id, sessionId: session.id, commitSha: commitHash });
         }
       }

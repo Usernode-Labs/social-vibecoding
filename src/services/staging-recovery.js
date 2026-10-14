@@ -51,8 +51,19 @@ function checkRunOverdue(session, { now = Date.now(), staleMs = checksStaleMs() 
 // active Dev sessions have their own turn-tail recovery, a fresh draft has no
 // checks to re-run, and an uploaded-but-unsubmitted commit is still waiting on
 // proposal_submit_build rather than on the checks service.
+//
+// And any open proposal owed a run a person asked for ("Run checks again",
+// services/unit-suite-reuse.js) on its current head: the route accepts the
+// request for active and paused proposals, native and CLI alike, and the
+// request outlives the process that took it.
+function freshRunOwed(session) {
+  return !!session?.unit_suite_fresh_sha && !!session?.checks_commit_sha
+    && String(session.unit_suite_fresh_sha).toLowerCase() === String(session.checks_commit_sha).toLowerCase();
+}
+
 function isStuckCheckRecoveryScope(session) {
   if (session?.status === 'promoted') return true;
+  if (['active', 'paused'].includes(session?.status) && freshRunOwed(session)) return true;
   if (session?.status !== 'active' || session?.source !== 'cli_handoff') return false;
   if (!(session.checks_commit_sha || session.handoff_head_sha)) return false;
   const hasUnsubmittedUpload = !!session.handoff_uploaded_sha
@@ -104,6 +115,9 @@ async function findStuckCheckSessions({
     `SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url
        FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
       WHERE (cs.status = 'promoted'
+             OR (cs.status IN ('active', 'paused')
+                 AND cs.unit_suite_fresh_sha IS NOT NULL
+                 AND lower(cs.unit_suite_fresh_sha) = lower(cs.checks_commit_sha))
              OR (cs.status = 'active'
                  AND cs.source = 'cli_handoff'
                  AND COALESCE(cs.checks_commit_sha, cs.handoff_head_sha) IS NOT NULL
