@@ -14209,3 +14209,120 @@ CREATE TABLE IF NOT EXISTS shots_eval_pairs (
 );
 CREATE INDEX IF NOT EXISTS idx_shots_eval_pairs_waiting ON shots_eval_pairs(eval_run_id, id) WHERE status = 'waiting';
 COMMENT ON TABLE shots_eval_pairs IS 'staging:private';
+
+-- #4678: the daily GLM security bot. Durable state for the isolated,
+-- budget-capped red-team service: its campaigns (runs), the probes each
+-- campaign executed, only the findings an independent verifier confirmed,
+-- each reconfirmation of a finding, every physical model call (attacker and
+-- defender alike), and the combined USD ledger the reserve-before-invoke
+-- accounting runs against. All private: probe details are sanitized at
+-- write time and must never surface through debug tooling.
+CREATE TABLE IF NOT EXISTS security_bot_runs (
+  id                SERIAL PRIMARY KEY,
+  status            TEXT NOT NULL DEFAULT 'pending',
+  trigger           TEXT NOT NULL DEFAULT 'manual',
+  scheduled_day     DATE,
+  lease_owner       TEXT,
+  lease_expires_at  TIMESTAMPTZ,
+  heartbeat_at      TIMESTAMPTZ,
+  started_at        TIMESTAMPTZ,
+  finished_at       TIMESTAMPTZ,
+  cancel_requested_at TIMESTAMPTZ,
+  cancel_requested_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  limits_snapshot   JSONB NOT NULL DEFAULT '{}'::jsonb,
+  arena_ref         TEXT,
+  arena_status      TEXT,
+  outcome           TEXT,
+  attacker_calls    INTEGER NOT NULL DEFAULT 0,
+  target_requests   INTEGER NOT NULL DEFAULT 0,
+  spend_usd         NUMERIC(10,4) NOT NULL DEFAULT 0,
+  error_message     TEXT,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT security_bot_runs_status_check CHECK (status IN
+    ('pending','claimed','running','cancelling','completed','cancelled','failed','interrupted','orphaned')),
+  CONSTRAINT security_bot_runs_trigger_check CHECK (trigger IN ('manual','scheduled')),
+  CONSTRAINT security_bot_runs_outcome_check CHECK (outcome IS NULL OR outcome IN
+    ('completed','cancelled','failed','budget_exhausted','time_exhausted','request_exhausted','calls_exhausted'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_security_bot_runs_scheduled_day
+  ON security_bot_runs(scheduled_day) WHERE trigger = 'scheduled';
+CREATE INDEX IF NOT EXISTS idx_security_bot_runs_created ON security_bot_runs(created_at DESC, id DESC);
+
+CREATE TABLE IF NOT EXISTS security_bot_probes (
+  id          SERIAL PRIMARY KEY,
+  run_id      INTEGER NOT NULL REFERENCES security_bot_runs(id) ON DELETE CASCADE,
+  category    TEXT NOT NULL,
+  probe_key   TEXT NOT NULL,
+  variant     BOOLEAN NOT NULL DEFAULT FALSE,
+  outcome     TEXT NOT NULL,
+  detail      JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT security_bot_probes_outcome_check CHECK (outcome IN
+    ('passed','blocked','variant-confirmed','failed','skipped','unsupported','simulated')),
+  UNIQUE (run_id, category, probe_key)
+);
+CREATE INDEX IF NOT EXISTS idx_security_bot_probes_run ON security_bot_probes(run_id, category);
+
+CREATE TABLE IF NOT EXISTS security_bot_findings (
+  id            SERIAL PRIMARY KEY,
+  category      TEXT NOT NULL,
+  probe_key     TEXT NOT NULL,
+  severity      TEXT NOT NULL,
+  status        TEXT NOT NULL DEFAULT 'new',
+  fingerprint   TEXT NOT NULL,
+  summary       TEXT NOT NULL,
+  evidence_ref  TEXT,
+  first_run_id  INTEGER NOT NULL REFERENCES security_bot_runs(id) ON DELETE CASCADE,
+  verified_by   TEXT NOT NULL DEFAULT 'independent-verifier',
+  status_changed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  status_changed_at TIMESTAMPTZ,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT security_bot_findings_severity_check CHECK (severity IN ('low','medium','high','critical')),
+  CONSTRAINT security_bot_findings_status_check CHECK (status IN ('new','verified','acknowledged','resolved','dismissed'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_security_bot_findings_fingerprint
+  ON security_bot_findings(fingerprint) WHERE status <> 'resolved';
+CREATE INDEX IF NOT EXISTS idx_security_bot_findings_status ON security_bot_findings(status, severity DESC, id DESC);
+
+CREATE TABLE IF NOT EXISTS security_bot_finding_occurrences (
+  id           SERIAL PRIMARY KEY,
+  finding_id   INTEGER NOT NULL REFERENCES security_bot_findings(id) ON DELETE CASCADE,
+  run_id       INTEGER NOT NULL REFERENCES security_bot_runs(id) ON DELETE CASCADE,
+  context      JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (finding_id, run_id)
+);
+
+CREATE TABLE IF NOT EXISTS security_bot_model_calls (
+  id              SERIAL PRIMARY KEY,
+  run_id          INTEGER REFERENCES security_bot_runs(id) ON DELETE CASCADE,
+  role            TEXT NOT NULL,
+  attempt         INTEGER NOT NULL DEFAULT 1,
+  reserved_usd    NUMERIC(10,4) NOT NULL DEFAULT 0,
+  cost_usd        NUMERIC(10,4),
+  cost_source     TEXT,
+  outcome         TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL UNIQUE,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT security_bot_model_calls_role_check CHECK (role IN ('attacker','defender')),
+  CONSTRAINT security_bot_model_calls_outcome_check CHECK (outcome IN
+    ('ok','error','cancelled','unreconciled','skipped-budget'))
+);
+
+CREATE TABLE IF NOT EXISTS security_bot_daily_budgets (
+  day           DATE PRIMARY KEY,
+  reserved_usd  NUMERIC(10,4) NOT NULL DEFAULT 0,
+  spent_usd     NUMERIC(10,4) NOT NULL DEFAULT 0,
+  released_usd  NUMERIC(10,4) NOT NULL DEFAULT 0,
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+COMMENT ON TABLE security_bot_runs IS 'staging:private';
+COMMENT ON TABLE security_bot_probes IS 'staging:private';
+COMMENT ON TABLE security_bot_findings IS 'staging:private';
+COMMENT ON TABLE security_bot_finding_occurrences IS 'staging:private';
+COMMENT ON TABLE security_bot_model_calls IS 'staging:private';
+COMMENT ON TABLE security_bot_daily_budgets IS 'staging:private';
+COMMENT ON COLUMN security_bot_probes.detail IS 'staging:private';
+COMMENT ON COLUMN security_bot_finding_occurrences.context IS 'staging:private';
