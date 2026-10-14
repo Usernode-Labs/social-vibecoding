@@ -57,7 +57,7 @@ function loadStaging({ failGit = false, failRun = false, failHealth = false, liv
       return { stdout: '' };
     },
     buildImage: async () => {},
-    runContainer: async () => { calls.order.push('run'); if (failRun) throw new Error('container exited'); return 'cid-mine'; },
+    runContainer: async (name, opts) => { calls.order.push('run'); calls.labels = opts?.labels; if (failRun) throw new Error('container exited'); return 'cid-mine'; },
     waitForHealthy: async () => { if (failHealth) throw new Error('never healthy'); },
     // The container by the session's name, as the platform labelled it.
     inspectContainer: async () => (calls.order.push('inspect'), liveAttempt == null ? { status: 'not_found', labels: {} }
@@ -89,7 +89,7 @@ const APP = { id: 5, slug: 'widget', name: 'Widget', repo_url: 'https://github.c
 const SHA = 'a'.repeat(40);
 const SERVING = { id: 7, branch_name: 'dev/work', staging_runtime_name: 'usernode-staging-widget--7', staging_runtime_kind: 'docker' };
 const attempt = (calls) => ({
-  n: 3, dbName: 'app_widget_staging_s7_abc123',
+  n: 3, claim: 2, dbName: 'app_widget_staging_s7_abc123',
   checkpoint: async (v) => { calls.checkpoints.push(v.step); },
 });
 
@@ -99,7 +99,7 @@ test('an attempt builds into its own checkout and database, checkpoints, and wri
     const a = attempt(calls);
     const out = await subject.prepareAttempt({ appRuntime: 'docker' }, SERVING, APP, SHA, a);
     assert.equal(out.commitSha, SHA);
-    assert.ok(calls.git.find((g) => g.includes('clone')).includes('/tmp/usernode-preview-7-a3'));
+    assert.ok(calls.git.find((g) => g.includes('clone')).includes('/tmp/usernode-preview-7-a3-c2'), 'one checkout per claim of the attempt');
     assert.deepEqual(calls.cloned, ['app_widget_staging_s7_abc123']);
     assert.deepEqual(calls.checkpoints, ['clone', 'deploy']);
     // Its live build progress (checks_progress) is written as before.
@@ -133,6 +133,22 @@ test('on Docker, an older attempt never replaces a newer one\'s container', asyn
       (err) => err.code === 'attempt_superseded');
     assert.ok(!calls.removed.includes('usernode-staging-widget--7'), 'the newer container is untouched');
   } finally { restore(); }
+});
+
+test('on Docker, a claim of an attempt never replaces what a later claim of the same attempt runs (review finding)', async () => {
+  // The attempt is claim 2 of attempt 3 (`attempt()` above).
+  const later = loadStaging({ liveAttempt: '3.3' });
+  try {
+    await assert.rejects(later.subject.prepareAttempt({ appRuntime: 'docker' }, SERVING, APP, SHA, attempt(later.calls)),
+      (err) => err.code === 'attempt_superseded');
+    assert.ok(!later.calls.removed.includes('usernode-staging-widget--7'), 'the later claim\'s container is untouched');
+  } finally { later.restore(); }
+  const earlier = loadStaging({ liveAttempt: '3.1' });
+  try {
+    await earlier.subject.prepareAttempt({ appRuntime: 'docker' }, SERVING, APP, SHA, attempt(earlier.calls));
+    assert.ok(earlier.calls.removed.includes('usernode-staging-widget--7'), 'an earlier claim\'s container is replaced');
+    assert.equal(earlier.calls.labels['social.usernode.io/preview-attempt'], '3.2', 'the container names its attempt and claim');
+  } finally { earlier.restore(); }
 });
 
 test('on Docker, reading the newest attempt and replacing the container hold one lock (review finding)', async () => {

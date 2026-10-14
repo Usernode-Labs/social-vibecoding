@@ -18,9 +18,11 @@ const missing = () => Object.assign(new Error('missing'), { code: 404 });
 
 // An in-memory namespace. `failRollout` makes the new pod fail to start, so
 // the rollout fails at once instead of after its five-minute budget.
-function cluster({ failRollout = false, beforeDelete = null } = {}) {
+function cluster({ failRollout = false, beforeDelete = null, duringWait = null } = {}) {
   const store = new Map();
   const failing = { on: failRollout };
+  // Pods of a template a Deployment no longer names, still failing.
+  const stuck = [];
   // The ReplicaSets the controller keeps, one per template a Deployment ran.
   const replicaSets = [];
   let revision = 0;
@@ -84,11 +86,12 @@ function cluster({ failRollout = false, beforeDelete = null } = {}) {
       readNamespacedService: service.read, createNamespacedService: service.create, replaceNamespacedService: service.replace,
       deleteNamespacedService: service.delete,
       listNamespacedPod: async () => {
+        if (duringWait) { const hook = duringWait; duringWait = null; await hook(); }
         const d = store.get(`deployment/${NAME}`);
-        if (!d || !failing.on) return { items: [] };
-        return { items: [{ metadata: { name: 'new', annotations: d.spec.template.metadata.annotations },
-          spec: { containers: [{ name: 'app', image: app(d).image }] },
-          status: { containerStatuses: [{ name: 'app', state: { waiting: { reason: 'CreateContainerConfigError', message: 'bad env' } } }] } }] };
+        const pod = (template) => ({ metadata: { name: 'new', annotations: template.metadata.annotations },
+          spec: { containers: [{ name: 'app', image: template.spec.containers.find((x) => x.name === 'app').image }] },
+          status: { containerStatuses: [{ name: 'app', state: { waiting: { reason: 'CreateContainerConfigError', message: 'bad env' } } }] } });
+        return { items: [...(d && failing.on ? [pod(d.spec.template)] : []), ...stuck.map(pod)] };
       },
       readNamespacedPodLog: async () => '',
     },
@@ -112,14 +115,14 @@ function cluster({ failRollout = false, beforeDelete = null } = {}) {
     },
     custom: {},
   });
-  return { store, calls, fail: (on) => { failing.on = on; }, image: (n) => app(store.get(`deployment/${NAME}`)).image, secretOf: (n) => store.get(`deployment/${NAME}`).spec.template.spec.containers[0].envFrom[0].secretRef.name };
+  return { store, calls, fail: (on) => { failing.on = on; }, stuckPod: (template) => stuck.push(structuredClone(template)), image: (n) => app(store.get(`deployment/${NAME}`)).image, secretOf: (n) => store.get(`deployment/${NAME}`).spec.template.spec.containers[0].envFrom[0].secretRef.name };
 }
 
 // `serving`: the attempt the machine says serves (null: nothing does).
-const deploy = (attempt, { imageRef = `app@sha256:${attempt}`, serving = attempt > 1 ? attempt - 1 : null } = {}) =>
+const deploy = (attempt, { imageRef = `app@sha256:${attempt}`, serving = attempt > 1 ? attempt - 1 : null, claim = 0 } = {}) =>
   kubernetes.deployApplication(CONFIG, {
     app: { id: 1, slug: 'demo' }, environment: 'staging', sessionId: 2, imageRef, env: { N: String(attempt) },
-    internalOnly: true, attempt, servingAttempt: serving,
+    internalOnly: true, attempt, servingAttempt: serving, claim,
   });
 
 test('each attempt has its own env Secret and the Deployment records the attempt', async () => {
@@ -200,5 +203,28 @@ test('a failed attempt\'s cleanup never deletes a Deployment a newer attempt wro
   assert.ok(c.store.has(`deployment/${NAME}`), 'attempt 2\'s Deployment is still there');
   assert.equal(c.secretOf(), `${NAME}-env-a2`);
   assert.ok(c.store.has(`service/${NAME}`), 'and the session\'s Service with it');
+});
+
+test('a claim of an attempt never deletes or restores what a later claim of the same attempt deployed (review finding)', async () => {
+  // Claim 1 of attempt 3 loses its lease during its rollout; claim 2 of the
+  // same attempt deploys meanwhile; claim 1's rollout then fails and it
+  // cleans up.
+  let c;
+  c = cluster({ failRollout: true, duringWait: async () => {
+    const claim1 = c.store.get(`deployment/${NAME}`).spec.template;
+    c.fail(false);
+    await deploy(3, { claim: 2, serving: null, imageRef: 'app@sha256:claim2' });
+    c.stuckPod(claim1);   // claim 1's pod still failing
+  } });
+  await assert.rejects(deploy(3, { claim: 1, serving: null, imageRef: 'app@sha256:claim1' }));
+  assert.ok(c.store.has(`deployment/${NAME}`), 'claim 2\'s Deployment is still there');
+  assert.equal(c.image(), 'app@sha256:claim2');
+  assert.equal(c.store.get(`deployment/${NAME}`).metadata.annotations[ANNOTATION], '3.2');
+  // A stale claim cannot write over it either, nor give it back.
+  await assert.rejects(deploy(3, { claim: 1, serving: null }), (err) => err.code === 'attempt_superseded');
+  assert.equal(await kubernetes.restorePreviewAttempt(CONFIG, NAME, 3, null, 1), 'superseded');
+  assert.equal(c.image(), 'app@sha256:claim2');
+  assert.deepEqual(kubernetes.attemptFence('3.2'), { attempt: 3, claim: 2 });
+  assert.deepEqual(kubernetes.attemptFence('4'), { attempt: 4, claim: 0 }, 'a bare number is claim 0 (written before claims)');
 });
 

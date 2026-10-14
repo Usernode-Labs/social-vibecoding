@@ -74,7 +74,7 @@ function dnsAlias({ environment, sessionId, dockerName }) {
 async function deploy(config, {
   app, environment, sessionId, imageRef, env, dockerName,
   port = 3000, memory, cpus, labels, runtimeName = null, internalOnly = false,
-  command = [], runAsUser = null, onRollout = null, attempt = null, servingAttempt = null,
+  command = [], runAsUser = null, onRollout = null, attempt = null, servingAttempt = null, claim = 0,
 }) {
   if (mode(config) === 'docker') {
     const name = runtimeName || dockerName;
@@ -89,9 +89,11 @@ async function deploy(config, {
     const replace = async () => {
       if (attempt) {
         const current = await docker.inspectContainer(name).catch(() => null);
-        const written = Number(current?.labels?.[kubernetes.PREVIEW_ATTEMPT_ANNOTATION]);
-        if (Number.isInteger(written) && written > attempt) {
-          throw Object.assign(new Error(`Preview attempt ${attempt} was superseded by attempt ${written}`),
+        // A newer attempt, or a later claim of this one (kubernetes.js
+        // attemptFence: `n.k`).
+        const written = kubernetes.attemptFence(current?.labels?.[kubernetes.PREVIEW_ATTEMPT_ANNOTATION]);
+        if (kubernetes.fenceNewer(written, attempt, claim)) {
+          throw Object.assign(new Error(`Preview attempt ${kubernetes.fenceValue(attempt, claim)} was superseded by ${kubernetes.fenceValue(written.attempt, written.claim)}`),
             { code: 'attempt_superseded', permanent: true });
         }
       }
@@ -99,7 +101,7 @@ async function deploy(config, {
       replaced = true;
       containerId = await docker.runContainer(name, {
         image: imageRef, env, port, memory, cpus,
-        labels: attempt ? { ...labels, [kubernetes.PREVIEW_ATTEMPT_ANNOTATION]: String(attempt) } : labels,
+        labels: attempt ? { ...labels, [kubernetes.PREVIEW_ATTEMPT_ANNOTATION]: kubernetes.fenceValue(attempt, claim) } : labels,
         aliases: alias ? [alias] : [],
         command,
       });
@@ -144,7 +146,7 @@ async function deploy(config, {
     app, environment, sessionId, imageRef, env, cpus, labels, runtimeName, internalOnly,
     command, ...(runAsUser != null ? { runAsUser } : {}),
     ...(onRollout ? { onRollout } : {}),
-    ...(attempt ? { attempt, servingAttempt } : {}),
+    ...(attempt ? { attempt, servingAttempt, claim } : {}),
   });
 }
 

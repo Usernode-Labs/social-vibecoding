@@ -81,7 +81,9 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
     }
     if (!input.appSlug) return false;
     const c = await legacy('services/docker').inspectContainer(`usernode-staging-${input.appSlug}--${input.sessionId}`).catch(() => null);
-    return Number(c?.labels?.[kubernetes().PREVIEW_ATTEMPT_ANNOTATION]) === input.n;
+    // Any claim of attempt n (kubernetes.js attemptFence: `n.k`).
+    const fence = kubernetes().attemptFence(c?.labels?.[kubernetes().PREVIEW_ATTEMPT_ANNOTATION]);
+    return fence?.attempt === input.n;
   };
   // Every claim of a run (its check_runs rows, by the run's key): their Jobs
   // cancelled, finished or not, and their rows gone.
@@ -102,7 +104,7 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
   const undo = async (input: any) => {
     if (runtimeMode() === 'kubernetes') {
       await kubernetes().restorePreviewAttempt(config, runtimeName(input.appId, input.sessionId), input.n,
-        input.serving?.n ?? null).catch(() => null);
+        input.serving?.n ?? null, input.claim ?? 0).catch(() => null);
     }
     if (!await serves(input).catch(() => true)) await dbManager().dropDatabase(input.db).catch(() => {});
   };
@@ -123,7 +125,9 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
         // Each claim clones into its own database: one before it may have
         // deployed, and its pods still use that one.
         const db: string = (Array.isArray(input.dbs) && input.dbs[ctx.attempt - 1]) || input.db;
-        const attempt = { n: input.n, dbName: db, servingN: input.serving?.n ?? null,
+        // The claim fences what it writes: a claim that lost its lease and
+        // runs on never touches what a later claim of the attempt deployed.
+        const attempt = { n: input.n, claim: ctx.attempt, dbName: db, servingN: input.serving?.n ?? null,
           checkpoint: (v: Json) => ctx.checkpoint(v) };
         try {
           const built = await staging().prepareAttempt(config, row, a, input.head, attempt);
@@ -141,7 +145,7 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
             // cancel (the machine's retirement covers everything before). A
             // lost lease authorizes nothing: a retry of this same attempt
             // may be using the database right now.
-            if (await cancelledByMachine(ctx.workId)) await undo({ ...input, db, appSlug: a.slug });
+            if (await cancelledByMachine(ctx.workId)) await undo({ ...input, db, appSlug: a.slug, claim: ctx.attempt });
             throw err;
           }
           // A failure seen by a claim that is no longer the live one (its
@@ -249,7 +253,8 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
           const k = kubernetes();
           await k.deleteSecret(config, k.attemptSecretName(runtimeName(input.appId, input.sessionId), input.n));
         }
-        await legacy('services/docker').execFileAsync('rm', ['-rf', `/tmp/usernode-preview-${input.sessionId}-a${input.n}`]).catch(() => {});
+        const dirs = Array.from({ length: PREPARE_ATTEMPTS + 1 }, (_, claim) => `/tmp/usernode-preview-${input.sessionId}-a${input.n}-c${claim}`);
+        await legacy('services/docker').execFileAsync('rm', ['-rf', ...dirs]).catch(() => {});
         return { dropped: input.db };
       },
     },

@@ -342,7 +342,10 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, { at
     if (!owner || !repo) throw new Error('Could not parse repo URL');
 
     const cloneUrl = await github.getCloneUrl(owner, repo);
-    const cloneDir = attempt ? `/tmp/usernode-preview-${session.id}-a${attempt.n}` : `/tmp/usernode-staging-${session.id}`;
+    // One checkout per claim of an attempt: a claim that lost its lease may
+    // still be using its own when the next one starts.
+    const cloneDir = attempt ? `/tmp/usernode-preview-${session.id}-a${attempt.n}-c${attempt.claim || 0}`
+      : `/tmp/usernode-staging-${session.id}`;
 
     // Whether the caller pinned a concrete commit. 'latest' (and any falsy
     // value) keeps the historical "build the current branch tip" behaviour
@@ -718,7 +721,7 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, { at
         // or drained. Empty, so nothing is added, without such a server.
         ...(dbManager.previewDatabaseLabels?.(stagingDbNameStr, cloned.server) || {}),
       },
-      ...(attempt ? { attempt: attempt.n, servingAttempt: attempt.servingN ?? null } : {}),
+      ...(attempt ? { attempt: attempt.n, servingAttempt: attempt.servingN ?? null, claim: attempt.claim || 0 } : {}),
     });
     timings.healthMs = Date.now() - healthStartedAt;
     const { hostname, url: stagingUrl } = deployed;

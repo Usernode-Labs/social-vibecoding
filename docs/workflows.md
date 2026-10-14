@@ -728,12 +728,14 @@ serves and which revision the verdict is for are separate facts on the instance;
   `head_superseded`; the head being built or served joins.
 - **One build at a time, one checks run at a time.** A build is an attempt
   (`preview.prepare`): its own checkout, database and env Secret, then the session's
-  runtime updated in place, fenced by attempt number, the serving template restored if
-  the rollout fails. Each claim of a build clones into a database of its own, so a claim
-  that runs again after a crash never re-clones the database an earlier claim's pods may
-  already use; the receipt names the one that serves, and the earlier claims' go. A
-  failed attempt deletes only its own Deployment, and only as it read it (UID and
-  version), never one a newer attempt has written since. A recheck whose inputs changed
+  runtime updated in place, fenced by attempt and claim (`n.k`), the serving template
+  restored if the rollout fails. Each claim of a build clones into a database and a
+  checkout of its own, so a claim that runs again after a crash never re-clones the
+  database an earlier claim's pods may already use; the receipt names the one that
+  serves, and the earlier claims' go. A claim that lost its lease and runs on never
+  writes, restores or deletes what a later claim of the same attempt deployed. A failed
+  attempt deletes only the Deployment exactly its claim wrote, and only as it read it
+  (UID and version), never one a newer attempt or claim has written since. A recheck whose inputs changed
   (`testing-update`, `shots-update`) replaces a run going; any other joins it. A newer head cancels the obsolete build or run (the kernel's
   `cancel`) and retires what it created, never while it still serves (a build cancelled
   after its deploy gives the Deployment back to the attempt that serves). Each claim of a

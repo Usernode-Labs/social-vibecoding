@@ -84,6 +84,23 @@ function isConflict(err) {
 // own, and the Deployment records the highest attempt that wrote it, so an
 // older attempt that lands late cannot overwrite a newer one.
 const PREVIEW_ATTEMPT_ANNOTATION = 'social.usernode.io/preview-attempt';
+// The fence a preview's Deployment (or Docker container) carries: the
+// attempt that wrote it and which claim of that attempt's build, as `n.k`
+// (a bare `n` is claim 0). A claim of a build that lost its lease may still
+// be running while the next claim of the same attempt deploys: the claim
+// tells them apart. Ordered by attempt, then claim.
+function attemptFence(value) {
+  const [n, k] = String(value ?? '').split('.');
+  const attempt = Number(n);
+  return Number.isInteger(attempt) && n !== '' ? { attempt, claim: Number(k) || 0 } : null;
+}
+const fenceValue = (attempt, claim = 0) => (claim ? `${attempt}.${claim}` : String(attempt));
+// Written by a newer attempt, or a later claim of this one.
+const fenceNewer = (written, attempt, claim = 0) =>
+  !!written && (written.attempt > attempt || (written.attempt === attempt && written.claim > claim));
+// Written by exactly this claim of this attempt.
+const fenceIs = (written, attempt, claim = 0) => !!written && written.attempt === attempt && written.claim === claim;
+const fenceOf = (o) => attemptFence(o?.metadata?.annotations?.[PREVIEW_ATTEMPT_ANNOTATION]);
 function attemptSecretName(runtimeName, attempt) {
   return attempt ? withSuffix(runtimeName, `env-a${attempt}`) : withSuffix(runtimeName, 'env');
 }
@@ -1082,7 +1099,7 @@ async function reconcileAppGateIngresses(config, { force = null } = {}) {
 async function deployApplication(config, {
   app, environment, sessionId, imageRef, env, cpus = null,
   labels: extraLabels = {}, runtimeName = null, internalOnly = false,
-  command = [], runAsUser = null, onRollout = null, attempt = null, servingAttempt = null,
+  command = [], runAsUser = null, onRollout = null, attempt = null, servingAttempt = null, claim = 0,
 }) {
   if (!imageRef?.includes('@sha256:')) throw new Error('Kubernetes deployments require an immutable image digest');
   if (attempt != null && (!Number.isSafeInteger(attempt) || attempt <= 0 || environment === 'production')) {
@@ -1116,7 +1133,7 @@ async function deployApplication(config, {
   // may have written it since (attempts only; [main] deletes the preview).
   let previous = null;
   if (attempt) {
-    previous = await readFencedDeployment(apps, namespace, name, attempt);
+    previous = await readFencedDeployment(apps, namespace, name, attempt, claim);
   }
 
   await upsert(core, 'readNamespacedSecret', 'createNamespacedSecret', 'replaceNamespacedSecret', namespace, {
@@ -1131,7 +1148,7 @@ async function deployApplication(config, {
   const deploymentBody = {
     apiVersion: 'apps/v1', kind: 'Deployment',
     metadata: { name, namespace, labels: resourceLabels,
-      ...(attempt ? { annotations: { [PREVIEW_ATTEMPT_ANNOTATION]: String(attempt) } } : {}) },
+      ...(attempt ? { annotations: { [PREVIEW_ATTEMPT_ANNOTATION]: fenceValue(attempt, claim) } } : {}) },
     spec: {
       replicas: 1,
       strategy: { type: 'RollingUpdate', rollingUpdate: { maxUnavailable: 0, maxSurge: 1 } },
@@ -1165,7 +1182,7 @@ async function deployApplication(config, {
     },
   };
   const deployed = attempt
-    ? await writeFencedDeployment(apps, namespace, name, attempt, deploymentBody, previous)
+    ? await writeFencedDeployment(apps, namespace, name, attempt, claim, deploymentBody, previous)
     : await upsert(apps, 'readNamespacedDeployment', 'createNamespacedDeployment', 'replaceNamespacedDeployment', namespace, deploymentBody);
   // Best-effort, and deliberately so: the asset backend is shared
   // infrastructure, and a failure to reconcile it must not stop THIS app
@@ -1238,7 +1255,7 @@ async function deployApplication(config, {
     // 'restored', 'superseded' (a newer attempt owns it), 'missing' (no
     // template of the serving attempt is left: nothing serves), or 'failed'.
     const restore = attempt && servingAttempt != null
-      ? await restoreTemplate(apps, namespace, name, attempt, attemptSecretName(name, servingAttempt), previous)
+      ? await restoreTemplate(apps, namespace, name, attempt, claim, attemptSecretName(name, servingAttempt), previous)
         .catch((restoreErr) => {
           err.restoreFailed = restoreErr.message;
           log.warn('kubernetes', 'Could not restore the serving preview template', {
@@ -1252,7 +1269,10 @@ async function deployApplication(config, {
       // consumes ResourceQuota. Production keeps its prior ReplicaSet for a
       // recoverable rollout; previews are disposable and are rebuilt on retry.
       // An attempt deletes only the Deployment it wrote, by its UID.
-      const own = attempt ? await readFencedDeployment(apps, namespace, name, attempt).catch(() => null) : null;
+      // Only the Deployment exactly this claim wrote: not a newer attempt's,
+      // nor the same attempt's written by a later claim of its build.
+      const read = attempt ? await readFencedDeployment(apps, namespace, name, attempt, claim).catch(() => null) : null;
+      const own = read && fenceIs(fenceOf(read), attempt, claim) ? read : null;
       if (!attempt || own) {
         const cleanup = attempt ? deleteAttemptDeployment(config, name, own) : deleteApplication(config, name).then(() => true);
         const deleted = await cleanup.catch((cleanupErr) => {
@@ -1281,15 +1301,16 @@ async function deployApplication(config, {
   };
 }
 
-// The Deployment as this attempt finds it, refused when a newer attempt has
-// already written it. Null when there is none yet.
-async function readFencedDeployment(apps, namespace, name, attempt) {
+// The Deployment as this claim of an attempt finds it, refused when a newer
+// attempt, or a later claim of this one, has already written it. Null when
+// there is none yet.
+async function readFencedDeployment(apps, namespace, name, attempt, claim = 0) {
   let current;
   try { current = await apps.readNamespacedDeployment({ name, namespace }); }
   catch (err) { if (isNotFound(err)) return null; throw err; }
-  const written = Number(current.metadata?.annotations?.[PREVIEW_ATTEMPT_ANNOTATION]);
-  if (Number.isInteger(written) && written > attempt) {
-    throw Object.assign(new Error(`Preview attempt ${attempt} was superseded by attempt ${written}`),
+  const written = fenceOf(current);
+  if (fenceNewer(written, attempt, claim)) {
+    throw Object.assign(new Error(`Preview attempt ${fenceValue(attempt, claim)} was superseded by ${fenceValue(written.attempt, written.claim)}`),
       { code: 'attempt_superseded', permanent: true });
   }
   return current;
@@ -1297,7 +1318,7 @@ async function readFencedDeployment(apps, namespace, name, attempt) {
 
 // Create, or replace on the version this attempt read: a write by anyone
 // else in between conflicts, and the fence is read again.
-async function writeFencedDeployment(apps, namespace, name, attempt, body, current) {
+async function writeFencedDeployment(apps, namespace, name, attempt, claim, body, current) {
   for (let i = 0; ; i++) {
     try {
       if (!current) return await apps.createNamespacedDeployment({ namespace, body });
@@ -1306,7 +1327,7 @@ async function writeFencedDeployment(apps, namespace, name, attempt, body, curre
     } catch (err) {
       if ((!isConflict(err) && !(current && isNotFound(err))) || i >= 3) throw err;
       delete body.metadata.resourceVersion;
-      current = await readFencedDeployment(apps, namespace, name, attempt);
+      current = await readFencedDeployment(apps, namespace, name, attempt, claim);
     }
   }
 }
@@ -1329,14 +1350,14 @@ async function servingTemplate(apps, namespace, name, secret, previous) {
   return template;
 }
 
-async function restoreTemplate(apps, namespace, name, attempt, servingSecret, previous) {
+async function restoreTemplate(apps, namespace, name, attempt, claim, servingSecret, previous) {
   const template = await servingTemplate(apps, namespace, name, servingSecret, previous);
   if (!template) return 'missing';
   for (let i = 0; ; i++) {
     const current = await apps.readNamespacedDeployment({ name, namespace });
-    const written = Number(current.metadata?.annotations?.[PREVIEW_ATTEMPT_ANNOTATION]);
-    // A newer attempt owns the Deployment now; its template is not ours to undo.
-    if (Number.isInteger(written) && written > attempt) return 'superseded';
+    // A newer attempt, or a later claim of this one, owns the Deployment
+    // now; its template is not ours to undo.
+    if (fenceNewer(fenceOf(current), attempt, claim)) return 'superseded';
     current.spec.template = template;
     try {
       await apps.replaceNamespacedDeployment({ name, namespace, body: current });
@@ -1365,15 +1386,17 @@ async function previewServesAttempt(config, name, n) {
 // (`servingN`), or, when nothing served before it, its own Deployment is
 // deleted by its UID. Never once a newer attempt owns the Deployment.
 // Answers 'restored', 'deleted', 'superseded' or 'missing'.
-async function restorePreviewAttempt(config, name, attempt, servingN) {
+async function restorePreviewAttempt(config, name, attempt, servingN, claim = 0) {
   const { apps } = getClients();
   const namespace = config.kubernetes.appNamespace;
   let own;
-  try { own = await readFencedDeployment(apps, namespace, name, attempt); }
+  try { own = await readFencedDeployment(apps, namespace, name, attempt, claim); }
   catch (err) { if (err.code === 'attempt_superseded') return 'superseded'; throw err; }
   if (!own) return 'missing';
+  // Only what exactly this claim wrote is its to give back.
+  if (!fenceIs(fenceOf(own), attempt, claim)) return 'superseded';
   if (servingN != null) {
-    const restored = await restoreTemplate(apps, namespace, name, attempt, attemptSecretName(name, servingN), null);
+    const restored = await restoreTemplate(apps, namespace, name, attempt, claim, attemptSecretName(name, servingN), null);
     if (restored !== 'missing') return restored;
   }
   return await deleteAttemptDeployment(config, name, own) ? 'deleted' : 'superseded';
@@ -3321,7 +3344,7 @@ module.exports = {
   dnsName, withSuffix, labels, appResourceName, createBuild, buildReadsBelowSourceRoot,
   deployApplication, getApplicationStatus, inspectApplication,
   getApplicationLogs, getDebugLogs, restartApplication, deleteApplication, deleteBuilds, deleteFailedBuilds, ensureWorker,
-  attemptSecretName, previewResourcesPresent, deleteSecret, PREVIEW_ATTEMPT_ANNOTATION,
+  attemptSecretName, previewResourcesPresent, deleteSecret, PREVIEW_ATTEMPT_ANNOTATION, attemptFence, fenceValue, fenceNewer,
   listManagedBuilds, readBuild, deleteBuildSnapshot,
   runCaptureJob, runUnitSuiteJob, cancelPreviewChecks, findCheckJobs, collectCheckJob,
   checkJobRunName, deleteCheckJob, countRunningUnitSuiteJobs, deleteRunCheckJobs,
