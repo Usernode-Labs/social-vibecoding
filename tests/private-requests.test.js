@@ -258,6 +258,33 @@ test('bad input is refused before anything is written', async () => {
   assert.equal(comments.length, 0);
 });
 
+test('a write from another origin on the same site is refused before anything is written', async () => {
+  await post(bases.full, '/api/private-requests', { target: 'app', appSlug: 'notes', description: 'x' });
+  const crossSite = (url, body) => fetch(`${bases.full}${url}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Sec-Fetch-Site': 'same-site' },
+    body: JSON.stringify(body || {}),
+  });
+  for (const r of await Promise.all([
+    crossSite('/api/private-requests', { target: 'app', appSlug: 'notes', description: 'y' }),
+    crossSite('/api/apps/notes/private-requests/1/comments', { body: 'z' }),
+    crossSite('/api/apps/notes/private-requests/1/close'),
+  ])) assert.equal(r.status, 403);
+  assert.equal(requests.length, 1);
+  assert.equal(comments.length, 0);
+  assert.equal(requests[0].status, 'open');
+  const ok = await fetch(`${bases.full}/api/apps/notes/private-requests/1/close`, {
+    method: 'POST', headers: { 'Sec-Fetch-Site': 'same-origin' },
+  });
+  assert.equal(ok.status, 200, 'the Homeroom page itself still can');
+});
+
+test('the production debugging role can never read them', () => {
+  const src = read('src/services/debug-access.js');
+  assert.match(src, /'private_requests',/);
+  assert.match(src, /'private_request_comments',/);
+});
+
 test('both tables are staging:private and the route is mounted', () => {
   const schema = read('src/db/schema.sql');
   assert.match(schema, /COMMENT ON TABLE private_requests IS 'staging:private';/);

@@ -12,10 +12,18 @@
 // answer an id that does not exist gets, so a non-admin cannot even learn
 // that one exists. Reading takes `isAdmin`; filing, commenting, closing and
 // reopening take `canAdminWrite`, as the rest of the admin surface does.
+//
+// Every write answers only the Homeroom page itself
+// (middleware/same-site-browser.js), as the /api/admin writes do: close and
+// reopen need no body, so a page on a child app's subdomain (the same site,
+// so the Lax session cookie rides along) could otherwise send one for a
+// signed-in admin. The routes live outside /api/admin, so that prefix's
+// guard does not reach them.
 
 const { Router } = require('express');
 const log = require('../services/logger');
 const { getPool } = require('../db/pool');
+const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 
 const TITLE_MAX = 200;
 const DESCRIPTION_MAX = 20000;
@@ -180,7 +188,7 @@ function privateRequestRoutes(config) {
   // The "file a request" dialog's private switch posts here instead of
   // /api/feedback. A platform request goes on the platform's own project,
   // where /api/feedback's platform issues go.
-  router.post('/api/private-requests', async (req, res) => {
+  router.post('/api/private-requests', sameOriginBrowserOnly, async (req, res) => {
     if (!req.user?.isAdmin) return notFound(res);
     if (!req.user.canAdminWrite) return res.status(403).json({ error: 'Admin write access required' });
     const parsed = parseNewRequest(req.body);
@@ -210,7 +218,7 @@ function privateRequestRoutes(config) {
   });
 
   // POST /api/apps/:slug/private-requests/:id/comments { body }
-  router.post('/api/apps/:slug/private-requests/:id/comments', async (req, res) => {
+  router.post('/api/apps/:slug/private-requests/:id/comments', sameOriginBrowserOnly, async (req, res) => {
     try {
       if (!ID_RE.test(req.params.id)) return notFound(res);
       const app = await adminApp(req, req.params.slug);
@@ -236,7 +244,7 @@ function privateRequestRoutes(config) {
 
   // POST /api/apps/:slug/private-requests/:id/close and /reopen
   for (const action of ['close', 'reopen']) {
-    router.post(`/api/apps/:slug/private-requests/:id/${action}`, async (req, res) => {
+    router.post(`/api/apps/:slug/private-requests/:id/${action}`, sameOriginBrowserOnly, async (req, res) => {
       try {
         if (!ID_RE.test(req.params.id)) return notFound(res);
         const app = await adminApp(req, req.params.slug);
