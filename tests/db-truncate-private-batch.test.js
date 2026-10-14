@@ -28,10 +28,10 @@ function recorder(tables, { failOn = null, holding = () => [], allocated = [], l
   const calls = [];
   const execute = async (db, sql, opts = {}) => {
     calls.push({ db, sql, opts });
-    if (/obj_description/.test(sql)) return [...tables, ...foreign.map((f) => `FOREIGN ${f}`)].join('\n') + '\n';
+    if (/obj_description/.test(sql)) return [...tables, ...foreign.map((pair) => `FOREIGN ${JSON.stringify(pair)}`)].join('\n') + '\n';
     if (failOn && failOn(sql)) throw new Error(`boom: ${sql.slice(0, 60)}`);
     if (/pg_relation_size/.test(sql)) {
-      return [...holding(calls), ...allocated].map((n) => `${n}|${n}|r`).concat(listed).join('\n');
+      return [...holding(calls), ...allocated].map((n, i) => JSON.stringify([n, 16384 + i, 'r', n])).concat(listed).join('\n');
     }
     if (/^DO \$staging_check\$/.test(sql)) {
       if (readError) throw new Error(readError);
@@ -98,7 +98,8 @@ test('a file with pages but no live row is read, found empty, and passes', async
   assert.deepEqual(result.truncated, ['public.a', 'public.b']);
   assert.equal(r.truncates().length, 1, 'no per-table pass');
   assert.equal(r.reads().length, 1);
-  assert.match(r.reads()[0].sql, /SET LOCAL row_security = off; IF EXISTS \(SELECT 1 FROM ONLY "public"\."b"\)/);
+  assert.match(r.reads()[0].sql, /SET LOCAL row_security = off; EXECUTE format\('SELECT EXISTS \(SELECT 1 FROM ONLY %s\)', 16384::oid::regclass\) INTO present; IF present AND NOT 'public\.b' = ANY \(found\)/);
+  assert.doesNotMatch(r.reads()[0].sql, /"public"|FROM ONLY public/, 'no catalog name is spliced into SQL');
 });
 
 test('a suspect that cannot be read (a policy with row_security off, no privilege) fails the pass', async () => {
@@ -109,11 +110,12 @@ test('a suspect that cannot be read (a policy with row_security off, no privileg
   assert.equal(r.reads().length, 2);
 });
 
-test('a relation under a private table whose name cannot be checked fails the pass', async () => {
+test('a line of the check that cannot be read refuses the copy, with no per-table pass', async () => {
   const r = recorder(['public.a'], { listed: ['public.a|public.weird name|r'] });
   await assert.rejects(truncatePrivateTables('app_demo_staging_s1_abc', r.execute),
     /Could not confirm .* cannot be checked: "public\.a\|public\.weird name\|r"/);
   assert.equal(r.reads().length, 0);
+  assert.equal(r.truncates().length, 1, 'only the single statement');
 });
 
 test('a read error that only echoes the statement is not mistaken for named rows', async () => {
@@ -128,11 +130,33 @@ test('a read error that only echoes the statement is not mistaken for named rows
 });
 
 test('a foreign child the check finds after the single statement refuses the copy, with no per-table pass', async () => {
-  const r = recorder(['public.a', 'public.b'], { listed: ['public.b|public.b_dyn|f'] });
+  const r = recorder(['public.a', 'public.b'], { listed: [JSON.stringify(['public.b', 16500, 'f', 'public.b_dyn'])] });
   await assert.rejects(truncatePrivateTables('app_demo_staging_s1_abc', r.execute),
     /Refusing to empty the staging:private tables in app_demo_staging_s1_abc: public\.b has the foreign-table descendant public\.b_dyn/);
   assert.equal(r.truncates().length, 1, 'only the single statement, which did not reach it');
   assert.equal(r.reads().length, 0);
+});
+
+test('a foreign child with a name no identifier check accepts is refused just the same', async () => {
+  const r = recorder(['public.a', 'public.b'], { listed: [JSON.stringify(['public.b', 16501, 'f', 'public.b-dyn\nx|y'])] });
+  await assert.rejects(truncatePrivateTables('app_demo_staging_s1_abc', r.execute),
+    /public\.b has the foreign-table descendant public\.b-dyn\nx\|y/);
+  assert.equal(r.truncates().length, 1, 'no per-table pass');
+  assert.equal(r.reads().length, 0);
+});
+
+test('more private tables than one psql argument holds: table by table, and the check split', async () => {
+  // 1,700 names of 63 characters: about 120 KB in one TRUNCATE, past the
+  // 96 KiB ceiling; the size query names each table twice.
+  const tables = Array.from({ length: 1700 }, (_, i) => `public.t${String(i).padStart(4, '0')}_${'x'.repeat(57)}`);
+  const r = recorder(tables, { allocated: tables.slice(0, 1500) });
+  const result = await truncatePrivateTables('app_demo_staging_s1_abc', r.execute);
+  assert.equal(result.truncated.length, 1700);
+  assert.equal(r.truncates().length, 1700, 'no single statement: one per table');
+  assert.ok(r.truncates().every((sql) => !sql.includes(', ')));
+  assert.ok(r.checks().length > 1, 'the size query is split');
+  assert.ok(r.reads().length > 1, 'the read is split');
+  for (const c of [...r.checks(), ...r.reads()]) assert.ok(Buffer.byteLength(c.sql) <= 96 * 1024, `${Buffer.byteLength(c.sql)} bytes`);
 });
 
 test('a check that cannot run fails the pass', async () => {
@@ -142,7 +166,7 @@ test('a check that cannot run fails the pass', async () => {
 });
 
 test('a private table with a foreign-table descendant refuses the copy before any TRUNCATE', async () => {
-  const r = recorder(['public.a', 'public.b'], { foreign: ['public.b public.b_remote'] });
+  const r = recorder(['public.a', 'public.b'], { foreign: [['public.b', 'public.b_remote']] });
   await assert.rejects(truncatePrivateTables('app_demo_staging_s1_abc', r.execute),
     /Refusing to empty the staging:private tables in app_demo_staging_s1_abc: public\.b has the foreign-table descendant public\.b_remote/);
   assert.deepEqual(r.truncates(), []);
@@ -380,7 +404,8 @@ test('real server: a refilled inheritance child of a private table is caught', {
 // A foreign child can also appear after discovery: a TRUNCATE trigger may
 // create one. Found by the check, it refuses the copy at once; it is never
 // handed to the per-table pass, whose TRUNCATE would reach the remote table.
-test('real server: a foreign child created by a TRUNCATE trigger after discovery is refused', { timeout: 60000 }, async (t) => {
+for (const [child, shown] of [['b_dyn', 'public\\.b_dyn'], ['"b-dyn"', 'public\\.b-dyn']]) {
+test(`real server: a foreign child ${child} created by a TRUNCATE trigger after discovery is refused`, { timeout: 60000 }, async (t) => {
   const s = await scratchDatabase(t, 'trunc_dynforeign');
   if (!s) return;
   const live = await scratchDatabase(t, 'trunc_dynforeign_live');
@@ -399,16 +424,17 @@ test('real server: a foreign child created by a TRUNCATE trigger after discovery
     CREATE TABLE a (id int); CREATE TABLE b (id int);
     COMMENT ON TABLE a IS 'staging:private'; COMMENT ON TABLE b IS 'staging:private';
     CREATE FUNCTION add_foreign_child() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
-      CREATE FOREIGN TABLE IF NOT EXISTS b_dyn () INHERITS (b) SERVER live_app OPTIONS (table_name 'store');
+      CREATE FOREIGN TABLE IF NOT EXISTS ${child} () INHERITS (b) SERVER live_app OPTIONS (table_name 'store');
       RETURN NULL; END $$;
     CREATE TRIGGER a_adds_child AFTER TRUNCATE ON a FOR EACH STATEMENT EXECUTE FUNCTION add_foreign_child();
   `);
   s.statements.length = 0;
   await assert.rejects(truncatePrivateTables(s.name, s.execute),
-    /Refusing to empty the staging:private tables in trunc_dynforeign_[0-9a-f]+: public\.b has the foreign-table descendant public\.b_dyn/);
+    new RegExp(`Refusing to empty the staging:private tables in trunc_dynforeign_[0-9a-f]+: public\\.b has the foreign-table descendant ${shown}`));
   assert.equal(s.statements.filter((sql) => /^TRUNCATE/.test(sql)).length, 1, 'no per-table pass');
   assert.equal((await live.client.query('SELECT count(*)::int AS n FROM store')).rows[0].n, 2, 'the remote rows are untouched');
 });
+}
 
 test('real server: a table left with pages but no live row passes without the per-table pass', { timeout: 60000 }, async (t) => {
   const s = await scratchDatabase(t, 'trunc_deadrow');
@@ -456,6 +482,29 @@ test('real server: a foreign-table descendant is refused, and the remote rows ar
   assert.equal(s.statements.length, 1, 'discovery, and nothing after it');
   assert.equal((await live.client.query('SELECT count(*)::int AS n FROM store')).rows[0].n, 2, 'the remote rows are untouched');
   assert.equal((await s.client.query('SELECT count(*)::int AS n FROM ONLY a')).rows[0].n, 1, 'no local table was emptied either');
+});
+
+// Through psql, as the template build and the direct copy run it: psql takes
+// each statement as one argument, which Linux caps at 128 KiB. 1,000 private
+// tables with 60-character names make a size check of about 150 KB in one
+// piece; split, the pass succeeds.
+test('real server, through psql: 1,000 long-named private tables', { timeout: 180000 }, async (t) => {
+  try { require('node:child_process').execFileSync('psql', ['--version'], { stdio: 'ignore' }); } catch {
+    t.skip('psql is not on PATH'); return;
+  }
+  const s = await scratchDatabase(t, 'trunc_psql_many');
+  if (!s) return;
+  await s.client.query(`DO $$ BEGIN FOR i IN 1..1000 LOOP
+    EXECUTE format('CREATE TABLE %I (id serial PRIMARY KEY)', 't' || lpad(i::text, 4, '0') || '_' || repeat('x', 55));
+    EXECUTE format('COMMENT ON TABLE %I IS %L', 't' || lpad(i::text, 4, '0') || '_' || repeat('x', 55), 'staging:private');
+  END LOOP; END $$`);
+  await s.client.query(`INSERT INTO ${'t0001_' + 'x'.repeat(55)} DEFAULT VALUES`);
+  const saved = process.env.DB_ADMIN_URL;
+  process.env.DB_ADMIN_URL = DSN;
+  t.after(() => { if (saved === undefined) delete process.env.DB_ADMIN_URL; else process.env.DB_ADMIN_URL = saved; });
+  const result = await truncatePrivateTables(s.name);
+  assert.equal(result.truncated.length, 1000);
+  assert.equal((await s.client.query(`SELECT count(*)::int AS n FROM ${'t0001_' + 'x'.repeat(55)}`)).rows[0].n, 0);
 });
 
 test('real server: the platform schema\'s private tables, in one statement', { timeout: 180000 }, async (t) => {

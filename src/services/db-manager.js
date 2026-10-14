@@ -2247,8 +2247,9 @@ async function truncatePrivateTables(targetDb, execute = execInTarget) {
   // shouldn't have user comments.
   //
   // The same query also lists every foreign table among their inheritance
-  // descendants, as `FOREIGN <private table> <foreign table>` (no table
-  // name contains a space). TRUNCATE without ONLY reaches those children,
+  // descendants, as `FOREIGN ["<private table>", "<foreign table>"]`: JSON,
+  // so no name, however odd, breaks the line or hides the prefix.
+  // TRUNCATE without ONLY reaches those children,
   // and for postgres_fdw it sends TRUNCATE to the remote server, which in a
   // copy is the same server the live app's definition names. Nor can their
   // emptiness be shown from here: another user mapping, or a policy on the
@@ -2268,7 +2269,7 @@ WITH RECURSIVE private(name, rel) AS (
 )
 SELECT name FROM private
 UNION ALL
-SELECT DISTINCT 'FOREIGN ' || tree.name || ' ' || n.nspname || '.' || c.relname
+SELECT DISTINCT 'FOREIGN ' || json_build_array(tree.name, n.nspname || '.' || c.relname)::text
   FROM tree
   JOIN pg_class c ON c.oid = tree.rel
   JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -2293,8 +2294,17 @@ SELECT DISTINCT 'FOREIGN ' || tree.name || ' ' || n.nspname || '.' || c.relname
     .split('\n')
     .map((s) => s.trim())
     .filter(Boolean);
+  // [private table, foreign table] pairs; an unreadable pair is still a
+  // foreign descendant, shown as it came.
+  const foreignPair = (text) => {
+    try {
+      const pair = JSON.parse(text);
+      if (Array.isArray(pair) && pair.length === 2) return pair.map(String);
+    } catch { /* shown raw below */ }
+    return ['?', text];
+  };
   const foreign = lines.filter((line) => line.startsWith('FOREIGN '))
-    .map((line) => line.slice('FOREIGN '.length));
+    .map((line) => foreignPair(line.slice('FOREIGN '.length)));
   const qualifiedNames = lines.filter((line) => !line.startsWith('FOREIGN '));
 
   const refuseForeign = (pairs) => {
@@ -2303,10 +2313,10 @@ SELECT DISTINCT 'FOREIGN ' || tree.name || ' ' || n.nspname || '.' || c.relname
     });
     const err = new Error(
       `Refusing to empty the staging:private tables in ${targetDb}: ` +
-      pairs.map((pair) => pair.replace(' ', ' has the foreign-table descendant ')).join('; ') +
+      pairs.map(([parent, child]) => `${parent} has the foreign-table descendant ${child}`).join('; ') +
       '. Its rows are on another server: they can neither be emptied from a copy safely nor shown to be empty.'
     );
-    err.refusedForeign = true;
+    err.noFallback = true;
     return err;
   };
   if (foreign.length > 0) throw refuseForeign(foreign);
@@ -2386,10 +2396,20 @@ SELECT DISTINCT 'FOREIGN ' || tree.name || ' ' || n.nspname || '.' || c.relname
   //      relation gone). The block raises, naming the private
   //      tables whose suspects hold rows; it returns nothing when none do.
   // After the single statement, anything but proof of emptiness sends the
-  // pass table by table; after that pass, it fails the pass.
-  // Names in step 2 come from the catalog: they are validated like the
-  // others, double-quoted so they are read exactly, and a name that fails
-  // validation fails the pass.
+  // pass table by table; after that pass, it fails the pass. Two findings
+  // never go to the per-table pass, whose TRUNCATE would reach whatever the
+  // check could not vouch for: a foreign table (a TRUNCATE trigger can create
+  // one after discovery), and a line of the check's answer that cannot be
+  // read. Both refuse the copy at once.
+  // Step 1 answers in JSON, one array per relation: the private table, the
+  // relation's oid, its relkind, and its name for messages. No catalog name
+  // is ever put into SQL: step 2 reads each relation by oid, through
+  // format('%s', oid::regclass), which quotes it.
+  //
+  // psql takes a statement as one argument, which Linux caps at 128 KiB
+  // (spawn E2BIG, before the database sees anything). The single statement
+  // is skipped above MAX_SCRUB_STATEMENT_BYTES, the same ceiling the column
+  // pass uses, and both check queries are split under it.
   const truncated = [];
   const perTable = async () => {
     truncated.length = 0;
@@ -2405,63 +2425,96 @@ SELECT DISTINCT 'FOREIGN ' || tree.name || ' ' || n.nspname || '.' || c.relname
       }
     }
   };
+  // Each check query as few statements as fit under the ceiling.
+  const chunked = (items, render, join, wrap) => {
+    const statements = [];
+    let parts = [];
+    for (const item of items) {
+      const part = render(item);
+      if (parts.length > 0 && Buffer.byteLength(wrap(parts.concat(part).join(join))) > MAX_SCRUB_STATEMENT_BYTES) {
+        statements.push(wrap(parts.join(join)));
+        parts = [];
+      }
+      parts.push(part);
+    }
+    if (parts.length > 0) statements.push(wrap(parts.join(join)));
+    return statements;
+  };
   // Names were validated above, so they can be spliced as text too.
-  const sizeSql = 'WITH RECURSIVE targets(name, rel) AS (VALUES '
-    + safe.map((t) => `('${t}', '${t}'::regclass)`).join(', ')
-    + '), tree(name, rel) AS (SELECT name, rel FROM targets'
+  const sizeSqls = chunked(safe, (t) => `('${t}', '${t}'::regclass)`, ', ', (values) =>
+    `WITH RECURSIVE targets(name, rel) AS (VALUES ${values}), tree(name, rel) AS (SELECT name, rel FROM targets`
     + ' UNION SELECT tree.name, i.inhrelid::regclass FROM pg_inherits i JOIN tree ON i.inhparent = tree.rel)'
-    + " SELECT DISTINCT tree.name, n.nspname || '.' || c.relname, c.relkind FROM tree"
+    + " SELECT DISTINCT json_build_array(tree.name, c.oid::bigint, c.relkind, n.nspname || '.' || c.relname)::text FROM tree"
     + ' JOIN pg_class c ON c.oid = tree.rel JOIN pg_namespace n ON n.oid = c.relnamespace'
     + ' LEFT JOIN pg_am am ON am.oid = c.relam'
     + " WHERE c.relkind <> 'r' OR am.amname IS DISTINCT FROM 'heap'"
-    + ' OR pg_relation_size(tree.rel) IS DISTINCT FROM 0 ORDER BY 1, 2';
-  const quoted = (qualified) => qualified.split('.').map((part) => `"${part}"`).join('.');
+    + ' OR pg_relation_size(tree.rel) IS DISTINCT FROM 0 ORDER BY 1');
   const stillHoldingRows = async () => {
     const unconfirmed = (err) => new Error(
       `Could not confirm the staging:private tables in ${targetDb} are empty: ${err.message}`);
-    let out;
-    try {
-      out = await execute(targetDb, sizeSql, { tuplesOnly: true });
-    } catch (err) { throw unconfirmed(err); }
     const suspects = [];
-    for (const line of String(out || '').split('\n').map((l) => l.trim()).filter(Boolean)) {
-      const fields = line.split('|');
-      const [name, rel, relkind] = fields;
-      if (fields.length !== 3 || !safe.includes(name) || !SAFE_QUALIFIED_IDENT.test(rel) || !/^[a-z]$/.test(relkind)) {
-        throw unconfirmed(new Error(`a relation under a staging:private table cannot be checked: ${JSON.stringify(line)}`));
+    const foreignNow = [];
+    for (const sql of sizeSqls) {
+      let out;
+      try {
+        out = await execute(targetDb, sql, { tuplesOnly: true });
+      } catch (err) { throw unconfirmed(err); }
+      for (const line of String(out || '').split('\n').map((l) => l.trim()).filter(Boolean)) {
+        let row = null;
+        try { row = JSON.parse(line); } catch { /* below */ }
+        const [name, oid, relkind, display] = Array.isArray(row) ? row : [];
+        // Classified before anything else is checked: a foreign table is
+        // refused whatever its name.
+        if (relkind === 'f') { foreignNow.push([String(name), String(display)]); continue; }
+        if (!Array.isArray(row) || row.length !== 4 || !safe.includes(name)
+            || !Number.isSafeInteger(oid) || oid <= 0 || typeof relkind !== 'string' || !/^[a-z]$/.test(relkind)) {
+          const err = unconfirmed(new Error(`a relation under a staging:private table cannot be checked: ${JSON.stringify(line)}`));
+          err.noFallback = true;
+          throw err;
+        }
+        suspects.push({ name, oid, display: String(display) });
       }
-      suspects.push({ name, rel, relkind });
     }
-    // A foreign child that appeared after discovery (a TRUNCATE trigger can
-    // create one): refused like one found by discovery, and never handed to
-    // the per-table pass, whose TRUNCATE would reach the remote table.
-    const foreignNow = suspects.filter((x) => x.relkind === 'f');
-    if (foreignNow.length > 0) throw refuseForeign(foreignNow.map(({ name, rel }) => `${name} ${rel}`));
+    if (foreignNow.length > 0) throw refuseForeign(foreignNow);
     if (suspects.length === 0) return [];
     // The marker is assembled by format(), so the statement's own text, which
     // a psql failure echoes, never contains it.
-    const readSql = 'DO $staging_check$ DECLARE found text[] := \'{}\'; BEGIN SET LOCAL row_security = off; '
-      + suspects.map(({ name, rel }) => `IF EXISTS (SELECT 1 FROM ONLY ${quoted(rel)}) AND NOT '${name}' = ANY (found) THEN found := found || '${name}'::text; END IF; `).join('')
-      + "IF cardinality(found) > 0 THEN RAISE EXCEPTION '%', format('staging:private %s: %s;', 'rows remain in', array_to_string(found, ', ')); END IF; END $staging_check$";
-    try {
-      await execute(targetDb, readSql);
-      return [];
-    } catch (err) {
-      const m = /staging:private rows remain in: ([a-z0-9_., ]+);/i.exec(String(err.message || ''));
-      const names = m ? m[1].split(', ').filter((n) => safe.includes(n)) : [];
-      if (names.length === 0) throw unconfirmed(err);
-      return names;
+    const readSqls = chunked(suspects,
+      ({ name, oid }) => `EXECUTE format('SELECT EXISTS (SELECT 1 FROM ONLY %s)', ${oid}::oid::regclass) INTO present; `
+        + `IF present AND NOT '${name}' = ANY (found) THEN found := found || '${name}'::text; END IF; `,
+      '',
+      (body) => 'DO $staging_check$ DECLARE found text[] := \'{}\'; present boolean; BEGIN SET LOCAL row_security = off; '
+        + body
+        + "IF cardinality(found) > 0 THEN RAISE EXCEPTION '%', format('staging:private %s: %s;', 'rows remain in', array_to_string(found, ', ')); END IF; END $staging_check$");
+    const holding = new Set();
+    for (const sql of readSqls) {
+      try {
+        await execute(targetDb, sql);
+      } catch (err) {
+        const m = /staging:private rows remain in: ([a-z0-9_., ]+);/i.exec(String(err.message || ''));
+        const names = m ? m[1].split(', ').filter((n) => safe.includes(n)) : [];
+        if (names.length === 0) throw unconfirmed(err);
+        names.forEach((n) => holding.add(n));
+      }
     }
+    return [...holding];
   };
   if (safe.length > 0) {
     let batched = false;
-    try {
-      await execute(targetDb, `TRUNCATE ${safe.join(', ')} RESTART IDENTITY CASCADE`);
-      batched = true;
-    } catch (batchErr) {
-      log.warn('db-manager', 'One-statement TRUNCATE failed; truncating table by table', {
-        targetDb, count: safe.length, err: batchErr.message,
+    const oneStatement = `TRUNCATE ${safe.join(', ')} RESTART IDENTITY CASCADE`;
+    if (Buffer.byteLength(oneStatement) > MAX_SCRUB_STATEMENT_BYTES) {
+      log.warn('db-manager', 'Too many staging:private tables for one statement; truncating table by table', {
+        targetDb, count: safe.length, bytes: Buffer.byteLength(oneStatement),
       });
+    } else {
+      try {
+        await execute(targetDb, oneStatement);
+        batched = true;
+      } catch (batchErr) {
+        log.warn('db-manager', 'One-statement TRUNCATE failed; truncating table by table', {
+          targetDb, count: safe.length, err: batchErr.message,
+        });
+      }
     }
     let refilled = [];
     if (batched) {
@@ -2471,7 +2524,7 @@ SELECT DISTINCT 'FOREIGN ' || tree.name || ' ' || n.nspname || '.' || c.relname
       try {
         refilled = await stillHoldingRows();
       } catch (err) {
-        if (err.refusedForeign) throw err;
+        if (err.noFallback) throw err;
         refilled = [`(${err.message})`];
       }
       if (refilled.length === 0) truncated.push(...safe);
