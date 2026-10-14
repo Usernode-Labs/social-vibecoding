@@ -5649,6 +5649,12 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
      under-reserving does not merely crop the last card, it parks Create and
      Challenges permanently behind the bar. */
   padding-bottom: max(var(--platform-tabs-h, 0px), var(--platform-safe-bottom));
+  /* 4px, so the first label (its own `pt-4`) clears the header's notch by
+     the 12px Workshop, Messages and Profile leave: the bar overlaps this
+     box by 8. It sits on #home-body, not the search bar, because the bar
+     parks by its own offsetHeight (home.js), and a taller bar would park
+     the gap away with it. */
+  padding-top: 4px;
 }
 html[data-browser-scroller="home-screen"] .home-body-fill {
   /* The header overlaps its content by .5rem (its rounded lower edge). */
@@ -5849,7 +5855,9 @@ html[data-browser-scroller="home-screen"] .home-body-fill {
   #browse-screen .browse-pane-head {
     position: static;
     margin: 0;
-    padding: 12px 12px 10px;
+    /* 20px at the top: 8 under the header's notch, 12 of air (12 left the
+       search field 4px under the bar). */
+    padding: 20px 12px 10px;
     background: transparent;
   }
   #browse-screen .browse-pane-body,
@@ -10584,6 +10592,13 @@ html[data-browser-scroller="settings-screen"] #settings-screen:has(#settings-sec
 html.un-kb #settings-content-col > .settings-sheet {
   margin-bottom: 0;
   padding-bottom: 32px;
+}
+/* From md up the sheet sits BESIDE the sidebar, whose search field starts
+   at the root's top. The 12px shoulder put the sheet's top edge 12px below
+   the field's, so the two columns did not line up; there the root's
+   `md:pt-5` (8 for the header's notch, 12 of air) is the step for both. */
+@media (min-width: 768px) {
+  #settings-content-col > .settings-sheet { margin-top: 0; }
 }
 .settings-sheet > [data-settings-section] { max-width: 40rem; }
 /* A PAGE shows several parts at once since the settings restructure

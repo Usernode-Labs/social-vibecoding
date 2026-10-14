@@ -603,7 +603,11 @@ function reviewRecord(review) {
         problem: clip(i?.problem, 1000), fix: clip(i?.fix, 1000),
       })),
       previousFixed: (Array.isArray(r?.previousFixed) ? r.previousFixed : []).slice(0, 20).map((x) => clip(x, 80)),
-      reviewer: { costUsd: n(r?.reviewerCostUsd), ms: n(r?.reviewerMs), error: r?.reviewerError ? clip(r.reviewerError, 300) : null },
+      reviewer: {
+        costUsd: n(r?.reviewerCostUsd), ms: n(r?.reviewerMs), error: r?.reviewerError ? clip(r.reviewerError, 300) : null,
+        // Asked twice (bot-review.js reviewCapture): what was wrong with its first reply.
+        retry: r?.reviewerRetry ? clip(r.reviewerRetry, 300) : null,
+      },
       fix: r?.fix ? {
         ok: !!r.fix.ok, costUsd: n(r.fix.costUsd), ms: n(r.fix.ms), sha: r.fix.sha || null, commits: n(r.fix.commits),
         error: r.fix.error ? clip(r.fix.error, 300) : null,

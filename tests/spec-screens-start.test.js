@@ -84,6 +84,12 @@ test('the spec\'s screens become the starter\'s main screen, its stylesheet and 
 
   const css = fileOf(out.files, start.SCREENS_CSS_PATH);
   assert.ok(css.includes('--radius: 14px'), 'a custom property that is not a colour stays');
+  // App bench run 193: each screen is one centred column on a wider window,
+  // and the drawing's own rules come after it, so they win where they differ.
+  assert.match(start.SCREEN_COLUMN_CSS, /\[data-spec-screen\] \{\n {2}width: 100%;\n {2}max-width: 42rem;\n {2}margin-inline: auto;\n\}/);
+  assert.ok(css.includes(start.SCREEN_COLUMN_CSS), 'the column opens the screens\' stylesheet');
+  assert.ok(css.indexOf(start.SCREEN_COLUMN_CSS) < css.indexOf('--radius: 14px'), 'before the drawing\'s rules');
+  assert.equal(css.split(start.SCREEN_COLUMN_CSS).length, 2, 'once, however many screens');
   assert.ok(!/--(?:ground|accent|ballot)\s*:/.test(css), 'the colour tokens moved to the kit');
   assert.match(css, /\[data-spec-screen\] \{\s*display: block;/, 'a selector on the marks names the wrapper');
   assert.ok(css.includes('.chip { --chip: 9 9 9;'), 'a token scoped to one part stays where it was');

@@ -2297,6 +2297,12 @@ function revisionDesignText({ readsImages = false } = {}) {
 // for both looks, a few components, the loading, empty and error states), so
 // the build re-points the tokens and builds with the kit. A starter other
 // than Empty has the kit but no "## Design" section yet, hence "add it".
+// A game starter's scene fills the window (firstVersionDesignLines), so these
+// go to every other first version only.
+const FIRST_VERSION_COLUMN_LINES = Object.freeze([
+  'Each screen is one centred column on a window wider than a phone (the kit\'s `page-column`), never rows and buttons',
+  'stretched across the window.',
+]);
 const FIRST_VERSION_DESIGN_LINES = Object.freeze([
   '',
   'This is the app\'s FIRST VERSION, so its look is not set yet: the spec\'s "### Design" subsection (or, without a',
@@ -2327,6 +2333,12 @@ const FIRST_VERSION_DESIGN_LINES = Object.freeze([
   'components rather than re-invented. In your look-and-fix rounds, compare your screenshots with the drawn screens and',
   'fix what differs. Where a drawing and the spec\'s words disagree, the words decide what the app does and the drawing',
   'decides how it looks.',
+  // App bench run 193 (14 Oct 2026): the reviewer's two most common round-1
+  // findings in every arm, desktop layouts stretched across the window (8 of
+  // 15 reviewed builds) and loading states shaped unlike the rows (6).
+  ...FIRST_VERSION_COLUMN_LINES,
+  'A screen\'s loading state has the content\'s own shape: the same list and rows at their height, with the kit\'s',
+  '`skeleton` bars where their text goes, so nothing moves when the data arrives.',
   // And the populated demo the spec describes, which is how a first version
   // is first seen (the staging preview with ?demo=1).
   'Build the populated demo the spec describes, the staging preview opened with `?demo=1`: the viewer\'s own data as',
@@ -2419,7 +2431,8 @@ function startingScreensLines(placed) {
     'THE SPEC\'S SCREENS ARE IN PLACE. Before this turn the platform wrote the screens the spec drew into the repository,',
     'as the first commit on this branch: the main screen in `public/index.html` is screen 1 exactly as drawn (inside',
     '`<div data-spec-screen="1">`, its demo rows included), its styles are `public/screens.css` (linked after',
-    '`/tailwind.css`), and the light look\'s colours the drawing set are the kit\'s tokens in `styles/tailwind-input.css`.',
+    '`/tailwind.css`; its first rule keeps each screen one centred column on a wider window, so keep it), and the light',
+    'look\'s colours the drawing set are the kit\'s tokens in `styles/tailwind-input.css`.',
     ...second,
     'Do not draw, restyle or rewrite them: no second copy of the markup, no new styles for what is drawn, no redesign.',
     'Change them only where behaviour needs it: render the drawn rows from data with the same markup (the drawn rows',
@@ -2456,7 +2469,7 @@ function firstVersionDesignLines(starter = null, { oneLook = false } = {}) {
     ? swapWording(FIRST_VERSION_DESIGN_LINES.join('\n'), ONE_LOOK_DESIGN_SWAP).split('\n')
     : FIRST_VERSION_DESIGN_LINES;
   if (!s) return base;
-  const lines = swapWording(base.join('\n'), [[
+  const lines = swapWording(base.filter((l) => !FIRST_VERSION_COLUMN_LINES.includes(l)).join('\n'), [[
     'the starter\'s screen and default colours are placeholder, not a look to copy.',
     'the game starter\'s screens work, but their look is the example game\'s, not a look to copy.',
   ]]).split('\n');

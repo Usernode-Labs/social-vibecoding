@@ -160,10 +160,15 @@ export function BrowseScreen() {
           `browse-pane-head` / `browse-pane-body` / `browse-pane-note` in
           app.css, next to the .browse-row rules — so the phone padding and
           fill live there and only the md+ utilities stay here.
+
+          `md:pt-5` CLEARS THE HEADER'S NOTCH, as Workshop, Messages and
+          Profile do: the bar is `rounded-b-2xl -mb-2`, so this band starts
+          8px under its bottom edge, and `pt-3` left the search field 4px
+          below it (#spacing audit, 14 Oct 2026). 8 for the notch, 12 of air.
       */}
       <div
         id="browse-search-bar"
-        className={`${onDetail ? 'hidden ' : ''}browse-pane-head sticky top-0 z-20 md:px-3 md:pt-3 md:pb-2 md:bg-[color:var(--home-ground)]`}
+        className={`${onDetail ? 'hidden ' : ''}browse-pane-head sticky top-0 z-20 md:px-3 md:pt-5 md:pb-2 md:bg-[color:var(--home-ground)]`}
       >
         <div className="relative max-w-xl">
           <SearchIcon
