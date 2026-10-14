@@ -333,19 +333,35 @@ async function ensureRole(config) {
 }
 
 // What the leader made, for the other processes (loadShared): whether the
-// setup succeeded and the password, encrypted with the data key. Never
-// throws: the leader's own capability does not depend on it.
+// setup succeeded and the password, encrypted with the data key. Retried: a
+// record left at the previous password refuses every other process's queries
+// until the next election. Never throws: the leader's own capability does
+// not depend on it.
+const RECORD_RETRY_MS = [500, 2000, 5000];
 async function recordBootstrap(config, { ok, password = null, reason = null }) {
+  let secretEnc;
   try {
-    const secretEnc = ok ? secrets.encrypt(password, config && config.dataEncryptionKey) : null;
-    await getPool(config).query(
-      `INSERT INTO platform_db_roles (role, ok, reason, secret_enc, release, ensured_at)
-       VALUES ($1, $2, $3, $4, $5, NOW())
-       ON CONFLICT (role) DO UPDATE SET ok = EXCLUDED.ok, reason = EXCLUDED.reason,
-         secret_enc = EXCLUDED.secret_enc, release = EXCLUDED.release, ensured_at = NOW()`,
-      [ROLE, !!ok, reason, secretEnc, process.env.GIT_SHA || null]);
+    secretEnc = ok ? secrets.encrypt(password, config && config.dataEncryptionKey) : null;
   } catch (err) {
-    log.warn('prod-debug', 'Could not record the role for the other processes', { err: err.message });
+    log.warn('prod-debug', 'Could not encrypt the role\'s password for the other processes', { err: err.message });
+    return;
+  }
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await getPool(config).query(
+        `INSERT INTO platform_db_roles (role, ok, reason, secret_enc, release, ensured_at)
+         VALUES ($1, $2, $3, $4, $5, NOW())
+         ON CONFLICT (role) DO UPDATE SET ok = EXCLUDED.ok, reason = EXCLUDED.reason,
+           secret_enc = EXCLUDED.secret_enc, release = EXCLUDED.release, ensured_at = NOW()`,
+        [ROLE, !!ok, reason, secretEnc, process.env.GIT_SHA || null]);
+      return;
+    } catch (err) {
+      if (attempt >= RECORD_RETRY_MS.length) {
+        log.warn('prod-debug', 'Could not record the role for the other processes', { err: err.message });
+        return;
+      }
+      await sleep(RECORD_RETRY_MS[attempt]);
+    }
   }
 }
 

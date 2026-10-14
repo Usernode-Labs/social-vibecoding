@@ -1143,9 +1143,10 @@ function startProcessDuties() {
 // EVERYTHING here either mutates shared cluster state (worker containers,
 // PR/merge rows, staging, Postgres roles, GitHub) or is a singleton
 // poller/sweeper that must never double-run across the two colors. The
-// follower serves HTTP from boot; the couple of leader-scoped capabilities
-// (prod-debug SQL, whose role password lives in the leader's memory) degrade
-// to a clean 503 on the follower for the seconds until promotion.
+// follower serves HTTP from boot, and so does a web process, which never
+// leads (docs/plans/web-and-conductor.md): what the leader sets up or keeps
+// in memory and a route reads (the read-only database roles, the admin
+// statuses) is recorded for them (platform_db_roles, services/leader-status.js).
 async function becomeLeader() {
   log.info('server', 'Running leader duties (role bootstraps, recovery, sweepers)', {
     identity: leadership && leadership.identity,
@@ -1535,6 +1536,12 @@ async function becomeLeader() {
     .resumeHeadlessRuns(config, { minIdleMs: ORPHAN_MIN_AGE_MS })
     .catch((err) => log.warn('server', 'Orphan headless sweep failed', { err: err.message })),
   ORPHAN_SWEEP_MS, { firstDelayMs: ORPHAN_SWEEP_MS });
+  // And the warm workers of a process that exited: a web process's release
+  // or crash elects nobody (docs/plans/web-and-conductor.md), so nobody would
+  // adopt and later evict them.
+  leaderTimers.every('left-warm-worker-sweep', () => sweepLeftWarmWorkers(config)
+    .catch((err) => log.warn('server', 'Left-behind warm worker sweep failed', { err: err.message })),
+  LEFT_WARM_SWEEP_MS, { firstDelayMs: LEFT_WARM_SWEEP_MS });
 
   // Durable deletion tasks survive provider outages and platform restarts.
   const runAccountDeletionCleanup = () => require('./src/services/account-deletion-cleanup')
@@ -1905,6 +1912,8 @@ module.exports = {
   // docs/plans/draining-releases.md: the leader's sweep for turns their
   // process left behind.
   sweepOrphanTurns,
+  // docs/plans/web-and-conductor.md: and for idle warm workers.
+  sweepLeftWarmWorkers,
   // #1378: the detached-turn resume itself, so tests can prove a stop that
   // lands on an ADOPTED turn terminalizes it as a stop instead of narrating
   // an interruption (or retrying it). Driving it through adoptOrphanWorker
@@ -2928,6 +2937,47 @@ async function recoverActiveWorkers(config) {
 // adoption itself is adoptOrphanWorker's, which reads the holders again.
 const ORPHAN_SWEEP_MS = 60 * 1000;
 const ORPHAN_MIN_AGE_MS = 2 * 60 * 1000;
+
+// docs/plans/web-and-conductor.md: a worker left running by a process that
+// exited, with no turn on it (a turn is sweepOrphanTurns'), that no live
+// process keeps warm or runs anything in: adopted here as an election would,
+// so this process's idle eviction reclaims it in its time. Read exactly
+// (holders), and a session whose holders cannot be read is left for the next
+// pass.
+const LEFT_WARM_SWEEP_MS = 5 * 60 * 1000;
+const HELD_WORKER_KINDS = ['warm', 'session', 'shots', 'sync'];
+
+async function sweepLeftWarmWorkers(config, { list = () => worker.listOrphanWorkers(), adopt = adoptOrphanWorker } = {}) {
+  const pool = getPool(config);
+  const mine = new Set(worker.warmRegistrySnapshot().map((m) => Number(m.sessionId)));
+  const candidates = [];
+  for (const w of await list()) {
+    const id = Number(w.sessionId);
+    if (!Number.isInteger(id) || id <= 0 || w.state !== 'running' || mine.has(id)) continue;
+    if (HELD_WORKER_KINDS.some((kind) => processes.heldHere(kind, id))) continue;
+    if (activeWorkersSvc.isSessionBusyHere(id) || worker.getActiveTurnMode(id)) continue;
+    let holders;
+    try { holders = await processes.holders(HELD_WORKER_KINDS, id, pool); } catch { continue; }
+    if (!holders.length) candidates.push(w);
+  }
+  if (!candidates.length) return 0;
+  const { rows } = await pool.query(
+    'SELECT id FROM chat_sessions WHERE id = ANY($1::int[]) AND active_turn IS NOT NULL',
+    [candidates.map((w) => Number(w.sessionId))]);
+  const withTurn = new Set(rows.map((r) => Number(r.id)));
+  const deps = { config, pool, staging: require('./src/services/staging'), ghub: require('./src/services/github'),
+    broadcastGlobal: require('./src/services/ws').broadcastGlobal };
+  let adopted = 0;
+  for (const w of candidates) {
+    if (withTurn.has(Number(w.sessionId))) continue;
+    log.info('server', 'Adopting a warm worker its process left behind', { sessionId: w.sessionId, containerName: w.name });
+    adopted += 1;
+    await Promise.resolve().then(() => adopt(w, deps)).catch((err) => {
+      log.warn('server', 'Adopting a left-behind warm worker failed', { sessionId: w.sessionId, err: err.message });
+    });
+  }
+  return adopted;
+}
 
 async function sweepOrphanTurns(config, { adopt = adoptOrphanWorker } = {}) {
   const pool = getPool(config);
@@ -5362,11 +5412,10 @@ function startIdleEvictionSweeper() {
       if (meta.bootstrapping) continue;
       if (now - meta.lastUsedMs < WORKER_IDLE_EVICTION_MS) continue;
       if (activeWorkersSvc.isSessionBusyElsewhere(meta.sessionId)) continue;
-      // Warm in another process too: one of them evicts it, the one with
-      // the highest id, so two never both let it go (nor both delete it from
-      // under the other); the rest forget it.
-      const alsoWarm = processes.heldElsewhereBy('warm', meta.sessionId);
-      if (alsoWarm.some((id) => id > processes.ID)) {
+      // Warm in another process too: forget it here and leave it to them;
+      // the last one keeping it warm evicts it. If they all forget it at
+      // once, the leader's sweep for left-behind workers adopts it.
+      if (processes.heldElsewhere('warm', meta.sessionId)) {
         worker.forgetWorker(meta.sessionId);
         log.info('server', 'Idle warm worker left to another process that keeps it warm', {
           sessionId: meta.sessionId, containerName: meta.containerName,
@@ -6802,6 +6851,13 @@ async function cleanup() {
   if (finishesWork) {
     await boundedStep(processes.markDraining(new Date(cleanupStartedAt + drainMs)), 1000)
       .catch((err) => log.warn('server', 'Could not mark this process draining', { err: err.message }));
+    // Its idle warm workers are no longer its own: it starts no turn, and
+    // its idle eviction stops. Forgotten here, before it resigns, so the
+    // next leader adopts them (adoptOrphanWorker) rather than leave them to
+    // a process that will not evict them.
+    for (const meta of worker.warmRegistrySnapshot()) {
+      if (!meta.inFlight && !meta.bootstrapping) worker.forgetWorker(meta.sessionId);
+    }
   }
   const askSuccessor = shutdownOverrides?.successor ?? successorServing;
   if (finishesWork && !(await askSuccessor())) {

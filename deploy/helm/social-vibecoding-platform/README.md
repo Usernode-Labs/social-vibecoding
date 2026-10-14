@@ -423,8 +423,11 @@ and never stands for leader. A second Deployment, `<fullname>-conductor`
 on Pods the Service sends no requests to. Both use the same image, Pod and
 drain. The conductor's Pods keep the platform's `component` label, so every
 network policy and the PodDisruptionBudget that admit the platform admit them;
-the Service selects `social.usernode.io/serves-requests: "true"`, which only the
-serving Pods carry. Switch the split on in a release after one carrying that
+the Service and the platform PodDisruptionBudget select
+`social.usernode.io/serves-requests: "true"`, which only the serving Pods
+carry. The platform Deployment's immutable selector also matches the
+conductor's Pods (ownership keeps them apart); select them by
+`social.usernode.io/process-role` rather than `deploy/<fullname>`. Switch the split on in a release after one carrying that
 label has rolled out (this chart version adds it), or the Service drops the old
 Pods before the new ones are Ready. Switching it off is a release too: the old
 conductor finishes its work beside the new Pods, which lead again.

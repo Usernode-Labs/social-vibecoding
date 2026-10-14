@@ -14135,8 +14135,8 @@ COMMENT ON TABLE process_holds IS 'staging:private';
 -- and SQL console routes with what the leader made. `ok` is whether its last
 -- setup succeeded. `secret_enc` is a LOGIN role's password, encrypted with
 -- the data key (services/secrets.js), as app secrets are; a NOLOGIN role has
--- none. Neither role may read this table (their deny lists say so), and a
--- staging copy gets no rows.
+-- none. The prod-debug role may not read this table (its deny list says
+-- so), the SQL console masks `secret_enc`, and a staging copy gets no rows.
 CREATE TABLE IF NOT EXISTS platform_db_roles (
   role       TEXT PRIMARY KEY,
   ok         BOOLEAN NOT NULL,

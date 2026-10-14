@@ -2131,18 +2131,28 @@ function defaultSchedule(work, ms) {
 
 /**
  * Ask the turn for `message` again, try `attempt`, after its delay. Never
- * throws. The process holds the message until that try has run
- * (services/processes.js 'dm_defer'): resumeDeferred elsewhere leaves it
- * alone, and a release lets this process ask it before it exits.
+ * throws. The process marks the message as its own while it waits
+ * (services/processes.js 'dm_defer', a marker no drain waits for), and holds
+ * it while the try runs ('dm_answer', which a drain does): resumeDeferred
+ * elsewhere leaves either alone. A process that exits while it waits leaves
+ * the message to the leader's minute sweep.
  */
 function scheduleDeferred(pool, config, args, attempt) {
   const schedule = args.deps?.schedule || defaultSchedule;
-  const release = args.message?.id != null ? require('./processes').hold('dm_defer', args.message.id) : () => {};
-  schedule(() => deferredTurn(pool, config, args, attempt).catch((err) => {
-    log.warn('homeroom-bot-mayor', 'A DM answer asked again failed', { userId: args.user?.id, attempt, err: err.message });
-    return null;
-  }).finally(release), DEFER_DELAYS_MS[attempt - 1]);
+  const processes = require('./processes');
+  const id = args.message?.id;
+  const unmark = id != null ? processes.hold('dm_defer', id) : () => {};
+  schedule(() => {
+    const release = id != null ? processes.hold('dm_answer', id) : () => {};
+    unmark();
+    return deferredTurn(pool, config, args, attempt).catch((err) => {
+      log.warn('homeroom-bot-mayor', 'A DM answer asked again failed', { userId: args.user?.id, attempt, err: err.message });
+      return null;
+    }).finally(release);
+  }, DEFER_DELAYS_MS[attempt - 1]);
 }
+
+const DEFER_HOLD_KINDS = ['dm_defer', 'dm_answer'];
 
 /**
  * One later try at a message the model could not answer: its whole turn
@@ -2199,16 +2209,23 @@ async function resumeDeferred(pool, config, deps = {}, { minAgeSeconds = 0 } = {
          JOIN users u ON u.id = t.user_id
          JOIN conversation_messages m ON m.id = t.message_id AND m.deleted_at IS NULL
         WHERE t.fallback IN ('deferred', 'plain_later') AND t.tries <= $1
-          AND t.created_at < NOW() - make_interval(secs => $2)`,
+          AND t.created_at < NOW() - make_interval(secs => $2)
+          -- Written to since: that message's turn reads this one too
+          -- (deferredTurn skips it), so it is not picked up again and again.
+          AND NOT EXISTS (
+            SELECT 1 FROM conversation_messages n
+             WHERE n.conversation_id = t.conversation_id AND n.sender_id = t.user_id AND n.id > t.message_id
+               AND n.deleted_at IS NULL AND n.thread_root_id IS NULL)`,
       [DEFER_DELAYS_MS.length, Math.max(0, Number(minAgeSeconds) || 0)],
     );
     const processes = deps.processes || require('./processes');
     const rows = [];
     for (const row of found) {
-      if (processes.heldHere('dm_defer', row.message_id)) continue;
-      // Exact, not the mirror: a duplicate answer is what this prevents.
-      let holders = [];
-      try { holders = await processes.holders('dm_defer', row.message_id, pool); } catch { holders = []; }
+      if (DEFER_HOLD_KINDS.some((kind) => processes.heldHere(kind, row.message_id))) continue;
+      // Exact, not the mirror: a duplicate answer is what this prevents. A
+      // holder this process cannot read is one it must not act over.
+      let holders;
+      try { holders = await processes.holders(DEFER_HOLD_KINDS, row.message_id, pool); } catch { continue; }
       if (!holders.length) rows.push(row);
     }
     for (const row of rows) {

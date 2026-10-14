@@ -193,15 +193,20 @@ test('a DM answer is held until its later try runs, and a restart leaves one a l
   mayor.scheduleDeferred(pool, {}, {
     message: { id: 501 }, user: { id: 1 }, conversationId: 2, deps: { schedule: (fn) => { run = fn; } },
   }, 1);
-  assert.equal(processes.heldHere('dm_defer', 501), true, 'held from the promise');
-  assert.equal(processes.localCount(), 1, 'and its drain waits for it');
-  await run();
-  assert.equal(processes.heldHere('dm_defer', 501), false, 'released once the try ran');
+  assert.equal(processes.heldHere('dm_defer', 501), true, 'marked from the promise');
+  assert.equal(processes.localCount(), 0, 'a timer waiting is no work a drain waits for');
+  const running = run();
+  assert.equal(processes.heldHere('dm_answer', 501), true, 'the try running is');
+  assert.equal(processes.heldHere('dm_defer', 501), false);
+  assert.equal(processes.localCount(), 1);
+  await running;
+  assert.equal(processes.heldHere('dm_answer', 501), false, 'released once the try ran');
 
   // resumeDeferred: one message held by a live process, one nobody holds.
   const found = [
     { message_id: 601, conversation_id: 3, tries: 1, user_id: 1, username: 'a', content: 'hi' },
     { message_id: 602, conversation_id: 3, tries: 1, user_id: 1, username: 'a', content: 'hi' },
+    { message_id: 603, conversation_id: 3, tries: 1, user_id: 1, username: 'a', content: 'hi' },
   ];
   const scheduled = [];
   const resumePool = { query: async (sql) => (sql.includes('homeroom_bot_dm_turns') ? { rows: found } : { rows: [] }) };
@@ -209,13 +214,19 @@ test('a DM answer is held until its later try runs, and a restart leaves one a l
     dmSvc: { botAccount: async () => ({ id: 99 }) },
     processes: {
       heldHere: () => false,
-      holders: async (kind, ref) => (kind === 'dm_defer' && Number(ref) === 601 ? ['pod-web'] : []),
+      holders: async (kinds, ref) => {
+        assert.deepEqual(kinds, ['dm_defer', 'dm_answer'], 'waiting or running');
+        if (Number(ref) === 603) throw new Error('database blip');
+        return Number(ref) === 601 ? ['pod-web'] : [];
+      },
     },
     schedule: (fn) => { scheduled.push(fn); },
   }, { minAgeSeconds: 60 });
-  assert.equal(n, 1, 'only the one nobody holds is asked again');
+  assert.equal(n, 1, 'only the one nobody holds is asked again: not one held, nor one whose holders cannot be read');
   assert.equal(scheduled.length, 1);
-  assert.equal(processes.heldHere('dm_defer', 602), true, 'and this process holds it now');
+  assert.equal(processes.heldHere('dm_defer', 602), true, 'and this process marks it now');
+  assert.match(fs.readFileSync(path.join(__dirname, '..', 'src/services/homeroom-bot-mayor.js'), 'utf8'),
+    /AND NOT EXISTS \(\n\s+SELECT 1 FROM conversation_messages n/, 'one written to since is not picked up again and again');
 });
 
 test('the bot sweeps every minute for DM answers a process that died had promised', () => {
@@ -243,8 +254,11 @@ test('a worker warm here is a marker other processes read, never work a drain wa
 
 test('the idle sweep leaves a worker another process keeps warm, and adoption leaves it too', () => {
   const sweeper = serverJs.slice(serverJs.indexOf('function startIdleEvictionSweeper()'));
-  assert.match(sweeper.slice(0, 3000), /processes\.heldElsewhereBy\('warm', meta\.sessionId\)/);
-  assert.match(sweeper.slice(0, 3000), /alsoWarm\.some\(\(id\) => id > processes\.ID\)/, 'one of them evicts it, never both or neither');
+  assert.match(sweeper.slice(0, 3000), /if \(processes\.heldElsewhere\('warm', meta\.sessionId\)\) \{\n\s+worker\.forgetWorker\(meta\.sessionId\);/,
+    'the last one keeping it warm evicts it');
+  // A draining process lets go of its idle ones, so the next leader adopts them.
+  const cleanupBody = serverJs.slice(serverJs.indexOf('async function cleanup()'));
+  assert.match(cleanupBody.slice(0, 4000), /if \(!meta\.inFlight && !meta\.bootstrapping\) worker\.forgetWorker\(meta\.sessionId\);/);
   const adopt = serverJs.slice(serverJs.indexOf('async function adoptOrphanWorker('));
   assert.match(adopt, /processes\.holders\('warm', sessionId, pool\)/);
 });

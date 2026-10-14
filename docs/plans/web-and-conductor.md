@@ -54,18 +54,23 @@ is one for its whole life, so what a follower could not do had to move:
   (`issues_cache`): a close, a reopen or an invalidation leaves every
   process's open-issues copy, so a list a web process serves is as fresh as
   the merge or the heal the conductor made.
-- **A DM answer the bot promised to ask again** is held by the process that
-  will ask it (`dm_defer`) until the try has run: a release lets it finish,
-  the leader's resume leaves it alone, and a minute's sweep picks up what a
-  process that died left.
+- **A DM answer the bot promised to ask again** is marked by the process
+  that will ask it (`dm_defer`, a marker no drain waits for) and held while
+  the try runs (`dm_answer`): the leader's resume leaves either alone, and its
+  minute sweep picks up what a process that exited or died left.
 - **A worker warm in one process** is a marker for the others (`warm`, which
   no drain waits for): the admin status shows another process's worker as
-  in flight or warm, not as an orphan; adoption at an election leaves it; and
-  when two processes keep the same worker warm, the one with the highest id
-  evicts it and the rest forget it.
+  in flight or warm, not as an orphan; adoption leaves it; and when two
+  processes keep the same worker warm, the idle one forgets it and the last
+  one evicts it. A draining process forgets its idle ones at once, so the next
+  leader adopts them, and the leader adopts every five minutes the idle
+  workers nobody live holds (`sweepLeftWarmWorkers`): a web process's release
+  elects nobody.
 - **A heal or a drift rebuild under way** is held (`app_heal`,
   `drift_rebuild`), so a request on a web process and the conductor's sweep
-  never start the same one twice.
+  no longer both start one (the copy they read is up to two seconds old, so
+  two that start within that window still can; each heal's cooldown is its
+  process's own).
 - **Sweeps that check a session is not mid-turn** before acting on it (the
   imported-PR head sync, the proposal measurement) check every process.
 - **A conductor does not say a release is live**: only a process that serves
@@ -96,8 +101,13 @@ as web. The conductor's Pods keep the platform's `component` label, so the
 network policies and the PodDisruptionBudget that admit the platform admit
 them, in the chart and outside it; the Service selects
 `social.usernode.io/serves-requests: "true"`, which only the serving Pods
-carry. That label ships with this change; switch the split on in a later
-release, or the Service drops the old Pods before the new ones are Ready.
+carry, and so does the PodDisruptionBudget (a conductor evicted drains as a
+release does). That label ships with this change; switch the split on in a
+later release, or the Service drops the old Pods before the new ones are
+Ready. The platform Deployment's selector (immutable) also matches the
+conductor's Pods: ownership keeps them apart, but `kubectl logs
+deploy/<fullname>` may pick a conductor Pod; select by
+`social.usernode.io/process-role`.
 
 ## Still per process
 
