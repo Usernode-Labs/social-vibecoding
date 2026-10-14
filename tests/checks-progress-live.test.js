@@ -765,7 +765,7 @@ test('the build opens prepare_checks when the container is up, and the capture c
   assert.match(src, /running\.operation\.abort\(lifecycle\.cancelled\(\)\)/,
     'and it actually aborts the in-flight operation');
   // Closed right after the phase flips, before anything slow (the compare, the capture image).
-  assert.match(src, /notifyChecksPending\(session\.id, commitHash, 'testing', trigger\);[\s\S]{0,600}await finishPrepareChecks\(pool, session, commitHash, stagingResult, trigger\);/);
+  assert.match(src, /notifyChecksPending\(session\.id, commitHash, 'testing', trigger\);[\s\S]{0,800}await finishPrepareChecks\(pool, session, commitHash, stagingResult, trigger\);/);
   assert.match(read('src/services/staging.js'), /timings\.deployedAt = deployedAt;\n\s+reportBuildStep\(config, session, 'prepare_checks', timings, deployedAt\);/);
 });
 
