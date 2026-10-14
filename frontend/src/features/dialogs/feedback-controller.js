@@ -176,8 +176,148 @@ export function init() {
     let pendingFirstFeedback = null;
     let closeTimer = null;
     let presentation = 0;
+    let lastFiled = null;
+    let editTimer = null;
+    let editCountdown = null;
+    let editing = null;
+    let editActions = null;
+    let editBusy = false;
+    const editSection = document.getElementById('feedback-edit');
+    const editTitle = document.getElementById('feedback-edit-title');
+    const editText = document.getElementById('feedback-edit-text');
+    const editStatus = document.getElementById('feedback-edit-status');
+    const editWindow = document.getElementById('feedback-edit-window');
+    const editSave = document.getElementById('feedback-edit-save');
+    const editCancel = document.getElementById('feedback-edit-cancel');
+    const editButtons = ['feedback-sent-edit', 'feedback-first-edit'].map(id => document.getElementById(id));
+    const editNow = () => typeof performance !== 'undefined' ? performance.now() : Date.now();
+    const rememberEdit = (edit) => edit ? { ...edit, deadline: editNow() + Number(edit.secondsLeft) * 1000 } : null;
+    const editSeconds = (edit) => Math.max(0, (edit.deadline - editNow()) / 1000);
+    const showEditStatus = (message) => {
+      editStatus.textContent = message;
+      editStatus.classList.toggle('hidden', !message);
+    };
+    const resetEdit = () => {
+      clearTimeout(editTimer);
+      clearInterval(editCountdown);
+      lastFiled = null;
+      editing = null;
+      editActions = null;
+      editBusy = false;
+      editSection?.classList.add('hidden');
+      if (editTitle) editTitle.value = '';
+      if (editText) editText.value = '';
+      for (const button of editButtons) button?.classList.add('hidden');
+    };
+    const armEditExpiry = (edit) => {
+      clearTimeout(editTimer);
+      clearInterval(editCountdown);
+      if (editing === edit) editCountdown = setInterval(() => {
+        const seconds = editSeconds(edit);
+        if (seconds > 0) editWindow.textContent = t('dialogs:feedback.edit.window', { count: Math.ceil(seconds / 60) });
+      }, 1000);
+      editTimer = setTimeout(() => {
+        clearInterval(editCountdown);
+        for (const button of editButtons) button?.classList.add('hidden');
+        if (editing === edit && !editSection.classList.contains('hidden')) {
+          editWindow.textContent = '';
+          editSave.disabled = true;
+          showEditStatus(t('dialogs:feedback.edit.closed'));
+        }
+      }, editSeconds(edit) * 1000);
+    };
+    const offerEdit = (actions) => {
+      clearInterval(editCountdown);
+      editSection?.classList.add('hidden');
+      editing = null;
+      editActions = actions;
+      const available = lastFiled && editSeconds(lastFiled) > 0;
+      for (const button of editButtons) button?.classList.toggle('hidden', !available);
+      if (available) armEditExpiry(lastFiled);
+    };
+    const openEdit = (edit, actions) => {
+      if (!edit) return;
+      setComposerLocked(true);
+      editing = edit;
+      editActions = actions;
+      editBusy = false;
+      editTitle.value = edit.title;
+      editText.value = edit.description;
+      editTitle.readOnly = editText.readOnly = false;
+      editSave.disabled = editSeconds(edit) <= 0;
+      editCancel.disabled = false;
+      editSave.textContent = t('dialogs:feedback.edit.save');
+      editWindow.textContent = t('dialogs:feedback.edit.window', { count: Math.max(1, Math.ceil(editSeconds(edit) / 60)) });
+      showEditStatus(editSave.disabled ? t('dialogs:feedback.edit.closed') : '');
+      feedbackForm.classList.add('hidden');
+      firstSuccess.classList.add('hidden');
+      sentSection.classList.add('hidden');
+      editSection.classList.remove('hidden');
+      armEditExpiry(edit);
+      editTitle.focus();
+    };
+    for (const button of editButtons) button?.addEventListener('click', () => openEdit(lastFiled, editActions));
+    editCancel?.addEventListener('click', () => { if (!editBusy) editActions?.cancel(); });
+    editSave?.addEventListener('click', async () => {
+      if (!editing || editBusy || editSave.disabled) return;
+      const title = editTitle.value.trim();
+      const description = editText.value.trim();
+      if (!title || !description) { showEditStatus(t('dialogs:feedback.edit.required')); return; }
+      const edit = editing;
+      const actions = editActions;
+      const opened = presentation;
+      const userId = App.user?.id;
+      const current = () => opened === presentation && userId === App.user?.id && editing === edit;
+      editBusy = true;
+      editSave.disabled = editCancel.disabled = true;
+      editTitle.readOnly = editText.readOnly = true;
+      editSave.textContent = t('dialogs:feedback.edit.saving');
+      showEditStatus('');
+      let blocked = false;
+      try {
+        const response = await fetch(`/api/feedback/${edit.reportId}`, {
+          method: 'PATCH', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title, description, version: edit.version }),
+        });
+        const data = await response.json();
+        if (!current()) return;
+        if (response.ok) {
+          lastFiled = rememberEdit(data.edit);
+          editBusy = false;
+          actions.saved();
+          return;
+        }
+        blocked = data.code === 'edit_window_closed' || data.code === 'edit_conflict';
+        if (blocked) {
+          clearInterval(editCountdown);
+          editWindow.textContent = '';
+          if (data.code === 'edit_window_closed') edit.deadline = editNow();
+          else lastFiled = null;
+        }
+        showEditStatus(data.code === 'edit_window_closed' ? t('dialogs:feedback.edit.closed')
+          : data.code === 'edit_conflict' ? t('dialogs:feedback.edit.conflict')
+            : response.status === 400 ? t('dialogs:feedback.edit.tooLong') : t('dialogs:feedback.edit.failed'));
+      } catch {
+        if (!current()) return;
+        showEditStatus(t('dialogs:feedback.edit.failed'));
+      } finally {
+        if (current()) {
+          editBusy = false;
+          editSave.disabled = blocked || editSeconds(edit) <= 0;
+          editCancel.disabled = false;
+          editTitle.readOnly = editText.readOnly = false;
+          editSave.textContent = t('dialogs:feedback.edit.save');
+        }
+      }
+    });
+    editSection?.addEventListener('keydown', (event) => {
+      if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+        event.preventDefault(); editSave.click();
+      }
+    });
 
-    const showFirstFeedback = (moment, notice) => {
+    const showFirstFeedback = (moment, notice, edited = false) => {
       if (!moment || Number(moment.userId) !== Number(App.user?.id)) return false;
       clearTimeout(closeTimer);
       firstFeedback = moment;
@@ -195,12 +335,15 @@ export function init() {
         ? (hasBoard ? t('dialogs:feedback.first.fixNote.needAccess') : t('dialogs:feedback.first.fixNote.noBoard'))
         : t('dialogs:feedback.first.fixNote.default');
       firstNotice.textContent = notice || t('dialogs:feedback.first.posted');
+      if (edited) firstNotice.textContent = joinSentences([firstNotice.textContent, t('dialogs:feedback.edit.saved')]);
       feedbackForm.classList.add('hidden');
       // A queued first report can land while a filed one's confirmation is
       // up; the moment replaces it rather than stacking under it.
       sentSection?.classList.add('hidden');
       firstSuccess.classList.remove('hidden');
       firstSuccess.focus();
+      offerEdit({ cancel: () => showFirstFeedback(moment, notice, edited),
+        saved: () => showFirstFeedback(moment, notice, true) });
       return true;
     };
 
@@ -266,7 +409,7 @@ export function init() {
     // `firstApp`: `{ name }`, the app's name ('' when it has none), when this is the person's first request ever
     // and the bot builds it. The first-request moment used to be skipped for
     // the bot (B8), so the bot's confirmation carries it instead.
-    const showSent = (title, notice = '', bot = null, firstApp = null) => {
+    const showSent = (title, notice = '', bot = null, firstApp = null, edited = false) => {
       const building = !!bot?.botWillBuild;
       sentBot = building ? bot : null;
       if (sentTitle) sentTitle.textContent = building ? botTitle() : title;
@@ -284,13 +427,15 @@ export function init() {
       sentChat?.classList.toggle('hidden', !building);
       sentMine?.classList.toggle('hidden', building);
       sentFix?.classList.toggle('hidden', !(building && bot.canFix));
-      sentNotice.textContent = notice;
-      sentNotice.classList.toggle('hidden', !notice);
+      sentNotice.textContent = edited ? joinSentences([notice, t('dialogs:feedback.edit.saved')]) : notice;
+      sentNotice.classList.toggle('hidden', !sentNotice.textContent);
       feedbackForm.classList.add('hidden');
       sentSection.classList.remove('hidden');
       // Off the composer, as the first-feedback moment's focus() is: the
       // keyboard comes down once, now, rather than whenever the viewer closes.
       sentSection.focus();
+      offerEdit({ cancel: () => showSent(title, notice, bot, firstApp, edited),
+        saved: () => showSent(title, notice, bot, firstApp, true) });
     };
     const hideSent = () => {
       sentSection?.classList.add('hidden');
@@ -2107,6 +2252,7 @@ export function init() {
           feedbackStatus.textContent = joinSentences([postedSentence, bountyNotice, stateNotice]);
           feedbackStatus.className = 'text-sm mt-2 text-emerald-700 dark:text-emerald-400';
           feedbackStatus.classList.remove('hidden');
+          lastFiled = rememberEdit(data.edit);
           feedbackText.value = '';
           feedbackTitle.value = '';
           clearDescriptionError();
@@ -2190,6 +2336,7 @@ export function init() {
     // and lifted the card into the kit shell.
     Feedback._open = (opts = {}) => {
       presentation += 1;
+      resetEdit();
       window.UITelemetry?.screen?.('feedback_dialog', { appSlug: App.currentApp || undefined });
       clearTimeout(closeTimer);
       firstFeedback = null;
@@ -2202,6 +2349,17 @@ export function init() {
       // #3186: the last filed report's confirmation never greets the next open.
       hideSent();
       feedbackForm?.classList.remove('hidden');
+      if (opts.edit) {
+        openEdit(rememberEdit(opts.edit), {
+          cancel: closeFeedback,
+          saved: () => {
+            closeFeedback();
+            PlatformUI?.toast?.(t('dialogs:feedback.edit.savedToast'));
+            opts.onEditSaved?.();
+          },
+        });
+        return;
+      }
       // Opening a queued success must not consume a failed outbox draft or
       // start screenshot/title probes behind the confirmation.
       if (opts.firstFeedback && showFirstFeedback(opts.firstFeedback, t('dialogs:feedback.first.savedPosted'))) return;
@@ -2421,6 +2579,8 @@ export function init() {
     // line belongs to useStaticModal.
     Feedback._reset = () => {
       presentation += 1;
+      const wasEditing = !!editing;
+      resetEdit();
       setAttachMenuOpen(false);
       clearTimeout(closeTimer);
       firstFeedback = null;
@@ -2433,7 +2593,7 @@ export function init() {
       if (!captureInFlight) {
         // #2796: closing is not discarding — whatever is in the composer is
         // kept for the next open (saveDraft skips a locked, already-sent one).
-        saveDraft();
+        if (!wasEditing) saveDraft();
         feedbackText.value = '';
         feedbackTitle.value = '';
         feedbackStatus.classList.add('hidden');
@@ -2528,7 +2688,7 @@ export function init() {
   // comment mode's Form).
   App.openFeedbackModal = (opts = {}) => {
     const shortcut = window.UsernodeReact?.suggestShortcut;
-    const plain = !opts.firstFeedback && !opts.description && !opts.screenshotBlob && !opts.screenshots
+    const plain = !opts.edit && !opts.firstFeedback && !opts.description && !opts.screenshotBlob && !opts.screenshots
       && opts.mode !== 'form';
     if (plain && shortcut?.opensComment?.()) {
       shortcut.openComment({ via: 'suggest' });

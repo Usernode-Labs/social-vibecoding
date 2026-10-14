@@ -401,6 +401,8 @@ export function feedbackListView(feedback, now = Date.now()) {
     const when = mergedAgo(r.createdAt, now);
     if (when) meta.push(t('profile:feedback.sent', { when }));
     const points = Number(r.points);
+    const secondsLeft = r.edit ? Math.max(0, Number(r.edit.secondsLeft)
+      - Math.max(0, now - (feedback.receivedAt ?? now)) / 1000) : 0;
     return {
       key: String(r.id),
       title: r.title ? String(r.title) : t('profile:feedback.fallbackTitle'),
@@ -411,6 +413,7 @@ export function feedbackListView(feedback, now = Date.now()) {
         : t(FEEDBACK_STATUS[status].label),
       statusClassName: FEEDBACK_STATUS[status].className,
       href: linked ? `#app/${encodeURIComponent(slug)}/dev/issues/${issue}` : null,
+      edit: secondsLeft > 0 ? { ...r.edit, expiresAt: now + secondsLeft * 1000 } : null,
     };
   });
   return {
