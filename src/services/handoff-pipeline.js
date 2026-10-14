@@ -76,7 +76,12 @@ function beginHandoffPipeline(sessionId) {
 function startHandoffPipeline(
   config, pool, session, app, headSha, releasePipeline, trigger = 'commit-push'
 ) {
-  const run = runStaging(config, pool, session, app, headSha, trigger);
+  // With WF_PREVIEWS_ENABLED on the preview machine builds and checks the
+  // submitted upload; its pin (handoff_head_sha) refuses a stale one.
+  const workflow = require('./preview-workflow');
+  const run = workflow.enabled()
+    ? workflow.revision({ pool, session, head: headSha, source: 'cli', trigger })
+    : runStaging(config, pool, session, app, headSha, trigger);
   run.catch((err) => {
     log.error('handoff-pipeline', 'Unexpected handoff run rejection', {
       sessionId: session.id, err: err.message,

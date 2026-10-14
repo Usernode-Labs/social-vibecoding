@@ -813,6 +813,18 @@ function load() {
     // app-delivery machine: one at a time per app, recorded, and the
     // "deploying" state is durable. Off by default.
     wfAppDeliveryEnabled: ['1', 'true'].includes(process.env.WF_APP_DELIVERY_ENABLED),
+    // With WF_PREVIEWS_ENABLED on, a proposal's preview and its required
+    // checks are the preview machine's: every source asks it, one build and
+    // one checks run at a time, and what serves, what is built and which
+    // revision the verdict is for are durable. It also records who is working
+    // on a session. Off by default.
+    wfPreviewsEnabled: ['1', 'true'].includes(process.env.WF_PREVIEWS_ENABLED),
+    // How many 'error' verdicts in a row the checks' error lane re-runs on
+    // its own (staging-recovery.checkMaxAutoRetries, CHECK_MAX_AUTO_RETRIES).
+    checkMaxAutoRetries: (() => {
+      const n = Number.parseInt(process.env.CHECK_MAX_AUTO_RETRIES || '6', 10);
+      return Number.isFinite(n) ? n : 6;
+    })(),
     // Its own pool, so pipeline slots and the outcome listener never take
     // request connections, and how many slots each process runs. A staging
     // preview shares one Postgres server with the fleet: one slot, and a
