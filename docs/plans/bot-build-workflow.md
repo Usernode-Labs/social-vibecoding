@@ -108,21 +108,33 @@ read, and what was saved is only a lower bound.
 
 ## Ownership outside the kernel
 
-- A turn the kernel's build owns carries `owner: "workflow:bot-build/<key>"`
-  on its record, and its session carries `workflow_owner`. `server.js`
-  leaves both alone when it adopts workers at promotion.
-- Every other turn's record carries the process that dispatched it. A
-  promoted follower no longer adopts the turns it is already following
-  itself.
+- A session a durable build opens carries `chat_sessions.workflow_owner`
+  (`bot-build/<key>`). While that build is under way, `server.js` leaves the
+  session's worker and its turn to it when it adopts workers at promotion,
+  and the stale-turn watchdog passes it by.
+- A turn this process is following itself (its worker registry, or the
+  session busy here) is no orphan: a promoted follower no longer adopts the
+  turns it started during a rollout's overlap.
+- The lane's and the bot's sweeps leave a build's run or trial alone while a
+  durable build owns it (`releaseStale` and `releaseOrphaned` in the lane,
+  `releaseStaleBuilds` in the bot).
 
 ## Bench trials
 
 The lane still decides which trials run (its caps and concurrency); a trial
-it starts is a `trial:<id>` instance, and `executeTrial` is the handler. Its
-stages run on the durable context: the branch is cut once (never pinned
-again on a later attempt), the triage, the spec, the build and the review are
-steps, and the trial is recorded once. A trial's checkpoint column and its
-hand-back paths are gone.
+it starts is a `trial:<id>@<claim>` instance, and `executeTrial` is the
+handler's pipeline (`lane.runTrial`). Its stages run on the durable context
+(`bench/runner.js`): the branch is cut once (`cutBranch`, never pinned again
+on a later attempt, which is what bench run 193 got wrong), each session is
+opened once and read back (`trialSession`), the triage, the spec, the build
+and its review are steps, each turn is attached to or started, the screenshot
+step runs detached and is harvested after a restart, a DM conversation keeps
+each turn it finished, and the trial is recorded once. The lane holds the
+slot of a trial whose build is under way wherever it runs
+(`holdDurableTrials`). The checkpoint column now says only how often a
+restart carried the trial on (`handBacks`, which the studio shows); the
+hand-back, recovery and free-restart paths are gone. A trial that ran with no
+workflow runtime is put back in the queue after a restart, as before.
 
 ## Verifying it
 

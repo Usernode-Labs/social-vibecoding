@@ -658,18 +658,6 @@ async function noteSession(pool, trialId, sessionId, { baseSha = null, branch = 
 // runs. Without the workflow runtime a trial runs in this process as it
 // always did, and a restart puts it back in the queue (releaseTrial).
 
-// Whether a durable build owns the trial whose id is the SQL `id`: one
-// under way, or one asked for whose Requested event the kernel has not taken
-// yet. The lane's sweeps leave such a trial to its build.
-function ownedByBuildSql(id) {
-  const keyed = (col) => `(${col} = 'trial:' || ${id} OR ${col} LIKE 'trial:' || ${id} || '@%')`;
-  return `(EXISTS (SELECT 1 FROM wf_instances w
-                    WHERE w.machine = 'bot-build' AND w.state = 'building' AND ${keyed('w.key')})
-           OR EXISTS (SELECT 1 FROM wf_events e
-                       WHERE e.machine = 'bot-build' AND e.type = 'Requested' AND e.status <> 'processed'
-                         AND ${keyed('e.key')}))`;
-}
-
 function buildRuns() {
   return require('../build-runs');
 }
@@ -1068,15 +1056,22 @@ async function releaseStale(pool, settings) {
   const live = require('../homeroom-bot-live');
   const seconds = bot.PLATFORM_BUILD_TIME_FACTOR * (turnSeconds + live.SPEC_TURN_MAX_MS / 1000) + 600;
   const { rows } = await pool.query(
-    `UPDATE bench_trials
-        SET status = CASE WHEN claims < $3 THEN 'pending' ELSE 'infra_fail' END,
-            error = CASE WHEN claims < $3 THEN NULL ELSE $4::text END,
-            started_at = CASE WHEN claims < $3 THEN NULL ELSE started_at END,
-            finished_at = CASE WHEN claims < $3 THEN NULL ELSE NOW() END
-      WHERE status = 'running' AND started_at < NOW() - make_interval(secs => $1)
-        AND NOT (id = ANY($2::int[]))
-        AND NOT ${ownedByBuildSql('bench_trials.id')}
-      RETURNING id, status`,
+    `UPDATE bench_trials tr
+        SET status = CASE WHEN tr.claims < $3 THEN 'pending' ELSE 'infra_fail' END,
+            error = CASE WHEN tr.claims < $3 THEN NULL ELSE $4::text END,
+            started_at = CASE WHEN tr.claims < $3 THEN NULL ELSE tr.started_at END,
+            finished_at = CASE WHEN tr.claims < $3 THEN NULL ELSE NOW() END
+      WHERE tr.status = 'running' AND tr.started_at < NOW() - make_interval(secs => $1)
+        AND NOT (tr.id = ANY($2::int[]))
+        -- A trial a durable build owns is its build's: one under way, or one
+        -- asked for whose Requested event the kernel has not taken yet.
+        AND NOT EXISTS (SELECT 1 FROM wf_instances w
+                         WHERE w.machine = 'bot-build' AND w.state = 'building'
+                           AND split_part(w.key, '@', 1) = 'trial:' || tr.id)
+        AND NOT EXISTS (SELECT 1 FROM wf_events e
+                         WHERE e.machine = 'bot-build' AND e.type = 'Requested' AND e.status <> 'processed'
+                           AND split_part(e.key, '@', 1) = 'trial:' || tr.id)
+      RETURNING tr.id, tr.status`,
     [seconds, [...inFlight.keys()], MAX_CLAIMS, TWICE_INTERRUPTED],
   );
   if (rows.length) log.info('bench', 'Released trials an earlier process never finished', { trials: rows.length });
@@ -1200,7 +1195,14 @@ async function releaseOrphaned(pool, deps = {}) {
         AND NOT (tr.id = ANY($1::int[]))
         AND tr.started_at < NOW() - make_interval(secs => $2)
         AND (cs.id IS NULL OR cs.active_turn IS NULL OR cs.status = 'archived')
-        AND NOT ${ownedByBuildSql('tr.id')}
+        -- A trial a durable build owns is its build's: one under way, or one
+        -- asked for whose Requested event the kernel has not taken yet.
+        AND NOT EXISTS (SELECT 1 FROM wf_instances w
+                         WHERE w.machine = 'bot-build' AND w.state = 'building'
+                           AND split_part(w.key, '@', 1) = 'trial:' || tr.id)
+        AND NOT EXISTS (SELECT 1 FROM wf_events e
+                         WHERE e.machine = 'bot-build' AND e.type = 'Requested' AND e.status <> 'processed'
+                           AND split_part(e.key, '@', 1) = 'trial:' || tr.id)
       ORDER BY tr.id
       LIMIT 50`,
     [[...inFlight.keys()], ORPHAN_GRACE_SECONDS],
