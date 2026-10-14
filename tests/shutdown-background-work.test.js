@@ -51,7 +51,7 @@ test('a board-change reconcile under way is held for the drain; none starts once
 // 60s deadline while one pass was minutes into a staging rebuild, which a
 // shutdown leaves to be re-driven anyway. Only the measurement is held.
 test('the session sweeper holds the drain only for a measurement, and its long loops stop at their next row on shutdown', () => {
-  assert.match(SERVER, /sessionSweeperHandle = setInterval\(async \(\) => \{\s+if \(lifecycle\.isShuttingDown\(\)\) return;/);
+  assert.match(SERVER, /sessionSweeperHandle = setInterval\(singleFlight\('session-sweeper', async \(\) => \{\s+if \(lifecycle\.isShuttingDown\(\)\) return;/);
   assert.doesNotMatch(SERVER, /inflightWork\.track\('timer:session-sweeper'/, 'a staging rebuild in a pass is not waited for');
   assert.match(SERVER, /await inflightWork\.track\('session-sweeper:measure', async \(\) => \{\s+for \(const session of rows\) \{\s+if \(lifecycle\.isShuttingDown\(\)\) break;/,
     'the proposal measurement is held, and stops before its next write');
