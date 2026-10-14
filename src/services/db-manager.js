@@ -2350,71 +2350,100 @@ SELECT n.nspname || '.' || c.relname,
     columns: targets.map((t) => `${t.qualified}.${t.column}`),
   });
 
+  // Every column is checked first; a column that fails a check is never put
+  // into SQL, and it still fails the pass after the others are scrubbed.
   const failures = [];
-  const scrubbed = [];
+  const columns = [];
   for (const { qualified, column, notNull, maxLength } of targets) {
+    const target = `${qualified}.${column}`;
     if (!SAFE_QUALIFIED_IDENT.test(qualified) || !SAFE_IDENT.test(column)) {
       log.warn('db-manager', 'Refusing to UPDATE non-standard identifier', {
         targetDb, qualified, column,
       });
-      failures.push({ target: `${qualified}.${column}`, error: 'unsafe identifier' });
+      failures.push({ target, error: 'unsafe identifier' });
       continue;
     }
-    let value;
     if (!notNull) {
-      value = 'NULL';
-    } else if (maxLength != null && (!Number.isInteger(maxLength) || maxLength < 1)) {
+      columns.push({ qualified, column, target, placeholder: null });
+      continue;
+    }
+    if (maxLength != null && (!Number.isInteger(maxLength) || maxLength < 1)) {
       // Unexpected metadata shape — fail closed rather than guess at a
       // placeholder that might not fit the column.
       log.error('db-manager', 'staging:private column has unusable max length', {
         targetDb, qualified, column, maxLength,
       });
-      failures.push({ target: `${qualified}.${column}`, error: `unusable max length ${maxLength}` });
+      failures.push({ target, error: `unusable max length ${maxLength}` });
       continue;
-    } else {
-      // A template is scrubbed when built and again on each clone. Its
-      // existing placeholders contain the rows' OLD ctids; a later UPDATE
-      // can assign one of those values to a different row and hit a UNIQUE
-      // constraint. Give every scrub a fresh namespace, check that it is
-      // absent from the source column, and append the row's current ctid.
-      // Do not truncate the ctid: that would make multiple rows equal.
-      const compact = maxLength != null
-        && maxLength < STAGING_REDACTED_SENTINEL.length + 16 + 1 + MAX_CTID_TEXT_LENGTH;
-      const marker = compact ? '~' : STAGING_REDACTED_SENTINEL;
-      const nonceBytes = compact ? 4 : 8;
-      if (maxLength != null && maxLength < marker.length + nonceBytes * 2 + 1 + MAX_CTID_TEXT_LENGTH) {
-        failures.push({ target: `${qualified}.${column}`, error: `max length ${maxLength} cannot hold unique redaction values` });
-        continue;
-      }
-      let prefix = null;
-      try {
-        for (let attempt = 0; attempt < 5; attempt += 1) {
-          const candidate = `${marker}${crypto.randomBytes(nonceBytes).toString('hex')}:`;
-          const occupied = await execute(targetDb,
-            `SELECT EXISTS (SELECT 1 FROM ${qualified} WHERE left(${column}::text, ${candidate.length}) = '${candidate}')`,
-            { tuplesOnly: true });
-          if (String(occupied).trim() !== 'f') continue;
-          prefix = candidate;
-          break;
-        }
-      } catch (err) {
-        failures.push({ target: `${qualified}.${column}`, error: err.message });
-        continue;
-      }
-      if (!prefix) {
-        failures.push({ target: `${qualified}.${column}`, error: 'could not reserve a unique redaction namespace' });
-        continue;
-      }
-      value = `'${prefix}' || ctid::text`;
     }
+    // A template is scrubbed when built and again on each clone. Its
+    // existing placeholders contain the rows' OLD ctids; a later UPDATE
+    // can assign one of those values to a different row and hit a UNIQUE
+    // constraint. Give every scrub a fresh namespace, check that it is
+    // absent from the source column, and append the row's current ctid.
+    // Do not truncate the ctid: that would make multiple rows equal.
+    const compact = maxLength != null
+      && maxLength < STAGING_REDACTED_SENTINEL.length + 16 + 1 + MAX_CTID_TEXT_LENGTH;
+    const marker = compact ? '~' : STAGING_REDACTED_SENTINEL;
+    const nonceBytes = compact ? 4 : 8;
+    if (maxLength != null && maxLength < marker.length + nonceBytes * 2 + 1 + MAX_CTID_TEXT_LENGTH) {
+      failures.push({ target, error: `max length ${maxLength} cannot hold unique redaction values` });
+      continue;
+    }
+    columns.push({ qualified, column, target, placeholder: { marker, nonceBytes } });
+  }
+
+  let scrubbed = [];
+  if (columns.length > 0) {
+    // All of them in ONE statement first: one round trip instead of one or
+    // two per column. Through psql (template build, direct copy) that is
+    // one process instead of one per statement.
+    let batchError = null;
     try {
-      await execute(targetDb, `UPDATE ${qualified} SET ${column} = ${value}`);
-      scrubbed.push(`${qualified}.${column}`);
+      await execute(targetDb, scrubInOneStatementSql(columns.map((c) => ({
+        ...c, prefix: c.placeholder ? newRedactionPrefix(c.placeholder) : null,
+      }))));
+      scrubbed = columns.map((c) => c.target);
     } catch (err) {
-      log.error('db-manager', 'staging:private column UPDATE failed', {
-        targetDb, qualified, column, err: err.message,
+      batchError = err;
+    }
+    if (batchError && !databaseAnsweredWithError(batchError)) {
+      // No answer, a lost connection, or psql stopped at its deadline: the
+      // statement may have committed, failed or still be running. Nothing
+      // more is sent, because the column-by-column pass could wait behind it
+      // or, on the clone's single connection, is refused anyway. The copy is
+      // not handed out.
+      log.error('db-manager', 'One-statement column scrub got no answer from the database', {
+        targetDb, count: columns.length, err: briefError(batchError),
       });
-      failures.push({ target: `${qualified}.${column}`, error: err.message });
+      throw new Error(
+        `Failed to scrub staging:private columns in ${targetDb}: no answer to the one-statement scrub of ` +
+        `${columns.length} column(s), so whether it changed anything is unknown; ` +
+        `the column-by-column pass was not tried: ${briefError(batchError)}`
+      );
+    }
+    if (batchError) {
+      // The database refused the statement, so it rolled back and changed
+      // nothing. Today's column-by-column pass then scrubs every column it
+      // can and names each one it cannot; a check afterwards names any
+      // column a trigger or rule left unscrubbed.
+      log.warn('db-manager', 'One-statement column scrub failed; scrubbing column by column', {
+        targetDb, count: columns.length, err: briefError(batchError),
+      });
+      const byColumn = await scrubColumnByColumn(targetDb, columns, execute);
+      failures.push(...byColumn.failures);
+      scrubbed = byColumn.scrubbed;
+      if (byColumn.failures.length === 0) {
+        const done = columns.filter((c) => scrubbed.includes(c.target))
+          .map((c) => ({ ...c, prefix: byColumn.prefixes.get(c.target) || null }));
+        try {
+          for (const target of await columnsNotScrubbed(targetDb, done, execute)) {
+            failures.push({ target, error: 'still holds a value after its UPDATE' });
+          }
+        } catch (err) {
+          failures.push({ target: 'the check after the column-by-column pass', error: err.message });
+        }
+      }
     }
   }
 
@@ -2426,6 +2455,131 @@ SELECT n.nspname || '.' || c.relname,
   }
 
   return { scrubbed };
+}
+
+// A fresh placeholder namespace: the marker, a random nonce, and ':'. The
+// row's ctid follows it, so every value in one scrub is distinct, and the
+// namespace is checked to be absent from the column before it is used.
+function newRedactionPrefix({ marker, nonceBytes }) {
+  return `${marker}${crypto.randomBytes(nonceBytes).toString('hex')}:`;
+}
+
+// What a column holds once scrubbed: NULL, or its placeholder namespace.
+// Names were validated and prefixes are [~_a-z0-9:], so both splice as text.
+function unscrubbedRowSql({ column, prefix }) {
+  return prefix
+    ? `left(${column}::text, ${prefix.length}) IS DISTINCT FROM '${prefix}'`
+    : `${column} IS NOT NULL`;
+}
+
+// The whole column pass as one statement. A DO block runs as one statement,
+// so it commits or rolls back as a whole, and an error inside it reaches the
+// caller as the database's error. In order:
+//   1. each NOT NULL column's new namespace must be absent from the column;
+//   2. one UPDATE per table, setting all of that table's private columns;
+//   3. each column must now hold only NULL or its namespace.
+// Step 3 is there because one UPDATE per table is not the same as one per
+// column: a BEFORE UPDATE trigger or a rule sees every column change at once,
+// and could, for instance, copy an old private value into another private
+// column that a later per-column UPDATE would have cleared. Any of the three
+// raises, the block rolls back, and the caller scrubs column by column.
+function scrubInOneStatementSql(columns) {
+  const reserve = columns.filter((c) => c.prefix).map((c) =>
+    `  IF EXISTS (SELECT 1 FROM ${c.qualified} WHERE left(${c.column}::text, ${c.prefix.length}) = '${c.prefix}') THEN\n` +
+    `    RAISE EXCEPTION 'staging:private scrub: placeholder namespace is taken in %', '${c.target}';\n` +
+    '  END IF;');
+  const tables = new Map();
+  for (const c of columns) {
+    if (!tables.has(c.qualified)) tables.set(c.qualified, []);
+    tables.get(c.qualified).push(`${c.column} = ${c.prefix ? `'${c.prefix}' || ctid::text` : 'NULL'}`);
+  }
+  const updates = [...tables].map(([qualified, sets]) => `  UPDATE ${qualified} SET ${sets.join(', ')};`);
+  const verify = columns.map((c) =>
+    `  IF EXISTS (SELECT 1 FROM ${c.qualified} WHERE ${unscrubbedRowSql(c)}) THEN\n` +
+    `    RAISE EXCEPTION 'staging:private scrub: % still holds a value after its UPDATE', '${c.target}';\n` +
+    '  END IF;');
+  return ['DO $staging_scrub$', 'BEGIN', ...reserve, ...updates, ...verify, 'END', '$staging_scrub$'].join('\n');
+}
+
+// The one statement is long (a few kB for the platform's own database), and
+// psql's failure repeats it in full. Log and report what the database said
+// (psql's stderr), or the start of the message.
+function briefError(err) {
+  const said = err && typeof err.stderr === 'string' ? err.stderr.trim() : '';
+  return (said || String(err && err.message || err)).slice(0, 500);
+}
+
+// True only when the database answered the statement with an ERROR: it ran,
+// failed and rolled back, so running the column-by-column pass next is safe.
+// node-postgres carries the server's severity and SQLSTATE; psql exits with
+// status 1 and prints the server's ERROR. A FATAL (the session ended), a
+// client-side timeout, a lost connection, psql stopped at its deadline or
+// exiting 2: none of those says what happened to the statement.
+function databaseAnsweredWithError(err) {
+  if (!err || typeof err !== 'object') return false;
+  if (typeof err.severity === 'string') {
+    return err.severity === 'ERROR' && /^[0-9A-Z]{5}$/.test(String(err.code || ''));
+  }
+  const stderr = typeof err.stderr === 'string' ? err.stderr : '';
+  return err.code === 1 && err.killed !== true && !err.signal && /(^|\n)ERROR: {2}/.test(stderr);
+}
+
+// Today's pass, one column at a time: reserve a namespace for a NOT NULL
+// column (one probe, up to five), then UPDATE it. Used only when the
+// one-statement scrub was refused by the database; it names each column it
+// cannot scrub and goes on with the others.
+async function scrubColumnByColumn(targetDb, columns, execute) {
+  const failures = [];
+  const scrubbed = [];
+  const prefixes = new Map();
+  for (const { qualified, column, target, placeholder } of columns) {
+    let value = 'NULL';
+    if (placeholder) {
+      let prefix = null;
+      try {
+        for (let attempt = 0; attempt < 5; attempt += 1) {
+          const candidate = newRedactionPrefix(placeholder);
+          const occupied = await execute(targetDb,
+            `SELECT EXISTS (SELECT 1 FROM ${qualified} WHERE left(${column}::text, ${candidate.length}) = '${candidate}')`,
+            { tuplesOnly: true });
+          if (String(occupied).trim() !== 'f') continue;
+          prefix = candidate;
+          break;
+        }
+      } catch (err) {
+        failures.push({ target, error: err.message });
+        continue;
+      }
+      if (!prefix) {
+        failures.push({ target, error: 'could not reserve a unique redaction namespace' });
+        continue;
+      }
+      prefixes.set(target, prefix);
+      value = `'${prefix}' || ctid::text`;
+    }
+    try {
+      await execute(targetDb, `UPDATE ${qualified} SET ${column} = ${value}`);
+      scrubbed.push(target);
+    } catch (err) {
+      log.error('db-manager', 'staging:private column UPDATE failed', {
+        targetDb, qualified, column, err: err.message,
+      });
+      failures.push({ target, error: err.message });
+    }
+  }
+  return { failures, scrubbed, prefixes };
+}
+
+// One query naming every column that still holds something other than NULL
+// or its placeholder namespace (step 3 of the one-statement scrub, for the
+// column-by-column pass). If the query itself fails, the caller counts that
+// as a failure: nothing is confirmed.
+async function columnsNotScrubbed(targetDb, columns, execute) {
+  if (columns.length === 0) return [];
+  const out = await execute(targetDb, columns.map((c) =>
+    `SELECT '${c.target}' WHERE EXISTS (SELECT 1 FROM ${c.qualified} WHERE ${unscrubbedRowSql(c)})`).join(' UNION ALL '),
+  { tuplesOnly: true });
+  return String(out || '').split('\n').map((s) => s.trim()).filter(Boolean);
 }
 
 // ─── Per-app database storage cap (#2253) ───────────────────────────────
