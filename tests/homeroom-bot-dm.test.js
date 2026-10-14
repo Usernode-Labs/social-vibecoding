@@ -529,7 +529,8 @@ test('the short description is suggested for everyone making a project, and ever
   // fork.
   assert.match(create, /\} else \{\s*try \{\s*await homeroomBotDm\.noteProjectMade\(pool, \{\s*app: appRow, user: req\.user, origin: repoUrlNormalized \? 'import' : 'blank',/);
   const fork = routes.slice(routes.indexOf("router.post('/api/apps/:slug/fork'"), routes.indexOf("router.get('/api/apps/:slug'"));
-  assert.match(fork, /noteProjectMade\(pool, \{ app: appRow, user: req\.user, origin: 'fork' \}\)[\s\S]{0,200}\}\s*forkApp\(config, appRow, sourceApp\)/);
+  // Recorded before the copy is started (under its owner, services/app-creation-owner.js).
+  assert.match(fork, /noteProjectMade\(pool, \{ app: appRow, user: req\.user, origin: 'fork' \}\)[\s\S]{0,400}appCreationOwner\.drive\(pool, appRow, \{[\s\S]{0,80}provision: \(\) => forkApp\(config, appRow, sourceApp\)/);
   // Every project is live, so nothing reads who made which any more; what
   // was made without a description is recorded only for somebody the bot
   // works for, and an import's record is what holds its backlog back.

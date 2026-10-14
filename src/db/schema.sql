@@ -753,11 +753,44 @@ ALTER TABLE apps ADD COLUMN IF NOT EXISTS manifest_snapshot JSONB;
 --   stage  : 'database'|'repo'|'clone'|'build'|'start'|'healthcheck'|'timeout'|'other'
 --   reason : concise human line (<= 280 chars)
 --   log    : ANSI-stripped tail of the docker build / boot output (<= 16 kB)
+--   interrupted : true on a creation the platform's restarts ended, whose
+--            Retry is not counted against the creator
 -- Written by the deploy catch paths (services/app-creator.js,
--- services/staging.js rebuildProduction, routes/apps.js watchdog);
+-- services/staging.js rebuildProduction, the creation watchdog in
+-- services/app-creation-owner.js);
 -- cleared (NULL) on every successful deploy. Exposed API-side only to
 -- the app's creator / collaborators / admins — see routes/apps.js.
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS last_failure JSONB;
+
+-- Who is setting a project up, so a platform restart cannot lose it
+-- (services/app-creation-owner.js). Creation runs for minutes after the
+-- request that started it has answered, in whichever process served it, and
+-- dies with that process. `creating_owner` is the token of the attempt
+-- driving the row and `creating_heartbeat_at` when it last said so (every
+-- 20 seconds while it runs); both NULL once it ends. The leader resumes a
+-- 'creating' row whose owner went quiet, by running the same idempotent
+-- create path again under a new token, at most three times an attempt
+-- (`creating_redrives`, back to 0 when a person starts a new attempt), and
+-- only then flips it to 'error'. A row whose owner is alive is never swept,
+-- and Retry takes the row only from nobody, or from an owner gone quiet.
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS creating_owner TEXT;
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS creating_heartbeat_at TIMESTAMPTZ;
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS creating_redrives INTEGER NOT NULL DEFAULT 0;
+-- A production redeploy the platform owes the app (services/owed-redeploy.js):
+-- a secret a vote changed reaches the running container only by a rebuild,
+-- and main_sha does not move for it, so neither the drift poller nor the
+-- heal would ever notice one a restart lost. Marked in the transaction that
+-- applies the change (`redeploy_owed_at`, `redeploy_owed_reason`), cleared
+-- by the rebuild that ran after it; the rebuild under way holds
+-- `redeploy_owner` / `redeploy_heartbeat_at` as creation does, and the
+-- leader runs again one whose owner went quiet, at most three times a mark
+-- (`redeploy_kicks`). The governance machine (WF_GOVERNANCE_ENABLED) owes
+-- its rebuild as durable work of its own and writes none of these.
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS redeploy_owed_at TIMESTAMPTZ;
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS redeploy_owed_reason TEXT;
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS redeploy_owner TEXT;
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS redeploy_heartbeat_at TIMESTAMPTZ;
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS redeploy_kicks INTEGER NOT NULL DEFAULT 0;
 
 -- Admin-gated change lock. When TRUE, applying any group-voted change to
 -- this app (PR merge in routes/votes.js, rename proposal + secret-change

@@ -154,7 +154,6 @@ const nodeStatus = require('./src/services/node-status');
 const statusService = require('./src/services/status');
 const mobilePush = require('./src/services/mobile-push');
 const { getActiveWorkerCount } = require('./src/routes/sessions');
-const { sweepStuckCreatingApps } = require('./src/routes/apps');
 const appAccess = require('./src/services/app-access');
 const platformJwt = require('./src/services/platform-jwt');
 const usernames = require('./src/services/usernames');
@@ -1294,9 +1293,18 @@ async function becomeLeader() {
     });
   });
 
-  // Any app stuck in 'creating' from a previous process crash gets flipped
-  // to 'error' so the creator can retry instead of staring at a spinner.
-  await sweepStuckCreatingApps(getPool(config)).catch(() => {});
+  // A project being set up when its process died is resumed, not failed
+  // (services/app-creation-owner.js): each attempt keeps a heartbeat on its
+  // row, and the leader takes over one that went quiet, at boot and every
+  // minute after. A row nobody owns (from before that) is taken by the old
+  // boot rule: at boot, once it is ten minutes old.
+  await require('./src/services/app-creation-owner').start(config).catch(() => {});
+  // A production redeploy a vote owed an app and its process died before
+  // giving (services/owed-redeploy.js): run again, every minute.
+  require('./src/services/owed-redeploy').start(config);
+  // And the first session's card a restart kept out of a new repository
+  // (services/app-sketch.js sweepUncommitted): every quarter hour.
+  require('./src/services/app-sketch').startCommitSweep(config);
 
   // A normal failed build deletes itself in services/kubernetes.js. This
   // leader-only boot pass catches terminal Builds left behind if the platform
