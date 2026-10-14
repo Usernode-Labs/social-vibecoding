@@ -298,7 +298,7 @@ test('a tracker writes the whole transcript with its progress: every line, repea
   assert.deepEqual(tr.snapshot().lines, ['Using Write public/app.js', 'OpenRouter request #3: still responding after 30s', `Using Bash ${'x'.repeat(3000)}`.slice(0, 199) + '…'],
     'the watch still keeps its last few, repeats dropped');
 
-  // Restart recovery's replay: the lines written before the restart are skipped, the rest marked replayed.
+  // A turn followed after a restart, from its start: the lines written before the restart are skipped, the rest marked replayed.
   writes.length = 0;
   const replay = progress.tracker(pool, 7, { writeEveryMs: 60_000, transcript: { replayed: true, skip: 2 }, seed: { step: 'build', stepAt: '2026-10-13T18:20:00.000Z', lines: ['old'] } });
   for (const line of ['Using Write public/app.js', 'OpenRouter request #3: ok after 174s', 'Using Bash npm test', 'OpenRouter request #4: ok after 12s']) replay.note(line);

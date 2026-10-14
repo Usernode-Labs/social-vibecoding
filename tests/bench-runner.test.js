@@ -343,7 +343,6 @@ test('launch validation: models, stages, repeats, the $50 default cap and concur
   assert.equal(lane.validateLaunch({ suiteId: 1, models: [], stages: ['triage'] }).status, 400);
 });
 
-
 // ── After a restart ─────────────────────────────────────────────────────
 //
 // A trial runs as a durable build (services/bench/lane.js runTrial): each
