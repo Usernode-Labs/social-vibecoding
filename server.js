@@ -330,6 +330,7 @@ app.use((req, res, next) => {
   // also carries an app's state snapshot. Both routes check the length
   // themselves and refuse an oversized body with the numbers.
   if ((req.method === 'POST' && req.path === '/api/feedback')
+      || (req.method === 'PATCH' && /^\/api\/feedback\/\d+$/.test(req.path))
       || (req.method === 'PATCH' && /^\/api\/apps\/[^/]+\/github-issues\/[^/]+\/body$/.test(req.path))) {
     return express.json({ limit: '1mb' })(req, res, next);
   }

@@ -4197,6 +4197,12 @@ COMMENT ON TABLE feedback_reports IS 'staging:private';
 -- 'homeroom_bot' is a report the Homeroom bot filed for the person in its DM
 -- (report_problem), which is rate-limited per person on this column.
 ALTER TABLE feedback_reports ADD COLUMN IF NOT EXISTS source VARCHAR(32);
+-- #4803: immutable parts around the reporter's words. Keeping them separately
+-- avoids parsing Markdown or rebuilding attachments when a typo is corrected.
+-- NULL marks older and bot-filed reports, which have no edit window.
+ALTER TABLE feedback_reports ADD COLUMN IF NOT EXISTS body_prefix TEXT;
+ALTER TABLE feedback_reports ADD COLUMN IF NOT EXISTS body_suffix TEXT;
+ALTER TABLE feedback_reports ADD COLUMN IF NOT EXISTS edit_version INTEGER NOT NULL DEFAULT 0;
 
 -- Group-chat file attachments (#694). Users attach files to group-chat
 -- messages (images, markdown, standalone HTML, anything else as a

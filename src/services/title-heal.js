@@ -26,6 +26,7 @@ const prMetadata = require('./pr-metadata');
 const limits = require('./limits');
 const { getPool } = require('../db/pool');
 const { pushVoteUpdate, pushIssueUpdate } = require('./ws');
+const { withFeedbackIssueLock } = require('./feedback-edit');
 
 // Give up on a queued issue title after this many failed attempts (~2
 // weeks at the backoff cap). The issue keeps its fallback title forever at
@@ -145,8 +146,35 @@ async function healIssueTitles(pool, { limit = 10, dataKey } = {}) {
       }
       // PAT-first PATCH with installation fallback — lives in github.js
       // since #556 shares it with the author-rename route.
-      await github.patchIssueTitle(row.owner, row.repo, row.issue_number, title);
-      await pool.query(`DELETE FROM title_heal_queue WHERE id = $1`, [row.id]);
+      const applied = await withFeedbackIssueLock(pool, row.owner, row.repo, row.issue_number, async (client) => {
+        // A person may have corrected the title or words while generation
+        // was running. Never apply that cancelled or stale generated title.
+        const { rows: current } = await client.query(
+          'SELECT description FROM title_heal_queue WHERE id = $1 FOR UPDATE', [row.id]);
+        if (!current[0] || current[0].description !== row.description) return false;
+        const { rows: reports } = await client.query(`SELECT title, description, body_prefix, body_suffix
+          FROM feedback_reports WHERE issue_owner = $1 AND issue_repo = $2 AND issue_number = $3
+            AND body_prefix IS NOT NULL LIMIT 1`, [row.owner, row.repo, row.issue_number]);
+        if (reports[0]) {
+          // GitHub may have accepted a correction whose local commit failed,
+          // or somebody may have edited the issue there. Do not overwrite it
+          // from a stale local receipt; the author's retry remains safe.
+          const fr = reports[0];
+          const remote = await github.getIssue(row.owner, row.repo, row.issue_number);
+          if (remote.title !== github.safeMention(fr.title)
+              || remote.body !== github.safeMention(fr.body_prefix + fr.description + fr.body_suffix)) {
+            await client.query('DELETE FROM title_heal_queue WHERE id = $1', [row.id]);
+            return false;
+          }
+        }
+        await github.patchIssueTitle(row.owner, row.repo, row.issue_number, title);
+        await client.query(`UPDATE feedback_reports SET title = $4, edit_version = edit_version + 1
+          WHERE issue_owner = $1 AND issue_repo = $2 AND issue_number = $3 AND body_prefix IS NOT NULL`,
+        [row.owner, row.repo, row.issue_number, title]);
+        await client.query(`DELETE FROM title_heal_queue WHERE id = $1`, [row.id]);
+        return true;
+      });
+      if (!applied) continue;
       healed++;
       log.info('title-heal', 'Issue title regenerated', {
         repo: `${row.owner}/${row.repo}`, issueNumber: row.issue_number, title,

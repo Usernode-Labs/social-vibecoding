@@ -6636,6 +6636,21 @@
     },
     {
       "source": "src/routes/feedback.js",
+      "method": "PATCH",
+      "path": "/api/feedback/:id",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.patch.feedback.item.f414bdab",
+      "domain": "apps",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps"
+    },
+    {
+      "source": "src/routes/feedback.js",
       "method": "GET",
       "path": "/api/feedback/mine",
       "expression": null,
