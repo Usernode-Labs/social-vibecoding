@@ -75,6 +75,9 @@ test('two platform processes see each other\'s holds and stops', { timeout: 1200
   await admin.query(`CREATE DATABASE ${name}`);
   const url = new URL(DSN); url.pathname = '/' + name;
   const pool = new Pool({ connectionString: String(url), max: 4 });
+  // An idle connection the server drops is replaced, never a crash of the test.
+  pool.on('error', () => {});
+  admin.on('error', () => {});
   await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
   const old = child(String(url));
   const fresh = child(String(url));

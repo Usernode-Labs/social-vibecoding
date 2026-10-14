@@ -16,6 +16,8 @@ const wsBus = require('../../src/services/ws-bus');
 
 const url = process.argv[2];
 const pool = new Pool({ connectionString: url, max: 4 });
+// As the platform's own pools: a dropped idle connection is replaced.
+pool.on('error', () => {});
 const releases = new Map();
 const send = (o) => process.stdout.write(`${JSON.stringify(o)}\n`);
 
