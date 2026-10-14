@@ -46,8 +46,13 @@ const RESTART_ALLOWANCE_MS = 2 * 60 * 1000;
 const MAX_RESTARTS_ALLOWED = 10;
 // A turn dispatched again after its record was lost gets at least this.
 const MIN_REDISPATCH_MS = 60 * 1000;
-// What of a turn's result is kept: everything, its long texts clipped.
+// What of a turn's result is kept: everything, its long texts clipped. A
+// plan's (a `scout` turn's) answer is kept whole, up to the largest spec the
+// platform reads (spec-html.js MAX_SPEC_HTML_CHARS, with its markdown): the
+// step after it parses it, and a restart between the two must not hand that
+// step a cut copy.
 const KEPT_TEXT_CHARS = 20000;
+const KEPT_SCOUT_CHARS = 800000;
 const KEPT_PARTS = 40;
 
 function allowanceMs(restarts) {
@@ -56,13 +61,18 @@ function allowanceMs(restarts) {
 }
 
 /** A turn's routed result as a step keeps it: JSON, its long texts clipped. Pure. */
-function keptRouted(routed) {
+function keptRouted(routed, { mode = null } = {}) {
   if (!routed || typeof routed !== 'object') return routed ?? null;
-  const clip = (v) => (typeof v === 'string' && v.length > KEPT_TEXT_CHARS ? v.slice(0, KEPT_TEXT_CHARS) : v);
+  const max = (k) => (mode === 'scout' && (k === 'lastResultText' || k === 'answerParts') ? KEPT_SCOUT_CHARS : KEPT_TEXT_CHARS);
+  const clip = (v, k) => (typeof v === 'string' && v.length > max(k) ? v.slice(0, max(k)) : v);
   const result = routed.result && typeof routed.result === 'object' ? { ...routed.result } : routed.result ?? null;
   if (result && typeof result === 'object') {
-    for (const [k, v] of Object.entries(result)) result[k] = clip(v);
-    if (Array.isArray(result.answerParts)) result.answerParts = result.answerParts.slice(-KEPT_PARTS).map(clip);
+    for (const [k, v] of Object.entries(result)) result[k] = clip(v, k);
+    if (Array.isArray(result.answerParts)) {
+      // A plan's parts whole, and all of them; any other turn's last few.
+      const parts = mode === 'scout' ? result.answerParts : result.answerParts.slice(-KEPT_PARTS);
+      result.answerParts = parts.map((p) => clip(p, 'answerParts'));
+    }
   }
   const error = routed.error instanceof Error ? routed.error.message : routed.error ?? null;
   return durableSteps.plain({ ...routed, result, error });
@@ -240,7 +250,7 @@ async function runTurn(steps, key, {
 
   const finish = async (out, record) => {
     steps.fence();
-    await steps.set(k, { ...(saved || {}), phase: 'done', out: { routed: keptRouted(out.routed), stopped: !!out.stopped }, record: record || saved?.record || null });
+    await steps.set(k, { ...(saved || {}), phase: 'done', out: { routed: keptRouted(out.routed, { mode }), stopped: !!out.stopped }, record: record || saved?.record || null });
     await release(worker, session.id, record || saved?.record);
     return out;
   };

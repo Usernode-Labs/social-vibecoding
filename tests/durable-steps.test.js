@@ -102,18 +102,53 @@ test('a stop is sticky: once the signal aborts, every step throws, even after a 
   try { steps.fence(); } catch (err) { caught = err; }
   assert.ok(durableSteps.isStopped(caught), 'a fenced step throws a stop');
   assert.equal(caught.code, 'steps_stopped');
-  // Swallowed on the way out; the next step throws it again.
-  await assert.rejects(steps.once('two', async () => 2), (err) => durableSteps.isStopped(err));
-  await assert.rejects(steps.set('three', 3), (err) => durableSteps.isStopped(err));
-  assert.deepEqual(w.last(), { one: 1 }, 'nothing is saved after the stop');
+  // Swallowed on the way out; the next step throws it again, and runs nothing.
+  let ran = false;
+  await assert.rejects(steps.once('two', async () => { ran = true; return 2; }), (err) => durableSteps.isStopped(err));
+  assert.equal(ran, false);
+  assert.deepEqual(w.last(), { one: 1 }, 'nothing new is started after the stop');
 });
 
-test('a step that ends after the stop is not saved', async () => {
+test('a step whose work was under way when the process began stopping is saved, and then the stop is thrown', async () => {
   const w = item();
   const ac = new AbortController();
   const steps = durableSteps.durable({ checkpoint: w.checkpoint, signal: ac.signal });
-  await assert.rejects(steps.once('turn', async () => { ac.abort(); return 'done'; }), (err) => durableSteps.isStopped(err));
-  assert.equal(w.saves.length, 0);
+  // The kernel takes a checkpoint for as long as the process holds the
+  // lease: what the step did is not done again by the next process.
+  await assert.rejects(steps.once('comment', async () => { ac.abort(); return { posted: 7 }; }), (err) => durableSteps.isStopped(err));
+  assert.deepEqual(w.last(), { comment: { posted: 7 } });
+  const next = durableSteps.durable({ resumeFrom: w.last(), checkpoint: w.checkpoint });
+  let again = false;
+  assert.deepEqual(await next.once('comment', async () => { again = true; return { posted: 8 }; }), { posted: 7 });
+  assert.equal(again, false);
+});
+
+test('state a step keeps as it goes is saved while the process is stopping', async () => {
+  const w = item();
+  const ac = new AbortController();
+  const steps = durableSteps.durable({ checkpoint: w.checkpoint, signal: ac.signal });
+  ac.abort();
+  await steps.set('review_state', { round: 2 });
+  assert.deepEqual(w.last(), { review_state: { round: 2 } });
+});
+
+test('a save the database refuses for a moment is tried again; a lost lease is not', async () => {
+  const saves = [];
+  let refusals = 2;
+  const steps = durableSteps.durable({
+    checkpoint: async (v) => {
+      if (refusals > 0) { refusals -= 1; throw new Error('connection terminated unexpectedly'); }
+      saves.push(v);
+    },
+  });
+  await steps.once('a', async () => 1);
+  assert.deepEqual(saves, [{ a: 1 }], 'saved on the third try, the build going on');
+  assert.equal(steps.stopped, false);
+  class LeaseLost extends Error { constructor() { super('work lease lost'); } }
+  let tries = 0;
+  const lost = durableSteps.durable({ checkpoint: async () => { tries += 1; throw new LeaseLost(); } });
+  await assert.rejects(lost.once('a', async () => 1), (err) => durableSteps.isStopped(err));
+  assert.equal(tries, 1, 'the claim is gone: no point trying again');
 });
 
 test('race resolves the promise, or rejects with the stop, even one that came first', async () => {

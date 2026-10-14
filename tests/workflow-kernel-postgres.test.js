@@ -628,9 +628,13 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
     // One finishes its step whatever the signal says (a deploy); one gives up on it.
     handlers['k7s-done'] = async () => { started.add('done'); await gate; return { finished: true }; };
     handlers['k7s-quit'] = async (ctx) => {
-      if (ctx.attempt > 1) return { resumed: true };
+      if (ctx.attempt > 1) return { resumed: ctx.resumeFrom };
       started.add('quit');
-      await new Promise((resolve, reject) => ctx.signal.addEventListener('abort', () => reject(ctx.signal.reason), { once: true }));
+      await new Promise((resolve) => ctx.signal.addEventListener('abort', resolve, { once: true }));
+      // The step it was in had done its part when the stop came: kept, under
+      // the lease this process still holds, before it gives up.
+      await ctx.checkpoint({ step: 'done before the stop' });
+      throw ctx.signal.reason;
     };
     await route('k7s', 'Work', { keys: ['k7s-done', 'k7s-quit'], workKey: 'k7s-done' });
     await rt.drain();
@@ -643,6 +647,8 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
     const items = new Map((await pool.query(`SELECT work_key, status FROM wf_work WHERE work_key LIKE 'k7s-%'`)).rows.map((w) => [w.work_key, w.status]));
     assert.equal(items.get('k7s-done'), 'reported', 'its result is kept, not run again after the lease');
     assert.equal(items.get('k7s-quit'), 'running', 'nothing reported; the next claim resumes it');
+    const { rows: [kept] } = await pool.query(`SELECT checkpoint FROM wf_work WHERE work_key = 'k7s-quit'`);
+    assert.deepEqual(kept.checkpoint, { step: 'done before the stop' }, 'a stopping process still checkpoints under its lease');
     // The stopping process gave its lease up: the next process need not wait it out.
     const { rows: [quit] } = await pool.query(`SELECT lease_until <= now() AS given_up FROM wf_work WHERE work_key = 'k7s-quit'`);
     assert.equal(quit.given_up, true, 'a stopped item\'s lease is given up at once');

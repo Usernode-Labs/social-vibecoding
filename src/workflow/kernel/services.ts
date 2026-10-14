@@ -145,9 +145,12 @@ async function finish(opts: ServiceOptions, w: Claimed, report: Report): Promise
 // signal and nothing is reported; the next claim resumes from the checkpoint.
 // A process stopping aborts it too, and a handler that ended on that signal
 // (it threw) reports nothing either; one that finished its work anyway
-// reports it, rather than have it run again after the lease lapses. A
-// process that stops gives up the lease of an item it reports nothing for,
-// so the next process claims it at once rather than when the lease lapses.
+// reports it, rather than have it run again after the lease lapses. Until
+// the handler returns its process still holds the lease, so it may still
+// checkpoint: a step whose effect had happened when the stop came is kept,
+// and the next process does not do it again. A process that stops gives up
+// the lease of an item it reports nothing for, so the next process claims it
+// at once rather than when the lease lapses.
 //
 // A `resumable` handler carries its work on from its checkpoint, so an
 // attempt that ended because its process went (a release restarts the
@@ -186,7 +189,7 @@ export async function execute(opts: ServiceOptions, w: Claimed, stopping?: Abort
       resumeFrom: w.checkpoint ?? null,
       checkpoint: async (v: Json) => {
         assertJson(v);
-        if (abort.signal.aborted) throw new LeaseLost();
+        if (leaseLost) throw new LeaseLost();
         await renew(`UPDATE wf_work SET checkpoint = $3 WHERE ${live}`, [w.id, w.claim_id, JSON.stringify(v)]);
       },
       signal: abort.signal,

@@ -278,14 +278,14 @@ function withApp(session, app) {
   return session;
 }
 
-async function openSession(pool, config, { user, app, model, branch, title, owner = null }) {
+async function openSession(pool, config, { user, app, model, branch, title, owner = null, step = null }) {
   const { rows } = await pool.query(
     `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, is_headless, linked_issues,
                                 session_title, agent_backend, agent_provider, agent_model, agent_reasoning_effort,
-                                workflow_owner)
-     VALUES ($1, $2, $3, 'paused', FALSE, '{}', $4, 'codex_openrouter', 'openrouter', $5, $6, $7)
+                                workflow_owner, workflow_step)
+     VALUES ($1, $2, $3, 'paused', FALSE, '{}', $4, 'codex_openrouter', 'openrouter', $5, $6, $7, $8)
      RETURNING *`,
-    [app.id, user.id, branch, title, model, config.openrouterDefaultCodexReasoning || 'low', owner],
+    [app.id, user.id, branch, title, model, config.openrouterDefaultCodexReasoning || 'low', owner, owner ? step : null],
   );
   return withApp(rows[0], app);
 }
@@ -303,7 +303,18 @@ async function trialSession(ctx, key, { model, branch, base }) {
   const steps = stepsOf(ctx);
   let session = null;
   const kept = await steps.once(`session:${key}`, async () => {
-    session = await openSession(pool, config, { user, app, model, branch, title: ctx.title, owner: steps.owner });
+    // A restart between the insert and this step's save finds the row.
+    const step = steps.path(`session:${key}`);
+    if (steps.owner) {
+      const { rows: [mine] } = await pool.query(
+        'SELECT * FROM chat_sessions WHERE workflow_owner = $1 AND workflow_step = $2 ORDER BY id LIMIT 1', [steps.owner, step],
+      );
+      if (mine) {
+        session = withApp(mine, app);
+        return { id: Number(mine.id) };
+      }
+    }
+    session = await openSession(pool, config, { user, app, model, branch, title: ctx.title, owner: steps.owner, step });
     return { id: Number(session.id) };
   });
   if (!session) {
@@ -596,7 +607,9 @@ async function specStage(ctx) {
     durableSteps.rethrowStop(err, 'worker');
     return { session_id: session.id, base_sha: base, build_branch: branch, status: 'infra_fail', error: `worker: ${err.message}`, session };
   }
-  const spec = await live.draftSpec({
+  // A step: run again after a restart, the plan is not read (or published)
+  // a second time.
+  const spec = await stepsOf(ctx).once('spec', () => live.draftSpec({
     pool, config, bot: user, session, containerName, seed: snapshot.texts.seed,
     buildNote: snapshot.texts.build_note || '', turnBudgetMs: budgets.turnMs, model, specBudgetMs: budgets.specMs,
     // Its turn a durable step (draftSpec's `spec` turn).
@@ -607,7 +620,7 @@ async function specStage(ctx) {
     telemetryComponent: TELEMETRY,
     // #3737: a first version's spec decides its look, as the live one does.
     firstVersion: !!snapshot.extra?.firstVersion,
-  });
+  }));
   const out = { session_id: session.id, base_sha: base, build_branch: branch, cost_usd: spec.costUsd ?? null, session };
   if (spec.stopped) return { ...out, status: 'timeout', error: spec.error };
   if (spec.ok) return { ...out, status: 'ok', raw_output: rawOf(spec.specMd), parsed: { spec: spec.specMd } };

@@ -1579,6 +1579,30 @@ async function issuePoster(pool, { app, repo, issueNumber, issue, botLogin = nul
  * never changes the verdict or the build. Returns null when `looking` was
  * already claimed, else what landed.
  */
+/**
+ * The comment of `text` the bot made on the issue at or after `since`, or
+ * null: a post a restart cut short after its comment went out and before
+ * its answer was kept. Read off the issue; never throws.
+ */
+const COMMENT_MATCH_CHARS = 200;
+const COMMENT_CLOCK_SLACK_MS = 2 * 60 * 1000;
+async function commentMadeSince(github, repo, issueNumber, text, since) {
+  try {
+    if (typeof github?.fetchIssueComments !== 'function') return null;
+    const from = Date.parse(since) - COMMENT_CLOCK_SLACK_MS;
+    const read = await github.fetchIssueComments(repo.owner, repo.repo, issueNumber, {
+      ...(Number.isFinite(from) ? { since: new Date(from).toISOString() } : {}),
+    });
+    const head = String(text || '').trim().slice(0, COMMENT_MATCH_CHARS);
+    const found = (read?.comments || []).find((c) => String(c.body || '').trim().slice(0, COMMENT_MATCH_CHARS) === head
+      && (!c.createdAt || !Number.isFinite(from) || Date.parse(c.createdAt) >= from));
+    return found ? { id: found.id ?? null } : null;
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not read the issue for a post a restart cut short', { issueNumber, err: err.message });
+    return null;
+  }
+}
+
 async function post({
   pool, github, ws, app, repo, issueNumber, kind, runId = null, text,
   msgType = 'system', metadata = null, mention = null, mentions = null, senderId = null, notifications = null,
@@ -1609,23 +1633,43 @@ async function post({
   const inThread = (content, thread, meta = metadata, kindOfRow = msgType) => (sender
     ? ws.sendBotMessage(pool, app.id, { user: sender, content, metadata: meta, thread })
     : ws.sendSystemMessage(pool, app.id, content, kindOfRow, meta, thread));
-  const { rows } = await pool.query(
-    `INSERT INTO homeroom_bot_posts (app_id, issue_number, run_id, kind)
-     VALUES ($1, $2, $3, $4)
-     ON CONFLICT (app_id, issue_number) WHERE kind = 'looking' DO NOTHING
-     RETURNING id`,
-    [app.id, issueNumber, runId, kind],
-  );
-  if (!rows.length) return null;
-  const postId = rows[0].id;
-  let comment = null;
-  let message = null;
-  if (!noComment) {
-    try {
-      comment = await github.createIssueComment(repo.owner, repo.repo, issueNumber, text);
-    } catch (err) {
-      log.warn('homeroom-bot', 'GitHub comment failed (continuing)', { app: app.slug, issueNumber, kind, err: err.message });
+  // A post of this run's that a restart cut short (its durable build says it
+  // again): its row is taken up, and what of it went out already is not sent
+  // twice. The row is pending until the post has gone out, so the build's
+  // "said once" (homeroom-bot.js runPosted) never counts a post half sent.
+  const had = runId ? (await pool.query(
+    `SELECT id, github_comment_id, thread_message_id, created_at FROM homeroom_bot_posts
+      WHERE run_id = $1 AND kind = $2 AND pending IS TRUE ORDER BY id DESC LIMIT 1`,
+    [runId, kind],
+  ).catch(() => ({ rows: [] }))).rows[0] || null : null;
+  let postId = had ? had.id : null;
+  if (!postId) {
+    const { rows } = await pool.query(
+      `INSERT INTO homeroom_bot_posts (app_id, issue_number, run_id, kind, pending)
+       VALUES ($1, $2, $3, $4, TRUE)
+       ON CONFLICT (app_id, issue_number) WHERE kind = 'looking' DO NOTHING
+       RETURNING id`,
+      [app.id, issueNumber, runId, kind],
+    );
+    if (!rows.length) return null;
+    postId = rows[0].id;
+  }
+  const noted = (sql, value) => pool.query(sql, [postId, value]).catch(() => {});
+  let comment = had?.github_comment_id ? { id: had.github_comment_id } : null;
+  let message = had?.thread_message_id ? { id: had.thread_message_id } : null;
+  // Its thread message went out before the restart: so did what it tagged.
+  const messageSentBefore = !!message;
+  if (!noComment && !comment) {
+    // Made before the restart, its answer lost with it: found on the issue.
+    if (had) comment = await commentMadeSince(github, repo, issueNumber, text, had.created_at);
+    if (!comment) {
+      try {
+        comment = await github.createIssueComment(repo.owner, repo.repo, issueNumber, text);
+      } catch (err) {
+        log.warn('homeroom-bot', 'GitHub comment failed (continuing)', { app: app.slug, issueNumber, kind, err: err.message });
+      }
     }
+    if (comment?.id != null) await noted('UPDATE homeroom_bot_posts SET github_comment_id = $2 WHERE id = $1', comment.id);
   }
   // #3624: the same news, in the requester's DM with the bot, when they
   // are somebody it talks to there. A post that carries `dm` is one worth
@@ -1664,7 +1708,7 @@ async function post({
   // its title, a person by their name) brings them as `homeroomText`.
   const own = homeroomText || firstPerson(text);
   const threadText = handles ? `${handles} ${own}` : own;
-  if (!noIssueThread) {
+  if (!noIssueThread && !message) {
     try {
       // A spec is a card in the thread (its full text is on GitHub, and one
       // click away from the card), not a wall of markdown in a chat bubble.
@@ -1678,6 +1722,7 @@ async function post({
     } catch (err) {
       log.warn('homeroom-bot', 'Thread post failed (continuing)', { app: app.slug, issueNumber, kind, err: err.message });
     }
+    if (message?.id != null) await noted('UPDATE homeroom_bot_posts SET thread_message_id = $2 WHERE id = $1', message.id);
   }
   // A system message fires no mention notifications of its own, so the
   // mention row is written here, as the "needs a conversation" prompt does
@@ -1685,7 +1730,7 @@ async function post({
   // handed over is their handles alone, never the message, whose
   // model-written text could name anybody.
   let notified = 0;
-  if (handles && message?.id) {
+  if (handles && message?.id && !messageSentBefore) {
     try {
       const notify = notifications || require('./notifications');
       const rows = await notify.createMentionNotifications(pool, {
@@ -1709,7 +1754,7 @@ async function post({
     }
   }
   await pool.query(
-    `UPDATE homeroom_bot_posts SET github_comment_id = $2, thread_message_id = $3
+    `UPDATE homeroom_bot_posts SET github_comment_id = $2, thread_message_id = $3, pending = NULL
       WHERE id = $1`,
     [postId, comment?.id ?? null, (message || (proposalOnly ? proposalMessage : null))?.id ?? null],
   ).catch(() => {});
@@ -3734,25 +3779,34 @@ async function buildAndPropose({
   let openedRow = null;
   const opened = await steps.once('session', async () => {
    try {
+    // Which build owns it, and the step that opened it: server.js leaves a
+    // session a durable build owns to that build when it adopts workers at a
+    // restart, and a restart before this step is saved finds the row here.
+    const owner = steps.owner || null;
+    const step = owner ? steps.path('session') : null;
+    if (owner) {
+      const { rows: [mine] } = await pool.query(
+        'SELECT * FROM chat_sessions WHERE workflow_owner = $1 AND workflow_step = $2 ORDER BY id LIMIT 1', [owner, step],
+      );
+      if (mine) {
+        openedRow = mine;
+        return { id: Number(mine.id) };
+      }
+    }
     const { rows } = await pool.query(
       `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, is_headless,
                                   created_from_issue_number, linked_issues, issue_link_seeded,
                                   session_title, agent_backend, agent_provider, agent_model,
-                                  agent_reasoning_effort)
+                                  agent_reasoning_effort, workflow_owner, workflow_step)
        VALUES ($1, $2, NULL, 'active', FALSE, $3,
                CASE WHEN $3::int IS NULL THEN '{}'::int[] ELSE ARRAY[$3::int] END, TRUE, $4,
-               'codex_openrouter', 'openrouter', $5, $6)
+               'codex_openrouter', 'openrouter', $5, $6, $7, $8)
        RETURNING *`,
       [app.id, bot.id, propose ? issueNumber : null,
         sessionTitle || `${propose ? 'Homeroom bot' : 'Homeroom bot shadow build'}: #${issueNumber} ${title}`,
-        model, config.openrouterDefaultCodexReasoning || 'low'],
+        model, config.openrouterDefaultCodexReasoning || 'low', owner, step],
     );
     openedRow = rows[0];
-    // Which build owns it: server.js leaves a session a durable build owns
-    // to that build when it adopts workers at a restart.
-    if (steps.owner) {
-      await pool.query('UPDATE chat_sessions SET workflow_owner = $2 WHERE id = $1', [openedRow.id, steps.owner]);
-    }
     return { id: Number(openedRow.id) };
    } catch (err) {
     return { error: err.message };
@@ -3841,7 +3895,7 @@ async function buildAndPropose({
     };
   };
   // A skip is put away as a failed attempt is, and says why it stopped.
-  const skipNow = async () => {
+  const askSkip = async () => {
     if (!skipCheck) return null;
     try {
       return (await skipCheck()) || null;
@@ -3851,6 +3905,11 @@ async function buildAndPropose({
       return null;
     }
   };
+  // Each check between the build's steps is a step itself, asked once: run
+  // again after a restart, a build past its promotion would otherwise find
+  // its own proposal and stop. (A review's rounds ask as they go: their
+  // state is the review's own.)
+  const skipNow = (where) => steps.once(`skip:${where}`, askSkip);
   // Its run is another build's (onSession, above): nothing more is spent on
   // this one, and its session is put away as a skip's is.
   if (claimRefused) {
@@ -3961,7 +4020,7 @@ async function buildAndPropose({
   }
   // WP1 (#2): before its plan is posted and the build turn starts, which a
   // stopped spec turn (noteRequestMerged stops one) would otherwise go on to.
-  const skippedEarly = await skipNow();
+  const skippedEarly = await skipNow('before_build');
   if (skippedEarly) return { ...(await fail(skippedEarly)), skipped: skippedEarly, costUsd: spec.costUsd ?? null };
   if (planOnly) {
     // #4488: only the plan. Its session is put away as a finished attempt
@@ -4013,12 +4072,11 @@ async function buildAndPropose({
   } else {
     log.warn('homeroom-bot', 'No spec; building from the plan', { sessionId: session.id, error: spec.error });
     if (spec.stopped) {
-      // Stopping a turn takes its container down with it.
+      // Stopping a turn takes its container down with it. After a restart
+      // the worker running now may be the build turn's: adopted, never
+      // replaced under it.
       try {
-        containerName = await worker.ensureWorker(session.id, {
-          repoOwner: repo.owner, repoName: repo.repo, branchName,
-          temporary: true, onProgress: () => {},
-        });
+        containerName = await ensureBuildWorker({ worker, session, repo, branchName, steps });
       } catch (err) {
         durableSteps.rethrowStop(err, 'worker');
         return { ...(await fail(`the worker would not start: ${err.message}`)), costUsd: spec.costUsd };
@@ -4030,8 +4088,9 @@ async function buildAndPropose({
   // worker skips every dispatch until a new turn clears it (#937). Without
   // this, the build after a spec time-out was skipped at once and recorded
   // as "no change to propose" (#3396). Cleared before the build's own clock
-  // starts, so a stop aimed at the build is never the one erased.
-  worker.clearPendingStop?.(session.id);
+  // starts, so a stop aimed at the build is never the one erased (nor, after
+  // a restart, once the build turn has started).
+  if (!steps.has('turn:build')) worker.clearPendingStop?.(session.id);
 
   // Run five, item 8: a first version's build starts from the screens its
   // spec drew, written into the repository and pushed as its first commit
@@ -4122,7 +4181,7 @@ async function buildAndPropose({
   // WP1 (#2): and once the build turn is over, whatever it came to, just
   // before it is proposed. A build stopped for this (noteRequestMerged ends
   // its turn) is a skip, not a failure.
-  const skipped = await skipNow();
+  const skipped = await skipNow('built');
   if (skipped) {
     endLive();
     return { ...(await fail(skipped)), skipped, costUsd };
@@ -4157,14 +4216,16 @@ async function buildAndPropose({
       }
       return noChange;
     });
-    if (!notNudged) {
+    // What was decided when the turn ended, not again: run after a restart,
+    // the clock has less left, and a nudge that ran (and pushed) is followed.
+    if (noChange.nudged) {
       const stopAt = utcClock(turnStartedMs + turnBudgetMs);
       const nudgeStartedMs = Date.now();
       ({ routed, stopped } = await runBuildTurn({
         prompt: buildNudgePrompt({ stopAt }),
         freshPrompt: [prompt, '', buildNudgePrompt({ stopAt, fresh: true })].join('\n'),
         resumeThreadId: routed?.result?.agentThreadId || null,
-        budgetMs: leftMs, commitMsg, progress, telemetry: telemetry || BUILD_NUDGE_TELEMETRY, key: 'nudge',
+        budgetMs: Math.max(leftMs, BUILD_NUDGE_MIN_MS), commitMsg, progress, telemetry: telemetry || BUILD_NUDGE_TELEMETRY, key: 'nudge',
       }));
       pastStartingScreens(routed, startingScreens);
       countTurn(routed);
@@ -4179,7 +4240,7 @@ async function buildAndPropose({
       });
     }
     if (noChange.nudged) {
-      const skippedAfterNudge = await skipNow();
+      const skippedAfterNudge = await skipNow('nudged');
       if (skippedAfterNudge) endLive();
       if (skippedAfterNudge) return { ...(await fail(skippedAfterNudge)), skipped: skippedAfterNudge, costUsd };
     }
@@ -4263,7 +4324,7 @@ async function buildAndPropose({
     // (reviewLanded, on the durable context).
     reviewed = await steps.once('reviewed', () => reviewLanded({
       pool, config, bot, app, repo, session, branchName, seed, spec: spec.ok ? spec.specMd : null,
-      review, deps, runBuildTurn, turnBudgetMs, readsImages, platformRepo, skipNow, onProgress, fixTurnIds,
+      review, deps, runBuildTurn, turnBudgetMs, readsImages, platformRepo, skipNow: askSkip, onProgress, fixTurnIds,
       locale, tweaks: buildTweaks,
       start: {
         sha: landedSha, commits: landedCommits,
@@ -4275,7 +4336,7 @@ async function buildAndPropose({
       if (Number(reviewed.finalCommits) > 0) landedCommits = Number(reviewed.finalCommits);
       if (Number(reviewed.costUsd) > 0) costUsd = (Number(costUsd) || 0) + Number(reviewed.costUsd);
     }
-    const skippedLate = await skipNow();
+    const skippedLate = await skipNow('reviewed');
     if (skippedLate) return { ...(await fail(skippedLate)), skipped: skippedLate, costUsd, review: reviewed };
   }
   const reviewOut = reviewed ? { review: reviewed } : {};
@@ -4451,6 +4512,9 @@ async function reviewLanded({
   // back here, so the review carries on from the step it was at.
   const steps = durableSteps.of(deps);
   const keptState = steps.get('review_state');
+  // One that had finished when the restart came (its end saved, the build's
+  // `reviewed` step not yet): taken as it ended, never reviewed again.
+  if (!resumeFrom && keptState?.state === 'done') return keptState;
   if (!resumeFrom && keptState && keptState.state && keptState.state !== 'done') resumeFrom = keptState;
   const reviewer = (resumeFrom && resumeFrom.reviewer && resumeFrom.reviewer.maxRounds != null) ? resumeFrom.reviewer : review.reviewer;
   const owner = review.owner || {};

@@ -21,16 +21,27 @@
 //                   turn starting, or a turn a restart caught being
 //                   followed: a bench trial's watch recounts its looks)
 //
-// The stop is sticky: once the signal has aborted, every later durable call
-// throws again, so a stop that one `catch` swallows on the way out (much of
-// the pipeline fails open on purpose) is thrown by the next step instead of
+// The stop is sticky: once the signal has aborted, every later step throws
+// it again, so a stop that one `catch` swallows on the way out (much of the
+// pipeline fails open on purpose) is thrown by the next step instead of
 // letting a process that lost the build archive its session or post its
-// failure.
+// failure. A step whose work was under way when a process began stopping is
+// still saved (the kernel takes a checkpoint for as long as the process
+// holds the lease), and the stop is thrown once it is: what it did is not
+// done again by the next process. Only a lost lease refuses the save.
 //
 // Code not run by the kernel (tests, a person's own dev chat) gets the inert
 // context, `none()`: every step simply runs, nothing is kept, nothing fences.
 
 const log = require('./logger');
+
+// A checkpoint write that failed for another reason than a lost lease (the
+// database blinked) is tried again this many times, this far apart.
+const SAVE_RETRY_MS = Object.freeze([500, 2000, 5000]);
+
+function leaseLost(err) {
+  return !!err && (err.constructor?.name === 'LeaseLost' || err.message === 'work lease lost');
+}
 
 /** The error a fenced step throws. `stopped` tells it from a step's own failure. */
 class StepsStopped extends Error {
@@ -69,11 +80,23 @@ function durable({ resumeFrom = null, checkpoint, signal = null, attempt = 1, lo
       throw new StepsStopped();
     }
   };
+  const wait = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
+  const write1 = async (snapshot) => {
+    for (let i = 0; ; i += 1) {
+      try {
+        return await checkpoint(snapshot);
+      } catch (err) {
+        if (leaseLost(err) || isStopped(err) || i >= SAVE_RETRY_MS.length) throw err;
+        log.warn('durable', 'Could not save a step; trying again', { owner, err: err.message });
+        await wait(SAVE_RETRY_MS[i]);
+      }
+    }
+  };
   // One write at a time, each with everything kept so far: a later write
   // never lands under an earlier one.
   const save = () => {
     const snapshot = plain(state);
-    const write = writes.then(() => checkpoint(snapshot));
+    const write = writes.then(() => write1(snapshot));
     writes = write.catch(() => {});
     return write.catch((err) => {
       // The kernel's checkpoint throws only when the claim is gone.
@@ -93,9 +116,16 @@ function durable({ resumeFrom = null, checkpoint, signal = null, attempt = 1, lo
       signal,
       get stopped() { return stopped || !!signal?.aborted; },
       has(key) { return Object.prototype.hasOwnProperty.call(state, k(key)); },
-      get(key) { return Object.prototype.hasOwnProperty.call(state, k(key)) ? state[k(key)] : undefined; },
+      // A copy: a caller that changes what it was handed (a build's result
+      // it adds a cost to) changes nothing kept, and the next save cannot
+      // carry the change in.
+      get(key) { return Object.prototype.hasOwnProperty.call(state, k(key)) ? plain(state[k(key)]) : undefined; },
+      // The key as it is kept, scope included: what a row a step writes
+      // carries so the step finds it again (a session it opened).
+      path(key) { return k(key); },
+      // Saved even once the process is stopping, while it holds the lease:
+      // state a step keeps as it goes is what the next process reads.
       async set(key, value) {
-        fence();
         if (value === undefined) delete state[k(key)];
         else state[k(key)] = plain(value);
         await save();
@@ -108,8 +138,10 @@ function durable({ resumeFrom = null, checkpoint, signal = null, attempt = 1, lo
         fence();
         if (ctx.has(key)) return ctx.get(key);
         const value = await fn();
-        fence();
+        // Its work is done: kept, even if the process began stopping
+        // meanwhile, and then the stop is thrown.
         await ctx.set(key, value === undefined ? null : value);
+        fence();
         return ctx.get(key);
       },
       fence,
@@ -159,6 +191,7 @@ function none() {
     stopped: false,
     has: () => false,
     get: () => undefined,
+    path: (key) => String(key),
     set: async () => {},
     merge: async () => {},
     once: async (key, fn) => fn(),

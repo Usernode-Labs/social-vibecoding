@@ -1392,6 +1392,16 @@ async function tick(pool, config, deps = {}) {
           input: {}, deps: { ...deps, user, inProcessRow: claim },
         })
           .catch(async (err) => {
+            // Not started: the platform began stopping. Back in the queue,
+            // its claim not spent, for the next leader.
+            if (err?.notStarted) {
+              await pool.query(
+                `UPDATE bench_trials SET status = 'pending', claims = GREATEST(claims - 1, 0), started_at = NULL
+                  WHERE id = $1 AND status = 'running'`,
+                [claim.id],
+              ).catch(() => {});
+              return;
+            }
             log.error('bench', 'Trial threw', { trialId: claim.id, err: err.message });
             await pool.query(
               "UPDATE bench_trials SET status = 'infra_fail', error = $2, finished_at = NOW() WHERE id = $1 AND status = 'running'",

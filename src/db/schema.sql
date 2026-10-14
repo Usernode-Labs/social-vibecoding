@@ -10381,6 +10381,10 @@ CREATE TABLE IF NOT EXISTS homeroom_bot_posts (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_homeroom_bot_posts_looking
   ON homeroom_bot_posts(app_id, issue_number) WHERE kind = 'looking';
+-- TRUE while the post is going out (live.post), NULL once it has, and for
+-- every post from before: a durable build a restart caught in the middle of
+-- one says it again, taking up this row and sending only what had not gone.
+ALTER TABLE homeroom_bot_posts ADD COLUMN IF NOT EXISTS pending BOOLEAN;
 CREATE INDEX IF NOT EXISTS idx_homeroom_bot_posts_issue
   ON homeroom_bot_posts(app_id, issue_number, created_at DESC);
 
@@ -13794,6 +13798,12 @@ ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_touches_sha TEXT;
 -- turns are that build's to carry on after a restart, so server.js's worker
 -- adoption leaves them alone while the build is under way.
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS workflow_owner TEXT;
+-- And the durable step that opened it ('session', 'build/session:triage'):
+-- a restart between the insert and the step being saved finds the row
+-- instead of opening a second session.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS workflow_step TEXT;
+CREATE INDEX IF NOT EXISTS idx_chat_sessions_workflow_step
+  ON chat_sessions (workflow_owner, workflow_step) WHERE workflow_owner IS NOT NULL;
 
 -- Test release emails (services/test-accounts.js sendRelease, the connector's
 -- send_test_release_email): a full admin sends the waitlist's real "you're

@@ -35,6 +35,19 @@ function platform() {
   return require('../workflow/platform.ts');
 }
 
+function shuttingDown() {
+  try { return !!require('./lifecycle').isShuttingDown(); } catch { return false; }
+}
+
+/**
+ * What start() throws in a process that has begun stopping: a build started
+ * now would run here unkept and be lost with the process. The caller leaves
+ * the build asked for, for the next leader to start.
+ */
+function notStarted() {
+  return Object.assign(new Error('the platform is stopping: the build was not started'), { code: 'not_started', notStarted: true });
+}
+
 // The instance key (src/workflow/bot-build/machine.ts buildKey): the run or
 // the trial, and what tells two builds of one run apart.
 function keyOf(target, id, nonce = null) {
@@ -132,6 +145,7 @@ async function start({ pool, config, target, id, nonce = null, appId = null, inp
   let running = false;
   try { running = platform().botBuildsRunning(); } catch { running = false; }
   if (!running || deps.inProcess) {
+    if (!deps.inProcess && shuttingDown()) throw notStarted();
     // No runtime here: the build runs as it always did, unkept.
     try {
       const out = await t.run({ pool, config, id: Number(id), input, steps: durableSteps.none(), deps });
@@ -194,4 +208,4 @@ async function underWay(target) {
   }
 }
 
-module.exports = { start, whenEnded, run, lost, underWay, keyOf, TARGETS, _ended: ended };
+module.exports = { start, whenEnded, run, lost, underWay, keyOf, notStarted, TARGETS, _ended: ended };
