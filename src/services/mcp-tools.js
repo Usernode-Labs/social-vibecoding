@@ -1382,8 +1382,17 @@ function shapeNextStep(session, checks, viewerId = null) {
     const again = erroredRunWillRetry(session)
       ? 'Homeroom runs the checks again on its own; poll get_proposal for the new verdict.'
       : 'Homeroom will not run them again on its own now; recheck_change re-runs them.';
-    return `The checks on ${ref} were asked to run the repo unit suite (npm test) again, and it did not run: its `
-      + 'runner did not start or its package.json could not be read. The build did not fail and no test failed, so '
+    const lead = `The checks on ${ref} were asked to run the repo unit suite (npm test) again, and it did not run: its `
+      + 'runner did not start or its package.json could not be read. ';
+    // Browser checks that failed in the same run are failures all the same.
+    const failed = checks.failing ? checks.failing.length : 0;
+    if (failed) {
+      return `${lead}${checks.failingTotal || failed} check(s) did fail in that run: \`failures\` names them and says `
+        + `why. ${again} Fix those checks, then push to `
+        + `${branch.youCanPush ? (branch.name || 'this proposal\'s branch') + ' in your own fork' : 'a branch in your OWN fork'}`
+        + ` and call submit_work with proposalId ${session.id} and that branch. Do not open a second proposal.`;
+    }
+    return `${lead}The build did not fail and no test failed, so `
       + `there is nothing to fix in the change. ${again} Do not push a new commit for this.`;
   }
   // An errored run is a failure with no test to point at: the build or the
@@ -1715,12 +1724,17 @@ function changeNextStep(session, checks, live, kind = 'agent_mayor') {
         : `Nothing to fix yet; call get_change again for the new verdict.${paused}`);
   }
   if (unitSuiteRow.missingUnitError(session)) {
+    const again = erroredRunWillRetry(session)
+      ? 'Homeroom runs the checks again on its own; call get_change again for the new verdict.'
+      : 'recheck_change re-runs the checks.';
+    // Browser checks that failed in the same run are failures all the same.
+    if (checks.failing && checks.failing.length) {
+      return `The repo unit suite (npm test) asked for again on ${ref} did not run, and `
+        + `${checks.failingTotal || checks.failing.length} check(s) failed in that run (named in checks.failing). `
+        + `${again} ${words.fixTests}${paused}`;
+    }
     return `The repo unit suite (npm test) asked for again on ${ref} did not run, so there is no verdict yet; the `
-      + 'build did not fail and no test failed. '
-      + (erroredRunWillRetry(session)
-        ? 'Homeroom runs the checks again on its own; call get_change again for the new verdict.'
-        : 'recheck_change re-runs the checks.')
-      + paused;
+      + `build did not fail and no test failed. ${again}${paused}`;
   }
   if (unitSuiteRow.notRunError(session)) {
     return `The repo unit suite (npm test) could not run on ${ref}, so there is no verdict yet, and no test failed. `

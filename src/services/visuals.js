@@ -3697,8 +3697,13 @@ async function settleCaptureRun(config, pool, run) {
   if (!unitOutcome) {
     const owed = await freshRunOwedFor(pool, session.id, commitHash);
     if (owed !== false) {
-      const applies = await unitSuite.suiteApplies({ repoOwner, repoName, ref: commitHash });
-      if (applies === false && !(await require('./unit-suite-reuse').hasAnyPass(pool, { appId: app.id, commitSha: commitHash }))) {
+      // The suite turned off (or GitHub off) answers the request as it
+      // always did: nothing runs, whatever the commit's history. The pass
+      // evidence below is about the repository's content only.
+      const switchedOff = !unitSuite.isEnabled() || !github.isEnabled();
+      const applies = switchedOff ? false : await unitSuite.suiteApplies({ repoOwner, repoName, ref: commitHash });
+      if (switchedOff
+          || (applies === false && !(await require('./unit-suite-reuse').hasAnyPass(pool, { appId: app.id, commitSha: commitHash })))) {
         checksResult.unitSuiteAbsent = true;
       } else if (owed === true && checksResult.state !== 'error') {
         checksResult.state = 'error';

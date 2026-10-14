@@ -1079,3 +1079,55 @@ test('the connector explains a missing-unit error as a retry, not a broken build
   assert.match(tools.shapeProposal(broken, ORIGIN).nextStep, /ERRORED before any test reported/);
   assert.match(tools.changeNextStep(broken, tools.shapeChecks(broken), {}, 'external'), /preview build itself broke/);
 });
+
+test('missing-unit advice acknowledges browser checks that failed in the same run (both shapers)', () => {
+  const tools = require('../src/services/mcp-tools');
+  const row = {
+    id: 8465, app_slug: 'usernode-2d5619', status: 'promoted', pr_number: 41, branch_name: 'usernode/s8465',
+    check_state: 'error', check_error_detail: unitSuiteRow.MISSING_UNIT_DETAIL, check_error_platform: true,
+    consecutive_check_failures: 1, check_next_retry_at: new Date(Date.now() + 120000).toISOString(),
+    first_check_failure_at: new Date().toISOString(),
+    test_results: [
+      { name: 'Board loads', path: '/', status: 'pass', consoleErrors: [] },
+      { name: 'Vote button', path: '/', status: 'fail', failureReason: 'Expected Vote, got nothing', consoleErrors: [] },
+    ],
+  };
+  const shaped = tools.shapeProposal(row, 'https://social-vibecoding.usernodelabs.org');
+  assert.match(shaped.nextStep, /asked to run the repo unit suite \(npm test\) again, and it did not run/);
+  assert.match(shaped.nextStep, /1 check\(s\) did fail in that run: `failures` names them/);
+  assert.match(shaped.nextStep, /Fix those checks/);
+  assert.doesNotMatch(shaped.nextStep, /no test failed|nothing to fix|Do not push a new commit/);
+  assert.equal(shaped.checks.failures[0].name.includes('Vote button'), true, 'and the failure is listed');
+  const change = tools.changeNextStep(row, tools.shapeChecks(row), {}, 'external');
+  assert.match(change, /did not run, and 1 check\(s\) failed in that run \(named in checks\.failing\)/);
+  assert.doesNotMatch(change, /no test failed/);
+});
+
+test('postgres, real settlement: with the unit suite switched off, a manual request is answered even for a commit with a recorded pass', async (t) => {
+  const pool = await fullSchemaDb(t);
+  if (!pool) return;
+  const { app, session } = await settleFixture(pool, 'switched-off-test');
+  t.mock.method(github, 'isEnabled', () => true);
+  const key = reuse.keyFor(config, { ...keyArgs, appId: app.id, repoOwner: 'o', repoName: 'r' });
+  await reuse.recordPass(pool, key, { sessionId: session.id, runId: 'run-old' });
+  const settle = () => visuals.settleCaptureRun({}, pool, {
+    session, app, commitHash: SHA, trigger: 'manual-recheck', media: false, capturePaths: ['/'], pathDefaulted: true,
+    visualScenarios: [], prodRunning: false, stagingOrigin: '', targets: [], testsCount: 1, stdout: frameFor(0),
+    unitOutcome: null,
+  });
+  const read = async () => (await pool.query(
+    'SELECT check_state, unit_suite_fresh_sha FROM chat_sessions WHERE id = $1', [session.id])).rows[0];
+  process.env.UNIT_SUITE_CHECK_ENABLED = '0';
+  try {
+    await visuals.setChecksPending(pool, session.id, SHA, 'testing', 'manual-recheck');
+    await settle();
+  } finally { delete process.env.UNIT_SUITE_CHECK_ENABLED; }
+  assert.deepEqual(Object.values(await read()), ['passing', null], 'switched off: nothing to run, the request is answered');
+  // Switched on, the same recorded pass still keeps an unreadable
+  // repository from being taken as having no suite.
+  t.mock.method(github, 'getFileContent', async () => null);
+  t.mock.method(github, 'listRepoFiles', async () => ({ files: [], truncated: false }));
+  await visuals.setChecksPending(pool, session.id, SHA, 'testing', 'manual-recheck');
+  await settle();
+  assert.deepEqual(Object.values(await read()), ['error', SHA]);
+});
