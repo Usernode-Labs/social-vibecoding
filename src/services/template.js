@@ -997,11 +997,14 @@ value = "build"
         {
           ...(about ? { description: about } : {}),
           // A starter's tile icon, else the first session card's, and the
-          // checks a starter's first proposal runs.
+          // checks a starter's first proposal runs. The empty starter ships
+          // an empty `tests` array, so the key its checks go under is there
+          // from the first commit: App bench run 191's builds wrote theirs
+          // under `checks`, which the platform never reads.
           ...(icon ? { icon } : {}),
           secrets: [],
           ...(governanceBlock ? { governance: governanceBlock } : {}),
-          ...(starter ? { tests: starter.tests } : {}),
+          tests: starter ? starter.tests : [],
         },
         null,
         2,
