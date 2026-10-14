@@ -95,19 +95,24 @@ to the new Pods.
 
 ## Chart
 
-`platform.conductor.enabled` (off by default) adds `<fullname>-conductor`,
+`platform.conductor.enabled` (on by default) adds `<fullname>-conductor`,
 the platform's own Pod run as the conductor, and runs the platform Deployment
-as web. The conductor's Pods keep the platform's `component` label, so the
-network policies and the PodDisruptionBudget that admit the platform admit
-them, in the chart and outside it; the Service selects
-`social.usernode.io/serves-requests: "true"`, which only the serving Pods
-carry, and so does the PodDisruptionBudget (a conductor evicted drains as a
-release does). That label ships with this change; switch the split on in a
-later release, or the Service drops the old Pods before the new ones are
-Ready. The platform Deployment's selector (immutable) also matches the
-conductor's Pods: ownership keeps them apart, but `kubectl logs
-deploy/<fullname>` may pick a conductor Pod; select by
-`social.usernode.io/process-role`.
+as web; off, one Deployment does both, as before. The conductor's Pods keep
+the platform's `component` label, so the network policies that admit the
+platform admit them, in the chart and outside it; the Service and the
+PodDisruptionBudget select `social.usernode.io/serves-requests: "true"`, which
+only the serving Pods carry. The Service is in Argo CD sync wave 1: its
+selector changes only after the Deployments are healthy, so the release that
+first requires the label never leaves it with no labelled Pod Ready. (Applied
+without Argo, all at once, that first release would.) The platform
+Deployment's selector (immutable) also matches the conductor's Pods:
+ownership keeps them apart, but `kubectl logs deploy/<fullname>` may pick a
+conductor Pod; select by `social.usernode.io/process-role`.
+
+The first release with the split replaces Pods of a build from before it.
+Their registry counts only an 'all' as a successor, so they find none and
+hand over with the minute's cutover (docs/plans/draining-releases.md), once;
+every release after that drains.
 
 ## Still per process
 

@@ -286,3 +286,46 @@ test('a web process never stands for leader, and only a serving one says its mer
   // The sweeps that read busy before acting read it for every process.
   assert.equal((serverJs.match(/worker\.isInFlight\(session\.id\) \|\| activeWorkersSvc\.isSessionBusy\(session\.id\)/g) || []).length, 2);
 });
+
+// ── The chart ─────────────────────────────────────────────────────────
+
+const { spawnSync } = require('node:child_process');
+const helmAvailable = spawnSync('helm', ['version', '--short']).status === 0;
+
+function render(extra = []) {
+  const args = ['template', 'test', 'deploy/helm/social-vibecoding-platform',
+    '--set', 'enabled=true', '--set', 'networkPolicy.appNamespace=social-apps',
+    '--set-string', `release.sourceRevision=${'a'.repeat(40)}`, ...extra];
+  for (const field of ['image', 'workerImage', 'captureImage']) {
+    args.push('--set-string', `platform.${field}.digest=sha256:${'b'.repeat(64)}`);
+  }
+  const out = spawnSync('helm', args, { encoding: 'utf8', cwd: path.join(__dirname, '..') });
+  assert.equal(out.status, 0, out.stderr);
+  const { parseAllDocuments } = require('yaml');
+  return parseAllDocuments(out.stdout).map((d) => d.toJSON()).filter(Boolean);
+}
+
+test('the chart runs a conductor beside the web Pods by default, and the Service follows the Deployments', { skip: !helmAvailable }, () => {
+  const objects = render();
+  const deployments = objects.filter((o) => o.kind === 'Deployment');
+  const role = (d) => d.spec.template.spec.containers[0].env.find((e) => e.name === 'PROCESS_ROLE')?.value;
+  assert.deepEqual(deployments.map((d) => [d.metadata.name, role(d)]),
+    [['social-vibecoding', 'web'], ['social-vibecoding-conductor', 'conductor']]);
+  const [web, conductor] = deployments;
+  assert.equal(web.spec.template.metadata.labels['social.usernode.io/serves-requests'], 'true');
+  assert.equal(conductor.spec.template.metadata.labels['social.usernode.io/serves-requests'], undefined, 'no requests for the conductor');
+  assert.equal(conductor.spec.template.metadata.labels['app.kubernetes.io/component'], 'platform', 'the platform\'s network identity');
+  const service = objects.find((o) => o.kind === 'Service' && o.metadata.name === 'social-vibecoding');
+  assert.equal(service.spec.selector['social.usernode.io/serves-requests'], 'true');
+  assert.equal(service.metadata.annotations['argocd.argoproj.io/sync-wave'], '1',
+    'after the Deployments are healthy, so a selector requiring the label never finds none Ready');
+  const pdb = objects.find((o) => o.kind === 'PodDisruptionBudget' && o.metadata.name.endsWith('-platform'));
+  assert.equal(pdb.spec.selector.matchLabels['social.usernode.io/serves-requests'], 'true');
+
+  // Off: one Deployment that serves and leads, and a selector without the label.
+  const off = render(['--set', 'platform.conductor.enabled=false']);
+  const only = off.filter((o) => o.kind === 'Deployment');
+  assert.deepEqual(only.map((d) => [d.metadata.name, role(d)]), [['social-vibecoding', undefined]]);
+  assert.equal(off.find((o) => o.kind === 'Service' && o.metadata.name === 'social-vibecoding')
+    .spec.selector['social.usernode.io/serves-requests'], undefined);
+});

@@ -6,6 +6,12 @@ metadata:
   labels:
     {{- include "social-vibecoding-platform.labels" . | nindent 4 }}
     app.kubernetes.io/component: platform
+  annotations:
+    # After the Deployments (wave 0) are healthy: a selector that starts to
+    # require serves-requests (the conductor switched on, the release that
+    # first labels the serving Pods) is applied only once the Pods carrying
+    # it are rolled out and Ready, never while only the old ones serve.
+    argocd.argoproj.io/sync-wave: "1"
 spec:
   type: ClusterIP
   selector:
