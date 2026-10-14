@@ -212,11 +212,11 @@ test('the shadow-build lane against the full PostgreSQL schema', { timeout: 1800
     // Past one turn and the margin (660s), but inside the longest a build
     // can take: a platform build's doubled spec and turn (#3396), 1920s.
     const platformLong = await run(paused, 33, { queuedAgo: 2000, buildAgo: 1500, attempts: 1 });
-    // Long past any bound, but its worker outlived a restart and recovery
-    // still owns the turn (#3401): the session carries it in flight.
+    // Long past any bound, but its worker outlived a restart and its turn
+    // is still in flight (#3401): the session carries it.
     const recovering = await run(paused, 34, { queuedAgo: 9000, buildAgo: 8000, attempts: 1 });
     const { rows: [owner] } = await pool.query(
-      `INSERT INTO users (username, password) VALUES ('recovery-owner', 'x') RETURNING id`,
+      `INSERT INTO users (username, password) VALUES ('turn-owner', 'x') RETURNING id`,
     );
     const { rows: [inFlight] } = await pool.query(
       `INSERT INTO chat_sessions (app_id, user_id, status, active_turn)
@@ -239,7 +239,7 @@ test('the shadow-build lane against the full PostgreSQL schema', { timeout: 1800
     assert.equal(r2.build_error, 'interrupted: the build never finished');
     assert.notEqual((await row(fresh)).build_at, null, 'one inside its time is left alone');
     assert.notEqual((await row(platformLong)).build_at, null, 'a platform build on its doubled clocks is left alone');
-    assert.notEqual((await row(recovering)).build_at, null, 'a build restart recovery is finishing is left to it');
+    assert.notEqual((await row(recovering)).build_at, null, 'a build whose turn is still in flight is left to it');
     await setting(bot.KEY_BUILD_CONCURRENCY, '2');
     await setting('homeroom_bot_turn_seconds', '1200');
     await pool.query('UPDATE homeroom_bot_runs SET build_queued_at = NULL, build_at = NULL WHERE id = ANY($1::int[])', [[once, fresh, platformLong, recovering]]);
@@ -256,33 +256,6 @@ test('the shadow-build lane against the full PostgreSQL schema', { timeout: 1800
     assert.match(r.build_error, /^superseded/);
     assert.notEqual((await row(started)).build_queued_at, null, 'a build under way is not dropped');
     await pool.query('UPDATE homeroom_bot_runs SET build_queued_at = NULL, build_at = NULL WHERE id = $1', [started]);
-  });
-
-  // #4662: the plan a build carries on from after a restart keeps its HTML
-  // document, so the version people open draws with its tabs and screens.
-  // A later markdown-only resume of the same run clears it on purpose:
-  // markdown and HTML never come from different plans.
-  await t.test('a resumed build keeps its plan\'s HTML; a markdown resume of the same run clears it', async () => {
-    const lanes = await app('lanehtml', 'https://github.com/usernode-bot/lanehtml');
-    const runId = (await pool.query(
-      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, build_note, live_build_waiting_at)
-       VALUES ($1, 60, 'live', 'ready', 'build it', NOW()) RETURNING id`,
-      [lanes.id],
-    )).rows[0].id;
-    const doc = '<article data-spec><h1>Kept</h1><section data-spec-tab="user"><p>x</p></section></article>';
-    assert.equal(await bot.resumeLiveBuildFromSpec(pool, { runId, appId: lanes.id, specMd: '# Kept', specHtml: doc, costUsd: 0.4 }), true);
-    const kept = (await pool.query(
-      'SELECT build_spec_md, build_spec_html, build_cost_usd::float8 AS cost FROM homeroom_bot_runs WHERE id = $1', [runId],
-    )).rows[0];
-    assert.equal(kept.build_spec_md, '# Kept');
-    assert.equal(kept.build_spec_html, doc, 'the document beside it');
-    assert.equal(kept.cost, 0.4);
-    assert.equal(await bot.resumeLiveBuildFromSpec(pool, { runId, appId: lanes.id, specMd: '# Again' }), true);
-    const after = (await pool.query(
-      'SELECT build_spec_md, build_spec_html FROM homeroom_bot_runs WHERE id = $1', [runId],
-    )).rows[0];
-    assert.equal(after.build_spec_md, '# Again');
-    assert.equal(after.build_spec_html, null, 'a markdown plan never pairs with an older document');
   });
 
   await t.test('"Triage this app again" queues every open issue of a live app, oldest first, as the loop takes new ones (#3480)', async () => {

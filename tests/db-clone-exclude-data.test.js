@@ -61,8 +61,10 @@ function loadDbManager({ discovery = [], truncateDiscovery = [], columnDiscovery
     const sql = dashC >= 0 ? args[dashC + 1] : '';
     calls.push({ cmd, args, sql, env: opts.env || {} });
 
-    // The exclusion discovery: the only query with the recursive closure.
-    if (/WITH RECURSIVE/.test(sql) && /obj_description/.test(sql)) {
+    // The exclusion discovery: the recursive closure over foreign keys.
+    // (truncatePrivateTables' discovery also recurses, over inheritance, and
+    // is the one that lists FOREIGN descendants.)
+    if (/WITH RECURSIVE/.test(sql) && /obj_description/.test(sql) && !/'FOREIGN '/.test(sql)) {
       if (discovery instanceof Error) return Promise.reject(discovery);
       return Promise.resolve({ stdout: discovery.join('\n') + '\n', stderr: '' });
     }

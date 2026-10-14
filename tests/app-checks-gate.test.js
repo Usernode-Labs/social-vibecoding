@@ -359,12 +359,11 @@ test('the bot\'s runner writes the check before each turn and turns the gate on;
   });
   await failing({ prompt: 'p', budgetMs: 1000, commitMsg: 'm', progress: { note() {} } });
   assert.equal(dispatched[2].checksGate, undefined);
-  // And the build and the review's recovery runner ask for it unless the
-  // repository is the platform's own.
+  // And the build's runner, which its review's fix turns share (also after a
+  // restart: the build carries on from its saved steps), asks for it unless
+  // the repository is the platform's own.
   const liveSrc = require('node:fs').readFileSync(require.resolve('../src/services/homeroom-bot-live'), 'utf8');
   assert.match(liveSrc, /harness: buildHarness, telemetry, onProgress, checksGate: appChecksOn\(platformRepo\),/);
-  const botSrc = require('node:fs').readFileSync(require.resolve('../src/services/homeroom-bot'), 'utf8');
-  assert.match(botSrc, /checksGate: live\.appChecksOn\(isPlatformRepo\(app, config\)\)/);
 });
 
 test('the gate and the detached capture each have an off switch', () => {

@@ -467,6 +467,7 @@ function load() {
       return configured.split(',').map((s) => s.trim()).filter(Boolean);
     })(),
     openrouterApiBase,
+    dictationModel: process.env.DICTATION_MODEL || 'openai/whisper-large-v3-turbo',
     // Per-model host shortlists for coding turns (openRouterProviderShortlists
     // above): { model: 'slug,slug' | 'none' }, empty for the listeners' own.
     openrouterProviderShortlists: openRouterProviderShortlists(process.env.OPENROUTER_PROVIDER_SHORTLISTS),
@@ -808,6 +809,11 @@ function load() {
     // announcements) to the merge-followups machine, and a change reads
     // live only once production runs it. Off by default.
     wfMergeFollowupsEnabled: ['1', 'true'].includes(process.env.WF_MERGE_FOLLOWUPS_ENABLED),
+    // With WF_APP_DELIVERY_ENABLED on (and WF_MERGE_FOLLOWUPS_ENABLED, which
+    // it needs), every production deploy of an app is asked of the
+    // app-delivery machine: one at a time per app, recorded, and the
+    // "deploying" state is durable. Off by default.
+    wfAppDeliveryEnabled: ['1', 'true'].includes(process.env.WF_APP_DELIVERY_ENABLED),
     // Its own pool, so pipeline slots and the outcome listener never take
     // request connections, and how many slots each process runs. A staging
     // preview shares one Postgres server with the fleet: one slot, and a

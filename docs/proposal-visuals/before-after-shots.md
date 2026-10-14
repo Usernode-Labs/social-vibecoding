@@ -393,9 +393,14 @@ and that the statement may still be running, where it used to end at the
 command with nothing said (`db-manager.psqlFailure`). A password in the
 statement is masked.
 
-A run that a platform restart interrupted is retried automatically, up to
-twice per commit: a sweep every 30 seconds starts the same commit again once
-the run has been marked interrupted for 30 seconds. Until then the card says
+A run that a platform restart interrupted is retried automatically on the
+same commit (`shots-gc.retryInterrupted`): one a graceful shutdown cut off
+(a rollout, `interruptedBy: 'shutdown'`) up to 24 times, so a burst of
+rollouts cannot spend the retries, and one nothing explained (a crash, a
+lost heartbeat) up to twice, since the run itself may be what takes the
+process down. A sweep every 30 seconds starts the same commit again once the
+run has been marked interrupted for 30 seconds, and each further retry waits
+twice as long, up to five minutes. Until then the card says
 "Trying the shots again" rather than asking anyone to retry, and the view
 carries `automaticRetryPending: true`. A person can take the shots again,
 stop a running set, or (as an app manager) waive them.
@@ -1161,6 +1166,15 @@ and reason, and a bounded trace:
 - `trace.agentActivity.events` of kind `demo_data` say, per persona and
   side, how each copy answered the bootstrap's request for its first-view
   demo data (`outcome`, `httpStatus`).
+
+## Evals on merged proposals
+
+A full platform admin's connector can try the shots agent with another
+model, prompt or time budget on proposals that have already merged. Each
+eval reshoots those proposals with the live agent and with each
+configuration, side by side, on the platform and billed to the platform.
+Blind pairs and per-change marks compare them.
+[shots-evals.md](shots-evals.md) describes it.
 
 ## Dry run on local builds
 

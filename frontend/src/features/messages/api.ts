@@ -836,6 +836,28 @@ export async function decideBotAction(actionId: number, choice: string, answers?
   return { label: text(pick(data, 'label')) || null };
 }
 
+/**
+ * Run six: whether the signed-in person is told when their first version of
+ * `slug` is ready and live (on from Make it), and turning it on or off.
+ * Null when it is not their first version.
+ */
+export async function getFirstVersionNotify(slug: string): Promise<boolean | null> {
+  try {
+    const data = record(await request<unknown>(`/api/conversations/homeroom-bot/first-versions/${encodeURIComponent(slug)}/notify`));
+    return bool(pick(data, 'on'), true);
+  } catch (err) {
+    if (err instanceof MessagesApiError && err.status === 404) return null;
+    throw err;
+  }
+}
+
+export async function setFirstVersionNotify(slug: string, on: boolean): Promise<boolean> {
+  const data = record(await request<unknown>(`/api/conversations/homeroom-bot/first-versions/${encodeURIComponent(slug)}/notify`, {
+    method: 'PUT', body: JSON.stringify({ on }),
+  }));
+  return bool(pick(data, 'on'), on);
+}
+
 /** B8: the signed-in person's chat with Homeroom bot, made the first time. */
 export async function openBotConversation(): Promise<number | null> {
   const data = record(await request<unknown>('/api/conversations/homeroom-bot', { method: 'POST', body: '{}' }));

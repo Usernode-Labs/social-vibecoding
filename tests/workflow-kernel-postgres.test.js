@@ -628,9 +628,13 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
     // One finishes its step whatever the signal says (a deploy); one gives up on it.
     handlers['k7s-done'] = async () => { started.add('done'); await gate; return { finished: true }; };
     handlers['k7s-quit'] = async (ctx) => {
-      if (ctx.attempt > 1) return { resumed: true };
+      if (ctx.attempt > 1) return { resumed: ctx.resumeFrom };
       started.add('quit');
-      await new Promise((resolve, reject) => ctx.signal.addEventListener('abort', () => reject(ctx.signal.reason), { once: true }));
+      await new Promise((resolve) => ctx.signal.addEventListener('abort', resolve, { once: true }));
+      // The step it was in had done its part when the stop came: kept, under
+      // the lease this process still holds, before it gives up.
+      await ctx.checkpoint({ step: 'done before the stop' });
+      throw ctx.signal.reason;
     };
     await route('k7s', 'Work', { keys: ['k7s-done', 'k7s-quit'], workKey: 'k7s-done' });
     await rt.drain();
@@ -643,13 +647,74 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
     const items = new Map((await pool.query(`SELECT work_key, status FROM wf_work WHERE work_key LIKE 'k7s-%'`)).rows.map((w) => [w.work_key, w.status]));
     assert.equal(items.get('k7s-done'), 'reported', 'its result is kept, not run again after the lease');
     assert.equal(items.get('k7s-quit'), 'running', 'nothing reported; the next claim resumes it');
+    const { rows: [kept] } = await pool.query(`SELECT checkpoint FROM wf_work WHERE work_key = 'k7s-quit'`);
+    assert.deepEqual(kept.checkpoint, { step: 'done before the stop' }, 'a stopping process still checkpoints under its lease');
+    // The stopping process gave its lease up: the next process need not wait it out.
+    const { rows: [quit] } = await pool.query(`SELECT lease_until <= now() AS given_up FROM wf_work WHERE work_key = 'k7s-quit'`);
+    assert.equal(quit.given_up, true, 'a stopped item\'s lease is given up at once');
     await rt.drain();
     assert.deepEqual((await inst('k7s')).data.results.map((x) => x.slice(0, 2)), [['ok', 'k7s-done']]);
-    // Its lease lapses and the next claim finishes it, so no later test meets it.
-    await sleep(700);
+    // The next claim finishes it, so no later test meets it.
     await rt.runServices();
     await rt.drain();
     assert.equal((await pool.query(`SELECT status FROM wf_work WHERE work_key = 'k7s-quit'`)).rows[0].status, 'settled');
+  });
+
+  await t.test('K7 a resumable item\'s lost attempts are not its tries; errors are, and lost ones are bounded', async () => {
+    const resumable = { ...echo, resumable: true, maxLostAttempts: 3 };
+    const gone = (ctx) => new Promise((resolve, reject) => {
+      if (ctx.signal.aborted) { reject(ctx.signal.reason); return; }
+      ctx.signal.addEventListener('abort', () => reject(ctx.signal.reason), { once: true });
+    });
+    const r = make({ services: { 'kt.echo': resumable } });
+    await create('k7r');
+    const seen = [];
+    handlers['k7r-w'] = async (ctx) => {
+      seen.push({ attempt: ctx.attempt, lost: ctx.lostAttempts, resumeFrom: ctx.resumeFrom });
+      await ctx.checkpoint({ step: ctx.attempt });
+      // Its process goes (a restart): the lease lapses and the handler gives up on its signal.
+      if (ctx.attempt <= 3) await gone(ctx);
+      return { finished: ctx.attempt };
+    };
+    await route('k7r', 'Work', { workKey: 'k7r-w' });
+    await rt.drain();
+    for (let i = 0; i < 3; i++) {
+      // As the service loop does: claim again until a slot is free and the item is due.
+      while (seen.length < i + 1) { void r.runServices(); await sleep(50); }
+      await pool.query(`UPDATE wf_work SET lease_until = now() - interval '1 second' WHERE work_key = 'k7r-w'`);
+    }
+    // Three lost attempts and maxAttempts 2: a plain handler would be exhausted by now.
+    while ((await pool.query(`SELECT status FROM wf_work WHERE work_key = 'k7r-w'`)).rows[0].status === 'running') {
+      await r.runServices();
+      await sleep(50);
+    }
+    let item = (await pool.query(`SELECT * FROM wf_work WHERE work_key = 'k7r-w'`)).rows[0];
+    assert.equal(item.status, 'reported');
+    assert.equal(item.attempt_count, 4);
+    assert.equal(item.lost_attempts, 3);
+    assert.deepEqual(seen.map((x) => x.lost), [0, 1, 2, 3]);
+    assert.deepEqual(seen.map((x) => x.resumeFrom), [null, { step: 1 }, { step: 2 }, { step: 3 }]);
+    await rt.drain();
+    assert.deepEqual((await inst('k7r')).data.results.map((x) => x.slice(0, 2)), [['ok', 'k7r-w']]);
+
+    // A handler that keeps taking its process down is still bounded.
+    await create('k7x');
+    let tries = 0;
+    handlers['k7x-w'] = async (ctx) => { tries += 1; await gone(ctx); };
+    await route('k7x', 'Work', { workKey: 'k7x-w' });
+    await rt.drain();
+    for (let i = 0; i < 4; i++) {
+      while (tries < i + 1) { void r.runServices(); await sleep(50); }
+      await pool.query(`UPDATE wf_work SET lease_until = now() - interval '1 second' WHERE work_key = 'k7x-w'`);
+    }
+    while ((await pool.query(`SELECT status FROM wf_work WHERE work_key = 'k7x-w'`)).rows[0].status === 'running') {
+      await r.runServices();
+      await sleep(50);
+    }
+    await rt.drain();
+    item = (await pool.query(`SELECT * FROM wf_work WHERE work_key = 'k7x-w'`)).rows[0];
+    assert.equal(item.status, 'settled');
+    assert.deepEqual((await inst('k7x')).data.results.map((x) => x.slice(0, 2)), [['exhausted', 'k7x-w']]);
   });
 
   await t.test('K7 a work item that continues an earlier one starts from its checkpoint', async () => {

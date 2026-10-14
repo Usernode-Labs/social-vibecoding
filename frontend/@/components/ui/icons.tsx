@@ -52,6 +52,12 @@ import * as React from 'react';
  * enumerate them.
  */
 
+// Heroicons outline microphone, sharing the shell glyphs' grid and stroke.
+export const MicrophoneIcon = stroked("MicrophoneIcon", [
+  'M12 18.75a6 6 0 0 0 6-6v-1.5m-12 0v1.5a6 6 0 0 0 6 6Zm0 0v3m-3 0h6',
+  'M12 15.75a3 3 0 0 0 3-3v-7.5a3 3 0 0 0-6 0v7.5a3 3 0 0 0 3 3Z',
+]);
+
 export type IconProps = Omit<
   React.SVGProps<SVGSVGElement>,
   'children' | 'viewBox' | 'fill' | 'stroke' | 'd'

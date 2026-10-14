@@ -78,6 +78,7 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   const scope = scopeKey(conversationId, threadRootId);
   const inThread = !!threadRootId;
   const [value, setValue] = useState('');
+  const [dictating, setDictating] = useState(false);
   const [attachments, setAttachments] = useState<MessageAttachment[]>([]);
   const [uploading, setUploading] = useState(0);
   const [object, setObject] = useState<StagedObject | null>(null);
@@ -495,7 +496,7 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   // Send, never scrolls. Every other focus in this feature is
   // `preventScroll` for the same reason.
   function submit() {
-    if (uploading || (!value.trim() && !attachments.length && !object)) return;
+    if (dictating || uploading || (!value.trim() && !attachments.length && !object)) return;
     // #4389: the message goes, so listening stops with it — nothing sends
     // automatically from a live dictation either way.
     dictation.stop();
@@ -604,8 +605,8 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
           ) : null}
         </div>
         <textarea ref={inputRef} value={value} onChange={onComposerChange} onPaste={(event) => { const files = [...event.clipboardData.files]; if (files.length) { event.preventDefault(); void addFiles(files); } }} onKeyDown={(event) => { if (onEmojiKeyDown(event)) return; if (suggestionKeys(event)) return; if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); submit(); } else if (event.key === 'Escape' && reply) setReply(scope, null); }} onBlur={() => notifyTyping(false)} rows={1} maxLength={8000} placeholder={inThread ? threadPlaceholder : (prompt || t('messages:composer.placeholder'))} aria-label={inThread ? t('messages:composer.labelThread') : t('messages:composer.label')} aria-autocomplete="list" aria-controls={suggestions.length ? listId : undefined} aria-activedescendant={activeOption >= 0 ? optionId(activeOption) : undefined} className="messages-composer-input" />
-        {botChat && dictation.supported ? <SpeakButton listening={dictation.listening} onToggle={toggleDictation} /> : null}
-        <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={submit} disabled={!!uploading || (!value.trim() && !attachments.length && !object)} className="messages-send" aria-label={t('messages:composer.send')}><ArrowUpIcon aria-hidden="true" /></button>
+        <SpeakButton scope={`messages:${scope}`} getText={() => inputRef.current?.value || ''} onText={updateValue} maxLength={8000} onBusyChange={setDictating} disabled={!boxShown} />
+        <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={submit} disabled={dictating || !!uploading || (!value.trim() && !attachments.length && !object)} className="messages-send" aria-label={t('messages:composer.send')}><ArrowUpIcon aria-hidden="true" /></button>
       </div>
       {error ? <p role="alert" className="mt-1 text-xs text-red-700 dark:text-red-400">{error}</p> : null}
       {/* #4389: dictation's own troubles, in the same line the composer's

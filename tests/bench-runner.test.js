@@ -6,7 +6,10 @@
 // trial's own `bench/` branch. Every stage is run here against stubbed
 // workers with every side-effecting entry point spied on, and none of them
 // may be called. Also: the stages rebuild the real prompts from the
-// snapshot, start at its base commit, and classify how a turn ended.
+// snapshot, start at its base commit, and classify how a turn ended; and,
+// run on durable steps as a trial is (services/build-runs.js), a stage a
+// restart caught goes on from the last step it saved: a turn under way is
+// followed, never dispatched again, and the branch is never cut again.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -20,6 +23,7 @@ const followup = require('../src/services/homeroom-bot-followup');
 const dm = require('../src/services/homeroom-bot-dm');
 const githubModule = require('../src/services/github');
 const snapshots = require('../src/services/homeroom-bot-snapshots');
+const durableSteps = require('../src/services/durable-steps');
 
 const BASE = 'b'.repeat(40);
 const APP = { id: 9, slug: 'todo', name: 'Todo', repo_url: 'https://github.com/o/todo', self_hosted: false };
@@ -58,13 +62,19 @@ function fakeGithub() {
   };
 }
 
-function harness({ text = '', result = null, sessionsOverride = null } = {}) {
+// `activeTurn` is a turn record a restart left on the trial's session,
+// which a later attempt follows.
+function harness({ text = '', result = null, sessionsOverride = null, activeTurn = null } = {}) {
   const calls = { prompts: [], modes: [], models: [], queries: [], ensured: [] };
   const pool = {
     async query(sql, params) {
       const s = String(sql);
       calls.queries.push({ s, params });
       if (/INSERT INTO chat_sessions/.test(s)) return { rows: [{ id: 7001, branch_name: params[2] ?? null, agent_model: params[4] }] };
+      // A session an earlier attempt opened, read back.
+      if (/SELECT \* FROM chat_sessions WHERE id = \$1/.test(s)) return { rows: [{ id: Number(params[0]), branch_name: 'bench/r3-t44', agent_model: null }] };
+      if (/SELECT active_turn FROM chat_sessions/.test(s)) return { rows: activeTurn ? [{ active_turn: activeTurn }] : [] };
+      if (/'\{restarts\}'/.test(s)) return { rows: activeTurn ? [{ restarts: 1 }] : [] };
       return { rows: [], rowCount: 1 };
     },
   };
@@ -122,6 +132,17 @@ function ctx(h, stage, over = {}) {
     title: 'Homeroom benchmark: run 3, trial 44', ...over,
   };
 }
+
+// A trial's stage on durable steps, as the workflow kernel runs it
+// (services/build-runs.js): every state it saves is kept here, so a later
+// attempt can resume from any of them, as the next leader does after a
+// restart that came just after that step was saved.
+function keeping({ resumeFrom = null, signal = null } = {}) {
+  const saves = [];
+  const steps = durableSteps.durable({ resumeFrom, signal, lostAttempts: resumeFrom ? 1 : 0, checkpoint: async (state) => { saves.push(state); } });
+  return { steps, saves };
+}
+const onSteps = (h, steps) => ({ deps: { ...h.deps, durable: steps } });
 
 test('the GitHub a trial gets: reads, and its own bench/ branch, and nothing else', async () => {
   const gh = fakeGithub();
@@ -201,12 +222,13 @@ test('a build trial: built without proposing, on its bench branch at the base, i
   }));
   assert.equal(out.status, 'ok');
   assert.equal(args.propose, false, 'never proposed');
-  assert.equal(typeof args.onSpec, 'function', 'the spec is kept on the trial, for a restart to go on from, and posted nowhere');
+  assert.equal(args.onSpec, null, 'the spec is posted nowhere: it is the build\'s own step');
   assert.equal(args.deps.votesRouter, undefined, 'no route to promote with');
   assert.equal(args.telemetry, 'homeroom_bench');
   assert.equal(out.build_branch, 'bench/r3-t44');
   assert.equal(out.build_commits, 2);
-  assert.deepEqual(h.gh.calls.pinned, [{ branch: 'bench/r3-t44', sha: BASE }]);
+  assert.deepEqual(h.gh.calls.deleted, ['bench/r3-t44'], 'an earlier claim\'s branch of the same trial goes first');
+  assert.deepEqual(h.gh.calls.pinned, [{ branch: 'bench/r3-t44', sha: BASE }], 'then it is cut at the base');
   assert.match(out.diff, /diff --git a\/app\.js/);
   assert.deepEqual(out.changed_files.files, [{ filename: 'app.js', status: 'modified' }]);
   assert.equal(out.checks.ran, false, 'hidden checks are not run yet, and the trial says so');
@@ -321,90 +343,113 @@ test('launch validation: models, stages, repeats, the $50 default cap and concur
   assert.equal(lane.validateLaunch({ suiteId: 1, models: [], stages: ['triage'] }).status, 400);
 });
 
-test('after a restart: only a trial\'s last turn is finished from its journal, read as the live stage reads it', async (t) => {
-  const side = spySideEffects(t);
-  const scout = { mode: 'scout' };
-  const build = { mode: 'build' };
-  assert.equal(runner.resumableTurn('triage', scout), true);
-  assert.equal(runner.resumableTurn('followup', build), true);
-  assert.equal(runner.resumableTurn('checks_fix', build), true);
-  assert.equal(runner.resumableTurn('build', build), true, 'the build turn is a build\'s last');
-  assert.equal(runner.resumableTurn('build', scout), true, 'its spec turn is followed and kept, for the build to go on from');
-  assert.equal(runner.resumableTurn('dm', scout), false, 'a DM conversation is several turns');
-  assert.equal(runner.resumableTurn('spec', scout), true, 'a spec task\'s one turn');
-  assert.equal(runner.resumableTurn('spec', build), false);
-  assert.equal(runner.resumableTurn('triage', null), false);
+// ── After a restart ─────────────────────────────────────────────────────
+//
+// A trial runs as a durable build (services/bench/lane.js runTrial): each
+// part of its stage is a durable step, and a restart's next attempt carries
+// it on from the last one it saved. Each test runs a first attempt, keeps
+// every state it saved, and runs the next attempt from one of them.
 
-  // A follow-up that revised: the same reader as the live stage, diffed from its recorded base.
-  const h = harness();
-  const out = await runner.recoverStage({
-    stage: 'followup', snapshot: snapshot('followup'), task: { id: 1, stage: 'followup', reference: {} }, trial: TRIAL,
-    session: { id: 7001, spec_md: '' }, activeTurn: build, repo: REPO, deps: h.deps, baseSha: BASE, branch: 'bench/r3-t44',
-    result: { lastResultText: '```json\n{"action":"revise","reply":"Made it blue","summary":"Blue pins"}\n```', pushOk: true, sha: 'd'.repeat(40), ahead: 1 },
+const REVISED = { lastResultText: '```json\n{"action":"revise","reply":"Made it blue","summary":"Blue pins"}\n```', pushOk: true, sha: 'd'.repeat(40), ahead: 1 };
+
+test('after a restart: a trial\'s turn the restart caught is followed through its journal to its end and read as the live stage reads it; nothing is cut or dispatched again', async (t) => {
+  const side = spySideEffects(t);
+  // The first attempt: its follow-up turn is dispatched, its record written,
+  // and the process stops while the turn runs on in its worker.
+  const first = harness({ result: REVISED });
+  const stop = new AbortController();
+  first.deps.worker.execInWorker = async (id, opts) => {
+    first.calls.modes.push(opts.mode);
+    await opts.onTurnRecord({ turnId: 'turn-1', journal: '/journals/t.log' });
+    stop.abort();
+    return new Promise(() => {});
+  };
+  const a = keeping({ signal: stop.signal });
+  await assert.rejects(runner.runStage(ctx(first, 'followup', onSteps(first, a.steps))), { code: 'steps_stopped' },
+    'a stop is not the trial\'s failure: its next attempt carries it on');
+  const kept = a.saves.at(-1);
+  assert.deepEqual(kept['turn:followup'].record, { turnId: 'turn-1', journal: '/journals/t.log' }, 'the turn\'s record, kept as it was written');
+  assert.deepEqual(first.gh.calls.pinned, [{ branch: 'bench/r3-t44', sha: BASE }], 'the branch was cut once, at the base');
+
+  // The next attempt finds the record on the session and its worker still
+  // running, and follows the turn to where it ended: it revised.
+  const h = harness({ result: REVISED, activeTurn: { turnId: 'turn-1', journal: '/journals/t.log', mode: 'build', phase: 'executing', backend: 'codex_openrouter' } });
+  const followed = [];
+  Object.assign(h.deps.worker, {
+    workerRuntimeName: (id) => `w-${id}`,
+    async getWorkerStatus() { return 'running'; },
+    adoptWarmWorker(id, name) { followed.push(['adopt', name]); },
+    async resumeTurnFromJournal(id, opts) { followed.push(['resume', opts.journal]); return REVISED; },
+    async markTurnTail() { return true; },
+    async finishTurn(id, ids) { followed.push(['finish', ids.turnId]); return true; },
   });
-  assert.equal(out.status, 'ok');
-  assert.equal(out.parsed.action, 'revise');
+  Object.assign(h.deps.agentTurn, {
+    async persistRecoveredAgentThread() {},
+    async settleRecoveredAgentAttempt() { return { estimatedCost: { estimatedCostUsd: 0.07 } }; },
+  });
+  const b = keeping({ resumeFrom: kept });
+  const out = await runner.runStage(ctx(h, 'followup', onSteps(h, b.steps)));
+  assert.equal(out.status, 'ok', out.error);
+  assert.equal(out.parsed.action, 'revise', 'read as the live stage reads it');
   assert.equal(out.parsed.moved, true);
   assert.equal(out.build_sha, 'd'.repeat(40));
-  assert.match(out.diff, /app\.js/);
-  assert.deepEqual(h.gh.calls.pinned, [], 'nothing is cut or pushed by recovery');
-  // A triage turn that ended on the trial's clock is a timeout, as live.
-  const timedOut = await runner.recoverStage({
-    stage: 'triage', snapshot: snapshot('triage'), task: { id: 1, stage: 'triage', reference: {} }, trial: TRIAL,
-    session: { id: 7001 }, activeTurn: scout, repo: REPO, deps: h.deps, baseSha: BASE, timedOut: true, result: { lastResultText: '' },
-  });
-  assert.equal(timedOut.status, 'timeout');
-  assert.equal(await runner.recoverStage({
-    stage: 'dm', snapshot: snapshot('triage'), task: { id: 1, stage: 'dm', reference: {} }, trial: TRIAL,
-    session: { id: 7001 }, activeTurn: scout, repo: REPO, deps: h.deps, result: {},
-  }), null);
-  // A spec task's turn, read as specStage reads draftSpec's answer.
-  const specOf = (over) => runner.recoverStage({
-    stage: 'spec', snapshot: snapshot('build'), task: { id: 1, stage: 'spec', reference: {} }, trial: TRIAL,
-    session: { id: 7001 }, activeTurn: scout, repo: REPO, deps: h.deps, baseSha: BASE, ...over,
-  });
-  const spec = await specOf({ result: { lastResultText: '# The spec\n\nPin them.', exitCode: 0 } });
-  assert.equal(spec.status, 'ok');
-  assert.equal(spec.parsed.spec, '# The spec\n\nPin them.');
-  assert.equal(spec.base_sha, BASE);
-  assert.equal((await specOf({ result: { lastResultText: 'BLOCKED: needs a camera' } })).parsed.blocked, 'needs a camera');
-  assert.equal((await specOf({ result: {}, timedOut: true })).status, 'timeout');
-  assert.equal((await specOf({ result: { lastResultText: '' } })).status, 'model_fail');
-  // A build's spec turn is kept, not finished here (lane.handBackTrial).
-  assert.equal(await runner.recoverStage({
-    stage: 'build', snapshot: snapshot('build'), task: { id: 1, stage: 'build', reference: {} }, trial: TRIAL,
-    session: { id: 7001 }, activeTurn: scout, repo: REPO, deps: h.deps, baseSha: BASE, result: { lastResultText: '# Spec' },
-  }), null);
+  assert.match(out.diff, /app\.js/, 'diffed from the base it was cut at');
+  assert.equal(out.cost_usd, 0.07, 'what the followed turn cost, settled on the ledger');
+  assert.equal(out.session_id, 7001, 'on the session the first attempt opened');
+  assert.deepEqual(h.calls.modes, [], 'never dispatched again');
+  assert.deepEqual(h.calls.ensured, [], 'its worker taken as the restart left it');
+  assert.deepEqual(followed, [['adopt', 'w-7001'], ['resume', '/journals/t.log'], ['finish', 'turn-1']],
+    'followed to its end, its record released only then');
+  assert.deepEqual(h.gh.calls.deleted, [], 'its branch is not cut again');
+  assert.deepEqual(h.gh.calls.pinned, []);
+  assert.equal(b.saves.at(-1)['turn:followup'].phase, 'done');
   assert.deepEqual(side, []);
 });
 
-test('a build trial a restart caught in its spec goes on from the spec it kept: built from it as it is, its branch cut again at the base', async (t) => {
+test('a build trial a restart caught after its spec goes on from the spec it kept: one build turn, on the same session and branch, never cut again', async (t) => {
   const side = spySideEffects(t);
-  const realBuild = live.buildAndPropose;
-  let args = null;
-  live.buildAndPropose = async (a) => { args = a; return realBuild(a); };
-  t.after(() => { live.buildAndPropose = realBuild; });
-  const h = harness({ result: () => ({ pushOk: true, ahead: 2, sha: 'c'.repeat(40) }) });
-  const kept = [];
-  const out = await runner.runStage(ctx(h, 'build', {
-    checkpoint: { sessions: [6001], spec: { sessionId: 6001, specMd: '# Pin the markers\n\nKept.' }, handBacks: 1 },
-    onCheckpoint: async (part) => { kept.push(part); },
-  }));
+  const result = (opts) => (opts.mode === 'scout' ? { lastResultText: '# Pin the markers\n\nDo it.' } : { pushOk: true, ahead: 2, sha: 'c'.repeat(40) });
+  const first = harness({ result });
+  const a = keeping();
+  const done = await runner.runStage(ctx(first, 'build', onSteps(first, a.steps)));
+  assert.equal(done.status, 'ok', done.error);
+  // A restart just after the spec was saved.
+  const atSpec = a.saves.find((s) => 'build/spec' in s);
+  assert.equal(atSpec['build/spec'].specMd, '# Pin the markers\n\nDo it.', 'the spec, kept as it was written');
+  const h = harness({ result });
+  const out = await runner.runStage(ctx(h, 'build', onSteps(h, keeping({ resumeFrom: atSpec }).steps)));
   assert.equal(out.status, 'ok', out.error);
   assert.deepEqual(h.calls.modes, ['build'], 'no spec turn: the kept spec is built from');
-  assert.equal(args.presetSpec, '# Pin the markers\n\nKept.');
-  assert.deepEqual(h.gh.calls.deleted, ['bench/r3-t44'], 'the earlier claim\'s branch goes first');
-  assert.deepEqual(h.gh.calls.pinned, [{ branch: 'bench/r3-t44', sha: BASE }], 'then cut again at the base');
-  assert.deepEqual(out.session_ids, [6001, 7001], 'its spec\'s session and its build\'s, each charged');
-  assert.equal(out.parsed.resumedAfterRestart, 1);
-  assert.equal(kept.find((p) => p.build)?.build.sha, 'c'.repeat(40), 'its build kept the moment it pushed');
+  assert.match(h.calls.prompts[0], /Do it\./, 'the build turn is handed it');
+  assert.equal(out.parsed.spec, '# Pin the markers\n\nDo it.');
+  assert.equal(out.build_commits, 2);
+  assert.equal(out.session_id, done.session_id, 'built on the session the spec was written in');
+  assert.deepEqual(h.gh.calls.deleted, [], 'its branch is not cut again');
+  assert.deepEqual(h.gh.calls.pinned, []);
+  assert.deepEqual(side, []);
+});
 
-  // A first claim keeps its spec as it is written, for a restart to go on from.
-  const fresh = harness({ result: (opts) => (opts.mode === 'scout' ? { lastResultText: '# Pin the markers\n\nDo it.' } : { pushOk: true, ahead: 2, sha: 'c'.repeat(40) }) });
-  const first = [];
-  const done = await runner.runStage(ctx(fresh, 'build', { onCheckpoint: async (part) => { first.push(part); } }));
-  assert.equal(done.status, 'ok', done.error);
-  assert.equal(first.find((p) => p.spec)?.spec.specMd, '# Pin the markers\n\nDo it.');
-  assert.deepEqual(fresh.gh.calls.deleted, [], 'a first claim has no branch to clear');
+// Bench run 193: recovery that re-established a trial from its checkpoint
+// pinned the branch back to the build the checkpoint named, under the fix
+// that had landed after it.
+test('a build turn that pushed after its last save and lost its record is taken off its branch: never dispatched again, its branch never pinned back', async (t) => {
+  const side = spySideEffects(t);
+  const result = (opts) => (opts.mode === 'scout' ? { lastResultText: '# Pin the markers\n\nDo it.' } : { pushOk: true, ahead: 2, sha: 'c'.repeat(40) });
+  const first = harness({ result });
+  const a = keeping();
+  assert.equal((await runner.runStage(ctx(first, 'build', onSteps(first, a.steps)))).status, 'ok');
+  // A restart just after the build turn was started, and saved as started.
+  const atTurn = a.saves.find((s) => s['build/turn:build']?.phase === 'started');
+  assert.equal(atTurn['build/turn:build'].headBefore, 'f'.repeat(40), 'with the branch tip it started from');
+  // The turn pushed while nobody watched, and no record of it is left.
+  const h = harness({ result });
+  h.gh.getBranchSha = async () => 'e'.repeat(40);
+  const out = await runner.runStage(ctx(h, 'build', onSteps(h, keeping({ resumeFrom: atTurn }).steps)));
+  assert.equal(out.status, 'ok', out.error);
+  assert.deepEqual(h.calls.modes, [], 'not dispatched again');
+  assert.equal(out.build_sha, 'e'.repeat(40), 'the branch tip is its result');
+  assert.deepEqual(h.gh.calls.pinned, [], 'and the branch is left where the turn put it');
+  assert.deepEqual(h.gh.calls.deleted, []);
+  assert.match(out.diff, /app\.js/);
   assert.deepEqual(side, []);
 });

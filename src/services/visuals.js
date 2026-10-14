@@ -2173,7 +2173,8 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // which aborts the harvest. The lifecycle asks again under its lock. A
     // request whose inputs changed (`replaceRun`: new capture routes or
     // shots) is not asked about: it runs forced and cancels that run, as
-    // every same-commit request used to.
+    // every same-commit request used to. Without the lifecycle the same
+    // question is asked below, once the run holds the session's seat.
     if (!opts.replaceRun) {
       const left = await require('./check-harvest').runToCollect(config, getPool(config), session.id, commitHash);
       if (left) {
@@ -2283,6 +2284,31 @@ async function captureForSession(config, session, app, commitHash, stagingResult
   const flight = { operation, commitHash: commitHash || null };
   _inFlight.set(key, flight);
   const pool = getPool(config);
+
+  // Without the preview lifecycle, the question the lifecycle path asks
+  // above. A run of this commit left on the cluster by a process that died
+  // is the harvest's to read; a capture started anyway took the session's
+  // seat, so the harvest passed the old run's finished Jobs by and its
+  // admitted row held a checks slot until its deadline. A recovered turn's
+  // capture of the commit its dead process was checking (server.js
+  // finalizeRecoveredTurn) can start before the harvest's claim. Asked once
+  // the seat is held, so the seat is still claimed before the first await
+  // (drainQueued counts on that), and given back, with what queued behind
+  // it, when the run is left to the harvest. Inside a lifecycle operation
+  // (`operation`) the lifecycle asked under its lock; `replaceRun` replaces
+  // the run, as above. Only the Kubernetes capture runtime leaves runs on a
+  // cluster, so elsewhere nothing is asked and nothing waits.
+  if (!operation && !opts.replaceRun && require('./check-harvest').isEnabled(config)) {
+    const left = await require('./check-harvest').runToCollect(config, pool, session.id, commitHash);
+    if (left) {
+      log.info('visuals', 'A run of this commit is still on the cluster; leaving it to the harvest', {
+        sessionId: session.id, commitHash: commitHash || null, trigger: trigger || null, ...left,
+      });
+      if (_inFlight.get(key) === flight) _inFlight.delete(key);
+      drainQueued(key, session.id, commitHash || null, null);
+      return;
+    }
+  }
 
   // The preview for this commit is live (the lifecycle wrapper above checked
   // it), so the before & after shots can start now, beside the checks,

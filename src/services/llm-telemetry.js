@@ -59,6 +59,8 @@ const COMPONENTS = new Set([
   'app_sketch',
   // A first version's plan at Make it (services/first-version-plan.js).
   'first_version_plan',
+  // And its early first look, drawn from that plan (services/first-version-early-look.js).
+  'first_version_look',
   'challenge_grade',
   'challenge_grade_feedback',
   'challenge_grade_proposal',
@@ -68,6 +70,7 @@ const COMPONENTS = new Set([
   // The translation step's catalog requests (services/language-sync.js), sent
   // one by one or as a Message Batch.
   'language_sync',
+  'dictation',
   'other_helper',
 ]);
 const BILLING_PATHS = new Set([

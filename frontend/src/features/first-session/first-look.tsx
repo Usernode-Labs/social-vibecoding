@@ -23,18 +23,24 @@ import { madeAppUrl } from './made';
 
 export const FIRST_LOOK_POLL_MS = 5000;
 
+/** The screens a first version's picture may be (services/first-version-screens.js KINDS). */
+export const SCREEN_KINDS: readonly string[] = ['first_look', 'real'];
+
 /**
  * The picture to draw from GET /api/apps/:slug's answer: the first look (or,
  * once there are some, the first real screen), as the image's own URL, or
- * null while there is none. Pure.
+ * null while there is none. `kinds` narrows it: the hub's first look card
+ * (../dev-board/workshop/hub-cards.tsx FirstLookCard) asks for the first
+ * look alone. Pure.
  */
-export function firstLookSrc(body: unknown, slug: string): string | null {
+export function firstLookSrc(body: unknown, slug: string, kinds: readonly string[] = SCREEN_KINDS): string | null {
   const app = body && typeof body === 'object' ? (body as { app?: unknown }).app : null;
   const fv = app && typeof app === 'object' ? (app as { first_version?: unknown }).first_version : null;
   const sc = fv && typeof fv === 'object' ? (fv as { screens?: unknown }).screens : null;
   if (!sc || typeof sc !== 'object') return null;
   const { kind, count, v } = sc as { kind?: unknown; count?: unknown; v?: unknown };
-  if ((kind !== 'first_look' && kind !== 'real') || !Number.isInteger(count) || (count as number) < 1 || !slug) return null;
+  if (typeof kind !== 'string' || !kinds.includes(kind) || !SCREEN_KINDS.includes(kind)
+    || !Number.isInteger(count) || (count as number) < 1 || !slug) return null;
   return `/api/apps/${encodeURIComponent(slug)}/first-version/screens/${kind}/0?v=${encodeURIComponent(String(v ?? '0'))}`;
 }
 

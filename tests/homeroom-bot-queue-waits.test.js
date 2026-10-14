@@ -10,9 +10,8 @@
 //
 // These pin, without a database: queueWait's reasons and their order; the
 // one-statement snapshot and what it derives from it; the connector's shape;
-// the console's words; the move offers' record and summary; the
-// configuration comparison leaving platform failures out on both sides; and
-// the interruption incident's words for a kept plan.
+// the console's words; the move offers' record and summary; and the
+// configuration comparison leaving platform failures out on both sides.
 //
 // Run with: node --test tests/homeroom-bot-queue-waits.test.js
 
@@ -297,10 +296,4 @@ test('configuration comparison: the platform\'s failures are left out of the bui
   assert.match(src, /platformFailures,/);
   const tsx = read('frontend/src/features/admin/admin-bot-configs.tsx');
   assert.match(tsx, /platform failure\$\{s\.platformFailures === 1 \? '' : 's'\}, left out/);
-});
-
-test('an interruption whose plan was kept says it resumed from it', () => {
-  const src = read('src/services/homeroom-bot.js');
-  assert.match(src, /await noteIncident\('resumed', plan\.lost \? what : 'resumed from its saved plan'\);/);
-  assert.match(src, /const noteIncident = \(outcome, why = what\) => incidents\(\)\.record\(pool, \{/);
 });

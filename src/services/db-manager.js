@@ -2245,13 +2245,34 @@ async function truncatePrivateTables(targetDb, execute = execInTarget) {
   // to ordinary tables (not views/indexes/sequences). We exclude
   // pg_catalog/information_schema defensively even though they
   // shouldn't have user comments.
+  //
+  // The same query also lists every foreign table among their inheritance
+  // descendants, as `FOREIGN <private table> <foreign table>` (no table
+  // name contains a space). TRUNCATE without ONLY reaches those children,
+  // and for postgres_fdw it sends TRUNCATE to the remote server, which in a
+  // copy is the same server the live app's definition names. Nor can their
+  // emptiness be shown from here: another user mapping, or a policy on the
+  // remote side, may see rows ours does not. So a private table with a
+  // foreign descendant refuses the copy before any TRUNCATE is sent.
   const discoverySql = `
-SELECT n.nspname || '.' || c.relname
-  FROM pg_class c
+WITH RECURSIVE private(name, rel) AS (
+  SELECT n.nspname || '.' || c.relname, c.oid
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+   WHERE obj_description(c.oid, 'pg_class') = 'staging:private'
+     AND c.relkind = 'r'
+     AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+), tree(name, rel) AS (
+  SELECT name, rel FROM private
+  UNION SELECT tree.name, i.inhrelid FROM pg_inherits i JOIN tree ON i.inhparent = tree.rel
+)
+SELECT name FROM private
+UNION ALL
+SELECT DISTINCT 'FOREIGN ' || tree.name || ' ' || n.nspname || '.' || c.relname
+  FROM tree
+  JOIN pg_class c ON c.oid = tree.rel
   JOIN pg_namespace n ON n.oid = c.relnamespace
- WHERE obj_description(c.oid, 'pg_class') = 'staging:private'
-   AND c.relkind = 'r'
-   AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+ WHERE c.relkind = 'f'
  ORDER BY 1`.trim();
 
   let stdout;
@@ -2268,10 +2289,27 @@ SELECT n.nspname || '.' || c.relname
     );
   }
 
-  const qualifiedNames = (stdout || '')
+  const lines = (stdout || '')
     .split('\n')
     .map((s) => s.trim())
     .filter(Boolean);
+  const foreign = lines.filter((line) => line.startsWith('FOREIGN '))
+    .map((line) => line.slice('FOREIGN '.length));
+  const qualifiedNames = lines.filter((line) => !line.startsWith('FOREIGN '));
+
+  const refuseForeign = (pairs) => {
+    log.error('db-manager', 'staging:private table with a foreign-table descendant; copy refused', {
+      targetDb, foreign: pairs,
+    });
+    const err = new Error(
+      `Refusing to empty the staging:private tables in ${targetDb}: ` +
+      pairs.map((pair) => pair.replace(' ', ' has the foreign-table descendant ')).join('; ') +
+      '. Its rows are on another server: they can neither be emptied from a copy safely nor shown to be empty.'
+    );
+    err.refusedForeign = true;
+    return err;
+  };
+  if (foreign.length > 0) throw refuseForeign(foreign);
 
   if (qualifiedNames.length === 0) {
     log.info('db-manager', 'No staging:private tables to truncate', { targetDb });
@@ -2282,12 +2320,12 @@ SELECT n.nspname || '.' || c.relname
     targetDb, count: qualifiedNames.length, tables: qualifiedNames,
   });
 
-  // Per-table failures are collected rather than short-circuiting so
-  // we don't leave half the private tables full because one failed.
-  // After the pass, if anything failed, throw — a partial truncate is
-  // still a leaky clone.
+  // Failures are collected rather than short-circuiting so we don't
+  // leave half the private tables full because one failed. After the
+  // pass, if anything failed, throw — a partial truncate is still a
+  // leaky clone.
   const failures = [];
-  const truncated = [];
+  const safe = [];
   for (const qualified of qualifiedNames) {
     if (!SAFE_QUALIFIED_IDENT.test(qualified)) {
       log.warn('db-manager', 'Refusing to TRUNCATE non-standard identifier', {
@@ -2296,14 +2334,161 @@ SELECT n.nspname || '.' || c.relname
       failures.push({ table: qualified, error: 'unsafe identifier' });
       continue;
     }
+    safe.push(qualified);
+  }
+
+  // All of them in ONE statement, so one round trip and one transaction.
+  // One statement per table (191 for the platform's own database) paid a
+  // network round trip per table — a psql process per table on the
+  // template build — and a WAL flush per table: a TRUNCATE drops relation
+  // files, and Postgres flushes WAL at the commit of any transaction that
+  // does, whatever synchronous_commit says. One statement also truncates
+  // each relation once, where the per-table form re-truncates whatever
+  // several tables' CASCADE reaches.
+  // Do NOT replace this with the per-table statements inside BEGIN/COMMIT:
+  // re-truncating a relation already truncated in the same transaction
+  // flushes WAL every time, which measured slower than autocommit.
+  //
+  // When the statement fails with an error from the server, it rolled back
+  // and every table is as it was; the fallback then runs one statement per
+  // table, in autocommit, to empty all that can be emptied and to name each
+  // table that cannot. A client-side timeout says nothing about the outcome:
+  // the statement may have committed or may still be running. On the one
+  // connection a clone uses, the runner then refuses every later statement,
+  // so the fallback and the check below fail and the pass throws (the
+  // caller may then try the direct copy). Through psql, the process is
+  // killed at its deadline but the server may still be working, and the
+  // fallback's statements can wait behind it.
+  //
+  // AFTER TRUNCATE triggers fire once the whole statement has emptied every
+  // table in it, so a trigger on one private table that writes into another
+  // would refill it after the fact. Hence the check: one query that names
+  // every private table still holding a row. Rows found after the single
+  // statement send the pass to the per-table form; rows found after that
+  // fail the pass, and the copy is not handed out.
+  //
+  // The check runs in two steps, so the usual case costs one query:
+  //   1. File sizes. For every private table and every inheritance child
+  //      (TRUNCATE without ONLY empties those too), a plain heap table whose
+  //      file is zero bytes long holds no row: TRUNCATE leaves a zero-length
+  //      file, and any row written afterwards takes a page. A size reads the
+  //      same for every role, so row-level security cannot hide anything
+  //      here. Every other relation is a suspect: a heap with pages, which
+  //      may hold only dead rows, and anything not a plain heap (another
+  //      access method, a partitioned table; a foreign table was refused
+  //      before any TRUNCATE), whose local file size says nothing about its
+  //      rows.
+  //   2. Only when there are suspects: their rows are read, in one DO block
+  //      with row_security off for that transaction. With it off, a read
+  //      that a policy would filter raises an error instead, so a refill
+  //      hidden by row-level security fails the check rather than passing
+  //      it, and so does a suspect that cannot be read (no privilege, a
+  //      relation gone). The block raises, naming the private
+  //      tables whose suspects hold rows; it returns nothing when none do.
+  // After the single statement, anything but proof of emptiness sends the
+  // pass table by table; after that pass, it fails the pass.
+  // Names in step 2 come from the catalog: they are validated like the
+  // others, double-quoted so they are read exactly, and a name that fails
+  // validation fails the pass.
+  const truncated = [];
+  const perTable = async () => {
+    truncated.length = 0;
+    for (const qualified of safe) {
+      try {
+        await execute(targetDb, `TRUNCATE ${qualified} RESTART IDENTITY CASCADE`);
+        truncated.push(qualified);
+      } catch (err) {
+        log.error('db-manager', 'TRUNCATE failed', {
+          targetDb, table: qualified, err: err.message,
+        });
+        failures.push({ table: qualified, error: err.message });
+      }
+    }
+  };
+  // Names were validated above, so they can be spliced as text too.
+  const sizeSql = 'WITH RECURSIVE targets(name, rel) AS (VALUES '
+    + safe.map((t) => `('${t}', '${t}'::regclass)`).join(', ')
+    + '), tree(name, rel) AS (SELECT name, rel FROM targets'
+    + ' UNION SELECT tree.name, i.inhrelid::regclass FROM pg_inherits i JOIN tree ON i.inhparent = tree.rel)'
+    + " SELECT DISTINCT tree.name, n.nspname || '.' || c.relname, c.relkind FROM tree"
+    + ' JOIN pg_class c ON c.oid = tree.rel JOIN pg_namespace n ON n.oid = c.relnamespace'
+    + ' LEFT JOIN pg_am am ON am.oid = c.relam'
+    + " WHERE c.relkind <> 'r' OR am.amname IS DISTINCT FROM 'heap'"
+    + ' OR pg_relation_size(tree.rel) IS DISTINCT FROM 0 ORDER BY 1, 2';
+  const quoted = (qualified) => qualified.split('.').map((part) => `"${part}"`).join('.');
+  const stillHoldingRows = async () => {
+    const unconfirmed = (err) => new Error(
+      `Could not confirm the staging:private tables in ${targetDb} are empty: ${err.message}`);
+    let out;
     try {
-      await execute(targetDb, `TRUNCATE ${qualified} RESTART IDENTITY CASCADE`);
-      truncated.push(qualified);
+      out = await execute(targetDb, sizeSql, { tuplesOnly: true });
+    } catch (err) { throw unconfirmed(err); }
+    const suspects = [];
+    for (const line of String(out || '').split('\n').map((l) => l.trim()).filter(Boolean)) {
+      const fields = line.split('|');
+      const [name, rel, relkind] = fields;
+      if (fields.length !== 3 || !safe.includes(name) || !SAFE_QUALIFIED_IDENT.test(rel) || !/^[a-z]$/.test(relkind)) {
+        throw unconfirmed(new Error(`a relation under a staging:private table cannot be checked: ${JSON.stringify(line)}`));
+      }
+      suspects.push({ name, rel, relkind });
+    }
+    // A foreign child that appeared after discovery (a TRUNCATE trigger can
+    // create one): refused like one found by discovery, and never handed to
+    // the per-table pass, whose TRUNCATE would reach the remote table.
+    const foreignNow = suspects.filter((x) => x.relkind === 'f');
+    if (foreignNow.length > 0) throw refuseForeign(foreignNow.map(({ name, rel }) => `${name} ${rel}`));
+    if (suspects.length === 0) return [];
+    // The marker is assembled by format(), so the statement's own text, which
+    // a psql failure echoes, never contains it.
+    const readSql = 'DO $staging_check$ DECLARE found text[] := \'{}\'; BEGIN SET LOCAL row_security = off; '
+      + suspects.map(({ name, rel }) => `IF EXISTS (SELECT 1 FROM ONLY ${quoted(rel)}) AND NOT '${name}' = ANY (found) THEN found := found || '${name}'::text; END IF; `).join('')
+      + "IF cardinality(found) > 0 THEN RAISE EXCEPTION '%', format('staging:private %s: %s;', 'rows remain in', array_to_string(found, ', ')); END IF; END $staging_check$";
+    try {
+      await execute(targetDb, readSql);
+      return [];
     } catch (err) {
-      log.error('db-manager', 'TRUNCATE failed', {
-        targetDb, table: qualified, err: err.message,
+      const m = /staging:private rows remain in: ([a-z0-9_., ]+);/i.exec(String(err.message || ''));
+      const names = m ? m[1].split(', ').filter((n) => safe.includes(n)) : [];
+      if (names.length === 0) throw unconfirmed(err);
+      return names;
+    }
+  };
+  if (safe.length > 0) {
+    let batched = false;
+    try {
+      await execute(targetDb, `TRUNCATE ${safe.join(', ')} RESTART IDENTITY CASCADE`);
+      batched = true;
+    } catch (batchErr) {
+      log.warn('db-manager', 'One-statement TRUNCATE failed; truncating table by table', {
+        targetDb, count: safe.length, err: batchErr.message,
       });
-      failures.push({ table: qualified, error: err.message });
+    }
+    let refilled = [];
+    if (batched) {
+      // Anything short of proof that every table is empty, an unreadable
+      // suspect included, sends the pass table by table, as before this
+      // check existed; after that pass the check has the last word.
+      try {
+        refilled = await stillHoldingRows();
+      } catch (err) {
+        if (err.refusedForeign) throw err;
+        refilled = [`(${err.message})`];
+      }
+      if (refilled.length === 0) truncated.push(...safe);
+      else {
+        log.warn('db-manager', 'Rows came back after the one-statement TRUNCATE, or could not be ruled out; truncating table by table', {
+          targetDb, tables: refilled,
+        });
+      }
+    }
+    if (!batched || refilled.length > 0) {
+      const failedBefore = failures.length;
+      await perTable();
+      if (failures.length === failedBefore) {
+        for (const table of await stillHoldingRows()) {
+          failures.push({ table, error: 'still holds rows after TRUNCATE' });
+        }
+      }
     }
   }
 
