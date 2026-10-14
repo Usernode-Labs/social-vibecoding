@@ -5317,11 +5317,13 @@ function startSessionAutoPauseSweeper(config) {
     stagingIdleMs: config.stagingIdleTeardownMs,
     sweepIntervalMs: config.sessionSweepIntervalMs,
   });
-  // Held in services/inflight-work.js like a leader timer's tick, so the
-  // shutdown drain waits for a pass under way instead of closing the pool
-  // under it (its proposal measurement wrote into a closed pool at each
-  // restart); its long loops stop at their next row once shutdown begins.
-  sessionSweeperHandle = setInterval(() => inflightWork.track('timer:session-sweeper', async () => {
+  // Not held for the shutdown drain as a whole: a pass can be minutes into a
+  // staging rebuild, which a shutdown leaves to be re-driven (cleanup marks
+  // it), and waiting for one held a release's drain to its 60s deadline on
+  // 14 Oct 2026. Its long loops stop at their next row once shutdown begins,
+  // and the proposal measurement, whose write the closing pool cut, is held
+  // on its own below.
+  sessionSweeperHandle = setInterval(async () => {
     if (lifecycle.isShuttingDown()) return;
 
     // Pass 1: auto-pause idle 'active' sessions (worker + slot only;
@@ -5850,14 +5852,19 @@ function startSessionAutoPauseSweeper(config) {
           ORDER BY cs.app_id, cs.integration_measured_at NULLS FIRST`
       );
       let measured = 0;
-      for (const session of rows) {
-        if (lifecycle.isShuttingDown()) break;
-        // A session mid-turn is about to move its own head; measuring it now
-        // records an answer that is wrong before it is written.
-        if (worker.isInFlight(session.id)) continue;
-        const written = await integrationSvc.measure({ pool, session }, { force: true });
-        if (written && !written.skipped) measured++;
-      }
+      // Held for the shutdown drain, which therefore waits for one
+      // measurement at most: the loop stops at its next row once shutdown
+      // begins, rather than writing into the closed pool.
+      await inflightWork.track('session-sweeper:measure', async () => {
+        for (const session of rows) {
+          if (lifecycle.isShuttingDown()) break;
+          // A session mid-turn is about to move its own head; measuring it now
+          // records an answer that is wrong before it is written.
+          if (worker.isInFlight(session.id)) continue;
+          const written = await integrationSvc.measure({ pool, session }, { force: true });
+          if (written && !written.skipped) measured++;
+        }
+      });
       if (measured) log.info('server', 'Measured proposals against main', { count: measured });
     } catch (err) {
       log.warn('server', 'Proposal measurement sweep failed', { err: err.message });
@@ -5925,7 +5932,7 @@ function startSessionAutoPauseSweeper(config) {
     } catch (err) {
       log.warn('server', 'Connection-pressure sweep failed', { err: err.message });
     }
-  }), config.sessionSweepIntervalMs).unref();
+  }, config.sessionSweepIntervalMs).unref();
 }
 
 let governanceApplyTickerHandle = null;
