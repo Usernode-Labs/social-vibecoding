@@ -9041,6 +9041,46 @@
       "classicPath": "#app/:slug/app"
     },
     {
+      "source": "src/routes/private-requests.js",
+      "method": "GET",
+      "path": "/api/apps/:slug/private-requests",
+      "expression": null,
+      "status": "exempt",
+      "reason": "admin-only confidential and security requests (#5048), kept off GitHub; their words are not handed to an assistant or its model provider"
+    },
+    {
+      "source": "src/routes/private-requests.js",
+      "method": "GET",
+      "path": "/api/apps/:slug/private-requests/:id",
+      "expression": null,
+      "status": "exempt",
+      "reason": "admin-only confidential and security requests (#5048), kept off GitHub; their words are not handed to an assistant or its model provider"
+    },
+    {
+      "source": "src/routes/private-requests.js",
+      "method": "POST",
+      "path": "/api/private-requests",
+      "expression": null,
+      "status": "exempt",
+      "reason": "admin-only confidential and security requests (#5048), kept off GitHub; their words are not handed to an assistant or its model provider"
+    },
+    {
+      "source": "src/routes/private-requests.js",
+      "method": "POST",
+      "path": "/api/apps/:slug/private-requests/:id/comments",
+      "expression": null,
+      "status": "exempt",
+      "reason": "admin-only confidential and security requests (#5048), kept off GitHub; their words are not handed to an assistant or its model provider"
+    },
+    {
+      "source": "src/routes/private-requests.js",
+      "method": "POST",
+      "path": "/api/apps/:slug/private-requests/:id/:dynamic",
+      "expression": null,
+      "status": "exempt",
+      "reason": "admin-only confidential and security requests (#5048), kept off GitHub; their words are not handed to an assistant or its model provider"
+    },
+    {
       "source": "src/routes/profile.js",
       "method": "GET",
       "path": "/api/me/email",

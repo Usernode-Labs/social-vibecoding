@@ -285,6 +285,15 @@ test('the production debugging role can never read them', () => {
   assert.match(src, /'private_request_comments',/);
 });
 
+test('no assistant can reach them, and the admin console may read them', () => {
+  const inventory = JSON.parse(read('src/services/global-chat/classic-inventory.generated.json'));
+  const routes = JSON.stringify(inventory).match(/"source":"src\/routes\/private-requests\.js"[^}]*/g) || [];
+  assert.ok(routes.length >= 5, 'every route is listed');
+  for (const r of routes) assert.match(r, /"status":"exempt"/);
+  const scope = read('src/services/topochain/db-console-scope.js');
+  assert.match(scope, /'private_requests',\n  'private_request_comments',\n\]\);/);
+});
+
 test('both tables are staging:private and the route is mounted', () => {
   const schema = read('src/db/schema.sql');
   assert.match(schema, /COMMENT ON TABLE private_requests IS 'staging:private';/);

@@ -165,6 +165,12 @@ const FULLY_READABLE_CONSOLE_TABLES = new Set([
   'global_chat_threads',
   'global_chat_messages',
   'global_chat_tool_runs',
+  // Private requests (#5048): admin-only confidential requests and their
+  // comments, kept off GitHub. Every admin can already read them in the
+  // Workshop, and no column holds a credential; the automated debug role
+  // stays denied.
+  'private_requests',
+  'private_request_comments',
 ]);
 
 // The per-column replacement for the old table-level denials — one entry
