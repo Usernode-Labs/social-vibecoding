@@ -3906,13 +3906,22 @@ async function maybeApplySecretChangeProposal(config, pool, issue, options = {})
       // NEVER for the self-hosted row: rebuildProduction() would treat the
       // platform like a child container (see this function's header).
       //
-      // Not awaited, and owed above: this run takes the mark whoever holds
-      // it, records the new container and clears it; if this process dies
-      // first, the leader's sweep runs it again (services/owed-redeploy.js).
-      void owedRedeploy.kick(config, pool, issue.app_id, {
-        takeover: true,
-        rebuild: (app) => staging.rebuildProduction(config, app),
-      });
+      // With the app-delivery machine on, a recorded request it runs (kept
+      // across a restart: the stored key is never left undeployed).
+      const workflow = require('../workflow/platform.ts');
+      if (workflow.deliveryEnabled()) {
+        workflow.requestDeploy(issue.app_id, 'secret_change').catch((err) => {
+          log.warn('issues', 'Post-secret-change redeploy request failed', { slug: issue.app_slug, err: err.message });
+        });
+      } else {
+        // Not awaited, and owed above: this run takes the mark whoever holds
+        // it, records the new container and clears it; if this process dies
+        // first, the leader's sweep runs it again (services/owed-redeploy.js).
+        void owedRedeploy.kick(config, pool, issue.app_id, {
+          takeover: true,
+          rebuild: (app) => staging.rebuildProduction(config, app),
+        });
+      }
     }
 
     if (locked.github_issue_number) {

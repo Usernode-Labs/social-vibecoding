@@ -501,7 +501,7 @@ test('a run keeps its review slim: where each screenshot is, never the checks\' 
 
 // ── One review, against a capture ────────────────────────────────────────
 
-test('reviewCapture: the eight most telling screenshots go to the reviewer as images; a malformed answer fails open', async () => {
+test('reviewCapture: the eight most telling screenshots go to the reviewer as images; a malformed answer, asked for twice, fails open', async () => {
   const seen = [];
   const deps = {
     readArtifacts: async (_pool, ids) => new Map(ids.map((id) => [id, { id, content_type: 'image/png', data: PNG }])),
@@ -518,16 +518,82 @@ test('reviewCapture: the eight most telling screenshots go to the reviewer as im
   assert.equal(images[0].image_url.url, `data:image/png;base64,${PNG.toString('base64')}`);
   assert.match(seen[0].content[1].text, /Phone 390×844, light look, populated/);
 
-  deps.callReviewer = async () => ({ ok: true, text: 'I think it is fine.', costUsd: 0.2, ms: 500 });
+  deps.callReviewer = async () => ({ ok: true, text: 'I think it is fine.', costUsd: 0.25, ms: 500 });
   const bad = await review.reviewCapture({ pool: {}, userId: 7, model: OPUS, capture: captureOf(0), round: 1, maxRounds: 3, deps });
   assert.equal(bad.ok, false);
-  assert.match(bad.error, /JSON/);
-  assert.equal(bad.costUsd, 0.2);
+  assert.match(bad.error, /^the reviewer did not answer with a JSON object \(asked twice\)$/);
+  assert.equal(bad.costUsd, 0.5, 'both calls');
+  assert.equal(bad.retry, 'the reviewer did not answer with a JSON object');
 
   deps.callReviewer = async () => { throw new Error('should not be called'); };
   const boot = await review.reviewCapture({ pool: {}, userId: 7, model: OPUS, capture: captureOf(0, { booted: false }), round: 1, maxRounds: 3, deps });
   assert.deepEqual({ ok: boot.ok, verdict: boot.verdict, by: boot.by, costUsd: boot.costUsd }, { ok: true, verdict: 'fix', by: 'platform', costUsd: 0 });
   assert.equal(boot.issues[0].id, 'app-does-not-boot');
+});
+
+// App bench run 193: one reply in 18 was not the JSON asked for, and that
+// first version went out unreviewed.
+test('reviewCapture: a reply that cannot be used is asked for once more, with the same screens, while the call\'s time allows', async () => {
+  const seen = [];
+  const replies = [];
+  const deps = {
+    readArtifacts: async (_pool, ids) => new Map(ids.map((id) => [id, { id, content_type: 'image/png', data: PNG }])),
+    callReviewer: async (args) => { seen.push(args); return replies.shift(); },
+  };
+  const ask = (extra = {}) => review.reviewCapture({
+    pool: {}, config: {}, userId: 7, model: OPUS, seed: 'REQ', spec: 'SPEC', capture: captureOf(0), round: 1, maxRounds: 3, deps, ...extra,
+  });
+
+  replies.push({ ok: true, text: 'Looks good to me overall.', costUsd: 0.25, ms: 9_000 },
+    { ok: true, text: '{"verdict":"fix","issues":[{"id":"gutter","severity":"major","screen":"desktop","problem":"rows run edge to edge","fix":"centre a column"}]}', costUsd: 0.5, ms: 21_000 });
+  const out = await ask({ timeoutMs: 240_000 });
+  assert.deepEqual({ ok: out.ok, verdict: out.verdict, ids: out.issues.map((i) => i.id), costUsd: out.costUsd, ms: out.ms, by: out.by },
+    { ok: true, verdict: 'fix', ids: ['gutter'], costUsd: 0.75, ms: 30_000, by: 'model' });
+  assert.equal(out.retry, 'the reviewer did not answer with a JSON object', 'what was wrong with the first reply');
+  assert.equal(seen.length, 2);
+  assert.deepEqual(seen[1].content.slice(0, -1), seen[0].content, 'the same request and screens');
+  assert.match(seen[1].content.at(-1).text, /^Your earlier answer to this message could not be used: the reviewer did not answer with a JSON object\. Answer again with ONLY the JSON object/);
+  assert.equal(seen[1].timeoutMs, 240_000 - 9_000, 'within what is left of the call\'s time');
+
+  // A first reply that works is the only call, and carries no retry.
+  seen.length = 0;
+  replies.push({ ok: true, text: '{"verdict":"ship","issues":[]}', costUsd: 0.25, ms: 9_000 });
+  const once = await ask({ timeoutMs: 240_000 });
+  assert.equal(seen.length, 1);
+  assert.equal(once.retry, undefined);
+
+  // Too little time left for another call: it fails open as before.
+  seen.length = 0;
+  replies.push({ ok: true, text: 'no', costUsd: 0.25, ms: 20_000 });
+  const late = await ask({ timeoutMs: 20_000 + review.MIN_REVIEW_RETRY_MS - 1 });
+  assert.equal(seen.length, 1);
+  assert.deepEqual({ ok: late.ok, error: late.error, retry: late.retry }, { ok: false, error: 'the reviewer did not answer with a JSON object', retry: undefined });
+
+  // A call that failed outright (no reply) is not asked again here.
+  seen.length = 0;
+  replies.push({ ok: false, error: 'HTTP 502', ms: 300 });
+  const failed = await ask({ timeoutMs: 240_000 });
+  assert.equal(seen.length, 1);
+  assert.deepEqual({ ok: failed.ok, error: failed.error }, { ok: false, error: 'HTTP 502' });
+
+  // The second call failing outright: its error, after both calls.
+  seen.length = 0;
+  replies.push({ ok: true, text: '```json\n{"verdict":"maybe"}\n```', costUsd: 0.25, ms: 9_000 }, { ok: false, error: 'HTTP 502', ms: 300 });
+  const second = await ask({ timeoutMs: 240_000 });
+  assert.equal(seen.length, 2);
+  assert.deepEqual({ ok: second.ok, error: second.error, retry: second.retry, costUsd: second.costUsd, ms: second.ms },
+    { ok: false, error: 'HTTP 502 (asked twice)', retry: 'the reviewer\'s verdict is neither ship nor fix', costUsd: 0.25, ms: 9_300 });
+});
+
+test('the loop records a round\'s retried reviewer call on the round', async () => {
+  const h = loopHarness({ verdicts: ['ship'] });
+  const reviewOf = h.opts.review;
+  h.opts.review = async (args) => ({ ...(await reviewOf(args)), retry: 'the reviewer did not answer with a JSON object' });
+  const out = await review.runReviewLoop(h.opts);
+  assert.equal(out.stop, 'ship');
+  assert.equal(out.rounds[0].reviewerRetry, 'the reviewer did not answer with a JSON object');
+  const plain = loopHarness({ verdicts: ['ship'] });
+  assert.equal((await review.runReviewLoop(plain.opts)).rounds[0].reviewerRetry, undefined);
 });
 
 test('callReviewer: the bot\'s own key, an image-reading model, and OpenRouter\'s own figure for the cost', async () => {

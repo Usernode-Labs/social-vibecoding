@@ -116,11 +116,23 @@ async function removeRuntimeIfDeleted(config, pool, app) {
   }
 }
 
+async function requestedDeploy(app) {
+  const workflow = require('../workflow/platform.ts');
+  if (!workflow.deliveryEnabled()) return false;
+  await workflow.requestDeploy(app.id, 'heal');
+  log.info('app-heal', 'App rebuild asked of app delivery', { slug: app.slug });
+  return true;
+}
+
 async function rebuildOrRespawn(config, pool, app) {
   const github = require('./github');
   const name = containerName(app.slug);
 
   if (app.repo_url && github.isEnabled()) {
+    // With the app-delivery machine on, the rebuild is a recorded request
+    // it runs; the "deploying" state it writes keeps this sweep off the app
+    // meanwhile.
+    if (await requestedDeploy(app)) return 'deploy_requested';
     const staging = require('./staging');
     const { containerId, sha, runtimeKind = applicationRuntime.mode(config), runtimeName = containerId } = await staging.rebuildProduction(config, app);
     await pool.query(
@@ -254,6 +266,7 @@ async function provisionMissingRepo(config, pool, app) {
     slug: app.slug, repoUrl,
   });
 
+  if (await requestedDeploy(app)) return;
   const staging = require('./staging');
   const { containerId, sha, runtimeKind = applicationRuntime.mode(config), runtimeName = containerId } = await staging.rebuildProduction(config, app);
   await pool.query(
@@ -286,6 +299,7 @@ async function provisionMissingRepo(config, pool, app) {
 //   cooldown        — a recent attempt failed; not retrying yet
 //   started         — stopped container brought back with `docker start`
 //   rebuilt         — full rebuildProduction succeeded
+//   deploy_requested — the rebuild was asked of app delivery (its flag on)
 //   respawned       — existing image re-run succeeded
 //   restarted       — hung-but-running container docker-restarted (probe path)
 //   repo_provisioned — missing GitHub repo created + prod converged
@@ -303,8 +317,10 @@ async function checkAndHealOne(config, pool, app, { probeRunning = false, backgr
   config = { ...config, appRuntime: runtimeRef.runtimeKind };
   if (inFlight.has(app.slug)) return { status: 'in_flight', slug: app.slug };
 
+  // A deploy of this app in this process, or one app delivery runs
+  // anywhere (the row's deploy_state).
   const appDeployStatus = require('./app-deploy-status');
-  const deploy = appDeployStatus.read(app.slug);
+  const deploy = appDeployStatus.read(app.slug, app);
   if (deploy && deploy.deploying) return { status: 'deploying', slug: app.slug };
 
   // Repo provisioning comes before the container-state logic: a repo-less
@@ -365,7 +381,9 @@ async function checkAndHealOne(config, pool, app, { probeRunning = false, backgr
         }
       }
       const recovered = await recoverFromScratch(config, pool, app);
-      healAttempts.delete(app.slug);
+      // A requested deploy keeps the cooldown: its outcome comes later, and
+      // a failure must not be asked for again every tick.
+      if (recovered !== 'deploy_requested') healAttempts.delete(app.slug);
       return { status: recovered, slug: app.slug };
     } catch (err) {
       log.error('app-heal', 'Kubernetes heal failed', { slug: app.slug, err: err.message });
@@ -445,7 +463,7 @@ async function checkAndHealOne(config, pool, app, { probeRunning = false, backgr
       }
     }
     const status = await recoverFromScratch(config, pool, app);
-    healAttempts.delete(app.slug);
+    if (status !== 'deploy_requested') healAttempts.delete(app.slug);
     restartingStreak.delete(app.slug);
     return { status, slug: app.slug };
   } catch (err) {
@@ -478,7 +496,7 @@ async function poll(config) {
     try {
       const result = await checkAndHealOne(config, pool, app, { background: true });
       appOutages.recordHealed(pool, app, result, 'sweep');
-      if (['started', 'rebuilt', 'respawned', 'repo_provisioned', 'heal_failed'].includes(result.status)) {
+      if (['started', 'rebuilt', 'deploy_requested', 'respawned', 'repo_provisioned', 'heal_failed'].includes(result.status)) {
         attempts++;
       }
     } catch (err) {

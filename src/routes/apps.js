@@ -1022,7 +1022,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           share_url: shareUrl(url, liveDomains.get(Number(a.id))),
           staging_sample: stagingSample,
           version,
-          deployProgress: appDeployStatus.read(a.slug),
+          deployProgress: appDeployStatus.read(a.slug, a),
           missingSecrets,
           // Server-built icon URL so the client never assembles ids into
           // paths (and staging demo rows can inject arbitrary sources).
@@ -1758,6 +1758,12 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
             const liveFields = await firstVersionLiveFields(pool, appRow.id, req.user?.id, {
               mine, line: state.line || null, realScreens: showcase.screens?.kind === 'real',
             }).catch(() => ({}));
+            // Run six: how long it still has to go, from the first versions
+            // that went live lately (services/first-version-eta.js), while
+            // it is built or tested. None without enough of them.
+            const estimate = state.line === 'building' || state.line === 'testing'
+              ? await require('../services/first-version-eta').estimateFor(pool, appRow.id, state.steps)
+              : null;
             firstVersion = {
               building: true,
               mine,
@@ -1777,6 +1783,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
               // N4: the stage named, with when it began, and the steps.
               ...(state.phase ? { phase: state.phase } : {}),
               ...(Array.isArray(state.steps) ? { steps: state.steps } : {}),
+              ...(estimate ? { estimate } : {}),
               // #4396: for a member who is not its maker, while it is not
               // ready, what the App tab's "While you wait" card offers.
               ...(!mine && !state.ready ? await waitingMemberFields(pool, appRow.id, req.user?.id, state).catch(() => ({ member: false })) : {}),
@@ -1868,13 +1875,15 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
     try {
       const appVersion = require('../services/app-version');
       const appDeployStatus = require('../services/app-deploy-status');
+      // With the deploy app delivery runs, if any (deploy_state).
       const gated = await appAccess.getAppForUser(
-        pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS
+        pool, req.params.slug, req.user, 'view',
+        `${appAccess.ACCESS_COLUMNS}, deploy_state, deploy_started_at, deploy_from_sha`
       );
       if (!gated) return res.status(404).json({ error: 'App not found' });
       const info = await appVersion.getAppVersion(pool, req.params.slug);
       if (!info) return res.status(404).json({ error: 'App not found' });
-      res.json({ ...info, deployProgress: appDeployStatus.read(req.params.slug) });
+      res.json({ ...info, deployProgress: appDeployStatus.read(req.params.slug, gated) });
     } catch (err) {
       log.error('apps', 'Failed to get app version', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -2753,6 +2762,14 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       if (refuseIfSelfHosted(app, res)) return;
       if (!app.repo_url) {
         return res.status(400).json({ error: 'This app is not backed by a GitHub repo' });
+      }
+      // With the app-delivery machine on, the deploy is a recorded request
+      // it runs (one at a time per app, kept across a restart), and it
+      // writes the result.
+      const workflow = require('../workflow/platform.ts');
+      if (workflow.deliveryEnabled()) {
+        await workflow.requestDeploy(app.id, 'redeploy');
+        return res.json({ ok: true });
       }
       // Fire-and-forget: same fan-out as the drift-poller and dev-chat
       // merge paths use. Errors land on the deploy-status broadcast.
@@ -4128,6 +4145,12 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         try {
           const state = await botDm.firstVersionState(pool, app.id, { viewerId: req.user?.id ?? null });
           firstVersion = hubFirstVersion(state, req.user?.id ?? null, { member: !!membership?.is_member });
+          // Run six: the hub card says the time left as the App tab does
+          // (services/first-version-eta.js), while it is built or tested.
+          if (firstVersion && (state.line === 'building' || state.line === 'testing')) {
+            const estimate = await require('../services/first-version-eta').estimateFor(pool, app.id, state.steps);
+            if (estimate) firstVersion.estimate = estimate;
+          }
           if (!firstVersion && firstWeek) firstVersion = await liveFirstVersion(pool, app.id, req.user?.id ?? null);
         } catch (err) {
           log.warn('apps', 'Could not read the first version for the hub', { slug: app.slug, message: err.message });

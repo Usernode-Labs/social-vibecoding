@@ -1334,7 +1334,7 @@ test('posting a comment shows a sent card on the screen (#5008), not only the to
   // Typing the next comment stands the card down, and stays down after.
   assert.match(src, /useEffect\(\(\) => \{\s*if \(hasWords\(draft\)\) setSent\(null\);\s*\}, \[draft\]\);/);
   // The card: where it went in the marker's own words, the request's title,
-  // "Open request" behind the post's link, and a close button. No hiding at
+  // "View request" behind the post's link, and a close button. No hiding at
   // any width: phones show it too, unlike the bar's posted chip.
   assert.match(src, /aria-label=\{t\('devchat:commentPin\.sent\.label'\)\}/);
   assert.match(src, /\{placeOf\(sentRequest\)\}/);

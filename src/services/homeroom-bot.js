@@ -113,6 +113,8 @@ function botConfigs() { return require('./bot-configs'); }
 function firstVersionScreens() { return require('./first-version-screens'); }
 // #4449: and Live, the app itself while it is built.
 function firstVersionLive() { return require('./first-version-live'); }
+// Newcomer run six: the early first look, drawn from the plan at Make it.
+function firstVersionEarlyLook() { return require('./first-version-early-look'); }
 function botReview() { return require('./bot-review'); }
 // #4210: interrupted builds, kept for admins.
 function incidents() { return require('./platform-incidents'); }
@@ -7664,6 +7666,12 @@ async function buildLive({
       // #3737: a first version's spec and build decide and record its look;
       // made from a game starter, they build on it.
       firstVersion, starter,
+      // Newcomer run six (14 Oct 2026): and its spec starts its main screen
+      // from the early first look its maker has been shown, when that was
+      // drawn from the plan it is built from (first-version-early-look.js).
+      ...(firstVersion ? {
+        earlyLook: () => firstVersionEarlyLook().forSpec(pool, { appId: app.id, buildNote: parsed.buildNote }),
+      } : {}),
       // WP1 (#2): asked once the plan is written and again just before it is
       // proposed (whyNotBuild).
       skipCheck: () => whyNotBuild(pool, { runId, botId: bot.id, appId: app.id, issueNumber, github, repo }),

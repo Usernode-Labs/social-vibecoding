@@ -10512,6 +10512,11 @@ CREATE INDEX IF NOT EXISTS idx_homeroom_bot_first_versions_waiting
 COMMENT ON TABLE homeroom_bot_first_versions IS 'staging:private';
 -- Every row before the column was one the bot builds, so the default is true.
 ALTER TABLE homeroom_bot_first_versions ADD COLUMN IF NOT EXISTS bot_builds BOOLEAN NOT NULL DEFAULT TRUE;
+-- Run six (14 Oct 2026): whether its maker is told when it is ready and
+-- live ("We'll tell you when it's live" under its plan in their chat with
+-- Homeroom bot). On from Make it; off, those two are said in the chat and
+-- ring nothing (services/homeroom-bot-dm.js firstVersionNotify).
+ALTER TABLE homeroom_bot_first_versions ADD COLUMN IF NOT EXISTS notify_live BOOLEAN NOT NULL DEFAULT TRUE;
 -- The plan written at Make it (services/first-version-plan.js), while the
 -- project is still being set up: one model call from the description, in
 -- the shape a first version's triage gives (`plan` bullets, up to two
@@ -13234,6 +13239,34 @@ CREATE TABLE IF NOT EXISTS first_version_screens (
   UNIQUE (bot_run_id, kind, position)
 );
 COMMENT ON TABLE first_version_screens IS 'staging:private';
+-- Newcomer run six (14 Oct 2026): a first version's EARLY first look
+-- (services/first-version-early-look.js). Its main screen, drawn from the
+-- plan written at Make it in one short model call while the project is set
+-- up (the plan's suggested answers stand in for the ones not given yet), and
+-- rendered to a phone-sized PNG in the worker of the app's bot session, as
+-- the spec's screens are. Kept by project, since there is no run yet: the
+-- App tab reads it as the first look (first-version-screens.js showcaseOf)
+-- until the build's spec saves its own, and that spec starts its main screen
+-- from `screen`. `status` is pending while it is drawn, drawn once the model
+-- answered, ready with its picture, failed without one (`error` says why).
+-- `screen` is the model's <template data-screen>, read only by the platform
+-- (the spec's prompt) and never served; `png` is read back only by the
+-- project's members. Private: a drawn screen shows what its maker described.
+CREATE TABLE IF NOT EXISTS first_version_early_looks (
+  app_id        INTEGER PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE,
+  status        VARCHAR(16) NOT NULL CHECK (status IN ('pending', 'drawn', 'ready', 'failed')),
+  model         TEXT,
+  screen        TEXT,
+  png           BYTEA,
+  width         INTEGER CHECK (width IS NULL OR width > 0),
+  height        INTEGER CHECK (height IS NULL OR height > 0),
+  bytes         INTEGER CHECK (bytes IS NULL OR bytes > 0),
+  error         TEXT,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  drawn_at      TIMESTAMPTZ,
+  saved_at      TIMESTAMPTZ
+);
+COMMENT ON TABLE first_version_early_looks IS 'staging:private';
 -- #4387: the build agent's latest "Adding …" phrase (usernode-progress),
 -- the App tab's build line note while a first version is built.
 ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_caption TEXT;
@@ -13701,6 +13734,28 @@ CREATE TRIGGER chat_sessions_wf_merge_owned
   EXECUTE FUNCTION wf_guard_owned_columns('@enrolled=merge-followups/session:',
     'merged_at', 'merge_commit_sha', 'included_in_session_id', 'live_at');
 
+-- app-delivery (src/workflow/app-delivery/): an app's production deploys,
+-- one at a time per app, for everyone who asks (a merge, a secret change,
+-- the drift poller, an admin's Redeploy, heal, rollover, a demo reset).
+--
+-- deploy_state: 'deploying' while a deploy of the app runs, NULL otherwise;
+-- deploy_started_at and deploy_from_sha say since when and from which
+-- revision. The machine's projection, and the durable form of what
+-- services/app-deploy-status.js keeps in one process's memory for the
+-- legacy deploys: the version pill, heal and rollover read both.
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS deploy_state TEXT;
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS deploy_started_at TIMESTAMPTZ;
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS deploy_from_sha TEXT;
+DROP TRIGGER IF EXISTS apps_wf_delivery_owned ON apps;
+CREATE TRIGGER apps_wf_delivery_owned
+  BEFORE UPDATE ON apps
+  FOR EACH ROW
+  WHEN (OLD.deploy_state IS DISTINCT FROM NEW.deploy_state
+        OR OLD.deploy_started_at IS DISTINCT FROM NEW.deploy_started_at
+        OR OLD.deploy_from_sha IS DISTINCT FROM NEW.deploy_from_sha)
+  EXECUTE FUNCTION wf_guard_owned_columns('@enrolled=app-delivery/app:',
+    'deploy_state', 'deploy_started_at', 'deploy_from_sha');
+
 -- platform_live_at: a merge into Homeroom itself, when a production build
 -- that carries it first started serving. Homeroom ships in a release cut
 -- after the merge, so live_at (the merge, on the legacy paths) cannot say.
@@ -13998,3 +14053,159 @@ CREATE TABLE IF NOT EXISTS leader_sweeps (
   name        TEXT PRIMARY KEY,
   last_run_at TIMESTAMPTZ NOT NULL
 );
+
+-- Before & after shots EVALS (services/shots-eval.js, its runner in
+-- services/shots-eval-runner.js): an admin trying the shots agent with
+-- another model, prompt or time budget on proposals that have already
+-- merged, through the connector, and comparing what it saves with what the
+-- live shots agent saves on the same proposals in the same batch. Nothing
+-- here touches a proposal's own shots: a trial is never its proposal's
+-- shots run, its files live in shots_eval_artifacts, and it is billed to the
+-- platform, never to the proposal's author.
+--
+-- A CONFIGURATION is one immutable version of a recipe: the shots agent's
+-- model, its system prompt (whole, or null for the live one), guidance
+-- added after it, its task prompt, and its time budget. Saving again under
+-- the same key makes the next version. Not private: admin-written recipes,
+-- nothing about anybody's app.
+CREATE TABLE IF NOT EXISTS shots_eval_configs (
+  id          SERIAL PRIMARY KEY,
+  key         TEXT NOT NULL,
+  version     INTEGER NOT NULL DEFAULT 1,
+  label       TEXT NOT NULL,
+  recipe      JSONB NOT NULL,
+  notes       TEXT,
+  created_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT shots_eval_configs_key_check CHECK (key ~ '^[a-z0-9][a-z0-9-]{0,39}$'),
+  CONSTRAINT shots_eval_configs_version_check CHECK (version > 0),
+  UNIQUE (key, version)
+);
+
+-- One EVAL: a batch of merged proposals, each shot by the live agent (the
+-- control) and by each named configuration, `repeats` times, until it is
+-- done, cancelled or reaches its cap. `config_ids` are the configurations
+-- beside the control, in the order they were named. `spent_cents` is what
+-- its finished trials cost; the cap stops new trials, and the ones already
+-- running finish. Private, with its trials.
+CREATE TABLE IF NOT EXISTS shots_eval_runs (
+  id           SERIAL PRIMARY KEY,
+  label        TEXT NOT NULL,
+  status       TEXT NOT NULL DEFAULT 'running',
+  config_ids   INTEGER[] NOT NULL DEFAULT '{}',
+  repeats      INTEGER NOT NULL DEFAULT 1,
+  cap_cents    INTEGER NOT NULL,
+  est_cents    INTEGER NOT NULL DEFAULT 0,
+  spent_cents  NUMERIC(12,4) NOT NULL DEFAULT 0,
+  created_by   INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  finished_at  TIMESTAMPTZ,
+  CONSTRAINT shots_eval_runs_status_check CHECK (status IN ('running', 'done', 'cancelled', 'capped')),
+  CONSTRAINT shots_eval_runs_repeats_check CHECK (repeats BETWEEN 1 AND 3),
+  CONSTRAINT shots_eval_runs_cap_check CHECK (cap_cents > 0)
+);
+CREATE INDEX IF NOT EXISTS idx_shots_eval_runs_running ON shots_eval_runs(id) WHERE status = 'running';
+COMMENT ON TABLE shots_eval_runs IS 'staging:private';
+
+-- One TRIAL: one proposal shot once by one arm (`config_id`, null for the
+-- live control). The proposal's revisions and declared changes are frozen
+-- at launch, from its own published run, so every arm shoots the same
+-- thing. `attempt_id` names this attempt's copies, databases and control
+-- plane the way a shots run's id does (shots-environment.js); a trial a
+-- restart interrupted gets a fresh one and runs again, at most twice.
+-- `state` follows a shots run's (shots-state.js): planned, provisioning,
+-- exploring, reviewing, then verified or failed; or cancelled. `recipe` is
+-- what it ran with (the model, the prompts' hashes and lengths, the
+-- budget), `hard_verdict` how each declared change came out, and
+-- `trace_summary` the run's timings, tool counts and the agent's last words.
+-- Private: a proposal's declared changes and the agent's words about an
+-- app's screens.
+CREATE TABLE IF NOT EXISTS shots_eval_trials (
+  id              SERIAL PRIMARY KEY,
+  eval_run_id     INTEGER NOT NULL REFERENCES shots_eval_runs(id) ON DELETE CASCADE,
+  session_id      INTEGER NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  config_id       INTEGER REFERENCES shots_eval_configs(id) ON DELETE CASCADE,
+  repetition      INTEGER NOT NULL DEFAULT 1,
+  position        INTEGER NOT NULL,
+  attempt_id      VARCHAR(32) NOT NULL UNIQUE CHECK (attempt_id ~ '^[0-9a-f]{32}$'),
+  attempts        INTEGER NOT NULL DEFAULT 0,
+  base_sha        VARCHAR(40) NOT NULL CHECK (base_sha ~ '^[0-9a-f]{40}$'),
+  head_sha        VARCHAR(40) NOT NULL CHECK (head_sha ~ '^[0-9a-f]{40}$'),
+  intent          JSONB NOT NULL,
+  state           TEXT NOT NULL DEFAULT 'planned',
+  recipe          JSONB,
+  hard_verdict    JSONB,
+  plan_hash       VARCHAR(64),
+  trace_summary   JSONB,
+  failure_code    TEXT,
+  failure_reason  TEXT,
+  cost_cents      NUMERIC(12,4) NOT NULL DEFAULT 0,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  started_at      TIMESTAMPTZ,
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  completed_at    TIMESTAMPTZ,
+  CONSTRAINT shots_eval_trials_state_check
+    CHECK (state IN ('planned', 'provisioning', 'exploring', 'reviewing', 'verified', 'failed', 'cancelled')),
+  CONSTRAINT shots_eval_trials_repetition_check CHECK (repetition BETWEEN 1 AND 3)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_shots_eval_trials_arm
+  ON shots_eval_trials (eval_run_id, session_id, COALESCE(config_id, 0), repetition);
+CREATE INDEX IF NOT EXISTS idx_shots_eval_trials_planned
+  ON shots_eval_trials (eval_run_id, position) WHERE state = 'planned';
+CREATE INDEX IF NOT EXISTS idx_shots_eval_trials_active
+  ON shots_eval_trials (session_id) WHERE state IN ('provisioning', 'exploring', 'reviewing');
+COMMENT ON TABLE shots_eval_trials IS 'staging:private';
+
+-- What a trial saved, stored the way a shots run's files are
+-- (shot_artifacts): one row per file, gone with the trial. Read only
+-- through the admin connector. The images themselves are pruned after
+-- shots-gc.js EVAL_ARTIFACT_DAYS; the trial keeps its results. Private: an
+-- app's screens can show any of its data.
+CREATE TABLE IF NOT EXISTS shots_eval_artifacts (
+  id            VARCHAR(32) PRIMARY KEY CHECK (id ~ '^[0-9a-f]{32}$'),
+  trial_id      INTEGER NOT NULL REFERENCES shots_eval_trials(id) ON DELETE CASCADE,
+  story_id      VARCHAR(96) NOT NULL,
+  viewport      VARCHAR(32) NOT NULL,
+  side          VARCHAR(8) NOT NULL CHECK (side IN ('base', 'head')),
+  variant       VARCHAR(16) NOT NULL CHECK (variant IN ('focus', 'context', 'animation')),
+  media         VARCHAR(8) NOT NULL CHECK (media IN ('png', 'webm', 'gif')),
+  content_type  VARCHAR(32) NOT NULL,
+  data          BYTEA NOT NULL,
+  width         INTEGER CHECK (width IS NULL OR width > 0),
+  height        INTEGER CHECK (height IS NULL OR height > 0),
+  bytes         INTEGER NOT NULL CHECK (bytes >= 0),
+  sha256        VARCHAR(64) NOT NULL CHECK (sha256 ~ '^[0-9a-f]{64}$'),
+  focus_rect    JSONB,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (trial_id, story_id, viewport, side, variant, media)
+);
+COMMENT ON TABLE shots_eval_artifacts IS 'staging:private';
+
+-- A blind PAIR: the control's trial and one configuration's, of the same
+-- proposal and repetition, for an admin's pick through the connector (left,
+-- right or a tie), with what they marked about each side's ready changes
+-- (`marks`: does each show its claim, and is any misleading). The sides are
+-- drawn at random when the pair is made (`left_is_control`, never shown);
+-- `token` is the only id a picker sees. A pair is `excluded`, with why,
+-- when the platform failed either side or neither has a ready change.
+CREATE TABLE IF NOT EXISTS shots_eval_pairs (
+  id                SERIAL PRIMARY KEY,
+  token             TEXT NOT NULL UNIQUE,
+  eval_run_id       INTEGER NOT NULL REFERENCES shots_eval_runs(id) ON DELETE CASCADE,
+  control_trial_id  INTEGER NOT NULL REFERENCES shots_eval_trials(id) ON DELETE CASCADE,
+  arm_trial_id      INTEGER NOT NULL REFERENCES shots_eval_trials(id) ON DELETE CASCADE,
+  left_is_control   BOOLEAN NOT NULL,
+  status            TEXT NOT NULL DEFAULT 'waiting',
+  excluded_reason   TEXT,
+  pick              TEXT,
+  marks             JSONB,
+  note              TEXT,
+  picked_by         INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  picked_at         TIMESTAMPTZ,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT shots_eval_pairs_status_check CHECK (status IN ('waiting', 'excluded', 'picked')),
+  CONSTRAINT shots_eval_pairs_pick_check CHECK (pick IS NULL OR pick IN ('control', 'arm', 'tie')),
+  UNIQUE (control_trial_id, arm_trial_id)
+);
+CREATE INDEX IF NOT EXISTS idx_shots_eval_pairs_waiting ON shots_eval_pairs(eval_run_id, id) WHERE status = 'waiting';
+COMMENT ON TABLE shots_eval_pairs IS 'staging:private';

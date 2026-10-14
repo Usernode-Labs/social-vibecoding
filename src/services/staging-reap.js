@@ -1133,9 +1133,13 @@ async function previewServerDrainStatus(config, { now = Date.now(), force = fals
       if (state.status === 'not_found') continue;
       if (dbManager.previewDatabaseServerOf(state.labels) === dbManager.PREVIEW_SERVER) status.previews.push(Number(session.id));
     }
+    // A shots eval's trial (services/shots-eval-runner.js) uses the same
+    // kind of copies on the same server.
     const runs = await pool.query(
-      `SELECT count(*)::int AS n FROM shot_runs
-        WHERE state IN ('planned','provisioning','exploring','replaying','reviewing')`
+      `SELECT ((SELECT count(*) FROM shot_runs
+                 WHERE state IN ('planned','provisioning','exploring','replaying','reviewing'))
+             + (SELECT count(*) FROM shots_eval_trials
+                 WHERE state IN ('provisioning','exploring','reviewing')))::int AS n`
     );
     status.shotsRuns = Number(runs.rows[0]?.n) || 0;
     status.shotsDatabases = (await dbManager.previewServerShotsDatabases()).length;
