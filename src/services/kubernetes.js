@@ -1136,11 +1136,13 @@ async function deployApplication(config, {
     previous = await readFencedDeployment(apps, namespace, name, attempt, claim);
   }
 
-  await upsert(core, 'readNamespacedSecret', 'createNamespacedSecret', 'replaceNamespacedSecret', namespace, {
+  const secretBody = {
     apiVersion: 'v1', kind: 'Secret',
     metadata: { name: secretName, namespace, labels: resourceLabels },
     type: 'Opaque', stringData: Object.fromEntries(Object.entries(env || {}).map(([key, value]) => [key, String(value)])),
-  });
+  };
+  if (attempt) await writeFencedSecret(core, namespace, secretBody, attempt, claim);
+  else await upsert(core, 'readNamespacedSecret', 'createNamespacedSecret', 'replaceNamespacedSecret', namespace, secretBody);
   await upsert(core, 'readNamespacedService', 'createNamespacedService', 'replaceNamespacedService', namespace, {
     apiVersion: 'v1', kind: 'Service', metadata: { name, namespace, labels: resourceLabels },
     spec: { selector: selectorLabels, ports: [{ name: 'http', port: 3000, targetPort: 3000 }], type: 'ClusterIP' },
@@ -1309,11 +1311,41 @@ async function readFencedDeployment(apps, namespace, name, attempt, claim = 0) {
   try { current = await apps.readNamespacedDeployment({ name, namespace }); }
   catch (err) { if (isNotFound(err)) return null; throw err; }
   const written = fenceOf(current);
-  if (fenceNewer(written, attempt, claim)) {
-    throw Object.assign(new Error(`Preview attempt ${fenceValue(attempt, claim)} was superseded by ${fenceValue(written.attempt, written.claim)}`),
-      { code: 'attempt_superseded', permanent: true });
-  }
+  if (fenceNewer(written, attempt, claim)) throw supersededBy(written, attempt, claim);
   return current;
+}
+
+function supersededBy(written, attempt, claim) {
+  return Object.assign(new Error(`Preview attempt ${fenceValue(attempt, claim)} was superseded by ${fenceValue(written.attempt, written.claim)}`),
+    { code: 'attempt_superseded', permanent: true });
+}
+
+// An attempt's env Secret, written under the same fence as the Deployment:
+// the claims of one attempt share it, and a claim that lost its lease and
+// runs on must not put its own database back in it after a later claim
+// wrote theirs. Created, or replaced on the version read with the fence, so
+// a write in between conflicts and the fence is read again.
+async function writeFencedSecret(core, namespace, body, attempt, claim) {
+  const name = body.metadata.name;
+  body.metadata.annotations = { ...(body.metadata.annotations || {}), [PREVIEW_ATTEMPT_ANNOTATION]: fenceValue(attempt, claim) };
+  for (let i = 0; ; i++) {
+    let current = null;
+    try { current = await core.readNamespacedSecret({ name, namespace }); }
+    catch (err) { if (!isNotFound(err)) throw err; }
+    const written = fenceOf(current);
+    if (fenceNewer(written, attempt, claim)) throw supersededBy(written, attempt, claim);
+    try {
+      if (!current) {
+        delete body.metadata.resourceVersion;
+        return await core.createNamespacedSecret({ namespace, body });
+      }
+      body.metadata.resourceVersion = current.metadata.resourceVersion;
+      return await core.replaceNamespacedSecret({ name, namespace, body });
+    } catch (err) {
+      // 409: written (or created) by someone else since the read.
+      if ((!isConflict(err) && !(current && isNotFound(err))) || i >= 3) throw err;
+    }
+  }
 }
 
 // Create, or replace on the version this attempt read: a write by anyone

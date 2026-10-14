@@ -733,7 +733,8 @@ serves and which revision the verdict is for are separate facts on the instance;
   checkout of its own, so a claim that runs again after a crash never re-clones the
   database an earlier claim's pods may already use; the receipt names the one that
   serves, and the earlier claims' go. A claim that lost its lease and runs on never
-  writes, restores or deletes what a later claim of the same attempt deployed. A failed
+  writes, restores or deletes what a later claim of the same attempt deployed, its env
+  Secret included (the claims of an attempt share it; it carries the same fence). A failed
   attempt deletes only the Deployment exactly its claim wrote, and only as it read it
   (UID and version), never one a newer attempt or claim has written since. A recheck whose inputs changed
   (`testing-update`, `shots-update`) replaces a run going; any other joins it. A newer head cancels the obsolete build or run (the kernel's

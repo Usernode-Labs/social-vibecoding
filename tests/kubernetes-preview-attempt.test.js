@@ -18,8 +18,15 @@ const missing = () => Object.assign(new Error('missing'), { code: 404 });
 
 // An in-memory namespace. `failRollout` makes the new pod fail to start, so
 // the rollout fails at once instead of after its five-minute budget.
-function cluster({ failRollout = false, beforeDelete = null, duringWait = null } = {}) {
+// `onSecret`: a hook run once, before the first Secret read ('read') or
+// replacement ('replace'), to stall a writer there.
+function cluster({ failRollout = false, beforeDelete = null, duringWait = null, onSecret = {} } = {}) {
   const store = new Map();
+  const secretHooks = new Map(Object.entries(onSecret));
+  const secretHook = async (step) => {
+    const hook = secretHooks.get(step);
+    if (hook) { secretHooks.delete(step); await hook(); }
+  };
   const failing = { on: failRollout };
   // Pods of a template a Deployment no longer names, still failing.
   const stuck = [];
@@ -81,7 +88,9 @@ function cluster({ failRollout = false, beforeDelete = null, duringWait = null }
   const app = (d) => (d.spec?.template?.spec?.containers || []).find((c) => c.name === 'app');
   kubernetes._setClientsForTest({
     core: {
-      readNamespacedSecret: secret.read, createNamespacedSecret: secret.create, replaceNamespacedSecret: secret.replace,
+      readNamespacedSecret: async (req) => { await secretHook('read'); return secret.read(req); },
+      createNamespacedSecret: secret.create,
+      replaceNamespacedSecret: async (req) => { await secretHook('replace'); return secret.replace(req); },
       deleteNamespacedSecret: secret.delete,
       readNamespacedService: service.read, createNamespacedService: service.create, replaceNamespacedService: service.replace,
       deleteNamespacedService: service.delete,
@@ -119,9 +128,9 @@ function cluster({ failRollout = false, beforeDelete = null, duringWait = null }
 }
 
 // `serving`: the attempt the machine says serves (null: nothing does).
-const deploy = (attempt, { imageRef = `app@sha256:${attempt}`, serving = attempt > 1 ? attempt - 1 : null, claim = 0 } = {}) =>
+const deploy = (attempt, { imageRef = `app@sha256:${attempt}`, serving = attempt > 1 ? attempt - 1 : null, claim = 0, env = { N: String(attempt) } } = {}) =>
   kubernetes.deployApplication(CONFIG, {
-    app: { id: 1, slug: 'demo' }, environment: 'staging', sessionId: 2, imageRef, env: { N: String(attempt) },
+    app: { id: 1, slug: 'demo' }, environment: 'staging', sessionId: 2, imageRef, env,
     internalOnly: true, attempt, servingAttempt: serving, claim,
   });
 
@@ -226,5 +235,30 @@ test('a claim of an attempt never deletes or restores what a later claim of the 
   assert.equal(c.image(), 'app@sha256:claim2');
   assert.deepEqual(kubernetes.attemptFence('3.2'), { attempt: 3, claim: 2 });
   assert.deepEqual(kubernetes.attemptFence('4'), { attempt: 4, claim: 0 }, 'a bare number is claim 0 (written before claims)');
+});
+
+test('a claim never writes its database into the Secret a later claim of the same attempt wrote (review finding)', async () => {
+  const SECRET = `secret/${NAME}-env-a3`;
+  const claim2 = { claim: 2, serving: null, env: { DATABASE_URL: 'postgres://claim-2' } };
+  // Claim 1 has read the Deployment's fence and stalls before the Secret;
+  // claim 2 deploys meanwhile.
+  let c = cluster({ onSecret: { read: () => deploy(3, claim2) } });
+  await assert.rejects(deploy(3, { claim: 1, serving: null, env: { DATABASE_URL: 'postgres://claim-1' } }),
+    (err) => err.code === 'attempt_superseded');
+  assert.equal(c.store.get(SECRET).stringData.DATABASE_URL, 'postgres://claim-2');
+  assert.equal(c.store.get(SECRET).metadata.annotations[ANNOTATION], '3.2');
+  assert.equal(c.store.get(`deployment/${NAME}`).metadata.annotations[ANNOTATION], '3.2');
+
+  // Claim 1 wrote the Secret once; on its next write it stalls between
+  // reading the Secret and replacing it, and claim 2 deploys meanwhile.
+  c = cluster({ onSecret: { replace: () => deploy(3, claim2) } });
+  await deploy(3, { claim: 1, serving: null, env: { DATABASE_URL: 'postgres://claim-1' } });
+  await assert.rejects(deploy(3, { claim: 1, serving: null, env: { DATABASE_URL: 'postgres://claim-1' } }),
+    (err) => err.code === 'attempt_superseded');
+  assert.equal(c.store.get(SECRET).stringData.DATABASE_URL, 'postgres://claim-2', 'its stale replacement conflicted');
+  assert.equal(c.store.get(`deployment/${NAME}`).metadata.annotations[ANNOTATION], '3.2');
+  // The earlier claim's Secret is replaced by a later one, as before.
+  await deploy(3, { claim: 3, serving: null, env: { DATABASE_URL: 'postgres://claim-3' } });
+  assert.equal(c.store.get(SECRET).stringData.DATABASE_URL, 'postgres://claim-3');
 });
 
