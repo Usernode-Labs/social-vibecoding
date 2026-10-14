@@ -154,6 +154,7 @@ test('Q19: each small control named by the audit wears a hit-slop', () => {
   has(ws, /className="dev-ws-reveal touch-target-32"\s+data-ws-fresh-more=""/, 'New for you\'s Show N more');
   has(weeks, /className="dev-ws-reveal touch-target-32" data-ws-week-group-more=""/, 'a week group\'s Show all N');
   has(ws, new RegExp(`className="dev-ws-since-clear ${KIT}"`), 'Mark all seen');
+  has(ws, /className="dev-ws-since-clear un-touch-target"\s+data-ws-fresh-clear=""/, 'New for you\'s Mark all seen');
   // After-Workshop-B: the Overview's chips and its Rules, and a row's one
   // act (Vote, Build it, the card's own), wear the kit's slop.
   has(ws, new RegExp(`className="dev-ws-ov-chip ${KIT}"`), 'a chip of where the open work is');

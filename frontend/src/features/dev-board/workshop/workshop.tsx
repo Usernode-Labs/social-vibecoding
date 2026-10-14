@@ -3562,13 +3562,20 @@ export function NeedsFeed({ rows, models, slug, canPost, onDone, onHub, onSugges
  * count beside it, muted, or in the accent when the count asks for the
  * viewer (`ask`), as This week's "5 new" does.
  */
-function PartHead({ title, count, ask = false }: { title: string; count: string | null; ask?: boolean }): ReactNode {
+function PartHead({ title, count, ask = false, action = null }: {
+  title: string;
+  count: string | null;
+  ask?: boolean;
+  /** Optional control at the head's right end, as New for you's Mark all seen (#5056). */
+  action?: ReactNode;
+}): ReactNode {
   return (
     <div className="dev-ws-hweek-head">
       <span className="dev-ws-week-head">
         <b>{title}</b>
         {count ? <span className={ask ? 'dev-ws-week-fresh' : undefined}>{count}</span> : null}
       </span>
+      {action}
     </div>
   );
 }
@@ -5048,6 +5055,16 @@ export function DevWorkshop(): ReactNode {
               <PartHead
                 title={t('project:workshop.fresh.title')}
                 count={t('project:workshop.fresh.count', { count: freshRows.length })}
+                action={(
+                  <button
+                    type="button"
+                    className="dev-ws-since-clear un-touch-target"
+                    data-ws-fresh-clear=""
+                    onClick={clearSince}
+                  >
+                    {t('project:workshop.fresh.markAllSeen')}
+                  </button>
+                )}
               />
               <div className="dev-ws-wlist">
                 {(freshAll ? freshRows : freshRows.slice(0, WORKSHOP_WORK_FIRST)).map((r) => (

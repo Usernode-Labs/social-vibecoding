@@ -531,6 +531,10 @@
     "text": "{{count}} since your last visit",
     "description": "Beside the \"New for you\" heading on the Workshop tab of a project's page: how many rows the card holds. {{count}} is that number."
   },
+  "workshop.fresh.markAllSeen": {
+    "text": "Mark all seen",
+    "description": "Button beside the \"New for you\" heading on the Workshop tab of a project's page: marks everything new since the viewer's last visit as seen, which empties the card."
+  },
   "workshop.fresh.buildIt": {
     "text": "Build it",
     "description": "Button on a new request's row in the \"New for you\" card on the Workshop tab of a project's page: starts building it, by asking Homeroom bot or with the viewer's own coding agent, whichever the request's own page offers."
