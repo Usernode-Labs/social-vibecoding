@@ -266,6 +266,24 @@ async function owePendingRun({
 }
 
 /**
+ * Has a unit-suite pass of this commit ever been recorded for the app (any
+ * age, observed or not)? Then the commit has a suite. Unreadable reads as
+ * yes: the caller then does not take the suite for absent. Never throws.
+ */
+async function hasAnyPass(pool, { appId, commitSha } = {}) {
+  if (!pool || !Number(appId) || !isSha(commitSha)) return true;
+  try {
+    const { rows } = await pool.query(
+      'SELECT 1 FROM unit_suite_passes WHERE app_id = $1 AND commit_sha = $2 LIMIT 1',
+      [Number(appId), String(commitSha).toLowerCase()]
+    );
+    return rows.length > 0;
+  } catch {
+    return true;
+  }
+}
+
+/**
  * The run of `sessionId` that passed `commitSha` stored its verdict and
  * recorded the pass in the app's history: its passes may now be reused.
  * Never throws.
@@ -365,6 +383,7 @@ module.exports = {
   markFreshOwed,
   markObserved,
   owePendingRun,
+  hasAnyPass,
   reusedOutcome,
   reusedSnapshot,
   checkedOutCommit,

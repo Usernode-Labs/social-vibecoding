@@ -932,3 +932,135 @@ test('postgres: once the in-process drain is gone, recovery still finds every op
   // (server.js checkRecoveryInFlight), so ownership is respected.
   assert.match(read('server.js'), /if \(checkRecoveryInFlight\(session\.id\)\) continue;[\s\S]{0,400}reason: 'stuck-checks-boot'/);
 });
+
+test('postgres, real settlement and the real GitHub reader: a 404 on package.json of a commit that passed its suite is not taken as no suite', async (t) => {
+  const pool = await fullSchemaDb(t);
+  if (!pool) return;
+  const { app, session } = await settleFixture(pool, 'gh404-test');
+  t.mock.method(github, 'isEnabled', () => true);
+  // The real reader, its client answering 404 for package.json (as GitHub
+  // does for a repository the caller cannot reach) or a package.json with
+  // no test script.
+  let mode = '404';
+  github._setOctokitFactoryForTests(() => ({ rest: { repos: { getContent: async ({ path: file }) => {
+    if (file !== 'package.json') throw Object.assign(new Error('Not Found'), { status: 404 });
+    if (mode === '404') throw Object.assign(new Error('Not Found'), { status: 404 });
+    return { data: { content: Buffer.from(JSON.stringify({ scripts: {} })).toString('base64'), encoding: 'base64' } };
+  } } } }));
+  t.after(() => github._setOctokitFactoryForTests(null));
+  assert.equal(await github.getFileContent('o', 'r', 'package.json', SHA), null, 'the real reader turns the 404 into null');
+  const settle = () => visuals.settleCaptureRun({}, pool, {
+    session, app, commitHash: SHA, trigger: 'manual-recheck', media: false, capturePaths: ['/'], pathDefaulted: true,
+    visualScenarios: [], prodRunning: false, stagingOrigin: '', targets: [], testsCount: 1, stdout: frameFor(0),
+    unitOutcome: null,
+  });
+  const read = async () => (await pool.query(
+    'SELECT check_state, check_error_detail, unit_suite_fresh_sha FROM chat_sessions WHERE id = $1', [session.id])).rows[0];
+  // The commit had passed its suite: it has one.
+  const key = reuse.keyFor(config, { ...keyArgs, appId: app.id, repoOwner: 'o', repoName: 'r' });
+  await reuse.recordPass(pool, key, { sessionId: session.id, runId: 'run-old' });
+  await reuse.markObserved(pool, { appId: app.id, sessionId: session.id, commitSha: SHA });
+
+  await visuals.setChecksPending(pool, session.id, SHA, 'testing', 'manual-recheck');
+  await settle();
+  let r = await read();
+  assert.equal(r.check_state, 'error');
+  assert.equal(r.check_error_detail, unitSuiteRow.MISSING_UNIT_DETAIL);
+  assert.equal(r.unit_suite_fresh_sha, SHA, 'the request stands');
+  assert.equal(await unitSuite.reusablePass({
+    config, pool, appId: app.id, sessionId: session.id, repoOwner: 'o', repoName: 'r', commitSha: SHA, trigger: 'stuck-sweep',
+  }), null, 'and the old pass is not copied for it');
+
+  // A commit with no recorded pass and a package.json read that has no
+  // test script: established absence, the request is answered.
+  await pool.query('DELETE FROM unit_suite_passes WHERE app_id = $1', [app.id]);
+  mode = 'no-test';
+  await visuals.setChecksPending(pool, session.id, SHA, 'testing', 'manual-recheck');
+  await settle();
+  r = await read();
+  assert.equal(r.check_state, 'passing');
+  assert.equal(r.unit_suite_fresh_sha, null);
+});
+
+test('postgres, real settlement: one failed marker read keeps an owed head pending and recoverable; unmarked runs are unchanged', async (t) => {
+  const pool = await fullSchemaDb(t);
+  if (!pool) return;
+  const { app, session } = await settleFixture(pool, 'markerread-test');
+  t.mock.method(github, 'isEnabled', () => true);
+  // A repository whose package.json could not be read: the suite cannot be
+  // confirmed absent.
+  t.mock.method(github, 'getFileContent', async () => { throw new Error('GitHub 502'); });
+  // The marker read fails once; every other statement goes through.
+  let failMarkerRead = true;
+  const flaky = {
+    query: (sql, params) => {
+      if (failMarkerRead && /SELECT unit_suite_fresh_sha FROM chat_sessions WHERE id = \$1/.test(String(sql))) {
+        failMarkerRead = false;
+        return Promise.reject(new Error('connection reset'));
+      }
+      return pool.query(sql, params);
+    },
+    connect: () => pool.connect(),
+  };
+  const settle = (p) => visuals.settleCaptureRun({}, p, {
+    session, app, commitHash: SHA, trigger: 'boot-reconcile', media: false, capturePaths: ['/'], pathDefaulted: true,
+    visualScenarios: [], prodRunning: false, stagingOrigin: '', targets: [], testsCount: 1, stdout: frameFor(0),
+    unitOutcome: null,
+  });
+  await visuals.setChecksPending(pool, session.id, SHA, 'testing', 'manual-recheck');
+  await settle(flaky);
+  assert.equal(failMarkerRead, false, 'the read did fail');
+  const { rows: [r] } = await pool.query('SELECT * FROM chat_sessions WHERE id = $1', [session.id]);
+  assert.equal(r.check_state, 'pending', 'no stored pass for a request nothing answered');
+  assert.equal(r.unit_suite_fresh_sha, SHA);
+  // Pending and owed: the stale sweep's scope takes it once it ages.
+  assert.equal(require('../src/services/staging-recovery').isStuckCheckRecoveryScope(r), true);
+
+  // The same failed read on a repository whose package.json has no test
+  // script (and no recorded pass): the suite is confirmed absent, which
+  // answers the request even though the marker could not be read.
+  t.mock.method(github, 'getFileContent', async () => JSON.stringify({ scripts: {} }));
+  failMarkerRead = true;
+  await visuals.setChecksPending(pool, session.id, SHA, 'testing', 'manual-recheck');
+  await settle(flaky);
+  assert.equal(failMarkerRead, false);
+  const { rows: [answered] } = await pool.query('SELECT check_state, unit_suite_fresh_sha FROM chat_sessions WHERE id = $1', [session.id]);
+  assert.deepEqual([answered.check_state, answered.unit_suite_fresh_sha], ['passing', null]);
+
+  // A run of a head nobody asked about is stored as it always was.
+  const { session: other, app: app2 } = await settleFixture(pool, 'markerread-control');
+  await visuals.setChecksPending(pool, other.id, SHA, 'testing', 'commit-push');
+  await visuals.settleCaptureRun({}, pool, {
+    session: other, app: app2, commitHash: SHA, trigger: 'commit-push', media: false, capturePaths: ['/'], pathDefaulted: true,
+    visualScenarios: [], prodRunning: false, stagingOrigin: '', targets: [], testsCount: 1, stdout: frameFor(0),
+    unitOutcome: null,
+  });
+  assert.equal((await pool.query('SELECT check_state FROM chat_sessions WHERE id = $1', [other.id])).rows[0].check_state, 'passing');
+});
+
+test('the connector explains a missing-unit error as a retry, not a broken build (both shapers)', () => {
+  const tools = require('../src/services/mcp-tools');
+  const ORIGIN = 'https://social-vibecoding.usernodelabs.org';
+  // Both browser rows passed; the run was stored as the missing-unit error
+  // with a retry scheduled.
+  const row = {
+    id: 8465, app_slug: 'usernode-2d5619', status: 'promoted', pr_number: 41, branch_name: 'usernode/s8465',
+    check_state: 'error', check_error_detail: unitSuiteRow.MISSING_UNIT_DETAIL, check_error_platform: true,
+    consecutive_check_failures: 1, check_next_retry_at: new Date(Date.now() + 120000).toISOString(),
+    first_check_failure_at: new Date().toISOString(),
+    test_results: [{ name: 'Board loads', path: '/', status: 'pass', consoleErrors: [] }, { name: 'Vote', path: '/', status: 'pass', consoleErrors: [] }],
+  };
+  assert.equal(unitSuiteRow.missingUnitError(row), true);
+  const shaped = tools.shapeProposal(row, ORIGIN);
+  assert.match(shaped.nextStep, /asked to run the repo unit suite \(npm test\) again, and it did not run/);
+  assert.match(shaped.nextStep, /The build did not fail and no test failed, so there is nothing to fix in the change\. Homeroom runs the checks again on its own/);
+  assert.doesNotMatch(shaped.nextStep, /Fix the build|ERRORED before any test reported|push a new commit to/);
+  const change = tools.changeNextStep(row, tools.shapeChecks(row), {}, 'external');
+  assert.match(change, /did not run, so there is no verdict yet; the build did not fail and no test failed\. Homeroom runs the checks again on its own/);
+  assert.doesNotMatch(change, /preview build itself broke/);
+
+  // Any other error keeps the build-failure advice.
+  const broken = { ...row, check_error_detail: 'The staging build failed: npm ERR!', check_error_platform: false };
+  assert.match(tools.shapeProposal(broken, ORIGIN).nextStep, /ERRORED before any test reported/);
+  assert.match(tools.changeNextStep(broken, tools.shapeChecks(broken), {}, 'external'), /preview build itself broke/);
+});

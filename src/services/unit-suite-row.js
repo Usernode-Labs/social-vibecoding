@@ -176,6 +176,17 @@ function reusedFrom(testResults) {
   };
 }
 
+// The check_error_detail of a run stored as an 'error' because a person
+// asked for the unit suite again ("Run checks again") and the run came back
+// without a unit-suite verdict: its runner did not start or package.json
+// could not be read (visuals.settleCaptureRun). The browser checks may all
+// have passed; nothing in the change is known to be wrong, and the error
+// lane runs the checks again.
+const MISSING_UNIT_DETAIL = 'The unit suite asked for with "Run checks again" did not run, so the checks will run again.';
+function missingUnitError(session) {
+  return !!session && session.check_state === 'error' && session.check_error_detail === MISSING_UNIT_DETAIL;
+}
+
 // Is this stored verdict one the merge gate must not take yet? A person
 // asked for the head's checks again (chat_sessions.unit_suite_fresh_sha
 // names it) and no verdict whose unit suite really ran has been stored
@@ -210,4 +221,6 @@ module.exports = {
   unitSuiteFailures,
   reusedFrom,
   freshSuiteOwed,
+  MISSING_UNIT_DETAIL,
+  missingUnitError,
 };

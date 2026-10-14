@@ -1250,6 +1250,11 @@ async function storeChecks(pool, sessionId, commitSha, result, errorDetail = nul
   // and one whose suite really ran settles the request ($8).
   const unitRow = Array.isArray(result && result.results) ? result.results.find(unitSuiteRow.isUnitSuiteRow) : null;
   const unitReused = !!(unitRow && unitRow.reused);
+  // A verdict that does not answer the request either: no unit-suite row,
+  // and the suite not confirmed absent. Refused like a copied pass when the
+  // head is owed a fresh run, so a request is never left with a stored pass
+  // that nothing will re-drive (the row stays pending for the stale sweep).
+  const unanswered = unitReused || (!unitRow && !(result && result.unitSuiteAbsent === true));
   // The request is answered by a suite that ran (pass or fail), or by a
   // run that confirmed the suite does not apply (settleCaptureRun sets
   // `unitSuiteAbsent`). Not by a copied pass, not by a missing row whose
@@ -1342,7 +1347,7 @@ async function storeChecks(pool, sessionId, commitSha, result, errorDetail = nul
        AND status IN ('active', 'paused', 'promoted', 'merging')
        AND NOT ($5::boolean AND COALESCE(lower(unit_suite_fresh_sha) = lower($3::text), false))
        AND checks_commit_sha IS NOT DISTINCT FROM $3::text`,
-    [result.state, serializeTestResults(result.results), commitSha || null, sessionId, unitReused, unitRan]
+    [result.state, serializeTestResults(result.results), commitSha || null, sessionId, unanswered, unitRan]
   );
   return write.rowCount !== 0;
 }
@@ -1919,8 +1924,8 @@ function hasInFlightCapture(sessionId) {
 }
 
 // Is a run of `commitHash` where the unit suite really runs owed to a
-// person on this proposal (chat_sessions.unit_suite_fresh_sha)? False when
-// unreadable: then the verdict is stored as it is.
+// person on this proposal (chat_sessions.unit_suite_fresh_sha)? true, false,
+// or null when the row could not be read.
 async function freshRunOwedFor(pool, sessionId, commitHash) {
   if (!commitHash) return false;
   try {
@@ -1930,7 +1935,7 @@ async function freshRunOwedFor(pool, sessionId, commitHash) {
     return !!(row && row.unit_suite_fresh_sha
       && String(row.unit_suite_fresh_sha).toLowerCase() === String(commitHash).toLowerCase());
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -3680,15 +3685,24 @@ async function settleCaptureRun(config, pool, run) {
   // row (package.json unreadable, the runner failed before a Job, an outcome
   // nobody could read) did not run the suite they asked for: the verdict is
   // a retryable 'error' and the request stands.
+  //
+  // "Does not apply" needs evidence about this commit, not a bare 404 on
+  // package.json (which a repository the reader cannot reach also answers):
+  // a commit with any recorded unit-suite pass has a suite, so it is never
+  // read as absent. A commit with none has nothing to copy either, so the
+  // request it settles cannot be answered with a copy later.
+  // An unreadable marker (null) is not "nothing owed": the verdict store
+  // then refuses a pass with no unit row for an owed head (storeChecks), and
+  // the head stays pending for the stale sweep.
   if (!unitOutcome) {
     const owed = await freshRunOwedFor(pool, session.id, commitHash);
-    if (owed) {
+    if (owed !== false) {
       const applies = await unitSuite.suiteApplies({ repoOwner, repoName, ref: commitHash });
-      if (applies === false) {
+      if (applies === false && !(await require('./unit-suite-reuse').hasAnyPass(pool, { appId: app.id, commitSha: commitHash }))) {
         checksResult.unitSuiteAbsent = true;
-      } else if (checksResult.state !== 'error') {
+      } else if (owed === true && checksResult.state !== 'error') {
         checksResult.state = 'error';
-        checksResult.errorDetail = 'The unit suite asked for with "Run checks again" did not run, so the checks will run again.';
+        checksResult.errorDetail = unitSuiteRow.MISSING_UNIT_DETAIL;
         checksResult.platformFault = true;
         log.warn('visuals', 'A fresh unit suite was owed and this run has none: recorded as a retryable error', {
           sessionId: session.id, commitHash, applies,

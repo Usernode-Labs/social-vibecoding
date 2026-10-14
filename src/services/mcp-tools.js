@@ -1374,6 +1374,18 @@ function shapeNextStep(session, checks, viewerId = null) {
       + `${branch.youCanPush ? (branch.name || 'this proposal\'s branch') + ' in your own fork' : 'a branch in your OWN fork'}`
       + ` and call submit_work with proposalId ${session.id} and that branch. Do not open a second proposal.`;
   }
+  // The run errored only because the unit suite a person asked for again
+  // came back without a verdict (its runner did not start, or package.json
+  // could not be read): the build and the browser checks may well have
+  // passed, so there is nothing to fix and a retry is on its way.
+  if (unitSuiteRow.missingUnitError(session)) {
+    const again = erroredRunWillRetry(session)
+      ? 'Homeroom runs the checks again on its own; poll get_proposal for the new verdict.'
+      : 'Homeroom will not run them again on its own now; recheck_change re-runs them.';
+    return `The checks on ${ref} were asked to run the repo unit suite (npm test) again, and it did not run: its `
+      + 'runner did not start or its package.json could not be read. The build did not fail and no test failed, so '
+      + `there is nothing to fix in the change. ${again} Do not push a new commit for this.`;
+  }
   // An errored run is a failure with no test to point at: the build or the
   // preview broke before the suite could report. Naming that is the difference
   // between fixing a test and fixing a Dockerfile.
@@ -1701,6 +1713,14 @@ function changeNextStep(session, checks, live, kind = 'agent_mayor') {
     return `Checks on ${ref} ran while Homeroom was updating, so they will run again on their own. `
       + (unit ? `${unit} ${words.fixTests}${paused}`
         : `Nothing to fix yet; call get_change again for the new verdict.${paused}`);
+  }
+  if (unitSuiteRow.missingUnitError(session)) {
+    return `The repo unit suite (npm test) asked for again on ${ref} did not run, so there is no verdict yet; the `
+      + 'build did not fail and no test failed. '
+      + (erroredRunWillRetry(session)
+        ? 'Homeroom runs the checks again on its own; call get_change again for the new verdict.'
+        : 'recheck_change re-runs the checks.')
+      + paused;
   }
   if (unitSuiteRow.notRunError(session)) {
     return `The repo unit suite (npm test) could not run on ${ref}, so there is no verdict yet, and no test failed. `
