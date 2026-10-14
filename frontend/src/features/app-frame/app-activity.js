@@ -406,12 +406,14 @@ export class EngagedAppUsage {
         milliseconds: Math.min(buffer.milliseconds, 86_400_000),
       };
       if (Array.isArray(buffer.intervals)) {
+        const startOfDay = dayStart(buffer.day);
+        if (startOfDay == null) continue;
         restored.intervals = buffer.intervals.filter((r) => (
-          Number.isSafeInteger(r.start) && Number.isSafeInteger(r.end)
-          && r.end > r.start && utcDay(r.start) === buffer.day
-          && utcDay(r.end - 1) === buffer.day
+          r && Number.isSafeInteger(r.start) && Number.isSafeInteger(r.end)
+          && r.end > r.start && r.start >= startOfDay && r.end <= startOfDay + 86_400_000
         )).slice(-MAX_BUFFER_INTERVALS);
-        restored.legacyMilliseconds = Math.max(0, Number(buffer.legacyMilliseconds) || 0);
+        restored.legacyMilliseconds = Math.min(restored.milliseconds,
+          Math.max(0, Number(buffer.legacyMilliseconds) || 0));
         restored.milliseconds = restored.legacyMilliseconds
           + restored.intervals.reduce((sum, r) => sum + r.end - r.start, 0);
       }

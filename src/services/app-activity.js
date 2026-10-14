@@ -77,6 +77,7 @@ function parseActivityRequest(body, now = new Date()) {
       let previousEnd = at;
       for (const interval of raw.intervals) {
         if (++intervalCount > ACTIVITY_MAX_INTERVALS || !interval) return null;
+        if (typeof interval.startedAt !== 'string' || typeof interval.endedAt !== 'string') return null;
         const start = Date.parse(interval.startedAt);
         const end = Date.parse(interval.endedAt);
         if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start
@@ -189,7 +190,9 @@ async function recordActivityBatch(pool, { slug, user, request }) {
     const precise = request.entries.some((entry) => entry.intervals);
     // Serialize different receipts for the same person before checking their
     // intervals. Concurrent tabs cannot credit the same elapsed time twice.
-    if (precise) await client.query('SELECT id FROM users WHERE id = $1 FOR UPDATE', [user.id]);
+    // Receipt foreign keys already hold KEY SHARE here. NO KEY UPDATE
+    // serializes usage writers without deadlocking those concurrent checks.
+    if (precise) await client.query('SELECT id FROM users WHERE id = $1 FOR NO KEY UPDATE', [user.id]);
     let intervalIndex = 0;
     const scoring = { appId: app.id, userId: user.id, seconds: 0, daySeconds: 0 };
     for (const entry of request.entries) {

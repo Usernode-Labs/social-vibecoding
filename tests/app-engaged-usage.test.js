@@ -475,7 +475,25 @@ test('timestamped batches reject forged durations, overlaps, date-only and futur
     { ...body.entries[0], seconds: 11 },
     { ...body.entries[0], date: '2026-09-30' },
     { ...body.entries[0], intervals: [{ startedAt: '2026-10-01', endedAt: '2026-10-01T15:17:00.000Z' }] },
+    { ...body.entries[0], intervals: [{ startedAt: { toString: null, valueOf: null }, endedAt: '2026-10-01T15:17:00.000Z' }] },
+    { ...body.entries[0], intervals: [{ startedAt: '2026-10-01T15:16:50.000Z', endedAt: [] }] },
     { ...body.entries[0], intervals: [{ startedAt: '2026-10-01T18:05:00.000Z', endedAt: '2026-10-01T18:05:10.000Z' }] },
     { ...body.entries[0], seconds: 20, intervals: [body.entries[0].intervals[0], body.entries[0].intervals[0]] },
   ]) assert.equal(activityService.parseActivityRequest({ ...body, entries: [entry] }, now), null);
+});
+
+test('malformed cached intervals do not prevent collecting or delivering valid usage', async () => {
+  const storage = new MemoryStorage();
+  storage.setItem('sv:engaged-app-usage:v1', JSON.stringify({ version: 1, owner: '7', batches: [], buffers: {
+    'notes\n2026-10-01': { slug: 'notes', day: '2026-10-01', milliseconds: 2_000, intervals: [
+      null, { start: Number.MAX_SAFE_INTEGER, end: Number.MAX_SAFE_INTEGER + 1 },
+      { start: Date.parse('2026-10-01T15:00:00Z'), end: Date.parse('2026-10-01T15:00:02Z') },
+    ] },
+  } }));
+  const h = await collectorHarness({ startAt: Date.parse('2026-10-02T20:00:00Z'), storage });
+  await h.usage.flushPromise;
+  assert.equal(h.requests[0].body.entries[0].seconds, 2);
+  assert.deepEqual(h.requests[0].body.entries[0].intervals, [{
+    startedAt: '2026-10-01T15:00:00.000Z', endedAt: '2026-10-01T15:00:02.000Z',
+  }]);
 });

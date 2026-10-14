@@ -146,11 +146,37 @@ test('challenge credits retain the qualifying usage time through delayed and con
 
     await t.test('overlapping concurrent receipts acknowledge both uploads and count their union once', async () => {
       const user = await person(); const app = await project();
+      let arrived = 0;
+      let releaseReceipts;
+      const receiptsWritten = new Promise((resolve) => { releaseReceipts = resolve; });
+      // Both transactions must hold their receipt's foreign-key lock before
+      // either asks for the usage lock. This deterministically exposes a
+      // FOR UPDATE upgrade deadlock instead of relying on scheduler timing.
+      const simultaneousPool = {
+        query: pool.query.bind(pool),
+        async connect() {
+          const client = await pool.connect();
+          return {
+            async query(sql, params) {
+              const result = await client.query(sql, params);
+              if (sql.trim().startsWith('INSERT INTO app_activity_receipts')) {
+                if (++arrived === 2) releaseReceipts();
+                await receiptsWritten;
+              }
+              return result;
+            },
+            release() { client.release(); },
+          };
+        },
+      };
       const results = await Promise.allSettled([
-        record(user, app, payload([['2026-10-01T15:00:00Z', '2026-10-01T15:00:10Z']])),
-        record(user, app, payload([['2026-10-01T15:00:00Z', '2026-10-01T15:00:10Z']])),
+        activity.recordActivityBatch(simultaneousPool, { user, slug: app.slug,
+          request: payload([['2026-10-01T15:00:00Z', '2026-10-01T15:00:10Z']]) }),
+        activity.recordActivityBatch(simultaneousPool, { user, slug: app.slug,
+          request: payload([['2026-10-01T15:00:00Z', '2026-10-01T15:00:10Z']]) }),
       ]);
-      assert.equal(results.filter((r) => r.status === 'fulfilled').length, 2);
+      assert.equal(results.filter((r) => r.status === 'fulfilled').length, 2,
+        JSON.stringify(results.filter((r) => r.status === 'rejected').map((r) => r.reason.message)));
       assert.equal((await pool.query('SELECT seconds_spent FROM app_activity WHERE user_id = $1', [user.id])).rows[0].seconds_spent, 10);
       assert.equal((await pool.query('SELECT count(*)::int n FROM app_usage_intervals WHERE user_id = $1', [user.id])).rows[0].n, 1);
       assert.equal((await pool.query('SELECT count(*)::int n FROM app_activity_receipts WHERE user_id = $1', [user.id])).rows[0].n, 2);
