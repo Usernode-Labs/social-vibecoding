@@ -144,7 +144,8 @@ test('the bot\'s build is asked to declare what it built, except a first version
 test('the bot records its visible changes before it proposes, and not for a first version', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'src/services/homeroom-bot-live.js'), 'utf8');
   const record = src.indexOf('specVisibleChanges.recordForBotProposal(');
-  const promote = src.indexOf('const promoted = await promoteAsBot(');
+  // Each a step of the durable build: done once, the record before the promotion.
+  const promote = src.indexOf("const promoted = await steps.once('promoted', async () => {");
   assert.ok(record > 0 && promote > record, 'recorded before the proposal opens');
-  assert.match(src.slice(record - 400, record), /if \(!firstVersion\) \{/);
+  assert.match(src.slice(record - 400, record), /if \(!firstVersion\) await steps\.once\('visible_changes', async \(\) => \{/);
 });

@@ -277,7 +277,8 @@ test('the leader runs the pass at boot, on its own tick, and after every lease s
     server.indexOf('async function recoverLocalAgentTurns'));
   assert.match(block, /localAgent\.sweepExpiredLeases\(getPool\(config\)\)[\s\S]{0,400}\.then\(\(\) => recoverLocalAgentTurns\(config\)\)/);
   assert.match(block, /\n  recoverLocalAgentTurns\(config\);\n/);
-  assert.match(block, /setInterval\(\(\) => recoverLocalAgentTurns\(config\), LOCAL_AGENT_RECOVERY_MS\)/);
+  // A leader timer (services/leader-timers.js): it stops when leadership goes.
+  assert.match(block, /leaderTimers\.every\('local-agent-recovery', \(\) => recoverLocalAgentTurns\(config\), LOCAL_AGENT_RECOVERY_MS\)/);
   const tick = Number((server.match(/const LOCAL_AGENT_RECOVERY_MS = (\d+) \* 1000;/) || [])[1]) * 1000;
   assert.ok(tick > 0 && tick < localAgent.WAITER_STALE_SECONDS * 1000,
     'a quiet waiter is taken over within its stale window plus one tick');

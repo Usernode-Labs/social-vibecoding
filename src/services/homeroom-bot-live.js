@@ -3389,9 +3389,9 @@ async function recordNoChange(pool, { noChange, which = 'all', recovered = false
  * round's fix (bot-review.js), which starts a fresh thread with a prompt
  * that stands alone. The same wall clock a triage turn has, ended the same
  * way. A function of its own, not a closure inside buildAndPropose, so that
- * restart recovery can run a review's fix turns in a session whose build a
- * restart caught (homeroom-bot.js reviewRecoveredBuild). Resolves
- * { routed, stopped }.
+ * a review's fix turns run through it too (reviewLanded). Each call names its
+ * durable step (`key`), which a restart's next attempt follows instead of
+ * starting again. Resolves { routed, stopped }.
  *
  * A turn that continues a conversation (the nudge, `resumeThreadId`) also
  * carries `freshPrompt`, the whole prompt it stands on, for when that
@@ -4366,9 +4366,7 @@ async function rollbackReviewBranch({ github, repo, branchName, sha }) {
  * One capture of what a first version's branch holds now, in the build's own
  * worker, its screenshots stored as round `index` of the run's (or the
  * trial's) review (bot-review.js storeRoundShots): the review loop's
- * `capture` (reviewLanded), and the one look restart recovery takes at a
- * review fix that landed before anything saw it boot (homeroom-bot.js
- * finishRecoveredLive). Resolves { ok, capture, ms } or { ok: false, error,
+ * `capture` (reviewLanded). Resolves { ok, capture, ms } or { ok: false, error,
  * ms }; a worker that will not start is the latter, and the capture step's
  * own failure is thrown, as the loop has always handled it.
  */

@@ -204,9 +204,12 @@ test('a card that joined work under way starts when that work began, not when th
     '2026-10-02T10:00:00.000Z');
   assert.match(service, /AND r\.created_at >= c\.began\s+AND \(nxt\.began IS NULL OR r\.created_at < nxt\.began\)/);
   assert.match(service, /AND NOT \(r\.build_ok IS FALSE AND right\(COALESCE\(r\.build_error, ''\), char_length\(\$3::text\)\) = \$3::text\)/);
+  // No build is sent back by a restart any more; the runs that were end
+  // their error with the note, and the read still passes over them.
+  assert.match(service, /\[userId, limit, RESTARTED_BUILD_NOTE, EARLIER_LOOKS\],/);
   const bot = read('src/services/homeroom-bot.js');
-  assert.match(bot, /error: `interrupted: \$\{what\} \$\{RESTARTED_BUILD_NOTE\}`/,
-    'the restart\'s requeue writes the note the card reads past');
+  assert.match(bot, /const RESTARTED_BUILD_NOTE = 'by a restart; the issue was sent back to be triaged again';/,
+    'the note those runs end with');
 });
 
 // ── Starting one ──

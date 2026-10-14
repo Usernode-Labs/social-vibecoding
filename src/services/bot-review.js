@@ -52,20 +52,22 @@
 // before it starts (`inFlight`: the capture's id, the round being reviewed,
 // the fix turn dispatched) and after it ends, with the process that ran it
 // (`leader`) and what the reviewer needs of the latest capture (`latest`).
-// Restart recovery (homeroom-bot.js finishRecoveredLive) hands that state
-// back as `resumeFrom`, and the loop carries on at the step that was cut:
+// The durable build that runs the review keeps that state as a step
+// (homeroom-bot-live.js reviewLanded, docs/plans/bot-build-workflow.md) and
+// hands it back as `resumeFrom` when a restart brings the build back, and
+// the loop carries on at the step that was cut:
 //   - round 0 never captured: captured now;
 //   - a capture under way: its result harvested from the worker it ran in
 //     (it runs detached, bench/capture.js), or taken again when it is gone;
 //   - a reviewer call under way: asked again for the same round, its cost
 //     recorded once, on that round;
-//   - a fix turn under way: the result restart recovery followed it to
-//     (`recoveredFix`), or the turn run again when it was lost;
+//   - a fix turn under way: followed to its end by its durable turn (or
+//     the result a caller followed it to: `recoveredFix`), or run again
+//     when it was lost;
 //   - then on as it would have gone, the final capture and the rollback
 //     included.
 // The time from the last step saved to the resume is given back on the
-// budget (`pausedMs`), and resumes are counted: past MAX_REVIEW_RESUMES the
-// caller proposes what is committed as it stands, as before.
+// budget (`pausedMs`), and resumes are counted on the state (`resumes`).
 
 const crypto = require('crypto');
 const log = require('./logger');
@@ -106,14 +108,13 @@ const MAX_SPEC_CHARS = 24000;
 const MAX_REVIEW_IMAGE_BYTES = 8 * 1024 * 1024;
 const MAX_FIELD_CHARS = 600;
 const TELEMETRY_COMPONENT = 'homeroom_bot_review';
-// Restarts one review may carry on through. The fourth proposes what is
-// committed as it stands (homeroom-bot.js finishRecoveredLive), so a review
-// that every release keeps catching still ends.
+// The restarts a review in progress may say it was carried on through
+// (canResume). A durable build carries its review on through any number,
+// each step kept, and is itself bounded by the restarts the kernel carries a
+// build through (src/workflow/bot-build/services.ts maxLostAttempts).
 const MAX_REVIEW_RESUMES = 3;
-// This process, stamped on every state the loop saves (`leader`): restart
-// recovery tells a review a process that is gone left behind (any other
-// stamp) from one this process is running, without waiting for it to go
-// quiet (homeroom-bot.js finishInterruptedReviews).
+// This process, stamped on every state the loop saves (`leader`): which
+// process ran the step a resumed review goes on from.
 const PROCESS_ID = crypto.randomBytes(8).toString('hex');
 
 function clip(text, max) {

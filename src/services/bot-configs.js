@@ -1409,10 +1409,11 @@ function outcomesOf(rows) {
  * Whether a result is the platform's failure rather than its
  * configuration's, so it is left out of the build rate on both sides alike
  * and counted on its own: a side build the platform failed (infra_fail,
- * recorded skipped: finishSideTrial), and a live build a restart failed
- * (finished by restart recovery and not built: homeroom-bot.js
- * completeRecoveredLive says "(finished after a restart)", or the platform
- * restarted in the middle of each try). Pure.
+ * recorded skipped: finishSideTrial), and a live build restarts failed (the
+ * records restart recovery wrote before builds were durable say "(finished
+ * after a restart)" or that the platform restarted in the middle of each try;
+ * a durable build that restarts kept taking says the platform restarted
+ * while it was building: homeroom-bot.js recordLostLiveBuild). Pure.
  */
 function platformFailureOf(r) {
   if (!r || r.built === true) return false;

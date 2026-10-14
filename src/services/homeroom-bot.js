@@ -1567,8 +1567,9 @@ function latestOf(a, b) {
  * recovery that costs nothing afterwards.
  *
  * `live_building`: that run is a live build waiting its turn or under way
- * (classifyIssue), as liveCandidates reads it. One the abandoned-build
- * sweep can no longer reach (older than its window) holds nothing.
+ * (classifyIssue), as liveCandidates reads it. One older than the window a
+ * build from before builds were durable is asked for again in
+ * (requeueLegacyBuilds) holds nothing.
  */
 async function lastRunsByIssue(pool, appId) {
   const { rows } = await pool.query(
@@ -4815,6 +4816,8 @@ const MAX_RESTARTED_BUILDS = 3;
 const ABANDONED_LIVE_WINDOW_DAYS = 7;
 // What a live build lost for good says on its request.
 const LOST_LIVE_REASON = 'the platform failed while it was building, and the build was lost';
+// A build every restart took from the process carrying it on.
+const ABANDONED_LIVE_REASON = 'the platform restarted while it was building, and the build was lost';
 
 /** A build session is archived once its run is recorded; the triage session rests paused. */
 async function putAwayRecoveredSession(pool, session, { archive }) {
@@ -4926,9 +4929,15 @@ async function runLiveBuild({ pool, config, id, input = {}, steps, deps = {} }) 
   return { acted };
 }
 
-/** bot-build's `live` target, lost for good: recorded failed, and said on its request. */
+/**
+ * bot-build's `live` target, lost for good: recorded failed, and said on its
+ * request. One restarts kept taking from every process that carried it on
+ * (the kernel's `lease_lost`) is said to be the restarts' doing.
+ */
 async function recordLostLiveBuild({ pool, config, id, error = null }) {
-  const why = `the build could not finish (${clip(error?.message || 'it failed', 200)})`;
+  const why = error?.code === 'lease_lost'
+    ? ABANDONED_LIVE_REASON
+    : `the build could not finish (${clip(error?.message || 'it failed', 200)})`;
   const { rows: [run] = [] } = await pool.query(
     `UPDATE homeroom_bot_runs SET build_ok = FALSE, build_error = $2, live_build_waiting_at = NULL
       WHERE id = $1 AND build_ok IS NULL AND proposal_session_id IS NULL
@@ -6493,8 +6502,8 @@ function liveSayer({
 /**
  * A build turn that changed nothing, kept on its run the moment it ends,
  * before its nudge starts (homeroom-bot-live.js buildAndPropose's
- * onNoChange), so a restart in the middle of the nudge still finds what the
- * first turn said (recoveredNoChange). The outcome's own record replaces it.
+ * onNoChange), so the run says what the first turn said while the nudge
+ * runs. The outcome's own record replaces it.
  */
 async function keepNoChange(pool, runId, noChange) {
   if (!runId || !noChange) return;
@@ -7547,8 +7556,9 @@ async function buildLive({
   // its requester approved (#4488) was posted when they were asked.
   const onSpec = async ({ sessionId, version, specMd }) => {
     if (version) await live.shareSpecVersion(pool, sessionId, version);
-    // Said once per run: a build carried on from its plan after a restart
-    // (resumeLiveBuildFromSpec) has it on the issue already.
+    // Said once per run: a build asked for again from its kept plan (a build
+    // from before builds were durable: requeueLegacyBuilds) has it on the
+    // issue already.
     if (await runPosted(pool, runId, 'spec')) {
       log.info('homeroom-bot', 'The plan was said before a restart; not saying it again', { app: app.slug, issueNumber, runId, sessionId });
     } else {
@@ -8374,8 +8384,9 @@ async function buildOne(pool, config, { bot, app, run, settings, deps = {} }) {
     seed, seedReadAt, postedAt: [], turnBudgetMs, botLogin,
     model: stageModel(settings, config, 'build'), specModel: stageModel(settings, config, 'spec'),
     proposalCeiling: botProposalCeiling(settings), firstVersion: !!requester?.firstVersion, settings, deps: buildDeps,
-    // The plan of a build a restart interrupted, kept by recovery
-    // (resumeLiveBuildFromSpec), and what writing it cost.
+    // The plan a build kept on its run (one from before builds were
+    // durable, asked for again: requeueLegacyBuilds), and what writing it
+    // cost.
     presetSpec: run.build_spec_md || null,
     carriedCostUsd: run.build_spec_md ? Number(run.build_cost_usd) || 0 : 0,
     // #4488: a complicated change, planned with its requester first; once
@@ -9040,13 +9051,13 @@ async function workingNow(pool, settings, { userId = null } = {}) {
 }
 
 // A live build is under way from the moment its session is linked (onSession)
-// until its outcome is recorded; one older than this is the abandoned-build
-// sweep's, not work under way (a platform build's plan and build turn, the
-// longest, take under two hours). Its session is paused between its turns
-// (buildTurnRunner pauses it after each), through a first version's review
-// (captures and reviewer calls) above all, and that is still the build: run
-// 1746's console showed nothing building for most of its review (run four,
-// 13 Oct 2026).
+// until its outcome is recorded; one older than this is not work under way
+// (a platform build's plan and build turn, the longest, take under two
+// hours, and a durable build that cannot finish ends failed). Its session is
+// paused between its turns (buildTurnRunner pauses it after each), through a
+// first version's review (captures and reviewer calls) above all, and that is
+// still the build: run 1746's console showed nothing building for most of its
+// review (run four, 13 Oct 2026).
 const BUILD_UNDER_WAY_HOURS = 4;
 
 // The live builds under way (a session linked, no outcome yet, the session
@@ -10358,6 +10369,8 @@ module.exports = {
   relaySpend,
   STOP_SETTLE_MS,
   ABANDONED_LIVE_WINDOW_DAYS,
+  ABANDONED_LIVE_REASON,
+  LOST_LIVE_REASON,
   BACKOFF_BASE_MS,
   BACKOFF_CEILING_MS,
   TRIPWIRE_VERDICTS,
