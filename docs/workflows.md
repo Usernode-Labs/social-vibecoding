@@ -675,7 +675,13 @@ reset (`platform.requestDeploy`).
   A failure (missing keys, a broken build, retries spent) is told once to whoever asked;
   their request stays open, so the next deploy that succeeds, whoever asks for it, still
   answers it. A request with nobody to tell goes: the drift poller, heal or an admin asks
-  again.
+  again. Every merge of the app still waiting to go live hears each deploy that did not
+  answer it (`Deployed`), so one whose own answer was not yet shown to contain it goes
+  live with a later one. A request another machine sent that no deploy here can serve
+  (no repository, no app) is answered `DeliveryFailed`.
+- **A deploy that never answers** (a hung build or lock, a result skipped in Admin →
+  Workflows) is ended by an admin there (`EndDeploy`): read as a failure, its late result
+  stale.
 - **"Deploying" is durable.** `apps.deploy_state`, `deploy_started_at` and
   `deploy_from_sha` are its projection, owned by the machine, with the same
   `app_redeploy_status` pushes the in-memory tracker sends. The version pill, heal,

@@ -697,7 +697,13 @@ An ordinary rolling change, safe in both directions.
 
 **Rollback.** Set the value back to `false`. Callers deploy themselves again. Requests the
 machine already accepted still run: the runtime keeps running while it has a deploy or a
-request left, and stops on a later boot once nothing is left.
+request left, and stops on a later boot once nothing is left. A retry of a merge's
+delivery or of a secret change's redeploy is then the machine's own deploy again.
+
+Rolling the **release** back (to code from before this machine) is different: the
+merge-followups and governance-proposal instances this release wrote are version 3, and
+older code leaves an instance a newer version wrote alone. With those flags on, such an
+instance waits until the release comes back.
 
 ## Read-only inventory and logs
 
