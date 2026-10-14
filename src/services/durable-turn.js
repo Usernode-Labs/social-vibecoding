@@ -189,9 +189,10 @@ async function release(worker, sessionId, ids) {
 /**
  * Run the turn `key` of a pipeline on the durable context `steps`.
  *
- *   dispatch({ holdTurnRecord, onTurnRecord })  starts the turn and resolves
- *     its routed result (sessions.runCodexAttemptLoop's), forwarding both
- *     options to worker.execInWorker
+ *   dispatch({ holdTurnRecord, onTurnRecord }, { budgetMs })  starts the
+ *     turn and resolves its routed result (sessions.runCodexAttemptLoop's),
+ *     forwarding both options to worker.execInWorker; `budgetMs` is the
+ *     clock it is started on (what is left of it, started again)
  *   stop()       ends the turn on its clock (homeroom-bot-live.js stopOnClock)
  *   budgetMs     its clock; on a later attempt, what is left of it
  *   mode         the record's mode ('build' | 'scout'), to know it as this step's
@@ -315,7 +316,7 @@ async function runTurn(steps, key, {
         saved = { ...saved, record };
         await steps.set(k, saved);
       },
-    }));
+    }, { budgetMs: left }));
   } catch (err) {
     // A stop leaves the turn and its record to the next owner. Anything else
     // is the dispatch failing, which the caller reads as the turn failing,

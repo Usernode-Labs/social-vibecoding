@@ -216,10 +216,12 @@ test('with no record and a branch that did not move, the turn is started again o
     pool: pool(null), session: SESSION, mode: 'build', budgetMs: 60 * 60 * 1000,
     head: async () => 'base',
     observe: async () => { throw new Error('nothing landed'); },
-    dispatch: async (extra) => { asked = extra; return { result: { pushOk: true, sha: 'again' } }; },
+    dispatch: async (extra, clock) => { asked = { ...extra, clock }; return { result: { pushOk: true, sha: 'again' } }; },
     deps: { worker: fakeWorker() },
   });
   assert.equal(asked.holdTurnRecord, true);
+  assert.ok(asked.clock.budgetMs <= 5 * 60 * 1000 && asked.clock.budgetMs > 4 * 60 * 1000,
+    'started on what is left of its clock, which a checks gate takes for its deadline');
   assert.equal(out.routed.result.sha, 'again');
   assert.equal(w.saves[0]['turn:build'].deadlineAt, deadlineAt, 'its deadline is the first one, not a fresh hour');
   assert.deepEqual(heard, ['turn_start']);

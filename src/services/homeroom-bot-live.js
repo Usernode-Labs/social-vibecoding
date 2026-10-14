@@ -3470,6 +3470,13 @@ function buildTurnRunner({
   }) => {
     // A turn may go on the ledger under a name of its own (the nudge).
     const telemetry = turnTelemetry || runnerTelemetry;
+    // #4575: before & after shots on this session hold it from their first
+    // build until their agent finishes, but write no turn record until they
+    // dispatch. Let a run that is under way finish first, as the Mayor's
+    // dispatch does, so this turn does not take the session from under it;
+    // the wait is not charged to the turn's own clock, which runTurn arms
+    // (and a durable step saves as its deadline) before it dispatches.
+    await waitOutShotsRun(session.id, deps);
     activeWorkers.add(session.id);
     let turnRouted;
     let turnStopped = false;
@@ -3478,7 +3485,7 @@ function buildTurnRunner({
         pool, session, mode: 'build', budgetMs, deps, head, observe,
         stop: () => stopOnClock(pool, worker, session.id),
         onProgress: teeProgress(turnProgress, onProgress),
-        dispatch: (extra) => dispatchTurn(extra),
+        dispatch: (extra, clock) => dispatchTurn(extra, clock),
       });
       turnRouted = turn.routed;
       turnStopped = turn.stopped;
@@ -3496,7 +3503,7 @@ function buildTurnRunner({
     }
     return { routed: turnRouted, stopped: turnStopped };
 
-    async function dispatchTurn(extra = {}) {
+    async function dispatchTurn(extra = {}, clock = null) {
     // L2: the check command, written fresh for this turn (the platform's
     // current script); a write that fails runs the turn without the gate.
     let gate = null;
@@ -3512,14 +3519,9 @@ function buildTurnRunner({
         });
       }
     }
-    // #4575: before & after shots on this session hold it from their first
-    // build until their agent finishes, but write no turn record until they
-    // dispatch. Let a run that is under way finish first, as the Mayor's
-    // dispatch does, so this turn does not take the session from under it;
-    // the wait is not charged to the turn's own clock.
-    await waitOutShotsRun(session.id, deps);
-    // The gate's deadline is the turn's own clock, which starts here.
-    if (gate) gate.deadlineMs = Date.now() + budgetMs;
+    // The gate's deadline is the turn's own clock, armed just before: what
+    // is left of it for a turn started again after a restart.
+    if (gate) gate.deadlineMs = Date.now() + (Number(clock?.budgetMs) > 0 ? Number(clock.budgetMs) : budgetMs);
     let turnRouted;
     try {
       turnRouted = await sessions.runCodexAttemptLoop({
@@ -4224,7 +4226,15 @@ async function buildAndPropose({
   }
   if (faultError && !partial) return { ...(await fail(faultError)), costUsd };
   if (!result.pushOk || !(Number(result.ahead) > 0)) {
-    return { ...(await fail('the build produced no change to propose')), costUsd };
+    // A turn a restart caught whose commit could not be pushed from its
+    // worker either (durable-turn.js followTurn's `pushFailed`): its work is
+    // in the worker, so it is a push failure, never "no change".
+    return {
+      ...(await fail(result.pushFailed
+        ? `couldn't push the build's commit (${result.pushFailed})`
+        : 'the build produced no change to propose')),
+      costUsd,
+    };
   }
   // Pushed: a restart from here on proposes this work, never builds it again.
   // With what its spec and build turns cost (costsOut, no review yet), so a
