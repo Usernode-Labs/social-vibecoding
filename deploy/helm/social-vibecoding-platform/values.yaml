@@ -46,6 +46,20 @@ platform:
   # over first rather than keep one Pod per release.
   drainingMax: 2
   replicas: 1
+  # The web and conductor split (docs/plans/web-and-conductor.md). Off, the
+  # Pods above serve people's requests and stand for leader, as they always
+  # have. On, they serve and never lead (PROCESS_ROLE=web), and a Deployment
+  # of its own runs the conductor (PROCESS_ROLE=conductor): the leader, its
+  # timers, sweeps, merge queue, workflow loops, Homeroom bot and bench lane,
+  # on Pods the Service sends no requests to. Switch it on in a release after
+  # one carrying the serves-requests label has rolled out, so the Service's
+  # new selector finds every serving Pod labelled.
+  conductor:
+    enabled: false
+    # More than one is a standby: it waits for the leader lock.
+    replicas: 1
+    # Empty: the platform's resources above.
+    resources: {}
   image:
     repository: ghcr.io/replace-me/social-vibecoding-platform
     digest: ""

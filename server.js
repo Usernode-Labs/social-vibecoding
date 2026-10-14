@@ -149,6 +149,7 @@ const leaderTimers = require('./src/services/leader-timers');
 // The platform's processes and what each holds (docs/plans/draining-releases.md).
 const processes = require('./src/services/processes');
 const drain = require('./src/services/drain');
+const processRole = require('./src/services/process-role');
 const inflightWork = require('./src/services/inflight-work');
 const inflightRequests = require('./src/middleware/inflight-requests');
 const chainPoller = require('./src/services/chain-poller');
@@ -1120,6 +1121,22 @@ app.use(errorHandler);
 // is gated to the leader so it never double-runs. See services/leadership.js.
 let leadership = null;
 
+// What every process does for itself, whatever its role
+// (services/process-role.js) and whether or not it leads: each one sweeps
+// what only it holds. A staging preview runs none of it, as it runs no
+// leader duties (config.runsClusterMaintenance).
+function startProcessDuties() {
+  // Idle-eviction sweeper. Warm workers cost ~256MB resident; eviction
+  // reclaims that memory after a tunable idle period. The CC volume
+  // (cc-volume-<sessionId>) is preserved so the next dispatch's
+  // re-warm replays prior conversation state via `claude --resume`.
+  //
+  // WORKER_IDLE_EVICTION_MS is the only knob (default 10min). Lower it
+  // if memory headroom shrinks; raise it if we're seeing frequent
+  // re-warms in production logs.
+  startIdleEvictionSweeper();
+}
+
 // Leader-only singleton work. Runs exactly once per cluster — at boot for
 // the leader / the single-instance case (PLATFORM_LEADER_LOCK unset), or at
 // promotion for a follower whose old leader has exited (blue-green handoff).
@@ -1532,16 +1549,6 @@ async function becomeLeader() {
     .catch((err) => log.warn('mcp', 'Delegated-grant prune failed', { code: err.code, message: err.message }));
   leaderTimers.every('delegation-prune', runDelegationPrune, 60 * 60 * 1000, { durable: getPool(config) });
 
-  // Idle-eviction sweeper. Warm workers cost ~256MB resident; eviction
-  // reclaims that memory after a tunable idle period. The CC volume
-  // (cc-volume-<sessionId>) is preserved so the next dispatch's
-  // re-warm replays prior conversation state via `claude --resume`.
-  //
-  // WORKER_IDLE_EVICTION_MS is the only knob (default 10min). Lower it
-  // if memory headroom shrinks; raise it if we're seeing frequent
-  // re-warms in production logs.
-  startIdleEvictionSweeper();
-
   // Session auto-pause sweeper (separate, longer timer than worker
   // eviction above). Flips long-idle 'active' sessions to 'paused' so
   // they stop counting against the per-user / global session caps. The
@@ -1741,6 +1748,9 @@ async function becomeLeader() {
 
 async function start() {
   const startedAt = Date.now();
+  // web, conductor or all (services/process-role.js): read before anything
+  // starts, so a value that names no role fails boot here.
+  const ownRole = processRole.processRole();
   const migrationsOnStartup = process.env.RUN_MIGRATIONS_ON_STARTUP !== 'false';
   let migration = null;
   // Schema migration is serialized across colors with an advisory lock so
@@ -1758,7 +1768,7 @@ async function start() {
   // This process, and what it holds, for every other one to see
   // (docs/plans/draining-releases.md): before anything here can start work.
   // Never fatal: holds stay this process's own until the database takes them.
-  await processes.start({ pool: getPool(config), role: 'all' });
+  await processes.start({ pool: getPool(config), role: ownRole });
   // The clients every process that runs the workflow machines makes
   // (src/workflow/setup.ts): the push sender, GitHub, the model.
   await require('./src/workflow/setup.ts').startWorkflowClients(config);
@@ -1826,8 +1836,17 @@ async function start() {
   // that never stops. Previews last touched a week ago were measured still
   // holding six warm Postgres connections each, on a server whose
   // max_connections is the stock 100. See config.runsClusterMaintenance.
+  //
+  // A web process (PROCESS_ROLE=web, docs/plans/web-and-conductor.md) never
+  // stands either: the conductor leads, and a release of the web Pods leaves
+  // its leader work where it is. What every process does for itself (the
+  // idle eviction of its own warm workers, ...) runs from
+  // startProcessDuties(), whatever its role.
+  if (runsClusterMaintenance()) startProcessDuties();
   if (!runsClusterMaintenance()) {
     log.info('server', 'Leader duties skipped — staging preview serves requests only');
+  } else if (!processRole.standsForLeader(ownRole)) {
+    log.info('server', 'Leader duties run on the conductor — this web process serves requests only', { role: ownRole });
   } else {
     leadership = createLeadership({ databaseUrl: config.databaseUrl });
     leadership.start(becomeLeader).catch((err) => {
@@ -5300,6 +5319,11 @@ const SWEEP_INTERVAL_MS = 30 * 1000;
 
 let sweeperHandle = null;
 
+// Every process sweeps its own warm registry (startProcessDuties): a web
+// process never leads, and its turns' workers are its own. A session busy
+// anywhere is left alone: a turn on another process may be using the very
+// worker this registry last used (a session's turns land wherever the
+// Service sends them).
 function startIdleEvictionSweeper() {
   if (sweeperHandle) return;
   log.info('server', 'Worker idle-eviction sweeper started', {
@@ -5314,6 +5338,7 @@ function startIdleEvictionSweeper() {
       if (meta.inFlight) continue;
       if (meta.bootstrapping) continue;
       if (now - meta.lastUsedMs < WORKER_IDLE_EVICTION_MS) continue;
+      if (activeWorkersSvc.isSessionBusyElsewhere(meta.sessionId)) continue;
       try {
         await worker.evictWorker(meta.sessionId);
         log.info('server', 'Idle warm worker evicted', {

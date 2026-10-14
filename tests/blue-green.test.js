@@ -131,7 +131,6 @@ test('singleton background work lives in becomeLeader(), not start()', () => {
     'resumeHeadlessRuns',
     'recoverStuckMerges(config)',
     'recoverSessions(config)',
-    'startIdleEvictionSweeper()',
     'startSessionAutoPauseSweeper(config)',
     'startStalePrSweeper(config)',
     'startEligibleMergeSweeper(config)',
@@ -157,6 +156,30 @@ test('singleton background work lives in becomeLeader(), not start()', () => {
   ]) {
     assert.ok(startBody.includes(perInstance), `start() must run per-instance: ${perInstance}`);
   }
+});
+
+test('each process sweeps its own warm workers, whether or not it leads', () => {
+  // A web process never leads (docs/plans/web-and-conductor.md), and the
+  // workers of the turns it ran are in its registry alone.
+  const duties = serverJs.slice(
+    serverJs.indexOf('function startProcessDuties()'),
+    serverJs.indexOf('async function becomeLeader()')
+  );
+  assert.ok(duties.includes('startIdleEvictionSweeper()'), 'startProcessDuties() owns the idle eviction');
+  const startBody = serverJs.slice(
+    serverJs.indexOf('async function start()'),
+    serverJs.indexOf('// Boot only when run as the entry point')
+  );
+  assert.match(startBody, /if \(runsClusterMaintenance\(\)\) startProcessDuties\(\);/,
+    'every process that maintains the cluster runs them; a staging preview does not');
+  const becomeLeaderBody = serverJs.slice(
+    serverJs.indexOf('async function becomeLeader()'),
+    serverJs.indexOf('async function start()')
+  );
+  assert.ok(!becomeLeaderBody.includes('startIdleEvictionSweeper()'), 'not only on the leader');
+  // A session busy anywhere is left alone: its worker may be in use there.
+  const sweeper = serverJs.slice(serverJs.indexOf('function startIdleEvictionSweeper()'));
+  assert.match(sweeper.slice(0, 2000), /isSessionBusyElsewhere\(meta\.sessionId\)\) continue;/);
 });
 
 test('cleanup releases leadership after the drain so the standby promotes cleanly', () => {

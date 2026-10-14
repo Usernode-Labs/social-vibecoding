@@ -35,6 +35,7 @@
 const crypto = require('crypto');
 const os = require('os');
 const log = require('./logger');
+const { successorRoles } = require('./process-role');
 
 const HEARTBEAT_MS = 10 * 1000;
 // A process that has not beaten for this long is gone (four beats missed).
@@ -332,7 +333,7 @@ function every(ms, fn, label) {
 
 /**
  * Register this process and start beating and mirroring. `role` is what it
- * runs ('all' until the web and conductor split). Resolves once the first
+ * runs (services/process-role.js: 'all', 'web' or 'conductor'). Resolves once the first
  * beat and refresh are done; a database that will not take them is logged
  * and retried by the timers, never thrown: holds work in memory meanwhile.
  */
@@ -380,36 +381,39 @@ async function markDraining(deadline) {
 }
 
 /**
- * How many live processes of this role began draining after this one did:
- * releases faster than work finishes. The drain ends early when there are
- * too many, rather than keep one Pod per release.
+ * How many live processes that could replace this one (process-role.js
+ * successorRoles) began draining after it did: releases faster than work
+ * finishes. The drain ends early when there are too many, rather than keep
+ * one Pod per release.
  */
 async function newerDraining() {
   if (!started || !pool || !draining) return 0;
   const { rows: [row] } = await pool.query(
     `SELECT count(*)::int AS n FROM platform_processes
-      WHERE id <> $1 AND role = $2 AND state = 'draining' AND drain_started_at > $3
+      WHERE id <> $1 AND role = ANY($2::text[]) AND state = 'draining' AND drain_started_at > $3
         AND heartbeat_at > NOW() - make_interval(secs => $4)`,
-    [ID, role, draining.since, LIVE_SECONDS]);
+    [ID, successorRoles(role), draining.since, LIVE_SECONDS]);
   return row?.n || 0;
 }
 
 /**
- * How many live processes of this role started after this one and are
- * serving (not draining): a successor that registers what it holds, so that
- * this process may stop leading and finish its work beside it. A process of
- * a release from before the registry writes no row: it is never counted, and
- * a process it replaces keeps the cutover it always had. Neither is one older
- * than this one, nor one stopping with it (docs/plans/draining-releases.md).
+ * How many live processes that could replace this one (process-role.js
+ * successorRoles: a conductor for a conductor, a web process for a web one,
+ * an 'all' for either) started after it and are serving (not draining): a
+ * successor that registers what it holds, so that this process may stop
+ * leading and finish its work beside it. A process of a release from before
+ * the registry writes no row: it is never counted, and a process it replaces
+ * keeps the cutover it always had. Neither is one older than this one, nor
+ * one stopping with it (docs/plans/draining-releases.md).
  */
 async function servingOthers() {
   if (!started || !pool) return 0;
   const { rows: [row] } = await pool.query(
     `SELECT count(*)::int AS n FROM platform_processes p
-      WHERE p.id <> $1 AND p.role = $2 AND p.state = 'serving'
+      WHERE p.id <> $1 AND p.role = ANY($2::text[]) AND p.state = 'serving'
         AND p.heartbeat_at > NOW() - make_interval(secs => $3)
         AND p.started_at > COALESCE((SELECT started_at FROM platform_processes WHERE id = $1), '-infinity'::timestamptz)`,
-    [ID, role, LIVE_SECONDS]);
+    [ID, successorRoles(role), LIVE_SECONDS]);
   return row?.n || 0;
 }
 
@@ -493,6 +497,7 @@ module.exports = {
   stop,
   refreshMirror,
   beat,
+  get role() { return role; },
   get draining() { return draining; },
   get started() { return started; },
   get mirrorAt() { return mirrorAt; },

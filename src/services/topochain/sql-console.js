@@ -591,6 +591,8 @@ async function runConsoleQuery(pool, { query, limit }) {
   // run the query at all rather than silently falling back to running
   // it unscoped as the app's normal (unrestricted) connection — the
   // route handler turns this into a 503.
+  // A process that never led (a web process) reads the leader's record.
+  if (!consoleRole.isAvailable()) await consoleRole.loadShared(pool);
   if (!consoleRole.isAvailable()) {
     return { kind: 'unavailable', reason: consoleRole.unavailableReason() };
   }
