@@ -1361,16 +1361,22 @@ async function reusablePass({ config, pool, appId, sessionId = null, repoOwner, 
 
 /**
  * Does the repository at `ref` have a unit suite this platform runs? true,
- * false (confirmed: the feature or GitHub is off, or package.json has no
- * runnable `test` script), or null when it could not be told (package.json
- * unreadable). Never throws.
+ * false (confirmed: the feature or GitHub is off, package.json was read and
+ * has no runnable `test` script, or the commit's tree was read and has no
+ * package.json), or null when it could not be told. The file reader answers
+ * null for any 404, and GitHub also answers 404 for a repository it will not
+ * show, so a missing package.json is only taken as absent when the tree of
+ * that commit was readable without it. Never throws.
  */
 async function suiteApplies({ repoOwner, repoName, ref }) {
   if (!isEnabled() || !github.isEnabled()) return false;
   if (!repoOwner || !repoName || !ref) return null;
   try {
     const raw = await github.getFileContent(repoOwner, repoName, UNIT_CHECK_PATH, ref);
-    return hasRunnableTestScript(raw);
+    if (raw != null) return hasRunnableTestScript(raw);
+    const tree = await github.listRepoFiles(repoOwner, repoName, ref);
+    if (!tree || tree.truncated || !Array.isArray(tree.files)) return null;
+    return tree.files.some((f) => f && f.path === UNIT_CHECK_PATH) ? null : false;
   } catch {
     return null;
   }

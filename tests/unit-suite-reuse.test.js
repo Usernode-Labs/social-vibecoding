@@ -933,22 +933,33 @@ test('postgres: once the in-process drain is gone, recovery still finds every op
   assert.match(read('server.js'), /if \(checkRecoveryInFlight\(session\.id\)\) continue;[\s\S]{0,400}reason: 'stuck-checks-boot'/);
 });
 
-test('postgres, real settlement and the real GitHub reader: a 404 on package.json of a commit that passed its suite is not taken as no suite', async (t) => {
+test('postgres, real settlement and the real GitHub reader: a 404 on package.json is not taken as no suite without proof', async (t) => {
   const pool = await fullSchemaDb(t);
   if (!pool) return;
   const { app, session } = await settleFixture(pool, 'gh404-test');
   t.mock.method(github, 'isEnabled', () => true);
-  // The real reader, its client answering 404 for package.json (as GitHub
-  // does for a repository the caller cannot reach) or a package.json with
-  // no test script.
-  let mode = '404';
-  github._setOctokitFactoryForTests(() => ({ rest: { repos: { getContent: async ({ path: file }) => {
-    if (file !== 'package.json') throw Object.assign(new Error('Not Found'), { status: 404 });
-    if (mode === '404') throw Object.assign(new Error('Not Found'), { status: 404 });
-    return { data: { content: Buffer.from(JSON.stringify({ scripts: {} })).toString('base64'), encoding: 'base64' } };
-  } } } }));
+  // The real reader. Its client answers 404 for package.json (as GitHub
+  // does for a repository the caller cannot reach), and for the tree either
+  // 404 too, a tree without package.json, or a package.json with no test.
+  let mode = 'all-404';
+  github._setOctokitFactoryForTests(() => ({ rest: {
+    repos: { getContent: async ({ path: file }) => {
+      if (mode === 'no-test' && file === 'package.json') {
+        return { data: { content: Buffer.from(JSON.stringify({ scripts: {} })).toString('base64'), encoding: 'base64' } };
+      }
+      throw Object.assign(new Error('Not Found'), { status: 404 });
+    } },
+    git: { getTree: async () => {
+      if (mode === 'all-404') throw Object.assign(new Error('Not Found'), { status: 404 });
+      return { data: { tree: [{ type: 'blob', path: 'index.html', size: 10, sha: 'x' }], truncated: false } };
+    } },
+  } }));
   t.after(() => github._setOctokitFactoryForTests(null));
   assert.equal(await github.getFileContent('o', 'r', 'package.json', SHA), null, 'the real reader turns the 404 into null');
+  assert.equal(await unitSuite.suiteApplies({ repoOwner: 'o', repoName: 'r', ref: SHA }), null, 'a 404 alone proves nothing');
+  mode = 'tree-without';
+  assert.equal(await unitSuite.suiteApplies({ repoOwner: 'o', repoName: 'r', ref: SHA }), false, 'a readable tree without package.json does');
+
   const settle = () => visuals.settleCaptureRun({}, pool, {
     session, app, commitHash: SHA, trigger: 'manual-recheck', media: false, capturePaths: ['/'], pathDefaulted: true,
     visualScenarios: [], prodRunning: false, stagingOrigin: '', targets: [], testsCount: 1, stdout: frameFor(0),
@@ -956,30 +967,34 @@ test('postgres, real settlement and the real GitHub reader: a 404 on package.jso
   });
   const read = async () => (await pool.query(
     'SELECT check_state, check_error_detail, unit_suite_fresh_sha FROM chat_sessions WHERE id = $1', [session.id])).rows[0];
-  // The commit had passed its suite: it has one.
+  // The commit had passed its suite.
   const key = reuse.keyFor(config, { ...keyArgs, appId: app.id, repoOwner: 'o', repoName: 'r' });
   await reuse.recordPass(pool, key, { sessionId: session.id, runId: 'run-old' });
   await reuse.markObserved(pool, { appId: app.id, sessionId: session.id, commitSha: SHA });
 
-  await visuals.setChecksPending(pool, session.id, SHA, 'testing', 'manual-recheck');
-  await settle();
-  let r = await read();
-  assert.equal(r.check_state, 'error');
-  assert.equal(r.check_error_detail, unitSuiteRow.MISSING_UNIT_DETAIL);
-  assert.equal(r.unit_suite_fresh_sha, SHA, 'the request stands');
-  assert.equal(await unitSuite.reusablePass({
-    config, pool, appId: app.id, sessionId: session.id, repoOwner: 'o', repoName: 'r', commitSha: SHA, trigger: 'stuck-sweep',
-  }), null, 'and the old pass is not copied for it');
+  for (const m of ['all-404', 'tree-without']) {
+    mode = m;
+    await visuals.setChecksPending(pool, session.id, SHA, 'testing', 'manual-recheck');
+    await settle();
+    const r = await read();
+    assert.equal(r.check_state, 'error', m);
+    assert.equal(r.check_error_detail, unitSuiteRow.MISSING_UNIT_DETAIL, m);
+    assert.equal(r.unit_suite_fresh_sha, SHA, `${m}: the request stands`);
+    assert.equal(await unitSuite.reusablePass({
+      config, pool, appId: app.id, sessionId: session.id, repoOwner: 'o', repoName: 'r', commitSha: SHA, trigger: 'stuck-sweep',
+    }), null, `${m}: and the old pass is not copied for it`);
+  }
 
-  // A commit with no recorded pass and a package.json read that has no
-  // test script: established absence, the request is answered.
+  // No recorded pass, and established absence: the request is answered.
   await pool.query('DELETE FROM unit_suite_passes WHERE app_id = $1', [app.id]);
-  mode = 'no-test';
-  await visuals.setChecksPending(pool, session.id, SHA, 'testing', 'manual-recheck');
-  await settle();
-  r = await read();
-  assert.equal(r.check_state, 'passing');
-  assert.equal(r.unit_suite_fresh_sha, null);
+  for (const m of ['tree-without', 'no-test']) {
+    mode = m;
+    await reuse.markFreshOwed(pool, { sessionId: session.id, commitSha: SHA });
+    await visuals.setChecksPending(pool, session.id, SHA, 'testing', 'manual-recheck');
+    await settle();
+    const r = await read();
+    assert.deepEqual([r.check_state, r.unit_suite_fresh_sha], ['passing', null], m);
+  }
 });
 
 test('postgres, real settlement: one failed marker read keeps an owed head pending and recoverable; unmarked runs are unchanged', async (t) => {
