@@ -104,6 +104,11 @@ const MAX_SPEC_CHARS = 24000;
 // Images in one reviewer call, together (the grading judge's own bound).
 const MAX_REVIEW_IMAGE_BYTES = 8 * 1024 * 1024;
 const MAX_FIELD_CHARS = 600;
+// A reply that is not the JSON asked for is asked for once more
+// (reviewCapture), when at least this much of the call's time is left.
+const MIN_REVIEW_RETRY_MS = 30 * 1000;
+const REVIEW_RETRY_NOTE = (problem) => `Your earlier answer to this message could not be used: ${problem}. `
+  + 'Answer again with ONLY the JSON object your instructions describe, with no prose before or after it and no code fence.';
 const TELEMETRY_COMPONENT = 'homeroom_bot_review';
 // Restarts one review may carry on through. The fourth proposes what is
 // committed as it stands (homeroom-bot.js finishRecoveredLive), so a review
@@ -521,8 +526,11 @@ async function callReviewer({
 /**
  * Review one capture: a capture that did not boot gets the boot issue with
  * no call; any other, one reviewer call with its eight most telling
- * screenshots. Resolves { ok, verdict, issues, previousFixed, costUsd, ms,
- * by } (`by` 'model' or 'platform'), or { ok: false, error, costUsd, ms }.
+ * screenshots, asked once more when its reply is not the JSON asked for
+ * (REVIEW_RETRY_NOTE). Resolves { ok, verdict, issues, previousFixed,
+ * costUsd, ms, by } (`by` 'model' or 'platform'), or { ok: false, error,
+ * costUsd, ms }, both with `retry` (what was wrong with the first reply)
+ * when it was asked again; costUsd and ms are both calls'.
  */
 async function reviewCapture({
   pool, config, userId, model, seed, spec, capture, previousIssues = null, round, maxRounds,
@@ -554,14 +562,34 @@ async function reviewCapture({
   const content = reviewerContent({
     brief: seed, spec, shots, identical: picked.identical, signals, previousIssues, round, maxRounds,
   });
-  const call = await (deps.callReviewer || callReviewer)({
-    pool, config, userId, model, system: reviewerSystemPrompt(locale), content, appId, sessionId, timeoutMs, deps,
+  const ask = (parts, budgetMs) => (deps.callReviewer || callReviewer)({
+    pool, config, userId, model, system: reviewerSystemPrompt(locale), content: parts, appId, sessionId, timeoutMs: budgetMs, deps,
   });
+  const call = await ask(content, timeoutMs);
   if (!call.ok) return { ok: false, error: call.error, costUsd: call.costUsd ?? null, ms: call.ms };
-  const parsed = parseReview(call.text);
-  if (!parsed.ok) return { ok: false, error: parsed.error, costUsd: call.costUsd ?? null, ms: call.ms };
+  let parsed = parseReview(call.text);
+  let costUsd = call.costUsd ?? null;
+  let ms = call.ms;
+  let retry = null;
+  // App bench run 193 (14 Oct 2026): one reviewer reply in 18 was not the
+  // JSON asked for, and the loop fails open, so that first version went out
+  // unreviewed and judged the run's worst. A reply that cannot be used is
+  // asked for once more, with the same screens, while the call's own time
+  // allows; a failed call (no reply at all) is not.
+  const leftMs = Number(timeoutMs) > 0 ? Number(timeoutMs) - (Number(call.ms) || 0) : null;
+  if (!parsed.ok && (leftMs == null || leftMs >= MIN_REVIEW_RETRY_MS)) {
+    retry = parsed.error;
+    const again = await ask([...content, { type: 'text', text: REVIEW_RETRY_NOTE(parsed.error) }], leftMs);
+    costUsd = costUsd == null && again.costUsd == null ? null : (Number(costUsd) || 0) + (Number(again.costUsd) || 0);
+    ms = (Number(ms) || 0) + (Number(again.ms) || 0);
+    parsed = again.ok ? parseReview(again.text) : { ok: false, error: again.error };
+  }
+  const retried = retry ? { retry } : {};
+  if (!parsed.ok) {
+    return { ok: false, error: retry ? `${parsed.error} (asked twice)` : parsed.error, costUsd, ms, ...retried };
+  }
   // L2: the app's own declared checks, which the reviewer cannot see fail.
-  return withCheckIssues({ ...parsed, costUsd: call.costUsd ?? null, ms: call.ms, by: 'model' }, capture);
+  return withCheckIssues({ ...parsed, costUsd, ms, by: 'model', ...retried }, capture);
 }
 
 // ── Storing a round's screenshots ────────────────────────────────────────
@@ -877,6 +905,8 @@ async function runReviewLoop({
         // round's one call.
         entry.reviewerCostUsd = num(rev?.costUsd);
         entry.reviewerMs = num(rev?.ms);
+        if (rev?.retry) entry.reviewerRetry = clip(rev.retry, 300);
+        else delete entry.reviewerRetry;
         recount();
         if (!rev?.ok) {
           entry.reviewerError = clip(rev?.error || 'the reviewer failed', 300);
@@ -1143,6 +1173,7 @@ module.exports = {
   fixBrowserLines,
   callReviewer,
   reviewCapture,
+  MIN_REVIEW_RETRY_MS,
   storeRoundShots,
   artifactIdsOf,
   runReviewLoop,
