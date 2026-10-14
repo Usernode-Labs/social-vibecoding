@@ -893,6 +893,7 @@ async function executeTrial(pool, config, trialRow, deps = {}) {
     // Its time from its first attempt, restarts included.
     if (patch.duration_ms != null) patch.duration_ms = Math.max(Date.now() - startedMs, 0);
     if (cancelled()) patch = { ...patch, status: 'cancelled', error: 'cancelled by an admin' };
+    patch = asPlatformFault(patch);
   } catch (err) {
     durableSteps.rethrowStop(err, `trial ${trialRow.id}`);
     patch = { status: 'infra_fail', error: `setup: ${err.message}` };
@@ -1332,6 +1333,50 @@ async function settleSideResults(pool) {
   }
 }
 
+// A provider refusing the bench's key for its spending limit (run 196:
+// OpenRouter's "403 Key limit exceeded (weekly limit)" on its last ten
+// trials, each failed on its first request). It is the platform's fault,
+// not the model's: the trial is an infra_fail, out of its arm's build rate,
+// and the lane starts nothing new for PROVIDER_LIMIT_PAUSE_MS after it
+// (providerLimitPause), as it waits on the bench user's own allowance.
+const PROVIDER_LIMIT_RE = /key limit exceeded|insufficient credits|requires more credits/i;
+const PROVIDER_LIMIT_PAUSE_MS = 30 * 60 * 1000;
+
+/** Whether a trial's error is its provider refusing the key for its spending limit. Pure. */
+function providerLimitHit(error) {
+  return PROVIDER_LIMIT_RE.test(String(error || ''));
+}
+
+/** A trial's result, its model's failure read as the platform's when providerLimitHit says so. Pure. */
+function asPlatformFault(patch) {
+  return patch && patch.status === 'model_fail' && providerLimitHit(patch.error) ? { ...patch, status: 'infra_fail' } : patch;
+}
+
+/**
+ * The lane's pause after a provider refused the key for its spending
+ * limit: { until } while the last trial the bench finished (any run: they
+ * share the key) was refused that way less than PROVIDER_LIMIT_PAUSE_MS
+ * ago, else null. Read from the trials, so it holds in every process and
+ * through a restart; once it is over, the next trial is the one that finds
+ * out whether the key works again, and one that ends any other way lifts
+ * it. Never throws.
+ */
+async function providerLimitPause(pool, { now = Date.now() } = {}) {
+  try {
+    const { rows: [last] } = await pool.query(
+      `SELECT error, finished_at FROM bench_trials
+        WHERE finished_at IS NOT NULL AND status NOT IN ('not_applicable', 'skipped_cap', 'cancelled')
+        ORDER BY finished_at DESC LIMIT 1`,
+    );
+    if (!last || !providerLimitHit(last.error)) return null;
+    const until = new Date(last.finished_at).getTime() + PROVIDER_LIMIT_PAUSE_MS;
+    return until > now ? { until: new Date(until).toISOString() } : null;
+  } catch (err) {
+    log.warn('bench', 'Could not read whether the provider refused the bench key', { err: err.message });
+    return null;
+  }
+}
+
 /**
  * Whether the next trial fits the cap: what was spent, plus every trial
  * under way at its estimate, plus this one's. Pure.
@@ -1365,6 +1410,7 @@ async function tick(pool, config, deps = {}) {
     );
     const limits = deps.limits || require('../limits');
     let user = null;
+    const limited = runs.length ? await providerLimitPause(pool) : null;
     for (const run of runs) {
       const mine = [...inFlight.values()].filter((f) => f.runId === run.id);
       const { rows: [left] } = await pool.query(
@@ -1395,6 +1441,7 @@ async function tick(pool, config, deps = {}) {
         // eslint-disable-next-line no-await-in-loop
         const budget = await limits.checkBudget(pool, user.id);
         if (budget.error) { out.paused = 'bench_allowance'; break; }
+        if (limited) { out.paused = 'provider_limit'; out.until = limited.until; break; }
         // eslint-disable-next-line no-await-in-loop
         // Its next trial in order, passing over heavy ones while three of
         // its heavy trials are under way.
@@ -1597,6 +1644,10 @@ module.exports = {
   capRun,
   settleSideResults,
   fitsCap,
+  PROVIDER_LIMIT_PAUSE_MS,
+  providerLimitHit,
+  asPlatformFault,
+  providerLimitPause,
   tick,
   start,
   stop,

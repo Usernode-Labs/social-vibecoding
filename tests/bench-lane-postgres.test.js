@@ -171,6 +171,44 @@ test('the benchmark lane against the full PostgreSQL schema', { timeout: 180000 
     assert.equal(r.spent, 3.75);
   });
 
+  await t.test('a provider refusing the bench key for its spending limit: an infra_fail, and nothing new starts for a while', async () => {
+    lane._resetForTests();
+    const { run } = await lane.launchRun(pool, { suiteId: suite.id, models: ['z-ai/glm-5.3-flash'], stages: ['triage'], repeats: 2, concurrency: 1 });
+    const refused = 'the build turn failed (the agent exited with code 1); last activity: Failed to authenticate. API Error: 403 Key limit exceeded (weekly limit).';
+    runner.runStage = async () => ({ status: 'model_fail', error: refused, cost_usd: 0.04, duration_ms: 5 });
+    try {
+      assert.equal((await lane.tick(pool, {}, deps)).started, 1);
+      await lane._awaitTrialsForTests();
+      const [first] = (await trials(run.id)).filter((x) => x.status !== 'pending');
+      assert.equal(first.status, 'infra_fail', 'the platform\'s fault, out of the arm\'s build rate');
+      assert.match(first.error, /Key limit exceeded/);
+      const pause = await lane.providerLimitPause(pool);
+      assert.ok(pause && Date.parse(pause.until) > Date.now(), JSON.stringify(pause));
+      const held = await lane.tick(pool, {}, deps);
+      assert.equal(held.started, 0);
+      assert.equal(held.paused, 'provider_limit');
+      assert.equal(held.until, pause.until);
+      const watched = await require('../src/services/bench/studio').watchRun(pool, run.id);
+      assert.deepEqual(watched.run.waiting, { reason: 'provider_limit', until: pause.until });
+      // Past the pause, the next trial finds out whether the key works again,
+      // and one that ends any other way lifts it.
+      await pool.query("UPDATE bench_trials SET finished_at = NOW() - INTERVAL '31 minutes' WHERE id = $1", [first.id]);
+      assert.equal(await lane.providerLimitPause(pool), null);
+      runner.runStage = async () => ({ status: 'ok', cost_usd: 1.25, parsed: { verdict: 'ready' }, duration_ms: 5 });
+      assert.equal((await lane.tick(pool, {}, deps)).started, 1);
+      await lane._awaitTrialsForTests();
+      assert.equal(await lane.providerLimitPause(pool), null);
+      assert.equal((await require('../src/services/bench/studio').watchRun(pool, run.id)).run.waiting, null);
+    } finally {
+      runner.runStage = async ({ stage, model, trial }) => {
+        ran.push(`${stage}:${model}:${trial.id}`);
+        return { status: 'ok', cost_usd: 1.25, parsed: { verdict: 'ready' }, duration_ms: 5 };
+      };
+      await pool.query("UPDATE bench_runs SET status = 'cancelled' WHERE id = $1", [run.id]);
+      await pool.query("UPDATE bench_trials SET status = 'cancelled' WHERE run_id = $1 AND status = 'pending'", [run.id]);
+    }
+  });
+
   await t.test('the cap: no trial starts that would cross it, and the rest are skipped', async () => {
     lane._resetForTests();
     const { run } = await lane.launchRun(pool, {

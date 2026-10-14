@@ -775,12 +775,16 @@ async function watchRun(pool, runId, { since = null } = {}) {
     `SELECT task_id, context_pack_id, status, sha, branch, error FROM bench_scaffolds WHERE run_id = $1 ORDER BY id`,
     [Number(runId)],
   );
+  // An open run whose new trials wait because the provider refused the
+  // bench's key for its spending limit (lane.js providerLimitPause).
+  const limited = ['queued', 'running'].includes(run.status) ? await require('./lane').providerLimitPause(pool) : null;
   return {
     ok: true,
     run: {
       id: Number(run.id), kind: run.kind, status: run.status, suite: run.suite_name, models: run.models,
       contextPackIds: run.context_pack_ids || [], referencesPerBrief: Number(run.references_per_brief) || 0,
       sharedPlans: run.shared_plans === true,
+      waiting: limited ? { reason: 'provider_limit', until: limited.until } : null,
       capUsd: run.cap, spentUsd: run.spent, concurrency: run.concurrency,
       createdAt: iso(run.created_at), startedAt: iso(run.started_at), finishedAt: iso(run.finished_at),
     },

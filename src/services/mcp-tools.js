@@ -7300,9 +7300,11 @@ function registerTools(server, ctx) {
         trials: (b.trials || []).map(studioTrialOut),
         changedOnly: !!b.changedOnly,
         cursor: String(b.cursor || ''),
-        nextStep: open
-          ? `${open} builds are still under way. Call again in a minute or two with since set to the cursor.`
-          : 'Nothing is under way. Compare the builds with get_bench_gallery or get_bench_trial; put one up with deploy_bench_preview.',
+        nextStep: open && b.run?.waiting?.reason === 'provider_limit'
+          ? `${open} builds are left, and no new one starts until ${String(b.run.waiting.until || '').slice(0, 40)}: the provider refused the benchmark's key for its spending limit. Tell the person: an admin can raise homeroom_bench's weekly cap in Admin > Limits; the next build then finds out whether the key works again.`
+          : open
+            ? `${open} builds are still under way. Call again in a minute or two with since set to the cursor.`
+            : 'Nothing is under way. Compare the builds with get_bench_gallery or get_bench_trial; put one up with deploy_bench_preview.',
       });
     });
 
