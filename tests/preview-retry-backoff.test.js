@@ -39,7 +39,9 @@ test('the boot recovery and the live heal both wait for it, before anything else
   const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
   const boot = server.slice(server.indexOf('async function recoverSessions(config)'));
   const bootLoop = boot.slice(0, boot.indexOf("reason: 'startup'"));
-  assert.match(bootLoop, /if \(stagingRecovery\.previewRetryPending\(session\)\) \{ backedOff \+= 1; continue; \}\s+if \(!\(await stagingRecovery\.stagingNeedsRebuild\(session, \{ config \}\)\)\) continue;/);
+  // Between the two, only the skip for a session a live process still works
+  // on (docs/plans/draining-releases.md), which asks nothing of the preview.
+  assert.match(bootLoop, /if \(stagingRecovery\.previewRetryPending\(session\)\) \{ backedOff \+= 1; continue; \}(?:\s*\/\/[^\n]*)*\s+if \(\(await processes\.holders\(\['session', 'staging_build', 'capture'\], session\.id, pool\)\)\.length\) continue;\s+if \(!\(await stagingRecovery\.stagingNeedsRebuild\(session, \{ config \}\)\)\) continue;/);
   assert.match(boot, /Left failing previews to their retry backoff at boot/);
 
   const heal = server.slice(server.indexOf('const MAX_HEALS_PER_SWEEP'), server.indexOf("reason: 'heal'"));

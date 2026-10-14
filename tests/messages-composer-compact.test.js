@@ -223,6 +223,15 @@ test('an empty composer renders the count\'s line without the near-limit mark', 
   assert.match(html, /<div class="messages-composer-card">/);
 });
 
+test('the rendered microphone stays between the editable field and Send in the compact row', () => {
+  const html = composerHtml();
+  const field = html.indexOf('<textarea');
+  const microphone = html.indexOf('data-dictation="idle"');
+  const send = html.indexOf('class="messages-send"');
+  assert.ok(field >= 0 && field < microphone && microphone < send);
+  assert.equal((html.match(/data-dictation=/g) || []).length, 1, 'one microphone control per composer');
+});
+
 // ── 4. What the phone block leaves alone ───────────────────────────────
 
 test('desktop keeps the card\'s padding and row, and is the app channel\'s height', () => {

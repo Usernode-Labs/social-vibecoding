@@ -133,7 +133,9 @@ const SET_FOCUS_APP_TOOL = Object.freeze({
 });
 
 // Stop handles for the turns this process is running, by agent session id.
-const stopRegistry = new Map();
+// Each is this process's hold on the turn (services/processes.js): a
+// draining process finishes it before it exits.
+const stopRegistry = require('../processes').heldMap('agent_turn');
 
 // Whether this turn's model can look at pictures: a Claude model always can,
 // an OpenRouter one when the catalog lists image input (openrouter-mayor.js).
@@ -1044,8 +1046,13 @@ async function runAgentTurn({
     }
   } finally {
     clearInterval(leaseTimer);
-    if (shim) await shim.close('turn_finished');
-    if (stopRegistry.get(agentSessionId) === stop) stopRegistry.delete(agentSessionId);
+    // The handle (and the hold it is: services/processes.js) goes even when
+    // the shim's close throws.
+    try {
+      if (shim) await shim.close('turn_finished');
+    } finally {
+      if (stopRegistry.get(agentSessionId) === stop) stopRegistry.delete(agentSessionId);
+    }
     await d.agentSessions.releaseTurnLease(pool, { agentSessionId, turnId, finished: true }).catch((err) => {
       log.warn('agent-mayor', 'Could not release the turn lease', { agentSessionId, err: err.message });
     });

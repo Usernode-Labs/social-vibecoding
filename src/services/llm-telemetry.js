@@ -70,6 +70,7 @@ const COMPONENTS = new Set([
   // The translation step's catalog requests (services/language-sync.js), sent
   // one by one or as a Message Batch.
   'language_sync',
+  'dictation',
   'other_helper',
 ]);
 const BILLING_PATHS = new Set([

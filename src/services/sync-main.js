@@ -76,10 +76,10 @@ async function persistConflictState(pool, session, { state, files }) {
 
 // #252: in-flight sync registry. One entry per session while a
 // MODE=sync turn is running, holding the coarse phase the UI banner
-// shows. Process-local — same single-Node-process assumption as the
-// conflict-resolver's isResolving registry.
+// shows. Each entry is also this process's hold on the session's sync
+// (services/processes.js): another platform process sees it running.
 //   sessionId(Number) -> { phase, startedAt, promise }
-const _inFlightSyncs = new Map();
+const _inFlightSyncs = require('./processes').heldMap('sync');
 
 function repoOf(session) {
   const m = (session?.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
@@ -111,9 +111,13 @@ function repoOf(session) {
 
 // Read by GET /api/sessions/:id/status for reload recovery and the
 // client's poll fallback. Null when nothing is syncing.
+// A sync another process runs is known to be running, not where it is.
 function getSyncState(sessionId) {
   const entry = _inFlightSyncs.get(Number(sessionId));
-  return entry ? { phase: entry.phase, startedAt: entry.startedAt } : null;
+  if (entry) return { phase: entry.phase, startedAt: entry.startedAt };
+  let elsewhere = false;
+  try { elsewhere = require('./processes').heldElsewhere('sync', Number(sessionId)); } catch { /* none */ }
+  return elsewhere ? { phase: 'starting', startedAt: null } : null;
 }
 
 // Map the worker's __USERNODE_PHASE__ markers (forwarded by

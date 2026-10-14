@@ -6551,6 +6551,14 @@
       "classicPath": "#app/:slug/app"
     },
     {
+      "source": "src/routes/dictation.js",
+      "method": "POST",
+      "path": "/api/dictation/transcribe",
+      "expression": null,
+      "status": "exempt",
+      "reason": "audio upload transport after a deliberate microphone action; the browser inserts editable text before a person sends it"
+    },
+    {
       "source": "src/routes/external-agent-patch-upload.js",
       "method": "PUT",
       "path": "/api/external-tasks/:taskId/patch",

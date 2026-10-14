@@ -43,8 +43,10 @@ const DEFAULT_CONCURRENCY = 2;
 const MAX_CONCURRENCY = 4;
 const INTERRUPTED_REASON = 'Homeroom restarted while this trial was being taken, twice.';
 
-// trialId -> { trialId, attemptId, sessionId, runId, proxyCents, reportedCents, promise }
-const inFlight = new Map();
+// trialId -> { trialId, attemptId, sessionId, runId, proxyCents, reportedCents, promise }.
+// Each is this process's hold on the trial (services/processes.js): a
+// draining process finishes it before it exits.
+const inFlight = require('./processes').heldMap('shots_eval');
 // sessionId -> the in-flight entry whose shots turn the platform pays for.
 const billed = new Map();
 
@@ -84,6 +86,34 @@ function overCap(sessionId, extraCents = 0) {
   const entry = billed.get(Number(sessionId));
   if (!entry || !(entry.capCents > 0)) return false;
   return entry.spentAtStartCents + entry.proxyCents + (Number(extraCents) || 0) > entry.capCents;
+}
+
+// A trial another platform process runs on the session (one finishing its
+// work after a release, its shots agent's calls reaching this process): its
+// id and how far its eval is from the cap, from the database. Null when no
+// live process runs one. What the runner itself has billed is not seen here,
+// so the eval can end past its cap by at most a trial, as it already could.
+async function remoteTrialFor(pool, sessionId) {
+  const { rows: [t] } = await pool.query(
+    `SELECT t.id, t.proxy_cents, r.cap_cents, r.spent_cents FROM shots_eval_trials t
+       JOIN shots_eval_runs r ON r.id = t.eval_run_id
+      WHERE t.session_id = $1 AND t.state = ANY($2::text[])
+      ORDER BY t.id DESC LIMIT 1`,
+    [Number(sessionId), ACTIVE]);
+  if (!t || !require('./processes').heldElsewhere('shots_eval', Number(t.id))) return null;
+  return { trialId: Number(t.id), capCents: num(t.cap_cents), spentCents: num(t.spent_cents) + num(t.proxy_cents) };
+}
+
+/** Whether `extraCents` more would take that trial's eval past its cap. */
+function remoteOverCap(trial, extraCents = 0) {
+  return !!trial && trial.capCents > 0 && trial.spentCents + (Number(extraCents) || 0) > trial.capCents;
+}
+
+/** One proxied call of a trial another process runs, on the trial's row. */
+async function noteRemoteSpend(pool, trialId, costCents) {
+  const cents = Number(costCents);
+  if (!(Number.isFinite(cents) && cents > 0)) return;
+  await pool.query('UPDATE shots_eval_trials SET proxy_cents = proxy_cents + $2::numeric WHERE id = $1', [Number(trialId), cents]);
 }
 
 // ── A trial's state, in the shape the shots pipeline uses ───────────────
@@ -312,7 +342,10 @@ async function executeTrial(pool, config, trial, entry, deps = {}) {
 
 // What the trial cost goes on it and on its eval, once.
 async function settleCost(pool, entry) {
-  const cents = Math.round(Math.max(entry.proxyCents, entry.reportedCents) * 10_000) / 10_000;
+  // With what another process's proxy billed for it (noteRemoteSpend).
+  const { rows: [row] } = await pool.query('SELECT proxy_cents FROM shots_eval_trials WHERE id = $1', [entry.trialId]);
+  const proxied = entry.proxyCents + num(row?.proxy_cents);
+  const cents = Math.round(Math.max(proxied, entry.reportedCents) * 10_000) / 10_000;
   if (!(cents > 0)) return 0;
   await pool.query(
     `WITH trial AS (
@@ -604,6 +637,9 @@ module.exports = {
   billsSession,
   noteSpend,
   overCap,
+  remoteTrialFor,
+  remoteOverCap,
+  noteRemoteSpend,
   trialState,
   promptedAgent,
   executeTrial,

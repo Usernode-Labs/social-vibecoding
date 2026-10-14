@@ -49,7 +49,11 @@ spec:
     spec:
       serviceAccountName: social-platform-runtime
       automountServiceAccountToken: true
-      terminationGracePeriodSeconds: 90
+      # A Pod a release replaced keeps finishing the work it started for up
+      # to platform.drainMinutes, then hands the rest over and exits
+      # (docs/plans/draining-releases.md). The 60 seconds on top are the
+      # preStop sleep and the bounded steps after the drain.
+      terminationGracePeriodSeconds: {{ add (mul (int .Values.platform.drainMinutes) 60) 60 }}
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
@@ -115,6 +119,10 @@ spec:
             # HTTP, but only the Postgres advisory-lock leader runs singleton
             # recovery, sweepers and reconcilers.
             - {name: PLATFORM_LEADER_LOCK, value: "1"}
+            # How long a replaced Pod finishes its work, and how many may at
+            # once (docs/plans/draining-releases.md).
+            - {name: PLATFORM_DRAIN_TIMEOUT_MS, value: {{ mul (int .Values.platform.drainMinutes) 60000 | quote }}}
+            - {name: PLATFORM_DRAINING_MAX, value: {{ int .Values.platform.drainingMax | quote }}}
             - {name: GIT_SHA, value: {{ .Values.release.sourceRevision | quote }}}
             - {name: USERNODE_DOMAIN, value: {{ .Values.config.domain | quote }}}
             - {name: USERNODE_APPS_DOMAIN, value: {{ default .Values.config.domain .Values.config.appsDomain | quote }}}

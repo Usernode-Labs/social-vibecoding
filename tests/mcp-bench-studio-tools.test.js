@@ -143,6 +143,37 @@ test('launch_bench_studio: no cap is refused, a cap over $100 needs confirmLarge
   assert.equal(calls[1].body.confirmLargeCap, true);
 });
 
+// A client whose copy of the tool list predates launch_bench_studio's
+// sharedPlans has no type for it and sends `true` as the text "true" (run
+// 194's launch was refused for exactly that). The SDK parses a call with the
+// tool's own schema, so the schema takes the text, and what it advertises
+// stays a boolean, as submit_work's patchUploadId does for its digits.
+test('launch_bench_studio takes sharedPlans as "true" or "false" text, advertises a boolean, and refuses anything else', async (t) => {
+  const { normalizeObjectSchema, safeParse } = require('@modelcontextprotocol/sdk/server/zod-compat.js');
+  const { toJsonSchemaCompat } = require('@modelcontextprotocol/sdk/server/zod-json-schema-compat.js');
+  const { specs, handlers } = register({ user: { ...ADMIN } });
+  const schema = normalizeObjectSchema(specs.get('launch_bench_studio').inputSchema);
+  const parse = (args) => safeParse(schema, { capUsd: 20, ...args });
+  for (const [sent, got] of [[true, true], [false, false], ['true', true], ['false', false], [' true ', true]]) {
+    const r = parse({ sharedPlans: sent });
+    assert.equal(r.success, true, JSON.stringify(sent));
+    assert.equal(r.data.sharedPlans, got, `${JSON.stringify(sent)} reaches the handler as the boolean`);
+  }
+  assert.equal(parse({}).data.sharedPlans, undefined, 'still optional');
+  for (const sent of ['yes', 'TRUE', '1', '', 'constructor', 1, 0, null, {}]) {
+    assert.equal(parse({ sharedPlans: sent }).success, false, JSON.stringify(sent));
+  }
+  const listed = toJsonSchemaCompat(schema, { strictUnions: true, pipeStrategy: 'input' });
+  assert.equal(listed.properties.sharedPlans.type, 'boolean', 'advertised as a boolean');
+  assert.match(listed.properties.sharedPlans.description, /one plan per brief/);
+
+  // What the handler is handed reaches the route as the boolean.
+  const calls = stubFetch(t, () => ({ body: { run: { id: 194, status: 'queued', capUsd: 20, sharedPlans: true }, trials: 18, briefs: [] } }));
+  const out = await handlers.get('launch_bench_studio')({ ...parse({ briefs: [{ taskId: 143 }], sharedPlans: 'true' }).data });
+  assert.equal(calls[0].body.sharedPlans, true);
+  assert.equal(out.structuredContent.sharedPlans, true);
+});
+
 test('get_bench_studio_run passes the cursor and wraps what models wrote', async (t) => {
   const calls = stubFetch(t, () => ({
     body: {

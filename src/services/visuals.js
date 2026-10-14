@@ -1608,7 +1608,10 @@ async function resetShots(pool, session, repoOwner, repoName, send) {
 // #2038: a Map, not a Set — the value carries the running operation's abort
 // handle and the commit it is testing, which is what lets a NEWER run for a
 // DIFFERENT commit supersede it instead of waiting it out.
-const _inFlight = new Map(); // key -> { operation, commitHash }
+// Each key is this process's HOLD on the session's capture too
+// (services/processes.js), so another platform process sees the capture in
+// flight (hasInFlightCapture) and a draining one finishes it.
+const _inFlight = require('./processes').heldMap('capture'); // key -> { operation, commitHash }
 const _queued = new Map();
 
 function captureKey(sessionId) {
@@ -1619,9 +1622,11 @@ function captureKey(sessionId) {
 // commit while an older revision can still write screenshots or checks.
 // Include the depth-one queue: after a newer web build supersedes an active
 // capture, that queued run is still part of the current proposal pipeline.
+// For every live platform process: this one's, then the others' holds.
 function hasInFlightCapture(sessionId) {
   const key = captureKey(sessionId);
-  return _inFlight.has(key) || _queued.has(key);
+  if (_inFlight.has(key) || _queued.has(key)) return true;
+  try { return require('./processes').heldElsewhere('capture', key); } catch { return false; }
 }
 
 // Main entry point. Fire-and-forget from the staging-success sites

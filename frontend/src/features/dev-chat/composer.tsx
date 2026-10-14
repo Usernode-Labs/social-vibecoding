@@ -17,6 +17,7 @@
 
 import { type ChangeEvent, type MouseEvent, type ReactNode } from 'react';
 
+import { SpeakButton } from '../dictation/speak-button';
 import { Button } from '@/components/ui/button';
 import {
   ArrowUpIcon,
@@ -278,6 +279,9 @@ export function DevComposerView({ s }: { s: ComposerState }): ReactNode {
             >
               <PlusIcon width={20} height={20} />
             </button>
+            <SpeakButton scope={`dev:${controller()?.currentSession?.id}`} disabled={s.hidden || !['send', 'save'].includes(s.send.kind)} maxLength={50000}
+              getText={() => (document.getElementById('dc-input') as HTMLTextAreaElement | null)?.value || ''}
+              onText={(text) => controller()?._restoreComposer?.(text)} />
             <BudgetPillBar />
             {s.models ? (
               <div id="dc-venue-detail" className="dc-venue-detail dc-venue-detail-inline">

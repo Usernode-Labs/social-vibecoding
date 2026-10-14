@@ -146,6 +146,9 @@ const ws = require('./src/services/ws');
 const log = require('./src/services/logger');
 const lifecycle = require('./src/services/lifecycle');
 const leaderTimers = require('./src/services/leader-timers');
+// The platform's processes and what each holds (docs/plans/draining-releases.md).
+const processes = require('./src/services/processes');
+const drain = require('./src/services/drain');
 const inflightWork = require('./src/services/inflight-work');
 const inflightRequests = require('./src/middleware/inflight-requests');
 const chainPoller = require('./src/services/chain-poller');
@@ -654,6 +657,7 @@ app.use(illustrationRoutes(config));
 app.use(appFileShellRoutes(config));
 app.use(chatRoutes(config));
 app.use(conversationRoutes(config));
+app.use(require('./src/routes/dictation').dictationRoutes(config));
 // #2386: mutual friends — the viewer's own lists, requests and answers.
 app.use(friendRoutes(config));
 app.use(contentReportRoutes(config));
@@ -1485,6 +1489,21 @@ async function becomeLeader() {
           log.warn('server', 'Quick-reply backfill failed', { err: err.message });
         });
     });
+  // What a process leaves behind later (it exits at its drain deadline, or
+  // dies) is adopted as it goes, not at the next election: the replaced Pod
+  // may still be finishing turns when this one is elected
+  // (docs/plans/draining-releases.md). Turns, then headless runs that have
+  // not moved for a while and that no live process holds.
+  leaderTimers.every('orphan-turn-sweep', () => sweepOrphanTurns(config)
+    .catch((err) => log.warn('server', 'Orphan turn sweep failed', { err: err.message })),
+  ORPHAN_SWEEP_MS, { firstDelayMs: ORPHAN_SWEEP_MS });
+  leaderTimers.every('process-reap', () => processes.reap()
+    .catch((err) => log.warn('server', 'Reaping gone processes failed', { err: err.message })),
+  5 * 60 * 1000);
+  leaderTimers.every('orphan-headless-sweep', () => require('./src/routes/sessions')
+    .resumeHeadlessRuns(config, { minIdleMs: ORPHAN_MIN_AGE_MS })
+    .catch((err) => log.warn('server', 'Orphan headless sweep failed', { err: err.message })),
+  ORPHAN_SWEEP_MS, { firstDelayMs: ORPHAN_SWEEP_MS });
 
   // Durable deletion tasks survive provider outages and platform restarts.
   const runAccountDeletionCleanup = () => require('./src/services/account-deletion-cleanup')
@@ -1736,6 +1755,10 @@ async function start() {
     migration = await withMigrationLock(getPool(config), () => migrate(config));
   }
   const servicesStartedAt = Date.now();
+  // This process, and what it holds, for every other one to see
+  // (docs/plans/draining-releases.md): before anything here can start work.
+  // Never fatal: holds stay this process's own until the database takes them.
+  await processes.start({ pool: getPool(config), role: 'all' });
   // The clients every process that runs the workflow machines makes
   // (src/workflow/setup.ts): the push sender, GitHub, the model.
   await require('./src/workflow/setup.ts').startWorkflowClients(config);
@@ -1845,6 +1868,9 @@ module.exports = {
   // sends with a shell asset (tests/spec-frame-styles.test.js).
   app,
   adoptOrphanWorker,
+  // docs/plans/draining-releases.md: the leader's sweep for turns their
+  // process left behind.
+  sweepOrphanTurns,
   // #1378: the detached-turn resume itself, so tests can prove a stop that
   // lands on an ADOPTED turn terminalizes it as a stop instead of narrating
   // an interruption (or retrying it). Driving it through adoptOrphanWorker
@@ -1870,11 +1896,16 @@ module.exports = {
   get SUCCESSOR_ANNOUNCE_TIMEOUT_MS() { return SUCCESSOR_ANNOUNCE_TIMEOUT_MS; },
   get SHOTS_SHUTDOWN_MARK_TIMEOUT_MS() { return SHOTS_SHUTDOWN_MARK_TIMEOUT_MS; },
   get BUILD_SHUTDOWN_MARK_TIMEOUT_MS() { return BUILD_SHUTDOWN_MARK_TIMEOUT_MS; },
+  get SUCCESSOR_WAIT_MS() { return SUCCESSOR_WAIT_MS; },
   shutdownDrainMs: (...args) => shutdownDrainMs(...args),
-  __setShutdownTargets: ({ server, pool } = {}) => {
+  // `finishesWork`, `drainMs` and `leadership` stand in for a Kubernetes
+  // Pod's drain (docs/plans/draining-releases.md) and its leader lock.
+  __setShutdownTargets: ({ server, pool, finishesWork, drainMs, successor, leadership: lead } = {}) => {
     httpServer = server ?? null;
     shutdownPool = pool ?? null;
     cleanupStarted = false;
+    shutdownOverrides = { finishesWork, drainMs, successor };
+    if (lead !== undefined) leadership = lead;
   },
 };
 
@@ -2623,6 +2654,10 @@ async function recoverSessions(config) {
       // does: a boot is not a reason to try it again
       // (stagingRecovery.previewRetryPending).
       if (stagingRecovery.previewRetryPending(session)) { backedOff += 1; continue; }
+      // A live process still working on the session (the Pod a release
+      // replaced, finishing a turn or a build: docs/plans/draining-releases.md)
+      // builds its preview itself.
+      if ((await processes.holders(['session', 'staging_build', 'capture'], session.id, pool)).length) continue;
       if (!(await stagingRecovery.stagingNeedsRebuild(session, { config }))) continue;
       // Boot is when the old leader's runs are being harvested. A rebuild
       // would replace the preview under one and abort its harvest, so a
@@ -2848,6 +2883,67 @@ async function recoverActiveWorkers(config) {
   }
 }
 
+// docs/plans/draining-releases.md: a turn its process leaves behind (it
+// exited at its drain deadline, or died) is adopted by the leader within
+// ORPHAN_SWEEP_MS, not only when a leader is elected: since a release lets
+// the replaced Pod finish its work while this one leads, election is no
+// longer when the previous owner is known to be gone. An orphan is a turn in
+// a recoverable phase that no live process holds (services/processes.js),
+// whose record has not moved for ORPHAN_MIN_AGE_MS (a dispatch just made has
+// its hold written long before then), and whose worker is still there. The
+// adoption itself is adoptOrphanWorker's, which reads the holders again.
+const ORPHAN_SWEEP_MS = 60 * 1000;
+const ORPHAN_MIN_AGE_MS = 2 * 60 * 1000;
+
+async function sweepOrphanTurns(config, { adopt = adoptOrphanWorker } = {}) {
+  const pool = getPool(config);
+  const { rows } = await pool.query(
+    `SELECT cs.id FROM chat_sessions cs
+      WHERE cs.active_turn IS NOT NULL
+        AND cs.active_turn->>'phase' = ANY($1::text[])
+        AND COALESCE(cs.active_turn->>'lifecycleUpdatedAt', cs.active_turn->>'startedAt') < $2
+        AND NOT EXISTS (
+          SELECT 1 FROM process_holds h JOIN platform_processes p ON p.id = h.process_id
+           WHERE h.kind = ANY($3::text[]) AND h.ref = cs.id::text
+             AND p.heartbeat_at > NOW() - make_interval(secs => $4))
+        -- What adoption leaves as it is, and so would come back every pass:
+        -- a headless run (resumeHeadlessRuns carries it), and a durable
+        -- build's session (its build carries it, wherever it runs).
+        AND cs.is_headless IS NOT TRUE
+        AND NOT (cs.workflow_owner IS NOT NULL AND EXISTS (
+          SELECT 1 FROM wf_instances w
+           WHERE w.machine = split_part(cs.workflow_owner, '/', 1)
+             AND w.key = substr(cs.workflow_owner, length(split_part(cs.workflow_owner, '/', 1)) + 2)
+             AND w.state = 'building'))
+      ORDER BY cs.id
+      LIMIT 20`,
+    [[...turnLifecycle.RECOVERABLE_PHASES], new Date(Date.now() - ORPHAN_MIN_AGE_MS).toISOString(),
+      ['session', 'shots', 'sync'], processes.LIVE_SECONDS],
+  );
+  let adopted = 0;
+  for (const { id } of rows) {
+    // What this process holds, whether or not its write has landed yet.
+    if (['session', 'shots', 'sync'].some((kind) => processes.heldHere(kind, id))) continue;
+    if (activeWorkersSvc.isSessionBusyHere(id) || worker.getActiveTurnMode(id)) continue;
+    const name = worker.workerContainerName(id);
+    let state;
+    try { state = await worker.getWorkerStatus(name); } catch { continue; }
+    if (!state || state === 'not_found') continue;
+    const deps = { config, pool, staging: require('./src/services/staging'), ghub: require('./src/services/github'),
+      broadcastGlobal: require('./src/services/ws').broadcastGlobal };
+    log.info('server', 'Adopting a turn its process left behind', { sessionId: id, containerName: name, state });
+    adopted += 1;
+    Promise.resolve().then(() => adopt({ name, sessionId: id, state }, deps)).catch((err) => {
+      if (err?.retainActiveTurn && recoveryRetry.shouldRetryRecoveryError(err)) {
+        scheduleRetainedOrphanRecovery({ name, sessionId: id, state, retryWorkerRecovery: !!err.retryWorkerRecovery }, deps);
+        return;
+      }
+      log.warn('server', 'Adopting a left-behind turn failed', { sessionId: id, err: err.message });
+    });
+  }
+  return { examined: rows.length, adopted };
+}
+
 async function persistedActiveTurnExists(pool, sessionId) {
   try {
     const { rows } = await pool.query(
@@ -2875,6 +2971,12 @@ async function reconcilePendingTurnCleanup(config) {
     [turnLifecycle.PHASE_CLEANUP_PENDING],
   );
   for (const row of rows) {
+    // A live process still finishing the turn cleans it up itself
+    // (docs/plans/draining-releases.md); one whose holders cannot be read is
+    // left for a later sweep.
+    let held = true;
+    try { held = (await processes.holders('session', row.id, pool)).length > 0; } catch { held = true; }
+    if (held) continue;
     const args = turnCleanupArgs(row.active_turn);
     const cleared = await worker.finishTurn(row.id, args);
     if (!cleared) {
@@ -3215,8 +3317,24 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
   // promoted; adopting its own live turn here put a second consumer on its
   // journal and finished it twice (cards, vote resets, wrap-ups), and the
   // adoption's `finally` took the live owner's busy flag with it.
-  if (worker.getActiveTurnMode(sessionId) || activeWorkersSvc.isSessionBusy(sessionId)) {
+  if (worker.getActiveTurnMode(sessionId) || activeWorkersSvc.isSessionBusyHere(sessionId)) {
     log.info('server', 'A turn on this worker is live in this process; not adopting it', { containerName, sessionId });
+    return;
+  }
+  // Nor one another live process is following: the Pod a release replaced
+  // finishes its turns while this one leads (docs/plans/draining-releases.md),
+  // holding their sessions until they end (services/processes.js). Read
+  // exactly: a session whose holders cannot be read is retried, not taken.
+  let holders;
+  try {
+    holders = await processes.holders(['session', 'shots', 'sync'], sessionId, pool);
+  } catch (err) {
+    throw retryRuntimeRecovery(`could not read who holds the session: ${err.message}`);
+  }
+  if (holders.length) {
+    log.info('server', 'A turn on this worker is live in another process; not adopting it', {
+      containerName, sessionId, holders,
+    });
     return;
   }
 
@@ -5340,6 +5458,12 @@ function startSessionAutoPauseSweeper(config) {
     stagingIdleMs: config.stagingIdleTeardownMs,
     sweepIntervalMs: config.sessionSweepIntervalMs,
   });
+  // Not held for the shutdown drain as a whole: a pass can be minutes into a
+  // staging rebuild, which a shutdown leaves to be re-driven (cleanup marks
+  // it), and waiting for one held a release's drain to its 60s deadline on
+  // 14 Oct 2026. Its long loops stop at their next row once shutdown begins,
+  // and the proposal measurement, whose write the closing pool cut, is held
+  // on its own below.
   sessionSweeperHandle = setInterval(async () => {
     if (lifecycle.isShuttingDown()) return;
 
@@ -5655,7 +5779,7 @@ function startSessionAutoPauseSweeper(config) {
       const MAX_HEALS_PER_SWEEP = 5;
       let healed = 0;
       for (const session of rows) {
-        if (healed >= MAX_HEALS_PER_SWEEP) break;
+        if (healed >= MAX_HEALS_PER_SWEEP || lifecycle.isShuttingDown()) break;
         if (activeWorkersSvc.isSessionBusy(session.id)) continue;
         // #866: worker.isInFlight only covers agent turns. An imported
         // proposal's first staging build runs from the import path with no
@@ -5869,13 +5993,19 @@ function startSessionAutoPauseSweeper(config) {
           ORDER BY cs.app_id, cs.integration_measured_at NULLS FIRST`
       );
       let measured = 0;
-      for (const session of rows) {
-        // A session mid-turn is about to move its own head; measuring it now
-        // records an answer that is wrong before it is written.
-        if (worker.isInFlight(session.id)) continue;
-        const written = await integrationSvc.measure({ pool, session }, { force: true });
-        if (written && !written.skipped) measured++;
-      }
+      // Held for the shutdown drain, which therefore waits for one
+      // measurement at most: the loop stops at its next row once shutdown
+      // begins, rather than writing into the closed pool.
+      await inflightWork.track('session-sweeper:measure', async () => {
+        for (const session of rows) {
+          if (lifecycle.isShuttingDown()) break;
+          // A session mid-turn is about to move its own head; measuring it now
+          // records an answer that is wrong before it is written.
+          if (worker.isInFlight(session.id)) continue;
+          const written = await integrationSvc.measure({ pool, session }, { force: true });
+          if (written && !written.skipped) measured++;
+        }
+      });
       if (measured) log.info('server', 'Measured proposals against main', { count: measured });
     } catch (err) {
       log.warn('server', 'Proposal measurement sweep failed', { err: err.message });
@@ -6602,6 +6732,8 @@ async function announceSuccessorBuild() {
 }
 
 let cleanupStarted = false;
+// Tests only (__setShutdownTargets).
+let shutdownOverrides = null;
 // Set by start() once the listener is up. cleanup() runs at module scope,
 // so both need to be reachable from here.
 let httpServer = null;
@@ -6611,13 +6743,45 @@ async function cleanup() {
   if (cleanupStarted) return;
   cleanupStarted = true;
   lifecycle.setShuttingDown();
+  // docs/plans/draining-releases.md: on the platform's own Kubernetes Pods a
+  // release no longer cuts the work this process started. Everything below
+  // that would cut it (ending the Mayor's turns, stopping the workflow
+  // runtime's work, closing the listener) waits until drainUntilIdle has
+  // let it finish, or its deadline has passed; the rest stops at once, as
+  // before. A docker-compose color and a staging preview keep the short
+  // drain: neither has a grace period to spend.
+  const cleanupStartedAt = Date.now();
+  let finishesWork = shutdownOverrides?.finishesWork ?? finishesWorkOnShutdown();
+  let drainMs = shutdownOverrides?.drainMs ?? shutdownDrainMs();
+  // Only beside a successor that says what it holds: a release from before
+  // the registry would adopt this process's live turns as orphans the moment
+  // it led (a rollback across it), and a Pod evicted before its replacement
+  // is up would leave nobody leading. Without one, the cutover it always had:
+  // a minute's drain, the lock released last.
+  // Draining first, so a process stopping beside this one (a scale to zero,
+  // a restart of every replica) never counts it as its successor.
+  if (finishesWork) {
+    await boundedStep(processes.markDraining(new Date(cleanupStartedAt + drainMs)), 1000)
+      .catch((err) => log.warn('server', 'Could not mark this process draining', { err: err.message }));
+  }
+  const askSuccessor = shutdownOverrides?.successor ?? successorServing;
+  if (finishesWork && !(await askSuccessor())) {
+    finishesWork = false;
+    drainMs = Math.min(drainMs, lifecycle.KUBERNETES_DRAIN_DEFAULT_MS);
+    log.warn('server', 'No process that knows what this one holds is serving; cutting over without finishing the work', { drainMs });
+  }
+  // From SIGTERM, not from here: waiting for a successor spends the drain.
+  const drainDeadline = cleanupStartedAt + drainMs;
   // The Mayor's turns in agent sessions end with this process: each one
   // records what it had said and that it was interrupted (with Retry), and
   // hands its lease back, so the conversation is never left looking busy
   // with nobody working. A turn whose coding agent is running is left to
   // restart recovery. Awaited with the drain below, before the pool closes.
-  const agentTurnsEnded = require('./src/services/mayor/agent-turn').interruptLocalTurns({ timeoutMs: 3000 })
+  // A process finishing its work ends only those still running at its
+  // drain's end.
+  const endAgentTurns = () => require('./src/services/mayor/agent-turn').interruptLocalTurns({ timeoutMs: 3000 })
     .catch((err) => log.warn('server', 'Interrupting agent turns failed', { err: err.message }));
+  let agentTurnsEnded = finishesWork ? null : endAgentTurns();
   require('./src/services/mayor/agent-turn').stopInterruptedTurnSweeper();
   // The Homeroom bot's loops and its benchmark lane: nothing new is claimed
   // or dispatched on a process whose pool is about to close. Their turns
@@ -6634,6 +6798,16 @@ async function cleanup() {
   try { require('./src/services/homeroom-bot-welcome').stop(); } catch (err) {
     log.warn('server', 'Stopping the Homeroom bot welcome failed', { err: err.message });
   }
+  // The leader's sweeps on timers of their own: none may run beside the new
+  // leader's while this process finishes its work. A creation or a redeploy
+  // under way here keeps its own heartbeat until it ends.
+  for (const [name, stop] of [
+    ['app creation', () => require('./src/services/app-creation-owner').stop()],
+    ['owed redeploy', () => require('./src/services/owed-redeploy').stop()],
+    ['sketch commit', () => require('./src/services/app-sketch').stopCommitSweep()],
+  ]) {
+    try { stop(); } catch (err) { log.warn('server', `Stopping the ${name} sweep failed`, { err: err.message }); }
+  }
   // The bot's builds and the bench's trials under way here are durable
   // builds (services/build-runs.js): stopping the workflow runtime below
   // stops each at its next step, its turn left running in its worker, and
@@ -6648,8 +6822,14 @@ async function cleanup() {
   // parallel with HTTP/session draining and is awaited before pool close.
   // The workflow runtime has its own pool; its running work reports nothing,
   // and gives its lease up so the next leader claims it at once.
-  const workflowStop = require('./src/workflow/platform.ts').stopWorkflow()
+  // A process finishing its work only quiesces it here (no slot, timer or
+  // claim): the work it runs goes on until the drain ends.
+  const stopWorkflowNow = () => require('./src/workflow/platform.ts').stopWorkflow()
     .catch((err) => log.warn('server', 'Stopping the workflow runtime failed', { err: err.message }));
+  let workflowStop = finishesWork
+    ? require('./src/workflow/platform.ts').quiesceWorkflow()
+      .catch((err) => log.warn('server', 'Quiescing the workflow runtime failed', { err: err.message }))
+    : stopWorkflowNow();
   const pushStop = mobilePush.stop({ timeoutMs: DRAIN_TIMEOUT_MS }).catch((err) => {
     log.warn('server', 'Mobile push shutdown failed', {
       code: typeof err?.code === 'string' ? err.code : 'unknown',
@@ -6664,20 +6844,11 @@ async function cleanup() {
   // dropped at once; connections still serving a request get until the
   // drain deadline, then closeAllConnections cuts them so `close()` can
   // actually complete.
-  const drainMs = shutdownDrainMs();
-  if (httpServer) {
-    try {
-      httpServer.close(() => {});
-      httpServer.closeIdleConnections?.();
-      const cutoff = setTimeout(() => {
-        try { httpServer.closeAllConnections?.(); } catch { /* already gone */ }
-      }, drainMs);
-      cutoff.unref?.();
-      log.info('server', 'Listener closed to new connections', { timeoutMs: drainMs });
-    } catch (err) {
-      log.warn('server', 'Listener close failed', { err: err.message });
-    }
-  }
+  //
+  // A process finishing its work keeps listening until its drain ends:
+  // Kubernetes has already taken it out of the Service, and a shots worker
+  // calls the Pod that runs its run by its own address.
+  if (!finishesWork) closeListener(drainMs);
   // Behind the listener close, deliberately: what the tabs fetch on hearing
   // this must not be able to land here. Awaited with the drain below.
   const announced = announceSuccessorBuild();
@@ -6724,6 +6895,18 @@ async function cleanup() {
     governanceApplyTickerHandle = null;
   }
 
+  // Stop leading, then finish what this process started, up to its drain
+  // deadline (drainUntilIdle); only then cut what is left, as below.
+  let handlerDrainMs = drainMs;
+  if (finishesWork) {
+    await drainUntilIdle({ deadline: drainDeadline, announced });
+    closeListener(DRAIN_TIMEOUT_MS);
+    agentTurnsEnded = endAgentTurns();
+    await workflowStop;
+    workflowStop = stopWorkflowNow();
+    handlerDrainMs = DRAIN_TIMEOUT_MS;
+  }
+
   // The handlers still answering and the background work still running
   // (a merge pass, a leader timer's tick, whatever else registered with
   // services/inflight-work.js), up to this process's drain deadline. Started
@@ -6738,7 +6921,7 @@ async function cleanup() {
     timersStopped: stoppedTimers.length,
   });
   const handlersDrained = inflightWork.waitIdle({
-    timeoutMs: drainMs,
+    timeoutMs: handlerDrainMs,
     also: () => inflightRequests.pending() === 0,
   });
 
@@ -6768,7 +6951,7 @@ async function cleanup() {
   }
   if (!(await handlersDrained)) {
     log.warn('server', 'Drain deadline passed with requests or background work in flight', {
-      deadlineMs: drainMs,
+      deadlineMs: handlerDrainMs,
       requests: inflightRequests.snapshot().slice(0, 20),
       background: inflightWork.snapshot().slice(0, 20),
     });
@@ -6857,6 +7040,12 @@ async function cleanup() {
     });
   }
 
+  // This process's row goes, and its holds with it: what it leaves is the
+  // next leader's at once rather than once its heartbeat lapses
+  // (services/processes.js). Bounded like the marks above.
+  await boundedStep(processes.stop(), BUILD_SHUTDOWN_MARK_TIMEOUT_MS)
+    .catch((err) => log.warn('server', 'Could not remove this process\'s row', { err: err.message }));
+
   // Close the pg pool so in-flight queries settle instead of being severed
   // by process.exit(). Bounded: a pool that won't drain must not hold the
   // process past the SIGKILL deadline.
@@ -6888,12 +7077,120 @@ async function cleanup() {
   // against a quiesced process, not one still finishing a turn. Uses its
   // own dedicated pg connection, so the pool close above doesn't affect
   // it. (Process exit would release the session lock anyway; doing it
-  // explicitly just hands off promptly.)
+  // explicitly just hands off promptly.) A process that finished its work
+  // resigned long before (drainUntilIdle), and adoption skipped what it held.
   if (leadership) {
     await leadership.stop().catch(() => {});
   }
 
   process.exit(0);
+}
+
+// docs/plans/draining-releases.md: whether this process finishes its work on
+// SIGTERM rather than cutting it: the platform's own Kubernetes Pods, the
+// processes the long drain is for (shutdownDrainMs).
+function finishesWorkOnShutdown() {
+  try {
+    return require('./src/services/application-runtime').mode(config) === 'kubernetes' && runsClusterMaintenance();
+  } catch { return false; }
+}
+
+// Waits up to SUCCESSOR_WAIT_MS for another process of this role to be
+// serving (services/processes.js servingOthers). On a rollout the new Pod has
+// been Ready since before SIGTERM; on an eviction its replacement is starting.
+const SUCCESSOR_WAIT_MS = 60 * 1000;
+async function successorServing({ timeoutMs = SUCCESSOR_WAIT_MS, pollMs = 2000 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try { if ((await processes.servingOthers()) > 0) return true; } catch { /* asked again below */ }
+    if (Date.now() + pollMs > deadline) return false;
+    await new Promise((r) => { const t = setTimeout(r, pollMs); t.unref?.(); });
+  }
+}
+
+function boundedStep(promise, ms) {
+  let timer = null;
+  return Promise.race([
+    Promise.resolve(promise),
+    new Promise((resolve) => { timer = setTimeout(resolve, ms); timer.unref?.(); }),
+  ]).finally(() => { if (timer) clearTimeout(timer); });
+}
+
+// Stop accepting new connections. Idle keep-alives are dropped at once;
+// connections still serving a request get until `timeoutMs`, then
+// closeAllConnections cuts them so `close()` can complete.
+function closeListener(timeoutMs) {
+  if (!httpServer) return;
+  try {
+    httpServer.close(() => {});
+    httpServer.closeIdleConnections?.();
+    const cutoff = setTimeout(() => {
+      try { httpServer.closeAllConnections?.(); } catch { /* already gone */ }
+    }, timeoutMs);
+    cutoff.unref?.();
+    log.info('server', 'Listener closed to new connections', { timeoutMs });
+  } catch (err) {
+    log.warn('server', 'Listener close failed', { err: err.message });
+  }
+}
+
+// What of this process's background work is its leader work: a leader
+// timer's tick (services/leader-timers.js) and a merge pass (merge-queue.js).
+// The lock goes only once they are done, or at the drain deadline: the new
+// leader would run the same sweep, or the same app's merges, beside them.
+const isLeaderWork = (name) => name.startsWith('timer:') || name === 'merge-queue';
+
+// A release replaced this process: stop leading, send its tabs to the new
+// Pod, and finish what it holds (services/processes.js), its background work
+// (inflight-work.js), its workflow work and its requests still answering,
+// until it is idle, the deadline passes, or too many newer processes are
+// draining too (services/drain.js). Its leader work, its loops and its
+// timers stopped before this is called, and it refuses anything new
+// (lifecycle.setShuttingDown).
+async function drainUntilIdle({ deadline, announced }) {
+  const workflowPlatform = require('./src/workflow/platform.ts');
+  const leaderWorkDone = await inflightWork.waitIdle({ timeoutMs: Math.max(0, deadline - Date.now()), only: isLeaderWork });
+  if (!leaderWorkDone) {
+    log.warn('server', 'Resigning with leader work still running at the drain deadline', {
+      work: inflightWork.snapshot().filter((e) => isLeaderWork(e.name)).slice(0, 20),
+    });
+  }
+  if (leadership) await leadership.resign().catch((err) => log.warn('server', 'Resigning leadership failed', { err: err.message }));
+  await announced;
+  const closed = ws.closeAllForRelease();
+  const busy = () => ({
+    holds: processes.localSnapshot(20),
+    background: inflightWork.snapshot().slice(0, 20),
+    workflowWork: workflowPlatform.workflowWorkRunning(),
+    requests: inflightRequests.pending(),
+  });
+  log.info('server', 'Finishing this process\'s work before exiting', {
+    sockets: closed, deadlineMs: Math.max(0, deadline - Date.now()), ...busy(),
+  });
+  const maxDraining = drain.drainingMax();
+  let why = null;
+  const outcome = await drain.untilIdle({
+    deadline,
+    idle: () => processes.localCount() === 0 && inflightWork.size() === 0
+      && workflowPlatform.workflowWorkRunning() === 0 && inflightRequests.pending() === 0,
+    // Too many newer processes draining, or no successor serving any more
+    // (it died, and nothing leads): hand the rest over now.
+    superseded: async () => {
+      if ((await processes.newerDraining()) >= maxDraining) { why = 'crowded'; return true; }
+      if ((await processes.servingOthers()) === 0) { why = 'alone'; return true; }
+      return false;
+    },
+    describe: busy,
+  });
+  if (outcome.reason === 'idle') {
+    log.info('server', 'Finished this process\'s work', { waitedMs: outcome.waitedMs });
+  } else {
+    const message = outcome.reason === 'deadline' ? 'Drain deadline passed; handing the rest of this process\'s work over'
+      : why === 'alone' ? 'No successor is serving any more; handing the rest of this process\'s work over'
+        : 'Newer processes are draining too; handing the rest of this one\'s work over';
+    log.warn('server', message, { waitedMs: outcome.waitedMs, maxDraining, ...busy() });
+  }
+  return outcome;
 }
 
 process.on('SIGTERM', cleanup);

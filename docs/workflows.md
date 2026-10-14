@@ -431,11 +431,16 @@ separate workflow Pod.
   the machine, legacy writes to that machine's rows are neither refused nor logged until
   that Pod's next boot turns the guard on again. In `raise` mode
   (development, previews, tests: one process) a flag-off boot turns it off. A rollback to
-  code from before this rule deletes it, as that code did. With a flag on, it also starts the runtime on its own pool
+  code from before this rule deletes it, as that code did. It also starts the runtime on its own pool
   (`application_name` `homeroom-workflow`), listens for outcomes so routes can wait for
   them, and runs pipeline slots. A Pod that is not the leader (the new one, during a
-  rollout) therefore applies its own events at once instead of answering `202`. With
-  every flag off, nothing else starts.
+  rollout) therefore applies its own events at once instead of answering `202`. The
+  runtime starts with every flag off too: the bot's builds and the bench's trials
+  (`bot-build`) run on it (docs/plans/bot-build-workflow.md).
+- **A Pod a release replaced** quiesces its runtime as it starts draining
+  (`quiesceWorkflow`: no slot, timer or claim) and keeps running the work it had
+  claimed, its leases renewed, until it ends or the drain does
+  (docs/plans/draining-releases.md).
 - **The leader** also runs (`startWorkflowLoops` in `becomeLeader`):
   - the timer and retention loop;
   - service loops;

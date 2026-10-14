@@ -25,11 +25,14 @@ const appAccess = require('./app-access');
 // rebuilds. It asks here first. On 2026-10-05 it did not: a test account was
 // retired, its app's database drop took 30 seconds, and the sweep rebuilt the
 // production Deployment ten seconds in. The row was then deleted, and the
-// Deployment crash-looped against the dropped database for a week.
-const tearingDown = new Set();
+// Deployment crash-looped against the dropped database for a week. Each slug
+// is also this process's hold (services/processes.js): a heal sweep on
+// another platform process sees the teardown too.
+const tearingDown = require('./processes').heldSet('teardown');
 
 function isTearingDown(slug) {
-  return tearingDown.has(slug);
+  if (tearingDown.has(slug)) return true;
+  try { return require('./processes').heldElsewhere('teardown', slug); } catch { return false; }
 }
 
 async function teardownApp(pool, config, app) {

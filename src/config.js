@@ -467,6 +467,7 @@ function load() {
       return configured.split(',').map((s) => s.trim()).filter(Boolean);
     })(),
     openrouterApiBase,
+    dictationModel: process.env.DICTATION_MODEL || 'openai/whisper-large-v3-turbo',
     // Per-model host shortlists for coding turns (openRouterProviderShortlists
     // above): { model: 'slug,slug' | 'none' }, empty for the listeners' own.
     openrouterProviderShortlists: openRouterProviderShortlists(process.env.OPENROUTER_PROVIDER_SHORTLISTS),

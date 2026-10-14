@@ -1,3 +1,4 @@
+import { SpeakButton } from '../dictation/speak-button';
 import {
   memo,
   useCallback,
@@ -1814,6 +1815,7 @@ function Composer({ id }: { id: string }) {
     refused: !!s.credits,
   }));
   const [value, setValue] = useState('');
+  const [dictating, setDictating] = useState(false);
   const input = useRef<HTMLTextAreaElement | null>(null);
   const running = snapshot.running;
   const archived = snapshot.session?.status === 'archived';
@@ -1958,6 +1960,7 @@ function Composer({ id }: { id: string }) {
 
   function submit(event?: FormEvent) {
     event?.preventDefault();
+    if (dictating) return;
     const text = value.trim();
     if (running) {
       if (saveComposerDraft(text)) update('');
@@ -2128,6 +2131,7 @@ function Composer({ id }: { id: string }) {
         >
           <PaperclipIcon className="h-5 w-5" aria-hidden="true" />
         </button>
+        <SpeakButton scope={`agent:${target}`} getText={() => input.current?.value || ''} onText={update} maxLength={20000} disabled={archived || !!pendingSend || snapshot.phase === 'loading'} onBusyChange={setDictating} />
         <input
           ref={picker}
           type="file"
