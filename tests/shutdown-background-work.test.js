@@ -47,12 +47,15 @@ test('a board-change reconcile under way is held for the drain; none starts once
   assert.equal(late.queries, 0, 'a change due after shutdown began starts nothing');
 });
 
-test('the session sweeper is held for the drain, and its long loops stop at their next row on shutdown', () => {
-  assert.match(SERVER, /sessionSweeperHandle = setInterval\(\(\) => inflightWork\.track\('timer:session-sweeper', async \(\) => \{\s+if \(lifecycle\.isShuttingDown\(\)\) return;/);
-  assert.match(SERVER, /\}\), config\.sessionSweepIntervalMs\)\.unref\(\);/);
+// 14 Oct 2026, 16:39: holding the whole sweeper tick held the drain to its
+// 60s deadline while one pass was minutes into a staging rebuild, which a
+// shutdown leaves to be re-driven anyway. Only the measurement is held.
+test('the session sweeper holds the drain only for a measurement, and its long loops stop at their next row on shutdown', () => {
+  assert.match(SERVER, /sessionSweeperHandle = setInterval\(async \(\) => \{\s+if \(lifecycle\.isShuttingDown\(\)\) return;/);
+  assert.doesNotMatch(SERVER, /inflightWork\.track\('timer:session-sweeper'/, 'a staging rebuild in a pass is not waited for');
+  assert.match(SERVER, /await inflightWork\.track\('session-sweeper:measure', async \(\) => \{\s+for \(const session of rows\) \{\s+if \(lifecycle\.isShuttingDown\(\)\) break;/,
+    'the proposal measurement is held, and stops before its next write');
   assert.match(SERVER, /if \(healed >= MAX_HEALS_PER_SWEEP \|\| lifecycle\.isShuttingDown\(\)\) break;/, 'the staging heal starts no rebuild during shutdown');
-  assert.match(SERVER, /for \(const session of rows\) \{\s+if \(lifecycle\.isShuttingDown\(\)\) break;\s+\/\/ A session mid-turn is about to move its own head/,
-    'the proposal measurement stops before its next write');
 });
 
 // Last: shutting down cannot be undone in this process.
