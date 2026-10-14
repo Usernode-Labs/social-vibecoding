@@ -1889,6 +1889,17 @@ function hasInFlightCapture(sessionId) {
   return _inFlight.has(key) || _queued.has(key);
 }
 
+// Is this process's run for the session one that copied an earlier
+// unit-suite pass instead of running the suite (services/unit-suite-
+// reuse.js), with nothing queued behind it yet? A person's "Run checks
+// again" must not be folded into such a run: it goes on, and its own run
+// is queued behind this one (forced, so it is not dropped as decided).
+function inFlightReusedUnit(sessionId) {
+  const key = captureKey(sessionId);
+  const flight = _inFlight.get(key);
+  return !!(flight && flight.reusedUnit) && !_queued.has(key);
+}
+
 // Main entry point. Fire-and-forget from the staging-success sites
 // (routes/sessions.js interactive + headless tails, routes/votes.js
 // post-promote clone build) — always AFTER staging_ready is sent so the
@@ -2910,6 +2921,9 @@ async function captureForSession(config, session, app, commitHash, stagingResult
         });
         traceStep('unit_suite', 'Unit suite reused from an earlier pass of this commit', reusedUnit.reused);
         progress.observeUnit(reusedUnit.snapshot);
+        // A person's "Run checks again" arriving now does not join this
+        // run: it starts its own once this one ends (inFlightReusedUnit).
+        flight.reusedUnit = true;
       }
     }
 
@@ -2951,7 +2965,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
           ...(earlyUnit ? { unitRunId: earlyUnit.runId } : {}),
           // Or the pass it copied instead of running one: the harvest stores
           // the same row, and looks for no unit-suite Job.
-          ...(reusedUnit ? { unitReused: { row: reusedUnit.row, snapshot: reusedUnit.snapshot } } : {}),
+          ...(reusedUnit ? { unitReused: { row: reusedUnit.row, earned: reusedUnit.earned || null, snapshot: reusedUnit.snapshot } } : {}),
         },
       });
       // This run is now the one the session waits on. The Jobs of its runs
@@ -2970,7 +2984,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // .catch collapses every failure mode to null (no row) — the checks
     // run must never die because the unit-suite runner did.
     const unitSuitePromise = shotsOnly ? Promise.resolve(null) : earlyUnit ? earlyUnit.promise : reusedUnit
-      ? Promise.resolve({ row: reusedUnit.row, history: null }) : unitSuite.maybeRunUnitSuite({
+      ? Promise.resolve({ row: reusedUnit.row, history: null, earned: reusedUnit.earned || null }) : unitSuite.maybeRunUnitSuite({
       config, pool, appId: app.id, sessionId: session.id,
       repoOwner, repoName, ref: gitRef,
       prNumber: Number(session.pr_number) || null,
@@ -3634,6 +3648,13 @@ async function settleCaptureRun(config, pool, run) {
         // been seen rendering with their stylesheets once.
         if (renderOutcome) historyRows.push(renderOutcome.history);
         await checkHistory.recordRun(pool, app.id, historyRows, { sessionId: session.id });
+        // A unit suite copied from an earlier pass of the commit observed
+        // nothing new, so it moves no counts, but its proposal earns the
+        // gate that pass earns: a later head of it that fails the suite
+        // is blocked, as it would be had the suite run here.
+        if (unitOutcome && !unitOutcome.history && unitOutcome.earned) {
+          await checkHistory.recordEarned(pool, app.id, session.id, [unitOutcome.earned]);
+        }
       }
       log.info('visuals', 'Checks stored', {
         sessionId: session.id, state: checksResult.state,
@@ -4303,6 +4324,7 @@ module.exports = {
   parseDiagnostics,
   captureFailureDetail,
   classifyTests,
+  inFlightReusedUnit,
   unreachableOriginDetail,
   connectionExhaustionDetail,
   dnsHostname,

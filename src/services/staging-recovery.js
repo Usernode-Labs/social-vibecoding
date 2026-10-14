@@ -459,6 +459,9 @@ const CHECK_TRIGGER_BY_REASON = {
   // (services/check-harvest.js). Re-driven the moment it is found rather
   // than when the stale sweeper would have got to it.
   'orphaned-run': 'boot-reconcile',
+  // The same, for a run a person asked for ("Run checks again"): it stays
+  // theirs, so the unit suite runs rather than reusing an earlier pass.
+  'orphaned-manual-run': 'manual-recheck',
 };
 function checkTriggerForReason(reason) {
   return CHECK_TRIGGER_BY_REASON[reason] || 'stuck-sweep';
@@ -1090,6 +1093,14 @@ async function recheckSessionChecks({ config, pool, session, reason, queuedSince
     });
   }
   const replaceRun = REPLACING_RECHECK_REASONS.has(reason);
+  const manual = checkTriggerForReason(reason) === 'manual-recheck';
+  // A person asked for the suite to run again: no run of this commit may
+  // copy an earlier pass from now on (services/unit-suite-reuse.js).
+  if (manual) {
+    await require('./unit-suite-reuse').forgetPasses(pool, {
+      appId: session.app_id, commitShas: [head, session.checks_commit_sha],
+    });
+  }
   // A run of this commit still on the cluster, running or finished but not
   // yet read, is the run a recheck asks for: the harvest collects it
   // (services/check-harvest.js). Asked before the stamp below, which would
@@ -1101,7 +1112,7 @@ async function recheckSessionChecks({ config, pool, session, reason, queuedSince
   // asks for, and the stamp below moves the pin off it, so its verdict is
   // never stored (visuals.storeChecks writes only for the pinned commit).
   if (!replaceRun) {
-    const left = await require('./check-harvest').runToCollect(config, pool, session.id, head);
+    const left = await require('./check-harvest').runToCollect(config, pool, session.id, head, { forManual: manual });
     if (left) {
       log.info('staging-recovery', 'A run of this commit is still on the cluster; leaving it to the harvest', {
         sessionId: session.id, reason, ...left,

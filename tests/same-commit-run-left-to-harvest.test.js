@@ -186,7 +186,7 @@ test('a capture asks before the lifecycle request; a recheck asks before its sta
 test('the manual button and recheck_change say a run was left to finish rather than claim a new one', () => {
   const routes = read('src/routes/sessions.js');
   const route = routes.slice(routes.indexOf("router.post('/api/sessions/:id/recheck'"));
-  const ask = route.indexOf("require('../services/check-harvest').runToCollect(config, pool, sessionId, session.checks_commit_sha || null)");
+  const ask = route.indexOf("require('../services/check-harvest').runToCollect(config, pool, sessionId, session.checks_commit_sha || null, { forManual: true })");
   const stamp = route.indexOf('setChecksPending(pool, sessionId');
   assert.ok(ask > 0 && stamp > ask, 'asked before the pending stamp');
   assert.match(route, /return res\.json\(\{ status: 'running', checkState: 'pending', collecting: true \}\);/);

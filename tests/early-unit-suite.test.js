@@ -239,7 +239,7 @@ test('the build starts it, detached; the checks run takes it over and records wh
   assert.match(run, /earlyUnit = require\('\.\/early-unit-suite'\)\.adopt\(config, session\.id, commitHash, gitRef, \{\s+onProgress: progress\.observeUnit, signal: operation\?\.signal,/);
   assert.ok(run.indexOf('.adopt(config') < run.indexOf('await checkRuns.record(operation?.cleanupPool || pool, {'), 'taken over before the manifest is written');
   assert.match(run, /\.\.\.\(earlyUnit \? \{ unitRunId: earlyUnit\.runId \} : \{\}\),/);
-  assert.match(run, /const unitSuitePromise = shotsOnly \? Promise\.resolve\(null\) : earlyUnit \? earlyUnit\.promise : reusedUnit\s+\? Promise\.resolve\(\{ row: reusedUnit\.row, history: null \}\) : unitSuite\.maybeRunUnitSuite\(\{/);
+  assert.match(run, /const unitSuitePromise = shotsOnly \? Promise\.resolve\(null\) : earlyUnit \? earlyUnit\.promise : reusedUnit\s+\? Promise\.resolve\(\{ row: reusedUnit\.row, history: null, earned: reusedUnit\.earned \|\| null \}\) : unitSuite\.maybeRunUnitSuite\(\{/);
   assert.match(run, /require\('\.\/early-unit-suite'\)\.cancel\(config, session\.id, 'the verdict is deferred', \{ commitHash \}\);/);
   assert.match(run, /require\('\.\/early-unit-suite'\)\.cancel\(config, session\.id, 'the checks for this commit already passed', \{ commitHash \}\);/);
   assert.match(run, /if \(harvestable && settledRun && earlyUnit\) releaseCheckJobs\(config, session\.id, earlyUnit\.runId\);/);

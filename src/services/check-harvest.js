@@ -241,8 +241,13 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null } = {}) 
     // Release the seat BEFORE the re-drive so captureForSession does not
     // park itself behind the harvest that is asking for it.
     release(null);
+    // A person's "Run checks again" that died with its process is still
+    // theirs: re-driven as one, so it runs the unit suite rather than
+    // copying an earlier pass (services/unit-suite-reuse.js).
     await stagingRecovery.recheckSessionChecks({
-      config, pool, session, reason: 'orphaned-run', ...(queuedSince ? { queuedSince } : {}),
+      config, pool, session,
+      reason: manifest.trigger === 'manual-recheck' ? 'orphaned-manual-run' : 'orphaned-run',
+      ...(queuedSince ? { queuedSince } : {}),
     });
     return { outcome: 'redriven', why, ...base };
   };
@@ -378,7 +383,7 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null } = {}) 
     } catch (err) {
       log.warn('check-harvest', 'Graduation lookup failed — unit row advisory', { ...base, err: err.message });
     }
-    let unitOutcome = reusedUnit ? { row: reusedUnit.row, history: null } : null;
+    let unitOutcome = reusedUnit ? { row: reusedUnit.row, history: null, earned: reusedUnit.earned || null } : null;
     if (!unitOutcome && unit && (unit.state === 'succeeded' || unit.state === 'failed' || unit.state === 'timeout')) {
       unitOutcome = await unitSuite.outcomeFromLog({
         pool, appId: app.id, sessionId,
@@ -596,8 +601,11 @@ async function sweep(config, { reason = 'sweep', pool = null, wait = false } = {
 // creates them once it is admitted, or, if its owner has died, the harvest
 // re-drives it in its place in line. Starting another would only queue a
 // second run of the same commit behind it.
+// `forManual`: a person's "Run checks again" is asking. A run that copied
+// an earlier unit-suite pass instead of running the suite (its manifest's
+// `unitReused`) is not the run they asked for, so it is not offered.
 async function runOnCluster(config, pool, session, {
-  commitSha = session?.checks_commit_sha, staleMs = null, now = Date.now(),
+  commitSha = session?.checks_commit_sha, staleMs = null, now = Date.now(), forManual = false,
 } = {}) {
   if (!isEnabled(config) || !session) return null;
   const sessionId = Number(session.id);
@@ -605,13 +613,14 @@ async function runOnCluster(config, pool, session, {
     const kubernetes = require('./kubernetes');
     const windowMs = staleMs ?? require('./staging-recovery').checksStaleMs();
     const { rows } = await pool.query(
-      `SELECT run_id, owner, admitted_at FROM check_runs
+      `SELECT run_id, owner, admitted_at, manifest FROM check_runs
         WHERE session_id = $1 AND commit_sha IS NOT DISTINCT FROM $2
         ORDER BY started_at DESC
         LIMIT 5`,
       [sessionId, commitSha || null]
     );
     for (const row of rows) {
+      if (forManual && row.manifest && row.manifest.unitReused) continue;
       if (require('./checks-queue').isWaitingRow(row)) {
         return { runId: row.run_id, owner: row.owner, capture: 'queued', unitSuite: 'queued', queued: true };
       }
@@ -641,13 +650,13 @@ async function runOnCluster(config, pool, session, {
 // harvest writes through. Yes only while the session, read now, is still
 // waiting on that commit's verdict (stillCurrent): a manifest that outlived
 // a stored verdict is no reason to refuse a run. Never throws.
-async function runToCollect(config, pool, sessionId, commitSha = null) {
+async function runToCollect(config, pool, sessionId, commitSha = null, { forManual = false } = {}) {
   if (!isEnabled(config) || !sessionId) return null;
   try {
     const session = await loadSession(pool, sessionId);
     const commit = commitSha || session?.checks_commit_sha || null;
     if (!stillCurrent(session, commit).current) return null;
-    return await runOnCluster(config, pool, session, { commitSha: commit });
+    return await runOnCluster(config, pool, session, { commitSha: commit, forManual });
   } catch (err) {
     log.warn('check-harvest', 'Could not ask whether a run is left to collect (non-fatal)', {
       sessionId: Number(sessionId), err: err.message,

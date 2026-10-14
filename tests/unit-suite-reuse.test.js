@@ -174,7 +174,7 @@ test('every way a person asks for the checks again reaches the manual-recheck tr
   // submit_work / proposal_submit_build with `recheck: true` is a manual
   // re-run even when its shots changed too.
   assert.match(read('src/services/proposal-update.js'),
-    /reason: shotsApplied\.changed && !ctx\.recheck \? 'shots-update' : 'testing-update',/);
+    /const shotsOnly = shotsApplied\.changed && !applied\.changed && !ctx\.recheck;\s+[\s\S]{0,120}reason: shotsOnly \? 'shots-update' : 'testing-update',/);
 });
 
 // ── Recording and finding a pass ─────────────────────────────────────────
@@ -199,7 +199,7 @@ test('a lookup matches every part of the key and the age limit, and a person\'s 
   const { sql, params } = pool.calls[0];
   assert.match(sql, /WHERE app_id = \$1 AND repo = \$2 AND commit_sha = \$3 AND image = \$4 AND job_definition = \$5/);
   assert.match(sql, /passed_at > NOW\(\) - make_interval\(secs => \$6::double precision\)/);
-  assert.deepEqual(params, [10, 'usernode-labs/social-vibecoding', SHA, DIGEST, keyArgs.jobHash, 12 * 3600]);
+  assert.deepEqual(params, [10, 'usernode-labs/social-vibecoding', SHA, DIGEST, keyArgs.jobHash, 3 * 3600]);
 
   const asked = recordingPool([{ id: 3, passed_at: new Date() }]);
   assert.equal(await reuse.findPass(asked, key, { trigger: 'manual-recheck' }), null);
@@ -210,8 +210,11 @@ test('a lookup matches every part of the key and the age limit, and a person\'s 
   assert.equal(await reuse.findPass(broken, key, { trigger: 'stuck-sweep' }), null, 'a failed lookup runs the suite');
 });
 
-test('the age limit: 12 hours', () => {
-  assert.equal(reuse.MAX_AGE_MS, 12 * 60 * 60 * 1000);
+test('the age limit: 3 hours, set in one named constant', () => {
+  assert.equal(reuse.MAX_AGE_HOURS, 3);
+  assert.equal(reuse.MAX_AGE_MS, 3 * 60 * 60 * 1000);
+  const src = read('src/services/unit-suite-reuse.js');
+  assert.equal((src.match(/MAX_AGE_HOURS = /g) || []).length, 1);
 });
 
 // One shard's passing output, as the run script prints it.
@@ -377,8 +380,8 @@ test('captureForSession copies the pass instead of launching the suite, and reco
   const tail = src.slice(at, at + 6000);
   assert.match(tail, /if \(!shotsOnly && !earlyUnit\) \{\s+reusedUnit = await unitSuite\.reusablePass\(\{\s+config, pool, appId: app\.id, repoOwner, repoName, commitSha: commitHash, trigger,/);
   assert.match(tail, /progress\.observeUnit\(reusedUnit\.snapshot\)/);
-  assert.match(tail, /unitReused: \{ row: reusedUnit\.row, snapshot: reusedUnit\.snapshot \}/);
-  assert.match(tail, /: reusedUnit\s+\? Promise\.resolve\(\{ row: reusedUnit\.row, history: null \}\) : unitSuite\.maybeRunUnitSuite\(/);
+  assert.match(tail, /unitReused: \{ row: reusedUnit\.row, earned: reusedUnit\.earned \|\| null, snapshot: reusedUnit\.snapshot \}/);
+  assert.match(tail, /: reusedUnit\s+\? Promise\.resolve\(\{ row: reusedUnit\.row, history: null, earned: reusedUnit\.earned \|\| null \}\) : unitSuite\.maybeRunUnitSuite\(/);
   assert.match(tail, /previewRunId: runId, commitSha: commitHash,/);
 });
 
@@ -412,7 +415,7 @@ test('a harvest settles a reused run from its manifest, with no unit-suite Job t
   const src = read('src/services/check-harvest.js');
   assert.match(src, /const reusedUnit = manifest\.unitReused && manifest\.unitReused\.row && manifest\.unitReused\.row\.reused\s+&& manifest\.unitReused\.row\.status === 'pass' \? manifest\.unitReused : null;/);
   assert.match(src, /!reusedUnit && unitJobs\.length \? Promise\.all/);
-  assert.match(src, /let unitOutcome = reusedUnit \? \{ row: reusedUnit\.row, history: null \} : null;/);
+  assert.match(src, /let unitOutcome = reusedUnit \? \{ row: reusedUnit\.row, history: null, earned: reusedUnit\.earned \|\| null \} : null;/);
 });
 
 // ── Against a real PostgreSQL: the table in schema.sql, across a restart ──
@@ -438,6 +441,80 @@ async function connect() {
   }
   return { pool };
 }
+
+test('a reused pass earns the receiving proposal the unit-suite gate, without a history observation', async (t) => {
+  t.mock.method(github, 'isEnabled', () => true);
+  const pool = recordingPool([{ id: 3, session_id: 8401, run_id: 'run-a', summary: PASS.summary, passed_at: new Date(PASS.passedAt) }]);
+  const outcome = await unitSuite.reusablePass({
+    config, pool, appId: 10, repoOwner: 'Usernode-Labs', repoName: 'social-vibecoding', commitSha: SHA, trigger: 'stuck-sweep',
+  });
+  const unitKey = require('../src/services/app-manifest').checkKey(unitSuite.UNIT_CHECK_NAME, unitSuite.UNIT_CHECK_PATH);
+  assert.equal(outcome.history, null, 'no observation');
+  assert.equal(outcome.earned, unitKey, 'but the gate the pass earns');
+  // The settlement grants it to the proposal that copied the pass, the
+  // live run and the harvest alike.
+  const src = read('src/services/visuals.js');
+  assert.match(src, /if \(unitOutcome && !unitOutcome\.history && unitOutcome\.earned\) \{\s+await checkHistory\.recordEarned\(pool, app\.id, session\.id, \[unitOutcome\.earned\]\);/);
+  assert.match(src, /Promise\.resolve\(\{ row: reusedUnit\.row, history: null, earned: reusedUnit\.earned \|\| null \}\)/);
+  assert.match(read('src/services/check-harvest.js'), /\{ row: reusedUnit\.row, history: null, earned: reusedUnit\.earned \|\| null \}/);
+});
+
+test('postgres: a proposal that reused a pass blocks its own later head that fails the suite', async (t) => {
+  const conn = await connect();
+  if (!conn) return t.skip('the pg driver is not installed in this environment');
+  if (conn.error) return t.skip(`no postgres reachable at ${DSN}: ${conn.error}`);
+  const { pool } = conn;
+  const schema = `unit_suite_earned_test_${process.pid}`;
+  const start = SCHEMA_SQL.indexOf('CREATE TABLE IF NOT EXISTS app_check_history');
+  const create = SCHEMA_SQL.slice(start, SCHEMA_SQL.indexOf(');', start) + 2)
+    .replace(/\s*REFERENCES apps\(id\) ON DELETE CASCADE/, '');
+  const alters = SCHEMA_SQL.match(/^ALTER TABLE app_check_history[^;]*;/gm) || [];
+  try {
+    await pool.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
+    await pool.query(`CREATE SCHEMA ${schema}`);
+    await pool.query(`SET search_path TO ${schema}`);
+    await pool.query([create, ...alters].join('\n'));
+    await pool.query(`CREATE TABLE chat_sessions (id INTEGER PRIMARY KEY, app_id INTEGER, status TEXT,
+      checks_earned_keys TEXT[], checks_earned_settled_at TIMESTAMPTZ)`);
+    await pool.query(`INSERT INTO chat_sessions (id, app_id, status) VALUES (8401, 10, 'active'), (8402, 10, 'active')`);
+    const unitKey = require('../src/services/app-manifest').checkKey(unitSuite.UNIT_CHECK_NAME, unitSuite.UNIT_CHECK_PATH);
+    // Proposal A ran the suite and passed: an observation, and its own gate.
+    await checkHistory.recordRun(pool, 10, [{ checkKey: unitKey, name: unitSuite.UNIT_CHECK_NAME, path: 'package.json', passed: true }], { sessionId: 8401 });
+    const counts = async () => (await pool.query('SELECT pass_count FROM app_check_history WHERE app_id = 10')).rows[0].pass_count;
+    assert.equal(await counts(), 1);
+    assert.equal((await checkHistory.loadGraduated(pool, 10, { sessionId: 8402 })).has(unitKey), false,
+      'nothing merged: B has not earned the gate yet');
+    // Proposal B copied that pass: no new observation, but B earns the gate.
+    assert.equal(await checkHistory.recordEarned(pool, 10, 8402, [unitKey]), true);
+    assert.equal(await counts(), 1, 'the app\'s counts did not move');
+    const graduated = (await checkHistory.loadGraduated(pool, 10, { sessionId: 8402 })).has(unitKey);
+    assert.equal(graduated, true, 'B\'s later heads are judged with the suite blocking');
+    // B's next head fails the suite: the row blocks and the run fails.
+    const red = await unitSuite.outcomeFromLog({
+      pool: recordingPool(), appId: 10, sessionId: 8402, succeeded: false, graduated,
+      stdout: `${unitSuite.SETUP_DONE_SENTINEL}\nnot ok 1 - broken\n# tests 1\n# pass 0\n# fail 1`,
+    });
+    assert.equal(red.row.status, 'fail');
+    assert.equal(red.row.advisory, false);
+    assert.equal(visuals.classifyTests([{ name: 'a check', path: '/', status: 'pass' }], 1, { extraRows: [red.row] }).state, 'failing');
+  } finally {
+    await pool.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`).catch(() => {});
+    await pool.end().catch(() => {});
+  }
+});
+
+test('a person\'s request forgets the commit\'s passes, and a manual request does not collect a run that reused one', async () => {
+  const pool = recordingPool();
+  assert.equal(await reuse.forgetPasses(pool, { appId: 10, commitShas: [SHA, SHA.toUpperCase(), 'latest', null] }), 1);
+  assert.match(pool.calls[0].sql, /DELETE FROM unit_suite_passes WHERE app_id = \$1 AND commit_sha = ANY\(\$2::text\[\]\)/);
+  assert.deepEqual(pool.calls[0].params, [10, [SHA]]);
+  assert.equal(await reuse.forgetPasses(recordingPool(), { appId: 10, commitShas: ['latest'] }), 0);
+  const sessions = read('src/routes/sessions.js');
+  const route = sessions.slice(sessions.indexOf("router.post('/api/sessions/:id/recheck'"));
+  assert.match(route.slice(0, 8000), /\(visuals\.hasInFlightCapture\(sessionId\) && !visuals\.inFlightReusedUnit\(sessionId\)\)/);
+  assert.match(route.slice(0, 8000), /forgetPasses\(pool, \{\s+appId: session\.app_id, commitShas: \[session\.checks_commit_sha\],\s+\}\);\s+if \(await require\('\.\.\/services\/check-harvest'\)\.runToCollect\(config, pool, sessionId, session\.checks_commit_sha \|\| null, \{ forManual: true \}\)\)/);
+  assert.match(read('src/services/check-harvest.js'), /if \(forManual && row\.manifest && row\.manifest\.unitReused\) continue;/);
+});
 
 test('postgres: found by the same key alone, within the age limit, and still there after a restart', async (t) => {
   const conn = await connect();
@@ -477,9 +554,11 @@ test('postgres: found by the same key alone, within the age limit, and still the
 
     // Older than the limit: not reused; older than twice it: deleted with
     // the app's next pass.
-    await pool.query(`UPDATE unit_suite_passes SET passed_at = NOW() - interval '13 hours'`);
+    await pool.query(`UPDATE unit_suite_passes SET passed_at = NOW() - interval '2 hours 50 minutes'`);
+    assert.ok(await reuse.findPass(pool, key, { trigger: 'boot-reconcile' }), 'inside 3 hours');
+    await pool.query(`UPDATE unit_suite_passes SET passed_at = NOW() - interval '3 hours 10 minutes'`);
     assert.equal(await reuse.findPass(pool, key, { trigger: 'boot-reconcile' }), null, 'too old');
-    await pool.query(`UPDATE unit_suite_passes SET passed_at = NOW() - interval '25 hours'`);
+    await pool.query(`UPDATE unit_suite_passes SET passed_at = NOW() - interval '6 hours 10 minutes'`);
     await reuse.recordPass(pool, { ...key, commitSha: OTHER }, { sessionId: 8402, runId: 'run-b' });
     const { rows } = await pool.query('SELECT commit_sha FROM unit_suite_passes ORDER BY id');
     assert.deepEqual(rows.map((r) => r.commit_sha), [OTHER], 'the stale pass went with the next one');

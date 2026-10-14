@@ -253,7 +253,7 @@ test('every run\'s row going wakes this process\'s waiters', () => {
 test('the harvest re-drives a run in the place it had in line', () => {
   const src = stripComments(read('src/services/check-harvest.js'));
   assert.match(src, /const queuedSince = row\.queued_at \|\| null;/);
-  assert.match(src, /recheckSessionChecks\(\{\s+config, pool, session, reason: 'orphaned-run', \.\.\.\(queuedSince \? \{ queuedSince \} : \{\}\),\s+\}\)/);
+  assert.match(src, /recheckSessionChecks\(\{\s+config, pool, session,\s+reason: manifest\.trigger === 'manual-recheck' \? 'orphaned-manual-run' : 'orphaned-run',\s+\.\.\.\(queuedSince \? \{ queuedSince \} : \{\}\),\s+\}\)/);
   const recovery = stripComments(read('src/services/staging-recovery.js'));
   assert.match(recovery, /async function recheckSessionChecks\(\{ config, pool, session, reason, queuedSince = null \}\)/);
   assert.match(recovery, /\.\.\.\(queuedSince \? \{ queuedSince \} : \{\}\),/);

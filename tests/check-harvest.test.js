@@ -350,6 +350,22 @@ test('a process that died before creating its Jobs is re-driven at once, with th
   assert.equal(harvest.isHarvesting(42), false);
 });
 
+test('a person\'s "Run checks again" that died before its Jobs is re-driven as theirs, so it cannot reuse a pass', async (t) => {
+  quietBroadcast(t);
+  const pool = makePool({
+    orphans: [orphanRow({ manifest: { launched: false, trigger: 'manual-recheck', startedAt: Date.now() - 20_000 } })],
+    session: sessionRow(),
+  });
+  const rechecks = [];
+  stub(t, kubernetes, { findCheckJobs: async () => assert.fail('nothing to find for a pre-launch death') });
+  stub(t, stagingRecovery, { recheckSessionChecks: async ({ reason }) => { rechecks.push(reason); } });
+  const [result] = await (await harvest.sweep(config, { reason: 'boot', pool })).done;
+  assert.equal(result.outcome, 'redriven');
+  assert.deepEqual(rechecks, ['orphaned-manual-run']);
+  assert.match(fs.readFileSync(path.join(__dirname, '..', 'src/services/staging-recovery.js'), 'utf8'),
+    /'orphaned-manual-run': 'manual-recheck',/, 'which recovery runs as manual-recheck: never reused');
+});
+
 test('a launched run whose capture Job cannot be found is re-driven, not left pending', async (t) => {
   quietBroadcast(t);
   const pool = makePool({ orphans: [orphanRow()], session: sessionRow() });
@@ -510,7 +526,7 @@ test('a run that reused an earlier unit-suite pass settles with that row after a
     status: 'pass', advisory: false, consoleErrors: [], failureReason: '', summary: { tests: 5, pass: 5 },
     reused: { runId: 'run-0', sessionId: 42, passedAt: '2026-10-14T10:00:00.000Z' },
   };
-  const manifest = { ...orphanRow().manifest, unitReused: { row: reusedRow, snapshot: { phase: 'done', done: true, reused: reusedRow.reused } } };
+  const manifest = { ...orphanRow().manifest, unitReused: { row: reusedRow, earned: 'unit-key', snapshot: { phase: 'done', done: true, reused: reusedRow.reused } } };
   const pool = makePool({ orphans: [orphanRow({ manifest })], session: sessionRow(), answer: graduatedUnit });
   const collected = [];
   let settledWith = null;
@@ -522,7 +538,8 @@ test('a run that reused an earlier unit-suite pass settles with that row after a
   const [result] = await (await harvest.sweep(config, { reason: 'boot', pool })).done;
   assert.equal(result.outcome, 'settled', 'a merge-blocking suite it copied is not a missing one');
   assert.deepEqual(collected, ['capture'], 'no unit-suite Job is looked for');
-  assert.deepEqual(settledWith.unitOutcome, { row: reusedRow, history: null }, 'the same row, and no history');
+  assert.deepEqual(settledWith.unitOutcome, { row: reusedRow, history: null, earned: 'unit-key' },
+    'the same row, no history, and the gate it earns the proposal');
 });
 
 test('an advisory unit suite whose Jobs are gone settles without its row, as before', async (t) => {

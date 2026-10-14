@@ -56,12 +56,16 @@ const AUTOMATIC_TRIGGERS = Object.freeze(new Set([
   'conflict-resolved',
 ]));
 
-// How old a pass may be. 12 hours covers the repeats this exists for (on 13
-// to 14 Oct 2026 every earlier pass of a re-checked commit was under 1.4 h
-// old but one, at 7.9 h) and keeps a test that reads the date from carrying
-// a pass much past the day it was earned. The worker image is rebuilt daily,
-// and its digest is part of the key, so a new image ends reuse sooner.
-const MAX_AGE_MS = 12 * 60 * 60 * 1000;
+// How old a pass may be: the one place the limit is set, by the owner's
+// decision. 3 hours keeps almost all of what this is for (on 13 to 14 Oct
+// 2026 every earlier pass of a re-checked commit was under 1.4 h old but
+// one, at 7.9 h) and bounds how long a test that reads the date can carry a
+// pass. Nothing else bounds it: the worker image is not rebuilt on a fixed
+// schedule (a scheduled build releases only when its inputs changed), so its
+// digest can stay the same for days. Rows are kept for twice the limit (see
+// recordPass), then deleted with the app's next pass.
+const MAX_AGE_HOURS = 3;
+const MAX_AGE_MS = MAX_AGE_HOURS * 60 * 60 * 1000;
 
 function isEnabled() {
   const v = String(process.env.UNIT_SUITE_REUSE ?? '1').trim().toLowerCase();
@@ -165,6 +169,37 @@ async function findPass(pool, key, { trigger = null } = {}) {
   }
 }
 
+/**
+ * A person asked for the suite to run again on this commit ("Run checks
+ * again" and every path that reaches 'manual-recheck'): forget the passes
+ * a run of it could copy, so that no run of the commit reuses one from now
+ * on, whichever run ends up answering: one already waiting for a checks
+ * slot, one re-driven after a restart, or the requested run itself. The next
+ * pass of the commit, from the run that was asked for, can be reused again.
+ * Never throws.
+ */
+async function forgetPasses(pool, { appId, commitShas = [] } = {}) {
+  const shas = [...new Set((commitShas || []).filter(isSha).map((x) => String(x).toLowerCase()))];
+  if (!pool || !Number(appId) || !shas.length) return 0;
+  try {
+    const { rowCount } = await pool.query(
+      'DELETE FROM unit_suite_passes WHERE app_id = $1 AND commit_sha = ANY($2::text[])',
+      [Number(appId), shas]
+    );
+    if (rowCount) {
+      log.info('unit-suite-reuse', 'A person asked for the checks again: earlier passes of the commit forgotten', {
+        appId: Number(appId), commits: shas, forgotten: rowCount,
+      });
+    }
+    return rowCount || 0;
+  } catch (err) {
+    log.warn('unit-suite-reuse', 'Could not forget the passes of a re-checked commit', {
+      appId, err: err.message,
+    });
+    return 0;
+  }
+}
+
 // What a reused row says about where it came from.
 function reusedFrom(pass) {
   return {
@@ -178,13 +213,18 @@ function reusedFrom(pass) {
  * The outcome a run stores in place of running the suite: the pass row
  * `shapeOutcome` gives any pass, marked `reused`, and no history record — the
  * pass it copies was observed (and counted) when it ran, and copying it is
- * not a second observation. `shapeOutcome` is unit-suite.js's own.
+ * not a second observation. `earned` is the suite's check key: the gate a
+ * pass earns its proposal (chat_sessions.checks_earned_keys, so its later
+ * heads cannot quietly fail the suite) is granted to the proposal that
+ * copies it all the same (check-history.recordEarned), without touching the
+ * app's counts. `shapeOutcome` is unit-suite.js's own.
  */
 function reusedOutcome(shapeOutcome, pass) {
   const shaped = shapeOutcome({ passed: true, reason: '', graduated: true, summary: pass.summary || null });
   return {
     row: { ...shaped.row, reused: reusedFrom(pass) },
     history: null,
+    earned: shaped.history ? shaped.history.checkKey : null,
     reused: reusedFrom(pass),
   };
 }
@@ -227,6 +267,7 @@ function jobHashOf(definition) {
 
 module.exports = {
   AUTOMATIC_TRIGGERS,
+  MAX_AGE_HOURS,
   MAX_AGE_MS,
   isEnabled,
   isAutomaticTrigger,
@@ -234,6 +275,7 @@ module.exports = {
   keyFor,
   recordPass,
   findPass,
+  forgetPasses,
   reusedOutcome,
   reusedSnapshot,
   checkedOutCommit,

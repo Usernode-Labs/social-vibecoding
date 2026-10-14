@@ -190,7 +190,7 @@ test('the recheck reads the row before it decides, and the verdict store keeps t
   const src = fs.readFileSync(path.join(ROOT, 'src/services/staging-recovery.js'), 'utf8');
   const fn = src.slice(src.indexOf('async function recheckSessionChecks('), src.indexOf('module.exports = {', src.indexOf('async function recheckSessionChecks(')));
   assert.ok(fn.indexOf('session = await currentPins(pool, session);') < fn.indexOf('const head = recheckHeadSha(session);'));
-  assert.match(fn, /runToCollect\(config, pool, session\.id, head\)/);
+  assert.match(fn, /runToCollect\(config, pool, session\.id, head, \{ forManual: manual \}\)/);
   assert.match(fn, /setChecksPending\(pool, session\.id, head, 'building'/);
   assert.match(fn, /rebuildSessionStaging\(\{ config, pool, session, reason, headSha: approvedHeadSha\(session\) \}\)/);
   assert.match(fn, /captureForSession\(config, session, app, head, null,/);
@@ -198,4 +198,26 @@ test('the recheck reads the row before it decides, and the verdict store keeps t
   const visuals = fs.readFileSync(path.join(ROOT, 'src/services/visuals.js'), 'utf8');
   const store = visuals.slice(visuals.indexOf('async function storeChecks('), visuals.indexOf('async function storeChecksSkipped('));
   assert.equal((store.match(/AND checks_commit_sha IS NOT DISTINCT FROM \$3::text`/g) || []).length, 2);
+});
+
+test('a re-driven "Run checks again" stays manual: its commit\'s cached unit-suite passes are forgotten, and its run is manual-recheck', async (t) => {
+  const { rec, visuals, db, copy } = harness(t, { stagingCommit: NEW });
+  const forgotten = [];
+  const query = db.query.bind(db);
+  db.query = async (sql, params) => {
+    if (/DELETE FROM unit_suite_passes/.test(String(sql))) { forgotten.push(params); return { rows: [], rowCount: 1 }; }
+    return query(sql, params);
+  };
+  const captured = [];
+  visuals.captureForSession = async (_config, s, _app, commit, _staging, opts) => { captured.push({ commit, trigger: opts.trigger }); };
+  assert.equal(await rec.recheckSessionChecks({ config: null, pool: db, session: copy, reason: 'orphaned-manual-run' }), 'rechecked');
+  assert.deepEqual(captured, [{ commit: NEW, trigger: 'manual-recheck' }]);
+  assert.equal(forgotten.length, 1);
+  assert.equal(forgotten[0][0], 77);
+  assert.ok(forgotten[0][1].includes(NEW), 'the head this run judges');
+
+  // An automatic re-drive forgets nothing.
+  forgotten.length = 0;
+  await rec.recheckSessionChecks({ config: null, pool: db, session: copy, reason: 'orphaned-run' });
+  assert.equal(forgotten.length, 0);
 });
