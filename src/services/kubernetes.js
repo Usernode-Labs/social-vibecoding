@@ -116,21 +116,45 @@ function labels({ appId, sessionId, environment }) {
   return result;
 }
 
+function isConflict(err) {
+  return err?.code === 409 || err?.response?.statusCode === 409 || err?.response?.status === 409;
+}
+
+// Two callers can write the same object at once: two bootstraps of one
+// session's worker (14 Oct 2026, session 8499: the read found no env Secret,
+// another bootstrap created it, and this create's 409 "already exists" failed
+// the person's message). A 409 is either that lost create or a replace that
+// lost to another write's resourceVersion; both are settled by reading the
+// object again and replacing it, the client-go RetryOnConflict pattern.
+const UPSERT_CONFLICT_ATTEMPTS = 3;
+
 async function upsert(api, readMethod, createMethod, replaceMethod, namespace, body) {
-  const name = body.metadata.name;
-  try {
-    const current = await api[readMethod]({ name, namespace });
-    body.metadata.resourceVersion = current.metadata.resourceVersion;
-    if (body.kind === 'Service') {
-      for (const field of ['clusterIP', 'clusterIPs', 'ipFamilies', 'ipFamilyPolicy', 'healthCheckNodePort']) {
-        if (current.spec?.[field] !== undefined) body.spec[field] = current.spec[field];
-      }
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await upsertOnce(api, readMethod, createMethod, replaceMethod, namespace, body);
+    } catch (err) {
+      if (!isConflict(err) || attempt >= UPSERT_CONFLICT_ATTEMPTS) throw err;
+      delete body.metadata.resourceVersion;
     }
-    return api[replaceMethod]({ name, namespace, body });
+  }
+}
+
+async function upsertOnce(api, readMethod, createMethod, replaceMethod, namespace, body) {
+  const name = body.metadata.name;
+  let current;
+  try {
+    current = await api[readMethod]({ name, namespace });
   } catch (err) {
     if (!isNotFound(err)) throw err;
-    return api[createMethod]({ namespace, body });
+    return await api[createMethod]({ namespace, body });
   }
+  body.metadata.resourceVersion = current.metadata.resourceVersion;
+  if (body.kind === 'Service') {
+    for (const field of ['clusterIP', 'clusterIPs', 'ipFamilies', 'ipFamilyPolicy', 'healthCheckNodePort']) {
+      if (current.spec?.[field] !== undefined) body.spec[field] = current.spec[field];
+    }
+  }
+  return await api[replaceMethod]({ name, namespace, body });
 }
 
 async function deleteIfPresent(api, method, name, namespace, options = {}) {
@@ -3112,7 +3136,7 @@ module.exports = {
   listWorkerVolumes, listPreviews, listShotsRuntimes, isQuotaExceeded,
   listStatusResources, listNamespaceCapacity, inspectWorkerTermination, getPlatformDeployStatus,
   stopCheckJobs,
-  _setClientsForTest: setClientsForTest, _envChecksumForTest: envChecksum,
+  _setClientsForTest: setClientsForTest, _envChecksumForTest: envChecksum, _upsertForTest: upsert,
   _packageRunsScriptForTest: packageRunsScript,
   _attachLineObserverForTest: attachLineObserver,
   _clientsLogApiForTest: clientsLogApi,
