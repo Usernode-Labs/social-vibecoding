@@ -413,7 +413,8 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
     const s = await proposal(a);
     await merge(s);
     assert.ok(!(await workOf(s)).some((w) => w.kind === WORK.deliver), 'no rebuild for the self-hosted app');
-    assert.ok(notified.some((n) => n.type === 'nudgeDeployer' && n.sha === SHA('a')));
+    // The host deployer's nudge is durable work now, not a notifier.
+    assert.equal((await workOf(s)).find((w) => w.kind === WORK.nudge)?.input?.sha, SHA('a'));
     await settle();
     assert.equal((await instance(s)).state, 'delivering');
     await send(s, 'Deployed', { sha: SHA('a') });

@@ -2628,6 +2628,9 @@ const Home = {
       case 'in_flight':
         PlatformUI.toast(message('home:check.inFlight'));
         return;
+      case 'deploy_requested':
+        PlatformUI.toast(message('home:check.deployRequested', { sha: (data.to || '').slice(0, 7) }));
+        return;
       case 'first_seen':
         PlatformUI.toast(message('home:check.firstSeen', { sha: (data.sha || '').slice(0, 7) }));
         return;

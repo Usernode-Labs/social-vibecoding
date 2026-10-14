@@ -1007,6 +1007,16 @@ async function rebuildProduction(config, app, options = {}) {
   return result;
 }
 
+// The same deploy for the app-delivery workflow machine
+// (src/workflow/app-delivery/), which owns what the wrapper above does in
+// this process's memory: one deploy at a time per app (its instance), the
+// "deploying" state (apps.deploy_state, with its pushes) and who hears the
+// result (its replies). Only the cross-process lock stays.
+async function deployProduction(config, app, options = {}) {
+  return withResourceUse(config, PRODUCTION_BUILD_LOCK, app.slug,
+    () => rebuildProductionInner(config, app, { ...options, track: false }));
+}
+
 // Whether an offered image is of the tree that was just cloned, and so the
 // image this rebuild would otherwise spend a build producing. Pure, and the
 // whole guarantee: same tree sha means the same source, byte for byte, so the
@@ -1066,8 +1076,9 @@ async function rebuildProductionInner(config, app, options = {}) {
   // caller (dev-chat merge, drift-poller, manual check-updates) ends up
   // here, so wrapping the body once means the version-pill UI flips to
   // its deploying state regardless of who triggered the rebuild.
-  const appDeployStatus = require('./app-deploy-status');
-  appDeployStatus.markStart(app.slug, { fromSha: app.main_sha || null });
+  // `track: false` (deployProduction): the workflow machine says it instead.
+  const appDeployStatus = options.track === false ? null : require('./app-deploy-status');
+  if (appDeployStatus) appDeployStatus.markStart(app.slug, { fromSha: app.main_sha || null });
   let succeeded = false;
   let resultSha = null;
   let missingSecretsFromErr = null;
@@ -1358,7 +1369,7 @@ async function rebuildProductionInner(config, app, options = {}) {
     }
     throw err;
   } finally {
-    appDeployStatus.markEnd(app.slug, {
+    if (appDeployStatus) appDeployStatus.markEnd(app.slug, {
       toSha: resultSha,
       failed: !succeeded,
       missingSecrets: missingSecretsFromErr,
@@ -1377,6 +1388,7 @@ module.exports = {
   warmStagingCert,
   teardownStaging,
   rebuildProduction,
+  deployProduction,
   // The image-reuse decision and the tree read behind it, unit-tested
   // directly: the decision IS the guarantee, and rebuildProductionInner
   // around it is a clone, a database and a cluster.

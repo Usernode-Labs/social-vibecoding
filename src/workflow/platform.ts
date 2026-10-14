@@ -16,6 +16,8 @@ import { MACHINE, governanceProposal, issueKey } from './governance-proposal/mac
 import { governanceNotifiers, governanceServices } from './governance-proposal/services.ts';
 import { MACHINE as MERGE, mergeFollowups, sessionKey } from './merge-followups/machine.ts';
 import { mergeFollowupsNotifiers, mergeFollowupsServices } from './merge-followups/services.ts';
+import { MACHINE as DELIVERY, appDelivery, appKey } from './app-delivery/machine.ts';
+import { appDeliveryServices } from './app-delivery/services.ts';
 
 const pg = createRequire(import.meta.url)('pg');
 
@@ -26,6 +28,8 @@ let kernelPool: Pool & { end(): Promise<void> } | null = null;
 let machine: ReturnType<typeof governanceProposal> | null = null;
 let merges: ReturnType<typeof mergeFollowups> | null = null;
 let mergesAdmitted = false;
+let deliveries: ReturnType<typeof appDelivery> | null = null;
+let deliveriesAdmitted = false;
 let log: Logger | null = null;
 
 // What the ownership triggers read, synced on every boot:
@@ -52,10 +56,23 @@ async function setSetting(pool: Pool, key: string, value: string | null): Promis
 }
 
 // Each machine's flag in this process's configuration.
+// App delivery runs only beside merge follow-ups: with merge follow-ups
+// off, the legacy merge tail deploys and marks a change live in one call,
+// and nothing else may deploy beside the machine.
 const FLAGS = new Map<string, { flag: string; on: (config: any) => boolean }>([
   [MACHINE, { flag: 'WF_GOVERNANCE_ENABLED', on: (c) => !!c.wfGovernanceEnabled }],
   [MERGE, { flag: 'WF_MERGE_FOLLOWUPS_ENABLED', on: (c) => !!c.wfMergeFollowupsEnabled }],
+  [DELIVERY, { flag: 'WF_APP_DELIVERY_ENABLED', on: (c) => !!c.wfAppDeliveryEnabled && !!c.wfMergeFollowupsEnabled }],
 ]);
+
+// Why a flag that is set does not run its machine here, for the boot log
+// and Admin → Workflows.
+export function flagBlocked(name: string, config: any): string | null {
+  if (name === DELIVERY && config.wfAppDeliveryEnabled && !config.wfMergeFollowupsEnabled) {
+    return 'WF_APP_DELIVERY_ENABLED needs WF_MERGE_FOLLOWUPS_ENABLED';
+  }
+  return null;
+}
 
 export async function syncSettings(pool: Pool, config: any): Promise<void> {
   const logMode = config.wfOwnershipMode === 'log';
@@ -78,10 +95,12 @@ export async function syncSettings(pool: Pool, config: any): Promise<void> {
 // Each machine's guard, and whether this process's flag runs it: the admin
 // view shows a guard on while the flag is off here (every process's flag
 // may be off by now, after a rollback).
-export async function guards(pool: Pool, config: any): Promise<{ machine: string; flag: string; on: boolean; flagHere: boolean }[]> {
+export async function guards(pool: Pool, config: any): Promise<{ machine: string; flag: string; on: boolean; flagHere: boolean; blocked: string | null }[]> {
   const { rows } = await pool.query(`SELECT key FROM wf_settings WHERE key LIKE 'enabled:%'`);
   const set = new Set(rows.map((r: { key: string }) => r.key));
-  return [...FLAGS].map(([name, f]) => ({ machine: name, flag: f.flag, on: set.has(`enabled:${name}`), flagHere: f.on(config) }));
+  return [...FLAGS].map(([name, f]) => ({
+    machine: name, flag: f.flag, on: set.has(`enabled:${name}`), flagHere: f.on(config), blocked: flagBlocked(name, config),
+  }));
 }
 
 // An admin turns a machine's guard off, once its flag is off everywhere
@@ -105,6 +124,17 @@ async function mergesUnfinished(pool: Pool): Promise<boolean> {
          OR EXISTS (SELECT 1 FROM wf_events WHERE machine = $1 AND status = 'pending')
          OR EXISTS (SELECT 1 FROM wf_instances WHERE machine = $1 AND state IN ('delivering', 'deploy_failed')) AS unfinished`,
     [MERGE]);
+  return !!rows[0]?.unfinished;
+}
+
+// Deploys app-delivery accepted before its flag went off still finish:
+// requests waiting for it, its running deploys and their results.
+async function deliveriesUnfinished(pool: Pool): Promise<boolean> {
+  const { rows } = await pool.query(
+    `SELECT EXISTS (SELECT 1 FROM wf_work WHERE machine = $1 AND status IN ('queued', 'running', 'reported'))
+         OR EXISTS (SELECT 1 FROM wf_events WHERE machine = $1 AND status = 'pending')
+         OR EXISTS (SELECT 1 FROM wf_instances WHERE machine = $1 AND state = 'deploying') AS unfinished`,
+    [DELIVERY]);
   return !!rows[0]?.unfinished;
 }
 
@@ -145,8 +175,14 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
   await syncSettings(appPool, config);
   await recordBooted(appPool).catch((err) => log!.warn('workflow', 'Could not record the booted build', { message: err.message }));
   if (runtime) return;
+  for (const name of FLAGS.keys()) {
+    const blocked = flagBlocked(name, config);
+    if (blocked) log!.warn('workflow', 'A workflow flag is set but its machine does not run', { machine: name, reason: blocked });
+  }
+  const deliveryOn = FLAGS.get(DELIVERY)!.on(config);
   const withMerges = !!config.wfMergeFollowupsEnabled || await mergesUnfinished(appPool).catch(() => false);
-  if (!config.wfGovernanceEnabled && !withMerges) return;
+  const withDeliveries = deliveryOn || await deliveriesUnfinished(appPool).catch(() => false);
+  if (!config.wfGovernanceEnabled && !withMerges && !withDeliveries) return;
   const workflowPool = new pg.Pool({
     connectionString: config.databaseUrl, max: config.wfPoolMax, idleTimeoutMillis: 30000, application_name: 'homeroom-workflow',
   });
@@ -158,16 +194,26 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
   const deps = { config, pool: appPool };
   const machines = [];
   let services = {};
+  // Whether the other machines ask app-delivery for a deploy: its flag here
+  // (a request is recorded on the instance that made it, so one decided on
+  // the work path stays there).
+  const delivery = () => deliveriesAdmitted;
   if (config.wfGovernanceEnabled) {
-    machine = governanceProposal({ dataKey: config.dataEncryptionKey, notifiers: governanceNotifiers(deps) });
+    machine = governanceProposal({ dataKey: config.dataEncryptionKey, notifiers: governanceNotifiers(deps), delivery });
     machines.push(machine);
     services = { ...services, ...governanceServices(deps) };
   }
   if (withMerges) {
-    merges = mergeFollowups({ dataKey: config.dataEncryptionKey, notifiers: mergeFollowupsNotifiers(deps) });
+    merges = mergeFollowups({ dataKey: config.dataEncryptionKey, notifiers: mergeFollowupsNotifiers(deps), delivery });
     mergesAdmitted = !!config.wfMergeFollowupsEnabled;
     machines.push(merges);
     services = { ...services, ...mergeFollowupsServices(deps) };
+  }
+  if (withDeliveries) {
+    deliveries = appDelivery();
+    deliveriesAdmitted = deliveryOn;
+    machines.push(deliveries);
+    services = { ...services, ...appDeliveryServices(deps) };
   }
   const started = createRuntime({
     pool: kernelPool!, machines, services, slots: config.wfSlots, log: log!, publish: publishPushes,
@@ -182,6 +228,8 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
     machine = null;
     merges = null;
     mergesAdmitted = false;
+    deliveries = null;
+    deliveriesAdmitted = false;
     throw err;
   }
   runtime = started;
@@ -211,6 +259,8 @@ export async function stopWorkflow(): Promise<void> {
   machine = null;
   merges = null;
   mergesAdmitted = false;
+  deliveries = null;
+  deliveriesAdmitted = false;
   await r?.stop();
   await kernelPool?.end();
   kernelPool = null;
@@ -414,6 +464,23 @@ async function releaseBooted(pool: Pool): Promise<void> {
   if (!/^[0-9a-f]{40}$/i.test(sha)) return;
   const { rows } = await pool.query('SELECT id FROM apps WHERE self_hosted = TRUE');
   for (const a of rows) await productionDeployed(a.id, sha);
+}
+
+// ── App delivery ────────────────────────────────────────────────────────
+
+// Whether a deploy is asked of app-delivery rather than run here. Off with
+// the flag, even while the machine finishes deploys it accepted before.
+export function deliveryEnabled(): boolean {
+  return runtime !== null && deliveries !== null && deliveriesAdmitted;
+}
+
+// Ask for a deploy of an app's production (the Redeploy route, the drift
+// poller, heal, rollover, a secret change, a demo reset): recorded at once,
+// deployed by the machine one at a time. Resolves the event's id; the
+// "deploying" state and its end reach browsers from the machine.
+export async function requestDeploy(appId: number, reason: string): Promise<number> {
+  return runtime!.append(deliveries!, appKey(appId), { type: 'DeployRequested', payload: { appId, reason } },
+    { requestKey: `deploy:${reason}:${randomUUID()}`, source: { kind: 'system', name: reason }, appId });
 }
 
 // ── The admin console ───────────────────────────────────────────────────

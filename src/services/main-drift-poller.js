@@ -251,6 +251,11 @@ async function checkAndRedeployOne(config, pool, app, { manual = false } = {}) {
     return releaseWatch.observe(config, pool, app, head, { octokit: head.octokit });
   }
 
+  // With the app-delivery machine on, the deploy is a recorded request it
+  // runs one at a time per app, and it writes main_sha when it succeeds.
+  const workflow = require('../workflow/platform.ts');
+  if (workflow.deliveryEnabled()) return requestDriftDeploy(config, pool, app, remoteSha, { manual, workflow });
+
   const retryInMs = manual ? 0 : backoffRemaining(app.id, remoteSha);
   if (retryInMs > 0) {
     const { failures } = failedAttempts.get(app.id);
@@ -318,6 +323,35 @@ async function checkAndRedeployOne(config, pool, app, { manual = false } = {}) {
   } finally {
     inFlight.delete(app.id);
   }
+}
+
+// How long a commit whose deploy failed waits before the poller asks for it
+// again (an admin's "Check for updates" does not wait).
+const DRIFT_RETRY_AFTER_FAILURE_MS = 30 * 60 * 1000;
+
+// The drift, asked of the app-delivery machine. What decides whether to ask
+// is durable (the app's deploy_state and last_failure), so another Pod or a
+// restarted one reads the same: nothing asked twice while a deploy runs,
+// and a commit whose deploy failed asked again after a wait.
+async function requestDriftDeploy(config, pool, app, remoteSha, { manual, workflow }) {
+  const { rows: [row] } = await pool.query('SELECT deploy_state, last_failure FROM apps WHERE id = $1', [app.id]);
+  if (row?.deploy_state === 'deploying') return { status: 'in_flight', slug: app.slug };
+  const failure = row?.last_failure && typeof row.last_failure === 'object' ? row.last_failure : null;
+  const failedAt = failure?.at ? Date.parse(failure.at) : NaN;
+  if (!manual && failure?.sha === remoteSha && Number.isFinite(failedAt)
+      && Date.now() - failedAt < DRIFT_RETRY_AFTER_FAILURE_MS) {
+    return { status: 'backing_off', slug: app.slug, from: app.main_sha, attempted: remoteSha,
+      retryInMs: DRIFT_RETRY_AFTER_FAILURE_MS - (Date.now() - failedAt) };
+  }
+  log.info('drift-poller', 'Detected main-branch drift; asking for a deploy', {
+    appId: app.id, slug: app.slug, from: app.main_sha.slice(0, 7), to: remoteSha.slice(0, 7),
+  });
+  await workflow.requestDeploy(app.id, manual ? 'check_updates' : 'drift');
+  // main moved out-of-band: promoted PRs on this app may now conflict.
+  checkAndResolveConflicts(config, { app_id: app.id }).catch((err) => {
+    log.error('drift-poller', 'Post-drift conflict resolution failed', { slug: app.slug, err: err.message });
+  });
+  return { status: 'deploy_requested', slug: app.slug, from: app.main_sha, to: remoteSha };
 }
 
 async function poll(config) {

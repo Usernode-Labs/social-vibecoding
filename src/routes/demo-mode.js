@@ -842,7 +842,11 @@ function demoModeRoutes(config) {
       // Production follows main. Fire-and-forget, as the redeploy route in
       // routes/apps.js does; a failure lands on the deploy-status broadcast.
       let redeploy = 'skipped';
-      if (main && main.moved) {
+      if (main && main.moved && require('../workflow/platform.ts').deliveryEnabled()) {
+        // A recorded request the app-delivery machine runs.
+        redeploy = 'started';
+        await require('../workflow/platform.ts').requestDeploy(app.id, 'demo_reset');
+      } else if (main && main.moved) {
         redeploy = 'started';
         staging.rebuildProduction(config, app)
           .then(async ({ containerId, sha }) => {

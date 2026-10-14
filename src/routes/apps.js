@@ -1069,7 +1069,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           share_url: shareUrl(url, liveDomains.get(Number(a.id))),
           staging_sample: stagingSample,
           version,
-          deployProgress: appDeployStatus.read(a.slug),
+          deployProgress: appDeployStatus.read(a.slug, a),
           missingSecrets,
           // Server-built icon URL so the client never assembles ids into
           // paths (and staging demo rows can inject arbitrary sources).
@@ -1927,7 +1927,9 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       if (!gated) return res.status(404).json({ error: 'App not found' });
       const info = await appVersion.getAppVersion(pool, req.params.slug);
       if (!info) return res.status(404).json({ error: 'App not found' });
-      res.json({ ...info, deployProgress: appDeployStatus.read(req.params.slug) });
+      const { rows: [deployRow] } = await pool.query(
+        'SELECT deploy_state, deploy_started_at, deploy_from_sha FROM apps WHERE slug = $1', [req.params.slug]);
+      res.json({ ...info, deployProgress: appDeployStatus.read(req.params.slug, deployRow || null) });
     } catch (err) {
       log.error('apps', 'Failed to get app version', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -2806,6 +2808,14 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       if (refuseIfSelfHosted(app, res)) return;
       if (!app.repo_url) {
         return res.status(400).json({ error: 'This app is not backed by a GitHub repo' });
+      }
+      // With the app-delivery machine on, the deploy is a recorded request
+      // it runs (one at a time per app, kept across a restart), and it
+      // writes the result.
+      const workflow = require('../workflow/platform.ts');
+      if (workflow.deliveryEnabled()) {
+        await workflow.requestDeploy(app.id, 'redeploy');
+        return res.json({ ok: true });
       }
       // Fire-and-forget: same fan-out as the drift-poller and dev-chat
       // merge paths use. Errors land on the deploy-status broadcast.

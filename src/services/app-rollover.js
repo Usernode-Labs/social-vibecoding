@@ -54,6 +54,8 @@ const appDeployStatus = require('./app-deploy-status');
 const deployFailure = require('./deploy-failure');
 const events = require('./events');
 const { getPool } = require('../db/pool');
+const { withResourceUse } = require('./build-retention-guard');
+const { PRODUCTION_BUILD_LOCK } = require('./advisory-locks');
 
 // Mirrors app-heal.js's MAX_HEALS_PER_TICK: the existing precedent for
 // "how much docker churn is polite on this host". At 3, at most three apps
@@ -76,7 +78,7 @@ const ELIGIBLE_WHERE = "status = 'running' AND self_hosted IS NOT TRUE";
 // plus what the fallback and the UI need.
 const SELECT_ELIGIBLE = `
   SELECT id, slug, name, db_password, manifest_snapshot, repo_url,
-         self_hosted, main_sha
+         self_hosted, main_sha, image_ref, deploy_state, deploy_started_at, deploy_from_sha
     FROM apps
    WHERE ${ELIGIBLE_WHERE}
    ORDER BY id`;
@@ -85,6 +87,8 @@ const SELECT_ELIGIBLE = `
 // status enum:
 //   rolled                  — image re-run with fresh env, healthy
 //   rebuilt                 — image was missing; full rebuildProduction ran
+//   rebuild_requested       — image was missing; the rebuild was asked of
+//                             app delivery (its flag on)
 //   skipped_deploying       — another rebuild owns this slug right now
 //   skipped_missing_secrets — required secrets unset; image can't run
 //   skipped_no_db_password  — per-role migration hasn't populated it
@@ -306,6 +310,7 @@ async function run(config, job) {
       total: job.total,
       rolled: tally.rolled || 0,
       rebuilt: tally.rebuilt || 0,
+      rebuildRequested: tally.rebuild_requested || 0,
       skipped: Object.keys(tally)
         .filter((k) => k.startsWith('skipped_'))
         .reduce((n, k) => n + tally[k], 0),
@@ -324,9 +329,10 @@ async function rollOne(config, pool, app) {
   const containerName = `usernode-app-${app.slug}`;
   const imageName = `usernode-app-${app.slug}:latest`;
 
-  // Something else (merge, drift poller, heal) owns this slug right now.
+  // Something else (merge, drift poller, heal) owns this slug right now, in
+  // this process or by app delivery anywhere (the row's deploy_state).
   // Stepping on it would interleave two stopAndRemove/runContainer pairs.
-  const deploy = appDeployStatus.read(app.slug);
+  const deploy = appDeployStatus.read(app.slug, app);
   if (deploy && deploy.deploying) return { outcome: 'skipped_deploying' };
 
   const kubernetesMode = config.appRuntime === 'kubernetes';
@@ -347,6 +353,12 @@ async function rollOne(config, pool, app) {
       return { outcome: FAILED, error: err.message };
     }
     try {
+      // With the app-delivery machine on, a recorded request it runs.
+      const workflow = require('../workflow/platform.ts');
+      if (workflow.deliveryEnabled()) {
+        await workflow.requestDeploy(app.id, 'rollover');
+        return { outcome: 'rebuild_requested' };
+      }
       const staging = require('./staging');
       const { containerId, sha } = await staging.rebuildProduction(config, app);
       const { rowCount } = await pool.query(
@@ -368,9 +380,11 @@ async function rollOne(config, pool, app) {
   // Per-slug serialization: bulk rollover, dev-chat merges, the drift
   // poller and heals all queue behind one another for the same app. This
   // is the race staging.js's serializeRebuild comment documents —
-  // runExistingImage does not take the lock on its own.
+  // runExistingImage does not take the lock on its own. The chain orders
+  // this process; PRODUCTION_BUILD_LOCK (Kubernetes) orders this against a
+  // rebuild in another process, as rebuildProduction takes it.
   const staging = require('./staging');
-  return staging.serializeRebuild(app.slug, async () => {
+  return staging.serializeRebuild(app.slug, () => withResourceUse(config, PRODUCTION_BUILD_LOCK, app.slug, async () => {
     // markStart/markEnd are the only emitters of app_redeploy_status, so
     // this is what makes the version pills spin during a rollover.
     appDeployStatus.markStart(app.slug, { fromSha: app.main_sha || null });
@@ -428,7 +442,7 @@ async function rollOne(config, pool, app) {
     } finally {
       appDeployStatus.markEnd(app.slug, { failed: failedForPill });
     }
-  });
+  }));
 }
 
 // apps.last_failure so the existing "View build log" panel covers rollover
