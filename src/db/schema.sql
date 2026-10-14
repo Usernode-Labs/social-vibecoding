@@ -13656,6 +13656,28 @@ CREATE TRIGGER chat_sessions_wf_merge_owned
   EXECUTE FUNCTION wf_guard_owned_columns('@enrolled=merge-followups/session:',
     'merged_at', 'merge_commit_sha', 'included_in_session_id', 'live_at');
 
+-- app-delivery (src/workflow/app-delivery/): an app's production deploys,
+-- one at a time per app, for everyone who asks (a merge, a secret change,
+-- the drift poller, an admin's Redeploy, heal, rollover, a demo reset).
+--
+-- deploy_state: 'deploying' while a deploy of the app runs, NULL otherwise;
+-- deploy_started_at and deploy_from_sha say since when and from which
+-- revision. The machine's projection, and the durable form of what
+-- services/app-deploy-status.js keeps in one process's memory for the
+-- legacy deploys: the version pill, heal and rollover read both.
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS deploy_state TEXT;
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS deploy_started_at TIMESTAMPTZ;
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS deploy_from_sha TEXT;
+DROP TRIGGER IF EXISTS apps_wf_delivery_owned ON apps;
+CREATE TRIGGER apps_wf_delivery_owned
+  BEFORE UPDATE ON apps
+  FOR EACH ROW
+  WHEN (OLD.deploy_state IS DISTINCT FROM NEW.deploy_state
+        OR OLD.deploy_started_at IS DISTINCT FROM NEW.deploy_started_at
+        OR OLD.deploy_from_sha IS DISTINCT FROM NEW.deploy_from_sha)
+  EXECUTE FUNCTION wf_guard_owned_columns('@enrolled=app-delivery/app:',
+    'deploy_state', 'deploy_started_at', 'deploy_from_sha');
+
 -- platform_live_at: a merge into Homeroom itself, when a production build
 -- that carries it first started serving. Homeroom ships in a release cut
 -- after the merge, so live_at (the merge, on the legacy paths) cannot say.

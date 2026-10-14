@@ -22,6 +22,17 @@ export function appVersion(d: { appId: number; appSlug: string; sha: string | nu
     data: { type: 'app_version_changed', appSlug: d.appSlug, sha: d.sha || null, prNumber: d.prNumber || null } };
 }
 
+// The version pill's "deploying", started or ended: services/app-deploy-status.js
+// markStart/markEnd's broadcast, to everyone (ws.broadcastGlobal).
+export function redeployStatus(d: {
+  appSlug: string; deploying: boolean; startedAt: string; fromSha: string | null;
+  toSha?: string | null; failed?: boolean; missingSecrets?: string[] | null;
+}): Push {
+  const data: JsonObject = { type: 'app_redeploy_status', appSlug: d.appSlug, deploying: d.deploying, startedAt: d.startedAt, fromSha: d.fromSha };
+  if (!d.deploying) Object.assign(data, { toSha: d.toSha ?? null, failed: !!d.failed, missingSecrets: d.missingSecrets ?? null });
+  return { kind: 'global', data };
+}
+
 // Issues just closed on GitHub, to every web process's own copy of the
 // repository's open issues (github.js: the "just closed" suppression, since
 // GitHub's list lags, and the cache). `open`: issues hidden as about to

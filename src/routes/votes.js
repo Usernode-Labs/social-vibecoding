@@ -4861,7 +4861,7 @@ function voteRoutes(config) {
       const gatedApp = await appAccess.getAppForUser(
         pool, req.params.slug, req.user, 'view',
         `${appAccess.ACCESS_COLUMNS}, repo_url, runtime_kind, runtime_name,
-         main_sha, main_pr_number, last_failure, release_stall`
+         main_sha, main_pr_number, last_failure, release_stall, deploy_state, deploy_started_at, deploy_from_sha`
       );
       if (!gatedApp) return res.status(404).json({ error: 'App not found' });
       const appRows = [gatedApp];
