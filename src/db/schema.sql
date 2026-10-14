@@ -2704,6 +2704,35 @@ ALTER TABLE notifications ADD COLUMN IF NOT EXISTS detail VARCHAR(32);
 -- re-running it is a no-op.
 ALTER TABLE notifications ALTER COLUMN detail TYPE VARCHAR(255);
 
+-- #4769: personal bookmarks on notifications. A user saves any
+-- notification in their feed (the bookmark button at the right end of the
+-- row, notifications-sheet.tsx); saved notifications render in the same
+-- pinned "Saved" section at the TOP of the drawer as #1280's saved
+-- messages, until unsaved — from the row itself, or from that section.
+-- Toggled over REST (src/routes/notifications.js), not the chat
+-- WebSocket: a save is private to one user, so there is nothing to
+-- broadcast.
+--
+-- One row per (user, notification); the UNIQUE constraint is what makes
+-- the save path an idempotent insert. Deleting the notification deletes
+-- the save (the FK cascade), and a save never changes the notification's
+-- read state. Tagged `staging:private` below for the same reason
+-- `notifications` is — one person's private feed — with the staging
+-- preview fed by the request-time `?demo=1` mock in
+-- src/routes/notifications.js instead.
+CREATE TABLE IF NOT EXISTS notification_bookmarks (
+  id              SERIAL PRIMARY KEY,
+  user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  notification_id INTEGER NOT NULL REFERENCES notifications(id) ON DELETE CASCADE,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(user_id, notification_id)
+);
+-- The drawer's Saved section reads "this user's notification saves,
+-- newest first", which is exactly this index; the per-notification
+-- lookup rides the UNIQUE index.
+CREATE INDEX IF NOT EXISTS notification_bookmarks_user_idx
+  ON notification_bookmarks (user_id, created_at DESC);
+
 -- #1559: grant existing accounts at least two slots once, preserving higher
 -- allowances. A later explicit admin reduction must survive every restart.
 -- Persist the notification in the same migration so offline users see it too.
@@ -2839,6 +2868,7 @@ COMMENT ON TABLE chat_session_spec_user_shares IS 'staging:private';
 COMMENT ON TABLE llm_usage              IS 'staging:private';
 COMMENT ON TABLE notifications          IS 'staging:private';
 COMMENT ON TABLE message_bookmarks      IS 'staging:private';
+COMMENT ON TABLE notification_bookmarks IS 'staging:private';
 COMMENT ON TABLE app_secrets            IS 'staging:private';
 -- `mail_deliveries` is tagged too, but its COMMENT lives beside its
 -- CREATE TABLE further down this file — the table doesn't exist yet at
@@ -10433,6 +10463,13 @@ BEGIN
   ALTER TABLE homeroom_bot_first_versions ADD CONSTRAINT homeroom_bot_first_versions_early_plan_check
     CHECK (early_plan_status IS NULL OR early_plan_status IN ('pending', 'ready', 'failed'));
 END $$;
+-- The SHAPE of a reply the plan at Make it could not use (early_plan_error
+-- 'unusable_reply', first-version-plan.js replyShape), never its words: how
+-- far it got as JSON (`json`), why it was refused (`why`), its top-level
+-- keys with each value's type and length (`keys`), the length of its text
+-- and of the model's own text beside its tool call, how many tool calls it
+-- made, and its finish reason. Null for a plan that was used.
+ALTER TABLE homeroom_bot_first_versions ADD COLUMN IF NOT EXISTS early_plan_reply JSONB;
 
 -- The first session's sketch (services/app-sketch.js): since 5 October 2026
 -- a featured card of the idea, made from its description a few seconds after
@@ -10577,6 +10614,14 @@ COMMENT ON COLUMN homeroom_bot_runs.build_checkpoint IS 'staging:private';
 ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS live_build_waiting_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS homeroom_bot_runs_live_build_waiting_idx
   ON homeroom_bot_runs(live_build_waiting_at) WHERE live_build_waiting_at IS NOT NULL;
+-- When the build went ahead, kept: live_build_waiting_at above is cleared
+-- the moment the build starts, so how long it waited for its slot could only
+-- be pieced together afterwards (newcomer run five, 13 Oct 2026). Build it
+-- (homeroom-bot.js goAhead) sets it; a ready verdict queued with no Build it
+-- to wait for (queueLiveBuild) sets it once. Never cleared. The build's own
+-- start is its session's created_at (build_session_id), and the gap between
+-- the two is logged as waitedMs when it starts.
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS go_ahead_at TIMESTAMPTZ;
 
 -- B6: what a look planned, for its person to see before anything is built:
 -- { bullets, questions: [{ question, answers }], chosen }. A first version's
@@ -10916,6 +10961,25 @@ CREATE TABLE IF NOT EXISTS bench_trial_artifacts (
   UNIQUE (trial_id, shot_id)
 );
 COMMENT ON TABLE bench_trial_artifacts IS 'staging:private';
+-- 13 Oct 2026: a trial's whole transcript (services/bench/progress.js
+-- tracker): every activity line its turns reported, as the studio's watch
+-- sees them (the tool each step used, each model request's size and time,
+-- its review's rounds), with when it came and the trial's step then, where
+-- bench_trials.progress keeps only the last four. A `step` row marks each
+-- step's start. Lines restart recovery replayed after the platform went down
+-- are marked `replayed` (their time is the replay's). Gone with the trial;
+-- private, as its screens are: a line can quote the app's data.
+CREATE TABLE IF NOT EXISTS bench_trial_lines (
+  id        BIGSERIAL PRIMARY KEY,
+  trial_id  INTEGER NOT NULL REFERENCES bench_trials(id) ON DELETE CASCADE,
+  at        TIMESTAMPTZ NOT NULL,
+  step      VARCHAR(16),
+  kind      VARCHAR(8) NOT NULL DEFAULT 'line' CHECK (kind IN ('line', 'step')),
+  line      TEXT NOT NULL,
+  replayed  BOOLEAN NOT NULL DEFAULT FALSE
+);
+CREATE INDEX IF NOT EXISTS idx_bench_trial_lines_trial ON bench_trial_lines (trial_id, id);
+COMMENT ON TABLE bench_trial_lines IS 'staging:private';
 -- A fifth state, `result`: the populated screen after its primary action
 -- was tapped once (worker/usernode-bench-capture.js). Widening the CHECK on
 -- a table made before it rejects no row already stored.
@@ -13800,3 +13864,34 @@ CREATE TABLE IF NOT EXISTS language_translations (
   created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (language, namespace, key, source)
 );
+
+-- Newcomer test runs (services/run-report.js): what was recorded about each
+-- project a test account made, its first version above all (the plan at
+-- Make it, the bot's runs and review rounds, its sessions, agent turns and
+-- their telemetry, helper model calls, screens without their images, and
+-- incidents), kept when the account is retired (services/test-accounts.js
+-- retire). Taking the app down deletes its first version, runs, sessions,
+-- turns and screens with it (ON DELETE CASCADE), so the report is built and
+-- kept first; the connector's get_run_report reads it once the app is gone.
+-- One row per app (`app_id_was`, no foreign key: the app is gone): a retire
+-- run again after a teardown failed replaces it with the fresher report.
+-- `slug`, `app_name` and `test_username` are as they were when it was kept;
+-- the account's own username changes when it is deleted. Private: the
+-- report quotes review issues about a private project's screens and the
+-- answers its maker chose, as homeroom_bot_runs.review and
+-- homeroom_bot_first_versions are.
+CREATE TABLE IF NOT EXISTS test_run_reports (
+  id             BIGSERIAL PRIMARY KEY,
+  app_id_was     INTEGER NOT NULL UNIQUE,
+  slug           VARCHAR(255) NOT NULL,
+  app_name       TEXT,
+  test_user_id   INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  test_username  TEXT,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  report         JSONB NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_test_run_reports_slug
+  ON test_run_reports (slug, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_test_run_reports_user
+  ON test_run_reports (test_user_id, created_at DESC);
+COMMENT ON TABLE test_run_reports IS 'staging:private';

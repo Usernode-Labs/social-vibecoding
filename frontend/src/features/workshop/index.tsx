@@ -828,7 +828,9 @@ export const workshopController = {
     let feedCapped = false;
     try {
       const [appsRes, countsRes, feedRes] = await Promise.all([
-        fetch(`/api/apps${demo}`),
+        // Only the communities you are in (#5023): the list below keeps
+        // nothing else, so the rest of the catalog was payload for nothing.
+        fetch(`/api/apps?scope=joined${demo.replace('?', '&')}`),
         fetch(`/api/workshop/counts${demo}`).catch(() => null),
         fetch(`/api/workshop/needs-feed${demo}`).catch(() => null),
       ]);

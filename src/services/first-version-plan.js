@@ -152,28 +152,20 @@ function planUserPrompt({ name, brief, starter = null, maker = null, members = n
   ].filter(Boolean).join('\n\n');
 }
 
-/** Pure: the JSON object a reply holds, or null. */
-function replyObject(text) {
+/**
+ * Pure: the reply read as a plan, or why it is none: { plan, why, json,
+ * obj }. `json` is how far it got as JSON ('none': no braces, 'invalid',
+ * 'not_object', 'object'); `why` is null with a plan, else 'no_json',
+ * 'bad_json', 'not_object', 'no_plan' (no plan line survived) or 'no_note'.
+ */
+function readPlanReply(text) {
   const out = String(text || '');
   const first = out.indexOf('{');
   const last = out.lastIndexOf('}');
-  if (first === -1 || last <= first) return null;
+  if (first === -1 || last <= first) return { plan: null, why: 'no_json', json: 'none', obj: null };
   let obj;
-  try { obj = JSON.parse(out.slice(first, last + 1)); } catch { return null; }
-  return obj && typeof obj === 'object' && !Array.isArray(obj) ? obj : null;
-}
-
-/**
- * The reply as a plan: { bullets, questions, buildNote, assumptions }, or
- * null when it has no plan line or no build note. Cut and cleaned as a
- * triage verdict's plan is (homeroom-bot.js planBullets, planQuestions),
- * with no em dashes in anything people read. Forgives the two shapes a
- * model sends for "a few lines" (run five): the plan as one string, one
- * line a bullet, and the build note as a list of lines. Pure.
- */
-function parsePlanReply(text) {
-  const obj = replyObject(text);
-  if (!obj) return null;
+  try { obj = JSON.parse(out.slice(first, last + 1)); } catch { return { plan: null, why: 'bad_json', json: 'invalid', obj: null }; }
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return { plan: null, why: 'not_object', json: 'not_object', obj: null };
   const bot = require('./homeroom-bot');
   const plain = (t) => withoutEmDashes(t);
   const lines = typeof obj.plan === 'string'
@@ -187,19 +179,74 @@ function parsePlanReply(text) {
     ? obj.build_note.filter((line) => typeof line === 'string').join('\n')
     : obj.build_note;
   const note = typeof rawNote === 'string' ? rawNote.trim().slice(0, 4000) : '';
-  if (!bullets.length || !note) return null;
-  return { bullets, questions, buildNote: bot.noteWithAssumptions(note, assumptions), assumptions };
+  if (!bullets.length || !note) return { plan: null, why: bullets.length ? 'no_note' : 'no_plan', json: 'object', obj };
+  return {
+    plan: { bullets, questions, buildNote: bot.noteWithAssumptions(note, assumptions), assumptions },
+    why: null, json: 'object', obj,
+  };
+}
+
+/**
+ * The reply as a plan: { bullets, questions, buildNote, assumptions }, or
+ * null when it has no plan line or no build note. Cut and cleaned as a
+ * triage verdict's plan is (homeroom-bot.js planBullets, planQuestions),
+ * with no em dashes in anything people read. Pure.
+ */
+function parsePlanReply(text) {
+  return readPlanReply(text).plan;
+}
+
+// A reply's shape keeps this many of its top-level keys, each named only
+// when its name is a plain word.
+const SHAPE_KEYS_MAX = 20;
+const SHAPE_KEY_RE = /^[A-Za-z0-9_]{1,40}$/;
+
+/** Pure: a JSON value's type, and its length where it has one (an array's items, a string's characters, an object's keys). */
+function valueShape(value) {
+  if (value === null) return { type: 'null' };
+  if (Array.isArray(value)) {
+    const items = [...new Set(value.map((v) => (v === null ? 'null' : Array.isArray(v) ? 'array' : typeof v)))].sort();
+    return { type: 'array', length: value.length, items };
+  }
+  if (typeof value === 'string') return { type: 'string', length: value.length };
+  if (typeof value === 'object') return { type: 'object', length: Object.keys(value).length };
+  return { type: typeof value };
+}
+
+/**
+ * Pure (newcomer run five, 13 Oct 2026): the SHAPE of a reply the plan
+ * could not use, for its row (early_plan_reply), never a word of it: its
+ * length (`chars`), how far it got as JSON and why it was refused
+ * (readPlanReply), its top-level keys with each value's type and length,
+ * and from the call itself (`reply`, llm.js helperMessage) the finish
+ * reason, how many tool calls it made, the length of the model's own text
+ * beside them, and which provider served it. Run five's plan at Make it
+ * was refused, and nothing said what had come back.
+ */
+function replyShape(text, reply = null) {
+  const read = readPlanReply(text);
+  const keys = read.obj ? Object.keys(read.obj).slice(0, SHAPE_KEYS_MAX)
+    .map((key) => ({ key: SHAPE_KEY_RE.test(key) ? key : '?', ...valueShape(read.obj[key]) })) : [];
+  const r = reply && typeof reply === 'object' ? reply : {};
+  const count = (v) => (Number.isSafeInteger(Number(v)) && Number(v) >= 0 ? Number(v) : null);
+  const finish = typeof r.finishReason === 'string' && /^[a-z_]{1,32}$/i.test(r.finishReason) ? r.finishReason : null;
+  const routed = typeof r.routedProvider === 'string' && /^[\w .-]{1,80}$/.test(r.routedProvider) ? r.routedProvider : null;
+  return {
+    chars: String(text || '').length,
+    json: read.json,
+    why: read.why,
+    keys,
+    ...(read.obj ? { keyCount: Object.keys(read.obj).length } : {}),
+    finishReason: finish,
+    toolCallCount: count(r.toolCallCount),
+    textChars: count(r.textChars),
+    routedProvider: routed,
+  };
 }
 
 /** Pure: whether the helper's answer (an object) is a plan parsePlanReply can read. */
 function usableAnswer(answer) {
   return parsePlanReply(JSON.stringify(answer)) !== null;
-}
-
-/** Pure: what a reply looked like, never what it said (llm.js answerShape), for the log. */
-function replyShape(text) {
-  const obj = replyObject(text);
-  return obj ? require('./llm').answerShape(obj) : { reply: `no JSON object, ${String(text || '').length} characters` };
 }
 
 /**
@@ -284,19 +331,26 @@ async function makePlan(pool, { app, user, brief, deps = {} }) {
     await recordSpend(reply);
     model = reply.model || model;
     const plan = parsePlanReply(reply.text);
-    return plan ? { plan, model, error: null } : { plan: null, model, error: 'unusable_reply', shape: replyShape(reply.text) };
+    // A reply it cannot use keeps its shape (never its words) for the row.
+    return plan ? { plan, model, error: null }
+      : { plan: null, model, error: 'unusable_reply', shape: replyShape(reply.text, reply.reply) };
   } catch (err) {
     return { plan: null, model, error: String(err && err.message || 'failed').slice(0, 200) };
   }
 }
 
-/** Store what makePlan made: ready with a plan, failed without one. */
-async function savePlan(pool, appId, { plan, model, error }) {
+/**
+ * Store what makePlan made: ready with a plan, failed without one, and the
+ * shape of a reply it could not use (replyShape).
+ */
+async function savePlan(pool, appId, { plan, model, error, shape = null }) {
   await pool.query(
     `UPDATE homeroom_bot_first_versions
-        SET early_plan_status = $2, early_plan = $3::jsonb, early_plan_at = NOW(), early_plan_error = $4
+        SET early_plan_status = $2, early_plan = $3::jsonb, early_plan_at = NOW(), early_plan_error = $4,
+            early_plan_reply = $5::jsonb
       WHERE app_id = $1 AND early_plan_status = 'pending'`,
-    [appId, plan ? 'ready' : 'failed', plan ? JSON.stringify({ ...plan, model: model || null }) : null, plan ? null : clip(error, 200)],
+    [appId, plan ? 'ready' : 'failed', plan ? JSON.stringify({ ...plan, model: model || null }) : null, plan ? null : clip(error, 200),
+      !plan && shape ? JSON.stringify(shape) : null],
   );
 }
 
@@ -332,9 +386,14 @@ async function startEarlyPlan(pool, { app, user, brief }, deps = {}) {
           log.info('first-version-plan', 'A first version\'s plan is ready at Make it', {
             appId: app.id, questions: made.plan.questions.length, model: made.model,
           });
+          // Its timeline's first stage (first-version-timeline.js), before
+          // there is a run.
+          await (deps.timeline || require('./first-version-timeline')).record(pool, {
+            appId: app.id, stage: 'plan_written', detail: { source: 'make_it', questions: made.plan.questions.length },
+          });
         } else {
           log.warn('first-version-plan', 'No plan at Make it; the triage plans it', {
-            appId: app.id, error: made.error, model: made.model, ...(made.shape ? { shape: made.shape } : {}),
+            appId: app.id, error: made.error, model: made.model, ...(made.shape ? { why: made.shape.why, routedProvider: made.shape.routedProvider } : {}),
           });
         }
         return made;

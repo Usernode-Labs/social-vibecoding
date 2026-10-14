@@ -274,6 +274,21 @@ const EVENT_TYPES = Object.freeze({
   LIVE_BUILD_STREAM: 'live_build_stream',
   LIVE_BUILD_OPENED: 'live_build_opened',
   LIVE_BUILD_WATCHED: 'live_build_watched',
+  // Newcomer run five (13 Oct 2026): what a first version's timings could
+  // only be pieced together from screenshots and a polling watcher.
+  //   first_version_stage   a first version moved to a new stage, written
+  //                        by the pipeline as it moves
+  //                        (services/first-version-timeline.js), for its
+  //                        maker and project. metadata: { stage, runId,
+  //                        issueNumber, ... } (STAGES there names each stage
+  //                        and what it adds)
+  //   first_session_moment  the made screen showed something, or was tapped
+  //                        (services/first-session-moments.js), for the
+  //                        person and project: { kind, clientAt (the
+  //                        browser's clock), receivedAt (the server's), ... }.
+  //                        Test accounts' too: the Journey reads none of it.
+  FIRST_VERSION_STAGE: 'first_version_stage',
+  FIRST_SESSION_MOMENT: 'first_session_moment',
   // Somebody was refused a session because a session cap was full
   // (services/session-lifecycle.js recordCapacityRefusal): { cap: 'global'
   // | 'user', path: where they asked }. The infra topic's "Turned away at a

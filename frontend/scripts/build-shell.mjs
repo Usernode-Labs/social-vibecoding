@@ -27,13 +27,21 @@
 // ── Modes ──────────────────────────────────────────────────────────────
 //
 //   (no flag)          both passes, the document for this GIT_SHA and the
-//                      stamped bundle. Every local flow runs this.
+//                      stamped bundle. `npm run build:shell` and the local
+//                      runtime preflight run this.
 //   --keep-prerender   the same, but leaves the pass-2 bundle (frontend/.ssr)
 //                      in place for a later --document run.
 //   --document         no Vite at all: renders again with the kept pass-2
 //                      bundle and rewrites public/index.html only.
+//   --no-bundle        pass 2 and the document, without pass 1. The bundle on
+//                      disk, if any, is left as it is, stale stamp included.
 //
-// The last two exist for Dockerfile.kubernetes. A commit id reaches this
+// --no-bundle is the test preflight's (scripts/ensure-shell-artifacts.js
+// --html-only): the root suites read the document and never the bundle. Nothing
+// that serves the shell may use it. The local runtime preflight checks the
+// bundle's own stamp, so it still rebuilds one this mode left behind.
+//
+// The middle two exist for Dockerfile.kubernetes. A commit id reaches this
 // script in exactly one place, the document (its <meta name="platform-build">
 // and the /b/<sha>/ prefix on every asset URL); neither Vite pass reads it. So
 // that image runs `--keep-prerender` and Tailwind BEFORE it declares GIT_SHA,
@@ -76,12 +84,15 @@ function resolveViteCli() {
   return path.join(path.dirname(pkgJson), binRel);
 }
 
-const FLAGS = ['--keep-prerender', '--document'];
+const FLAGS = ['--keep-prerender', '--document', '--no-bundle'];
 const unknownArgs = process.argv.slice(2).filter((arg) => !FLAGS.includes(arg));
 // A misspelt --document would otherwise run both Vite passes again and pass.
-if (unknownArgs.length) fail(`unknown argument ${unknownArgs.join(' ')}; this script takes ${FLAGS.join(' and ')}`);
+if (unknownArgs.length) fail(`unknown argument ${unknownArgs.join(' ')}; this script takes ${FLAGS.join(', ')}`);
 const keepPrerender = process.argv.includes('--keep-prerender');
 const documentOnly = process.argv.includes('--document');
+const noBundle = process.argv.includes('--no-bundle');
+// --document renders with a bundle it has checked; --no-bundle promises none.
+if (documentOnly && noBundle) fail('--document and --no-bundle cannot be combined');
 
 // The bundled English catalog (src/lib/i18n/catalogs.generated.json) and the
 // hashed language packs are inputs of the bundle below. Only a mistake in the
@@ -89,7 +100,8 @@ const documentOnly = process.argv.includes('--document');
 // frontend/locales/README.md. A --document run builds no bundle: the
 // --keep-prerender run before it built the packs from these same sources, in
 // the same image stage, and the stamp check below refuses a bundle that did
-// not see them.
+// not see them. A --no-bundle run still builds them: the prerender imports
+// the catalog, and so do the tests that load the language runtime.
 if (!documentOnly) require(path.join(ROOT, 'scripts/language-packs.js')).buildLanguagePacks(ROOT);
 
 function runVite(args) {
@@ -103,6 +115,14 @@ function runVite(args) {
 const jsPath = path.join(ROOT, JS_OUTPUT);
 const ssrDir = path.join(FRONTEND, '.ssr');
 const ssrEntry = path.join(ssrDir, 'prerender.js');
+
+function buildPrerender() {
+  fs.rmSync(ssrDir, { recursive: true, force: true });
+  runVite(['build', '--config', 'vite.ssr.config.ts', '--logLevel', 'warn']);
+
+  if (!fs.existsSync(ssrEntry)) fail(`the SSR build did not emit ${path.relative(ROOT, ssrEntry)}`);
+}
+
 const { stamp, files } = expectedStamp();
 
 if (documentOnly) {
@@ -119,6 +139,9 @@ if (documentOnly) {
   if (!fs.existsSync(ssrEntry)) {
     fail(`--document needs ${path.relative(ROOT, ssrEntry)}. Run this script with --keep-prerender first.`);
   }
+} else if (noBundle) {
+  console.log('[build-shell] no bundle: pass 2 and the document only');
+  buildPrerender();
 } else {
   // ── Pass 1: the browser bundle ───────────────────────────────────────
   console.log('[build-shell] pass 1/2 — client bundle');
@@ -145,10 +168,7 @@ if (documentOnly) {
 
   // ── Pass 2: prerender the shell tree ─────────────────────────────────
   console.log('[build-shell] pass 2/2 — SSG prerender');
-  fs.rmSync(ssrDir, { recursive: true, force: true });
-  runVite(['build', '--config', 'vite.ssr.config.ts', '--logLevel', 'warn']);
-
-  if (!fs.existsSync(ssrEntry)) fail(`the SSR build did not emit ${path.relative(ROOT, ssrEntry)}`);
+  buildPrerender();
 }
 
 const { renderShell, renderShellWithSeparators } = await import(pathToFileURL(ssrEntry).href);
@@ -265,6 +285,8 @@ fs.writeFileSync(path.join(ROOT, HTML_OUTPUT), html);
 
 if (documentOnly) {
   console.log(`[build-shell] wrote ${HTML_OUTPUT} (${html.length} bytes); ${JS_OUTPUT} is the bundle already built`);
+} else if (noBundle) {
+  console.log(`[build-shell] wrote ${HTML_OUTPUT} (${html.length} bytes); ${JS_OUTPUT} was not built`);
 } else {
   // Stamp the JS too so a running image can identify the exact source set that
   // produced it. The image copies HTML and JS from this same builder invocation.

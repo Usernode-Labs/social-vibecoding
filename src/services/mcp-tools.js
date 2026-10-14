@@ -7056,6 +7056,54 @@ function registerTools(server, ctx) {
       passed: typeof s.passed === 'boolean' ? s.passed : null,
       screenshots: sNum(s.screenshots), snapshots: sNum(s.snapshots), navigations: sNum(s.navigations),
     } : null);
+    // What a build took and what its review found, per trial and per arm
+    // (services/bench/speed.js): numbers, the review's own words for its
+    // verdicts and stops, and provider and model names held to the shapes the
+    // ledger keeps them in. Nothing a model wrote.
+    const PROVIDER_OUT_RE = /^[a-zA-Z0-9 ._:/()-]{1,80}$/;
+    const WORD_OUT_RE = /^[a-z_]{1,40}$/;
+    // An arm's medians are of these (speed.js BUILD_FIELDS); a trial has a few more.
+    const ARM_BUILD_NUMBERS = [
+      'wallMs', 'modelCalls', 'inputTokens', 'outputTokens', 'inputTokensPerCall', 'firstFileChangeMs', 'firstAppBootMs',
+      'browserShare', 'modelRequestMs', 'browserToolMs', 'shellToolMs', 'editToolMs', 'readToolMs', 'otherToolMs',
+      'fileChanges', 'distinctFileChanges', 'compactions', 'toolOutputPruned', 'toolOutputPrunedChars', 'toolBytes',
+    ];
+    const BUILD_SPEED_NUMBERS = ['turns', 'attempts', ...ARM_BUILD_NUMBERS, 'cachedInputTokens', 'browserSpanMs'];
+    const REVIEW_OUTCOME_NUMBERS = ['round1Blockers', 'round1Majors', 'rounds', 'reviewMs', 'doneMs'];
+    const nameOut = (v, re) => (typeof v === 'string' && re.test(v) ? v : null);
+    const numbersOut = (o, keys) => Object.fromEntries(keys.map((k) => [k, sNumOrNull(o?.[k])]));
+    const countsOut = (o, re) => Object.fromEntries(Object.entries(o && typeof o === 'object' ? o : {})
+      .filter(([k]) => re.test(k)).slice(0, 20).map(([k, v]) => [k, sNum(v)]));
+    const buildSpeedOut = (s) => (s && typeof s === 'object' ? {
+      startedAt: typeof s.startedAt === 'string' ? s.startedAt.slice(0, 40) : null,
+      ...numbersOut(s, BUILD_SPEED_NUMBERS),
+      routedProvider: nameOut(s.routedProvider, PROVIDER_OUT_RE), routedModel: nameOut(s.routedModel, MODEL_ID_OUT_RE),
+      requestedModel: nameOut(s.requestedModel, MODEL_ID_OUT_RE), harness: nameOut(s.harness, WORD_OUT_RE),
+    } : null);
+    const reviewOutcomeOut = (r) => (r && typeof r === 'object' ? {
+      round1Verdict: r.round1Verdict === 'ship' || r.round1Verdict === 'fix' ? r.round1Verdict : null,
+      stop: nameOut(r.stop, WORD_OUT_RE),
+      ...numbersOut(r, REVIEW_OUTCOME_NUMBERS),
+      declaredChecks: r.declaredChecks && typeof r.declaredChecks === 'object' ? {
+        total: sNum(r.declaredChecks.total), ran: sNum(r.declaredChecks.ran), failed: sNum(r.declaredChecks.failed),
+        allPassed: typeof r.declaredChecks.allPassed === 'boolean' ? r.declaredChecks.allPassed : null,
+      } : null,
+    } : null);
+    const armSpeedOut = (a) => ({
+      arm: untrusted(a?.arm, 200) || '',
+      n: sNum(a?.n),
+      plan: {
+        n: sNum(a?.plan?.n), median: numbersOut(a?.plan?.median, ARM_BUILD_NUMBERS), hosts: countsOut(a?.plan?.hosts, PROVIDER_OUT_RE),
+      },
+      build: {
+        n: sNum(a?.build?.n), median: numbersOut(a?.build?.median, ARM_BUILD_NUMBERS), hosts: countsOut(a?.build?.hosts, PROVIDER_OUT_RE),
+      },
+      review: {
+        n: sNum(a?.review?.n), median: numbersOut(a?.review?.median, REVIEW_OUTCOME_NUMBERS),
+        round1Verdicts: countsOut(a?.review?.round1Verdicts, /^(ship|fix)$/), stops: countsOut(a?.review?.stops, WORD_OUT_RE),
+        declaredChecksFirstTime: countsOut(a?.review?.declaredChecksFirstTime, /^(passed|failed)$/),
+      },
+    });
     const studioTrialShape = z.object({
       trialId: z.number(), runId: z.number(), taskId: z.number(), ref: z.string().nullable(), appName: z.string().nullable(),
       arm: armShape, armLabel: z.string(), attempt: z.number(), status: z.string(), step: z.string().nullable(),
@@ -7066,6 +7114,7 @@ function registerTools(server, ctx) {
       code: z.any().nullable(), preview: z.any().nullable(), error: z.string().nullable(),
       final: z.string(), critique: z.string().nullable(), criteria: z.object({ held: z.number(), of: z.number() }).nullable(),
       updatedAt: z.string().nullable(), sight: sightShape.nullable(), costBreakdown: z.any().nullable().optional(),
+      buildSpeed: z.any().nullable().optional(), planSpeed: z.any().nullable().optional(), reviewOutcome: z.any().nullable().optional(),
     });
     const studioTrialOut = (t) => ({
       trialId: sNum(t.trialId), runId: sNum(t.runId), taskId: sNum(t.taskId),
@@ -7073,6 +7122,11 @@ function registerTools(server, ctx) {
       arm: armOut(t.arm), armLabel: untrusted(t.armLabel, 200) || '', attempt: sNum(t.attempt), status: String(t.status || ''),
       step: t.step ? String(t.step) : null, startedAt: t.startedAt || null, finishedAt: t.finishedAt || null,
       elapsedMs: sNumOrNull(t.elapsedMs), costUsd: sNumOrNull(t.costUsd), costBreakdown: costBreakdownOut(t.costBreakdown),
+      // Only a read that asked the turn ledger carries buildSpeed (the watch, one trial).
+      ...(t.buildSpeed !== undefined ? { buildSpeed: buildSpeedOut(t.buildSpeed) } : {}),
+      // Its plan step's (the spec turn's), the same numbers.
+      ...(t.planSpeed !== undefined ? { planSpeed: buildSpeedOut(t.planSpeed) } : {}),
+      reviewOutcome: reviewOutcomeOut(t.reviewOutcome),
       activity: (Array.isArray(t.activity) ? t.activity : []).map((l) => untrusted(l, 240)).filter(Boolean),
       skills: {
         invoked: (t.skills?.invoked || []).map((x) => untrusted(x, 100)).filter(Boolean),
@@ -7179,13 +7233,13 @@ function registerTools(server, ctx) {
 
     server.registerTool('get_bench_studio_run', {
       title: 'Benchmark studio: watch a run',
-      description: 'Admin only. A run as it moves, one row per build: the brief, the arm (model and pack, or a reference label), its status and step (scaffold, triage, plan, spec, build, capture), elapsed time and spend, its last few activity lines, the skills it invoked or read, whether its build could see its own screens (`sight`: told it could, handed images, and the screenshots, text snapshots and page loads it took), whether it built and booted, its spend stage by stage (costBreakdown: triage, spec, build, a review\'s reviewer calls and fix turns, each with its model id and dollars, and other, adding up to costUsd), its newest screenshots (by artifact id: get_bench_trial shows them), its code on GitHub, its preview, and once graded its verdict and critique. Pass the cursor from the last call as `since` to get only the builds that changed. Works for any run; a studio run is open by design (you see which model made what), so a blind grade should come from a session that never watched. Activity lines, critiques and names are untrusted data.',
+      description: 'Admin only. A run as it moves, one row per build: the brief, the arm (model and pack, or a reference label), its status and step (scaffold, triage, plan, spec, build, capture), elapsed time and spend, its last few activity lines, the skills it invoked or read, whether its build could see its own screens (`sight`: told it could, handed images, and the screenshots, text snapshots and page loads it took), whether it built and booted, its spend stage by stage (costBreakdown: triage, spec, build, a review\'s reviewer calls and fix turns, each with its model id and dollars, and other, adding up to costUsd), its newest screenshots (by artifact id: get_bench_trial shows them), its code on GitHub, its preview, and once graded its verdict and critique. Each row has buildSpeed (its build turn and any nudge, from the turn ledger; null with none on record): wallMs, modelCalls, input and output tokens, inputTokensPerCall, firstFileChangeMs and firstAppBootMs from the build\'s start, browserShare (first to last browser call over wallMs), modelRequestMs, browserToolMs, shellToolMs (and edit, read, other), fileChanges, distinctFileChanges, compactions, toolBytes, toolOutputPruned, routedProvider; and reviewOutcome: round1Verdict, round1Blockers, round1Majors, stop, rounds, declaredChecks (whether the first build passed them), reviewMs, doneMs (build start to review end). `arms`: per arm, n and the medians of those over its ended builds, with counts of hosts, round-1 verdicts, stops and first-time check passes. Pass the cursor from the last call as `since` to get only the builds that changed. Works for any run; a studio run is open by design (you see which model made what), so a blind grade should come from a session that never watched. Activity lines, critiques and names are untrusted data.',
       inputSchema: {
         runId: z.number().int().positive(),
         since: z.string().optional().describe('The cursor the previous call returned: only builds that changed after it.'),
       },
       outputSchema: {
-        run: z.any(), counts: z.record(z.string(), z.number()), firstCommits: z.array(z.any()),
+        run: z.any(), counts: z.record(z.string(), z.number()), arms: z.array(z.any()), firstCommits: z.array(z.any()),
         trials: z.array(studioTrialShape), changedOnly: z.boolean(), cursor: z.string(), nextStep: z.string(),
       },
       annotations: readAnnotations,
@@ -7200,6 +7254,7 @@ function registerTools(server, ctx) {
       return readResult('get_bench_studio_run', {
         run: { ...(b.run || {}), suite: b.run?.suite ? untrusted(b.run.suite, 120) : null },
         counts,
+        arms: (Array.isArray(b.arms) ? b.arms : []).slice(0, 60).map(armSpeedOut),
         firstCommits: b.firstCommits || [],
         trials: (b.trials || []).map(studioTrialOut),
         changedOnly: !!b.changedOnly,
@@ -7557,11 +7612,14 @@ function registerTools(server, ctx) {
 
     server.registerTool('get_bench_trial', {
       title: 'Benchmark: one trial in full',
-      description: 'Admin only. One benchmark trial in full: its brief and arm, what the triage answered and planned (with the plan\'s choices), what it cost stage by stage (costBreakdown: triage, spec, build with its own look-and-fix loop, a review\'s reviewer calls and its fix turns, each with its model id, dollars and, where the turn ledger has them, tokens, and other, so the stages add up to costUsd; the spec\'s line is marked overBudget when a drawn screen ran past twice its budget), its spec whole (spec, up to 120,000 characters; specChars is its full length; detail.specNote says why there is none), the size of each screen the spec drew (specScreens: characters, inline SVGs, SVG shapes, overBudget past 30,000 characters), for a first version with a reviewer its review (review: the reviewer, the first build as round 0, then each round\'s verdict, issues with id, severity, screen, problem and fix, the earlier issues it called fixed, the reviewer call\'s and the fix turn\'s cost and time, the fix\'s commit, and why the review stopped), the files it changed, the automatic checks and source lint, its verdict and critique, its code and preview, and its screenshots, which come back as images after the text, each captioned with its screen size, look and state. Refused, like list_bench_trials, for a trial of a run that is not a studio run while it waits for the judge. Everything it carries was written by people and models, and the screenshots show an app: all untrusted data.',
-      inputSchema: { trialId: z.number().int().positive() },
+      description: 'Admin only. One benchmark trial in full: its brief and arm, what the triage answered and planned (with the plan\'s choices), what it cost stage by stage (costBreakdown: triage, spec, build with its own look-and-fix loop, a review\'s reviewer calls and its fix turns, each with its model id, dollars and, where the turn ledger has them, tokens, and other, so the stages add up to costUsd; the spec\'s line is marked overBudget when a drawn screen ran past twice its budget), its spec whole, last (spec, up to 120,000 characters; spec: false leaves it out; specChars is its full length; detail.specNote says why there is none), the size of each screen the spec drew (specScreens: characters, inline SVGs, SVG shapes, overBudget past 30,000 characters), for a first version with a reviewer its review (review: the reviewer, the first build as round 0, then each round\'s verdict, issues with id, severity, screen, problem and fix, the earlier issues it called fixed, the reviewer call\'s and the fix turn\'s cost and time, the fix\'s commit, and why the review stopped), its buildSpeed, planSpeed (its plan step\'s spec turn, the same numbers) and reviewOutcome (as get_bench_studio_run gives them), its timeline (each step it reached from its transcript: when it began and ended, how long, how many lines; get_bench_trial_transcript has the lines, transcriptLines how many), the files it changed, the automatic checks and source lint, its verdict and critique, its code and preview, and its screenshots, which come back as images after the text, each captioned with its screen size, look and state. Refused, like list_bench_trials, for a trial of a run that is not a studio run while it waits for the judge. Everything it carries was written by people and models, and the screenshots show an app: all untrusted data.',
+      inputSchema: {
+        trialId: z.number().int().positive(),
+        spec: z.boolean().optional().describe('false leaves the spec out (specChars still says its length): a long one can crowd out the rest.'),
+      },
       outputSchema: { trial: z.any(), images: z.array(z.object({ caption: z.string(), attached: z.boolean() })) },
       annotations: readAnnotations,
-    }, async ({ trialId }) => {
+    }, async ({ trialId, spec: withSpec }) => {
       const guard = scopeGuard(READ_SCOPE) || studioAdminOnly();
       if (guard) return guard;
       const withImages = imageInput !== false;
@@ -7576,7 +7634,13 @@ function registerTools(server, ctx) {
           stage: rest.stage ? String(rest.stage) : null,
           brief: rest.brief ? untrusted(rest.brief, 4000) : null,
           models: rest.models || null,
-          spec: rest.spec ? untrusted(rest.spec, MAX_TRIAL_SPEC) : null,
+          // Its steps as its transcript recorded them; the lines themselves
+          // are get_bench_trial_transcript's.
+          timeline: Array.isArray(rest.timeline) ? rest.timeline.slice(0, 40).map((e) => ({
+            step: nameOut(e?.step, WORD_OUT_RE), from: typeof e?.from === 'string' ? e.from.slice(0, 40) : null,
+            to: typeof e?.to === 'string' ? e.to.slice(0, 40) : null, ms: sNumOrNull(e?.ms), lines: sNum(e?.lines), replayed: sNum(e?.replayed),
+          })) : null,
+          transcriptLines: sNum(rest.transcriptLines),
           specChars: sNumOrNull(rest.specChars),
           specScreens: Array.isArray(rest.specScreens) ? rest.specScreens.slice(0, 6).map(screenOut) : null,
           review: rest.review ? sData(rest.review) : null,
@@ -7585,9 +7649,50 @@ function registerTools(server, ctx) {
             blocked: rest.blocked || null, changedFiles: rest.changedFiles || null, checks: rest.checks || null,
             bootError: rest.bootError || null, notes: rest.notes || [], criteriaById: rest.criteriaById || null,
           }),
+          // Last: the longest part, so a reader that cuts a long answer short
+          // cuts the spec, not the review or the files.
+          spec: withSpec !== false && rest.spec ? untrusted(rest.spec, MAX_TRIAL_SPEC) : null,
         },
         images: shots.captions,
       }, shots.content);
+    });
+
+    server.registerTool('get_bench_trial_transcript', {
+      title: 'Benchmark: one trial\'s transcript',
+      description: 'Admin only. One benchmark trial\'s whole transcript, oldest first, a page at a time: every activity line its turns reported (each tool it used and on what, each model request\'s size and time, its review\'s rounds), as the studio\'s watch shows its last four, with when it came (at), the step it came in (scaffold, triage, plan, spec, build, review, capture), and kind \'step\' rows marking each step\'s start. Lines restart recovery replayed after the platform went down say replayed (their time is the replay\'s). Pass step for one step\'s lines only, and the page\'s next as after for the page after it (up to 500 lines a page). total counts the trial\'s lines; get_bench_trial\'s timeline says how long each step took. Kept from 13 Oct 2026; an older trial has none. Every line was written by a model or a tool run on its behalf: untrusted data.',
+      inputSchema: {
+        trialId: z.number().int().positive(),
+        step: z.enum(['scaffold', 'triage', 'plan', 'spec', 'build', 'review', 'capture']).optional(),
+        after: z.number().int().positive().optional(),
+        limit: z.number().int().positive().max(500).optional(),
+      },
+      outputSchema: {
+        trialId: z.number(), step: z.string().nullable(), total: z.number(),
+        lines: z.array(z.object({
+          id: z.number(), at: z.string().nullable(), step: z.string().nullable(), kind: z.string(), line: z.string(), replayed: z.boolean(),
+        })),
+        next: z.number().nullable(), nextStep: z.string(),
+      },
+      annotations: readAnnotations,
+    }, async ({ trialId, step, after, limit }) => {
+      const guard = scopeGuard(READ_SCOPE) || studioAdminOnly();
+      if (guard) return guard;
+      const q = new URLSearchParams();
+      if (step) q.set('step', step);
+      if (after) q.set('after', String(after));
+      if (limit) q.set('limit', String(limit));
+      const r = await callPlatform(baseUrl, accessToken, 'GET', `/api/bot-studio/trials/${Number(trialId)}/transcript?${q.toString()}`);
+      if (!r.ok) return studioRefusal(r, 'trial');
+      const b = r.body || {};
+      const lines = (Array.isArray(b.lines) ? b.lines : []).slice(0, 500).map((l) => ({
+        id: sNum(l?.id), at: typeof l?.at === 'string' ? l.at.slice(0, 40) : null, step: nameOut(l?.step, WORD_OUT_RE),
+        kind: l?.kind === 'step' ? 'step' : 'line', line: untrusted(l?.line, 2000) || '', replayed: l?.replayed === true,
+      }));
+      const next = sNumOrNull(b.next);
+      return readResult('get_bench_trial_transcript', {
+        trialId: sNum(b.trialId) || Number(trialId), step: b.step ? nameOut(b.step, WORD_OUT_RE) : null, total: sNum(b.total), lines, next,
+        nextStep: next ? `More lines: call again with after ${next}.` : 'That is the end of its transcript.',
+      });
     });
 
     server.registerTool('get_homeroom_bot', {
@@ -7801,6 +7906,9 @@ function registerTools(server, ctx) {
         model: modelId, maxRounds: z.number().int().min(0).max(5), budgetMinutes: z.number().int().min(1).max(60),
       }).nullable(),
       pack: z.number().int().positive().nullable(),
+      // Build-speed tweaks (bot-configs.js TWEAKS), each benched as its own
+      // configuration before it is anyone's default; left out is none.
+      tweaks: z.array(z.enum(require('./bot-configs').TWEAKS)).max(8).optional(),
     });
     // A version's numbers as the connector shows them: without how many
     // pairs wait on it. The picker is this same connector, and the next
@@ -7853,7 +7961,7 @@ function registerTools(server, ctx) {
 
     server.registerTool('save_bot_config', {
       title: 'Bot configurations: save a version',
-      description: 'Admin only. Save a new version of a Homeroom bot configuration in `scope`: "first_version" (the default: how a project\'s first version is built) or "later" (every other build, live or shadow). It is the next version of `key` (or a new key, made from the label when none is given), with its recipe and role; a key belongs to one scope. A version is never edited; this is how a recipe changes, and its numbers start again. Roles move with it, within its scope: saved as "current", it builds every build of its scope from now on and the version current until now becomes a side version (or is retired, when it is this key\'s own earlier version); saved as "side", it is built silently beside each build of its scope for comparison, within that scope\'s side builds\' weekly budget, and this key\'s other side versions are retired. The recipe names an OpenRouter model id for triage, spec and build, a reviewer (model, maxRounds 0 to 5, budgetMinutes 1 to 60) or null, and an App bench context pack id or null. A later recipe\'s reviewer is null (the review is a first version\'s), and its triage model is not run (a later change\'s triage keeps its per-stage model). A version saved as "current" must name only models in the OpenRouter catalog, and its reviewer\'s must read images; when the catalog cannot be read it can only be saved as side. Saving "current" changes what the bot builds with and what it costs: ask the person first, and say the recipe and the scope back. It changes no app.',
+      description: 'Admin only. Save a new version of a Homeroom bot configuration in `scope`: "first_version" (the default: how a project\'s first version is built) or "later" (every other build, live or shadow). It is the next version of `key` (or a new key, made from the label when none is given), with its recipe and role; a key belongs to one scope. A version is never edited; this is how a recipe changes, and its numbers start again. Roles move with it, within its scope: saved as "current", it builds every build of its scope from now on and the version current until now becomes a side version (or is retired, when it is this key\'s own earlier version); saved as "side", it is built silently beside each build of its scope for comparison, within that scope\'s side builds\' weekly budget, and this key\'s other side versions are retired. The recipe names an OpenRouter model id for triage, spec and build, a reviewer (model, maxRounds 0 to 5, budgetMinutes 1 to 60) or null, an App bench context pack id or null, and optionally a first version\'s tweaks, named changes to how its plan or build works that are benched before anyone\'s default: one_look (the build boots once, looks at each main screen once at one width, fixes only what is broken and leaves the sweep to the reviewer; needs a reviewer), starter_inline (the starter\'s file map and the files every build reads are in the build prompt) lean_turns (the declared checks are left to the platform\'s gate and stale tool output is cut from what each model call re-sends) one_go (the whole first version is written from the spec in a few replies of whole files before anything is booted, with the repository in the prompt) and lean_plan (the spec plans a focused first version: what the request asks for and the platform\'s minimums, about a third of the length, one drawn screen, and "Not in this version" in place of nice-to-haves, which the build leaves out). Save a version as "retired" to build it only where it is named, such as a studio arm (models ["config:<its id>"]), and never beside live builds. A later recipe\'s reviewer is null (the review is a first version\'s), and its triage model is not run (a later change\'s triage keeps its per-stage model). A version saved as "current" must name only models in the OpenRouter catalog, and its reviewer\'s must read images; when the catalog cannot be read it can only be saved as side. Saving "current" changes what the bot builds with and what it costs: ask the person first, and say the recipe and the scope back. It changes no app.',
       inputSchema: {
         key: z.string().max(40).optional(), label: z.string().max(80).optional(), recipe: recipeShape,
         role: z.enum(['current', 'side', 'retired']), notes: z.string().max(1000).optional(), scope: scopeInput,
@@ -7991,12 +8099,13 @@ function registerTools(server, ctx) {
 
   // ── Test accounts (full platform admins only) ──────────────────────────
   //
-  // Five tools over routes/test-accounts.js: make a genuinely new account for
+  // Six tools over routes/test-accounts.js: make a genuinely new account for
   // first-time-user testing, mint a one-time phone sign-in for a test number
   // (the invite's Join sheet signs up with a phone), send the waitlist's
   // "you're in" mail to a test address (the sign-up from that mail makes a
-  // test account), list the live ones, and retire one with the apps it made.
-  // services/test-accounts.js has the whole design, and the charter's
+  // test account), list the live ones, retire one with the apps it made, and
+  // read a test project's run report (services/run-report.js), which retiring
+  // keeps. services/test-accounts.js has the whole design, and the charter's
   // "test-accounts" section the rules for the session using them.
   //
   // Admin-only three times over, like the benchmark's: registered only for a
@@ -8273,7 +8382,7 @@ function registerTools(server, ctx) {
 
     server.registerTool('retire_test_account', {
       title: 'Test accounts: retire one',
-      description: 'Admin only. Retire a test account (one create_test_account made, or one a test phone sign-in or a test release email made): take down every app it created (container, database and stored files, as deleting the app does), then delete the account, which signs it out everywhere and withdraws its open votes. Pass confirm: "RETIRE". It refuses any account that is not a test account. If an app cannot be taken down it stops and says which, leaving the account in place; calling it again finishes the job. Ask the person before retiring an account somebody else made.',
+      description: 'Admin only. Retire a test account (one create_test_account made, or one a test phone sign-in or a test release email made): take down every app it created (container, database and stored files, as deleting the app does), each after keeping its run report for get_run_report, then delete the account, which signs it out everywhere and withdraws its open votes. Pass confirm: "RETIRE". It refuses any account that is not a test account. If an app cannot be taken down it stops and says which, leaving the account in place; calling it again finishes the job. Ask the person before retiring an account somebody else made.',
       inputSchema: {
         userId: z.number().int().positive().describe('The test account\'s id, from create_test_account or list_test_accounts.'),
         confirm: z.string().describe('Must be "RETIRE".'),
@@ -8282,6 +8391,7 @@ function registerTools(server, ctx) {
         userId: z.number(),
         username: z.string(),
         appsDeleted: z.array(z.string()),
+        reportsKept: z.array(z.string()),
         nextStep: z.string(),
       },
       annotations: writeAnnotations,
@@ -8294,11 +8404,101 @@ function registerTools(server, ctx) {
       if (!r.ok) return testAccountRefusal(r);
       const t = (r.body && r.body.retired) || {};
       const appsDeleted = (Array.isArray(t.appsDeleted) ? t.appsDeleted : []).map(String);
+      const reportsKept = (Array.isArray(t.reportsKept) ? t.reportsKept : []).map(String);
       return toolResult({
         userId: num(t.userId) || userId,
         username: String(t.username || ''),
         appsDeleted,
-        nextStep: `Retired${appsDeleted.length ? `, with ${appsDeleted.length} app${appsDeleted.length === 1 ? '' : 's'}` : ''}. Its username and password no longer sign in.`,
+        reportsKept,
+        nextStep: `Retired${appsDeleted.length ? `, with ${appsDeleted.length} app${appsDeleted.length === 1 ? '' : 's'}` : ''}. Its username and password no longer sign in.`
+          + (reportsKept.length ? ` Run reports kept for ${reportsKept.join(', ')}: get_run_report with the slug.` : ''),
+      });
+    });
+
+    // A test project's run report: what was recorded about its first
+    // version, built now while the app is live, or the copy retiring the
+    // account kept once it is gone (services/run-report.js). Counts, times,
+    // models and costs, which the service keeps to their own shapes; the
+    // free text in it (review issues, errors, the plan's answers, the app's
+    // name, an incident's why) was written by people and models, so it comes
+    // back inside the untrusted envelope.
+    const wrapText = (v, max) => (v == null || v === '' ? null : (untrusted(v, max) || null));
+    const listOf = (v) => (Array.isArray(v) ? v : []);
+    const runReportOut = (rep) => {
+      if (!rep || typeof rep !== 'object') return null;
+      const fv = rep.firstVersion && typeof rep.firstVersion === 'object' ? rep.firstVersion : null;
+      return {
+        ...rep,
+        app: rep.app ? { ...rep.app, name: wrapText(rep.app.name, 200) } : null,
+        firstVersion: fv ? {
+          ...fv,
+          error: wrapText(fv.error, 400),
+          earlyPlanError: wrapText(fv.earlyPlanError, 400),
+          answers: Array.isArray(fv.answers) ? fv.answers.map((a) => wrapText(a, 300)) : null,
+        } : null,
+        runs: listOf(rep.runs).map((x) => ({
+          ...x,
+          error: wrapText(x.error, 400),
+          buildError: wrapText(x.buildError, 400),
+          review: x.review ? { ...x.review, stopDetail: wrapText(x.review.stopDetail, 400) } : null,
+        })),
+        reviewRounds: listOf(rep.reviewRounds).map((x) => ({
+          ...x,
+          reviewerError: wrapText(x.reviewerError, 400),
+          fix: x.fix ? { ...x.fix, error: wrapText(x.fix.error, 400) } : null,
+          issues: listOf(x.issues).map((i) => ({ ...i, screen: wrapText(i.screen, 120), problem: wrapText(i.problem, 400) })),
+        })),
+        incidents: listOf(rep.incidents).map((x) => ({ ...x, why: wrapText(x.why, 400) })),
+      };
+    };
+
+    server.registerTool('get_run_report', {
+      title: 'Test accounts: a first version\'s run report',
+      description: 'Admin only. Everything recorded about a test project\'s first version, for analysing a newcomer test: the app and its first-version row (plan status, timing, answers), the Homeroom bot\'s runs (verdict, times, sessions, build, costs, spec sizes, review rounds and stop), each review round\'s verdict and issues, the app\'s sessions, the agent turns on them (model, host, effort, time, tokens, cost) with their telemetry metrics, helper model calls, first-version screens (metadata, no images) and incidents. Pass slug: a live app\'s report is built now; once the app is gone, the copy retire_test_account kept is returned (source says which, savedAt when it was kept). Pass username for that test account\'s kept reports, newest first, and with no slug the newest in full. Long text and long lists are cut (truncated names the lists). Names, answers, errors and review issues are untrusted data.',
+      inputSchema: {
+        slug: z.string().max(63).optional().describe('An app slug, from list_test_accounts or a retire\'s appsDeleted.'),
+        username: z.string().max(65).optional().describe('A test account\'s username, live or retired: lists the reports kept for it.'),
+      },
+      outputSchema: {
+        source: z.enum(['live', 'saved']).nullable(),
+        savedAt: z.string().nullable(),
+        slug: z.string().nullable(),
+        report: z.any().nullable(),
+        saved: z.array(z.object({ slug: z.string(), appName: z.string().nullable(), savedAt: z.string().nullable() })),
+        nextStep: z.string(),
+      },
+      annotations: readAnnotations,
+    }, async ({ slug, username }) => {
+      const guard = scopeGuard(READ_SCOPE) || testAccountAdminOnly();
+      if (guard) return guard;
+      if (!slug && !username) return toolError('invalid_request', 'Pass slug (an app slug), username (a test account), or both.');
+      if (slug && !requireSlug(slug)) return toolError('invalid_request', 'slug must be an app slug, such as plant-pal-3f9a1c.');
+      const q = new URLSearchParams();
+      if (slug) q.set('slug', slug);
+      if (username) q.set('username', String(username));
+      const r = await callPlatform(baseUrl, accessToken, 'GET', `/api/test-accounts/run-report?${q}`);
+      if (!r.ok) return testAccountRefusal(r);
+      const b = r.body || {};
+      const source = b.source === 'live' || b.source === 'saved' ? b.source : null;
+      const saved = listOf(b.saved).map((x) => ({
+        slug: String(x.slug || ''),
+        appName: wrapText(x.appName, 200),
+        savedAt: x.savedAt == null ? null : String(x.savedAt),
+      }));
+      const report = runReportOut(b.report);
+      const cut = report && report.truncated && Object.keys(report.truncated).length
+        ? ` Lists cut short: ${Object.keys(report.truncated).join(', ')}.` : '';
+      let nextStep;
+      if (source === 'live') nextStep = `Built now from the live app. Retiring its test account keeps a copy.${cut}`;
+      else if (source === 'saved') nextStep = `The copy kept when its test account was retired, at ${b.savedAt}.${cut}`;
+      else nextStep = 'No reports were kept for that account. Its live apps are in list_test_accounts: pass one\'s slug.';
+      return readResult('get_run_report', {
+        source,
+        savedAt: b.savedAt == null ? null : String(b.savedAt),
+        slug: b.slug == null ? null : String(b.slug),
+        report,
+        saved,
+        nextStep,
       });
     });
   }

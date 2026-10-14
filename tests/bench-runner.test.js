@@ -201,7 +201,7 @@ test('a build trial: built without proposing, on its bench branch at the base, i
   }));
   assert.equal(out.status, 'ok');
   assert.equal(args.propose, false, 'never proposed');
-  assert.equal(args.onSpec, null, 'the spec is posted nowhere');
+  assert.equal(typeof args.onSpec, 'function', 'the spec is kept on the trial, for a restart to go on from, and posted nowhere');
   assert.equal(args.deps.votesRouter, undefined, 'no route to promote with');
   assert.equal(args.telemetry, 'homeroom_bench');
   assert.equal(out.build_branch, 'bench/r3-t44');
@@ -329,9 +329,10 @@ test('after a restart: only a trial\'s last turn is finished from its journal, r
   assert.equal(runner.resumableTurn('followup', build), true);
   assert.equal(runner.resumableTurn('checks_fix', build), true);
   assert.equal(runner.resumableTurn('build', build), true, 'the build turn is a build\'s last');
-  assert.equal(runner.resumableTurn('build', scout), false, 'its spec turn has the build still to run');
+  assert.equal(runner.resumableTurn('build', scout), true, 'its spec turn is followed and kept, for the build to go on from');
   assert.equal(runner.resumableTurn('dm', scout), false, 'a DM conversation is several turns');
-  assert.equal(runner.resumableTurn('spec', scout), false);
+  assert.equal(runner.resumableTurn('spec', scout), true, 'a spec task\'s one turn');
+  assert.equal(runner.resumableTurn('spec', build), false);
   assert.equal(runner.resumableTurn('triage', null), false);
 
   // A follow-up that revised: the same reader as the live stage, diffed from its recorded base.
@@ -357,5 +358,53 @@ test('after a restart: only a trial\'s last turn is finished from its journal, r
     stage: 'dm', snapshot: snapshot('triage'), task: { id: 1, stage: 'dm', reference: {} }, trial: TRIAL,
     session: { id: 7001 }, activeTurn: scout, repo: REPO, deps: h.deps, result: {},
   }), null);
+  // A spec task's turn, read as specStage reads draftSpec's answer.
+  const specOf = (over) => runner.recoverStage({
+    stage: 'spec', snapshot: snapshot('build'), task: { id: 1, stage: 'spec', reference: {} }, trial: TRIAL,
+    session: { id: 7001 }, activeTurn: scout, repo: REPO, deps: h.deps, baseSha: BASE, ...over,
+  });
+  const spec = await specOf({ result: { lastResultText: '# The spec\n\nPin them.', exitCode: 0 } });
+  assert.equal(spec.status, 'ok');
+  assert.equal(spec.parsed.spec, '# The spec\n\nPin them.');
+  assert.equal(spec.base_sha, BASE);
+  assert.equal((await specOf({ result: { lastResultText: 'BLOCKED: needs a camera' } })).parsed.blocked, 'needs a camera');
+  assert.equal((await specOf({ result: {}, timedOut: true })).status, 'timeout');
+  assert.equal((await specOf({ result: { lastResultText: '' } })).status, 'model_fail');
+  // A build's spec turn is kept, not finished here (lane.handBackTrial).
+  assert.equal(await runner.recoverStage({
+    stage: 'build', snapshot: snapshot('build'), task: { id: 1, stage: 'build', reference: {} }, trial: TRIAL,
+    session: { id: 7001 }, activeTurn: scout, repo: REPO, deps: h.deps, baseSha: BASE, result: { lastResultText: '# Spec' },
+  }), null);
+  assert.deepEqual(side, []);
+});
+
+test('a build trial a restart caught in its spec goes on from the spec it kept: built from it as it is, its branch cut again at the base', async (t) => {
+  const side = spySideEffects(t);
+  const realBuild = live.buildAndPropose;
+  let args = null;
+  live.buildAndPropose = async (a) => { args = a; return realBuild(a); };
+  t.after(() => { live.buildAndPropose = realBuild; });
+  const h = harness({ result: () => ({ pushOk: true, ahead: 2, sha: 'c'.repeat(40) }) });
+  const kept = [];
+  const out = await runner.runStage(ctx(h, 'build', {
+    checkpoint: { sessions: [6001], spec: { sessionId: 6001, specMd: '# Pin the markers\n\nKept.' }, handBacks: 1 },
+    onCheckpoint: async (part) => { kept.push(part); },
+  }));
+  assert.equal(out.status, 'ok', out.error);
+  assert.deepEqual(h.calls.modes, ['build'], 'no spec turn: the kept spec is built from');
+  assert.equal(args.presetSpec, '# Pin the markers\n\nKept.');
+  assert.deepEqual(h.gh.calls.deleted, ['bench/r3-t44'], 'the earlier claim\'s branch goes first');
+  assert.deepEqual(h.gh.calls.pinned, [{ branch: 'bench/r3-t44', sha: BASE }], 'then cut again at the base');
+  assert.deepEqual(out.session_ids, [6001, 7001], 'its spec\'s session and its build\'s, each charged');
+  assert.equal(out.parsed.resumedAfterRestart, 1);
+  assert.equal(kept.find((p) => p.build)?.build.sha, 'c'.repeat(40), 'its build kept the moment it pushed');
+
+  // A first claim keeps its spec as it is written, for a restart to go on from.
+  const fresh = harness({ result: (opts) => (opts.mode === 'scout' ? { lastResultText: '# Pin the markers\n\nDo it.' } : { pushOk: true, ahead: 2, sha: 'c'.repeat(40) }) });
+  const first = [];
+  const done = await runner.runStage(ctx(fresh, 'build', { onCheckpoint: async (part) => { first.push(part); } }));
+  assert.equal(done.status, 'ok', done.error);
+  assert.equal(first.find((p) => p.spec)?.spec.specMd, '# Pin the markers\n\nDo it.');
+  assert.deepEqual(fresh.gh.calls.deleted, [], 'a first claim has no branch to clear');
   assert.deepEqual(side, []);
 });

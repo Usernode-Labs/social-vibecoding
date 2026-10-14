@@ -329,16 +329,16 @@ test('actual shared component renders the entire card and escapes the issue titl
   // addresses, the Votes and Testing cards; the steps sheet (with the failing
   // check's reason behind its door) in Details. Its discussion is the
   // thread's own stream. The Build is a ⋯ row that LEAVES this page (#2605).
-  for (const label of ['Addresses', 'Waiting on you', 'Submitted for review', 'Expected app, received login', 'Checks']) assert.ok(html.includes(label), `${label} is on the page`);
+  for (const label of ['Built for', 'Waiting on you', 'Submitted for review', 'Expected app, received login', 'Checks']) assert.ok(html.includes(label), `${label} is on the page`);
   assert.ok(!html.includes('Where it stands'), 'a draft draws the same short steps as a proposal');
   assert.ok(html.includes('&lt;script&gt;issue&lt;/script&gt;'));
   assert.ok(!html.includes('<script>issue</script>'));
   assert.ok(av._cardMenuItems(v.card.rail.menuKey).some((a) => a.label === 'Edit requests'), 'the owner can manage associations after creation, from the ⋯');
-  // The issue is a chip on the "Addresses" line, in the Needs-you chip's
+  // The issue is a chip on the "Built for" line, in the Needs-you chip's
   // accent tint: the number bold, the title after it, the issue's own page
   // behind it.
   assert.match(html, /<a href="[^"]*\/dev\/issues\/1993" class="dev-ws-chip dev-ws-chip-info dev-topic-issue" data-issue-ref="1993"[^>]*><b>#1993<\/b><span>&lt;script&gt;issue&lt;\/script&gt;<\/span><\/a>/);
-  assert.match(html, /class="dev-change-chips-lead">Addresses</);
+  assert.match(html, /class="dev-change-chips-lead">Built for</);
   assert.doesNotMatch(html, /dev-issue-ref/, 'the event-box row is the ISSUE page\u2019s (AddressedBy), not the change page\u2019s');
   // #2193: a long title truncates instead of scrolling the page sideways.
   const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'css', 'app.css'), 'utf8');

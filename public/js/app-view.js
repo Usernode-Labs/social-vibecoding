@@ -8116,6 +8116,14 @@ const AppView = {
       const item = AppView._findTopicItem();
       const closed = item && ['active', 'paused'].includes(item.status) && !item.shared_at
         ? PlatformI18n.t('changes:page.thread.onlyYou') : null;
+      // #5007: a change built for a request points its thread at that
+      // request — its conversation lives there, before the change is shared
+      // and after. linked[0] is the same request the head's Built for row
+      // names first; the href is the same in-app one the head's chip opens.
+      const linked = AppView._sanitizeIssueNumbers(Array.isArray(item && item.linked_issues) ? item.linked_issues : []);
+      const issue = linked.length
+        ? { n: linked[0], href: `#app/${AppView.appData?.slug || App.currentApp}/dev/issues/${linked[0]}` }
+        : null;
       GroupChat.mountThread({
         type: 'session',
         ref: t.id,
@@ -8125,7 +8133,15 @@ const AppView = {
         language: 'change',
         placeholder: PlatformI18n.t('changes:page.thread.replyPlaceholder'),
         readOnly: AppView.readOnly || !!closed,
-        ...(closed ? { closed, notice: PlatformI18n.t('changes:page.thread.shareToDiscuss') } : {}),
+        ...(issue ? { issue } : {}),
+        ...(closed ? {
+          closed: issue
+            ? PlatformI18n.t('changes:page.thread.onlyYouLinked')
+            : PlatformI18n.t('changes:page.thread.onlyYou'),
+          notice: issue
+            ? PlatformI18n.t('changes:page.thread.shareToDiscussLinked')
+            : PlatformI18n.t('changes:page.thread.shareToDiscuss'),
+        } : {}),
         ...(AppView.readOnly && !closed
           ? { notice: PlatformI18n.t('changes:discussion.readOnlyNotice') }
           : {}),
@@ -28397,10 +28413,16 @@ const AppView = {
     const slug = AppView.appData?.slug;
     if (!slug) return;
 
-    const reply = (value, error) => {
+    // `code` is the server's structured error code (file_too_large,
+    // app_quota_exceeded, storage_unavailable, …: app-conventions.md), so
+    // the bridge can hand it to the app on the rejection (#5028).
+    const reply = (value, error, code) => {
       try {
         e.source.postMessage(
-          { __usernode_storage: 'response', id: data.id, value: value ?? null, error: error ?? null },
+          {
+            __usernode_storage: 'response', id: data.id, value: value ?? null, error: error ?? null,
+            code: typeof code === 'string' && code ? code : null,
+          },
           '*'
         );
       } catch {}
@@ -28427,7 +28449,7 @@ const AppView = {
         });
         const j = await r.json().catch(() => ({}));
         if (!r.ok) {
-          reply(null, j.error || PlatformI18n.t('changes:bridge.uploadFailed', { status: r.status }));
+          reply(null, j.error || PlatformI18n.t('changes:bridge.uploadFailed', { status: r.status }), j.code);
           return;
         }
         reply(j);
@@ -28446,7 +28468,7 @@ const AppView = {
         });
         const j = await r.json().catch(() => ({}));
         if (!r.ok) {
-          reply(null, j.error || PlatformI18n.t('changes:bridge.deleteFailed', { status: r.status }));
+          reply(null, j.error || PlatformI18n.t('changes:bridge.deleteFailed', { status: r.status }), j.code);
           return;
         }
         reply({ ok: true });
@@ -28459,7 +28481,7 @@ const AppView = {
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) {
-        reply(null, j.error || PlatformI18n.t('changes:bridge.usageFailed', { status: r.status }));
+        reply(null, j.error || PlatformI18n.t('changes:bridge.usageFailed', { status: r.status }), j.code);
         return;
       }
       reply(j);

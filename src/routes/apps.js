@@ -21,7 +21,7 @@ const places = require('../services/places');
 const staging = require('../services/staging');
 const { drainGuard } = require('../services/lifecycle');
 const deployFailure = require('../services/deploy-failure');
-const { appCreateLimiter, appAllowanceRequestLimiter, issueCreateLimiter, githubLookupLimiter, feedbackTitleLimiter } = require('../middleware/rate-limits');
+const { appCreateLimiter, appAllowanceRequestLimiter, issueCreateLimiter, githubLookupLimiter, feedbackTitleLimiter, firstSessionMomentLimiter } = require('../middleware/rate-limits');
 const { rateLimit } = require('express-rate-limit');
 const events = require('../services/events');
 const appOpenings = require('../services/app-openings');
@@ -328,6 +328,10 @@ function hubFirstVersion(state, viewerId, { member = false } = {}) {
     step: Number.isInteger(state.step) ? state.step : null,
     of: Number.isInteger(state.of) ? state.of : null,
     line: state.line || null,
+    // Run five: its stage while it is built, so the hub card names the same
+    // one the App tab and the Home tile do (homeroom-bot-progress.js
+    // firstVersionPhase).
+    phase: state.phase || null,
     ready,
     mine,
     creator: state.creator || null,
@@ -459,6 +463,7 @@ async function liveFirstVersion(pool, appId, viewerId) {
     step: null,
     of: null,
     line: 'live',
+    phase: null,
     ready: false,
     mine: viewerId != null && Number(row.user_id) === Number(viewerId),
     creator: row.username || null,
@@ -744,9 +749,11 @@ const { activitySeconds } = appActivity;
  * firstVersionState, the same answer GET /api/apps/:slug gives as
  * `first_version.line`): Map(appId -> line). The Home tile says it in place
  * of "Spinning up...". One query finds the few under way; best-effort, so a
- * read that fails leaves the tiles as they were.
+ * read that fails leaves the tiles as they were. `phases`, when given, is
+ * filled with each one's stage while it is built (`first_version.phase`),
+ * so the tile names the same stage the App tab does (run five, 13 Oct 2026).
  */
-async function firstVersionLinesFor(pool, apps, viewerId) {
+async function firstVersionLinesFor(pool, apps, viewerId, phases = null) {
   const lines = new Map();
   const ids = apps.map((a) => Number(a.id)).filter((id) => Number.isInteger(id) && id > 0);
   if (!ids.length) return lines;
@@ -761,6 +768,7 @@ async function firstVersionLinesFor(pool, apps, viewerId) {
       const state = await botDm.firstVersionState(pool, appId, { viewerId });
       const line = state && (state.line || (state.ready ? 'ready' : 'planning'));
       if (line) lines.set(Number(appId), line);
+      if (line && phases && state.phase) phases.set(Number(appId), state.phase);
     }));
   } catch (err) {
     log.warn('apps', 'Could not read the first versions for the list', { message: err.message });
@@ -802,6 +810,12 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       // and open issues. All DB-derived; no GitHub round trips.
       const userId = req.user?.id || null;
       const isAdmin = !!req.user?.isAdmin;
+      // ?scope=joined (#5023): only the communities this viewer is in. The
+      // Workshop and its community switcher list nothing else, and without
+      // it they were sent the whole catalog (and the per-app work below:
+      // secrets, contributors, domains, first versions, lineage) only to
+      // throw most of it away. Same rows, same fields, fewer of them.
+      const joinedOnly = req.query.scope === 'joined' && userId != null;
       // Visibility filter: admins see everything; everyone else sees
       // view-public apps plus apps they're a member of (the `me` join).
       // View-private apps are simply absent from the list for outsiders
@@ -911,8 +925,9 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         WHERE a.moderation_suspended_at IS NULL AND (NOT a.self_hosted OR $1::boolean)
           AND NOT EXISTS (SELECT 1 FROM user_app_blocks b WHERE b.user_id = $2 AND b.app_id = a.id)
           AND ($3::boolean OR a.view_visibility = 'public' OR me.user_id IS NOT NULL)
+          AND (NOT $4::boolean OR cm.user_id IS NOT NULL)
         ORDER BY (COALESCE(msg_counts.cnt, 0) + COALESCE(activity.total_seconds, 0)) DESC, a.created_at DESC
-      `, [showSelfHosted, userId, isAdmin]);
+      `, [showSelfHosted, userId, isAdmin, joinedOnly]);
 
       // #788: one query for every app this viewer is a per-app admin
       // of, so accessFlags below can resolve can_manage per row without
@@ -938,8 +953,9 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       const liveDomains = await liveDomainsFor(pool, rows.map((a) => a.id));
       // #4053: where each first version Homeroom bot is making stands, for
       // its Home tile, in the build line this viewer reads.
+      const firstVersionPhases = new Map();
       const firstVersionLines = await firstVersionLinesFor(
-        pool, rows.filter((a) => !a.self_hosted && !stagingApps.isSample(a)), req.user?.id ?? null
+        pool, rows.filter((a) => !a.self_hosted && !stagingApps.isSample(a)), req.user?.id ?? null, firstVersionPhases
       );
 
       let apps = await Promise.all(rows.map(async (a) => {
@@ -1044,6 +1060,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           manifest_snapshot: appAccess.summarizeManifestSnapshot(a.manifest_snapshot),
           contributor_count: contributorCount,
           first_version_line: firstVersionLines.get(Number(a.id)) || null,
+          first_version_phase: firstVersionPhases.get(Number(a.id)) || null,
           last_failure: undefined,
           last_failure_reason: lf ? (lf.reason || null) : null,
           last_failure_at: lf ? (lf.at || null) : null,
@@ -1997,6 +2014,29 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       return res.json({ ok: true, building: done.building, answers: done.answers });
     } catch (err) {
       log.error('apps', 'Failed to record a first version\'s answers', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Newcomer run five (13 Oct 2026): the made screen's moments, what it
+  // showed and what was tapped on it, as they happen
+  // (services/first-session-moments.js), for the run report. A member's
+  // own (404 for anyone else, as Live's are below: a 403 would offer them
+  // Join), rate-limited, and never waited on by the screen. 200 whether or
+  // not the account is one that is recorded.
+  router.post('/api/apps/:slug/first-version/moments', firstSessionMomentLimiter, sameOriginBrowserOnly, async (req, res) => {
+    try {
+      if (!req.user?.id) return res.status(401).json({ error: 'Sign in first' });
+      const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS);
+      if (!app || !(await communities.isMember(pool, app.id, req.user.id))) return res.status(404).json({ error: 'Not found' });
+      const moments = require('../services/first-session-moments');
+      const moment = moments.parseMoment(req.body);
+      if (!moment) return res.status(400).json({ error: 'A known kind and when it happened are required' });
+      const recorded = await moments.record(pool, { user: req.user, appId: app.id, moment });
+      res.set('Cache-Control', 'no-store');
+      return res.json({ ok: true, recorded });
+    } catch (err) {
+      log.error('apps', 'Failed to record a made screen moment', { message: err.message });
       return res.status(500).json({ error: 'Internal server error' });
     }
   });

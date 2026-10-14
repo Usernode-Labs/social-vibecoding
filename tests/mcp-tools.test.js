@@ -2804,7 +2804,7 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     'create_bench_context_pack', 'create_request',
     // Test accounts for first-run testing (create_test_account,
     // create_test_phone_sign_in, send_test_release_email, list_test_accounts,
-    // retire_test_account):
+    // retire_test_account, get_run_report):
     // registered only for a full platform admin, and every route behind them
     // refuses anybody else.
     'create_test_account', 'create_test_phone_sign_in',
@@ -2817,6 +2817,8 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     // #3654. One benchmark run's results, as aggregates only.
     'get_bench_run',
     'get_bench_studio', 'get_bench_studio_run', 'get_bench_suite', 'get_bench_trial',
+    // A benchmark trial's whole transcript, a page at a time (bench_trial_lines).
+    'get_bench_trial_transcript',
     // The Homeroom bot's first-version configurations (routes/bot-configs.js):
     // the next blind pair to pick. Full platform admins only, like the rest.
     'get_bot_config_pair',
@@ -2838,6 +2840,9 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     'get_message',
     'get_platform_build', 'get_platform_conventions', 'get_proposal',
     'get_recent_shots', 'get_request',
+    // A test project's run report (services/run-report.js), beside the
+    // test-account tools: full platform admins only, like them.
+    'get_run_report',
     // Specs on a request (services/request-specs.js): reading one, and the
     // platform's own format for writing one. post_spec, below, posts it.
     'get_spec', 'get_spec_format', 'keep_bench_trial',

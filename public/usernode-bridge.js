@@ -5993,8 +5993,14 @@
         delete _stPending[data.id];
         if (entry.ackTimer) clearTimeout(entry.ackTimer);
         if (entry.timer) clearTimeout(entry.timer);
-        if (data.error) entry.reject(new Error(data.error));
-        else entry.resolve(data.value);
+        if (data.error) {
+          // The platform's structured code rides along as err.code
+          // (file_too_large, app_quota_exceeded, storage_unavailable, …),
+          // so an app can tell a full quota from an outage (#5028).
+          var err = new Error(data.error);
+          if (typeof data.code === "string" && data.code) err.code = data.code;
+          entry.reject(err);
+        } else entry.resolve(data.value);
       }
     });
 

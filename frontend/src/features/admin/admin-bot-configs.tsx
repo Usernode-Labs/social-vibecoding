@@ -35,6 +35,8 @@ interface Recipe {
   models: { triage: string; spec: string; build: string };
   reviewer: { model: string; maxRounds: number; budgetMinutes: number } | null;
   pack: number | null;
+  // Build-speed tweaks (services/bot-configs.js TWEAKS); recipeLine names them.
+  tweaks?: string[];
 }
 
 interface VsCurrent {

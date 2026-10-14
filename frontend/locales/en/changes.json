@@ -8187,6 +8187,14 @@
     "text": "Share this change to start a discussion.",
     "description": "Notice in place of the message box at the bottom of a person's own change that is not shared with the project's members yet. \"Share\" is a verb; \"change\" is a noun."
   },
+  "page.thread.onlyYouLinked": {
+    "text": "Only you can see this change. Its conversation so far is on the request.",
+    "description": "Shown where the replies would be on a person's own change that they have not shared with the project's members yet, when the change was built for a request: the request's page is where its conversation is. \"Change\" is a noun; \"request\" is a filed issue."
+  },
+  "page.thread.shareToDiscussLinked": {
+    "text": "Share this change to discuss it here. Until then, reply on the request.",
+    "description": "Notice in place of the message box at the bottom of a person's own change that is not shared with the project's members yet, when the change was built for a request: sharing opens the discussion here; until then people reply on the request. \"Share\" is a verb; \"request\" is a filed issue."
+  },
   "page.thread.replyPlaceholder": {
     "text": "Reply…",
     "description": "Placeholder in the message box at the bottom of a change's page and of a request's page. A verb: write a reply."

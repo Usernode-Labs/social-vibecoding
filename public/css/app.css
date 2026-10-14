@@ -16672,6 +16672,18 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-change-shots-line { margin: 8px 0 0; display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--text-muted); }
 .dev-change-shots-tiles { margin-top: 8px; }
 .dev-change-closed-note { margin: 0; padding: 6px 16px 12px; font-size: 15px; color: var(--text-muted); }
+/* #5007: a change built for a request points its replies at the request
+   where its conversation lives. The `p` variant sits above the "N replies"
+   row; the `div` one replaces the "No replies yet" row and keeps that
+   row's hairline. Same spacing and type as the reply-count row. */
+p.dev-change-issue-pointer {
+  margin: 0;
+  padding: 2px 16px 4px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.dev-change-issue-link { color: var(--accent); font-weight: 600; text-decoration: none; }
+.dev-change-issue-link:hover { text-decoration: underline; }
 
 /* Shot details, in the Details sheet. */
 .dev-shot-details-claims { margin: 6px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
@@ -17470,33 +17482,47 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 }
 .dev-ws-item[data-ws-tint="a"] { background-image: linear-gradient(165deg, rgba(139, 92, 246, .16), rgba(20, 23, 31, 0) 55%, rgba(244, 114, 182, .10)); }
 .dev-ws-item[data-ws-tint="b"] { background-image: linear-gradient(165deg, rgba(59, 130, 246, .16), rgba(20, 23, 31, 0) 55%, rgba(251, 191, 36, .08)); }
-/* The progress line: one segment an item, lit up to the one in view. The
-   gaps are a mask, so the count is a number on the line (`--ws-n`) rather
-   than an element an item. */
-.dev-ws-item-progress {
-  position: absolute; left: 12px; right: 12px; top: 10px; height: 3px; z-index: 2;
-  border-radius: 3px; background: rgba(255, 255, 255, .25);
+/* #4754: THE STAGE. The strip and the scroller share one column, so the
+   strip is as wide as the card and sits over it, and neither scrolls. */
+.dev-ws-needs-stage {
+  flex: 1 1 auto; min-height: 0;
+  display: flex; flex-direction: column;
+}
+/* Where you are, on the page: one segment an item, lit up to the one in
+   view. The gaps are a mask, so the count is a number on the line
+   (`--ws-n`) rather than an element an item. The page's own colours: the
+   base is the sheet hairline and the lit part the ink that marks where you
+   are (--lit-ink), where the card drew the line white on the dark. */
+.dev-ws-needs-progress {
+  flex: 0 0 auto;
+  display: flex; align-items: center; gap: 12px;
+  height: 20px; margin: 0 6px 6px;
+}
+.dev-ws-needs-progress-line {
+  flex: 1 1 auto; height: 3px; border-radius: 3px;
+  background: var(--app-sheet-line);
   -webkit-mask-image: repeating-linear-gradient(90deg, #000 0 calc(100% / var(--ws-n, 1) - 4px), transparent calc(100% / var(--ws-n, 1) - 4px) calc(100% / var(--ws-n, 1)));
   mask-image: repeating-linear-gradient(90deg, #000 0 calc(100% / var(--ws-n, 1) - 4px), transparent calc(100% / var(--ws-n, 1) - 4px) calc(100% / var(--ws-n, 1)));
 }
-.dev-ws-item-progress > i { display: block; height: 100%; background: #fff; }
+.dev-ws-needs-progress-line > i { display: block; height: 100%; background: var(--lit-ink); }
+.dev-ws-needs-of {
+  flex: none;
+  font-size: 11px; font-weight: 700; letter-spacing: .06em; color: var(--text-muted);
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
 .dev-ws-item-top {
   position: relative; z-index: 2;
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
   min-height: 20px; margin: 22px 14px 0;
 }
 .dev-ws-item-top > .dev-ws-eyebrow { font-size: 10.5px; font-weight: 700; letter-spacing: .09em; color: rgba(255, 255, 255, .7); min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.dev-ws-item-of {
-  font-size: 11px; font-weight: 700; letter-spacing: .06em; color: rgba(255, 255, 255, .7);
-  font-variant-numeric: tabular-nums; white-space: nowrap;
-}
-/* #3517: the way back on a phone, beside the counter (workshop.tsx draws it
+/* #3517: the way back on a phone, at the right end of the card's top line,
+   where the counter sat before it moved to the strip (workshop.tsx draws it
    there only, from the second item on). A small round, the rail's own fill,
-   drawn at 26px but held to the row's 20px by negative margins, so the
-   counter under it sits where it does on the first card, which has none: a
-   swipe from one to the next must not nudge it. `margin-left: auto` takes
-   the row's free space, so it rides beside the counter rather than in the
-   middle of the row; the tap target is the 44px square around it. */
+   drawn at 26px but held to the row's 20px by negative margins.
+   `margin-left: auto` takes the row's free space, so it rides at the row's
+   right end rather than in the middle of it; the tap target is the 44px
+   square around it. */
 .dev-ws-item-prev {
   position: relative; flex: none;
   width: 26px; height: 26px; margin: -3px -4px -3px auto; padding: 0;
@@ -19814,10 +19840,14 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
        never lies across the card's caption or the arrows beside the rail. */
     padding-bottom: 34px;
   }
-  .dev-ws-needs-scroll { flex: 0 1 440px; max-width: 440px; border-radius: 22px; box-shadow: 0 16px 40px rgba(20, 23, 31, .25); }
+  /* The stage takes the card's width, so the strip above it is as wide as
+     the card and not as wide as the rail beside it. The scroller fills the
+     stage (its base rule is already `flex: 1 1 auto; min-height: 0`). */
+  .dev-ws-needs-stage { flex: 0 1 440px; max-width: 440px; }
+  .dev-ws-needs-scroll { border-radius: 22px; box-shadow: 0 16px 40px rgba(20, 23, 31, .25); }
+  .dev-ws-needs-progress { margin: 0 4px 8px; }
   /* The end card is the page's own, with its own hairline: no reel's shadow. */
-  .dev-ws-needs[data-ws-end] > .dev-ws-needs-scroll { box-shadow: none; }
-  .dev-ws-item-progress { left: 14px; right: 14px; top: 12px; }
+  .dev-ws-needs[data-ws-end] .dev-ws-needs-scroll { box-shadow: none; }
   .dev-ws-item-top { margin: 26px 16px 0; }
   .dev-ws-item-caption { left: 18px; right: 18px; bottom: 20px; gap: 8px; }
   .dev-ws-item-avatar { width: 32px; height: 32px; font-size: 13px; }
@@ -19841,7 +19871,7 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
   .dev-ws-needs:is([data-ws-sheet="comments"], [data-ws-sheet="ask"]) .dev-ws-item-caption > :not(.dev-ws-item-by) { display: none; }
   .dev-ws-needs:is([data-ws-sheet="comments"], [data-ws-sheet="ask"]) .dev-ws-item-scrim { height: 180px; }
   .dev-ws-needs:is([data-ws-sheet="comments"], [data-ws-sheet="ask"]) .dev-ws-item[data-ws-picture="none"] > .dev-ws-item-caption { top: auto; }
-  .dev-ws-needs:is([data-ws-sheet="comments"], [data-ws-sheet="ask"]) .dev-ws-needs-scroll { flex-basis: 400px; }
+  .dev-ws-needs:is([data-ws-sheet="comments"], [data-ws-sheet="ask"]) .dev-ws-needs-stage { flex-basis: 400px; }
   .dev-ws-rail {
     position: relative; right: auto; bottom: auto; z-index: auto;
     flex: 0 0 64px; justify-content: flex-end; padding-bottom: 20px; gap: 16px;
@@ -23441,10 +23471,10 @@ html.in-side-panel body {
   .dev-kanban-step-name, .dev-kanban-step-n { font-size: 14px; }
   .dev-kanban-step-arrow { display: none; }
   .dev-kanban-card { padding: 2px 12px 6px; }
-  /* The head: the way back and the name, then the search, the switch and
-     the filters a line each. */
+  /* The head: the way back and the name, then the search on its own line,
+     and the switch and the filters sharing the line under it (#5029). */
   .dev-ws-allbar #dev-kanban-search { flex-basis: 100%; max-width: none; min-width: 0; }
-  .dev-ws-allbar #dev-filter-chips { flex: 1 1 100%; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .dev-ws-allbar #dev-filter-chips { flex: 1 1 0; min-width: 0; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
   .dev-ws-allbar .dev-ws-pagehead-title { font-size: 20px; line-height: 26px; }
 }
 @media (max-width: 640px) {

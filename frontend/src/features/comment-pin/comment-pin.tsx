@@ -68,8 +68,8 @@ import {
 
 import { Button } from '@/components/ui/button';
 import {
-  ArrowsPointingOutIcon, ChatIcon, DescriptionIcon, DraftEditIcon, ArrowsMoveIcon, PaperclipIcon, PlusIcon,
-  SparklesIcon, XIcon,
+  ArrowsPointingInIcon, ArrowsPointingOutIcon, ArrowPathIcon, CheckIcon, ChatIcon, DescriptionIcon, DraftEditIcon,
+  ArrowsMoveIcon, PaperclipIcon, PlusIcon, SparklesIcon, XIcon,
 } from '@/components/ui/icons';
 
 import { useMessages } from '../../lib/i18n/react';
@@ -82,9 +82,10 @@ import { PLANE_FILL } from '@/components/ui/grouped-list';
 import { platformSlug } from '../messages/channel-hub';
 import {
   changesPicture, loadLibrary, outOfPicture, textsUnchanged,
-  closeUpView, coverCrop, describeElement, encodeUnder, inRect, insetFrame, overlaysGone, pictureScale, placeBeside,
+  closeUpView, coverCrop, cropCanvas, CROP_SHADE, describeElement, dragCrop, encodeUnder, FULL_CROP, inRect, insetFrame,
+  isFullCrop, overlaysGone, pictureScale, pinInCrop, placeBeside,
   takeBase, thumbnail, toPage, toScreen,
-  type Base, type ElementInfo, type Point, type Rect, type Size,
+  type Base, type CropHandle, type ElementInfo, type Point, type Rect, type Size,
 } from './picture';
 import { CloseUp } from './close-up';
 import {
@@ -317,6 +318,9 @@ interface Picture {
   url: string;
   /** Its size in its own pixels, once drawn. */
   size: Size | null;
+  /** The crop applied to it, when the person cropped it: the frame's rect as
+   *  fractions of the full picture, its own thumbnail and close-up, its size. */
+  cut: { rect: Rect; thumb: string; url: string; size: Size } | null;
   /** The view it shows: how many times the page had scrolled, and its route, when it was drawn. */
   view: number;
   screen: string;
@@ -428,12 +432,127 @@ function markIntroSeen(): void {
 
 const clamp01 = (n: number) => Math.max(0, Math.min(1, n));
 
+/**
+ * The crop over a picture: the picture full size in its frame, the frame's
+ * rect cut out of it (the rest dimmed), corner and edge handles that drag
+ * inward, and the request's pins on that picture — one outside the frame
+ * drawn faded, on its way out with the part cut away.
+ */
+function CropFrame({ pic, rect, onRect, frame, page, phone, draft, numbered }: {
+  pic: Picture;
+  rect: Rect;
+  onRect: (rect: Rect) => void;
+  frame: { x: number; y: number; scale: number };
+  page: Size;
+  phone: boolean;
+  draft: Draft;
+  numbered: boolean;
+}): ReactNode {
+  const rootRef = useRef<HTMLDivElement>(null);
+  const drag = useRef<{ handle: CropHandle; start: Point; from: Rect } | null>(null);
+  const W = page.width * frame.scale;
+  const H = page.height * frame.scale;
+  // Forty points of the picture, at least, on either axis.
+  const min = { width: 40 / Math.max(1, page.width), height: 40 / Math.max(1, page.height) };
+  const onDown = (handle: CropHandle) => (e: ReactPointerEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    drag.current = { handle, start: { x: e.clientX, y: e.clientY }, from: rect };
+    rootRef.current?.setPointerCapture?.(e.pointerId);
+  };
+  const onMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const d = drag.current;
+    if (!d) return;
+    onRect(dragCrop(d.from, d.handle,
+      { x: (e.clientX - d.start.x) / Math.max(1, W), y: (e.clientY - d.start.y) / Math.max(1, H) }, min));
+  };
+  const onUp = () => { drag.current = null; };
+  const cursorOf = (h: CropHandle) => (h === 'nw' || h === 'se'
+    ? 'cursor-nwse-resize'
+    : h === 'ne' || h === 'sw'
+      ? 'cursor-nesw-resize'
+      : h === 'n' || h === 's' ? 'cursor-ns-resize' : 'cursor-ew-resize');
+  const HIT = phone ? 44 : 24;
+  const CORNER = phone ? 18 : 14;
+  const EDGE = { w: 40, h: phone ? 10 : 8 };
+  const handles: CropHandle[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
+  // A handle's anchor, in screen pixels: its two named sides, or the middle of its one.
+  const anchor = (h: CropHandle): Point => ({
+    x: rect.x * W + (h.includes('e') ? rect.width * W : h.includes('w') ? 0 : (rect.width * W) / 2),
+    y: rect.y * H + (h.includes('s') ? rect.height * H : h.includes('n') ? 0 : (rect.height * H) / 2),
+  });
+  return (
+    <div ref={rootRef} className="fixed inset-0" style={{ touchAction: 'none' }} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp}>
+      <div aria-hidden="true" className="absolute inset-0 bg-zinc-300 dark:bg-zinc-800" />
+      <div
+        className="absolute overflow-hidden rounded-2xl bg-white ring-1 ring-black/10 dark:bg-zinc-900 dark:ring-white/10"
+        style={{ left: frame.x, top: frame.y, width: W, height: H }}
+      >
+        <img
+          src={pic.url || pic.thumb}
+          alt=""
+          draggable={false}
+          className="pointer-events-none absolute left-0 top-0 max-w-none select-none"
+          style={{ width: W, height: H }}
+        />
+        {/* The part kept; what is outside it goes dark. */}
+        <div
+          aria-hidden="true"
+          className="absolute border-2 border-white"
+          style={{ left: rect.x * W, top: rect.y * H, width: rect.width * W, height: rect.height * H, boxShadow: CROP_SHADE }}
+        />
+        {/* Handles: a visible grip inside a bigger transparent hit box. */}
+        {handles.map((h) => {
+          const at = anchor(h);
+          const corner = h.length === 2;
+          return (
+            <div
+              key={h}
+              onPointerDown={onDown(h)}
+              className={`absolute grid place-items-center ${cursorOf(h)}`}
+              style={{ left: at.x - HIT / 2, top: at.y - HIT / 2, width: HIT, height: HIT, touchAction: 'none' }}
+            >
+              {corner ? (
+                <span aria-hidden="true" className="rounded-[3px] bg-white shadow-[0_1px_4px_rgba(0,0,0,0.35)]" style={{ width: CORNER, height: CORNER }} />
+              ) : (
+                <span
+                  aria-hidden="true"
+                  className="rounded-full bg-white shadow-[0_1px_4px_rgba(0,0,0,0.35)]"
+                  style={h === 'n' || h === 's' ? { width: EDGE.w, height: EDGE.h } : { width: EDGE.h, height: EDGE.w }}
+                />
+              )}
+            </div>
+          );
+        })}
+        {/* The request's pins on this picture, numbered as the draft numbers them. */}
+        {draft.comments.map((c, i) => {
+          if (c.picture !== pic.key) return null;
+          const inside = pinInCrop(c.pin, rect) !== null;
+          const s = toScreen({ x: c.pin.x * page.width, y: c.pin.y * page.height }, frame);
+          return (
+            <span
+              key={c.key}
+              aria-hidden="true"
+              className={`absolute grid h-[30px] w-[30px] place-items-center ${PIN_SHAPE} bg-white text-[13px] font-extrabold text-violet-600 shadow-[0_0_0_2.5px_#0a6ee0,0_3px_10px_rgba(0,0,0,0.2)] dark:bg-zinc-900${inside ? '' : ' opacity-40'}`}
+              style={{ left: s.x, top: s.y - 30 }}
+            >
+              {numbered ? i + 1 : ''}
+            </span>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function CommentMode({ session, onClose }: { session: Session; onClose: () => void }): ReactNode {
   const t = useMessages('devchat');
   const { host, app } = session;
   const [draft, setDraft] = useState<Draft | null>(null);
   const [posted, setPosted] = useState<Posted[]>([]);
   const [postedPins, setPostedPins] = useState<PostedPin[]>([]);
+  // The last posted request, for the sent card on the screen: the toast is
+  // gone in a moment and the bar's chip never shows on a phone.
+  const [sent, setSent] = useState<number | null>(null);
   const [open, setOpen] = useState<number | null>(null);
   const [confirm, setConfirm] = useState<'exit' | 'discard' | null>(null);
   const [carry, setCarry] = useState<CommentCarry | null>(session.carry);
@@ -448,6 +567,8 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
   const [cardAt, setCardAt] = useState<Point>({ x: -9999, y: -9999 });
   const [barAt, setBarAt] = useState<Point | null>(null);
   const [barSize, setBarSize] = useState({ width: 0, height: 0 });
+  /** Cropping in progress: which picture, and the frame's rect as fractions of it. */
+  const [cropping, setCropping] = useState<{ picture: number; rect: Rect } | null>(null);
   const boxRef = useRef<HTMLDivElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
   const barRef = useRef<HTMLDivElement>(null);
@@ -486,6 +607,19 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
   const update = useCallback((key: number, patch: Partial<Draft> | ((d: Draft) => Partial<Draft>)) => {
     setDraft((d) => (d && d.key === key ? { ...d, ...(typeof patch === 'function' ? patch(d) : patch) } : d));
   }, []);
+
+  // Cropping ends with its picture: if the picture goes while the frame is
+  // up (the screenshots removed, the draft discarded), the mode goes back
+  // to the page.
+  useEffect(() => {
+    if (cropping && (!draft || !draft.pictures.some((pic) => pic.key === cropping.picture))) setCropping(null);
+  }, [draft, cropping]);
+  // The sent card stands down once the next comment has words. Clearing
+  // here, not only in the render, means deleting the words afterwards does
+  // not bring it back.
+  useEffect(() => {
+    if (hasWords(draft)) setSent(null);
+  }, [draft]);
 
   // The bar has the keyboard from the start, so Esc and C reach the shell
   // even when the app's frame had it.
@@ -645,6 +779,13 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
   // above it whenever the picture is on show: in the bar, never over the
   // picture, where it covered the page's own header (#4774).
   const shotLabel = !!inset && !shotIntro;
+  // While cropping, the frame the crop happens over: the picture's own inset
+  // frame when there is one, else the frame the picture would sit in — a
+  // failed view keeps the mode over the live page, and the crop still works
+  // on the picture it took.
+  const cropFrame = cropping
+    ? (inset ?? insetFrame(size, phone ? INSET_MARGIN_PHONE : INSET_MARGIN, band))
+    : null;
 
   // ── Leaving ─────────────────────────────────────────────────────────
   //
@@ -699,7 +840,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
         land({ url });
       }, 'image/png');
     }, () => land({ base: null, thumb: '' }));
-    return { key, base: undefined, promise, thumb: '', url: '', size: null, view: view.current, screen: routeOf(), askedFor };
+    return { key, base: undefined, promise, thumb: '', url: '', size: null, cut: null, view: view.current, screen: routeOf(), askedFor };
   }, [host]);
 
   /**
@@ -708,14 +849,19 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
    * room for it beside the others and the person's own images.
    */
   const pictureFor = useCallback((d: Draft, p: Point, commentKey: number): { pictures: Picture[]; picture: number | null } => {
-    const same = d.pictures.find((pic) => pic.view === view.current && pic.screen === routeOf() && pic.base !== null);
+    // A cropped picture takes the pin only when the pin's spot survived the
+    // crop: otherwise a new picture of the same view is drawn, while there
+    // is room for one.
+    const pin = { x: p.x / Math.max(1, size.width), y: p.y / Math.max(1, size.height) };
+    const same = d.pictures.find((pic) => pic.view === view.current && pic.screen === routeOf()
+      && pic.base !== null && (!pic.cut || pinInCrop(pin, pic.cut.rect) !== null));
     if (same) return { pictures: d.pictures, picture: same.key };
     const others = d.comments.filter((c) => c.key !== commentKey);
     const inUse = d.pictures.filter((pic) => others.some((c) => c.picture === pic.key)).length;
     if (inUse + d.images.length >= MAX_PICTURES) return { pictures: d.pictures, picture: null };
     const pic = drawPicture(d.key, p, commentKey);
     return { pictures: [...d.pictures, pic], picture: pic.key };
-  }, [drawPicture]);
+  }, [drawPicture, size]);
 
   /**
    * A press on the page: the open comment's pin moved there, the request's
@@ -902,11 +1048,16 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
     if (d.keepShot) {
       for (const pic of d.pictures) {
         const base = bases.get(pic.key);
-        const pins = live.map((c, i) => ({ c, i })).filter(({ c }) => c.picture === pic.key)
-          .map(({ c, i }) => ({ x: c.pin.x, y: c.pin.y, n: many ? i + 1 : null, note: c.text.trim() }));
+        // A cropped picture posts cropped: the frame is cut off the full
+        // canvas, and each pin maps into the crop's own fractions — one
+        // outside the crop has gone with the part cut away.
+        const pins = live.map((c, i) => ({ c, i, at: pinInCrop(c.pin, pic.cut?.rect ?? null) }))
+          .filter(({ c, at }) => c.picture === pic.key && at)
+          .map(({ c, i, at }) => ({ x: at!.x, y: at!.y, n: many ? i + 1 : null, note: c.text.trim() }));
         if (!base || !pins.length) continue;
+        const canvas = pic.cut ? cropCanvas(base.canvas, pic.cut.rect) : base.canvas;
         try {
-          const blob = await encodeUnder(base.canvas);
+          const blob = await encodeUnder(canvas);
           if (blob) shots.push({ blob, pins });
         } catch { /* that picture stays behind; the words go */ }
       }
@@ -949,6 +1100,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
         kudos: !!outcome.bounty?.placed,
       }]);
       setPostedPins((list) => [...list, ...live.map((c, i) => ({ key: c.key, request: d.key, n: many ? i + 1 : null, anchor: c.anchor }))]);
+      setSent(d.key);
       setDraft(null);
       barRef.current?.focus({ preventScroll: true });
       // Whole sentences, one after another: where it went, then what came
@@ -1038,13 +1190,61 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
     });
   }, [draft]);
 
+  /**
+   * Apply the crop: the comments whose pin fell outside the frame go, the
+   * picture carries its crop, and the frame closes. Reset (back to the full
+   * picture) takes the crop off again, but comments already dropped by an
+   * earlier apply do not come back.
+   */
+  const applyCrop = useCallback(() => {
+    const d = draft;
+    const crop = cropping;
+    if (!d || !crop || d.sending) return;
+    const pic = d.pictures.find((p) => p.key === crop.picture);
+    if (!pic || !pic.base) return;
+    const onPic = d.comments.filter((c) => c.picture === pic.key);
+    const dropped = onPic.filter((c) => pinInCrop(c.pin, crop.rect) === null);
+    // Every pin on this picture would go: the Apply button is disabled
+    // already, and this keeps a stale frame from cutting the last one.
+    if (onPic.length && dropped.length === onPic.length) return;
+    const droppedKeys = new Set(dropped.map((c) => c.key));
+    const comments = d.comments.filter((c) => !droppedKeys.has(c.key));
+    const active = droppedKeys.has(d.active ?? -1) || d.active == null
+      ? (comments.length ? comments[comments.length - 1].key : null)
+      : d.active;
+    if (pic.cut) { URL.revokeObjectURL(pic.cut.url); urls.current.delete(pic.cut.url); }
+    if (isFullCrop(crop.rect)) {
+      const pictures = prune(d.pictures.map((p) => (p.key === pic.key ? { ...p, cut: null } : p)), comments);
+      setDraft({ ...d, comments, pictures, active });
+    } else {
+      const canvas = cropCanvas(pic.base.canvas, crop.rect);
+      let thumb = '';
+      try { thumb = thumbnail(canvas, 160); } catch { /* no preview, still cropped */ }
+      const cut: NonNullable<Picture['cut']> = { rect: crop.rect, thumb, url: '', size: { width: canvas.width, height: canvas.height } };
+      const pictures = prune(d.pictures.map((p) => (p.key === pic.key ? { ...p, cut } : p)), comments);
+      setDraft({ ...d, comments, pictures, active });
+      canvas.toBlob((blob) => {
+        if (!blob) return;
+        const url = URL.createObjectURL(blob);
+        urls.current.add(url);
+        setDraft((next) => (next
+          ? { ...next, pictures: next.pictures.map((p) => (p.cut && p.cut.rect === crop.rect && !p.cut.url ? { ...p, cut: { ...p.cut, url } } : p)) }
+          : next));
+      }, 'image/png');
+    }
+    setCropping(null);
+    if (dropped.length) toast(t('devchat:commentPin.crop.removed', { count: dropped.length }));
+    requestAnimationFrame(() => { textRef.current?.focus({ preventScroll: true }); });
+  }, [draft, cropping, t]);
+
   const escape = useCallback(() => {
+    if (cropping) { setCropping(null); return; }
     if (open != null) { setOpen(null); return; }
     if (confirm) { setConfirm(null); return; }
     if (draft && draft.active == null && draft.comments.length) { openComment(draft.comments[draft.comments.length - 1].key); return; }
     if (draft) { if (!draft.sending) requestDiscard(); return; }
     leave();
-  }, [open, confirm, draft, openComment, requestDiscard, leave]);
+  }, [cropping, open, confirm, draft, openComment, requestDiscard, leave]);
 
   useEffect(() => {
     const onKey = (e: globalThis.KeyboardEvent) => {
@@ -1117,6 +1317,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
   const boxPoint = boxPointPage ? (inset ? toScreen(boxPointPage, inset) : boxPointPage) : null;
   const openPin = open != null ? postedPins.find((p) => p.key === open) || null : null;
   const openRequest = openPin ? posted.find((r) => r.key === openPin.request) || null : null;
+  const sentRequest = sent != null ? posted.find((r) => r.key === sent) || null : null;
   const openPointPage = openPin ? anchorPoint(openPin.anchor, size) : null;
   const openPoint = openPointPage ? (inset ? toScreen(openPointPage, inset) : openPointPage) : null;
   // The close-up at the top of the phone's sheet: the area around the open
@@ -1264,6 +1465,18 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
   const imageName = (img: Image) => img.name
     || (img.n != null ? t('devchat:commentPin.image.numbered', { number: img.n }) : t('devchat:commentPin.image.pasted'));
   const quietTool = 'inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 text-[13px] font-semibold text-zinc-600 ring-1 ring-inset ring-zinc-300 hover:bg-zinc-100 hover:text-zinc-900 disabled:opacity-40 dark:text-zinc-300 dark:ring-zinc-600 dark:hover:bg-zinc-800 dark:hover:text-white';
+  // What the crop in progress would do to the picture it is on: the picture
+  // itself, how many of its comments would go with the part cut away, and
+  // whether that would be all of them.
+  const cropView = cropping && draft ? (() => {
+    const pic = draft.pictures.find((p) => p.key === cropping.picture) ?? null;
+    const onPic = pic ? draft.comments.filter((c) => c.picture === pic.key) : [];
+    const dropped = onPic.filter((c) => pinInCrop(c.pin, cropping.rect) === null);
+    return { pic, dropped: dropped.length, keepOne: onPic.length > 0 && dropped.length === onPic.length };
+  })() : null;
+  // While cropping the bar rides the frame the crop happens over, the way
+  // it rides the picture's inset frame otherwise.
+  const barFrame = inset || cropFrame;
   // The wait-for-the-next-pin row, as the box shows it and, on a phone, as
   // the whole collapsed sheet while the wait is on.
   const nextPinRow = draft && draft.active == null ? (
@@ -1430,6 +1643,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
                 <CloseUp
                   view={closeUpSrc}
                   pin={boxComment?.pin ?? { x: 0.5, y: 0.5 }}
+                  crop={activePicture?.cut?.rect ?? null}
                 />
               ) : null}
               <div className="flex min-h-[30px] items-center gap-1.5">
@@ -1588,11 +1802,20 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
               // a phone's tall picture in this wide box shows a third of its
               // height at most, and a pin placed as a fraction of the box
               // landed on another part of the page.
-              const pins = draft.comments.filter((c) => c.picture === pic.key);
+              // A cropped picture is drawn whole, the part kept framed and
+              // the rest dimmed (#5020): the pins are fractions of the full
+              // picture and stay put on it — one the crop cut away is already
+              // gone from the request, so it is not drawn.
+              const shown = pic.size || size;
+              const pins = draft.comments
+                .filter((c) => c.picture === pic.key && (!pic.cut || pinInCrop(c.pin, pic.cut.rect) !== null))
+                .map((c) => ({ c, at: c.pin }));
               const focus = pins.length
-                ? { x: pins.reduce((n, c) => n + c.pin.x, 0) / pins.length, y: pins.reduce((n, c) => n + c.pin.y, 0) / pins.length }
-                : { x: 0.5, y: 0 };
-              const crop = coverCrop({ width: 64, height: 42 }, pic.size || size, focus);
+                ? { x: pins.reduce((n, x) => n + x.at.x, 0) / pins.length, y: pins.reduce((n, x) => n + x.at.y, 0) / pins.length }
+                : pic.cut
+                  ? { x: pic.cut.rect.x + pic.cut.rect.width / 2, y: pic.cut.rect.y + pic.cut.rect.height / 2 }
+                  : { x: 0.5, y: 0 };
+              const crop = coverCrop({ width: 64, height: 42 }, shown, focus);
               return (
               <span key={pic.key} className="relative block h-[42px] w-[64px] shrink-0">
                 {pic.thumb ? (
@@ -1603,30 +1826,57 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
                       className="relative block max-w-none"
                       style={{ left: crop.x, top: crop.y, width: crop.width, height: crop.height }}
                     />
+                    {pic.cut ? (
+                      /* What was cropped away stays in sight, dimmed, the
+                         kept part framed in white. */
+                      <span
+                        aria-hidden="true"
+                        className="absolute border border-white"
+                        style={{
+                          left: crop.x + pic.cut.rect.x * crop.width,
+                          top: crop.y + pic.cut.rect.y * crop.height,
+                          width: pic.cut.rect.width * crop.width,
+                          height: pic.cut.rect.height * crop.height,
+                          boxShadow: CROP_SHADE,
+                        }}
+                      />
+                    ) : null}
                   </span>
                 ) : (
                   <span className="block h-[42px] w-[64px] animate-pulse rounded-lg bg-zinc-100 motion-reduce:animate-none dark:bg-zinc-800" />
                 )}
                 {/* The pins over the preview: data beside the picture, as they are posted. */}
-                {pins.map((c) => (
+                {pins.map(({ c, at }) => (
                   <span
                     key={c.key}
                     aria-hidden="true"
                     className={`absolute h-[10px] w-[10px] -translate-y-full ${PIN_SHAPE} bg-violet-600 shadow-[0_0_0_1.5px_#fff]`}
-                    style={{ left: crop.x + c.pin.x * crop.width, top: crop.y + c.pin.y * crop.height }}
+                    style={{ left: crop.x + at.x * crop.width, top: crop.y + at.y * crop.height }}
                   />
                 ))}
                 {pic.base ? (
-                  <button
-                    type="button"
-                    aria-label={t('devchat:commentPin.shot.removeLabel')}
-                    title={t('devchat:commentPin.shot.remove')}
-                    disabled={draft.sending}
-                    onClick={() => update(draft.key, { keepShot: false })}
-                    className="absolute -right-2 -top-2 grid h-5 w-5 place-items-center rounded-full bg-zinc-900 text-white ring-2 ring-white dark:bg-zinc-100 dark:text-zinc-900 dark:ring-zinc-900"
-                  >
-                    <XIcon className="h-3 w-3" />
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      aria-label={t('devchat:commentPin.shot.removeLabel')}
+                      title={t('devchat:commentPin.shot.remove')}
+                      disabled={draft.sending}
+                      onClick={() => update(draft.key, { keepShot: false })}
+                      className="absolute -right-2 -top-2 grid h-5 w-5 place-items-center rounded-full bg-zinc-900 text-white ring-2 ring-white dark:bg-zinc-100 dark:text-zinc-900 dark:ring-zinc-900"
+                    >
+                      <XIcon className="h-3 w-3" />
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={t('devchat:commentPin.shot.cropLabel')}
+                      title={t('devchat:commentPin.shot.crop')}
+                      disabled={draft.sending}
+                      onClick={() => setCropping({ picture: pic.key, rect: pic.cut?.rect ?? FULL_CROP })}
+                      className="absolute -bottom-2 -right-2 grid h-5 w-5 place-items-center rounded-full bg-zinc-900 text-white ring-2 ring-white dark:bg-zinc-100 dark:text-zinc-900 dark:ring-zinc-900"
+                    >
+                      <ArrowsPointingInIcon className="h-3 w-3" />
+                    </button>
+                  </>
                 ) : null}
               </span>
               );
@@ -1820,6 +2070,62 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
         </div>
       ) : null}
 
+      {/* The sent card (#5008): where the comment just went, where the bar's
+          own chip never shows (a phone) and the toast has gone in a moment.
+          Dressed like the posted marker's card. It stands down when the next
+          comment has words, when it is closed, or when another is posted. */}
+      {sentRequest && !shotIntro && !cropping && !hasWords(draft) ? (
+        <div
+          role="status"
+          aria-live="polite"
+          aria-label={t('devchat:commentPin.sent.label')}
+          data-comment-pin-sent=""
+          className="absolute left-1/2 flex w-[340px] max-w-[calc(100vw-24px)] -translate-x-1/2 flex-col gap-1.5 rounded-2xl bg-white p-3 shadow-[0_8px_30px_rgba(0,0,0,0.18)] ring-1 ring-black/10 dark:bg-zinc-900 dark:ring-white/10"
+          style={inset ? { top: band + 8 } : { bottom: 'calc(76px + var(--platform-safe-bottom, 0px))' }}
+        >
+          <div className="flex items-center gap-2">
+            <span className={`grid h-[22px] w-[22px] shrink-0 place-items-center ${PIN_SHAPE} bg-violet-600 text-white`} aria-hidden="true"><CheckIcon className="h-3.5 w-3.5" /></span>
+            <span className="min-w-0 flex-1 truncate text-[15px] font-[650] text-zinc-900 dark:text-white">{placeOf(sentRequest)}</span>
+            <button
+              type="button"
+              aria-label={t('core:common.close')}
+              onClick={() => setSent(null)}
+              className="grid h-7 w-7 shrink-0 place-items-center rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-800"
+            >
+              <XIcon className="h-3.5 w-3.5" />
+            </button>
+          </div>
+          {sentRequest.title ? <p className="text-[13px] text-zinc-600 dark:text-zinc-300">{sentRequest.title}</p> : null}
+          <div className="mt-1 flex items-center gap-2 border-t border-black/5 pt-2 text-xs text-zinc-500 dark:border-white/10 dark:text-zinc-400">
+            <span className="min-w-0 flex-1 truncate">{t('devchat:commentPin.hint.another')}</span>
+            {sentRequest.href ? (
+              <a
+                href={sentRequest.href}
+                onClick={() => onClose()}
+                className="shrink-0 rounded-full bg-violet-600 px-3 py-1.5 text-[13px] font-semibold text-white hover:bg-violet-500"
+              >
+                {t('devchat:commentPin.card.open')}
+              </a>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      {/* Cropping a picture: the frame over it, while the box, the pins and
+          the cards stand down. The bar above it becomes the crop's. */}
+      {cropping && draft && cropView?.pic && cropFrame ? (
+        <CropFrame
+          pic={cropView.pic}
+          rect={cropping.rect}
+          onRect={(r) => setCropping((c) => (c ? { ...c, rect: r } : c))}
+          frame={cropFrame}
+          page={size}
+          phone={phone}
+          draft={draft}
+          numbered={numbered}
+        />
+      ) : null}
+
       {/* Over the picture the bar is the view's header: same width as the
           picture, in the band above it, nothing floating over the page and
           no handle to drag it by. Over the live page it is the floating bar
@@ -1831,23 +2137,25 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
         aria-label={t('devchat:commentPin.bar.label')}
         className={[
           'absolute flex max-w-[calc(100vw-24px)] items-center gap-2 whitespace-nowrap rounded-full bg-white py-1.5 pl-1.5 pr-1.5 outline-none ring-1 ring-black/10 dark:bg-zinc-900 dark:ring-white/10 sm:gap-2.5',
-          inset
+          barFrame
             ? 'rounded-2xl shadow-[0_8px_30px_rgba(0,0,0,0.18)]'
             : 'shadow-[0_8px_30px_rgba(0,0,0,0.22)]',
-          !inset && !barPlace ? 'left-1/2 -translate-x-1/2' : '',
+          !barFrame && !barPlace ? 'left-1/2 -translate-x-1/2' : '',
           // Not over the live page while the first picture draws: drawn there
           // it covered the page's own header for a few frames, then the
           // picture shrank in under it. It fades in with the picture.
           shotIntro ? 'pointer-events-none opacity-0' : 'comment-bar-in',
         ].filter(Boolean).join(' ')}
-        style={inset
+        style={barFrame
           ? {
-            left: inset.x,
+            left: barFrame.x,
             top: safeTop + Math.max(6, Math.round((HEADER_BAND - barSize.height) / 2)),
-            width: size.width * inset.scale,
+            width: size.width * barFrame.scale,
           }
           : barPlace ? { left: barPlace.left, top: barPlace.top } : { bottom: 'calc(1rem + var(--platform-safe-bottom, 0px))' }}
       >
+        {/* The live-page fallback's handle: the crop bar has none, so the
+            grip stands down while the person crops. */}
         {!inset ? (
           <button
             type="button"
@@ -1858,7 +2166,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
             onPointerUp={onGripUp}
             onPointerCancel={onGripUp}
             onDoubleClick={() => { setBarAt(null); }}
-            className="grid h-8 w-6 shrink-0 cursor-move touch-none place-items-center rounded-lg text-zinc-500 hover:bg-zinc-100 hover:text-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-300"
+            className={`grid h-8 w-6 shrink-0 cursor-move touch-none place-items-center rounded-lg text-zinc-500 hover:bg-zinc-100 hover:text-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-300${cropping ? ' hidden' : ''}`}
           >
             <ArrowsMoveIcon className="h-4 w-4" />
           </button>
@@ -1880,7 +2188,47 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
             <span aria-hidden="true" className="comment-shot-label-in hidden h-4 w-px shrink-0 bg-zinc-200 dark:bg-zinc-700 sm:block" />
           </>
         ) : null}
-        {confirm ? (
+        {cropping && cropView ? (
+          <>
+            <span className="hidden min-w-0 truncate text-[13px] font-semibold text-zinc-900 sm:inline dark:text-white">
+              {t('devchat:commentPin.crop.title')}
+            </span>
+            {cropView.keepOne ? (
+              <span className="shrink-0 whitespace-nowrap text-xs font-semibold text-violet-700 dark:text-violet-300">
+                {t('devchat:commentPin.crop.keepOne')}
+              </span>
+            ) : cropView.dropped ? (
+              <span className="shrink-0 whitespace-nowrap text-xs tabular-nums text-zinc-500 dark:text-zinc-400">
+                {t('devchat:commentPin.crop.dropping', { count: cropView.dropped })}
+              </span>
+            ) : null}
+            {barFrame ? <span className="min-w-0 flex-1" /> : null}
+            <button
+              type="button"
+              onClick={() => setCropping(null)}
+              className="h-[34px] shrink-0 rounded-full px-3 text-sm font-semibold text-zinc-900 hover:bg-zinc-100 dark:text-white dark:hover:bg-zinc-800"
+            >
+              {t('core:common.cancel')}
+            </button>
+            <button
+              type="button"
+              disabled={isFullCrop(cropping.rect)}
+              onClick={() => setCropping((c) => (c ? { ...c, rect: FULL_CROP } : c))}
+              className={quietTool}
+            >
+              <ArrowPathIcon className="h-4 w-4" />
+              {t('devchat:commentPin.crop.reset')}
+            </button>
+            <button
+              type="button"
+              disabled={cropView.keepOne}
+              onClick={applyCrop}
+              className="inline-flex h-[34px] shrink-0 items-center rounded-full bg-zinc-900 px-4 text-sm font-semibold text-white disabled:opacity-40 dark:bg-white dark:text-zinc-900"
+            >
+              {t('devchat:commentPin.crop.apply')}
+            </button>
+          </>
+        ) : confirm ? (
           <>
             <span className="min-w-0 truncate text-[13px] font-semibold text-zinc-900 dark:text-white">
               {confirm === 'discard' ? t('devchat:commentPin.bar.confirmDiscard') : t('devchat:commentPin.bar.confirmExit')}

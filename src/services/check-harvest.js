@@ -120,19 +120,24 @@ function joinCaptures(results) {
 }
 
 // A run's unit-suite shards, collected, read as one Job: the outputs joined
-// as the live run joins them (unit-suite.joinUnitShardOutputs). Null, a
-// suite that contributes no row, when a shard is missing: part of a suite
-// is not the suite. One shard gone or aborted is the suite's state; it
+// as the live run joins them (unit-suite.joinUnitShardOutputs). A shard
+// that failed or ran out of time makes the suite red, whatever the others
+// say or whether they could be read at all: a missing shard cannot make it
+// pass. Short of that, part of a suite is not the suite: null, no row, when
+// a shard is missing, and one gone or aborted is the suite's state. It
 // succeeded only if every shard did.
 function joinUnitResults(results, expectedShards = 1) {
   const list = (results || []).filter(Boolean);
   if (list.length <= 1 && expectedShards <= 1) return list[0] || null;
-  if (list.length < expectedShards) return null;
+  const red = list.filter((r) => r.state === 'failed' || r.state === 'timeout');
+  if (list.length < expectedShards && !red.length) return null;
   const worst = ['gone', 'aborted'].find((state) => list.some((r) => r.state === state));
-  const failed = list.find((r) => r.state !== 'succeeded');
+  const failed = red[0] || list.find((r) => r.state !== 'succeeded');
   const joined = require('./unit-suite').joinUnitShardOutputs(list);
+  const state = red.length ? (red.some((r) => r.state === 'timeout') ? 'timeout' : 'failed')
+    : (worst || (failed ? 'failed' : 'succeeded'));
   return {
-    state: worst || (failed ? (list.some((r) => r.state === 'timeout') ? 'timeout' : 'failed') : 'succeeded'),
+    state,
     stdout: joined.stdout,
     stderr: joined.stderr,
     timedOut: list.some((r) => r.timedOut),
@@ -358,23 +363,34 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null } = {}) 
     // now rather than from the manifest: the history could only have moved
     // towards graduated, and that is what a fresh run would see too. A Job
     // that ended in setup, or with an empty log, is a suite that never ran
-    // (unit-suite.js notRunOutcome), as on the live path. A Job that
-    // vanished contributes no row.
+    // (unit-suite.js notRunOutcome), and one past its deadline a suite that
+    // timed out, as on the live path.
+    let graduated = false;
+    try {
+      graduated = (await checkHistory.loadGraduated(pool, app.id, { sessionId }))
+        .has(appManifest.checkKey(unitSuite.UNIT_CHECK_NAME, unitSuite.UNIT_CHECK_PATH));
+    } catch (err) {
+      log.warn('check-harvest', 'Graduation lookup failed — unit row advisory', { ...base, err: err.message });
+    }
     let unitOutcome = null;
-    if (unit && (unit.state === 'succeeded' || unit.state === 'failed')) {
-      let graduated = false;
-      try {
-        graduated = (await checkHistory.loadGraduated(pool, app.id, { sessionId }))
-          .has(appManifest.checkKey(unitSuite.UNIT_CHECK_NAME, unitSuite.UNIT_CHECK_PATH));
-      } catch (err) {
-        log.warn('check-harvest', 'Graduation lookup failed — unit row advisory', { ...base, err: err.message });
-      }
+    if (unit && (unit.state === 'succeeded' || unit.state === 'failed' || unit.state === 'timeout')) {
       unitOutcome = await unitSuite.outcomeFromLog({
         pool, appId: app.id, sessionId,
         succeeded: unit.state === 'succeeded',
-        stdout: unit.stdout, stderr: unit.stderr, timedOut: unit.timedOut, exitCode: unit.exitCode,
+        stdout: unit.stdout, stderr: unit.stderr,
+        timedOut: unit.timedOut || unit.state === 'timeout', exitCode: unit.exitCode,
         graduated, tracker: unitTracker,
       });
+    }
+    // A suite that blocks merges and cannot be read here, its Jobs gone or
+    // part of them, is not one the run may settle without: only a fresh run
+    // can judge the head. Settling without it passed #4996 and #4973 on 13
+    // Oct 2026 with red suites. An advisory suite's row would block nothing,
+    // so the run settles without it, as before.
+    if (!unitOutcome && !manifest.shotsOnly && graduated) {
+      const again = stillCurrent(await loadSession(pool, sessionId), commitSha);
+      if (!again.current) return await moot(again.why);
+      return await redrive(session, unit ? `unit-suite Job ${unit.state}` : 'unit-suite Job not found');
     }
 
     // A capture Job that failed without a frame to salvage, or one the

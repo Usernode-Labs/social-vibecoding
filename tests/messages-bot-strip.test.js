@@ -88,6 +88,20 @@ test('the groups, in order, each request once', () => {
   assert.deepEqual(stripGroups(null), { needs: [], ready: [], progress: [], done: [] });
 });
 
+// #4974: a reply on the request's discussion settles a need, and what the
+// tray then folds into History carries no ask. The strip draws it nowhere:
+// not Needs you (nothing waits on them any more), not done (nothing was
+// built from the reply yet) — the quiet line in the request's thread says
+// what happened instead.
+test('a need settled by a reply leaves the strip: no longer a need, not done either', () => {
+  const { stripGroups } = strip();
+  const settled = past({ title: 'Dinner rota', outcome: 'question', answered: true, at: ago(20) });
+  const waiting = past({ title: 'Print view', outcome: 'blocked', ask: { messageId: 42, kind: 'blocked' } });
+  const model = stripGroups(work({ needsYou: [waiting], history: [settled] }), NOW);
+  assert.deepEqual(model.needs.map((row) => row.job.title), ['Print view'], 'the answered one is not asked for any more');
+  assert.deepEqual(model.done.map((row) => row.job.title), [], 'and it is not done: nothing was built from the reply yet');
+});
+
 test('each row says one short thing: no step numbers, no timings', () => {
   const { needsRow, readyState, doingWord, stripTitle } = strip();
   const said = (extra) => needsRow(past(extra));

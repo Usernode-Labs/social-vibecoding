@@ -783,6 +783,64 @@ test('a first version going on after a restart is never triaged again: the kept 
   assert.equal(h.calls.capture.length, 1);
 });
 
+// Run 190: a restart landed during all six spec turns, recovery kept each
+// spec's markdown only, and no build started from the screens it drew.
+const HTML_SPEC = '<article data-spec><h1>Ear Trainer</h1><section data-spec-tab="user"><h2>User-facing changes</h2>'
+  + '<figure data-screens><ol data-changes><li data-change="1">The lessons</li></ol>'
+  + '<template data-screen data-size="phone" data-height="900"><style>:root{--accent:37 99 235}</style>'
+  + '<div data-side="after" data-change="1"><h2>Lessons</h2><button class="btn-primary">Start</button></div></template></figure>'
+  + '<p>Lessons list.</p></section><section data-spec-tab="tech"><h2>Technical implementation</h2><p>public/app.js draws it.</p></section></article>';
+
+test('a spec turn a restart\'s recovery reads keeps its HTML, the screens it drew with it', () => {
+  const session = { id: 6, spec_md: '' };
+  const cp = { triageSessionId: 5, triage: { status: 'ok' } };
+  const read = runner.recoverFirstVersionTurn({ checkpoint: cp, session, activeTurn: { mode: 'scout' }, result: { lastResultText: HTML_SPEC } });
+  assert.equal(read.step, 'spec');
+  assert.match(read.keep.spec.specMd, /^# Ear Trainer/);
+  assert.match(read.keep.spec.specHtml, /<template data-screen data-size="phone"/);
+  const md = runner.recoverFirstVersionTurn({ checkpoint: cp, session, activeTurn: { mode: 'scout' }, result: { lastResultText: '# Ear Trainer\n\nPlain.' } });
+  assert.equal('specHtml' in md.keep.spec, false, 'a markdown spec keeps no HTML');
+});
+
+test('a kept spec\'s HTML goes to its build, which starts from its screens and counts them; a markdown one goes as before', async (t) => {
+  const { kept } = await keptRun(t);
+  const realBuild = live.buildAndPropose;
+  let args = null;
+  live.buildAndPropose = async (a) => { args = a; return realBuild(a); };
+  t.after(() => { live.buildAndPropose = realBuild; });
+  const spec = { sessionId: 6001, specMd: '# Ear Trainer\n\nThe kept spec.', specHtml: HTML_SPEC };
+  const out = await runner.runStage(ctx(harness(), 'first_version', FIRST, {
+    checkpoint: { ...keptTriageOf(kept), sessions: [KEPT_TRIAGE, 6001], spec },
+  }));
+  assert.equal(out.status, 'ok', out.error);
+  assert.equal(args.presetSpec, spec.specMd);
+  assert.equal(args.presetSpecHtml, HTML_SPEC, 'the screens it drew go with it (spec-screens-start.js)');
+  assert.equal(out.parsed.specScreens.length, 1, 'and they are counted, as a fresh spec\'s are');
+
+  const plain = await runner.runStage(ctx(harness(), 'first_version', FIRST, {
+    checkpoint: { ...keptTriageOf(kept), sessions: [KEPT_TRIAGE, 6001], spec: { sessionId: 6001, specMd: '# Ear Trainer\n\nThe kept spec.' } },
+  }));
+  assert.equal(plain.status, 'ok', plain.error);
+  assert.equal('presetSpecHtml' in args, false, 'no HTML kept, none passed');
+  assert.equal(plain.parsed.specScreens, undefined);
+});
+
+test('a spec written with screens is kept with its HTML as it lands, so a restart in the build still has them', async (t) => {
+  spySideEffects(t);
+  const h = harness();
+  const write = h.deps.worker.execInWorker;
+  h.deps.worker.execInWorker = async (id, opts) => {
+    const out = await write(id, opts);
+    return out.lastResultText === '# Ear Trainer\n\nThe first version.' ? { lastResultText: HTML_SPEC } : out;
+  };
+  const parts = [];
+  const out = await runner.runStage(ctx(h, 'first_version', FIRST, { onCheckpoint: async (p) => { parts.push(p); } }));
+  assert.equal(out.status, 'ok', out.error);
+  const spec = Object.assign({}, ...parts).spec;
+  assert.match(spec.specMd, /^# Ear Trainer/);
+  assert.equal(spec.specHtml, HTML_SPEC.replace(/—/g, ','), 'its HTML, as the spec turn read it');
+});
+
 test('a kept spec is built from as it is: one build turn, the spec\'s session counted', async (t) => {
   const { kept } = await keptRun(t);
   const realBuild = live.buildAndPropose;
@@ -940,6 +998,219 @@ test('a build records whether it could see its own screens: what its prompt told
   const d = await runner.runStage(ctx(resumed, 'first_version', FIRST, { checkpoint: { ...checkpoint, build: { ...checkpoint.build, sessionId: 6007 } } }));
   assert.deepEqual(resumed.calls.modes, [], 'no turn');
   assert.deepEqual(d.parsed.sight, { told: true, passed: true });
+});
+
+// ── A first version gone on from a restart, as a live one is ───────────
+//
+// Until 13 Oct 2026 a first version whose build a restart kept was captured
+// as it stood: its configuration's reviewer never saw it (run 189: a restart
+// while all six builds were building left every one unreviewed), its review
+// was never kept as it went, and a build turn recovery followed named none
+// of its turns, so its cost was all "other" and its speed could not be read.
+
+const REVIEWER = { model: 'anthropic/claude-opus-5.5', maxRounds: 2, budgetMinutes: 20 };
+const SPEC_TURN = '11111111-1111-4111-8111-111111111111';
+const BUILD_TURN = '22222222-2222-4222-8222-222222222222';
+
+/** A first claim's checkpoint, as a real one leaves it, with the build turn recovery followed instead of the one that landed. */
+async function keptFirstVersion(t) {
+  const parts = [];
+  await runner.runStage(ctx(harness(), 'first_version', FIRST, { onCheckpoint: async (p) => { parts.push(p); } }));
+  const cp = Object.assign({}, ...parts);
+  return {
+    ...cp,
+    spec: { ...cp.spec, turnId: SPEC_TURN },
+    // Recovery followed its build turn: no costs, only its turn's ledger id.
+    build: { ok: true, sessionId: 6007, sha: 'd'.repeat(40), commits: 2, specMd: cp.spec.specMd, specNote: null, error: null, turnIds: [BUILD_TURN] },
+    handBacks: 1,
+  };
+}
+
+/** A harness whose ledger holds the spec and build turns recovery followed. */
+function ledgerHarness(opts) {
+  const h = harness(opts);
+  const query = h.pool.query;
+  h.pool.query = async (sql, params) => {
+    if (/FROM agent_turns WHERE logical_turn_id = ANY/.test(String(sql))) {
+      const held = {
+        [SPEC_TURN]: { id: SPEC_TURN, model: 'anthropic/claude-opus-5.5', cost: 0.6, priced: 1, input: 40000, output: 9000 },
+        [BUILD_TURN]: { id: BUILD_TURN, model: 'z-ai/glm-5.3-flash', cost: 0.4, priced: 2, input: 900000, output: 30000 },
+      };
+      return { rows: (params[0] || []).map((id) => held[id]).filter(Boolean) };
+    }
+    return query(sql, params);
+  };
+  return h;
+}
+
+test('a first version whose build a restart kept is reviewed now, as recovery reviews a live one, and its costs are named off the ledger', async (t) => {
+  spySideEffects(t);
+  const checkpoint = await keptFirstVersion(t);
+  const realReview = live.reviewLanded;
+  let args = null;
+  const finalCapture = { booted: true, shots: [{ id: 'phone-light-populated', artifactId: 'a'.repeat(32) }] };
+  live.reviewLanded = async (a) => {
+    args = a;
+    await a.review.onState({ state: 'reviewing', startedAt: '2026-10-13T18:40:00.000Z', rounds: [], round0: null, finalSha: a.start.sha, finalCapture: null });
+    return { state: 'done', stop: 'ship', finalSha: 'e'.repeat(40), finalCommits: 3, finalCapture, round0: null, rounds: [{ round: 1, verdict: 'ship', reviewerCostUsd: 0.2 }] };
+  };
+  t.after(() => { live.reviewLanded = realReview; });
+  const h = ledgerHarness();
+  const kept = [];
+  const out = await runner.runStage(ctx(h, 'first_version', FIRST, {
+    reviewer: REVIEWER, checkpoint, onCheckpoint: async (part) => { kept.push(part); },
+  }));
+  assert.equal(out.status, 'ok', out.error);
+  assert.deepEqual(h.calls.modes, [], 'its build is not run again');
+  assert.deepEqual(args.start, { sha: 'd'.repeat(40), commits: 2, costUsd: null, activeMs: null, buildText: null }, 'reviewed from the build that landed');
+  assert.deepEqual(args.review.reviewer, REVIEWER);
+  assert.deepEqual(args.review.owner, { trialId: 44 }, 'its rounds\' screenshots are the trial\'s');
+  assert.equal(args.spec, checkpoint.spec.specMd);
+  assert.equal(args.turnBudgetMs, 120_000, 'a first version\'s clocks');
+  const reviewSession = kept.find((p) => p.reviewSessionId)?.reviewSessionId;
+  assert.ok(reviewSession, 'on a fresh session at its branch');
+  assert.equal(kept.find((p) => p.review)?.review.state, 'reviewing', 'its state kept as it goes');
+  assert.equal(out.build_sha, 'e'.repeat(40), 'where the review left the branch');
+  assert.equal(out.build_commits, 3);
+  assert.equal(out.parsed.review.stop, 'ship');
+  assert.ok(Math.abs(out.review_cost_usd - 0.2) < 1e-9);
+  assert.ok(out.session_ids.includes(reviewSession), 'its review\'s session charged with the rest');
+  // Its screenshots on the review's session, as a first version's always are.
+  assert.equal(h.calls.capture.length, 1);
+  assert.equal(h.calls.capture[0].containerName, `w-${reviewSession}`);
+  // What each stage cost: the spec and build turns recovery followed, off the
+  // ledger by their ids, and the reviewer's calls from its state.
+  const parts = out.parsed.costParts;
+  assert.equal(parts.spec.usd, 0.6);
+  assert.equal(parts.spec.model, out.parsed.models.spec, 'on its stage\'s model');
+  assert.equal(parts.build.usd, 0.4);
+  assert.deepEqual(parts.build.turnIds, [BUILD_TURN]);
+  assert.equal(parts.build.inputTokens, 900000);
+  assert.equal(parts.review_reviewer.usd, 0.2);
+  assert.ok(parts.triage, 'its triage\'s part as before');
+  assert.deepEqual(require('../src/services/bench/speed').buildTurnIds(out.parsed), [BUILD_TURN], 'so its build\'s speed can be read');
+});
+
+test('a first version whose review restarts cut short too often is recorded interrupted, never reviewed again; its tip captured once', async (t) => {
+  spySideEffects(t);
+  const checkpoint = await keptFirstVersion(t);
+  const realReview = live.reviewLanded;
+  live.reviewLanded = async () => { throw new Error('a review cut short is not run again'); };
+  t.after(() => { live.reviewLanded = realReview; });
+  // Carried through MAX_REVIEW_RESUMES restarts already (bot-review.js canResume).
+  const review = {
+    state: 'reviewing', startedAt: '2026-10-13T18:40:00.000Z', reviewer: REVIEWER, resumes: 3,
+    round0: { sha: 'd'.repeat(40), capture: { booted: true, shots: [] } },
+    rounds: [{ round: 1, verdict: 'fix', issues: [{ what: 'x' }], reviewerCostUsd: 0.3, fix: { ok: true, sha: 'f'.repeat(40), commits: 3, costUsd: 0.1 } }],
+    stop: null, finalSha: 'f'.repeat(40), finalCommits: 3, lastBooted: { sha: 'd'.repeat(40), commits: 2 }, finalCapture: null,
+  };
+  // The harness's branch is at 'f…': the fix landed, and no capture saw it.
+  const h = ledgerHarness();
+  const kept = [];
+  const out = await runner.runStage(ctx(h, 'first_version', FIRST, {
+    reviewer: REVIEWER, checkpoint: { ...checkpoint, review }, onCheckpoint: async (part) => { kept.push(part); },
+  }));
+  assert.equal(out.status, 'ok', out.error);
+  assert.deepEqual(h.calls.modes, []);
+  assert.equal(out.parsed.review.state, 'done');
+  assert.equal(out.parsed.review.stop, 'interrupted');
+  assert.equal(out.parsed.review.stopDetail, 'the platform restarted during the review');
+  assert.equal(out.build_sha, 'f'.repeat(40), 'the fix seen to boot is kept');
+  assert.equal(kept.find((p) => p.review)?.review.stop, 'interrupted', 'settled on the checkpoint, so a restart in the capture does not settle it again');
+  assert.equal(h.calls.capture.length, 1, 'its tip captured once, and that is its final capture');
+  assert.deepEqual(out.capture, { booted: true, shots: [{ id: 'phone-light-populated', artifactId: 'b'.repeat(32) }], checks: {}, tells: {} });
+  assert.ok(Math.abs(out.review_cost_usd - 0.3) < 1e-9, 'the reviewer calls of the claim before, charged once, here');
+  assert.equal(out.parsed.costParts.review_fixes.usd, 0.1, 'and its fix, from the review\'s state');
+});
+
+test('a first version whose review a restart cut short is carried on from its saved state, with the fix turn recovery followed, as a live one is', async (t) => {
+  spySideEffects(t);
+  const checkpoint = await keptFirstVersion(t);
+  const realReview = live.reviewLanded;
+  let args = null;
+  live.reviewLanded = async (a) => {
+    args = a;
+    return { state: 'done', stop: 'ship', finalSha: 'f'.repeat(40), finalCommits: 3, resumes: 1, round0: { sha: 'd'.repeat(40) },
+      rounds: [{ round: 1, verdict: 'fix', reviewerCostUsd: 0.3, fix: { ok: true, sha: 'f'.repeat(40), commits: 3, costUsd: 0.1 } }, { round: 2, verdict: 'ship', reviewerCostUsd: 0.2 }] };
+  };
+  t.after(() => { live.reviewLanded = realReview; });
+  const review = {
+    state: 'reviewing', startedAt: '2026-10-13T18:40:00.000Z', reviewer: REVIEWER, resumes: 0,
+    round0: { sha: 'd'.repeat(40), capture: { booted: true, shots: [] } },
+    rounds: [{ round: 1, verdict: 'fix', issues: [{ what: 'x' }], reviewerCostUsd: 0.3 }],
+    inFlight: { step: 'fix', at: '2026-10-13T18:45:00.000Z' },
+    stop: null, finalSha: 'd'.repeat(40), finalCommits: 2, lastBooted: { sha: 'd'.repeat(40), commits: 2 }, finalCapture: null,
+  };
+  const recoveredFix = { ok: true, sha: 'f'.repeat(40), commits: 3, costUsd: 0.1, ms: 90000 };
+  const h = ledgerHarness();
+  const out = await runner.runStage(ctx(h, 'first_version', FIRST, {
+    reviewer: REVIEWER, checkpoint: { ...checkpoint, review, recoveredFix },
+  }));
+  assert.equal(out.status, 'ok', out.error);
+  assert.deepEqual(h.calls.modes, [], 'its build is not run again');
+  assert.equal(args.resumeFrom, review, 'carried on from where it was cut');
+  assert.deepEqual(args.recoveredFix, recoveredFix, 'with the fix turn recovery followed, which it was waiting on');
+  assert.equal(out.parsed.review.stop, 'ship', 'it finished as it would have');
+  assert.equal(out.build_sha, 'f'.repeat(40));
+  assert.ok(Math.abs(out.review_cost_usd - 0.5) < 1e-9, 'every round\'s reviewer calls, once');
+
+  // A fix a round has already recorded is spent: not handed to it again.
+  const spentFix = await runner.runStage(ctx(ledgerHarness(), 'first_version', FIRST, {
+    reviewer: REVIEWER,
+    checkpoint: { ...checkpoint, review: { ...review, rounds: [{ ...review.rounds[0], fix: { ok: true, sha: 'f'.repeat(40) } }] }, recoveredFix },
+  }));
+  assert.equal(spentFix.status, 'ok', spentFix.error);
+  assert.equal(args.recoveredFix, null);
+});
+
+test('a first version\'s first claim keeps its build the moment it pushes, with what its spec and build cost, and its review as it goes', async (t) => {
+  spySideEffects(t);
+  const realBuild = live.buildAndPropose;
+  live.buildAndPropose = async (a) => {
+    await a.onSession({ id: 7101 });
+    await a.onSpec({ sessionId: 7101, specMd: '# Ear Trainer', turnId: SPEC_TURN });
+    await a.onStep('landed', {
+      sessionId: 7101, landed: { sha: 'd'.repeat(40), commits: 2, pushOk: true, text: 'Built.' }, turnIds: [BUILD_TURN],
+      stageCosts: { spec: { usd: 0.6, model: 'anthropic/claude-opus-5.5', turnIds: [SPEC_TURN] }, build: { usd: 0.4, model: 'z-ai/glm-5.3-flash', turnIds: [BUILD_TURN] } },
+    });
+    await a.review.onState({ state: 'reviewing', startedAt: '2026-10-13T18:40:00.000Z', round0: null, rounds: [], finalSha: 'd'.repeat(40), finalCommits: 2 });
+    await a.review.onState({ state: 'reviewing', round0: { sha: 'd'.repeat(40) }, rounds: [{ verdict: 'fix' }], finalSha: 'e'.repeat(40), finalCommits: 3 });
+    return {
+      ok: true, sessionId: 7101, sha: 'e'.repeat(40), commits: 3, specMd: '# Ear Trainer',
+      review: { state: 'done', stop: 'ship', round0: null, rounds: [], finalSha: 'e'.repeat(40), finalCapture: { booted: true, shots: [] } },
+    };
+  };
+  t.after(() => { live.buildAndPropose = realBuild; });
+  const kept = [];
+  const out = await runner.runStage(ctx(harness(), 'first_version', FIRST, { reviewer: REVIEWER, onCheckpoint: async (part) => { kept.push(part); } }));
+  assert.equal(out.status, 'ok', out.error);
+  assert.deepEqual(kept.find((p) => p.spec)?.spec, { sessionId: 7101, specMd: '# Ear Trainer', turnId: SPEC_TURN }, 'its spec with its turn\'s ledger id');
+  const builds = kept.filter((p) => p.build);
+  assert.equal(builds.length, 1, 'kept once, as it pushed; not again when the review is over');
+  assert.equal(builds[0].build.sha, 'd'.repeat(40), 'the build that landed, before any review');
+  assert.equal(builds[0].build.stageCosts.build.usd, 0.4, 'with what its turns cost');
+  assert.deepEqual(builds[0].build.stageCosts.spec.turnIds, [SPEC_TURN]);
+  assert.equal(kept.filter((p) => p.review).length, 2, 'and the review\'s state as it goes');
+  assert.equal(runner.firstVersionTurnOf({ build: builds[0].build }, 7101, { mode: 'build' }), 'fix', 'so a build turn after it is the review\'s fix');
+});
+
+test('restart recovery keeps the ledger ids of a first version\'s spec and build turns, and tells a review\'s fix from its build', () => {
+  const session = { id: 6, spec_md: '' };
+  const cp = { triageSessionId: 5, triage: { status: 'ok' } };
+  const scout = { mode: 'scout', turnId: SPEC_TURN };
+  const spec = runner.recoverFirstVersionTurn({ checkpoint: cp, session, activeTurn: scout, result: { lastResultText: '# Ear Trainer' } });
+  assert.equal(spec.keep.spec.turnId, SPEC_TURN);
+  const build = { mode: 'build', turnId: 'turn-x', logicalTurnId: BUILD_TURN };
+  const withSpec = { ...cp, spec: { sessionId: 6, specMd: '# Kept' } };
+  const landed = runner.recoverFirstVersionTurn({ checkpoint: withSpec, session, activeTurn: build, result: { pushOk: true, ahead: 2, sha: 'd'.repeat(40) } });
+  assert.deepEqual(landed.keep.build.turnIds, [BUILD_TURN], 'the attempt\'s ledger identity over the record\'s own id');
+  assert.equal(runner.ledgerTurnIdOf({ turnId: SPEC_TURN }), SPEC_TURN);
+  assert.equal(runner.ledgerTurnIdOf(null), null);
+  const kept = { ...withSpec, build: landed.keep.build };
+  assert.equal(runner.firstVersionTurnOf(kept, 6, { mode: 'build' }), 'fix');
+  assert.equal(runner.recoverFirstVersionTurn({ checkpoint: kept, session, activeTurn: build, result: { pushOk: true, ahead: 3, sha: 'e'.repeat(40) } }), null,
+    'a fix keeps nothing of its own: the review is kept, and its next claim records it cut short');
+  assert.equal(runner.firstVersionTurnOf({ build: { ok: false } }, 6, { mode: 'build' }), 'build', 'a build that failed is not a review\'s');
 });
 
 test('what a build could see is kept before its build turn runs, so a build restart recovery finished keeps it too', async (t) => {

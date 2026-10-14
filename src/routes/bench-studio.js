@@ -252,6 +252,17 @@ function benchStudioRoutes(config) {
     if (!id) return bad('Invalid trial id');
     return studio.trialDetail(pool, id, { images: req.query?.images === '1' });
   }));
+  // A page of its transcript (bench_trial_lines), oldest first.
+  router.get('/api/bot-studio/trials/:id/transcript', requireAdminWrite, handler('Bench trial transcript (connector)', async (req) => {
+    const id = idParam(req.params.id);
+    if (!id) return bad('Invalid trial id');
+    const q = req.query || {};
+    return studio.transcriptOf(pool, id, {
+      step: typeof q.step === 'string' && q.step ? q.step : null,
+      after: q.after ? Number(q.after) : null,
+      limit: q.limit ? Number(q.limit) : undefined,
+    });
+  }));
 
   // The Homeroom bot's own data, and a run's rating.
   router.get('/api/bot-studio/bot', requireAdminWrite, handler('Homeroom bot (connector)', async (req) => (

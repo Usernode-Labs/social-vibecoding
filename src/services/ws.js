@@ -1446,6 +1446,16 @@ async function handleMessage(pool, client, msg) {
       // A person answering on an issue's thread is exactly what the Homeroom
       // bot waits for; a system row (a claim, a bounty) is not a message.
       if (thread && thread.type === 'issue') noteIssueActivityForBot(client.appId, thread.ref, 'thread');
+      // #4974: that reply also settles the bot's asks in the requester's DM —
+      // the question it is waiting on, a stop still showing its buttons — and
+      // says so in the request's thread there. Not awaited. The bot's own post
+      // of a DM answer is skipped by its viaBotDm flag, a connector's above.
+      if (thread && thread.type === 'issue' && postedVia !== 'agent' && !client.viaBotDm) {
+        void require('./homeroom-bot-dm').noteRequestReply(pool, {
+          appId: client.appId, issueNumber: thread.ref, userId: client.user.id,
+          chatMessageId: rows[0].id, content, createdAt: rows[0].created_at,
+        }).catch((err) => log.warn('ws', 'Homeroom bot request-reply note failed', { err: err.message }));
+      }
       // #3264: a reply in the discussion of the bot's own proposal.
       if (thread && thread.type === 'session') noteProposalActivityForBot(pool, client.appId, thread.ref);
       // #2387: a reply thread grew — every row showing its root redraws its

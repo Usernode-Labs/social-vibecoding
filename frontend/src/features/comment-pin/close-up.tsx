@@ -11,13 +11,14 @@
  * phone the keyboard rising counted as the page moving, so every comment
  * showed blurred text and a pin on another part of the page (iPhone 17
  * simulator, 12 Oct 2026). One picture, always at full size, always zoomed
- * about its own pin.
+ * about its own pin. A cut picture is shown whole (#5020): `crop` frames the
+ * part kept in white and dims the rest, so what was cropped away stays seen.
  */
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import { useMessages } from '../../lib/i18n/react';
-import { closeUpView, type Point, type Size } from './picture';
+import { closeUpView, CROP_SHADE, type Point, type Rect, type Size } from './picture';
 
 const HEIGHT = 150;
 const START_ZOOM = 2;
@@ -26,8 +27,9 @@ const MAX_ZOOM = 4;
 const midOf = (a: Point, b: Point): Point => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
 const distOf = (a: Point, b: Point): number => Math.max(1, Math.hypot(a.x - b.x, a.y - b.y));
 
-/** The zoomed view of the pin on `view`, the picture it was put on. */
-export function CloseUp({ view, pin }: { view: string; pin: Point }) {
+/** The zoomed view of the pin on `view`, the picture it was put on. When the
+ * picture was cut, `crop` frames the part kept on the full picture. */
+export function CloseUp({ view, pin, crop }: { view: string; pin: Point; crop?: Rect | null }) {
   const t = useMessages('devchat');
   const boxRef = useRef<HTMLDivElement>(null);
   const [boxWidth, setBoxWidth] = useState(0);
@@ -174,6 +176,21 @@ export function CloseUp({ view, pin }: { view: string; pin: Point }) {
           style={view2
             ? { width: view2.size.width, height: view2.size.height, transform: `translate(${view2.offset.x}px, ${view2.offset.y}px)` }
             : { visibility: 'hidden' }}
+        />
+      ) : null}
+      {view2 && crop ? (
+        /* The crop, at the place the zoomed picture is drawn: the part kept
+           framed in white, the rest dimmed (#5020). */
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute border-2 border-white"
+          style={{
+            left: view2.offset.x + crop.x * view2.size.width,
+            top: view2.offset.y + crop.y * view2.size.height,
+            width: crop.width * view2.size.width,
+            height: crop.height * view2.size.height,
+            boxShadow: CROP_SHADE,
+          }}
         />
       ) : null}
       {view2 && pinPx ? (
