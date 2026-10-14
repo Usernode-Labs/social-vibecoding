@@ -3517,6 +3517,8 @@ function buildTurnRunner({
           // The `lean_turns` tweak: fewer tools and stale tool output cut
           // from what each model call re-sends (worker.js LEAN_TURNS).
           ...(firstVersion && Array.isArray(tweaks) && tweaks.includes('lean_turns') ? { leanTurns: true } : {}),
+          // The `roomy_context` tweak: compact later (worker.js ROOMY_CONTEXT).
+          ...(firstVersion && Array.isArray(tweaks) && tweaks.includes('roomy_context') ? { roomyContext: true } : {}),
           ...(ctx || {}),
           telemetryComponent: telemetry || 'homeroom_bot_build',
           onProgress: teeProgress(turnProgress, onProgress),
