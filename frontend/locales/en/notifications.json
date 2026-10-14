@@ -83,6 +83,14 @@
     "text": "Clear notification",
     "description": "Accessible name of the small × button on an unread notification: marks that notification as read without opening it."
   },
+  "row.save": {
+    "text": "Save notification",
+    "description": "Accessible name of the bookmark button at the right end of a notification row that is not saved: pins that notification in the Saved section at the top."
+  },
+  "row.unsave": {
+    "text": "Unsave notification",
+    "description": "Accessible name of the bookmark button at the right end of a notification row the viewer has saved: removes it from the Saved section at the top. The button is the same one, pressed."
+  },
   "row.unreadDot": {
     "text": "Unread",
     "description": "Accessible name of the dot at the right of a notification that has not been read."
@@ -873,15 +881,19 @@
   },
   "saved.heading": {
     "text": "Saved",
-    "description": "Heading over the messages the viewer bookmarked, at the top of the notifications sheet."
+    "description": "Heading over what the viewer bookmarked in the notifications sheet — saved messages and saved notifications — at the top of the screen."
   },
   "saved.unsave": {
     "text": "Unsave",
-    "description": "Button beside a saved message in the notifications sheet, and the action revealed by swiping it: removes the bookmark from that message."
+    "description": "Button beside a saved message or a saved notification in the notifications sheet, and the action revealed by swiping it: removes the bookmark from it."
   },
   "saved.system": {
     "text": "System",
     "description": "Stands for the author of a saved message that the platform itself wrote. Only its first letter is shown, in the round avatar beside the message."
+  },
+  "saved.notificationLine": {
+    "text": "<0>{{kind}}</0> · <1>{{when}}</1>",
+    "description": "First line over a saved notification in the notifications sheet's Saved section: what kind of notification it is, and when it was saved. {{kind}} is the kind line the row shows in the list (\"New reply\", \"Mention\"), {{when}} is how long ago it was saved (\"2h ago\") or a date."
   },
   "saved.line.author": {
     "text": "<0>@{{username}}</0> in <1>{{place}}</1> · <2>{{when}}</2>",
@@ -1022,6 +1034,14 @@
   "toast.clearFailed": {
     "text": "Couldn’t clear this notification. Try again.",
     "description": "Brief message shown when marking one notification as read (clearing it) failed."
+  },
+  "toast.saveFailed": {
+    "text": "Couldn’t save this notification. Try again.",
+    "description": "Brief message shown when saving a notification (pinning it in the Saved section) failed."
+  },
+  "toast.unsaveFailed": {
+    "text": "Couldn’t unsave this notification. Try again.",
+    "description": "Brief message shown when removing the save from a saved notification failed."
   },
   "friend.answerFailed": {
     "text": "Couldn’t answer this friend request. Try again.",

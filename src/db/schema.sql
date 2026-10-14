@@ -2704,6 +2704,35 @@ ALTER TABLE notifications ADD COLUMN IF NOT EXISTS detail VARCHAR(32);
 -- re-running it is a no-op.
 ALTER TABLE notifications ALTER COLUMN detail TYPE VARCHAR(255);
 
+-- #4769: personal bookmarks on notifications. A user saves any
+-- notification in their feed (the bookmark button at the right end of the
+-- row, notifications-sheet.tsx); saved notifications render in the same
+-- pinned "Saved" section at the TOP of the drawer as #1280's saved
+-- messages, until unsaved — from the row itself, or from that section.
+-- Toggled over REST (src/routes/notifications.js), not the chat
+-- WebSocket: a save is private to one user, so there is nothing to
+-- broadcast.
+--
+-- One row per (user, notification); the UNIQUE constraint is what makes
+-- the save path an idempotent insert. Deleting the notification deletes
+-- the save (the FK cascade), and a save never changes the notification's
+-- read state. Tagged `staging:private` below for the same reason
+-- `notifications` is — one person's private feed — with the staging
+-- preview fed by the request-time `?demo=1` mock in
+-- src/routes/notifications.js instead.
+CREATE TABLE IF NOT EXISTS notification_bookmarks (
+  id              SERIAL PRIMARY KEY,
+  user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  notification_id INTEGER NOT NULL REFERENCES notifications(id) ON DELETE CASCADE,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(user_id, notification_id)
+);
+-- The drawer's Saved section reads "this user's notification saves,
+-- newest first", which is exactly this index; the per-notification
+-- lookup rides the UNIQUE index.
+CREATE INDEX IF NOT EXISTS notification_bookmarks_user_idx
+  ON notification_bookmarks (user_id, created_at DESC);
+
 -- #1559: grant existing accounts at least two slots once, preserving higher
 -- allowances. A later explicit admin reduction must survive every restart.
 -- Persist the notification in the same migration so offline users see it too.
@@ -2839,6 +2868,7 @@ COMMENT ON TABLE chat_session_spec_user_shares IS 'staging:private';
 COMMENT ON TABLE llm_usage              IS 'staging:private';
 COMMENT ON TABLE notifications          IS 'staging:private';
 COMMENT ON TABLE message_bookmarks      IS 'staging:private';
+COMMENT ON TABLE notification_bookmarks IS 'staging:private';
 COMMENT ON TABLE app_secrets            IS 'staging:private';
 -- `mail_deliveries` is tagged too, but its COMMENT lives beside its
 -- CREATE TABLE further down this file — the table doesn't exist yet at
