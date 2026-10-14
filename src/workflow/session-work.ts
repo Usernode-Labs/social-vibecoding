@@ -5,9 +5,8 @@
 //   a coding turn            chat_sessions.active_turn (its journal)
 //   a turn on a local agent  local_agent_turns, while live
 //   a shots run              shot_runs, heard from lately (LIVE_SHOTS_RUN)
-//   a preview build or a     the preview machine's instance, while it is
-//     checks run               preparing or checking (its work is alive
-//                              while its lease is)
+//   a preview build or a     the preview machine's build or run item,
+//     checks run               while outstanding (alive while its lease is)
 //   anything else an old     the preview machine's instance's operations,
 //     flow does (a sync,       recorded by services/active-workers.js, each
 //     a dispatch, an upload)   counted while the process that holds it is
@@ -28,15 +27,18 @@ export const LIVE_SHOTS_RUN = `((r.state = 'planned' AND r.updated_at > NOW() - 
          AND r.updated_at > NOW() - (CASE WHEN COALESCE(r.trace_summary, '{}'::jsonb) ? 'progress'
                                           THEN INTERVAL '5 minutes' ELSE INTERVAL '45 minutes' END)))`;
 
-// The preview machine's states whose work is under way.
-export const PREVIEW_WORKING_STATES: readonly string[] = Object.freeze(['preparing', 'checking']);
+// The preview machine's work that is a build or a checks run.
+export const PREVIEW_WORK_KINDS: readonly string[] = Object.freeze(['preview.prepare', 'checks.run']);
 
-// True while the preview machine's instance for the session `sessionId` (an
-// SQL expression) holds it and is building or checking it.
+// True while the preview machine builds or checks the session `sessionId`
+// (an SQL expression): its build or run is outstanding (queued, running, or
+// reported and not yet applied). A running item is alive while its lease
+// is; one whose process died is claimed again after it.
 export function previewWorkingSql(sessionId: string): string {
-  return `EXISTS (SELECT 1 FROM wf_instances p
+  return `EXISTS (SELECT 1 FROM wf_work p
                    WHERE p.machine = 'preview' AND p.key = 'session:' || ${sessionId}
-                     AND p.state IN (${PREVIEW_WORKING_STATES.map((s) => `'${s}'`).join(', ')}))`;
+                     AND p.kind IN (${PREVIEW_WORK_KINDS.map((k) => `'${k}'`).join(', ')})
+                     AND p.status IN ('queued', 'running', 'reported'))`;
 }
 
 // True while an operation recorded on that instance is held by a live

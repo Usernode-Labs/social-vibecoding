@@ -67,6 +67,10 @@ export interface Served extends Attempt {
   buildRef: string | null;
 }
 export interface Run { key: string; n: number; head: string }
+// An attempt waiting for its preview.retireAttempt: the item's key, and
+// whether it came from a prepare that was cancelled (one that may still be
+// creating things until its handler stops).
+export interface Retiring extends Attempt { key: string; cancelled?: boolean }
 // What an old flow is doing on the session, and which process does it.
 export interface Operation { id: string; kind: string; holder: string; since: string }
 
@@ -88,8 +92,8 @@ export interface Data {
   streak: number;                // consecutive errors on this head
   firstFailureAt: string | null;
   episode: number;               // deferred episodes, for ConflictResolved's key
-  retiring: Attempt[];           // attempts whose preview.retireAttempt is outstanding
-  exit: { reason: string; terminal: boolean; key: string; failed?: string } | null;
+  retiring: Retiring[];          // attempts whose preview.retireAttempt is outstanding
+  exit: { reason: string; terminal: boolean; key: string; attempts: Attempt[]; failed?: string } | null;
   pending: { head: string; trigger: string | null } | null;  // a revision that arrived during an idle retirement
   closedAt: string | null;
   operations: Operation[];
@@ -143,8 +147,11 @@ const EVENTS = {
   RecheckRequested: (p: any) => ({ reason: word(p?.reason, 'reason'), trigger: optWord(p?.trigger) }),
   // Nothing to test: the head carries no commits beyond main (`head` is
   // the commit the verdict describes). Settles 'skipped' without a build.
+  // `expected`: the checks commit the caller read, the stale fence of the
+  // store (a caller that read an older row writes nothing).
   ChecksSkipped: (p: any) => ({
     sessionId: int(p?.sessionId, 'sessionId'), head: sha(p?.head, 'head'), reason: text(p?.reason, 'reason', 300),
+    expected: p?.expected == null ? null : sha(p.expected, 'expected'),
   }),
   ConflictResolved: (p: any) => ({ head: sha(p?.head, 'head') }),
   // The branch moved on to code nothing checks yet (a CLI upload before it
@@ -221,7 +228,9 @@ const step = (s: Step): Outcome<PState> =>
   ({ next: { name: s.name, data: s.data }, writes: s.writes, work: s.work, cancel: s.cancel, push: s.push, timer: s.timer });
 
 const prepareKey = (n: number) => `prepare:${n}`;
-const retireAttemptKey = (n: number) => `retire-attempt:${n}`;
+// Unique per decision: attempt 0 (a preview [main] built) can be adopted
+// again after a detach, and must be retirable again.
+const retireAttemptKey = (n: number, version: number) => `retire-attempt:${n}:v${version}`;
 
 const route = (d: Data): SessionRoute => ({ sessionId: d.sessionId, userId: d.userId, appId: d.appId, appSlug: d.appSlug || null });
 const seq = (ctx: TransitionContext, i = 0) => `wf-${ctx.key}-${ctx.version + 1}-${i}`;
@@ -250,27 +259,40 @@ const PLATFORM_FAULT_RETRY_MS = 24 * 60 * 60 * 1000;
 
 // What a newer step makes obsolete: the attempt being prepared (retired
 // once its handler has stopped) and the checks run.
-function obsolete(d: Data, ctx: TransitionContext, deps: Deps): { cancel: WorkRef[]; work: WorkRequest[]; retiring: Attempt[] } {
+function obsolete(d: Data, ctx: TransitionContext, deps: Deps): { cancel: WorkRef[]; work: WorkRequest[]; retiring: Retiring[] } {
   const cancel: WorkRef[] = [];
   const work: WorkRequest[] = [];
   const retiring = [...d.retiring];
   if (d.preparing) {
     cancel.push({ kind: WORK.prepare, key: prepareKey(d.preparing.n) });
-    retiring.push(d.preparing);
-    work.push(retireWork(d, d.preparing, new Date(ctx.now.getTime() + deps.retireAfterMs)));
+    const r = retire(d, d.preparing, ctx, deps, true);
+    retiring.push(r.entry);
+    work.push(r.work);
   }
   if (d.run) {
     cancel.push({ kind: WORK.run, key: d.run.key });
-    work.push({ kind: WORK.cancel, key: `cancel:${d.run.key}`, input: { sessionId: d.sessionId, runId: d.run.key } });
+    // After the run's claim has stopped (it learns of the cancel at its next
+    // renewal), so nothing it starts meanwhile outlives the cleanup.
+    work.push({ kind: WORK.cancel, key: `cancel:${d.run.key}`, input: { sessionId: d.sessionId, runId: d.run.key },
+      notBefore: new Date(ctx.now.getTime() + deps.retireAfterMs) });
   }
   return { cancel, work, retiring };
 }
 
-const retireWork = (d: Data, a: Attempt, notBefore?: Date): WorkRequest => ({
-  kind: WORK.retireAttempt, key: retireAttemptKey(a.n),
-  input: { sessionId: d.sessionId, appId: d.appId, appSlug: d.appSlug, n: a.n, db: a.db },
-  ...(notBefore ? { notBefore } : {}),
-});
+// Retire an attempt that does not serve: its item, and its entry in
+// `retiring`. One from a cancelled prepare waits until that handler has
+// stopped (a lease and more).
+function retire(d: Data, a: Attempt, ctx: TransitionContext, deps: Deps, cancelled = false): { entry: Retiring; work: WorkRequest } {
+  const key = retireAttemptKey(a.n, ctx.version + 1);
+  return {
+    entry: { n: a.n, head: a.head, db: a.db, key, ...(cancelled ? { cancelled: true } : {}) },
+    work: {
+      kind: WORK.retireAttempt, key,
+      input: { sessionId: d.sessionId, appId: d.appId, appSlug: d.appSlug, n: a.n, db: a.db },
+      ...(cancelled ? { notBefore: new Date(ctx.now.getTime() + deps.retireAfterMs) } : {}),
+    },
+  };
+}
 
 const pendingWrite = (d: Data, head: string, phase: 'building' | 'testing', trigger: string | null): DomainWrite =>
   ({ type: 'pending', sessionId: d.sessionId, head, phase, trigger });
@@ -380,6 +402,16 @@ function fromRow(d: Data, f: Facts, head: string, trigger: string | null, ctx: T
   return startRun({ name: 'settled', data: { ...d, head } }, trigger, ctx);
 }
 
+// Where an adopted row stands, without starting anything (an operation's
+// record): a preview that serves is `settled`, with the row's verdict when
+// it is about that head; else `idle`, about the row's checks commit.
+function standing(d: Data, f: Facts): Live {
+  if (!d.serving) return { name: 'idle', data: d };
+  const checks = f.session!.checks;
+  const verdict = checks.commitSha === d.serving.head ? verdictOf(checks.state) : null;
+  return { name: 'settled', data: { ...d, head: d.serving.head, verdict } };
+}
+
 // An adopted row's verdict, as a state, for the carry below.
 function fromRowVerdict(d: Data, f: Facts): Live {
   const v = f.session!.checks.state;
@@ -483,7 +515,10 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
     guard: (s, e, f, ctx) => {
       if (ctx.key !== sessionKey(e.payload.sessionId)) return reject('key_mismatch');
       if (!f.session || !f.app) return reject('no_session');
-      return OPEN.has(f.session.status) ? ok() : reject('not_open');
+      if (!OPEN.has(f.session.status)) return reject('not_open');
+      // The caller read an older row: a newer run has moved the checks on.
+      if (e.payload.expected && e.payload.expected !== f.session.checks.commitSha) return reject('checks_moved');
+      return ok();
     },
     to: (s, e, f, ctx) => {
       const d0: Data = restarts(s) ? adopt(e, f, priorOf(s)) : s.data;
@@ -551,7 +586,7 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
       const cancel: WorkRef[] = [
         ...(d.preparing ? [{ kind: WORK.prepare, key: prepareKey(d.preparing.n) }] : []),
         ...(d.run ? [{ kind: WORK.run, key: d.run.key }] : []),
-        ...d.retiring.map((a) => ({ kind: WORK.retireAttempt, key: retireAttemptKey(a.n) })),
+        ...d.retiring.map((a) => ({ kind: WORK.retireAttempt, key: a.key })),
         ...(d.exit ? [{ kind: WORK.retire, key: d.exit.key }] : []),
       ];
       return step({ name: 'detached', data: { ...d, preparing: null, run: null, retiring: [], exit: null, pending: null,
@@ -567,7 +602,7 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
   };
   const adminRetry: Entry = {
     to: (s, e, f, ctx) => {
-      if (s.name === 'retiring') return toRetiring(s, s.data.exit.reason, s.data.exit.terminal, ctx, deps);
+      if (s.name === 'retiring') return toRetiring(s, s.data.exit.reason, s.data.exit.terminal, ctx, deps, s.data.exit.attempts || []);
       if (!s.data.head) return step({ name: s.name, data: s.data });
       return s.name === 'failed' || !s.data.serving || s.data.serving.head !== s.data.head
         ? begin(s, s.data.head, 'manual-recheck', ctx, deps)
@@ -592,7 +627,7 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
     to: (s, e, f, ctx) => {
       // An operation is recorded only while the flag is on: a session handed
       // back while it was off starts again from its row, as a revision would.
-      const live: Live = s.name === NONE || s.name === 'detached' ? { name: 'idle', data: adopt(e, f, priorOf(s)) } : s;
+      const live: Live = s.name === NONE || s.name === 'detached' ? standing(adopt(e, f, priorOf(s)), f) : s;
       const p = e.payload;
       const operations = [
         ...live.data.operations.filter((o) => o.id !== p.id && f.alive.has(o.holder)),
@@ -756,24 +791,27 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
 // Retire everything this instance created: the serving attempt, the one
 // being prepared, and those still waiting for their own retirement (whose
 // items are cancelled: this one covers them).
-function toRetiring(s: Live, reason: string, terminal: boolean, ctx: TransitionContext, deps: Deps): Outcome<PState> {
+function toRetiring(s: Live, reason: string, terminal: boolean, ctx: TransitionContext, deps: Deps,
+  again: Attempt[] = []): Outcome<PState> {
   const d0 = s.data;
   const old = obsolete(d0, ctx, deps);
   const attempts = new Map<number, Attempt>();
-  for (const a of [...(d0.serving ? [d0.serving] : []), ...old.retiring]) attempts.set(a.n, { n: a.n, head: a.head, db: a.db });
+  for (const a of [...again, ...(d0.serving ? [d0.serving] : []), ...old.retiring]) attempts.set(a.n, { n: a.n, head: a.head, db: a.db });
   const key = `retire:${ctx.version + 1}`;
-  const d: Data = { ...d0, preparing: null, run: null, retiring: [], exit: { reason, terminal, key }, pending: null };
+  // A prepare cancelled just now, or lately, may still create something
+  // until its handler stops: the retirement runs after that.
+  const waits = !!d0.preparing || d0.retiring.some((a) => a.cancelled);
+  const d: Data = { ...d0, preparing: null, run: null, retiring: [],
+    exit: { reason, terminal, key, attempts: [...attempts.values()] }, pending: null };
   return step({
     name: 'retiring', data: d,
-    cancel: [...old.cancel, ...d0.retiring.map((a) => ({ kind: WORK.retireAttempt, key: retireAttemptKey(a.n) }))],
+    cancel: [...old.cancel, ...d0.retiring.map((a) => ({ kind: WORK.retireAttempt, key: a.key }))],
     writes: [{ type: 'unpublished', sessionId: d.sessionId }],
     work: [...old.work.filter((w) => w.kind !== WORK.retireAttempt), { kind: WORK.retire, key, input: {
       sessionId: d.sessionId, appId: d.appId, appSlug: d.appSlug, attempts: [...attempts.values()] as unknown as Json,
       runtimeName: d0.serving?.runtimeName ?? null, runtimeKind: d0.serving?.runtimeKind ?? null,
     },
-    // A prepare cancelled just now may still create something until its
-    // handler stops: the retirement runs after that.
-    ...(d0.preparing ? { notBefore: new Date(ctx.now.getTime() + deps.retireAfterMs) } : {}) }],
+    ...(waits ? { notBefore: new Date(ctx.now.getTime() + deps.retireAfterMs) } : {}) }],
     timer: null,
   });
 }
@@ -818,7 +856,7 @@ function workResult(name: Name, outcome: 'succeeded' | 'failed' | 'exhausted', d
       if (p.kind === WORK.retire) return retired(s, e, outcome, ctx, deps);
       // Everything else only has to happen; a retired attempt leaves the list.
       const d = s.data;
-      const retiring = p.kind === WORK.retireAttempt ? d.retiring.filter((a) => retireAttemptKey(a.n) !== p.workKey) : d.retiring;
+      const retiring = p.kind === WORK.retireAttempt ? d.retiring.filter((a) => a.key !== p.workKey) : d.retiring;
       return step({ name, data: { ...d, retiring } });
     },
   };
@@ -834,12 +872,13 @@ function prepared(s: Live, e: Event<any>, outcome: string, f: Facts, ctx: Transi
       containerId: r.containerId ?? null, imageRef: r.imageRef ?? null, buildRef: r.buildRef ?? null,
     };
     const previous = d0.serving && d0.serving.n !== served.n ? d0.serving : null;
-    const d: Data = { ...d0, preparing: null, serving: served, retiring: previous ? [...d0.retiring, previous] : d0.retiring };
+    const gone = previous ? retire(d0, previous, ctx, deps) : null;
+    const d: Data = { ...d0, preparing: null, serving: served, retiring: gone ? [...d0.retiring, gone.entry] : d0.retiring };
     const testing = f.session?.testing ?? { md: null, path: null };
     return startRun({ name: 'preparing', data: d }, d0.trigger, ctx, {
       writes: [{ type: 'published', sessionId: d.sessionId, served: served as unknown as Json }],
       work: [
-        ...(previous ? [retireWork(d, previous)] : []),
+        ...(gone ? [gone.work] : []),
         { kind: WORK.ready, key: `ready:${served.n}`, input: { sessionId: d.sessionId, head: served.head } },
       ],
       push: [
@@ -861,16 +900,17 @@ function prepared(s: Live, e: Event<any>, outcome: string, f: Facts, ctx: Transi
     ...d0, preparing: null, verdict: 'error', failure: detail, platformFault: !!r?.platformFault, streak: streakBefore + 1,
     firstFailureAt: d0.firstFailureAt ?? ctx.now.toISOString(),
     serving: servingRemoved ? null : d0.serving,
-    retiring: [...d0.retiring, attempt, ...(servingRemoved && d0.serving ? [d0.serving] : [])],
   };
+  const failedAttempt = retire(d0, attempt, ctx, deps, ended);
+  const removed = servingRemoved && d0.serving ? retire(d0, d0.serving, ctx, deps) : null;
+  d.retiring = [...d0.retiring, failedAttempt.entry, ...(removed ? [removed.entry] : [])];
   const writes: DomainWrite[] = [{
     type: 'prepareFailed', eventId: e.id, sessionId: d.sessionId, appId: d.appId, userId: d.userId, head: attempt.head,
     detail, infrastructure, platformFault: !!r?.platformFault, aboutMain: r?.aboutMain ?? null, sync: !!r?.sync,
     source: f.session?.source ?? null, prNumber: f.session?.prNumber ?? null,
   }];
   if (servingRemoved && d0.serving) writes.push({ type: 'unpublished', sessionId: d.sessionId });
-  const work: WorkRequest[] = [retireWork(d, attempt, ended ? new Date(ctx.now.getTime() + deps.retireAfterMs) : undefined)];
-  if (servingRemoved && d0.serving) work.push(retireWork(d, d0.serving));
+  const work: WorkRequest[] = [failedAttempt.work, ...(removed ? [removed.work] : [])];
   if (streakBefore === 0) work.push({ kind: WORK.stopped, key: `stopped:${attempt.n}`, input: { sessionId: d.sessionId } });
   return step({
     name: 'failed', data: d,
@@ -923,6 +963,10 @@ function ran(s: Live, e: Event<any>, outcome: string, f: Facts, ctx: TransitionC
     firstFailureAt: state === 'error' ? (d0.firstFailureAt ?? ctx.now.toISOString()) : null,
   };
   const results = blocked ? [] : ((r!.results ?? []) as unknown[]);
+  // The settlement is stored only while the row is open and its checks are
+  // about this run's head (check-store's fence); a verdict nobody stores sets
+  // nothing off.
+  const stores = !!f.session && OPEN.has(f.session.status) && f.session.checks.commitSha === run.head;
   const settle = {
     type: 'settled', ...base, state, detail, platformFault,
     results: results as Json, console: blocked ? null : (r!.console ?? null),
@@ -935,10 +979,12 @@ function ran(s: Live, e: Event<any>, outcome: string, f: Facts, ctx: TransitionC
     writes: [settle],
     work: [
       ...(ended ? [{ kind: WORK.cancel, key: `cancel:${run.key}`, input: { sessionId: d.sessionId, runId: run.key } }] : []),
-      { kind: WORK.publish, key: `publish:${run.key}`, input: { ...base, state, visuals: !!visuals } },
-      followUps(d, run, state),
+      ...(stores ? [
+        { kind: WORK.publish, key: `publish:${run.key}`, input: { ...base, state, visuals: !!visuals } },
+        followUps(d, run, state),
+      ] : []),
     ],
-    push: [checksReady(d, ctx, run.head, state, results), ...visualsReady],
+    push: stores ? [checksReady(d, ctx, run.head, state, results), ...visualsReady] : [],
     timer: state === 'error' ? errorTimer(d, f, deps, ctx, streakBefore) : null,
   });
 }

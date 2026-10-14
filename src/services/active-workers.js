@@ -50,26 +50,30 @@ function previews() {
   }
 }
 
+// Resolves whether an end must be recorded too: once the start may have
+// been appended (even if waiting for it failed), its end is, so a record
+// never outlives the work while this process lives.
 async function recordStart(sessionId, id, kind) {
   const platform = previews();
   if (!platform) return false;
   const presence = require('./process-presence');
   try {
     await presence.ensure({ databaseUrl: require('../db/pool').getPool({}).options.connectionString });
-    presence.hold();
-    try {
-      await platform.operationStarted({ sessionId, id, kind, holder: presence.holder() });
-    } catch (err) {
-      presence.release();
-      throw err;
-    }
-    return true;
   } catch (err) {
     require('./logger').warn('active-workers', 'Could not record work on a session; this process alone sees it', {
       sessionId, kind, err: err.message,
     });
     return false;
   }
+  presence.hold();
+  try {
+    await platform.operationStarted({ sessionId, id, kind, holder: presence.holder() });
+  } catch (err) {
+    require('./logger').warn('active-workers', 'Recording work on a session did not answer; its end is recorded anyway', {
+      sessionId, kind, err: err.message,
+    });
+  }
+  return true;
 }
 
 function recordEnd(sessionId, id, started) {
@@ -101,7 +105,10 @@ function close(sessionId, id) {
   recordEnd(sessionId, id, started);
 }
 
-const workerRecordId = (sessionId) => `worker:${sessionId}`;
+// The record of the worker's current turn on a session: a new one per
+// turn, so a later turn is recorded as its own (a record's request keys are
+// kept for the instance's life).
+const workerRecords = new Map(); // sessionId -> record id
 
 class ActiveWorkerSet extends Set {
   add(sessionId) {
@@ -109,7 +116,9 @@ class ActiveWorkerSet extends Set {
     const out = super.add(sessionId);
     if (!had) {
       notifySessionState(sessionId);
-      open(Number(sessionId), workerRecordId(sessionId), 'turn');
+      const id = `worker:${require('crypto').randomUUID()}`;
+      workerRecords.set(Number(sessionId), id);
+      open(Number(sessionId), id, 'turn');
     }
     return out;
   }
@@ -117,14 +126,16 @@ class ActiveWorkerSet extends Set {
   // add(), and wait until the record another process reads is written.
   async enter(sessionId) {
     this.add(sessionId);
-    await recorded.get(Number(sessionId))?.get(workerRecordId(sessionId));
+    await recorded.get(Number(sessionId))?.get(workerRecords.get(Number(sessionId)));
   }
 
   delete(sessionId) {
     const out = super.delete(sessionId);
     if (out) {
       notifySessionState(sessionId);
-      close(Number(sessionId), workerRecordId(sessionId));
+      const id = workerRecords.get(Number(sessionId));
+      workerRecords.delete(Number(sessionId));
+      if (id) close(Number(sessionId), id);
     }
     return out;
   }

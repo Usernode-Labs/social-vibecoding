@@ -1908,8 +1908,9 @@ async function waitForChecksSlot(pool, runsPool, {
 // instead of storing it, as { outcome: 'verdict' | 'deferred' | 'blocked',
 // ... }. The machine owns the seat, the verdict, the history, the
 // follow-ups and when to run at all; the run's media go to check_run_media
-// under its run id, published with the verdict. `workflow` is
-// { runId, signal }: the work item's key and its lease's abort signal.
+// under the run's key, published with the verdict. `workflow` is
+// { runId, runKey, signal }: this claim's id (its Jobs and check_runs row),
+// the work item's key, and its lease's abort signal.
 async function captureForSession(config, session, app, commitHash, stagingResult, opts = {}) {
   const lifecycle = require('./preview-lifecycle');
   const workflow = opts.workflow || null;
@@ -2166,7 +2167,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
         runId, sessionId: session.id, commitSha: commitHash || null,
         manifest: { launched: false, trigger: trigger || null, debugRunId, startedAt: runStartedAt,
           // A machine's run: its retry collects it; the harvest leaves it alone.
-          ...(workflow ? { workflow: true } : {}) },
+          ...(workflow ? { workflow: true, runKey: workflow.runKey } : {}) },
       };
       const place = checksQueue.isEnabled()
         ? await checksQueue.enqueue(runsPool, { ...provisional, queuedSince: opts.queuedSince || null })
@@ -2207,8 +2208,9 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     notifyChecksPending(session.id, commitHash, 'testing', trigger);
     // Shots belong to a completed run, not merely to this session id.
     // Clear the previous set before any slow browser/image work so a live
-    // client cannot keep presenting it as the revision now under test.
-    await resetShots(pool, session, repoOwner, repoName, send);
+    // client cannot keep presenting it as the revision now under test. (A
+    // machine's run: its settlement replaces them, in one transaction.)
+    if (!workflow) await resetShots(pool, session, repoOwner, repoName, send);
     // The build half is over: close its fifth step with the time the
     // hand-off took (and whether it was spent queued), and publish the
     // finished build so the card does not keep a step pulsing under
@@ -2680,7 +2682,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
           captureShards,
           // Where the harvest finds the unit suite when it is the early one.
           ...(earlyUnit ? { unitRunId: earlyUnit.runId } : {}),
-          ...(workflow ? { workflow: true } : {}),
+          ...(workflow ? { workflow: true, runKey: workflow.runKey } : {}),
         },
       });
       // This run is now the one the session waits on. The Jobs of its runs
@@ -2890,7 +2892,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       prodRunning, stagingOrigin, targets,
       testsCount: tests.length, dispatched, ceilingDropped: declared.ceilingDropped,
       stdout, stderr: captureStderr, runPartial, runPartialReason, unitOutcome,
-      collect: workflow ? { runId } : null,
+      collect: workflow ? { runId: workflow.runKey } : null,
     });
     traceStatus = settled.traceStatus;
     settledRun = true;
@@ -2949,7 +2951,9 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // Jobs cancelled (or is about to) — a harvester finding the row would
     // only re-drive a run something else already replaced.
     stopHeartbeat();
-    if (harvestable) await checkRuns.finish(operation?.cleanupPool || pool, runId);
+    // A machine's run that did not settle keeps its row: the retry of its
+    // work item collects its Jobs by it, and the machine's cancel clears it.
+    if (harvestable && (!workflow || settledRun)) await checkRuns.finish(operation?.cleanupPool || pool, runId);
     // ...and so do its Jobs, once it settled: with the verdict stored and the
     // manifest gone no harvest will read them, and the Job TTL would hold the
     // worker namespace's Job slots for another hour. A run that ended any

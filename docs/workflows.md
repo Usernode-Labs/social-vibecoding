@@ -730,9 +730,11 @@ serves and which revision the verdict is for are separate facts on the instance;
   (`preview.prepare`): its own checkout, database and env Secret, then the session's
   runtime updated in place, fenced by attempt number, the serving template restored if
   the rollout fails. A newer head cancels the obsolete build or run (the kernel's
-  `cancel`) and retires what it created. The checks run (`checks.run`) carries the work
-  item's key as its Jobs' run id: a retry after a lost claim collects those Jobs from the
-  cluster instead of running them again.
+  `cancel`) and retires what it created, never while it still serves (a build cancelled
+  after its deploy gives the Deployment back to the attempt that serves). Each claim of a
+  checks run (`checks.run`) gives its Jobs an id of its own, and its manifest names the
+  run: a retry after a lost claim collects the Jobs the earlier claim left on the cluster,
+  and runs again only when there is nothing to read.
 - **One transition settles a run:** the verdict, `test_results`, console, capture outcome,
   the run's media (held under its run id until then, `check_run_media`) and the app's
   check history (`rules/check-store.ts`), with the pushes browsers hear (`checks_ready`,
@@ -743,8 +745,9 @@ serves and which revision the verdict is for are separate facts on the instance;
   for a day for the platform's own fault). An admin can retry, retire, or end a build or
   run that never answers (`AdminEnd`).
 - **Retirement:** archive, merge, included changes and app deletion retire the preview
-  for good; idle and connection pressure only when nobody is working on the session.
-  Everything is deleted by identity.
+  for good; idle and connection pressure only when nobody is working on the session (a
+  refusal reads as busy to the sweep that asked). The runtime and its Secrets are deleted
+  by the identities read first, every attempt's database by name.
 - **Who is working on a session.** The instance is also its durable record: its own build
   or run while it is `preparing` or `checking`, and the operations old flows keep no
   record of (a sync with main or a dispatch starting its worker, an upload, a promote, a

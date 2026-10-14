@@ -494,17 +494,21 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null } = {}) 
 // nothing to read (no launched manifest, a Job gone, a blocking unit suite
 // that cannot be read): the retry then runs the checks again. Throws the
 // signal's reason when the work item is cancelled meanwhile.
-async function collectForWorkflow(config, pool, { runId, session, app, signal }) {
+async function collectForWorkflow(config, pool, { runKey, session, app, signal }) {
   const visuals = require('./visuals');
   const kubernetes = require('./kubernetes');
   const unitSuite = require('./unit-suite');
   const checkHistory = require('./check-history');
   const appManifest = require('./app-manifest');
   if (!isEnabled(config)) return null;
+  // The newest claim of the run that launched its Jobs.
   const { rows: [row] } = await pool.query(
-    'SELECT run_id, session_id, commit_sha, manifest, started_at FROM check_runs WHERE run_id = $1', [runId]);
+    `SELECT run_id, session_id, commit_sha, manifest, started_at FROM check_runs
+      WHERE session_id = $1 AND manifest->>'runKey' = $2 AND manifest->>'launched' = 'true'
+      ORDER BY started_at DESC LIMIT 1`, [session.id, runKey]);
   const manifest = row?.manifest || {};
-  if (!row || !manifest.launched || manifest.workflow !== true) return null;
+  if (!row || manifest.workflow !== true) return null;
+  const runId = row.run_id;
   const sessionId = Number(session.id);
   const commitSha = row.commit_sha || null;
   const jobs = await kubernetes.findCheckJobs(config, { sessionId, previewRunId: runId });
@@ -551,6 +555,8 @@ async function collectForWorkflow(config, pool, { runId, session, app, signal })
     const why = capture.state === 'timeout'
       ? 'capture Job still running past its deadline'
       : `capture Job failed${capture.stderr ? ` (${capture.stderr})` : ''}`;
+    kubernetes.deleteSettledCheckJobs(config, { sessionId, previewRunId: runId }).catch(() => {});
+    await checkRuns.finish(pool, runId);
     return { outcome: 'blocked', reason: why.slice(0, 300) };
   }
   const settled = await visuals.settleCaptureRun(config, pool, {
@@ -568,8 +574,11 @@ async function collectForWorkflow(config, pool, { runId, session, app, signal })
     ceilingDropped: Number(manifest.ceilingDropped) || 0,
     stdout: capture ? capture.stdout : '', stderr: capture ? (capture.stderr || '') : '',
     runPartial: capture ? !!capture.partial : false, runPartialReason: capture ? (capture.partialReason || '') : '',
-    unitOutcome, collect: { runId },
+    unitOutcome, collect: { runId: runKey },
   });
+  // Read out: the Jobs and the row go, as a live run's do once it settles.
+  kubernetes.deleteSettledCheckJobs(config, { sessionId, previewRunId: runId }).catch(() => {});
+  await checkRuns.finish(pool, runId);
   return settled.result;
 }
 

@@ -10,10 +10,14 @@
 //   hand-offs    to flows later steps migrate: the merge queue, the
 //                Homeroom bot's notes and before & after shots.
 //
-// Nothing here keeps state in process memory: what a handler needs is in
-// its input, in Postgres, or on the cluster. Every browser update is the
-// transitions' (src/workflow/pushes.ts).
+// The handlers keep no state of their own in process memory: what one needs
+// is in its input, in Postgres, or on the cluster. The hand-offs call into
+// flows that still do (the merge queue, the bot, a sync with main); they go
+// with the steps that migrate those. What browsers hear about a decision is
+// the transitions' (src/workflow/pushes.ts); the build and the run still
+// stream their own progress (checks_progress and its events) as they go.
 
+import { createHash } from 'node:crypto';
 import type { Json, Pool, WorkContext, WorkHandler } from '../kernel/index.ts';
 import { LeaseLost } from '../kernel/index.ts';
 import { legacy } from '../legacy.ts';
@@ -21,10 +25,10 @@ import { WORK } from './machine.ts';
 
 interface Deps { config: any; pool: Pool }
 
-// How long a prepare or a checks run holds its lease between renewals, and
-// so how long a cancelled one can keep going before its signal aborts (the
-// machine waits longer than this before it retires a cancelled attempt's
-// database, and before it closes a retirement).
+// How long a prepare or a checks run holds its lease between renewals. A
+// cancelled one learns it at its next checkpoint or renewal; the machine
+// waits longer than a lease before it retires a cancelled attempt or runs a
+// retirement, and nothing is dropped while it still serves (below).
 export const PREPARE_LEASE_MS = 60000;
 // Retries after a lost lease, never after a failure: a build that fails is
 // the error lane's, as on [main].
@@ -40,6 +44,16 @@ const repoOf = (url: unknown) => {
   return m ? { owner: m[1]!, repo: m[2]! } : null;
 };
 const cancelled = (ctx: WorkContext, err: unknown) => ctx.signal.aborted || err instanceof LeaseLost;
+
+// The id one claim of a checks run gives its Jobs and its check_runs row (a
+// UUID, as that table's key is): one per claim, so a claim that runs again
+// never meets the Jobs of the one before under the same names. The run
+// itself is known by the work item's key (`runKey`), which its manifest
+// carries and its media are held under.
+export function claimRunId(sessionId: number, runKey: string, claim: number): string {
+  const h = createHash('sha256').update(`preview-run:${sessionId}:${runKey}:${claim}`).digest('hex');
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-${((parseInt(h[16]!, 16) & 3) | 8).toString(16)}${h.slice(17, 20)}-${h.slice(20, 32)}`;
+}
 
 export function previewServices({ config, pool }: Deps): Record<string, WorkHandler> {
   const staging = () => legacy('services/staging');
@@ -59,6 +73,39 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
   // The session's runtime on Kubernetes: one name per session, every attempt.
   const runtimeName = (appId: number, sessionId: number) =>
     kubernetes().appResourceName({ id: appId }, 'staging', sessionId);
+  // Whether attempt n still serves the session's preview: its env Secret in
+  // the live pod template (Kubernetes), its number on the container (Docker).
+  const serves = async (input: { sessionId: number; appId: number; appSlug?: string; n: number }) => {
+    if (runtimeMode() === 'kubernetes') {
+      return kubernetes().previewServesAttempt(config, runtimeName(input.appId, input.sessionId), input.n);
+    }
+    if (!input.appSlug) return false;
+    const c = await legacy('services/docker').inspectContainer(`usernode-staging-${input.appSlug}--${input.sessionId}`).catch(() => null);
+    return Number(c?.labels?.[kubernetes().PREVIEW_ATTEMPT_ANNOTATION]) === input.n;
+  };
+  // Every claim of a run (its check_runs rows, by the run's key): their Jobs
+  // cancelled, finished or not, and their rows gone.
+  const clearRun = async (sessionId: number, runKey: string) => {
+    const { rows } = await pool.query(
+      `SELECT run_id FROM check_runs WHERE session_id = $1 AND manifest->>'runKey' = $2`, [sessionId, runKey]);
+    for (const r of rows) {
+      if (config.captureRuntime === 'kubernetes') {
+        await kubernetes().cancelPreviewChecks(config, sessionId, r.run_id);
+        await kubernetes().deleteRunCheckJobs(config, { sessionId, previewRunId: r.run_id });
+      }
+      await legacy('services/check-runs').finish(pool, r.run_id);
+    }
+  };
+  // An attempt the machine cancelled after it had written the session's
+  // Deployment gives it back to the attempt that serves; its database goes
+  // only once it serves nothing.
+  const undo = async (input: any) => {
+    if (runtimeMode() === 'kubernetes') {
+      await kubernetes().restorePreviewAttempt(config, runtimeName(input.appId, input.sessionId), input.n,
+        input.serving?.n ?? null).catch(() => null);
+    }
+    if (!await serves(input).catch(() => true)) await dbManager().dropDatabase(input.db).catch(() => {});
+  };
 
   return {
     // Build attempt n of the head into its own checkout, database and env
@@ -77,6 +124,9 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
           checkpoint: (v: Json) => ctx.checkpoint(v) };
         try {
           const built = await staging().prepareAttempt(config, row, a, input.head, attempt);
+          // Deployed: still this machine's attempt? A cancel that came during
+          // the rollout is seen here, and the deploy undone.
+          await ctx.checkpoint({ step: 'deployed', db: input.db });
           await staging().verifyStagingEdge(row, built.hostname, built.stagingUrl).catch(() => null);
           return {
             ok: true, url: built.stagingUrl, runtimeKind: built.runtimeKind, runtimeName: built.runtimeName,
@@ -88,7 +138,7 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
             // cancel (the machine's retirement covers everything before). A
             // lost lease authorizes nothing: a retry of this same attempt
             // may be using the database right now.
-            if (await cancelledByMachine(ctx.workId)) await dbManager().dropDatabase(input.db).catch(() => {});
+            if (await cancelledByMachine(ctx.workId)) await undo({ ...input, appSlug: a.slug });
             throw err;
           }
           // A failure seen by a claim that is no longer the live one (its
@@ -124,32 +174,27 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
         if (!row || !a) return { outcome: 'blocked', reason: 'The proposal or its app no longer exists' };
         if (attempt > 1) {
           const collected = await legacy('services/check-harvest')
-            .collectForWorkflow(config, pool, { runId: input.runId, session: row, app: a, signal });
+            .collectForWorkflow(config, pool, { runKey: input.runId, session: row, app: a, signal });
           if (collected) return collected as Json;
-          // Nothing to read: what the earlier claim left goes, and the run
-          // starts over under the same id.
-          if (config.captureRuntime === 'kubernetes') {
-            await kubernetes().cancelPreviewChecks(config, input.sessionId, input.runId);
-          }
-          await legacy('services/check-runs').finish(pool, input.runId);
+          // Nothing to read: what the earlier claims left goes, and the run
+          // starts over under this claim's own id.
+          await clearRun(input.sessionId, input.runId);
         }
         const stagingResult = { runtimeName: input.runtimeName, runtimeKind: input.runtimeKind, stagingUrl: input.url, timings: null };
         const result = await visuals().captureForSession(config, row, a, input.head, stagingResult, {
-          trigger: input.trigger, force: true, workflow: { runId: input.runId, signal },
+          trigger: input.trigger, force: true,
+          workflow: { runId: claimRunId(input.sessionId, input.runId, attempt), runKey: input.runId, signal },
         });
         return (result ?? { outcome: 'blocked', reason: 'The checks run produced no result' }) as Json;
       },
     },
 
-    // A cancelled run's Jobs and its place in the checks queue, by its run
-    // id: never the session's others.
+    // A cancelled run's Jobs and its place in the checks queue, by its own
+    // ids (every claim's): never the session's others.
     [WORK.cancel]: {
       maxAttempts: 5,
       async run({ input }): Promise<Json> {
-        if (config.captureRuntime === 'kubernetes') {
-          await kubernetes().cancelPreviewChecks(config, input.sessionId, input.runId);
-        }
-        await legacy('services/check-runs').finish(pool, input.runId);
+        await clearRun(input.sessionId, input.runId);
         return { cancelled: true };
       },
     },
@@ -193,6 +238,9 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
       maxAttempts: 5,
       leaseMs: 120000,
       async run({ input }): Promise<Json> {
+        // Never what serves: a cancelled attempt whose deploy could not be
+        // given back still has the live pods on its database and Secret.
+        if (await serves(input)) throw new Error(`Attempt ${input.n} still serves the preview; not retired`);
         await dbManager().dropDatabase(input.db, { strict: true });
         if (runtimeMode() === 'kubernetes') {
           const k = kubernetes();

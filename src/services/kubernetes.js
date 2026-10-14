@@ -1253,11 +1253,18 @@ async function deployApplication(config, {
       // recoverable rollout; previews are disposable and are rebuilt on retry.
       // An attempt deletes only the Deployment it wrote, by its UID.
       const own = attempt ? await readFencedDeployment(apps, namespace, name, attempt).catch(() => null) : null;
-      if (!attempt || own) await deleteApplication(config, name, own ? { uid: own.metadata.uid } : {}).catch((cleanupErr) => {
-        log.warn('kubernetes', 'Failed preview cleanup failed', {
-          namespace, name, err: cleanupErr.message,
+      if (!attempt || own) {
+        const deleted = await deleteApplication(config, name, own ? { uid: own.metadata.uid } : {}).then(() => true, (cleanupErr) => {
+          log.warn('kubernetes', 'Failed preview cleanup failed', {
+            namespace, name, err: cleanupErr.message,
+          });
+          return false;
         });
-      });
+        // An earlier attempt served from this Deployment and nothing of its
+        // template was left to give back: what served is gone too, and the
+        // preview machine must hear it (as the Docker replacement says).
+        if (deleted && attempt && servingAttempt != null) err.servingRemoved = true;
+      }
     }
     throw err;
   }
@@ -1337,6 +1344,39 @@ async function restoreTemplate(apps, namespace, name, attempt, servingSecret, pr
       if (!isConflict(err) || i >= 3) throw err;
     }
   }
+}
+
+// Whether the preview's live pod template takes its env from attempt n's
+// Secret: the attempt still serves (or is rolling out), so its database
+// and Secret must stay. A Deployment that is gone serves nothing.
+async function previewServesAttempt(config, name, n) {
+  const { apps } = getClients();
+  let current;
+  try { current = await apps.readNamespacedDeployment({ name, namespace: config.kubernetes.appNamespace }); }
+  catch (err) { if (isNotFound(err)) return false; throw err; }
+  const secret = attemptSecretName(name, n);
+  return (current.spec?.template?.spec?.containers || [])
+    .some((c) => (c.envFrom || []).some((e) => e.secretRef?.name === secret));
+}
+
+// A preview attempt the machine cancelled after it had written the
+// Deployment gives it back: to the template of the attempt that serves
+// (`servingN`), or, when nothing served before it, its own Deployment is
+// deleted by its UID. Never once a newer attempt owns the Deployment.
+// Answers 'restored', 'deleted', 'superseded' or 'missing'.
+async function restorePreviewAttempt(config, name, attempt, servingN) {
+  const { apps } = getClients();
+  const namespace = config.kubernetes.appNamespace;
+  let own;
+  try { own = await readFencedDeployment(apps, namespace, name, attempt); }
+  catch (err) { if (err.code === 'attempt_superseded') return 'superseded'; throw err; }
+  if (!own) return 'missing';
+  if (servingN != null) {
+    const restored = await restoreTemplate(apps, namespace, name, attempt, attemptSecretName(name, servingN), null);
+    if (restored !== 'missing') return restored;
+  }
+  await deleteApplication(config, name, { uid: own.metadata.uid });
+  return 'deleted';
 }
 
 function terminalPodFailureDetails(pods, { imageRef, environmentChecksum, container = 'app' } = {}) {
@@ -3257,6 +3297,8 @@ async function execInWorker(config, runtimeName, command, stdinText = null, { ti
 }
 
 module.exports = {
+  previewServesAttempt,
+  restorePreviewAttempt,
   dnsName, withSuffix, labels, appResourceName, createBuild, buildReadsBelowSourceRoot,
   deployApplication, getApplicationStatus, inspectApplication,
   getApplicationLogs, getDebugLogs, restartApplication, deleteApplication, deleteBuilds, deleteFailedBuilds, ensureWorker,

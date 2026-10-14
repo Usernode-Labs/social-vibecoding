@@ -234,8 +234,9 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
     services = { ...services, ...appDeliveryServices(deps) };
   }
   if (withPreviews) {
-    // A cancelled prepare stops at its next lease renewal (a third of its
-    // lease); its attempt is retired, and a retirement runs, after that.
+    // A cancelled prepare learns it at its next checkpoint or lease renewal;
+    // its attempt is retired, and a retirement runs, a lease and more later
+    // (and never while it serves: services.ts).
     previews = preview({ maxRetries: config.checkMaxAutoRetries ?? 6, retireAfterMs: PREPARE_LEASE_MS + 30000 });
     previewsAdmitted = previewsOn;
     machines.push(previews);
@@ -573,8 +574,9 @@ export async function requestRecheck(r: { sessionId: number; appId: number; reas
     actor: r.actor ?? undefined, appId: r.appId, waitMs: 2000 });
 }
 
-export async function checksSkipped(sessionId: number, appId: number, head: string, reason: string): Promise<EventOutcome> {
-  return runtime!.appendAndWait(previews!, previewKey(sessionId), { type: 'ChecksSkipped', payload: { sessionId, head, reason } },
+export async function checksSkipped(sessionId: number, appId: number, head: string, reason: string,
+  expected: string | null = null): Promise<EventOutcome> {
+  return runtime!.appendAndWait(previews!, previewKey(sessionId), { type: 'ChecksSkipped', payload: { sessionId, head, reason, expected } },
     { requestKey: `skipped:${head}:${randomUUID()}`, source: sys('checks-skipped'), appId, waitMs: 2000 });
 }
 
@@ -590,16 +592,17 @@ export async function conflictResolved(sessionId: number, appId: number, head: s
 
 export async function previewLost(sessionId: number, appId: number, attempt: number, detail: string | null): Promise<number> {
   return runtime!.append(previews!, previewKey(sessionId), { type: 'PreviewLost', payload: { attempt, detail } },
-    { requestKey: `lost:${attempt}`, source: sys('preview-lost'), appId });
+    { requestKey: await versioned(sessionId, `lost:${attempt}`), source: sys('preview-lost'), appId });
 }
 
-// Retire a session's preview. Answers false when the machine does not hold
-// the session (the caller retires it on [main]'s path).
-export async function retirePreview(sessionId: number, appId: number, reason: string, terminal: boolean): Promise<boolean> {
-  if (!await previewHeld(sessionId)) return false;
-  await runtime!.append(previews!, previewKey(sessionId), { type: 'RetireRequested', payload: { reason, terminal } },
-    { requestKey: await versioned(sessionId, `retire:${reason}`), source: sys(reason), appId });
-  return true;
+// Retire a session's preview. Answers null when the machine does not hold
+// the session (the caller retires it on [main]'s path), else the outcome:
+// a non-terminal retirement is refused while someone works on the session,
+// while it is under review, or while it builds or checks.
+export async function retirePreview(sessionId: number, appId: number, reason: string, terminal: boolean): Promise<EventOutcome | null> {
+  if (!await previewHeld(sessionId)) return null;
+  return runtime!.appendAndWait(previews!, previewKey(sessionId), { type: 'RetireRequested', payload: { reason, terminal } },
+    { requestKey: await versioned(sessionId, `retire:${reason}`), source: sys(reason), appId, waitMs: 2000 });
 }
 
 // Who is working on a session: an old flow's operation starts or ends
@@ -608,8 +611,9 @@ export async function retirePreview(sessionId: number, appId: number, reason: st
 // goes on.
 export async function operationStarted(o: { sessionId: number; id: string; kind: string; holder: string }): Promise<void> {
   if (!previewsEnabled()) return;
+  const { rows: [s] } = await kernelPool!.query('SELECT app_id FROM chat_sessions WHERE id = $1', [o.sessionId]);
   await runtime!.appendAndWait(previews!, previewKey(o.sessionId), { type: 'OperationStarted', payload: o },
-    { requestKey: `op:${o.id}:start`, source: sys('operation'), waitMs: 2000 });
+    { requestKey: `op:${o.id}:start`, source: sys('operation'), appId: s?.app_id ?? null, waitMs: 2000 });
 }
 export async function operationEnded(o: { sessionId: number; id: string }): Promise<void> {
   if (!previewsEnabled()) return;

@@ -98,8 +98,9 @@ async function markInterruptedBuilds(pool, sessionIds) {
 // its row in the checks queue (services/checks-queue.js) is the queue's and,
 // if its process died, the harvest's. Only a 'queued' session with no row
 // left in line is overdue, by the same clock as any other.
-// A session the preview machine holds is left out: its runs are alive while
-// their work leases are, and its errors run again on its own timer.
+// A session the preview machine is building or checking is left out: its
+// work is alive while its lease is, and its errors run again on its own
+// timer.
 async function findStuckCheckSessions({
   pool,
   staleMs = checksStaleMs(),
@@ -140,9 +141,13 @@ async function findStuckCheckSessions({
   // keeps a future query refactor from widening recovery to ordinary sessions.
   const inScope = rows.filter(isStuckCheckRecoveryScope);
   if (!inScope.length || !workflow().enabled()) return { rows: inScope };
+  // Left to the machine only while it builds or checks the session: a
+  // 'pending' from before it held the row is still re-driven here (and the
+  // recheck is then the machine's).
   const { rows: held } = await pool.query(
-    `SELECT key FROM wf_instances
-      WHERE machine = 'preview' AND key = ANY($1::text[]) AND state NOT IN ('retired', 'detached', '(none)')`,
+    `SELECT DISTINCT key FROM wf_work
+      WHERE machine = 'preview' AND key = ANY($1::text[]) AND kind IN ('preview.prepare', 'checks.run')
+        AND status IN ('queued', 'running', 'reported')`,
     [inScope.map((r) => `session:${r.id}`)]);
   const machines = new Set(held.map((h) => h.key));
   return { rows: inScope.filter((r) => !machines.has(`session:${r.id}`)) };

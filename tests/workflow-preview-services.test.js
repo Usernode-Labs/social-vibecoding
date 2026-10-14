@@ -16,7 +16,7 @@ const stub = (path, exports) => {
 };
 
 const calls = [];
-const state = { build: null, present: [], exists: new Set() };
+const state = { build: null, present: [], exists: new Set(), serving: new Set() };
 const realStaging = require('../src/services/staging');
 stub('../src/services/staging', {
   ...realStaging,
@@ -39,6 +39,13 @@ stub('../src/services/kubernetes', {
   async deleteApplication(config, name, opts) { calls.push(['delete', name, opts.identity, opts.secrets]); },
   async previewResourcesPresent() { return state.present; },
   async deleteSecret(config, name) { calls.push(['delete-secret', name]); },
+  async deleteRunCheckJobs(config, { previewRunId }) { calls.push(['delete-jobs', previewRunId]); return 0; },
+  async previewServesAttempt(config, name, n) { return state.serving.has(n); },
+  async restorePreviewAttempt(config, name, n, servingN) {
+    calls.push(['restore', name, n, servingN]);
+    if (servingN != null) { state.serving.delete(n); state.serving.add(servingN); }
+    return 'restored';
+  },
 });
 stub('../src/services/application-runtime', { ...require('../src/services/application-runtime'), mode: () => 'kubernetes' });
 const syncs = [];
@@ -49,7 +56,7 @@ stub('../src/services/boot-failure-sync', {
 const collected = { next: null };
 stub('../src/services/check-harvest', {
   ...require('../src/services/check-harvest'),
-  async collectForWorkflow(config, pool, o) { calls.push(['collect', o.runId]); return collected.next; },
+  async collectForWorkflow(config, pool, o) { calls.push(['collect', o.runKey]); return collected.next; },
 });
 stub('../src/services/check-runs', {
   ...require('../src/services/check-runs'),
@@ -69,8 +76,10 @@ const { WORK } = require('../src/workflow/preview/machine.ts');
 const { LeaseLost } = require('../src/workflow/kernel/index.ts');
 
 const work = { cancelled: true };
+const runs = { rows: [] };
 const pool = { async query(text) {
   if (/FROM wf_work WHERE id/.test(text)) return { rows: [{ cancelled: work.cancelled }] };
+  if (/FROM check_runs WHERE session_id/.test(text)) return { rows: runs.rows };
   if (/FROM chat_sessions cs JOIN apps/.test(text)) return { rows: [{ id: 5, app_id: 2, app_slug: 'shop', repo_url: '' }] };
   if (/FROM apps WHERE id/.test(text)) return { rows: [{ id: 2, slug: 'shop' }] };
   return { rows: [] };
@@ -119,6 +128,27 @@ test('a cancelled attempt drops the database it was building and reports nothing
   assert.deepEqual(calls.filter((c) => c[0] === 'drop'), [['drop', 'app_shop_staging_s5_444444']]);
 });
 
+test('an attempt cancelled after its deploy gives the Deployment back before its database goes (review finding)', async () => {
+  calls.length = 0;
+  work.cancelled = true;
+  state.build = { stagingUrl: 'https://shop--s5.apps', hostname: 'shop--s5.apps', runtimeKind: 'kubernetes',
+    runtimeName: 'sv-preview-2-s5', containerId: null, imageRef: 'img@sha256:5', buildRef: 'b5' };
+  state.serving = new Set([5]);   // its rollout went through: the live pods use attempt 5
+  const input = { sessionId: 5, appId: 2, n: 5, head, db: 'app_shop_staging_s5_555555', serving: { n: 4 } };
+  let seen = 0;
+  const checkpoint = async () => { if (++seen > 1) throw new LeaseLost(); };   // cancelled during the rollout
+  await assert.rejects(handlers[WORK.prepare].run(ctx(input, { workId: 'w5', checkpoint })), LeaseLost);
+  const order = calls.filter((c) => c[0] === 'restore' || c[0] === 'drop').map((c) => c[0]);
+  assert.deepEqual(order, ['restore', 'drop'], 'given back to attempt 4 first, then dropped');
+  // Retiring an attempt that still serves (the give-back failed) drops nothing.
+  calls.length = 0;
+  state.serving = new Set([5]);
+  await assert.rejects(handlers[WORK.retireAttempt].run(ctx({ sessionId: 5, appId: 2, appSlug: 'shop', n: 5, db: 'app_shop_staging_s5_555555' })),
+    /still serves/);
+  assert.deepEqual(calls.filter((c) => c[0] === 'drop'), []);
+  state.serving = new Set();
+});
+
 test('a claim that only lost its lease deletes nothing: a retry of the same attempt may be using it (review finding)', async () => {
   calls.length = 0;
   work.cancelled = false;
@@ -128,29 +158,40 @@ test('a claim that only lost its lease deletes nothing: a retry of the same atte
   work.cancelled = true;
 });
 
-test('a retried checks run collects what the earlier claim left, or starts over under the same id', async () => {
+test('each claim of a checks run has an id of its own; a retry collects what the earlier claim left, or starts over', async () => {
+  const { claimRunId } = require('../src/workflow/preview/services.ts');
+  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+  const first = claimRunId(5, 'run-1-7', 1);
+  const second = claimRunId(5, 'run-1-7', 2);
+  assert.match(first, UUID, 'a UUID: check_runs.run_id is one');
+  assert.notEqual(first, second);
+  assert.equal(claimRunId(5, 'run-1-7', 1), first, 'and the same for the same claim');
   const input = { sessionId: 5, appId: 2, n: 1, head, runId: 'run-1-7', trigger: 'commit-push',
     runtimeName: 'sv-preview-2-s5', runtimeKind: 'kubernetes', url: 'https://shop--s5.apps' };
   calls.length = 0;
   assert.deepEqual(await handlers[WORK.run].run(ctx(input)), { outcome: 'verdict', state: 'passing' });
-  assert.deepEqual(calls, [['capture', head, 'sv-preview-2-s5', 'run-1-7']], 'a first claim runs, under the work item\'s key');
+  assert.deepEqual(calls, [['capture', head, 'sv-preview-2-s5', first]], 'a first claim runs under its own id');
   calls.length = 0;
   collected.next = { outcome: 'verdict', state: 'failing' };
   assert.deepEqual(await handlers[WORK.run].run(ctx(input, { attempt: 2 })), { outcome: 'verdict', state: 'failing' });
   assert.deepEqual(calls, [['collect', 'run-1-7']], 'its Jobs collected, nothing run again');
   calls.length = 0;
   collected.next = null;
+  runs.rows = [{ run_id: first }];
   await handlers[WORK.run].run(ctx(input, { attempt: 2 }));
-  assert.deepEqual(calls, [['collect', 'run-1-7'], ['cancel-jobs', 5, 'run-1-7'], ['finish', 'run-1-7'],
-    ['capture', head, 'sv-preview-2-s5', 'run-1-7']], 'nothing to read: what was left goes, and it runs again');
+  assert.deepEqual(calls, [['collect', 'run-1-7'], ['cancel-jobs', 5, first], ['delete-jobs', first], ['finish', first],
+    ['capture', head, 'sv-preview-2-s5', second]], 'nothing to read: what the earlier claim left goes, and it runs again');
   calls.length = 0;
+  runs.rows = [{ run_id: first }, { run_id: second }];
   await handlers[WORK.cancel].run(ctx({ sessionId: 5, runId: 'run-1-7' }));
-  assert.deepEqual(calls, [['cancel-jobs', 5, 'run-1-7'], ['finish', 'run-1-7']], 'by its own id, never session-wide');
+  assert.deepEqual(calls, [['cancel-jobs', 5, first], ['delete-jobs', first], ['finish', first],
+    ['cancel-jobs', 5, second], ['delete-jobs', second], ['finish', second]], 'every claim of the run, never the session\'s others');
+  runs.rows = [];
 });
 
 test('retiring an attempt drops its database and its own Secret', async () => {
   calls.length = 0;
-  await handlers[WORK.retireAttempt].run(ctx({ sessionId: 5, appId: 2, n: 2, db: 'app_shop_staging_s5_222222' }));
+  await handlers[WORK.retireAttempt].run(ctx({ sessionId: 5, appId: 2, appSlug: 'shop', n: 2, db: 'app_shop_staging_s5_222222' }));
   assert.deepEqual(calls, [['drop', 'app_shop_staging_s5_222222'], ['delete-secret', 'sv-preview-2-s5-env-a2']]);
 });
 

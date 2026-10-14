@@ -68,7 +68,8 @@ async function request({ pool, session, head = null, reason, actor = null }) {
 // Run the checks again. A session the machine does not hold yet is enrolled
 // first with its head, so the recheck has something to run against.
 async function recheck({ pool, session, reason, trigger = null, actor = null, system = false }) {
-  if (!await held(session.id)) {
+  const instance = await held(session.id) ? await platform().previewInstance(Number(session.id)) : null;
+  if (!instance?.data?.head) {
     await revision({ pool, session, head: session.checks_commit_sha, source: 'recheck', trigger });
   }
   return platform().requestRecheck({
@@ -80,7 +81,8 @@ async function recheck({ pool, session, reason, trigger = null, actor = null, sy
 async function skipped({ session, head, reason }) {
   const resolved = exact(head) || exact(session.checks_commit_sha);
   if (!resolved) return false;
-  await platform().checksSkipped(Number(session.id), Number(session.app_id), resolved, reason);
+  await platform().checksSkipped(Number(session.id), Number(session.app_id), resolved, reason,
+    exact(session.checks_commit_sha));
   return true;
 }
 
@@ -96,10 +98,13 @@ async function clear({ session, reason }) {
 
 // Retire a session's preview: terminal for a row that has left review
 // (archived, merged, deleted), otherwise an idle or pressure reclaim.
-// Answers false when the machine does not hold the session.
+// Answers null when the machine does not hold the session, else whether it
+// took the retirement ('accepted' or 'pending'; a refusal says why).
 async function retire({ session, reason, terminal }) {
-  if (!enabled()) return false;
-  return platform().retirePreview(Number(session.id), Number(session.app_id), reason, !!terminal);
+  if (!enabled()) return null;
+  const out = await platform().retirePreview(Number(session.id), Number(session.app_id), reason, !!terminal);
+  if (!out) return null;
+  return { taken: out.status === 'accepted' || out.status === 'pending' || out.status === 'replayed', reason: out.reason || null };
 }
 
 // An observer found the serving runtime gone: the machine rebuilds it.

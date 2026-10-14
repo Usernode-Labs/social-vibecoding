@@ -739,7 +739,10 @@ process also holds one more database connection, for its presence lock.
 holds back to the old paths (`Detach`): its work is cancelled, what it built stays (its
 databases follow the old naming, so the orphan sweep collects them once unlinked), and the
 old paths own the sessions again. Turning it on again later adopts each session from its
-row.
+row. The old paths delete a preview's `-env` Secret only: a held session's `-env-a<n>`
+Secrets stay until the machine retires the preview again, or are deleted by hand: list
+them with `kubectl -n social-apps get secrets -l social.usernode.io/session-id=<id>` and
+delete only the `-env-a<n>` ones (the `-env` Secret is the old paths' preview's).
 
 ## Read-only inventory and logs
 

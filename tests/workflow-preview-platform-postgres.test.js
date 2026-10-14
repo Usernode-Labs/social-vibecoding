@@ -120,7 +120,7 @@ test('previews through the platform runtime', { timeout: 120000 }, async (t) => 
     await pool.query(`UPDATE chat_sessions SET last_activity_at = NOW() WHERE id = $1`, [s.id]);
     const other = await proposal();
     await pool.query(`UPDATE chat_sessions SET staging_url = 'https://legacy' WHERE id = $1`, [other.id]);
-    assert.equal(await platform.retirePreview(other.id, app.id, 'archived', true), false, 'not held: the caller retires it the old way');
+    assert.equal(await platform.retirePreview(other.id, app.id, 'archived', true), null, 'not held: the caller retires it the old way');
     await quiet();
   });
 

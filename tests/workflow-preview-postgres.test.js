@@ -195,7 +195,7 @@ test('preview machine against the full PostgreSQL schema', { timeout: 120000 }, 
     const prepares = await workOf(s, WORK.prepare);
     assert.deepEqual(prepares.map((w) => [w.work_key, w.status, w.result]),
       [['prepare:1', 'settled', { cancelled: true }], ['prepare:2', 'queued', null]]);
-    assert.deepEqual((await workOf(s, WORK.retireAttempt)).map((w) => [w.work_key, w.input.n]), [['retire-attempt:1', 1]]);
+    assert.deepEqual((await workOf(s, WORK.retireAttempt)).map((w) => [w.work_key.replace(/:v\d+$/, ''), w.input.n]), [['retire-attempt:1', 1]]);
     await settle();
     assert.equal((await instance(s)).state, 'settled');
     assert.equal((await row(s.id)).staging_commit_sha, SHA('b'));
@@ -487,6 +487,7 @@ test('preview machine against the full PostgreSQL schema', { timeout: 120000 }, 
     work.answer.set(WORK.run, verdict('passing'));
     const r = await row(s.id);
     assert.equal(r.check_state, 'pending', 'the stale verdict was not stored');
+    assert.equal((await workOf(s, WORK.followUps)).length, 1, 'and set nothing off (review finding)');
     assert.equal((await pool.query('SELECT count(*)::int AS n FROM session_visuals WHERE session_id = $1', [s.id])).rows[0].n, 1,
       'nor its media');
     assert.equal((await pool.query('SELECT count(*)::int AS n FROM check_run_media WHERE session_id = $1', [s.id])).rows[0].n, 0);
@@ -569,5 +570,91 @@ test('preview machine against the full PostgreSQL schema', { timeout: 120000 }, 
     assert.ok(i.deadline_at, 'still in the lane');
     assert.equal((await row(s.id)).check_error_platform, true);
     work.answer.set(WORK.prepare, prepareOk);
+  });
+  await t.test('P18 an operation on a session with a serving preview enrols it as it stands, without starting anything', async () => {
+    const s = await proposal(await app(), { status: 'active', extra: {
+      staging_url: 'https://legacy', staging_runtime_name: 'sv-preview-legacy', staging_runtime_kind: 'kubernetes',
+      staging_commit_sha: SHA('a'), checks_commit_sha: SHA('a'), check_state: 'passing' } });
+    const live = await pool.connect();
+    await live.query('SELECT pg_advisory_lock($1, hashtext($2) & 2147483647)', [PROCESS_PRESENCE_LOCK, 'p18-host']);
+    try {
+      const id = await send(s, 'OperationStarted', { sessionId: s.id, id: 'op:p18', kind: 'turn', holder: 'p18-host' });
+      await rt.drain();
+      assert.equal((await outcome(id)).state_after, 'settled');
+      const i = await instance(s);
+      assert.deepEqual([i.data.serving.n, i.data.verdict, i.data.head], [0, 'passing', SHA('a')]);
+      assert.equal((await workOf(s)).length, 0, 'nothing built or run');
+      const same = await submit(s, SHA('a'));
+      await rt.drain();
+      assert.equal((await outcome(same)).reason, 'same_head', 'the head it serves, with its verdict, joins');
+      await send(s, 'OperationEnded', { id: 'op:p18' });
+      await rt.drain();
+      const idle = await send(s, 'RetireRequested', { reason: 'idle', terminal: false });
+      await rt.drain();
+      assert.equal((await outcome(idle)).state_after, 'retiring', 'an idle reclaim can retire it');
+      await settle();
+    } finally {
+      live.release(true);
+    }
+  });
+
+  await t.test('P19 a retirement retried by an admin still covers every attempt it had', async () => {
+    const s = await proposal(await app(), { status: 'active' });
+    await submit(s, SHA('1'));
+    await settle();
+    const release = hold(WORK.prepare);
+    await submit(s, SHA('2'));
+    await rt.drain();
+    const running = rt.runServices();
+    await new Promise((r) => setTimeout(r, 50));
+    work.answer.set(WORK.retire, { closed: false });
+    await pool.query(`UPDATE chat_sessions SET status = 'archived' WHERE id = $1`, [s.id]);
+    await send(s, 'RetireRequested', { reason: 'archived', terminal: true });
+    await rt.drain();
+    release();
+    await running;
+    await settle();
+    let i = await instance(s);
+    assert.equal(i.state, 'retiring');
+    assert.ok(i.data.exit.failed);
+    const first = (await workOf(s, WORK.retire))[0].input.attempts.map((a) => a.n).sort();
+    work.answer.set(WORK.retire, { closed: true });
+    await send(s, 'AdminRetry', {}, { kind: 'admin' });
+    await settle();
+    const retires = await workOf(s, WORK.retire);
+    assert.deepEqual(retires[1].input.attempts.map((a) => a.n).sort(), first, 'the same attempts, the failed one\'s included');
+    i = await instance(s);
+    assert.equal(i.state, 'retired');
+  });
+
+  await t.test('P20 a retirement right after a cancelled build waits for it to stop', async () => {
+    // The transition itself, with a lease to wait for: a prepare cancelled by
+    // ChecksCleared left its attempt in `retiring`; a terminal retirement
+    // then takes it over, and runs only after that prepare can have stopped.
+    const m = preview({ maxRetries: 6, retireAfterMs: 90000 });
+    const now = new Date('2026-10-14T12:00:00Z');
+    const ctx = { machine: MACHINE, key: 'session:1', appId: 1, version: 7, now };
+    const data = {
+      sessionId: 1, appId: 1, appSlug: 'a', userId: null, seed: 1, head: SHA('3'), trigger: null, last: 1,
+      preparing: null, serving: null, run: null, verdict: null, failure: null, platformFault: false, streak: 0,
+      firstFailureAt: null, episode: 0, exit: null, pending: null, closedAt: null, operations: [],
+      retiring: [{ n: 1, head: SHA('3'), db: 'db1', key: 'retire-attempt:1:v5', cancelled: true }],
+    };
+    const facts = { session: { status: 'archived' }, app: { id: 1 }, alive: new Set() };
+    const event = { id: 9, type: 'RetireRequested', payload: { reason: 'archived', terminal: true }, source: { kind: 'system' } };
+    const out = m.entryFor('idle', 'RetireRequested').to({ name: 'idle', data }, event, facts, ctx);
+    const retire = out.work.find((w) => w.kind === WORK.retire);
+    assert.equal(retire.notBefore.getTime(), now.getTime() + 90000);
+    assert.deepEqual(retire.input.attempts.map((a) => a.n), [1], 'the cancelled attempt is covered');
+    assert.deepEqual(out.cancel, [{ kind: WORK.retireAttempt, key: 'retire-attempt:1:v5' }], 'its own retirement is taken over');
+    assert.deepEqual(out.next.data.exit.attempts.map((a) => a.n), [1], 'kept for a retry');
+  });
+
+  await t.test('P21 a skip read from a row a newer run has moved on is refused', async () => {
+    const s = await proposal(await app(), { status: 'promoted', pin: SHA('8'), extra: { checks_commit_sha: SHA('8'), check_state: 'pending' } });
+    const id = await send(s, 'ChecksSkipped', { sessionId: s.id, head: SHA('9'), reason: 'nothing beyond main', expected: SHA('7') });
+    await rt.drain();
+    assert.equal((await outcome(id)).reason, 'checks_moved');
+    assert.equal((await row(s.id)).check_state, 'pending');
   });
 });
