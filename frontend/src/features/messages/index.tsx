@@ -48,7 +48,7 @@ import { useDismiss } from '../message-actions/use-dismiss';
 import { ShareItemDialog } from './share-dialog';
 import { ShareToDialog } from './share-to-dialog';
 import { JumpToLatest } from './jump-to-latest';
-import { isNearTop, needsMoreHistory, useStickToBottom } from './stick-to-bottom';
+import { centreInScroller, isNearTop, needsMoreHistory, useStickToBottom } from './stick-to-bottom';
 import {
   firstUnreadId, jumpLabel, lineTopIn, messageRow, newMessagesLabel, openingScrollTop, useLineHold, useUnreadAffordances,
 } from './unread-anchor';
@@ -1856,7 +1856,7 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
         shownFocus.current = focusId;
         previousLast.current = last;
         pinned.current = false;
-        requestAnimationFrame(() => row.scrollIntoView({ block: 'center' }));
+        requestAnimationFrame(() => centreInScroller(el, row));
         setFlashId(focusId);
         window.setTimeout(() => setFlashId((id) => (id === focusId ? null : id)), 2400);
         return;
@@ -2290,7 +2290,7 @@ function ReplyThreadPanel() {
     if (!row) return;
     shownFocus.current = wanted;
     pinned.current = false;
-    requestAnimationFrame(() => row.scrollIntoView({ block: 'center' }));
+    requestAnimationFrame(() => centreInScroller(el, row));
     setFlashId(wanted);
     window.setTimeout(() => {
       setFlashId((id) => (id === wanted ? null : id));

@@ -163,7 +163,7 @@ test('an invitation resolves metadata before deciding whether history may be fet
 // in, in place of the button that used to sit at its top. The button returns
 // only to retry a failed load.
 test('a conversation loads earlier messages on scroll, one page at a time', () => {
-  assert.match(screen, /import \{ isNearTop, needsMoreHistory, useStickToBottom \} from '\.\/stick-to-bottom';/);
+  assert.match(screen, /import \{ centreInScroller, isNearTop, needsMoreHistory, useStickToBottom \} from '\.\/stick-to-bottom';/);
   const thread = screen.slice(screen.indexOf('function ConversationThread('), screen.indexOf('function ThreadActivityRow('));
   assert.ok(thread.length > 0);
   assert.match(thread, /if \(!isNearTop\(el\)\) return;/,
