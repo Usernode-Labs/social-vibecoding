@@ -57,7 +57,12 @@ const MAX_MODELS = 5;
 const MAX_PACKS = 4;
 const MAX_REFERENCES = 5;
 const MAX_REPEATS = 3;
-const MAX_CONCURRENCY = 6;
+// Builds at once. 9, not 6 (14 Oct 2026): a three-arm run of three briefs
+// twice is 18 trials, which go in two rounds instead of three. Run 191's own
+// trial durations put it at about 60 minutes instead of about 90; each
+// build's own time is what the run measures, and the lane keeps room beside
+// it (lane.js MAX_IN_FLIGHT).
+const MAX_CONCURRENCY = 9;
 const MIN_CAP_USD = 0.5;
 const MAX_CAP_USD = 1000;
 const MAX_LIVE_PREVIEWS = 4;
