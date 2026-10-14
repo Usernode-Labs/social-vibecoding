@@ -434,6 +434,43 @@ function anthropicProxyRoutes(config) {
     // read it synchronously to decide which cap+tracker to gate against.
     let workerMod = null;
     try { workerMod = require('../services/worker'); } catch {}
+
+    // A before & after shots eval's trial runs the shots agent on somebody
+    // else's merged proposal for an admin's comparison
+    // (services/shots-eval-runner.js). The platform's key pays for it and
+    // the eval's own cap bounds it: never the proposal author's allowance,
+    // never the system bucket the sync turns below live on, and never the
+    // change's ledger. Each call is added to the trial, and one that would
+    // take the eval past its cap is refused or cut off.
+    let shotsEval = null;
+    try {
+      if (workerMod && workerMod.getActiveTurnMode(sessionId) === 'shots') {
+        const evalRunner = require('../services/shots-eval-runner');
+        if (evalRunner.billsSession(sessionId)) shotsEval = evalRunner;
+      }
+    } catch { shotsEval = null; }
+    if (shotsEval) {
+      if (shotsEval.overCap(sessionId, 0)) {
+        return res.status(429).json({ ok: false, code: 'budget_exceeded', message: 'This shots eval reached its cap.' });
+      }
+      if (!config.anthropicApiKey) {
+        return res.status(502).json({ ok: false, code: 'no_platform_key' });
+      }
+      const evalPath = req.params[0] ? `/${req.params[0]}` : '/';
+      const evalQs = req.originalUrl.includes('?') ? req.originalUrl.slice(req.originalUrl.indexOf('?')) : '';
+      const result = await anthropicStream.forwardCall({
+        req,
+        res,
+        upstreamUrl: `${anthropicStream.ANTHROPIC_UPSTREAM}${evalPath}${evalQs}`,
+        apiKey: config.anthropicApiKey,
+        logTag: 'anthropic-proxy',
+        logCtx: { sessionId, userId, upstreamPath: evalPath, shotsEval: true },
+        shouldKill: (currentCallCents) => (shotsEval.overCap(sessionId, currentCallCents) ? 'over_budget' : null),
+      });
+      shotsEval.noteSpend(sessionId, result.costCents);
+      return;
+    }
+
     const isSyncTurn = (() => {
       try { return !!workerMod && workerMod.getActiveTurnMode(sessionId) === 'sync'; }
       catch { return false; }
