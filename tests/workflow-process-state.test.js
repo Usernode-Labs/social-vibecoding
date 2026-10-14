@@ -17,10 +17,19 @@ const assert = require('node:assert/strict');
 const { boundary, readBaseline, BASELINE } = require('./lib/workflow-boundary');
 
 // The machines that predate the list. Any other machine may enter it only
-// with the other writers of its own columns (removed by the end of its step,
-// when the legacy paths go), and with calls it took over from a machine
-// that lists them, each named in the baseline's `takenOver` with where it
-// came from: the call moves, so the list ends no longer. Nothing else.
+// with:
+// - the other writers of its own columns (removed by the end of its step,
+//   when the legacy paths go);
+// - calls it took over from a machine that lists them, each named in the
+//   baseline's `takenOver` with where it came from (the call moves, so the
+//   list ends no longer);
+// - its work's I/O cores (`io`): a function outside src/workflow/ that does
+//   the step's I/O, cut out of the per-process wrapper the old flow runs it
+//   through, each with a reason saying so. The two-process and restart
+//   tests show it keeps no process memory;
+// - hand-offs to a flow a later step migrates (`handOff`), each naming that
+//   step: they leave the list when it does.
+// Nothing else. (Decided with Bruno for the preview machine, 2026-10-14.)
 const PREDATE = new Set(['governance-proposal', 'merge-followups', 'platform', 'kernel']);
 
 test('the workflow machines cross no new boundary into code not migrated yet', () => {
@@ -36,10 +45,11 @@ test('the workflow machines cross no new boundary into code not migrated yet', (
       if (!entries.has(entry)) problems.push(`${name}: "${entry}" is gone; remove it from the list (--shrink)`);
     }
     if (!PREDATE.has(name)) {
-      const moved = (baseline.takenOver || {})[name] || {};
+      const named = new Map(['takenOver', 'io', 'handOff'].map((k) => [k, (baseline[k] || {})[name] || {}]));
       for (const entry of listed) {
-        if (entry.startsWith('ownership | ') || Object.prototype.hasOwnProperty.call(moved, entry)) continue;
-        problems.push(`${name}: a new machine may list only other writers of its columns and calls it took over, not "${entry}"`);
+        if (entry.startsWith('ownership | ')) continue;
+        if ([...named.values()].some((m) => Object.prototype.hasOwnProperty.call(m, entry))) continue;
+        problems.push(`${name}: a new machine may list only other writers of its columns, calls it took over, its I/O cores and hand-offs to a later step, not "${entry}"`);
       }
     }
   }
@@ -56,6 +66,21 @@ test('each call a new machine took over says from where, and is still listed for
     for (const [entry, reason] of Object.entries(moved)) {
       assert.ok(typeof reason === 'string' && reason.length > 40, `${name}: ${entry}: say which machine it was taken from`);
       assert.ok(listed.has(entry), `${name}: ${entry}: taken over but no longer listed; remove it from takenOver`);
+    }
+  }
+});
+
+test('each I/O core says what it does and which wrapper it was cut out of, each hand-off which step removes it', () => {
+  const baseline = readBaseline();
+  for (const [section, says] of [['io', 'what it does, outside which per-process wrapper'], ['handOff', 'which step migrates the flow it calls']]) {
+    for (const [name, entries] of Object.entries(baseline[section] || {})) {
+      const listed = new Set(baseline.machines[name] || []);
+      for (const [entry, reason] of Object.entries(entries)) {
+        assert.ok(entry.startsWith('services | uses '), `${name}: ${section}: ${entry}: only a work handler's call can be one`);
+        assert.ok(typeof reason === 'string' && reason.length > 40, `${name}: ${section}: ${entry}: say ${says}`);
+        if (section === 'handOff') assert.match(reason, /\bstep\b/, `${name}: ${entry}: name the step that removes it`);
+        assert.ok(listed.has(entry), `${name}: ${section}: ${entry}: no longer listed; remove it from ${section}`);
+      }
     }
   }
 });
