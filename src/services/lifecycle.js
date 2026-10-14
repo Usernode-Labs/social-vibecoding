@@ -32,4 +32,44 @@ async function waitFor(check, { timeoutMs = 60000, intervalMs = 500 } = {}) {
   return check();
 }
 
-module.exports = { isShuttingDown, setShuttingDown, drainGuard, waitFor };
+// How long the shutdown drain waits for the HTTP handlers still answering
+// and the background work registered in services/inflight-work.js.
+//
+// Under docker-compose that is `shortMs` (server.js DRAIN_TIMEOUT_MS, 5s):
+// compose SIGKILLs at stop_grace_period (10s), and
+// tests/caddy-deploy-grace.test.js pins the drain, the marks and the pool
+// close below it. Under Kubernetes the platform Pod gets
+// terminationGracePeriodSeconds 90 (deploy/helm/.../platform.yaml), of which
+// the preStop sleep spends 5 before SIGTERM even arrives and cleanup's marks,
+// pool close and leader-lock release a few more after the drain; waiting 5s
+// there left some 80 seconds of it unused while the exit cut whatever was
+// still running. So the default there is KUBERNETES_DRAIN_DEFAULT_MS, and
+// PLATFORM_DRAIN_TIMEOUT_MS may move it within 0..KUBERNETES_DRAIN_MAX_MS
+// (tests/server-graceful-shutdown.test.js pins preStop + the ceiling + the
+// rest of cleanup below the grace). Under compose the variable can only
+// shorten the drain: there is no grace above `shortMs` to spend.
+//
+// The drain returns as soon as nothing is in flight, so these are ceilings,
+// not costs: an idle pod still exits at once.
+const KUBERNETES_DRAIN_DEFAULT_MS = 60000;
+const KUBERNETES_DRAIN_MAX_MS = 75000;
+
+function drainDeadlineMs({ kubernetes = false, shortMs = 5000, env = process.env } = {}) {
+  const ceiling = kubernetes ? KUBERNETES_DRAIN_MAX_MS : shortMs;
+  const fallback = kubernetes ? KUBERNETES_DRAIN_DEFAULT_MS : shortMs;
+  const raw = env ? env.PLATFORM_DRAIN_TIMEOUT_MS : undefined;
+  if (raw != null && String(raw).trim() !== '' && Number.isFinite(Number(raw))) {
+    return Math.min(Math.max(0, Math.floor(Number(raw))), ceiling);
+  }
+  return fallback;
+}
+
+module.exports = {
+  isShuttingDown,
+  setShuttingDown,
+  drainGuard,
+  waitFor,
+  drainDeadlineMs,
+  KUBERNETES_DRAIN_DEFAULT_MS,
+  KUBERNETES_DRAIN_MAX_MS,
+};

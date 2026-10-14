@@ -70,9 +70,13 @@ test('execInWorker issues the grant after the prompt is written and revokes it o
   assert.ok(mint > exec.indexOf('await writeTurnPrompt('), 'a failed prompt write has nothing to revoke');
   assert.ok(mint < exec.indexOf('buildTurnSecretEnv({'));
   const revokes = [...exec.matchAll(/await revokeHomeroomReadGrant\(sessionId, homeroomGrant\)/g)].map((m) => m.index);
-  assert.equal(revokes.length, 3, 'a secret-env failure, a persist failure, and the finally');
-  assert.ok(revokes[1] < exec.indexOf("throw err;\n  }\n\n  // Visible to the `finally`"), 'before the persist-failure throw');
-  assert.ok(revokes[2] > exec.lastIndexOf('} finally {'), 'in the finally');
+  assert.equal(revokes.length, 4, 'a secret-env failure, a persist failure, a turn-record hook that fails, and the finally');
+  const record = exec.indexOf("if (typeof onTurnRecord === 'function') {");
+  assert.ok(revokes[1] < record, 'the persist failure\'s, before the turn record is reported');
+  // A durable build that could not keep the record's identity starts no turn
+  // (services/durable-turn.js): the grant goes with it.
+  assert.ok(revokes[2] > record && revokes[2] < exec.indexOf('// Visible to the `finally`'), 'the turn-record hook\'s');
+  assert.ok(revokes[3] > exec.lastIndexOf('} finally {'), 'in the finally');
 
   const helper = src.slice(src.indexOf('async function mintHomeroomReadGrant('), src.indexOf('async function revokeHomeroomReadGrant('));
   assert.match(helper, /status IN \('active', 'promoted'\)/, 'only for a change the grant\'s liveness check would accept');

@@ -2,7 +2,9 @@
   "allowed": {
     "timer src/workflow/kernel/services.ts#execute setInterval": "the lease heartbeat of a running work item; it dies with the handler, and a lapsed lease lets the next process claim the item",
     "timer src/workflow/kernel/stream.ts#Signals setTimeout": "the LISTEN connection's reconnect and a loop's idle sleep; loops poll while it is down",
-    "timer src/workflow/kernel/stream.ts#waitForOutcome setTimeout": "a route's bounded wait for an event's outcome; it answers 202 when it runs out"
+    "timer src/workflow/kernel/stream.ts#waitForOutcome setTimeout": "a route's bounded wait for an event's outcome; it answers 202 when it runs out",
+    "uses src/services/build-runs.js:run": "the bot-build machine's build.run handler is the build's own pipeline (homeroom-bot.js, bench/lane.js), run on durable steps over the work item's checkpoint: the machine owns where a build is and who runs it, not what a build does (docs/plans/bot-build-workflow.md)",
+    "uses src/services/build-runs.js:lost": "the bot-build machine's build.lost handler records a build that failed for good where the build is read (the run's outcome, the trial's row), which only the build's own module knows (docs/plans/bot-build-workflow.md)"
   },
   "takenOver": {
     "app-delivery": {
@@ -138,7 +140,6 @@
       "ownership | chat_sessions.status ← src/routes/votes.js#finalizeMerge",
       "ownership | chat_sessions.status ← src/routes/votes.js#voteRoutes",
       "ownership | chat_sessions.status ← src/services/account-deletion.js#deleteAccount",
-      "ownership | chat_sessions.status ← src/services/bench/lane.js#handBackTrial",
       "ownership | chat_sessions.status ← src/services/bench/lane.js#recordTrial",
       "ownership | chat_sessions.status ← src/services/bench/runner.js#runTurn",
       "ownership | chat_sessions.status ← src/services/bench/studio.js#sweepPreviews",

@@ -8012,6 +8012,28 @@ async function runRecoveredWrapUp({
   pool, config, session, sessionId, outcome, dispatchSummary,
   fallbackPillKind, turnModel, turnId = null, emit = () => {}, signal = null,
 }) {
+  // A change an agent session started has no dev chat: the turn that
+  // dispatched this run was the conversation's, and its wrap-up belongs in
+  // the conversation, written the way that turn would have written it. The
+  // classic prompt below would answer from the change's slice as a dev-chat
+  // Mayor, and the conversation's Mayor would later read a reply that is
+  // not its own.
+  if (session?.agent_session_id != null) {
+    const conversation = await require('../services/mayor/agent-turn').writeRecoveredWrapUp({
+      pool,
+      config,
+      agentSessionId: Number(session.agent_session_id),
+      userId: session.user_id,
+      username: session.username || null,
+      changeId: sessionId,
+      kind: outcome === 'spec' ? 'scout' : 'build',
+      isError: outcome === 'push_failed' || outcome === 'failed',
+      toolResultText: dispatchSummary || '',
+      turnId,
+      signal,
+    });
+    if (conversation.reason !== 'no_conversation') return conversation;
+  }
   const recoveryPills = require('../services/recovery-pills');
   const fallbackPills = recoveryPills.buildRecoveryQuickReplies(fallbackPillKind);
 
@@ -8744,6 +8766,10 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
       // post-restart switched calls accumulate on top of pre-restart ones.
       byokCentsSoFar: Number(activeTurn.byokCents || 0),
       onProgress: onRecoveredProgress,
+      // The registry state execInWorker kept for this turn (worker.js).
+      mode: activeTurn.mode || null,
+      branchName: session.branch_name || null,
+      stopRequestedAt: turnLifecycle.stopRequestOf(activeTurn)?.atMs || null,
     });
     let recoveryActiveTurn = activeTurn;
     try {
@@ -9731,6 +9757,8 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
       if (stopHandle) stopHandle.localTurnId = String(turnId);
       let announcedAccepted = false;
       const { outcome, turn: finished } = await localAgent.awaitTurnResult(pool, turnId, {
+        // This process is the turn's waiter (see dispatchLocalBuild).
+        waiterId: queued.waiterId,
         onProgress: (row) => {
           if (!announcedAccepted && row.status !== 'queued' && row.status !== 'offered') {
             announcedAccepted = true;
@@ -9741,6 +9769,12 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
           seenScoutLines = Math.max(seenScoutLines, lines.length);
         },
       });
+      if (outcome === 'adopted') {
+        // Restart recovery took the turn over and publishes its spec itself.
+        const adopted = new Error(`${lease.label}'s scout turn is being finished by restart recovery`);
+        adopted.code = 'local_turn_adopted';
+        throw adopted;
+      }
       recordLocalCodingInvocation(pool, {
         session,
         turnId,
@@ -9751,33 +9785,9 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
         correlationId: localScoutCorrelationId,
         startedAt: telemetryStartedAt,
       });
-      const explain = {
-        declined: `${lease.label} declined this turn`,
-        abandoned: `${lease.label} disconnected before finishing this turn`,
-        stopped: 'Stopped',
-        missing: 'The local turn record disappeared',
-        aborted: `${lease.label} was interrupted`,
-      }[outcome] || null;
-      const detail = finished?.error_detail ? `: ${finished.error_detail}` : '';
-      return {
-        exitCode: outcome === 'completed' ? 0 : 1,
-        ccIsError: outcome !== 'completed',
-        fatalError: explain ? `${explain}${detail}` : null,
-        // The spec IS the result text here. spec_md is the column the local
-        // agent posts its drafted document into; `summary` carries the
-        // runtime's own closing words, which for a scout run are the spec
-        // again, so prefer the explicit field.
-        lastResultText: finished?.spec_md || finished?.summary || '',
-        rawStderr: finished?.error_detail || '',
-        // A local run has no cost to the platform. Leaving costUsd absent is
-        // what makes the zero-cost accounting below a no-op rather than a
-        // special case: no llm_usage row, no settleTurnSpend, no usage event.
-        sessionId: null,
-        initSessionId: null,
-        markerlessCause: null,
-        localTurnId: String(turnId),
-        localOutcome: outcome,
-      };
+      // Shaped and worded as restart recovery shapes a recovered one
+      // (localAgent.buildTurnResult): the spec is the result text.
+      return localAgent.buildTurnResult({ turn: finished, outcome, label: lease.label, mode: 'scout' });
     };
 
     let result;
@@ -11118,6 +11128,92 @@ function describeStagingFailure(stagingErr) {
   return { fix, missingKeys, errMsg, errName };
 }
 
+// ── Steps the live build tail and its restart recovery share ───────────
+//
+// runClaudeCodeTool's tail (below) and server.js finalizeRecoveredTurn both
+// end a build turn, and a restart can land between any two of their steps,
+// so the recovered tail repeats whatever the live one had not finished. The
+// two steps here are the ones that must read the same from either side.
+
+// The staging outcome card ("Staging deployed!" / "Staging build failed"),
+// written once per durable turn whichever tail gets there first. The card,
+// its tail checkpoint and the receipt commit together, under one receipt
+// key for both tails: a restart after the live card was written finds the
+// receipt and writes no second one. `turnId` null (a legacy record, a local
+// agent's turn) writes the row without a receipt. `tailIdentity` names the
+// held record the checkpoint merges into (turnLifecycle.cleanupArgs), or is
+// null when there is none. Resolves { applied, outcome, metadata, failure,
+// checkpoint }: what the receipt holds when it was already written.
+async function publishStagingOutcome({
+  pool, sessionId, turnId = null, tailIdentity = null,
+  outcome, metadata, failure = null,
+}) {
+  // 'building': the preview machine (WF_PREVIEWS_ENABLED) builds it; the
+  // card says so, and its Preview button comes with the machine's
+  // staging_ready.
+  const succeeded = outcome === 'success' || outcome === 'building';
+  const content = outcome === 'building' ? 'Building staging preview...'
+    : succeeded ? 'Staging deployed!' : 'Staging build failed';
+  const checkpoint = succeeded
+    ? { stagingPublished: true }
+    : { stagingPublished: true, stagingFailed: failure || { errMsg: metadata?.error || 'Staging build failed' } };
+  const persist = async (client) => {
+    await client.query(
+      `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+       VALUES ($1, 'system', $2, $3)`,
+      [sessionId, content, JSON.stringify(metadata || {})],
+    );
+    if (tailIdentity) {
+      await turnLifecycle.mergeTailMilestones(client, {
+        sessionId, ...tailIdentity, milestones: checkpoint,
+      });
+    }
+    return { outcome, metadata, failure, checkpoint };
+  };
+  if (!turnId) return { applied: true, content, ...(await persist(pool)) };
+  const receipt = await turnEffects.runDbEffect({
+    pool,
+    turnId,
+    effectKey: turnEffects.EFFECT_KEYS.RECOVERED_STAGING_PUBLICATION,
+    sessionId,
+    run: persist,
+  });
+  return {
+    applied: receipt.applied,
+    content,
+    ...(receipt.value || { outcome, metadata, failure, checkpoint }),
+  };
+}
+
+// A promoted proposal's new commit, once its preview is up: the votes cast
+// on the old version stop counting (retired, not deleted: services/
+// vote-revision.js), dapp.json's admins are re-read, and the proposal's own
+// thread is told. The caller stamps its votesResetFor milestone BEFORE
+// calling, so a resumed tail never re-announces a reset. The line goes to
+// the proposal's thread and nowhere else: a platform line names its thread
+// or is not written (ws.sendSystemMessage writes nothing without one).
+async function retireVotesForNewCommit({ pool, session, sessionId = session.id, commitHash }) {
+  // #788: the new commit may have added or removed a name in dapp.json's
+  // `admins` block. Best-effort (swallows GitHub failures) and re-verified
+  // authoritatively in checkAndMerge.
+  await require('../services/app-admins').refreshExplicitApproval(pool, session, session);
+  const { sendSystemMessage, pushVoteUpdate } = require('../services/ws');
+  return require('../services/vote-revision').retireAndRecheck(
+    pool, { ...session, id: sessionId }, commitHash,
+    {
+      announce: async ({ retired: dropped }) => {
+        pushVoteUpdate({ sessionId, appSlug: session.app_slug, merged: false });
+        const resetMsg = `An update was pushed to PR #${session.pr_number || sessionId} (commit ${commitHash.substring(0, 8)}). Earlier votes were on the old version, so take another look.`;
+        await sendSystemMessage(pool, session.app_id, resetMsg, 'system',
+          null, { type: 'session', ref: sessionId }).catch(() => {});
+        log.info('sessions', 'Retired PR votes after new commit', {
+          sessionId, commitHash: commitHash.substring(0, 8), votesRetired: dropped,
+        });
+      },
+    },
+  );
+}
+
 // Local Claude and Codex/OpenRouter do not have hosted Claude's independently
 // verified appended-system-prompt transport. Keep their existing browser and
 // testing guidance inline, byte-for-byte, so this optimization cannot change
@@ -12308,6 +12404,10 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${guidan
       if (stopHandle) stopHandle.localTurnId = String(turnId);
       let announcedAccepted = false;
       const { outcome, turn: finished } = await localAgent.awaitTurnResult(pool, turnId, {
+        // This process is the turn's waiter: it keeps the turn from being
+        // taken over by restart recovery while it waits, and claims the
+        // tail below under this id (services/local-agent-recovery.js).
+        waiterId: queued.waiterId,
         onProgress: (row) => {
           if (!announcedAccepted && row.status !== 'queued' && row.status !== 'offered') {
             announcedAccepted = true;
@@ -12318,6 +12418,15 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${guidan
           seenLocalLines = Math.max(seenLocalLines, lines.length);
         },
       });
+      if (outcome === 'adopted') {
+        // Restart recovery took this turn over while this process looked
+        // dead (it stopped renewing for longer than WAITER_STALE_SECONDS),
+        // and runs its tail itself. Running it here too would post every
+        // card twice.
+        const adopted = new Error(`${lease.label}'s turn is being finished by restart recovery`);
+        adopted.code = 'local_turn_adopted';
+        throw adopted;
+      }
       recordLocalCodingInvocation(pool, {
         session,
         turnId,
@@ -12328,43 +12437,14 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${guidan
         correlationId: localBuildCorrelationId,
         startedAt: telemetryStartedAt,
       });
-      const headSha = finished?.head_sha || null;
-      // 'declined' and 'abandoned' are the two outcomes that are nobody's
-      // fault: the checkout was dirty / on the wrong commit, or the laptop
-      // went away mid-turn. Both are reported as an honest error rather than
-      // as a silent no-op, because the user is sitting in front of the
-      // machine that just refused and can act on the reason.
-      //
       // The full set awaitTurnResult can return is completed / failed /
-      // declined / stopped / abandoned / missing / aborted. 'completed' needs
-      // no explanation and 'failed' already carries the runtime's own words
-      // in error_detail, so both are left to the shared tail.
-      const explain = {
-        declined: `${lease.label} declined this turn`,
-        abandoned: `${lease.label} disconnected before finishing this turn`,
-        stopped: 'Stopped',
-        missing: 'The local turn record disappeared',
-        aborted: `${lease.label} was interrupted`,
-      }[outcome] || null;
-      const detail = finished?.error_detail ? `: ${finished.error_detail}` : '';
-      return {
-        sha: headSha,
-        ahead: headSha ? 1 : 0,
-        // Nothing local was fetched, so the platform's existing count is the
-        // best answer; do not let a local turn reset it to zero.
-        behind: session.behind_main || 0,
-        pushOk: true,
-        exitCode: outcome === 'completed' ? 0 : 1,
-        ccIsError: outcome !== 'completed',
-        fatalError: explain ? `${explain}${detail}` : null,
-        lastResultText: finished?.summary || '',
-        rawStderr: finished?.error_detail || '',
-        sessionId: null,
-        initSessionId: null,
-        markerlessCause: null,
-        localTurnId: String(turnId),
-        localOutcome: outcome,
-      };
+      // declined / stopped / abandoned / missing / aborted; the shape and the
+      // words for each are shared with restart recovery
+      // (localAgent.buildTurnResult), so a recovered local turn reaches the
+      // tail exactly as this one does.
+      return localAgent.buildTurnResult({
+        turn: finished, outcome, label: lease.label, behind: session.behind_main || 0, mode: 'build',
+      });
     };
 
     let result;
@@ -13024,9 +13104,13 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${guidan
         summaryParts.push(`Opened PR #${prResult.prNumber}: ${prResult.prUrl}`);
         // Tail milestone: a resume must not open a second PR-opened event
         // (applyPrMetadata itself is update-safe once pr_number is set).
-        await worker.noteTailMilestone(session.id, {
-          prNumber: prResult.prNumber, prOpenedEventRecorded: true,
-        }, { turnId: durableTurnId });
+        // Only a turn with a durable record has one to stamp: a local
+        // agent's turn has none, and a stamp without an owner throws.
+        if (durableTurnId) {
+          await worker.noteTailMilestone(session.id, {
+            prNumber: prResult.prNumber, prOpenedEventRecorded: true,
+          }, { turnId: durableTurnId });
+        }
       } else if (session.pr_number && !wasNewPR) {
         summaryParts.push(`Pushed to existing PR #${session.pr_number}.`);
       }
@@ -13064,41 +13148,18 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${guidan
         // so claim it up front — a crash between the stamp and the retire
         // leaves at worst an unannounced reset, which the next push redoes
         // anyway.
-        await worker.noteTailMilestone(
-          session.id,
-          { votesResetFor: commitHash },
-          { turnId: durableTurnId },
-        );
-        // #788: the new commit may have added or removed a name in
-        // dapp.json's `admins` block, so re-classify alongside the
-        // vote reset. Best-effort (swallows GitHub failures) and
-        // re-verified authoritatively in checkAndMerge.
-        await require('../services/app-admins')
-          .refreshExplicitApproval(pool, session, session);
+        if (durableTurnId) {
+          await worker.noteTailMilestone(
+            session.id,
+            { votesResetFor: commitHash },
+            { turnId: durableTurnId },
+          );
+        }
         // #1688: the votes are RETIRED, not deleted — the session's approval
         // epoch moves on and the rows stay as the record of who was on
-        // board, which is what asks the prior Yes voters back with one tap
-        // (services/vote-revision.js).
-        const { sendSystemMessage, pushVoteUpdate } = require('../services/ws');
-        const retired = await require('../services/vote-revision').retireAndRecheck(
-          pool, session, commitHash,
-          {
-            announce: async ({ retired: dropped }) => {
-              pushVoteUpdate({
-                sessionId: session.id,
-                appSlug: session.app_slug,
-                merged: false,
-              });
-              const resetMsg = `An update was pushed to PR #${session.pr_number || session.id} (commit ${commitHash.substring(0, 8)}). Earlier votes were on the old version, so take another look.`;
-              // Into the proposal's thread (lifecycle in context).
-              await sendSystemMessage(pool, session.app_id, resetMsg, 'system',
-                null, { type: 'session', ref: session.id }).catch(() => {});
-              log.info('sessions', 'Retired PR votes after new commit', {
-                sessionId: session.id, commitHash: commitHash.substring(0, 8), votesRetired: dropped,
-              });
-            },
-          },
-        );
+        // board, which is what asks the prior Yes voters back with one tap.
+        // The same step the recovered tail takes (retireVotesForNewCommit).
+        const retired = await retireVotesForNewCommit({ pool, session, commitHash });
         if (retired.retired > 0) {
           summaryParts.push('Group-chat votes were reset for the new commit.');
         }
@@ -13131,13 +13192,24 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${guidan
 
       if (previewHandedOff) {
         // The "Changes ready" card renders from changesReady; its Preview
-        // button appears when the machine's staging_ready arrives.
-        await sendStatus('Building staging preview...', {
+        // button appears when the machine's staging_ready arrives. Behind
+        // the receipt the recovered tail writes this card under, as the
+        // other outcomes are.
+        const buildingCard = {
           changesReady: true,
           stagingBuild: 'running',
           prNumber: session.pr_number || null,
           prUrl: session.pr_url || null,
-        });
+        };
+        if (durableTurnId) {
+          const published = await publishStagingOutcome({
+            pool, sessionId: session.id, turnId: durableTurnId,
+            tailIdentity: { turnId: durableTurnId }, outcome: 'building', metadata: buildingCard,
+          });
+          if (published.applied) send('status', { text: published.content, ...buildingCard });
+        } else {
+          await sendStatus('Building staging preview...', buildingCard);
+        }
         summaryParts.push('The staging preview is building; its checks run once it is up.');
       } else if (stagingResult) {
         await pool.query(
@@ -13148,9 +13220,11 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${guidan
         // tail re-checks its liveness before deciding to rebuild, so a
         // healthy container is left alone rather than rebuilt for another
         // ~5 minutes.
-        await worker.noteTailMilestone(session.id, {
-          stagingUrl: stagingResult.stagingUrl,
-        }, { turnId: durableTurnId });
+        if (durableTurnId) {
+          await worker.noteTailMilestone(session.id, {
+            stagingUrl: stagingResult.stagingUrl,
+          }, { turnId: durableTurnId });
+        }
 
         // Make one real end-to-end request through the edge now that
         // staging_url is persisted and BEFORE emitting `staging_ready`
@@ -13166,12 +13240,23 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${guidan
         // (rather than incidentally `stagingUrl`), so the same card renders
         // on the staging-failed branch below. prNumber/prUrl ride along so
         // the card header + "View on GitHub" survive a reload from metadata.
-        await sendStatus('Staging deployed!', {
+        const stagingCard = {
           stagingUrl,
           changesReady: true,
           prNumber: session.pr_number || null,
           prUrl: session.pr_url || null,
-        });
+        };
+        // Behind the receipt the recovered tail writes this card under, so
+        // a restart after it is on the transcript never posts a second one.
+        if (durableTurnId) {
+          const published = await publishStagingOutcome({
+            pool, sessionId: session.id, turnId: durableTurnId,
+            tailIdentity: { turnId: durableTurnId }, outcome: 'success', metadata: stagingCard,
+          });
+          if (published.applied) send('status', { text: published.content, ...stagingCard });
+        } else {
+          await sendStatus('Staging deployed!', stagingCard);
+        }
         // #127: ship the session's testing guidance (this turn's block, or
         // the kept-previous one off the session row) alongside the staging
         // URL so the client can offer "Test this change" without a refetch.
@@ -13234,7 +13319,7 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${guidan
         // disabled Preview button and the missing-secret hint), so a failed
         // preview no longer hides a perfectly proposable change. Propose
         // rebuilds staging itself (routes/votes.js), so this stays usable.
-        await sendStatus('Staging build failed', {
+        const failedCard = {
           error: errMsg,
           changesReady: true,
           stagingFailed: true,
@@ -13242,7 +13327,19 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${guidan
           stagingMissingKeys: missingKeys,
           prNumber: session.pr_number || null,
           prUrl: session.pr_url || null,
-        });
+        };
+        // Same receipt as the success card: a restart after this card does
+        // not rebuild a preview known to fail, or post the card again.
+        if (durableTurnId) {
+          const published = await publishStagingOutcome({
+            pool, sessionId: session.id, turnId: durableTurnId,
+            tailIdentity: { turnId: durableTurnId }, outcome: 'failed', metadata: failedCard,
+            failure: { fix, missingKeys, errMsg, errName },
+          });
+          if (published.applied) send('status', { text: published.content, ...failedCard });
+        } else {
+          await sendStatus('Staging build failed', failedCard);
+        }
         send('staging_failed', {
           error: errMsg,
           errorName: errName,
@@ -13371,11 +13468,13 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${guidan
       // Tail milestone: the agent's own summary card is on the transcript.
       // A resumed tail must not post a second one (finalizeRecoveredTurn's
       // persistCompletionRow is otherwise unconditional).
-      await worker.noteTailMilestone(
-        session.id,
-        { completionRowPosted: true },
-        { turnId: durableTurnId },
-      );
+      if (durableTurnId) {
+        await worker.noteTailMilestone(
+          session.id,
+          { completionRowPosted: true },
+          { turnId: durableTurnId },
+        );
+      }
       // Prepend CC's own description so the Mayor leads with what was
       // actually built, with our outcome bullets as supplementary context.
       summaryParts.unshift(directChatReply ? ccText : `What the agent did:\n${ccText}`);
@@ -13654,7 +13753,7 @@ const MAYOR_TURN_DEPS = Object.freeze({
   switchSessionAgent,
 });
 
-module.exports = { requestSessionStop, changePlanFor, MAYOR_TURN_DEPS, canViewSession, BUILD_VENUES, summarizeFailingChecks, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, captureSpecOutput, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifySessionStalled, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, codexMaxTokensRetry, codexProviderFailureText, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildHostedCodingWorkflowGuidance, buildCodingAgentBuildGuidance, OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE, OPENROUTER_PLATFORM_ISSUE_GUIDANCE, DISPATCHED_TURN_INSTRUCTIONS, DEV_CHAT_SUMMARY_RULE, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, SUGGEST_REPLIES_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, switchSessionAgent, resumePausedSession, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };
+module.exports = { requestSessionStop, changePlanFor, MAYOR_TURN_DEPS, canViewSession, BUILD_VENUES, summarizeFailingChecks, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, captureSpecOutput, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, publishStagingOutcome, retireVotesForNewCommit, notifySessionDone, notifySessionStalled, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, codexMaxTokensRetry, codexProviderFailureText, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildHostedCodingWorkflowGuidance, buildCodingAgentBuildGuidance, OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE, OPENROUTER_PLATFORM_ISSUE_GUIDANCE, DISPATCHED_TURN_INSTRUCTIONS, DEV_CHAT_SUMMARY_RULE, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, SUGGEST_REPLIES_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, switchSessionAgent, resumePausedSession, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };
 // #4524: the topic page's fast open asks GET /api/apps/:slug/proposals/:id
 // for its item beside the board load, and production serves an active or
 // paused session there when it is the viewer's own or shared. The demo rows

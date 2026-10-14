@@ -82,6 +82,7 @@ const unitSuite = require('./unit-suite');
 const unitSuiteRow = require('./unit-suite-row');
 const checkRuns = require('./check-runs');
 const checksQueue = require('./checks-queue');
+const leaderTimers = require('./leader-timers');
 // Required when used: it reads scripts/test-changed.js and the bot's queue.
 const redFix = () => require('./main-red-fix');
 
@@ -366,6 +367,10 @@ const ADOPT_SLACK_MS = 2 * 60 * 1000;
  * verdict as runSuite does, 'superseded' when another process took it
  * first, or null when there is nothing to adopt and the suite must run
  * again. Never throws.
+ *
+ * The queue row is cleared only by the adopter that claimed it. One that
+ * lost the claim leaves it alone: the winner heartbeats that row while its
+ * Jobs run, and the row is the queue slot they hold (checks-queue.js).
  */
 async function adoptRun(config, pool, app, mergeSha, dead) {
   if (config?.workerRuntime !== 'kubernetes' || !dead || !dead.runId) return null;
@@ -373,8 +378,10 @@ async function adoptRun(config, pool, app, mergeSha, dead) {
   const harvest = require('./check-harvest');
   const sessionId = mainSessionId(app);
   let stopHeartbeat = () => {};
+  let claimed = false;
   try {
     if (!(await checkRuns.claim(pool, dead.runId, dead.owner))) return { state: 'superseded', detail: {} };
+    claimed = true;
     stopHeartbeat = checkRuns.startHeartbeat(pool, dead.runId);
     const jobs = await kubernetes.findCheckJobs(config, { sessionId, previewRunId: dead.runId });
     const unitJobs = Array.isArray(jobs.unitSuites) && jobs.unitSuites.length
@@ -419,7 +426,7 @@ async function adoptRun(config, pool, app, mergeSha, dead) {
     return null;
   } finally {
     stopHeartbeat();
-    await checkRuns.finish(pool, dead.runId).catch(() => {});
+    if (claimed) await checkRuns.finish(pool, dead.runId).catch(() => {});
   }
 }
 
@@ -1080,19 +1087,22 @@ async function resumeInterrupted(config, { pool = null, olderThanMs = staleMs() 
   return { resumed, done: Promise.all(runs) };
 }
 
-/** The leader's timer for resumeInterrupted and recheckPaused. Returns a stop function. */
+/**
+ * The leader's timer for resumeInterrupted and recheckPaused. Returns a stop
+ * function. A leader timer (services/leader-timers.js): a re-drive can start
+ * a whole-tree run or release a paused main to merges, so none starts once
+ * shutdown has begun, and the sweeps of a tick under way are drained.
+ */
 function start(config, { intervalMs = 2 * 60 * 1000 } = {}) {
   if (!isEnabled()) return () => {};
-  const timer = setInterval(() => {
+  return leaderTimers.every('main-watch', () => Promise.all([
     resumeInterrupted(config).catch((err) => {
       log.warn('main-watch', 'Interrupted-run sweep failed (non-fatal)', { err: err.message });
-    });
+    }),
     recheckPaused(config).catch((err) => {
       log.warn('main-watch', 'Paused-main sweep failed (non-fatal)', { err: err.message });
-    });
-  }, intervalMs);
-  if (typeof timer.unref === 'function') timer.unref();
-  return () => clearInterval(timer);
+    }),
+  ]), intervalMs);
 }
 
 module.exports = {

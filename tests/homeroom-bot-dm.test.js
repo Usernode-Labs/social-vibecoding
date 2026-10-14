@@ -529,7 +529,8 @@ test('the short description is suggested for everyone making a project, and ever
   // fork.
   assert.match(create, /\} else \{\s*try \{\s*await homeroomBotDm\.noteProjectMade\(pool, \{\s*app: appRow, user: req\.user, origin: repoUrlNormalized \? 'import' : 'blank',/);
   const fork = routes.slice(routes.indexOf("router.post('/api/apps/:slug/fork'"), routes.indexOf("router.get('/api/apps/:slug'"));
-  assert.match(fork, /noteProjectMade\(pool, \{ app: appRow, user: req\.user, origin: 'fork' \}\)[\s\S]{0,200}\}\s*forkApp\(config, appRow, sourceApp\)/);
+  // Recorded before the copy is started (under its owner, services/app-creation-owner.js).
+  assert.match(fork, /noteProjectMade\(pool, \{ app: appRow, user: req\.user, origin: 'fork' \}\)[\s\S]{0,400}appCreationOwner\.drive\(pool, appRow, \{[\s\S]{0,80}provision: \(\) => forkApp\(config, appRow, sourceApp\)/);
   // Every project is live, so nothing reads who made which any more; what
   // was made without a description is recorded only for somebody the bot
   // works for, and an import's record is what holds its backlog back.
@@ -541,9 +542,10 @@ test('the short description is suggested for everyone making a project, and ever
   // The bot's wake is only for a first version it builds.
   assert.match(src, /if \(botBuilds\) settingsModule\(\)\.noteIssueActivity\(/);
   assert.match(src, /if \(final && botBuilds\) \{/, 'no DM about a request the bot never took on');
-  // A sweep the bot's mode does not gate, on the leader.
+  // A sweep the bot's mode does not gate, on the leader (a leader timer:
+  // services/leader-timers.js unrefs it and stops it at shutdown).
   const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
-  assert.match(server, /\.sweepFirstVersions\(getPool\(config\), config\)[\s\S]{0,240}setInterval\(runFirstRequestSweep, 5 \* 60 \* 1000\)\.unref\(\);/);
+  assert.match(server, /\.sweepFirstVersions\(getPool\(config\), config\)[\s\S]{0,240}leaderTimers\.every\('first-request-sweep', runFirstRequestSweep, 5 \* 60 \* 1000\);/);
   const schema = fs.readFileSync(path.join(__dirname, '..', 'src', 'db', 'schema.sql'), 'utf8');
   assert.match(schema, /ALTER TABLE homeroom_bot_first_versions ADD COLUMN IF NOT EXISTS bot_builds BOOLEAN NOT NULL DEFAULT TRUE;/);
 });

@@ -143,8 +143,10 @@ async function settleMergedPasses(pool, appId) {
 // The checks that block for this run: every check a merged proposal has
 // passed, and every check `sessionId` itself has passed on an earlier head.
 // One query per checks run, plus one for the proposal's own; a few hundred
-// rows is nothing.
-async function loadGraduated(pool, appId, { sessionId = null } = {}) {
+// rows is nothing. `strict` throws a read that failed instead of reading it
+// as advisory: for a caller that can ask again later rather than judge now
+// (check-harvest.js, whose run waits for the next sweep).
+async function loadGraduated(pool, appId, { sessionId = null, strict = false } = {}) {
   const out = new Set();
   if (!pool || !appId) return out;
   await settleMergedPasses(pool, appId);
@@ -160,6 +162,7 @@ async function loadGraduated(pool, appId, { sessionId = null } = {}) {
     // check has earned gating, so everything is advisory for this run. The
     // alternative (assume everything gates) would block every proposal on
     // a transient DB hiccup.
+    if (strict) throw err;
     log.warn('check-history', 'Graduated-set load failed — treating all checks as advisory', {
       appId, err: err.message,
     });
@@ -176,6 +179,7 @@ async function loadGraduated(pool, appId, { sessionId = null } = {}) {
     } catch (err) {
       // The app-wide set still stands; only this proposal's own passes are
       // missing, which can under-block it this once and never over-block.
+      if (strict) throw err;
       log.warn('check-history', 'Own passes load failed (non-fatal)', { appId, sessionId: own, err: err.message });
     }
   }

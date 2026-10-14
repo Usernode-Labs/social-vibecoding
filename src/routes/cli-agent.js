@@ -32,6 +32,7 @@ const classicSessions = require('../services/classic-sessions');
 const github = require('../services/github');
 const githubBudget = require('../services/github-budget');
 const { drainGuard } = require('../services/lifecycle');
+const { openEnded } = require('../middleware/inflight-requests');
 const log = require('../services/logger');
 
 const MAX_REASON_CHARS = 500;
@@ -252,6 +253,9 @@ function cliAgentRoutes(config, { pool = getPool(config), auth } = {}) {
     }
     const lease = await requireLease(req, res, req.query.leaseId);
     if (!lease) return undefined;
+    // Held open for the poll window by design: a shutdown's drain does not
+    // wait for it (src/middleware/inflight-requests.js).
+    openEnded(res);
     const controller = new AbortController();
     res.on('close', () => controller.abort());
     try {

@@ -22,7 +22,7 @@ export interface ServiceOptions {
   versions: ReadonlyMap<string, number>;
 }
 
-const DEFAULTS = { maxAttempts: 5, leaseMs: 60000 };
+const DEFAULTS = { maxAttempts: 5, leaseMs: 60000, maxLostAttempts: 100 };
 const RESULT_EVENTS = new Map([['succeeded', 'WorkSucceeded'], ['failed', 'WorkFailed'], ['exhausted', 'WorkExhausted']]);
 const defaultBackoff = (attempt: number) => Math.min(10 * 60000, 5000 * 2 ** (attempt - 1));
 
@@ -32,10 +32,12 @@ function errorJson(err: unknown): { message: string; code: string | null } {
 }
 
 interface Claimed { id: string; machine: string; key: string; kind: string;
-  work_key: string; input: Json; checkpoint: Json | null; attempt_count: number; claim_id: string }
+  work_key: string; input: Json; checkpoint: Json | null; attempt_count: number; lost_attempts: number; claim_id: string }
 
 // Claim up to `room` due items of one kind: queued and due, or running on
-// an expired lease. `room` is this process's free capacity for the kind;
+// an expired lease (an attempt lost: its process died, or stopped and gave
+// the lease up, which `lost_attempts` counts). `room` is this process's
+// free capacity for the kind;
 // services run in one process for now, so that is also the global limit.
 // An item whose instance a newer machine version last wrote is not claimed
 // here: during a rollout the older process would run it with older code.
@@ -57,10 +59,11 @@ export async function claim(opts: ServiceOptions, kind: string, room: number): P
           FOR UPDATE OF w SKIP LOCKED)
        UPDATE wf_work w SET status = 'running', claim_id = gen_random_uuid(),
               lease_until = now() + make_interval(secs => $3::float8 / 1000),
-              attempt_count = w.attempt_count + 1
+              attempt_count = w.attempt_count + 1,
+              lost_attempts = w.lost_attempts + CASE WHEN w.status = 'running' THEN 1 ELSE 0 END
          FROM due WHERE w.id = due.id
        RETURNING w.id, w.machine, w.key, w.kind, w.work_key, w.input, w.checkpoint,
-                 w.attempt_count, w.claim_id, due.claim_id AS previous_claim`,
+                 w.attempt_count, w.lost_attempts, w.claim_id, due.claim_id AS previous_claim`,
       [kind, room, leaseMs, [...opts.versions.keys()], [...opts.versions.values()]]);
     for (const r of rows) {
       if (r.previous_claim) {
@@ -142,12 +145,26 @@ async function finish(opts: ServiceOptions, w: Claimed, report: Report): Promise
 // signal and nothing is reported; the next claim resumes from the checkpoint.
 // A process stopping aborts it too, and a handler that ended on that signal
 // (it threw) reports nothing either; one that finished its work anyway
-// reports it, rather than have it run again after the lease lapses.
+// reports it, rather than have it run again after the lease lapses. Until
+// the handler returns its process still holds the lease, so it may still
+// checkpoint: a step whose effect had happened when the stop came is kept,
+// and the next process does not do it again. A process that stops gives up
+// the lease of an item it reports nothing for, so the next process claims it
+// at once rather than when the lease lapses.
+//
+// A `resumable` handler carries its work on from its checkpoint, so an
+// attempt that ended because its process went (a release restarts the
+// platform many times a day) is not one of its tries: only attempts that
+// ended in an error count against `maxAttempts`, and lost ones against
+// `maxLostAttempts`, which bounds a handler that keeps taking its process
+// down with it.
 export async function execute(opts: ServiceOptions, w: Claimed, stopping?: AbortSignal): Promise<void> {
   const h = opts.handlers.get(w.kind)!;
   const maxAttempts = h.maxAttempts ?? DEFAULTS.maxAttempts;
   const leaseMs = h.leaseMs ?? DEFAULTS.leaseMs;
-  if (w.attempt_count > maxAttempts) {
+  const lost = Number(w.lost_attempts) || 0;
+  const tries = h.resumable ? w.attempt_count - lost : w.attempt_count;
+  if (h.resumable ? lost > (h.maxLostAttempts ?? DEFAULTS.maxLostAttempts) : w.attempt_count > maxAttempts) {
     // Only a lease that kept expiring gets here: the process running it died.
     await finish(opts, w, { outcome: 'exhausted', error: { message: 'lease lost on every attempt', code: 'lease_lost' } });
     return;
@@ -168,11 +185,11 @@ export async function execute(opts: ServiceOptions, w: Claimed, stopping?: Abort
   let report: Report | null;
   try {
     const value = await h.run({
-      workId: w.id, kind: w.kind, key: w.work_key, input: w.input, attempt: w.attempt_count,
+      workId: w.id, kind: w.kind, key: w.work_key, input: w.input, attempt: w.attempt_count, lostAttempts: lost,
       resumeFrom: w.checkpoint ?? null,
       checkpoint: async (v: Json) => {
         assertJson(v);
-        if (abort.signal.aborted) throw new LeaseLost();
+        if (leaseLost) throw new LeaseLost();
         await renew(`UPDATE wf_work SET checkpoint = $3 WHERE ${live}`, [w.id, w.claim_id, JSON.stringify(v)]);
       },
       signal: abort.signal,
@@ -183,11 +200,17 @@ export async function execute(opts: ServiceOptions, w: Claimed, stopping?: Abort
   } catch (err) {
     if (abort.signal.aborted) report = null;
     else if ((err as { permanent?: boolean })?.permanent) report = { outcome: 'failed', error: errorJson(err) };
-    else if (w.attempt_count >= maxAttempts) report = { outcome: 'exhausted', error: errorJson(err) };
-    else report = { outcome: 'retry', error: errorJson(err), delayMs: (h.backoffMs || defaultBackoff)(w.attempt_count) };
+    else if (tries >= maxAttempts) report = { outcome: 'exhausted', error: errorJson(err) };
+    else report = { outcome: 'retry', error: errorJson(err), delayMs: (h.backoffMs || defaultBackoff)(tries) };
   } finally {
     clearInterval(heartbeat);
     stopping?.removeEventListener('abort', onStop);
+  }
+  if (!leaseLost && !report && stopping?.aborted) {
+    // Stopping, with nothing to report: the claim is given up now, under it.
+    await opts.pool.query(`UPDATE wf_work SET lease_until = now() WHERE ${live}`, [w.id, w.claim_id])
+      .catch((err) => opts.log.warn('workflow', 'could not give up a stopped work item\'s lease', { kind: w.kind, workId: w.id, message: err?.message }));
+    return;
   }
   if (leaseLost || !report) return;
   if (!await finish(opts, w, report)) {

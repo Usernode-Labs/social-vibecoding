@@ -64,8 +64,9 @@ test('the words people gave the bot stay out of staging and prod-debug', () => {
   // when it changed nothing (homeroom-bot-live.js buildNudgePrompt), which
   // can quote a private project's code; and why a first version's first try
   // failed (homeroom-bot.js claimAutoRetry), which can quote the same; and
-  // where a build is between its steps (homeroom-bot-checkpoint.js), which
-  // keeps its build agent's last message.
+  // where a build was between its steps, kept by builds from before builds
+  // were durable until they are asked for again (homeroom-bot.js
+  // requeueLegacyBuilds), which keeps its build agent's last message.
   assert.deepEqual(DENIED_COLUMNS.homeroom_bot_runs, ['plan_change', 'review', 'build_no_change', 'build_retry', 'build_checkpoint']);
   assert.match(schema, /COMMENT ON COLUMN homeroom_bot_runs\.build_checkpoint IS 'staging:private';/);
   assert.match(schema, /COMMENT ON COLUMN homeroom_bot_runs\.build_retry IS 'staging:private';/);

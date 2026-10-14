@@ -744,24 +744,109 @@ async function commitWhenReady(pool, { appId, name, owner, repo }, deps = {}) {
   try {
     const sketch = await whenReady(pool, appId, LATE_COMMIT_WAIT_MS);
     if (!sketch || sketch.committed_at) return false;
-    const files = designFiles({ sketch });
-    if (!files.length) return false;
-    const github = deps.github || require('./github');
-    const card = cardOf(sketch.design);
-    const manifest = typeof github.getFileContent === 'function'
-      ? await github.getFileContent(owner, repo, 'dapp.json', 'main').catch(() => null)
-      : null;
-    const withCard = manifest ? manifestWithCard(manifest, { emoji: card.emoji, tagline: card.tagline }) : null;
-    if (withCard) files.push({ path: 'dapp.json', content: withCard });
-    await github.pushFiles(owner, repo, files, {
-      message: `Add the card ${name} was made with`,
-    });
-    await markCommitted(pool, appId);
-    return true;
+    return await commitCard(pool, sketch, { appId, name, owner, repo }, deps);
   } catch (err) {
     log.warn('app-sketch', 'Late card not committed', { appId, err: err.message });
     return false;
   }
+}
+
+// The late commit itself, for a ready card: commitWhenReady's, and the
+// leader's sweep's below. Throws what GitHub throws.
+async function commitCard(pool, sketch, { appId, name, owner, repo }, deps = {}) {
+  const files = designFiles({ sketch });
+  if (!files.length) return false;
+  const github = deps.github || require('./github');
+  const card = cardOf(sketch.design);
+  const manifest = typeof github.getFileContent === 'function'
+    ? await github.getFileContent(owner, repo, 'dapp.json', 'main').catch(() => null)
+    : null;
+  const withCard = manifest ? manifestWithCard(manifest, { emoji: card.emoji, tagline: card.tagline }) : null;
+  if (withCard) files.push({ path: 'dapp.json', content: withCard });
+  await github.pushFiles(owner, repo, files, {
+    message: `Add the card ${name} was made with`,
+  });
+  await markCommitted(pool, appId);
+  return true;
+}
+
+// ── Cards a restart kept out of the repository ──────────────────────────
+//
+// commitWhenReady runs in the process that made the repository, and dies
+// with it; and a creation the leader resumes after a restart
+// (app-creation-owner.js) finds the repository already made and clones it,
+// so it commits no card at all. The leader's sweep commits such a card: one
+// ready for SWEEP_AFTER_MINUTES (well past LATE_COMMIT_WAIT_MS, so a late
+// commit still running in a live process lands first), made in the last
+// SWEEP_WITHIN_HOURS (which also bounds how often one GitHub keeps refusing
+// is tried), for a project now running on the repository made for it. A
+// repository that already holds design/sketch.json (a commit that landed
+// before its process could mark it) is only marked, never committed twice.
+const SWEEP_AFTER_MINUTES = 10;
+const SWEEP_WITHIN_HOURS = 6;
+const COMMIT_SWEEP_MS = 15 * 60 * 1000;
+const COMMIT_SWEEP_BATCH = 10;
+
+/** One pass: resolves how many cards it committed (or found committed). Never throws. */
+async function sweepUncommitted(pool, deps = {}) {
+  const github = deps.github || require('./github');
+  if (typeof github.isEnabled === 'function' && !github.isEnabled()) return 0;
+  let done = 0;
+  try {
+    const { rows } = await pool.query(
+      `SELECT s.app_id, s.design, s.model, s.ready_at, s.committed_at, s.status,
+              a.name, a.repo_url
+         FROM app_sketches s JOIN apps a ON a.id = s.app_id
+        WHERE s.status = 'ready' AND s.committed_at IS NULL AND s.design->>'kind' = 'card'
+          AND s.ready_at < NOW() - make_interval(mins => $1)
+          AND s.created_at > NOW() - make_interval(hours => $2)
+          AND a.repo_url IS NOT NULL AND a.self_hosted IS NOT TRUE AND a.forked_from IS NULL
+          AND a.status IN ('running', 'awaiting_secrets')
+        ORDER BY s.created_at
+        LIMIT $3`,
+      [SWEEP_AFTER_MINUTES, SWEEP_WITHIN_HOURS, COMMIT_SWEEP_BATCH]
+    );
+    for (const row of rows) {
+      const parsed = github.parseGithubUrl(row.repo_url);
+      if (!parsed) continue;
+      try {
+        const existing = await github.getFileContent(parsed.owner, parsed.repo, 'design/sketch.json', 'main');
+        if (existing !== null) {
+          await markCommitted(pool, row.app_id);
+        } else if (!(await commitCard(pool, row, {
+          appId: row.app_id, name: row.name, owner: parsed.owner, repo: parsed.repo,
+        }, deps))) {
+          continue;
+        }
+        done += 1;
+        log.info('app-sketch', 'Card a restart kept out of the repository committed', { appId: row.app_id });
+      } catch (err) {
+        log.warn('app-sketch', 'Late card not committed by the sweep', { appId: row.app_id, err: err.message });
+      }
+    }
+  } catch (err) {
+    log.warn('app-sketch', 'Card commit sweep failed', { err: err.message });
+  }
+  return done;
+}
+
+let commitSweepHandle = null;
+let commitSweeping = false;
+
+/** The leader's half (server.js becomeLeader): a pass every COMMIT_SWEEP_MS. */
+function startCommitSweep(config, deps = {}) {
+  if (commitSweepHandle) return;
+  const pool = deps.pool || require('../db/pool').getPool(config);
+  commitSweepHandle = setInterval(() => {
+    if (commitSweeping) return;
+    commitSweeping = true;
+    sweepUncommitted(pool, deps).finally(() => { commitSweeping = false; });
+  }, COMMIT_SWEEP_MS);
+  commitSweepHandle.unref?.();
+}
+
+function stopCommitSweep() {
+  if (commitSweepHandle) { clearInterval(commitSweepHandle); commitSweepHandle = null; }
 }
 
 module.exports = {
@@ -801,4 +886,7 @@ module.exports = {
   designFiles,
   markCommitted,
   commitWhenReady,
+  sweepUncommitted,
+  startCommitSweep,
+  stopCommitSweep,
 };

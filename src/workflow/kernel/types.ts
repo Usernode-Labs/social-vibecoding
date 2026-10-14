@@ -158,6 +158,7 @@ export interface WorkContext {
   key: string;
   input: any;
   attempt: number;
+  lostAttempts?: number;                 // attempts that ended with their process
   resumeFrom: Json | null;               // the last checkpoint, if any
   checkpoint(value: Json): Promise<void>; // throws LeaseLost if the claim is gone
   signal: AbortSignal;
@@ -169,6 +170,10 @@ export interface WorkHandler {
   backoffMs?: (attempt: number) => number;
   concurrency?: number;                   // per kind, in this process
   leaseMs?: number;
+  // Carries its work on from its checkpoint: attempts lost with their process
+  // do not count against maxAttempts, only against maxLostAttempts (default 100).
+  resumable?: boolean;
+  maxLostAttempts?: number;
 }
 
 // What a producer gets back for an event.

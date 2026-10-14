@@ -387,6 +387,9 @@ test('the spec receives the early first look: read for its plan, waited for whil
   const bap = src.slice(src.indexOf('async function buildAndPropose('));
   const wait = bap.indexOf('const startingLook = !presetSpec && firstVersion && typeof earlyLook === \'function\'');
   assert.ok(wait > 0 && wait < bap.indexOf('await step(\'spec_turn\')'), 'read before the spec turn starts');
+  // A durable build resumed after its plan was kept does not wait for it
+  // again, and a stop does not wait for it at all.
+  assert.match(bap, /typeof earlyLook === 'function' && !steps\.has\('spec'\)\s*\? await steps\.race\(/);
   assert.match(bap, /locale, onScreen, tweaks: buildTweaks, earlyLook: typeof startingLook === 'string' \? startingLook : null,/);
   assert.match(src, /seed, buildNote, firstVersion, guidance, starter, locale, tweaks, earlyLook: firstVersion \? earlyLook : null,/);
 });

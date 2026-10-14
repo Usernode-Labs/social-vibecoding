@@ -136,7 +136,7 @@ test('singleton background work lives in becomeLeader(), not start()', () => {
     'startStalePrSweeper(config)',
     'startEligibleMergeSweeper(config)',
     'startTitleHealSweeper(config)',
-    'resumeIssueCloseWatches(config)',
+    'resumeIssueCloseWatches(config',
     'resumeRunningCampaigns(config',
     "require('./src/services/main-drift-poller').start(config)",
     "require('./src/services/app-heal').start(config)",

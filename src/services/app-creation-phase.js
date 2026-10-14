@@ -31,15 +31,17 @@
  *
  * Why no persistence across restarts? If the platform restarts
  * mid-creation the `createApp` job dies with it — there is nothing left
- * to report a phase for. The creation watchdog in routes/apps.js flips
- * the stranded row to `'error'`, and until it does, a missing phase
- * reads as "in progress, step unknown", which is exactly true.
+ * to report a phase for. The leader resumes the stranded row from the
+ * start in its own process (services/app-creation-owner.js), which
+ * reports its phases afresh, and until it does, a missing phase reads as
+ * "in progress, step unknown", which is exactly true.
  */
 
 // Creation is watchdogged at CREATION_TIMEOUT_MS (5 minutes) in
-// routes/apps.js. Anything still claiming a phase well past that is an
-// orphan from a process that died mid-run rather than a genuinely slow
-// build, and we would rather report nothing than spin a step forever.
+// services/app-creation-owner.js. Anything still claiming a phase well
+// past that is an orphan from a process that died mid-run rather than a
+// genuinely slow build, and we would rather report nothing than spin a
+// step forever.
 const PHASE_STALE_AFTER_MS = 10 * 60 * 1000;
 
 /**
