@@ -554,7 +554,10 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null } = {}) 
 // settlement is returned for the machine to store. Null when there is
 // nothing to read (no launched manifest, a Job gone, a blocking unit suite
 // that cannot be read): the retry then runs the checks again. Throws the
-// signal's reason when the work item is cancelled meanwhile.
+// signal's reason when the work item is cancelled meanwhile, and throws when
+// whether the unit suite blocks merges cannot be read: the item is retried
+// and reads the Jobs again, as the harvest's run waits for its next sweep.
+// Never settled as advisory on that doubt (#4996, #4973).
 async function collectForWorkflow(config, pool, { runKey, session, app, signal }) {
   const visuals = require('./visuals');
   const kubernetes = require('./kubernetes');
@@ -596,11 +599,8 @@ async function collectForWorkflow(config, pool, { runKey, session, app, signal }
   ]);
   if (signal?.aborted) throw signal.reason;
   if (capture && (capture.state === 'gone' || capture.state === 'aborted')) return null;
-  let graduated = false;
-  try {
-    graduated = (await checkHistory.loadGraduated(pool, app.id, { sessionId }))
-      .has(appManifest.checkKey(unitSuite.UNIT_CHECK_NAME, unitSuite.UNIT_CHECK_PATH));
-  } catch { /* advisory on any doubt */ }
+  const graduated = (await checkHistory.loadGraduated(pool, app.id, { sessionId, strict: true }))
+    .has(appManifest.checkKey(unitSuite.UNIT_CHECK_NAME, unitSuite.UNIT_CHECK_PATH));
   let unitOutcome = null;
   if (unit && (unit.state === 'succeeded' || unit.state === 'failed' || unit.state === 'timeout')) {
     unitOutcome = await unitSuite.outcomeFromLog({
@@ -612,13 +612,16 @@ async function collectForWorkflow(config, pool, { runKey, session, app, signal }
   // As the harvest: a suite that blocks merges and cannot be read is one
   // only a fresh run can judge.
   if (!unitOutcome && !manifest.shotsOnly && graduated) return null;
+  // As the harvest: a capture Job that wrote nothing at all, or that its
+  // deadline did not end, says nothing about the proposal. It is the
+  // platform's fault, and spends none of the proposal's automatic retries.
   if (capture && ((capture.state === 'failed' && !capture.stdout.trim()) || capture.state === 'timeout')) {
     const why = capture.state === 'timeout'
       ? 'capture Job still running past its deadline'
       : `capture Job failed${capture.stderr ? ` (${capture.stderr})` : ''}`;
     kubernetes.deleteSettledCheckJobs(config, { sessionId, previewRunId: runId }).catch(() => {});
     await checkRuns.finish(pool, runId);
-    return { outcome: 'blocked', reason: why.slice(0, 300) };
+    return { outcome: 'blocked', reason: why.slice(0, 300), platformFault: true };
   }
   const settled = await visuals.settleCaptureRun(config, pool, {
     session, app, commitHash: commitSha, trigger: manifest.trigger || null, send: null, operation: null,

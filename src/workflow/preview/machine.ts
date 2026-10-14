@@ -996,7 +996,11 @@ function ran(s: Live, e: Event<any>, outcome: string, f: Facts, ctx: TransitionC
       ? (r?.reason || (outcome === 'succeeded' ? 'The checks run produced no result' : 'The checks run was lost before it finished'))
       : (r!.errorDetail ?? null);
   const streakBefore = d0.streak;
-  const platformFault = state === 'error' && !!r?.platformFault;
+  // The platform's fault, never the proposal's: what the run itself says is
+  // (a Pod that never started, a capture Job that wrote nothing), and a run
+  // that never answered at all (its handler kept failing, or its claims kept
+  // being lost). An admin ending a hung run is not counted as either.
+  const platformFault = state === 'error' && (!!r?.platformFault || (!ended && outcome !== 'succeeded'));
   const d: Data = {
     ...d0, run: null, verdict: state, failure: state === 'error' ? detail : null, platformFault,
     streak: state === 'error' ? streakBefore + 1 : 0,

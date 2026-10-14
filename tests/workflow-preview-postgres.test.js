@@ -297,6 +297,14 @@ test('preview machine against the full PostgreSQL schema', { timeout: 120000 }, 
     work.answer.set(WORK.run, verdict('passing'));
     const r2 = await row(t2.id);
     assert.deepEqual([r2.check_state, r2.check_error_platform], ['error', true]);
+    // So is a run that never answered: its handler kept failing.
+    const t3 = await proposal(await app(), { status: 'active' });
+    work.answer.set(WORK.run, () => { throw new Error('the database went away'); });
+    await submit(t3, SHA('e'));
+    await settle();
+    work.answer.set(WORK.run, verdict('passing'));
+    const r3 = await row(t3.id);
+    assert.deepEqual([r3.check_state, r3.check_error_platform], ['error', true]);
   });
 
   await t.test('P6 a deferred head waits for ConflictResolved, once per episode', async () => {
