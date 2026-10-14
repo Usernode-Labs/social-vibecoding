@@ -2251,12 +2251,12 @@ SELECT n.nspname || '.' || c.relname
     targetDb, count: qualifiedNames.length, tables: qualifiedNames,
   });
 
-  // Per-table failures are collected rather than short-circuiting so
-  // we don't leave half the private tables full because one failed.
-  // After the pass, if anything failed, throw — a partial truncate is
-  // still a leaky clone.
+  // Failures are collected rather than short-circuiting so we don't
+  // leave half the private tables full because one failed. After the
+  // pass, if anything failed, throw — a partial truncate is still a
+  // leaky clone.
   const failures = [];
-  const truncated = [];
+  const safe = [];
   for (const qualified of qualifiedNames) {
     if (!SAFE_QUALIFIED_IDENT.test(qualified)) {
       log.warn('db-manager', 'Refusing to TRUNCATE non-standard identifier', {
@@ -2265,14 +2265,43 @@ SELECT n.nspname || '.' || c.relname
       failures.push({ table: qualified, error: 'unsafe identifier' });
       continue;
     }
+    safe.push(qualified);
+  }
+
+  // All of them in ONE statement, so one round trip and one transaction.
+  // One statement per table (191 for the platform's own database) paid a
+  // network round trip per table — a psql process per table on the
+  // template build — and a WAL flush per table: a TRUNCATE drops relation
+  // files, and Postgres flushes WAL at the commit of any transaction that
+  // does, whatever synchronous_commit says. One statement also truncates
+  // each relation once, where the per-table form re-truncates whatever
+  // several tables' CASCADE reaches.
+  // Do NOT replace this with the per-table statements inside BEGIN/COMMIT:
+  // re-truncating a relation already truncated in the same transaction
+  // flushes WAL every time, which measured slower than autocommit.
+  // It is all or nothing, so a failure leaves every table as it was; the
+  // fallback then runs today's statement per table, in autocommit, to empty
+  // all that can be emptied and to name each table that cannot.
+  const truncated = [];
+  if (safe.length > 0) {
     try {
-      await execute(targetDb, `TRUNCATE ${qualified} RESTART IDENTITY CASCADE`);
-      truncated.push(qualified);
-    } catch (err) {
-      log.error('db-manager', 'TRUNCATE failed', {
-        targetDb, table: qualified, err: err.message,
+      await execute(targetDb, `TRUNCATE ${safe.join(', ')} RESTART IDENTITY CASCADE`);
+      truncated.push(...safe);
+    } catch (batchErr) {
+      log.warn('db-manager', 'One-statement TRUNCATE failed; truncating table by table', {
+        targetDb, count: safe.length, err: batchErr.message,
       });
-      failures.push({ table: qualified, error: err.message });
+      for (const qualified of safe) {
+        try {
+          await execute(targetDb, `TRUNCATE ${qualified} RESTART IDENTITY CASCADE`);
+          truncated.push(qualified);
+        } catch (err) {
+          log.error('db-manager', 'TRUNCATE failed', {
+            targetDb, table: qualified, err: err.message,
+          });
+          failures.push({ table: qualified, error: err.message });
+        }
+      }
     }
   }
 

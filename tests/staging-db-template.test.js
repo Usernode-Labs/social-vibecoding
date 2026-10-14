@@ -377,7 +377,9 @@ test('template clone uses two bounded connections for 101 redactions and closes 
       assert.equal(c.config.statement_timeout, 30000);
       assert.equal(c.config.query_timeout, 30000);
     }
-    assert.equal(fixture.calls.filter((c) => c.cmd === 'pg' && /^TRUNCATE/.test(c.sql)).length, 82);
+    const truncates = fixture.calls.filter((c) => c.cmd === 'pg' && /^TRUNCATE/.test(c.sql));
+    assert.equal(truncates.length, 1, 'the 82 private tables are emptied by one statement');
+    assert.equal(truncates[0].sql.split(', ').length, 82);
     assert.equal(fixture.calls.filter((c) => c.cmd === 'pg' && /^UPDATE/.test(c.sql)).length, 19);
     assert.ok(!fixture.calls.some((c) => c.cmd === 'psql' && /TRUNCATE|UPDATE/.test(c.sql)));
     assert.ok(!fixture.calls.some((c) => /^(BEGIN|COMMIT)/.test(c.sql || '')), 'CREATE DATABASE stays outside transactions');
