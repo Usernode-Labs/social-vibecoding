@@ -11167,6 +11167,29 @@ html.platform-kb-open #comment-pin-box.comment-sheet {
   padding-bottom: var(--comment-sheet-pb);
   background-color: var(--dc-sheet-solid);
 }
+/* And its head the same at the top (14 Oct 2026): the grabber, where the
+   request goes, Minimize and ✕ stay at the sheet's top edge while the rest
+   scrolls under them. Under the close-up and scrolled away with the keys
+   up, the ✕ was hard to find. Held the sheet's top padding (p-3) higher,
+   for the same reason the actions row is held lower. */
+#comment-pin-box.comment-sheet .comment-sheet-head {
+  position: sticky;
+  top: -0.75rem;
+  z-index: 1;
+  flex: none;
+  margin-top: -0.75rem;
+  padding-top: 0.75rem;
+  background-color: var(--dc-sheet-solid);
+}
+/* The phone's small box (the comment before its sheet) comes in beside its
+   pin rather than appearing in a frame. Opacity and transform only. */
+.comment-small-in { animation: comment-small-in 160ms ease-out; }
+@keyframes comment-small-in {
+  from { opacity: 0; transform: translateY(4px) scale(0.97); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .comment-small-in { animation: none; }
+}
 /* THE PAPERCLIP'S POPOVER (#4127): Photo and Video, in the vote popover's
    frame (.dev-vote-pop / .messages-new-pop: same radius, surface, hairline
    and shadow) and the "+" menu's rows. Absolute under the paperclip rather
