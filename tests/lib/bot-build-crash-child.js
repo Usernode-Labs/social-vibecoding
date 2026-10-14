@@ -163,10 +163,12 @@ require(path.join(SRC, 'services/homeroom-bot'));
 require(path.join(SRC, 'routes/sessions'));
 process.on('unhandledRejection', (err) => { console.error('unhandled rejection:', err?.stack || err?.message || err); });
 
+// The outside world's own connections are left open to the end: what a
+// fake was doing for a turn when the stop came (a dispatch) is cut by the
+// exit, as a real process's is, never failed by this process closing them.
 async function stopAndExit() {
   await platform.stopWorkflow().catch(() => {});
   await world.record('stopped', {}).catch(() => {});
-  await pool.end().catch(() => {});
   process.exit(0);
 }
 

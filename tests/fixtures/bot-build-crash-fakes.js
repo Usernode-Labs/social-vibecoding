@@ -29,7 +29,7 @@
 
 const crypto = require('node:crypto');
 const path = require('node:path');
-const { captureStdout, MAIN_SHA } = require('../lib/bot-build-crash');
+const { captureStdout, MAIN_SHA, sha1 } = require('../lib/bot-build-crash');
 
 const SRC = path.join(__dirname, '..', '..', 'src');
 const isClass = (fn) => /^class\b/.test(Function.prototype.toString.call(fn));
@@ -80,9 +80,14 @@ module.exports = function install(world) {
   }
   async function sessionWorld(sessionId) {
     const { rows: [r] } = await world.appPool().query(
-      `SELECT cs.app_id, cs.branch_name, a.repo_url FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1`,
+      `SELECT cs.app_id, cs.branch_name, cs.workflow_step, a.repo_url FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1`,
       [Number(sessionId)]);
-    return { appId: r?.app_id ?? null, branch: r?.branch_name ?? null, repo: repoOf(r?.repo_url) };
+    return { appId: r?.app_id ?? null, branch: r?.branch_name ?? null, repo: repoOf(r?.repo_url), workflowStep: r?.workflow_step ?? null };
+  }
+  // The app a repository is (each run has its own), for the effects GitHub records.
+  async function appOfRepo(owner, repo) {
+    const { rows: [a] } = await world.appPool().query('SELECT id FROM apps WHERE repo_url = $1', [`https://github.com/${owner}/${repo}`]);
+    return a ? a.id : null;
   }
 
   // ── GitHub ────────────────────────────────────────────────────────────
@@ -119,6 +124,45 @@ module.exports = function install(world) {
         return { id: Number(`${Date.now()}${n}`), created_at: at.toISOString() };
       },
       async getFileContent() { return null; },
+      // The bench's own writes (bench/runner.js guardedGithub): a first
+      // version's first commit, and its branches under bench/.
+      async createRootCommit(owner, repo, files, { message = 'Initial commit' } = {}) {
+        const appId = await appOfRepo(owner, repo);
+        await world.kill('rootCommit:before');
+        // The same tree on every run, so two runs of one trial end on the same shas.
+        const sha = sha1(`root|${message}|${(files || []).length}`);
+        await pool.query('INSERT INTO crash_world_commits (sha, parent, ahead, step) VALUES ($1, NULL, 0, $2) ON CONFLICT DO NOTHING', [sha, 'root']);
+        await world.record('github.rootCommit', { repo: `${owner}/${repo}`, sha }, appId);
+        await world.kill('rootCommit:after');
+        return sha;
+      },
+      async deleteBenchBranch(owner, repo, branch) {
+        const { rowCount } = await pool.query('DELETE FROM crash_world_branches WHERE repo = $1 AND branch = $2', [`${owner}/${repo}`, branch]);
+        await world.record('github.deleteBranch', { repo: `${owner}/${repo}`, branch, existed: rowCount > 0 }, await appOfRepo(owner, repo));
+        return rowCount > 0;
+      },
+      // As GitHub's: made at `sha`, kept when it is there, refused at another commit.
+      async ensureBranchAtSha(owner, repo, branch, sha) {
+        const key = `${owner}/${repo}`;
+        const { rows: [b] } = await pool.query('SELECT sha FROM crash_world_branches WHERE repo = $1 AND branch = $2', [key, branch]);
+        const appId = await appOfRepo(owner, repo);
+        if (b && b.sha !== sha) {
+          await world.record('github.ensureBranch', { repo: key, branch, sha, outcome: 'conflict' }, appId);
+          throw Object.assign(new Error('The branch already exists at a different commit'), { code: 'branch_conflict' });
+        }
+        if (!b) await pool.query('INSERT INTO crash_world_branches (repo, branch, sha) VALUES ($1, $2, $3)', [key, branch, sha]);
+        await world.record('github.ensureBranch', { repo: key, branch, sha, outcome: b ? 'kept' : 'created' }, appId);
+        return { sha, created: !b };
+      },
+      async compareFiles(owner, repo, basehead) {
+        const [base, head] = String(basehead).split('...');
+        const { rows: [b] } = await pool.query('SELECT sha FROM crash_world_branches WHERE repo = $1 AND branch = $2', [`${owner}/${repo}`, head]);
+        const tip = b?.sha || head;
+        const { rows: [c] } = await pool.query('SELECT ahead FROM crash_world_commits WHERE sha = $1', [tip]);
+        const n = tip === base ? 0 : Math.max(0, Number(c?.ahead) || 0);
+        const files = Array.from({ length: n }, (_, i) => ({ filename: `src/part-${i + 1}.js`, status: 'added', additions: 3, deletions: 0, previous: null }));
+        return { files, diff: files.map((f) => `+++ ${f.filename}`).join('\n'), complete: true, truncated: false };
+      },
       async createBranch(owner, repo, branch) {
         await pool.query(
           'INSERT INTO crash_world_branches (repo, branch, sha) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING',
@@ -154,7 +198,9 @@ module.exports = function install(world) {
   const db = () => world.appPool();
 
   // Which of a build's turns this is: the step a durable turn is kept under.
-  function stepOf(opts) {
+  function stepOf(opts, where = {}) {
+    // A bench trial's triage runs on a session of its own (runner.js trialSession).
+    if (opts.mode === 'scout' && /(^|\/)session:triage$/.test(String(where.workflowStep || ''))) return 'triage';
     if (opts.mode === 'scout') return 'spec';
     if (opts.telemetryComponent === 'homeroom_bot_build_nudge') return 'nudge';
     const fix = /review fixes, round (\d+)/.exec(String(opts.commitMsg || ''));
@@ -353,8 +399,8 @@ module.exports = function install(world) {
       if (!meta) throw new Error(`execInWorker: no warm worker registered for session ${sid}`);
       if (meta.inFlight) throw Object.assign(new Error(`execInWorker: a turn is already in flight for session ${sid}`), { code: 'TURN_IN_FLIGHT' });
       const mode = opts.mode || 'build';
-      const step = stepOf(opts);
       const where = await sessionWorld(sid);
+      const step = stepOf(opts, where);
       await world.record('turn.exec', { step, mode, sessionId: sid }, where.appId);
       // The attempt is registered (agent-turn.js startCodexAttempt wrote its
       // dispatch_pending record); nothing of this call has happened yet.
@@ -464,7 +510,7 @@ module.exports = function install(world) {
       const where = await sessionWorld(sid);
       const { rows: [b] } = await pool.query('SELECT sha FROM crash_world_branches WHERE repo = $1 AND branch = $2', [where.repo, branchName]);
       await pool.query('UPDATE crash_world_branches SET sha = $3 WHERE repo = $1 AND branch = $2', [where.repo, branchName, w.head_sha]);
-      await world.record('push', { sha: w.head_sha, from: b?.sha || null, by: 'execPushFromWorker' }, where.appId);
+      await world.record('push', { sha: w.head_sha, from: b?.sha || null, by: 'execPushFromWorker', branch: branchName }, where.appId);
       return { sha: w.head_sha };
     },
     async keepPartialWork(sessionId) {

@@ -133,7 +133,7 @@ async function settleTurns(pool) {
           }
           await client.query(
             `INSERT INTO crash_world_effects (app_id, kind, data) VALUES ($1, $2, $3)`,
-            [t.app_id, pushOk ? 'push' : 'push.rejected', JSON.stringify({ step: t.step, sha: head, from: t.base_sha, by: 'turn', branchWas: b?.sha || null })]);
+            [t.app_id, pushOk ? 'push' : 'push.rejected', JSON.stringify({ step: t.step, sha: head, from: t.base_sha, by: 'turn', branch: t.branch, branchWas: b?.sha || null })]);
         }
         await client.query(
           `UPDATE crash_world_workspaces SET head_sha = $2, head_ahead = $3 WHERE session_id = $1`, [t.session_id, sha, ahead]);
