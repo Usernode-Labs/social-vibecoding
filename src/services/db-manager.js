@@ -2470,8 +2470,13 @@ SELECT n.nspname || '.' || c.relname,
         const done = columns.filter((c) => scrubbed.includes(c.target))
           .map((c) => ({ ...c, prefix: byColumn.prefixes.get(c.target) || null }));
         try {
-          for (const target of await columnsNotScrubbed(targetDb, done, execute)) {
-            failures.push({ target, error: 'still holds a value after its UPDATE' });
+          for (const { target, rowSecurity } of await columnsNotScrubbed(targetDb, done, execute)) {
+            failures.push({
+              target,
+              error: rowSecurity
+                ? 'row-level security applies to this role now, so rows could have been hidden from the scrub'
+                : 'still holds a value after its UPDATE',
+            });
           }
         } catch (err) {
           failures.push({ target: 'the check after the column-by-column pass', error: err.message });
@@ -2627,7 +2632,11 @@ async function scrubColumnByColumn(targetDb, columns, execute) {
 
 // One query naming every column that still holds something other than NULL
 // or its placeholder namespace (step 3 of the one-statement scrub, for the
-// column-by-column pass). If the query itself fails, the caller counts that
+// column-by-column pass). It also names any column whose table row-level
+// security now applies to: discovery's flag is from before the pass, and a
+// trigger fired by one of its UPDATEs can turn row-level security on, after
+// which this role's UPDATEs and this very check see only some rows. The
+// flag is read in the same query, so it is current when the pass ends. If the query itself fails, the caller counts that
 // as a failure: nothing is confirmed.
 async function columnsNotScrubbed(targetDb, columns, execute) {
   // As few queries as fit under MAX_SCRUB_STATEMENT_BYTES (one for any
@@ -2636,7 +2645,8 @@ async function columnsNotScrubbed(targetDb, columns, execute) {
   let parts = [];
   let bytes = 0;
   for (const c of columns) {
-    const part = `SELECT '${c.target}' WHERE EXISTS (SELECT 1 FROM ${c.qualified} WHERE ${unscrubbedRowSql(c)})`;
+    const rls = `row_security_active('${c.qualified}'::regclass)`;
+    const part = `SELECT '${c.target}', ${rls} WHERE ${rls} OR EXISTS (SELECT 1 FROM ${c.qualified} WHERE ${unscrubbedRowSql(c)})`;
     if (parts.length > 0 && bytes + part.length + 11 > MAX_SCRUB_STATEMENT_BYTES) {
       queries.push(parts.join(' UNION ALL '));
       parts = [];
@@ -2649,7 +2659,10 @@ async function columnsNotScrubbed(targetDb, columns, execute) {
   const found = [];
   for (const sql of queries) {
     const out = await execute(targetDb, sql, { tuplesOnly: true });
-    found.push(...String(out || '').split('\n').map((s) => s.trim()).filter(Boolean));
+    for (const line of String(out || '').split('\n').map((s) => s.trim()).filter(Boolean)) {
+      const [target, rowSecurity] = line.split('|');
+      found.push({ target, rowSecurity: rowSecurity === 't' });
+    }
   }
   return found;
 }

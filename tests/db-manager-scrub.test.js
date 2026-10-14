@@ -59,7 +59,7 @@ function loadDbManager(discoveryRows, { occupiedAnswers = [], batch = null, upda
       if (/^DO /.test(sql)) { if (batch) batch(sql); return Promise.resolve({ stdout: 'DO\n', stderr: '' }); }
       if (/^SELECT EXISTS/.test(sql)) return Promise.resolve({ stdout: `${occupiedAnswers.shift() || 'f'}\n`, stderr: '' });
       if (/^UPDATE/.test(sql)) { if (update) update(sql); return Promise.resolve({ stdout: '', stderr: '' }); }
-      if (/ WHERE EXISTS /.test(sql)) return Promise.resolve({ stdout: unscrubbed.map((t) => `${t}\n`).join(''), stderr: '' });
+      if (/ OR EXISTS \(/.test(sql)) return Promise.resolve({ stdout: unscrubbed.map((t) => `${t}\n`).join(''), stderr: '' });
       return Promise.resolve({ stdout: '', stderr: '' });
     } catch (err) {
       return Promise.reject(err);
@@ -84,7 +84,7 @@ function loadDbManager(discoveryRows, { occupiedAnswers = [], batch = null, upda
     blocks: () => calls.filter((sql) => /^DO /.test(sql)),
     probes: () => calls.filter((sql) => /^SELECT EXISTS/.test(sql)),
     updates: () => calls.filter((sql) => /^UPDATE/.test(sql)),
-    checks: () => calls.filter((sql) => / WHERE EXISTS /.test(sql)),
+    checks: () => calls.filter((sql) => / OR EXISTS \(/.test(sql)),
   };
 }
 
@@ -257,8 +257,12 @@ test('a refused statement whose columns all scrub one by one is not a failure, o
     assert.equal(f.checks().length, 1);
     const prefix = /registration_code = '([^']+)'/.exec(f.updates()[0])[1];
     assert.equal(f.checks()[0],
-      `SELECT 'public.onchain_accounts.registration_code' WHERE EXISTS (SELECT 1 FROM public.onchain_accounts WHERE left(registration_code::text, ${prefix.length}) IS DISTINCT FROM '${prefix}')`
-      + " UNION ALL SELECT 'public.users.secret' WHERE EXISTS (SELECT 1 FROM public.users WHERE secret IS DISTINCT FROM NULL)");
+      "SELECT 'public.onchain_accounts.registration_code', row_security_active('public.onchain_accounts'::regclass)"
+      + " WHERE row_security_active('public.onchain_accounts'::regclass)"
+      + ` OR EXISTS (SELECT 1 FROM public.onchain_accounts WHERE left(registration_code::text, ${prefix.length}) IS DISTINCT FROM '${prefix}')`
+      + " UNION ALL SELECT 'public.users.secret', row_security_active('public.users'::regclass)"
+      + " WHERE row_security_active('public.users'::regclass)"
+      + ' OR EXISTS (SELECT 1 FROM public.users WHERE secret IS DISTINCT FROM NULL)');
   } finally {
     f.restore();
   }
@@ -273,6 +277,20 @@ test('a column still holding a value after the column-by-column pass fails it, b
     await assert.rejects(f.dbManager.scrubPrivateColumns(DB),
       (err) => /Failed to scrub 1 staging:private column\(s\)/.test(err.message)
         && /public\.users\.token \(still holds a value after its UPDATE\)/.test(err.message));
+  } finally {
+    f.restore();
+  }
+});
+
+test('row-level security that applies once the column-by-column pass ends fails it, by name', async () => {
+  const f = loadDbManager(['public.a_toggle|secret|f||f', 'public.secrets|secret|f||f'], {
+    batch: () => { throw psqlError('query would be affected by row-level security policy for table "secrets"'); },
+    unscrubbed: ['public.secrets.secret|t'],
+  });
+  try {
+    await assert.rejects(f.dbManager.scrubPrivateColumns(DB),
+      (err) => /Failed to scrub 1 staging:private column\(s\)/.test(err.message)
+        && /public\.secrets\.secret \(row-level security applies to this role now/.test(err.message));
   } finally {
     f.restore();
   }
@@ -328,7 +346,8 @@ test('the error a node-postgres connection gives decides the same way', async ()
   const refused = run(Object.assign(new Error('deadlock detected'), { severity: 'ERROR', code: '40P01' }));
   assert.equal(await refused.done, 'ok');
   assert.deepEqual(refused.sent.slice(2), ['UPDATE public.users SET secret = NULL',
-    "SELECT 'public.users.secret' WHERE EXISTS (SELECT 1 FROM public.users WHERE secret IS DISTINCT FROM NULL)"]);
+    "SELECT 'public.users.secret', row_security_active('public.users'::regclass) WHERE row_security_active('public.users'::regclass)"
+      + ' OR EXISTS (SELECT 1 FROM public.users WHERE secret IS DISTINCT FROM NULL)']);
   for (const err of [new Error('Query read timeout'), new Error('Connection terminated unexpectedly'),
     Object.assign(new Error('terminating connection due to administrator command'), { severity: 'FATAL', code: '57P01' })]) {
     const lost = run(err);
@@ -713,4 +732,53 @@ test('real server, through psql: too many columns for one argument are scrubbed 
   const check = await s.connect(s.name);
   const row = (await check.client.query('SELECT * FROM wide')).rows[0];
   assert.ok(columns.every((c) => row[c] === null));
+});
+
+test('real server: row-level security switched on by a trigger during the scrub fails the pass, on both executors', { timeout: 60000 }, async (t) => {
+  const s = await scratchDatabase(t, 'scrub_rlsdyn');
+  if (!s) return;
+  const login = await s.ordinaryRole();
+  // FORCE without ENABLE: row-level security is off when the lookup runs.
+  // Updating a_toggle (scrubbed first) switches it on for secrets.
+  await s.client.query(`
+    GRANT ALL ON SCHEMA public TO ${login.role};
+    CREATE TABLE a_toggle (id int, secret text);
+    INSERT INTO a_toggle VALUES (1, 'a-private');
+    COMMENT ON COLUMN a_toggle.secret IS 'staging:private';
+    CREATE TABLE secrets (id int, secret text);
+    COMMENT ON COLUMN secrets.secret IS 'staging:private';
+    ALTER TABLE a_toggle OWNER TO ${login.role};
+    ALTER TABLE secrets OWNER TO ${login.role};
+    ALTER TABLE secrets FORCE ROW LEVEL SECURITY;
+    CREATE POLICY visible ON secrets USING (id = 1) WITH CHECK (id = 1);
+    CREATE FUNCTION activate_rls() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER AS $$
+    BEGIN ALTER TABLE public.secrets ENABLE ROW LEVEL SECURITY; RETURN NEW; END $$;
+    ALTER FUNCTION activate_rls() OWNER TO ${login.role};
+    CREATE TRIGGER enable_rls AFTER UPDATE ON a_toggle FOR EACH ROW EXECUTE FUNCTION activate_rls();
+  `);
+  const reset = () => s.client.query(`
+    ALTER TABLE secrets DISABLE ROW LEVEL SECURITY;
+    DELETE FROM secrets; INSERT INTO secrets VALUES (1, 'visible-private'), (2, 'hidden-private');
+  `);
+  const leaked = async () => (await s.client.query('SELECT secret FROM secrets WHERE id = 2')).rows[0].secret;
+  const { scrubPrivateColumns } = require('../src/services/db-manager');
+  const refused = (err) => /Failed to scrub 1 staging:private column\(s\)/.test(err.message)
+    && /public\.secrets\.secret \(row-level security applies to this role now/.test(err.message);
+
+  await reset();
+  const asRole = await s.connect(s.name, login);
+  await assert.rejects(scrubPrivateColumns(s.name, asRole.execute), refused);
+  assert.equal(asRole.statements.filter((sql) => /^DO /.test(sql)).length, 1, 'the one statement raised');
+  assert.equal(asRole.statements.filter((sql) => /^UPDATE /.test(sql)).length, 2, 'then column by column');
+  assert.equal(await leaked(), 'hidden-private', 'the hidden row kept its value, and the pass says so');
+
+  try { execFileSync('psql', ['--version']); } catch { return; }
+  await reset();
+  await s.close(s.name);
+  const saved = process.env.DB_ADMIN_URL;
+  process.env.DB_ADMIN_URL = String(s.urlFor('usernode', login));
+  t.after(() => { if (saved === undefined) delete process.env.DB_ADMIN_URL; else process.env.DB_ADMIN_URL = saved; });
+  await assert.rejects(scrubPrivateColumns(s.name), refused);
+  const owner = await s.connect(s.name);
+  assert.equal((await owner.client.query('SELECT secret FROM secrets WHERE id = 2')).rows[0].secret, 'hidden-private');
 });
