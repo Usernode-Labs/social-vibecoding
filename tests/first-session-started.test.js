@@ -73,8 +73,12 @@ test('C3: who, then the community, then the app, then one line over two buttons'
   assert.match(CODE, /max-w-sm grow flex-col px-6 pb-\[max\(36px,env\(safe-area-inset-bottom\)\)\]">/);
   // The faces and the heading over the thumbnail, one block centred in the
   // room between the bar and the line over the buttons. The name is the
-  // thumbnail's alone.
-  assert.match(CODE, /<div data-first-session-made-body="" className="flex grow flex-col justify-center gap-4 py-4">/);
+  // thumbnail's alone. Run seven: at the top while it checks or asks
+  // (tests/first-session-one-thing), so this one, checking, stands there.
+  assert.match(CODE, /<div data-first-session-made-body="" className=\{madeBodyClass\(screen\)\}>/);
+  assert.equal(made.madeBodyClass('invite'), 'flex grow flex-col justify-center gap-4 py-4');
+  assert.match(html, /<div data-first-session-made-body="" class="flex flex-col gap-4 py-4">/);
+  assert.match(buttons, /<div data-first-session-made-body="" class="flex grow flex-col justify-center gap-4 py-4">/, 'the invite ask, centred');
   assert.ok(at('data-first-session-made-body=""') < at('data-first-session-people="1"'));
   assert.ok(at('data-first-session-people="1"') < at('<h1 id="first-session-made-title"'));
   assert.ok(at('<h1 id="first-session-made-title"') < at('data-featured-card='));

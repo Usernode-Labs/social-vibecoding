@@ -287,7 +287,7 @@ Lock Screen and in the Dynamic Island) until it is live.
 | `activityId` | 1 to 128 of `[A-Za-z0-9.:_-]`, starting with a letter or digit. One per build: SV sends `first-version:<slug>`. The same id updates the running activity; a new id ends the previous one first. |
 | `state` | `"active"` while it builds, `"ended"` once it is done. |
 | `title` | The project's name, at most 80 characters. |
-| `stage` | At most 80 characters, required while `active`: the words the screen shows for the stage, already in the person's language ("Drawing the screens"). |
+| `stage` | At most 80 characters, required while `active`: the words the screen shows for the stage, already in the person's language ("Working out the details"). |
 | `detail` | Optional second line, at most 120 characters. SV sends none today. |
 | `startedAt` | Optional, milliseconds since the epoch: when the build started (its plan decided). Left out, the running activity keeps its own start, so the progress does not restart. |
 | `etaAt` | Milliseconds since the epoch, or `null`: when it should be live, after `startedAt`. It drives a countdown that runs with the app asleep; `null` shows the stage only. |
@@ -326,9 +326,11 @@ screen after Submit):
   through Testing it, and through Ready to try for a first version that goes
   live on its own (`approval.noVote` or `approval.soon`). The stage is the
   build line's own words (`phaseLine`, `BUILD_LINE_WORDS`), never words of
-  its own. `etaAt` is the estimate's (`first_version.estimate.etaAt`) while
-  the screen counts down; `null` once the step under way has run past its
-  own estimate (the screen then says it is taking a little longer than
+  its own. `etaAt` is what the screen's line counts down to: the estimate's
+  (`first_version.estimate.etaAt`), and once the step under way has run past
+  its own estimate, now plus the later steps' usual time, so it moves out
+  with the clock (at most one call a minute); `null` once no later step is
+  left to count (the screen then says it is taking a little longer than
   usual), or without an estimate.
 - **`ended` once**, with `endedTitle` "`<name>` is live" when the line says
   Live or the first version has gone from a running app (which the App tab

@@ -17,11 +17,14 @@
  * ("3 min"; none under a minute: zero says nothing), with no fill: a done
  * thing is never the loudest thing on screen. The step under way turns, its
  * line saying what it is doing now (the review's round, the build's
- * "Adding …") and how long it still has to go ("about 12 min left", run six:
- * ./first-version-eta.ts), or, with no estimate to go on, how long it has
- * run ("7 min so far"). The rest are hollow and say nothing. A review that
- * did not run is left out. No accent: nothing here asks the viewer for
- * anything.
+ * "Adding …") and, with no estimate to go on, how long it has run ("7 min
+ * so far"). With an estimate (run six, ./first-version-eta.ts) the build
+ * line says the time to live, and since run seven (14 Oct 2026) the step
+ * says no time of its own: the App tab said "about 28 min left" on the line
+ * and "about 17 min left" here, two times on one screen. It says "taking a
+ * little longer than usual" once it has run past its usual end. The rest
+ * are hollow and say nothing. A review that did not run is left out. No
+ * accent: nothing here asks the viewer for anything.
  */
 
 import type { ReactNode } from 'react';
@@ -32,17 +35,18 @@ import { CheckIcon, SpinnerRingIcon } from '@/components/ui/icons';
 import { useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
 import { soFarNote, useNow } from '../first-session/build-line';
-import { STEP_WORDS, phaseOf, stepsOf } from '../first-session/build-line-words.js';
-import { type FirstVersionEstimate, stepLeftNote } from './first-version-eta';
+import { PHASE_WORDS, STEP_WORDS, phaseOf, stepsOf } from '../first-session/build-line-words.js';
+import { type FirstVersionEstimate, stepOverrunNote } from './first-version-eta';
 
 export type FirstVersionStep = { key: keyof typeof STEP_WORDS; state: 'done' | 'now' | 'next'; minutes?: number; since?: string };
 
 /**
  * Pure: the line under one step's title, in the language on screen, at
  * `now` (ms): how long a done step took; for the step under way, what it is
- * doing (the review's round, the build's phrase) and how long it still has
- * to go by `estimate`, else for how long it has run; nothing for a step
- * still to come.
+ * doing (the review's round, the spec working out the details, the build's
+ * phrase) and, with an `estimate`, "taking a little longer than usual" once
+ * it has run past its usual end (the line says the time left), else for how
+ * long it has run; nothing for a step still to come.
  */
 export function stepNote(step: FirstVersionStep, now: number, { phase = null, caption = null, estimate = null }: { phase?: unknown; caption?: string | null; estimate?: FirstVersionEstimate | null } = {}): string | null {
   if (step.state === 'done') return step.minutes ? translate('onboarding:buildLine.step.took', { count: step.minutes }) : null;
@@ -51,9 +55,9 @@ export function stepNote(step: FirstVersionStep, now: number, { phase = null, ca
   const doing = step.key === 'check' && p && p.key === 'checking'
     ? translate('onboarding:buildLine.step.round', { round: p.round || 1, rounds: p.rounds || p.round || 1 })
     : step.key === 'build' && p && p.key === 'writing'
-      ? translate('onboarding:buildLine.phase.writing')
+      ? translate(PHASE_WORDS.writing)
       : step.key === 'build' && caption ? caption : null;
-  const time = stepLeftNote(estimate, step.key, now) || soFarNote(step.since, now);
+  const time = estimate ? stepOverrunNote(estimate, step.key, now) : soFarNote(step.since, now);
   if (doing && time) return translate('onboarding:buildLine.withNote', { line: doing, note: time });
   return doing || time;
 }

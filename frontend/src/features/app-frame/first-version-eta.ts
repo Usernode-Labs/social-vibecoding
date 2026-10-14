@@ -12,14 +12,29 @@
  *
  *   the line            Building it · about 15 min left
  *   the step under way  Building
- *                       about 12 min left
  *
  * in whole minutes, never "0": the last minute is "about 1 min left". Once
- * the step under way runs past its own estimate both say "taking a little
- * longer than usual", rather than freezing at a number or counting below
- * zero; the next step brings a fresh estimate. Without an estimate (too few
- * first versions to go on) nothing is said about time left, and the screen
- * says what it said before.
+ * the step under way runs past its own estimate, the step says "taking a
+ * little longer than usual", rather than freezing at a number or counting
+ * below zero; the next step brings a fresh estimate. Without an estimate
+ * (too few first versions to go on) nothing is said about time left, and
+ * the screen says what it said before.
+ *
+ * Run seven (14 Oct 2026, iPhone Safari, Club Votes):
+ *
+ *   ONE TIME PER SCREEN. The App tab said "Writing the plan · about 28 min
+ *   left" on the line and "Writing the plan · about 17 min left" under the
+ *   step under way: two times on one screen. With an estimate the step
+ *   says its words only (stepOverrunNote), and the line keeps the time to
+ *   live.
+ *
+ *   NOT LONGER UNTIL IT IS. Once the step under way ran past its estimate,
+ *   the line said "taking a little longer than usual" with the later steps
+ *   all still to come: 12 minutes before it went live, after a countdown
+ *   that had been right to 2 minutes. Now the line goes on counting the
+ *   later steps' usual time, as if the step under way ended now (leftNote),
+ *   and says "taking a little longer than usual" only when no later step
+ *   is left to count.
  */
 
 import { t as translate } from '../../lib/i18n/runtime';
@@ -57,23 +72,55 @@ export function minutesLeft(at: number, now: number): number {
 }
 
 /**
+ * When the first version should be live, as the line counts to it at `now`
+ * (ms): the estimate's `etaAt` while the step under way is within its usual
+ * time; past it, `now` plus the later steps' usual time (`etaAt` less
+ * `stepEtaAt`), as if the step under way ended now; null without an
+ * estimate, or once no later step is left to count (under a minute):
+ * then it is only taking longer (run seven, NOT LONGER UNTIL IT IS). Pure.
+ */
+export function liveAt(estimate: FirstVersionEstimate | null, now: number): number | null {
+  if (!estimate || !Number.isFinite(now)) return null;
+  const stepEnd = time(estimate.stepEtaAt);
+  const end = time(estimate.etaAt);
+  if (stepEnd == null || end == null) return null;
+  if (now < stepEnd) return end;
+  const rest = end - stepEnd;
+  return rest >= 60000 ? now + rest : null;
+}
+
+/**
  * The words for the time left at `now` (ms): to the first version going
  * live, or with `step`, to the end of the step under way. "about 15 min
- * left"; "taking a little longer than usual" once the step under way has
- * run past its estimate; null without an estimate. Pure.
+ * left"; null without an estimate. "taking a little longer than usual":
+ * for the step, once it has run past its estimate; for the line, only once
+ * no later step is left to count (liveAt), else the later steps' usual
+ * time. Pure.
  */
 export function leftNote(estimate: FirstVersionEstimate | null, now: number, { step = false }: { step?: boolean } = {}): string | null {
   if (!estimate || !Number.isFinite(now)) return null;
   const stepEnd = time(estimate.stepEtaAt);
   const end = time(estimate.etaAt);
   if (stepEnd == null || end == null) return null;
-  if (now >= stepEnd) return translate('onboarding:buildLine.longer');
-  return translate('onboarding:buildLine.left', { count: minutesLeft(step ? stepEnd : end, now) });
+  if (step) {
+    if (now >= stepEnd) return translate('onboarding:buildLine.longer');
+    return translate('onboarding:buildLine.left', { count: minutesLeft(stepEnd, now) });
+  }
+  const live = liveAt(estimate, now);
+  if (live == null) return translate('onboarding:buildLine.longer');
+  return translate('onboarding:buildLine.left', { count: minutesLeft(live, now) });
 }
 
-/** The note for the step `key` of the list, when the estimate is for it. Pure. */
-export function stepLeftNote(estimate: FirstVersionEstimate | null, key: string, now: number): string | null {
-  return estimate && estimate.step === key ? leftNote(estimate, now, { step: true }) : null;
+/**
+ * The note for the step `key` of the list, when the estimate is for it:
+ * nothing while the step is within its usual time (the line says the time
+ * to live, the one time on the screen), and "taking a little longer than
+ * usual" once it has run past it (run seven, ONE TIME PER SCREEN). Pure.
+ */
+export function stepOverrunNote(estimate: FirstVersionEstimate | null, key: string, now: number): string | null {
+  if (!estimate || estimate.step !== key || !Number.isFinite(now)) return null;
+  const stepEnd = time(estimate.stepEtaAt);
+  return stepEnd != null && now >= stepEnd ? leftNote(estimate, now, { step: true }) : null;
 }
 
 /** The lines that count down: the first version is being built or tested. */

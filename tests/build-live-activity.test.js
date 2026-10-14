@@ -83,7 +83,7 @@ test('a building payload makes the whole activity: the screen\'s stage, the buil
     activityId: 'first-version:club-votes',
     state: 'active',
     title: 'Club Votes',
-    stage: 'Drawing the screens',
+    stage: 'Working out the details',
     startedAt: NOW - 3 * MIN,
     etaAt: NOW + 20 * MIN,
     deepLink: 'https://social.example/app/club-votes',
@@ -111,9 +111,16 @@ test('the countdown runs only while the screen counts down', () => {
   const eta = (fv, now = NOW) => m.planBuildActivity(building(fv), null, { now }).args.etaAt;
   assert.equal(eta({}), NOW + 20 * MIN);
   assert.equal(eta({ estimate: null }), null, 'no estimate: the stage only');
-  // Past the step's own estimate the screen says "taking a little longer
-  // than usual", and the activity stops counting with it.
-  assert.equal(eta({}, NOW + 2 * MIN), null);
+  // Run seven: past the step's own estimate the line goes on counting the
+  // later steps' usual time (18 min here), as if the step ended now, so
+  // the activity's end moves out with the clock.
+  assert.equal(eta({}, NOW + 2 * MIN), NOW + 2 * MIN + 18 * MIN);
+  assert.equal(eta({}, NOW + 9 * MIN), NOW + 9 * MIN + 18 * MIN);
+  // Only once no later step is left to count does the screen say "taking a
+  // little longer than usual", and the activity stops counting with it.
+  const last = { step: 'live', stepEtaAt: at(2), etaAt: new Date(NOW + 2 * MIN + 30000).toISOString() };
+  assert.equal(eta({ estimate: last }, NOW + MIN), NOW + 2 * MIN + 30000);
+  assert.equal(eta({ estimate: last }, NOW + 2 * MIN), null);
   assert.equal(eta({ estimate: { step: 'screens', stepEtaAt: at(2), etaAt: at(-10) } }), null, 'never at or before its start');
   assert.equal(m.etaOf('ready', building().estimate, NOW - MIN, NOW), null, 'Ready to try counts nothing down');
 });
@@ -241,9 +248,12 @@ test('it calls the app only on a change: the line, the stage, or the minute it e
   assert.equal(h.calls.length, 1, 'the same thing, and the same minute: nothing');
   await h.instance.sync(building({ estimate: { step: 'screens', stepEtaAt: at(2), etaAt: at(22) } }));
   assert.equal(h.calls.length, 2, 'a new minute');
-  await h.instance.sync(building({ phase: { key: 'writing', since: at(0) } }));
+  // Run seven: the spec's two stages say the same words, so its second is no change.
+  await h.instance.sync(building({ phase: { key: 'writing', since: at(0) }, estimate: { step: 'screens', stepEtaAt: at(2), etaAt: at(22) } }));
+  assert.equal(h.calls.length, 2, 'the same words: nothing');
+  await h.instance.sync(building({ phase: { key: 'building', since: at(0) } }));
   assert.equal(h.calls.length, 3, 'a new stage');
-  assert.equal(h.calls[2].stage, 'Writing the plan');
+  assert.equal(h.calls[2].stage, 'Building it');
   assert.equal(h.calls[2].startedAt, NOW - 3 * MIN, 'the start it began with, every time');
   await h.instance.sync(building({ line: 'testing', phase: { key: 'testing', since: at(1) } }));
   assert.equal(h.calls.length, 4, 'a new line');
@@ -295,7 +305,7 @@ test('a refusal is logged, never thrown, and not sent again until something chan
   assert.match(h.warnings[0], /failed/);
   await h.instance.sync(building());
   assert.equal(h.calls.length, 1);
-  await h.instance.sync(building({ phase: { key: 'writing', since: at(0) } }));
+  await h.instance.sync(building({ phase: { key: 'building', since: at(0) } }));
   assert.equal(h.calls.length, 2);
   // An answer that is not an object is no activity.
   const odd = harness({ reply: 'yes' });

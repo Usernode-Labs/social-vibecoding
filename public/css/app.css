@@ -4321,7 +4321,20 @@ html.un-ios.web-browser-chrome:not([data-community-tint]) body:has(#app-view:not
    tab's light bar. Sticky at the top here as well: the page does not
    scroll, so the bar stays exactly where it was, and the strip takes the
    opaque ground the rule above gives it. Back on the hub the bar is sticky
-   and tinted again (`data-community-tint`), and the strip turns teal. */
+   and tinted again (`data-community-tint`), and the strip turns teal.
+   …AND ON EVERY OTHER SCREEN THE DOCUMENT DOES NOT SCROLL (newcomer run
+   seven, 14 Oct 2026, iPhone Safari 26): from the hub to Messages the strip
+   stayed teal over Messages' light bar, for the same reason. Of the routes
+   above, only Home, Browse, Leaderboard, Profile and Settings are page
+   scrollers (lib/browser-scroll.ts PAGES); Messages, Communities, #general,
+   an agent's session and a profile's proposals each scroll an element of
+   their own, so their bar is sticky here too. Sticky changes no layout on
+   them: it offsets the bar only when its nearest scroller, <body>
+   (`overflow: hidden`, 100dvh), scrolls, and nothing scrolls it, so the
+   bar stays where it sits in the flow; and it is already `relative z-10`,
+   so it was a stacking context and a containing block before. */
+html.un-ios.web-browser-chrome:not([data-community-tint]):not([data-browser-scroller]) body:has(:is(#messages-screen, #workshop-screen, #global-chat-screen,
+             #agent-session-screen, #profile-proposals-screen):not(.hidden)) #platform-header,
 html.un-ios.web-browser-chrome:not([data-community-tint]):not([data-browser-scroller]) body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header {
   position: sticky;
   top: 0;

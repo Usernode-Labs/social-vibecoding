@@ -9,11 +9,13 @@
 //                  Make it, its status and timing, the answers its maker
 //                  chose, and the early first look drawn from that plan)
 //   runs           the bot's runs on it (verdict, times, sessions, build,
-//                  costs, spec sizes, review rounds and why the review stopped)
+//                  costs, spec sizes, review rounds and why the review
+//                  stopped, and the last look after a final round's fix)
 //   reviewRounds   each review round's verdict and issues
 //   sessions       its chat sessions' timeline
 //   turns          the agent turns on those sessions (component, model, the
-//                  host it was routed to, effort, time, tokens, cost)
+//                  host it was routed to and every host it used, how many of
+//                  its requests left the shortlist, effort, time, tokens, cost)
 //   turnMetrics    every telemetry metric each turn recorded
 //   invocations    its llm_invocation events (the plan, the sketch, the
 //                  reviewer and the other helper calls)
@@ -90,6 +92,10 @@ const BRANCH_RE = /^[\w./-]{1,200}$/;
 const SHA_RE = /^[0-9a-f]{7,64}$/i;
 const PROVIDER_RE = /^[\w .-]{1,80}$/;
 const ISSUE_ID_RE = /^[a-z0-9][a-z0-9-]{0,59}$/;
+// The most hosts a turn lists (worker.js keeps eight) and issue ids a last
+// look names (a round raises at most eight, and checks add a few).
+const MAX_TURN_PROVIDERS = 8;
+const MAX_LOOK_IDS = 20;
 
 function num(v) {
   if (v == null || v === '') return null;
@@ -224,11 +230,31 @@ function runOut(row) {
       costUsd: num(row.review_cost_usd),
       resumes: num(row.review_resumes),
     },
+    reviewFinalLook: finalLookOut(row.review_final_look),
     botConfig: row.bot_config_version_id == null ? null : {
       id: num(row.bot_config_version_id),
       key: code(row.bot_config_key),
       version: num(row.bot_config_version),
     },
+  };
+}
+
+// Run seven (14 Oct 2026): the look taken at the final capture after a
+// review stopped on its round limit (bot-review.js finalLook): which of the
+// last round's issues its fix had fixed and which it left open. Recorded
+// only; it changed nothing. Null for a run without one.
+function finalLookOut(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const ids = (v) => (Array.isArray(v) ? v.slice(0, MAX_LOOK_IDS).map((id) => code(id, ISSUE_ID_RE)).filter(Boolean) : []);
+  return {
+    round: num(raw.round),
+    fixed: ids(raw.fixed),
+    open: ids(raw.open),
+    verdict: code(raw.verdict),
+    costUsd: num(raw.costUsd),
+    ms: num(raw.ms),
+    at: iso(raw.at),
+    error: clip(raw.error, TEXT.error),
   };
 }
 
@@ -294,7 +320,16 @@ function turnOut(row) {
     component: code(row.component),
     requestedModel: code(row.requested_model, MODEL_RE),
     routedModel: code(row.routed_model, MODEL_RE),
-    routedProvider: code(row.routed_provider, MODEL_RE),
+    // A provider's name, which can have a space ("Sail Research"): a model
+    // id's shape dropped those until run seven (14 Oct 2026).
+    routedProvider: code(row.routed_provider, PROVIDER_RE),
+    // Every host its requests went to, first seen first, and how many of them
+    // the shortlist refused and sent again to every host
+    // (agent_turns.metadata, run seven); null on a turn that did not record them.
+    routedProviders: Array.isArray(row.routed_providers)
+      ? row.routed_providers.slice(0, MAX_TURN_PROVIDERS).map((p) => code(p, PROVIDER_RE)).filter(Boolean)
+      : null,
+    shortlistFallbacks: num(row.shortlist_fallbacks),
     reasoningEffort: code(row.reasoning_effort),
     status: code(row.status),
     attempt: num(row.attempt_number),
@@ -533,6 +568,7 @@ const RUNS_SQL = `
          r.review->>'state' AS review_state, r.review->>'stopDetail' AS review_stop_detail,
          r.review->>'costUsd' AS review_cost_usd, r.review->>'resumes' AS review_resumes,
          CASE WHEN jsonb_typeof(r.review->'rounds') = 'array' THEN r.review->'rounds' END AS review_rounds_json,
+         CASE WHEN jsonb_typeof(r.review->'finalLook') = 'object' THEN r.review->'finalLook' END AS review_final_look,
          COUNT(*) OVER () AS total
     FROM homeroom_bot_runs r
     LEFT JOIN bot_config_versions v ON v.id = r.bot_config_version_id
@@ -556,6 +592,9 @@ const TURNS_SQL = `
          ROUND(EXTRACT(EPOCH FROM t.completed_at - t.started_at)::numeric, 1) AS secs,
          t.input_tokens, t.cached_input_tokens, t.output_tokens, t.reasoning_output_tokens,
          t.actual_cost_usd, t.error_code,
+         CASE WHEN jsonb_typeof(t.metadata->'routed_providers') = 'array'
+              THEN t.metadata->'routed_providers' END AS routed_providers,
+         t.metadata->>'shortlist_fallbacks' AS shortlist_fallbacks,
          CASE WHEN jsonb_typeof(t.metadata->'telemetry_metrics') = 'object'
               THEN t.metadata->'telemetry_metrics' END AS metrics,
          COUNT(*) OVER () AS total

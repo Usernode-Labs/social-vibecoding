@@ -97,7 +97,7 @@ export interface AppStatusView {
   /**
    * N4: the stage it is at by its own name, with when it began
    * (`first_version.phase`), said on the build line while it is built
-   * ("Drawing the screens · 2 min so far").
+   * ("Working out the details · 2 min so far").
    */
   phase?: unknown;
   /** N4: every step, done, under way or to come (./first-version-steps.tsx). */
@@ -181,7 +181,7 @@ function FirstVersionCard({ thumb, line, caption = null, usual = null, estimate 
   /** N4: the steps are listed under it, the build's phrase with them. */
   listed?: boolean;
 }): ReactNode {
-  // N4: "Drawing the screens · 2 min so far", in place of "Building it";
+  // N4: "Working out the details · 2 min so far", in place of "Building it";
   // run six: "· about 15 min left" when there is an estimate.
   const now = useNow();
   const left = countsDown(line) ? leftNote(estimate, now) : null;

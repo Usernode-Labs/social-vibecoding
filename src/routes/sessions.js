@@ -10285,6 +10285,10 @@ async function runCodexAttemptLoop({
       // The upstream provider OpenRouter named for the turn's requests, when
       // the Claude Code listener saw one (worker.js observeCodingProviderResult).
       routedProvider: result?.routedProvider || null,
+      // Run seven (14 Oct 2026): and every one it used, with how many of its
+      // requests left the shortlist, for the row's metadata.
+      routedProviders: result?.routedProviders || null,
+      shortlistFallbacks: result?.shortlistFallbacks ?? null,
       telemetryComponent: result?.providerDispatched === true
         ? (telemetryComponent
           || (mode === 'scout' ? 'coding_agent_scout' : 'coding_agent_build'))
