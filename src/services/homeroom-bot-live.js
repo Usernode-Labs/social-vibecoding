@@ -1727,11 +1727,16 @@ async function post({
   // twice. The row is pending until the post has gone out, so the build's
   // "said once" (homeroom-bot.js runPosted) never counts a post half sent.
   // ("looking" is claimed by its insert, once per issue, and is not taken up.)
+  // A durable caller (`strict`) is told the lookup failed: taken for "none",
+  // its retry would insert a second post and say again what went out.
   const had = runId && kind !== 'looking' ? (await pool.query(
     `SELECT id, github_comment_id, thread_message_id, created_at FROM homeroom_bot_posts
       WHERE run_id = $1 AND kind = $2 AND pending IS TRUE ORDER BY id DESC LIMIT 1`,
     [runId, kind],
-  ).catch(() => ({ rows: [] }))).rows[0] || null : null;
+  ).catch((err) => {
+    if (strict) throw err;
+    return { rows: [] };
+  })).rows[0] || null : null;
   let postId = had ? had.id : null;
   if (!postId) {
     const { rows } = await pool.query(
@@ -1855,6 +1860,14 @@ async function post({
     }
   }
   if (strict && failed.length) {
+    // What did go out is recorded once more (its own write may have failed),
+    // the post left pending, so the retry says only the rest.
+    await pool.query(
+      `UPDATE homeroom_bot_posts SET github_comment_id = COALESCE($2, github_comment_id),
+              thread_message_id = COALESCE($3, thread_message_id)
+        WHERE id = $1`,
+      [postId, comment?.id ?? null, message?.id ?? null],
+    ).catch(() => {});
     throw new Error(`Could not post the ${kind} note on request #${issueNumber}: ${failed.join(', ')}`);
   }
   await pool.query(

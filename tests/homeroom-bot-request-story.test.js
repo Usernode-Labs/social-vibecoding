@@ -150,6 +150,40 @@ test('strict: a failed GitHub comment or thread message is thrown and retried, n
   assert.equal(await live.announceLive(pool, { session: { id: 51 }, deps, strict: true }), null, 'said: nothing more');
 });
 
+test('strict: a failed lookup of the pending post is thrown, never taken for none (no second post, nothing said twice)', async () => {
+  // The thread message went out; GitHub failed, so the post is pending.
+  const posts = new Map([[99, { id: 99, pending: true, github_comment_id: null, thread_message_id: 77 }]]);
+  let lookupDown = true;
+  const inserted = [];
+  const pool = {
+    async query(sql) {
+      if (/FROM homeroom_bot_runs r\s+JOIN apps a/.test(sql)) {
+        return { rows: [{ run_id: 40, app_id: 3, issue_number: 12, slug: 'plant-pal', name: 'Plant Pal', repo_url: 'https://github.com/o/plant-pal', title: 'Dark mode' }] };
+      }
+      if (/kind = 'live' AND pending IS NOT TRUE LIMIT 1/.test(sql)) return { rows: [] };
+      if (/WHERE run_id = \$1 AND kind = \$2 AND pending IS TRUE/.test(sql)) {
+        if (lookupDown) throw new Error('connection reset');
+        return { rows: [...posts.values()].map((r) => ({ ...r, created_at: new Date() })) };
+      }
+      if (/FROM users WHERE username/.test(sql)) return { rows: [BOT] };
+      if (/INSERT INTO homeroom_bot_posts/.test(sql)) { inserted.push(sql); return { rows: [{ id: 100 }] }; }
+      return { rows: [] };
+    },
+  };
+  const messages = [];
+  const deps = {
+    github: { async createIssueComment() { return { id: 5, created_at: 'now' }; }, async fetchIssueComments() { return { comments: [] }; } },
+    ws: { async sendBotMessage(_p, _a, msg) { messages.push(msg.content); return { id: 78 }; }, async sendSystemMessage() {} },
+  };
+  await assert.rejects(live.announceLive(pool, { session: { id: 51 }, deps, strict: true }), /connection reset/);
+  assert.deepEqual([inserted.length, messages.length], [0, 0], 'no second post, nothing sent');
+  // The retry finds the pending post and sends only the missing comment.
+  lookupDown = false;
+  const out = await live.announceLive(pool, { session: { id: 51 }, deps, strict: true });
+  assert.ok(out && out.github && out.thread);
+  assert.deepEqual([inserted.length, messages.length], [0, 0], 'the thread message is not said again');
+});
+
 test('announceLive says it on the request once, in both places, untagged', async () => {
   const f = fakeLive();
   const out = await live.announceLive(f.pool, { session: { id: 51 }, deps: f.deps });
