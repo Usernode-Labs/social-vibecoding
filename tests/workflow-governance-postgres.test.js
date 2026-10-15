@@ -91,9 +91,7 @@ test('governance-proposal machine against the full PostgreSQL schema', { timeout
       return work.result[kind] || { ok: true };
     },
   });
-  // Whether a secret change asks app-delivery for its redeploy (its flag, per process).
-  const delivery = { on: false };
-  const machine = governanceProposal({ dataKey: DATA_KEY, notifiers, delivery: () => delivery.on });
+  const machine = governanceProposal({ dataKey: DATA_KEY, notifiers });
   // What browsers hear: published in the transition's transaction.
   const pushed = [];
   const rt = createRuntime({
@@ -202,7 +200,7 @@ test('governance-proposal machine against the full PostgreSQL schema', { timeout
       `SELECT work_key, input FROM wf_work WHERE machine = $1 AND key = $2 AND kind = 'campaign.run'`, [MACHINE, issueKey(c.id)]);
     assert.deepEqual([run.work_key, run.input], ['campaign', { issueId: c.id }]);
     assert.ok(!notified.some((n) => n.type === 'startCampaign'));
-    // secret_change: the secret, the rebuild as work, and no ciphertext left behind.
+    // secret_change: the secret, the redeploy asked of app-delivery, and no ciphertext left behind.
     const valueEnc = secrets.encrypt('hunter2-value', DATA_KEY);
     const sec = await issue(a, author, 'secret_change', { key: 'API_KEY', action: 'set', valueEnc, valueLast4: 'alue' });
     await file(sec);
@@ -211,7 +209,7 @@ test('governance-proposal machine against the full PostgreSQL schema', { timeout
     const stored = (await pool.query('SELECT * FROM app_secrets WHERE app_id = $1 AND key = $2', [a.id, 'API_KEY'])).rows[0];
     assert.equal(secrets.decrypt(stored.value_enc, DATA_KEY), 'hunter2-value');
     assert.equal((await row(sec)).payload.valueEnc, undefined);
-    assert.equal((await pool.query(`SELECT count(*)::int AS n FROM wf_work WHERE key = $1 AND kind = 'app.rebuildProduction'`, [issueKey(sec.id)])).rows[0].n, 1);
+    assert.equal((await pool.query(`SELECT count(*)::int AS n FROM wf_events WHERE machine = 'app-delivery' AND key = $1`, [`app:${a.id}`])).rows[0].n, 1);
     const { rows: history } = await pool.query(`SELECT data FROM wf_instances WHERE key = $1`, [issueKey(sec.id)]);
     assert.doesNotMatch(JSON.stringify(history), /hunter2|valueEnc/, 'the instance never holds the secret');
     // featured_illustration whose image is gone: refused, not stuck.
@@ -290,8 +288,8 @@ test('governance-proposal machine against the full PostgreSQL schema', { timeout
     assert.equal(secrets.decrypt(stored.value_enc, DATA_KEY), 'tuned', 'written by the platform-env store');
     assert.equal((await pool.query('SELECT count(*)::int AS n FROM app_secrets WHERE app_id = $1', [platformApp.id])).rows[0].n, 0,
       'app_secrets is for child apps only');
-    assert.equal((await pool.query(`SELECT count(*)::int AS n FROM wf_work WHERE key = $1 AND kind = 'app.rebuildProduction'`,
-      [issueKey(v.id)])).rows[0].n, 0, 'the platform is never rebuilt for it');
+    assert.equal((await pool.query(`SELECT count(*)::int AS n FROM wf_events WHERE machine = 'app-delivery' AND key = $1`,
+      [`app:${platformApp.id}`])).rows[0].n, 0, 'the platform is never redeployed for it');
   });
 
   await t.test('G4 applied at most once across concurrent votes, timers and admin force', async () => {
@@ -427,9 +425,8 @@ test('governance-proposal machine against the full PostgreSQL schema', { timeout
     assert.equal((await pool.query('SELECT name FROM apps WHERE id = $1', [a.id])).rows[0].name, 'By the rules');
   });
 
-  await t.test('with app delivery on, a secret change asks it for the redeploy and records its answer', async () => {
-    delivery.on = true;
-    try {
+  await t.test('a secret change asks app-delivery for the redeploy and records its answer', async () => {
+    {
       const [author, voter] = [await user(), await user()];
       const a = await app();
       const sec = await issue(a, author, 'secret_change', { key: 'API_KEY', action: 'set', valueEnc: secrets.encrypt('v', DATA_KEY) });
@@ -459,22 +456,43 @@ test('governance-proposal machine against the full PostgreSQL schema', { timeout
       await rt.drain();
       const done = Object.values(await followup()).filter((f) => f.kind === 'app-delivery').map((f) => f.status);
       assert.deepEqual(done, ['retried', 'done']);
-      // Another secret change whose redeploy failed, retried with app delivery
-      // turned off since: the rebuild is this machine's own work again.
+      // A rebuild recorded before every deploy was app-delivery's: its item
+      // left at the release hands the redeploy to app-delivery, and an admin's
+      // retry of one that failed asks app-delivery too.
       const sec2 = await issue(a, author, 'secret_change', { key: 'API_KEY2', action: 'set', valueEnc: secrets.encrypt('w', DATA_KEY) });
       await file(sec2);
       await vote(sec2, voter, 'up');
-      await rt.append(machine, issueKey(sec2.id), { type: 'DeliveryFailed', payload: { message: 'the build failed' } },
-        { requestKey: `t-${++rk}`, appId: a.id, source: { kind: 'message', from: { machine: 'app-delivery', key: `app:${a.id}`, eventId: 1 } } });
-      await rt.drain();
-      delivery.on = false;
+      const asBefore = async (i, status) => {
+        const c = await pool.connect();
+        try {
+          await c.query('BEGIN');
+          await c.query("SET LOCAL app.wf_writer = 'transition'");
+          await c.query(`UPDATE wf_instances SET data = jsonb_set(data, '{followups,rebuild}', $3::jsonb) WHERE machine = $1 AND key = $2`,
+            [MACHINE, issueKey(i.id), JSON.stringify({ kind: 'app.rebuildProduction', input: { appId: a.id }, status })]);
+          if (status === 'pending') {
+            await c.query(`INSERT INTO wf_work (machine, key, kind, work_key, input) VALUES ($1, $2, 'app.rebuildProduction', 'rebuild', $3)`,
+              [MACHINE, issueKey(i.id), JSON.stringify({ appId: a.id })]);
+          }
+          await c.query('COMMIT');
+        } catch (err) { await c.query('ROLLBACK'); throw err; } finally { c.release(); }
+      };
+      await asBefore(sec2, 'pending');
       const before = (await asked()).length;
-      await send(sec2, 'RetryFollowup', { workKey: 'rebuild' }, { source: { kind: 'admin' } });
+      work.result['app.rebuildProduction'] = { handOff: true };
+      try { await settle(); } finally { delete work.result['app.rebuildProduction']; }
+      assert.equal((await asked()).length, before + 1, 'handed to app-delivery');
+      assert.deepEqual((await inst(sec2)).data.followups.rebuild, { kind: 'app-delivery', input: { appId: a.id }, status: 'pending' });
+      const sec3 = await issue(a, author, 'secret_change', { key: 'API_KEY3', action: 'set', valueEnc: secrets.encrypt('x', DATA_KEY) });
+      await file(sec3);
+      await vote(sec3, voter, 'up');
+      await asBefore(sec3, 'exhausted');
+      const prior = (await asked()).length;
+      await send(sec3, 'RetryFollowup', { workKey: 'rebuild' }, { source: { kind: 'admin' } });
       await rt.drain();
-      assert.equal((await asked()).length, before, 'nothing asked of a machine that no longer runs');
-      assert.equal((await pool.query(`SELECT count(*)::int AS n FROM wf_work WHERE key = $1 AND kind = 'app.rebuildProduction'`,
-        [issueKey(sec2.id)])).rows[0].n, 1);
-    } finally { delivery.on = false; }
+      assert.equal((await asked()).length, prior + 1, 'the retry asks app-delivery');
+      assert.equal((await pool.query(`SELECT count(*)::int AS n FROM wf_work WHERE key = $1 AND kind = 'app.rebuildProduction' AND status = 'queued'`,
+        [issueKey(sec3.id)])).rows[0].n, 0, 'no rebuild of its own');
+    }
   });
 
   await t.test('G9 refusals close the proposal with their reason instead of leaving it open', async () => {
@@ -669,15 +687,8 @@ test('governance-proposal machine against the full PostgreSQL schema', { timeout
     await assert.rejects(pool.query(`UPDATE issues SET payload = payload || '{"appliedAt": "x"}' WHERE id = $1`, [enrolled.id]), /payload.appliedAt/);
     await pool.query(`UPDATE issues SET status = 'closed' WHERE id = $1`, [legacy.id]);
     await pool.query(`UPDATE issues SET title = 'retitled' WHERE id = $1`, [enrolled.id]);
-    // The old paths are deleted, so production's 'log' mode does not let a
-    // write through either: the guard carries '@raise'.
-    await pool.query(`INSERT INTO wf_settings (key, value) VALUES ('ownership_mode', 'log')`);
-    try {
-      await assert.rejects(pool.query(`UPDATE issues SET status = 'closed' WHERE id = $1`, [enrolled.id]), /WF_OWNERSHIP_VIOLATION: issues.status/);
-      assert.equal((await pool.query('SELECT count(*)::int AS n FROM wf_ownership_violations')).rows[0].n, 0, 'refused, not logged');
-    } finally {
-      await pool.query(`DELETE FROM wf_settings WHERE key = 'ownership_mode'`);
-    }
+    // There is no mode that lets such a write through: no log of them either.
+    assert.equal((await pool.query(`SELECT to_regclass('wf_ownership_violations') AS t`)).rows[0].t, null);
     // The trigger's kinds are services/governance-kinds.js's.
     const { rows: [trg] } = await pool.query(
       `SELECT pg_get_triggerdef(oid) AS def FROM pg_trigger WHERE tgname = 'issues_wf_governance_owned'`);

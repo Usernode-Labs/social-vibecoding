@@ -56,7 +56,7 @@ function loadVotes({ measured }) {
     logger: require.resolve('../src/services/logger'),
     pool: require.resolve('../src/db/pool'),
     github: require.resolve('../src/services/github'),
-    staging: require.resolve('../src/services/staging'),
+    platform: require.resolve('../src/workflow/platform.ts'),
     docker: require.resolve('../src/services/docker'),
     resolver: require.resolve('../src/services/conflict-resolver'),
     ws: require.resolve('../src/services/ws'),
@@ -87,10 +87,9 @@ function loadVotes({ measured }) {
     isEnabled: () => true,
     mergePR: async () => ({ sha: 'deadbeefcafe', merged: true }),
   });
-  stub(ids.staging, {
-    rebuildProduction: async () => ({ ok: true }),
-    teardownStaging: async () => {},
-  });
+  // A merge is reported to the merge-followups workflow machine, which
+  // owns everything after GitHub's merge.
+  stub(ids.platform, { mergeConfirmed: async () => ({ status: 'accepted', eventId: 1 }) });
   stub(ids.docker, {});
   stub(ids.resolver, {
     checkAndResolveConflicts: async () => {},
@@ -168,8 +167,6 @@ function poolWith({ checks = {}, main = null } = {}) {
     [/SELECT check_state, test_results[\s\S]*FROM chat_sessions/, [checkRow]],
     [/SELECT main_check_state[\s\S]*FROM apps WHERE id/, main ? [main] : []],
     [/SET status = 'merging'/, [{ id: 7 }]],
-    [/SELECT \* FROM apps WHERE id/, [{ id: 5, slug: 'whiteboard', self_hosted: false }]],
-    [/SET\s+status = 'merged'/, { rows: [], rowCount: 1 }],
   ]);
 }
 

@@ -4,7 +4,6 @@ const bcrypt = require('bcrypt');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const github = require('../services/github');
-const staging = require('../services/staging');
 const ws = require('../services/ws');
 const notifications = require('../services/notifications');
 const notificationPreferences = require('../services/notification-preferences');
@@ -855,28 +854,15 @@ function demoModeRoutes(config) {
       }
       await refreshPartnerStanding(app, partner, req.user.id);
 
-      // Production follows main. Fire-and-forget, as the redeploy route in
-      // routes/apps.js does; a failure lands on the deploy-status broadcast.
+      // Production follows main: a recorded request the app-delivery
+      // machine runs, as the redeploy route in routes/apps.js asks it.
       let redeploy = 'skipped';
-      if (main && main.moved && require('../workflow/platform.ts').deliveryEnabled()) {
-        // A recorded request the app-delivery machine runs.
+      if (main && main.moved) {
         redeploy = 'started';
         // The reset is done by now: a request that cannot be recorded is
-        // logged, as the legacy rebuild's failure is, not this reset's error.
+        // logged, not this reset's error.
         await require('../workflow/platform.ts').requestDeploy(app.id, 'demo_reset')
           .catch((err) => log.warn('demo-mode', 'Deploy request after reset failed', { slug: app.slug, err: err.message }));
-      } else if (main && main.moved) {
-        redeploy = 'started';
-        staging.rebuildProduction(config, app, { retrySameCommit: true })
-          .then(async ({ containerId, sha }) => {
-            await pool.query(
-              `UPDATE apps SET container_id = $1, main_sha = $2, status = 'running',
-                               last_deploy_at = NOW()
-               WHERE id = $3`,
-              [containerId, sha || null, app.id]
-            );
-          })
-          .catch((err) => log.warn('demo-mode', 'Rebuild after reset failed', { slug: app.slug, err: err.message }));
       }
       log.info('demo-mode', 'Demo reset', { slug: app.slug, removed: ids.length, main, redeploy });
       res.json({ ok: true, sessionsRemoved: ids.length, main, redeploy });

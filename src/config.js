@@ -796,16 +796,6 @@ function load() {
     // The Workshop theme sweep (services/workshop-themes.js): re-checks every
     // app opened in the last week, re-drafting themes at most daily.
     workshopSweepIntervalMs: parseInt(process.env.WORKSHOP_THEMES_SWEEP_INTERVAL_MS || String(60 * 60 * 1000), 10),
-    // With WF_MERGE_FOLLOWUPS_ENABLED on, a merge hands what follows it
-    // (delivery, preview teardown, included changes, closing requests, the
-    // announcements) to the merge-followups machine, and a change reads
-    // live only once production runs it. Off by default.
-    wfMergeFollowupsEnabled: ['1', 'true'].includes(process.env.WF_MERGE_FOLLOWUPS_ENABLED),
-    // With WF_APP_DELIVERY_ENABLED on (and WF_MERGE_FOLLOWUPS_ENABLED, which
-    // it needs), every production deploy of an app is asked of the
-    // app-delivery machine: one at a time per app, recorded, and the
-    // "deploying" state is durable. Off by default.
-    wfAppDeliveryEnabled: ['1', 'true'].includes(process.env.WF_APP_DELIVERY_ENABLED),
     // How many 'error' verdicts in a row the checks' error lane re-runs on
     // its own (staging-recovery.checkMaxAutoRetries, CHECK_MAX_AUTO_RETRIES).
     checkMaxAutoRetries: (() => {
@@ -818,11 +808,6 @@ function load() {
     // pool of two (the outcome listener and one working connection).
     wfPoolMax: parseInt(process.env.WF_POOL_MAX || (IS_STAGING() ? '2' : '6'), 10),
     wfSlots: parseInt(process.env.WF_SLOTS || (IS_STAGING() ? '1' : '4'), 10),
-    // What a write to a machine-owned column outside the pipeline does:
-    // 'raise' everywhere but production, where it is logged to
-    // wf_ownership_violations until no legacy writer is left.
-    wfOwnershipMode: process.env.WF_OWNERSHIP_MODE
-      || ((process.env.NODE_ENV === 'production' && !IS_STAGING()) ? 'log' : 'raise'),
     // Demand-driven global-cap eviction. When a new session is needed but
     // the platform is at maxGlobalSessions, we pause the globally least-
     // recently-active session that has been idle longer than this grace

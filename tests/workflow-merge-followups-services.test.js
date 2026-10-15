@@ -102,19 +102,19 @@ test('worker.retire waits for a shots run read from its own row, then deletes th
   assert.deepEqual(retired, [12]);
 });
 
-test('included.find names each carried change with the head that matched, and leaves out a change busy here', async () => {
+test('included.find names each carried change with the head that matched', async () => {
   const candidates = [
     { id: 3, source: 'native', reviewed_head_sha: 'c'.repeat(40), imported_pr_head_sha: null },
     { id: 4, source: 'imported', reviewed_head_sha: null, imported_pr_head_sha: 'D'.repeat(40) },
     { id: 5, source: 'native', reviewed_head_sha: 'e'.repeat(40), imported_pr_head_sha: null },
   ];
   gh.listPullRequestCommitShas = async () => ({ shas: ['c'.repeat(40), 'd'.repeat(40)] });
-  // Change 4's head is listed too, but an operation that keeps no durable
-  // record is running on it in this process (as [main] checked).
-  stub('../src/services/active-workers', { isSessionBusy: (id) => id === 4 });
+  // Who works on a change is the preview machine's record, which the
+  // Included guard reads under the change's lock (machine.ts notIncludable):
+  // the search names every change whose head matched.
   const { handlers: h } = withRows(() => candidates);
   const out = await call(h, WORK.find, { sessionId: 1, appId: 2, prNumber: 8, owner: 'acme', repo: 'shop' });
-  assert.deepEqual(out, { ids: [3], found: [{ id: 3, head: 'c'.repeat(40) }] });
+  assert.deepEqual(out, { ids: [3, 4], found: [{ id: 3, head: 'c'.repeat(40) }, { id: 4, head: 'd'.repeat(40) }] });
 });
 
 test('the bot, the DM, the journey and the main check run strict, so a failure is retried', async () => {
@@ -127,4 +127,16 @@ test('the bot, the DM, the journey and the main check run strict, so a failure i
   assert.equal(seen.journey.strict, true);
   await call(h, WORK.mainCheck, { appId: 2, sessionId: 5, prNumber: 8, mergeSha: 'a'.repeat(40) });
   assert.equal(seen.mainCheck.strict, true);
+});
+
+test('an app.deliver item left from before asks app-delivery for its deploy itself, keyed by the item', async () => {
+  // Whichever release applies its result (an older Pod's code would not
+  // ask), the deploy it stood for is asked here.
+  const asked = [];
+  const h = mergeFollowupsServices({ config: {}, pool, requestDeploy: async (...args) => { asked.push(args); return 1; } });
+  const reuse = { imageRef: 'img', buildRef: 'b', commitSha: 'c'.repeat(40), owner: 'acme', repo: 'shop' };
+  const out = await h[WORK.deliver].run({ input: { appId: 2, sessionId: 5, mergeSha: 'a'.repeat(40), prNumber: 8, reuse },
+    workId: 'w-1', key: 'deliver', attempt: 1, resumeFrom: null, checkpoint: async () => {} });
+  assert.deepEqual(out, { handOff: true });
+  assert.deepEqual(asked, [[2, 'merge', { prNumber: 8, revision: 'a'.repeat(40), reuse, requestKey: 'handoff:w-1' }]]);
 });

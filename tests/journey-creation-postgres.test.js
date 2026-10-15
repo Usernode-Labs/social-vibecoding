@@ -131,11 +131,11 @@ test('the three records: a first run once, a preview once per viewer, a change l
   assert.deepEqual([row.user_id, row.app_id, row.session_id, row.created_at.getTime()], [bot, project, built, at.getTime()],
     'recorded at the merge, not after the health reading');
 
-  // A change somebody made themselves, on Homeroom's own project (no
-  // deploy here, so not read as live).
+  // A change somebody made themselves, on Homeroom's own project: recorded
+  // when production runs it (the merge-followups machine asks only then).
   const own = await session(project, ben, { created_from_issue_number: 9 });
   const mine = await journeyEvents.recordChangeLive(pool, { session: { id: own, app_id: project, user_id: ben, created_from_issue_number: 9 } });
-  assert.deepEqual(mine, { sessionId: own, requesterIds: [ben], firstVersion: false, live: false, sha: null });
+  assert.deepEqual(mine, { sessionId: own, requesterIds: [ben], firstVersion: false, live: true, sha: null });
   assert.deepEqual(journeyEvents.requestNumbers({ linked_issues: [3, '3', 0, null], created_from_issue_number: 7 }), [3, 7]);
   assert.equal(await journeyEvents.recordChangeLive({ query: async () => { throw new Error('down'); } }, {
     session: { id: own, app_id: project, user_id: ben },

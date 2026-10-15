@@ -310,8 +310,8 @@ async function resolvePlatformEnvCheck({ pool, app, session }) {
   let stored = new Set();
   // A value can also arrive WITH the proposal: the panel's "+ New
   // variable" flow parks it in pending_secret_declarations bound to this
-  // very session, and routes/votes.js finalizeMerge() writes it the moment
-  // the PR merges (services/pending-secrets.js). Counting those is what
+  // very session, and the merge writes it the moment the PR merges
+  // (services/pending-secrets.js, the merge-followups machine). Counting those is what
   // stops such a proposal from blocking ITSELF — the declaration is in the
   // branch, the value just isn't in platform_env_values yet. Scoped to
   // THIS session on purpose: another proposal's held value proves nothing

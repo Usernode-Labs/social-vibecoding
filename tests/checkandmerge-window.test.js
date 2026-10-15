@@ -4,6 +4,11 @@
 // (requiredVotes / mergeWindowMs / mergeGate) with only getActiveUserStats
 // overridden to pin the active-user count.
 //
+// A merge is reported to the merge-followups workflow machine
+// (platform.ts mergeConfirmed), which owns everything after GitHub's
+// merge; the stub records each report so a test can read the tally the
+// gate snapshotted.
+//
 // Run with: node --test tests/checkandmerge-window.test.js
 
 const test = require('node:test');
@@ -25,7 +30,6 @@ function stub(id, exports) {
 // whether the promoted→merging claim ran.
 function makePool(opts) {
   const claims = [];
-  const updates = [];
   const records = [];
   const pool = {
     async query(sql, params) {
@@ -46,23 +50,15 @@ function makePool(opts) {
         claims.push(params);
         return { rows: [{ id: opts.sessionId }] };
       }
-      if (/SELECT \* FROM apps WHERE id/.test(sql)) {
-        // self_hosted app → checkAndMerge skips rebuildProduction.
-        return { rows: [{ id: opts.appId, self_hosted: true, slug: 'widget' }] };
-      }
       // #47 checks gate: this suite exercises the vote/window gates, so the
       // proposal's checks are always green here.
       if (/SELECT check_state, test_results, checks_checked_at/.test(sql)) {
         return { rows: [{ check_state: 'passing', test_results: [], checks_checked_at: new Date().toISOString() }] };
       }
-      if (/UPDATE chat_sessions SET status = 'merged'/.test(sql)) {
-        updates.push(params);
-        return { rows: [] };
-      }
       return { rows: [] };
     },
   };
-  return { pool, claims, updates, records };
+  return { pool, claims, records };
 }
 
 function loadVotes() {
@@ -71,7 +67,7 @@ function loadVotes() {
     logger: require.resolve('../src/services/logger'),
     pool: require.resolve('../src/db/pool'),
     github: require.resolve('../src/services/github'),
-    staging: require.resolve('../src/services/staging'),
+    platform: require.resolve('../src/workflow/platform.ts'),
     docker: require.resolve('../src/services/docker'),
     resolver: require.resolve('../src/services/conflict-resolver'),
     ws: require.resolve('../src/services/ws'),
@@ -80,7 +76,6 @@ function loadVotes() {
     adminApproval: require.resolve('../src/services/admin-approval'),
     events: require.resolve('../src/services/events'),
     appAccess: require.resolve('../src/services/app-access'),
-    worker: require.resolve('../src/services/worker'),
     mergeDebug: require.resolve('../src/services/merge-debug'),
     subject: require.resolve('../src/routes/votes'),
   };
@@ -93,7 +88,10 @@ function loadVotes() {
   stub(ids.logger, { info() {}, warn() {}, error() {}, debug() {} });
   stub(ids.pool, { getPool: () => ({}) });
   stub(ids.github, { isEnabled: () => false, mergePR: async () => ({}) });
-  stub(ids.staging, { teardownStaging: async () => {}, rebuildProduction: async () => ({}) });
+  const reports = [];
+  stub(ids.platform, {
+    mergeConfirmed: async (m) => { reports.push(m); return { status: 'accepted', eventId: 1 }; },
+  });
   stub(ids.docker, {});
   stub(ids.resolver, {
     checkAndResolveConflicts: async () => {},
@@ -117,7 +115,6 @@ function loadVotes() {
   stub(ids.adminApproval, { isAppLocked: async () => false, hasAdminYesVote: async () => true });
   stub(ids.events, { record() {}, EVENT_TYPES: { PR_MERGED: 'pr_merged', BOUNTY_AWARDED: 'bounty_awarded' } });
   stub(ids.appAccess, { sessionCollabGuard: () => (_req, _res, next) => next() });
-  stub(ids.worker, { destroyCcVolume: async () => {}, retireWorker: async () => ({ deferred: false }), isInFlight: () => false });
   stub(ids.mergeDebug, {
     startRun: async () => 1, step() {}, endRun() {}, pruneOldRuns: async () => {},
   });
@@ -129,7 +126,7 @@ function loadVotes() {
       if (orig[k]) require.cache[id] = orig[k]; else delete require.cache[id];
     }
   };
-  return { subject, setActive, restore };
+  return { subject, setActive, reports, restore };
 }
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -158,16 +155,18 @@ test('threshold met but inside the visibility window → deferred (waitingForWin
 });
 
 test('threshold met and window elapsed → merges', async () => {
-  const { subject, setActive, restore } = loadVotes();
+  const { subject, setActive, reports, restore } = loadVotes();
   setActive(20);
   try {
-    const { pool, claims, updates } = makePool({ yes: 6, no: 0, sessionId: 7, appId: 5 });
+    const { pool, claims } = makePool({ yes: 6, no: 0, sessionId: 7, appId: 5 });
     // Promoted 8 days ago → window (~3.4d) long elapsed.
     const session = { ...baseSession, promoted_at: new Date(Date.now() - 8 * DAY).toISOString() };
     const r = await subject.checkAndMerge({ jwtSecret: 's' }, pool, session, {});
     assert.equal(r.merged, true);
     assert.equal(claims.length, 1, 'claimed the merge once the window elapsed');
-    assert.equal(updates[0][2], 6, 'snapshotted the eased threshold (required=6), not the majority');
+    assert.equal(reports.length, 1, 'the merge was reported to the merge-followups machine');
+    assert.equal(reports[0].sessionId, 7);
+    assert.equal(reports[0].tally.required, 6, 'snapshotted the eased threshold (required=6), not the majority');
   } finally {
     restore();
   }
@@ -194,15 +193,16 @@ test('below threshold, unopposed lead, clock running → deferred (lazy consensu
 });
 
 test('below threshold, unopposed lead, clock elapsed → merges (silence is consent)', async () => {
-  const { subject, setActive, restore } = loadVotes();
+  const { subject, setActive, reports, restore } = loadVotes();
   setActive(20);
   try {
-    const { pool, claims, updates } = makePool({ yes: 5, no: 0, sessionId: 7, appId: 5 });
+    const { pool, claims } = makePool({ yes: 5, no: 0, sessionId: 7, appId: 5 });
     const session = { ...baseSession, promoted_at: new Date(Date.now() - 30 * DAY).toISOString() };
     const r = await subject.checkAndMerge({ jwtSecret: 's' }, pool, session, {});
     assert.equal(r.merged, true, 'lazy-consensus window elapsed with no objection');
     assert.equal(claims.length, 1);
-    assert.equal(updates[0][2], 6, 'still snapshots the eased threshold');
+    assert.equal(reports.length, 1);
+    assert.equal(reports[0].tally.required, 6, 'still snapshots the eased threshold');
   } finally {
     restore();
   }

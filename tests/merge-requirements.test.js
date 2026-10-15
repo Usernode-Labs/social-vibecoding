@@ -645,9 +645,6 @@ function makePool(opts) {
       if (/vote = 'yes'/.test(sql)) return { rows: [{ cnt: String(opts.yes) }] };
       if (/vote = 'no'/.test(sql)) return { rows: [{ cnt: String(opts.no) }] };
       if (/SET status = 'merging'/.test(sql)) return { rows: [{ id: opts.sessionId }] };
-      if (/SELECT \* FROM apps WHERE id/.test(sql)) {
-        return { rows: [{ id: opts.appId, self_hosted: false, slug: 'widget' }] };
-      }
       if (/SELECT id, repo_url, self_hosted FROM apps/.test(sql)) {
         return { rows: [{ id: opts.appId, repo_url: '', self_hosted: false }] };
       }
@@ -667,7 +664,7 @@ function loadVotes(over) {
     logger: require.resolve('../src/services/logger'),
     pool: require.resolve('../src/db/pool'),
     github: require.resolve('../src/services/github'),
-    staging: require.resolve('../src/services/staging'),
+    platform: require.resolve('../src/workflow/platform.ts'),
     docker: require.resolve('../src/services/docker'),
     resolver: require.resolve('../src/services/conflict-resolver'),
     ws: require.resolve('../src/services/ws'),
@@ -676,7 +673,6 @@ function loadVotes(over) {
     adminApproval: require.resolve('../src/services/admin-approval'),
     events: require.resolve('../src/services/events'),
     appAccess: require.resolve('../src/services/app-access'),
-    worker: require.resolve('../src/services/worker'),
     mergeDebug: require.resolve('../src/services/merge-debug'),
     integration: require.resolve('../src/services/integration'),
     subject: require.resolve('../src/routes/votes'),
@@ -687,7 +683,8 @@ function loadVotes(over) {
   stub(ids.logger, { info() {}, warn() {}, error() {}, debug() {} });
   stub(ids.pool, { getPool: () => ({}) });
   stub(ids.github, { isEnabled: () => false, mergePR: async () => ({}) });
-  stub(ids.staging, { teardownStaging: async () => {}, rebuildProduction: async () => ({}) });
+  // A merge is reported to the merge-followups workflow machine.
+  stub(ids.platform, { mergeConfirmed: async () => ({ status: 'accepted', eventId: 1 }) });
   stub(ids.docker, {});
   stub(ids.resolver, {
     checkAndResolveConflicts: async () => {}, resolveAndMaybeRetry: async () => ({ ok: true }), isResolving: () => false,
@@ -708,7 +705,6 @@ function loadVotes(over) {
   });
   stub(ids.events, { record() {}, EVENT_TYPES: { PR_MERGED: 'pr_merged', BOUNTY_AWARDED: 'bounty_awarded' } });
   stub(ids.appAccess, { sessionCollabGuard: () => (_req, _res, next) => next() });
-  stub(ids.worker, { destroyCcVolume: async () => {}, retireWorker: async () => ({ deferred: false }), isInFlight: () => false });
   stub(ids.mergeDebug, { startRun: async () => 1, step() {}, endRun() {}, pruneOldRuns: async () => {} });
   stub(ids.integration, {
     ...require('../src/services/integration'),
@@ -855,7 +851,6 @@ test('the recording is descriptive only — a failed write never blocks a merge'
     if (/vote = 'yes'/.test(sql)) return { rows: [{ cnt: '4' }] };
     if (/vote = 'no'/.test(sql)) return { rows: [{ cnt: '0' }] };
     if (/SET status = 'merging'/.test(sql)) return { rows: [{ id: 7 }] };
-    if (/SELECT \* FROM apps WHERE id/.test(sql)) return { rows: [{ id: 5, self_hosted: false, slug: 'widget' }] };
     if (/SELECT check_state/.test(sql)) return { rows: [{ check_state: 'passing', test_results: [] }] };
     return { rows: [] };
   } };

@@ -44,7 +44,7 @@ stub(require.resolve('../src/services/github'), { parseGithubUrl: () => null, is
 stub(require.resolve('../src/services/main-drift-poller'), { checkAndRedeployOne: async () => ({}) });
 stub(require.resolve('../src/services/app-secrets'), {});
 stub(require.resolve('../src/services/rename-pr'), {});
-stub(require.resolve('../src/services/staging'), { rebuildProduction: async () => ({}), MissingSecretsError: class extends Error {} });
+stub(require.resolve('../src/services/staging'), { MissingSecretsError: class extends Error {} });
 
 let pool = null;
 require('../src/db/pool').getPool = () => pool;
@@ -284,7 +284,9 @@ test('the first version being built, from the records the bot leaves', { timeout
   });
 
   await t.test('merged: the app is the first version now', async () => {
-    await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW() WHERE id = $1`, [proposal.id]);
+    // Merged and live: the merge-followups machine stamps live_at once
+    // production runs it, so the fixture writes both.
+    await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW(), live_at = NOW() WHERE id = $1`, [proposal.id]);
     assert.equal(await state(), null);
     // Its tile says nothing more (routes/apps.js firstVersionLinesFor).
     const routes = require('../src/routes/apps');

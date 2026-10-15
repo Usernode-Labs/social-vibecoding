@@ -54,7 +54,7 @@ stub(ids.appManifest, {
   buildAppSlug: realAppManifest.buildAppSlug,
 });
 stub(ids.renamePr, {});
-stub(ids.staging, { rebuildProduction: async () => ({}), MissingSecretsError: class extends Error {} });
+stub(ids.staging, { MissingSecretsError: class extends Error {} });
 
 const SECRET_VALUES = {
   db_password: 'fixture-db-password-do-not-leak',
@@ -301,7 +301,12 @@ test('the declaration route holds the value encrypted, never in the clear', () =
     path.join(__dirname, '../src/services/pending-secrets.js'), 'utf8'
   );
   assert.match(pendingJs, /encrypt\(value, dataKey\)/, 'held values are encrypted at rest');
-  assert.match(pendingJs, /SET value_enc = NULL/,
+  // The merge applies the held value inside the merge-followups machine's
+  // transaction (src/workflow/rules/pending-secret-apply.ts).
+  const applyTs = fs.readFileSync(
+    path.join(__dirname, '../src/workflow/rules/pending-secret-apply.ts'), 'utf8'
+  );
+  assert.match(applyTs, /SET status = 'applied', value_enc = NULL,/,
     'and the ciphertext is dropped once the value is live in the real store');
 });
 

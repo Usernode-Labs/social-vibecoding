@@ -278,8 +278,8 @@ server code; changing the scaffold does not retrofit them.
 
 `PREVIEW_LIFECYCLE_ENABLED` and its per-session advisory lock are gone: the
 preview machine (below) owns every build, checks run and teardown, one at a time
-per session, as durable work. Its `preview_operations` table stays for one
-release so a rollback target still finds it, and nothing writes it.
+per session, as durable work. Its `preview_operations` table is dropped (a
+rollback past the preview machine's deletion recreates it empty).
 
 ## Preview cleanup
 
@@ -592,8 +592,8 @@ Pass 0b, the apply functions in `routes/issues.js`) are deleted.
   SIGTERM), so another process leads: the timers and work of every governance proposal
   run only there.
 - **Ownership is enforced.** A write to an enrolled governance proposal's status or audit
-  keys from outside the machine is refused (`WF_OWNERSHIP_VIOLATION`), whatever
-  `WF_OWNERSHIP_MODE` says for the other machines. A row is enrolled when it is filed, or
+  keys from outside the machine is refused (`WF_OWNERSHIP_VIOLATION`). A row is enrolled
+  when it is filed, or
   by the leader's boot backfill if filing failed.
 - **Rolling back past this release.** Code from before it still reads
   `WF_GOVERNANCE_ENABLED`, and without it its old paths would try to decide proposals the
@@ -606,67 +606,60 @@ Pass 0b, the apply functions in `routes/issues.js`) are deleted.
 
 ## Workflow merge-followups machine
 
-`platform.workflowMergeFollowupsEnabled` (default `false`) becomes
-`WF_MERGE_FOLLOWUPS_ENABLED`. When it is on, what follows a merge (production delivery,
-preview teardown, included changes, closing requests, the announcements) is durable work
-of the merge-followups machine, and a change reads live only once production runs it.
-`merge-followup-recovery` and the boot resume of issue-close watches stand down.
+The merge-followups machine in `src/workflow/merge-followups/` runs what follows a merge
+(the production deploy, preview teardown, included changes, closing requests, the
+announcements) as durable work, and a change reads live only once production runs it. It
+has no flag: the old merge tail (`finalizeMerge` and its follow-ups), the
+`merge-followup-recovery` sweep and the boot resume of issue-close watches are deleted.
 `docs/workflows.md` explains the machine.
 
-### Activation and rollback
-
-An ordinary rolling change, safe in both directions.
-
-1. **Set the value.** Set `platform.workflowMergeFollowupsEnabled: true` in the
-   platform's values in the infra repository. Argo CD rolls the Deployment.
-2. **During the rollout overlap.**
-   - An old Pod may still merge the old way. Once a new Pod has recorded the flag, the
-     ownership trigger logs such an old merge in `wf_ownership_violations`, which is
-     `log` mode in production. The old merge tail then runs as before.
-   - A merge on a new Pod is reported to the machine and finished by the leader's loops.
-3. **Verify.**
-   - **The new Pod's log.** It shows `Workflow runtime started` with `merge-followups`.
-   - **Admin → Workflows.** The next merge appears as `merge-followups / session:<id>`
-     and reaches `live`, and its problems panel is empty.
-   - **The proposal's thread.** It says "is live" after the deploy, not before.
-
-**Rollback.** Set the value back to `false`.
-- **New merges** take the old tail again.
-- **Merges the machine already accepted** still finish: the runtime keeps running while
-  they have work left, and stops on a later boot once nothing is left.
+- **A merge is only reported.** `checkAndMerge` appends `Merged` right after GitHub's
+  merge. A report that failed leaves the row `merging`, and the stuck-merge sweep finds
+  the merge on GitHub and reports it again.
+- **Ownership is enforced.** Only the machine moves a proposal into `merged`, and a write
+  to a merged row's `merged_at`, `merge_commit_sha`, `included_in_session_id` or `live_at`
+  from outside it is refused (`WF_OWNERSHIP_VIOLATION`).
+- **Rolling back past this release.** Code from before it still reads
+  `WF_MERGE_FOLLOWUPS_ENABLED`; with it off, its old merge tail would move rows into
+  `merged` itself. Keep `platform.workflowMergeFollowupsEnabled: true` in the infra values
+  (this chart no longer reads it) until no rollback target predates this release. The
+  instances this release writes are version 5, which older code leaves alone: such a
+  merge finishes once the release comes back.
+- **Verify after a release.** The Pod's log shows `Workflow runtime started` with
+  `merge-followups`; the next merge appears in Admin → Workflows as
+  `merge-followups / session:<id>` and reaches `live`, and the proposal's thread says "is
+  live" after the deploy, not before.
 
 ## Workflow app-delivery machine
 
-`platform.workflowAppDeliveryEnabled` (default `false`) becomes `WF_APP_DELIVERY_ENABLED`.
-It needs `platform.workflowMergeFollowupsEnabled`: without it the machine does not run,
-the boot logs why, and Admin → Workflows lists the flag under "Needs a person". When it
-runs, every production deploy of an app is a request to the app-delivery machine, run one
-at a time per app, and the version pill's "deploying" is `apps.deploy_state`, read by every
-Pod. `docs/workflows.md` explains the machine.
+The app-delivery machine in `src/workflow/app-delivery/` runs every production deploy of
+an app, one at a time per app and at most four at a time in the leading process, for everyone who
+asks (a merge, a secret change, the drift poller, Check for updates, Redeploy, heal, a
+rollover whose image is gone, a demo reset). It has no flag: each caller used to deploy
+itself, in its own process, with "deploying" in that process's memory; now it records a
+request and the machine deploys. `docs/workflows.md` explains the machine.
 
-### Activation and rollback
-
-An ordinary rolling change, safe in both directions.
-
-1. **Set the value** in the platform's values in the infra repository, once merge
-   follow-ups is on. Argo CD rolls the Deployment.
-2. **During the rollout overlap.** An old Pod still deploys the old way. The cross-process
-   build lock keeps its deploy and the machine's from running on one app at once.
-3. **Verify.**
-   - **The new Pod's log.** `Workflow runtime started` lists `app-delivery`.
-   - **Admin → Workflows.** The next deploy appears as `app-delivery / app:<id>`,
-     `deploying`, then `idle`, and its problems panel is empty.
-   - **The version pill** spins during the deploy after a page reload, too.
-
-**Rollback.** Set the value back to `false`. Callers deploy themselves again. Requests the
-machine already accepted still run: the runtime keeps running while it has a deploy or a
-request left, and stops on a later boot once nothing is left. A retry of a merge's
-delivery or of a secret change's redeploy is then the machine's own deploy again.
-
-Rolling the **release** back (to code from before this machine) is different: the
-merge-followups and governance-proposal instances this release wrote are version 3, and
-older code leaves an instance a newer version wrote alone. With those flags on, such an
-instance waits until the release comes back.
+- **Where the deploys run.** `app.deploy` is a work item, which only the leader runs:
+  with the web and conductor split, the conductor Pod. Each deploy clones the app into
+  that Pod's `/tmp` and builds there, as previews do.
+- **"Deploying" is durable.** It is `apps.deploy_state`, read by every Pod and after a
+  restart; a deploy whose process died is retried after its lease. A deploy that never
+  answers (a hung build or lock) is ended by an admin in Admin → Workflows (`EndDeploy`).
+- **Ownership is enforced.** A write to `apps.deploy_state`, `deploy_started_at` or
+  `deploy_from_sha` from outside the machine is refused (`WF_OWNERSHIP_VIOLATION`).
+- **During the rollout that brings it.** An old Pod still deploys the old way; the
+  cross-process build lock keeps its deploy and the machine's from running on one app at
+  once, and each reads the other's "deploying".
+- **Rolling back past this release.** Older code deploys in each caller again. It still
+  runs a deploy app delivery had under way (it registers the machine while one is), but a
+  request left open after a failed deploy waits: the merge or secret change that asked is
+  version 5, which older code leaves alone, so it is answered once the release comes back.
+  Nothing in the infra values needs keeping for it (`workflowAppDeliveryEnabled` stays as
+  it is until the values are cleaned up).
+- **Verify after a release.** The Pod's log shows `Workflow runtime started` with
+  `app-delivery`; the next deploy appears in Admin → Workflows as
+  `app-delivery / app:<id>`, `deploying`, then `idle`, and the version pill spins during
+  the deploy after a page reload, too.
 
 ## Workflow preview machine
 
@@ -696,8 +689,8 @@ explains the machine.
   checking or retrying alone. The orphan-database sweep keeps every database of a
   session it holds.
 - **Ownership is enforced.** A write to a held session's preview or checks columns from
-  outside the machine is refused (`WF_OWNERSHIP_VIOLATION`), whatever
-  `WF_OWNERSHIP_MODE` says. The staging seeds in `migrate.js` leave a row it holds alone.
+  outside the machine is refused (`WF_OWNERSHIP_VIOLATION`). The staging seeds in
+  `migrate.js` leave a row it holds alone.
 - **Rolling back past this release.** Code from before it still reads
   `WF_PREVIEWS_ENABLED` and `PREVIEW_LIFECYCLE_ENABLED`; with the first off it would hand
   every session back to paths the guard now refuses. Keep

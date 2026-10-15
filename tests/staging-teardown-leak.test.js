@@ -146,7 +146,6 @@ function installStubs() {
   stub(ids.events, {
     EVENT_TYPES: {
       STALE_PREVIEWS_REAPED: 'stale_previews_reaped',
-      STAGING_TEARDOWN_LEAKED: 'staging_teardown_leaked',
     },
     record(_pool, payload) { fx.eventRecords.push(payload); return Promise.resolve(); },
   });

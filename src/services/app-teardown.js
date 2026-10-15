@@ -37,6 +37,30 @@ function isTearingDown(slug) {
   try { return require('./processes').heldElsewhere('teardown', slug); } catch { return false; }
 }
 
+// A deploy or a recovery takes minutes, so an app can be deleted while one
+// runs: the teardown removes the runtime, then the deploy puts it back. Its
+// caller asks this once it has finished (app-heal's recovery, app-delivery's
+// deploy): an app that is gone or going by then keeps no runtime. A lookup
+// that fails removes nothing. Resolves whether it removed one.
+async function removeRuntimeIfDeleted(config, pool, app, { who = 'deploy' } = {}) {
+  try {
+    if (!isTearingDown(app.slug)) {
+      const { rows } = await pool.query('SELECT 1 FROM apps WHERE id = $1', [app.id]);
+      if (rows.length) return false;
+    }
+    const applicationRuntime = require('./application-runtime');
+    const ref = applicationRuntime.productionRef(config, app);
+    await applicationRuntime.remove(config, { ...ref, appId: app.id }, {
+      deleteBuilds: ref.runtimeKind === 'kubernetes',
+    });
+    log.warn('app-teardown', `App was deleted during a ${who}; runtime removed`, { slug: app.slug });
+    return true;
+  } catch (err) {
+    log.warn('app-teardown', `Could not check for a deleted app after a ${who}`, { slug: app.slug, err: err.message });
+    return false;
+  }
+}
+
 async function teardownApp(pool, config, app) {
   tearingDown.add(app.slug);
   try {
@@ -135,4 +159,4 @@ async function retirePreviews(pool, app) {
   }
 }
 
-module.exports = { teardownApp, isTearingDown };
+module.exports = { teardownApp, isTearingDown, removeRuntimeIfDeleted };

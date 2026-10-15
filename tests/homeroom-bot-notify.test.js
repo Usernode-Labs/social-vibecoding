@@ -55,7 +55,7 @@ const MOMENT_WORDS = [
   [D({ moment: 'on_hold', said: 'allowance', count: 2 }), '2 requests on hold', 'On hold until Monday: your building time for this week is used up.', 'On hold', '2 requests on hold'],
   [D({ moment: 'live', said: 'live' }), 'Dark mode · Plant Pal', 'It\'s live. Open Plant Pal to see it.', 'Live', 'Dark mode'],
   [D({ moment: 'live', said: 'live_first', firstVersion: true }), 'Plant Pal', 'Your first version is live. Open Plant Pal to try it.', 'Live', 'Plant Pal first version'],
-  // "Live" only once the app answers on it.
+  // A message that said it before the change was live keeps its words.
   [D({ moment: 'live', said: 'live_soon' }), 'Dark mode · Plant Pal', 'It\'s going live now. Open Plant Pal in a few minutes to see it.', 'Live', 'Dark mode'],
   // A row written before "one story" keeps reading, as the moment it is.
   ['hrbot:question:Plant Pal', 'Plant Pal', 'I have a question before I build it.', 'Needs you', 'Plant Pal'],
@@ -323,7 +323,7 @@ test('B4: what one first version rings for its maker, against the full PostgreSQ
   });
 });
 
-test('WP-F: a merged change is "live" only once the app answers on it, and a stop says which one', async () => {
+test('WP-F: a merged change is "live" when the machine says it is, and a stop says which one', async () => {
   const pool = { async query() { return { rows: [] }; } };
   const said = async (moment, metadata) => {
     const d = notifyCopy.parseBotDetail(await dm.notificationDetail(pool, moment, { appName: 'Plant Pal', ...metadata }));
@@ -345,9 +345,16 @@ test('WP-F: a merged change is "live" only once the app answers on it, and a sto
   // Every moment rings as its kind, by its new name or its old one.
   assert.deepEqual(['needs_you', 'question', 'ready', 'stopped', 'on_hold', 'held', 'live'].map((m) => dm.BUILD_KINDS[m]),
     ['build_needs_you', 'build_needs_you', 'build_ready', 'build_stopped', 'build_stopped', 'build_stopped', 'build_live']);
-  // The chat chip moves to Live after the app answers, not on the merge.
+  // The chat chip moves to Live when the change is live, not on the merge:
+  // the merge-followups machine asks for the DM only once it is live
+  // (machine.ts toLive's bot.dmMerged work), so the DM says live and marks
+  // the chat live at once.
   const src = fs.readFileSync(require.resolve('../src/services/homeroom-bot-dm.js'), 'utf8');
   const merged = src.slice(src.indexOf('async function noteProposalMerged('), src.indexOf('// ── A person writing to the bot'));
-  assert.ok(merged.indexOf('const live = await liveAfterMerge(') < merged.indexOf('noteChatLive(pool, run, deps)'));
-  assert.match(merged, /if \(live \|\| platform\) await noteChatLive\(pool, run, deps\);\n {2}else laterChatLive\(pool, run, \{ config, sha, deps \}\);/);
+  assert.match(merged, /const live = true;\n {2}\/\/ B9: [^\n]*\n {2}await noteChatLive\(pool, run, deps\);/);
+  const machine = fs.readFileSync(require.resolve('../src/workflow/merge-followups/machine.ts'), 'utf8');
+  const toLive = machine.slice(machine.indexOf('function toLive('), machine.indexOf('function lineInput('));
+  assert.match(toLive, /\{ kind: WORK\.dm, key: 'dm', input: \{ sessionId: d\.sessionId, sha: deliveredSha \} \}/);
+  const services = fs.readFileSync(require.resolve('../src/workflow/merge-followups/services.ts'), 'utf8');
+  assert.match(services, /\[WORK\.dm\]: \{[\s\S]*?legacy\('services\/homeroom-bot-dm'\)\.noteProposalMerged\(pool, \{ id: input\.sessionId \}/);
 });

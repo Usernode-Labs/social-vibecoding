@@ -9067,8 +9067,8 @@ async function buildOne(pool, config, { bot, app, run, settings, deps = {} }) {
 // after the first was merged, and the next request waited behind it.
 
 /**
- * Called by the merge (routes/votes.js finalizeMerge) once `session` is
- * merged. Only for a proposal of the bot's. Never throws; resolves what it
+ * Called by the merge-followups workflow machine's bot.requestMerged work
+ * once `session` is merged. Only for a proposal of the bot's. Never throws; resolves what it
  * did ({ skipped, stopped, withdrawn, dequeued }), or null.
  *
  * `deps.before` (the merge's time) leaves alone the builds, proposals and

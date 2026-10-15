@@ -23,7 +23,9 @@ const log = require('./logger');
 const MINUTE_MS = 60 * 1000;
 const TYPES = Object.freeze({ UNAVAILABLE: 'app_unavailable', RESTARTED: 'app_restarted' });
 // What the watchdog reports when it brought an app back.
-const RESTART_OUTCOMES = Object.freeze(['started', 'restarted', 'rebuilt', 'respawned']);
+// A rebuild is asked of app delivery (deploy_requested): the watchdog acted
+// then, though the deploy that brings the app back finishes later.
+const RESTART_OUTCOMES = Object.freeze(['started', 'restarted', 'deploy_requested', 'respawned']);
 const MAX_SEEN = 2000;
 
 const UNAVAILABLE_SQL = `
