@@ -305,7 +305,8 @@ test('a choice that needs no typing makes a ready-made app, with nothing for Hom
   assert.match(src, /emoji: ready \? ready\.emoji : example \? example\.emoji : null,/);
   assert.match(src, /\.\.\.\(ready \? \{ readyMade: true \} : \{\}\),/);
   // Nothing under its choices says so (Evan, 10 Oct 2026): the line read as
-  // fine print on a screen that is about the idea.
+  // fine print on a screen that is about the idea. Since 15 Oct one line
+  // above Who can change it says Instant or Custom (pinned at the end).
   const make = loadTsx(`${DIR}/make.tsx`);
   assert.equal(make.READY_LINE, undefined);
   assert.doesNotMatch(src, /data-make-ready|Ready-made:|firstSession\.make\.readyMade/);
@@ -891,4 +892,176 @@ test('runs six and seven: a long description scrolls inside its own box, under i
   assert.match(html, /<label for="first-session-brief" class="block text-\[13px\] text-zinc-500 dark:text-zinc-400">What should it do\?<\/label><textarea/);
   assert.match(brief, /rows="3"/);
   assert.ok(classOf(brief).includes('resize-none'));
+});
+
+// INSTANT OR CUSTOM (Evan, 15 Oct 2026): one line above Who can change it
+// says what Make it will do. A ready-made app (Make it's own `readyMadeOf`
+// test while the sentence is still the template's) is Instant; anything
+// Homeroom bot builds is Custom; with nothing picked or typed there is none.
+test('Make it says whether it is instant or custom: the rule, the exact copy, and nothing before a pick', () => {
+  const make = loadTsx(`${DIR}/make.tsx`);
+  const { TEMPLATES, OWN, readyMadeOf } = loadTsx(`${DIR}/examples.ts`);
+  const game = TEMPLATES.find((t) => t.key === 'game');
+
+  // Nothing picked and nothing typed: no line.
+  assert.equal(make.makeSpeed(null, '', null, ''), null);
+  assert.equal(make.makeSpeed(null, '', null, '   \n'), null, 'blank space is nothing typed');
+  // Every choice that makes a ready-made app, drawn as the template's: instant.
+  for (const t of TEMPLATES.filter((x) => x !== game)) {
+    for (const c of t.choices) {
+      assert.ok(readyMadeOf(t, c.key), `${t.key}/${c.key} is ready-made`);
+      assert.equal(make.makeSpeed(t, c.key, null, ''), 'instant', `${t.key}/${c.key}`);
+      // Write it yourself: the plain box, which Homeroom bot builds.
+      const out = 'A tier list for our favorite hikes. ';
+      assert.equal(make.makeSpeed(t, c.key, out, out), 'custom', `${t.key}/${c.key} written out`);
+    }
+    // Your own… in its blank, with or without their words yet.
+    assert.equal(make.makeSpeed(t, OWN, null, ''), 'custom', `${t.key}: Your own…`);
+  }
+  // Every game chip, and the game's own Your own…: built on, so custom.
+  for (const key of [OWN, ...game.choices.map((c) => c.key)]) {
+    assert.equal(make.makeSpeed(game, key, null, ''), 'custom', `game/${key}`);
+  }
+  // Their own words, and Your own idea picked before a word is typed.
+  assert.equal(make.makeSpeed(make.OWN_IDEA, '', null, 'A tracker for my run club'), 'custom');
+  assert.equal(make.makeSpeed(make.OWN_IDEA, '', null, ''), 'custom');
+
+  // The exact copy, the first word bold.
+  assert.deepEqual({ ...make.SPEED_LINE }, {
+    instant: 'onboarding:firstSession.make.speed.instant',
+    custom: 'onboarding:firstSession.make.speed.custom',
+  });
+  assert.equal(message(make.SPEED_LINE.instant), '<0>Instant</0> · ready to use in about a minute');
+  assert.equal(message(make.SPEED_LINE.custom), '<0>Custom</0> · Homeroom bot builds it in 20 to 30 min');
+  const catalog = JSON.parse(read('frontend/locales/en/onboarding.json'));
+  for (const id of Object.values(make.SPEED_LINE)) {
+    const entry = catalog[id.slice('onboarding:'.length)];
+    assert.ok(entry && entry.description, `${id} has a description`);
+    assert.match(entry.description, /<0>…<\/0> is bold/);
+  }
+
+  // Drawn: none as the screen opens, and Custom, sparkle first, for a
+  // waitlist answer in the plain box. Muted zinc, 14px, no colour of its own.
+  const base = { who: 'Jordan', onMade() {}, onLookAround() {} };
+  const plain = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', base);
+  assert.doesNotMatch(plain, /data-make-speed/);
+  const html = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { ...base, idea: 'A tracker for my run club, so we can see who keeps up' });
+  const line = /<p data-make-speed="custom" class="([^"]*)">(.*?)<\/p>/.exec(html);
+  assert.ok(line, 'the line is drawn');
+  assert.match(line[1], /\btext-\[14px\]/);
+  assert.match(line[1], /\btext-zinc-600\b/);
+  assert.doesNotMatch(line[1], /violet|accent|red-|amber-|green-|emerald-/);
+  assert.match(line[2], /^<svg [^>]*aria-hidden="true"[^>]*>.*<\/svg><span[^>]*><b class="font-semibold text-zinc-900 dark:text-zinc-100">Custom<\/b> · Homeroom bot builds it in 20 to 30 min<\/span>$/);
+  const icons = read('frontend/@/components/ui/icons.tsx');
+  const pathOf = (name) => new RegExp(`export const ${name} = stroked\\(\\s*'${name}',\\s*'([^']+)'`).exec(icons)[1];
+  assert.ok(line[2].includes(`d="${pathOf('SparklesIcon')}"`), 'the sparkle');
+  assert.ok(!line[2].includes(`d="${pathOf('BoltIcon')}"`), 'not the bolt');
+  // Above Who can change it, under the name.
+  const src = read(`${DIR}/make.tsx`);
+  const nameHint = src.indexOf("{missing === 'name' ? <p id=\"first-session-name-hint\"");
+  const speedAt = src.indexOf('<p data-make-speed={speed}');
+  const ruleAt = src.indexOf('<MakeRuleLine preset={rule} onPick={setRule} who={who} />');
+  assert.ok(nameHint > 0 && nameHint < speedAt && speedAt < ruleAt, 'under the name, just above Who can change it');
+  assert.ok(html.indexOf('data-make-speed') < html.indexOf('data-make-rule='), 'drawn above the rule line');
+  assert.match(src, /const speed = makeSpeed\(picked, choice, written, brief\);/);
+});
+
+test('the instant or custom line follows each pick and keystroke', (t) => {
+  let slots = [];
+  let at = 0;
+  const real = require(require.resolve('react', { paths: [path.join(ROOT, 'frontend')] }));
+  const React = {
+    ...real,
+    useState(init) {
+      const k = at++;
+      if (!(k in slots)) slots[k] = typeof init === 'function' ? init() : init;
+      return [slots[k], (v) => { slots[k] = typeof v === 'function' ? v(slots[k]) : v; }];
+    },
+    useRef(init) { const k = at++; if (!(k in slots)) slots[k] = { current: init }; return slots[k]; },
+    useCallback(fn) { at++; return fn; },
+    useEffect() { at++; },
+    useLayoutEffect() { at++; },
+    useSyncExternalStore(subscribe, get) { at++; return get(); },
+  };
+  const { MakeScreen } = loadTsx(`${DIR}/make.tsx`, { stubs: { react: React, 'react-dom': { createPortal: (el) => el }, '../../lib/i18n/react': ENGLISH_HOOK } });
+  const hadDocument = 'document' in globalThis;
+  if (!hadDocument) globalThis.document = { body: {} };
+  t.after(() => { if (!hadDocument) delete globalThis.document; });
+  const draw = () => { at = 0; return MakeScreen({ who: 'Jordan', onMade() {}, onLookAround() {} }); };
+  const find = (node, test, out = []) => {
+    if (!node || typeof node !== 'object') return out;
+    if (Array.isArray(node)) { node.forEach((n) => find(n, test, out)); return out; }
+    if (node.props && test(node)) out.push(node);
+    if (node.props) find(node.props.children, test, out);
+    return out;
+  };
+  const tiles = (tree) => find(tree, (n) => n.props['data-first-session-example'] !== undefined);
+  const chip = (tree, key) => find(tree, (n) => n.props['data-make-choice'] === key)[0];
+  const brief = (tree) => find(tree, (n) => n.props.id === 'first-session-brief')[0];
+  const words = (tree) => find(tree, (n) => n.props.id === 'make-words')[0];
+  const sheet = (tree) => find(tree, (n) => n.props.onPickIdea !== undefined)[0];
+  // What the line says: its kind, its icon and its message, or null.
+  const said = (tree) => {
+    const line = find(tree, (n) => n.props['data-make-speed'] !== undefined)[0];
+    if (!line) return null;
+    const icon = find(line.props.children, (n) => typeof n.type === 'function' && /Icon$/.test(n.type.displayName || ''))[0];
+    const rich = find(line.props.children, (n) => typeof n.props.id === 'string')[0];
+    return [line.props['data-make-speed'], icon.type.displayName, rich.props.id];
+  };
+  const INSTANT = ['instant', 'BoltIcon', 'onboarding:firstSession.make.speed.instant'];
+  const CUSTOM = ['custom', 'SparklesIcon', 'onboarding:firstSession.make.speed.custom'];
+
+  let tree = draw();
+  assert.equal(said(tree), null, 'nothing chosen: no line');
+  // A ready-made chip: the tier list's first choice, then another.
+  tiles(tree)[0].props.onClick();
+  tree = draw();
+  assert.deepEqual(said(tree), INSTANT, 'tier list, restaurants');
+  chip(tree, 'hikes').props.onClick();
+  tree = draw();
+  assert.deepEqual(said(tree), INSTANT, 'tier list, hikes');
+  // Your own…: their words in the blank are built.
+  chip(tree, 'own').props.onClick();
+  tree = draw();
+  assert.deepEqual(said(tree), CUSTOM, 'Your own…, before a word');
+  words(tree).props.onChange({ target: { value: 'taco spots' } });
+  tree = draw();
+  assert.deepEqual(said(tree), CUSTOM, 'Your own…, with their words');
+  chip(tree, 'cities').props.onClick();
+  tree = draw();
+  assert.deepEqual(said(tree), INSTANT, 'back to a ready-made chip');
+  // Write it yourself: the plain box, built by Homeroom bot.
+  find(tree, (n) => n.props['data-make-write-out'] !== undefined)[0].props.onClick();
+  tree = draw();
+  assert.deepEqual(said(tree), CUSTOM, 'written out');
+  brief(tree).props.onChange({ target: { value: `${brief(tree).props.value} And a map of them.` } });
+  tree = draw();
+  assert.deepEqual(said(tree), CUSTOM, 'their own words');
+  // The game: always built, whichever chip.
+  tiles(tree)[1].props.onClick();
+  tree = draw();
+  assert.deepEqual(said(tree), CUSTOM, 'the game, on Your own');
+  for (const key of ['board', 'shooter', 'blocks', 'trivia']) {
+    chip(tree, key).props.onClick();
+    tree = draw();
+    assert.deepEqual(said(tree), CUSTOM, `game/${key}`);
+  }
+  // The organizer, picked: ready-made again.
+  tiles(tree)[2].props.onClick();
+  tree = draw();
+  assert.deepEqual(said(tree), INSTANT, 'organizer, groceries');
+  // Your own idea, from Something else.
+  tiles(tree)[3].props.onClick();
+  tree = draw();
+  sheet(tree).props.onPickIdea();
+  tree = draw();
+  assert.deepEqual(said(tree), CUSTOM, 'Your own idea');
+
+  // From a fresh screen, typing alone is enough.
+  slots = [];
+  tree = draw();
+  assert.equal(said(tree), null);
+  brief(tree).props.onChange({ target: { value: 'A' } });
+  tree = draw();
+  assert.deepEqual(said(tree), CUSTOM, 'their own words, as they type');
 });
