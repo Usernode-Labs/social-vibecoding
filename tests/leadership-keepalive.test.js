@@ -132,9 +132,18 @@ test('on a real server: the lock session carries the keepalive settings, and los
       assert.equal(held.ok, false, 'the leader holds the lock');
 
       // The server drops the session (as keepalive would for a dead peer):
-      // the leader learns its lock is gone and steps down.
-      const { rows: [{ pid }] } = await client.query('SELECT pg_backend_pid() AS pid');
-      await observer.query('SELECT pg_terminate_backend($1)', [pid]);
+      // the leader learns its lock is gone and steps down. The pid alone
+      // does not name the session — test files run in parallel against one
+      // server, and a pid can be stale or reused by the time the terminate
+      // runs — so the terminate is scoped to that pid AND backend_start,
+      // which a stranger's session does not match: it then fails this
+      // assertion instead of killing another file's connection.
+      const { rows: [{ pid, backend_start }] } = await client.query(
+        'SELECT pid, backend_start::text AS backend_start FROM pg_stat_activity WHERE pid = pg_backend_pid()');
+      const { rows: killed } = await observer.query(
+        'SELECT pg_terminate_backend(pid) AS killed FROM pg_stat_activity WHERE pid = $1 AND backend_start = $2::timestamptz',
+        [pid, backend_start]);
+      assert.ok(killed.length === 1 && killed[0].killed === true, "terminated the leader's own session");
       assert.ok(await until(() => exits.length > 0), 'the leader exits');
       assert.deepEqual(exits, [1]);
       assert.ok(logs.some((l) => l.msg === 'Leader-lock connection ended unexpectedly' && l.data.wasLeader === true));
