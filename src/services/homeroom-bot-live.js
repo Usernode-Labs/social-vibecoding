@@ -1696,7 +1696,7 @@ async function post({
   pool, github, ws, app, repo, issueNumber, kind, runId = null, text,
   msgType = 'system', metadata = null, mention = null, mentions = null, senderId = null, notifications = null,
   proposalSessionId = null, sender = null, threadMessage = null, dm = null, untag = null, onlyProposal = false,
-  skipIssueThread = false, skipGithub = false, homeroomText = null,
+  skipIssueThread = false, skipGithub = false, homeroomText = null, strict = false,
 }) {
   // Answered where it was asked: a reply to people who wrote only in the
   // change's own discussion is said there alone, with no GitHub comment and
@@ -1746,6 +1746,11 @@ async function post({
   }
   let comment = had?.github_comment_id ? { id: had.github_comment_id } : null;
   let message = had?.thread_message_id ? { id: had.thread_message_id } : null;
+  // `strict` (a durable caller that retries: the merge-followups machine's
+  // bot.announceLive work): what could not be said is thrown at the end,
+  // with the post left pending, so the retry takes the row up and says only
+  // what is missing.
+  const failed = [];
   // Its thread message went out before the restart: so did what it tagged.
   const messageSentBefore = !!message;
   if (!noComment && !comment) {
@@ -1756,6 +1761,8 @@ async function post({
         comment = await github.createIssueComment(repo.owner, repo.repo, issueNumber, text);
       } catch (err) {
         log.warn('homeroom-bot', 'GitHub comment failed (continuing)', { app: app.slug, issueNumber, kind, err: err.message });
+        // An issue that is gone (deleted, transferred) has nobody to tell.
+        if (err.status !== 404 && err.status !== 410) failed.push(`the GitHub comment (${err.message})`);
       }
     }
     if (comment?.id != null) {
@@ -1812,6 +1819,7 @@ async function post({
         : await inThread(threadText, { type: 'issue', ref: issueNumber });
     } catch (err) {
       log.warn('homeroom-bot', 'Thread post failed (continuing)', { app: app.slug, issueNumber, kind, err: err.message });
+      failed.push(`the thread message (${err.message})`);
     }
     if (message?.id != null) {
       await pool.query('UPDATE homeroom_bot_posts SET thread_message_id = $2 WHERE id = $1', [postId, message.id]).catch(() => {});
@@ -1845,6 +1853,9 @@ async function post({
     } catch (err) {
       log.warn('homeroom-bot', 'Proposal thread post failed (continuing)', { app: app.slug, issueNumber, kind, err: err.message });
     }
+  }
+  if (strict && failed.length) {
+    throw new Error(`Could not post the ${kind} note on request #${issueNumber}: ${failed.join(', ')}`);
   }
   await pool.query(
     `UPDATE homeroom_bot_posts SET github_comment_id = $2, thread_message_id = $3, pending = NULL
@@ -1916,9 +1927,11 @@ async function announceLive(pool, { session, deps = {}, strict = false } = {}) {
     );
     const run = rows[0];
     if (!run) return null;
+    // Said once: a post still pending (cut short, or a part of it failed)
+    // is taken up again by post(), which sends only what is missing.
     const { rows: said } = await pool.query(
       `SELECT 1 FROM homeroom_bot_posts
-        WHERE app_id = $1 AND issue_number = $2 AND run_id = $3 AND kind = 'live' LIMIT 1`,
+        WHERE app_id = $1 AND issue_number = $2 AND run_id = $3 AND kind = 'live' AND pending IS NOT TRUE LIMIT 1`,
       [run.app_id, run.issue_number, run.run_id],
     );
     if (said.length) return null;
@@ -1944,6 +1957,7 @@ async function announceLive(pool, { session, deps = {}, strict = false } = {}) {
       sender: bot,
       senderId: bot.id,
       skipGithub: !repo,
+      strict,
     });
   } catch (err) {
     // The merge-followups machine's work asks it strictly: a failure is

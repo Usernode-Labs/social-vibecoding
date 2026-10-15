@@ -69,7 +69,7 @@ function fakeLive({ posted = false, run = true } = {}) {
       if (/FROM homeroom_bot_runs r\s+JOIN apps a/.test(sql)) {
         return { rows: run ? [{ run_id: 40, app_id: 3, issue_number: 12, slug: 'plant-pal', name: 'Plant Pal', repo_url: 'https://github.com/o/plant-pal', title: 'Dark mode' }] : [] };
       }
-      if (/kind = 'live' LIMIT 1/.test(sql)) return { rows: posted ? [{ '?column?': 1 }] : [] };
+      if (/kind = 'live' AND pending IS NOT TRUE LIMIT 1/.test(sql)) return { rows: posted ? [{ '?column?': 1 }] : [] };
       if (/FROM users WHERE username/.test(sql)) return { rows: [BOT] };
       if (/INSERT INTO homeroom_bot_posts/.test(sql)) return { rows: [{ id: 99 }] };
       return { rows: [] };
@@ -84,6 +84,71 @@ function fakeLive({ posted = false, run = true } = {}) {
   };
   return { pool, deps, queries, comments, messages };
 }
+
+// What the merge-followups machine's retry needs (bot.announceLive work,
+// strict): a part that failed is thrown with the post left pending, and the
+// retry says only what is missing; a post never reads as said half sent.
+test('strict: a failed GitHub comment or thread message is thrown and retried, never marked said', async () => {
+  const posts = new Map();   // id -> the homeroom_bot_posts row
+  let nextId = 99;
+  const pool = {
+    async query(sql, params) {
+      if (/FROM homeroom_bot_runs r\s+JOIN apps a/.test(sql)) {
+        return { rows: [{ run_id: 40, app_id: 3, issue_number: 12, slug: 'plant-pal', name: 'Plant Pal', repo_url: 'https://github.com/o/plant-pal', title: 'Dark mode' }] };
+      }
+      if (/kind = 'live' AND pending IS NOT TRUE LIMIT 1/.test(sql)) {
+        return { rows: [...posts.values()].filter((r) => r.pending !== true) };
+      }
+      if (/WHERE run_id = \$1 AND kind = \$2 AND pending IS TRUE/.test(sql)) {
+        return { rows: [...posts.values()].filter((r) => r.pending === true).map((r) => ({ ...r, created_at: new Date() })) };
+      }
+      if (/FROM users WHERE username/.test(sql)) return { rows: [BOT] };
+      if (/INSERT INTO homeroom_bot_posts/.test(sql)) {
+        const id = nextId++;
+        posts.set(id, { id, pending: true, github_comment_id: null, thread_message_id: null });
+        return { rows: [{ id }] };
+      }
+      if (/SET github_comment_id = \$2, thread_message_id = \$3, pending = NULL/.test(sql)) {
+        Object.assign(posts.get(params[0]), { github_comment_id: params[1], thread_message_id: params[2], pending: null });
+        return { rows: [] };
+      }
+      if (/SET github_comment_id = \$2 WHERE id = \$1/.test(sql)) { posts.get(params[0]).github_comment_id = params[1]; return { rows: [] }; }
+      if (/SET thread_message_id = \$2 WHERE id = \$1/.test(sql)) { posts.get(params[0]).thread_message_id = params[1]; return { rows: [] }; }
+      return { rows: [] };
+    },
+  };
+  const down = { github: true, thread: true };
+  const comments = [];
+  const messages = [];
+  const deps = {
+    github: {
+      async createIssueComment(owner, repo, n, text) {
+        if (down.github) throw Object.assign(new Error('GitHub is down'), { status: 502 });
+        comments.push(text); return { id: 5, created_at: 'now' };
+      },
+      async listIssueComments() { return []; },
+    },
+    ws: {
+      async sendBotMessage(_pool, appId, msg) { if (down.thread) throw new Error('db hiccup'); messages.push(msg.content); return { id: 77 }; },
+      async sendSystemMessage() { throw new Error('the bot speaks as itself'); },
+    },
+  };
+  await assert.rejects(live.announceLive(pool, { session: { id: 51 }, deps, strict: true }),
+    /GitHub comment \(GitHub is down\), the thread message \(db hiccup\)/);
+  assert.equal([...posts.values()][0].pending, true, 'not said yet');
+  // The retry: GitHub answers now, the thread still fails.
+  down.github = false;
+  await assert.rejects(live.announceLive(pool, { session: { id: 51 }, deps, strict: true }), /the thread message/);
+  assert.equal(posts.size, 1, 'the same post taken up');
+  assert.equal(comments.length, 1);
+  // Then the thread too: said once, in both places, and marked said.
+  down.thread = false;
+  const out = await live.announceLive(pool, { session: { id: 51 }, deps, strict: true });
+  assert.ok(out && out.github && out.thread);
+  assert.deepEqual([comments.length, messages.length], [1, 1], 'the comment is not posted twice');
+  assert.equal([...posts.values()][0].pending, null);
+  assert.equal(await live.announceLive(pool, { session: { id: 51 }, deps, strict: true }), null, 'said: nothing more');
+});
 
 test('announceLive says it on the request once, in both places, untagged', async () => {
   const f = fakeLive();
