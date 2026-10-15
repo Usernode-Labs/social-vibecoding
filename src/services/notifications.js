@@ -193,11 +193,29 @@ const DECIDED_ASK_SETTLED_SQL = `(n.kind IN (${DECIDED_ASK_KINDS.map((k) => `'${
 // first message, or a message in a group's discussion, became when Homeroom
 // bot filed it (`bot_request_number`, from FILED_MESSAGE_JOIN_SQL). Kept
 // beside the joins they need in every read of the bell: the list, the exact
-// lookup and the live push. A merged change that is not live yet
-// (chat_sessions.live_at) reads as merging, which the bell words as going live.
-const LIVE_ROW_COLUMNS_SQL = `CASE WHEN cs.status = 'merged' AND cs.live_at IS NULL THEN 'merging' ELSE cs.status END AS session_status,
+// lookup and the live push. A merged change that is not live yet reads as
+// merging, which the bell words as going live: live_at is NULL (the
+// merge-followups machine), or (#5064) it is a merge of Homeroom itself that
+// the running build does not carry yet. With the machine's flag off the
+// merge stamps live_at at once, while the platform's own release comes
+// minutes later; the build that serves is apps.main_sha, and a change merged
+// after the one that build was merged from is still on its way. That is the
+// board's own boundary (routes/votes.js annotateDeploymentState); no match
+// for the running build reads as it always did, live.
+const RELEASE_PENDING_SQL = `(COALESCE(cs.merged_at, cs.created_at), cs.id) > (
+              SELECT COALESCE(running.merged_at, running.created_at), running.id
+                FROM apps self_app
+                JOIN chat_sessions running ON running.app_id = self_app.id AND running.status = 'merged'
+                 AND LOWER(running.merge_commit_sha) = LOWER(self_app.main_sha)
+               WHERE self_app.id = cs.app_id AND self_app.self_hosted
+               ORDER BY COALESCE(running.merged_at, running.created_at) DESC, running.id DESC
+               LIMIT 1)`;
+const LIVE_ROW_COLUMNS_SQL = `CASE WHEN cs.status = 'merged' AND (cs.live_at IS NULL OR ${RELEASE_PENDING_SQL}) THEN 'merging' ELSE cs.status END AS session_status,
             CASE WHEN n.kind = 'vote_digest' THEN ${DIGEST_WAITING_SQL} END AS digest_waiting,
             bot_request.issue_number AS bot_request_number`;
+// The kinds whose row carries `sessionStatus`: a "ready to try" (Live, Going
+// live or Closed), and the author's and the voters' news that it went live.
+const SESSION_STATUS_KINDS = new Set(['change_ready', 'pr_merged', 'voted_change_merged']);
 // 'filed' and 'group' are a request in the writer's words; 'revise' asked to
 // change one of the bot's changes before it went live. An offer not taken
 // up, a question or a dismissed read is still just what they said. The two
@@ -2161,7 +2179,9 @@ function serialize(row) {
     // ('promoted', 'merging', 'merged', 'archived', …); how many of a
     // digest's changes still wait on its reader; and the request a joiner's
     // first message, or a group's discussion message, became.
-    ...(row.kind === 'change_ready' ? { sessionStatus: row.session_status || null } : {}),
+    // #5064: the rows that say a change went live read it too, so they say
+    // "going live" until production runs it.
+    ...(SESSION_STATUS_KINDS.has(row.kind) ? { sessionStatus: row.session_status || null } : {}),
     ...(row.kind === 'vote_digest' && row.digest_waiting != null
       ? { digestWaiting: Number(row.digest_waiting) } : {}),
     ...(row.kind === 'first_message' || row.kind === 'channel_message'

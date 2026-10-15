@@ -438,6 +438,52 @@ test('a Homeroom merge not live yet carries its next release; a child app\'s, or
   assert.equal(payload.proposal.release, undefined, 'live');
 });
 
+// #5064: opened on its own (from the bell or Home), a merge of Homeroom
+// itself gets the board's deployment_state, so its page says going live
+// until the running build carries it, even though the legacy merge stamped
+// live_at at once.
+test('#5064: a Homeroom merge the running build does not carry yet reads as deploying on its own page', async () => {
+  const releaseWatch = require('../src/services/release-watch');
+  const A_SHA = 'a'.repeat(40);
+  const B_SHA = 'b'.repeat(40);
+  const MIN = 60 * 1000;
+  const now = Date.now();
+  const merged = { id: 4242, status: 'merged', live_at: new Date(now - MIN).toISOString(),
+    merged_at: new Date(now - MIN).toISOString(), merge_commit_sha: B_SHA, pr_number: 88 };
+  const outlookRow = { id: 1, main_sha: A_SHA, last_deploy_at: new Date(now - 3 * MIN), release_stall: null,
+    release_run: null, newest_at: new Date(now - MIN) };
+  const boundary = (at) => ({ id: 4100, pr_number: 80, merge_commit_sha: A_SHA, merged_at: at, created_at: at, pending_count: 1 });
+  const db = (running) => (sql) => {
+    if (/FROM apps a\s+LEFT JOIN LATERAL/.test(sql)) return [outlookRow];
+    if (/SELECT id, slug, self_hosted, main_sha, release_stall FROM apps WHERE id = \$1/.test(sql)) {
+      return [{ id: 1, slug: 'usernode-2d5619', self_hosted: true, main_sha: running, release_stall: null }];
+    }
+    if (/FROM chat_sessions live/.test(sql)) return [boundary(new Date(now - 60 * MIN).toISOString())];
+    return undefined;
+  };
+  const gateApp = { id: 1, slug: 'usernode-2d5619', self_hosted: true };
+
+  releaseWatch._forTest.resetOutlook();
+  let loaded = loadVotes({ row: merged, gateApp, db: db(A_SHA) });
+  let { payload } = await callById(loaded.routes, { id: 4242 });
+  assert.equal(payload.proposal.deployment_state, 'deploying', 'merged after the running build: going live');
+  assert.equal(payload.proposal.release.state, 'next', 'and its page says when');
+
+  // The running build is the change's own: live.
+  releaseWatch._forTest.resetOutlook();
+  loaded = loadVotes({ row: { ...merged, merge_commit_sha: A_SHA }, gateApp,
+    db: (sql) => (/FROM chat_sessions live/.test(sql)
+      ? [{ ...boundary(merged.merged_at), id: 4242 }] : db(A_SHA)(sql)) });
+  ({ payload } = await callById(loaded.routes, { id: 4242 }));
+  assert.equal(payload.proposal.deployment_state, 'deployed');
+
+  // A child app's merge is not asked about: it goes live with its own deploy.
+  loaded = loadVotes({ row: merged, gateApp: { id: 2, slug: 'notes', self_hosted: false }, db: db(A_SHA) });
+  ({ payload } = await callById(loaded.routes, { id: 4242 }));
+  assert.equal(payload.proposal.deployment_state, undefined);
+  assert.ok(!loaded.captured.calls.some((c) => /FROM chat_sessions live/.test(c.sql)));
+});
+
 test('?demo=1: the going-live mock reads the same on its page and in the Done column', async () => {
   const { routes } = loadVotes({ row: null, staging: true });
   const detail = await callById(routes, { id: 9100035, query: { demo: '1' } });
