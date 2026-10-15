@@ -10,9 +10,10 @@
  * (../../group-chat/thread-shell.tsx `RequestShell`, in its change layout):
  *
  *   - `#gc-thread-back`: the "‹ Workshop" chip, above the sheet;
- *   - `#gc-thread-bar`: the sheet's header, "Change #N", the category in
- *     plain words, and the ⋯ disc, which holds everything that is not on the
- *     page (`AppView._topicCard`'s rows: the pull request, Share, Explore,
+ *   - `#gc-thread-bar`: the sheet's header, "Change #N" and its status pill
+ *     (the board card's, #5178), the category in plain words, and the ⋯
+ *     disc, which holds everything that is not on the page
+ *     (`AppView._topicCard`'s rows: the pull request, Share, Explore,
  *     Edit requests, the tags, Shot details, Take the shots again, Details).
  *
  * The root post: who put it up, when and what built it; the title; the
@@ -37,7 +38,7 @@ import { Avatar } from '@/components/ui/feed';
 import { CheckIcon, EllipsisHorizontalIcon } from '@/components/ui/icons';
 import { swatchFor } from '../../group-chat/swatch';
 import { useInlineImageViewer } from '../../image-viewer/image-viewer';
-import { ActionButton, TitleContent, VoteButton, isVoteSpec } from '../card/dev-card';
+import { ActionButton, StatusPill, TitleContent, VoteButton, isVoteSpec } from '../card/dev-card';
 import type { ActionSpec, DevCardModel } from '../card/model';
 import type { ChangeGateView, ChangeThreadView, TopicBody } from './model';
 import { RequestWords, SpecCard, sentences } from './request-head';
@@ -49,13 +50,20 @@ function host(id: string): Element | null {
   return typeof document === 'undefined' ? null : document.getElementById(id);
 }
 
-/** The sheet's header: what this is, its category, and everything else behind ⋯. */
-function ChangeBar({ v, menuKey }: { v: ChangeThreadView; menuKey: string }): ReactNode {
+/** The sheet's header: what this is, its status, its category, and everything else behind ⋯. */
+export function ChangeBar({ v, menuKey }: { v: ChangeThreadView; menuKey: string }): ReactNode {
   const t = useMessages('project');
   return (
     <header className="messages-thread-header">
       <div className="min-w-0 flex-1">
-        <div className="messages-thread-name">{v.number ? t('project:topic.change.bar.titleNumbered', { number: v.number }) : t('project:topic.change.bar.title')}</div>
+        <div className="flex min-w-0 items-center gap-2">
+          <div className="messages-thread-name min-w-0">{v.number ? t('project:topic.change.bar.titleNumbered', { number: v.number }) : t('project:topic.change.bar.title')}</div>
+          {v.status ? (
+            <span className="shrink-0" data-change-status={v.status.key}>
+              <StatusPill s={v.status} inline />
+            </span>
+          ) : null}
+        </div>
         {v.category ? <div className="messages-thread-sub" data-change-category="">{v.category}</div> : null}
       </div>
       {menuKey ? (
