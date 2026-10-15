@@ -6910,13 +6910,27 @@ async function finishBuiltFirstVersion(pool, config, { runId, user, bot, deps = 
       && Number(finish.session_id) === Number(run.build_session_id)
       && ['promoted', 'merging'].includes(run.session_status));
     if (!recovering) {
+      // #5211 (15 Oct 2026): the checks below run after this tap's read,
+      // against the live database. While one is under way, another tap can
+      // claim the run and put its proposal up, which this tap's checks then
+      // read as a reason to start over (its whyNotBuild finds the proposal
+      // and skips). Every refusal they make is looked at once more first:
+      // a claim set since the read, any outcome but failed, is another tap
+      // finishing it, answered already. An outcome of failed is the start
+      // over that tap already spent, and the refusal stands.
+      const refusal = async (why, detail = null) => {
+        const fresh = await finishableRun(pool, run.id);
+        const freshFinish = fresh?.build_finish && typeof fresh.build_finish === 'object' ? fresh.build_finish : null;
+        if (freshFinish && freshFinish.outcome !== 'failed') return { ok: true, already: true, app };
+        return { ok: false, why, ...(detail ? { detail } : {}), app };
+      };
       const why = whyNotFinish(run, { userId: user.id, botId: bot.id });
-      if (why) return { ok: false, why, app };
+      if (why) return refusal(why);
       const settings = await readSettings(pool);
-      if (!live.isLiveFor(settings, app)) return { ok: false, why: 'not_live', app };
+      if (!live.isLiveFor(settings, app)) return refusal('not_live');
       const repo = parseRepo(run.repo_url);
       const github = deps.github || require('./github');
-      if (!repo || typeof github.isEnabled !== 'function' || !github.isEnabled()) return { ok: false, why: 'no_github', app };
+      if (!repo || typeof github.isEnabled !== 'function' || !github.isEnabled()) return refusal('no_github');
       // What the build pushed is still there, as it was: a branch deleted, or
       // moved by somebody since, is not what was built.
       const head = await Promise.resolve()
@@ -6925,9 +6939,9 @@ async function finishBuiltFirstVersion(pool, config, { runId, user, bot, deps = 
           log.info('homeroom-bot', 'Try again: the built branch could not be read', { runId: run.id, err: err.message });
           return null;
         });
-      if (!head) return { ok: false, why: 'branch_gone', app };
+      if (!head) return refusal('branch_gone');
       if (run.build_sha && String(head).toLowerCase() !== String(run.build_sha).toLowerCase()) {
-        return { ok: false, why: 'branch_moved', app };
+        return refusal('branch_moved');
       }
       // The backstop every proposal of the bot's meets (whyNotBuild): another
       // proposal of the request, another build of it under way, or its issue
@@ -6935,7 +6949,7 @@ async function finishBuiltFirstVersion(pool, config, { runId, user, bot, deps = 
       const skip = await whyNotBuild(pool, {
         runId: run.id, botId: bot.id, appId: app.id, issueNumber: Number(run.issue_number), github, repo,
       });
-      if (skip) return { ok: false, why: 'skip', detail: skip, app };
+      if (skip) return refusal('skip', skip);
     }
     const { rows: claimed } = await pool.query(
       `UPDATE homeroom_bot_runs
