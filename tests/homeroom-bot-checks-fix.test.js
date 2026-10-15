@@ -169,8 +169,11 @@ function harness({
   row = checksRow(), revisions = 0, comments = [], proposalThread = [],
   result = { lastResultText: '```json\n{"action":"revise","reply":"Renamed the control.","summary":"The text-size button now says \\"Text size\\"."}\n```', pushOk: true, sha: NEW_HEAD },
   routed = null, sync = { synced: false, why: 'level' },
+  // #5220: the pre-turn sync (syncBeforeFix). Not synced unless a test says
+  // so, so the fix turn runs as before in the tests above.
+  fixSync = { synced: false, why: 'own_failure' },
 } = {}) {
-  const calls = { queries: [], exec: [], loop: null, posts: [], onProposal: [], reconciled: [], seen: [], sync: [] };
+  const calls = { queries: [], exec: [], loop: null, posts: [], onProposal: [], reconciled: [], seen: [], sync: [], fixSync: [] };
   const pool = {
     async query(sql, params) {
       const s = String(sql);
@@ -225,9 +228,15 @@ function harness({
     sessionLifecycle: {},
     domain: 'app.onhomeroom.com',
     votes: { async reconcileNativeReviewedHead(args) { calls.reconciled.push(args); return { enforced: true }; } },
-    // Before a hand-off (fixed-check-sync.js syncBeforeHandOff): level with
-    // main unless a test says otherwise, so nothing is synced.
+    // Before its fix turn (#5220) and before a hand-off
+    // (fixed-check-sync.js syncBeforeHandOff): level with main unless a test
+    // says otherwise, so nothing is synced.
     fixedCheckSync: {
+      async syncBeforeFix(args) {
+        calls.fixSync.push({ sessionId: args.sessionId, head: args.head });
+        if (fixSync instanceof Error) throw fixSync;
+        return fixSync;
+      },
       async syncBeforeHandOff(args) {
         calls.sync.push({ sessionId: args.sessionId, head: args.head });
         if (sync instanceof Error) throw sync;
@@ -387,6 +396,58 @@ test('the bot asks fixed-check-sync for the sync, once per proposal, on the fail
   assert.match(hand, /if \(failing\.length && !broken\.length && cause !== 'change'\) \{/);
   assert.match(hand, /\.syncBeforeHandOff\(\{ config, pool, sessionId: session\.id, head \}\)/);
   assert.match(src, /cause: parsed\?\.action === 'person' \? parsed\.cause : null,\n {2}\}\);\n\}/);
+});
+
+// #5220: before the fix turn is spent, a failure that looks like main's
+// staleness brings the change up to date with main once (fixed-check-sync.js
+// syncBeforeFix), and the votes keep counting, where a fix turn's revision
+// would clear them.
+test('a failure that looks like main\'s is synced before the fix turn: no turn spent, one line where the votes are', async (t) => {
+  const h = harness({ fixSync: { synced: true, why: null, sha: NEW_HEAD } });
+  const out = await run(t, h);
+  assert.equal(out.acted, 'checks_synced');
+  assert.equal(out.verdict, 'answer', 'an answer, not a revise: it counts toward no MAX_REVISIONS');
+  assert.equal(h.calls.exec.length, 0, 'no fix turn: main may already have fixed it');
+  assert.deepEqual(h.calls.fixSync, [{ sessionId: 5001, head: HEAD }], 'asked on the failing head the round is due on');
+  assert.deepEqual(h.calls.onProposal.map((p) => p.kind), ['checks_synced'], 'one line where the group votes');
+  assert.equal(h.calls.onProposal[0].text, followup.checksSyncedText({ failingCount: 1 }));
+  assert.equal(h.calls.posts.length, 0, 'nothing on the request, on GitHub or in the DM');
+  assert.equal(h.calls.reconciled.length, 0, 'the sync starts the new head\'s run itself, keeping the votes');
+  const insert = insertOf(h);
+  assert.equal(insert.params[4], 'answer');
+  assert.equal(insert.params[14], null, 'no turn ran, so nothing was spent');
+  assert.equal(insert.params[21], HEAD, 'the failing head is marked looked at; the synced one gets its own round');
+  assert.equal(insert.params[9], 'Brought up to date with main before fixing its checks; its checks run again.',
+    'the ledger says what happened instead of a fix');
+  assert.ok(h.calls.queries.some((q) => /DELETE FROM homeroom_bot_queue WHERE id = \$1/.test(q.s) && q.params[0] === 31),
+    'the round is done: the queue row goes');
+});
+
+test('when the pre-turn sync declines, the fix turn runs as before', async (t) => {
+  const h = harness();
+  const out = await run(t, h);
+  assert.equal(out.acted, 'checks_revise');
+  assert.equal(h.calls.exec.length, 1);
+  assert.deepEqual(h.calls.fixSync, [{ sessionId: 5001, head: HEAD }], 'it was asked first, and said no');
+  assert.deepEqual(h.calls.sync, [], 'a turn that revises never reaches the hand-off sync');
+});
+
+test('no pre-turn sync when only the shots showed something not working', async (t) => {
+  const h = harness({ row: brokenRow() });
+  const out = await run(t, h);
+  assert.equal(out.verdict, 'revise');
+  assert.deepEqual(h.calls.fixSync, [], 'a sync cannot fix what its shots show');
+});
+
+test('the pre-turn sync is not asked for a recovered turn, and the infra early return stands before it', () => {
+  const src = read('src/services/homeroom-bot.js');
+  const pre = src.slice(src.indexOf('// #5220: before its own fix turn'), src.indexOf('const handOff = async ('));
+  assert.match(pre, /if \(!recovered && failing\.length && !broken\.length\) \{/);
+  assert.match(pre, /\.syncBeforeFix\(\{ config, pool, sessionId: session\.id, head \}\)\)/);
+  assert.ok(src.indexOf('.syncBeforeFix({ config, pool, sessionId: session.id, head }))') < src.indexOf('const handOff = async ('),
+    'the sync comes before the hand-off path');
+  const infra = src.slice(src.indexOf('if (!recovered && followup.checksLookLikeInfra(checks))'), src.indexOf('// #5220: before its own fix turn'));
+  assert.match(infra, /return \{ ran: false, reason: 'checks_infra' \};/, 'a platform fault returns before the sync is asked');
 });
 
 test('a person the change needs is still a person: only cause not_change goes to admins', () => {
