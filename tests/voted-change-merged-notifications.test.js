@@ -232,6 +232,35 @@ test('the row is drawn like the author\'s "Live" row, with no button of its own'
   assert.match(src, /'voted_change_merged',\s*\n\s*\]\);/, 'a proposal kind: opens the proposal');
 });
 
+// #5064: "A change you voted on is live" while it was still merging. The
+// row reads where the change stands (`sessionStatus`, the server's
+// session_status), as a "ready to try" row does, and says going live until
+// production runs it. The author's "Live" row says the same.
+test('#5064: going live until production runs it, then live', () => {
+  const going = controller()._rowView({ ...ROW, kind: 'voted_change_merged', sessionStatus: 'merging' });
+  assert.equal(going.label, 'A change you voted on is going live');
+  assert.equal(subjectOf(going), 'Dark mode for the reading list');
+  assert.equal(going.icon, '\u{1F680}', 'the "Going live" tile a "ready to try" row uses');
+  const live = controller()._rowView({ ...ROW, kind: 'voted_change_merged', sessionStatus: 'merged' });
+  assert.equal(live.label, 'A change you voted on is live');
+  assert.equal(live.icon, '\u{1F389}');
+
+  const author = (extra) => controller()._rowView({ ...ROW, kind: 'pr_merged', ...extra });
+  assert.equal(author({ sessionStatus: 'merging' }).label, 'Going live');
+  assert.equal(author({ sessionStatus: 'merging' }).icon, '\u{1F680}');
+  assert.equal(author({ sessionStatus: 'merged' }).label, 'Live');
+  assert.equal(author({}).label, 'Live', 'a row without the field reads as it always did');
+  assert.equal(author({ sessionStatus: 'merging', detail: 'forced' }).label, 'Made live by an admin');
+  const credited = author({ sessionStatus: 'merging', detail: 'Backed by alice.' });
+  assert.equal(credited.label, 'Going live');
+  assert.match(subjectOf(credited), /Backed by alice\.$/, 'the credits still ride along');
+
+  // The server hands the status to both rows, read with them.
+  const service = fs.readFileSync(path.join(__dirname, '../src/services/notifications.js'), 'utf8');
+  assert.match(service, /SESSION_STATUS_KINDS = new Set\(\['change_ready', 'pr_merged', 'voted_change_merged'\]\)/);
+  assert.match(service, /cs\.status = 'merged' AND \(cs\.live_at IS NULL OR \$\{RELEASE_PENDING_SQL\}\)/);
+});
+
 // ── 4. The merge paths ────────────────────────────────────────────────
 
 // The merge workflow may only name the members of services/notifications.js
