@@ -96,6 +96,9 @@ test('the release link signs its recipient in once, by POST, and only while it i
     const get = await fetch(`${base}/api/auth/release-link?token=${token}`);
     assert.notEqual(get.status, 200);
     assert.equal((await pool.query('SELECT consumed_at FROM waitlist_release_links')).rows[0].consumed_at, null);
+    const followedAt = async () => (await pool.query(
+      'SELECT release_link_followed_at AS at FROM waitlist_signups WHERE id = $1', [newId])).rows[0].at;
+    assert.equal(await followedAt(), null, 'opening it is not following it');
 
     const first = await spend(token);
     assert.equal(first.status, 200);
@@ -113,6 +116,10 @@ test('the release link signs its recipient in once, by POST, and only while it i
     assert.equal(user.email_confirmed, true);
     assert.equal(user.password_set, false);
     assert.equal(user.has_platform_access, true, 'a released address is let in');
+    // The admin Journey's first mile reads the spend as the mail followed:
+    // kept on the waitlist row, which outlives the link's own.
+    const followed = await followedAt();
+    assert.ok(followed, 'the first spend is kept on the waitlist row');
 
     // Spent, it works again while the account it started is unfinished (no
     // username, no password): the same account's step, in whatever browser
@@ -124,6 +131,7 @@ test('the release link signs its recipient in once, by POST, and only while it i
     assert.equal(replayBody.next, 'set-password');
     assert.equal(replayBody.created, false, 'the same account, not a second');
     assert.equal(replayBody.needsUsername, true);
+    assert.equal(String(await followedAt()), String(followed), 'the first spend stands');
     assert.equal((await pool.query(
       "SELECT COUNT(*)::int AS n FROM users WHERE lower(email) = 'new.person@example.test'"
     )).rows[0].n, 1);

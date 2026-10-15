@@ -30,9 +30,12 @@
 // `receivedAt`, when the server got it (also the row's created_at).
 //
 // Recorded for test accounts too: the newcomer runs are theirs. The admin
-// Journey reads none of these rows (services/journey.js), so they count
-// nowhere there; a reader that counts people fences test accounts out as
-// journey.js REAL_PERSON_SQL does. Never for a platform service account or
+// Journey's first session reads them (services/journey.js MADE_SCREEN_SQL,
+// the made screen and the tour step by step) through its real-person rule,
+// so a test account's count nowhere there; any other reader that counts
+// people fences test accounts out as journey.js REAL_PERSON_SQL does. One
+// person's own view lists their moments (PERSON_MOMENTS_SQL), as it lists
+// everything else about them. Never for a platform service account or
 // somebody who objected to being recorded (ui-telemetry.js isRecordable).
 // Nothing anybody typed: a kind, small counts and short codes.
 

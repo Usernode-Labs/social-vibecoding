@@ -6728,6 +6728,31 @@ CREATE INDEX IF NOT EXISTS idx_waitlist_release_links_expires
   ON waitlist_release_links (expires_at);
 COMMENT ON TABLE waitlist_release_links IS 'staging:private';
 
+-- The admit mail as the admin Journey's first mile reads it (services/
+-- journey.js), kept on the released row after the mail log forgets it. The
+-- log (mail_deliveries and its mail_events) keeps 30 days, and a cohort's
+-- first mile is read for as long as there is one, so the log's retention
+-- sweep (services/mail/index.js pruneDeliveries) copies a released row's
+-- facts here in the same statement that deletes them: when its "you're in"
+-- mail was first sent, whether one was tracked, its first open and first
+-- followed link (never a scanner's or prefetcher's request), and the first
+-- sign-in code asked for after the admit. Each is the earliest seen and
+-- never moves once set, so a sweep that runs in batches keeps the same
+-- values. `release_link_followed_at` is the first spend of the mail's
+-- one-time sign-in link (services/release-links.js spend), which click
+-- tracking leaves out on purpose and whose rows are deleted a day after
+-- they expire: it is written as the link is spent. Times and a flag, like
+-- confirmed_at beside them, and no capability: not column-private, which
+-- here marks a credential and hides it from the debug role, where these are
+-- what somebody debugging a first mile needs. A staging clone empties this
+-- table's rows with every other signup surface (migrate.js seeds its own).
+ALTER TABLE waitlist_signups ADD COLUMN IF NOT EXISTS release_mail_sent_at TIMESTAMPTZ;
+ALTER TABLE waitlist_signups ADD COLUMN IF NOT EXISTS release_mail_tracked BOOLEAN;
+ALTER TABLE waitlist_signups ADD COLUMN IF NOT EXISTS release_mail_opened_at TIMESTAMPTZ;
+ALTER TABLE waitlist_signups ADD COLUMN IF NOT EXISTS release_mail_clicked_at TIMESTAMPTZ;
+ALTER TABLE waitlist_signups ADD COLUMN IF NOT EXISTS release_code_asked_at TIMESTAMPTZ;
+ALTER TABLE waitlist_signups ADD COLUMN IF NOT EXISTS release_link_followed_at TIMESTAMPTZ;
+
 -- Outbound mail log (src/services/mail/). Every send attempt lands here
 -- with its outcome, and it is the ONLY place an operator can see what
 -- happened: the endpoints that trigger mail are always-200 by contract
