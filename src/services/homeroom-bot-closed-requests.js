@@ -221,23 +221,19 @@ const OPEN_TRACKED_SQL = `
    ORDER BY 1 DESC
    LIMIT $3`;
 
-// The same statement closeTwinRows uses: open `general` rows only, one-way.
-const CLOSE_REQUEST_ROWS_SQL = `
-  UPDATE issues SET status = 'closed'
-   WHERE app_id = $1 AND kind = 'general' AND status = 'open'
-     AND github_issue_number = ANY($2::int[])`;
-
 /**
  * The bot's refresh of one app read its open requests (`openNumbers`): its
  * tracked requests missing from that list may have been closed on GitHub by
  * hand, where Homeroom gets no signal. Each candidate is confirmed with
  * GitHub once — the open list alone is never trusted, for the same reasons
  * sweepClosedRequests gives — and only a close GitHub itself reports closes
- * the platform's row, which the tray's Needs you reads. One-way: nothing
- * reopens a row here. When anything closed, the issues cache is busted and
- * `github_synced` broadcast (a merge's close does the same), and every
- * requester whose request closed has their open tray re-read. Never throws;
- * resolves { closed: [number] }.
+ * the platform's row, which the tray's Needs you reads, through the watcher's
+ * closeTwinRows: the one writer of issues.status outside the governance
+ * machine, so this adds no second one. One-way: nothing reopens a row here.
+ * When anything closed, the issues cache is busted and `github_synced`
+ * broadcast (a merge's close does the same), and every requester whose
+ * request closed has their open tray re-read. Never throws; resolves
+ * { closed: [number] }.
  */
 async function closeRequestRows(pool, { appId, appSlug, repoUrl, openNumbers, deps = {} } = {}) {
   const numbers = numbersOf(openNumbers);
@@ -251,8 +247,12 @@ async function closeRequestRows(pool, { appId, appSlug, repoUrl, openNumbers, de
       if (await isClosed(Number(row.github_issue_number))) confirmed.push(Number(row.github_issue_number));
     }
     if (!confirmed.length) return { closed: [] };
-    await pool.query(CLOSE_REQUEST_ROWS_SQL, [Number(appId), confirmed]);
-    await announceClosed(pool, { repo, appId: Number(appId), appSlug, closed: confirmed, deps });
+    const watcher = deps.watcher || require('./issue-close-watcher');
+    // closeTwinRows swallows its own failures (non-strict); it awaits the
+    // UPDATE, so a caller (a test, the next refresh) sees the close done.
+    // Its prNumber is only failure-log context; this close is not a PR's.
+    await watcher.closeTwinRows({ pool, appId: Number(appId), numbers: confirmed });
+    await announceClosed(pool, { repo, appId: Number(appId), appSlug, closed: confirmed, watcher, deps });
     return { closed: confirmed };
   } catch (err) {
     log.warn('homeroom-bot-closed-requests', 'Reconciling rows of requests closed on GitHub failed', { appId, err: err.message });
@@ -262,12 +262,12 @@ async function closeRequestRows(pool, { appId, appSlug, repoUrl, openNumbers, de
 
 // The side effects of rows just closed, awaited by closeRequestRows so a
 // caller (a test, the next refresh) sees them done: the caches a merge's
-// close busts, and an open tray re-read per requester. Both lazy requires
-// (the tray and the watcher are siblings this file's other callers already
-// require), both best-effort: the rows are closed either way.
-async function announceClosed(pool, { repo, appId, appSlug, closed, deps }) {
+// close busts, and an open tray re-read per requester. The watcher is the
+// one closeRequestRows resolved (deps.watcher, else the real one); the tray
+// is a lazy require (a sibling this file's other callers already require).
+// Both best-effort: the rows are closed either way.
+async function announceClosed(pool, { repo, appId, appSlug, closed, watcher, deps }) {
   try {
-    const watcher = deps.watcher || require('./issue-close-watcher');
     watcher.bustAndBroadcast({
       owner: repo.owner, repo: repo.repo, appSlug: appSlug || null, appId, closed,
     });

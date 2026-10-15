@@ -36,6 +36,9 @@ const { Pool } = require('pg');
 const closedRequests = require('../src/services/homeroom-bot-closed-requests');
 const bot = require('../src/services/homeroom-bot');
 const tray = require('../src/services/homeroom-bot-tray');
+// The real closeTwinRows stands in for the stub watcher's close (it is the
+// writer the stub must use); only bustAndBroadcast is stood in for.
+const realWatcher = require('../src/services/issue-close-watcher');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL
   || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
@@ -349,7 +352,7 @@ test('the bot\'s proposals for closed requests are withdrawn, against the full P
     try {
       const out = await closedRequests.closeRequestRows(pool, {
         appId: app.id, appSlug: app.slug, repoUrl: app.repo_url,
-        openNumbers: [62], deps: { github, watcher: { bustAndBroadcast(args) { busted.push(args); } } },
+        openNumbers: [62], deps: { github, watcher: { ...realWatcher, bustAndBroadcast(args) { busted.push(args); } } },
       });
       assert.deepEqual(out, { closed: [60] });
       assert.deepEqual(github.asked.sort((a, b) => a - b), [60, 64, 65],
