@@ -22,6 +22,10 @@ export { DevKanban, StageStrip } from '../../frontend/src/features/dev-board/car
 // wants the read-only viewer has to reach the instance the rendered tree
 // reads — which is this bundle's, not a second copy of the module.
 export { improveStore } from '../../frontend/src/features/improve/improve-store.js';
+// 15 Oct 2026: the hub's closed cards, read by the start-here banner's ✕
+// (../../frontend/src/features/dev-board/workshop/hub-dismissed.ts): the
+// same instance the rendered tree reads.
+export { hubDismissedStore } from '../../frontend/src/features/dev-board/workshop/hub-dismissed';
 export { TopicHead, TopicBodySections, NoteBoxView, ChecksVerdictView, ProposalBody, DetailsBody } from '../../frontend/src/features/dev-board/topic/topic-head';
 export { topicHeadStore } from '../../frontend/src/features/dev-board/topic/topic-store';
 export { ListRowView } from '../../frontend/src/features/dev-board/card/list-rows';

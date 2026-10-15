@@ -8,7 +8,7 @@
 // the Share it card, then nothing down to the Resume bar. The first look,
 // the picture of the app's main screen Homeroom bot drew from the plan, was
 // only on the App tab. Now, while their first version is built and the
-// picture is there, a card under Share it shows it small and phone-shaped,
+// picture is there, a card after For you shows it small and phone-shaped,
 // with "FIRST LOOK", "Here's what you're making", one line, and "Watch
 // Homeroom bot build it", which opens the App tab. Nothing on it shares the
 // picture: inviting is Share it's, and invitations are to the community.
@@ -123,11 +123,14 @@ test('only the first look, read as the tour\'s last card reads it, and nothing u
   assert.match(card, /if \(!wanted \|\| touring \|\| !shown\) return null;/);
 });
 
-test('on the hub under Share it, before Recently live', () => {
+test('on the hub after For you, before Recently live', () => {
+  // 15 Oct 2026: Share it moved up, under the hero and the First version
+  // card; the first look stays where it was, over Recently live.
   const lander = read('frontend/src/features/dev-board/workshop/workshop.tsx');
   const at = (s) => lander.indexOf(s);
   assert.ok(at('<ShareItCard slug={slug}') > 0);
-  assert.ok(at('<ShareItCard slug={slug}') < at('<FirstLookCard slug={slug} data={community} />'));
+  assert.ok(at('<ShareItCard slug={slug}') < at('<ForYouCard'));
+  assert.ok(at('<ForYouCard') < at('<FirstLookCard slug={slug} data={community} />'));
   assert.ok(at('<FirstLookCard slug={slug} data={community} />') < at('<RecentlyLive slug={slug}'));
-  assert.match(lander, /import \{ FirstLookCard, FirstVersionCard, ForYouCard, RecentlyLive, hubAlone, hubWorkEmpty, owesVote \} from '\.\/hub-cards';/);
+  assert.match(lander, /import \{ FirstLookCard, FirstVersionCard, ForYouCard, RecentlyLive, hubAlone, owesVote \} from '\.\/hub-cards';/);
 });

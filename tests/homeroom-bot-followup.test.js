@@ -751,3 +751,55 @@ test('#3767: a revision that changed what the proposal does names it again, and 
   assert.match(src, /if \(moved && parsed\?\.title\) await renameRevised\(/, 'renamed only when the revision landed');
   assert.match(src, /require\('\.\/proposal-update'\)\.applyProposedTitle\(\{/, 'through the seam a person\'s revision uses');
 });
+
+// Issue #4813, 15 Oct 2026: the bot's follow-up turn on its proposal failed,
+// so 30 minutes later the refresh offered the failed run a retry. The retry
+// went to the follow-up, which found nothing to answer and records no run in
+// that case, so the failed run was still the latest and the very next refresh
+// offered the same retry again. With the live lane re-waking the app after
+// each slot, that was about three passes a second for 45 minutes, until
+// GitHub's hourly budget was spent. A retry that finds nothing is spent.
+test('a failed run\'s retry that finds nothing new on its proposal is spent: the refresh does not offer it again', async (t) => {
+  t.after(() => bot._resetForTests());
+  const failedRun = (id) => ({ id, issue_number: 24, thread_seen_at: SEEN, created_at: '2026-09-26T09:00:00Z', verdict: 'failed', failed_tries: 1 });
+  let lastRun = failedRun(800);
+  const inserts = [];
+  const pool = {
+    async query(sql, params) {
+      const s = String(sql);
+      if (/FROM issue_claims|UNNEST\(cs\.linked_issues\) AS n\s+FROM chat_sessions cs JOIN users|headless_issue_number AS n|created_from_issue_number AS n/.test(s)) return { rows: [] };
+      if (/CROSS JOIN LATERAL UNNEST\(cs\.linked_issues\)/.test(s)) return { rows: [] };
+      if (/FROM chat_messages/.test(s)) return { rows: [] };
+      if (/FROM homeroom_bot_runs/.test(s)) return { rows: [lastRun] };
+      if (/INSERT INTO homeroom_bot_queue/.test(s)) { inserts.push(params); return { rows: [] }; }
+      if (/DELETE FROM homeroom_bot_queue/.test(s)) return { rowCount: 0, rows: [] };
+      return { rows: [] };
+    },
+  };
+  const github = { async fetchPublicIssues() { return { issues: [{ number: 24, state: 'open', updatedAt: SEEN }] }; } };
+  const refresh = () => bot.refreshApp(pool, APP, { github, bot: BOT, capRoom: { proposals_per_app: 1, question_tripwire: 5 } });
+
+  await refresh();
+  assert.deepEqual(inserts.map((p) => [p[1], p[3]]), [[24, bot.RETRY_FAILED_REASON]], 'the failed run is offered its retry');
+
+  // The retry reaches the follow-up, and nobody said anything new.
+  const h = harness({ comments: [{ author: 'usernode-bot', body: 'Homeroom bot built this', createdAt: '2026-09-26T11:00:00Z' }] });
+  const realPost = live.post;
+  const realSeen = live.advanceSeen;
+  t.after(() => { live.post = realPost; live.advanceSeen = realSeen; });
+  live.post = async () => ({});
+  live.advanceSeen = async () => ({ advanced: true });
+  const out = await bot.runTriage(h.pool, {}, {
+    bot: BOT, app: APP, item: { ...ITEM, reason: bot.RETRY_FAILED_REASON }, mode: 'shadow', settings: SETTINGS, deps: h.deps,
+  });
+  assert.deepEqual(out, { ran: false, reason: 'no_new_replies' });
+
+  inserts.length = 0;
+  await refresh();
+  assert.equal(inserts.length, 0, 'the same failed run is not offered again');
+
+  // A later failed run is a new one, and gets its own retry.
+  lastRun = failedRun(801);
+  await refresh();
+  assert.deepEqual(inserts.map((p) => [p[1], p[3]]), [[24, bot.RETRY_FAILED_REASON]]);
+});

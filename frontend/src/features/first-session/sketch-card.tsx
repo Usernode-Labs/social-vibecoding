@@ -137,7 +137,7 @@ function glyphOf(name: string, emoji: string | null, sketched: boolean): string 
  * `children` close the card's body, under the line (the invite page's
  * invitation, #4394).
  */
-export function FeaturedCard({ name, colorKey, emoji, iconUrl = null, card, description = null, sketching: sketched = !card, line = null, lineNote = null, lineWords = null, titleId, heading = false, compact = false, large = false, band = null, bandCorner = null, children = null }: {
+export function FeaturedCard({ name, colorKey, emoji, iconUrl = null, card, description = null, sketching: sketched = !card, line = null, lineNote = null, lineWords = null, titleId, heading = false, compact = false, large = false, band = null, bandClassName = 'h-[340px]', bandOnly = false, bandCorner = null, cornerRoom = false, children = null }: {
   name: string;
   /** Picks a colour when there is no emoji to read one from (the project's slug). */
   colorKey: string;
@@ -169,10 +169,26 @@ export function FeaturedCard({ name, colorKey, emoji, iconUrl = null, card, desc
    */
   band?: ReactNode;
   /**
+   * How tall the band is while it shows `band`: the App tab's 340px, unless
+   * the screen has less room (the made screen's card, ./made.tsx APP_BAND).
+   */
+  bandClassName?: string;
+  /**
+   * The band alone, with no name or line under it in the card: the made
+   * screen's App side, where the picture shows the app (./made.tsx).
+   */
+  bandOnly?: boolean;
+  /**
    * #4449: drawn over the colour band's top-right corner (the App tab's
    * "Preview | Live" switch, ../app-frame/live-switch.tsx).
    */
   bandCorner?: ReactNode;
+  /**
+   * The icon drawn below `bandCorner` rather than centred under it, in a
+   * band 16px taller (the made screen's Invite | App switch, ./made.tsx):
+   * on a narrow phone a centred icon met the switch.
+   */
+  cornerRoom?: boolean;
   /** More of the card's body, under the line. */
   children?: ReactNode;
 }) {
@@ -186,7 +202,7 @@ export function FeaturedCard({ name, colorKey, emoji, iconUrl = null, card, desc
         data-featured-card={sketched ? 'sketching' : 'ready'}
         className="relative overflow-hidden rounded-[20px] bg-white text-left text-zinc-900 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900 dark:text-zinc-100"
       >
-        <div className={`relative flex items-center justify-center overflow-hidden bg-zinc-200 dark:bg-zinc-800 ${band ? 'h-[340px]' : compact ? 'h-[88px]' : 'h-[132px]'}`}>
+        <div className={`relative flex items-center justify-center overflow-hidden bg-zinc-200 dark:bg-zinc-800 ${band ? bandClassName : compact ? 'h-[88px]' : cornerRoom && bandCorner ? 'h-[148px] pt-10' : 'h-[132px]'}`}>
           <div
             aria-hidden="true"
             className={`absolute inset-0 transition-opacity duration-500 ease-out motion-reduce:transition-none ${color ? 'opacity-100' : 'opacity-0'}`}
@@ -202,11 +218,13 @@ export function FeaturedCard({ name, colorKey, emoji, iconUrl = null, card, desc
           )}
           {bandCorner ? <div className="absolute right-3 top-3 z-10">{bandCorner}</div> : null}
         </div>
-        <div className="flex flex-col gap-1 px-4 pb-4 pt-3.5">
-          <Title id={titleId} className={large ? 'truncate text-[20px] font-bold leading-[26px]' : 'truncate text-[17px] font-bold leading-[22px]'}>{name}</Title>
-          {sketched ? <Placeholder /> : tagline ? <Tagline key={tagline} text={tagline} /> : null}
-          {children}
-        </div>
+        {band && bandOnly ? null : (
+          <div className="flex flex-col gap-1 px-4 pb-4 pt-3.5">
+            <Title id={titleId} className={large ? 'truncate text-[20px] font-bold leading-[26px]' : 'truncate text-[17px] font-bold leading-[22px]'}>{name}</Title>
+            {sketched ? <Placeholder /> : tagline ? <Tagline key={tagline} text={tagline} /> : null}
+            {children}
+          </div>
+        )}
         {sketched ? (
           <div aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden motion-reduce:hidden">
             <div className="h-full w-2/5 bg-gradient-to-r from-transparent via-white/60 to-transparent motion-safe:animate-card-sweep dark:via-white/[0.06]" />
@@ -309,7 +327,7 @@ export function useSketch(slug: string | null): Sketch {
  * build line only when the screen has one to say (a project Homeroom bot
  * does not build).
  */
-export function SketchCard({ made, sketch, line, note = null, lineWords = null, lineNote = null }: {
+export function SketchCard({ made, sketch, line, note = null, lineWords = null, lineNote = null, band = null, bandClassName, bandCorner = null }: {
   made: Made;
   sketch: Sketch;
   /** Where its first version is (./build-line.tsx), or none for a project Homeroom bot does not build. */
@@ -319,6 +337,14 @@ export function SketchCard({ made, sketch, line, note = null, lineWords = null, 
   /** N4: the stage's own words, and how long it has run, on the build line. */
   lineWords?: string | null;
   lineNote?: string | null;
+  /**
+   * INVITE | APP (./made.tsx): the App side's picture in the band in place of
+   * the icon, at the card's own height and with no name or line under it in
+   * the card (the picture shows the app), and the switch over its corner.
+   */
+  band?: ReactNode;
+  bandClassName?: string;
+  bandCorner?: ReactNode;
 }) {
   const t = useMessages('onboarding');
   const card = sketch.card;
@@ -336,6 +362,11 @@ export function SketchCard({ made, sketch, line, note = null, lineWords = null, 
         line={line}
         lineWords={lineWords}
         lineNote={lineNote}
+        band={band}
+        bandClassName={bandClassName}
+        bandOnly
+        bandCorner={bandCorner}
+        cornerRoom
       />
       {note ? <p data-first-session-note="" className="px-1 pt-2.5 text-[13px] leading-snug text-zinc-500 dark:text-zinc-400">{note}</p> : null}
     </div>

@@ -601,6 +601,15 @@ let lastLiveSweepAt = 0;
 // reconcile was asked for (the mode was switched on, say). Read and cleared
 // at the top of every pass; only meaningful on the Pod running the loop.
 const pendingApps = new Set();
+// A failed run whose retry (RETRY_FAILED_REASON) went to its proposal's
+// follow-up and found nothing to answer: `${appId}#${issueNumber}` -> that
+// run's id. The follow-up records no run when nobody said anything new, so
+// the refresh offered the same retry again straight away, and the live lane
+// re-woke the app after each slot (#3703): issue #4813 on 15 Oct 2026, about
+// three passes a second for 45 minutes, until GitHub's hourly budget was
+// spent. Spent once, it is not offered again; a newer run or new activity
+// on the issue is. In memory: a new leader gives it one more look.
+const spentRetries = new Map();
 let refreshAllRequested = false;
 let wakeRequested = false;
 // What the last pass did, for the dashboard: a loop that is on but idle
@@ -1599,7 +1608,7 @@ function latestOf(a, b) {
  */
 async function lastRunsByIssue(pool, appId) {
   const { rows } = await pool.query(
-    `SELECT DISTINCT ON (issue_number) issue_number, thread_seen_at, verdict, cap_suppressed, created_at, mode,
+    `SELECT DISTINCT ON (issue_number) id, issue_number, thread_seen_at, verdict, cap_suppressed, created_at, mode,
             (mode = 'live' AND verdict = 'ready' AND build_ok IS NULL AND proposal_session_id IS NULL
              AND (live_build_waiting_at IS NOT NULL OR build_session_id IS NOT NULL)
              AND created_at > NOW() - make_interval(days => $2)) AS live_building,
@@ -1709,6 +1718,11 @@ async function refreshApp(pool, app, {
       busy: busy.has(n),
       lastRun,
     });
+    if (verdict.eligible && verdict.reason === RETRY_FAILED_REASON && lastRun?.id != null
+        && spentRetries.get(`${app.id}#${n}`) === Number(lastRun.id)) {
+      quiet.push(n);
+      continue;
+    }
     if (verdict.eligible) eligible.push({ n, ...verdict });
     else if (verdict.reason === 'held') held.push({ n, heldAt: toMs(lastRun.created_at), ...verdict });
     // A request the bot is building keeps a row it queued for itself, as an
@@ -5514,6 +5528,9 @@ async function runFollowUp(pool, config, {
       );
     }
     await pool.query('DELETE FROM homeroom_bot_queue WHERE id = $1', [item.id]);
+    if (item.reason === RETRY_FAILED_REASON && lastRun?.id != null) {
+      spentRetries.set(`${app.id}#${issueNumber}`, Number(lastRun.id));
+    }
     log.info('homeroom-bot', 'Activity on a bot proposal\'s issue, but nobody said anything new', {
       app: app.slug, issueNumber, sessionId: proposal.id,
     });
@@ -11163,7 +11180,7 @@ module.exports = {
     liveKick = null; liveKickSeams = {};
     if (timer) clearTimeout(timer);
     if (deferResumeTimer) clearInterval(deferResumeTimer); deferResumeTimer = null;
-    timer = null; loopConfig = null; pendingApps.clear(); refreshAllRequested = false; wakeRequested = false;
+    timer = null; loopConfig = null; pendingApps.clear(); spentRetries.clear(); refreshAllRequested = false; wakeRequested = false;
     buildsInFlight.clear(); buildLaneOn = false; buildDrainRunning = false; buildDrainAgain = false;
     buildFault = null; lastBuildDrain = null;
     if (buildTimer) clearTimeout(buildTimer);

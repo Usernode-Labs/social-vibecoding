@@ -212,45 +212,46 @@ test('"Nothing more to vote on." is a zero on a project nobody else is in', () =
   assert.equal(hubAlone(null), false, 'nothing is taken off the hub before the read answers');
 });
 
-test('Your work on a project nobody else is in: how to change something, or nothing', () => {
-  const { ForYouCard, hubWorkEmpty } = hub;
-  const is = (over) => hubWorkEmpty({ alone: true, building: false, startHere: false, readOnly: false, bot: false, ...over });
-  assert.equal(is({ alone: false, building: true, startHere: true }), 'plain', 'a project with people in it keeps #3489');
-  assert.equal(is({ building: true }), null, 'its first version being built already says what is next');
-  assert.equal(is({ startHere: true }), null, 'so does the start-here banner');
-  assert.equal(is({ readOnly: true }), null, 'and a read-only viewer has nothing to start');
-  assert.equal(is({ bot: true }), 'bot');
-  assert.equal(is({}), 'menu');
-  // #4045: in a project's first week an empty Your work is left out, with
-  // people in it or not; it shows once there is some.
-  assert.equal(is({ firstWeek: true }), null);
-  assert.equal(is({ alone: false, firstWeek: true }), null);
-
-  // The For you card's Your work row says so in those words.
-  const row = (empty, mine = { viewer: true, bot: empty === 'bot', count: 0, shown: 3, rows: [] }) => renderToHtml(createElement(ForYouCard, {
-    slug: 'geneva-hikes', name: 'Geneva hike planner', queue: [], mine, workEmpty: empty, alone: true,
-    data: community(), canPost: true, onNeeds: () => {}, onWork: () => {}, onDiscussion: () => {},
+test('For you on a project nobody else is in: Your work and the Discussion from its first day, Needs you only when a vote waits', () => {
+  // 15 Oct 2026: a ready-made app's hub had no For you at all in its first
+  // week (an empty Your work and the Discussion were both left out), and
+  // looked nothing like an older project's. Now the card is the same from
+  // the first day: Your work says "No work in progress.", the Discussion
+  // "No messages yet.", and Needs you shows only when a vote waits on you.
+  const { ForYouCard } = hub;
+  const empty = { viewer: true, bot: true, count: 0, shown: 3, rows: [] };
+  const channel = { recent: [], unread_count: 0, last_message: null, last_at: null, last_by: null, href: '#messages/app/geneva-hikes', handle: null };
+  const card = (over = {}) => renderToHtml(createElement(ForYouCard, {
+    slug: 'geneva-hikes', queue: [], mine: empty, alone: true, unclaimed: 0,
+    data: community({ channel }), canPost: true, onNeeds: () => {}, onWork: () => {}, onDiscussion: () => {}, ...over,
   }));
-  assert.equal(row(null), '', 'nothing to say: no row, and with no vote line nor discussion, no card');
-  const bot = row('bot');
-  assert.match(bot, /<button type="button" class="[^"]*dev-ws-foryou-row[^"]*" data-ws-mine-card="" data-ws-mine-open="bot">/,
-    'the row opens the chat where Homeroom bot builds for you');
-  assert.match(bot, /<span data-ws-mine-empty="bot">Nothing in progress\. To change something, tell Homeroom bot\.<\/span>/);
-  assert.match(read(HUB), /onClick=\{toBot \? \(\) => \{ void openBot\(\); \} : onOpen\}/);
-  const menu = row('menu');
-  assert.match(menu, /data-ws-mine-open="workshop"/);
-  assert.match(menu, /<span data-ws-mine-empty="menu">Nothing in progress\. Press <span class="font-medium text-violet-700 dark:text-violet-400">⋯<\/span> to suggest an improvement\.<\/span>/);
-  // A project with people in it: as it was, for the declared check that
-  // reads "No work in progress." on Homeroom's own hub.
-  const plain = row('plain');
-  assert.match(plain, /<span data-ws-mine-empty="">No work in progress\.<\/span>/);
+  const html = card();
+  assert.match(html, /^<section class="dev-ws-hub-section" data-ws-hub-for-you=""[^>]*><h2[^>]*>For you<\/h2><div class="dev-ws-strip dev-ws-foryou"><button type="button" class="[^"]*dev-ws-foryou-row[^"]*" data-ws-mine-card="" data-ws-mine-open="workshop">/,
+    'no Needs you line: nothing needs you, and nobody else could put a vote up');
+  assert.match(html, /<span data-ws-mine-empty="">No work in progress\.<\/span>/, 'Your work, saying so, as on every project');
+  assert.match(html, /data-ws-channel="preview" data-ws-channel-open=""[\s\S]*<span data-ws-channel-empty="">No messages yet\.<\/span>/,
+    'and the Discussion, a door to the room, saying so');
+  assert.doesNotMatch(html, /data-ws-hub-needs|Nothing more to vote on|data-ws-mine-empty="(bot|menu)"|tell Homeroom bot|Say hi/);
+  // A vote waiting on you: Needs you leads.
+  const vote = { t: 'card', key: 'v1', kind: 'vote', card: { title: { text: 'Dark mode' } } };
+  assert.match(card({ queue: [vote] }), /<div class="dev-ws-strip dev-ws-foryou"><div class="dev-ws-foryou-item" data-ws-hub-needs="" data-ws-hub-needs-votes="1">/);
+  // A visitor has no work to list, and without a room it may talk in there
+  // is no Discussion row: nothing left to say, so no card.
+  assert.equal(card({ mine: { viewer: false, count: 0, shown: 3, rows: [] }, data: community() }), '');
+  // The empty Your work is the one the declared check reads on Homeroom's
+  // own hub, so a new project's says it the same way.
   const declared = JSON.parse(read('dapp.json')).tests
     .find((t) => t.name === 'Hub: Your work stays when nothing is in progress, and says so (#3489)');
   assert.equal(declared.expectText, 'No work in progress.');
-  assert.match(declared.path, /#app\/usernode-2d5619\/workshop$/, 'on Homeroom\'s own hub, which has people in it');
+  assert.match(declared.path, /#app\/usernode-2d5619\/workshop$/);
   assert.equal(declared.expectSelector,
     '#dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] > .dev-ws-foryou > button[data-ws-mine-card] [data-ws-mine-empty=""]',
     'For you\'s Your work row, saying so');
+  const src = read(HUB);
+  assert.equal(hub.hubWorkEmpty, undefined, 'no other words for an empty Your work');
+  assert.match(src, /if \(!cards\.length && !mine\?\.viewer\) return null;/);
+  assert.match(src, /const work = cards \|\| !!mine\?\.viewer;\s*const talk = !!\(data && data\.channel\);/);
+  assert.doesNotMatch(src, /hub\.work\.emptyBot|hub\.work\.emptyMenu|hub\.channel\.sayHi/);
 });
 
 test('the Share it card says what an invite is for while it is being built', () => {
@@ -270,14 +271,14 @@ test('the hub puts the first version under the hero, and stands the start-here p
   // Before its description is filed the board is empty too, and "The first
   // change is yours to start" told its maker to start the bot's change.
   assert.match(LANDER, /const building = !!\(community && community\.first_version\);\s*const startHere = !!\(v\.dashboard && v\.dashboard\.open === 0 && !v\.dashboard\.everShipped\) && !building;/);
-  assert.match(hubTab, /\{v\.emptyNote && !building \? \(/, 'nor the no-items note');
-  assert.match(LANDER, /const alone = hubAlone\(community\);[\s\S]{0,400}const weekOne = !!\(community && community\.first_week\);\s*const workEmpty = hubWorkEmpty\(\{\s*alone, building, startHere, readOnly: !!actions\.readOnly, bot: !!\(v\.mine && v\.mine\.bot\), firstWeek: weekOne,\s*\}\);/);
-  // For you takes both: Needs you's quiet line leaves out its zero on a
-  // project nobody else is in or in its first week, and Your work says what
-  // hubWorkEmpty says.
-  assert.match(hubTab, /<ForYouCard[\s\S]{0,200}mine=\{v\.mine\}\s+workEmpty=\{workEmpty\}\s+alone=\{alone \|\| weekOne\}/);
+  assert.match(hubTab, /\{v\.emptyNote && !building && !startHere \? \(/, 'nor the no-items note, which the banner says too');
+  assert.match(LANDER, /const alone = hubAlone\(community\);/);
+  assert.doesNotMatch(LANDER, /first_week|weekOne|hubWorkEmpty/, 'the same hub from the first day (15 Oct 2026)');
+  // For you: Needs you's quiet line leaves out its zero on a project nobody
+  // else is in; Your work says "No work in progress." for everyone.
+  assert.match(hubTab, /<ForYouCard[\s\S]{0,200}mine=\{v\.mine\}\s+alone=\{alone\}/);
   assert.match(read(HUB), /: <NothingToVote unclaimed=\{claims\} onOpen=\{onWork\} alone=\{alone\} \/>\}/);
-  assert.match(read(HUB), /if \(!cards\.length && !\(mine\?\.viewer && empty\)\) return null;/, 'Your work for a signed-in viewer, with work or with something to say');
+  assert.match(read(HUB), /if \(!cards\.length && !mine\?\.viewer\) return null;/, 'Your work for a signed-in viewer');
   // The thumbnail's row is app.css's, beside the hub's doors.
   assert.match(read('public/css/app.css'), /\.dev-ws-hub-first-row \{ display: flex; align-items: center; gap: 10px; min-width: 0; \}/);
 });
@@ -372,7 +373,7 @@ test('#4045: `?shot=hub-first-week` draws a made-up first week for the before/af
   assert.equal(shot.hubShot(''), null);
   const creator = shot.hubShotPayload('garden', 'creator', 0);
   assert.equal(creator.slug, 'garden', 'for whatever project the address names');
-  assert.equal(creator.first_week, true);
+  assert.equal(creator.first_week, undefined, 'the hub has no first week of its own (15 Oct 2026)');
   assert.deepEqual([creator.first_version.line, creator.first_version.waits_on, creator.is_creator, creator.can_manage], ['plan', 'plan', true, true]);
   assert.equal(creator.first_version.plan, null, 'its maker answers it in their chat');
   const member = shot.hubShotPayload('garden', 'member', 0);
@@ -380,10 +381,15 @@ test('#4045: `?shot=hub-first-week` draws a made-up first week for the before/af
   assert.equal(member.first_version.plan.bullets.length, 4);
   assert.equal(member.first_version.plan.questions[0].suggested, 'Each runner picks their own goal');
   assert.equal(shot.hubShotPayload('garden', 'question', 0).first_version.waits_on, 'question');
-  // A link is out and nobody else is in: Just you, with the link's seats.
+  // A link is out and nobody else is in: Just you, and Share it says the
+  // link is out: made a minute ago, for a week, nobody in through it yet.
   const link = shot.hubShotPayload('garden', 'link', 0);
   assert.deepEqual([link.audience, link.member_count, link.members.length, link.invite_link, link.is_creator], ['solo', 1, 1, true, true]);
+  assert.deepEqual([link.invite_summary.links, link.invite_summary.joined, link.invite_summary.expires_at],
+    [1, 0, new Date(7 * 24 * 60 * 60000 - 60000).toISOString()]);
+  assert.equal(loadTsx(CARD).inviteSentLine(link.invite_summary, 0), 'Invite link sent · nobody has joined yet · 7 days left');
   assert.equal(creator.invite_link, false);
+  assert.equal(creator.invite_summary, null);
   assert.equal(creator.channel.post_url, null, 'nothing behind it to post to');
   // The hub's one read answers it in place of the server's.
   assert.match(read(CARD), /const shot = hubShot\(\);\s*if \(shot\) return hubShotPayload\(slug, shot\);/);

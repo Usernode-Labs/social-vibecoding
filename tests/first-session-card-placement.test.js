@@ -29,7 +29,7 @@ const DIR = 'frontend/src/features/first-session';
 const { cardPosition, clearOf, SAFE_TOP, SAFE_BOTTOM, MIN_CARD_ROOM, CARD_GAP } = loadTsx(`${DIR}/card-placement.ts`);
 const { footTop, surfaceBox } = loadTsx(`${DIR}/index.tsx`);
 const { VIEWPORT_MARGIN } = loadTsx('frontend/src/features/home/tour/spotlight.ts');
-const { makerSteps, invitedSteps, privateSteps, lookAroundSteps, BOTTOM_BARS, APP_MENU } = loadTsx(`${DIR}/tour-steps.ts`);
+const { homeWalkSteps, lookAroundSteps, BOTTOM_BARS, APP_MENU, SCREEN_HEADER } = loadTsx(`${DIR}/tour-steps.ts`);
 
 // ./index.tsx PAD, the hole's padding round its target.
 const PAD = 6;
@@ -163,16 +163,18 @@ test('the other placements, and none can start above the screen or run off its f
 
 test('every tour card, on every desktop and phone size, is whole on the screen', () => {
   const steps = [
-    ...makerSteps({ slug: 'film', name: 'Friday Film Crew' }),
-    ...invitedSteps({ slug: 'film', name: 'Friday Film Crew' }),
-    ...privateSteps({ slug: 'film', name: 'Friday Film Crew' }),
+    ...homeWalkSteps({ slug: 'film' }),
+    ...homeWalkSteps({ slug: 'film', privateMember: true }),
     ...lookAroundSteps(),
-    // No tour places a card under an element since the maker's stopped
-    // ending in Homeroom bot's chat (Evan, 10 Oct 2026); the placement
-    // still holds for one.
+    // No tour places a card any other way since the walk replaced the tours
+    // that walked through the app, its menu, the hub and #general (15 Oct
+    // 2026); the engine still places one each way, and each still holds.
+    { title: 'a screen whole, its card at the foot', target: '#app-view', alongside: SCREEN_HEADER, place: 'bottom' },
+    { title: 'a card above the composer', target: '#gc-messages, #gc-form', place: { above: '#gc-form' } },
+    { title: 'a card clear of the menu', target: '#improve-row-feedback', inMenu: true, place: { clear: APP_MENU } },
     { title: 'a card under a header', place: { below: '#platform-header' } },
   ];
-  assert.ok(steps.some((s) => s.place === 'bottom'), 'the hub and app steps sit at the foot');
+  assert.ok(steps.some((s) => s.place === 'bottom'), 'a step at the foot');
 
   const sizes = [
     { width: 1280, height: 800 }, { width: 1024, height: 700 }, { width: 768, height: 1024 }, { width: 1440, height: 900 },
@@ -237,15 +239,7 @@ test('every tour card, on every desktop and phone size, is whole on the screen',
 // menu's sheet, and covered the sheet's top: its grabber, its rounded
 // corners and the app's name in small caps showed as a clipped sliver under
 // the card. Now the card stands clear of the whole sheet, with a gap.
-test('run six: Suggest an improvement\'s card stands over the whole menu sheet, with a clear gap', () => {
-  for (const steps of [
-    makerSteps({ slug: 'club-votes', name: 'Club Votes', firstVersion: 'building' }),
-    invitedSteps({ slug: 'club-votes', name: 'Club Votes' }),
-    privateSteps({ slug: 'club-votes', name: 'Club Votes' }),
-  ]) {
-    const suggest = steps.find((s) => s.target === '#improve-row-feedback');
-    assert.deepEqual(suggest.place, { clear: APP_MENU }, 'clear of the menu, not of the button alone');
-  }
+test('run six: a card clear of the menu stands over the whole menu sheet, with a clear gap', () => {
   // Safari on a phone: no tab bar under an open app, the menu a kit sheet
   // along the foot, the button a third of the way down it.
   const safari = { width: 402, height: 678 };
@@ -313,7 +307,7 @@ test('the tour measures the foot by footTop, and draws the card where cardPositi
   // The tour's first frame on a 1280x800 laptop, with the rail: no target
   // measured yet, so the card is at the foot of the window.
   const { Tour } = loadTsx(`${DIR}/index.tsx`);
-  const steps = makerSteps({ slug: 'film', name: 'Friday Film Crew' });
+  const steps = homeWalkSteps({ slug: 'film' });
   const railEl = { getBoundingClientRect: () => ({ ...rail, right: rail.left + rail.width, bottom: rail.top + rail.height }) };
   const had = { window: Object.hasOwn(globalThis, 'window'), document: Object.hasOwn(globalThis, 'document') };
   const before = { window: globalThis.window, document: globalThis.document };

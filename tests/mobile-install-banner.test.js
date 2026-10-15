@@ -326,8 +326,8 @@ test('a first visit holds the strip to its end, and only the first session\'s ow
     global.sessionStorage = prev;
   }
   const first = fs.readFileSync(path.join(ROOT, 'frontend/src/features/first-session/index.tsx'), 'utf8');
-  assert.match(first, /if \(mode\.kind === 'none'\) return;\n    if \(\(mode\.kind === 'make' \|\| mode\.kind === 'made'\) && mode\.entry === 'create'\) return;\n    noteFirstSessionVisit\(\);\n  \}, \[mode\]\);/,
-    'welcome, make, made and the tour note it; Create\'s make and made do not');
+  assert.match(first, /if \(mode\.kind === 'none' && !tip\) return;\n    if \(\(mode\.kind === 'make' \|\| mode\.kind === 'made'\) && mode\.entry === 'create'\) return;\n    noteFirstSessionVisit\(\);\n  \}, \[mode, tip\]\);/,
+    'the held frame, make, made, the tour and the tip in the app note it; Create\'s make and made do not');
 });
 
 test('#4899: the first render is the same hidden strip whether or not a tour runs', () => {
