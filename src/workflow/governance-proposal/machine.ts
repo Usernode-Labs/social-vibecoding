@@ -224,6 +224,9 @@ function apply(
         input: { ...issue.app.repo, number: n, comment, marker: `homeroom-governance:${issueKey(issue.id)}:close`,
           bustCache: true, appId: issue.appId, appSlug: issue.app.slug } });
     }
+    // The Homeroom bot's proposals for that request come down once every
+    // request they are linked to is closed (services/homeroom-bot-closed-requests.js).
+    work.push({ kind: 'bot.requestsClosed', key: 'bot', input: { appId: issue.appId, closed: [n] } });
   } else if (issue.kind === 'secret_change' && !issue.app.selfHosted) {
     if (extra.delivery) asked.push({ key: 'rebuild', input: { appId: issue.appId } });
     else work.push({ kind: 'app.rebuildProduction', key: 'rebuild', input: { appId: issue.appId } });
@@ -322,9 +325,10 @@ function followupResult(s: { name: Closed; data: ClosedData }, e: Event<WorkResu
   };
 }
 
-// Something other than this machine closed or deleted the issue row: the
-// flag was turned off for a while and [main]'s paths decided it, or the app
-// was deleted. The proposal ends without applying, and the row, which
+// Something other than this machine closed or deleted the issue row: it
+// was closed before the machine enrolled it (the old paths, before they were
+// deleted, or a write in the moment between filing and enrolling), or the
+// app was deleted. The proposal ends without applying, and the row, which
 // already says what happened, is left as it is (see project).
 const OUTSIDE = new Set(['closed_outside', 'issue_gone']);
 const outside = (f: Facts) => (!f.issue ? 'issue_gone' : f.issue.status !== 'open' ? 'closed_outside' : null);
@@ -426,9 +430,10 @@ export function governanceProposal(deps: MachineDeps): Machine<GovState, Facts> 
     // 2: campaign.run work (the startCampaign notifier went), the issue lists'
     // push, the forcing admin as a platform variable's author. 3: a secret
     // change's redeploy asked of app-delivery (Delivered, DeliveryFailed).
+    // 4: bot.requestsClosed work on a close vote's apply.
     // During a rollout an older Pod leaves the instances a newer version
     // wrote alone.
-    version: 3,
+    version: 4,
     events: EVENTS,
     create: ['Filed'],
     terminal: ['applied', 'refused', 'withdrawn', 'superseded'],

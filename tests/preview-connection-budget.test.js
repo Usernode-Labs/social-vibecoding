@@ -112,7 +112,7 @@ test('#1771: becomeLeader is still where the fleet duties live', () => {
   for (const starter of [
     'startConversationAttachmentSweeper',
     'startSessionAutoPauseSweeper', 'startStalePrSweeper', 'startWorkshopThemeSweeper',
-    'startLocalAgentLeaseSweeper', 'startGovernanceApplyTicker', 'startEligibleMergeSweeper',
+    'startLocalAgentLeaseSweeper', 'startEligibleMergeSweeper',
     'startTitleHealSweeper',
   ]) {
     assert.ok(body.includes(`${starter}(`), `${starter} is started under the leader gate`);

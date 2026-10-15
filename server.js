@@ -1154,11 +1154,14 @@ async function becomeLeader() {
     identity: leadership && leadership.identity,
   });
 
-  // Workflow pipeline slots, timers and services (a no-op unless a workflow
-  // flag is on). Correctness does not depend on running them here; the
-  // leader is simply where background work lives for now.
+  // The workflow's timers and services, and the boot backfill: the leader is
+  // where they run. A leader without them would leave every governance
+  // proposal's timers and work to the next election, with no other path, so
+  // a failure stops this process through its own drain (cleanup, on SIGTERM)
+  // and another one leads.
   await require('./src/workflow/platform.ts').startWorkflowLoops().catch((err) => {
-    log.error('server', 'Workflow loops failed to start', { err: err.message });
+    log.error('server', 'Workflow loops failed to start; stopping so another process leads', { err: err.message });
+    process.kill(process.pid, 'SIGTERM');
   });
 
   // What leader work keeps in memory and an admin screen reads, written for
@@ -1340,9 +1343,6 @@ async function becomeLeader() {
   // minute after. A row nobody owns (from before that) is taken by the old
   // boot rule: at boot, once it is ten minutes old.
   await require('./src/services/app-creation-owner').start(config).catch(() => {});
-  // A production redeploy a vote owed an app and its process died before
-  // giving (services/owed-redeploy.js): run again, every minute.
-  require('./src/services/owed-redeploy').start(config);
   // And the first session's card a restart kept out of a new repository
   // (services/app-sketch.js sweepUncommitted): every quarter hour.
   require('./src/services/app-sketch').startCommitSweep(config);
@@ -1390,16 +1390,6 @@ async function becomeLeader() {
   // first user contact. Non-blocking.
   auditExistingRepoPrivacy(getPool(config)).catch((err) => {
     log.warn('server', 'private-repo audit failed', { err: err.message });
-  });
-
-  // One-time, idempotent: convert any open legacy rename *issues* into
-  // rename PRs (the new dapp.json-name flow), then close the issues so
-  // the backlog drains. Runs after github.init so it can actually open
-  // PRs; no-op when GitHub isn't configured. Non-blocking + guarded
-  // per-app so one failing repo doesn't hold up boot or the batch.
-  const { migrateOpenRenameIssues } = require('./src/services/rename-pr');
-  migrateOpenRenameIssues(config, getPool(config)).catch((err) => {
-    log.warn('server', 'rename-issue migration failed', { err: err.message });
   });
 
   // Resume fleet maintenance campaigns interrupted by the restart —
@@ -1615,11 +1605,6 @@ async function becomeLeader() {
     pool: require('./src/db/pool').getPool(config),
   });
 
-  // #1010: fast, gate-first governance applies (minute-scale). Complements
-  // the hourly sweeper's Pass 0b, which keeps ownership of the close-issue
-  // superseded sweep (its GitHub fetch is too costly to run per minute).
-  startGovernanceApplyTicker(config);
-
   // Reconcile open PR sessions ('promoted'/'merging') against GitHub's
   // actual merge state. Heals sessions that merged on GitHub but whose
   // post-merge step (prod rebuild, etc.) failed — those would otherwise
@@ -1800,10 +1785,10 @@ async function start() {
   // The workflow runtime (src/workflow/platform.ts): every process appends
   // and waits for outcomes; the loops start in becomeLeader(), or here on a
   // staging preview, which never stands for election but must still decide.
-  // Never fatal: without a runtime, governsKind() is false and [main]'s
-  // governance paths decide, as with the flag off.
-  await require('./src/workflow/platform.ts').startWorkflow(config, { loops: !runsClusterMaintenance() })
-    .catch((err) => log.error('server', 'Workflow runtime failed to start; the legacy paths decide', { err: err.message }));
+  // Fatal: the machines are the only paths for what they decide (governance
+  // has no other), so a process without them exits and is restarted rather
+  // than serving without them.
+  await require('./src/workflow/platform.ts').startWorkflow(config, { loops: !runsClusterMaintenance() });
   startupDiagnostics = Object.freeze({
     totalMs: Date.now() - startedAt,
     migrationsOnStartup,
@@ -6273,105 +6258,6 @@ function startSessionAutoPauseSweeper(config) {
   }), config.sessionSweepIntervalMs).unref();
 }
 
-let governanceApplyTickerHandle = null;
-
-// #1010: FAST governance-apply ticker.
-//
-// A governance proposal (rename / secret_change / close_issue /
-// maintenance_campaign) can become mergeable purely through the passage of
-// time — the threshold is met and the minimum visibility window runs out with
-// no further vote to drive the apply. Before this ticker the ONLY thing that
-// noticed was the hourly stale-PR sweeper's Pass 0b, so a close proposal whose
-// countdown reached zero sat visibly decided-but-open for up to an hour. That
-// is the dead air issue #1010 is about, and it is also what would make the
-// client's derived "Closing issue…" spinner a lie — so the indicator and this
-// ticker ship together.
-//
-// Deliberately narrower than Pass 0b in one way that matters: it is
-// **gate-first for every kind**, including close_issue. Pass 0b dispatches
-// close_issue rows UNCONDITIONALLY because maybeApplyCloseIssueProposal's
-// superseded guard doubles as the catch-all for issues closed by hand on
-// GitHub — and that guard costs a `fetchPublicIssues` per app. Replicating it
-// at 60s cadence would mean a GitHub fetch per app per minute, so the
-// superseded sweep STAYS hourly and this ticker only touches rows whose gate
-// already says "apply me". Cost here is one small query plus a DB-only
-// governedGate per open governance row.
-//
-// Its own interval + own enable knob (GOVERNANCE_APPLY_TICK_MS, 0 disables)
-// so it is not silently switched off along with the stale-PR sweeper, which
-// disables itself entirely when both PR_STALE_NOTIFY_MS and
-// ARCHIVED_RETENTION_MS are zero.
-function startGovernanceApplyTicker(config) {
-  if (governanceApplyTickerHandle) return;
-  if (config.wfGovernanceEnabled) {
-    log.info('server', 'Governance-apply ticker off: the governance-proposal machine decides');
-    return;
-  }
-  const intervalMs = config.governanceApplyTickMs;
-  if (!(intervalMs > 0)) {
-    log.info('server', 'Governance-apply ticker disabled');
-    return;
-  }
-  const pool = getPool(config);
-  const issuesModule = require('./src/routes/issues');
-  const governance = require('./src/services/governance');
-  log.info('server', 'Governance-apply ticker started', { intervalMs });
-  governanceApplyTickerHandle = setInterval(async () => {
-    if (lifecycle.isShuttingDown()) return;
-    try {
-      const { rows } = await pool.query(
-        `SELECT i.*, a.slug AS app_slug, a.repo_url,
-                (SELECT COUNT(*)::int FROM issue_votes WHERE issue_id = i.id AND vote = 'up')   AS up_count,
-                (SELECT COUNT(*)::int FROM issue_votes WHERE issue_id = i.id AND vote = 'down') AS down_count
-           FROM issues i JOIN apps a ON a.id = i.app_id
-          WHERE i.status = 'open' AND i.kind IN ('rename', 'secret_change', 'close_issue', 'maintenance_campaign',
-                                                  'featured_illustration')
-          LIMIT 100`
-      );
-      for (const issue of rows) {
-        try {
-          // Gate-first for EVERY kind — see the header comment. A secret
-          // change is flagged: no timer, and an up vote from another member
-          // (the apply helper re-checks the same gate).
-          const gate = await governance.governedGate(pool, issue.app_id, {
-            kind: 'issue', id: issue.id, openedAt: issue.created_at,
-            explicitApproval: issue.kind === 'secret_change',
-            authorId: issue.created_by ?? null,
-          });
-          if (!gate.mergeable) continue;
-          // The apply helpers re-check the gate and lock the issue row
-          // atomically, so this can never double-apply against a concurrent
-          // vote, the hourly sweep, or another color's ticker.
-          let result;
-          if (issue.kind === 'close_issue') {
-            result = await issuesModule.maybeApplyCloseIssueProposal(pool, issue);
-          } else if (issue.kind === 'rename') {
-            result = await issuesModule.maybeApplyRenameProposal(pool, issue);
-          } else if (issue.kind === 'maintenance_campaign') {
-            result = await issuesModule.maybeApplyMaintenanceCampaignProposal(config, pool, issue);
-          } else if (issue.kind === 'featured_illustration') {
-            result = await issuesModule.maybeApplyFeaturedIllustrationProposal(pool, issue);
-          } else {
-            result = await issuesModule.maybeApplySecretChangeProposal(config, pool, issue);
-          }
-          if (result && (result.applied || result.superseded)) {
-            log.info('server', 'Governance proposal applied by ticker', {
-              issueId: issue.id, appId: issue.app_id, kind: issue.kind,
-              applied: !!result.applied, superseded: !!result.superseded,
-            });
-          }
-        } catch (err) {
-          log.warn('server', 'Governance-apply tick failed for row', {
-            issueId: issue.id, kind: issue.kind, err: err.message,
-          });
-        }
-      }
-    } catch (err) {
-      log.warn('server', 'Governance-apply tick failed', { err: err.message });
-    }
-  }, intervalMs).unref();
-}
-
 // Stale-promoted-PR policy + reversible-archive hard GC.
 //   Pass 1 (notify): a promoted PR with no voting interest for
 //     PR_STALE_NOTIFY_MS gets its author a 'stale_pr' notification, and
@@ -6387,8 +6273,7 @@ function startGovernanceApplyTicker(config) {
 // Hourly (staleSweepIntervalMs) on the durable clock leader_sweeps keeps
 // (services/leader-timers.js). As a bare setInterval its clock restarted at
 // every election, and with a release every twenty minutes or so it almost
-// never fired: warnings, auto-archive, Pass 0b's superseded close-issue
-// retirement, archived volume GC and merged worker-volume reclaim (a disk
+// never fired: warnings, auto-archive, archived volume GC and merged worker-volume reclaim (a disk
 // leak) all waited for a quiet night.
 function startStalePrSweeper(config) {
   if (leaderTimers.has('stale-pr-sweep')) return;
@@ -6408,7 +6293,6 @@ function startStalePrSweeper(config) {
     checkAndMerge,
     reconcilePromotedSweepHead,
   } = require('./src/routes/votes');
-  const issuesModule = require('./src/routes/issues');
   const governance = require('./src/services/governance');
   const appAdmins = require('./src/services/app-admins');
   leaderTimers.every('stale-pr-sweep', async () => {
@@ -6516,60 +6400,6 @@ function startStalePrSweeper(config) {
       }
     } catch (err) {
       log.warn('server', 'Window-elapsed merge sweep failed', { err: err.message });
-    }
-
-    // Pass 0b: window-elapsed governance applies (rename + secret_change +
-    // close_issue + maintenance_campaign). Same rationale as Pass 0 — an
-    // open governance proposal
-    // can satisfy both gates with no further vote. The apply helpers re-check
-    // the gate and lock the issue row atomically, so this can't double-apply
-    // against a vote. close_issue rows are dispatched UNCONDITIONALLY (not
-    // just when mergeable): maybeApplyCloseIssueProposal runs its superseded
-    // guard on every invocation, so the hourly sweep doubles as the catch-all
-    // that retires proposals whose target was closed by hand on GitHub. The
-    // guard reads the cached fetchPublicIssues — one cheap fetch per app.
-    // With the governance-proposal machine on, its own timers do this.
-    if (!config.wfGovernanceEnabled) try {
-      const { rows } = await pool.query(
-        `SELECT i.*, a.slug AS app_slug, a.repo_url,
-                (SELECT COUNT(*)::int FROM issue_votes WHERE issue_id = i.id AND vote = 'up')   AS up_count,
-                (SELECT COUNT(*)::int FROM issue_votes WHERE issue_id = i.id AND vote = 'down') AS down_count
-           FROM issues i JOIN apps a ON a.id = i.app_id
-          WHERE i.status = 'open' AND i.kind IN ('rename', 'secret_change', 'close_issue', 'maintenance_campaign',
-                                                  'featured_illustration')
-          LIMIT 100`
-      );
-      for (const issue of rows) {
-        try {
-          if (issue.kind === 'close_issue') {
-            await issuesModule.maybeApplyCloseIssueProposal(pool, issue);
-            continue;
-          }
-          // #646: governance-aware gate for issue-vote proposals too. A
-          // secret change is flagged, exactly as the apply helper gates it.
-          const gate = await governance.governedGate(pool, issue.app_id, {
-            kind: 'issue', id: issue.id, openedAt: issue.created_at,
-            explicitApproval: issue.kind === 'secret_change',
-            authorId: issue.created_by ?? null,
-          });
-          if (!gate.mergeable) continue;
-          if (issue.kind === 'rename') {
-            await issuesModule.maybeApplyRenameProposal(pool, issue);
-          } else if (issue.kind === 'maintenance_campaign') {
-            await issuesModule.maybeApplyMaintenanceCampaignProposal(config, pool, issue);
-          } else if (issue.kind === 'featured_illustration') {
-            await issuesModule.maybeApplyFeaturedIllustrationProposal(pool, issue);
-          } else {
-            await issuesModule.maybeApplySecretChangeProposal(config, pool, issue);
-          }
-        } catch (err) {
-          log.warn('server', 'Window-elapsed governance apply failed', {
-            issueId: issue.id, err: err.message,
-          });
-        }
-      }
-    } catch (err) {
-      log.warn('server', 'Window-elapsed governance sweep failed', { err: err.message });
     }
 
     if (notifyEnabled) {
@@ -7005,11 +6835,10 @@ async function cleanup() {
     log.warn('server', 'Stopping the Homeroom bot welcome failed', { err: err.message });
   }
   // The leader's sweeps on timers of their own: none may run beside the new
-  // leader's while this process finishes its work. A creation or a redeploy
-  // under way here keeps its own heartbeat until it ends.
+  // leader's while this process finishes its work. A creation under way here
+  // keeps its own heartbeat until it ends.
   for (const [name, stop] of [
     ['app creation', () => require('./src/services/app-creation-owner').stop()],
-    ['owed redeploy', () => require('./src/services/owed-redeploy').stop()],
     ['sketch commit', () => require('./src/services/app-sketch').stopCommitSweep()],
   ]) {
     try { stop(); } catch (err) { log.warn('server', `Stopping the ${name} sweep failed`, { err: err.message }); }
@@ -7099,10 +6928,6 @@ async function cleanup() {
   if (platformIncidentAlertSweeperHandle) {
     clearInterval(platformIncidentAlertSweeperHandle);
     platformIncidentAlertSweeperHandle = null;
-  }
-  if (governanceApplyTickerHandle) {
-    clearInterval(governanceApplyTickerHandle);
-    governanceApplyTickerHandle = null;
   }
 
   // Stop leading, then finish what this process started, up to its drain

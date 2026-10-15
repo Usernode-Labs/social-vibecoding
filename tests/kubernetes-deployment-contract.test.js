@@ -223,9 +223,8 @@ test('Kubernetes enables before & after shots by default with one explicit kill 
 test('Kubernetes passes the workflow flags through, off by default', () => {
   const platform = read('deploy/helm/social-vibecoding-platform/templates/platform.yaml');
   const values = read('deploy/helm/social-vibecoding-platform/values.yaml');
-  assert.match(values, /workflowGovernanceEnabled: false/);
-  assert.match(platform,
-    /name: WF_GOVERNANCE_ENABLED, value: \{\{ \.Values\.platform\.workflowGovernanceEnabled \| quote \}\}/);
+  // Governance has no flag: its old paths are deleted.
+  assert.doesNotMatch(platform, /WF_GOVERNANCE_ENABLED/);
   assert.match(values, /workflowMergeFollowupsEnabled: false/);
   assert.match(platform,
     /name: WF_MERGE_FOLLOWUPS_ENABLED, value: \{\{ \.Values\.platform\.workflowMergeFollowupsEnabled \| quote \}\}/);

@@ -6,8 +6,8 @@
  *
  * A campaign is a platform-level governance proposal on the self-hosted
  * app. Once its vote passes (or an admin force-applies it),
- * issues.maybeApplyMaintenanceCampaignProposal creates a
- * maintenance_campaigns row and hands it to runCampaign() here, which:
+ * the governance machine creates a maintenance_campaigns row and runs
+ * runCampaign() here as durable work (campaign.run), which:
  *
  *   1. Seeds one maintenance_campaign_apps row per target app
  *      (repo_url set, not self-hosted, optional slug filter) —

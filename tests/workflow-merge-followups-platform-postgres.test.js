@@ -125,9 +125,9 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
 
   await t.test('the flag is recorded for the ownership triggers', async () => {
     const { rows } = await pool.query(`SELECT key FROM wf_settings WHERE key LIKE 'enabled:%' ORDER BY key`);
-    assert.deepEqual(rows.map((r) => r.key), ['enabled:merge-followups']);
+    assert.deepEqual(rows.map((r) => r.key), ['enabled:governance-proposal', 'enabled:merge-followups'],
+      'governance has no flag: its guard is on in every process');
     assert.equal(platform.mergeFollowupsEnabled(), true);
-    assert.equal(platform.governanceEnabled(), false, 'the governance machine has its own flag');
   });
 
   await t.test('a confirmed merge goes live through the real handlers', async () => {

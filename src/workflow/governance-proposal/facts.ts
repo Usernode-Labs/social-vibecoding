@@ -48,9 +48,9 @@ function parseRepo(url: string | null): Issue['app']['repo'] {
 interface VoteRow { userId: number; vote: string; counts: boolean; admin: boolean }
 
 // The issue, and its app as far as naming it goes. The row is locked:
-// anything else that decides it ([main]'s apply, while old and new Pods
-// overlap in a deploy) waits for this transition, or this transition waits
-// for it and sees the row closed. Only the locked row is read as it is after
+// anything else that writes it (a row closed before the machine enrolled
+// it, an app's deletion) waits for this transition, or this transition
+// waits for it and sees the row closed. Only the locked row is read as it is after
 // a wait; what decides the proposal is read after it (readOpen).
 async function readIssue(tx: Tx, issueId: number) {
   const { rows: [r] } = await tx.query(

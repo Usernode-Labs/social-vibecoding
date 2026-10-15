@@ -1539,9 +1539,9 @@ function stagingMockMerged(viewer) {
 // "Issue close" card interleaved among the merged mocks. One group-vote
 // apply and one admin force-apply, exercising both "closed by vote" and
 // "closed by admin" meta lines. Ids live outside the merged-mock range so
-// the type-scoped de-dup never collides. The payload mirrors what
-// maybeApplyCloseIssueProposal stamps (appliedAt/appliedBy + tally
-// snapshot); the target is mock issue 900003 from stagingMockIssues.
+// the type-scoped de-dup never collides. The payload mirrors what the
+// governance machine stamps on a close-issue apply (appliedAt/appliedBy +
+// tally snapshot); the target is mock issue 900003 from stagingMockIssues.
 function stagingMockCompletedCloseIssues() {
   const daysAgo = (d) => new Date(Date.now() - d * 86400 * 1000).toISOString();
   const mk = (id, appliedBy, appliedDays, createdDays, chat) => ({
@@ -4993,7 +4993,7 @@ function voteRoutes(config) {
       // Applied close-issue proposals join the Completed stream: a
       // kind='close_issue' governance row whose vote (or an admin
       // force-apply) actually closed the target carries payload.appliedAt
-      // (see maybeApplyCloseIssueProposal). Withdrawn (withdrawnAt) and
+      // (the governance machine's apply). Withdrawn (withdrawnAt) and
       // superseded (supersededAt) rows never carry it, so they stay out.
       // chat_count / last_message_at mirror the open-issues endpoint's
       // governance-thread subqueries so the 💬 badge and activity sort

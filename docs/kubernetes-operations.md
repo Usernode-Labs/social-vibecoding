@@ -646,52 +646,32 @@ worker env Secrets; they are object counts, so headroom costs nothing.
 
 ## Workflow governance machine
 
-`platform.workflowGovernanceEnabled` (default `false`) becomes `WF_GOVERNANCE_ENABLED`.
-When it is on, the governance-proposal machine in `src/workflow/` decides governance
-proposals. The governance-apply ticker and the stale sweeper's Pass 0b then leave those
-proposals alone. `docs/workflows.md` explains the machine and where it runs.
+The governance-proposal machine in `src/workflow/` decides every governance proposal.
+It has no flag: its old paths (the governance-apply ticker, the stale sweeper's
+Pass 0b, the apply functions in `routes/issues.js`) are deleted.
+`docs/workflows.md` explains the machine and where it runs.
 
-- **Where it runs.** The machine runs inside the platform Pod; there is no extra
+- **Where it runs.** The machine runs inside the platform Pods; there is no extra
   workload. Every Pod listens for outcomes and runs pipeline slots, so it applies its
-  own votes; only the advisory-lock leader runs the timer and service loops and the
-  boot backfill.
-- **Schema.** The schema it needs (`wf_*` tables and triggers) is additive and ships
-  with every release, whether the flag is on or off.
-
-### Activation and rollback
-
-Unlike the coordinated preview lifecycle, an ordinary rolling change is safe in both
-directions. No maintenance window or scale-to-zero is needed.
-
-1. **Set the value.** Set `platform.workflowGovernanceEnabled: true` in the platform's
-   values in the infra repository. Argo CD rolls the Deployment with the same image.
-2. **During the rollout overlap.**
-   - The old Pod may still be the leader and apply proposals the old way.
-   - The machine and the old apply functions both lock the proposal's row, so
-     whichever commits first applies it. The machine ends the other's instance
-     `superseded` (`closed_outside`).
-   - The new Pod applies its own votes and withdrawals at once: its pipeline slots run
-     before it is leader. Only what the leader's loops do (timers, follow-up work, and
-     enrolling proposals opened before the flag) waits until it is elected. A route on
-     a proposal not enrolled yet enrolls it itself.
-3. **Verify.**
-   - **The new Pod's log.** It shows `Workflow runtime started` and, on the leader,
-     `Enrolled open governance proposals` with a count.
-   - **Admin → Workflows.** It lists the enrolled proposals, and its problems panel
-     is empty.
-   - **Votes.** A vote on a test proposal answers at once.
-4. **Watch for old writers.** In production the ownership trigger logs instead of
-   refusing (`WF_OWNERSHIP_MODE` defaults to `log`). Over the following days, the
-   problems panel in Admin → Workflows should show no "written outside its machine"
-   line. One lists the column, how often, and its latest writes: the row, the
-   connection's `application_name` and the statement, which name the code path that
-   still writes a governance proposal outside the machine (`wf_ownership_violations`).
-
-**Rollback.** Set the value back to `false` and let Argo CD roll the Deployment.
-- **What happens to the proposals.** The old paths decide them again. The trigger
-  stops guarding them as soon as the new Pods record the flag off.
-- **Turning it on again later is safe.** A proposal decided or deleted in the
-  meantime ends its instance without being applied twice.
+  own votes; only the leader runs the timer and service loops and the boot backfill.
+- **A runtime that fails to start ends the process.** With no other path for a
+  governance proposal, a Pod without the workflow runtime exits at boot and
+  Kubernetes restarts it, rather than serving without it.
+- **A leader whose workflow loops fail to start stops itself** (through its drain, as on
+  SIGTERM), so another process leads: the timers and work of every governance proposal
+  run only there.
+- **Ownership is enforced.** A write to an enrolled governance proposal's status or audit
+  keys from outside the machine is refused (`WF_OWNERSHIP_VIOLATION`), whatever
+  `WF_OWNERSHIP_MODE` says for the other machines. A row is enrolled when it is filed, or
+  by the leader's boot backfill if filing failed.
+- **Rolling back past this release.** Code from before it still reads
+  `WF_GOVERNANCE_ENABLED`, and without it its old paths would try to decide proposals the
+  guard now refuses to let them write, so every enrolled proposal would stall. Keep
+  `platform.workflowGovernanceEnabled: true` in the infra values (this chart no longer
+  reads it) until no rollback target predates this release.
+- **Verify after a release.** The Pod's log shows `Workflow runtime started` and, on
+  the leader, `Enrolled open governance proposals` when there were any; Admin →
+  Workflows lists the enrolled proposals and its problems panel is empty.
 
 ## Workflow merge-followups machine
 

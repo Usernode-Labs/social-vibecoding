@@ -57,6 +57,9 @@
       "services | uses src/services/homeroom-bot.js:noteProposalChecks": "the Homeroom bot queues a turn to fix its proposal's failing checks (verdict.followUps); goes with the last step (\"the rest\": the bot's notes as reactions to the stream)",
       "services | uses src/services/shots-orchestrator.js:scheduleForSession": "before & after shots for the head once its checks settle (verdict.followUps); goes when the shots step migrates them",
       "services | uses src/services/visuals.js:startShotsIfIdle": "before & after shots started beside the checks once the preview serves (preview.ready); goes when the shots step migrates them"
+    },
+    "governance-proposal": {
+      "services | uses src/services/homeroom-bot-closed-requests.js:noteRequestsClosed": "a close vote closed a request: the Homeroom bot's proposals for it are withdrawn and the bot is woken (bot.requestsClosed work, taken over from the deleted close-issue apply); goes when the last step migrates the bot's wake"
     }
   },
   "machines": {
@@ -69,27 +72,12 @@
       "notifiers | notifier scoreVote",
       "notifiers | uses src/services/topochain/challenge-scorer.js:scoreOnVote",
       "notifiers | uses src/services/ws.js:noteBoardChange",
-      "ownership | issues.payload ← src/routes/issues.js#issueRoutes",
-      "ownership | issues.payload ← src/routes/issues.js#maybeApplyCloseIssueProposal",
-      "ownership | issues.payload ← src/routes/issues.js#maybeApplyFeaturedIllustrationProposal",
-      "ownership | issues.payload ← src/routes/issues.js#maybeApplyMaintenanceCampaignProposal",
-      "ownership | issues.payload ← src/routes/issues.js#maybeApplyRenameProposal",
-      "ownership | issues.payload ← src/routes/issues.js#maybeApplySecretChangeProposal",
-      "ownership | issues.payload ← src/routes/issues.js#resolveSupersededCloseProposals",
-      "ownership | issues.payload ← src/services/rename-pr.js#migrateOpenRenameIssues",
-      "ownership | issues.status ← src/routes/issues.js#issueRoutes",
-      "ownership | issues.status ← src/routes/issues.js#maybeApplyCloseIssueProposal",
-      "ownership | issues.status ← src/routes/issues.js#maybeApplyFeaturedIllustrationProposal",
-      "ownership | issues.status ← src/routes/issues.js#maybeApplyMaintenanceCampaignProposal",
-      "ownership | issues.status ← src/routes/issues.js#maybeApplyRenameProposal",
-      "ownership | issues.status ← src/routes/issues.js#maybeApplySecretChangeProposal",
-      "ownership | issues.status ← src/routes/issues.js#resolveSupersededCloseProposals",
       "ownership | issues.status ← src/services/homeroom-bot-move.js#closeNow",
       "ownership | issues.status ← src/services/issue-close-watcher.js#closeTwinRows",
-      "ownership | issues.status ← src/services/rename-pr.js#migrateOpenRenameIssues",
       "services | uses src/services/fleet-maintenance.js:runCampaign",
       "services | uses src/services/github.js:getIssue",
       "services | uses src/services/github.js:isEnabled",
+      "services | uses src/services/homeroom-bot-closed-requests.js:noteRequestsClosed",
       "services | uses src/services/staging.js:rebuildProduction",
       "services | writes apps",
       "shared | uses src/services/github.js (whole module)",

@@ -59,7 +59,7 @@ test('workflow machines in a process of their own, and through its crash', { tim
   await procs.prepare(pool);
 
   // The flags, as config.js reads them; the child adds the database URL.
-  const flags = { dataEncryptionKey: DATA_KEY, wfGovernanceEnabled: true, wfMergeFollowupsEnabled: true, wfAppDeliveryEnabled: true,
+  const flags = { dataEncryptionKey: DATA_KEY, wfMergeFollowupsEnabled: true, wfAppDeliveryEnabled: true,
     wfPreviewsEnabled: true,
     wfPoolMax: 4, wfSlots: 2, wfOwnershipMode: 'raise',
     // Phone push on, to a fake Firebase (the fixture fakes its library).

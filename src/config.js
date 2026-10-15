@@ -790,20 +790,6 @@ function load() {
     // The Workshop theme sweep (services/workshop-themes.js): re-checks every
     // app opened in the last week, re-drafting themes at most daily.
     workshopSweepIntervalMs: parseInt(process.env.WORKSHOP_THEMES_SWEEP_INTERVAL_MS || String(60 * 60 * 1000), 10),
-    // #1010: how often the FAST governance-apply ticker runs. The hourly
-    // sweeper above also applies window-elapsed governance proposals, but an
-    // hour of dead air after a close proposal's countdown reaches zero is
-    // exactly the "did my vote do anything?" confusion this ticker removes —
-    // and it is what makes the client's derived "Closing issue…" spinner
-    // honest rather than a promise nothing keeps. Deliberately gate-first and
-    // DB-only (no GitHub traffic for rows that aren't ready), and on its own
-    // knob so it can't be silently disabled along with the stale-PR sweeper.
-    // Default 60s; set to 0 to disable (the hourly catch-all still runs).
-    governanceApplyTickMs: parseInt(process.env.GOVERNANCE_APPLY_TICK_MS || String(60 * 1000), 10),
-    // Workflow foundation (src/workflow/): with WF_GOVERNANCE_ENABLED on,
-    // the governance-proposal machine decides governance proposals and the
-    // ticker above and the sweeper's Pass 0b leave them alone. Off by default.
-    wfGovernanceEnabled: ['1', 'true'].includes(process.env.WF_GOVERNANCE_ENABLED),
     // With WF_MERGE_FOLLOWUPS_ENABLED on, a merge hands what follows it
     // (delivery, preview teardown, included changes, closing requests, the
     // announcements) to the merge-followups machine, and a change reads

@@ -2945,8 +2945,8 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
   // applying any group-voted change (PR merge, rename proposal, secret
   // change) additionally requires at least one admin yes/up vote on top
   // of the existing active-user majority — enforced in routes/votes.js
-  // (checkAndMerge) and routes/issues.js (maybeApplyRenameProposal /
-  // maybeApplySecretChangeProposal) via services/admin-approval.js.
+  // (checkAndMerge, via services/admin-approval.js) and by the governance
+  // machine for governance proposals (src/workflow/governance-proposal/).
   //
   // The home-card lock icon is the canonical UI affordance. We post a
   // system chat message + broadcast `app_update` so every viewer's card

@@ -7,8 +7,8 @@ then applies, a preview builds and runs its checks, a merge sets off a list of f
 it, and one code path that applies those events. Everything it does to the outside world
 is a durable work item whose result comes back as another event.
 
-Governance proposals are the first machine (behind `WF_GOVERNANCE_ENABLED`), merge
-follow-ups the second (behind `WF_MERGE_FOLLOWUPS_ENABLED`), then app delivery
+Governance proposals are the first machine, and the first whose old paths are deleted:
+it has no flag and decides every governance proposal. Merge follow-ups are the second (behind `WF_MERGE_FOLLOWUPS_ENABLED`), then app delivery
 (`WF_APP_DELIVERY_ENABLED`) and a proposal's preview and required checks
 (`WF_PREVIEWS_ENABLED`). The others move over one at a time.
 
@@ -325,6 +325,9 @@ they cannot drift from the instance.
     production, so a forgotten legacy writer fails a test.
   - In `log` mode, the write is allowed and recorded in `wf_ownership_violations`. That is
     the production default until the machine's old paths are deleted.
+  - The `'@raise'` argument refuses the write whatever the mode: a machine whose old paths
+    are deleted has no writer of those columns left outside it. governance-proposal's
+    trigger carries it.
 
 ## Writing a machine
 
@@ -422,7 +425,8 @@ separate workflow Pod.
 
 - **Every process** records its flags in `wf_settings` at boot (`startWorkflow` in
   `server.js`): a flag that is on turns its machine's ownership guard on
-  (`enabled:<machine>`). In `log` mode (production) a flag that is off leaves the guard
+  (`enabled:<machine>`), and so does every boot for a machine with no flag
+  (governance-proposal). A process whose runtime fails to start exits. In `log` mode (production) a flag that is off leaves the guard
   as it is: the flag is per process and the guard is the cluster's, so a Pod still running
   with the flag off (the old one in a rollout, a rollback, a restart) never switches it off
   under the Pods that run the machine. Once no process runs it, an admin turns it off in
@@ -521,7 +525,6 @@ Two more kinds, decided with the preview machine (each named with a reason, and 
 
 | Variable | Default | Set in production by | Meaning |
 |---|---|---|---|
-| `WF_GOVERNANCE_ENABLED` | `false` | Helm value `platform.workflowGovernanceEnabled` | The governance-proposal machine decides governance proposals. The ticker and the sweeper's Pass 0b leave them alone. |
 | `WF_MERGE_FOLLOWUPS_ENABLED` | `false` | Helm value `platform.workflowMergeFollowupsEnabled` | The merge-followups machine runs what follows a merge. The follow-up recovery sweep stands down, and a change reads live only once production runs it. |
 | `WF_APP_DELIVERY_ENABLED` | `false` | Helm value `platform.workflowAppDeliveryEnabled` | The app-delivery machine runs every production deploy of an app. Needs `WF_MERGE_FOLLOWUPS_ENABLED`: without it the machine does not run, and Admin → Workflows says so. |
 | `WF_PREVIEWS_ENABLED` | `false` | Helm value `platform.workflowPreviewsEnabled` | The preview machine runs every proposal's preview and required checks, and records who works on a session. Off at boot hands its sessions back to the old paths. |
@@ -532,13 +535,13 @@ Two more kinds, decided with the preview machine (each named with a reason, and 
 **Where the variables are set.**
 - **The Helm chart.** A Kubernetes Pod gets only the variables the chart lists, so a
   variable an operator needs to change is a chart value.
-- **`platform_env`.** All five are also declared in `dapp.json`'s `platform_env`, as
+- **`platform_env`.** All of them are also declared in `dapp.json`'s `platform_env`, as
   the platform requires of every variable it reads. Values stored through the Platform
   variables panel only ever reached the retired VPS deploy.
 
 **Turning a machine on or off.** Change its chart value in the infra repository; Argo CD
-rolls the Deployment. `docs/kubernetes-operations.md` has the procedure for the
-governance machine.
+rolls the Deployment (`docs/kubernetes-operations.md`). governance-proposal has no flag:
+its guard is on in every process.
 - **The settings.** The flag a process records in `wf_settings` at boot arms the
   ownership trigger.
 - **The rolling deploy.** While old and new Pods overlap, an old one may still decide a
@@ -609,7 +612,7 @@ A new machine brings the same two layers:
 
 | Machine | Instance | States | Status |
 |---|---|---|---|
-| `governance-proposal` | `issue:<id>`, for the five governance kinds (rename, secret change, close issue, maintenance campaign, featured illustration) | `open` → `applied` / `refused` / `withdrawn` / `superseded` | Behind `WF_GOVERNANCE_ENABLED` |
+| `governance-proposal` | `issue:<id>`, for the five governance kinds (rename, secret change, close issue, maintenance campaign, featured illustration) | `open` → `applied` / `refused` / `withdrawn` / `superseded` | On everywhere; its old paths are deleted |
 | `merge-followups` | `session:<id>`, for each merged proposal and each change that went live inside one | `delivering` → `live`, or `deploy_failed` → `live` | Behind `WF_MERGE_FOLLOWUPS_ENABLED` |
 | `app-delivery` | `app:<id>`, for each app a production deploy was asked for | `idle` ⇄ `deploying` | Behind `WF_APP_DELIVERY_ENABLED`, which needs `WF_MERGE_FOLLOWUPS_ENABLED` |
 | `preview` | `session:<id>`, for each proposal with a preview, a checks run or work recorded on it | `idle`, `preparing`, `checking`, `deferred`, `settled`, `failed`, `retiring` → `retired`; `detached` | Behind `WF_PREVIEWS_ENABLED` |
@@ -621,8 +624,9 @@ votes, the gate (`rules/governance-gate.ts`, the same rule every merge path uses
 vote window and a 10-minute backstop as the instance's timer, then the kind's own change
 in the transaction that closes it. What talks to the outside is durable work: GitHub's
 close and comment (`github.closeIssue`), the production rebuild a secret change needs
-(`app.rebuildProduction`), the target check of a close proposal, and a passed maintenance
-campaign's fan-out (`campaign.run`). The campaign also holds a lease of its own
+(`app.rebuildProduction`), the target check of a close proposal, a passed maintenance
+campaign's fan-out (`campaign.run`), and, when a close vote closes a request, the Homeroom
+bot's proposals for it (`bot.requestsClosed`). The campaign also holds a lease of its own
 (`fleet-maintenance.runCampaign`), so the leader's resume or an admin's retry never drives
 it at the same time.
 
@@ -684,7 +688,7 @@ What a merged pull request still has to do once GitHub has merged it
 An app's production deploys (`src/workflow/app-delivery/`), one at a time per app, for
 everyone who asks: a merge and a secret change (by message, from merge-followups and
 governance-proposal), and, with its flag on, the drift poller and **Check for updates**,
-**Redeploy**, heal's rebuild, rollover's rebuild, the legacy secret change and a demo
+**Redeploy**, heal's rebuild, rollover's rebuild and a demo
 reset (`platform.requestDeploy`).
 
 - **A request** (`DeployRequested`) is recorded on the app's instance. The rule for every

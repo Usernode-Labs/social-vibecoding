@@ -9,9 +9,7 @@
  *
  * The flavors share the createManifestPR core so they can never drift:
  *   - rename PRs (top-level `name`) — used by the interactive route
- *     (POST /api/apps/:slug/rename in routes/apps.js) and the one-time
- *     boot migration that drains the legacy rename-issue backlog
- *     (migrateOpenRenameIssues below);
+ *     (POST /api/apps/:slug/rename in routes/apps.js);
  *   - visibility PRs (top-level `visibility` block, issue #124) — used
  *     by POST /api/apps/:slug/visibility-pr in routes/apps.js. The
  *     change applies when the merged PR's production rebuild runs
@@ -527,172 +525,6 @@ async function findVisibilityPr(pool, appId) {
   return rows[0] || null;
 }
 
-// Returns a matching rename PR session for the same target name. Used by
-// the migration to stay idempotent without collapsing distinct legacy
-// rename proposals for the same app into one PR.
-async function findRenamePrForName(pool, appId, newName) {
-  const { rows } = await pool.query(
-    `SELECT id, pr_number, pr_url FROM chat_sessions
-      WHERE app_id = $1 AND status IN ('promoted', 'merging')
-        AND branch_name LIKE 'rename/%'
-        AND pr_title = $2
-      ORDER BY id DESC
-      LIMIT 1`,
-    [appId, renamePrTitle(newName)]
-  );
-  return rows[0] || null;
-}
-
-// Carries the issue's votes onto the rename PR so people do not have to vote
-// the same thing twice.
-//
-// approval_epoch is not named here on purpose: schema.sql's
-// pr_votes_stamp_approval_epoch trigger fills it from the session. It was
-// named nowhere at all once (#2050), and since NULL never equals the
-// session's epoch, every vote this carried across arrived already dead.
-async function restoreIssueVotesToPr(pool, issueId, sessionId) {
-  const { rowCount } = await pool.query(
-    `INSERT INTO pr_votes (session_id, user_id, vote, created_at)
-       SELECT $2, iv.user_id,
-              CASE iv.vote WHEN 'up' THEN 'yes' WHEN 'down' THEN 'no' END,
-              iv.created_at
-         FROM issue_votes iv
-        WHERE iv.issue_id = $1
-          AND iv.vote IN ('up', 'down')
-      ON CONFLICT (session_id, user_id) DO NOTHING`,
-    [issueId, sessionId]
-  );
-  return rowCount;
-}
-
-/**
- * One-time, idempotent boot routine: convert every open `issues` row with
- * kind='rename' into an equivalent rename PR (via createRenamePR), then
- * best-effort close the GitHub issue + close the DB issue row so the
- * legacy backlog drains and repos' issue trackers stay clean.
- *
- * Idempotency: a rename issue whose exact target name already has an open
- * rename PR is not re-opened; its old issue votes are copied onto that PR.
- * Distinct rename issues for the same app still become distinct PRs so the
- * vote surface preserves all in-flight proposals. A single failing app
- * (GitHub disabled, no bot access, unparseable repo) logs and continues
- * rather than aborting the batch. No-op when GitHub isn't configured.
- */
-async function migrateOpenRenameIssues(config, pool) {
-  if (!github.isEnabled() || !process.env.GITHUB_BOT_TOKEN) {
-    log.info('rename-pr', 'Skipping rename-issue migration (GitHub not configured)');
-    return { migrated: 0, skipped: 0 };
-  }
-
-  let rows;
-  try {
-    ({ rows } = await pool.query(
-      `SELECT i.id, i.app_id, i.github_issue_number, i.payload,
-              a.slug, a.name, a.repo_url,
-              u.username AS created_by_username, i.created_by
-         FROM issues i
-         JOIN apps a ON a.id = i.app_id
-         LEFT JOIN users u ON u.id = i.created_by
-        WHERE i.kind = 'rename' AND i.status = 'open'
-          -- A legacy rename the governance machine holds while it is on is
-          -- its to decide (it still applies legacy renames); with the
-          -- machine off, the migration drains it as before.
-          AND NOT wf_holds('governance-proposal', 'issue:' || i.id)`
-    ));
-  } catch (err) {
-    // issues table or columns missing on a fresh DB — nothing to migrate.
-    log.warn('rename-pr', 'Could not query open rename issues (skipping)', { err: err.message });
-    return { migrated: 0, skipped: 0 };
-  }
-  if (!rows.length) return { migrated: 0, skipped: 0 };
-
-  log.info('rename-pr', 'Migrating open rename issues to rename PRs', { count: rows.length });
-  let migrated = 0;
-  let skipped = 0;
-
-  for (const issue of rows) {
-    try {
-      const newName = typeof issue.payload?.newName === 'string' ? issue.payload.newName.trim() : '';
-      if (!newName || newName.length > appManifest.MAX_APP_NAME_LENGTH) {
-        log.warn('rename-pr', 'Skipping rename issue with invalid newName', { issueId: issue.id });
-        skipped++;
-        continue;
-      }
-      const [, owner, repo] = (issue.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
-      if (!owner || !repo) {
-        log.warn('rename-pr', 'Skipping rename issue (no parseable repo_url)', {
-          issueId: issue.id, slug: issue.slug,
-        });
-        skipped++;
-        continue;
-      }
-
-      const app = { id: issue.app_id, slug: issue.slug, name: issue.name, repo_url: issue.repo_url };
-      const actor = { id: issue.created_by || null, username: issue.created_by_username || 'Homeroom' };
-
-      const alreadyNamed = newName.toLowerCase() === (issue.name || '').toLowerCase();
-      let renameSession = alreadyNamed ? null : await findRenamePrForName(pool, issue.app_id, newName);
-
-      if (!alreadyNamed && !renameSession) {
-        renameSession = await createRenamePR(config, pool, app, newName, actor);
-        migrated++;
-      } else {
-        // Nothing new to open (name already applied, or this exact target
-        // rename PR is already in flight) — just drain this lingering issue
-        // row below after restoring its votes when a PR exists.
-        log.info('rename-pr', 'Rename PR already open / name already applied; draining issue only', {
-          issueId: issue.id, slug: issue.slug, alreadyNamed,
-          existingSessionId: renameSession?.sessionId || renameSession?.id || null,
-        });
-        skipped++;
-      }
-
-      const sessionId = renameSession?.sessionId || renameSession?.id || null;
-      const prNumber = renameSession?.prNumber || renameSession?.pr_number || null;
-      if (sessionId) {
-        const copiedVotes = await restoreIssueVotesToPr(pool, issue.id, sessionId);
-        if (copiedVotes > 0) {
-          log.info('rename-pr', 'Restored issue votes to rename PR', {
-            issueId: issue.id, sessionId, copiedVotes,
-          });
-        }
-      }
-
-      // Best-effort: close the GitHub issue + close the DB row so it leaves
-      // the app's open-issues list. Failures don't undo the PR we opened.
-      if (issue.github_issue_number) {
-        await github.closeIssue(owner, repo, issue.github_issue_number).catch((err) =>
-          log.warn('rename-pr', 'GitHub issue close failed during migration', {
-            issue: issue.github_issue_number, err: err.message,
-          }));
-      }
-      await pool.query(
-        `UPDATE issues SET status = 'closed',
-            payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb
-          WHERE id = $1 AND status = 'open'`,
-        [issue.id, JSON.stringify({
-          migratedToPrAt: new Date().toISOString(),
-          ...(sessionId ? { migratedToPrSessionId: sessionId } : {}),
-          ...(prNumber ? { migratedToPrNumber: prNumber } : {}),
-        })]
-      ).catch((err) => log.warn('rename-pr', 'Could not close migrated rename issue row', {
-        issueId: issue.id, err: err.message,
-      }));
-    } catch (err) {
-      // One app failing (GitHub disabled mid-run, lost bot access, branch
-      // collision, etc.) must not abort the whole batch — leave its issue
-      // as-is so a later boot can retry.
-      log.warn('rename-pr', 'Rename-issue migration failed for one app; continuing', {
-        issueId: issue.id, slug: issue.slug, err: err.message,
-      });
-      skipped++;
-    }
-  }
-
-  log.info('rename-pr', 'Rename-issue migration complete', { migrated, skipped });
-  return { migrated, skipped };
-}
-
 module.exports = {
   // The shared core, for the manifest-editing flavours that live in their
   // own module (#4417: services/topics-pr.js).
@@ -707,7 +539,4 @@ module.exports = {
   findVisibilityPr,
   findGovernancePr,
   findAdminsPr,
-  migrateOpenRenameIssues,
-  findRenamePrForName,
-  restoreIssueVotesToPr,
 };
