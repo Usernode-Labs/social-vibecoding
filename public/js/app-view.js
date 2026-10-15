@@ -6845,6 +6845,15 @@ const AppView = {
     const via = agent ? PlatformI18n.t('changes:page.thread.via', { agent })
       : item.external_agent ? PlatformI18n.t('changes:page.thread.viaExternal')
         : (item.source === 'imported' ? PlatformI18n.t('changes:page.thread.viaGitHub') : null);
+    // Issue #5178: the header repeats the status pill the board card shows,
+    // beside "Change #N" — "✓ Live", "Going live…", or the vote's own words.
+    // A change still being built or closed has no pill worth repeating: its
+    // card pill would read as a bare tally, and the Votes card under the
+    // title already says where those stand. The card's own state wins, so
+    // the kind (proposal or gov) and majority stay the card's.
+    const statusState = ['active', 'paused', 'closed'].includes(item.status)
+      ? null
+      : ((card && card.pill && card.pill.state) || AppView.statusPillState(item, kind === 'gov' ? { kind: 'gov' } : {}) || null);
     return {
       number: n || null,
       category,
@@ -6853,6 +6862,7 @@ const AppView = {
       time: stamp.text,
       timeTitle: stamp.title,
       via,
+      status: statusState && statusState.label ? statusState : null,
       votes: AppView._changeVotesView(item, card),
       testing: AppView._changeTestingView(item),
       shots: AppView._changeShotsView(kind, item),
