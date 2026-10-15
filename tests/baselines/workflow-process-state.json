@@ -115,6 +115,7 @@
       "ownership | chat_sessions.live_at ← src/routes/sessions.js#setHeadlessStep (dynamic SET)",
       "ownership | chat_sessions.live_at ← src/services/proposal-update.js#applyTestingMetadata (dynamic SET)",
       "ownership | chat_sessions.live_at ← trigger chat_sessions_inserted_merged_live",
+      "ownership | chat_sessions.live_at ← trigger chat_sessions_merged_live",
       "ownership | chat_sessions.merge_commit_sha ← src/routes/sessions.js#setHeadlessStep (dynamic SET)",
       "ownership | chat_sessions.merge_commit_sha ← src/routes/votes.js#checkAndOpenRevert",
       "ownership | chat_sessions.merge_commit_sha ← src/services/proposal-update.js#applyTestingMetadata (dynamic SET)",

@@ -188,10 +188,12 @@ test('an invite by username accepted reads as a link\'s join does', () => {
 
 test('every decision settles the bell: the merge, a carried change, every close, and a vote for digests', () => {
   const votes = read('src/routes/votes.js');
-  assert.equal((votes.match(/notifications\.settleDecidedChange\?\.\(pool, session\.id\)/g) || []).length, 2,
-    'the merge, and a merge whose deploy then failed');
   assert.match(votes, /notifications\.settleVoteDigests\?\.\(pool, \{ userIds: \[req\.user\.id\] \}\)/);
-  assert.match(read('src/services/included-changes.js'), /d\.notifications\.settleDecidedChange\?\.\(pool, row\.id\)/);
+  // The merge and a carried change: the merge-followups machine's bell
+  // write, in the transition that marks each merged (settleWrites).
+  const machine = read('src/workflow/merge-followups/machine.ts');
+  assert.match(machine, /\{ type: 'bell', sessionId: d\.sessionId \}/);
+  assert.match(machine, /bell: async \(tx, w, ctx\) => \{\s+const told = new Set\(await settleDecidedChange\(tx, w\.sessionId, \{ status: 'merged' \}\)\);/);
   const lifecycle = read('src/services/session-lifecycle.js');
   const finalize = lifecycle.slice(lifecycle.indexOf('async function finalizeArchivedSession'));
   assert.match(finalize.slice(0, finalize.indexOf('\n}\n')), /settleDecidedChange\(pool, sessionId\)/);
