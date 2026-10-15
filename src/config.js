@@ -717,6 +717,12 @@ function load() {
       // it rebuilt something a later build can reuse. `always`: after every
       // build, as before the choice existed.
       buildkitCacheUpload: process.env.BUILDKIT_CACHE_UPLOAD || 'auto',
+      // `on` (default): an app made from a ready-made starter also imports
+      // that starter's shared layer cache, and the app's first build, the
+      // starter as created, uploads to it. `off` (or 0/false): every app
+      // has its own cache only, as before.
+      buildkitStarterCache: !['off', '0', 'false'].includes(
+        String(process.env.BUILDKIT_STARTER_CACHE || 'on').trim().toLowerCase()),
     },
     // Postgres connection pool size (pg `Pool.max`). pg's built-in default
     // is 10, which can bottleneck under many concurrent SSE turns + staging
@@ -814,6 +820,18 @@ function load() {
     // app-delivery machine: one at a time per app, recorded, and the
     // "deploying" state is durable. Off by default.
     wfAppDeliveryEnabled: ['1', 'true'].includes(process.env.WF_APP_DELIVERY_ENABLED),
+    // With WF_PREVIEWS_ENABLED on, a proposal's preview and its required
+    // checks are the preview machine's: every source asks it, one build and
+    // one checks run at a time, and what serves, what is built and which
+    // revision the verdict is for are durable. It also records who is working
+    // on a session. Off by default.
+    wfPreviewsEnabled: ['1', 'true'].includes(process.env.WF_PREVIEWS_ENABLED),
+    // How many 'error' verdicts in a row the checks' error lane re-runs on
+    // its own (staging-recovery.checkMaxAutoRetries, CHECK_MAX_AUTO_RETRIES).
+    checkMaxAutoRetries: (() => {
+      const n = Number.parseInt(process.env.CHECK_MAX_AUTO_RETRIES || '6', 10);
+      return Number.isFinite(n) ? n : 6;
+    })(),
     // Its own pool, so pipeline slots and the outcome listener never take
     // request connections, and how many slots each process runs. A staging
     // preview shares one Postgres server with the fleet: one slot, and a
@@ -964,6 +982,10 @@ function load() {
         topochainMailTransport: chosen.transport,
       };
     })(),
+    // Where new content reports are mailed (services/moderation.js
+    // submitReport). Optional, like every mail key: the platform's own
+    // compliance inbox is the default.
+    complianceEmail: (process.env.PLATFORM_COMPLIANCE_EMAIL || '').trim() || 'compliance@usernodelabs.org',
   };
 
   for (const [name, value] of [

@@ -274,3 +274,28 @@ export async function settleDecidedChange(pool: Queryable, sessionId: unknown, {
   }
   return [...touched];
 }
+
+// A proposal whose checks cannot run (its preview will not start): its
+// author's 'check_failed', at most one unread per proposal. The preview
+// machine writes it in the transition that records the failure, where a
+// preference read that fails fails the event (`kindAllowed`);
+// services/notifications.js passes `allowsKind`, which fails open.
+export async function createCheckFailedNotification(
+  db: Queryable, { userId, appId, sessionId }: { userId: number | null; appId: number | null; sessionId: number | null },
+  allowed: typeof kindAllowed = kindAllowed,
+): Promise<any[]> {
+  if (!userId || !sessionId) return [];
+  if (!await allowed(db, { userId, appId, kind: 'check_failed' })) return [];
+  const { rows } = await db.query(
+    `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind)
+     SELECT $1, $2, $3, NULL, 'check_failed'
+      WHERE NOT EXISTS (
+        SELECT 1 FROM notifications n
+        WHERE n.user_id = $1 AND n.session_id = $3
+          AND n.kind = 'check_failed' AND n.read_at IS NULL
+      )
+     RETURNING id, user_id, app_id, session_id, source_user_id, kind, created_at`,
+    [userId, appId, sessionId]
+  );
+  return rows;
+}

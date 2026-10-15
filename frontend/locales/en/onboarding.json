@@ -151,6 +151,10 @@
     "text": "Live",
     "description": "One-line status under a new project's card, on its Home tile and on its hub while its first version is being made: the first version has been published and the app is running for everyone. An adjective, not the verb \"to live\"."
   },
+  "buildLine.stopped": {
+    "text": "Stopped",
+    "description": "One-line status under a new project's card, on its App tab, its hub and the screen shown after making it: Homeroom bot's build of its first version stopped before the app went live, and nothing is being built now. Its maker can start it again from their chat with Homeroom bot."
+  },
   "buildLine.tile.planning": {
     "text": "Planning",
     "description": "Very short status under a new project's name on its Home screen icon while its first version is being made: the assistant called Homeroom bot is planning it, writing its plan or working out its details before it builds it. Must fit one short line under a small app icon, so keep it to one or two short words."
@@ -183,6 +187,10 @@
     "text": "Live",
     "description": "Very short status under a new project's name on its Home screen icon: its first version has been published and the app is running for everyone. An adjective, not the verb \"to live\"."
   },
+  "buildLine.tile.stopped": {
+    "text": "Stopped",
+    "description": "Very short status under a new project's name on its Home screen icon: Homeroom bot's build of its first version stopped before the app went live. Must fit one short line under a small app icon."
+  },
   "buildLine.tile.phase.starting": {
     "text": "Starting",
     "description": "Very short status under a new project's name on its Home screen icon: Homeroom bot is starting to build its first version. A verb in progress. Must fit one short line under a small app icon."
@@ -212,8 +220,8 @@
     "description": "One-line status under a new project's card while its first version is made: the first version is built, and its screens are being looked at to find what to fix, before anyone tries it."
   },
   "buildLine.phase.checking": {
-    "text": "Checking the screens · round {{round}} of {{rounds}}",
-    "description": "One-line status under a new project's card while its first version is made: its screens are being looked at and fixed, in rounds. {{round}} is this round's number and {{rounds}} how many rounds there are at most, for example \"round 1 of 2\"."
+    "text": "Checking the screens",
+    "description": "One-line status under a new project's card while its first version is made: its screens are being looked at and fixed. Kept short so that how long is left still fits beside it on a phone; which round it is in is shown in the list of steps."
   },
   "buildLine.soFar_one": {
     "text": "{{count}} min so far",
@@ -571,22 +579,6 @@
     "text": "A lending library",
     "description": "One-line description saved with a new project made from the \"Shared library\" option of the organizer idea, shown under the project's name. At most 90 characters."
   },
-  "firstSession.template.organizer.potlucks.label": {
-    "text": "Potlucks",
-    "description": "Chip under the organizer sentence on the screen that asks a member \"What do you want to make?\": picks this option to fill the sentence's blank."
-  },
-  "firstSession.template.organizer.potlucks.sentence": {
-    "text": "An app to organize our <0>potlucks</0>: who's bringing what, so we don't end up with six salads.",
-    "description": "Sentence shown on the screen that asks a member \"What do you want to make?\" after the Organizer tile and the \"Potlucks\" chip are picked. It is also sent as the description of what to make. <0>…</0> wraps the words the chip filled in, which are shown highlighted; keep the tags around them."
-  },
-  "firstSession.template.organizer.potlucks.name": {
-    "text": "Potluck Planner",
-    "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Potlucks\" option of the organizer idea is picked. A title; the maker can change it."
-  },
-  "firstSession.template.organizer.potlucks.description": {
-    "text": "A potluck planner",
-    "description": "One-line description saved with a new project made from the \"Potlucks\" option of the organizer idea, shown under the project's name. At most 90 characters."
-  },
   "firstSession.template.organizer.study.label": {
     "text": "Study timer",
     "description": "Chip under the organizer sentence on the screen that asks a member \"What do you want to make?\": picks this option to fill the sentence's blank."
@@ -619,6 +611,358 @@
     "text": "An organizer",
     "description": "One-line description saved with a new project made from the organizer idea with the maker's own words, shown under the project's name. At most 90 characters."
   },
+  "firstSession.template.poll.title": {
+    "text": "A group poll",
+    "description": "Title of one of the examples of what a group can make (a group poll), in the list on the signed-out welcome page."
+  },
+  "firstSession.template.poll.line": {
+    "text": "Where to eat, what to spend on, what to watch",
+    "description": "Line under the example titled \"A group poll\" on the signed-out welcome page, and under \"Poll the group\" in the list of more ideas on the \"What do you want to make?\" screen: what it is for."
+  },
+  "firstSession.template.poll.short": {
+    "text": "Poll the group",
+    "description": "Label of a tile, or of a row in the list of more ideas, on the screen that asks a member \"What do you want to make?\": picks a group poll as the starting idea for the new project."
+  },
+  "firstSession.template.poll.note": {
+    "text": "I'm making us a poll. Join and help decide.",
+    "description": "Suggested text of the personal note a maker sends with the invite link to their group, when their new project started from the a group poll idea. Written in the maker's voice, to their friends, while the app is still being made. No exclamation mark."
+  },
+  "firstSession.template.poll.namePlaceholder": {
+    "text": "For example, Dinner Decider",
+    "description": "Placeholder in the empty name field on the \"What do you want to make?\" screen while the a group poll idea is picked: an example of such a project's name."
+  },
+  "firstSession.template.poll.dinner.label": {
+    "text": "Where to eat",
+    "description": "Chip under the a group poll sentence on the screen that asks a member \"What do you want to make?\": picks this option to fill the sentence's blank."
+  },
+  "firstSession.template.poll.dinner.sentence": {
+    "text": "An app for us to decide <0>where to eat</0>: anyone can suggest options, everyone votes, and we see what wins.",
+    "description": "Sentence shown on the screen that asks a member \"What do you want to make?\" after the a group poll idea and the \"Where to eat\" chip are picked. It is also sent as the description of what to make. <0>…</0> wraps the words the chip filled in, which are shown highlighted; keep the tags around them."
+  },
+  "firstSession.template.poll.dinner.name": {
+    "text": "Dinner Decider",
+    "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Where to eat\" option of the a group poll idea is picked. A title; the maker can change it."
+  },
+  "firstSession.template.poll.dinner.description": {
+    "text": "A poll for where we eat",
+    "description": "One-line description saved with a new project made from the \"Where to eat\" option of the a group poll idea, shown under the project's name. At most 90 characters."
+  },
+  "firstSession.template.poll.spending.label": {
+    "text": "What to spend on",
+    "description": "Chip under the a group poll sentence on the screen that asks a member \"What do you want to make?\": picks this option to fill the sentence's blank."
+  },
+  "firstSession.template.poll.spending.sentence": {
+    "text": "An app for us to decide <0>what to spend on</0>: anyone can suggest options, everyone votes, and we see what wins.",
+    "description": "Sentence shown on the screen that asks a member \"What do you want to make?\" after the a group poll idea and the \"What to spend on\" chip are picked. It is also sent as the description of what to make. <0>…</0> wraps the words the chip filled in, which are shown highlighted; keep the tags around them."
+  },
+  "firstSession.template.poll.spending.name": {
+    "text": "Spending Poll",
+    "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"What to spend on\" option of the a group poll idea is picked. A title; the maker can change it."
+  },
+  "firstSession.template.poll.spending.description": {
+    "text": "A poll for what we spend on",
+    "description": "One-line description saved with a new project made from the \"What to spend on\" option of the a group poll idea, shown under the project's name. At most 90 characters."
+  },
+  "firstSession.template.poll.movies.label": {
+    "text": "Movie night",
+    "description": "Chip under the a group poll sentence on the screen that asks a member \"What do you want to make?\": picks this option to fill the sentence's blank."
+  },
+  "firstSession.template.poll.movies.sentence": {
+    "text": "An app for us to decide <0>what to watch on movie night</0>: anyone can suggest options, everyone votes, and we see what wins.",
+    "description": "Sentence shown on the screen that asks a member \"What do you want to make?\" after the a group poll idea and the \"Movie night\" chip are picked. It is also sent as the description of what to make. <0>…</0> wraps the words the chip filled in, which are shown highlighted; keep the tags around them."
+  },
+  "firstSession.template.poll.movies.name": {
+    "text": "Movie Night Poll",
+    "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Movie night\" option of the a group poll idea is picked. A title; the maker can change it."
+  },
+  "firstSession.template.poll.movies.description": {
+    "text": "A poll for what we watch",
+    "description": "One-line description saved with a new project made from the \"Movie night\" option of the a group poll idea, shown under the project's name. At most 90 characters."
+  },
+  "firstSession.template.poll.own.sentence": {
+    "text": "An app for us to decide <0>{{words}}</0>: anyone can suggest options, everyone votes, and we see what wins.",
+    "description": "Sentence of the a group poll idea on the \"What do you want to make?\" screen when the maker fills its blank with their own words. {{words}} is what they type; <0>…</0> wraps it and is shown as a field; keep the tags and the placeholder."
+  },
+  "firstSession.template.poll.own.example": {
+    "text": "where to go this weekend",
+    "description": "Placeholder in the blank of the a group poll sentence when the maker fills it in themselves: an example. It must read naturally in that blank."
+  },
+  "firstSession.template.poll.own.description": {
+    "text": "A group poll",
+    "description": "One-line description saved with a new project made from the a group poll idea in the maker's own words, shown under the project's name. At most 90 characters."
+  },
+  "firstSession.template.findtime.title": {
+    "text": "A time to meet",
+    "description": "Title of one of the examples of what a group can make (finding a time), in the list on the signed-out welcome page."
+  },
+  "firstSession.template.findtime.line": {
+    "text": "Everyone marks when they're free",
+    "description": "Line under the example titled \"A time to meet\" on the signed-out welcome page, and under \"Find a time\" in the list of more ideas on the \"What do you want to make?\" screen: what it is for."
+  },
+  "firstSession.template.findtime.short": {
+    "text": "Find a time",
+    "description": "Label of a tile, or of a row in the list of more ideas, on the screen that asks a member \"What do you want to make?\": picks finding a time as the starting idea for the new project."
+  },
+  "firstSession.template.findtime.note": {
+    "text": "I'm making us a way to find a time. Join and mark when you're free.",
+    "description": "Suggested text of the personal note a maker sends with the invite link to their group, when their new project started from the finding a time idea. Written in the maker's voice, to their friends, while the app is still being made. No exclamation mark."
+  },
+  "firstSession.template.findtime.namePlaceholder": {
+    "text": "For example, Book Club Times",
+    "description": "Placeholder in the empty name field on the \"What do you want to make?\" screen while the finding a time idea is picked: an example of such a project's name."
+  },
+  "firstSession.template.findtime.bookclub.label": {
+    "text": "Book club",
+    "description": "Chip under the finding a time sentence on the screen that asks a member \"What do you want to make?\": picks this option to fill the sentence's blank."
+  },
+  "firstSession.template.findtime.bookclub.sentence": {
+    "text": "An app to find a time for our <0>book club</0> to meet: everyone marks when they're free, and we see what works.",
+    "description": "Sentence shown on the screen that asks a member \"What do you want to make?\" after the finding a time idea and the \"Book club\" chip are picked. It is also sent as the description of what to make. <0>…</0> wraps the words the chip filled in, which are shown highlighted; keep the tags around them."
+  },
+  "firstSession.template.findtime.bookclub.name": {
+    "text": "Book Club Times",
+    "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Book club\" option of the finding a time idea is picked. A title; the maker can change it."
+  },
+  "firstSession.template.findtime.bookclub.description": {
+    "text": "Finding a time for book club",
+    "description": "One-line description saved with a new project made from the \"Book club\" option of the finding a time idea, shown under the project's name. At most 90 characters."
+  },
+  "firstSession.template.findtime.gamenight.label": {
+    "text": "Game night",
+    "description": "Chip under the finding a time sentence on the screen that asks a member \"What do you want to make?\": picks this option to fill the sentence's blank."
+  },
+  "firstSession.template.findtime.gamenight.sentence": {
+    "text": "An app to find a time for <0>game night</0>: everyone marks when they're free, and we see what works.",
+    "description": "Sentence shown on the screen that asks a member \"What do you want to make?\" after the finding a time idea and the \"Game night\" chip are picked. It is also sent as the description of what to make. <0>…</0> wraps the words the chip filled in, which are shown highlighted; keep the tags around them."
+  },
+  "firstSession.template.findtime.gamenight.name": {
+    "text": "Game Night Times",
+    "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Game night\" option of the finding a time idea is picked. A title; the maker can change it."
+  },
+  "firstSession.template.findtime.gamenight.description": {
+    "text": "Finding a time for game night",
+    "description": "One-line description saved with a new project made from the \"Game night\" option of the finding a time idea, shown under the project's name. At most 90 characters."
+  },
+  "firstSession.template.findtime.trip.label": {
+    "text": "Trip",
+    "description": "Chip under the finding a time sentence on the screen that asks a member \"What do you want to make?\": picks this option to fill the sentence's blank."
+  },
+  "firstSession.template.findtime.trip.sentence": {
+    "text": "An app to find dates for our <0>trip</0>: everyone marks when they're free, and we see what works.",
+    "description": "Sentence shown on the screen that asks a member \"What do you want to make?\" after the finding a time idea and the \"Trip\" chip are picked. It is also sent as the description of what to make. <0>…</0> wraps the words the chip filled in, which are shown highlighted; keep the tags around them."
+  },
+  "firstSession.template.findtime.trip.name": {
+    "text": "Trip Dates",
+    "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Trip\" option of the finding a time idea is picked. A title; the maker can change it."
+  },
+  "firstSession.template.findtime.trip.description": {
+    "text": "Finding dates for our trip",
+    "description": "One-line description saved with a new project made from the \"Trip\" option of the finding a time idea, shown under the project's name. At most 90 characters."
+  },
+  "firstSession.template.findtime.own.sentence": {
+    "text": "An app to find a time for our <0>{{words}}</0>: everyone marks when they're free, and we see what works.",
+    "description": "Sentence of the finding a time idea on the \"What do you want to make?\" screen when the maker fills its blank with their own words. {{words}} is what they type; <0>…</0> wraps it and is shown as a field; keep the tags and the placeholder."
+  },
+  "firstSession.template.findtime.own.example": {
+    "text": "running club",
+    "description": "Placeholder in the blank of the finding a time sentence when the maker fills it in themselves: an example. It must read naturally in that blank."
+  },
+  "firstSession.template.findtime.own.name": {
+    "text": "{{words}} Times",
+    "description": "Name suggested for a new project made from the finding a time idea with the maker's own words. {{words}} is what they typed in the sentence's blank, with each word capitalized."
+  },
+  "firstSession.template.findtime.own.description": {
+    "text": "Finding a time that works",
+    "description": "One-line description saved with a new project made from the finding a time idea in the maker's own words, shown under the project's name. At most 90 characters."
+  },
+  "firstSession.template.signup.title": {
+    "text": "A sign-up sheet",
+    "description": "Title of one of the examples of what a group can make (a sign-up sheet), in the list on the signed-out welcome page."
+  },
+  "firstSession.template.signup.line": {
+    "text": "Potlucks, shifts, who's coming",
+    "description": "Line under the example titled \"A sign-up sheet\" on the signed-out welcome page, and under \"Sign-up sheet\" in the list of more ideas on the \"What do you want to make?\" screen: what it is for."
+  },
+  "firstSession.template.signup.short": {
+    "text": "Sign-up sheet",
+    "description": "Label of a tile, or of a row in the list of more ideas, on the screen that asks a member \"What do you want to make?\": picks a sign-up sheet as the starting idea for the new project."
+  },
+  "firstSession.template.signup.note": {
+    "text": "I'm making us a sign-up sheet. Join and sign up.",
+    "description": "Suggested text of the personal note a maker sends with the invite link to their group, when their new project started from the a sign-up sheet idea. Written in the maker's voice, to their friends, while the app is still being made. No exclamation mark."
+  },
+  "firstSession.template.signup.namePlaceholder": {
+    "text": "For example, Park Cleanup",
+    "description": "Placeholder in the empty name field on the \"What do you want to make?\" screen while the a sign-up sheet idea is picked: an example of such a project's name."
+  },
+  "firstSession.template.signup.potluck.label": {
+    "text": "Potluck",
+    "description": "Chip under the a sign-up sheet sentence on the screen that asks a member \"What do you want to make?\": picks this option to fill the sentence's blank."
+  },
+  "firstSession.template.signup.potluck.sentence": {
+    "text": "A sign-up sheet for our <0>potluck</0>: everyone says what they're bringing, so we don't end up with six salads.",
+    "description": "Sentence shown on the screen that asks a member \"What do you want to make?\" after the a sign-up sheet idea and the \"Potluck\" chip are picked. It is also sent as the description of what to make. <0>…</0> wraps the words the chip filled in, which are shown highlighted; keep the tags around them."
+  },
+  "firstSession.template.signup.potluck.name": {
+    "text": "Potluck Planner",
+    "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Potluck\" option of the a sign-up sheet idea is picked. A title; the maker can change it."
+  },
+  "firstSession.template.signup.potluck.description": {
+    "text": "A potluck planner",
+    "description": "One-line description saved with a new project made from the \"Potluck\" option of the a sign-up sheet idea, shown under the project's name. At most 90 characters."
+  },
+  "firstSession.template.signup.shifts.label": {
+    "text": "Volunteer shifts",
+    "description": "Chip under the a sign-up sheet sentence on the screen that asks a member \"What do you want to make?\": picks this option to fill the sentence's blank."
+  },
+  "firstSession.template.signup.shifts.sentence": {
+    "text": "A sign-up sheet for <0>volunteer shifts</0>: everyone takes a slot, and we see what's still needed.",
+    "description": "Sentence shown on the screen that asks a member \"What do you want to make?\" after the a sign-up sheet idea and the \"Volunteer shifts\" chip are picked. It is also sent as the description of what to make. <0>…</0> wraps the words the chip filled in, which are shown highlighted; keep the tags around them."
+  },
+  "firstSession.template.signup.shifts.name": {
+    "text": "Volunteer Sign-ups",
+    "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Volunteer shifts\" option of the a sign-up sheet idea is picked. A title; the maker can change it."
+  },
+  "firstSession.template.signup.shifts.description": {
+    "text": "A volunteer sign-up sheet",
+    "description": "One-line description saved with a new project made from the \"Volunteer shifts\" option of the a sign-up sheet idea, shown under the project's name. At most 90 characters."
+  },
+  "firstSession.template.signup.rsvp.label": {
+    "text": "Who's coming",
+    "description": "Chip under the a sign-up sheet sentence on the screen that asks a member \"What do you want to make?\": picks this option to fill the sentence's blank."
+  },
+  "firstSession.template.signup.rsvp.sentence": {
+    "text": "A sign-up sheet to see <0>who's coming</0>: everyone says going, maybe or can't, and we see the headcount.",
+    "description": "Sentence shown on the screen that asks a member \"What do you want to make?\" after the a sign-up sheet idea and the \"Who's coming\" chip are picked. It is also sent as the description of what to make. <0>…</0> wraps the words the chip filled in, which are shown highlighted; keep the tags around them."
+  },
+  "firstSession.template.signup.rsvp.name": {
+    "text": "Who's Coming",
+    "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Who's coming\" option of the a sign-up sheet idea is picked. A title; the maker can change it."
+  },
+  "firstSession.template.signup.rsvp.description": {
+    "text": "Who's coming",
+    "description": "One-line description saved with a new project made from the \"Who's coming\" option of the a sign-up sheet idea, shown under the project's name. At most 90 characters."
+  },
+  "firstSession.template.signup.own.sentence": {
+    "text": "A sign-up sheet for our <0>{{words}}</0>: everyone takes a slot, and we see what's still needed.",
+    "description": "Sentence of the a sign-up sheet idea on the \"What do you want to make?\" screen when the maker fills its blank with their own words. {{words}} is what they type; <0>…</0> wraps it and is shown as a field; keep the tags and the placeholder."
+  },
+  "firstSession.template.signup.own.example": {
+    "text": "bake sale",
+    "description": "Placeholder in the blank of the a sign-up sheet sentence when the maker fills it in themselves: an example. It must read naturally in that blank."
+  },
+  "firstSession.template.signup.own.name": {
+    "text": "{{words}} Sign-ups",
+    "description": "Name suggested for a new project made from the a sign-up sheet idea with the maker's own words. {{words}} is what they typed in the sentence's blank, with each word capitalized."
+  },
+  "firstSession.template.signup.own.description": {
+    "text": "A sign-up sheet",
+    "description": "One-line description saved with a new project made from the a sign-up sheet idea in the maker's own words, shown under the project's name. At most 90 characters."
+  },
+  "firstSession.template.challenge.title": {
+    "text": "A group challenge",
+    "description": "Title of one of the examples of what a group can make (a group challenge), in the list on the signed-out welcome page."
+  },
+  "firstSession.template.challenge.line": {
+    "text": "Miles, steps or books, with a leaderboard",
+    "description": "Line under the example titled \"A group challenge\" on the signed-out welcome page, and under \"Group challenge\" in the list of more ideas on the \"What do you want to make?\" screen: what it is for."
+  },
+  "firstSession.template.challenge.short": {
+    "text": "Group challenge",
+    "description": "Label of a tile, or of a row in the list of more ideas, on the screen that asks a member \"What do you want to make?\": picks a group challenge as the starting idea for the new project."
+  },
+  "firstSession.template.challenge.note": {
+    "text": "I'm making us a monthly challenge. Join and start logging.",
+    "description": "Suggested text of the personal note a maker sends with the invite link to their group, when their new project started from the a group challenge idea. Written in the maker's voice, to their friends, while the app is still being made. No exclamation mark."
+  },
+  "firstSession.template.challenge.namePlaceholder": {
+    "text": "For example, October Miles",
+    "description": "Placeholder in the empty name field on the \"What do you want to make?\" screen while the a group challenge idea is picked: an example of such a project's name."
+  },
+  "firstSession.template.challenge.miles.label": {
+    "text": "Miles",
+    "description": "Chip under the a group challenge sentence on the screen that asks a member \"What do you want to make?\": picks this option to fill the sentence's blank."
+  },
+  "firstSession.template.challenge.miles.sentence": {
+    "text": "A challenge for our group: who logs the most <0>miles</0> this month, with a leaderboard.",
+    "description": "Sentence shown on the screen that asks a member \"What do you want to make?\" after the a group challenge idea and the \"Miles\" chip are picked. It is also sent as the description of what to make. <0>…</0> wraps the words the chip filled in, which are shown highlighted; keep the tags around them."
+  },
+  "firstSession.template.challenge.miles.name": {
+    "text": "Miles Challenge",
+    "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Miles\" option of the a group challenge idea is picked. A title; the maker can change it."
+  },
+  "firstSession.template.challenge.miles.description": {
+    "text": "A monthly miles challenge",
+    "description": "One-line description saved with a new project made from the \"Miles\" option of the a group challenge idea, shown under the project's name. At most 90 characters."
+  },
+  "firstSession.template.challenge.steps.label": {
+    "text": "Steps",
+    "description": "Chip under the a group challenge sentence on the screen that asks a member \"What do you want to make?\": picks this option to fill the sentence's blank."
+  },
+  "firstSession.template.challenge.steps.sentence": {
+    "text": "A challenge for our group: who logs the most <0>steps</0> this month, with a leaderboard.",
+    "description": "Sentence shown on the screen that asks a member \"What do you want to make?\" after the a group challenge idea and the \"Steps\" chip are picked. It is also sent as the description of what to make. <0>…</0> wraps the words the chip filled in, which are shown highlighted; keep the tags around them."
+  },
+  "firstSession.template.challenge.steps.name": {
+    "text": "Steps Challenge",
+    "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Steps\" option of the a group challenge idea is picked. A title; the maker can change it."
+  },
+  "firstSession.template.challenge.steps.description": {
+    "text": "A monthly steps challenge",
+    "description": "One-line description saved with a new project made from the \"Steps\" option of the a group challenge idea, shown under the project's name. At most 90 characters."
+  },
+  "firstSession.template.challenge.books.label": {
+    "text": "Books",
+    "description": "Chip under the a group challenge sentence on the screen that asks a member \"What do you want to make?\": picks this option to fill the sentence's blank."
+  },
+  "firstSession.template.challenge.books.sentence": {
+    "text": "A challenge for our group: who reads the most <0>books</0> this month, with a leaderboard.",
+    "description": "Sentence shown on the screen that asks a member \"What do you want to make?\" after the a group challenge idea and the \"Books\" chip are picked. It is also sent as the description of what to make. <0>…</0> wraps the words the chip filled in, which are shown highlighted; keep the tags around them."
+  },
+  "firstSession.template.challenge.books.name": {
+    "text": "Reading Challenge",
+    "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Books\" option of the a group challenge idea is picked. A title; the maker can change it."
+  },
+  "firstSession.template.challenge.books.description": {
+    "text": "A monthly reading challenge",
+    "description": "One-line description saved with a new project made from the \"Books\" option of the a group challenge idea, shown under the project's name. At most 90 characters."
+  },
+  "firstSession.template.challenge.own.sentence": {
+    "text": "A challenge for our group: who logs the most <0>{{words}}</0> this month, with a leaderboard.",
+    "description": "Sentence of the a group challenge idea on the \"What do you want to make?\" screen when the maker fills its blank with their own words. {{words}} is what they type; <0>…</0> wraps it and is shown as a field; keep the tags and the placeholder."
+  },
+  "firstSession.template.challenge.own.example": {
+    "text": "push-ups",
+    "description": "Placeholder in the blank of the a group challenge sentence when the maker fills it in themselves: an example. It must read naturally in that blank."
+  },
+  "firstSession.template.challenge.own.name": {
+    "text": "{{words}} Challenge",
+    "description": "Name suggested for a new project made from the a group challenge idea with the maker's own words. {{words}} is what they typed in the sentence's blank, with each word capitalized."
+  },
+  "firstSession.template.challenge.own.description": {
+    "text": "A group challenge",
+    "description": "One-line description saved with a new project made from the a group challenge idea in the maker's own words, shown under the project's name. At most 90 characters."
+  },
+  "firstSession.make.somethingElse": {
+    "text": "Something else…",
+    "description": "Label of the fourth tile on the screen that asks a member \"What do you want to make?\", after three ready ideas: opens a list of more ideas, and of writing your own. The ellipsis says more choices are behind it."
+  },
+  "firstSession.make.sheet.title": {
+    "text": "Something else",
+    "description": "Heading of the sheet that opens from the \"Something else…\" tile on the \"What do you want to make?\" screen: a list of more starting ideas, and of writing your own."
+  },
+  "firstSession.make.sheet.close": {
+    "text": "Close",
+    "description": "Accessible name of the round close button on the \"Something else\" sheet of more starting ideas."
+  },
+  "firstSession.make.sheet.more": {
+    "text": "More ideas",
+    "description": "Small heading over the list of more starting ideas in the \"Something else\" sheet, under the row for writing your own idea."
+  },
+  "firstSession.make.ownIdeaLine": {
+    "text": "Describe it, and Homeroom bot builds it",
+    "description": "Line under \"Your own idea\" in the \"Something else\" sheet on the \"What do you want to make?\" screen: the member writes a description and Homeroom bot (the platform's AI helper, keep its name) builds the first version."
+  },
   "firstSession.make.eyebrow.create": {
     "text": "New project",
     "description": "Small heading above the question on the \"What do you want to make?\" screen, where a member describes a new project, when the screen was opened from the Create button. A noun phrase: this is a new project."
@@ -645,7 +989,7 @@
   },
   "firstSession.make.ownIdea": {
     "text": "Your own idea",
-    "description": "Label of the fourth tile on the \"What do you want to make?\" screen, where a member describes a new project: instead of a ready idea, the member writes their own description in a text box."
+    "description": "Label of the first row in the \"Something else\" sheet on the \"What do you want to make?\" screen, where a member describes a new project: instead of a ready idea, the member writes their own description in a text box. Also the fourth tile's label once that row is picked."
   },
   "firstSession.make.briefLabel": {
     "text": "What should it do?",

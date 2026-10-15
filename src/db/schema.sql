@@ -832,6 +832,7 @@ CREATE TABLE IF NOT EXISTS app_activity (
   date           DATE NOT NULL DEFAULT CURRENT_DATE,
   UNIQUE(app_id, user_id, date)
 );
+ALTER TABLE app_activity ADD COLUMN IF NOT EXISTS precise_milliseconds BIGINT NOT NULL DEFAULT 0;
 
 -- Delivery receipts for engaged-use batches. A browser retains the same UUID
 -- until acknowledgement, so a response lost after COMMIT can be retried
@@ -849,6 +850,27 @@ CREATE TABLE IF NOT EXISTS app_activity_receipts (
 CREATE INDEX IF NOT EXISTS idx_app_activity_receipts_received
   ON app_activity_receipts(received_at);
 COMMENT ON TABLE app_activity_receipts IS 'staging:private';
+
+-- The occurrence intervals behind the daily totals. Kept for challenge
+-- scoring after a delivery receipt expires; their timestamps are never the
+-- upload or scoring time. A receipt and all its intervals commit together.
+CREATE TABLE IF NOT EXISTS app_usage_intervals (
+  id              BIGSERIAL PRIMARY KEY,
+  user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  app_id          INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  batch_id        UUID NOT NULL,
+  interval_index  INTEGER NOT NULL,
+  date            DATE NOT NULL,
+  started_at      TIMESTAMPTZ NOT NULL,
+  ended_at        TIMESTAMPTZ NOT NULL,
+  CHECK (ended_at > started_at),
+  UNIQUE (user_id, batch_id, interval_index)
+);
+CREATE INDEX IF NOT EXISTS idx_app_usage_intervals_user_app_time
+  ON app_usage_intervals (user_id, app_id, started_at, ended_at);
+CREATE INDEX IF NOT EXISTS idx_app_usage_intervals_day
+  ON app_usage_intervals (user_id, app_id, date);
+COMMENT ON TABLE app_usage_intervals IS 'staging:private';
 
 -- Per-check history: which of an app's declared dapp.json checks have ever
 -- been OBSERVED PASSING, and are therefore allowed to block a merge.
@@ -6762,6 +6784,31 @@ CREATE INDEX IF NOT EXISTS idx_waitlist_release_links_expires
   ON waitlist_release_links (expires_at);
 COMMENT ON TABLE waitlist_release_links IS 'staging:private';
 
+-- The admit mail as the admin Journey's first mile reads it (services/
+-- journey.js), kept on the released row after the mail log forgets it. The
+-- log (mail_deliveries and its mail_events) keeps 30 days, and a cohort's
+-- first mile is read for as long as there is one, so the log's retention
+-- sweep (services/mail/index.js pruneDeliveries) copies a released row's
+-- facts here in the same statement that deletes them: when its "you're in"
+-- mail was first sent, whether one was tracked, its first open and first
+-- followed link (never a scanner's or prefetcher's request), and the first
+-- sign-in code asked for after the admit. Each is the earliest seen and
+-- never moves once set, so a sweep that runs in batches keeps the same
+-- values. `release_link_followed_at` is the first spend of the mail's
+-- one-time sign-in link (services/release-links.js spend), which click
+-- tracking leaves out on purpose and whose rows are deleted a day after
+-- they expire: it is written as the link is spent. Times and a flag, like
+-- confirmed_at beside them, and no capability: not column-private, which
+-- here marks a credential and hides it from the debug role, where these are
+-- what somebody debugging a first mile needs. A staging clone empties this
+-- table's rows with every other signup surface (migrate.js seeds its own).
+ALTER TABLE waitlist_signups ADD COLUMN IF NOT EXISTS release_mail_sent_at TIMESTAMPTZ;
+ALTER TABLE waitlist_signups ADD COLUMN IF NOT EXISTS release_mail_tracked BOOLEAN;
+ALTER TABLE waitlist_signups ADD COLUMN IF NOT EXISTS release_mail_opened_at TIMESTAMPTZ;
+ALTER TABLE waitlist_signups ADD COLUMN IF NOT EXISTS release_mail_clicked_at TIMESTAMPTZ;
+ALTER TABLE waitlist_signups ADD COLUMN IF NOT EXISTS release_code_asked_at TIMESTAMPTZ;
+ALTER TABLE waitlist_signups ADD COLUMN IF NOT EXISTS release_link_followed_at TIMESTAMPTZ;
+
 -- Outbound mail log (src/services/mail/). Every send attempt lands here
 -- with its outcome, and it is the ONLY place an operator can see what
 -- happened: the endpoints that trigger mail are always-200 by contract
@@ -10710,6 +10757,16 @@ COMMENT ON COLUMN homeroom_bot_runs.build_no_change IS 'staging:private';
 ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_retry JSONB;
 COMMENT ON COLUMN homeroom_bot_runs.build_retry IS 'staging:private';
 
+-- 15 Oct 2026: a live first version that was built and could not be
+-- proposed, finished by its maker's Try again (homeroom-bot.js
+-- finishBuiltFirstVersion): the session the build left is proposed as the
+-- build would have proposed it. { at, by (who tapped it), session_id (the
+-- session it proposes), outcome ('proposed' or 'failed', once known) }.
+-- Claimed once per run, so a second tap proposes nothing; a claim with no
+-- outcome after FINISH_STALE_MINUTES is a process that died and is taken
+-- again. Nothing private: no words, only ids and times.
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_finish JSONB;
+
 -- Where a live or shadow build is between its steps, saved at each step
 -- boundary so a restart carries it on from there instead of building it
 -- again or sending it back to be triaged (homeroom-bot-checkpoint.js):
@@ -13691,9 +13748,14 @@ CREATE TRIGGER wf_events_writer
 -- guard below checks before it guards a row. Code outside the machine that
 -- must leave such a row alone (a legacy migration, a backfill) asks the same
 -- question in its WHERE clause, so the two cannot disagree.
+-- An instance a machine has handed back holds nothing: 'detached' (its flag
+-- was turned off and the old paths own the row again) and the preview
+-- machine's 'retired' (a retired preview's row is the old paths' again, as
+-- an unarchived proposal's must be until its next event).
 CREATE OR REPLACE FUNCTION wf_holds(machine_name TEXT, instance_key TEXT) RETURNS BOOLEAN AS $$
   SELECT EXISTS (SELECT 1 FROM wf_settings WHERE key = 'enabled:' || machine_name)
-     AND EXISTS (SELECT 1 FROM wf_instances WHERE machine = machine_name AND key = instance_key)
+     AND EXISTS (SELECT 1 FROM wf_instances WHERE machine = machine_name AND key = instance_key
+                    AND NOT (state = 'detached' OR (machine_name = 'preview' AND state = 'retired')))
 $$ LANGUAGE sql STABLE;
 
 CREATE OR REPLACE FUNCTION wf_guard_owned_columns() RETURNS TRIGGER AS $$
@@ -13769,7 +13831,8 @@ CREATE TRIGGER issues_wf_governance_owned
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS live_at TIMESTAMPTZ;
 -- booted_shas: the platform's own row only. The builds platform processes
 -- booted with, newest first, at most ten: [{ "sha": ..., "at": ... }].
--- Written by each process at startup (src/workflow/platform.ts), never by
+-- Written by each process that serves requests, once it listens
+-- (src/workflow/platform.ts releaseServing; never a conductor), never by
 -- the migration Job: main_sha is seeded from the incoming release's GIT_SHA
 -- by the migration that runs BEFORE the rollout, so it can name a build that
 -- does not serve yet. A history, not the last boot: during a rollout an
@@ -13849,6 +13912,66 @@ CREATE TRIGGER apps_wf_delivery_owned
         OR OLD.deploy_from_sha IS DISTINCT FROM NEW.deploy_from_sha)
   EXECUTE FUNCTION wf_guard_owned_columns('@enrolled=app-delivery/app:',
     'deploy_state', 'deploy_started_at', 'deploy_from_sha');
+
+-- preview (src/workflow/preview/): a proposal's preview and its required
+-- checks, one instance per session. For a session it holds, it owns the
+-- preview's columns (what serves, from the serving attempt's receipt) and
+-- the checks' (which revision the verdict is for, and the verdict), and
+-- writes them in the transition that decides. checks_progress and
+-- check_phase stay the run's progress stream (a run says while it waits for
+-- a checks slot, and when it starts testing) and are not guarded.
+DROP TRIGGER IF EXISTS chat_sessions_wf_preview_owned ON chat_sessions;
+CREATE TRIGGER chat_sessions_wf_preview_owned
+  BEFORE UPDATE ON chat_sessions
+  FOR EACH ROW
+  WHEN (OLD.staging_url IS DISTINCT FROM NEW.staging_url
+        OR OLD.staging_container_id IS DISTINCT FROM NEW.staging_container_id
+        OR OLD.staging_image_ref IS DISTINCT FROM NEW.staging_image_ref
+        OR OLD.staging_build_ref IS DISTINCT FROM NEW.staging_build_ref
+        OR OLD.staging_runtime_kind IS DISTINCT FROM NEW.staging_runtime_kind
+        OR OLD.staging_runtime_name IS DISTINCT FROM NEW.staging_runtime_name
+        OR OLD.staging_commit_sha IS DISTINCT FROM NEW.staging_commit_sha
+        OR OLD.checks_commit_sha IS DISTINCT FROM NEW.checks_commit_sha
+        OR OLD.check_state IS DISTINCT FROM NEW.check_state
+        OR OLD.test_results IS DISTINCT FROM NEW.test_results
+        OR OLD.check_error_detail IS DISTINCT FROM NEW.check_error_detail
+        OR OLD.consecutive_check_failures IS DISTINCT FROM NEW.consecutive_check_failures
+        OR OLD.check_next_retry_at IS DISTINCT FROM NEW.check_next_retry_at
+        OR OLD.console_check_state IS DISTINCT FROM NEW.console_check_state
+        OR OLD.capture_state IS DISTINCT FROM NEW.capture_state)
+  EXECUTE FUNCTION wf_guard_owned_columns('@enrolled=preview/session:',
+    'staging_url', 'staging_container_id', 'staging_image_ref', 'staging_build_ref', 'staging_runtime_kind',
+    'staging_runtime_name', 'staging_commit_sha', 'checks_commit_sha', 'check_state',
+    'test_results', 'check_error_detail', 'consecutive_check_failures', 'check_next_retry_at',
+    'console_check_state', 'capture_state');
+
+-- A checks run's media (screenshots, recordings) while the run is under
+-- way: its handler stores them here under the run's id, and the transition
+-- that settles the run publishes them to session_visuals with its verdict,
+-- in one transaction. A run that is cancelled or superseded never reaches
+-- session_visuals; what it held goes when the session's next run settles,
+-- or when its preview is retired. Same columns as session_visuals.
+CREATE TABLE IF NOT EXISTS check_run_media (
+  id                   VARCHAR(32) PRIMARY KEY,
+  run_id               TEXT        NOT NULL,
+  session_id           INTEGER     NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  commit_hash          VARCHAR(64),
+  kind                 VARCHAR(8)  NOT NULL,
+  media                VARCHAR(8)  NOT NULL,
+  content_type         VARCHAR(32) NOT NULL,
+  data                 BYTEA       NOT NULL,
+  captured_path        VARCHAR(512),
+  capture_index        SMALLINT    NOT NULL DEFAULT 0,
+  captured_viewport    VARCHAR(16),
+  shot_status          SMALLINT,
+  before_fell_back     BOOLEAN     NOT NULL DEFAULT FALSE,
+  scenario_id          VARCHAR(96),
+  scenario_fingerprint VARCHAR(64),
+  created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS check_run_media_run_idx ON check_run_media (run_id);
+CREATE INDEX IF NOT EXISTS check_run_media_session_idx ON check_run_media (session_id);
+COMMENT ON TABLE check_run_media IS 'staging:private';
 
 -- platform_live_at: a merge into Homeroom itself, when a production build
 -- that carries it first started serving. Homeroom ships in a release cut

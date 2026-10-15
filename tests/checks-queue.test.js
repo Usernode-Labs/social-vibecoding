@@ -242,7 +242,7 @@ test('captureForSession waits for its slot after the preview is up and before an
 test('a newer request for a session whose run is still waiting supersedes it at once', () => {
   const src = read('src/services/visuals.js');
   assert.match(src, /if \(movedOn && typeof running\.leaveQueue === 'function' && running\.leaveQueue\(\)\) \{/);
-  assert.match(src, /const flight = \{ operation, commitHash: commitHash \|\| null \};\s+_inFlight\.set\(key, flight\);/);
+  assert.match(src, /const flight = \{ operation, commitHash: commitHash \|\| null \};\s+if \(!workflow\) _inFlight\.set\(key, flight\);/);
 });
 
 test('every run\'s row going wakes this process\'s waiters', () => {

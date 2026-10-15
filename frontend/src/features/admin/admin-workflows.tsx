@@ -352,6 +352,27 @@ function InstanceView({ at, actions, onOpen, onBack }: {
               <button type="button" disabled={busy} className={AdminUI.btn.primarySm}
                 onClick={() => act('Retry delivery', ...event('RetryDelivery'))}>Retry delivery</button>
             ) : null}
+            {actions.includes('AdminRetry') && ['failed', 'settled', 'deferred', 'retiring'].includes(inst.state) ? (
+              <button type="button" disabled={busy} className={AdminUI.btn.primarySm}
+                onClick={() => act('Retry the preview', ...event('AdminRetry'),
+                  'Builds the preview again if nothing serves its head, else runs its checks again (or retries a retirement that did not close).')}>
+                Retry preview
+              </button>
+            ) : null}
+            {actions.includes('AdminEnd') && ['preparing', 'checking'].includes(inst.state) ? (
+              <button type="button" disabled={busy} className={AdminUI.btn.outlineSm}
+                onClick={() => act('End the build or run', ...event('AdminEnd'),
+                  'Ends a build or checks run that never answers: it is recorded as an error, and its late result is ignored.')}>
+                End build or run
+              </button>
+            ) : null}
+            {actions.includes('AdminRetire') && !['retiring', 'retired', 'detached'].includes(inst.state) ? (
+              <button type="button" disabled={busy} className={AdminUI.btn.destructiveSm}
+                onClick={() => act('Retire the preview', ...event('AdminRetire'),
+                  'Deletes the preview and every database it built, and stops its checks. The next revision builds a new one.')}>
+                Retire preview
+              </button>
+            ) : null}
             {actions.includes('AdminApply') && inst.state === 'open' ? (
               <button type="button" disabled={busy} className={AdminUI.btn.destructiveSm}
                 onClick={() => act('Apply now', ...event('AdminApply'),

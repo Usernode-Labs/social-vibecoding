@@ -1403,6 +1403,10 @@
     "text": "Open app",
     "description": "Button on the first-version card of a project's Hub once the first version is live. Open is a verb: goes to the running app."
   },
+  "hub.firstVersion.tryAgain": {
+    "text": "Try again",
+    "description": "Main button on the first-version card of a project's Hub, for the person who started the project, when Homeroom bot's build of the first version stopped before the app went live: opens the build's conversation in their chat with Homeroom bot, where they can start it again."
+  },
   "hub.firstVersion.seePlan": {
     "text": "See the plan",
     "description": "Quiet link on the first-version card of a project's Hub, for a member who did not start the project: opens the plan for the first version to read, without being able to answer it."

@@ -40,6 +40,7 @@ const { MIN_MAX_OUTPUT_TOKENS } = require('../../worker/build-codex-model-catalo
 const workerProgress = require('../services/worker-progress');
 const sessionLifecycle = require('../services/session-lifecycle');
 const stagingRecovery = require('../services/staging-recovery');
+const previewWorkflow = require('../services/preview-workflow');
 const sessionBus = require('../services/session-bus');
 const chatDelivery = require('../services/chat-delivery');
 const { drainGuard } = require('../services/lifecycle');
@@ -6226,6 +6227,18 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         } catch {}
       }
 
+      // With WF_PREVIEWS_ENABLED on the preview machine builds a new attempt
+      // of the head (a build or run already going is the answer).
+      if (previewWorkflow.enabled()) {
+        const out = await previewWorkflow.request({
+          pool, session, head: commitHash === 'latest' ? null : commitHash, reason: 'deploy', actor: `user:${req.user.id}`,
+        });
+        if (out.status === 'rejected' && ['not_open', 'not_deployable', 'no_head'].includes(out.reason)) {
+          return res.status(409).json({ error: 'This session cannot deploy a preview now', reason: out.reason });
+        }
+        return res.json({ ok: true, status: 'deploying' });
+      }
+
       // Manual deployment can discover a newer branch head. Claim it before
       // entering the coordinator, but never regress a concurrently changed pin.
       if (require('../services/preview-lifecycle').enabled(config) && commitHash !== 'latest') {
@@ -6588,12 +6601,15 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // immediate refresh deterministically sees the in-progress state (the
       // fire-and-forget below re-stamps idempotently — same commit sha, so
       // the failure-streak bookkeeping is preserved).
-      const visualsService = require('../services/visuals');
-      await visualsService.setChecksPending(pool, sessionId, session.checks_commit_sha || null, 'building', 'manual-recheck')
-        .catch((err) => log.warn('sessions', 'recheck setChecksPending failed (non-fatal)', {
-          sessionId, err: err.message,
-        }));
-      visualsService.notifyChecksPending(sessionId, session.checks_commit_sha || null, 'building', 'manual-recheck');
+      // (With WF_PREVIEWS_ENABLED on, the preview machine stamps it.)
+      if (!previewWorkflow.enabled()) {
+        const visualsService = require('../services/visuals');
+        await visualsService.setChecksPending(pool, sessionId, session.checks_commit_sha || null, 'building', 'manual-recheck')
+          .catch((err) => log.warn('sessions', 'recheck setChecksPending failed (non-fatal)', {
+            sessionId, err: err.message,
+          }));
+        visualsService.notifyChecksPending(sessionId, session.checks_commit_sha || null, 'building', 'manual-recheck');
+      }
 
       res.json({ status: 'running', checkState: 'pending' });
 
@@ -8651,7 +8667,7 @@ async function resumeOneHeadlessRun(args) {
   // the auto-pause / staging-GC sweepers see the session as busy for the
   // full recovery (journal tail + staging + wrap-up) — mirrors
   // resumeDetachedTurn in server.js (pause-proof finalization).
-  activeWorkers.add(args.session.id);
+  await activeWorkers.enter(args.session.id);
   try {
     return await resumeOneHeadlessRunInner(args);
   } catch (err) {
@@ -8989,17 +9005,34 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
         const app = { id: session.app_id, slug: session.app_slug, name: session.app_name, repo_url: session.repo_url };
         let stagingResult = null;
         let stagingErr = null;
-        // #461: pend the checks for the NEW commit before the build, so the
-        // previous commit's verdict (e.g. a stale 'passing') can't satisfy
-        // the merge gate while this build runs — or after it fails.
-        await visuals.setChecksPending(pool, session.id, result.sha, 'building', 'commit-push')
-          .catch((err) => log.warn('visuals', 'setChecksPending failed (non-fatal)', { sessionId: session.id, err: err.message }));
-        try {
-          stagingResult = await staging.buildAndDeployStaging(config, session, app, result.sha);
-        } catch (e) {
-          stagingErr = e;
+        // With WF_PREVIEWS_ENABLED on the preview machine builds and checks it.
+        const previewHandedOff = await previewWorkflow.revision({
+          pool, session, head: result.sha, source: 'turn', trigger: 'commit-push',
+        });
+        if (!previewHandedOff) {
+          // #461: pend the checks for the NEW commit before the build, so the
+          // previous commit's verdict (e.g. a stale 'passing') can't satisfy
+          // the merge gate while this build runs — or after it fails.
+          await visuals.setChecksPending(pool, session.id, result.sha, 'building', 'commit-push')
+            .catch((err) => log.warn('visuals', 'setChecksPending failed (non-fatal)', { sessionId: session.id, err: err.message }));
+          try {
+            stagingResult = await staging.buildAndDeployStaging(config, session, app, result.sha);
+          } catch (e) {
+            stagingErr = e;
+          }
         }
-        if (stagingResult) {
+        if (previewHandedOff) {
+          await pool.query(
+            `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+             VALUES ($1, 'system', $2, $3)`,
+            [session.id, 'Building staging preview...',
+              JSON.stringify({ changesReady: true, stagingBuild: 'running', prNumber: null })]
+          ).catch(() => {});
+          dispatchSummary = `Commit ${result.sha.substring(0, 8)} pushed to ${session.branch_name}; the staging preview is building. `
+            + 'Headless mode: no PR was opened (it is created on a clone at propose time).'
+            + (session.spec_md ? ' The change implements the spec drafted earlier this run (in the session spec doc).' : '')
+            + (testing.cleanedText ? `\n\nWhat the agent did:\n${testing.cleanedText.slice(0, 2000)}` : '');
+        } else if (stagingResult) {
           await pool.query(
             'UPDATE chat_sessions SET staging_container_id = $1, staging_url = $2 WHERE id = $3',
             [stagingResult.containerId, stagingResult.stagingUrl, session.id]
@@ -9410,7 +9443,7 @@ async function runScoutTool({
   deferTurnCleanup = false,
   beforeTurnCleanup = null,
 }) {
-  activeWorkers.add(session.id);
+  await activeWorkers.enter(session.id);
   // #50: wall-clock start for the durationMs persisted on terminal
   // statuses, so the dev-chat "(took Xm Ys)" suffix survives reloads.
   const turnStartedMs = Date.now();
@@ -11237,8 +11270,12 @@ async function publishStagingOutcome({
   pool, sessionId, turnId = null, tailIdentity = null,
   outcome, metadata, failure = null,
 }) {
-  const succeeded = outcome === 'success';
-  const content = succeeded ? 'Staging deployed!' : 'Staging build failed';
+  // 'building': the preview machine (WF_PREVIEWS_ENABLED) builds it; the
+  // card says so, and its Preview button comes with the machine's
+  // staging_ready.
+  const succeeded = outcome === 'success' || outcome === 'building';
+  const content = outcome === 'building' ? 'Building staging preview...'
+    : succeeded ? 'Staging deployed!' : 'Staging build failed';
   const checkpoint = succeeded
     ? { stagingPublished: true }
     : { stagingPublished: true, stagingFailed: failure || { errMsg: metadata?.error || 'Staging build failed' } };
@@ -11654,7 +11691,7 @@ async function runClaudeCodeTool({
   deferTurnCleanup = false,
   beforeTurnCleanup = null,
 }) {
-  activeWorkers.add(session.id);
+  await activeWorkers.enter(session.id);
   // #50: wall-clock start for the durationMs persisted on terminal
   // statuses, so the dev-chat "(took Xm Ys)" suffix survives reloads.
   const turnStartedMs = Date.now();
@@ -12968,18 +13005,27 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${guidan
       const app = { id: session.app_id, slug: session.app_slug, name: session.app_name, repo_url: session.repo_url };
       let stagingResult = null;
       let stagingErr = null;
-      // #461: pend the checks for the NEW commit before the build starts, so
-      // the previous commit's verdict (e.g. a stale 'passing') can't satisfy
-      // the merge gate while this build runs — or after it fails.
-      await visuals.setChecksPending(pool, session.id, commitHash, 'building')
-        .catch((err) => log.warn('visuals', 'setChecksPending failed (non-fatal)', { sessionId: session.id, err: err.message }));
-      try {
-        stagingResult = await staging.buildAndDeployStaging(config, session, app, commitHash);
-      } catch (e) {
-        stagingErr = e;
+      // With WF_PREVIEWS_ENABLED on the preview machine builds and checks it.
+      const previewHandedOff = await previewWorkflow.revision({
+        pool, session, head: commitHash, source: 'turn', trigger: 'commit-push',
+      });
+      if (!previewHandedOff) {
+        // #461: pend the checks for the NEW commit before the build starts, so
+        // the previous commit's verdict (e.g. a stale 'passing') can't satisfy
+        // the merge gate while this build runs — or after it fails.
+        await visuals.setChecksPending(pool, session.id, commitHash, 'building')
+          .catch((err) => log.warn('visuals', 'setChecksPending failed (non-fatal)', { sessionId: session.id, err: err.message }));
+        try {
+          stagingResult = await staging.buildAndDeployStaging(config, session, app, commitHash);
+        } catch (e) {
+          stagingErr = e;
+        }
       }
 
-      if (stagingResult) {
+      if (previewHandedOff) {
+        await sendStatus('Building staging preview...', { changesReady: true, stagingBuild: 'running', prNumber: null });
+        summaryParts.push('The staging preview is building; its checks run once it is up.');
+      } else if (stagingResult) {
         await pool.query(
           `UPDATE chat_sessions SET staging_container_id = $1, staging_url = $2 WHERE id = $3`,
           [stagingResult.containerId, stagingResult.stagingUrl, session.id]
@@ -13214,18 +13260,80 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${guidan
       // "Chat error" toast and has no breadcrumb to follow.
       let stagingResult = null;
       let stagingErr = null;
-      // #461: pend the checks for the NEW commit before the build starts, so
-      // the previous commit's verdict (e.g. a stale 'passing') can't satisfy
-      // the merge gate while this build runs — or after it fails.
-      await visuals.setChecksPending(pool, session.id, commitHash, 'building')
-        .catch((err) => log.warn('visuals', 'setChecksPending failed (non-fatal)', { sessionId: session.id, err: err.message }));
-      try {
-        stagingResult = await staging.buildAndDeployStaging(config, session, app, commitHash);
-      } catch (e) {
-        stagingErr = e;
+      // A promoted proposal's votes were on the previous version.
+      const retireVotesForCommit = async () => {
+        if (session.status !== 'promoted') return;
+        // Tail milestone BEFORE the work, not after: the vote reset is
+        // the one tail step that is not idempotent in what it SAYS (it
+        // announces itself and asks people back). A resumed tail must not
+        // re-announce a reset for a commit whose votes are already retired,
+        // so claim it up front — a crash between the stamp and the retire
+        // leaves at worst an unannounced reset, which the next push redoes
+        // anyway.
+        if (durableTurnId) {
+          await worker.noteTailMilestone(
+            session.id,
+            { votesResetFor: commitHash },
+            { turnId: durableTurnId },
+          );
+        }
+        // #1688: the votes are RETIRED, not deleted — the session's approval
+        // epoch moves on and the rows stay as the record of who was on
+        // board, which is what asks the prior Yes voters back with one tap.
+        // The same step the recovered tail takes (retireVotesForNewCommit).
+        const retired = await retireVotesForNewCommit({ pool, session, commitHash });
+        if (retired.retired > 0) {
+          summaryParts.push('Group-chat votes were reset for the new commit.');
+        }
+      };
+
+      // With WF_PREVIEWS_ENABLED on the preview machine builds and checks
+      // the commit; the turn ends without waiting for it, and the page hears
+      // staging_ready and the verdict over the WebSocket bus. A promoted
+      // proposal's reviewed head moves to the commit first: it is the pin the
+      // machine checks a revision against.
+      let previewHandedOff = false;
+      if (previewWorkflow.enabled()) {
+        await retireVotesForCommit();
+        previewHandedOff = await previewWorkflow.revision({
+          pool, session, head: commitHash, source: 'turn', trigger: 'commit-push',
+        });
+      }
+      if (!previewHandedOff) {
+        // #461: pend the checks for the NEW commit before the build starts, so
+        // the previous commit's verdict (e.g. a stale 'passing') can't satisfy
+        // the merge gate while this build runs — or after it fails.
+        await visuals.setChecksPending(pool, session.id, commitHash, 'building')
+          .catch((err) => log.warn('visuals', 'setChecksPending failed (non-fatal)', { sessionId: session.id, err: err.message }));
+        try {
+          stagingResult = await staging.buildAndDeployStaging(config, session, app, commitHash);
+        } catch (e) {
+          stagingErr = e;
+        }
       }
 
-      if (stagingResult) {
+      if (previewHandedOff) {
+        // The "Changes ready" card renders from changesReady; its Preview
+        // button appears when the machine's staging_ready arrives. Behind
+        // the receipt the recovered tail writes this card under, as the
+        // other outcomes are.
+        const buildingCard = {
+          changesReady: true,
+          stagingBuild: 'running',
+          prNumber: session.pr_number || null,
+          prUrl: session.pr_url || null,
+        };
+        if (durableTurnId) {
+          const published = await publishStagingOutcome({
+            pool, sessionId: session.id, turnId: durableTurnId,
+            tailIdentity: { turnId: durableTurnId }, outcome: 'building', metadata: buildingCard,
+          });
+          if (published.applied) send('status', { text: published.content, ...buildingCard });
+        } else {
+          await sendStatus('Building staging preview...', buildingCard);
+        }
+        summaryParts.push('The staging preview is building; its checks run once it is up.');
+      } else if (stagingResult) {
         await pool.query(
           `UPDATE chat_sessions SET staging_container_id = $1, staging_url = $2 WHERE id = $3`,
           [stagingResult.containerId, stagingResult.stagingUrl, session.id]
@@ -13292,30 +13400,7 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${guidan
             sessionId: session.id, err: err.message,
           }));
 
-        if (session.status === 'promoted') {
-          // Tail milestone BEFORE the work, not after: the vote reset is
-          // the one tail step that is not idempotent in what it SAYS (it
-          // announces itself and asks people back). A resumed tail must not
-          // re-announce a reset for a commit whose votes are already retired,
-          // so claim it up front — a crash between the stamp and the retire
-          // leaves at worst an unannounced reset, which the next push redoes
-          // anyway.
-          if (durableTurnId) {
-            await worker.noteTailMilestone(
-              session.id,
-              { votesResetFor: commitHash },
-              { turnId: durableTurnId },
-            );
-          }
-          // #1688: the votes are RETIRED, not deleted — the session's approval
-          // epoch moves on and the rows stay as the record of who was on
-          // board, which is what asks the prior Yes voters back with one tap.
-          // The same step the recovered tail takes (retireVotesForNewCommit).
-          const retired = await retireVotesForNewCommit({ pool, session, commitHash });
-          if (retired.retired > 0) {
-            summaryParts.push('Group-chat votes were reset for the new commit.');
-          }
-        }
+        await retireVotesForCommit();
 
         if (session.pr_number && repoOwner && repoName) {
           try {

@@ -3317,9 +3317,13 @@ const AppView = {
    * drawn to a picture, from Building it, then up to three REAL screens of
    * the build from Testing it, through Ready to try. Each is an image the
    * server keeps for the project's members
-   * (/api/apps/:slug/first-version/screens/:kind/:n), never a page. A
-   * screenshot state's made-up project carries its own pictures. Null for
-   * none: the thumbnail is as it was.
+   * (/api/apps/:slug/first-version/screens/:kind/:n). 15 Oct 2026: a first
+   * look whose picture is not saved yet (`screens.drawn`) is its drawn
+   * screen, a document that runs and loads nothing
+   * (/api/apps/:slug/first-version/first-look/drawn), which the band frames
+   * (frontend/src/features/first-session/drawn-look.tsx drawnLookUrl spells
+   * the same URL). A screenshot state's made-up project carries its own
+   * pictures. Null for none: the thumbnail is as it was.
    */
   _firstVersionScreens(appData) {
     const fv = appData.first_version || {};
@@ -3334,6 +3338,9 @@ const AppView = {
     if (!count || !appData.slug) return null;
     const v = encodeURIComponent(String(sc.v || '0'));
     const slug = encodeURIComponent(appData.slug);
+    if (sc.kind === 'first_look' && sc.drawn === true) {
+      return { kind: 'first_look', at, images: [`/api/apps/${slug}/first-version/first-look/drawn?v=${v}`] };
+    }
     return {
       kind: sc.kind,
       at,
@@ -3387,6 +3394,8 @@ const AppView = {
     const fv = appData.first_version || {};
     // Built and up for approval: no longer "being built" (_firstVersionReadyView).
     if (fv.ready) return AppView._firstVersionReadyView(appData);
+    // Its build stopped, and nothing is live yet (_firstVersionStoppedView).
+    if (fv.stopped === true) return AppView._firstVersionStoppedView(appData);
     const thumb = AppView._firstVersionThumb(appData);
     const waiting = AppView._firstVersionWaiting(appData);
     // Their DM, by its id when the record names it (members get neither).
@@ -3422,6 +3431,48 @@ const AppView = {
       tourSays: true,
       action: chat,
       ...(waiting ? { waiting } : {}),
+    };
+  },
+
+  /**
+   * 14 Oct 2026 (newcomer run eight, Club Votes, iPhone Safari): Homeroom
+   * bot's build of the first version stopped, and nothing is live yet
+   * (`first_version.stopped`, services/homeroom-bot-dm.js
+   * firstVersionState). The answer used to have no first version at all, so
+   * this screen framed the starter template the repo was made from
+   * ("Welcome to your new app! Everything on this screen is placeholder
+   * content…") with no sign that anything had gone wrong. It keeps the
+   * card and its first look, as while it was built, and its line says
+   * Stopped. Its maker gets Try again, which opens the build's thread in
+   * their chat with Homeroom bot (`first_version.thread`), where the bot's
+   * own Try again under its message starts it over; nobody else can, and
+   * they keep "It opens here when it’s ready." Nothing promises a
+   * notification while nothing is being made.
+   */
+  _firstVersionStoppedView(appData) {
+    const fv = appData.first_version || {};
+    const thumb = AppView._firstVersionThumb(appData);
+    const id = (value) => (Number.isInteger(value) && value > 0 ? value : null);
+    const thread = fv.thread && typeof fv.thread === 'object' ? fv.thread : {};
+    const mine = fv.mine === true;
+    return {
+      dot: null,
+      message: appData.name || appData.slug,
+      detail: null,
+      ...thumb,
+      buildLine: 'stopped',
+      ...(mine ? {} : { lines: [PlatformI18n.t('changes:firstVersion.opensWhenReady')] }),
+      action: mine
+        ? {
+          key: 'botThread',
+          label: PlatformI18n.t('changes:firstVersion.tryAgain'),
+          slug: appData.slug,
+          conversationId: id(thread.conversationId) || id(fv.conversationId),
+          threadRootId: id(thread.threadRootId),
+          messageId: id(thread.messageId),
+          underCard: true,
+        }
+        : null,
     };
   },
 
@@ -3646,6 +3697,26 @@ const AppView = {
     if (!slug || !Number.isInteger(id) || id <= 0) return;
     AppView._reactDevBoard()?.showVotes?.(id);
     location.hash = `#app/${encodeURIComponent(slug)}/dev/proposals/${id}`;
+  },
+
+  /**
+   * 14 Oct 2026: a stopped first version's Try again (_firstVersionStoppedView):
+   * the build's thread in its maker's chat with Homeroom bot, where the bot's
+   * Try again is; else the message itself, whose link lands inside its
+   * thread; else the chat (openBotChat). The address goes through Messages'
+   * openAddress, as a bell row's does, so it opens even when it is the one
+   * already in the bar.
+   */
+  openFirstVersionThread(slug, conversationId, threadRootId, messageId) {
+    const valid = (value) => Number.isInteger(value) && value > 0;
+    if (!valid(conversationId)) return AppView.openBotChat(slug, null);
+    const href = valid(threadRootId) ? `#messages/${conversationId}/thread/${threadRootId}`
+      : valid(messageId) ? `#messages/${conversationId}/m/${messageId}`
+        : `#messages/${conversationId}`;
+    const messages = window.UsernodeReact && window.UsernodeReact.messages;
+    if (messages && typeof messages.openAddress === 'function') messages.openAddress(href);
+    else location.hash = href;
+    return undefined;
   },
 
   /** The first-version screen's button: the viewer's DM with the Homeroom bot. */
@@ -6774,6 +6845,15 @@ const AppView = {
     const via = agent ? PlatformI18n.t('changes:page.thread.via', { agent })
       : item.external_agent ? PlatformI18n.t('changes:page.thread.viaExternal')
         : (item.source === 'imported' ? PlatformI18n.t('changes:page.thread.viaGitHub') : null);
+    // Issue #5178: the header repeats the status pill the board card shows,
+    // beside "Change #N" — "✓ Live", "Going live…", or the vote's own words.
+    // A change still being built or closed has no pill worth repeating: its
+    // card pill would read as a bare tally, and the Votes card under the
+    // title already says where those stand. The card's own state wins, so
+    // the kind (proposal or gov) and majority stay the card's.
+    const statusState = ['active', 'paused', 'closed'].includes(item.status)
+      ? null
+      : ((card && card.pill && card.pill.state) || AppView.statusPillState(item, kind === 'gov' ? { kind: 'gov' } : {}) || null);
     return {
       number: n || null,
       category,
@@ -6782,6 +6862,7 @@ const AppView = {
       time: stamp.text,
       timeTitle: stamp.title,
       via,
+      status: statusState && statusState.label ? statusState : null,
       votes: AppView._changeVotesView(item, card),
       testing: AppView._changeTestingView(item),
       shots: AppView._changeShotsView(kind, item),
@@ -8890,6 +8971,28 @@ const AppView = {
     // A fresh run started first is the one the feed's own load then joins.
     if (opts) AppView._loadDevData(opts);
     return AppView._loadDevFeed();
+  },
+
+  // (#5164) The project hub's quiet refresh: the For you card (the votes
+  // owed) and Recently live, re-read while one of the hub's own places is
+  // showing. A timed tick and a return to the tab call it; a socket burst
+  // still goes through refreshDevData, and a tick landing beside one joins
+  // the same run (_loadDevData's in-flight join / queue).
+  //
+  // `whole` widens the read to the whole board (a return to the tab, where
+  // the missed time can have moved anything); a tick reads only the parts
+  // the hub's two cards draw from — the proposals' tallies and the merged
+  // list — so it stays light. Nothing here runs off the board or under a
+  // hidden tab, and a board that has not loaded whole once is not partly
+  // refreshed.
+  refreshHubLive({ whole = false } = {}) {
+    if (!AppView.appData || typeof App === 'undefined' || App.currentTab !== 'dev') return undefined;
+    if (App.currentSubTab !== 'forum') return undefined;
+    if (document.hidden) return undefined;
+    if (!AppView._devDataReady) return undefined;
+    App._announceRefreshIntent?.();
+    const parts = whole ? null : new Set(['promoted', 'merged']);
+    return AppView._loadDevFeed(parts ? { parts } : null);
   },
 
   // What a live burst moved, as board parts: a vote moves the proposals'

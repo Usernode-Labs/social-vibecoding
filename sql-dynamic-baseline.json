@@ -446,7 +446,7 @@
     {
       "source": "src/routes/proposal-handoff.js",
       "kind": "structural-template",
-      "fingerprint": "1b33c1367f728315daa1",
+      "fingerprint": "de2bbf1356dca5b8a5e8",
       "count": 1,
       "preview": "`UPDATE chat_sessions SET handoff_uploaded_sha = $1, handoff_local_commit_sha = $5, ${summaryFreshness.INVALIDATE_SQL}, handoff_upload_checked_sha = checks_comm"
     },
@@ -913,23 +913,16 @@
       "preview": "`INSERT INTO app_check_history (app_id, check_key, check_name, check_path, first_passed_at, last_passed_at, last_seen_at, consecutive_passes, merged_pass_at, me"
     },
     {
-      "source": "src/services/check-history.js",
-      "kind": "structural-template",
-      "fingerprint": "2c4e52c5068d710d3719",
-      "count": 1,
-      "preview": "`INSERT INTO app_check_history AS h (app_id, check_key, check_name, check_path, first_passed_at, last_passed_at, last_failed_at, last_seen_at, pass_count, fail_"
-    },
-    {
       "source": "src/services/cli-handoff-sync.js",
       "kind": "structural-template",
-      "fingerprint": "468267d2ba00b7bc7ac5",
+      "fingerprint": "1cb21f929c7ffb55e776",
       "count": 1,
       "preview": "`UPDATE chat_sessions SET handoff_head_sha = $1, ${summaryFreshness.INVALIDATE_SQL}, handoff_uploaded_sha = $1, handoff_local_commit_sha = NULL, handoff_upload_"
     },
     {
       "source": "src/services/cli-handoff-sync.js",
       "kind": "structural-template",
-      "fingerprint": "dbc430251a0b764b430a",
+      "fingerprint": "6aa68d0ba5c2b91bab8a",
       "count": 1,
       "preview": "`UPDATE chat_sessions SET handoff_head_sha = $1, ${summaryFreshness.INVALIDATE_SQL}, handoff_uploaded_sha = $1, handoff_local_commit_sha = NULL, handoff_upload_"
     },
@@ -1370,9 +1363,9 @@
     {
       "source": "src/services/proposal-update.js",
       "kind": "structural-template",
-      "fingerprint": "48b2cbd10645fd9ca1ec",
+      "fingerprint": "55e4f495d28528be3946",
       "count": 1,
-      "preview": "`UPDATE chat_sessions SET check_state = 'pending', checks_commit_sha = $1, check_error_detail = NULL, staging_container_id = NULL, staging_url = NULL, last_acti"
+      "preview": "`UPDATE chat_sessions SET check_state = CASE WHEN $4::boolean THEN check_state ELSE 'pending' END, checks_commit_sha = CASE WHEN $4::boolean THEN checks_commit_"
     },
     {
       "source": "src/services/proposal-update.js",
@@ -1732,6 +1725,20 @@
       "preview": "sql"
     },
     {
+      "source": "src/workflow/merge-followups/facts.ts",
+      "kind": "structural-template",
+      "fingerprint": "c914efdf0597f6339694",
+      "count": 1,
+      "preview": "`SELECT r.id FROM shot_runs r WHERE r.session_id = $1 AND ${LIVE_SHOTS_RUN} ORDER BY r.created_at DESC LIMIT 1`"
+    },
+    {
+      "source": "src/workflow/merge-followups/facts.ts",
+      "kind": "structural-template",
+      "fingerprint": "fa05f9e0f0982408d8c9",
+      "count": 1,
+      "preview": "`SELECT cs.id, cs.app_id, cs.status, cs.user_id, cs.pr_number, cs.pr_title, cs.linked_issues, cs.agent_session_id, cs.active_turn IS NOT NULL AS active_turn, cs"
+    },
+    {
       "source": "src/workflow/merge-followups/services.ts",
       "kind": "runtime-built-identifier",
       "fingerprint": "13088ed3d10fbb042d8b",
@@ -1746,11 +1753,32 @@
       "preview": "`SELECT count(*)::int AS yes, cs.votes_required FROM pr_votes pv JOIN chat_sessions cs ON cs.id = pv.session_id WHERE pv.session_id = $1 AND pv.vote = 'yes' AND"
     },
     {
+      "source": "src/workflow/preview/facts.ts",
+      "kind": "structural-template",
+      "fingerprint": "3ed3ffeecbde5a9523e0",
+      "count": 1,
+      "preview": "`SELECT cs.id, cs.app_id, cs.user_id, cs.status, cs.source, cs.is_headless, cs.shared_at, cs.branch_name, cs.pr_number, cs.imported_pr_head_sha, cs.reviewed_hea"
+    },
+    {
+      "source": "src/workflow/preview/facts.ts",
+      "kind": "structural-template",
+      "fingerprint": "b07755383912776139d2",
+      "count": 1,
+      "preview": "`SELECT h AS holder FROM unnest($1::text[]) AS h WHERE ${holderAliveSql('h')}`"
+    },
+    {
       "source": "src/workflow/rules/change-notifications.ts",
       "kind": "structural-template",
       "fingerprint": "d81e1b5402d7ea2e1750",
       "count": 1,
       "preview": "`INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind, detail) SELECT v.user_id, v.app_id, v.session_id, v.source_user_id, v.kind, v.det"
+    },
+    {
+      "source": "src/workflow/rules/check-store.ts",
+      "kind": "structural-template",
+      "fingerprint": "9003bfe93e34a954816d",
+      "count": 1,
+      "preview": "`INSERT INTO app_check_history AS h (app_id, check_key, check_name, check_path, first_passed_at, last_passed_at, last_failed_at, last_seen_at, pass_count, fail_"
     },
     {
       "source": "src/workflow/rules/merge-credits.ts",

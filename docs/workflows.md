@@ -7,9 +7,10 @@ then applies, a preview builds and runs its checks, a merge sets off a list of f
 it, and one code path that applies those events. Everything it does to the outside world
 is a durable work item whose result comes back as another event.
 
-Governance proposals are the first machine (behind `WF_GOVERNANCE_ENABLED`) and merge
-follow-ups the second (behind `WF_MERGE_FOLLOWUPS_ENABLED`). The others move over one at a
-time.
+Governance proposals are the first machine (behind `WF_GOVERNANCE_ENABLED`), merge
+follow-ups the second (behind `WF_MERGE_FOLLOWUPS_ENABLED`), then app delivery
+(`WF_APP_DELIVERY_ENABLED`) and a proposal's preview and required checks
+(`WF_PREVIEWS_ENABLED`). The others move over one at a time.
 
 ## What it solves
 
@@ -216,6 +217,16 @@ A service is a `WorkHandler` registered for a kind:
   item of the same kind with `continues: '<work key>'`. The new item then starts from that
   item's last checkpoint, so a manual retry of a close that already commented does not
   comment again. Without `continues`, a new key starts fresh.
+- **An event can cancel work it made obsolete.** An outcome's `cancel: [{ kind, key }]`
+  settles those items of the instance as cancelled in the event's transaction (`result`
+  gains `cancelled: true`):
+  - a queued item never runs;
+  - a running item loses its claim, so its `signal` aborts at the next lease renewal
+    (within a third of the lease) and it reports nothing;
+  - an item that already reported has its result refused (`work_cancelled`).
+
+  The kernel stops nothing outside the database. A build or Job the item started is
+  cleaned up by the machine's own work (the preview machine's `checks.cancel`).
 
 ## Timers and messages
 
@@ -487,6 +498,13 @@ done when its entries are gone. A new machine may enter it only with the other w
 its own columns, which go when its legacy paths are deleted, and with calls it took over
 from an older machine, each named in the list's `takenOver` with where it came from (the
 call moves; the older machine's copy goes when its work path is deleted with the flag).
+Two more kinds, decided with the preview machine (each named with a reason, and checked):
+- **an I/O core** (`io`): a function outside `src/workflow/` that does the step's I/O, cut
+  out of the per-process wrapper the old flow runs it through (the build without
+  `_stagingBuilds` and the coordinator, the checks run without its in-process seat). The
+  two-process and restart tests show it keeps no process memory;
+- **a hand-off** (`handOff`) to a flow a later step migrates (the merge queue, the
+  Homeroom bot's notes, shots), naming that step: it leaves the list when the step lands.
 
 ### In production (Kubernetes)
 
@@ -506,6 +524,7 @@ call moves; the older machine's copy goes when its work path is deleted with the
 | `WF_GOVERNANCE_ENABLED` | `false` | Helm value `platform.workflowGovernanceEnabled` | The governance-proposal machine decides governance proposals. The ticker and the sweeper's Pass 0b leave them alone. |
 | `WF_MERGE_FOLLOWUPS_ENABLED` | `false` | Helm value `platform.workflowMergeFollowupsEnabled` | The merge-followups machine runs what follows a merge. The follow-up recovery sweep stands down, and a change reads live only once production runs it. |
 | `WF_APP_DELIVERY_ENABLED` | `false` | Helm value `platform.workflowAppDeliveryEnabled` | The app-delivery machine runs every production deploy of an app. Needs `WF_MERGE_FOLLOWUPS_ENABLED`: without it the machine does not run, and Admin → Workflows says so. |
+| `WF_PREVIEWS_ENABLED` | `false` | Helm value `platform.workflowPreviewsEnabled` | The preview machine runs every proposal's preview and required checks, and records who works on a session. Off at boot hands its sessions back to the old paths. |
 | `WF_SLOTS` | 4 (1 on a staging preview) | the default | Pipeline slots in each process. |
 | `WF_POOL_MAX` | 6 (2 on a staging preview) | the default | Connections in the runtime's own pool, the outcome listener's included. Keep it above `WF_SLOTS`. |
 | `WF_OWNERSHIP_MODE` | `log` in production, `raise` elsewhere | the default | What a write to an owned column from outside the machine does. |
@@ -593,6 +612,7 @@ A new machine brings the same two layers:
 | `governance-proposal` | `issue:<id>`, for the five governance kinds (rename, secret change, close issue, maintenance campaign, featured illustration) | `open` → `applied` / `refused` / `withdrawn` / `superseded` | Behind `WF_GOVERNANCE_ENABLED` |
 | `merge-followups` | `session:<id>`, for each merged proposal and each change that went live inside one | `delivering` → `live`, or `deploy_failed` → `live` | Behind `WF_MERGE_FOLLOWUPS_ENABLED` |
 | `app-delivery` | `app:<id>`, for each app a production deploy was asked for | `idle` ⇄ `deploying` | Behind `WF_APP_DELIVERY_ENABLED`, which needs `WF_MERGE_FOLLOWUPS_ENABLED` |
+| `preview` | `session:<id>`, for each proposal with a preview, a checks run or work recorded on it | `idle`, `preparing`, `checking`, `deferred`, `settled`, `failed`, `retiring` → `retired`; `detached` | Behind `WF_PREVIEWS_ENABLED` |
 
 ### governance-proposal
 
@@ -630,7 +650,9 @@ What a merged pull request still has to do once GitHub has merged it
 - **Merged, then live.** The change is `live` once production runs a build that contains
   it: its own delivery, or a `Deployed` report checked against GitHub
   (`delivery.verify`). Every successful `rebuildProduction` reports one, and so does the
-  platform's own release, at boot.
+  platform's own release, once a process serving people runs it (`releaseServing`, from
+  the listener's start; never a conductor, which serves nobody and can be up before the
+  release's web Pods).
   - Only then are these written: `chat_sessions.live_at`, the "is live" line, the
     author's notification, the requester's DM and the journey record.
   - Until then the change reads merged and going live.
@@ -644,8 +666,9 @@ What a merged pull request still has to do once GitHub has merged it
   working on it. An operation that keeps no durable record while it runs (a sync with main
   or a dispatch starting its worker, a hand-off's commit upload, a local agent run) is
   seen only in the process running it (`isSessionBusy`, as before the machine): during a
-  rollout's overlap, the other Pod's are not. Who is working on a session becomes durable
-  with previews and checks.
+  rollout's overlap, the other Pod's are not. With the preview machine on, those
+  operations are recorded on its instance and read by the guard instead (`worked_on`,
+  below), in whichever process decides.
 - **Every web process's issue lists.** GitHub's open-issues list is cached per process,
   with the requests just closed hidden from it. A merge and its close work publish an
   `issues_closed` push, which every web process applies to its own copy (`ws.js`); no
@@ -653,7 +676,7 @@ What a merged pull request still has to do once GitHub has merged it
 - **With app delivery on,** a merge asks `app-delivery` for its deploy by message instead
   of running `app.deliver`, and its answer (`Delivered` with the build's sha, or
   `DeliveryFailed`) decides as the work result did. The platform's own release is still
-  heard at boot; on a Docker host, its host deployer is told by durable work
+  heard from the processes serving it; on a Docker host, its host deployer is told by durable work
   (`host.nudgeDeployer`).
 
 ### app-delivery
@@ -696,11 +719,68 @@ reset (`platform.requestDeploy`).
   first deploy and the boot respawn stay old flows too (no request is made for an app
   still being created).
 
+### preview
+
+A proposal's preview and its required checks (`src/workflow/preview/`), from the first
+revision announced under the flag until the preview is retired. What is being built, what
+serves and which revision the verdict is for are separate facts on the instance; the
+`chat_sessions` columns are its projection, so every reader keeps working.
+
+- **Requests.** Every source of a preview or a checks run (a turn's commit, a CLI upload,
+  a fork update, a sync with main, an imported pull request's head, the merge gate, a
+  person's Preview, Deploy or Recheck, recovery, fleet) appends `RevisionSubmitted` with
+  an exact head, `PreviewRequested` or `RecheckRequested`, through
+  `services/preview-workflow.js`. A head that is not the row's pin for its kind (an
+  import's head, a promoted proposal's reviewed head, a submitted hand-off) is refused
+  `head_superseded`; the head being built or served joins.
+- **One build at a time, one checks run at a time.** A build is an attempt
+  (`preview.prepare`): its own checkout, database and env Secret, then the session's
+  runtime updated in place, fenced by attempt and claim (`n.k`), the serving template
+  restored if the rollout fails. Each claim of a build clones into a database and a
+  checkout of its own, so a claim that runs again after a crash never re-clones the
+  database an earlier claim's pods may already use; the receipt names the one that
+  serves, and the earlier claims' go. A claim that lost its lease and runs on never
+  writes, restores or deletes what a later claim of the same attempt deployed, its env
+  Secret included (the claims of an attempt share it; it carries the same fence). A failed
+  attempt deletes only the Deployment exactly its claim wrote, and only as it read it
+  (UID and version), never one a newer attempt or claim has written since. A recheck whose inputs changed
+  (`testing-update`, `shots-update`) replaces a run going; any other joins it. A newer head cancels the obsolete build or run (the kernel's
+  `cancel`) and retires what it created, never while it still serves (a build cancelled
+  after its deploy gives the Deployment back to the attempt that serves). Each claim of a
+  checks run (`checks.run`) gives its Jobs an id of its own, and its manifest names the
+  run: a retry after a lost claim collects the Jobs the earlier claim left on the cluster,
+  and runs again only when there is nothing to read.
+- **One transition settles a run:** the verdict, `test_results`, console, capture outcome,
+  the run's media (held under its run id until then, `check_run_media`) and the app's
+  check history (`rules/check-store.ts`), with the pushes browsers hear (`checks_ready`,
+  `staging_ready`, `visuals_ready`). A verdict about a head the row has left stores
+  nothing. Its follow-ups (the merge queue, the bot's note, shots) are one work item.
+- **Liveness is the work lease;** nothing is judged stuck by clock. An `error` runs again
+  on the instance's timer (2 minutes doubling to 30, at most `CHECK_MAX_AUTO_RETRIES`, or
+  for a day for the platform's own fault). An admin can retry, retire, or end a build or
+  run that never answers (`AdminEnd`).
+- **Retirement:** archive, merge, included changes and app deletion retire the preview
+  for good; idle and connection pressure only when nobody is working on the session (a
+  refusal reads as busy to the sweep that asked). The runtime and its Secrets are deleted
+  by the identities read first, every attempt's database by name.
+- **Who is working on a session.** The instance is also its durable record: its own build
+  or run while it is `preparing` or `checking`, and the operations old flows keep no
+  record of (a sync with main or a dispatch starting its worker, an upload, a promote, a
+  turn before its container starts), recorded by `services/active-workers.js`
+  (`OperationStarted` / `OperationEnded`). Such a record names the process that holds it
+  and counts only while that process holds its presence lock
+  (`services/process-presence.js`, `rules/presence.ts`): a crash or a release ends it at
+  once, without a heartbeat. `session-work.ts` is what other machines read.
+- **Coexistence.** Old flows that ask whether a build or run is under way read the row
+  (`check_phase = 'building'`, the preview display state) or the instance; the stuck-checks
+  sweep, the harvest and the reapers leave its sessions alone. With the flag off at boot,
+  every session it holds is handed back (`Detach`); the next event under the flag adopts
+  the row again.
+
 **Planned order:**
-1. **Previews and required checks.** (App delivery, above, came first.)
-2. **Before/after shots.**
-3. **The proposal lifecycle.**
-4. **The merge itself:** the attempt, the queue, production delivery and conflicts.
-5. **Fleet campaigns.**
+1. **Before/after shots.** (App delivery and previews, above, came first.)
+2. **The proposal lifecycle.**
+3. **The merge itself:** the attempt, the queue, production delivery and conflicts.
+4. **Fleet campaigns.**
 
 Each one deletes the old paths it replaces once its flag is the default.

@@ -301,7 +301,7 @@ function settleWrites(e: Event<any>, d: Data, s: NonNullable<Facts['session']>):
   ];
 }
 
-function merged(e: Event<any>, f: Facts, ctx: TransitionContext, viaDelivery: boolean): Outcome<MFState> {
+function merged(e: Event<any>, f: Facts, ctx: TransitionContext, viaDelivery: boolean, durableWork = false): Outcome<MFState> {
   const s = f.session!;
   const app = f.app!;
   const p = e.payload;
@@ -320,7 +320,8 @@ function merged(e: Event<any>, f: Facts, ctx: TransitionContext, viaDelivery: bo
   const messages = d.delivery ? [deliveryRequest(d, f)] : [];
   work.push(...settleWork(d, s.linkedIssues, false, { teardown: app.selfHosted }));
   if (d.repo && d.prNumber) {
-    work.push({ kind: WORK.find, key: 'included', input: { sessionId: d.sessionId, appId: d.appId, prNumber: d.prNumber, ...d.repo } });
+    work.push({ kind: WORK.find, key: 'included', input: { sessionId: d.sessionId, appId: d.appId, prNumber: d.prNumber, ...d.repo,
+      ...(durableWork ? { durableWork: true } : {}) } });
   }
   if (d.mergeSha) work.push({ kind: WORK.mainCheck, key: 'main-check', input: { appId: d.appId, sessionId: d.sessionId, prNumber: d.prNumber, mergeSha: d.mergeSha } });
   const notify: Notification[] = [{ type: 'kickQueue', appId: d.appId, excludeSessionId: d.sessionId },
@@ -356,10 +357,12 @@ function merged(e: Event<any>, f: Facts, ctx: TransitionContext, viaDelivery: bo
 // merge on its own, or be included by a later merge.
 //
 // What is working on it is read from the durable record of each: the turn's
-// journal (active_turn), a live shots run, checks running, and the head the
-// carrier matched (a change revised since it was listed merges on its own).
-// The operations that keep no durable record while they run are left out by
-// the search before this (services.ts included.find, isSessionBusy).
+// journal (active_turn), a live shots run, checks running, the operations
+// the preview machine records (session-work.ts), and the head the carrier
+// matched (a change revised since it was listed merges on its own). Without
+// the preview machine, the operations that keep no durable record while they
+// run are left out by the search before this (services.ts included.find,
+// isSessionBusy, in the process running the search).
 function notIncludable(f: Facts, carrierAppId: number | null, head: string | null): string | null {
   const s = f.session;
   if (!s) return 'no_session';
@@ -369,6 +372,7 @@ function notIncludable(f: Facts, carrierAppId: number | null, head: string | nul
   if (head && s.head !== head) return 'head_moved';
   if (s.shotsRunning) return 'shots_running';
   if (s.checksRunning) return 'checks_running';
+  if (s.workedOn) return 'worked_on';
   if (s.isHeadless) return 'headless';
   if (!s.prNumber) return 'no_pull_request';
   if (s.pendingSecrets) return 'holds_secret_values';
@@ -569,6 +573,10 @@ export interface MachineDeps {
   // Whether a merge asks app-delivery for its deploy (its flag in this
   // process). Recorded on the instance when it merges.
   delivery?: () => boolean;
+  // Whether who works on a session is recorded durably (the preview
+  // machine's flag in this process): the carry search then leaves it to the
+  // guard's durable reads, instead of this process's memory.
+  previews?: () => boolean;
 }
 
 export function mergeFollowups(deps: MachineDeps): Machine<MFState, Facts> {
@@ -588,9 +596,11 @@ export function mergeFollowups(deps: MachineDeps): Machine<MFState, Facts> {
     // 2: the retire waits on the shots run's row and asks again later, the
     // carried head and busy refusals, teardown after the delivery's result,
     // the issue lists' push. 3: the deploy asked of app-delivery (Delivered,
-    // DeliveryFailed), the host deployer's nudge as work. During a rollout
-    // an older Pod leaves the instances a newer version wrote alone.
-    version: 3,
+    // DeliveryFailed), the host deployer's nudge as work. 4: who works on a
+    // carried change is read from the preview machine's record (worked_on,
+    // and its build or run as checks running). During a rollout an older Pod
+    // leaves the instances a newer version wrote alone.
+    version: 4,
     events: EVENTS,
     create: ['Merged', 'Included'],
     terminal: ['live'],
@@ -619,7 +629,7 @@ export function mergeFollowups(deps: MachineDeps): Machine<MFState, Facts> {
             : !f.session || !f.app ? reject('no_session')
               : f.session.status === 'merged' ? reject('already_merged')
                 : !['promoted', 'merging'].includes(f.session.status) ? reject('not_merging') : ok()),
-          to: (s, e, f, ctx) => merged(e, f, ctx, viaDelivery()),
+          to: (s, e, f, ctx) => merged(e, f, ctx, viaDelivery(), !!deps.previews?.()),
         },
         Included: {
           guard: (s, e, f, ctx) => {

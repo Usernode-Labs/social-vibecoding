@@ -207,8 +207,10 @@ test('a build that did not finish says why in plain words, and that a reply here
     'I couldn\'t finish building this: something went wrong while I was working on it. Reply here and I\'ll try again.');
   assert.equal(said(''),
     'I couldn\'t finish building this: something went wrong while I was working on it. Reply here and I\'ll try again.');
+  // 14 Oct 2026 (newcomer run eight): a first version is named, and points
+  // at the Try again under the message (tests/first-version-stopped.test.js).
   assert.equal(said('the build ran past its time limit', { firstVersion: true }),
-    'I couldn\'t finish building the first version: it took longer than I\'m allowed. Reply here and I\'ll try again.');
+    'I couldn\'t finish building Page Turners: it took longer than I\'m allowed. Tap Try again and I\'ll start over.');
   for (const reason of ['the build ran past its time limit (finished after a restart)', 'the build turn failed (exit 1)',
     'the change was built but could not be proposed: x', 'the platform restarted in the middle of each of its last 3 tries at building this']) {
     const text = said(reason);

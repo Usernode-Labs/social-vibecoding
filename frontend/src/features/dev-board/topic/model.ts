@@ -585,6 +585,12 @@ export interface ChangeGateView {
 export interface ChangeThreadView {
   /** The pull request's number, for "Change #N"; null before it has one. */
   number: number | null;
+  /**
+   * The status pill the board card shows, beside "Change #N": "✓ Live",
+   * "Going live…", or the vote's own words. Null while the change is being
+   * built or closed (AppView._changeThreadView).
+   */
+  status: StatusPillState | null;
   category: string | null;
   author: string;
   at: string | null;

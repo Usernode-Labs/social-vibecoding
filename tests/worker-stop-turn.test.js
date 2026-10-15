@@ -43,7 +43,12 @@ function stub(id, exports) {
 // simulate a stop landing DURING the dispatch round-trip. `opts.journal`
 // installs a fake `child_process.spawn` so _consumeJournal's `tail -f`
 // resolves immediately off canned lines instead of shelling out.
-function loadWorker({ onExec = null, journalLines = null } = {}) {
+// `opts.onPromptWrite` and `opts.onActiveTurnRead` run while the dispatch
+// writes its prompt and reads chat_sessions.active_turn, so a test can land
+// another turn's claim at either point of the race.
+function loadWorker({
+  onExec = null, journalLines = null, onPromptWrite = null, onActiveTurnRead = null,
+} = {}) {
   const ids = {
     docker: require.resolve('../src/services/docker'),
     logger: require.resolve('../src/services/logger'),
@@ -68,6 +73,7 @@ function loadWorker({ onExec = null, journalLines = null } = {}) {
     // execInWorker writes the turn prompt through this one.
     execShellStdin: async (runtimeName, script, opts) => {
       stdinCalls.push({ runtimeName, script, opts });
+      if (onPromptWrite) await onPromptWrite({ runtimeName, script, opts });
       return { stdout: '', stderr: '' };
     },
   });
@@ -85,6 +91,7 @@ function loadWorker({ onExec = null, journalLines = null } = {}) {
         const text = String(sql);
         const sessionId = Number(params[0]);
         if (/SELECT active_turn FROM chat_sessions/i.test(text)) {
+          if (onActiveTurnRead) await onActiveTurnRead(sessionId);
           return { rows: [{ active_turn: activeTurns.get(sessionId) || null }], rowCount: 1 };
         }
         if (/SET active_turn = \$2::jsonb/i.test(text)) {
@@ -847,6 +854,55 @@ test('a dispatch that loses the session to another turn says why, and leaves the
       'the stop targets the journal the losing dispatch would have wiped');
   } finally { restore(); }
 });
+
+// Session 8599: a sync-on-resume and a build turn dispatched on the same
+// worker together. The build claimed the session; the sync, backing out,
+// wrote `inFlight: false` over the build's registry entry, and the idle
+// sweep (which skips only in-flight workers) evicted the worker five minutes
+// later with the build still running. The loser may back out after the
+// winner's claim landed on the registry before its own, or after.
+function raceTwoDispatches(sessionId, winnerClaims) {
+  const winner = { turnId: 'build-turn-1', phase: 'executing', mode: 'build',
+    journal: '/home/node/.claude/turn-build-turn-1.log' };
+  let worker = null;
+  let activeTurns = null;
+  let claimed = false;
+  const claim = () => {
+    if (claimed) return;
+    claimed = true;
+    activeTurns.set(sessionId, winner);
+    worker._registryUpsertForTests(sessionId, {
+      inFlight: true, activeTurnMode: 'build', journal: winner.journal, activeTurnId: winner.turnId,
+    });
+  };
+  const loaded = loadWorker({
+    journalLines: ['__USERNODE_EXIT__ 0'],
+    // Before the loser's own registry claim...
+    onPromptWrite: winnerClaims === 'before' ? claim : null,
+    // ...or between it and the loser's active_turn read.
+    onActiveTurnRead: winnerClaims === 'after' ? claim : null,
+  });
+  ({ worker, activeTurns } = loaded);
+  return { ...loaded, winner };
+}
+
+for (const winnerClaims of ['before', 'after']) {
+  test(`a dispatch that loses the session leaves the running turn in flight (winner claims ${winnerClaims})`, async () => {
+    const { worker, activeTurns, winner, restore } = raceTwoDispatches(8599, winnerClaims);
+    try {
+      warmSession(worker, 8599);
+      await assert.rejects(
+        () => worker.execInWorker(8599, { ...DISPATCH_ARGS, mode: 'sync', logicalTurnId: 'sync-turn-1' }),
+        (err) => err.sessionBusy === true,
+      );
+      assert.deepEqual(activeTurns.get(8599), winner, 'the winner keeps the session');
+      assert.equal(worker.isInFlight(8599), true, 'the running turn is still in flight');
+      const [meta] = worker.warmRegistrySnapshot().filter((m) => m.sessionId === 8599);
+      assert.equal(meta.inFlight, true, 'so the idle sweep leaves its worker alone');
+      assert.equal(worker.getActiveTurnMode(8599), 'build');
+    } finally { restore(); }
+  });
+}
 
 test('concurrent turns on one session write their prompts to different files', () => {
   const worker = require('../src/services/worker');

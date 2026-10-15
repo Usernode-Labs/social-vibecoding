@@ -21,6 +21,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
@@ -153,6 +154,32 @@ test('a merged change was voted in: a full green Votes card that says where it i
   assert.equal(av._topicHeroView('proposal', { ...merged, deployment_kind: 'child', deployment_state: 'pending' }).status, 'Going live');
   assert.equal(av._topicHeroView('proposal', { ...merged, deployment_kind: 'child', deployment_state: 'failed' }).status, 'Not live yet');
   assert.equal(av._topicHeroView('proposal', { ...PR, status: 'merging' }).status, 'Going live');
+});
+
+// Issue #5178: the sheet header repeats the board card's status pill beside
+// "Change #N" — "✓ Live", "Going live…", or the vote's own words. The
+// thread view carries the card's own state, so the two never disagree.
+test('the thread view carries the card’s status pill, and none where there is no card pill', () => {
+  const av = context();
+  // Merged and running: the card's green "✓ Live".
+  const live = av._topicViewFor('proposal', { ...PR, status: 'merged', merged_at: '2026-09-19T12:00:00Z', deployment_state: 'deployed' });
+  assert.equal(live.body.thread.status.key, 'deployed');
+  assert.equal(live.body.thread.status.label, message('changes:badge.pill.live'));
+  // Approved, the app still on the version before: "Going live…".
+  const going = av._topicViewFor('proposal', { ...PR, status: 'merged', merged_at: '2026-09-19T12:00:00Z', live_at: null });
+  assert.equal(going.body.thread.status.key, 'deploying');
+  assert.equal(going.body.thread.status.label, message('changes:badge.pill.goingLive'));
+  assert.equal(av._topicViewFor('proposal', { ...PR, status: 'merged', merged_at: '2026-09-19T12:00:00Z', deployment_state: 'stalled' }).body.thread.status.label,
+    message('changes:badge.pill.stuck'));
+  assert.equal(av._topicViewFor('proposal', { ...PR, status: 'merged', merged_at: '2026-09-19T12:00:00Z', deployment_kind: 'child', deployment_state: 'failed' }).body.thread.status.label,
+    message('changes:badge.pill.failed'));
+  // Up for a vote: the same words the card's pill shows there.
+  const voting = av._topicViewFor('proposal', PR);
+  assert.equal(voting.body.thread.status.key, 'needs_vote');
+  assert.equal(voting.body.thread.status.label, message('changes:badge.pill.vote', { yes: 1, majority: 2 }));
+  // Being built, and closed: no pill; the Votes card says where those stand.
+  assert.equal(av._topicViewFor('proposal', { ...PR, status: 'active' }).body.thread.status, null);
+  assert.equal(av._topicViewFor('proposal', { ...PR, status: 'closed' }).body.thread.status, null);
 });
 
 // Club Votes, 12 to 13 Oct 2026 (D1): a project's first version goes live

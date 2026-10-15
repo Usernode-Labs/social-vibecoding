@@ -57,6 +57,7 @@ import { agoStamp } from '../../../lib/timestamp';
 import { changeHref } from '../../../lib/change-href';
 import { type BuildLineState, buildLineOf, phaseLine, useNow } from '../../first-session/build-line';
 import { useTourRunning } from '../../first-session/tour-running';
+import { DrawnLook, isDrawnLook, ownSrc, useLookSwap } from '../../first-session/drawn-look';
 import { firstLookSrc } from '../../first-session/first-look';
 import { countsDown, estimateOf, leftNote } from '../../app-frame/first-version-eta';
 import { madeAppUrl } from '../../first-session/made';
@@ -88,18 +89,22 @@ export function firstVersionLine(fv: HubFirstVersion): BuildLineState {
  *   see       its plan waits, read only (#4074)      a member who did not start it
  *   try       built and up for approval              everyone
  *   open      live, in the project's first week      everyone
+ *   retry     its build stopped, nothing live yet    the person who started it
  *
  * A card with a button hides its build line (the owner, 6 Oct 2026): "Your
  * plan is ready to review" over "Review the plan" said one thing twice, so
  * the button says it and the app's own line sits under its name. See the
  * plan is a quiet link beside the line, not a button, so "Planning it"
- * stays.
+ * stays. Try again (14 Oct 2026, newcomer run eight) keeps the line: it
+ * says Stopped, which the button does not, and opens the build's thread in
+ * its maker's chat with Homeroom bot, where the bot's own Try again is.
  */
-export type FirstVersionAction = 'review' | 'answer' | 'see' | 'try' | 'open';
+export type FirstVersionAction = 'review' | 'answer' | 'see' | 'try' | 'open' | 'retry';
 
 export function firstVersionAction(fv: HubFirstVersion): FirstVersionAction | null {
   const line = firstVersionLine(fv);
   if (line === 'live') return 'open';
+  if (line === 'stopped') return fv.mine ? 'retry' : null;
   if (fv.ready) return fv.session_id ? 'try' : null;
   if (fv.waits_on === 'plan') return 'review';
   if (fv.waits_on === 'question') return 'answer';
@@ -113,6 +118,7 @@ const ACTION_WORDS: Record<Exclude<FirstVersionAction, 'see'>, string> = {
   answer: 'project:hub.firstVersion.answer',
   try: 'project:hub.firstVersion.tryIt',
   open: 'project:hub.firstVersion.openApp',
+  retry: 'project:hub.firstVersion.tryAgain',
 };
 
 /**
@@ -191,9 +197,16 @@ export function FirstVersionCard({ slug, data, emoji = null, onSeePlan }: {
       (window as any).AppView?.tryFirstVersion?.(slug, fv.session_id);
     } else if (action === 'open') {
       (window as any).App?.openAppTab?.(slug, 'app');
+    } else if (action === 'retry') {
+      // The App tab's own opener for it (AppView.openFirstVersionThread).
+      const thread = fv.thread || null;
+      (window as any).AppView?.openFirstVersionThread?.(slug, thread?.conversationId ?? fv.conversation_id ?? null,
+        thread?.threadRootId ?? null, thread?.messageId ?? null);
     }
   };
   const button = action && action !== 'see';
+  // Try again keeps the line that says it stopped.
+  const lineShown = !button || action === 'retry';
   return (
     <section ref={ref} className="dev-ws-strip dev-ws-hub-first" data-ws-first-version={line}>
       <div className="dev-ws-hub-first-row">
@@ -201,7 +214,7 @@ export function FirstVersionCard({ slug, data, emoji = null, onSeePlan }: {
           name={data?.name || slug}
           colorKey={slug}
           emoji={emoji}
-          line={button ? null : line}
+          line={lineShown ? line : null}
           lineWords={named.words}
           lineNote={named.note}
         />
@@ -273,6 +286,10 @@ const FIRST_LOOK_ONLY: readonly string[] = ['first_look'];
  * Gone once it is ready to try or live (hubShowsFirstLook), and held back
  * while the first-session tour runs (../../first-session/tour-running.ts),
  * whose own last card is this picture.
+ *
+ * 15 Oct 2026 (newcomer run nine): until the picture is saved, its drawn
+ * screen (../../first-session/drawn-look.tsx), asked again until the
+ * picture is there and swapped for it once it is in.
  */
 export function FirstLookCard({ slug, data }: { slug: string; data: CommunityPayload | null }): ReactNode {
   const touring = useTourRunning();
@@ -281,7 +298,7 @@ export function FirstLookCard({ slug, data }: { slug: string; data: CommunityPay
   // A picture that would not load is asked for again, as one not there yet.
   const [broken, setBroken] = useState<string | null>(null);
   useEffect(() => {
-    if (!wanted || !slug || (src && src !== broken)) return undefined;
+    if (!wanted || !slug || (src && src !== broken && !isDrawnLook(src))) return undefined;
     let live = true;
     const read = () => fetch(madeAppUrl(slug), { credentials: 'same-origin', cache: 'no-store' })
       .then((r) => (r.ok ? r.json() : null))
@@ -296,7 +313,7 @@ export function FirstLookCard({ slug, data }: { slug: string; data: CommunityPay
     }, FIRST_VERSION_POLL_MS);
     return () => { live = false; window.clearInterval(timer); };
   }, [wanted, slug, src, broken]);
-  const shown = src && src !== broken ? src : null;
+  const shown = useLookSwap(src && src !== broken ? src : null, ownSrc);
   if (!wanted || touring || !shown) return null;
   return <FirstLookView slug={slug} name={data?.name || slug} src={shown} onBroken={() => setBroken(shown)} />;
 }
@@ -314,23 +331,31 @@ export function watchBuild(slug: string): void {
 export function FirstLookView({ slug, name, src, onBroken }: {
   slug: string;
   name: string;
-  /** The first look's own URL (../../first-session/first-look.tsx firstLookSrc). */
+  /** The first look's own URL (../../first-session/first-look.tsx firstLookSrc), or its drawn screen's. */
   src: string;
   /** The picture would not load: the card asks for it again. */
   onBroken?: () => void;
 }): ReactNode {
   const t = useMessages('project');
+  const alt = t('project:hub.firstLook.alt', { app: name });
   return (
     <section className="dev-ws-strip dev-ws-first-look" data-ws-first-look="">
-      <img
-        src={src}
-        alt={t('project:hub.firstLook.alt', { app: name })}
-        width={64}
-        height={138}
-        draggable={false}
-        onError={onBroken}
-        className="dev-ws-first-look-shot"
-      />
+      {isDrawnLook(src) ? (
+        // Its drawn screen, at the picture's size, until the picture is saved.
+        <div className="dev-ws-first-look-shot relative overflow-hidden">
+          <DrawnLook src={src} label={alt} width={64} />
+        </div>
+      ) : (
+        <img
+          src={src}
+          alt={alt}
+          width={64}
+          height={138}
+          draggable={false}
+          onError={onBroken}
+          className="dev-ws-first-look-shot"
+        />
+      )}
       <div className="dev-ws-first-look-body">
         <p className="dev-ws-first-look-kicker">{t('project:hub.firstLook.kicker')}</p>
         <p className="dev-ws-head-title">{t('project:hub.firstLook.title')}</p>

@@ -3721,6 +3721,14 @@ const WIDE_QUERY = '(min-width: 700px)';
  * ../../nav/section-column.tsx) and the list keeps its room.
  */
 const SIDE_QUERY = '(min-width: 1180px)';
+
+/**
+ * (#5164) How often the hub's own places quietly re-read what waits on you
+ * and what went live, while one of them is showing (./workshop.tsx
+ * DevWorkshop's effect). The tick reads only what For you and Recently live
+ * draw from; returning to the browser tab reads the whole board.
+ */
+export const HUB_REFRESH_MS = 30_000;
 /**
  * #4417: from here the project's places are the section column beside the
  * strip (../../nav/section-column.tsx); under it, the tray behind the bar.
@@ -4251,6 +4259,32 @@ export function DevWorkshop(): ReactNode {
     tabSlug.current = v.slug;
     if (was && was !== v.slug) setTab(freshTab() || 'status');
   }, [v.slug]);
+  // (#5164) THE HUB'S QUIET REFRESH, while one of its own places is up
+  // (Hub, Needs you, the Workshop): every HUB_REFRESH_MS, and again the
+  // moment the browser tab comes back to the front — the moment a stale
+  // screen is most often noticed. The tick re-reads only what For you and
+  // Recently live draw from (AppView.refreshHubLive's parts), the return
+  // re-reads the whole board, so whatever the missed time moved catches up.
+  // Nothing runs while the tab is hidden or on another page (a channel, All
+  // items, the plan), and the effect cleans up after itself on every change.
+  useEffect(() => {
+    const isHubPlace = tab === 'status' || tab === 'needs' || tab === 'workshop';
+    if (!v.slug || !isHubPlace || typeof document === 'undefined') return undefined;
+    const tick = () => {
+      if (document.visibilityState !== 'visible') return;
+      if (!hostRef.current?.getClientRects().length) return;
+      callAppView('refreshHubLive');
+    };
+    const onReturn = () => {
+      if (document.visibilityState === 'visible') callAppView('refreshHubLive', { whole: true });
+    };
+    document.addEventListener('visibilitychange', onReturn);
+    const timer = window.setInterval(tick, HUB_REFRESH_MS);
+    return () => {
+      document.removeEventListener('visibilitychange', onReturn);
+      window.clearInterval(timer);
+    };
+  }, [v.slug, tab, hostRef]);
   // Which pane is under the tabs. Lives in a module-global store rather than
   // here, because app-view.js has to read it: `_rerenderWorkshop()` publishes
   // the kanban view model only when the stage pane is up. See

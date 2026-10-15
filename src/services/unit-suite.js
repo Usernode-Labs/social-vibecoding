@@ -1184,17 +1184,31 @@ function readFailure({
 // passes on Kubernetes, the pass is recorded for reuse
 // (services/unit-suite-reuse.js), provided every Job said it checked out
 // exactly that commit.
-async function maybeRunUnitSuite({ config, pool, appId, sessionId, repoOwner, repoName, ref, prNumber, onProgress = null, signal = null, previewRunId = null, jobNamePrefix = null, commitSha = null }) {
+//
+// `strict` (the preview machine's checks run): only a package.json that is
+// verifiably absent (GitHub's 404, which getFileContent answers with null)
+// means there is no suite. Any other failure to read it is a suite that
+// could not run, the row an 'error' once the suite blocks merges, rather
+// than a run that passes without its suite.
+async function maybeRunUnitSuite({ config, pool, appId, sessionId, repoOwner, repoName, ref, prNumber, onProgress = null, signal = null, previewRunId = null, jobNamePrefix = null, commitSha = null, strict = false }) {
   if (!isEnabled() || !github.isEnabled() || !repoOwner || !repoName || !ref) return null;
 
   let rawPkg = null;
   try {
     rawPkg = await github.getFileContent(repoOwner, repoName, UNIT_CHECK_PATH, ref);
   } catch (err) {
-    log.warn('unit-suite', 'package.json fetch failed — skipping unit suite', {
+    log.warn('unit-suite', strict ? 'package.json could not be read — the unit suite could not run'
+      : 'package.json fetch failed — skipping unit suite', {
       sessionId, repo: `${repoOwner}/${repoName}`, ref, err: err.message,
     });
-    return null;
+    if (!strict) return null;
+    let graduated = false;
+    try {
+      graduated = (await checkHistory.loadGraduated(pool, appId, { sessionId }))
+        .has(appManifest.checkKey(UNIT_CHECK_NAME, UNIT_CHECK_PATH));
+    } catch { /* advisory on any doubt, as below */ }
+    const reason = `package.json could not be read (${String(err.message || 'unknown error').slice(0, 200)})`;
+    return shapeOutcome({ passed: false, reason, graduated, summary: null, notRun: { reason, detail: reason } });
   }
   if (!hasRunnableTestScript(rawPkg)) return null;
 

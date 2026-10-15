@@ -184,10 +184,15 @@ test('bot builds through the platform runtime', { timeout: 120000 }, async (t) =
     const [item] = await work(key);
     assert.equal(item.attempt_count, 2);
     assert.equal(item.lost_attempts, 0);
-    const { rows: [{ last_error: lastError }] } = await pool.query(
-      `SELECT last_error FROM wf_work WHERE machine = 'bot-build' AND key = $1`, [key]);
-    assert.match(JSON.stringify(lastError), /proposal_deferred/, 'its first try is a retry of its own');
+    // The build is heard ending before the kernel files its success, and
+    // filing it clears the work item's last_error. The first try's error is
+    // kept on its own attempt row, so read it there, once both are final.
     await until(async () => (await instance(key))?.state === 'done', 'the instance ended done');
+    const { rows: attempts } = await pool.query(
+      `SELECT a.outcome, a.error FROM wf_work_attempts a JOIN wf_work w ON w.id = a.work_id
+        WHERE w.machine = 'bot-build' AND w.key = $1 AND w.kind = 'build.run' ORDER BY a.number`, [key]);
+    assert.deepEqual(attempts.map((a) => a.outcome), ['retry', 'succeeded'], 'its first try is a retry of its own');
+    assert.match(JSON.stringify(attempts[0].error), /proposal_deferred/, 'the first try was refused for now');
     assert.equal(await buildRuns.holdsSession(pool, session.id), false, 'once it has ended its session is no longer held');
   });
 

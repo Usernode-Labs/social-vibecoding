@@ -784,12 +784,19 @@ carries the app-specific notes and points at the platform rules.
 Once the real app exists, rewrite this README to describe it.
 `,
     },
+    // The package files are the starter's own, the same bytes in every app
+    // made from it: no slug or name of this app's goes into them (they
+    // carried both until October 2026). The image's `COPY package.json
+    // package-lock.json` and the `npm ci` after it are then the same steps
+    // for every copy of a starter, so a new app's first build is served
+    // them from the starter's shared layer cache instead of installing
+    // cold (services/kubernetes-buildkit.js, "The starter's shared
+    // cache"). Nothing reads either field: the app is named by dapp.json,
+    // its README, CLAUDE.md and its screen.
     {
       path: 'package.json',
       content: JSON.stringify({
         ...nodeAppPackage,
-        name: slug,
-        description: appName,
         ...(extraDeps ? { dependencies: sortedKeys({ ...nodeAppPackage.dependencies, ...extraDeps.ranges }) } : {}),
       }, null, 2),
     },
@@ -797,19 +804,14 @@ Once the real app exists, rewrite this README to describe it.
       path: 'package-lock.json',
       content: JSON.stringify({
         ...nodeAppLock,
-        name: slug,
         packages: extraDeps ? sortedKeys({
           ...nodeAppLock.packages,
           '': {
             ...nodeAppLock.packages[''],
-            name: slug,
             dependencies: sortedKeys({ ...nodeAppLock.packages[''].dependencies, ...extraDeps.ranges }),
           },
           ...extraDeps.packages,
-        }, '') : {
-          ...nodeAppLock.packages,
-          '': { ...nodeAppLock.packages[''], name: slug },
-        },
+        }, '') : nodeAppLock.packages,
       }, null, 2),
     },
     {

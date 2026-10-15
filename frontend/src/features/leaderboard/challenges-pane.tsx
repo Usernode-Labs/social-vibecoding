@@ -225,7 +225,7 @@ type ProfileView =
     kind: 'profile';
     name: string;
     stats: { label: string; value: string }[];
-    activities: { key: string; text: string; points: string; at: string | null }[] | null;
+    activities: { key: string; text: string; points: string; at: string | null; precision?: 'day' | 'instant' | null }[] | null;
   };
 
 // ── Class strings ───────────────────────────────────────────────────────
@@ -778,7 +778,7 @@ function ProfileBody({ view }: { view: ProfileView }): ReactNode {
       {view.activities ? (
         <ul className="space-y-1">
           {view.activities.map((a) => (
-            <ActivityRow key={a.key} text={a.text} points={a.points} at={a.at} />
+            <ActivityRow key={a.key} text={a.text} points={a.points} at={a.at} precision={a.precision} />
           ))}
         </ul>
       ) : (

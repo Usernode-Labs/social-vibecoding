@@ -91,6 +91,6 @@ test('the reference: the Claude path releases in its finally ahead of its own se
 
 test('beginSessionOperation\'s release is idempotent, so the finally re-running it is safe', () => {
   const svc = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'active-workers.js'), 'utf8');
-  assert.match(svc, /let released = false;\s*\n\s*return \(\) => \{\s*\n\s*if \(released\) return;/,
+  assert.match(svc, /let released = false;\s*\n\s*const release = \(\) => \{\s*\n\s*if \(released\) return;/,
     'the release closure guards against a second call');
 });

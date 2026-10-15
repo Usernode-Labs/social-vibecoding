@@ -163,11 +163,17 @@ export const STOP_CAUSE_LINES: Record<NonNullable<HomeroomBotActivity['stopCause
  * the ending's label. A build that stopped says why (`stopCause`); a request
  * held back by one of the bot's limits says what it waits for (`heldBy`),
  * naming `project`, and says nothing more when the limit is one it cannot
- * name (an empty line: the heading "Waiting" says it).
+ * name (an empty line: the heading "Waiting" says it). 14 Oct 2026 (newcomer
+ * run eight): a project's first version (`firstVersion`) goes live without a
+ * vote, so one built and not proposed says it is not live yet.
  */
 export function cardStateLine(
   card: Pick<HomeroomBotActivity, 'outcome' | 'release' | 'stopCause' | 'heldBy'>, now: number = Date.now(), project = '',
+  { firstVersion = false }: { firstVersion?: boolean } = {},
 ): string {
+  if (card.outcome === 'build_failed' && card.stopCause === 'unproposed' && firstVersion) {
+    return translate('messages:bot.state.line.stop.unproposedFirst');
+  }
   if (card.outcome === 'build_failed' && card.stopCause) return translate(STOP_CAUSE_LINES[card.stopCause]);
   if (card.outcome === 'held') {
     if (card.heldBy === 'proposals_per_app' && project) return translate('messages:bot.state.line.heldPerApp', { project });
@@ -432,7 +438,7 @@ export function BotActivityCardView({ meta, card, loaded = false, failed = false
     lead = SPINNING_OUTCOMES.has(card.outcome) ? <ActivityLead working /> : <ActivityLead tone={tone} />;
     eyebrow = cardStateWord(card.outcome);
     const took = card.endedAt ? spanText(clockFrom(card), new Date(card.endedAt)) : null;
-    const line = cardStateLine(card, at.getTime(), meta.appName || meta.appSlug || '');
+    const line = cardStateLine(card, at.getTime(), meta.appName || meta.appSlug || '', { firstVersion: meta.firstVersion === true });
     status = (
       <>
         {project ? <span>{line || took ? `${project} · ` : project}</span> : null}

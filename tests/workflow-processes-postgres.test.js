@@ -60,6 +60,7 @@ test('workflow machines in a process of their own, and through its crash', { tim
 
   // The flags, as config.js reads them; the child adds the database URL.
   const flags = { dataEncryptionKey: DATA_KEY, wfGovernanceEnabled: true, wfMergeFollowupsEnabled: true, wfAppDeliveryEnabled: true,
+    wfPreviewsEnabled: true,
     wfPoolMax: 4, wfSlots: 2, wfOwnershipMode: 'raise',
     // Phone push on, to a fake Firebase (the fixture fakes its library).
     mobilePushEnabled: true, mobilePushEnvironment: 'production', firebaseProjectId: 'social-test',
@@ -323,9 +324,7 @@ test('workflow machines in a process of their own, and through its crash', { tim
     assert.deepEqual({ ...row }, { status: 'promoted', included_in_session_id: null }, 'left to merge on its own');
   });
 
-  await t.test('a change busy in the web process with an operation that keeps no record is not carried', {
-    todo: 'active-workers.js#activeSessionOperations lives in the process running the operation (list: services | uses src/services/active-workers.js:isSessionBusy); who is working on a session becomes durable with previews and checks (step 3)',
-  }, async () => {
+  await t.test('a change busy in the web process with an operation that keeps no record of its own is not carried', async () => {
     const a = await app({ selfHosted: true });
     const carrier = await proposal(a);
     const { rows: [busy] } = await pool.query(
@@ -333,17 +332,83 @@ test('workflow machines in a process of their own, and through its crash', { tim
        VALUES ($1, $2, 'promoted', $3, 'Busy', $4) RETURNING *`, [a.id, author.id, ++seq, SHA('8')]);
     await pool.query(`INSERT INTO wf_test_effects (kind, data) VALUES ('github.prCommits', $1)`,
       [JSON.stringify({ number: carrier.pr_number, shas: [SHA('8')] })]);
-    // A sync with main starting its worker here: no active_turn yet, head unchanged.
+    // A sync with main starting its worker here: no active_turn yet, head
+    // unchanged. The preview machine records it, held by this process.
     const done = require('../src/services/active-workers').beginSessionOperation(busy.id);
     try {
+      await done.recorded;
+      assert.deepEqual((await instance('preview', `session:${busy.id}`)).data.operations.map((o) => o.kind), ['operation']);
       await platform.mergeConfirmed({ sessionId: carrier.id, appId: a.id, mergeSha: SHA('9'), force: false, tally: { yes: 1, required: 1, active: 1 } });
       await procs.until(() => settled('merge-followups', mergeKey(carrier), 'included.find'), 'the search for carried changes');
-      const read = async () => (await pool.query('SELECT status, included_in_session_id FROM chat_sessions WHERE id = $1', [busy.id])).rows[0];
-      await procs.until(async () => (await read()).included_in_session_id, 'a mark that should not come', 2000).catch(() => {});
-      assert.deepEqual({ ...await read() }, { status: 'promoted', included_in_session_id: null }, 'left as it is while busy');
+      // Wait for the decision itself, not a fixed time: the find settling
+      // only starts the chain (its WorkDone decided on the carrier, then the
+      // Included it sends appended and decided on this change), and a mark
+      // would be written by that same decision. A two-second window read the
+      // refusal before a loaded machine had decided it (#5059).
+      const refusal = async () => (await pool.query(
+        `SELECT result, reason FROM wf_events WHERE machine = 'merge-followups' AND key = $1 AND type = 'Included'`, [mergeKey(busy)])).rows[0];
+      await procs.until(async () => (await refusal())?.result, 'the carried message to be decided');
+      assert.deepEqual({ ...await refusal() }, { result: 'rejected', reason: 'worked_on' }, 'refused by the change\'s own guard, from the record');
+      const { rows: [row] } = await pool.query('SELECT status, included_in_session_id FROM chat_sessions WHERE id = $1', [busy.id]);
+      assert.deepEqual({ ...row }, { status: 'promoted', included_in_session_id: null }, 'left as it is while busy');
     } finally {
       done();
     }
+    // Once it ends, the record goes.
+    await procs.until(async () => (await instance('preview', `session:${busy.id}`)).data.operations.length === 0, 'the operation to end');
+  });
+
+  // ── Previews: who reads a build under way, and a build through a crash ─
+  // A build here stops at its clone (`github.clone`), which then fails:
+  // what these show is where the state lives, and that the machine resumes.
+  const promoted = async (a, head) => (await pool.query(
+    `INSERT INTO chat_sessions (app_id, user_id, status, pr_number, pr_title, branch_name, reviewed_head_sha)
+     VALUES ($1, $2, 'promoted', $3, 'A preview', 'feature', $4) RETURNING *`, [a.id, author.id, ++seq, head])).rows[0];
+  const previewOf = (s) => instance('preview', `session:${s.id}`);
+
+  await t.test('the web side reads a build under way from the row while the workflow process builds it', async () => {
+    const a = await app();
+    const s = await promoted(a, SHA('a'));
+    await procs.arm(pool, 'github.clone');
+    const sent = await platform.submitRevision({ sessionId: s.id, appId: a.id, head: SHA('a'), source: 'test', trigger: 'commit-push' });
+    assert.equal(sent.status, 'accepted');
+    try {
+      await procs.reached(pool, 'github.clone');
+      const { rows: [row] } = await pool.query('SELECT * FROM chat_sessions WHERE id = $1', [s.id]);
+      assert.deepEqual([row.check_state, row.check_phase, row.checks_commit_sha], ['pending', 'building', SHA('a')]);
+      assert.equal(require('../src/services/staging').previewDisplayState(row).preview_state, 'building',
+        'building, read on the web side from the row the workflow process wrote');
+      await procs.until(() => heard.some((e) => e.k === 'session' && e.r?.sessionId === s.id && e.d?.event === 'checks_ready'
+        && e.d.checkPhase === 'building'), 'browsers to hear it');
+    } finally {
+      await procs.release(pool, 'github.clone');
+    }
+    await procs.until(async () => (await previewOf(s)).state === 'failed', 'the failed build to be recorded');
+    const { rows: [row] } = await pool.query('SELECT check_state, checks_commit_sha FROM chat_sessions WHERE id = $1', [s.id]);
+    assert.deepEqual({ ...row }, { check_state: 'error', checks_commit_sha: SHA('a') });
+  });
+
+  await t.test('a preview build killed in the middle is resumed by the next process, and ends as an uninterrupted one', async () => {
+    const a = await app();
+    const s = await promoted(a, SHA('b'));
+    await procs.arm(pool, 'github.clone');
+    await platform.submitRevision({ sessionId: s.id, appId: a.id, head: SHA('b'), source: 'test', trigger: 'commit-push' });
+    await procs.reached(pool, 'github.clone');
+    await workflow.kill();
+    const { rows: [mid] } = await pool.query('SELECT check_phase FROM chat_sessions WHERE id = $1', [s.id]);
+    assert.equal(mid.check_phase, 'building', 'still building with no process at all: the next one builds it');
+    await procs.arm(pool, 'github.clone');
+    await procs.expireLeases(pool);
+    await startWorkflow();
+    try {
+      await procs.reached(pool, 'github.clone');
+      assert.equal(await ranIn('preview', `session:${s.id}`, 'preview.prepare'), 2, 'the build the crash interrupted, run by the next process');
+    } finally {
+      await procs.release(pool, 'github.clone');
+    }
+    await procs.until(async () => (await previewOf(s)).state === 'failed', 'the failed build to be recorded');
+    const i = await previewOf(s);
+    assert.deepEqual([i.data.streak, i.data.last], [1, 1], 'one attempt, failed once: as without the crash');
   });
 
   // ── What the workflow process's boot gives it (src/workflow/setup.ts) ─

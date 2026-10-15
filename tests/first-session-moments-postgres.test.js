@@ -123,8 +123,13 @@ test('the made screen\'s moments are kept for its maker, test accounts included,
 
   await t.test('a test account is fenced from the Journey all the same', async () => {
     const src = fs.readFileSync(require.resolve('../src/services/journey.js'), 'utf8');
-    assert.doesNotMatch(src, /first_session_moment/, 'the Journey reads none of these rows');
-    assert.match(src, /AND u\.test_account_created_at IS NULL/, 'and its people are never test accounts');
+    const journey = require('../src/services/journey');
+    const counts = (src.match(/'first_session_moment'/g) || []).length;
+    const readers = [journey.MADE_SCREEN_SQL, journey.PERSON_MOMENTS_SQL, journey.FIRST_SESSION_RECORDED_SQL]
+      .reduce((n, sql) => n + (sql.match(/'first_session_moment'/g) || []).length, 0);
+    assert.equal(counts, readers, 'the Journey reads these rows only in its made-screen reading, one person\'s view and the date they began');
+    assert.match(journey.MADE_SCREEN_SQL, /AND u\.test_account_created_at IS NULL/, 'and the people it counts are never test accounts');
+    assert.match(journey.MADE_SCREEN_SQL, /e\.user_id IN \(SELECT r\.id FROM real r\)/);
   });
 
   await t.test('nobody else, nothing malformed, and never from another page', async () => {

@@ -98,6 +98,8 @@ function strandedPendingChecks(session, {
   activeWorkers = require('../services/active-workers'),
 } = {}) {
   if (session?.check_state !== 'pending' || session.check_phase === 'deferred') return false;
+  // The preview machine's 'pending' always has its work outstanding.
+  if (require('../services/preview-workflow').enabled()) return false;
   const id = Number(session.id);
   return !visuals.hasInFlightCapture(id)
     && !activeWorkers.hasSessionOperation(id)
@@ -1736,6 +1738,10 @@ function nativeGithubTarget(session) {
 }
 
 async function kickNativeRevisionChecks({ config, pool, session, headSha }) {
+  // With WF_PREVIEWS_ENABLED on the preview machine builds and checks it.
+  if (await require('../services/preview-workflow').revision({
+    pool, session, head: headSha, source: 'reviewed-head', trigger: 'commit-push',
+  })) return;
   const visuals = require('../services/visuals');
   await visuals.setChecksPending(pool, session.id, headSha, 'building', 'commit-push')
     .catch((err) => log.warn('votes', 'Native revision setChecksPending failed (non-fatal)', {
@@ -1760,6 +1766,9 @@ async function kickNativeRevisionChecks({ config, pool, session, headSha }) {
 // gate independently compares the verdict SHA, so even a failed pending write
 // cannot let an older green result authorize this head.
 async function kickImportedRevisionChecks({ config, pool, session, headSha }) {
+  if (await require('../services/preview-workflow').revision({
+    pool, session, head: headSha, source: 'imported', trigger: 'pr-import',
+  })) return;
   const visuals = require('../services/visuals');
   await visuals.setChecksPending(pool, session.id, headSha, 'building', 'pr-import')
     .catch((err) => log.warn('votes', 'Imported revision setChecksPending failed (non-fatal)', {
@@ -2062,7 +2071,17 @@ async function reconcileNativeReviewedHead({
     && sameSha(session.checks_commit_sha, oldHead)
     && ['passing', 'skipped'].includes(session.check_state);
   const needsChecks = !sameSha(session.checks_commit_sha, liveHead) && !checksCarry;
-  if (needsChecks) {
+  // With WF_PREVIEWS_ENABLED on the machine decides both: it carries a green
+  // verdict of the old head, else checks the new one. A deferred caller
+  // hands off the build itself once its own pins are written.
+  const previewWorkflow = require('../services/preview-workflow');
+  if (previewWorkflow.enabled()) {
+    if (checksCarry || (needsChecks && !deferChecks)) {
+      await previewWorkflow.revision({ pool, session, head: liveHead, source: 'reviewed-head', trigger: 'commit-push',
+        carryFrom: checksCarry ? oldHead : null });
+    }
+    if (checksCarry) session.checks_commit_sha = liveHead;
+  } else if (needsChecks) {
     if (deferChecks) {
       const visuals = require('../services/visuals');
       await visuals.setChecksPending(pool, session.id, liveHead, 'building', 'commit-push')
@@ -2864,7 +2883,9 @@ function voteRoutes(config) {
             // Keep the session active so the new head can be rebuilt; never
             // open voting on code that did not produce the ready verdict.
             const detail = 'The proposal branch changed after checks. Rebuild the new head locally or from the web Dev session before promoting.';
-            await pool.query(
+            // The preview machine owns the verdict when it is on; the 409
+            // below says the same to the author.
+            if (!require('../services/preview-workflow').enabled()) await pool.query(
               `UPDATE chat_sessions SET check_state = 'error', check_error_detail = $1
                 WHERE id = $2 AND status = $4 AND source = 'cli_handoff'
                   AND COALESCE(checks_commit_sha, handoff_head_sha)
@@ -3079,6 +3100,11 @@ function voteRoutes(config) {
             } catch {}
           }
           const app = { id: session.app_id, slug: session.app_slug, name: session.app_name, repo_url: session.repo_url };
+          // With WF_PREVIEWS_ENABLED on the preview machine builds and checks
+          // the reviewed head.
+          if (await require('../services/preview-workflow').revision({
+            pool, session, head: commitHash === 'latest' ? null : commitHash, source: 'promote', trigger: 'promote-kick',
+          })) return;
           // #607: stamp 'pending' + broadcast before the (minutes-long)
           // staging build so the freshly promoted proposal's card shows
           // "Checks running…" instead of a bare NULL-verdict "Re-run
@@ -5451,6 +5477,21 @@ function voteRoutes(config) {
       if (IS_STAGING && req.query.demo === '1' && proposal.checks_estimate == null) {
         proposal = { ...proposal, checks_estimate: require('../services/checks-estimate').DEMO_ESTIMATE };
       }
+      // #5064: a merge of the platform's own app opened on its own (a link
+      // from the bell or Home, beyond the board's first page) gets the
+      // board's deployment_state too, so its page says "going live" until
+      // the running build carries it rather than reading the live_at the
+      // legacy merge stamps at once. A child app's keeps its words.
+      if (proposal.status === 'merged' && proposal.deployment_state == null && gatedApp.self_hosted
+          && !(IS_STAGING && req.query.demo === '1')) {
+        const { rows: [selfApp] } = await pool.query(
+          'SELECT id, slug, self_hosted, main_sha, release_stall FROM apps WHERE id = $1', [gatedApp.id]);
+        if (selfApp) {
+          const row = { ...proposal };
+          await annotateDeploymentState(config, pool, selfApp, [row]);
+          proposal = row;
+        }
+      }
       // Merged into the platform's own app and not live yet: when the next
       // release carries it (services/release-watch.js), which the page says
       // as "Merged; goes live in the next release (about 8 minutes)". A
@@ -7762,9 +7803,16 @@ async function checkAndMerge(config, pool, session, options = {}) {
       const failLabel = session.pr_title
         ? `PR #${session.pr_number || session.id}: ${session.pr_title}`
         : `PR #${session.pr_number || session.id}`;
+      // An image refused for running as root is the app's own Dockerfile,
+      // not something an operator retries away: say what to change.
+      const deployFailure = require('../services/deploy-failure');
+      const rootImage = deployFailure.isRootImageRefusal(err);
       await sendSystemMessage(pool, session.app_id,
-        `${failLabel} merged on GitHub, but the production deploy failed: ${err.message}. ` +
-        `The change is on main; an operator can retry the deploy once the cause is resolved.`,
+        rootImage
+          ? `${failLabel} merged on GitHub, but it cannot go live: ${deployFailure.ROOT_IMAGE_FIX} ` +
+            `Production keeps serving the previous version until then.`
+          : `${failLabel} merged on GitHub, but the production deploy failed: ${err.message}. ` +
+            `The change is on main; an operator can retry the deploy once the cause is resolved.`,
         'system', null, { type: 'session', ref: session.id }
       ).catch(() => {});
 

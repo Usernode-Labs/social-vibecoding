@@ -275,9 +275,19 @@ function liveHomeroomText({ title, project }) {
 // GitHub issue, is activity on the request: the bot reads it again
 // (homeroom-bot.js classifyIssue, 'changed'), which is how a request it
 // could build gets built. The record stays on the run (build_error, shown
-// on the admin's Homeroom bot screen) and in the log.
-function buildFailedText(reason) {
-  const words = require('./homeroom-bot-dm').buildFailedWords(reason, 'this', 'bot');
+// on the admin's Homeroom bot screen) and in the log. 14 Oct 2026 (newcomer
+// run eight): a project's first version (`firstVersion`), built and not
+// proposed, is said as built and not live yet, never as waiting for an
+// approval it does not need. 15 Oct 2026: and how it is finished, which a
+// reply here does not do (it reads the request again and starts over): its
+// maker's Try again in their chat with the bot proposes what was built
+// (homeroom-bot.js finishBuiltFirstVersion).
+function buildFailedText(reason, { firstVersion = false } = {}) {
+  const dm = require('./homeroom-bot-dm');
+  const words = dm.buildFailedWords(reason, 'this', 'bot', { first: firstVersion });
+  if (firstVersion && dm.buildFailedCause(reason).cause === 'unproposed') {
+    return `${words} Whoever asked for it can tap Try again in their chat with Homeroom bot, and it will finish it.`;
+  }
   return `${words} Reply here (or on the GitHub issue) and it will try again.`;
 }
 
@@ -3946,6 +3956,14 @@ async function buildAndPropose({
   // TWEAKS, recipe.tweaks), for its build turn, its nudge and its review's
   // fix turns. [] (every other build) is the build as it always was.
   tweaks = [],
+  // Newcomer run nine (15 Oct 2026): a live first version filed while its
+  // project was still being set up (homeroom-bot.js setupCheckFor):
+  // resolves null to go on, or `{ error, notProposed? }`, what the build
+  // comes to. Asked where skipCheck is, and once more before the proposal,
+  // with `wait`: the proposal's preview copies the project's database and
+  // its merge deploys over its container, so it waits for the project to
+  // run. Every other build passes none.
+  setupCheck = null,
 }) {
   const { worker, sessions, agentTurn, sessionLifecycle, activeWorkers } = deps;
   // Each step below is a durable step of the build's work item when the
@@ -4096,6 +4114,20 @@ async function buildAndPropose({
   // its own proposal and stop. (A review's rounds ask as they go: their
   // state is the review's own.)
   const skipNow = (where) => steps.once(`skip:${where}`, askSkip);
+  // Its project's setup, the same way (setupCheck): null to go on. A check
+  // that cannot be read goes on, as a skip check does.
+  const setupNow = (where, { wait = false } = {}) => (typeof setupCheck === 'function'
+    ? steps.once(`setup:${where}`, async () => {
+      try {
+        const stop = await setupCheck({ wait, fence: () => steps.fence() });
+        return stop && stop.error ? { error: String(stop.error), notProposed: !!stop.notProposed } : null;
+      } catch (err) {
+        durableSteps.rethrowStop(err, 'setup check');
+        log.warn('homeroom-bot', 'Could not check whether the project is set up (going on)', { sessionId: session.id, err: err.message });
+        return null;
+      }
+    })
+    : null);
   // Its run is another build's (onSession, above): nothing more is spent on
   // this one, and its session is put away as a skip's is.
   if (claimRefused) {
@@ -4220,6 +4252,8 @@ async function buildAndPropose({
   // stopped spec turn (noteRequestMerged stops one) would otherwise go on to.
   const skippedEarly = await skipNow('before_build');
   if (skippedEarly) return { ...(await fail(skippedEarly)), skipped: skippedEarly, costUsd: spec.costUsd ?? null };
+  const setupEarly = await setupNow('before_build');
+  if (setupEarly) return { ...(await fail(setupEarly.error)), setupFailed: true, costUsd: spec.costUsd ?? null };
   if (planOnly) {
     // #4488: only the plan. Its session is put away as a finished attempt
     // is; the spec version it holds is what the requester is shown, and
@@ -4383,6 +4417,11 @@ async function buildAndPropose({
   if (skipped) {
     endLive();
     return { ...(await fail(skipped)), skipped, costUsd };
+  }
+  const setupBuilt = await setupNow('built');
+  if (setupBuilt) {
+    endLive();
+    return { ...(await fail(setupBuilt.error)), setupFailed: true, costUsd };
   }
 
   // A turn that ended cleanly and changed nothing: one nudge, in this
@@ -4568,6 +4607,20 @@ async function buildAndPropose({
 
   // What the build pushed, recorded on a live run as a shadow build's is (#3509).
   const pushed = { branchName: session.branch_name, sha: landedSha, commits: landedCommits };
+  // Newcomer run nine (15 Oct 2026): a first version filed while its project
+  // was set up is proposed once the project runs (setupCheck, waited for).
+  // One whose setup failed is stopped; one still being set up after all
+  // that time is left built and not proposed, its session for a person to
+  // propose, as a proposal refused is (below).
+  const setupReady = await setupNow('proposal', { wait: true });
+  if (setupReady?.notProposed) {
+    log.warn('homeroom-bot', 'Built, and not proposed: its project is still being set up', { app: app.slug, issueNumber, sessionId: session.id });
+    return {
+      ok: false, sessionId: session.id, ...pushed, costUsd, error: setupReady.error, ...specOut(), ...reviewOut, ...costsOut(),
+      ...noChangeOut(), ...partialOut, notProposed: true, setupFailed: true,
+    };
+  }
+  if (setupReady) return { ...(await fail(setupReady.error)), setupFailed: true, costUsd, ...reviewOut };
   // Named and described first: the route reads both as it opens the pull
   // request (#3518).
   await steps.once('prepared', async () => {
@@ -4902,6 +4955,7 @@ module.exports = {
   openBotProposal,
   promoteAsBot,
   promoteOwnBuild,
+  proposedAlready,
   ProposalDeferred,
   PROPOSE_RETRY_MS,
   prepareProposal,

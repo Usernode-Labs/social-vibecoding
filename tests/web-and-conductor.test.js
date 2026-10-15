@@ -283,6 +283,9 @@ test('a web process never stands for leader, and only a serving one says its mer
   const elect = startBody.indexOf('leadership.start(becomeLeader)');
   assert.ok(web !== -1 && elect > web, 'the election is the last branch, after the web one');
   assert.match(startBody, /if \(processRole\.servesRequests\(ownRole\)\) platformRelease\.recordRunning\(getPool\(config\)\);/);
+  // The merge-followups machine hears it from the same place, never from a
+  // conductor's boot (src/workflow/platform.ts releaseServing).
+  assert.match(startBody, /if \(processRole\.servesRequests\(ownRole\)\) require\('\.\/src\/workflow\/platform\.ts'\)\.releaseServing\(getPool\(config\)\);/);
   // The sweeps that read busy before acting read it for every process.
   assert.equal((serverJs.match(/worker\.isInFlight\(session\.id\) \|\| activeWorkersSvc\.isSessionBusy\(session\.id\)/g) || []).length, 2);
 });

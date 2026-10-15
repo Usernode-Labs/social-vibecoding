@@ -125,6 +125,11 @@ export type HubFirstVersion = {
     bullets: string[];
     questions: Array<{ question: string; suggested: string | null }>;
   } | null;
+  /** 14 Oct 2026: its build stopped, nothing live yet (line 'stopped'). */
+  stopped?: boolean;
+  /** For its maker alone: where Homeroom bot said it stopped, with Try
+      again under it (routes/apps.js stoppedThread). */
+  thread?: { conversationId: number | null; threadRootId: number | null; messageId: number | null } | null;
 };
 
 /** One channel of a project (#4417): #general, or one of its topics. */
