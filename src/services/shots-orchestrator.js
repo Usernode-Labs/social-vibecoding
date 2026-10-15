@@ -1152,6 +1152,15 @@ async function failCurrentRun(pool, runId, error, stateService = state, runTrace
 // a call the agent made just before its turn was stopped still lands.
 const CONTROL_SLACK_MS = 60_000;
 
+// Whether run `runId` is still the proposal's run under way, in one of
+// `states` (its row's): a step of a run that ended stops instead of going on.
+async function runCurrent(pool, runId, states) {
+  const { rows } = await pool.query(
+    `SELECT 1 FROM shot_runs r JOIN chat_sessions cs ON cs.id = r.session_id AND cs.shots_run_id = r.id
+      WHERE r.id = $1 AND r.state = ANY($2::text[])`, [runId, states]);
+  return rows.length > 0;
+}
+
 // The exact before revision of a head (shots.revision).
 async function resolveRevision(pool, { sessionId, headSha }, githubService = github) {
   const row = await loadSession(pool, sessionId);
@@ -1173,11 +1182,14 @@ function removeCopies(config, { runId, appSlug }) {
  * once built (the machine's checkpoint). `fresh`: nothing of this run's
  * copies can exist yet; otherwise what an earlier attempt left is removed
  * first, so the copies are made from the start. The local checkouts go
- * before it returns; the copies stay for the agent.
+ * before it returns; the copies stay for the agent. `current`: whether the
+ * run is still under way, asked between phases; once it is not, the copies
+ * stop there and it resolves `{ stale: true }` (what they made is the
+ * run's cleanup's to remove).
  */
 async function buildCopies(config, pool, {
   runId, sessionId, kind = 'run', intent: rawIntent, baseSha, headSha, budgetMs,
-  images = null, onImages = null, onProgress = null, fresh = true,
+  images = null, onImages = null, onProgress = null, fresh = true, current = null,
 }, injected = {}) {
   const deps = {
     environment: injected.environment || environment,
@@ -1192,6 +1204,8 @@ async function buildCopies(config, pool, {
   const intent = planContract.parseIntent(rawIntent);
   const revision = await resolveRevisionContext(session, headSha, deps.github, { baseSha });
   const run = { id: runId, base_sha: revision.baseSha, head_sha: revision.headSha, intent };
+  const ended = async () => typeof current === 'function' && !(await current());
+  if (await ended()) return { stale: true };
   if (!fresh) {
     const left = await deps.removeCopies(config, { runId, appSlug: app.slug });
     if (left.length) {
@@ -1201,6 +1215,7 @@ async function buildCopies(config, pool, {
   }
   const pair = await deps.environment.preparePair(config, { pool, run, session, app, onProgress, images, onImages });
   try {
+    if (await ended()) return { stale: true };
     const exploration = await deps.environment.resetPair(config, pair, { onProgress });
     const expectedProvenance = {
       baseSha: run.base_sha,
@@ -1262,6 +1277,7 @@ async function buildCopies(config, pool, {
       platformAssets: !selfApp,
       selfApp,
     };
+    if (await ended()) return { stale: true };
     await shotsControl.create(pool, {
       runId, sessionId, kind, intent, context, homeTiles, afterOnly, agent,
       expiresAt: Date.now() + (Number(budgetMs) || 480_000) + CONTROL_SLACK_MS,
@@ -1339,7 +1355,7 @@ function verdictOf(summary) {
  * and what the run's workspace adds up to, for the machine to decide on.
  */
 async function dispatchAgent(config, pool, {
-  runId, sessionId, budgetMs, steps = null, key = 'agent', onProgress = null,
+  runId, sessionId, budgetMs, steps = null, key = 'agent', onProgress = null, signal = null, current = null,
 }, injected = {}) {
   const deps = {
     shotsAgent: injected.shotsAgent || shotsAgent,
@@ -1377,7 +1393,16 @@ async function dispatchAgent(config, pool, {
   const dispatchTrace = { requestedBackend: 'claude_code', requestedModel: safeModelId(shotsAgent.agentModel(config)), budgetMs };
   metrics.agentDispatches.push(dispatchTrace);
   metrics.agentAttempts += 1;
+  // A run that ended (`signal`: its step was cancelled; `current`: its row
+  // says so) starts no turn: a stop, so nothing is reported for it.
+  const stopIfEnded = async () => {
+    if (signal?.aborted || (typeof current === 'function' && !(await current()))) {
+      throw new (require('./durable-steps').StepsStopped)('the shots run ended before its agent was dispatched');
+    }
+  };
+  await stopIfEnded();
   const dispatch = async (extra = {}, { budgetMs: left = budgetMs } = {}) => {
+    await stopIfEnded();
     dispatchTrace.timeoutMs = left;
     try {
       const dispatched = await deps.shotsAgent.dispatch(config, {
@@ -1470,6 +1495,16 @@ async function compareScreens(pool, { runId, verdict }, injected = {}) {
   }
 }
 
+// Another run of the proposal is under way (the shots machine's instance).
+async function newerRunUnderWay(pool, sessionId, runId) {
+  const { SHOTS_LIVE_STATES } = require('../workflow/session-work.ts');
+  const { rows } = await pool.query(
+    `SELECT 1 FROM wf_instances WHERE machine = 'shots' AND key = 'session:' || $1::text
+        AND state = ANY($2::text[]) AND data->'run'->>'id' IS DISTINCT FROM $3`,
+    [sessionId, SHOTS_LIVE_STATES, runId]);
+  return rows.length > 0;
+}
+
 /**
  * Everything a run left (shots.cleanup): its agent's turn when it may still
  * be at it (`stopTurn`: the run ended while the agent worked), its copies,
@@ -1500,7 +1535,9 @@ async function cleanupRun(config, pool, {
     throw new ShotsOrchestrationError('shots_cleanup_incomplete',
       `The copies could not all be removed: ${left.map((err) => err.message).slice(0, 3).join('; ')}`);
   }
-  if (dropWorker) await workerApi.destroyCcVolume(sessionId);
+  // The temporary worker goes unless a newer run of the proposal is under
+  // way in it (this cleanup waited for its copies, or for a retry).
+  if (dropWorker && !(await newerRunUnderWay(pool, sessionId, runId))) await workerApi.destroyCcVolume(sessionId);
   await shotsControl.remove(pool, runId);
   // The run's row says so (the retention prune reads it).
   return { cleaned: true, version: environment.RESOURCE_CLEANUP_VERSION };
@@ -1628,6 +1665,7 @@ module.exports = {
   progressPhase,
   startRunHeartbeat,
   failCurrentRun,
+  runCurrent,
   resolveRevision,
   buildCopies,
   agentErrorOf,

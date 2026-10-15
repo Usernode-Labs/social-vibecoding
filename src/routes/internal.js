@@ -129,14 +129,14 @@ function internalRoutes(_config) {
   });
   // Applies one of the agent's calls to its run's workspace, in whichever
   // process serves it (services/shots-control.js).
-  function withShotsControl(req, fn) {
+  function withShotsControl(req, fn, opts = {}) {
     const runId = String(req.params.runId || '');
     if (req.workerSession.shotsRunId !== runId) {
       throw new shotsControl.ShotsControlError(
         'shots_scope_mismatch', 'Shots token does not own this run.', 403
       );
     }
-    return shotsControl.withControl(pool, { runId, sessionId: req.workerSession.sessionId }, fn);
+    return shotsControl.withControl(pool, { runId, sessionId: req.workerSession.sessionId }, fn, opts);
   }
   function shotsError(res, err) {
     const status = Number(err?.status)
@@ -146,7 +146,7 @@ function internalRoutes(_config) {
   }
 
   router.get('/api/internal/shots/:runId/context', shotsAuth, shotsLimiter, async (req, res) => {
-    try { return res.json({ ok: true, context: await withShotsControl(req, (c) => c.getContext()) }); }
+    try { return res.json({ ok: true, context: await withShotsControl(req, (c) => c.getContext(), { readOnly: true }) }); }
     catch (err) { return shotsError(res, err); }
   });
 
@@ -155,7 +155,7 @@ function internalRoutes(_config) {
   // path on that side's address (services/shots-home-tile.js).
   router.get('/api/internal/shots/:runId/home-tile/:side', shotsAuth, shotsLimiter, async (req, res) => {
     try {
-      const page = await withShotsControl(req, (c) => c.homeTilePage(String(req.params.side || '')));
+      const page = await withShotsControl(req, (c) => c.homeTilePage(String(req.params.side || '')), { readOnly: true });
       res.set({
         'Content-Type': 'text/html; charset=utf-8',
         'Cache-Control': 'no-store',

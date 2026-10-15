@@ -788,9 +788,12 @@ the run under way, a Stop or a waiver applies to whatever is current, and an aut
 retry is counted per head. `chat_sessions.shots_state`, `shots_run_id`, `shots_detail` and
 every `shot_runs` row are its projection and domain writes, guarded; their values and shape
 are what every reader (the vote and merge gate, the cards, the bot, the gallery) already
-read. A proposal it has never seen is adopted from its row by its first event; a run an
-earlier release was taking is ended as interrupted (its copies go) and taken again at the
-release (`platform.ts` `retryShotsCutOff`).
+read. A proposal it has never seen is adopted from its row by its first event (any event,
+its close included); a run an earlier release was taking is ended as interrupted (its
+copies go) and taken again once while the proposal is open. The leader appends to every
+such proposal whose run went quiet, every two minutes for an hour after it starts leading,
+because a rollout keeps the older release's processes starting runs for a while
+(`platform.ts` `retryShotsCutOff`; transitional).
 
 - **Requests.** A declaration (`Declared`: the hosted worker's tool, `submit_work`, a
   hand-off, PR import in its own transaction, the bot's own proposal) and a head move
@@ -808,20 +811,30 @@ release (`platform.ts` `retryShotsCutOff`).
   checkpoint, `services/durable-turn.js`: a restart follows the turn the worker still runs),
   `shots.publish` (the outlines). Publication is the transition: the ready files become
   `shot_artifacts` in the same transaction that writes `verified`. Whatever way a run
-  ends, `shots.cleanup` removes its copies (and its turn, and a temporary worker), and
-  `bot.shotsSettled` and `github.prShotsBlock` tell the Homeroom bot and the pull request.
+  ends, `shots.cleanup` removes its copies (and its turn, and a temporary worker no newer
+  run is in), and `bot.shotsSettled` and `github.prShotsBlock` tell the Homeroom bot and
+  the pull request. Copies still being built when their run ends are not cancelled: they
+  stop at their next phase (the step asks whether its run is still current), and the
+  cleanup starts once they report, so nothing they make afterwards is left. An agent's step
+  whose run ended starts no turn.
 - **The agent's control plane is in Postgres** (`shot_run_control`, `shot_run_files`,
   `services/shots-control.js`): any web process answers its calls, and nothing it saved
   is lost to a restart. A call is answered only while its run is current and its agent at
   work.
 - **The machine decides:** at most 4 copy builds and 32 agent turns at a time; it waits
   for the proposal's agent (`waiting_for_agent`, rechecked every 20 seconds, within the
-  run's time) instead of taking it from a turn; another turn taking it is waited for again
+  run's time from the moment its copies serve) instead of taking it from a turn, and for
+  any process of a release from before the machine to stop serving (its control plane was
+  in memory; transitional); another turn taking it is waited for again
   twice, a dispatch whose process died is tried once more. Each step has a deadline: copies
   that take over 45 minutes fail, an agent's turn 15 minutes past its own clock fails (its
   process is stuck), a comparison past 15 minutes publishes without outlines. A platform
   fault (the copies' database, a clone, the worker's bootstrap, GitHub's limit, the agent's
-  exit or a stuck turn, copies too slow) is taken again once. A run under way
+  exit or a stuck turn, copies too slow, a run a release cut off) is taken again once;
+  one whose revision never resolved (GitHub's limit) never got a row, so the slot says it
+  did not start, and it is taken again when the limit resets. Each timer names the run and
+  the step it was set for, so one that fired as a transition replaced it is ignored. A
+  run under way
   holds the proposal's worker: `session-work.ts` `shotsRunningSql` is what the preview
   machine and merge-followups (its `worker.retire`) read.
 - **Shots evals** (an admin's comparison of the agent's prompts) run the same steps one

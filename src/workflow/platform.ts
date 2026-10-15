@@ -114,6 +114,7 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
     execute: !!config.shots?.execute,
     agentBudgetMs: Number(config.shots?.maxAgentMs) || 480_000,
     runBudgetMs: Number(config.shots?.maxRunMs) || 1_440_000,
+    buildSha: /^[0-9a-f]{40}$/.test(String(process.env.GIT_SHA || '')) ? String(process.env.GIT_SHA) : null,
   });
   const machines = [machine, merges, builds, deliveries, previews, shotRuns];
   const services = {
@@ -171,20 +172,33 @@ export async function startWorkflowLoops(): Promise<void> {
   if (rows.length) log!.info('workflow', 'Enrolled open governance proposals', { count: rows.length });
   await retryPlatformFaults();
   await retryShotsCutOff();
+  watchShotsCutOff();
 }
 
 // Shots [main] was taking in a process the release replaced (or that a
 // release interrupted, on the head they were for): each open proposal's are
 // taken again by the shots machine, once. Its first event adopts the
-// proposal from its row (ending the run that was cut off). Once per release.
+// proposal from its row (ending the run that was cut off). A run counts once
+// it has gone quiet: [main]'s run beats its row every few seconds while its
+// process lives, and a rollout keeps [main]'s processes serving (and
+// starting runs) for a while after this one leads, so this looks again every
+// two minutes for an hour. Transitional: once no release from before the
+// machine runs, there is nothing to find.
+const CUT_OFF_QUIET = '5 minutes';
+const CUT_OFF_EVERY_MS = 2 * 60 * 1000;
+const CUT_OFF_FOR_MS = 60 * 60 * 1000;
+let cutOffWatch: NodeJS.Timeout | null = null;
+
 async function retryShotsCutOff(): Promise<void> {
-  if (!shotRuns) return;
+  if (!shotRuns || !runtime) return;
   const { rows } = await kernelPool!.query(
     `SELECT cs.id, cs.app_id FROM chat_sessions cs JOIN shot_runs r ON r.id = cs.shots_run_id
       WHERE cs.status IN ('active', 'paused', 'promoted', 'merging')
-        AND (r.state IN ('planned', 'provisioning', 'exploring', 'replaying', 'reviewing')
+        AND ((r.state IN ('planned', 'provisioning', 'exploring', 'replaying', 'reviewing')
+              AND r.updated_at < NOW() - $2::interval)
              OR (r.state = 'failed' AND r.failure_code = 'shots_run_interrupted'))
-        AND NOT EXISTS (SELECT 1 FROM wf_instances w WHERE w.machine = $1 AND w.key = 'session:' || cs.id)`, [SHOTS]);
+        AND NOT EXISTS (SELECT 1 FROM wf_instances w WHERE w.machine = $1 AND w.key = 'session:' || cs.id)`,
+    [SHOTS, CUT_OFF_QUIET]);
   const release = String(process.env.GIT_SHA || 'dev').slice(0, 40);
   for (const r of rows) {
     await runtime!.append(shotRuns, shotsKey(r.id), { type: 'RetryRequested', payload: { sessionId: r.id, reason: 'release' } },
@@ -192,6 +206,16 @@ async function retryShotsCutOff(): Promise<void> {
       .catch((err: Error) => log!.warn('workflow', 'Could not take cut-off shots again', { sessionId: r.id, message: err.message }));
   }
   if (rows.length) log!.info('workflow', 'Shots cut off by the release taken again', { count: rows.length });
+}
+
+function watchShotsCutOff(): void {
+  if (cutOffWatch) return;
+  const until = Date.now() + CUT_OFF_FOR_MS;
+  cutOffWatch = setInterval(() => {
+    if (Date.now() > until || !runtime) { clearInterval(cutOffWatch!); cutOffWatch = null; return; }
+    retryShotsCutOff().catch((err: Error) => log!.warn('workflow', 'Could not look for cut-off shots', { message: err.message }));
+  }, CUT_OFF_EVERY_MS);
+  cutOffWatch.unref?.();
 }
 
 // A release is when a fix to the platform's own fault (a check Job refused
@@ -229,6 +253,7 @@ export function workflowWorkRunning(): number {
 }
 
 export async function stopWorkflow(): Promise<void> {
+  if (cutOffWatch) { clearInterval(cutOffWatch); cutOffWatch = null; }
   const r = runtime;
   runtime = null;
   machine = null;
@@ -601,12 +626,14 @@ export async function shotsInstance(sessionId: number): Promise<{ state: string;
   return r ? { state: r.state, data: r.data } : null;
 }
 
-// A run of the proposal's shots is under way (it holds the proposal's
-// worker and its copies), read from the instance: true across restarts and
-// in every process.
+// A run of the proposal's shots is under way, for a coding turn deciding
+// whether to wait for it (the Homeroom bot, the Mayor), read from the
+// instance: true across restarts and in every process. A run waiting for the
+// proposal's agent is not one to wait for: it waits for the turn, and the
+// two would wait for each other until the run gave up.
 export async function shotsRunning(sessionId: number): Promise<boolean> {
   const i = await shotsInstance(sessionId);
-  return !!i && SHOTS_LIVE.has(i.state);
+  return !!i && SHOTS_LIVE.has(i.state) && i.state !== 'waiting_for_agent';
 }
 
 function shotsMachine() {

@@ -11,9 +11,6 @@ const state = require('../services/shots-state');
 const view = require('../services/shots-view');
 const { visualHeadForSession } = require('../services/pr-vote-revision');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
-// A rerun while this process drains would write a planned run no sweep
-// resumes (the unstarted sweep only reads claims without a run) and start it
-// only to be interrupted: refuse it up front, as other heavy routes do.
 
 const ARTIFACT_ID_RE = /^[0-9a-f]{32}$/;
 

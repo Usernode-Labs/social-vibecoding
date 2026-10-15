@@ -68,7 +68,8 @@
       "services | uses src/services/shots-orchestrator.js:platformFault": "a step's failure classified as the platform's own fault (pure, on the error), so the machine takes the run again once; cut out of executeRun's catch",
       "services | uses src/services/shots-orchestrator.js:visibleError": "a step's failure in the words the proposal shows (pure), cut out of executeRun's catch",
       "services | uses src/services/durable-steps.js:durable": "the agent step's durable context over the work item's own checkpoint (the kernel's), which durable-turn.js keeps the turn's record and clock in; no state outside the item",
-      "services | uses src/services/pr-metadata.js:syncShotsPrBlock": "github.prShotsBlock: the pull request description's shots block (GitHub), cut out of scheduleForSession's floating promise; now durable work at a run's start and when the slot settles"
+      "services | uses src/services/pr-metadata.js:syncShotsPrBlock": "github.prShotsBlock: the pull request description's shots block (GitHub), cut out of scheduleForSession's floating promise; now durable work at a run's start and when the slot settles",
+      "services | uses src/services/shots-orchestrator.js:runCurrent": "whether a step's run is still the proposal's run under way (its row and the slot), so copies of a run that ended stop at their next phase and an agent step whose run ended starts no turn; a read, no state"
     }
   },
   "handOff": {
@@ -184,6 +185,7 @@
       "shared | uses src/services/github.js:isEnabled"
     ],
     "platform": [
+      "web | state src/workflow/platform.ts#cutOffWatch",
       "web | state src/workflow/platform.ts#deliveries",
       "web | state src/workflow/platform.ts#kernelPool",
       "web | state src/workflow/platform.ts#log",
@@ -192,6 +194,7 @@
       "web | state src/workflow/platform.ts#previews",
       "web | state src/workflow/platform.ts#runtime",
       "web | state src/workflow/platform.ts#shotRuns",
+      "web | timer src/workflow/platform.ts#watchShotsCutOff setInterval",
       "web | uses src/db/pool.js:getPool",
       "web | uses src/routes/votes.js:VOTE_REASON_MAX",
       "web | uses src/routes/votes.js:VOTE_REASON_REQUIRED",
@@ -334,6 +337,7 @@
       "services | uses src/services/shots-orchestrator.js:dispatchAgent",
       "services | uses src/services/shots-orchestrator.js:platformFault",
       "services | uses src/services/shots-orchestrator.js:resolveRevision",
+      "services | uses src/services/shots-orchestrator.js:runCurrent",
       "services | uses src/services/shots-orchestrator.js:visibleError"
     ]
   }

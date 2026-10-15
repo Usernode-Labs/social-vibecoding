@@ -36,8 +36,8 @@ test('a verdict, a skip and a deferral each tell it again for their head: one me
 
 test('the shots machine waits for the proposal\'s agent itself, on its own clock', () => {
   const machine = read('src/workflow/shots/machine.ts');
-  assert.match(machine, /if \(f\.session\?\.agentBusy\) \{/);
-  assert.match(machine, /timer: \{ at: later\(ctx, AGENT_RECHECK_MS\), event: \{ type: 'Recheck' \} \}/);
+  assert.match(machine, /if \(f\.session\?\.agentBusy \|\| f\.session\?\.olderServing\) \{/);
+  assert.match(machine, /timer: clockFor\(ctx, AGENT_RECHECK_MS, 'Recheck', r\.id, 'wait'\)/);
   // No sweep looks for runs to start or retry.
   const server = read('server.js');
   assert.doesNotMatch(server, /shots-retry-interrupted|shots-recover-unstarted|shots-recover-interrupted/);

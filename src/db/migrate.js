@@ -7588,6 +7588,7 @@ async function seedStagingShotsNoticed(pool) {
        SELECT $1::varchar, $2::int, $3::varchar, $4::varchar, $5::varchar, $6::jsonb, $7::jsonb, $8::jsonb,
               'verified', 'staging-fixture', NOW() - interval '3 hours', NOW() - interval '3 hours'
         WHERE EXISTS (SELECT 1 FROM chat_sessions WHERE id = $2::int AND app_id = 900106)
+          AND NOT wf_holds('shots', 'session:' || $2::int)
        ON CONFLICT (id) DO NOTHING`,
       [runId, id, baseSha, headSha, planHash, JSON.stringify(intent), JSON.stringify(verdict),
         JSON.stringify(cleaned)]

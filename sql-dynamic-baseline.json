@@ -1783,7 +1783,7 @@
     {
       "source": "src/workflow/shots/facts.ts",
       "kind": "structural-template",
-      "fingerprint": "4eb41e9794048d6e0944",
+      "fingerprint": "7c099c2f55e9a8c649b2",
       "count": 1,
       "preview": "`SELECT cs.id, cs.app_id, cs.status, cs.source, cs.imported_pr_head_sha, cs.reviewed_head_sha, cs.checks_commit_sha, cs.handoff_head_sha, cs.staging_commit_sha,"
     },

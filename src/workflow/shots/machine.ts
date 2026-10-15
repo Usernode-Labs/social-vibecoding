@@ -59,6 +59,7 @@ export interface Run {
   busy: number;                    // dispatches another turn took the agent from
   died: number;                    // dispatches whose process died under them
   dispatches: number;
+  copiesAt: string | null;         // its copies serve: the agent may be waited for from here
   agentStartedAt: string | null;   // the agent's clock: its first dispatch
   agentWaitUntil: string | null;   // waiting for the agent, until
   platformRetry: boolean;          // this run is a platform fault's one retry
@@ -67,7 +68,11 @@ export interface Run {
   // the ready files' slots (the comparison only adds outlines).
   publish?: { verdict: Json; manifestHash: string; slots: string[] } | null;
 }
-export interface Cleaning { runId: string; worker: boolean; stopTurn: boolean }
+// A run that ended, until everything it left is gone. `awaitCopies`: its
+// copies were being built when it ended; the step is left to finish (it
+// stops at its next phase once it sees the run ended), and the cleanup
+// starts once it reports, so nothing it makes after the cleanup is left.
+export interface Cleaning { runId: string; n: number; worker: boolean; stopTurn: boolean; awaitCopies?: boolean }
 export interface Declared { intent: Json | null; required: boolean }
 export interface Data {
   sessionId: number;
@@ -77,7 +82,12 @@ export interface Data {
   head: string | null;             // the head the slot is about
   run: Run | null;                 // the run under way
   // The last run that ended on this head, for its one automatic retry.
-  last: { id: string; head: string; fault: string | null; retryAt: string | null; retried: boolean } | null;
+  // `row`: it got as far as its row (a run whose revision never resolved
+  // has none, so there is nothing on the slot to waive).
+  last: { id: string; head: string; fault: string | null; retryAt: string | null; retried: boolean; row: boolean } | null;
+  // Why the slot last said no run started, so the same refusal again is
+  // not told again.
+  notStarted?: string | null;
   n: number;
   cleaning: Cleaning[];
   declaredBy?: number;             // the event whose declaration stands
@@ -124,6 +134,7 @@ const intentOf = (v: unknown) => {
 };
 
 const session = (p: any) => ({ sessionId: int(p?.sessionId, 'sessionId') });
+const clock = (p: any) => ({ runId: text(p?.runId, 64), phase: text(p?.phase, 64) });
 const EVENTS = {
   // A declaration of visible changes (the hosted worker's tool, submit_work,
   // a hand-off, PR import, the bot's own proposal), for `head` or the row's.
@@ -140,10 +151,11 @@ const EVENTS = {
   StopRequested: (p: any) => ({ ...session(p) }),
   WaiveRequested: (p: any) => ({ ...session(p), userId: int(p?.userId, 'userId'), reason: text(p?.reason, 1000) || (() => { throw new Error('reason is required'); })() }),
   // The machine's own clock: the agent free yet, a step past its deadline,
-  // a platform fault's one retry.
-  Recheck: () => ({}),
-  Overdue: () => ({}),
-  RetryDue: () => ({}),
+  // a platform fault's one retry. Each names the run and the step it was
+  // set for: one that fired as a transition replaced it is ignored.
+  Recheck: clock,
+  Overdue: clock,
+  RetryDue: clock,
 };
 
 // ── Configuration ───────────────────────────────────────────────────────
@@ -152,6 +164,7 @@ export interface Deps {
   execute: boolean;          // config.shots.execute: this deployment takes shots
   agentBudgetMs: number;     // config.shots.maxAgentMs
   runBudgetMs: number;       // config.shots.maxRunMs
+  buildSha?: string | null;  // GIT_SHA: this release (facts.ts olderServing)
 }
 
 // How long a step may take before it is overdue: the copies (a platform
@@ -171,9 +184,10 @@ export const MAX_AGENT_BUSY_RETRIES = 2;
 export const PLATFORM_RETRY_MS = 60 * 1000;
 // The platform's own faults, by kind: the copies' database, a clone, the
 // worker's bootstrap, GitHub's limit, the agent's process, copies that never
-// finished. Anything else is the proposal's to fix.
+// finished, a run a release cut off, the revision step itself never ending.
+// Anything else is the proposal's to fix.
 const PLATFORM_FAULTS: ReadonlySet<string> = new Set([
-  'database', 'clone', 'worker_bootstrap', 'github_rate_limited', 'agent_exit', 'copies_timeout',
+  'database', 'clone', 'worker_bootstrap', 'github_rate_limited', 'agent_exit', 'copies_timeout', 'release', 'revision',
 ]);
 
 // What each refusal to start says on the proposal (#2601/#2558).
@@ -242,16 +256,39 @@ const told = (d: Data, state: string): Push => voteUpdate({
   sessionId: d.sessionId, appId: d.appId, appSlug: d.appSlug, merged: false, action: 'shots', shotsState: state,
 });
 
+// The machine's clock for the run under way: each timer names the run and
+// the step it was set for (the copies, an agent's dispatch, the comparison),
+// so one that fired as a transition replaced it is ignored.
+const clockFor = (ctx: TransitionContext, ms: number, type: string, runIdOf: string, phase: string): TimerRequest =>
+  ({ at: later(ctx, ms), event: { type, payload: { runId: runIdOf, phase } } });
+const agentPhase = (r: Run) => `agent:${r.dispatches}`;
+
 // The run under way ends, whatever way: what it still has outstanding is
 // cancelled, its copies (and its turn, when the agent may be at it) go.
 // `worker`: the proposal's worker was made for these shots and nothing
-// needs it any more.
-function endRun(s: Live, f: Facts, { worker = true }: { worker?: boolean } = {}): { d: Data; cancel: WorkRef[]; work: WorkRequest[] } {
+// needs it any more. Copies still being built are left to finish (they stop
+// at their next phase: services/shots-orchestrator.js buildCopies), and
+// their cleanup waits for them; `copiesSettled`: they already reported.
+function endRun(s: Live, f: Facts, { worker = true, copiesSettled = false }: { worker?: boolean; copiesSettled?: boolean } = {}):
+  { d: Data; cancel: WorkRef[]; work: WorkRequest[] } {
   const r = s.data.run!;
-  const c: Cleaning = { runId: r.id, worker: worker && !!f.session?.temporaryWorker,
-    stopTurn: s.name === 'taking_shots' || s.name === 'publishing' };
+  const awaitCopies = s.name === 'building_copies' && !!r.base && !copiesSettled;
+  const c: Cleaning = { runId: r.id, n: r.n, worker: worker && !!f.session?.temporaryWorker,
+    stopTurn: s.name === 'taking_shots' || s.name === 'publishing', ...(awaitCopies ? { awaitCopies: true } : {}) };
   const d: Data = { ...s.data, run: null, cleaning: [...s.data.cleaning.filter((x) => x.runId !== r.id), c] };
-  return { d, cancel: runWork(r), work: [cleanupWork(d, c)] };
+  return {
+    d,
+    cancel: runWork(r).filter((w) => !(awaitCopies && w.kind === WORK.copies)),
+    work: awaitCopies ? [] : [cleanupWork(d, c)],
+  };
+}
+
+// The slot says why no run started (#2601/#2558), and whoever waits on it
+// hears it settled; the same refusal again says nothing new.
+function refuse(d: Data, why: string, reason: string, ctx: TransitionContext): { d: Data; writes: DomainWrite[]; work: WorkRequest[] } {
+  if (d.notStarted === why) return { d, writes: [], work: [] };
+  const next = { ...d, notStarted: why };
+  return { d: next, writes: [{ type: 'notStarted', sessionId: d.sessionId, reason }], work: settledWork(next, ctx) };
 }
 
 // Start a run of the declaration on head `head`, or say on the slot why it
@@ -263,9 +300,10 @@ function start(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext, deps: D
   const why = !deps.execute ? 'disabled' : !d0.declared?.intent ? 'missing_intent' : !head ? 'no_revision' : null;
   if (why) {
     const name: Name = d0.declared?.intent ? 'waiting_for_preview' : 'undeclared';
-    return step({ name, data: d0 }, {
-      writes: [...(extra.writes || []), { type: 'notStarted', sessionId: d0.sessionId, reason: NOT_STARTED.get(why)! }],
-      cancel: extra.cancel, work: [...(extra.work || []), ...settledWork(d0, ctx)], timer: null,
+    const no = refuse(d0, why, NOT_STARTED.get(why)!, ctx);
+    return step({ name, data: no.d }, {
+      writes: [...(extra.writes || []), ...no.writes],
+      cancel: extra.cancel, work: [...(extra.work || []), ...no.work], timer: null,
     });
   }
   if (!d0.declared!.required) {
@@ -274,15 +312,38 @@ function start(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext, deps: D
   const n = d0.n + 1;
   const run: Run = {
     id: runId(ctx, e), n, head: head!, base: null, trigger, startedAt: ctx.now.toISOString(),
-    busy: 0, died: 0, dispatches: 0, agentStartedAt: null, agentWaitUntil: null,
+    busy: 0, died: 0, dispatches: 0, copiesAt: null, agentStartedAt: null, agentWaitUntil: null,
     platformRetry: !!extra.platformRetry, afterOnly: false,
   };
-  const d: Data = { ...d0, n, run };
+  const d: Data = { ...d0, n, run, notStarted: null };
   return step({ name: 'building_copies', data: d }, {
     writes: extra.writes,
     cancel: extra.cancel,
     work: [...(extra.work || []), { kind: WORK.revision, key: `revision:${n}`, input: { sessionId: d.sessionId, head: run.head } }],
-    timer: { at: later(ctx, COPIES_DEADLINE_MS), event: { type: 'Overdue' } },
+    timer: clockFor(ctx, COPIES_DEADLINE_MS, 'Overdue', run.id, 'copies'),
+  });
+}
+
+// A platform fault is taken again once, on the same head, while the
+// proposal is open (unless this run was that retry).
+function retryOf(r: Run, f: Facts, ctx: TransitionContext, fault: string | null, retryAt: string | null | undefined) {
+  const retry = !!fault && !r.platformRetry && !!f.session && OPEN.has(f.session.status);
+  return retry ? (retryAt || later(ctx, PLATFORM_RETRY_MS).toISOString()) : null;
+}
+
+// A run that never got its row (its revision never resolved): nothing was
+// built and nothing is on the slot to fail or waive, so the slot says it
+// never started, and a platform fault is taken again once.
+function notStartedRun(s: Live, f: Facts, ctx: TransitionContext, failure: { reason: string; fault?: string | null; retryAt?: string | null }): Outcome<SState> {
+  const r = s.data.run!;
+  const { d, cancel, work } = endRun(s, f);
+  const fault = failure.fault && PLATFORM_FAULTS.has(failure.fault) ? failure.fault : null;
+  const retryAt = retryOf(r, f, ctx, fault, failure.retryAt);
+  const no = refuse({ ...d, notStarted: null }, 'no_revision', failure.reason, ctx);
+  const next: Data = { ...no.d, last: { id: r.id, head: r.head, fault, retryAt, retried: false, row: false } };
+  return step({ name: 'waiting_for_preview', data: next }, {
+    writes: no.writes, cancel, work: [...work, ...no.work],
+    timer: retryAt ? { at: new Date(retryAt), event: { type: 'RetryDue', payload: { runId: r.id, phase: 'retry' } } } : null,
   });
 }
 
@@ -290,35 +351,40 @@ function start(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext, deps: D
 // platform fault is taken again once (unless this run was that retry).
 function fail(s: Live, f: Facts, ctx: TransitionContext, failure: {
   code: string; reason: string; fault?: string | null; retryAt?: string | null; verdict?: Json; trace?: Json;
+  copiesSettled?: boolean;
 }): Outcome<SState> {
   const r = s.data.run!;
-  const { d, cancel, work } = endRun(s, f);
+  if (!r.base) return notStartedRun(s, f, ctx, failure);
+  const { d, cancel, work } = endRun(s, f, { copiesSettled: failure.copiesSettled });
   const fault = failure.fault && PLATFORM_FAULTS.has(failure.fault) ? failure.fault : null;
-  const retry = !!fault && !r.platformRetry && !!f.session && OPEN.has(f.session.status);
-  const retryAt = retry ? (failure.retryAt || later(ctx, PLATFORM_RETRY_MS).toISOString()) : null;
-  const next: Data = { ...d, last: { id: r.id, head: r.head, fault, retryAt, retried: false } };
+  const retryAt = retryOf(r, f, ctx, fault, failure.retryAt);
+  const next: Data = { ...d, last: { id: r.id, head: r.head, fault, retryAt, retried: false, row: true } };
   const trace = { ...((failure.trace as object) || {}), ...(fault ? { platformFault: { kind: fault, ...(retryAt ? { retryAt: Date.parse(retryAt) } : {}) } } : {}),
-    ...(retry ? { automaticRetry: true } : {}), failure: { code: failure.code, message: failure.reason } } as Json;
+    ...(retryAt ? { automaticRetry: true } : {}), failure: { code: failure.code, message: failure.reason } } as Json;
   return step({ name: 'failed', data: next }, {
     writes: [{ type: 'runMoved', runId: r.id, state: 'failed',
       patch: { failureCode: failure.code, failureReason: failure.reason, traceSummary: trace,
         ...(failure.verdict ? { hardVerdict: failure.verdict } : {}) } }],
     cancel, work: [...work, ...settledWork(next, ctx)],
-    timer: retry ? { at: new Date(retryAt!), event: { type: 'RetryDue' } } : null,
+    timer: retryAt ? { at: new Date(retryAt), event: { type: 'RetryDue', payload: { runId: r.id, phase: 'retry' } } } : null,
   });
 }
 
 // The agent's turn on the run's copies, when the proposal's agent is free;
-// otherwise wait for it, until what is left of the run's time.
+// otherwise wait for it, until what is left of the run's time from the
+// moment its copies served. While a process of a release from before this
+// machine still serves (a rollout), the agent's calls could reach it, and it
+// keeps the agent's control plane in its memory: that is waited out too.
 function dispatchOrWait(s: Live, f: Facts, ctx: TransitionContext, deps: Deps, writes: DomainWrite[] = []): Outcome<SState> {
   const r = s.data.run!;
-  if (f.session?.agentBusy) {
-    const until = r.agentWaitUntil || new Date(Date.parse(r.startedAt) + deps.runBudgetMs).toISOString();
+  if (f.session?.agentBusy || f.session?.olderServing) {
+    const from = r.copiesAt || r.startedAt;
+    const until = r.agentWaitUntil || new Date(Date.parse(from) + deps.runBudgetMs).toISOString();
     if (Date.parse(until) <= ctx.now.getTime()) {
       return fail(s, f, ctx, { code: 'shots_agent_busy', reason: AGENT_BUSY_REASON });
     }
     return step({ name: 'waiting_for_agent', data: { ...s.data, run: { ...r, agentWaitUntil: until } } }, {
-      writes, timer: { at: later(ctx, AGENT_RECHECK_MS), event: { type: 'Recheck' } },
+      writes, timer: clockFor(ctx, AGENT_RECHECK_MS, 'Recheck', r.id, 'wait'),
     });
   }
   const agentStartedAt = r.agentStartedAt || ctx.now.toISOString();
@@ -330,7 +396,7 @@ function dispatchOrWait(s: Live, f: Facts, ctx: TransitionContext, deps: Deps, w
     writes,
     work: [{ kind: WORK.agent, key: `agent:${r.n}:${k}`,
       input: { runId: r.id, sessionId: s.data.sessionId, budgetMs } }],
-    timer: { at: later(ctx, budgetMs + AGENT_OVERDUE_MS), event: { type: 'Overdue' } },
+    timer: clockFor(ctx, budgetMs + AGENT_OVERDUE_MS, 'Overdue', r.id, agentPhase(run)),
   });
 }
 
@@ -342,7 +408,7 @@ const headOf = (d: Data, f: Facts, head: string | null) => head || d.head || f.s
 // ends, shots of other heads stop counting, and the declaration carries
 // over to the new head.
 function moveHead(s: Live, f: Facts, ctx: TransitionContext, head: string, reason: string | null): { s: Live; out: Outcome<SState> } {
-  let d: Data = { ...s.data, head, last: null };
+  let d: Data = { ...s.data, head, last: null, notStarted: null };
   let cancel: WorkRef[] = [];
   let work: WorkRequest[] = [];
   if (live(s)) {
@@ -360,12 +426,17 @@ function moveHead(s: Live, f: Facts, ctx: TransitionContext, head: string, reaso
 
 // ── Adoption ────────────────────────────────────────────────────────────
 
+const ACTIVE_RUN_STATES: ReadonlySet<string> = new Set(['planned', 'provisioning', 'exploring', 'replaying', 'reviewing']);
+const INTERRUPTED_REASON = 'Homeroom restarted while these before & after shots were being taken. You can take them again.';
+
 // A proposal's first event: the instance starts from what its row says, so
 // a declaration [main] stored is kept and its shots stand. A run [main]
-// was taking (the process that ran it ends with the release) is ended:
-// its copies go, and the slot says it was interrupted; the boot backfill
-// takes such a proposal again (platform.ts).
-function adopt(sessionId: number, f: Facts): { s: Live; writes: DomainWrite[]; work: WorkRequest[] } {
+// was taking (the process that ran it ends with the release), or one its
+// shutdown marked interrupted, is a run the release cut off: its copies go,
+// the slot says so, and it is taken again once, as any platform fault is,
+// while the proposal is open. platform.ts appends to every such proposal
+// nobody else did, for an hour after the release starts leading.
+function adopt(sessionId: number, f: Facts, ctx: TransitionContext): { s: Live; writes: DomainWrite[]; work: WorkRequest[]; timer?: TimerRequest } {
   const d = fresh(sessionId, f);
   const slot = f.session?.slot;
   const detail = slot?.detail;
@@ -378,22 +449,28 @@ function adopt(sessionId: number, f: Facts): { s: Live; writes: DomainWrite[]; w
   const run = slot?.run;
   if (run && slot?.runId === run.id) {
     d.head = run.head;
-    if (['planned', 'provisioning', 'exploring', 'replaying', 'reviewing'].includes(run.state)) {
-      const c: Cleaning = { runId: run.id, worker: !!f.session?.temporaryWorker, stopTurn: true };
+    const open = !!f.session && OPEN.has(f.session.status);
+    const inFlight = ACTIVE_RUN_STATES.has(run.state);
+    if (inFlight || (run.state === 'failed' && run.failureCode === 'shots_run_interrupted')) {
+      const retryAt = open && d.declared?.intent ? later(ctx, PLATFORM_RETRY_MS) : null;
+      d.last = { id: run.id, head: run.head, fault: 'release', retryAt: retryAt?.toISOString() ?? null, retried: false, row: true };
+      const timer: TimerRequest | undefined = retryAt
+        ? { at: retryAt, event: { type: 'RetryDue', payload: { runId: run.id, phase: 'retry' } } } : undefined;
+      if (!inFlight) return { s: { name: 'failed', data: d }, writes: [], work: [], timer };
+      const c: Cleaning = { runId: run.id, n: 0, worker: !!f.session?.temporaryWorker, stopTurn: true };
       d.cleaning = [c];
-      d.last = { id: run.id, head: run.head, fault: null, retryAt: null, retried: false };
       return {
         s: { name: 'failed', data: d },
         writes: [{ type: 'runMoved', runId: run.id, state: 'failed', patch: {
-          failureCode: 'shots_run_interrupted',
-          failureReason: 'Homeroom restarted while these before & after shots were being taken. You can take them again.',
-          traceMerge: { interruptedBy: 'release' } } }],
+          failureCode: 'shots_run_interrupted', failureReason: INTERRUPTED_REASON,
+          traceMerge: { interruptedBy: 'release', ...(retryAt ? { automaticRetry: true } : {}) } } }],
         work: [cleanupWork(d, c)],
+        timer,
       };
     }
     const name: Name = run.state === 'verified' ? 'published' : run.state === 'overridden' ? 'waived'
       : run.state === 'not_required' ? 'not_needed' : 'failed';
-    if (name === 'failed') d.last = { id: run.id, head: run.head, fault: null, retryAt: null, retried: true };
+    if (name === 'failed') d.last = { id: run.id, head: run.head, fault: null, retryAt: null, retried: true, row: true };
     return { s: { name, data: d }, writes: [], work: [] };
   }
   const name: Name = !d.declared ? 'undeclared' : !d.declared.intent ? 'undeclared'
@@ -405,11 +482,14 @@ function adopt(sessionId: number, f: Facts): { s: Live; writes: DomainWrite[]; w
 
 type Handler = (s: Live, e: Event<any>, f: Facts, ctx: TransitionContext, deps: Deps) => Outcome<SState>;
 
+// `b` happened first: the handler's outcome `a` follows it, and its timer
+// stands unless it kept the deadline (undefined), when `b`'s does.
 const merge = (a: Outcome<SState>, b: Omit<Outcome<SState>, 'next'>): Outcome<SState> => ({
   ...a,
   writes: [...(b.writes || []), ...(a.writes || [])],
   cancel: [...(b.cancel || []), ...(a.cancel || [])],
   work: [...(b.work || []), ...(a.work || [])],
+  timer: a.timer !== undefined ? a.timer : b.timer,
 });
 
 // A declaration. The same one again, for the same head, changes nothing (a
@@ -423,7 +503,7 @@ const declared: Handler = (s, e, f, ctx, deps) => {
   const same = !!s.data.declared?.intent && JSON.stringify(s.data.declared.intent) === JSON.stringify(intent)
     && s.data.head === head;
   if (same) return step(s);
-  let d: Data = { ...s.data, declared: { intent, required }, head, last: null, declaredBy: e.id };
+  let d: Data = { ...s.data, declared: { intent, required }, head, last: null, notStarted: null, declaredBy: e.id };
   let cancel: WorkRef[] = [];
   let work: WorkRequest[] = [];
   if (live(s)) ({ d, cancel, work } = endRun({ name: s.name, data: d } as Live, f, { worker: false }));
@@ -442,14 +522,18 @@ const headMoved: Handler = (s, e, f, ctx) => {
 };
 
 // A head is ready to be shot (its preview serves, or its checks settled).
-// Shots of that head that settled, or are under way, stand.
+// Shots of that head that settled, or are under way, stand. A proposal back
+// in review (unarchived) is shot again on its head. A head the proposal
+// already moved past (the message was on its way as it moved) is not.
+const WAITING: ReadonlySet<string> = new Set(['waiting_for_preview', 'undeclared', 'closed']);
 const headReady: Handler = (s, e, f, ctx, deps) => {
   const head = e.payload.head;
   if (!f.session || !OPEN.has(f.session.status)) return step(s);
+  if (head !== s.data.head && head !== f.session.head) return step(s);
   let base: Live = s;
   let moved: Outcome<SState> | null = null;
   if (s.data.head !== head) ({ s: base, out: moved } = moveHead(s, f, ctx, head, null));
-  else if (!['waiting_for_preview', 'undeclared'].includes(s.name)) return step(s);
+  else if (!WAITING.has(s.name)) return step(s);
   const out = start(base, e, f, ctx, deps, 'preview-ready');
   return moved ? merge(out, moved) : out;
 };
@@ -478,8 +562,10 @@ const uiUndeclared: Handler = (s, e, f, ctx) => {
 };
 
 // The proposal left review: the run under way ends, and every copy goes.
+// Shots that settled stand as they are (no automatic retry while it is out
+// of review); a declaration waiting for its preview waits on.
 const closed: Handler = (s, e, f, ctx) => {
-  if (!live(s)) return step({ name: 'closed', data: s.data }, { timer: null });
+  if (!live(s)) return step(s, { timer: null });
   const r = s.data.run!;
   const { d, cancel, work } = endRun(s, f);
   return step({ name: 'closed', data: d }, {
@@ -517,6 +603,10 @@ const waiveRequested: Handler = (s, e, f, ctx) => {
 };
 
 const recheck: Handler = (s, e, f, ctx, deps) => dispatchOrWait(s, f, ctx, deps);
+// The step a timer of the run under way was set for, as clockFor names it.
+const phaseOf = (s: Live): string | null => (s.name === 'building_copies' ? 'copies'
+  : s.name === 'taking_shots' ? agentPhase(s.data.run!) : s.name === 'publishing' ? 'publish'
+  : s.name === 'waiting_for_agent' ? 'wait' : null);
 
 // A step past its deadline. The copies are a platform fault (taken again
 // once); an agent's turn that never ended means its process is stuck (the
@@ -549,12 +639,10 @@ function revisionDone(s: Live, e: Event<WorkResultPayload>, f: Facts, ctx: Trans
   const out = result(e);
   if (!out?.baseSha) {
     // GitHub could not say what the head is compared with: nothing was
-    // built, so the slot says the run never started (as it did).
-    const d: Data = { ...s.data, run: null };
-    return step({ name: 'waiting_for_preview', data: d }, {
-      writes: [{ type: 'notStarted', sessionId: d.sessionId, reason: NOT_STARTED.get('no_revision')! }],
-      work: settledWork(d, ctx), timer: null,
-    });
+    // built, so the slot says the run never started (as it did), and its
+    // limit, or its being down, is taken again once.
+    const failed = out?.failed || { fault: e.type === 'WorkSucceeded' ? null : 'revision' };
+    return notStartedRun(s, f, ctx, { reason: NOT_STARTED.get('no_revision')!, fault: failed.fault, retryAt: failed.retryAt });
   }
   const run: Run = { ...r, base: out.baseSha };
   const d: Data = { ...s.data, run };
@@ -572,14 +660,22 @@ function revisionDone(s: Live, e: Event<WorkResultPayload>, f: Facts, ctx: Trans
 function copiesDone(s: Live, e: Event<WorkResultPayload>, f: Facts, ctx: TransitionContext, deps: Deps): Outcome<SState> {
   const r = s.data.run!;
   const out = result(e);
-  if (!out || out.failed) {
+  if (!out || out.failed || out.stale) {
     const failed = out?.failed || { code: 'shots_copies_failed', message: errorOf(e), fault: 'database' };
-    return fail(s, f, ctx, { code: failed.code, reason: failed.message, fault: failed.fault, retryAt: failed.retryAt });
+    return fail(s, f, ctx, { code: failed.code, reason: failed.message, fault: failed.fault, retryAt: failed.retryAt, copiesSettled: true });
   }
-  const run: Run = { ...r, afterOnly: !!out.afterOnly };
+  const run: Run = { ...r, afterOnly: !!out.afterOnly, copiesAt: ctx.now.toISOString() };
   const writes: DomainWrite[] = [{ type: 'runMoved', runId: r.id, state: 'exploring', patch: {
     fixtureFingerprint: out.fixtureFingerprint, baseImageDigest: out.baseImageDigest, headImageDigest: out.headImageDigest } }];
   return dispatchOrWait({ name: s.name, data: { ...s.data, run } } as Live, f, ctx, deps, writes);
+}
+
+// The agent's trace, with the last tool call the control plane refused (a
+// run that saved nothing often says why only there).
+function traceOf(out: any): Json {
+  const t = out?.lastToolFailure;
+  return { ...(out?.trace || {}), ...(t && typeof t === 'object' ? { lastToolFailure: {
+    tool: t.tool ?? null, toolCode: t.toolCode ?? t.code ?? null, toolMessage: t.toolMessage ?? t.message ?? null } } : {}) } as Json;
 }
 
 function agentDone(s: Live, e: Event<WorkResultPayload>, f: Facts, ctx: TransitionContext, deps: Deps): Outcome<SState> {
@@ -607,16 +703,17 @@ function agentDone(s: Live, e: Event<WorkResultPayload>, f: Facts, ctx: Transiti
     return step({ name: 'publishing', data: { ...s.data, run: { ...r, publish } } }, {
       writes: [{ type: 'runMoved', runId: r.id, state: 'reviewing', patch: { hardVerdict: out.verdict, planHash: out.manifestHash, traceSummary: out.trace } }],
       work: [{ kind: WORK.publish, key: `publish:${r.n}`, input: { runId: r.id, verdict: out.verdict } }],
-      timer: { at: later(ctx, PUBLISH_DEADLINE_MS), event: { type: 'Overdue' } },
+      timer: clockFor(ctx, PUBLISH_DEADLINE_MS, 'Overdue', r.id, 'publish'),
     });
   }
   if (agent.outcome !== 'completed' && !out.skippedAny) {
-    const fault = agent.platformFault?.kind || (agent.outcome === 'died' || agent.code === 'shots_agent_failed' ? 'agent_exit' : null);
+    const fault = agent.platformFault?.kind || agent.fault
+      || (agent.outcome === 'died' || agent.code === 'shots_agent_failed' ? 'agent_exit' : null);
     return fail(s, f, ctx, { code: agent.code || 'shots_agent_failed', reason: agent.message || 'The shots agent stopped with an error before it finished.',
-      fault, trace: out.trace });
+      fault, retryAt: agent.retryAt, trace: traceOf(out) });
   }
-  if (out.failedCount) return fail(s, f, ctx, { code: 'shots_change_failed', reason: out.failedReason, verdict: out.verdict, trace: out.trace });
-  return fail(s, f, ctx, { code: 'shots_capture_incomplete', reason: out.incompleteReason, verdict: out.verdict, trace: out.trace });
+  if (out.failedCount) return fail(s, f, ctx, { code: 'shots_change_failed', reason: out.failedReason, verdict: out.verdict, trace: traceOf(out) });
+  return fail(s, f, ctx, { code: 'shots_capture_incomplete', reason: out.incompleteReason, verdict: out.verdict, trace: traceOf(out) });
 }
 
 // Published: with the comparison's outlines, or without them when the
@@ -650,6 +747,13 @@ const workDone: Handler = (s, e, f, ctx, deps) => {
   const p = e.payload as WorkResultPayload;
   if (p.kind === WORK.cleanup) return cleaned(s, e);
   if (p.kind === WORK.settled || p.kind === WORK.prBlock) return step(s);
+  // Copies of a run that ended while they were built: now their cleanup.
+  const waited = p.kind === WORK.copies ? s.data.cleaning.find((c) => c.awaitCopies && p.workKey === `copies:${c.n}`) : null;
+  if (waited) {
+    const c: Cleaning = { runId: waited.runId, n: waited.n, worker: waited.worker, stopTurn: waited.stopTurn };
+    const d: Data = { ...s.data, cleaning: s.data.cleaning.map((x) => (x === waited ? c : x)) };
+    return step({ name: s.name, data: d }, { work: [cleanupWork(d, c)] });
+  }
   const r = s.data.run;
   if (!r) return step(s);
   if (p.kind === WORK.revision && s.name === 'building_copies' && p.workKey === `revision:${r.n}`) return revisionDone(s, e, f, ctx, deps);
@@ -659,8 +763,9 @@ const workDone: Handler = (s, e, f, ctx, deps) => {
   return step(s);
 };
 
+const ranFor = (s: Live, e: Event<any>) => !!s.data.run && s.data.run.id === e.payload.runId && phaseOf(s) === e.payload.phase;
+
 // Which state takes which request.
-const RESTING: ReadonlySet<string> = new Set(['undeclared', 'not_needed', 'waiting_for_preview', 'published', 'failed', 'waived', 'closed']);
 const GUARDS = new Map<string, (s: Live, e: Event<any>, f: Facts) => Check>([
   ['RetryRequested', (s, e, f) => {
     if (live(s)) return reject('shots_rerun_in_flight');
@@ -672,11 +777,13 @@ const GUARDS = new Map<string, (s: Live, e: Event<any>, f: Facts) => Check>([
   // A run whose row exists: the slot shows it (before its revision is
   // resolved, there is nothing on the slot to stop or waive).
   ['StopRequested', (s) => (live(s) && !!s.data.run?.base ? ok() : reject('not_running'))],
-  ['WaiveRequested', (s) => ((live(s) && !!s.data.run?.base) || (s.name === 'failed' && !!s.data.last)
+  ['WaiveRequested', (s) => ((live(s) && !!s.data.run?.base) || (s.name === 'failed' && !!s.data.last?.row)
     ? ok() : reject('invalid_shots_override_state'))],
-  ['Recheck', (s) => (s.name === 'waiting_for_agent' ? ok() : reject('not_waiting'))],
-  ['Overdue', (s) => (['building_copies', 'taking_shots', 'publishing'].includes(s.name) ? ok() : reject('nothing_due'))],
-  ['RetryDue', (s) => (s.name === 'failed' ? ok() : reject('not_failed'))],
+  // The machine's clock, for the run and the step it was set for.
+  ['Recheck', (s, e) => (s.name === 'waiting_for_agent' && ranFor(s, e) ? ok() : reject('not_waiting'))],
+  ['Overdue', (s, e) => (['building_copies', 'taking_shots', 'publishing'].includes(s.name) && ranFor(s, e) ? ok() : reject('nothing_due'))],
+  ['RetryDue', (s, e) => ((s.name === 'failed' || s.name === 'waiting_for_preview') && !!s.data.last
+    && s.data.last.id === e.payload.runId ? ok() : reject('not_failed'))],
 ]);
 const HANDLERS = new Map<string, Handler>([
   ['Declared', declared], ['HeadMoved', headMoved], ['HeadReady', headReady], ['PreviewStopped', previewStopped],
@@ -685,7 +792,7 @@ const HANDLERS = new Map<string, Handler>([
   ['WorkSucceeded', workDone], ['WorkFailed', workDone], ['WorkExhausted', workDone],
 ]);
 // The events that may create the instance, and those that need one.
-const CREATE = ['Declared', 'HeadMoved', 'HeadReady', 'PreviewStopped', 'UiUndeclared', 'RetryRequested', 'WaiveRequested', 'StopRequested'];
+const CREATE = ['Declared', 'HeadMoved', 'HeadReady', 'PreviewStopped', 'UiUndeclared', 'Closed', 'RetryRequested', 'WaiveRequested', 'StopRequested'];
 
 function transitions(deps: Deps) {
   const entry = (type: string) => ({
@@ -703,14 +810,14 @@ function transitions(deps: Deps) {
     guard: (_s: any, e: Event<any>, f: Facts, ctx: TransitionContext) => {
       if (!f.session) return reject('session_not_found');
       if (ctx.key !== sessionKey(e.payload.sessionId)) return reject('key_mismatch');
-      const a = adopt(e.payload.sessionId, f);
+      const a = adopt(e.payload.sessionId, f, ctx);
       const g = GUARDS.get(type);
       return g ? g(a.s, e, f) : ok();
     },
     to: (_s: any, e: Event<any>, f: Facts, ctx: TransitionContext) => {
-      const a = adopt(e.payload.sessionId, f);
+      const a = adopt(e.payload.sessionId, f, ctx);
       const out = HANDLERS.get(type)!(a.s, e, f, ctx, deps);
-      return merge(out, { writes: a.writes, work: a.work });
+      return merge(out, { writes: a.writes, work: a.work, timer: a.timer });
     },
   });
   table[NONE] = Object.fromEntries(CREATE.map((t) => [t, adopting(t)]));
@@ -736,7 +843,7 @@ export function shots(deps: Deps): Machine<SState, Facts> {
     facts: (tx, state, event) => {
       const id = state.name === NONE ? Number((event.payload as any)?.sessionId) : (state.data as Data).sessionId;
       if (!Number.isInteger(id) || id <= 0) return Promise.resolve({ session: null });
-      return readFacts(tx, id);
+      return readFacts(tx, id, { buildSha: deps.buildSha ?? null });
     },
     authorize: {
       Declared: produced,
@@ -758,7 +865,11 @@ export function shots(deps: Deps): Machine<SState, Facts> {
       if (after.name === NONE) return null;
       const d = (after as Live).data;
       const { rows: [s] } = await tx.query('SELECT shots_state, shots_run_id, shots_detail FROM chat_sessions WHERE id = $1', [d.sessionId]);
-      return { machineState: after.name, state: s?.shots_state ?? null, runId: s?.shots_run_id ?? null,
+      // A run that just started has no row until its revision resolves: the
+      // slot still shows the run before it.
+      const starting = LIVE.has(after.name) && !!d.run && !d.run.base;
+      return { machineState: after.name, state: starting ? 'planned' : s?.shots_state ?? null,
+        runId: starting ? null : s?.shots_run_id ?? null,
         detail: s?.shots_detail ?? null, required: d.declared?.required ?? null,
         ...(event.type === 'Declared' ? { unchanged: d.declaredBy !== event.id } : {}) };
     },

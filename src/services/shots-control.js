@@ -424,12 +424,15 @@ async function assertCurrent(db, control) {
  * `sessionId`: fn(control) runs RunControl's rule, and what it changed is
  * written back in the same transaction. A refused call still records itself
  * as the last refused call (the owner's diagnostics). Resolves fn's answer.
+ * `readOnly`: the call only reads (the brief, a home tile), so it neither
+ * waits for the agent's saves nor writes anything back but a refusal.
  */
-async function withControl(pool, { runId, sessionId }, fn) {
+async function withControl(pool, { runId, sessionId }, fn, { readOnly = false } = {}) {
   if (!RUN_ID.test(String(runId || ''))) throw new ShotsControlError('shots_control_not_found', 'This preview run is no longer active.', 410);
   let refused = null;
-  const out = await inTransaction(pool, async (db) => {
-    const loaded = await load(db, runId, { lock: true });
+  const run = readOnly ? (body) => body(pool) : (body) => inTransaction(pool, body);
+  const out = await run(async (db) => {
+    const loaded = await load(db, runId, { lock: !readOnly });
     if (!loaded) throw new ShotsControlError('shots_control_not_found', 'This preview run is no longer active.', 410);
     const { control } = loaded;
     if (control.sessionId !== Number(sessionId)) {
@@ -439,7 +442,7 @@ async function withControl(pool, { runId, sessionId }, fn) {
     await assertCurrent(db, control);
     try {
       const answer = await fn(control);
-      await persist(db, control);
+      if (!readOnly) await persist(db, control);
       return { answer };
     } catch (error) {
       // Only the refusal is kept; whatever the call half did is not.

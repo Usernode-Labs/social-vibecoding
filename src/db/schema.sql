@@ -13943,6 +13943,10 @@ BEGIN
   IF current_setting('app.wf_writer', true) = 'transition' THEN
     RETURN NEW;
   END IF;
+  -- A deleted account's waiver (ON DELETE SET NULL) is not the run moving.
+  IF TG_OP = 'UPDATE' AND (to_jsonb(NEW) - 'override_user_id') = (to_jsonb(OLD) - 'override_user_id') THEN
+    RETURN NEW;
+  END IF;
   IF wf_holds('shots', 'session:' || NEW.session_id) THEN
     RAISE EXCEPTION 'WF_OWNERSHIP_VIOLATION: % on shot_runs of a proposal the shots machine holds', TG_OP;
   END IF;

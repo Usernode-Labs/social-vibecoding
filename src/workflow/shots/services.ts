@@ -36,7 +36,9 @@ function failureOf(error: any): Json {
 export function shotsServices({ config, pool }: Deps): Record<string, WorkHandler> {
   return {
     // The exact before revision of the head (GitHub's merge base). Nothing
-    // is built yet: a head GitHub cannot compare is a run that never starts.
+    // is built yet: a head GitHub cannot compare is a run that never starts,
+    // and GitHub's limit (or its being down) is the platform's fault, which
+    // the machine takes again once, when the limit resets.
     [WORK.revision]: {
       maxAttempts: 3,
       backoffMs: (attempt) => 15000 * attempt,
@@ -44,7 +46,6 @@ export function shotsServices({ config, pool }: Deps): Record<string, WorkHandle
         try {
           return await orchestrator().resolveRevision(pool, { sessionId: input.sessionId, headSha: input.head });
         } catch (error: any) {
-          if (error?.code === 'github_rate_limited') throw error;
           return { failed: failureOf(error) };
         }
       },
@@ -70,6 +71,10 @@ export function shotsServices({ config, pool }: Deps): Record<string, WorkHandle
             baseSha: input.baseSha, headSha: input.headSha, budgetMs: input.budgetMs,
             images: kept.images || null, fresh,
             onImages: (images: unknown) => ctx.checkpoint({ images: JSON.parse(JSON.stringify(images)) as Json }),
+            // The run may end while its copies are built (a new head, a
+            // Stop): they stop at the next phase, and the machine's cleanup,
+            // which waits for this result, removes what they made.
+            current: () => orchestrator().runCurrent(pool, input.runId, ['provisioning']),
           });
         } catch (error: any) {
           if (signal.aborted) throw error;
@@ -97,7 +102,11 @@ export function shotsServices({ config, pool }: Deps): Record<string, WorkHandle
         });
         try {
           const out = await orchestrator().dispatchAgent(config, pool, {
-            runId: input.runId, sessionId: input.sessionId, budgetMs: input.budgetMs, steps,
+            runId: input.runId, sessionId: input.sessionId, budgetMs: input.budgetMs, steps, signal,
+            // A run that ended (its item cancelled) never starts its turn:
+            // the cancellation reaches this process only at its next lease
+            // renewal, and the run's cleanup may already have run.
+            current: () => orchestrator().runCurrent(pool, input.runId, ['exploring']),
           });
           await steps.flush();
           steps.fence();

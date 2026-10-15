@@ -153,6 +153,31 @@ test('the steps of a shots run against the full PostgreSQL schema', { timeout: 1
     assert.equal(left.calls.reset, 0, 'nothing is built over what was left');
   });
 
+  await t.test('copies of a run that ended stop at their next phase, leaving what they made to its cleanup', async () => {
+    const s = await proposal();
+    const id = runId();
+    const ended = copiesDeps();
+    assert.deepEqual(await copies(s, id, { current: async () => false }, ended.deps), { stale: true });
+    assert.equal(ended.calls.prepare.length, 0, 'nothing is built for a run that already ended');
+    let asked = 0;
+    const late = copiesDeps();
+    const out = await copies(s, id, { current: async () => (asked += 1) === 1 }, late.deps);
+    assert.deepEqual(out, { stale: true });
+    assert.equal(late.calls.prepare.length, 1);
+    assert.equal(late.calls.reset, 0, 'the run ended while its copies were built: they stop there');
+    assert.equal(fs.existsSync(late.rootDir), false, 'the checkouts still go');
+    assert.equal((await pool.query('SELECT 1 FROM shot_run_control WHERE run_id = $1', [id])).rowCount, 0, 'no workspace');
+    // The step's own question: the proposal's current run, in the state named.
+    await pool.query(`INSERT INTO shot_runs (id, session_id, base_sha, head_sha, intent, state) VALUES ($1, $2, $3, $4, '{}'::jsonb, 'provisioning')`,
+      [id, s.id, BASE, HEAD]);
+    assert.equal(await orchestrator.runCurrent(pool, id, ['provisioning']), false, 'not the slot\'s run');
+    await pool.query('UPDATE chat_sessions SET shots_run_id = $2 WHERE id = $1', [s.id, id]);
+    assert.equal(await orchestrator.runCurrent(pool, id, ['provisioning']), true);
+    assert.equal(await orchestrator.runCurrent(pool, id, ['exploring']), false);
+    await pool.query(`UPDATE shot_runs SET state = 'cancelled', completed_at = NOW() WHERE id = $1`, [id]);
+    assert.equal(await orchestrator.runCurrent(pool, id, ['provisioning']), false, 'a run that ended');
+  });
+
   await t.test('builds that do not match their fixture and images fail before any guest or workspace', async () => {
     const s = await proposal();
     const id = runId();
@@ -274,6 +299,17 @@ test('the steps of a shots run against the full PostgreSQL schema', { timeout: 1
     assert.equal(out.agent.outcome, 'timed_out');
   });
 
+  await t.test('a run that ended starts no turn: its step stops instead', async () => {
+    const s = await proposal();
+    const id = await prepared(s);
+    const { deps, calls } = agentDeps(async () => ({ backend: 'claude_code', result: { exitCode: 0 } }));
+    await assert.rejects(agent(s, id, deps, { current: async () => false }), (err) => err.stopped === true);
+    const aborted = new AbortController();
+    aborted.abort();
+    await assert.rejects(agent(s, id, deps, { signal: aborted.signal }), (err) => err.stopped === true);
+    assert.equal(calls.dispatches.length, 0, 'no turn was started');
+  });
+
   await t.test('a call from a turn that outlived its run changes nothing', async () => {
     const s = await proposal();
     const id = await prepared(s);
@@ -342,5 +378,31 @@ test('the steps of a shots run against the full PostgreSQL schema', { timeout: 1
     assert.deepEqual(stops, [s.id, ['volume', s.id]]);
     assert.equal(released.length, 1, 'its turn record is released');
     assert.equal((await pool.query('SELECT 1 FROM shot_run_control WHERE run_id = $1', [id])).rowCount, 0);
+  });
+
+  await t.test('a cleanup that comes late keeps the temporary worker a newer run of the proposal is under way in', async () => {
+    const s = await proposal({ source: 'imported' });
+    const id = runId();
+    const volumes = [];
+    const worker = { stopTurn: async () => {}, finishTurn: async () => {}, destroyCcVolume: async (sid) => { volumes.push(sid); } };
+    const instance = async (state, run) => {
+      const c = await pool.connect();
+      try {
+        await c.query(`BEGIN; SET LOCAL app.wf_writer = 'transition'`);
+        await c.query(
+          `INSERT INTO wf_instances (machine, key, state, data, machine_version) VALUES ('shots', $1, $2, $3::jsonb, 1)
+           ON CONFLICT (machine, key) DO UPDATE SET state = EXCLUDED.state, data = EXCLUDED.data`,
+          [`session:${s.id}`, state, JSON.stringify({ run })]);
+        await c.query('COMMIT');
+      } finally { c.release(); }
+    };
+    await instance('taking_shots', { id: runId() });
+    await orchestrator.cleanupRun({}, pool, { runId: id, sessionId: s.id, appSlug: s.app.slug, worker: true },
+      { worker, removeCopies: async () => [] });
+    assert.deepEqual(volumes, [], 'a newer run is at work in it');
+    await instance('taking_shots', { id });
+    await orchestrator.cleanupRun({}, pool, { runId: id, sessionId: s.id, appSlug: s.app.slug, worker: true },
+      { worker, removeCopies: async () => [] });
+    assert.deepEqual(volumes, [s.id], 'its own run (or none) under way: it goes');
   });
 });
