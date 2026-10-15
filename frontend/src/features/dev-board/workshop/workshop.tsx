@@ -2526,6 +2526,17 @@ export function NeedsFeed({ rows, models, slug, canPost, onDone, onHub, onSugges
   // when rows leave or arrive above it. `END_KEY` is the end card, the slot
   // after every row, and it is the seed when the route asked for it.
   const curKeyRef = useRef<string | null>(endOnOpen ? END_KEY : null);
+  // #5179: the advance a saved vote owes — the row's key, marked when the
+  // vote is saved and spent by the effect after the render that records it.
+  // A ref because the mark is set inside answer's promise callback and is
+  // read once, after the next render.
+  const advanceRef = useRef<string | null>(null);
+  // The sheet of the render in view, mirrored for the advance's guard:
+  // answer's promise callback closes over the `sheet` of the render that
+  // cast the vote, which is stale by the time the vote resolves, so a
+  // Comments, Ask or Vote sheet opened meanwhile is read here instead.
+  const sheetRef = useRef<SheetKind | null>(sheet);
+  useLayoutEffect(() => { sheetRef.current = sheet; });
   // Still owed the instant scroll to the end card (the effect below): true
   // until the scroller has a height to scroll by.
   const endScrollRef = useRef<boolean>(endOnOpen);
@@ -2911,6 +2922,10 @@ export function NeedsFeed({ rows, models, slug, canPost, onDone, onHub, onSugges
         });
         if (ok === true) {
           setAnswered((cur) => ({ ...cur, [key]: which }));
+          // #5179: the vote is IN, so the feed owes one move to the next
+          // row, spent by the effect on `answered` below. Set only here:
+          // a cancel, a refusal or a network failure moves nothing.
+          advanceRef.current = key;
           // #4794: the vote is IN. Tell the screen that owns this feed's
           // store copy, so it drops the row while the viewer is still here —
           // its bookkeeping must not be able to undo a saved vote.
@@ -2924,6 +2939,22 @@ export function NeedsFeed({ rows, models, slug, canPost, onDone, onHub, onSugges
         if (settled) settled();
       });
   };
+  // #5179: spend the advance a saved vote owed. After the render that
+  // records the vote, so the `go` this render refreshed into goRef reads
+  // the vote as answered — called straight from answer's promise, landOn's
+  // #3526 check would see the row as not yet answered and mark it seen as
+  // the feed moved off it. The move is the feed's own go(1): the chevron's
+  // smooth scroll, clamped to the end card on the last row. It does not
+  // pull the viewer: only when they are still on the row they voted on
+  // (a swipe or a press got there first, no move) and no sheet is up
+  // (Comments, Ask or Vote opened meanwhile, no move).
+  useEffect(() => {
+    const key = advanceRef.current;
+    if (!key) return;
+    advanceRef.current = null;
+    if (curKeyRef.current !== key || sheetRef.current !== null) return;
+    goRef.current(1);
+  }, [answered]);
   /**
    * The vote sheet's send (#3613): the switch's side with the line written
    * under it. A No needs its line, as on a card; a Yes may go without one,
