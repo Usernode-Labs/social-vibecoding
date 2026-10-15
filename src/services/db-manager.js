@@ -1020,10 +1020,11 @@ async function cloneDatabaseDirect(sourceDb, targetDb, { server = PRIMARY_SERVER
   // uninterrupted and there is no exclusive-access race.
   //
   // The clone starts from template0 (pristine, never-connected, so it's
-  // always clonable) owned by the new role; pg_restore --no-owner then
-  // lands every object owned by the psql superuser, and the
-  // reassignUserObjectsTo(DB_USER → targetRole) pass below hands them to
-  // the clone role — exactly the end-state the TEMPLATE path produced.
+  // always clonable) owned by the new role; pg_restore --no-owner, running
+  // AS that role (see dumpRestore), lands every object owned by it directly
+  // — the same end-state the TEMPLATE path produced. The
+  // reassignUserObjectsTo passes below stay as the backstop for anything a
+  // restore could still have left with another owner.
   await inAdmin(`CREATE DATABASE ${targetDb} TEMPLATE template0 OWNER ${targetRole}`);
 
   // Don't dump data we are about to throw away. The scrub passes below
@@ -1038,7 +1039,15 @@ async function cloneDatabaseDirect(sourceDb, targetDb, { server = PRIMARY_SERVER
   // the ~80 MB that actually survives.
   const excludeData = await privateDataExclusions(sourceDb);
   const dumpStartedAt = Date.now();
-  await dumpRestore(sourceDb, targetDb, excludeData, { targetServer: server });
+  // The restore authenticates AS the clone's own role, so the app-defined
+  // code the data load evaluates — CHECK constraints validated after the
+  // COPY, generated columns computed on insert, row and event triggers —
+  // runs with that unprivileged role's rights, not the administrator's (see
+  // dumpRestore). The role was created with its password above and owns the
+  // fresh database.
+  await dumpRestore(sourceDb, targetDb, excludeData, {
+    targetServer: server, as: { user: targetRole, password },
+  });
   log.info('db-manager', 'Clone copy complete', {
     sourceDb, targetDb,
     excludedTables: excludeData.length,
@@ -1256,48 +1265,54 @@ async function buildRedactedCopy(sourceDb, targetDb, ownerRole, { server = PRIMA
     throw new Error(`buildRedactedCopy: unsafe identifiers ${sourceDb}/${targetDb}/${ownerRole}`);
   }
   const inTarget = targetExecutor(server);
-  await adminExecutor(server)(`CREATE DATABASE ${targetDb} TEMPLATE template0 OWNER ${ownerRole}`);
-
-  const excludeData = await privateDataExclusions(sourceDb);
-  await dumpRestore(sourceDb, targetDb, excludeData, { targetServer: server });
-  const sourceRole = ownerRoleName(sourceDb);
-  if (SAFE_IDENT.test(sourceRole)) {
-    await reassignUserObjectsTo(targetDb, sourceRole, ownerRole, inTarget).catch((err) => {
-      log.warn('db-manager', 'template reassign from source-role failed', { targetDb, sourceRole, err: err.message });
-    });
-  }
-  await reassignUserObjectsTo(targetDb, adminUser(server), ownerRole, inTarget).catch((err) => {
-    if (serverKey(server) !== PRIMARY_SERVER) throw err;   // see cloneDatabaseDirect
-    log.warn('db-manager', 'template reassign from superuser failed', { targetDb, err: err.message });
-  });
-  // Redact AS the copy's owner role, not the administrator (see
-  // redactPrivateData). This role is NOLOGIN (a template / prepared-source
-  // role is shared and never logs in), so give it a login for the passes and
-  // take it away again afterwards — a template or prepared source must never
-  // be left with a login-capable role.
   const inAdmin = adminExecutor(server);
+  await inAdmin(`CREATE DATABASE ${targetDb} TEMPLATE template0 OWNER ${ownerRole}`);
+
+  // This role is NOLOGIN (a template / prepared-source role is shared and
+  // never logs in). Give it a login and a fresh password for everything that
+  // runs AS it — the data load (pg_restore authenticates as it, so the
+  // app-defined code the load evaluates runs without the platform's rights;
+  // see dumpRestore) and the redaction passes (see redactPrivateData) — and
+  // take both away again afterwards, on every path. A template or
+  // prepared-source role must never be left login-capable, nor with a
+  // password on it.
   const redactionPassword = generatePassword();
   await inAdmin(`ALTER ROLE ${ownerRole} LOGIN PASSWORD '${redactionPassword}'`);
   const asOwner = (db, sql, opts = {}) =>
     execInTarget(db, sql, { ...opts, server, as: { user: ownerRole, password: redactionPassword } });
-  let redactErr = null;
+  let excludeData = null;
+  let buildErr = null;
   try {
+    excludeData = await privateDataExclusions(sourceDb);
+    await dumpRestore(sourceDb, targetDb, excludeData, {
+      targetServer: server, as: { user: ownerRole, password: redactionPassword },
+    });
+    const sourceRole = ownerRoleName(sourceDb);
+    if (SAFE_IDENT.test(sourceRole)) {
+      await reassignUserObjectsTo(targetDb, sourceRole, ownerRole, inTarget).catch((err) => {
+        log.warn('db-manager', 'template reassign from source-role failed', { targetDb, sourceRole, err: err.message });
+      });
+    }
+    await reassignUserObjectsTo(targetDb, adminUser(server), ownerRole, inTarget).catch((err) => {
+      if (serverKey(server) !== PRIMARY_SERVER) throw err;   // see cloneDatabaseDirect
+      log.warn('db-manager', 'template reassign from superuser failed', { targetDb, err: err.message });
+    });
     await redactPrivateData(targetDb, asOwner);
   } catch (err) {
-    redactErr = err;
+    buildErr = err;
   }
   try {
     await inAdmin(`ALTER ROLE ${ownerRole} NOLOGIN PASSWORD NULL`);
   } catch (err) {
-    if (redactErr) {
+    if (buildErr) {
       log.error('db-manager', 'Could not return the redaction role to NOLOGIN after a failed build', {
         ownerRole, err: err.message,
       });
     } else {
-      redactErr = err;
+      buildErr = err;
     }
   }
-  if (redactErr) throw redactErr;
+  if (buildErr) throw buildErr;
   return excludeData;
 }
 
@@ -1968,6 +1983,14 @@ async function withDatabaseConnection(dbName, fn, { queryTimeoutMs = 30_000, ser
   client.on('error', (err) => { lost = err; });
   try {
     try { await client.connect(); } catch (err) { throw previewConnectFailure(err, server); }
+    // The same pin execInTarget applies (see there): inside an app database,
+    // the session's search_path decides how the platform's SQL resolves
+    // unqualified names, and the app can steer it. Set at the session level,
+    // so a database- or role-level default the app set is overridden. The
+    // maintenance database keeps the platform's own default path.
+    if (dbName !== adminDatabase(server)) {
+      await client.query({ text: 'SET search_path = pg_catalog', rowMode: 'array' });
+    }
     return await fn(singleConnection(async (targetDb, sql, opts = {}) => {
       if (targetDb !== dbName) throw new Error('Clone connection database mismatch');
       if (lost) throw lost;
@@ -2046,9 +2069,26 @@ async function execInTarget(dbName, sql, opts = {}) {
   args.push('-c', sql);
 
   const timeoutMs = Math.max(30_000, Math.min(120_000, Number(opts.timeoutMs) || 30_000));
+  // Inside an app database the session's search_path decides how the
+  // platform's own SQL resolves unqualified names — obj_description,
+  // pg_relation_size, a `'pg_class'::regclass` constant — and the app
+  // controls what a session there can see: it may set database-level
+  // settings on its own database, app code running during the data load can
+  // set them on the copy too, and it can create same-named functions in
+  // public. With `search_path = public, pg_catalog` its shadow functions are
+  // found FIRST, so the platform's statements would call app code and the
+  // emptiness checks could be fooled by a fake that always answers 0. So
+  // every session the platform opens inside an app database pins the
+  // search_path to the built-in functions (pg_temp is still searched for
+  // temp relations, and never for functions): every name the platform's SQL
+  // reaches unqualified is catalog-qualified by nature, so this changes no
+  // answer, only who provides it. The maintenance database keeps the
+  // platform's own default path — its SQL names its own unqualified tables.
+  const env = postgresEnv(dbName, opts.server, opts.as);
+  if (dbName !== adminDatabase(opts.server)) env.PGOPTIONS = '-c search_path=pg_catalog';
   let ran;
   try {
-    ran = await execFileAsync('psql', args, { timeout: timeoutMs, env: postgresEnv(dbName, opts.server, opts.as) });
+    ran = await execFileAsync('psql', args, { timeout: timeoutMs, env });
   } catch (err) {
     throw fromPreviewServer(psqlFailure(err, { sql, timeoutMs }), opts.server);
   }
@@ -2195,7 +2235,20 @@ SELECT n.nspname || '.' || c.relname
 // pg_dump must be at least as new as the server it reads and pg_restore
 // reads what that pg_dump wrote, so one client version serves both as long
 // as it is not older than either server.
-async function dumpRestore(sourceDb, targetDb, excludeData = [], { targetServer = PRIMARY_SERVER } = {}) {
+//
+// `as` ({ user, password }) authenticates the RESTORE as the copy's own
+// unprivileged owner role instead of the administrator. Loading the data
+// makes the server evaluate app-defined code — CHECK constraints validated
+// after the COPY, STORED generated columns computed on insert, and row and
+// event triggers fired by both — as the connected user, and that must not be
+// the platform administrator, for the same reason the redaction passes
+// authenticate as this role (see redactPrivateData). The copy's own role
+// owns the fresh database and every object the restore creates lands with
+// it (pg_restore --no-owner attributes everything to the connecting user),
+// so nothing needs the administrator's rights. pg_dump's emitted SQL is
+// schema-qualified by construction, so the unprivileged session cannot
+// redirect it; the dump side stays administrative and reads only.
+async function dumpRestore(sourceDb, targetDb, excludeData = [], { targetServer = PRIMARY_SERVER, as = null } = {}) {
   if (!SAFE_IDENT.test(sourceDb) || !SAFE_IDENT.test(targetDb)) {
     throw new Error(`dumpRestore: unsafe identifiers ${sourceDb}/${targetDb}`);
   }
@@ -2203,6 +2256,9 @@ async function dumpRestore(sourceDb, targetDb, excludeData = [], { targetServer 
     if (!SAFE_QUALIFIED_IDENT.test(qualified)) {
       throw new Error(`dumpRestore: unsafe exclude-table-data ${JSON.stringify(qualified)}`);
     }
+  }
+  if (as && (!as.user || !SAFE_IDENT.test(as.user) || as.password == null)) {
+    throw new Error('dumpRestore: the restore role needs a safe name and a password');
   }
 
   // -Fc custom format piped straight into pg_restore (no temp file on
@@ -2231,9 +2287,10 @@ async function dumpRestore(sourceDb, targetDb, excludeData = [], { targetServer 
   // pg_restore does not infer "restore into a database" from PGDATABASE:
   // without -d/--dbname it expects -f and exits before reading stdin. Keep
   // the explicit target in argv as well as postgresEnv(targetDb), which
-  // provides the network credentials.
+  // provides the network credentials — the copy's own owner role when `as`
+  // says so, the administrator otherwise.
   const restore = spawn('pg_restore', pgRestoreArgs(targetDb), {
-    env: postgresEnv(targetDb, targetServer), stdio: ['pipe', 'ignore', 'pipe'],
+    env: postgresEnv(targetDb, targetServer, as), stdio: ['pipe', 'ignore', 'pipe'],
   });
   dump.stdout.pipe(restore.stdin);
   let dumpStderr = '';

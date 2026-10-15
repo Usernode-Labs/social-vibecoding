@@ -116,14 +116,17 @@ async function assertRedacted(client, expectDb) {
   // filter below is what scopes to redaction-pass executions).
   const probe = (await client.query(
     'SELECT label, ran_as, was_super, saw_restricted FROM public.redaction_probe')).rows;
-  // The REDACTION passes run as the copy's owner role (name ends _owner); any
-  // app code they evaluate is in these rows. (pg_restore's own COPY, on the
-  // paths that dump and restore, enforces CHECK and computes generated
-  // columns as the administrator — a separate, pre-existing matter this change
-  // does not touch; those rows are not from a redaction pass and are excluded
-  // by the owner filter.)
+  // EVERY app-defined code evaluation inside the copy ran as a role whose
+  // name ends _owner — the data load's (pg_restore authenticates as the
+  // copy's own owner role, so its CHECK validation, generated columns and
+  // triggers run as that role) and the redaction passes'. Not one
+  // administrator row is permitted: one would mean app-defined code ran with
+  // the platform's rights inside the copy.
   const owner = probe.filter((r) => /_owner$/.test(r.ran_as));
-  assert.ok(owner.length > 0, `${expectDb}: the redaction passes evaluated app code (so the proof is live)`);
+  const admin = probe.filter((r) => !/_owner$/.test(r.ran_as));
+  assert.ok(owner.length > 0, `${expectDb}: the copy evaluated app code as its owner (so the proof is live)`);
+  assert.deepEqual(admin, [],
+    `${expectDb}: app-defined code evaluated as the administrator during the copy: ${JSON.stringify(admin)}`);
   for (const row of owner) {
     assert.equal(row.was_super, false, `${expectDb}: ${row.label} ran as a superuser during redaction`);
     assert.equal(row.saw_restricted, false, `${expectDb}: ${row.label} did a superuser-only read during redaction`);
@@ -261,11 +264,16 @@ test('app code on private tables runs without the admin role, on every clone pat
   await tmpl.end();
   await admin.query(`ALTER DATABASE ${template} WITH ALLOW_CONNECTIONS false`);
 
-  // The owner roles are left unable to log in again (templates/prepared
-  // sources are NOLOGIN at rest).
+  // The owner role is left unable to log in again and without the temporary
+  // password (templates/prepared sources are NOLOGIN and passwordless at
+  // rest; the stored password is visible only in pg_authid).
   const tmplRole = `${template}_owner`;
-  const canLogin = (await admin.query('SELECT rolcanlogin FROM pg_roles WHERE rolname=$1', [tmplRole])).rows[0];
-  assert.equal(canLogin.rolcanlogin, false, 'the template role is returned to NOLOGIN after the build');
+  const left = (await admin.query(
+    'SELECT r.rolcanlogin AS can_login, a.rolpassword IS NULL AS passwordless'
+    + ' FROM pg_roles r JOIN pg_authid a ON a.oid = r.oid WHERE r.rolname = $1',
+    [tmplRole])).rows[0];
+  assert.equal(left.can_login, false, 'the template role is returned to NOLOGIN after the build');
+  assert.equal(left.passwordless, true, 'the template role kept the temporary password after the build');
 });
 
 test('the after-the-column-pass re-check fails a copy whose private table was refilled', async (t) => {
@@ -338,4 +346,162 @@ test('FORCE row-level security on a private column fails the copy closed when re
   // would have run blind.)
   await assert.rejects(dbManager.cloneDatabase(source, target),
     /row-level security|Failed to scrub/i);
+});
+
+// The app controls what a session inside its own database resolves an
+// unqualified name to: it may set search_path on its own database, and app
+// code running during the data load can set it on the copy too. With
+// `search_path = public, pg_catalog` a same-named function in public is found
+// BEFORE the built-in — so a fake pg_relation_size that always answers 0
+// would hide a private table refilled during the column pass from the
+// emptiness proof. The platform's own sessions pin the built-ins, so the
+// refill is caught and the copy refused, whatever the app set.
+test('an app-set database search_path cannot redirect the platform\'s own queries', { timeout: 120000 }, async (t) => {
+  if (!(await reachable(t))) return;
+  const dbManager = harness(t);
+  const tok = crypto.randomBytes(4).toString('hex');
+  const source = `app_spp${tok}`;
+  const target = `${source}_staging_s1_abcdef`;
+  const { admin, created } = await adminControl();
+  const wipe = async () => {
+    for (const { datname } of (await admin.query("SELECT datname FROM pg_database WHERE datname LIKE $1", [`%${tok}%`])).rows) {
+      await admin.query(`ALTER DATABASE ${datname} WITH ALLOW_CONNECTIONS true`).catch(() => {});
+      await admin.query(`DROP DATABASE IF EXISTS ${datname} WITH (FORCE)`).catch(() => {});
+    }
+    for (const { rolname } of (await admin.query("SELECT rolname FROM pg_roles WHERE rolname LIKE $1", [`%${tok}%`])).rows) {
+      await admin.query(`DROP ROLE IF EXISTS ${rolname}`).catch(() => {});
+    }
+  };
+  t.after(async () => {
+    await wipe();
+    if (created) await admin.query('DROP DATABASE IF EXISTS usernode WITH (FORCE)').catch(() => {});
+    await admin.end();
+  });
+  await admin.query(`CREATE DATABASE ${source}`);
+  const src = await connect(at(BASE, source));
+  await src.query(SEED);
+  // The poison, in the source's own schema: a fake that answers 0 for every
+  // size, a rule that refills a private table during the column pass (rules
+  // are not triggers, so they are not switched off), and a CHECK whose
+  // function sets the database's search_path with public FIRST — pg_restore
+  // validates CHECK constraints while loading the copy's data, so the copy
+  // arrives poisoned whatever ran the load.
+  await src.query(`
+    CREATE FUNCTION public.pg_relation_size(relation regclass) RETURNS bigint
+      LANGUAGE sql IMMUTABLE PARALLEL SAFE AS 'SELECT 0::bigint';
+    CREATE RULE acct_refill AS ON UPDATE TO public.acct DO ALSO
+      INSERT INTO public.only_private(id, body) VALUES (99, 'refilled');
+    CREATE FUNCTION public.poison_and_true() RETURNS boolean LANGUAGE plpgsql VOLATILE AS $$
+      BEGIN EXECUTE 'ALTER DATABASE ' || quote_ident(current_database())
+        || ' SET search_path = public, pg_catalog';
+        RETURN true; END $$;
+    ALTER TABLE public.acct ADD CONSTRAINT acct_poison CHECK (public.poison_and_true());`);
+  // The seed's own CHECK firings recorded probe rows; clear them (and only
+  // them) so the copy's probe table starts empty, as the multi-path check
+  // does.
+  await src.query('TRUNCATE public.redaction_probe');
+  await src.end();
+  // With the built-ins pinned, the refill is caught and the copy refused;
+  // without the pin the fake would have answered 0 for the refilled table
+  // and the copy would have been handed out with the row in it.
+  await assert.rejects(dbManager.cloneDatabase(source, target),
+    /refilled during the column pass/);
+  // The poison really took in the copy, so this check exercised the pin and
+  // not an unpoisoned copy.
+  const settings = (await admin.query(
+    'SELECT setconfig::text AS setconfig FROM pg_db_role_setting'
+    + ' WHERE setdatabase = (SELECT oid FROM pg_database WHERE datname = $1) AND setrole = 0',
+    [target])).rows;
+  assert.ok(settings.some((r) => /search_path/.test(r.setconfig) && /public/.test(r.setconfig)),
+    `the copy's database search_path was never poisoned; the pin was not exercised: ${JSON.stringify(settings)}`);
+});
+
+// The shared role a template (or prepared source) is built as is NOLOGIN and
+// passwordless at rest. The build gives it a login and a fresh password and
+// must take both away on every path — a failed build included, which is when
+// a leftover login-capable shared role is at its most likely.
+test('a failed template build returns the shared role to NOLOGIN without the temporary password', { timeout: 120000 }, async (t) => {
+  if (!(await reachable(t))) return;
+  const dbManager = harness(t);
+  const tok = crypto.randomBytes(4).toString('hex');
+  const source = `app_rlf${tok}`;
+  const template = dbManager.stagingTemplateDbName(source);
+  const { admin, created } = await adminControl();
+  const wipe = async () => {
+    for (const { datname } of (await admin.query("SELECT datname FROM pg_database WHERE datname LIKE $1", [`%${tok}%`])).rows) {
+      await admin.query(`ALTER DATABASE ${datname} WITH ALLOW_CONNECTIONS true`).catch(() => {});
+      await admin.query(`DROP DATABASE IF EXISTS ${datname} WITH (FORCE)`).catch(() => {});
+    }
+    for (const { rolname } of (await admin.query("SELECT rolname FROM pg_roles WHERE rolname LIKE $1", [`%${tok}%`])).rows) {
+      await admin.query(`DROP ROLE IF EXISTS ${rolname}`).catch(() => {});
+    }
+  };
+  t.after(async () => {
+    await dbManager._templateIdleForTest(source).catch(() => {});
+    await wipe();
+    if (created) await admin.query('DROP DATABASE IF EXISTS usernode WITH (FORCE)').catch(() => {});
+    await admin.end();
+  });
+  await admin.query(`CREATE DATABASE ${source}`);
+  const src = await connect(at(BASE, source));
+  // A private column on a table whose row-level security is FORCEd, so the
+  // redaction refuses the build (the same refusal the direct-path test
+  // asserts), this time from inside the template build.
+  await src.query(`
+    CREATE TABLE public.people (id int PRIMARY KEY, email text);
+    INSERT INTO public.people VALUES (1, 'ann@prod.example');
+    COMMENT ON COLUMN public.people.email IS 'staging:private';
+    ALTER TABLE public.people ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE public.people FORCE ROW LEVEL SECURITY;
+    CREATE POLICY hide_all ON public.people USING (false);`);
+  await src.end();
+  await assert.rejects(dbManager.refreshStagingTemplate(source),
+    /row-level security|Failed to scrub/i);
+  const left = (await admin.query(
+    'SELECT r.rolcanlogin AS can_login, a.rolpassword IS NULL AS passwordless'
+    + ' FROM pg_roles r JOIN pg_authid a ON a.oid = r.oid WHERE r.rolname = $1',
+    [`${template}_owner`])).rows[0];
+  assert.equal(left.can_login, false, 'the shared role is still login-capable after the failed build');
+  assert.equal(left.passwordless, true, 'the shared role kept the temporary password after the failed build');
+});
+
+// An extension the app itself could have installed (a trusted one) is
+// recreated by the owner-authenticated restore and commented by its owner —
+// the comment pg_dump carries is evaluated as the copy's own owner, not the
+// administrator. An extension only a superuser could have installed fails
+// the restore loudly instead, which is the fail-closed posture, not a leak.
+test('a trusted extension is restored as the copy\'s own owner, comment and all', { timeout: 120000 }, async (t) => {
+  if (!(await reachable(t))) return;
+  const dbManager = harness(t);
+  const tok = crypto.randomBytes(4).toString('hex');
+  const source = `app_ext${tok}`;
+  const target = `${source}_staging_s1_abcdef`;
+  const { admin, created } = await adminControl();
+  const wipe = async () => {
+    for (const { datname } of (await admin.query("SELECT datname FROM pg_database WHERE datname LIKE $1", [`%${tok}%`])).rows) {
+      await admin.query(`DROP DATABASE IF EXISTS ${datname} WITH (FORCE)`).catch(() => {});
+    }
+    for (const { rolname } of (await admin.query("SELECT rolname FROM pg_roles WHERE rolname LIKE $1", [`%${tok}%`])).rows) {
+      await admin.query(`DROP ROLE IF EXISTS ${rolname}`).catch(() => {});
+    }
+  };
+  t.after(async () => {
+    await wipe();
+    if (created) await admin.query('DROP DATABASE IF EXISTS usernode WITH (FORCE)').catch(() => {});
+    await admin.end();
+  });
+  await admin.query(`CREATE DATABASE ${source}`);
+  const src = await connect(at(BASE, source));
+  await src.query('CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public');
+  await src.end();
+  await dbManager.cloneDatabase(source, target);
+  // pg_extension is per database; read it inside the copy.
+  const clone = await connect(at(BASE, target));
+  const there = (await clone.query(
+    'SELECT extowner::regrole::text AS owner, obj_description(oid, $1) IS NOT NULL AS commented'
+    + ' FROM pg_extension WHERE extname = $2', ['pg_extension', 'pg_trgm'])).rows[0];
+  await clone.end();
+  assert.ok(there, 'the trusted extension was restored into the copy');
+  assert.equal(there.owner, `${target}_owner`, `the extension is owned by the copy's own role (${there.owner}), not the administrator`);
+  assert.equal(there.commented, true, 'the extension\'s comment was restored too');
 });

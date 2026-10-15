@@ -652,7 +652,14 @@ test('a preview-side child process takes its connection from the URL alone, what
     assert.ok(preview.some((c) => c.via === 'pg_restore') && preview.some((c) => c.via === 'psql'));
     for (const call of preview) {
       const pg = Object.keys(call.env).filter((key) => /^PG/i.test(key)).sort();
-      assert.deepEqual(pg, ['PGDATABASE', 'PGHOST', 'PGPASSWORD', 'PGPORT', 'PGSSLMODE', 'PGUSER'], `${call.via}: only what the URL says`);
+      // A psql child the platform runs inside an app database also carries
+      // the search_path pin (see execInTarget); the ambient PGOPTIONS —
+      // which libpq would obey — must never leak through either way.
+      const unpinned = pg.filter((key) => key !== 'PGOPTIONS');
+      assert.deepEqual(unpinned, ['PGDATABASE', 'PGHOST', 'PGPASSWORD', 'PGPORT', 'PGSSLMODE', 'PGUSER'], `${call.via}: only what the URL says`);
+      if (pg.includes('PGOPTIONS')) {
+        assert.equal(call.env.PGOPTIONS, '-c search_path=pg_catalog', `${call.via}: the search_path is pinned to the built-ins, not the ambient one`);
+      }
       assert.equal(call.env.PGSSLMODE, 'disable');
       assert.equal(call.env.PGHOST, PREVIEW_HOST);
       // Administrative work connects as the preview admin; the redaction
