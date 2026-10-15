@@ -112,6 +112,39 @@ test('a ready-made app\'s icon is on its record from the start', () => {
   }
 });
 
+// "A more contextual tour" (Evan, 15 Oct 2026): the first-session walk's
+// Homeroom bot card offers one change somebody could ask for in THIS app
+// ("Ask it for changes, like “add a cheap eats tier”."), from its starter.
+// Short enough for the card on a phone, lowercase-led to sit inside the
+// sentence, and plain: no em dash, no quotation marks of its own (the card
+// draws them), no closing full stop. The walk's side is
+// tests/first-session.test.js.
+test('every ready-made app has a short example change for the walk; Empty and the games have none', () => {
+  const seen = new Set();
+  for (const id of READY) {
+    const change = appTemplates.get(id).exampleChange;
+    assert.equal(typeof change, 'string', id);
+    assert.equal(appTemplates.exampleChangeOf(id), change, id);
+    assert.ok(change.length > 0 && change.length <= 32, `${id}: ${change} (${change.length})`);
+    assert.match(change, /^[a-z]/, `${id}: lowercase-led`);
+    assert.equal(change, change.trim(), id);
+    assert.doesNotMatch(change, /[—–"“”.!?]/, `${id}: no em dash, quotes or closing punctuation`);
+    assert.ok(!seen.has(change), `${id}: its own`);
+    seen.add(change);
+  }
+  assert.equal(appTemplates.get('tier-list-restaurants').exampleChange, 'add a cheap eats tier');
+  // Nothing to offer: Empty (stored as NULL), a game, a deleted or unknown starter.
+  for (const id of ['empty', null, undefined, ...GAMES, ...DELETED, 'chess']) {
+    assert.equal(appTemplates.exampleChangeOf(id), null, String(id));
+  }
+  for (const id of GAMES) assert.equal(appTemplates.get(id).exampleChange, undefined, id);
+  // GET /api/apps/:slug carries it, read off the row's own template.
+  const route = fs.readFileSync(path.join(ROOT, 'src/routes/apps.js'), 'utf8');
+  const get = route.slice(route.indexOf("router.get('/api/apps/:slug', async"), route.indexOf('res.json({ app: appPayload });'));
+  assert.match(get, /`SELECT \$\{appAccess\.nonSecretAppColumnList\(\)\}, template,/);
+  assert.match(get, /exampleChange: appTemplates\.exampleChangeOf\(appRow\.template\),/);
+});
+
 test('Empty is the scaffold every project always got, byte for byte', () => {
   const plain = getTemplateFiles('Notes', 'notes-abc123', 'postgres://x', null, {});
   assert.deepEqual(getTemplateFiles('Notes', 'notes-abc123', 'postgres://x', null, { template: 'empty' }), plain);
