@@ -82,8 +82,9 @@ test('it steps before the browser paints, while the foot ends below the foot of 
   // toolbar coming and going does not.
   assert.match(SOURCE, /const TOOLBAR_SLACK = 120;/);
   assert.match(SOURCE, /if \(window\.innerWidth === f\.width && Math\.abs\(window\.innerHeight - f\.height\) < TOOLBAR_SLACK\) return;\s+fitting\.current = null;\s+setFit\(0\);/);
-  // The two examples left are the first two: the tier list and the game.
-  assert.match(SOURCE, /TEMPLATES\.slice\(0, s\.count\)\.map/);
+  // The two examples left are the first two of the front three: the tier
+  // list and the game.
+  assert.match(SOURCE, /FRONT\.slice\(0, s\.count\)\.map/);
 });
 
 // Evan, 10 Oct 2026, iPhone 13 mini in Safari, through #4691 and #4695: the

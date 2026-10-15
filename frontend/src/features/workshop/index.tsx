@@ -721,6 +721,48 @@ function stripAnswered(items: NeedsFeedItem[]): NeedsFeedItem[] {
   return answeredVotes.size ? items.filter((item) => !voteAnswered(item)) : items;
 }
 
+/** How often the open screen quietly re-reads what waits on you (#5164). */
+export const WORKSHOP_REFRESH_MS = 30_000;
+
+/**
+ * The quiet refresh behind #5164: while the screen is showing, the counts
+ * and the Needs you feed are read again every WORKSHOP_REFRESH_MS, and once
+ * more the moment the browser tab comes back to the front — the moment
+ * people most often notice the lag and reach for a page reload.
+ *
+ * A module-level watch rather than an effect, because the screen's roots
+ * outlive React's mounts the way the controller does: `open()` starts it and
+ * `close()` stops it, so nothing runs while the screen is hidden and
+ * re-entering never stacks a second timer. The interval skips its tick while
+ * the tab is hidden; the listener answers the return instead. Guarded on
+ * `document` because the tests run in node with only `window` faked.
+ */
+let watchTimer: number | null = null;
+let watchVisibility: (() => void) | null = null;
+
+function startWatch() {
+  if (typeof document === 'undefined') return;
+  stopWatch();
+  watchTimer = window.setInterval(() => {
+    if (document.visibilityState === 'visible') void workshopController.refreshNeeds();
+  }, WORKSHOP_REFRESH_MS);
+  watchVisibility = () => {
+    if (document.visibilityState === 'visible') void workshopController.refreshNeeds();
+  };
+  document.addEventListener('visibilitychange', watchVisibility);
+}
+
+function stopWatch() {
+  if (watchTimer !== null) {
+    window.clearInterval(watchTimer);
+    watchTimer = null;
+  }
+  if (watchVisibility) {
+    document.removeEventListener('visibilitychange', watchVisibility);
+    watchVisibility = null;
+  }
+}
+
 /**
  * The legacy seam, the same shape as `window.UsernodeReact.messages`.
  *
@@ -742,11 +784,14 @@ export const workshopController = {
     let asked: TabKey | null = null;
     try { asked = tabFromQuery(location.search); } catch { asked = null; }
     workshopStore.set(asked ? { open: true, tab: asked } : { open: true });
+    // #5164: the quiet refresh runs for as long as the screen is showing.
+    startWatch();
     return workshopController.reload();
   },
   close() {
     workshopStore.set({ open: false });
     answeredVotes.clear();
+    stopWatch();
   },
   isOpen() {
     return workshopStore.get().open;
@@ -782,9 +827,12 @@ export const workshopController = {
     if (!workshopStore.get().open) return;
     const demo = demoQuery();
     try {
+      // `no-cache` (the #4177 spelling): a quiet read asks for the CURRENT
+      // answer. The worker's boot lane would answer it from the saved copy,
+      // which is one reason a page reload looked fresher than this screen.
       const [countsRes, feedRes] = await Promise.all([
-        fetch(`/api/workshop/counts${demo}`).catch(() => null),
-        fetch(`/api/workshop/needs-feed${demo}`).catch(() => null),
+        fetch(`/api/workshop/counts${demo}`, { cache: 'no-cache' }).catch(() => null),
+        fetch(`/api/workshop/needs-feed${demo}`, { cache: 'no-cache' }).catch(() => null),
       ]);
       if (!workshopStore.get().open) return;
       const state = workshopStore.get();
