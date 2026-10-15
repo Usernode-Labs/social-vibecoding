@@ -2831,7 +2831,7 @@ const Home = {
     // horizontally centered in the tile — homescreen-launcher style —
     // and the card draws NO border: the violet hover/drop-slot tint
     // (.app-card:hover in app.css) is the affordance. The title is
-    // .app-card-title (app.css): iOS-sized 12px/14px type clamped to
+    // .app-card-title (app.css): iOS-sized 11px/13px type clamped to
     // TWO lines with an ellipsis, in a fixed-height lane so a long name
     // shows far more of itself without making its tile any taller than
     // a short one. The untruncated name stays reachable as the title

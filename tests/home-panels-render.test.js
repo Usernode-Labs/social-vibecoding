@@ -2186,15 +2186,16 @@ test('the grid host and its row-spanning rules are gone', () => {
 });
 
 test('the cell height still matches the app tile it is derived from', () => {
-  // p-3 (0.75rem x 2) + 3.5rem icon + 0.375rem gap + 1.75rem name (two
-  // 14px lines: 13px at #951, 14px since #4934) + 0.75rem caption lane =
-  // 7.875rem per cell. --home-cell-h still drives the grid's rows and the
-  // drag overlay's cells, which is why both sides are pinned here.
+  // p-3 (0.75rem x 2) + 3.5rem icon + 0.375rem gap + 1.625rem name (two
+  // 13px lines, #951) + 0.75rem caption lane = 7.75rem per cell; two cells
+  // + the grid's 0.5rem gap = 16rem — the figure the retired height cap was
+  // derived from. --home-cell-h still drives the grid's rows and the drag
+  // overlay's cells, which is why both sides are pinned here.
   const card = HOME.match(/<div class="app-card app-card-draggable[^"]*"/)[0];
   assert.match(card, /\bp-3\b/, 'app tile padding feeds the 1.5rem term');
   assert.match(card, /\bgap-1\.5\b/, 'app tile gap feeds the 0.375rem term');
   assert.match(HOME, /class="app-icon-tile w-14 h-14/, 'icon feeds the 3.5rem term');
-  assert.match(HOME, /class="app-card-title"/, 'name feeds the 1.75rem term');
+  assert.match(HOME, /class="app-card-title"/, 'name feeds the 1.625rem term');
   // …and the two label lanes measure their design size in app.css, so a
   // one-line and a two-line title produce identically sized tiles. The
   // title lane is a MIN-height since #3661, not a fixed height: a device
@@ -2202,15 +2203,16 @@ test('the cell height still matches the app tile it is derived from', () => {
   // must grow the box with its text instead of clipping the second line
   // mid-glyph, so the line-height is unitless and the height is a floor.
   const titleRule = CSS.match(/\.app-card-title \{[^}]*\}/)[0];
-  assert.match(titleRule, /min-height:\s*1\.75rem/, 'the title lane is two lines at the design size, and a floor when the font renders larger');
-  assert.doesNotMatch(titleRule, /(?<!min-)height:\s*1\.75rem/, 'the title lane is not a fixed height — that clipped inflated text (#3661)');
-  assert.match(titleRule, /line-height:\s*1\.1667\s*;/, 'the line height is unitless so it tracks the font');
+  assert.match(titleRule, /min-height:\s*1\.625rem/, 'the title lane is two lines at the design size, and a floor when the font renders larger');
+  assert.doesNotMatch(titleRule, /(?<!min-)height:\s*1\.625rem/, 'the title lane is not a fixed height — that clipped inflated text (#3661)');
+  assert.match(titleRule, /line-height:\s*1\.18\s*;/, 'the line height is unitless so it tracks the font');
   assert.doesNotMatch(titleRule, /line-height:\s*0\.8125rem/);
   assert.match(titleRule, /-webkit-line-clamp:\s*2/, 'long names ellipsise at two lines');
-  // #4934: 12px on 14px lines, so names on the wallpaper read at a glance;
-  // the two-line lane (28px) is the term the desktop cell's 126px adds up to.
-  assert.match(titleRule, /font-size:\s*0\.75rem/, 'the label is 12px (#4934)');
-  assert.match(CSS, /--home-cell-h: 7\.875rem/, 'the desktop cell adds up the terms above');
+  // #5195: 11px on 13px lines again. #4934's step up to 12px/14px cut most
+  // names after a few letters on a phone's four columns; the two-line lane
+  // (26px) is the term the desktop cell's 124px adds up to.
+  assert.match(titleRule, /font-size:\s*0\.6875rem/, 'the label is 11px (#5195)');
+  assert.match(CSS, /--home-cell-h: 7\.75rem/, 'the desktop cell adds up the terms above');
   assert.match(CSS.match(/\.app-card-status \{[^}]*\}/)[0], /line-height:\s*0\.75rem/);
   // THE CAPTION LANE IS LOAD-BEARING. The status dot is gone from the tile
   // face, so this line is a tile's only status signal — and rows are a
@@ -2225,7 +2227,7 @@ test('the cell height still matches the app tile it is derived from', () => {
   // since tailwind.css is linked after app.css (see the rule's comment).
   assert.match(grid, /\bp-2\b/);
   assert.match(CSS, /\.app-card\.app-card:not\(\.home-discover-card\) \{ padding: 0\.5rem; \}/);
-  assert.match(CSS, /--home-cell-h: 7\.375rem/);
+  assert.match(CSS, /--home-cell-h: 7\.25rem/);
   // …and the phone cap override is GONE with the cap itself (#968 introduced
   // it: a block's phone footprint was a single grid row, so a two-cell cap
   // would have let an oversized text size paint the article over the app
