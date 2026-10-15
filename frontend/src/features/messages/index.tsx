@@ -2247,6 +2247,39 @@ function ThreadActivityRow({ replies }: { replies: ConversationMessage[] }) {
  * request's card is the root of its thread, which this pane names by the
  * request ("Dark mode", "Plant Pal first version") over its project.
  */
+/**
+ * The thread pane's loading state, at the message row's own geometry
+ * (#5219 review). While the replies and, on a request's thread, the request's
+ * public discussion are still loading, the pane shows the rows they will
+ * arrive as — avatar, head line, words — rather than a blank pane under a
+ * line of grey text. The wrapper IS `.messages-message`, not an imitation of
+ * it: that class owns the flex, the gap and the row padding in app.css, so
+ * the placeholder cannot drift from the row the first time any of those move.
+ *
+ * Four, because the pane is taller than that on every phone and a thread
+ * that stops halfway reads as a short thread rather than a loading one.
+ */
+function ReplyRowSkeleton() {
+  const t = useMessages('messages');
+  return (
+    <SkeletonGroup label={t('messages:replies.loading')}>
+      {Array.from({ length: 4 }, (_, i) => (
+        <div key={i} className="messages-message" aria-hidden="true">
+          {/* The md square UserAvatar's 36px box. */}
+          <Skeleton shape="block" className="h-9 w-9 rounded-xl" />
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <Skeleton className="w-24" />
+              <Skeleton shape="muted" className="ml-auto w-12" />
+            </div>
+            <Skeleton shape="muted" className={`mt-2 ${i % 2 ? 'w-2/5' : 'w-3/5'}`} />
+          </div>
+        </div>
+      ))}
+    </SkeletonGroup>
+  );
+}
+
 function ReplyThreadPanel() {
   const t = useMessages('messages');
   const snap = useMessagesSnapshot();
@@ -2361,9 +2394,15 @@ function ReplyThreadPanel() {
             own threadRootId is null, being the main stream's message. */}
         {root ? <MessageRow message={{ ...root, thread: null, threadRootId: rootId }} conversationId={conversationId} channels={channels} kind={kind} inThread botChat={botChat} /> : null}
         {pieces.map((item) => <MessageRow key={item.clientKey || item.id} message={{ ...item, thread: null, threadRootId: rootId }} conversationId={conversationId} channels={channels} kind={kind} inThread botChat={botChat} focused={flashId === item.id} />)}
-        <div className="messages-reply-count" aria-hidden={!merged.length}>
-          <span>{merged.length ? t('messages:replies.count', { count: merged.length }) : thread?.loading ? t('messages:replies.loading') : t('messages:replies.none')}</span>
-        </div>
+        {/* An error stands in place of the thread (#5219 review): with one,
+            the count line would say "No replies yet", which is a different
+            answer to the same question, so it waits. */}
+        {thread?.error ? null : (
+          <div className="messages-reply-count" aria-hidden={!merged.length}>
+            <span>{merged.length ? t('messages:replies.count', { count: merged.length }) : thread?.loading ? t('messages:replies.loading') : t('messages:replies.none')}</span>
+          </div>
+        )}
+        {thread?.loading && !merged.length && !thread.error ? <ReplyRowSkeleton /> : null}
         {(thread?.nextBefore || discussion?.more) ? (
           <div className="flex flex-wrap justify-center gap-x-3 gap-y-1 py-2">
             {thread?.nextBefore ? <button type="button" disabled={thread.loading} onClick={() => void loadOlderReplies()} className="messages-load-older">{thread.loading ? t('messages:replies.loadingEarlier') : t('messages:replies.loadEarlier')}</button> : null}
