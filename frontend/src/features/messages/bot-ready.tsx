@@ -14,7 +14,7 @@ import * as api from './api';
 import { afterYesWords, countOf, waitingWords, type AfterYes } from './approval-words';
 import { ensureBotActivity, useBotActivity } from './bot-activity-store';
 import { botMeta } from './bot-question';
-import { scopeKey, setReply } from './store';
+import { quoteInComposer } from './store';
 import type {
   ConversationMessage, HomeroomBotAction, HomeroomBotGoesLive, HomeroomBotMeta, HomeroomBotReady, HomeroomBotReadyNow,
 } from './types';
@@ -425,8 +425,11 @@ export function ReadyCardView({
   );
 }
 
-/** Open a change's preview over the chat, or its page when there is no preview overlay to open. */
-function tryChange(meta: HomeroomBotMeta, sessionId: number) {
+/**
+ * Open a change's preview over the chat, or its page when there is no
+ * preview overlay to open. Also the strip's Try it (./bot-strip.tsx).
+ */
+export function tryChange(meta: Pick<HomeroomBotMeta, 'appSlug'>, sessionId: number) {
   const view = typeof window !== 'undefined' ? window.AppView : null;
   if (meta.appSlug && view && typeof view.ensureStaging === 'function') {
     void view.ensureStaging(sessionId, null, null, { readOnly: false, app: { slug: meta.appSlug } });
@@ -467,10 +470,9 @@ export function BotReadyCard({ message, conversationId }: { message: Conversatio
       return;
     }
     if (action.type === 'reply') {
-      setReply(scopeKey(conversationId, null), message);
-      window.requestAnimationFrame(() => {
-        document.querySelector<HTMLTextAreaElement>('.messages-composer-input')?.focus({ preventScroll: true });
-      });
+      // Change something: quoted in the composer, its request's thread's
+      // when the card is in one (store.quoteInComposer).
+      quoteInComposer(message, conversationId);
       return;
     }
     if (action.type === 'vote' && action.sessionId) {

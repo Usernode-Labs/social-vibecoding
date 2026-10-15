@@ -611,9 +611,9 @@ test('the flag survives every copy between the normalizer and the sentence', asy
     ['messages:thread.typingTwo', 'messages:thread.typingTwoUnknown', { first: 'unknown', second: 'unknown' }],
     ['messages:thread.typingTwo', 'messages:thread.typingTwoFirstUnknown', { first: 'unknown', second: 'ada' }],
     ['messages:thread.typingTwo', 'messages:thread.typingTwoSecondUnknown', { first: 'ada', second: 'unknown' }],
-    ['messages:bot.tray.workingOnShort', 'messages:bot.tray.workingOnShortUnnamed', { job: 'A project' }],
-    ['messages:bot.tray.jobQueued', 'messages:bot.tray.jobQueuedUnnamed', { job: 'A project' }],
-    ['messages:bot.tray.jobNeedsYouShort', 'messages:bot.tray.jobNeedsYouShortUnnamed', { job: 'A project' }],
+    // One request, one story: the tray's status line (bot.tray.*) is gone;
+    // the strip that replaced it names a first version this way.
+    ['messages:bot.job.firstVersion', 'messages:bot.job.firstVersionUnnamed', { project: 'A project' }],
     ['chat:group.file.loadFailedStatus', 'chat:group.file.loadFailedStatusUnnamed', { file: 'file', status: 404 }],
     ['project:topic.request.spec.by', 'project:topic.request.spec.bySystem', { author: 'System' }],
     ['project:topic.request.spec.byAt', 'project:topic.request.spec.bySystemAt', { author: 'System' }],
@@ -632,60 +632,31 @@ test('the flag survives every copy between the normalizer and the sentence', asy
   assert.match(read('frontend/src/features/group-chat/transcript.tsx'), /\.\.\.\(msg\.thread\.lastReply\.unnamed \? \{ unnamed: 'someone' as const \} : \{\}\),/);
   assert.match(read('frontend/src/features/messages/index.tsx'), /peer\.unnamed \? \(peer\.id \? t\('messages:header\.menu\.blockUnnamedHandle'\) : t\('messages:header\.menu\.blockUnnamed'\)\)/);
   assert.match(read('frontend/src/features/messages/composer.tsx'), /waitingUnknown \? t\('messages:composer\.requestSent\.waitingUnknown'\)/);
-  assert.match(read('frontend/src/features/messages/bot-work.tsx'), /shortUnnamed\(job\) \? translate\('messages:bot\.tray\.workingOnShortUnnamed'\)/);
+  // One request, one story: the strip that replaced the tray's status line keeps the flag.
+  assert.match(read('frontend/src/features/messages/bot-strip.tsx'), /job\.appUnnamed \? translate\('messages:bot\.job\.firstVersionUnnamed'\)/);
 });
 
-test('the bot\'s status line never takes the unnamed project\'s stand-in as a job\'s name', async (t) => {
+test('the bot\'s strip never takes the unnamed project\'s stand-in as a project\'s name', async (t) => {
+  // One request, one story: the header's status line, which this test held
+  // to the rule, is gone; the "Your requests" strip that replaced it names
+  // each request, and holds to the same rule.
   const es = {
     'messages:bot.job.unnamedProject': 'Un proyecto',
-    'messages:bot.job.requestUnnamed': 'Un proyecto, n.º {{number}}',
-    'messages:bot.last.live': 'Último: {{job}} ya está activo',
-    'messages:bot.last.liveUnnamed': 'Último: un proyecto ya está activo',
-    'messages:bot.tray.workingOnPhase.building': 'Trabajando en {{job}} · construyendo',
-    'messages:bot.tray.workingOnPhase.buildingUnnamed': 'Trabajando en un proyecto · construyendo',
-    'messages:bot.tray.workingOnShort': 'Trabajando en {{job}}',
-    'messages:bot.tray.workingOnShortUnnamed': 'Trabajando en un proyecto',
+    'messages:bot.job.firstVersionUnnamed': 'La primera versión de un proyecto',
+    'messages:bot.strip.firstVersion': '{{project}}, primera versión',
+    'messages:bot.strip.requestNumber': 'Solicitud n.º {{number}}',
   };
   const { module: api } = await loadInSpanish(t, 'frontend/src/features/messages/api.ts', es);
-  const { module: tray } = await loadInSpanish(t, 'frontend/src/features/messages/bot-work.tsx', es);
-  const now = new Date('2026-10-09T12:00:00Z');
-  const status = (payload) => tray.trayStatus(api.normalizeBotWork(payload), now);
-  const history = (row) => status({ history: [{ at: '2026-10-09T11:00:00Z', ...row }] });
-
-  // Every ending the history can have, for a project with neither a name nor a slug.
-  const outcomes = Object.keys(tray.LAST_WORDS);
-  assert.equal(outcomes.length, 16);
-  assert.deepEqual(Object.keys(tray.LAST_WORDS_UNNAMED), outcomes);
-  for (const outcome of outcomes) {
-    const named = tray.LAST_WORDS[outcome];
-    const unnamed = tray.LAST_WORDS_UNNAMED[outcome];
-    assert.equal(unnamed, `${named}Unnamed`);
-    assert.equal(message(unnamed), message(named, { job: 'A project' }), `${unnamed} reads as it did in English`);
-    const said = history({ outcome });
-    for (const line of [said.long, said.short]) {
-      assert.doesNotMatch(line, /Un proyecto/, `${outcome}: the stand-in is not placed as a name`);
-    }
-  }
-  assert.match(history({ outcome: 'live' }).short, /^Último: un proyecto ya está activo/);
-  assert.match(history({ outcome: 'live' }).long, /^Último: un proyecto ya está activo/);
-  // A numbered request names itself: "#12" on the short line, the unnamed request's own name on the long one.
-  assert.match(history({ outcome: 'live', issueNumber: 12 }).short, /^Último: #12 ya está activo/);
-  assert.match(history({ outcome: 'live', issueNumber: 12 }).long, /^Último: Un proyecto, n\.º 12 ya está activo/);
+  const { module: strip } = await loadInSpanish(t, 'frontend/src/features/messages/bot-strip.tsx', es);
+  const title = (row) => strip.stripTitle(api.normalizeBotWork({ history: [{ outcome: 'live', at: '2026-10-09T11:00:00Z', ...row }] }).history[0]);
+  assert.equal(title({ firstVersion: true }), 'La primera versión de un proyecto', 'the stand-in is not placed as a name');
+  assert.equal(message('messages:bot.job.firstVersionUnnamed') === message('messages:bot.strip.firstVersion', { project: 'Un proyecto' }), false);
   // A project really called "A project", and one known by its slug, stay on the named path.
-  assert.match(history({ outcome: 'live', appName: 'A project' }).short, /^Último: A project ya está activo/);
-  assert.match(history({ outcome: 'live', appSlug: 'recetas' }).long, /^Último: recetas ya está activo/);
-
-  // The same for work under way.
-  const working = status({ now: [{ phase: 'building' }] });
-  assert.match(working.long, /^Trabajando en un proyecto · construyendo/);
-  assert.equal(working.short, 'Trabajando en un proyecto');
-  const workingNamed = status({ now: [{ phase: 'building', appName: 'A project' }] });
-  assert.match(workingNamed.long, /^Trabajando en A project · construyendo/);
-  for (const phase of Object.keys(tray.SHORT_PHASES)) {
-    assert.equal(message(tray.SHORT_PHASES_UNNAMED[phase]), message(tray.SHORT_PHASES[phase], { job: 'A project' }), phase);
-  }
-  assert.equal(message('messages:bot.tray.workingOnUnnamed'), message('messages:bot.tray.workingOn', { job: 'A project' }));
-  assert.equal(message('messages:bot.tray.jobNeedsYouUnnamed'), message('messages:bot.tray.jobNeedsYou', { job: 'A project' }));
+  assert.equal(title({ firstVersion: true, appName: 'A project' }), 'A project, primera versión');
+  assert.equal(title({ firstVersion: true, appSlug: 'recetas' }), 'recetas, primera versión');
+  // A request is named by itself, never by its project.
+  assert.equal(title({ issueNumber: 12 }), 'Solicitud n.º 12');
+  assert.equal(title({ issueNumber: 12, title: 'Recetas' }), 'Recetas');
 });
 
 test('the reply strip words a nameless row in its own sentence', async (t) => {

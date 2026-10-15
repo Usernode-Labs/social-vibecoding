@@ -259,10 +259,39 @@ test('a post goes to both surfaces, scoped to the issue, and is recorded', async
   assert.deepEqual(h.calls.comments, [{ owner: 'usernode-bot', repo: 'rss-reader', n: 12, body: 'Which feed?' }]);
   assert.deepEqual(h.calls.messages[0].thread, { type: 'issue', ref: 12 });
   assert.equal(h.calls.messages[0].msgType, 'system');
-  const insert = h.calls.queries[0];
+  // A run's post first looks for one of its own a restart cut short.
+  assert.match(h.calls.queries[0].sql, /WHERE run_id = \$1 AND kind = \$2 AND pending IS TRUE/);
+  const insert = h.calls.queries[1];
   assert.match(insert.sql, /ON CONFLICT \(app_id, issue_number\) WHERE kind = 'looking' DO NOTHING/,
-    'the row is written first: for "looking" the insert is the claim');
+    'then its row is written, before anything is sent: for "looking" the insert is the claim');
+  assert.match(insert.sql, /VALUES \(\$1, \$2, \$3, \$4, TRUE\)/, 'pending until it has gone out');
+  assert.match(h.calls.queries.at(-1).sql, /pending = NULL/, 'and said once it has');
   assert.ok(h.calls.queries.some((q) => /UPDATE homeroom_bot_posts SET github_comment_id/.test(q.sql) && q.params[1] === 1234 && q.params[2] === 777));
+});
+
+test('a post a restart cut short is finished, its comment found on the issue rather than made twice', async () => {
+  const h = postHarness();
+  const at = '2026-10-14T10:00:00Z';
+  h.pool.query = async (sql, params) => {
+    h.calls.queries.push({ sql: String(sql), params });
+    if (/pending IS TRUE/.test(sql)) return { rows: [{ id: 41, github_comment_id: null, thread_message_id: null, created_at: at }] };
+    return { rows: [] };
+  };
+  h.github.fetchIssueComments = async () => ({ comments: [{ id: 990, body: 'Which feed?', createdAt: '2026-10-14T10:00:01Z' }] });
+  const out = await live.post({ ...h, app: APP, repo: REPO, issueNumber: 12, kind: 'question', runId: 900, text: 'Which feed?' });
+  assert.equal(out.postId, 41, 'its row is taken up');
+  assert.deepEqual(h.calls.comments, [], 'the comment it made before the restart is not made again');
+  assert.ok(!h.calls.queries.some((q) => /INSERT INTO homeroom_bot_posts/.test(q.sql)));
+  assert.equal(h.calls.messages.length, 1, 'what had not gone out goes now');
+  const end = h.calls.queries.at(-1);
+  assert.match(end.sql, /pending = NULL/);
+  assert.deepEqual(end.params.slice(0, 3), [41, 990, 777]);
+  // One whose comment had not gone out yet is commented now.
+  const h2 = postHarness();
+  h2.pool.query = async (sql) => (/pending IS TRUE/.test(sql) ? { rows: [{ id: 42, github_comment_id: null, thread_message_id: null, created_at: at }] } : { rows: [] });
+  h2.github.fetchIssueComments = async () => ({ comments: [] });
+  await live.post({ ...h2, app: APP, repo: REPO, issueNumber: 12, kind: 'question', runId: 900, text: 'Which feed?' });
+  assert.equal(h2.calls.comments.length, 1);
 });
 
 test('"looking" is posted once per issue: a second claim sends nothing', async () => {
@@ -368,7 +397,10 @@ test('issuePoster: the platform\'s issue row, the feedback report, the Source li
   assert.equal((await poster({ body: 'plain', user: 'stranger' })).name, null, 'no linked account, nobody to notify here');
 });
 
-test('the answers tag whoever filed the issue and took part; the notice and a held note tag nobody', async (t) => {
+// One request, one story: a tag means the bot is asking you something. A
+// question and a decision for a person tag; progress (an empty request, the
+// plan, the change, a build that stopped) is said untagged.
+test('the answers that ask something tag whoever filed the issue and took part; progress, the notice and a held note tag nobody', async (t) => {
   // Who exactly, and who is left out, is tests/homeroom-bot-mentions.test.js.
   const h = actHarness();
   const realPost = live.post;
@@ -382,8 +414,8 @@ test('the answers tag whoever filed the issue and took part; the notice and a he
   await act(h, { verdict: 'person', reason: 'Taste.' });
   await act(h, { verdict: 'empty', reason: 'Nothing.' });
   assert.deepEqual(h.posts.map((p) => [p.kind, p.mentions, p.senderId]),
-    [['question', ['evan', 'maya'], 77], ['person', ['evan', 'maya'], 77], ['empty', ['evan', 'maya'], 77]]);
-  assert.equal(lookups.length, 3, 'one lookup per run, read fresh each time');
+    [['question', ['evan', 'maya'], 77], ['person', ['evan', 'maya'], 77], ['empty', [], 77]]);
+  assert.equal(lookups.length, 2, 'one lookup per run that tags, read fresh each time');
   assert.equal(lookups[0].issueNumber, 12);
   assert.equal(lookups[0].bot.id, 77, 'so the bot can leave itself out');
 
@@ -393,9 +425,11 @@ test('the answers tag whoever filed the issue and took part; the notice and a he
   assert.deepEqual(h.posts.map((p) => [p.kind, p.mentions]), [['held_question_tripwire', []]]);
   assert.equal(lookups.length, 0, 'a held note looks nobody up');
 
-  for (const kind of ['proposal', 'build_failed', 'spec', 'blocked', 'followup_answer', 'followup_revise']) {
-    assert.ok(live.tagsPoster(kind), `${kind} is theirs to know about too`);
+  for (const kind of ['proposal', 'build_failed', 'spec', 'plan', 'blocked', 'empty', 'followup_answer', 'followup_revise',
+    'followup_person', 'followup_failed']) {
+    assert.ok(!live.tagsPoster(kind), `${kind} is progress: said untagged`);
   }
+  for (const kind of ['question', 'person', 'followup_ask']) assert.ok(live.tagsPoster(kind), `${kind} asks them something`);
   assert.ok(!live.tagsPoster('looking'));
   assert.ok(!live.tagsPoster('held_proposals_per_app'));
 });
@@ -414,15 +448,15 @@ test('what it says: the question, notes that never close, a linked proposal', ()
   assert.match(q, /Reply here \(or on the GitHub issue\) and it will look again\./);
   assert.match(live.personText({ reason: 'It changes who can see feeds.' }), /a person needs to decide this one: It changes who can see feeds\./);
   // #4239: about Homeroom itself, the note says so, and who can move it.
-  const platform = live.personText({ reason: 'The header is drawn by Homeroom.', platform: true });
-  assert.match(platform, /^Homeroom bot thinks this is about Homeroom itself, not this project: The header is drawn by Homeroom\.\n\nWhoever asked for it, or this project's creator or admins, can move it to Homeroom's own board by asking Homeroom bot in a chat\.$/);
+  const platform = live.personText({ reason: 'The header is drawn by Homeroom.', platform: true, project: 'RSS Reader' });
+  assert.match(platform, /^Homeroom bot thinks this is about Homeroom itself, not RSS Reader: The header is drawn by Homeroom\.\n\nWhoever asked for it, or RSS Reader's creator or admins, can have Homeroom bot move it to Homeroom's own board\.$/);
   assert.doesNotMatch(platform, /\u2014/);
   const empty = live.emptyText({ reason: 'The body is a placeholder.' });
   assert.match(empty, /couldn't find anything to build/);
   assert.ok(!/close/i.test(empty), 'it never closes, or offers to close, an issue');
   const link = live.proposalLink('app.onhomeroom.com', APP.slug, 5001);
   assert.equal(link, 'https://app.onhomeroom.com/#app/rss-reader-4113da/dev/proposals/5001');
-  assert.match(live.proposalText({ link, prNumber: 42 }), /opened a proposal for the group to vote on \(PR #42\): https:\/\/app\.onhomeroom\.com/);
+  assert.equal(live.proposalText({ link, prNumber: 42 }), `Homeroom bot built this. It's up for a vote: ${link}`, 'no pull request number');
   assert.ok(live.questionText({ question: 'x'.repeat(5000) }).length < 2000, 'model text is clipped');
 });
 
@@ -740,9 +774,13 @@ test('WP1: a build whose request was answered or closed while it ran is not prop
   assert.ok(h.calls.queries.some((q) => /SET status = 'archived'/.test(q.sql)));
   // The check is the step right before the proposal is prepared and put up.
   const fn = LIVE_SRC.slice(LIVE_SRC.indexOf('async function buildAndPropose('));
-  const check = fn.indexOf('const skipped = await skipNow();');
-  assert.ok(check > fn.indexOf('routed = await sessions.runCodexAttemptLoop({'), 'after the build turn');
-  assert.ok(check < fn.indexOf('await prepareProposal({') && check < fn.indexOf('const promoted = await promoteAsBot({'), 'before it is proposed');
+  const check = fn.indexOf("const skipped = await skipNow('built');");
+  const turn = fn.indexOf("let { routed, stopped } = await runBuildTurn({ prompt, budgetMs: turnBudgetMs, commitMsg, progress, key: 'build' });");
+  assert.ok(turn > -1 && check > turn, 'after the build turn');
+  const prepared = fn.indexOf('await prepareProposal({');
+  const promoted = fn.indexOf("const promoted = await steps.once('promoted', async () => {");
+  assert.ok(prepared > -1 && promoted > -1, 'the proposal is prepared, then put up, each a step of its own');
+  assert.ok(check < prepared && check < promoted, 'before it is proposed');
 });
 
 // One run, one build. Linking a build's session to its run is its claim on
@@ -845,8 +883,8 @@ test('each verdict says its own thing; a verdict held by a cap says only that it
   assert.deepEqual(h.posts.map((p) => p.kind), ['held_question_tripwire', 'held_proposals_per_app'],
     'the caps hold the question and the build, and say so in one line (#3152)');
   assert.ok(!/Which feed/.test(h.posts[0].text), 'the held question itself is not posted');
-  assert.match(h.posts[1].text, /would build this, but it already has 5 proposals open on this app/);
-  assert.match(h.posts[1].text, /come back to this issue when one of them is merged or closed/);
+  // One request, one story: in whole sentences, the project by its name.
+  assert.equal(h.posts[1].text, 'Homeroom bot will build this when one of its 5 changes on RSS reader is voted in or closed.');
 
   live.buildAndPropose = async (args) => {
     await args.onSession({ id: 5001 });
@@ -860,7 +898,7 @@ test('each verdict says its own thing; a verdict held by a cap says only that it
   assert.ok(h.queries.some((q) => /SET live_build_waiting_at = COALESCE\(live_build_waiting_at, NOW\(\)\)/.test(q.sql) && q.params[0] === 900));
   // The lane builds it.
   assert.equal(await build(h, { verdict: 'ready', buildNote: 'x' }), 'proposed');
-  assert.ok(h.queries.some((q) => /SET build_session_id = \$2, live_build_waiting_at = NULL WHERE id = \$1/.test(q.sql) && q.params[0] === 900 && q.params[1] === 5001),
+  assert.ok(h.queries.some((q) => /SET build_session_id = \$2, live_build_waiting_at = NULL\s+WHERE id = \$1/.test(q.sql) && q.params[0] === 900 && q.params[1] === 5001),
     'the live run is linked to its build session as soon as it exists, so a restart can find it (#3471), and no longer waits');
   const card = h.posts.find((p) => p.kind === 'proposal');
   assert.equal(card.msgType, 'vote', 'the thread gets the live vote card');
@@ -918,9 +956,9 @@ test('a second build of one run stops at its link and leaves the run to the firs
   // The run answers no row: another build linked its session first.
   assert.equal(await build(h, { verdict: 'ready', buildNote: 'x' }), 'lost_claim');
   assert.equal(refused, bot.LOST_CLAIM);
-  const claim = h.queries.find((q) => /SET build_session_id = \$2, live_build_waiting_at = NULL WHERE id = \$1/.test(q.sql));
-  assert.match(claim.sql, /WHERE id = \$1\s+AND build_session_id IS NULL AND build_ok IS NULL AND proposal_session_id IS NULL\s+RETURNING id/,
-    'once: only a run no build has linked, still waiting for its outcome');
+  const claim = h.queries.find((q) => /SET build_session_id = \$2, live_build_waiting_at = NULL\s+WHERE id = \$1/.test(q.sql));
+  assert.match(claim.sql, /AND \(build_session_id IS NULL OR build_session_id = \$2\)\s+AND build_ok IS NULL AND proposal_session_id IS NULL\s+RETURNING id/,
+    'once: only a run no other build has linked (its own link again, after a restart), still waiting for its outcome');
   assert.deepEqual(claim.params, [900, 5009]);
   assert.ok(!h.queries.some((q) => /SET build_ok = \$2, build_error = \$3/.test(q.sql)), 'the run keeps the first build\'s record');
   assert.ok(!h.queries.some((q) => /^UPDATE homeroom_bot_runs SET (live_build_waiting_at|build_spec_md|proposal_session_id) = /.test(q.sql)));
@@ -1057,8 +1095,8 @@ test('a live build\'s outcome is recorded on its run, in the shadow build\'s col
   // Recorded before anything is said: a post that throws cannot lose it.
   const src = BOT_SRC.slice(BOT_SRC.indexOf('async function announceBuilt'));
   assert.match(src.slice(0, 200), /\{\n  await recordLiveBuild\(pool, runId, built, built\.model \|\| null\);/);
-  // Never the lane's markers: build_at is how the lane and its restart
-  // recovery (runOfSession) tell a build of theirs under way.
+  // Never the lane's markers: build_at is how the lane tells a build of its
+  // own under way.
   const rec = BOT_SRC.slice(BOT_SRC.indexOf('async function recordLiveBuild'));
   assert.doesNotMatch(rec.slice(0, rec.indexOf('\n}\n')), /build_at|build_queued_at/);
 });
@@ -1111,7 +1149,7 @@ test('a ready verdict is held before it is built when the bot is at its ceiling 
   }), 'held');
   assert.deepEqual(built, []);
   assert.equal(h.posts[0].kind, 'held_proposals_total');
-  assert.match(h.posts[0].text, /already has 20 proposals open across Homeroom/);
+  assert.match(h.posts[0].text, /one of its 20 changes across Homeroom is voted in or closed/);
   // Not held, the build carries the ceiling to its promote.
   assert.equal(await bot.buildLive({
     pool: h.pool, config: {}, bot: BOT, app: APP, repo: REPO, issueNumber: 12, issue: { title: 'x' },
@@ -1121,15 +1159,13 @@ test('a ready verdict is held before it is built when the bot is at its ceiling 
   assert.deepEqual(built, [20]);
   assert.match(BOT_SRC, /quietHold: item\.reason === APP_AGAIN_REASON,\n\s+proposalCeiling: botProposalCeiling\(settings\),/);
   assert.match(BOT_SRC, /simulateCaps\(pool, bot, app\.id, parsed\.verdict, settings\)/);
-  assert.match(BOT_SRC, /live\.promoteAsBot\(\{\n\s+config, bot, sessionId, router: liveD\.votesRouter, ceiling: botProposalCeiling\(/,
-    'a build recovery finishes is proposed under the same ceiling');
   assert.match(LIVE_SRC, /router: deps\.votesRouter \|\| null, ceiling: proposalCeiling,/);
 });
 
 test('the held lines name the limit and never promise more than the refresh does', () => {
-  assert.match(live.heldText({ cap: 'proposals_per_app', verdict: 'ready', limit: 2 }), /already has 2 proposals open on this app/);
+  assert.match(live.heldText({ cap: 'proposals_per_app', verdict: 'ready', limit: 2 }), /when one of its 2 changes on this project is voted in or closed/);
   const q = live.heldText({ cap: 'question_tripwire', verdict: 'question', limit: 10 });
-  assert.match(q, /has a question about this request, but it has already posted 10 questions and notes on this app in the last day/);
+  assert.match(q, /has a question about this request, but it has already posted 10 questions and notes on this project today/);
   assert.match(live.heldText({ cap: 'question_tripwire', verdict: 'empty', limit: 10 }), /has a note on this request/);
   for (const text of [q, live.heldText({ cap: 'proposals_per_app', limit: 2 })]) assert.ok(!/\u2014/.test(text));
 });
@@ -1149,7 +1185,7 @@ test('runTriage acts only through the live module, and only when the app is live
   const planning = BOT_SRC.slice(BOT_SRC.indexOf('async function planBeforeBuilding('), BOT_SRC.indexOf('function isGoWord('));
   assert.match(planning, /platformRepo: isPlatformRepo\(app, config\), planOnly: true,/, 'the plan\'s call drafts the spec and nothing else');
   const shadow = BOT_SRC.slice(BOT_SRC.indexOf('async function shadowBuild('), BOT_SRC.indexOf('/**', BOT_SRC.indexOf('async function shadowBuild(')));
-  assert.match(shadow, /propose: false,?\s*\}\);/);
+  assert.match(shadow, /propose: false,?\s*\}\)\);/, 'its one build call, a durable step, never proposes');
   assert.doesNotMatch(shadow, /live\.post\(|promoteAsBot|advanceSeen/, 'a shadow build says nothing anywhere');
   assert.match(BOT_SRC, /\} else if \(parsed\.verdict === 'ready'\) \{\n\s+const skip = shadowBuildSkipReason\(settings, app, config\);/,
     'and it is queued only where the live branch does not run');

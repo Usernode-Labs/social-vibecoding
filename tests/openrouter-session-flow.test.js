@@ -168,7 +168,7 @@ test('Generate proposal follows the saved OpenRouter provider without Claude cre
 test('OpenRouter headless and recovery paths do not resolve Anthropic billing', () => {
   const headless = between(
     sessions,
-    'async function runHeadlessSession({',
+    'async function runHeadlessSessionInner({',
     'async function runRecoveredWrapUp({',
   );
   const directHeadless = between(

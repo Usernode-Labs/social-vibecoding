@@ -277,8 +277,6 @@ test('sign-in: the password form, every code step and both recovery paths say wh
     ['login-password', 'go'],
     ['otp-email', 'send'],
     ['otp-code', 'go'],
-    ['otp-new-password', 'next'],
-    ['otp-confirm-password', 'go'],
     ['recovery-new-password', 'next'],
     ['recovery-confirm-password', 'go'],
   ]);
@@ -294,7 +292,9 @@ test('sign-in: the password form, every code step and both recovery paths say wh
   assert.match(src, /id="recovery-wallet"[\s\S]{0,200}returnKeyHandler\(\{ submit: \(\) => \{ void onWalletReset\(\); \} \}\)/);
   assert.match(src, /id="recovery-email"[\s\S]{0,200}returnKeyHandler\(\{ submit: \(\) => \{ if \(busy !== 'btn-email-reset'\) void onEmailReset\(\); \} \}\)/);
   // The fields drawn only on demand say it too.
-  assert.match(src, /id="otp-username"[\s\S]{0,200}enterKeyHint="next"/);
+  // The set-password step asks for the username alone (#4891: no password),
+  // so its Return runs the step's button.
+  assert.match(src, /id="otp-username"[\s\S]{0,200}enterKeyHint="go"/);
   assert.match(src, /id="recovery-email-input"[\s\S]{0,120}enterKeyHint="send"/);
   assert.match(src, /id="reset-new-password"[\s\S]{0,80}enterKeyHint="next"/);
   assert.match(src, /id="reset-confirm-password"[\s\S]{0,80}enterKeyHint="go"/);
@@ -339,7 +339,8 @@ test('Suggest an improvement: Return in the title goes on to the description; ‚å
     stubs: { './feedback-controller': { Feedback: {}, init() {} } },
   });
   const html = renderToHtml(createElement(mod.FeedbackDialog));
-  assert.deepEqual(hints(html), [['feedback-title', 'next'], ['feedback-text', null]]);
+  assert.deepEqual(hints(html), [['feedback-title', 'next'], ['feedback-text', null],
+    ['feedback-edit-title', 'next'], ['feedback-edit-text', null]]);
   assert.match(read('frontend/src/features/dialogs/feedback.tsx'), /<div id="feedback-form" onKeyDown=\{returnKeyHandler\(\)\}>/);
   const controller = read('frontend/src/features/dialogs/feedback-controller.js');
   assert.match(controller, /feedbackTitle\.addEventListener\('keydown', \(e\) => \{\s+if \(e\.key === 'Enter' && \(e\.metaKey \|\| e\.ctrlKey\)\)/);

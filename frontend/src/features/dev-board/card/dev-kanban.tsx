@@ -54,6 +54,7 @@ import {
 } from '@/components/ui/icons';
 
 import { useMessages } from '../../../lib/i18n/react';
+import { getLanguage } from '../../../lib/i18n/runtime';
 import { useNarrowViewport } from '../../../lib/use-narrow';
 import { useStoreState } from '../../../lib/use-store-state';
 import { WorkList, type CardRow, type TopicRef } from '../workshop/work-row';
@@ -77,9 +78,12 @@ const STEP_ICON: Record<string, typeof CheckIcon> = {
   done: CheckIcon,
 };
 
-/** "2,760": a count as the strip says it. */
-function countWords(n: number): string {
-  return Number.isFinite(n) ? n.toLocaleString('en-US') : String(n);
+/**
+ * "2,760": a count as the strip says it, grouped the way the interface's
+ * language groups digits ("2 760" in French), never a fixed en-US.
+ */
+export function countWords(n: number): string {
+  return Number.isFinite(n) ? n.toLocaleString(getLanguage()) : String(n);
 }
 
 /**

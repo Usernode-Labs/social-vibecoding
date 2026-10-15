@@ -23,14 +23,10 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
 const express = require('express');
 
 const live = require('../src/services/homeroom-bot-live');
 const proposalDescription = require('../src/services/proposal-description');
-
-const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 
 const BOT = { id: 77, username: 'homeroom_bot' };
 const APP = { id: 9, slug: 'rss-reader-4113da', name: 'RSS', repo_url: 'https://github.com/usernode-bot/rss', self_hosted: false };
@@ -318,15 +314,3 @@ test('a failing write never stops the proposal', async () => {
   assert.ok(promoted(h.seq) >= 0);
 });
 
-test('a live build a restart interrupted is named and described before recovery proposes it', () => {
-  const src = read('src/services/homeroom-bot.js');
-  const recovered = src.slice(src.indexOf('async function completeRecoveredLive'), src.indexOf('async function holdSlotDuringRecovery'));
-  const prepare = recovered.indexOf('await live.prepareProposal({');
-  assert.ok(prepare > 0, 'the recovery path prepares the proposal too');
-  assert.ok(prepare < recovered.indexOf('await live.promoteAsBot('), 'before it promotes');
-  // A first version a restart caught in its review is described from the
-  // build's own message, which its review kept (bot-review.js), not from the
-  // fix turn recovery followed.
-  assert.match(recovered, /spec: session\.spec_md \|\| null,\n\s+buildText: reviewing \? \(reviewing\.buildText \|\| ''\) : plan\.result\.lastResultText, model: session\.agent_model \|\| null,/);
-  assert.match(recovered, /SELECT cs\.id, cs\.user_id, cs\.status, cs\.branch_name, cs\.spec_md, cs\.agent_model,/);
-});

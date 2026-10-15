@@ -39,6 +39,7 @@ function platformUi(): any {
  * template wrote it.
  */
 export function MergeStatusPill({ life }: { life: MergeLife }): ReactNode {
+  const t = useMessages('devchat');
   if (!life || !life.label) return null;
   const votes = life.key === 'in_vote' ? life.votes : null;
   const advisory = votes && votes.advisory > 0 ? votes.advisory : 0;
@@ -52,7 +53,7 @@ export function MergeStatusPill({ life }: { life: MergeLife }): ReactNode {
       {advisory ? (
         <span
           className="ms-advisory"
-          title={`${advisory} advisory vote${advisory === 1 ? '' : 's'} from non-approvers, so they don’t count toward merging`}
+          title={t('devchat:header.advisoryVotes', { count: advisory })}
         >
           {`+${advisory}`}
         </span>

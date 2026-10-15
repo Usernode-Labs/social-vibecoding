@@ -111,12 +111,22 @@ test('app.css bottoms the card, slides it, and clears the keyboard', () => {
     'and slides up once `-shown` lands');
   assert.match(block, /html\.platform-kb-open \[data-dialog-sheet\] \[data-modal-backdrop\] > div \{[\s\S]*?var\(--platform-kb-cover/,
     'the keyboard\'s band is cleared, the same arithmetic .platform-kb-sheet uses');
-  assert.match(block, /max-height: calc\(100% - var\(--platform-vv-top, 0px\) - var\(--platform-kb-cover, 0px\) - 12px\)/,
-    'and so is its height');
+  assert.match(block, /max-height: calc\(100% - var\(--platform-vv-top, 0px\) - var\(--platform-kb-cover, 0px\) - max\(12px, var\(--platform-safe-top, 0px\) \+ 8px\)\)/,
+    'and so is its height, its top kept under the status bar where a tap reaches it');
+  assert.match(block, /max-height: min\(92%, calc\(100% - var\(--platform-safe-top, 0px\) - 8px\)\);/,
+    'with the keys down too');
   assert.match(block, /\[data-dialog-sheet\] \.feedback-sheet-grabber \{[\s\S]*?display: block;/,
     'the grabber shows on a phone only');
   assert.match(block, /\[data-dialog-sheet\] \.feedback-actions \{[\s\S]*?position: sticky;/,
     'the actions row stays at the foot while the form scrolls');
+});
+
+test('the form takes the keyboard without panning the page', () => {
+  // A plain focus() had iOS pan the whole page while the sheet slid up and
+  // the keys rose, and the sheet bounced between them (12 Oct 2026).
+  const controller = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/dialogs/feedback-controller.js'), 'utf8');
+  assert.doesNotMatch(controller, /feedbackText\.focus\(\)/);
+  assert.equal((controller.match(/feedbackText\.focus\(\{ preventScroll: true \}\)/g) || []).length, 5);
 });
 
 test('the feedback dialog opts in and rides the keyboard on its card', () => {

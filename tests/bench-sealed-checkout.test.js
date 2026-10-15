@@ -22,6 +22,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync, spawnSync } = require('node:child_process');
+const { RUNNER_TEST_ENV } = require('./lib/runner-env');
 
 const ROOT = path.join(__dirname, '..');
 const LIB = path.join(ROOT, 'worker', 'session-branch.sh');
@@ -191,7 +192,7 @@ exit 0
     ...GIT_ENV,
     PATH: `${bin}:${process.env.PATH}`, HOME: dir,
     PROMPT_FILE: prompt, BRANCH, MODE: 'build', USERNODE_PINNED_BASE: fx.base,
-    WORKER_JWT: 'jwt', SESSION_ID: '1', PLATFORM_URL: 'http://127.0.0.1:9',
+    ...RUNNER_TEST_ENV, WORKER_JWT: 'jwt', SESSION_ID: '1', PLATFORM_URL: 'http://127.0.0.1:9',
     OPENROUTER_API_KEY: 'sk-or-v1-test', OPENROUTER_API_BASE: 'https://openrouter.ai/api/v1',
     AGENT_MODEL: 'z-ai/glm-5.3-flash',
     WORKSPACE_DIR: ws, CODEX_HOME: path.join(dir, 'codex-home'),

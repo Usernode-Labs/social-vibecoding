@@ -1,3 +1,4 @@
+import { SpeakButton } from '../dictation/speak-button';
 /**
  * "What do you want to make?": the first thing an account made from the
  * signed-out story is asked (../auth/story.tsx sets the session's
@@ -82,6 +83,13 @@
  * only movement. In the app, whose web view ends at the keys, the band is the
  * whole screen and only the reveal does anything.
  *
+ * OVER A PAGE THAT HOLDS STILL (onboarding run, 12 Oct 2026, iPhone 17
+ * Safari, #4893): a drag the screen's own scroller did not take scrolled
+ * Home underneath, and its cards came up behind the status bar. While it is
+ * up the page is held (lib/page-lock.ts): the document does not scroll, and
+ * on the first session Home takes no tap or focus. In a phone browser on iOS
+ * its ground also runs on above it, under the status bar (app.css).
+ *
  * STARTING POINTS (Evan, 8 Oct 2026): four tiles, two by two. A tier list,
  * a game and an organizer are sentences with a blank (./examples.ts); the
  * fourth, Your own idea, is the plain description box, which is also what
@@ -93,30 +101,49 @@
  * own and each starter ("a board game where") still waits for the rest.
  * The name follows the choice ("Hiking Tier List") until they type one.
  *
+ * SOMETHING ELSE (Evan, 15 Oct 2026): still two by two, but the tiles are
+ * the front three (./examples.ts FRONT: a tier list, a game and an
+ * organizer, one config list) and "Something else…". That tile opens a sheet
+ * (./more-sheet.tsx) with Your own idea first and then the rest (MORE: a
+ * poll, find a time, a sign-up sheet and a group challenge). A pick
+ * there takes the fourth tile over, with a chevron that opens the sheet
+ * again; Your own idea takes it too, picked there or by writing in the box.
+ *
  * A template is a starting point, not a choice that sticks: "Write it
  * yourself" turns the sentence into the plain box, and words of their own
  * there let go of the template (Your own idea is marked instead, and Make
  * it no longer sends the template's description). The name stays theirs to
  * keep or change.
+ *
+ * INSTANT OR CUSTOM (Evan, 15 Oct 2026): one line above Who can change it
+ * says what Make it will do, and follows each pick and keystroke
+ * (`makeSpeed`). A choice that makes a ready-made app is Instant, ready in
+ * about a minute; anything Homeroom bot builds (their own words, Write it
+ * yourself, a game, Your own…) is Custom, 20 to 30 minutes. Before anything
+ * is picked or typed there is no line: Make it would only ask for the answer.
  */
 
 import { type KeyboardEvent as ReactKeyboardEvent, useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 import { Button } from '@/components/ui/button';
 import { Chip } from '@/components/ui/chip';
-import { PencilSquareIcon, XIcon } from '@/components/ui/icons';
+import { BoltIcon, ChevronDownIcon, PencilSquareIcon, SparklesIcon, XIcon } from '@/components/ui/icons';
 import { Wordmark } from '@/components/ui/wordmark';
 
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
-import { useKeyboardSurface } from '../../lib/keyboard-surface';
+import { KB_OPEN_CLASS } from '../../lib/keyboard-open';
+import { revealScrollTop, useKeyboardSurface } from '../../lib/keyboard-surface';
+import { usePageLock } from '../../lib/page-lock';
 import { mayFocusByCodeNow } from '../auth/sign-in-sheet';
 import { MakeRuleLine } from '../who-decides/make-rule';
 import { DEFAULT_PRESET, type PresetKey } from '../who-decides/model';
 import { AppAllowance, useAppAllowance } from '../dialogs/app-allowance';
 import { deviceTimeZone, postCreateApp } from '../dialogs/post-create-app';
-import { descriptionOf, firstChoice, OWN, readyMadeOf, sentence, starterOf, suggestedName, TEMPLATES, type Template } from './examples';
+import { descriptionOf, firstChoice, FRONT, MORE, OWN, readyMadeOf, sentence, starterOf, suggestedName, type Template } from './examples';
 import { ImportForm, type RepoManifest } from './import-repo';
+import { MoreSheet } from './more-sheet';
 import { TierChart } from './tier-chart';
 
 export { deviceTimeZone };
@@ -143,11 +170,45 @@ export type Made = {
   imported?: boolean;
   /** One of Homeroom's ready-made apps (examples.ts `readyMadeOf`): nothing is built, it is ready once it runs. */
   readyMade?: boolean;
+  /**
+   * A ready-made app's example picture, its main screen with sample entries
+   * (POST /api/apps `exampleScreen`, services/app-templates.js): the made
+   * screen's card shows it as the App side, tagged as an example.
+   */
+  exampleScreen?: string | null;
 };
 
 const FIELD = 'px-4 pt-3 pb-2 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800';
 const LABEL = 'block text-[13px] text-zinc-500 dark:text-zinc-400';
-const INPUT = 'w-full border-0 bg-transparent px-0 py-1 text-[17px] text-zinc-900 dark:text-zinc-100 placeholder-zinc-500 focus:outline-none';
+/*
+ * UNDER ITS LABEL (newcomer run six, 14 Oct 2026, iPhone Safari, keyboard
+ * up): a description of about 200 characters is longer than the three rows
+ * the box shows, so the box scrolls, and its text ran up to the box's top
+ * edge, which was the label's own bottom edge. The line cut off there read
+ * as text passing under "What should it do?". Both fields keep 8px between
+ * their label and their writing (`pt-2`), and while the description is
+ * scrolled from its top its text fades out over the box's top line
+ * (BRIEF_FADE, `briefScrolled`), so a line scrolling up thins out inside its
+ * own box, below the label, never against it. Unscrolled there is no fade
+ * and the first line is drawn whole. The name is one line, which scrolls
+ * sideways and never up, so it needs the gap only.
+ *
+ * Run seven (14 Oct 2026, iPhone Safari) still saw a grey half line touching
+ * the label: the description's 8px was padding, inside its own scroll box,
+ * so scrolled text rose through it to the label's bottom edge, and the fade
+ * there was only starting. The description's gap is a margin now
+ * (BRIEF_INPUT, `mt-2`, no top padding), so the box's clip edge sits 8px
+ * under the label, and the fade hides the box's top 6px outright before it
+ * ramps in by 24px. Unscrolled, the first line starts 8px under the label as
+ * before. The name keeps its padding (INPUT).
+ */
+const INPUT = 'w-full border-0 bg-transparent px-0 pb-1 pt-2 text-[17px] text-zinc-900 dark:text-zinc-100 placeholder-zinc-500 focus:outline-none';
+const BRIEF_INPUT = 'mt-2 w-full border-0 bg-transparent px-0 pb-1 pt-0 text-[17px] text-zinc-900 dark:text-zinc-100 placeholder-zinc-500 focus:outline-none';
+export const BRIEF_FADE = '[mask-image:linear-gradient(to_bottom,transparent_6px,#000_24px)]';
+/** Whether the description's box is scrolled from its top, so its top edge fades (BRIEF_FADE). Pure. */
+export function briefFades(box: { scrollTop: number } | null | undefined): boolean {
+  return !!box && box.scrollTop > 0;
+}
 // Where the bar and the form start, and where they settle (see the header).
 const ARRIVING = 'translate-y-6 opacity-0 transition-[transform,opacity] duration-300 ease-out motion-reduce:transition-none';
 const ARRIVED = 'translate-y-0 opacity-100 transition-[transform,opacity] duration-300 ease-out motion-reduce:transition-none';
@@ -167,6 +228,35 @@ const TILE_OFF = 'shadow-[inset_0_0_0_1px_var(--app-sheet-line)]';
 
 /** The tile that is the plain description box. */
 export const OWN_IDEA = 'idea';
+/** The fourth tile while nothing from "Something else…" holds it. */
+export const MORE_TILE = 'more';
+
+/**
+ * INSTANT OR CUSTOM: what Make it will do with what is on screen now.
+ * `instant` while it would make a ready-made app, which is Make it's own
+ * test (`readyMadeOf` while the sentence is still the template's, not
+ * written out); `custom` while Homeroom bot would build it; null while
+ * nothing is picked or typed, when Make it would only ask for the answer.
+ * Pure.
+ */
+export type MakeSpeed = 'instant' | 'custom' | null;
+export function makeSpeed(
+  picked: Template | typeof OWN_IDEA | null,
+  choice: string,
+  written: string | null,
+  brief: string,
+): MakeSpeed {
+  const template = picked && picked !== OWN_IDEA ? picked : null;
+  if (template && written === null && readyMadeOf(template, choice)) return 'instant';
+  if (!picked && !brief.trim()) return null;
+  return 'custom';
+}
+
+/** The line for each, a message id: its first word is bold (`<0>…</0>`). */
+export const SPEED_LINE = {
+  instant: 'onboarding:firstSession.make.speed.instant',
+  custom: 'onboarding:firstSession.make.speed.custom',
+} as const;
 
 export type Missing = 'blank' | 'brief' | 'name' | null;
 
@@ -263,7 +353,10 @@ export function MakeScreen({
   // Who can change it (#4666): You or the group, unless Change picked another.
   // Sent only when it is another, as the project's own governance block.
   const [rule, setRule] = useState<PresetKey>(DEFAULT_PRESET);
+  // "Something else…" (./more-sheet.tsx), while it is up.
+  const [sheetOpen, setSheetOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [dictating, setDictating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // The answer a press of "Make it" found missing, said under its field
   // until it changes.
@@ -279,6 +372,16 @@ export function MakeScreen({
   const wordsFieldRef = useRef<HTMLInputElement>(null);
   const wordsBoxRef = useRef<HTMLTextAreaElement>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
+  // UNDER ITS LABEL: the description's top edge fades while it is scrolled.
+  // Read on its scroll, and again after each render, since a box swapped in
+  // or a shorter description can land it back at its top without a scroll.
+  const [briefScrolled, setBriefScrolled] = useState(false);
+  useEffect(() => { setBriefScrolled(briefFades(briefRef.current)); });
+  // Home holds still under it, and takes no tap or focus (lib/page-lock.ts).
+  // From Create the header and what stands above this screen stay in use, so
+  // only the scrolling stops there.
+  const rootRef = useRef<HTMLDivElement>(null);
+  usePageLock(rootRef, { inert: !underHeader });
   // The caret for a hardware keyboard; on a phone the first tap raises the
   // keys (without iOS's pan: lib/keyboard-surface.ts takes that tap). A
   // touch screen gets no caret from code (#4597, the sign-in sheet's own
@@ -288,6 +391,41 @@ export function MakeScreen({
   // Taps on the fields without the pan, and the focused field (with Make it
   // when they fit) revealed inside the scroller once the keys are up.
   useKeyboardSurface(scrollerRef);
+  // MAKE IT IN VIEW (onboarding run two, 12 Oct 2026, iPhone 17 Safari): a
+  // starting idea fills in its sentence and chips, the form grows, and Make
+  // it went under Safari's toolbar. With the keys down, a pick brings the
+  // description and Make it into view together, as the keyboard surface does
+  // with the keys up. Safari draws this box only to the foot of its layout
+  // viewport (`innerHeight` with the keys down), whatever runs on under the
+  // toolbar (app.css), so that is where the view ends.
+  const picks = useRef(0);
+  useEffect(() => {
+    if (picks.current++ === 0) return undefined;
+    const raf = requestAnimationFrame(() => {
+      const scroller = scrollerRef.current;
+      if (!scroller || document.documentElement.classList.contains(KB_OPEN_CLASS)) return;
+      const card = scroller.querySelector('[data-make-brief]');
+      const button = scroller.querySelector('[data-make-submit]');
+      if (!card || !button) return;
+      const view = scroller.getBoundingClientRect();
+      const field = card.getBoundingClientRect();
+      const action = button.getBoundingClientRect();
+      const top = revealScrollTop({
+        scrollTop: scroller.scrollTop,
+        scrollMax: scroller.scrollHeight - scroller.clientHeight,
+        viewTop: view.top,
+        viewBottom: Math.min(view.bottom, window.innerHeight),
+        fieldTop: field.top,
+        fieldBottom: field.bottom,
+        actionTop: action.top,
+        actionBottom: action.bottom,
+      });
+      if (top === Math.round(scroller.scrollTop)) return;
+      const still = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+      scroller.scrollTo({ top, behavior: still ? 'auto' : 'smooth' });
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [picked, choice, written]);
   // One frame on the wallpaper alone, so the rise has a start.
   const [arrived, setArrived] = useState(false);
   useEffect(() => {
@@ -304,11 +442,16 @@ export function MakeScreen({
   }, [onClose]);
 
   const template = picked && picked !== OWN_IDEA ? picked : null;
+  // The fourth tile: a pick from "Something else…" (Your own idea, or one of
+  // MORE) takes it over and opens the sheet again; until then it is the way in.
+  const fourth: Template | typeof OWN_IDEA | null = picked === OWN_IDEA ? OWN_IDEA : template && MORE.includes(template) ? template : null;
   // The sentence is drawn until it is written out as plain text.
   const templated = !!template && written === null;
   const said = template ? sentence(template, choice, words) : null;
   // What Make it sends as the description: the sentence, or the plain box.
   const text = templated && said ? said.text : brief;
+  // INSTANT OR CUSTOM: the line above Who can change it.
+  const speed = makeSpeed(picked, choice, written, brief);
   // After the tap that drew it, the field for their words (or the plain box).
   const focusSoon = (field: () => HTMLElement | null) => {
     setTimeout(() => field()?.focus({ preventScroll: true }), 0);
@@ -370,7 +513,7 @@ export function MakeScreen({
   };
 
   const make = useCallback(async () => {
-    if (busy || makingRef.current) return;
+    if (dictating || busy || makingRef.current) return;
     const gap: Missing = templated && said?.blank ? 'blank' : missingAnswer(text, name);
     if (gap) {
       setMissing(gap);
@@ -404,7 +547,7 @@ export function MakeScreen({
         ...(timeZone ? { timeZone } : {}),
       });
       const data = (reply.ok ? reply.data : {}) as {
-        app?: { slug?: string; name?: string }; homeroomBot?: { conversationId?: unknown };
+        app?: { slug?: string; name?: string }; homeroomBot?: { conversationId?: unknown }; exampleScreen?: unknown;
       };
       if (!reply.ok || !data.app?.slug) {
         setError(reply.ok ? translate('onboarding:firstSession.make.error.notMade') : reply.error);
@@ -418,12 +561,13 @@ export function MakeScreen({
         example,
         conversationId: Number(data.homeroomBot?.conversationId) || null,
         ...(ready ? { readyMade: true } : {}),
+        ...(ready && typeof data.exampleScreen === 'string' && data.exampleScreen ? { exampleScreen: data.exampleScreen } : {}),
       });
     } finally {
       makingRef.current = false;
       setBusy(false);
     }
-  }, [busy, templated, said, text, name, template, choice, rule, entry, onMade]);
+  }, [dictating, busy, templated, said, text, name, template, choice, rule, entry, onMade]);
   const needed = neededLine(missing, text, !!template?.finish);
   // The chips under the sentence: Your own… last, or first for the game.
   const ownChip = { key: OWN, label: 'onboarding:firstSession.make.ownChip' };
@@ -457,6 +601,7 @@ export function MakeScreen({
 
   return (
     <div
+      ref={rootRef}
       role="dialog"
       aria-labelledby="first-session-make-title"
       data-first-session-make=""
@@ -515,7 +660,7 @@ export function MakeScreen({
           </div>
           <p className="mt-6 pb-2 text-[13px] text-zinc-500 dark:text-zinc-400">{t('onboarding:firstSession.make.startFromIdea')}</p>
           <div className="grid grid-cols-2 gap-2" role="group" aria-label={t('onboarding:firstSession.make.ideasLabel')}>
-            {TEMPLATES.map((example) => {
+            {FRONT.map((example) => {
               const on = picked === example;
               return (
                 <button
@@ -531,18 +676,33 @@ export function MakeScreen({
                 </button>
               );
             })}
+            {/* SOMETHING ELSE (Evan, 15 Oct 2026): the fourth tile opens the
+                sheet with Your own idea and the rest (./more-sheet.tsx). A
+                pick there takes the tile over, chevron and all, so the grid
+                always shows what is chosen and one tap opens the list again.
+                Its glyph is four of what is behind it. */}
             <button
               type="button"
-              aria-pressed={picked === OWN_IDEA}
-              data-first-session-example={OWN_IDEA}
-              onClick={pickIdea}
-              className={`${TILE} ${picked === OWN_IDEA ? TILE_ON : TILE_OFF}`}
+              aria-pressed={!!fourth}
+              aria-haspopup="dialog"
+              data-first-session-example={fourth ? (fourth === OWN_IDEA ? OWN_IDEA : fourth.key) : MORE_TILE}
+              onClick={() => setSheetOpen(true)}
+              className={`${TILE} ${fourth ? TILE_ON : TILE_OFF}`}
             >
-              <span className="app-icon-tile flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-2xl" aria-hidden="true">💡</span>
-              <span className="text-[15px] font-[650] leading-tight">{t('onboarding:firstSession.make.ownIdea')}</span>
+              <span className="app-icon-tile flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-2xl" aria-hidden="true">
+                {fourth === OWN_IDEA ? '💡' : fourth ? (fourth.chart ? <TierChart /> : fourth.emoji) : (
+                  <span className="grid grid-cols-2 gap-0.5 text-[14px] leading-4">
+                    {MORE.slice(0, 4).map((m) => <span key={m.key}>{m.emoji}</span>)}
+                  </span>
+                )}
+              </span>
+              <span className="min-w-0 flex-1 text-[15px] font-[650] leading-tight">
+                {fourth === OWN_IDEA ? t('onboarding:firstSession.make.ownIdea') : fourth ? t(fourth.short) : t('onboarding:firstSession.make.somethingElse')}
+              </span>
+              {fourth ? <ChevronDownIcon className="h-4 w-4 shrink-0 text-zinc-500 dark:text-zinc-400" aria-hidden="true" /> : null}
             </button>
           </div>
-          <div className="mt-4 overflow-hidden rounded-2xl bg-white shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900">
+          <div data-make-brief="" className="mt-4 overflow-hidden rounded-2xl bg-white shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900">
             <div className={FIELD}>
               {templated && template && said ? (
                 <>
@@ -644,12 +804,21 @@ export function MakeScreen({
                       setMissing(null);
                     }}
                     onKeyDown={toName}
+                    onScroll={(e) => setBriefScrolled(briefFades(e.currentTarget))}
                     placeholder={t('onboarding:firstSession.make.briefPlaceholder')}
-                    className={`${INPUT} resize-none leading-[22px]`}
+                    className={`${BRIEF_INPUT}${briefScrolled ? ` ${BRIEF_FADE}` : ''} resize-none leading-[22px]`}
                   />
                   {waitlistIdea && brief === waitlistIdea ? <p data-make-waitlist-idea="" className={HINT}>{t(WAITLIST_IDEA_LINE)}</p> : null}
                 </>
               )}
+              <div className="flex justify-end">
+                <SpeakButton scope={`make:${mode}:${template?.key || 'idea'}:${written === null ? choice : 'written'}`} disabled={busy || mode !== 'make'} onBusyChange={setDictating}
+                  getText={() => templated ? words : brief} maxLength={templated ? template?.finish ? BRIEF_MAX - 200 : 60 : BRIEF_MAX}
+                  onText={(next) => {
+                    if (templated) { setChoice(OWN); changeWords(next); if (template && !nameTyped) setName(suggestedName(template, OWN, next)); }
+                    else { setBrief(next); setPicked(OWN_IDEA); setWritten(null); setError(null); setMissing(null); }
+                  }} />
+              </div>
               {missing === 'brief' || missing === 'blank' ? <p id="first-session-brief-needed" role="alert" className={NEEDED}>{needed}</p> : null}
             </div>
             <div className={FIELD}>
@@ -675,13 +844,28 @@ export function MakeScreen({
               {missing === 'name' ? <p id="first-session-name-hint" role="alert" className={NEEDED}>{needed}</p> : null}
             </div>
           </div>
+          {/* INSTANT OR CUSTOM: one line, drawn as the rule line under it is
+              (its inks, icon size and inset), a step larger, with no colour
+              of its own. It is one line from 390px wide; narrower, it wraps
+              without leaving one word on its own. */}
+          {speed ? (
+            <p data-make-speed={speed} className="mt-3 flex items-center gap-2 px-1 text-[14px] leading-[1.4] text-zinc-600 dark:text-zinc-300">
+              {speed === 'instant'
+                ? <BoltIcon className="h-4 w-4 shrink-0 text-zinc-500 dark:text-zinc-400" aria-hidden="true" />
+                : <SparklesIcon className="h-4 w-4 shrink-0 text-zinc-500 dark:text-zinc-400" aria-hidden="true" />}
+              <span className="min-w-0 text-pretty">
+                <RichMessage id={SPEED_LINE[speed]} components={[<b className="font-semibold text-zinc-900 dark:text-zinc-100" />]} />
+              </span>
+            </p>
+          ) : null}
           <MakeRuleLine preset={rule} onPick={setRule} who={who} />
           {allowance}
           {error ? <p role="alert" className="mt-3 text-[14px] text-red-700 dark:text-red-400">{error}</p> : null}
           <div className="grow" />
           <Button
             type="submit"
-            disabled={busy || quotaBlocks}
+            data-make-submit=""
+            disabled={dictating || busy || quotaBlocks}
             layout="full"
             variant="pillAccent"
             size="pillLg"
@@ -710,9 +894,26 @@ export function MakeScreen({
               />
             </p>
           )}
+          {/* HELD WHILE IT MAKES (onboarding run two): pressed with the keys up,
+              the keys went down, the scroller grew past what it could scroll,
+              and the form snapped back to its top, "Making it…" out of sight,
+              until the made screen came. Room after the form while it makes
+              keeps the scroller where it was, so the press stays in view. */}
+          {busy ? <div aria-hidden="true" data-make-hold="" className="h-[60vh] shrink-0" /> : null}
         </form>
         )}
       </div>
+      {sheetOpen && typeof document !== 'undefined'
+        ? createPortal(
+          <MoreSheet
+            picked={fourth}
+            onPick={(next) => { setSheetOpen(false); pickTemplate(next); }}
+            onPickIdea={() => { setSheetOpen(false); pickIdea(); }}
+            onClose={() => setSheetOpen(false)}
+          />,
+          document.body,
+        )
+        : null}
     </div>
   );
 }

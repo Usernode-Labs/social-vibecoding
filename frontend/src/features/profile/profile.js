@@ -364,7 +364,7 @@ const Profile = {
         Profile._fetchJson('/api/me/public-profile').catch(() => null),
         // The friends client carries `?demo=1` itself.
         listFriends().catch(() => null),
-        Profile._fetchJson(`/api/feedback/mine${demo}`).catch(() => null),
+        Profile._fetchJson(`/api/feedback/mine${demo}`).then(feedback => ({ ...feedback, receivedAt: Date.now() })).catch(() => null),
         Profile._fetchJson(`/api/me/requests${demo}`).catch(() => null),
         Profile._fetchJson('/api/me/history?type=votes&limit=1').catch(() => null),
       ]);
@@ -629,6 +629,16 @@ const Profile = {
     Profile._releaseFeedback = null;
     if (release) release({ navigating: true });
     if (profileStore.get().feedbackOpen) profileStore.set({ feedbackOpen: false });
+  },
+
+  async refreshFeedback() {
+    const token = Profile._loadToken;
+    try {
+      const feedback = await Profile._fetchJson(`/api/feedback/mine${Profile._demoQuery()}`);
+      if (token !== Profile._loadToken || !Profile._data || Profile._targetUsername) return;
+      Profile._data = { ...Profile._data, feedback: { ...feedback, receivedAt: Date.now() } };
+      Profile._pushState();
+    } catch { /* The correction is saved; the next profile load retries the read. */ }
   },
 
   /** Whether the address asks for the list; takes the ask off it if so. */

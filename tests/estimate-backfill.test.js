@@ -104,7 +104,10 @@ test('#892: the sweeper is registered on boot', () => {
 
 test('#892: the interval never holds the process open', () => {
   // Same posture as the other pollers — an un-unref\'d timer would stop the
-  // process exiting cleanly on SIGTERM.
+  // process exiting cleanly on SIGTERM. The sweep is a leader timer now
+  // (src/services/leader-timers.js unrefs every handle, and stops them all
+  // as shutdown begins), so any raw timer left here must still be unref'd.
+  assert.match(SRC, /leaderTimers\.every\('estimate-backfill'/, 'the sweep runs on a leader timer');
   const timers = SRC.match(/setTimeout\(|setInterval\(/g) || [];
   const unrefs = SRC.match(/\.unref\?\.\(\)/g) || [];
   assert.equal(timers.length, unrefs.length,

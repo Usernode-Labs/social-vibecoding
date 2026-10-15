@@ -49,6 +49,12 @@ export interface DiscoverTileView {
   demo: boolean;
   /** Is this app already in "Your apps"? Drives the badge's whole treatment. */
   added: boolean;
+  /**
+   * Is the viewer a member of this community? Together with `added` it picks
+   * the corner pill's one of three states: a real join, the quiet "Joined"
+   * that taps through to the leave confirm, or a plain pin to My apps.
+   */
+  joined: boolean;
   icon: IconView;
   /**
    * The featured illustration: its image, how it is framed inside the art
@@ -63,6 +69,12 @@ export interface DiscoverTileView {
    * declares none, which is most apps. The card draws nothing in its place.
    */
   blurb: string | null;
+  /**
+   * The fallback facts line — "12 users · Updated 3d ago" — drawn when the
+   * app declares no description, so a card with no blurb still says more
+   * than "N contributors". Null whenever a blurb exists.
+   */
+  meta: string | null;
   /** How many people built it. 0 hides the line rather than printing "0". */
   contributors: number;
 }

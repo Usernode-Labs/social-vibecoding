@@ -156,7 +156,9 @@ function requestNumbers(session) {
  * replaces that reading in tests. Recorded at the moment of the merge, not
  * after the reading. Resolves the metadata written, or null.
  */
-async function recordChangeLive(pool, { config = null, session, sha = null, at = new Date(), deps = {} } = {}) {
+// `strict` (the merge-followups machine's durable work) throws what it could
+// not record instead of resolving null, so the work is retried.
+async function recordChangeLive(pool, { config = null, session, sha = null, at = new Date(), deps = {}, strict = false } = {}) {
   try {
     const sessionId = Number(session && session.id);
     const appId = Number(session && session.app_id);
@@ -179,6 +181,7 @@ async function recordChangeLive(pool, { config = null, session, sha = null, at =
     ]);
     return rows[0] ? rows[0].metadata : null;
   } catch (err) {
+    if (strict) throw err;
     log.warn('journey-events', 'Could not record a change going live', {
       sessionId: session && session.id, err: err && err.message,
     });

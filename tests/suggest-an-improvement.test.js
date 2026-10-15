@@ -89,9 +89,10 @@ test('every door to filing a request says Suggest an improvement', () => {
   assert.match(read('frontend/src/features/messages/index.tsx'),
     /hint: 'messages:inbox\.new\.bot\.hint'/, 'Messages\' new-chat menu');
   assert.equal(message('messages:inbox.new.bot.hint'), 'Make an app or suggest an improvement');
-  assert.match(read('frontend/src/features/dev-board/workshop/hub-cards.tsx'),
-    /<RichMessage\s+id="project:hub\.work\.emptyMenu"/, 'the hub\'s Your work, with nothing in progress');
-  assert.equal(message('project:hub.work.emptyMenu'), 'Nothing in progress. Press <0>⋯</0> to suggest an improvement.');
+  // The hub's Your work says "No work in progress." on every project from
+  // its first day (15 Oct 2026); the empty board's note names the ⋯'s row.
+  assert.equal(message('project:boardEmpty.press.hub.plain.full'),
+    'Nothing on the board yet. Press <0>⋯</0> to suggest an improvement; to make one yourself, use Build it now there.');
   assert.match(read('src/services/homeroom-bot-dm.js'),
     /tell me here or tap Suggest an improvement on its page\./, 'the bot\'s hello to somebody who joined');
 });
@@ -111,5 +112,6 @@ test('Ask for changes on a built change is a different action, and keeps its wor
   // #4455: a row of the change page's ⋯.
   assert.match(read('public/js/app-view.js'), /label: PlatformI18n\.t\('changes:page\.menu\.askForChanges'\), icon: 'generate',/);
   assert.equal(require('./lib/platform-i18n').message('changes:page.menu.askForChanges'), 'Ask for changes');
-  assert.match(read('src/services/homeroom-bot-dm.js'), /open it below and tap Ask for changes\./);
+  // One story: the chat's words say Change something (the ready card's button).
+  assert.match(read('src/services/homeroom-bot-dm.js'), /tap Change something on it below\./);
 });

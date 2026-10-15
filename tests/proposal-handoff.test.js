@@ -407,6 +407,11 @@ function makeHarness() {
   });
   stubModule(ids.sessionLifecycle, {
     freeGlobalSlot: async () => ({ freed: false }),
+    // The platform-wide gate (session-lifecycle.claimGlobalSlot): never full
+    // here; tests/session-capacity.test.js covers it.
+    claimGlobalSlot: async () => ({ ok: true }),
+    recordCapacityRefusal: () => {},
+    PLATFORM_AT_CAPACITY: 'Platform is at capacity right now. Try again in a few minutes.',
     finalizeArchivedSession: async (args) => { state.finalizedArchives.push(args); },
   });
   stubModule(ids.proposalUpdate, {

@@ -4,9 +4,12 @@
  * Invite links over HTTP (services/community-invites.js has the rules).
  *
  *   POST   /api/apps/:slug/invite-links            make a link
- *   GET    /api/apps/:slug/invite-links            your live links (every
- *                                                  live link, for someone
- *                                                  who manages the project)
+ *   GET    /api/apps/:slug/invite-links            your links: the live ones
+ *                                                  and, for the last 30
+ *                                                  days, the ones that
+ *                                                  ended (every such link,
+ *                                                  for someone who manages
+ *                                                  the project)
  *   DELETE /api/invite-links/:id                   turn one off
  *   GET    /api/public/invites/:token              the preview, signed out
  *   GET    /api/public/invites/:token/picture      the project's picture, when

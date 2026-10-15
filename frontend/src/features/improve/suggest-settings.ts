@@ -1,6 +1,7 @@
 /**
  * The experimental switch for comment mode (#4289 and its follow-ups),
- * Settings, Experimental's "Press C to comment on the page", kept apart from
+ * Settings, Experimental's "Comment on the page" (it was "Press C to comment
+ * on the page" until the name had to work on a phone too), kept apart from
  * ../improve/suggest-shortcut.ts so a screen can read it without installing
  * the shortcut's listeners. Off by default. While it is on, "Suggest an
  * improvement" opens comment mode, and its form is one switch away.

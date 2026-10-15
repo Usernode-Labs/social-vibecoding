@@ -297,6 +297,7 @@ async function setStatus(pool, { appId, messageId, issueNumber, status, sessionI
     wsModule(deps).broadcast(Number(appId), { type: 'bot_request_status', messageId: Number(messageId), botRequest: value });
     return true;
   } catch (err) {
+    if (deps.strict) throw err;
     log.warn('homeroom-bot-chat', 'Could not set a chat request\'s status', { appId, messageId, err: err.message });
     return false;
   }
@@ -329,6 +330,8 @@ async function noteRequestStatus(pool, { appId, issueNumber, status, sessionId =
     await followCards(pool, { rows, deps });
     return rows.length;
   } catch (err) {
+    // The merge-followups machine's durable work asks for the error, to retry.
+    if (deps.strict) throw err;
     log.warn('homeroom-bot-chat', 'Could not move a chat request\'s status', { appId, issueNumber, status, err: err.message });
     return 0;
   }
@@ -516,7 +519,7 @@ function sameChip(have, want) {
 /**
  * Who still has to approve change `sessionId`, for `viewer`'s card: the same
  * reading as the DM's ready card (homeroom-bot-dm.js approvalState,
- * needsYesFrom). { youApprove, waitingOn, more, missing, needed }: `missing`
+ * needsYesFrom). { youApprove, waitingOn, more, missing, needed, noVote? }: `missing`
  * is how many more approvals it needs (0 once it has them) and `needed` how
  * many in all, so a change that needs two of three people says any of them
  * will do (frontend/src/features/messages/approval-words.ts). A public
@@ -534,11 +537,14 @@ async function approvalOf(pool, { sessionId, viewer, deps = {} }) {
     : { rows: [] };
   const names = rows.map((r) => r.username).filter(Boolean);
   return {
-    youApprove: !open && !!(state.counts && !state.already),
+    // A project's first version asks nobody's Yes (13 Oct 2026, D1).
+    youApprove: !open && !state.firstVersion && !!(state.counts && !state.already),
     waitingOn: names.slice(0, 3),
     more: Math.max(names.length - 3, 0),
     missing: state.missing,
     needed: state.needed,
+    // 13 Oct 2026, D1: a project's first version goes live without a vote.
+    ...(state.firstVersion ? { noVote: true } : {}),
   };
 }
 
@@ -639,6 +645,7 @@ async function followCards(pool, { rows, deps = {} }) {
       });
       for (const card of cards) pushCard(userId, theirs[0].app_slug, card, deps);
     } catch (err) {
+      if (deps.strict) throw err;
       log.warn('homeroom-bot-chat', 'Could not bring a chat request\'s card up to date', { userId, err: err.message });
     }
   }
@@ -722,7 +729,7 @@ async function fileMessage(pool, config, { app, user, messageId, words, title, h
       const bot = await dmModule(deps).botAccount(pool);
       if (bot) {
         await require('./homeroom-bot-activity').startCard(pool, {
-          app, issueNumber: filed.issueNumber, bot, jobKey: filed.queueId, settings: here.settings, filed: true,
+          app, issueNumber: filed.issueNumber, bot, jobKey: filed.queueId, settings: here.settings, filed: true, origin: 'chat',
           requester: {
             userId: user.id, username: user.username, issueTitle: title, firstVersion: false, askedText: words,
             isSynthetic: !!user.isSynthetic, hasPlatformAccess: !!(user.hasPlatformAccess || user.privateMember), isAdmin: !!user.isAdmin,

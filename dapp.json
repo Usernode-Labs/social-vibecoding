@@ -20,7 +20,7 @@
       "name": "Homeroom bot",
       "icon": "🤖",
       "about": "How it plans, builds and answers",
-      "figures": ["bot.answered", "bot.reply-cost", "bot.reply-time", "bot.merged", "bot.merged-cost", "bot.request-to-proposal"]
+      "figures": ["bot.answered", "bot.reply-cost", "bot.reply-time", "bot.merged", "bot.merged-cost", "bot.request-to-proposal", "bot.builds-proposed", "bot.first-versions", "bot.failed-spend"]
     },
     {
       "id": "proposal-pipeline",
@@ -28,7 +28,7 @@
       "name": "Proposal pipeline",
       "icon": "🚦",
       "about": "From request to merge: proposals, checks, votes and merging",
-      "figures": ["pipeline.checks-time", "pipeline.checks-couldnt-run", "pipeline.shots", "pipeline.vote-to-merged"]
+      "figures": ["pipeline.checks-time", "pipeline.checks-couldnt-run", "pipeline.shots", "pipeline.vote-to-merged", "pipeline.main-paused", "pipeline.reds-rerun"]
     },
     {
       "id": "infra",
@@ -36,7 +36,7 @@
       "name": "Infra",
       "icon": "🛠️",
       "about": "Builds, staging, deploys and the servers the apps run on",
-      "figures": ["infra.merge-to-live", "infra.deploys-failed", "infra.apps-up", "infra.restarts", "infra.limits-filled"]
+      "figures": ["infra.merge-to-live", "infra.deploys-failed", "infra.apps-up", "infra.restarts", "infra.limits-filled", "infra.turned-away", "infra.homeroom-stalls", "infra.homeroom-crashes"]
     },
     {
       "id": "project-workflows",
@@ -304,6 +304,18 @@
       "group": "Proposals & retention",
       "default": "false",
       "description": "The workflow merge-followups machine (docs/workflows.md). true: what follows a merge is durable work, and a change reads live only once production runs it. false (default): the old merge tail runs. Merges accepted while it was on still finish after it is turned off. On Kubernetes, set by the Helm value platform.workflowMergeFollowupsEnabled."
+    },
+    {
+      "key": "WF_APP_DELIVERY_ENABLED",
+      "group": "Proposals & retention",
+      "default": "false",
+      "description": "The workflow app-delivery machine (docs/workflows.md). true (needs WF_MERGE_FOLLOWUPS_ENABLED): every production deploy of an app is a recorded request, deployed one at a time per app, and the deploying state survives restarts. false (default): each caller deploys itself. On Kubernetes, set by the Helm value platform.workflowAppDeliveryEnabled."
+    },
+    {
+      "key": "WF_PREVIEWS_ENABLED",
+      "group": "Proposals & retention",
+      "default": "false",
+      "description": "The workflow preview machine (docs/workflows.md). true: a proposal's preview and required checks are durable work, one build and one run at a time, and who works on a session is recorded. false (default): the old paths run. Off at boot hands its sessions back to them. On Kubernetes, set by the Helm value platform.workflowPreviewsEnabled."
     },
     {
       "key": "WF_SLOTS",
@@ -1017,10 +1029,10 @@
       "expectText": "Re-run checks"
     },
     {
-      "name": "#4455: one row under the summary: \"Addresses\", then the request as a chip with its number bold and its title after it",
+      "name": "#4455: one row under the summary: \"Built for\", then the request as a chip with its number bold and its title after it",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000013",
       "expectSelector": "#gc-thread-head .dev-change-root .dev-request-ask ~ .dev-change-addresses > .dev-change-chips > .dev-change-chips-lead + .dev-change-chips-first > a.dev-ws-chip.dev-topic-issue[href*=\"/dev/issues/900017\"] > b + span",
-      "expectText": "Addresses"
+      "expectText": "Built for"
     },
     {
       "name": "#4453: a request's page is one sheet, Messages' reply thread: the header names the request and its category, the request is the root post (its title, its words as a quote, where it stands, its spec), then \"N replies\" and the stream",
@@ -1248,7 +1260,7 @@
       "name": "Identity credits show the actionable zero-credit state before verification (#538)",
       "path": "/?demo=identity-unverified#settings/linked-accounts",
       "expectSelector": "[data-settings-section=\"linked-accounts\"]:not(.hidden) #github-link-body",
-      "expectText": "$0 / day"
+      "expectText": "$0 / week"
     },
     {
       "name": "Legacy GitHub attribution is preserved but asks for one credit-proof reconnect (#538)",
@@ -1461,8 +1473,8 @@
     {
       "name": "Each home area is introduced by its own label (#1478)",
       "path": "/?demo=1",
-      "expectSelector": "#home-body #home-discover-section > h2.home-area-label",
-      "expectText": "Discover Communities"
+      "expectSelector": "#home-body #home-apps-section > h2.home-area-label",
+      "expectText": "My apps"
     },
     {
       "name": "App tiles are placed at explicit grid cells, with iOS-sized two-line labels (#951)",
@@ -1544,9 +1556,9 @@
       "expectText": "STAGING_DEMO_PROPOSED"
     },
     {
-      "name": "Create opens \"What do you want to make?\", the first session's own screen, as the one front door for a new project: a close, the examples, and a small \"Import from a GitHub repo\" (#748's route; the New project dialog is retired)",
+      "name": "Create opens \"What do you want to make?\", the first session's own screen, as the one front door for a new project: a close, the front three examples and \"Something else…\", and a small \"Import from a GitHub repo\" (#748's route; the New project dialog is retired)",
       "path": "/#create",
-      "expectSelector": "[data-first-session-make][data-make-entry=\"create\"]:has([data-make-close]):has([data-first-session-example=\"tier\"]) [data-make-import-link]",
+      "expectSelector": "[data-first-session-make][data-make-entry=\"create\"]:has([data-make-close]):has([data-first-session-example=\"tier\"]):has([data-first-session-example=\"organizer\"]):has([data-first-session-example=\"more\"]) [data-make-import-link]",
       "expectText": "What do you want to make?"
     },
     {
@@ -2160,7 +2172,7 @@
     {
       "name": "Workshop: Your work stays on screen when it is empty, and says so (#2182), first under What's happening",
       "path": "/?demo=1&shot=mine-empty&ws=workshop#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-body #dev-workshop .dev-ws-tabbody > [data-ws-part=\"happening\"] + [data-ws-mine] [data-ws-lane=\"mine\"] > [data-ws-mine-empty]",
+      "expectSelector": "#dev-body #dev-workshop .dev-ws-tabbody > [data-ws-part=\"happening\"] + [data-ws-happening] > [data-ws-mine]:first-child [data-ws-lane=\"mine\"] > [data-ws-mine-empty]",
       "expectText": "You have no work going on."
     },
     {
@@ -2532,7 +2544,7 @@
     {
       "name": "A Needs-you item's picture fills the card and the caption over it leads with who and when, then its title, then the sentence a voter reads; a change with no shots has its author's diagram as that picture (#4490)",
       "path": "/?demo=1&ws=needs#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-workshop [data-ws-needs]:has([data-ws-diagram=rename] ~ .dev-ws-item-caption) > .dev-ws-needs-scroll > [data-ws-item][data-ws-kind=\"vote\"]:not([data-ws-swipeable]) > .dev-ws-item-caption > .dev-ws-item-by + .dev-ws-item-title + .dev-ws-item-summary"
+      "expectSelector": "#dev-workshop [data-ws-needs]:has([data-ws-diagram=rename] ~ .dev-ws-item-caption) .dev-ws-needs-scroll > [data-ws-item][data-ws-kind=\"vote\"]:not([data-ws-swipeable]) > .dev-ws-item-caption > .dev-ws-item-by + .dev-ws-item-title + .dev-ws-item-summary"
     },
     {
       "name": "The Needs-you feed's rail offers Ask, which opens the question box about the item in front of you",
@@ -2543,7 +2555,7 @@
     {
       "name": "#2172: one card past the last Needs-you item says that's it and how many you reviewed, with the way on to what is live",
       "path": "/?demo=1&ws=needs&shot=needs-end#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-workshop [data-ws-needs] > .dev-ws-needs-scroll > [data-ws-item][data-ws-kind=\"vote\"] ~ [data-ws-item=\"done\"][data-ws-kind=\"done\"] > .dev-ws-done-body > .dev-ws-needs-done-line + .dev-ws-needs-done-sub ~ .dev-ws-done-actions > .dev-ws-done-cta",
+      "expectSelector": "#dev-workshop [data-ws-needs] .dev-ws-needs-scroll > [data-ws-item][data-ws-kind=\"vote\"] ~ [data-ws-item=\"done\"][data-ws-kind=\"done\"] > .dev-ws-done-body > .dev-ws-needs-done-line + .dev-ws-needs-done-sub ~ .dev-ws-done-actions > .dev-ws-done-cta",
       "expectText": "See what’s live"
     },
     {
@@ -3027,9 +3039,9 @@
       "expectSelector": "#messages-screen:not(.hidden) .messages-thread-pane.dc-lift.dc-lift-session.messages-thread-direct:not(:has(.messages-bubble)) .messages-message-self > :is(span[aria-hidden], img[alt=\"\"]) + .min-w-0 > .messages-message-head time"
     },
     {
-      "name": "...and the sheet carries the conversation's own title row, and ends in the message box: the \"+\", the field and the send disc on one row, its character count marked as not near the limit, which a phone does not lay out, so there it is one compact line (#3735)",
+      "name": "...and the sheet carries the conversation's own title row, and ends in the message box: the \"+\", field, Speak and send disc on one row, its character count marked as not near the limit, which a phone does not lay out, so there it is one compact line (#3735, #4389)",
       "path": "/?demo=1#messages/910001",
-      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-pane.dc-lift-session:has(.messages-composer-add + textarea + .messages-send):has(.messages-composer-count:not([data-near-limit])) .messages-thread-header .messages-thread-name + .messages-thread-sub"
+      "expectSelector": "#messages-screen:not(.hidden) .dc-lift-session:has(.messages-composer-add + textarea + [data-dictation] + .messages-send):has(.messages-composer-count:not([data-near-limit])) .messages-thread-header .messages-thread-name + .messages-thread-sub"
     },
     {
       "name": "A group conversation is a named-row transcript",
@@ -3252,6 +3264,12 @@
       "expectSelector": "#admin-screen:not(.hidden) #admin-section-content"
     },
     {
+      "name": "Moderation deep link opens the linked case already selected (#5072)",
+      "path": "/#admin/reports/1",
+      "expectText": "Staging fixture: a fake report so the Moderation screens have a case to open.",
+      "allowConsoleErrors": false
+    },
+    {
       "name": "Admin console deep-links the Activation codes section (#818)",
       "path": "/#admin/codes",
       "expectSelector": "#admin-code-list"
@@ -3261,6 +3279,12 @@
       "path": "/#admin/incidents",
       "expectSelector": "#admin-incidents:has(#admin-incidents-links a[href=\"#admin/status\"]):has(#admin-incidents-kind):has(#admin-incidents-app):has(#admin-incidents-days) #admin-incidents-summary[data-state=\"ready\"]",
       "expectText": "Unexpected events"
+    },
+    {
+      "name": "Admin Apps & usage lists every app with its members, contributors and activity, with its search, sort and time window controls",
+      "path": "/#admin/apps",
+      "expectSelector": "#admin-apps-usage:has(#admin-apps-usage-totals [data-tile=\"apps\"]):has(#admin-apps-usage-search):has(#admin-apps-usage-sort):has(#admin-apps-usage-days) #admin-apps-usage-summary[data-state=\"ready\"]",
+      "expectText": "Apps & usage"
     },
     {
       "name": "Admin console renders the Health & status section (#860)",
@@ -4752,9 +4776,9 @@
       "expectSelector": "html:not(.in-side-panel) body:has(#platform-side-panel.hidden):has(#platform-header:not(.hidden)):has(#platform-tabs:not(.hidden)) #messages-screen:not(.hidden)"
     },
     {
-      "name": "#4417: the desktop strip's five recent apps sit between the last section, Communities, and you, named for a screen reader (they replace the rail's Recents, #2802)",
+      "name": "#4417, #4935: the desktop strip's apps sit between the last section, Communities, and you, named for a screen reader (pinned first, then recents; they replace the rail's Recents, #2802)",
       "path": "/?demo=1",
-      "expectSelector": "#platform-tabs #platform-tab-workshop + #platform-strip-apps[role=\"group\"][aria-label=\"Recent apps\"] + #platform-tab-me"
+      "expectSelector": "#platform-tabs #platform-tab-workshop + #platform-strip-apps[role=\"group\"][aria-label=\"My apps and recent apps\"] + #platform-tab-me"
     },
     {
       "name": "#2800, #4417: you are the strip's foot, straight after its recent apps, with your Settings beside you",
@@ -4910,10 +4934,10 @@
       "expectText": "Invitation pending"
     },
     {
-      "name": "The Homeroom bot's question in its DM, under its name and Bot badge, carries its suggested answers to tap, the default marked, and says an answer is posted publicly on the request; beside it, a request the bot offers to file has File it and Not now, and no Something else (#3624), and quotes the message it answers (#3707)",
+      "name": "The chat with Homeroom bot draws each request as one row: its project's tile, a badge saying where it stands, its number in its own colour and its title, so the question waiting on you wears the amber badge (its answers are in the request's thread); beside it, a request the bot offers to file stays a message with File it and Not now, and no Write my own (#3624), and quotes the message it answers (#3707)",
       "path": "/?demo=1#messages/910005",
-      "expectSelector": "#messages-screen:not(.hidden):has(.messages-quote ~ * > [aria-label^=\"File this\"] > button:last-child:not(.messages-bot-other)) .messages-message:has(.messages-bot-badge) [data-bot-question=\"open\"] button[data-bot-answer=\"default\"] .messages-bot-default",
-      "expectText": "public discussion",
+      "expectSelector": "#messages-screen:not(.hidden):has(.messages-quote ~ * > [aria-label^=\"File this\"] > button:last-child:not(.messages-bot-other)) .messages-bot-news[data-bot-news=\"question\"]:has([data-request-tag]) [data-bot-news-state=needs] [data-bot-badge=needs]",
+      "expectText": "Which night should the rota start on?",
       "id": "homeroom-bot-dm-question",
       "visual": true,
       "impact": [
@@ -4923,10 +4947,10 @@
       ]
     },
     {
-      "name": "The Homeroom bot's DM says under its name what the bot is working on for you, and its Activity button beside the conversation's actions opens its activity panel at any time (#3692, #3770); in the transcript, each piece of its work is one activity card where it started, with its step of the request's steps while it goes (#3736); and work it already had under way without a card gets one when the DM opens",
+      "name": "The chat with Homeroom bot says under its name what it is for, and puts an Activity bar under its header (one request, one story): closed, it says what needs you, with that request's number in its own colour, what is ready to try and what is in progress; pressed, it opens a drawer over the chat with a row for each, one button that opens the request's thread at the question, and Try it and Approve (#3692, #3770)",
       "path": "/?demo=1#messages/910005",
-      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-pane:has([aria-label=\"Step 3 of 6: Build it\"]):has([aria-label=\"Step 2 of 6: Write a plan\"]) > .messages-thread-header [data-bot-work-toggle][aria-expanded=false]:has([data-bot-work-status=working])",
-      "expectText": "Working on 3",
+      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-header + [data-bot-strip=closed] [data-bot-strip-toggle][aria-expanded=false]:has([data-bot-strip-count=needs]):has([data-bot-strip-count=ready]):has([data-bot-strip-count=progress]) [data-request-tag]",
+      "expectText": "1 needs you",
       "id": "homeroom-bot-dm-activity-tray",
       "visual": true,
       "impact": [
@@ -4939,15 +4963,20 @@
       ]
     },
     {
-      "name": "#4097: the Homeroom bot's news about a request leads with the request's card in its DM, in place of the line naming it, and its words follow the card; a build that did not finish offers Try again",
+      "name": "#4097, one request, one story: in the chat with Homeroom bot each request is one row that opens its story, its earlier news folded into its newest row, which counts the updates; finished requests in a row fold into one line with how each ended (a build that stopped, a change that went live), and a change ready for your yes says so",
       "path": "/?demo=1#messages/910005",
-      "expectSelector": "#messages-screen:not(.hidden):has(.messages-message button.messages-bot-primary[data-bot-prompt]) .messages-message [data-bot-request-card=\"12\"]:has(> .messages-object-card .messages-object-icon) + .messages-markdown",
-      "expectText": "Staging demo, sort the list by date"
+      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-scroll:has([data-bot-settled-badges] [data-bot-final=build_failed]):has([data-bot-settled-badges] [data-bot-final=live]) [data-bot-news=question] [data-bot-news-state=needs] [data-bot-thread-link]",
+      "expectText": "Ready for your yes"
     },
     {
       "name": "An agent session's own screen shows its app, its change and a Changes button, and the drawer links the active change to its proposal page (#2779) and says why its checks were skipped (#3180)",
       "path": "/#agent/990801/changes",
       "expectSelector": "#agent-session-screen:not(.hidden):has([data-agent-session-focus] ~ [data-agent-session-change-pill] ~ [data-agent-session-changes-button]) [data-agent-session-active-change]:has([data-agent-session-checks-reason]) a[href$=\"/dev/proposals/990802\"]"
+    },
+    {
+      "name": "Workshop: What's happening files your work in sections of one card: Waiting on you and Going live one line a row, Yours, up for a vote two (#4772)",
+      "path": "/?demo=1&ws=workshop#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-workshop .dev-ws-tabbody > [data-ws-part=\"happening\"] + [data-ws-happening] > [data-ws-mine-section=\"waiting\"]:has(.dev-ws-hrow) ~ [data-ws-mine-section=\"vote\"]:has(.dev-ws-lrow) ~ [data-ws-mine-section=\"live\"] .dev-ws-hrow[data-ws-row]"
     }
   ],
   "governance": {

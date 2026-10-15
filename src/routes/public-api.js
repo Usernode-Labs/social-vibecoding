@@ -46,6 +46,7 @@ const {
 } = require('../middleware/rate-limits');
 const { waitlistIntegratorAuth } = require('../services/waitlist-integrator');
 const waitlist = require('../services/waitlist');
+const releaseLinks = require('../services/release-links');
 const questions = require('../services/waitlist-questions');
 const { sendWaitlistJoinMail, sendWaitlistCodeMail } = require('../services/topochain/mailer');
 const { inviteUrl, siteUrl, waitlistUrl } = require('../services/marketing-links');
@@ -684,6 +685,12 @@ function publicApiRoutes(config) {
         // short-circuit: that branch is the confirmation poll, it repeats on a
         // timer, and it has no reader for this.
         email: row.email,
+        // Whether a "You're in" mail's link for this row may be spent as the
+        // page opens (features/auth/landing.tsx): released, and the account
+        // the address would prove is still new (none yet, or no username and
+        // no password). A boolean and nothing else. Read only: it spends no
+        // link and makes no session (services/release-links.js isNewAccount).
+        new_account: await releaseLinks.isNewAccount(pool, row),
         answers,
         oauth: {
           github: !!(config.waitlistGithubClientId && config.waitlistGithubClientSecret),

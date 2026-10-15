@@ -309,17 +309,23 @@ test('card: the tile carries no users badge and no status dot', () => {
   assert.match(Home.renderAppCard(baseApp({ status: 'awaiting_secrets' })), /Awaiting secrets/);
   assert.match(Home.renderAppCard(baseApp({ status: 'error' })), /Error/);
   // #4053: a first version Homeroom bot is making says its build line
-  // instead, quiet, and blue only when it waits on the reader.
+  // instead, quiet, and blue only when it waits on the reader. Run four
+  // (13 Oct): in the tile's short words, on one line, so nothing is cut off.
   assert.match(Home.renderAppCard(baseApp({ status: 'creating', first_version_line: 'planning' })),
-    /<p class="app-card-status line-clamp-2 text-zinc-500 dark:text-zinc-400" data-build-line="planning">Homeroom bot is planning it<\/p>/);
+    /<p class="app-card-status line-clamp-1 text-zinc-500 dark:text-zinc-400" data-build-line="planning">Planning<\/p>/);
   assert.match(Home.renderAppCard(baseApp({ first_version_line: 'plan' })),
-    /<p class="app-card-status line-clamp-2 font-semibold text-\[color:var\(--accent\)\]" data-build-line="plan">Your plan is ready to review<\/p>/);
-  // While it shows one, the name takes one line so the caption has two.
-  assert.match(Home.renderAppCard(baseApp({ first_version_line: 'plan' })),
-    /<div class="app-card app-card-draggable [^"]* \[&_\.app-card-title\]:line-clamp-1 \[&_\.app-card-title\]:min-h-0"/);
-  assert.doesNotMatch(Home.renderAppCard(baseApp()), /line-clamp-1/);
+    /<p class="app-card-status line-clamp-1 font-semibold text-\[color:var\(--accent\)\]" data-build-line="plan">Plan ready<\/p>/);
+  // The name keeps its two lines: the caption needs only one.
+  assert.doesNotMatch(Home.renderAppCard(baseApp({ first_version_line: 'plan' })), /\[&_\.app-card-title\]/);
   assert.match(Home.renderAppCard(baseApp({ status: 'error', first_version_line: 'planning' })), />Error</);
-  assert.equal(Home.appView(baseApp({ first_version_line: 'building' })).statusLabel, 'Building it');
+  assert.equal(Home.appView(baseApp({ first_version_line: 'building', first_version_phase: { key: 'building', since: null } })).statusLabel, 'Building');
+  // Run five: the stage the App tab names, in its short word; before the spec turn, Starting.
+  // Run seven: the spec's stages are "Planning" (the plan and first look are made at Make it).
+  assert.equal(Home.appView(baseApp({ first_version_line: 'building', first_version_phase: { key: 'drawing', since: null } })).statusLabel, 'Planning');
+  assert.equal(Home.appView(baseApp({ first_version_line: 'building', first_version_phase: { key: 'starting', since: null } })).statusLabel, 'Starting');
+  assert.equal(Home.appView(baseApp({ first_version_line: 'building' })).statusLabel, 'Building');
+  assert.equal(Home.appView(baseApp({ first_version_line: 'question' })).statusLabel, 'Question');
+  assert.equal(Home.appView(baseApp({ first_version_line: 'ready' })).statusLabel, 'Ready to try');
   assert.equal(Home.appView(baseApp({ first_version_line: 'building' })).buildLine, 'building');
   assert.equal(Home.appView(baseApp()).buildLine, null);
 });

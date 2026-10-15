@@ -5,3 +5,4 @@ export {
   placeStore, publishPlace, publishSide, clearPlace,
   registerPlaceOpener, registerTrayToggle, toggleTray, trayButton,
 } from '../../frontend/src/features/dev-board/workshop/place-store';
+export { navStore } from '../../frontend/src/features/nav/nav-store';

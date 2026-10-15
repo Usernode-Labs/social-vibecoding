@@ -5,7 +5,7 @@
 // general starters (social productivity, multimedia social, a 2D game and a
 // 3D game) were deleted with the create dialog that offered them. What came
 // back (Evan, 8 October 2026) are apps finished enough that a project made
-// from one needs nothing built: the make screen's nine choices that need no
+// from one needs nothing built: the make screen's choices that need no
 // typing (frontend/src/features/first-session/examples.ts; the make screen's
 // side is tests/first-session-make.test.js). And the four game starters
 // (Evan, the same day): working multiplayer games the make screen's game
@@ -18,7 +18,7 @@
 //
 //   1. THE ALLOW-LIST. POST /api/apps takes `template` from
 //      services/app-templates.js's TEMPLATE_IDS and nothing else: `empty`,
-//      the nine ready-made apps and the four game starters; absent is
+//      the twenty ready-made apps and the four game starters; absent is
 //      `empty`; a deleted starter's id is refused, not swapped.
 //   2. EMPTY IS THE DEFAULT. Absent and `empty` write exactly the same
 //      files (#4047 dropped the scaffold's Press! demo, so "always got" is
@@ -52,7 +52,11 @@ const APP_FRAME_SANDBOX = /APP_FRAME_SANDBOX =\s*'([^']+)'/.exec(
 const DELETED = ['social-productivity', 'multimedia-social', 'game-2d', 'game-3d'];
 const READY = [
   'tier-list-restaurants', 'tier-list-hikes', 'tier-list-cities', 'tier-list-games',
-  'grocery-list', 'chore-list', 'lending-library', 'potluck-planner', 'study-timer',
+  'poll-dinner', 'poll-spending', 'poll-movies',
+  'grocery-list', 'chore-list', 'lending-library', 'study-timer',
+  'find-a-time-book-club', 'find-a-time-game-night', 'find-a-time-trip',
+  'potluck-planner', 'signup-shifts', 'signup-rsvp',
+  'challenge-miles', 'challenge-steps', 'challenge-books',
 ];
 const GAMES = ['game-board', 'game-space', 'game-blocks', 'game-trivia'];
 
@@ -64,7 +68,7 @@ const file = (files, p) => {
 
 const generate = (id, name = 'Demo App') => getTemplateFiles(name, 'demo-app-abc123', 'postgres://x', null, { template: id });
 
-test('the allow-list: Empty, the default, the nine ready-made apps and the four game starters; a deleted starter is refused', () => {
+test('the allow-list: Empty, the default, the twenty ready-made apps and the four game starters; a deleted starter is refused', () => {
   assert.deepEqual([...appTemplates.TEMPLATE_IDS], ['empty', ...READY, ...GAMES]);
   assert.deepEqual([...appTemplates.READY_IDS], READY);
   assert.equal(appTemplates.DEFAULT_TEMPLATE, 'empty');
@@ -108,6 +112,39 @@ test('a ready-made app\'s icon is on its record from the start', () => {
   }
 });
 
+// "A more contextual tour" (Evan, 15 Oct 2026): the first-session walk's
+// Homeroom bot card offers one change somebody could ask for in THIS app
+// ("Ask it for changes, like “add a cheap eats tier”."), from its starter.
+// Short enough for the card on a phone, lowercase-led to sit inside the
+// sentence, and plain: no em dash, no quotation marks of its own (the card
+// draws them), no closing full stop. The walk's side is
+// tests/first-session.test.js.
+test('every ready-made app has a short example change for the walk; Empty and the games have none', () => {
+  const seen = new Set();
+  for (const id of READY) {
+    const change = appTemplates.get(id).exampleChange;
+    assert.equal(typeof change, 'string', id);
+    assert.equal(appTemplates.exampleChangeOf(id), change, id);
+    assert.ok(change.length > 0 && change.length <= 32, `${id}: ${change} (${change.length})`);
+    assert.match(change, /^[a-z]/, `${id}: lowercase-led`);
+    assert.equal(change, change.trim(), id);
+    assert.doesNotMatch(change, /[—–"“”.!?]/, `${id}: no em dash, quotes or closing punctuation`);
+    assert.ok(!seen.has(change), `${id}: its own`);
+    seen.add(change);
+  }
+  assert.equal(appTemplates.get('tier-list-restaurants').exampleChange, 'add a cheap eats tier');
+  // Nothing to offer: Empty (stored as NULL), a game, a deleted or unknown starter.
+  for (const id of ['empty', null, undefined, ...GAMES, ...DELETED, 'chess']) {
+    assert.equal(appTemplates.exampleChangeOf(id), null, String(id));
+  }
+  for (const id of GAMES) assert.equal(appTemplates.get(id).exampleChange, undefined, id);
+  // GET /api/apps/:slug carries it, read off the row's own template.
+  const route = fs.readFileSync(path.join(ROOT, 'src/routes/apps.js'), 'utf8');
+  const get = route.slice(route.indexOf("router.get('/api/apps/:slug', async"), route.indexOf('res.json({ app: appPayload });'));
+  assert.match(get, /`SELECT \$\{appAccess\.nonSecretAppColumnList\(\)\}, template,/);
+  assert.match(get, /exampleChange: appTemplates\.exampleChangeOf\(appRow\.template\),/);
+});
+
 test('Empty is the scaffold every project always got, byte for byte', () => {
   const plain = getTemplateFiles('Notes', 'notes-abc123', 'postgres://x', null, {});
   assert.deepEqual(getTemplateFiles('Notes', 'notes-abc123', 'postgres://x', null, { template: 'empty' }), plain);
@@ -119,7 +156,9 @@ test('Empty is the scaffold every project always got, byte for byte', () => {
   assert.doesNotMatch(server, /\/api\/press|\/api\/leaderboard|presses/);
   assert.match(server, /app\.listen\(port/);
   assert.doesNotMatch(server, /require\('\.\/api'\)/);
-  assert.deepEqual(JSON.parse(file(plain, 'dapp.json')), { secrets: [] });
+  // The key a first version's checks go under is there from the first
+  // commit (App bench run 191: builds wrote theirs under `checks`).
+  assert.deepEqual(JSON.parse(file(plain, 'dapp.json')), { secrets: [], tests: [] });
   // #4047: the welcome card opens with the app's thumbnail tile (no sketch,
   // no starter here, so the name's letter falls back the way the home tile
   // does).
@@ -142,7 +181,7 @@ test('each ready-made app is a directory of its own files; the four tier lists s
   assert.deepEqual(appTemplates.starterFiles('empty'), []);
   for (const id of DELETED) assert.deepEqual(appTemplates.starterFiles(id), [], id);
   const dirs = new Set(READY.map((id) => appTemplates.dirOf(id)));
-  assert.deepEqual([...dirs].sort(), ['chore-list', 'grocery-list', 'lending-library', 'potluck-planner', 'study-timer', 'tier-list']);
+  assert.deepEqual([...dirs].sort(), ['chore-list', 'find-a-time', 'grocery-list', 'group-challenge', 'group-poll', 'lending-library', 'potluck-planner', 'signup-sheet', 'study-timer', 'tier-list']);
   const games = new Set(GAMES.map((id) => appTemplates.dirOf(id)));
   const shared = new Set(GAMES.map((id) => appTemplates.get(id).shared));
   assert.deepEqual([...shared], ['_game-room'], 'every game starter shares one game room');
@@ -353,6 +392,21 @@ test('the game starters: not ready-made, built on the shared game room, and told
   }
 });
 
+// The starter's shared layer cache (services/kubernetes-buildkit.js) can
+// serve a new app its `npm ci` steps only when its package files are the
+// same bytes as every other copy's: no app's slug or name goes into them.
+test('two apps made from the same starter have the same package files', () => {
+  const other = (id) => getTemplateFiles('Another One', 'another-one-f00d42', null, 'https://github.com/example/another-one-f00d42', { template: id });
+  for (const id of ['empty', ...READY, ...GAMES]) {
+    const one = generate(id);
+    const two = other(id);
+    for (const p of ['package.json', 'package-lock.json']) {
+      assert.equal(file(two, p), file(one, p), `${id}: ${p}`);
+      assert.doesNotMatch(file(one, p), /demo-app-abc123|Demo App/, `${id}: ${p} names no app`);
+    }
+  }
+});
+
 for (const id of GAMES) {
   test(`the ${id} game starter is a whole repository on the platform's conventions`, () => {
     const t = appTemplates.get(id);
@@ -415,7 +469,7 @@ for (const id of GAMES) {
     assert.equal(pkg.dependencies.ws, extra.ws.range);
     assert.equal(lock.packages[''].dependencies.ws, extra.ws.range);
     assert.deepEqual(lock.packages['node_modules/ws'], extra.ws.packages['node_modules/ws']);
-    assert.equal(lock.packages[''].name, 'demo-app-abc123');
+    assert.equal(lock.packages[''].name, 'usernode-app-template', 'the template\'s own name, not the app\'s');
     assert.deepEqual(Object.keys(lock.packages)[0], '', 'the root package first, as npm writes it');
     // Its manifest, README and notes.
     const manifest = JSON.parse(file(files, 'dapp.json'));

@@ -1410,11 +1410,18 @@ const GroupChat = {
     // thread is not read at all (only its author can open the page).
     const language = ['chat', 'request', 'change'].includes(opts.language) ? opts.language : 'flat';
     const closed = language === 'change' && opts.closed ? String(opts.closed) : null;
+    // #5007: a change built for a request points its replies at that
+    // request's own page, where the conversation lives. Only the change
+    // language takes one, and only with the in-app href its chip opens.
+    const issue = language === 'change' && opts.issue && Number.isInteger(opts.issue.n)
+      && typeof opts.issue.href === 'string' && opts.issue.href.startsWith('#app/')
+      ? { n: opts.issue.n, href: opts.issue.href } : null;
     // #4417: cards a topic's channel draws by time (a merged topic's), which
     // the transcript places among the rows (TranscriptLead.markers).
     const markers = Array.isArray(opts.markers) && opts.markers.length ? opts.markers : null;
     GroupChat.activeThread = {
-      type, ref: Number(ref), language, ...(closed ? { closed } : {}), ...(markers ? { markers } : {}),
+      type, ref: Number(ref), language,
+      ...(closed ? { closed } : {}), ...(issue ? { issue } : {}), ...(markers ? { markers } : {}),
     };
     // #4640: the thread renders into the container it was mounted in, not
     // whichever `#gc-thread-messages` a document-wide lookup finds first.
@@ -2238,7 +2245,7 @@ const GroupChat = {
         language,
         ...(language === 'request' ? { request: { loaded: !!st.loaded, githubMore } } : {}),
         ...(a.markers ? { markers: a.markers } : {}),
-        ...(language === 'change' ? { change: { loaded: !!(st.loaded || a.closed), closed: a.closed || null } } : {}),
+        ...(language === 'change' ? { change: { loaded: !!(st.loaded || a.closed), closed: a.closed || null, issue: a.issue || null } } : {}),
         ...(chat && st.loaded ? {
           quiet: {
             variant: 'change',
@@ -4592,6 +4599,11 @@ const GroupChat = {
       built,
       prNumber: meta.prNumber || null,
       sessionId: meta.sessionId || null,
+      // Homeroom bot's plan says where it stands in one sentence on a
+      // request's page (homeroom-bot-live.js specCard): it is building it,
+      // or it waits for whoever asked for it to say Build it.
+      botNote: meta.botNote === 'building' || meta.botNote === 'waiting' ? meta.botNote : null,
+      waitingFor: meta.botNote === 'waiting' && typeof meta.waitingFor === 'string' && meta.waitingFor ? meta.waitingFor : null,
       // Markdown, so `dangerouslySetInnerHTML`; null when the share carried
       // no snippet, or when dev-chat.js is not loaded to render one.
       snippetHtml: meta.snippet && renderMd ? renderMd(meta.snippet) : null,

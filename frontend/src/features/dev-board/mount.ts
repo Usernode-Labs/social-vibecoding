@@ -64,6 +64,7 @@ import { DevWorkshop } from './workshop/workshop';
 import { TopicHead } from './topic/topic-head';
 import { topicHeadStore, type TopicHeadState } from './topic/topic-store';
 import { publishRequestThread } from './topic/request-model';
+import { askVotesInView } from './topic/votes-in-view';
 import type { TranscriptMessage } from '../group-chat/transcript-store';
 import { AutoSessionModal } from './modals/auto-session-modal';
 import { SessionChecks, type SessionChecksProps } from './modals/session-checks';
@@ -124,6 +125,8 @@ export interface DevBoardBridge {
   publishAiEnabled(enabled: boolean): void;
   /** #3984: a vote on its way, by `<fn>:<id>`; null clears it (cards-store.ts). */
   publishVoteSending(key: string, side: 'yes' | 'no' | null): void;
+  /** Run four (13 Oct 2026): the next page of change `sessionId` opens at its Votes card (topic/votes-in-view.ts). */
+  showVotes(sessionId: number): void;
   publishViewMode(mode: string): void;
   publishWorkshopGroup(mode: string): void;
   /** #3700: the invite link a project's page was opened from (App._followInvite). */
@@ -371,6 +374,9 @@ export const devBoardBridge: DevBoardBridge = {
 
   // #3984: a vote on its way (castVote / castIssueVote), for the Vote button.
   publishVoteSending,
+
+  // A door that sends someone to vote: the change's page opens at its Votes card.
+  showVotes: (sessionId: number) => askVotesInView(sessionId),
 
   publishViewMode,
   publishWorkshopGroup,

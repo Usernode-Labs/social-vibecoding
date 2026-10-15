@@ -126,7 +126,7 @@ test('a just-you project\'s hub: what it is, and where its first version stands'
     return res.json();
   };
   const fv = (over) => ({
-    step: 1, of: 7, line: 'planning', ready: false, mine: true, creator: evan.username,
+    step: 1, of: 7, line: 'planning', phase: null, ready: false, mine: true, creator: evan.username,
     waits_on: null, conversation_id: opened.conversationId, session_id: null, plan: null, ...over,
   });
   // #4053: the build line as firstVersionState says it for this viewer: what
@@ -138,7 +138,11 @@ test('a just-you project\'s hub: what it is, and where its first version stands'
     assert.equal(body.audience, 'solo');
     assert.equal(body.description, null);
     assert.equal(body.first_version, null);
-    assert.equal(body.first_week, true, '#4045: made today, so in its first week');
+    // 15 Oct 2026: the hub is drawn the same from its first day, so the
+    // week is not in the record; nothing is live yet, and no link is out.
+    assert.equal('first_week' in body, false);
+    assert.equal(body.live_since, null, 'it has never run');
+    assert.deepEqual(body.invite_summary, { links: 0, joined: 0, waiting: 0, expires_at: null });
   });
 
   await t.test('#4045: an invite link makes the hub draw open seats, for the person whose link it is, while it is live', async () => {
@@ -157,12 +161,37 @@ test('a just-you project\'s hub: what it is, and where its first version stands'
       [crypto.randomBytes(12).toString('hex'), app.community_id, app.id, evan.id],
     );
     assert.equal((await get()).invite_link, false);
+    assert.equal((await get()).invite_summary.links, 0, 'and none of those is a live link out');
+    const listed = async () => {
+      const res = await fetch(`http://127.0.0.1:${listening.address().port}/api/apps?scope=joined`);
+      assert.equal(res.status, 200);
+      return (await res.json()).apps.find((a) => a.slug === app.slug);
+    };
+    assert.equal((await listed()).invite_link_out, false, 'the Communities list says nothing yet');
     const id = await link(evan);
     const body = await get();
     assert.equal(body.invite_link, true, 'their live link is out');
     assert.equal(body.audience, 'solo', 'the audience is still derived from people, not links');
+    // 15 Oct 2026: Share it's line, from the links listInvites shows them:
+    // one live, nobody in yet, about a week to go.
+    assert.deepEqual([body.invite_summary.links, body.invite_summary.joined, body.invite_summary.waiting], [1, 0, 0]);
+    const left = Date.parse(body.invite_summary.expires_at) - Date.now();
+    assert.ok(left > 6.9 * 86400000 && left <= 7 * 86400000, `the soonest end, a week out: ${left}`);
+    const row = await listed();
+    assert.equal(row.invite_link_out, true, 'and the Communities list says "Invite link out"');
+    assert.equal(row.audience, 'solo', 'in the Just you section still');
+    // Somebody joined through it: the line says so, and the list stops saying it.
+    await pool.query(
+      `INSERT INTO community_invite_redemptions (invite_id, user_id, status, applied_at) VALUES ($1, $2, 'joined', NOW())`,
+      [id, sam.id],
+    );
+    assert.equal((await get()).invite_summary.joined, 1);
+    assert.equal((await listed()).invite_link_out, false);
     await pool.query('UPDATE community_invites SET revoked_at = NOW() WHERE id = $1', [id]);
-    assert.equal((await get()).invite_link, false, 'turned off: back to Just you');
+    const off = await get();
+    assert.equal(off.invite_link, false, 'turned off: back to Just you');
+    assert.equal(off.invite_summary.links, 0, 'and no line');
+    await pool.query('DELETE FROM community_invite_redemptions WHERE invite_id = $1', [id]);
   });
 
   await t.test('being set up: the first sentence of what it was made from, and step 1 of 7', async () => {
@@ -295,9 +324,19 @@ test('a just-you project\'s hub: what it is, and where its first version stands'
     // After its first week, the hub has no build to show, and still says what it is.
     await pool.query(`UPDATE apps SET created_at = NOW() - INTERVAL '8 days' WHERE id = $1`, [app.id]);
     const live = await get();
-    assert.equal(live.first_week, false);
+    assert.equal('first_week' in live, false);
     assert.equal(live.first_version, null);
     assert.equal(live.description, 'Plan hikes around Geneva with friends');
+    // Since when the app itself is live, for Recently live's own card: when
+    // it first ran, or, from before that was recorded, when it was made if
+    // it is up now.
+    await pool.query(`UPDATE apps SET status = 'creating', first_running_at = NULL WHERE id = $1`, [app.id]);
+    assert.equal((await get()).live_since, null, 'never run');
+    await pool.query(`UPDATE apps SET status = 'running' WHERE id = $1`, [app.id]);
+    const made = (await pool.query('SELECT created_at FROM apps WHERE id = $1', [app.id])).rows[0].created_at;
+    assert.equal((await get()).live_since, made.toISOString(), 'up, with no first run recorded: when it was made');
+    await pool.query(`UPDATE apps SET first_running_at = created_at + INTERVAL '1 hour' WHERE id = $1`, [app.id]);
+    assert.equal((await get()).live_since, new Date(made.getTime() + 3600000).toISOString(), 'when it first ran');
   });
 
   await t.test('a read of the build that fails is no state, never a failed hub', async () => {

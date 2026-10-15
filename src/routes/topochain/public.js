@@ -46,6 +46,7 @@
 
 const { Router } = require('express');
 const { getPool } = require('../../db/pool');
+const { activityTimePrecision } = require('../../services/topochain/activity-time');
 const log = require('../../services/logger');
 const { optionalSessionAuth } = require('../../middleware/topochain-auth');
 const { computeStandings } = require('../../services/topochain/standings');
@@ -543,6 +544,7 @@ function topochainPublicRoutes(config) {
         points: num(r.points) ?? 0,
         description: r.description,
         activity_at: iso(r.activity_at),
+        activity_time_precision: activityTimePrecision(r),
         metadata: r.metadata,
       }));
 
@@ -1030,7 +1032,7 @@ function topochainPublicRoutes(config) {
         );
 
         const { rows: activityRows } = await pool.query(
-          `SELECT id, challenge_id, activity_type, points, description, activity_at
+          `SELECT id, challenge_id, activity_type, points, description, activity_at, metadata
              FROM user_activities WHERE user_id = $1 AND season_event_id = $2
             ORDER BY activity_at DESC`,
           [userId, seasonEventId]
@@ -1068,6 +1070,7 @@ function topochainPublicRoutes(config) {
               points: num(a.points) ?? 0,
               description: a.description,
               activity_at: iso(a.activity_at),
+              activity_time_precision: activityTimePrecision(a),
             })),
           },
         });
@@ -1109,7 +1112,7 @@ function topochainPublicRoutes(config) {
         [userId]
       );
       const { rows: activityRows2 } = await pool.query(
-        `SELECT id, challenge_id, activity_type, points, description, activity_at
+        `SELECT id, challenge_id, activity_type, points, description, activity_at, metadata
            FROM user_activities WHERE user_id = $1 ORDER BY activity_at DESC`,
         [userId]
       );
@@ -1141,6 +1144,7 @@ function topochainPublicRoutes(config) {
             points: num(a.points) ?? 0,
             description: a.description,
             activity_at: iso(a.activity_at),
+            activity_time_precision: activityTimePrecision(a),
           })),
         },
       });

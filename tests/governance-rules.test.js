@@ -367,6 +367,10 @@ function fakePool({ rulesRow, votes = [], author = MAYA, reason = null } = {}) {
       }
       if (/FROM pr_votes/.test(sql) && /SELECT user_id, vote/.test(sql)) return { rows: votes };
       if (/SELECT user_id AS author_id FROM chat_sessions/.test(sql)) return { rows: [{ author_id: author }] };
+      // D2: whether the author is a person (tests/first-version-gate.test.js).
+      if (/SELECT is_synthetic FROM users/.test(sql)) return { rows: [{ is_synthetic: false }] };
+      // D1: whether it is the project's first version.
+      if (/AS first_version FROM chat_sessions cs/.test(sql)) return { rows: [{ first_version: false }] };
       if (/explicit_approval_reason FROM chat_sessions/.test(sql)) return { rows: [{ explicit_approval_reason: reason }] };
       if (/COUNT\(DISTINCT a.user_id\)/.test(sql)) return { rows: [{ cnt: 4, invited_floor: 2 }] };
       if (/SELECT self_hosted, collab_visibility FROM apps/.test(sql)) return { rows: [{ self_hosted: false, collab_visibility: 'private' }] };

@@ -378,20 +378,35 @@ test('the routes answer the project\'s members only, as its screens do', () => {
   assert.match(src, /'Cache-Control': 'no-store'/);
 });
 
-test('firstVersionLiveFields: offered at Building it, to the maker and members, while it is on', async () => {
+test('firstVersionLiveFields: offered at Building it, to the maker and members, while it is on and has a frame to show', async () => {
   const { firstVersionLiveFields } = require('../src/routes/apps');
-  const pool = (member, setting = null) => ({
+  // N6: `live` is the newest build's first_version_live row (null: no
+  // watcher yet), read only once the rest allows Live.
+  const pool = (member, setting = null, live = { base_seq: 3, good_at: new Date(), ended_at: null }) => ({
     async query(sql) {
       if (/FROM platform_settings/.test(sql)) return { rows: setting ? [{ value: setting }] : [] };
+      if (/homeroom_bot_first_versions/.test(sql)) return { rows: [{ id: 7 }] };
+      if (/FROM first_version_live l WHERE l\.bot_run_id/.test(sql)) return { rows: live ? [live] : [] };
       return { rows: member ? [{ ok: 1, exists: true, is_member: true }] : [] };
     },
   });
   const on = pool(false);
   assert.deepEqual(await firstVersionLiveFields(on, 1, 5, { mine: true, line: 'building' }), { live: true });
-  assert.deepEqual(await firstVersionLiveFields(on, 1, 5, { mine: true, line: 'testing' }), {});
   assert.deepEqual(await firstVersionLiveFields(on, 1, null, { mine: true, line: 'building' }), {});
   const off = pool(true, 'off');
   assert.deepEqual(await firstVersionLiveFields(off, 1, 5, { mine: true, line: 'building' }), {});
+  // N6 (a): not before the watcher has a good frame (no row, or no kept restart).
+  assert.deepEqual(await firstVersionLiveFields(pool(false, null, null), 1, 5, { mine: true, line: 'building' }), {});
+  assert.deepEqual(await firstVersionLiveFields(pool(false, null, { base_seq: null, good_at: null, ended_at: null }), 1, 5, { mine: true, line: 'building' }), {});
+  // N7: tested (or ready to try) without real screens, its last frame stays.
+  assert.deepEqual(await firstVersionLiveFields(on, 1, 5, { mine: true, line: 'testing' }), { liveLast: true });
+  assert.deepEqual(await firstVersionLiveFields(on, 1, 5, { mine: true, line: 'ready' }), { liveLast: true });
+  assert.deepEqual(await firstVersionLiveFields(on, 1, 5, { mine: true, line: 'testing', realScreens: true }), {}, 'real screens say more');
+  assert.deepEqual(await firstVersionLiveFields(pool(false, null, null), 1, 5, { mine: true, line: 'testing' }), {});
+  assert.deepEqual(await firstVersionLiveFields(on, 1, 5, { mine: true, line: 'planning' }), {});
+  // Anyone not its maker: a member only.
+  assert.deepEqual(await firstVersionLiveFields(on, 1, 5, { mine: false, line: 'building' }), {});
+  assert.deepEqual(await firstVersionLiveFields(pool(true), 1, 5, { mine: false, line: 'testing' }), { liveLast: true });
 });
 
 test('the build turn: Live starts with it and ends with it (and its nudge), never waited on', () => {
@@ -446,17 +461,64 @@ test('the pill and the remembered choice', () => {
   assert.equal(m.livePill('live', 12.7), 'Live · updated 12 s ago');
   assert.equal(m.livePill('live', 130), 'Live · updated 2 min ago');
   assert.equal(m.livePill('failed', 3), 'A restart failed · showing the last good screen');
-  assert.equal(m.choiceKey('7'), 'usernode.firstVersionLive.v1.7');
-  assert.equal(m.readChoice('7'), 'preview', 'no storage: Preview');
-  const store = new Map();
+  // Run six: per person AND per project, and nothing picked is no choice
+  // (Live, once offered: shownChoice).
+  assert.equal(m.choiceKey('7', 'club-votes'), 'usernode.firstVersionLive.v2.7.club-votes');
+  assert.equal(m.readChoice('7', 'club-votes'), null, 'no storage: no choice');
+  const store = new Map([['usernode.firstVersionLive.v1.7', 'preview']]);
   global.localStorage = { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, v) };
   try {
-    m.writeChoice('7', 'live');
-    assert.equal(m.readChoice('7'), 'live');
-    assert.equal(m.readChoice('8'), 'preview', 'per person');
+    assert.equal(m.readChoice('7', 'club-votes'), null, 'the old per-person choice, made while Preview was the default, is not read');
+    m.writeChoice('7', 'club-votes', 'preview');
+    assert.equal(m.readChoice('7', 'club-votes'), 'preview');
+    assert.equal(m.readChoice('7', 'tier-list'), null, 'per project');
+    assert.equal(m.readChoice('8', 'club-votes'), null, 'per person');
+    store.set(m.choiceKey('7', 'tier-list'), 'nonsense');
+    assert.equal(m.readChoice('7', 'tier-list'), null);
   } finally {
     delete global.localStorage;
   }
+});
+
+// Run seven (14 Oct 2026, iPhone Safari, Club Votes): the recording is of
+// the staging preview opened with ?demo=1, and built apps label that demo
+// themselves ("Staging demo: …"), which on the App tab read as part of their
+// app. The replay hides the label apps mark `data-usernode-demo-note`, and a
+// "Sample data" chip in the Live pill's look says it in the band's corner.
+test('run seven: the replay hides the app\'s own demo note, and the band says "Sample data" in the pill\'s look', () => {
+  const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+  const band = loadTsx('frontend/src/features/app-frame/live-band.tsx');
+  const glow = loadTsx('frontend/src/features/app-frame/live-glow.ts');
+  assert.equal(band.DEMO_NOTE_ATTR, 'data-usernode-demo-note');
+  assert.deepEqual(band.REPLAY_RULES.slice(0, glow.GLOW_RULES.length), glow.GLOW_RULES, 'the glow\'s rules, kept');
+  assert.equal(band.REPLAY_RULES.at(-1), '[data-usernode-demo-note] { display: none !important; }');
+  const src = read('frontend/src/features/app-frame/live-band.tsx');
+  assert.match(src, /insertStyleRules: REPLAY_RULES,/, 'inserted into every replayed document, stored recordings too');
+  // The marker reaches the player: the server's sanitiser keeps it.
+  const kept = live.sanitizeEvents([{ type: 2, timestamp: 1, data: { initialOffset: { top: 0, left: 0 }, node: doc([
+    { type: 2, id: 40, tagName: 'p', attributes: { 'data-usernode-demo-note': '', class: 'note' }, childNodes: [{ type: 3, id: 41, textContent: 'Staging demo: sample members' }] },
+  ]) } }]);
+  assert.match(JSON.stringify(kept), /"data-usernode-demo-note":""/);
+  // The chip: the Live pill's shape, colours and type, bottom-left.
+  const chip = renderToHtml(createElement(band.SampleDataChip));
+  assert.match(chip, /^<span data-first-version-sample="" class="([^"]*)">Sample data<\/span>$/);
+  const chipClass = chip.match(/class="([^"]*)"/)[1].split(' ');
+  const pillClass = src.match(/data-first-version-pill=""\s+className="([^"]*)"/)[1].split(' ');
+  for (const cls of ['rounded-full', 'bg-black/55', 'px-2.5', 'py-1', 'text-[12px]', 'font-semibold', 'leading-4', 'text-white', 'pointer-events-none', 'absolute']) {
+    assert.ok(pillClass.includes(cls) && chipClass.includes(cls), cls);
+  }
+  assert.ok(chipClass.includes('bottom-3') && chipClass.includes('left-3'), 'the band\'s bottom-left corner');
+  assert.ok(pillClass.includes('top-3') && pillClass.includes('left-3'), 'the pill keeps the top-left');
+  // Once a frame is drawn: the first look under "Starting the app…" is a drawing.
+  assert.match(src, /\{drawn \? <SampleDataChip \/> : null\}/);
+  const starting = renderToHtml(createElement(band.default, { live: { slug: 'club-votes', userKey: '1' }, firstLook: null, name: 'Club Votes' }));
+  assert.match(starting, /data-first-version-live="starting"/);
+  assert.doesNotMatch(starting, /data-first-version-sample|Sample data/);
+  // Only on the Live band, not the real screens'.
+  assert.doesNotMatch(read('frontend/src/features/app-frame/first-version-screens.tsx'), /sampleData|data-first-version-sample|SampleDataChip/);
+  const en = JSON.parse(read('frontend/locales/en/agent.json'));
+  assert.equal(en['appFrame.live.sampleData'].text, 'Sample data');
+  assert.ok(en['appFrame.live.sampleData'].description.length > 60, 'a translator\'s description');
 });
 
 // ── What glows ───────────────────────────────────────────────────────────

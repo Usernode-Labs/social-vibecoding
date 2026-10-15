@@ -196,12 +196,20 @@
     "description": "Note in the credits card of the \"Build with\" sheet: how much the person spent today through their own API key, which does not count against Homeroom credits. {{amount}} is an exact dollar amount such as $1.20."
   },
   "session.credits.lowNote": {
-    "text": "Only {{amount}} of credits left. A build can cost more than that and may stop partway.",
-    "description": "Note above the send row of a new agent session, when the credits pill beside Send is red because less than 15% of the AI allowance is left: what remains may not cover a build, which may stop partway. It is a note, not a block; the person can still send. {{amount}} is a dollar amount such as $0.60, written the way the credits pill writes it."
+    "text": "Only {{amount}} of credits left. A build can cost more than that and may stop partway. To keep going, <0>add your own Anthropic API key</0> or wait for your free credits to reset.",
+    "description": "Note above the send row of an agent session, shown whenever the credits pill beside Send is red because less than 15% of the AI allowance is left — before the first message and once the conversation is under way. What remains may not cover a build, which may stop partway; the note also names the two ways to keep going, as the out-of-credits card does. It is a note, not a block; the person can still send. {{amount}} is a dollar amount such as $0.60, written the way the credits pill writes it. Tag 0 links to Settings, API key."
   },
   "session.credits.lowNoteNone": {
-    "text": "No credits left. A build may not start, or may stop partway.",
-    "description": "Note above the send row of a new agent session, when the credits pill beside Send is red and nothing at all remains of the AI allowance: a build may not start, or may stop partway. It is a note, not a block; the person can still send."
+    "text": "No credits left. A build may not start, or may stop partway. To keep going, <0>add your own Anthropic API key</0> or wait for your free credits to reset.",
+    "description": "Note above the send row of an agent session, shown whenever the credits pill beside Send is red and nothing at all remains of the AI allowance — before the first message and once the conversation is under way. A build may not start, or may stop partway; the note also names the two ways to keep going, as the out-of-credits card does. It is a note, not a block; the person can still send. Tag 0 links to Settings, API key."
+  },
+  "session.credits.confirmContinue": {
+    "text": "Continue",
+    "description": "Button of the low-credits check in the agent session's composer, shown when Send is pressed with less than a dollar or less than 10% of the AI allowance left: it sends the message anyway, and the check is not shown again for the rest of the visit."
+  },
+  "session.credits.confirmCancel": {
+    "text": "Cancel",
+    "description": "Button of the low-credits check in the agent session's composer, shown when Send is pressed with less than a dollar or less than 10% of the AI allowance left: it closes the check and nothing is sent; the message stays in the box."
   },
   "session.model.pillLabel": {
     "text": "Model: {{model}}",
@@ -1673,19 +1681,31 @@
   },
   "appContext.invite.detail.joined_one": {
     "text": "{{count}} joined",
-    "description": "One of two facts on a row of the list of invite links in the Invite pane of the app menu, joined by a middle dot: how many people joined through this link, which has no limit. {{count}} is that number."
+    "description": "The second line on a row of the list of invite links in the Invite pane of the app menu: how many people actually got in through this link. {{count}} is that number."
   },
   "appContext.invite.detail.joined_other": {
     "text": "{{count}} joined",
-    "description": "One of two facts on a row of the list of invite links in the Invite pane of the app menu, joined by a middle dot: how many people joined through this link, which has no limit. {{count}} is that number."
+    "description": "The second line on a row of the list of invite links in the Invite pane of the app menu: how many people actually got in through this link. {{count}} is that number."
   },
-  "appContext.invite.detail.nobodyYet": {
-    "text": "No one joined yet",
-    "description": "The first of two facts on an invite link row in the Invite pane of the app menu, joined by a middle dot: nobody has joined through the link yet. Sentence case because it starts the line."
+  "appContext.invite.detail.used": {
+    "text": "{{used}} of {{max}} used",
+    "description": "One of two facts on a row of the list of invite links in the Invite pane of the app menu, joined by a middle dot: how many of the link's uses are taken. {{used}} is how many people followed it (each use is spent whether they got in or are still waiting), {{max}} how many it allows."
   },
-  "appContext.invite.detail.joinedOf": {
-    "text": "{{joined}} of {{max}} joined",
-    "description": "The first of two facts on an invite link row in the Invite pane of the app menu, joined by a middle dot: how many people have joined through the link. {{joined}} is how many people joined through it, {{max}} how many it allows."
+  "appContext.invite.detail.anyone": {
+    "text": "for anyone",
+    "description": "One of two facts on a row of the list of invite links in the Invite pane of the app menu, joined by a middle dot: the link has no limit of people. Lower case; it follows the first fact. How many came in through it is the row's second line."
+  },
+  "appContext.invite.detail.expired": {
+    "text": "expired",
+    "description": "One of two facts on a row of the list of invite links in the Invite pane of the app menu, joined by a middle dot: the link's end date has passed, so it no longer works. Lower case; it follows the first fact."
+  },
+  "appContext.invite.detail.usedUp": {
+    "text": "all used",
+    "description": "One of two facts on a row of the list of invite links in the Invite pane of the app menu, joined by a middle dot: every use of the link is taken, so it no longer works. Lower case; it follows the first fact."
+  },
+  "appContext.invite.detail.turnedOff": {
+    "text": "turned off",
+    "description": "One of two facts on a row of the list of invite links in the Invite pane of the app menu, joined by a middle dot: someone turned the link off, or its maker can no longer grant what it grants, so it no longer works. Lower case; it follows the first fact."
   },
   "appContext.invite.detail.noEnd": {
     "text": "no end date",
@@ -1706,6 +1726,30 @@
   "appContext.invite.detail.pair": {
     "text": "{{uses}} · {{expiry}}",
     "description": "The line on a row of the list of invite links in the Invite pane of the app menu: two facts about one link, side by side. {{uses}} is how many people have joined through the link, already worded, for example \"3 of 25 joined\", \"4 joined\" or \"No one joined yet\"; {{expiry}} is how long it still works, already worded, for example \"7 days left\" or \"no end date\". Keep the middle dot between them, or use the separator this language puts between two short facts."
+  },
+  "appContext.invite.detail.waiting_one": {
+    "text": "{{count}} waiting",
+    "description": "The middle fact on a row of the list of invite links in the Invite pane of the app menu, between what the link has been used for and how long it works: how many people followed this link and have not got in yet, for example still on the waitlist or without a verified phone. {{count}} is that number. Shown only when it is not zero."
+  },
+  "appContext.invite.detail.waiting_other": {
+    "text": "{{count}} waiting",
+    "description": "The middle fact on a row of the list of invite links in the Invite pane of the app menu, between what the link has been used for and how long it works: how many people followed this link and have not got in yet, for example still on the waitlist or without a verified phone. {{count}} is that number. Shown only when it is not zero."
+  },
+  "appContext.invite.detail.triple": {
+    "text": "{{uses}} · {{waiting}} · {{expiry}}",
+    "description": "The line on a row of the list of invite links in the Invite pane of the app menu when people are still waiting on the link: three facts, side by side. {{uses}} is how much the link has been used, already worded; {{waiting}} is how many people have not got in yet, already worded, for example \"1 waiting\"; {{expiry}} is how long it still works, or why it no longer works, already worded. Keep the middle dots between them, or use the separator this language puts between short facts."
+  },
+  "appContext.invite.detail.ended.expired": {
+    "text": "expired",
+    "description": "The last fact on a row of the list of invite links in the Invite pane of the app menu, in place of how long the link still works: the link's end date has passed. Lower case; it follows the first fact."
+  },
+  "appContext.invite.detail.ended.usedUp": {
+    "text": "ended",
+    "description": "The last fact on a row of the list of invite links in the Invite pane of the app menu, in place of how long the link still works: every use it allowed is taken. Lower case; it follows the first fact."
+  },
+  "appContext.invite.detail.ended.revoked": {
+    "text": "turned off",
+    "description": "The last fact on a row of the list of invite links in the Invite pane of the app menu, in place of how long the link still works: somebody turned the link off. Lower case; it follows the first fact."
   },
   "appContext.invite.title": {
     "text": "Invite people to {{project}}",
@@ -1808,8 +1852,8 @@
     "description": "Small link beside the heading of the invite links list in the Invite pane of the app menu: a verb, unfolds the two drop-downs that set how long a new link works and for how many people."
   },
   "appContext.invite.liveLinks": {
-    "text": "Live links",
-    "description": "Small heading in the Invite pane of the app menu over the list of every invite link that still works, shown to someone who manages the project."
+    "text": "All links",
+    "description": "Small heading in the Invite pane of the app menu over the list of every invite link, the ones that still work first and the ones that ended in the last 30 days after them, shown to someone who manages the project."
   },
   "appContext.invite.yourLinks": {
     "text": "Your links",
@@ -1818,6 +1862,22 @@
   "appContext.invite.madeBy": {
     "text": "by @{{username}}",
     "description": "Small line on a row of the list of invite links in the Invite pane of the app menu: who made the link. {{username}} is that person's username; keep the @ before it."
+  },
+  "appContext.invite.status.waiting_one": {
+    "text": "{{count}} waiting",
+    "description": "The second line on a row of the list of invite links in the Invite pane of the app menu, beside the joined count: how many people followed this link and are still waiting to get in. {{count}} is that number."
+  },
+  "appContext.invite.status.waiting_other": {
+    "text": "{{count}} waiting",
+    "description": "The second line on a row of the list of invite links in the Invite pane of the app menu, beside the joined count: how many people followed this link and are still waiting to get in. {{count}} is that number."
+  },
+  "appContext.invite.status.nobody": {
+    "text": "No one has joined yet",
+    "description": "The second line on a row of the list of invite links in the Invite pane of the app menu when nobody has used the link at all: no one has joined and no one is waiting."
+  },
+  "appContext.invite.status.pair": {
+    "text": "{{joined}} · {{waiting}}",
+    "description": "The second line on a row of the list of invite links in the Invite pane of the app menu, when people have both joined through the link and are waiting: the joined count, already worded, for example \"2 joined\", then the waiting count, for example \"1 waiting\". Keep the middle dot between them, or use the separator this language puts between two short facts."
   },
   "appContext.invite.turnOff": {
     "text": "Turn off",
@@ -2179,6 +2239,10 @@
     "text": "Live",
     "description": "One side of the two-way switch in the corner of the picture area at the top of a project's card on the App tab while the project's first version is being built: the picture shows the app itself as it takes shape, updating as it is built. An adjective."
   },
+  "appFrame.live.sampleData": {
+    "text": "Sample data",
+    "description": "Small label in the bottom-left corner of the picture area at the top of a project's card on the App tab, while the picture shows the project's app running as it is built: the app is filled with made-up example content, not real people's information. A short noun phrase in a small rounded label."
+  },
   "appFrame.live.pill.starting": {
     "text": "Starting the app…",
     "description": "Small label over the picture area at the top of a project's card on the App tab while the project's first version is being built, with Live chosen, until the first picture of the running app arrives."
@@ -2186,6 +2250,10 @@
   "appFrame.live.pill.failed": {
     "text": "A restart failed · showing the last good screen",
     "description": "Small label over the picture area at the top of a project's card on the App tab while the project's first version is being built, with Live chosen, when the app being built did not start again after its latest change, so the picture is from before it."
+  },
+  "appFrame.live.pill.ended": {
+    "text": "Last screen from the build",
+    "description": "Small label over the picture area at the top of a project's card on the App tab, once the project's first version has been built, while it is reviewed, checked and tried: the picture is the app as it last looked while it was being built, kept there and no longer updating."
   },
   "appFrame.live.pill.justUpdated": {
     "text": "Live · just updated",
@@ -2214,6 +2282,10 @@
   "appFrame.live.frame.live": {
     "text": "{{project}}, live while it is built",
     "description": "Text alternative of the phone-shaped picture in the picture area at the top of a project's card on the App tab while the project's first version is being built, with Live chosen: it shows the app itself, updating as it is built. {{project}} is the project's name."
+  },
+  "appFrame.live.frame.ended": {
+    "text": "{{project}}, as it last looked while it was built",
+    "description": "Text alternative of the phone-shaped picture in the picture area at the top of a project's card on the App tab, once the project's first version has been built, while it is reviewed, checked and tried: it shows the app as it last looked while it was being built. {{project}} is the project's name."
   },
   "install.banner.getOnAppStore": {
     "text": "Get the app on the App Store",
@@ -2293,7 +2365,7 @@
   },
   "appContext.invite.noLinks": {
     "text": "No live links.",
-    "description": "Shown under the heading of the invite links list in the Invite pane of the app menu when no invite link works any more (all expired, used up or turned off)."
+    "description": "Shown under the heading of the invite links list in the Invite pane of the app menu when no invite link was made or ended in the last 30 days, so the list has nothing to show."
   },
   "session.changeRow.waitingForApproval": {
     "text": "Waiting for approval",

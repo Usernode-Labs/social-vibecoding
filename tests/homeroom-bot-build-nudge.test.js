@@ -20,7 +20,6 @@ const live = require('../src/services/homeroom-bot-live');
 const bot = require('../src/services/homeroom-bot');
 const worker = require('../src/services/worker');
 const events = require('../src/services/events');
-const runner = require('../src/services/bench/runner');
 
 const root = path.join(__dirname, '..');
 const read = (...p) => fs.readFileSync(path.join(root, ...p), 'utf8');
@@ -251,7 +250,7 @@ test('a Codex conversation that goes on gets the nudge alone, and no Claude fall
 test('no nudge for a turn that failed, under either CLI, or whose dispatch failed', async () => {
   const cases = [
     [{ ...QUIT, ccExit: 1, exitCode: 1 }, /the build turn failed \(the agent exited with code 1\)/],
-    [{ ...QUIT, lastResultText: 'API Error: 429 Too Many Requests' }, /the build turn failed \(it ended on an API error\)/],
+    [{ ...QUIT, lastResultText: 'API Error: 429 Too Many Requests' }, /the build turn failed \(it ended on an API error: API Error: 429 Too Many Requests\)/],
     [{ ...QUIT, agentHarness: 'codex', ccExit: null, exitCode: 1, agentExit: 1 }, /produced no change/],
   ];
   for (const [result, error] of cases) {
@@ -432,10 +431,13 @@ test('the worker keeps every provider a turn\'s requests went to, not only the l
 
 test('the live lane, the shadow lane and the bench all build through buildAndPropose, so all are nudged', () => {
   const src = read('src/services/homeroom-bot.js');
-  const liveCall = src.slice(src.indexOf('built = await live.buildAndPropose({'), src.indexOf('buildMs = Date.now() - buildStartedMs;\n  } finally {'));
-  assert.match(liveCall, /origin: \{ lane: 'live', runId \},\n\s+onNoChange: \(noChange\) => keepNoChange\(pool, runId, noChange\),/);
+  // A live build hands its arguments to each try, each a durable step.
+  const liveBuild = src.slice(src.indexOf('async function buildLive({'), src.indexOf('function liveDeps('));
+  assert.match(liveBuild, /origin: \{ lane: 'live', runId \},\n\s+onNoChange: \(noChange\) => keepNoChange\(pool, runId, noChange\),/);
+  assert.match(liveBuild, /built = await steps\.once\(tryKey, \(\) => live\.buildAndPropose\(\{\n\s+\.\.\.tryArgs, deps: \{ \.\.\.tryArgs\.deps, durable: steps\.scope\(tryKey\) \},/);
   const shadow = src.slice(src.indexOf('async function shadowBuild('), src.indexOf('async function runQueuedBuild('));
   assert.match(shadow, /origin: \{ lane: 'shadow', runId \},\n\s+onNoChange: \(noChange\) => keepNoChange\(pool, runId, noChange\),/);
+  assert.match(shadow, /const built = await steps\.once\('try', \(\) => live\.buildAndPropose\(\{/);
   assert.match(shadow, /build_no_change = \$11::jsonb/);
   const bench = read('src/services/bench/runner.js');
   const stage = bench.slice(bench.indexOf('async function buildStage('), bench.indexOf('function reviewerCost('));
@@ -458,85 +460,10 @@ test('recordLiveBuild keeps a build\'s record of a turn that changed nothing on 
   assert.match(queries.at(-1).sql, /UPDATE homeroom_bot_runs SET build_no_change = \$2::jsonb WHERE id = \$1/);
 });
 
-test('a bench build keeps its record on the trial, and a recovered bench turn that changed nothing keeps its words', () => {
-  const kept = runner.recoveredBuild({ session: { id: 5, spec_md: '# Spec' }, result: { ...QUIT } });
-  assert.equal(kept.ok, false);
-  assert.match(kept.error, /^the build produced no change to propose/);
-  assert.equal(kept.noChange.turns[0].said, QUIT.lastResultText);
-  assert.equal(kept.noChange.turns[0].provider, 'GMICloud');
-  assert.equal(kept.noChange.recovered, true);
-  assert.equal(kept.noChange.nudged, false);
-  assert.equal(runner.recoveredBuild({ session: { id: 5 }, result: { ...BUILT } }).noChange, undefined);
-  assert.equal(runner.recoveredBuild({ session: { id: 5 }, result: { ...QUIT }, timedOut: true }).noChange, undefined);
+test('a bench build keeps its record on the trial', () => {
   const src = read('src/services/bench/runner.js');
-  assert.match(src, /\.\.\.\(built\.noChange \? \{ noChange: built\.noChange \} : \{\}\),/, 'buildResult keeps it on the trial\'s parsed record');
-});
-
-// ── After a restart ─────────────────────────────────────────────────────────
-
-function recoveryPool(before = null) {
-  const queries = [];
-  const recorded = [];
-  return {
-    queries,
-    recorded,
-    async query(sql, params) {
-      queries.push({ sql: String(sql), params });
-      if (/SELECT build_no_change FROM homeroom_bot_runs/.test(sql)) return { rows: before ? [{ build_no_change: before }] : [] };
-      if (/INSERT INTO events/.test(sql)) recorded.push({ type: params[3], metadata: JSON.parse(params[4]) });
-      return { rows: [] };
-    },
-  };
-}
-const SESSION = { id: 7192, user_id: BOT.id, agent_model: 'z-ai/glm-5.3-flash' };
-const WHERE = { runId: 1166, session: SESSION, origin: { lane: 'live', runId: 1166 }, appId: APP.id, issueNumber: 1 };
-
-test('a nudge a restart caught adds its outcome to what its build turn left on the run', async () => {
-  const before = {
-    turns: [{ ...live.turnFacts({ routed: { result: QUIT } }, { turn: 'build' }), said: QUIT.lastResultText }],
-    nudged: true, notNudged: null, committed: null,
-  };
-  const pool = recoveryPool(before);
-  const noChange = await bot.recoveredNoChange(pool, {
-    ...WHERE, result: { ...BUILT }, component: live.BUILD_NUDGE_TELEMETRY,
-  });
-  assert.deepEqual(noChange.turns.map((t) => [t.turn, t.ended]), [['build', 'no_change'], ['nudge', 'changed']]);
-  assert.equal(noChange.turns[0].said, QUIT.lastResultText, 'what the first turn said survives the restart');
-  assert.equal(noChange.committed, true);
-  assert.equal(noChange.recovered, true);
-  assert.deepEqual(pool.recorded.map((e) => [e.type, e.metadata.turn, e.metadata.committed, e.metadata.recovered]), [
-    ['bot_build_nudged', 'nudge', true, true],
-  ], 'the build turn was counted before the restart; only the nudge is counted now');
-
-  // Read as a nudge by the record alone when the ledger name is missing.
-  const again = await bot.recoveredNoChange(recoveryPool(before), { ...WHERE, result: { ...QUIT, lastResultText: 'still a plan' } });
-  assert.equal(again.turns[1].turn, 'nudge');
-  assert.equal(again.turns[1].said, 'still a plan');
-  assert.equal(again.committed, false);
-});
-
-test('a build turn a restart caught that changed nothing is kept and counted, not nudged; one that built adds nothing', async () => {
-  const pool = recoveryPool(null);
-  const noChange = await bot.recoveredNoChange(pool, { ...WHERE, result: { ...QUIT } });
-  assert.equal(noChange.nudged, false);
-  assert.equal(noChange.notNudged, 'a restart caught the turn, and recovery does not nudge');
-  assert.equal(noChange.turns[0].said, QUIT.lastResultText);
-  assert.deepEqual(pool.recorded.map((e) => [e.type, e.metadata.turn, e.metadata.recovered, e.metadata.nudged]), [
-    ['bot_build_no_change', 'build', true, false],
-  ]);
-  assert.equal(await bot.recoveredNoChange(recoveryPool(null), { ...WHERE, result: { ...BUILT } }), null);
-  assert.equal(await bot.recoveredNoChange(recoveryPool(null), { ...WHERE, result: { ...QUIT }, timedOut: true }), null);
-});
-
-test('both recovery paths record it: the live one on its outcome, the lane\'s on its run', () => {
-  const src = read('src/services/homeroom-bot.js');
-  const finish = src.slice(src.indexOf('async function finishRecoveredTurn('), src.indexOf('async function finishConfiguredShadow('));
-  assert.match(finish, /component: activeTurn\?\.telemetryComponent \|\| null,\n\s+\}\)\) \{/, 'a live turn notes its ledger name for completeRecoveredLive');
-  assert.match(finish, /const noChange = await recoveredNoChange\(pool, \{/);
-  assert.match(finish, /build_no_change = COALESCE\(\$9::jsonb, r\.build_no_change\)/);
-  const complete = src.slice(src.indexOf('async function completeRecoveredLive('), src.indexOf('async function holdSlotDuringRecovery('));
-  assert.match(complete, /const noChange = plan\.mode !== 'scout' && !plan\.lost && !reviewing && !restartedOut\n\s+\? await recoveredNoChange\(pool, \{/);
-  assert.equal((complete.match(/\.\.\.noChangeOut/g) || []).length, 3, 'on every outcome of a build turn it followed');
+  const result = src.slice(src.indexOf('async function buildResult('), src.indexOf('async function buildStage('));
+  assert.match(result, /\.\.\.\(built\.noChange \? \{ noChange: built\.noChange \} : \{\}\),/, 'buildResult keeps it on the trial\'s parsed record');
 });
 
 // ── Where it is read ─────────────────────────────────────────────────────────

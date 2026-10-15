@@ -147,10 +147,12 @@ test('#4612: planOutOf is the text before the action JSON block, and nothing whe
   assert.equal(followup.planOutOf(''), '');
 });
 
-test('#4612: revisedText names the new plan version before the approvals line', () => {
+// One note per update: the cleared votes are the platform's line in the
+// change's discussion (routes/votes.js), so the note ends with the plan line.
+test('#4612: revisedText names the new plan version, and leaves the cleared votes to the platform', () => {
   const withPlan = followup.revisedText({ summary: 's', reply: 'r', planVersion: 2 });
-  assert.match(withPlan, /Its plan is updated to match: version 2 is in the change's discussion\./);
-  assert.ok(withPlan.indexOf('version 2') < withPlan.indexOf('Earlier approvals were cleared'), 'before the approvals line');
+  assert.match(withPlan, /Its plan is updated to match: version 2 is in the change's discussion\.$/);
+  assert.doesNotMatch(withPlan, /approvals/);
   assert.doesNotMatch(followup.revisedText({ summary: 's', reply: 'r' }), /Its plan is updated/, 'no version, no line');
   const texts = [withPlan, followup.revisedText({ summary: 's', reply: 'r', planVersion: 12 })];
   for (const t of texts) assert.ok(!/—/.test(t) && !/PR #|proposal/.test(t), t);
@@ -167,7 +169,7 @@ test('what it says has no em dashes', () => {
   for (const t of texts) assert.ok(!/—/.test(t), t);
   // B4: plain words: the change, its approvals, never a proposal or its number.
   for (const t of texts) assert.ok(!/PR #|proposal/.test(t), t);
-  assert.match(texts[3], /Earlier approvals were cleared/);
+  assert.doesNotMatch(texts[3], /approvals/, 'the platform\'s line says the votes were cleared');
   assert.doesNotMatch(texts[3], /https:/, 'the change\'s card goes with it instead of its address');
 });
 
@@ -389,7 +391,7 @@ test('#4612: a revise that says the plan changed publishes the next spec version
   const share = h.calls.queries.find((q) => /UPDATE chat_session_specs SET shared_to_group_at/.test(q.s));
   assert.deepEqual(share.params, [5001, 2]);
   assert.equal(h.calls.cards.length, 1);
-  assert.equal(h.calls.cards[0].content, '📋 The plan, updated for this change (version 2): "Darker dark mode".');
+  assert.equal(h.calls.cards[0].content, '📋 Plan v2: Darker dark mode, updated for this change.');
   assert.equal(h.calls.cards[0].msgType, 'spec_share');
   assert.deepEqual(h.calls.cards[0].thread, { type: 'session', ref: 5001 });
   assert.equal(h.calls.cards[0].metadata.specShare.version, 2, 'the transcript shows it as v2, beside the v1 card');
@@ -529,7 +531,8 @@ test('a GLM follow-up that ended on an API error with exit 0 is no revision, wha
   const out = await run(t, h);
   assert.equal(out.verdict, 'failed');
   assert.equal(h.calls.reconciled.length, 0, 'the proposal stays as it was voted on');
-  assert.equal(insertOf(h).params[18], 'the follow-up turn failed (it ended on an API error)');
+  assert.equal(insertOf(h).params[18], 'the follow-up turn failed (it ended on an API error: '
+    + 'API Error: 429 {"error":{"message":"Provider returned error","code":429}})');
   // Discarded by run-cc.sh, as it now is: the same, and the reason is named.
   const discarded = harness({
     comments: [{ author: 'evan', body: 'Make it #000', createdAt: '2026-09-26T11:30:00Z' }],
@@ -538,7 +541,9 @@ test('a GLM follow-up that ended on an API error with exit 0 is no revision, wha
   const out2 = await run(t, discarded);
   assert.equal(out2.verdict, 'failed');
   assert.equal(discarded.calls.reconciled.length, 0);
-  assert.equal(insertOf(discarded).params[18], 'the follow-up turn failed (the agent exited with code 1)');
+  // The notice, read before the exit code run-cc.sh gave it.
+  assert.equal(insertOf(discarded).params[18], 'the follow-up turn failed (it ended on an API error: '
+    + 'API Error: 429 {"error":{"message":"Provider returned error","code":429}})');
 });
 
 test('a Codex follow-up whose agent failed fails exactly as it did', async (t) => {
@@ -745,4 +750,56 @@ test('#3767: a revision that changed what the proposal does names it again, and 
   const src = fs.readFileSync(path.join(__dirname, '..', 'src/services/homeroom-bot.js'), 'utf8');
   assert.match(src, /if \(moved && parsed\?\.title\) await renameRevised\(/, 'renamed only when the revision landed');
   assert.match(src, /require\('\.\/proposal-update'\)\.applyProposedTitle\(\{/, 'through the seam a person\'s revision uses');
+});
+
+// Issue #4813, 15 Oct 2026: the bot's follow-up turn on its proposal failed,
+// so 30 minutes later the refresh offered the failed run a retry. The retry
+// went to the follow-up, which found nothing to answer and records no run in
+// that case, so the failed run was still the latest and the very next refresh
+// offered the same retry again. With the live lane re-waking the app after
+// each slot, that was about three passes a second for 45 minutes, until
+// GitHub's hourly budget was spent. A retry that finds nothing is spent.
+test('a failed run\'s retry that finds nothing new on its proposal is spent: the refresh does not offer it again', async (t) => {
+  t.after(() => bot._resetForTests());
+  const failedRun = (id) => ({ id, issue_number: 24, thread_seen_at: SEEN, created_at: '2026-09-26T09:00:00Z', verdict: 'failed', failed_tries: 1 });
+  let lastRun = failedRun(800);
+  const inserts = [];
+  const pool = {
+    async query(sql, params) {
+      const s = String(sql);
+      if (/FROM issue_claims|UNNEST\(cs\.linked_issues\) AS n\s+FROM chat_sessions cs JOIN users|headless_issue_number AS n|created_from_issue_number AS n/.test(s)) return { rows: [] };
+      if (/CROSS JOIN LATERAL UNNEST\(cs\.linked_issues\)/.test(s)) return { rows: [] };
+      if (/FROM chat_messages/.test(s)) return { rows: [] };
+      if (/FROM homeroom_bot_runs/.test(s)) return { rows: [lastRun] };
+      if (/INSERT INTO homeroom_bot_queue/.test(s)) { inserts.push(params); return { rows: [] }; }
+      if (/DELETE FROM homeroom_bot_queue/.test(s)) return { rowCount: 0, rows: [] };
+      return { rows: [] };
+    },
+  };
+  const github = { async fetchPublicIssues() { return { issues: [{ number: 24, state: 'open', updatedAt: SEEN }] }; } };
+  const refresh = () => bot.refreshApp(pool, APP, { github, bot: BOT, capRoom: { proposals_per_app: 1, question_tripwire: 5 } });
+
+  await refresh();
+  assert.deepEqual(inserts.map((p) => [p[1], p[3]]), [[24, bot.RETRY_FAILED_REASON]], 'the failed run is offered its retry');
+
+  // The retry reaches the follow-up, and nobody said anything new.
+  const h = harness({ comments: [{ author: 'usernode-bot', body: 'Homeroom bot built this', createdAt: '2026-09-26T11:00:00Z' }] });
+  const realPost = live.post;
+  const realSeen = live.advanceSeen;
+  t.after(() => { live.post = realPost; live.advanceSeen = realSeen; });
+  live.post = async () => ({});
+  live.advanceSeen = async () => ({ advanced: true });
+  const out = await bot.runTriage(h.pool, {}, {
+    bot: BOT, app: APP, item: { ...ITEM, reason: bot.RETRY_FAILED_REASON }, mode: 'shadow', settings: SETTINGS, deps: h.deps,
+  });
+  assert.deepEqual(out, { ran: false, reason: 'no_new_replies' });
+
+  inserts.length = 0;
+  await refresh();
+  assert.equal(inserts.length, 0, 'the same failed run is not offered again');
+
+  // A later failed run is a new one, and gets its own retry.
+  lastRun = failedRun(801);
+  await refresh();
+  assert.deepEqual(inserts.map((p) => [p[1], p[3]]), [[24, bot.RETRY_FAILED_REASON]]);
 });

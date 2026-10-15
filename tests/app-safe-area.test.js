@@ -101,9 +101,10 @@ test('every #app-content mount point declares its surface', () => {
   // platform: renderAppTab's status, offline and unsafe-origin branches, plus
   // renderDevView; and since #15, renderAppTab's first-version branch (the
   // shell's own screen while the Homeroom bot builds a first version) and
-  // its screenshot state.
-  assert.equal(platformCalls.length, 6,
-    `expected 6 platform-surface call sites, found ${platformCalls.length}`);
+  // its screenshot state; and since N6, that screen updated in place on its
+  // recheck (_repaintFirstVersion), which owns the host as the branch does.
+  assert.equal(platformCalls.length, 7,
+    `expected 7 platform-surface call sites, found ${platformCalls.length}`);
 });
 
 test('the keep/adopt early-exit still asserts the app surface', () => {

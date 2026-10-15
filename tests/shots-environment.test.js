@@ -358,7 +358,9 @@ test('a failed checkout clone is retried from a clean directory, a bounded numbe
   calls = 0;
   docker.execFileAsync = async () => { calls += 1; throw Object.assign(new Error('still down'), { code: 128 }); };
   await assert.rejects(environment.cloneWithRetry('https://github.com/o/r.git', target, { wait: async () => {} }),
-    /still down/);
+    (error) => /still down/.test(error.message)
+      // A platform step: the run is taken again once (shots-gc.retryPlatformFaults).
+      && error.shotsPlatformFault === 'clone');
   assert.equal(calls, environment.CLONE_ATTEMPTS);
 
   const src = require('node:fs').readFileSync(pathMod.join(__dirname, '../src/services/shots-environment.js'), 'utf8');

@@ -2005,18 +2005,19 @@ test('the drag overlay draws the whole canvas and doubles as the hit-test', () =
   assert.match(CSS, /\.home-grid-cell::before \{[^}]*inset: -4px/);
 });
 
-// #4738: on a wide window the four-column grid sat in a ~250px-wide cell
-// around a 56px icon, so a few apps spread across the whole page column.
-// Softened in review: the whole My apps area (heading, grid, Show all) is
-// capped at 48rem and centred, not the first cut's 36rem hug to the left.
-// The cap is on the area's box, so the overlay — inside #app-list, inset
-// by the same padding, sized by the same engine — keeps lining up with
-// zero arithmetic.
-test('the My apps area is capped at 48rem and centred on wide windows, overlay untouched (#4738)', () => {
+// #4738 capped the My apps area at 48rem and centred it so a few apps
+// grouped closer on a wide window; #4861 removed the cap — the narrower
+// block read as odder than wide spacing, sitting inside the width of the
+// search bar above and the sections below (evan). The overlay — inside
+// #app-list, inset by the same padding, sized by the same engine — was
+// never touched by either, and still lines up with zero arithmetic.
+test('the My apps area spans the full home column on wide windows, overlay untouched (#4861)', () => {
   const wide = CSS.slice(CSS.indexOf('@media (min-width: 640px) {\n  .home-grid-overlay'),
-    CSS.indexOf('\n}\n', CSS.indexOf('#home-apps-section:not(:has(')));
-  assert.match(wide, /#home-apps-section:not\(:has\(#app-list\[data-view="search"\]\)\) \{\s*max-width: 48rem;\s*margin-inline: auto;\s*\}/,
-    'the area is capped and centred; a search hands the full column back');
+    CSS.indexOf('\n}\n', CSS.indexOf('.home-grid-overlay {\n    /* #app-list')));
+  // No width cap on the area, of any kind: the grid runs to the same edges
+  // as the search bar above it and Discover Communities below.
+  assert.doesNotMatch(wide, /#home-apps-section[^{]*\{[^}]*max-width/);
+  assert.doesNotMatch(wide, /#home-apps-section[^{]*\{[^}]*margin-inline/);
   // The overlay's inset and gap are unchanged: it is inset by #app-list's
   // own padding, so any drift here is a jump at the end of the drop glide.
   const overlay = wide.match(/\.home-grid-overlay \{[^}]*\}/)[0];
@@ -2207,6 +2208,11 @@ test('the cell height still matches the app tile it is derived from', () => {
   assert.match(titleRule, /line-height:\s*1\.18\s*;/, 'the line height is unitless so it tracks the font');
   assert.doesNotMatch(titleRule, /line-height:\s*0\.8125rem/);
   assert.match(titleRule, /-webkit-line-clamp:\s*2/, 'long names ellipsise at two lines');
+  // #5195: 11px on 13px lines again. #4934's step up to 12px/14px cut most
+  // names after a few letters on a phone's four columns; the two-line lane
+  // (26px) is the term the desktop cell's 124px adds up to.
+  assert.match(titleRule, /font-size:\s*0\.6875rem/, 'the label is 11px (#5195)');
+  assert.match(CSS, /--home-cell-h: 7\.75rem/, 'the desktop cell adds up the terms above');
   assert.match(CSS.match(/\.app-card-status \{[^}]*\}/)[0], /line-height:\s*0\.75rem/);
   // THE CAPTION LANE IS LOAD-BEARING. The status dot is gone from the tile
   // face, so this line is a tile's only status signal — and rows are a
@@ -2495,6 +2501,68 @@ test('discoverTileView.added follows the cached flags, with no refetch (#1567)',
   HP.render();
   assert.match(paintHosts(sandbox, [host]), /data-added="false"/);
   assert.equal(fetches, 0);
+});
+
+// ── #4937: the pill follows what the viewer already is ───────────────
+//
+// The corner control is one labelled pill with three jobs, picked by what the
+// viewer already is: not a member, the real join; a member with the app on
+// Home, the quiet "Joined"; a member whose app is not on Home yet, a plain
+// "Add". `joined` is read from the same cached flags `added` is, through
+// Home.isJoined, and the facts line fills in only where the app declares no
+// description of its own.
+test('the Discover card carries data-join, the three pill states and the fallback facts line (#4937)', () => {
+  const alpha = { slug: 'alpha', name: 'Alpha', featured: true, active_users: 12 };
+  const beta = { slug: 'beta', name: 'Beta', featured: true, manifest_snapshot: { description: 'Its own sentence.' } };
+  const gamma = { slug: 'gamma', name: 'Gamma', featured: true, is_member: true, is_favorited: true };
+  const delta = { slug: 'delta', name: 'Delta', featured: true, is_member: true };
+  const html = renderDiscover({
+    featuredApps: () => [alpha, beta, gamma, delta],
+    popularApps: () => [],
+    isYours: (a) => !!a.is_favorited,
+    isJoined: (a) => !!a.is_member,
+    // The real line, spelled out. What composes it is unit-tested in
+    // home-find-more.test.js against the real Home.discoverMetaLine.
+    discoverMetaLine: (a) => (a.slug === 'alpha' ? '12 users · Updated 3d ago' : null),
+  });
+
+  // Not a member: the real join, offered by name.
+  assert.match(html, /class="card-add-btn [^"]*" data-slug="alpha" data-added="false" data-join="join"/);
+  assert.match(html, /aria-label="Join Alpha"/);
+  assert.match(html, />Join<\/span>/);
+  assert.match(html, /home-discover-facts[^>]*>12 users · Updated 3d ago</,
+    'the facts line stands in where the app declares no description');
+
+  // A description wins: the facts line does not repeat under it.
+  assert.match(html, />Its own sentence.</);
+  assert.equal((html.match(/home-discover-facts/g) || []).length, 1,
+    'exactly one card drew the facts line');
+
+  // A member whose app is on Home: the quiet "Joined", pressed, in grey.
+  assert.match(html, /data-slug="gamma" data-added="true" data-join="joined" aria-pressed="true"/);
+  assert.match(html, /aria-label="Joined Gamma"/);
+  assert.match(html, />Joined<\/span>/);
+  assert.match(html, /class="card-add-btn [^"]*border-transparent[^"]*" data-slug="gamma"/,
+    'the joined pill is the quiet grey, not the violet action');
+
+  // A member whose app is NOT on Home yet: a plain pin to My apps.
+  assert.match(html, /data-slug="delta" data-added="false" data-join="add"/);
+  assert.match(html, /aria-label="Add Delta to My apps"/);
+  assert.match(html, />Add<\/span>/);
+
+  // The pill's own name is still a pill's; the card keeps its own.
+  assert.match(html, /class="home-discover-name /);
+  assert.doesNotMatch(html, /home-discover-name[^>]*\btruncate\b/,
+    'the name wraps to two lines instead of cutting mid-word');
+
+  // The two-line clamp and the repointed preview overrides live in app.css.
+  const rule = CSS.match(/\.home-discover-name \{[^}]*\}/)[0];
+  assert.match(rule, /-webkit-line-clamp:\s*2/, 'the name ellipsises at two lines');
+  assert.match(rule, /overflow-wrap:\s*anywhere/, 'a run without spaces wraps instead of overflowing');
+  assert.match(CSS, /\.card-add-btn:not\(\[data-join="joined"\]\)/,
+    'the preview themes recolour the join and add pill, not the quiet joined one');
+  assert.doesNotMatch(CSS, /card-add-btn\[data-added="false"\]/,
+    'the old added-only override is gone with the round badge');
 });
 
 // ── Discover: ONE shape, at every width ───────────────────────────────

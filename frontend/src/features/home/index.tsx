@@ -88,14 +88,18 @@ import { useRef } from 'react';
 import { SearchIcon } from '@/components/ui/icons';
 
 import { AppGrid } from './app-grid';
+import { openAddAppsSheet } from './add-apps-sheet';
 import { AppsMore } from './apps-more';
 import { ChallengesSection, DiscoverSection } from './panels/sections';
+import { SectionHeading } from './panels/ui';
 import { VerifyCard } from './verify-card';
 import { WaitlistCard } from './waitlist-card';
 import { WidgetStrip } from './widget-strip';
 
 import { useMessages } from '../../lib/i18n/react';
+import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
+import { gridStore } from './grid-store';
 
 // The three modules that fill this screen, imported in the order their
 // <script> tags had: HomeLayout (pure geometry) is read by both of the others,
@@ -109,6 +113,11 @@ export function HomeScreen() {
   const t = useMessages('home');
   const screenRef = useRef<HTMLElement | null>(null);
   useVisibilityHiddenClass(screenRef, 'home-screen', true);
+  // EDIT MODE's (#4669) one read here: the "Done" that ends it, beside the
+  // heading. The store's initial value is false, so the prerender and the
+  // first client render render no action at all — the markup is unchanged
+  // until a hold actually starts edit mode.
+  const grid = useStoreState(gridStore);
 
   return (
     <main ref={screenRef} id="home-screen" className="flex-1 overflow-y-auto" style={{ position: 'relative' }} data-page-bounce="">
@@ -245,11 +254,48 @@ export function HomeScreen() {
         */}
         <section id="home-apps-section" className="px-3">
           {/*
-              NO LABEL since #4759: the tiles explain themselves, and the
-              welcome tour names the area. The set is still "My apps"
-              everywhere else (the tile menus' "Add to My apps", the browse
-              screen's badge).
+              The area's label, in the same treatment the two below it use —
+              see ./panels/ui.tsx's SectionHeading for why every area on this
+              screen is now "grey label, then the thing". It was "Your apps",
+              then "Shortcuts" once the UI overhaul gave your communities
+              (every project you are in) the Communities tab, which left this
+              set as what it always was: the apps you keep a tile for. It is
+              "My apps" since #4187, in the sentence case of Recents and
+              Discover. The rest of the product names the set the same way
+              (the tile menus' "Add to My apps", the browse screen's badge),
+              because two names for one collection is worse than either.
           */}
+          <SectionHeading
+            action={grid.editing ? (
+              /* The screen's one job while the tiles wiggle is arranging them,
+                 and "Done" is its primary action. The treatment is BrowseLink's
+                 own: 14px semibold in the accent, riding the heading row the way
+                 Discover's link does. "Add apps" rides beside it (#4669): the
+                 mode's second entry, opening the same sheet the tile menu's
+                 "Add to My apps" opens, so growing the shelf does not cost the
+                 trailing tile its place. */
+              <span className="flex items-center gap-4">
+                <button
+                  type="button"
+                  className="home-edit-add shrink-0 flex items-center text-[14px] font-semibold text-[color:var(--accent)] hover:underline whitespace-nowrap un-touch-target"
+                  aria-label={t('home:edit.addTile')}
+                  onClick={() => { openAddAppsSheet(); }}
+                >
+                  <span className="whitespace-nowrap">{t('home:edit.addTile')}</span>
+                </button>
+                <button
+                  type="button"
+                  className="home-edit-done shrink-0 flex items-center text-[14px] font-semibold text-[color:var(--accent)] hover:underline whitespace-nowrap un-touch-target"
+                  aria-label={t('home:edit.done')}
+                  onClick={() => { (window as any).Home?.setEditing?.(false); }}
+                >
+                  <span className="whitespace-nowrap">{t('home:edit.done')}</span>
+                </button>
+              </span>
+            ) : null}
+          >
+            {t('home:grid.heading')}
+          </SectionHeading>
           <AppGrid />
           {/*
               "Show all N apps" — revealed by Home.render() only when the
@@ -260,21 +306,13 @@ export function HomeScreen() {
           <AppsMore />
         </section>
         {/*
-            A PRIVATE MEMBER'S WAITLIST CARD (./waitlist-card.tsx): an invite
-            link let them into their group's apps, and this is where they join
-            the waitlist to make their own. Nothing in the prerender; it draws
-            once the shell knows who is signed in. Their Home has no
-            Challenges (src/routes/home-panels.js leaves it out).
-        */}
-        <WaitlistCard />
-        {/*
-            "VERIFY YOUR ACCOUNT" (./verify-card.tsx): a member the
-            verified-identity rule holds to it adds a phone here, or links
-            GitHub and X. Nothing in the prerender, like the card above.
-        */}
-        <VerifyCard />
-        {/*
-            ── AREAS 2-3: DISCOVER, CHALLENGES ────────────────────────
+            ── AREAS 2-4: DISCOVER, WAITLIST, VERIFY, CHALLENGES ──────
+
+            Discover moved up (#4937): it follows the launcher directly, so
+            the community cards are on the first screen instead of a scroll
+            below two cards that most viewers had already settled. The
+            launcher's cap (Home.APPS_VIEWPORT_FRACTION, now a half) leaves
+            the rail peeking under "Show all N apps".
 
             These were WIDGETS until THE UI OVERHAUL — draggable blocks
             placed on the launcher canvas alongside the app tiles, each with
@@ -312,6 +350,20 @@ export function HomeScreen() {
             the other.
         */}
         <DiscoverSection />
+        {/*
+            A PRIVATE MEMBER'S WAITLIST CARD (./waitlist-card.tsx): an invite
+            link let them into their group's apps, and this is where they join
+            the waitlist to make their own. Nothing in the prerender; it draws
+            once the shell knows who is signed in. Their Home has no
+            Challenges (src/routes/home-panels.js leaves it out).
+        */}
+        <WaitlistCard />
+        {/*
+            "VERIFY YOUR ACCOUNT" (./verify-card.tsx): a member the
+            verified-identity rule holds to it adds a phone here, or links
+            GitHub and X. Nothing in the prerender, like the card above.
+        */}
+        <VerifyCard />
         <ChallengesSection />
         {/*
             THE "YOU" AREA IS GONE, and Profile did not go with it. A fifth

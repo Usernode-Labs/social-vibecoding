@@ -296,7 +296,9 @@ test('the status read exposes the expected fingerprint and the automatic history
   const get = getHandlerFull();
   assert.match(get, /expectedFingerprint: stagingEnv\.expectedStagingFingerprint\(/,
     'an admin diagnosing "why is everything stale" needs the digest being compared');
-  assert.match(get, /automatic: stagingReap\.readAutomatic\(\)/);
+  // The pass runs on the leader: a process that does not lead reads the
+  // leader's copy (services/leader-status.js), else its own.
+  assert.match(get, /automatic: await leaderStatus\.readOr\('staging-reap\.automatic', pool, stagingReap\.readAutomatic\)/);
 });
 
 test('the demo payload covers the new tile and the automatic line', () => {

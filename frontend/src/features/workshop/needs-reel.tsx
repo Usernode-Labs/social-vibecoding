@@ -34,7 +34,7 @@
  * effect; nothing here is in the prerendered document.
  */
 
-import { useEffect, useMemo, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, type ReactNode } from 'react';
 
 import type { DevWorkshopView } from '../dev-board/card/model';
 import { callAppView } from '../dev-board/card/fold';
@@ -198,21 +198,35 @@ function ReelApp(item: FeedRow): ReactNode {
 
 const NO_MODELS: DevWorkshopView['models'] = { list: [], selected: null };
 
-export function NeedsReel({ items, error, capped, onDone }: {
+export function NeedsReel({ items, error, capped, onDone, onAnswered }: {
   items: NeedsFeedItem[] | null;
   error: boolean;
   /** The read stopped at its bound: there may be more than these. */
   capped: boolean;
   /** The end card's way on: back to the list of communities. */
   onDone: () => void;
+  /**
+   * #4794: a vote the feed has just saved, so the controller can take its
+   * card out of the store's copy at once. Absent on a project's own feed,
+   * whose refresh already drops the row.
+   */
+  onAnswered?: (id: number, epoch: number | null) => void;
 }) {
   // `t` changes with the language on screen, so the rows' words (reelRows)
   // are read again when it does.
   const t = useMessages('communities');
-  const rows = useMemo(() => (items ? reelRows(items, (md) => {
-    const out = callAppView('_proposalSummaryHtml', { pr_summary_md: md });
-    return typeof out === 'string' ? out : '';
-  }) : []), [items, t]);
+  // `epochs` is each row's source item's epoch, keyed by the row key
+  // NeedsFeed answers by: the vote's third argument, which the answered set
+  // matches on.
+  const { rows, epochs } = useMemo(() => {
+    const built = items ? reelRows(items, (md) => {
+      const out = callAppView('_proposalSummaryHtml', { pr_summary_md: md });
+      return typeof out === 'string' ? out : '';
+    }) : [];
+    const epochs = new Map<string, number | null>();
+    items?.forEach((item, i) => epochs.set(built[i].key, item.epoch));
+    return { rows: built, epochs };
+  }, [items, t]);
   // The ask box's models: the dev session's own list, as on a project page.
   const models = useMemo(() => {
     const m = callAppView('_workshopModels') as DevWorkshopView['models'] | undefined;
@@ -224,14 +238,24 @@ export function NeedsReel({ items, error, capped, onDone }: {
     callAppView('_attrInit');
     callAppView('_cardMenuInit');
   }, []);
+  // ONCE DRAWN, DRAWN (#4794): a vote on the last card empties the store's
+  // feed, and the feed the viewer is inside must not switch to the empty
+  // line over their head — the pin keeps the answered card, and the end card
+  // follows. Reset by the unmount, so reopening a genuinely empty feed still
+  // says so.
+  const drawnRef = useRef(false);
+  useEffect(() => {
+    if (items && items.length) drawnRef.current = true;
+  }, [items]);
 
   if (error) {
     return <p className="px-4 pt-3 text-sm text-zinc-500 dark:text-zinc-400" data-needs-error="">{t('communities:reel.error')}</p>;
   }
-  if (!items) {
+  if (!items && !drawnRef.current) {
     return <div className="workshop-needs-feed workshop-reel-loading" data-needs-reel="" aria-busy="true" aria-label={t('communities:reel.loading')} />;
   }
-  if (!items.length) {
+  const shown = items || [];
+  if (!shown.length && !drawnRef.current) {
     return <p className="px-4 pt-3 text-sm text-zinc-500 dark:text-zinc-400" data-needs-empty="">{t('communities:reel.empty')}</p>;
   }
   return (
@@ -245,11 +269,19 @@ export function NeedsReel({ items, error, capped, onDone }: {
           onDone={onDone}
           doneLabel={t('communities:reel.done')}
           renderApp={ReelApp}
+          onAnswered={onAnswered ? (row) => {
+            // A group decision has no Yes or No in the feed (reelRows sets
+            // both to null), so answer() never reaches here for one; a
+            // proposal's epoch rides along for the answered set.
+            if (row.askAbout && row.askAbout.kind === 'proposal') {
+              onAnswered(row.askAbout.ref as number, epochs.get(row.key) ?? null);
+            }
+          } : undefined}
         />
       </div>
-      {capped ? (
+      {capped && shown.length ? (
         <p className="px-4 pt-2 text-xs text-zinc-500 dark:text-zinc-400" data-needs-capped="">
-          {t('communities:reel.capped', { count: items.length })}
+          {t('communities:reel.capped', { count: shown.length })}
         </p>
       ) : null}
     </>

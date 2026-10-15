@@ -1,56 +1,19 @@
-import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
+import { useEffect, useRef, useSyncExternalStore } from 'react';
 
-import { Button } from '@/components/ui/button';
-import { SectionHeader } from '@/components/ui/grouped-list';
-import { ChevronDownIcon, ListLinesIcon, SpinnerRingIcon } from '@/components/ui/icons';
-import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
-import { useMessages } from '../../lib/i18n/react';
-import { t as translate } from '../../lib/i18n/runtime';
-import { agoStamp } from '../../lib/timestamp';
 import * as api from './api';
-import {
-  ACTIVITY_OUTCOME_LABELS, ACTIVITY_OUTCOME_TONES, ActivityBadge, ActivityLead, ActivityLink, TONE_WORDS, outcomeLabel, spanText,
-  type ActivityTone,
-} from './bot-activity';
-import { releaseMinutes, releaseOf, releaseSentence } from '../../lib/release-eta';
-import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { POLL_MS } from './bot-activity-store';
-import { WORK_CHANGED_EVENT, dotText, jobName, jobTitle } from './bot-shared';
-import type {
-  ConversationMessage, HomeroomBotActivityOutcome, HomeroomBotCurrentJob, HomeroomBotJob, HomeroomBotPastJob,
-  HomeroomBotPhase, HomeroomBotWork,
-} from './types';
+import { WORK_CHANGED_EVENT, jobName, jobTitle } from './bot-shared';
+import type { ConversationMessage, HomeroomBotWork } from './types';
 
 export { WORK_CHANGED_EVENT, jobName, jobTitle };
 
 /*
- * #3692: the activity tray in the Homeroom bot's DM.
- *
- * The DM carries the bot's news one message at a time. This is the state in
- * between, read from the platform's records of its work for the viewer and
- * nobody else (services/homeroom-bot-tray.js):
- *
- *   - a STATUS LINE in the chat header, under the bot's name where a DM says
- *     "Direct message": what it is working on for them ("Working on Ear
- *     Trainer #5 · following up"), else what waits on them, else the last
- *     thing it did. A phone gets a short form of the same line. It is words
- *     only (#3770): the name block it sits in used to be the toggle, and
- *     nobody read a name as a control.
- *   - an ACTIVITY DISC among the header's discs, on every width, which opens
- *     the panel at any time, working or not. Its badge is the live dot while
- *     the bot works, or the number of requests that wait on the viewer.
- *   - the PANEL it opens: a sheet that drops over the transcript at the
- *     pane's full width (the conversation under it does not move), closed
- *     again by the disc, Escape, or a press anywhere else but the full-width
- *     toggle beside it, which only widens the pane under it. Its tiles are
- *     the activity cards' language (./bot-activity.tsx): the ring with the
- *     step while the bot works, then Done / Needs you / Ended / Didn't
- *     finish, the request, what came of it, and where to open it. History's
- *     tiles lead with the app's own icon instead, the ending a badge on its
- *     corner (#4201). Each
- *     request is one tile, in the first group that fits: Now, Needs you,
- *     History. History starts folded away. A request's other runs fold into
- *     its tile.
+ * #3692: what the Homeroom bot is doing for the viewer, read from the
+ * platform's records of its work for them and nobody else (services/
+ * homeroom-bot-tray.js): Now, Needs you and History. One request, one
+ * story: drawn as the "Your requests" strip under the chat's header
+ * (./bot-strip.tsx), which replaced the Activity disc, its panel of tiles
+ * and the header's long status line.
  *
  * WHEN IT READS AGAIN. The same realtime Messages already runs on: the
  * bot's news landing in this DM (a new message from it, which the store
@@ -59,8 +22,7 @@ export { WORK_CHANGED_EVENT, jobName, jobTitle };
  * reaches every one of their tabs as `homeroom_bot_work_changed` and which
  * public/js/app.js turns into the window event below (as it does after a
  * socket reconnects). Like every conversation event, it carries no data: the
- * tray re-reads its endpoint under the viewer's own session. Opening the
- * panel reads it too.
+ * strip re-reads its endpoint under the viewer's own session.
  *
  * #8 (WP3): every one of those re-reads asks the server (`fresh`), never the
  * service worker's offline copy, which on a slow answer was the state from
@@ -69,31 +31,21 @@ export { WORK_CHANGED_EVENT, jobName, jobTitle };
  * it reads again every POLL_MS, as the activity cards do, for the steps the
  * loop announces nothing for. Only opening the DM keeps the ordinary read.
  *
- * ONE STATE, THREE PLACES. The header's status line, its disc and the
- * panel are drawn by different parts of the thread pane, so what was read,
- * whether the panel is open and whether History is unfolded live in one
- * small store here, which BotWorkSync keeps current.
- *
- * OWNERSHIP. Every node here is React's, inside the thread pane React already
- * owns; nothing outside writes into it. Nothing is read until the sync's
- * effect runs, so a first render matches whatever was drawn before.
+ * OWNERSHIP. Nothing here draws: the strip is React's, inside the thread
+ * pane React already owns. Nothing is read until the sync's effect runs, so
+ * a first render matches whatever was drawn before.
  */
 
-export const BOT_WORK_PANEL_ID = 'messages-bot-work-panel';
-const HISTORY_ID = 'messages-bot-work-history';
-
-// ── The store: what was read, and what is open ───────────────────────────
+// ── The store: what was read ───────────────────────────
 
 export interface BotWorkState {
   /** Null until the first read lands. */
   work: HomeroomBotWork | null;
   /** The last read failed (what was read before is kept). */
   failed: boolean;
-  open: boolean;
-  historyOpen: boolean;
 }
 
-const INITIAL: BotWorkState = { work: null, failed: false, open: false, historyOpen: false };
+const INITIAL: BotWorkState = { work: null, failed: false };
 let state: BotWorkState = INITIAL;
 const listeners = new Set<() => void>();
 
@@ -109,16 +61,6 @@ function subscribe(listener: () => void): () => void {
 
 export function useBotWork(): BotWorkState {
   return useSyncExternalStore(subscribe, () => state, () => INITIAL);
-}
-
-/** Open or shut the panel. It opens with History folded away. */
-export function setBotWorkOpen(open: boolean): void {
-  if (state.open === open) return;
-  publish(open ? { open, historyOpen: false } : { open });
-}
-
-export function toggleBotWork(): void {
-  setBotWorkOpen(!state.open);
 }
 
 // Only the newest read may land: an older one finishing late is dropped.
@@ -139,247 +81,6 @@ function resetBotWork(): void {
   publish(INITIAL);
 }
 
-// ── Words ────────────────────────────────────────────────────────────────
-
-/*
- * The words below are the person's, never the platform's: a change, waiting
- * for approval, live. "proposed Flat 4B Chores" in the header after a first
- * version was ready (4 October) is what this rule is for, and
- * tests/homeroom-bot-tray.test.js holds every line here to it.
- */
-
-/** What a tile of Now says the bot is doing when the server sends no words of its own. */
-export const PHASE_LABELS: Record<HomeroomBotPhase, string> = {
-  looking: 'messages:bot.phase.looking',
-  building: 'messages:bot.phase.building',
-  following_up: 'messages:bot.phase.followingUp',
-  setting_up: 'messages:bot.phase.settingUp',
-  // #3734: one per step services/homeroom-bot-tray.js draws an in-flight
-  // stage of the bot's progress as.
-  queued: 'messages:bot.phase.queued',
-  follow_up_queued: 'messages:bot.phase.followUpQueued',
-  merging: 'messages:bot.phase.merging',
-};
-
-/** The same, as the header's status line says it after the request's name. */
-export const SHORT_PHASES: Record<HomeroomBotPhase, string> = {
-  looking: 'messages:bot.tray.workingOnPhase.looking',
-  building: 'messages:bot.tray.workingOnPhase.building',
-  following_up: 'messages:bot.tray.workingOnPhase.followingUp',
-  setting_up: 'messages:bot.tray.workingOnPhase.settingUp',
-  queued: 'messages:bot.tray.workingOnPhase.queued',
-  follow_up_queued: 'messages:bot.tray.workingOnPhase.followUpQueued',
-  merging: 'messages:bot.tray.workingOnPhase.merging',
-};
-
-/** The same lines for a project nobody can name (see LAST_WORDS_UNNAMED). */
-export const SHORT_PHASES_UNNAMED: Record<HomeroomBotPhase, string> = {
-  looking: 'messages:bot.tray.workingOnPhase.lookingUnnamed',
-  building: 'messages:bot.tray.workingOnPhase.buildingUnnamed',
-  following_up: 'messages:bot.tray.workingOnPhase.followingUpUnnamed',
-  setting_up: 'messages:bot.tray.workingOnPhase.settingUpUnnamed',
-  queued: 'messages:bot.tray.workingOnPhase.queuedUnnamed',
-  follow_up_queued: 'messages:bot.tray.workingOnPhase.followUpQueuedUnnamed',
-  merging: 'messages:bot.tray.workingOnPhase.mergingUnnamed',
-};
-
-/**
- * The last thing the bot did, as the status line says it when nothing else
- * is going on: the same ending its activity card names
- * (ACTIVITY_OUTCOME_LABELS, and the server's copy in
- * services/homeroom-bot-activity.js), with the request's name in it.
- */
-export const LAST_WORDS: Record<HomeroomBotActivityOutcome, string> = {
-  question: 'messages:bot.last.question',
-  proposed: 'messages:bot.last.proposed',
-  live: 'messages:bot.last.live',
-  closed: 'messages:bot.last.closed',
-  blocked: 'messages:bot.last.blocked',
-  build_failed: 'messages:bot.last.buildFailed',
-  person: 'messages:bot.last.person',
-  empty: 'messages:bot.last.empty',
-  failed: 'messages:bot.last.failed',
-  held: 'messages:bot.last.held',
-  stopped: 'messages:bot.last.stopped',
-  answer: 'messages:bot.last.answer',
-  revise: 'messages:bot.last.revise',
-  checking: 'messages:bot.last.checking',
-  needs_look: 'messages:bot.last.needsLook',
-  going_live: 'messages:bot.last.goingLive',
-};
-
-/**
- * The same endings for a project nobody can name: the job's name is then only
- * the stand-in, and each sentence has a wording of its own instead of taking
- * that word as a name.
- */
-export const LAST_WORDS_UNNAMED: Record<HomeroomBotActivityOutcome, string> = {
-  question: 'messages:bot.last.questionUnnamed',
-  proposed: 'messages:bot.last.proposedUnnamed',
-  live: 'messages:bot.last.liveUnnamed',
-  closed: 'messages:bot.last.closedUnnamed',
-  blocked: 'messages:bot.last.blockedUnnamed',
-  build_failed: 'messages:bot.last.buildFailedUnnamed',
-  person: 'messages:bot.last.personUnnamed',
-  empty: 'messages:bot.last.emptyUnnamed',
-  failed: 'messages:bot.last.failedUnnamed',
-  held: 'messages:bot.last.heldUnnamed',
-  stopped: 'messages:bot.last.stoppedUnnamed',
-  answer: 'messages:bot.last.answerUnnamed',
-  revise: 'messages:bot.last.reviseUnnamed',
-  checking: 'messages:bot.last.checkingUnnamed',
-  needs_look: 'messages:bot.last.needsLookUnnamed',
-  going_live: 'messages:bot.last.goingLiveUnnamed',
-};
-
-function capitalized(text: string): string {
-  return text ? text[0].toUpperCase() + text.slice(1) : text;
-}
-
-/** Which of the release's phrases (../../lib/release-eta.ts releaseShort) a line says: `minutes` counts down. */
-type ReleaseCase = { kind: 'waiting' | 'now' | 'next'; minutes?: undefined } | { kind: 'minutes'; minutes: number };
-
-/**
- * A merge of the platform's own app waits for the platform's next release,
- * and the status line says when, where any other says "going live": "Working
- * on Homeroom #12 · goes live in about 8 minutes", "Last: Homeroom #12 goes
- * live in about 8 minutes" (../../lib/release-eta.ts). Each case is a whole
- * line of its own (WORKING_RELEASE, LAST_RELEASE), read in releaseShort's
- * order: waiting, then counting down, then no estimate at all, else now (its
- * release is rolling out, or the estimate has passed). Null without a
- * release block.
- */
-function releaseCase(job: HomeroomBotJob, now: Date): ReleaseCase | null {
-  const release = job.release ? releaseOf(job.release) : null;
-  if (!release) return null;
-  if (release.state === 'waiting') return { kind: 'waiting' };
-  const minutes = releaseMinutes(release, now.getTime());
-  if (minutes != null) return { kind: 'minutes', minutes };
-  return { kind: release.state === 'next' && !release.etaAt ? 'next' : 'now' };
-}
-
-/** The header's line for one merge of Homeroom itself, by its release (releaseCase): message ids. */
-const WORKING_RELEASE: Record<ReleaseCase['kind'], string> = {
-  waiting: 'messages:bot.tray.workingOnRelease.waiting',
-  now: 'messages:bot.tray.workingOnRelease.now',
-  next: 'messages:bot.tray.workingOnRelease.next',
-  minutes: 'messages:bot.tray.workingOnRelease.minutes',
-};
-
-/** The same, as the last thing the bot did (LAST_WORDS' `going_live`): message ids. */
-const LAST_RELEASE: Record<ReleaseCase['kind'], string> = {
-  waiting: 'messages:bot.last.release.waiting',
-  now: 'messages:bot.last.release.now',
-  next: 'messages:bot.last.release.next',
-  minutes: 'messages:bot.last.release.minutes',
-};
-
-/**
- * The wide status line's one job and its stage, as one message. A release
- * block comes only with the platform's own app, whose slug always names it,
- * so the stand-in for an unnamed project keeps its plain wording.
- */
-function workingLine(job: HomeroomBotCurrentJob, now: Date): string {
-  if (nameIsStandIn(job)) return translate(SHORT_PHASES_UNNAMED[job.phase] || 'messages:bot.tray.workingOnUnnamed');
-  const release = job.phase === 'merging' ? releaseCase(job, now) : null;
-  if (release) return translate(WORKING_RELEASE[release.kind], { job: jobName(job), count: release.minutes });
-  return translate(SHORT_PHASES[job.phase] || 'messages:bot.tray.workingOn', { job: jobName(job) });
-}
-
-/**
- * The status line's last thing the bot did, named `name` (or, `unnamed`, in
- * its own wording: as workingLine says, a release block never comes with it).
- */
-function lastLine(job: HomeroomBotPastJob, outcome: HomeroomBotActivityOutcome, name: string, unnamed: boolean, now: Date): string {
-  if (unnamed) return translate(LAST_WORDS_UNNAMED[outcome]);
-  const release = outcome === 'going_live' ? releaseCase(job, now) : null;
-  if (release) return translate(LAST_RELEASE[release.kind], { job: name, count: release.minutes });
-  return translate(LAST_WORDS[outcome], { job: name });
-}
-
-/** "#12", or the project's name for a first version: what the phone's status line names. */
-function shortName(job: Pick<HomeroomBotJob, 'appName' | 'issueNumber' | 'firstVersion'>): string {
-  return !job.firstVersion && job.issueNumber ? `#${job.issueNumber}` : job.appName;
-}
-
-/** The full name (bot-shared `jobName`) is the bare stand-in: an unnamed project's work that is neither a first version nor a numbered request. */
-function nameIsStandIn(job: Pick<HomeroomBotJob, 'appUnnamed' | 'issueNumber' | 'firstVersion'>): boolean {
-  return !!job.appUnnamed && !job.firstVersion && !job.issueNumber;
-}
-
-/** The short name is the stand-in for a project nobody can name: the line has its own wording. */
-function shortUnnamed(job: Pick<HomeroomBotJob, 'appUnnamed' | 'issueNumber' | 'firstVersion'>): boolean {
-  return !!job.appUnnamed && !(!job.firstVersion && job.issueNumber);
-}
-
-/** #8 (WP3): the steps of Now that wait their turn in the bot's queue rather than run. */
-const QUEUED_PHASES: ReadonlySet<HomeroomBotPhase> = new Set<HomeroomBotPhase>(['queued', 'follow_up_queued']);
-
-export interface TrayStatus {
-  /** working: the bot has something in hand; you: something waits on the viewer; last: what it did last. */
-  kind: 'working' | 'you' | 'last' | 'idle';
-  long: string;
-  short: string;
-}
-
-/**
- * The header's status line, from what was read: "Working on Ear Trainer #5 ·
- * following up", "Ear Trainer #12 needs you", "Last: answered on Ear Trainer
- * #9 · 16h ago", and a short form of each for a phone. Before the first
- * read, and with nothing to say, it names what opens: "Activity".
- *
- * #8 (WP3, D6): when everything in hand only waits its turn in the queue,
- * the phone's short form says so ("#3 queued") rather than "Working on #3".
- * The long form keeps counting it ("Working on 3 requests", which a declared
- * check reads).
- */
-export function trayStatus(work: HomeroomBotWork | null, now: Date = new Date()): TrayStatus {
-  const plain: TrayStatus = { kind: 'idle', long: translate('messages:bot.tray.activity'), short: translate('messages:bot.tray.activity') };
-  if (!work) return plain;
-  const waiting = work.needsYou.length;
-  const needs = waiting ? translate('messages:bot.tray.needYou', { count: waiting }) : null;
-  const queued = work.now.length > 0 && work.now.every((job) => QUEUED_PHASES.has(job.phase));
-  // A phone's line has room for one of the two: what waits on them wins.
-  if (work.now.length === 1) {
-    const job = work.now[0];
-    let short = shortUnnamed(job) ? translate('messages:bot.tray.workingOnShortUnnamed') : translate('messages:bot.tray.workingOnShort', { job: shortName(job) });
-    if (queued) short = waiting ? translate('messages:bot.tray.queuedNeedYou', { count: waiting }) : (shortUnnamed(job) ? translate('messages:bot.tray.jobQueuedUnnamed') : translate('messages:bot.tray.jobQueued', { job: shortName(job) }));
-    else if (waiting) short = translate('messages:bot.tray.workingNeedYou', { count: waiting });
-    // The job and its stage are one message; an unknown stage says the job alone.
-    return { kind: 'working', long: dotText([workingLine(job, now), needs]), short };
-  }
-  if (work.now.length) {
-    const count = work.now.length;
-    let short = translate('messages:bot.tray.workingOnCount', { count });
-    if (queued) short = waiting ? translate('messages:bot.tray.queuedNeedYou', { count: waiting }) : translate('messages:bot.tray.countQueued', { count });
-    else if (waiting) short = translate('messages:bot.tray.workingNeedYou', { count: waiting });
-    return { kind: 'working', long: dotText([translate('messages:bot.tray.workingOnRequests', { count }), needs]), short };
-  }
-  if (waiting === 1) {
-    const job = work.needsYou[0];
-    return {
-      kind: 'you',
-      long: nameIsStandIn(job) ? translate('messages:bot.tray.jobNeedsYouUnnamed') : translate('messages:bot.tray.jobNeedsYou', { job: jobName(job) }),
-      short: shortUnnamed(job) ? translate('messages:bot.tray.jobNeedsYouShortUnnamed') : translate('messages:bot.tray.jobNeedsYouShort', { job: shortName(job) }),
-    };
-  }
-  if (waiting) {
-    return {
-      kind: 'you',
-      long: translate('messages:bot.tray.requestsNeedYou', { count: waiting }),
-      short: translate('messages:bot.tray.needYouShort', { count: waiting }),
-    };
-  }
-  const last = work.history[0];
-  if (!last?.outcome) return plain;
-  const ago = agoStamp(last.at, { now }).text;
-  return {
-    kind: 'last',
-    long: dotText([lastLine(last, last.outcome, jobName(last), nameIsStandIn(last), now), ago]),
-    short: dotText([lastLine(last, last.outcome, shortName(last), shortUnnamed(last), now), ago]),
-  };
-}
-
 /** The id of the newest message the bot sent here: its news moves its work on. */
 export function newestBotMessageId(messages: ConversationMessage[]): number | null {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
@@ -389,409 +90,22 @@ export function newestBotMessageId(messages: ConversationMessage[]): number | nu
   return null;
 }
 
-// ── The status line ──────────────────────────────────────────────────────
-
-function PingDot() {
-  return (
-    <span className="relative flex h-2 w-2 shrink-0" aria-hidden="true">
-      <span className="absolute inline-flex h-full w-full rounded-full bg-[color:var(--accent)] opacity-60 motion-safe:animate-ping" />
-      <span className="relative inline-flex h-2 w-2 rounded-full bg-[color:var(--accent)]" />
-    </span>
-  );
-}
-
 /**
- * The line under the bot's name, a pure render. Words only: the Activity
- * disc beside it is the toggle (#3770).
- */
-export function BotWorkStatusView({ status }: { status: TrayStatus }) {
-  const loud = status.kind === 'working' || status.kind === 'you';
-  return (
-    <div
-      className={`messages-thread-sub flex items-center gap-1.5${loud ? ' font-semibold text-[color:var(--brand-ink)]' : ''}`}
-      data-bot-work-status={status.kind}
-    >
-      {status.kind === 'working' ? <PingDot /> : null}
-      <span className="min-w-0 truncate">
-        <span className="hidden sm:inline">{status.long}</span>
-        <span className="sm:hidden">{status.short}</span>
-      </span>
-    </div>
-  );
-}
-
-export function BotWorkStatusLine() {
-  // Subscribed: trayStatus reads its words as this renders.
-  useMessages('messages');
-  const { work } = useBotWork();
-  return <BotWorkStatusView status={trayStatus(work)} />;
-}
-
-// ── The disc ─────────────────────────────────────────────────────────────
-
-/**
- * #3770: the toggle, a disc among the header's discs (index.tsx
- * ThreadHeader), drawn on a phone too. A press on it is not "outside" the
- * panel, and Escape hands focus back to it: both find it by
- * `data-bot-work-toggle`. Its badge is the number of requests that wait on
- * the viewer, the accent's job (AGENTS.md), else nothing.
- *
- * #4198: its glyph says what the bot is doing. While it works, a turning
- * ring, the same "building" cue the platform mark draws (header/
- * platform-mark.tsx), held still where motion is unwelcome; otherwise a
- * list, for what the panel holds. A clock read as "history". The ring
- * carries the tray's state as `data-bot-work-status`, as the line and the
- * count do, which is what the declared check (dapp.json
- * homeroom-bot-dm-activity-tray) selects the toggle by. A pure render.
- */
-export function BotWorkButtonView({ work, open, onToggle }: { work: HomeroomBotWork | null; open: boolean; onToggle?: () => void }) {
-  const t = useMessages('messages');
-  const { kind } = trayStatus(work);
-  const waiting = work ? work.needsYou.length : 0;
-  let badge: ReactNode = null;
-  if (waiting) {
-    badge = (
-      <span className="messages-bot-work-badge messages-bot-work-count" data-bot-work-status={kind} aria-hidden="true">
-        {waiting > 9 ? '9+' : waiting}
-      </span>
-    );
-  }
-  const glyph = kind === 'working'
-    ? <SpinnerRingIcon className="motion-safe:animate-spin motion-reduce:animate-none" data-bot-work-status={kind} aria-hidden="true" />
-    : <ListLinesIcon aria-hidden="true" />;
-  return (
-    <button
-      type="button"
-      className="messages-thread-action messages-bot-work-button"
-      aria-label={t('messages:bot.tray.button')}
-      title={t('messages:bot.tray.button')}
-      aria-expanded={open}
-      aria-controls={BOT_WORK_PANEL_ID}
-      data-bot-work-toggle=""
-      onClick={onToggle}
-    >
-      {glyph}
-      {badge}
-    </button>
-  );
-}
-
-export function BotWorkButton() {
-  const { work, open } = useBotWork();
-  return <BotWorkButtonView work={work} open={open} onToggle={toggleBotWork} />;
-}
-
-// ── The panel ────────────────────────────────────────────────────────────
-
-const TILE_GRID = 'grid grid-cols-[repeat(auto-fill,minmax(17rem,1fr))] items-start gap-2.5 px-3';
-
-function PanelNote({ children, className = '' }: { children: string; className?: string }) {
-  return <p className={`px-4 pb-1 text-[0.8125rem] leading-[1.125rem] text-zinc-500 dark:text-zinc-400 ${className}`}>{children}</p>;
-}
-
-/** Where a tile can be opened: its proposal once people can open it, its request, or its project. */
-function tileLinks(job: HomeroomBotJob): ReactNode[] {
-  const links: ReactNode[] = [];
-  if (job.links.proposal) links.push(<ActivityLink key="proposal" data="bot-work" href={job.links.proposal}>{translate('messages:bot.tray.openChange')}</ActivityLink>);
-  if (job.links.request) {
-    links.push(
-      <ActivityLink key="request" data="bot-work" href={job.links.request}>
-        {job.firstVersion || !job.issueNumber ? translate('messages:bot.tray.openRequest') : translate('messages:bot.tray.requestNumber', { number: job.issueNumber })}
-      </ActivityLink>,
-    );
-  } else if (job.links.project) {
-    links.push(<ActivityLink key="project" data="bot-work" href={job.links.project}>{translate('messages:bot.tray.openProject')}</ActivityLink>);
-  }
-  return links;
-}
-
-interface TileProps {
-  job: HomeroomBotJob;
-  group: 'now' | 'you' | 'history';
-  tone: ActivityTone | null;
-  lead: ReactNode;
-  eyebrow: string;
-  status: string;
-  ago: (value: string | null) => string;
-}
-
-/** One request, in the activity cards' language. Its earlier runs fold away under it. */
-function Tile({ job, group, tone, lead, eyebrow, status, ago }: TileProps) {
-  const t = useMessages('messages');
-  const [showEarlier, setShowEarlier] = useState(false);
-  const links = tileLinks(job);
-  const earlier = job.earlier;
-  return (
-    <div
-      className="flex min-w-0 flex-col gap-2.5 rounded-2xl bg-zinc-50 px-3 py-2.5 dark:bg-zinc-950/60"
-      role="group"
-      aria-label={jobTitle(job)}
-      data-bot-work-tile={group}
-      data-bot-work-tone={tone || 'working'}
-    >
-      <div className="flex items-start gap-3">
-        {lead}
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-            <span className="truncate">{eyebrow}</span>
-          </div>
-          <div className="line-clamp-2 text-[0.9375rem] font-semibold leading-5 text-zinc-900 dark:text-zinc-100">{jobTitle(job)}</div>
-          <p className="text-[0.8125rem] leading-[1.125rem] text-zinc-500 dark:text-zinc-400" data-bot-work-tile-status="">{status}</p>
-        </div>
-      </div>
-      {links.length || earlier.length ? (
-        <div className="flex flex-wrap items-center gap-2">
-          {links}
-          {earlier.length ? (
-            <button
-              type="button"
-              className="ml-auto inline-flex items-center gap-1 rounded-full px-1.5 py-1 text-[0.8125rem] text-zinc-500 dark:text-zinc-400"
-              aria-expanded={showEarlier}
-              data-bot-work-earlier={earlier.length}
-              onClick={() => setShowEarlier((shown) => !shown)}
-            >
-              {t('messages:bot.tray.earlierRuns', { count: earlier.length })}
-              <ChevronDownIcon className={`h-3.5 w-3.5 transition-transform ${showEarlier ? 'rotate-180' : ''}`} aria-hidden="true" />
-            </button>
-          ) : null}
-        </div>
-      ) : null}
-      {showEarlier ? (
-        <ul className="flex flex-col gap-1.5 border-t border-zinc-200 pt-2 dark:border-zinc-800">
-          {earlier.map((run) => (
-            <li key={run.id} className="flex gap-2 text-[0.8125rem] leading-[1.125rem] text-zinc-500 dark:text-zinc-400">
-              <span className="min-w-0 flex-1">{t(ACTIVITY_OUTCOME_LABELS[run.outcome])}</span>
-              <span className="shrink-0">{ago(run.at)}</span>
-            </li>
-          ))}
-        </ul>
-      ) : null}
-    </div>
-  );
-}
-
-function withTime(text: string, time: string): string {
-  return time ? translate('messages:list.dot', { first: text, second: time }) : text;
-}
-
-function NowTile({ job, at, ago }: { job: HomeroomBotCurrentJob; at: Date; ago: (value: string | null) => string }) {
-  const t = useMessages('messages');
-  const stepped = !!job.step && !!job.of;
-  const eyebrow = stepped
-    ? (job.stepName
-      ? t('messages:bot.tray.eyebrowStepNamed', { step: job.step as number, total: job.of as number, name: job.stepName })
-      : t('messages:bot.tray.eyebrowStep', { step: job.step as number, total: job.of as number }))
-    : t('messages:bot.tray.eyebrowWorking');
-  const elapsed = spanText(job.since, at);
-  return (
-    <Tile
-      job={job}
-      group="now"
-      tone={null}
-      lead={<ActivityLead step={job.step} of={job.of} stepName={job.stepName} working />}
-      eyebrow={eyebrow}
-      status={withTime(
-        (job.phase === 'merging' && job.release && releaseSentence(job.release, at.getTime()))
-          || (job.doing ? capitalized(job.doing) : t(PHASE_LABELS[job.phase])),
-        elapsed ? t('messages:bot.tray.soFar', { duration: elapsed }) : '',
-      )}
-      ago={ago}
-    />
-  );
-}
-
-/**
- * #4201: a History tile's lead: the app's own icon (its image, else its
- * emoji, else its initial, as every app tile draws it) in the ring's 38px,
- * with how the work ended as a badge on its corner. The tile is app.css's
- * `.app-icon-tile`, which owns its face; the emoji and the initial are sized
- * down to the box here. Not a link: the tile's own links say where to go.
- */
-export function AppStatusLead({ job, tone }: { job: HomeroomBotJob; tone: ActivityTone }) {
-  const app = { icon_url: job.iconUrl, icon_emoji: job.iconEmoji, name: job.appName };
-  return (
-    <span className="relative shrink-0" data-bot-work-app-lead="">
-      <span
-        className="app-icon-tile flex h-[38px] w-[38px] items-center justify-center overflow-hidden rounded-xl text-base font-bold [&>span]:text-xl"
-        data-icon={appIconKind(app)}
-        aria-hidden="true"
-      >
-        <AppIconContent app={app} />
-      </span>
-      <ActivityBadge tone={tone} className="absolute -bottom-1 -right-1" />
-    </span>
-  );
-}
-
-function PastTile({ job, group, at, ago }: {
-  job: HomeroomBotPastJob; group: 'you' | 'history'; at: Date; ago: (value: string | null) => string;
-}) {
-  const t = useMessages('messages');
-  const tone: ActivityTone = group === 'you' ? 'you' : (job.outcome ? ACTIVITY_OUTCOME_TONES[job.outcome] : 'ended');
-  const said = job.outcome ? outcomeLabel(job, at.getTime()) : job.doing ? capitalized(job.doing) : t('messages:bot.tray.waitingOnYou');
-  return (
-    <Tile
-      job={job}
-      group={group}
-      tone={tone}
-      lead={group === 'history' ? <AppStatusLead job={job} tone={tone} /> : <ActivityLead tone={tone} />}
-      eyebrow={t(TONE_WORDS[tone])}
-      status={withTime(said, ago(job.at))}
-      ago={ago}
-    />
-  );
-}
-
-export interface BotWorkPanelViewProps {
-  /** Null until the first read lands. */
-  work: HomeroomBotWork | null;
-  /** The last read failed (what was read before stays drawn). */
-  failed?: boolean;
-  historyOpen?: boolean;
-  onToggleHistory?: () => void;
-  onRetry?: () => void;
-  /** For a test: the moment "4m ago" is counted from. */
-  now?: Date;
-}
-
-/** The panel itself, from what was read: a pure render, so a test can draw every state. */
-export function BotWorkPanelView({ work, failed = false, historyOpen = false, onToggleHistory, onRetry, now }: BotWorkPanelViewProps) {
-  const t = useMessages('messages');
-  const at = now || new Date();
-  const ago = (value: string | null) => agoStamp(value, { now: at }).text;
-  const idle = !!work && !work.now.length && !work.needsYou.length;
-  return (
-    <section
-      id={BOT_WORK_PANEL_ID}
-      className="absolute inset-x-3 top-1 max-h-[min(70vh,40rem)] overflow-y-auto overscroll-contain rounded-[20px] bg-white pb-3 shadow-[inset_0_0_0_1px_var(--app-sheet-line),0_18px_40px_-16px_rgba(0,0,0,0.35)] dark:bg-zinc-900"
-      aria-label={t('messages:bot.tray.panelName')}
-      data-bot-work-panel=""
-    >
-      {!work ? (
-        failed ? (
-          <div className="flex items-center gap-3 px-4 py-3" role="alert">
-            <span className="min-w-0 flex-1 text-[0.8125rem] text-zinc-500 dark:text-zinc-400">{t('messages:bot.tray.loadFailed')}</span>
-            <Button type="button" variant="pillNeutral" size="sm" ink="neutral" onClick={onRetry}>{t('core:common.tryAgain')}</Button>
-          </div>
-        ) : (
-          <SkeletonGroup label={t('messages:bot.tray.loading')} className="space-y-4 px-4 py-4">
-            {[0, 1, 2].map((key) => (
-              <div key={key} className="space-y-2">
-                <Skeleton className="w-2/3" />
-                <Skeleton shape="muted" className="w-1/3" />
-              </div>
-            ))}
-          </SkeletonGroup>
-        )
-      ) : (
-        <>
-          {work.now.length ? (
-            <>
-              <SectionHeader className="pt-3">{t('messages:bot.tray.sectionNow')}</SectionHeader>
-              <div className={TILE_GRID}>
-                {work.now.map((job) => <NowTile key={job.key} job={job} at={at} ago={ago} />)}
-              </div>
-            </>
-          ) : null}
-          {work.needsYou.length ? (
-            <>
-              <SectionHeader className={work.now.length ? 'pt-4' : 'pt-3'}>{t('messages:bot.tray.sectionNeedsYou')}</SectionHeader>
-              <div className={TILE_GRID}>
-                {work.needsYou.map((job) => <PastTile key={job.key} job={job} group="you" at={at} ago={ago} />)}
-              </div>
-            </>
-          ) : null}
-          {idle ? <PanelNote className="pt-3">{t('messages:bot.tray.idle')}</PanelNote> : null}
-          {work.history.length ? (
-            <>
-              <button
-                type="button"
-                className="mx-3 mt-3 flex w-[calc(100%-1.5rem)] items-center justify-center gap-1.5 rounded-[14px] bg-zinc-50 px-3 py-2.5 text-[0.875rem] font-semibold text-zinc-900 dark:bg-zinc-950/60 dark:text-zinc-100"
-                aria-expanded={historyOpen}
-                aria-controls={HISTORY_ID}
-                data-bot-work-history-toggle=""
-                onClick={onToggleHistory}
-              >
-                {historyOpen ? t('messages:bot.tray.hideHistory') : t('messages:bot.tray.showHistory', { count: work.history.length })}
-                <ChevronDownIcon className={`h-4 w-4 transition-transform ${historyOpen ? 'rotate-180' : ''}`} aria-hidden="true" />
-              </button>
-              {historyOpen ? (
-                <div id={HISTORY_ID} className={`${TILE_GRID} pt-2.5`}>
-                  {work.history.map((job) => <PastTile key={job.key} job={job} group="history" at={at} ago={ago} />)}
-                </div>
-              ) : null}
-            </>
-          ) : idle ? <PanelNote>{t('messages:bot.tray.empty')}</PanelNote> : null}
-          {failed ? <PanelNote className="pt-3">{t('messages:bot.tray.stale')}</PanelNote> : null}
-        </>
-      )}
-    </section>
-  );
-}
-
-/**
- * The panel in the bot's DM, under the chat header: drawn over the
- * transcript from a zero-height anchor, so opening it moves nothing. A
- * press anywhere but the panel and the header's toggle shuts it, as does
- * Escape, which hands focus back to the toggle. The full-width toggle
- * beside it (`data-bot-work-keep`) leaves it open (#3770): that one widens
- * the pane the panel is drawn in, and closing the panel too made it read as
- * the panel's own collapse control.
- */
-export function BotWorkPanel() {
-  const { work, failed, open, historyOpen } = useBotWork();
-  const anchor = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return undefined;
-    const onDown = (event: Event) => {
-      const target = event.target as Element | null;
-      if (!target || anchor.current?.contains(target) || target.closest?.('[data-bot-work-toggle], [data-bot-work-keep]')) return;
-      setBotWorkOpen(false);
-    };
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
-      setBotWorkOpen(false);
-      document.querySelector<HTMLElement>('[data-bot-work-toggle]')?.focus({ preventScroll: true });
-    };
-    document.addEventListener('mousedown', onDown);
-    document.addEventListener('touchstart', onDown);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', onDown);
-      document.removeEventListener('touchstart', onDown);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [open]);
-  if (!open) return null;
-  return (
-    <div ref={anchor} className="relative z-30 h-0 shrink-0" data-bot-work-tray="">
-      <BotWorkPanelView
-        work={work}
-        failed={failed}
-        historyOpen={historyOpen}
-        onToggleHistory={() => publish({ historyOpen: !historyOpen })}
-        onRetry={() => loadBotWork()}
-      />
-    </div>
-  );
-}
-
-/**
- * Keeps the tray in a conversation with the bot current (see the note at
+ * Keeps the strip in a conversation with the bot current (see the note at
  * the top). `newsKey` is the newest message the bot sent in this DM.
  * Renders nothing.
  */
 export function BotWorkSync({ conversationId, newsKey }: { conversationId: number; newsKey: number | null }) {
-  const { open, work } = useBotWork();
+  const { work } = useBotWork();
   const working = !!work && work.now.length > 0;
   // The newest bot message already accounted for. Null until this
   // conversation's transcript has drawn one: the first value it shows is
   // what was there when the read below was made, not news.
   const seenNews = useRef<number | null>(null);
 
-  // Another conversation is another tray: its panel starts shut and it reads
-  // afresh. The one ordinary read: what the worker kept is a fine first
-  // paint, and its late correction reads it again (store.ts resync).
+  // Another conversation is another strip: it reads afresh. The one
+  // ordinary read: what the worker kept is a fine first paint, and its late
+  // correction reads it again (store.ts resync).
   useEffect(() => {
     resetBotWork();
     seenNews.current = null;
@@ -822,10 +136,6 @@ export function BotWorkSync({ conversationId, newsKey }: { conversationId: numbe
     }, POLL_MS);
     return () => window.clearInterval(timer);
   }, [working]);
-
-  // Opening the panel reads it fresh; leaving the DM shuts it.
-  useEffect(() => { if (open) loadBotWork(); }, [open]);
-  useEffect(() => () => setBotWorkOpen(false), []);
 
   return null;
 }

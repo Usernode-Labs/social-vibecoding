@@ -12,8 +12,8 @@ import { botMeta, postedNote } from './bot-question';
 import { AnsweredChoices, PlanCardView, type AnsweredChoice, type PlanCardState, type PlanProgress } from './bot-plan-view';
 import { BotHeadWords, botHead } from './bot-head-card';
 import { MessageMarkdown } from './format';
-import { NotifyMe, notifyMeChosen } from './notify-me';
-import { answerBotQuestion, scopeKey, setReply, useMessagesSnapshot } from './store';
+import { NotifyLive, NotifyMe, notifyMeChosen } from './notify-me';
+import { answerBotQuestion, quoteInComposer, useMessagesSnapshot } from './store';
 import type { ConversationMessage, HomeroomBotActivity, HomeroomBotMeta } from './types';
 
 /*
@@ -41,7 +41,8 @@ import type { ConversationMessage, HomeroomBotActivity, HomeroomBotMeta } from '
  * the app's thumbnail row and build line); one moved before the thanks
  * existed (no `thanks` in its metadata) is still not drawn. While it is
  * being built, "Notify me when it's ready" is inside the plan card
- * (BotPlanCard's footer, ./notify-me.tsx).
+ * (BotPlanCard's footer, ./notify-me.tsx); for a first version (run six),
+ * the switch "We'll tell you when it's live", on until its maker turns it off.
  *
  * #4046: ONE SET OF SUGGESTIONS. While a plan or a question offers its own
  * answers, the bot's generic questions to tap (its hello's "How long will
@@ -55,8 +56,9 @@ import type { ConversationMessage, HomeroomBotActivity, HomeroomBotMeta } from '
  * the suggested one marked; Build it sends the answers as one message
  * quoting the card (the way a tapped answer has always gone, and so posted
  * on the request's public discussion, which the note says), with the
- * suggested answer for any left alone. Something else quotes it for answers
- * of one's own. One question keeps BotQuestion's one tap (./bot-question.tsx).
+ * suggested answer for any left alone (its button says Send answers, not
+ * Build it: Build it starts building a plan and nothing else). Write my own
+ * quotes it for answers of one's own. One question keeps BotQuestion's one tap (./bot-question.tsx).
  * #4197: answered, each question is a label over its answer's chip, read
  * back from the message's lines; an answer of one's own stays as written.
  */
@@ -166,11 +168,17 @@ export const NO_PLAN_LAYOUT: PlanLayout = { hidden: new Set(), cardOf: new Map()
  *     (the card that follows the build), unless it is the bot's thanks
  *     (#4392), which is always drawn;
  *   - the newest plan, waiting or built, reads the newest card's state.
+ *
+ * One request, one story: a plan posted in its request's thread (the card
+ * is the thread's root, and the main chat may also show the plan there) hides
+ * no card, since the card is the way into the thread, and reads the state of
+ * the card it hangs off.
  */
 export function planLayout(messages: readonly ConversationMessage[]): PlanLayout {
   const plans = new Map<string, ConversationMessage>();
   const cards = new Map<string, number[]>();
   const thanks = new Set<number>();
+  const threadedPlans = new Map<number, number>();
   let answersOpen = false;
   for (const message of messages) {
     const meta = botMeta(message);
@@ -181,6 +189,11 @@ export function planLayout(messages: readonly ConversationMessage[]): PlanLayout
     const key = changeKey(message);
     if (!key) continue;
     if (isPlanMessage(message)) {
+      // In its request's thread: the card it hangs off, never hidden.
+      if (message.threadRootId) {
+        if (['open', 'built'].includes(planState(meta))) threadedPlans.set(message.id, message.threadRootId);
+        continue;
+      }
       const newest = plans.get(key);
       if (!newest || message.id > newest.id) plans.set(key, message);
     } else if (isActivityMessage(message) && !isMovedActivity(message)) {
@@ -188,9 +201,9 @@ export function planLayout(messages: readonly ConversationMessage[]): PlanLayout
       if (meta.thanks) thanks.add(message.id);
     }
   }
-  if (!plans.size) return answersOpen ? { ...NO_PLAN_LAYOUT, answersOpen } : NO_PLAN_LAYOUT;
+  if (!plans.size && !threadedPlans.size) return answersOpen ? { ...NO_PLAN_LAYOUT, answersOpen } : NO_PLAN_LAYOUT;
   const hidden = new Set<number>();
-  const cardOf = new Map<number, number>();
+  const cardOf = new Map<number, number>(threadedPlans);
   for (const [key, plan] of plans) {
     const ids = cards.get(key) || [];
     const carried = ['open', 'built'].includes(planState(botMeta(plan) as HomeroomBotMeta));
@@ -238,12 +251,21 @@ export function planBuilding(
   return !card || card.state === 'working';
 }
 
-/** Put the card in the composer's reply bar, and the caret after it. */
+/** Put the card in the composer's reply bar (its thread's, in a request's thread), and the caret after it. */
 function quote(message: ConversationMessage, conversationId: number) {
-  setReply(scopeKey(conversationId, null), message);
-  window.requestAnimationFrame(() => {
-    document.querySelector<HTMLTextAreaElement>('.messages-composer-input')?.focus({ preventScroll: true });
-  });
+  quoteInComposer(message, conversationId);
+}
+
+/**
+ * Pure (run six): what sits under a plan while what it planned is built. A
+ * first version's switch, on from Make it, whatever this device chose
+ * before; a complicated change's plan keeps the one-time offer.
+ */
+export function notifyFooter(meta: HomeroomBotMeta, offer: boolean, userId: number | null) {
+  if (!meta.plan?.complicated && meta.appSlug) {
+    return <div className="mt-3"><NotifyLive appSlug={meta.appSlug} /></div>;
+  }
+  return offer ? <div className="mt-3"><NotifyMe userId={userId} /></div> : null;
 }
 
 export function BotPlanCard({ message, conversationId, cardId = null }: {
@@ -286,7 +308,9 @@ export function BotPlanCard({ message, conversationId, cardId = null }: {
       onBuild={build}
       onChange={() => quote(message, conversationId)}
       progress={planProgress(card, state)}
-      footer={offer && state === 'built' && card && card.state !== 'done' ? <div className="mt-3"><NotifyMe userId={userId} /></div> : null}
+      footer={state === 'built' && card && card.state !== 'done'
+        ? notifyFooter(meta, offer, userId)
+        : null}
     />
   );
 }
@@ -339,8 +363,8 @@ export function BotTwoQuestions({ message, conversationId }: { message: Conversa
       )}
       {open ? (
         <div className="mt-2.5 messages-bot-answers" role="group" aria-label={t('messages:bot.questions.actions')}>
-          <button type="button" className="messages-bot-primary" data-bot-answer="build" onClick={build}>{t('messages:bot.questions.build')}</button>
-          <button type="button" className="messages-bot-other" onClick={() => quote(message, conversationId)}>{t('messages:bot.questions.somethingElse')}</button>
+          <button type="button" className="messages-bot-primary" data-bot-answer="build" onClick={build}>{t('messages:bot.questions.send')}</button>
+          <button type="button" className="messages-bot-other" onClick={() => quote(message, conversationId)}>{t('messages:bot.questions.writeOwn')}</button>
         </div>
       ) : null}
       {answered && !pairs ? <p className="messages-bot-answered whitespace-pre-line">{t('messages:bot.questions.youAnswered', { answers: answered })}</p> : null}

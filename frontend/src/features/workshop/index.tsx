@@ -137,6 +137,9 @@ type WorkshopRow = {
   owed?: string[];
   /** Every vote owed, the ones swiped past too (`unseenRow` sets it). */
   owedCount?: number;
+  /** The viewer has an invite link out for it and nobody has joined yet
+      (GET /api/apps `invite_link_out`, routes/apps.js inviteLinkOut). */
+  invite_link_out?: boolean;
 };
 
 function SectionGlyph({ audience }: { audience: Audience }) {
@@ -170,8 +173,14 @@ function demoQuery(): string {
  *     The order of the section already says which moved last.
  *   Just you                   → when it last moved ("2h ago"). There is one
  *     member, and it is you.
+ *
+ * AN INVITE OUT (15 Oct 2026): a project the viewer has sent an invite link
+ * for, that nobody has joined yet, says "Invite link out" in that fact's
+ * place: it is what is going on with it. It stays in its section: a link
+ * out does not make Just you a private community, somebody joining does.
  */
 export function rowSubtitle(row: WorkshopRow, now = Date.now()): string {
+  if (row.invite_link_out) return translate('communities:row.inviteOut');
   if (row.audience !== 'solo') {
     const members = Number(row.member_count) || 0;
     return members > 0 ? translate('communities:row.members', { count: members }) : '';
@@ -671,13 +680,96 @@ export function WorkshopScreen() {
                 across your projects, one per screen, newest first, drawn by
                 a project's own Needs you feed (#3488). See ./needs-reel.tsx. */}
             {state.error ? null : (
-              <NeedsReel items={state.feed} error={state.feedError} capped={state.feedCapped} onDone={() => workshopController.setTab('status')} />
+              <NeedsReel
+                items={state.feed}
+                error={state.feedError}
+                capped={state.feedCapped}
+                onDone={() => workshopController.setTab('status')}
+                onAnswered={(id, epoch) => workshopController.answered(id, epoch)}
+              />
             )}
           </div>
         ) : null}
       </div>
     </main>
   );
+}
+
+/**
+ * The votes cast in a Needs you feed this visit, by `proposal:<id>@<epoch>`
+ * (`proposal:<id>` when the row carried no epoch). The store's feed is a copy
+ * read BEFORE the vote: once the reel unmounts its "Voted yes" state goes
+ * with it, and a remount would redraw the answered card as still owed — the
+ * report this answers. The set takes the voted items out of every read that
+ * hands the feed its rows, so a read issued before the vote and landing after
+ * it cannot bring one back. A NEWER epoch passes: the card changed under the
+ * vote and asks again. `close()` clears the set — a fresh visit starts from
+ * what the server says.
+ */
+const answeredVotes = new Set<string>();
+
+function answeredVoteKey(id: number, epoch: number | null): string {
+  return `proposal:${id}@${epoch == null ? '' : epoch}`;
+}
+
+/** Whether this feed item is a vote answered here, at its own epoch. */
+function voteAnswered(item: NeedsFeedItem): boolean {
+  if (item.kind !== 'proposal') return false;
+  for (const key of answeredVotes) {
+    const at = key.indexOf('@');
+    if (Number(key.slice('proposal:'.length, at)) !== item.id) continue;
+    const raw = key.slice(at + 1);
+    const epoch = raw === '' ? null : Number(raw);
+    if (item.epoch == null || epoch == null || item.epoch === epoch) return true;
+  }
+  return false;
+}
+
+/** The feed's rows, less the votes answered here. */
+function stripAnswered(items: NeedsFeedItem[]): NeedsFeedItem[] {
+  return answeredVotes.size ? items.filter((item) => !voteAnswered(item)) : items;
+}
+
+/** How often the open screen quietly re-reads what waits on you (#5164). */
+export const WORKSHOP_REFRESH_MS = 30_000;
+
+/**
+ * The quiet refresh behind #5164: while the screen is showing, the counts
+ * and the Needs you feed are read again every WORKSHOP_REFRESH_MS, and once
+ * more the moment the browser tab comes back to the front — the moment
+ * people most often notice the lag and reach for a page reload.
+ *
+ * A module-level watch rather than an effect, because the screen's roots
+ * outlive React's mounts the way the controller does: `open()` starts it and
+ * `close()` stops it, so nothing runs while the screen is hidden and
+ * re-entering never stacks a second timer. The interval skips its tick while
+ * the tab is hidden; the listener answers the return instead. Guarded on
+ * `document` because the tests run in node with only `window` faked.
+ */
+let watchTimer: number | null = null;
+let watchVisibility: (() => void) | null = null;
+
+function startWatch() {
+  if (typeof document === 'undefined') return;
+  stopWatch();
+  watchTimer = window.setInterval(() => {
+    if (document.visibilityState === 'visible') void workshopController.refreshNeeds();
+  }, WORKSHOP_REFRESH_MS);
+  watchVisibility = () => {
+    if (document.visibilityState === 'visible') void workshopController.refreshNeeds();
+  };
+  document.addEventListener('visibilitychange', watchVisibility);
+}
+
+function stopWatch() {
+  if (watchTimer !== null) {
+    window.clearInterval(watchTimer);
+    watchTimer = null;
+  }
+  if (watchVisibility) {
+    document.removeEventListener('visibilitychange', watchVisibility);
+    watchVisibility = null;
+  }
 }
 
 /**
@@ -701,10 +793,14 @@ export const workshopController = {
     let asked: TabKey | null = null;
     try { asked = tabFromQuery(location.search); } catch { asked = null; }
     workshopStore.set(asked ? { open: true, tab: asked } : { open: true });
+    // #5164: the quiet refresh runs for as long as the screen is showing.
+    startWatch();
     return workshopController.reload();
   },
   close() {
     workshopStore.set({ open: false });
+    answeredVotes.clear();
+    stopWatch();
   },
   isOpen() {
     return workshopStore.get().open;
@@ -712,6 +808,73 @@ export const workshopController = {
   /** Show one of the two tabs. */
   setTab(tab: TabKey) {
     workshopStore.set({ tab: tab === 'needs' ? 'needs' : 'status' });
+    // Re-entering the list or the feed quietly reloads what waits (#4794):
+    // the reads behind both were answered when the screen was entered, and a
+    // vote cast in the feed has moved them since. Not while the screen is
+    // closed — the notifications path calls setTab('needs') and then routes,
+    // and open() reloads anyway.
+    if (workshopStore.get().open) void workshopController.refreshNeeds();
+  },
+  /**
+   * A vote cast in the Needs you feed, taken down at once (#4794): the item
+   * leaves the store's feed, so leaving the feed and coming back cannot draw
+   * it as still owed, and every read until the screen closes skips it too.
+   */
+  answered(id: number, epoch: number | null) {
+    answeredVotes.add(answeredVoteKey(id, epoch));
+    const feed = workshopStore.get().feed;
+    if (feed) workshopStore.set({ feed: stripAnswered(feed) });
+  },
+  /**
+   * The quiet reload behind a tab switch: the counts and the Needs you feed
+   * again, nothing else. What is on screen stays until the answers land, and
+   * a failed read leaves its half untouched — no skeleton, no error card, no
+   * `rows: null`. Like reload(), a read that lands after the viewer left the
+   * screen publishes nothing.
+   */
+  async refreshNeeds() {
+    if (!workshopStore.get().open) return;
+    const demo = demoQuery();
+    try {
+      // `no-cache` (the #4177 spelling): a quiet read asks for the CURRENT
+      // answer. The worker's boot lane would answer it from the saved copy,
+      // which is one reason a page reload looked fresher than this screen.
+      const [countsRes, feedRes] = await Promise.all([
+        fetch(`/api/workshop/counts${demo}`, { cache: 'no-cache' }).catch(() => null),
+        fetch(`/api/workshop/needs-feed${demo}`, { cache: 'no-cache' }).catch(() => null),
+      ]);
+      if (!workshopStore.get().open) return;
+      const state = workshopStore.get();
+      const patch: {
+        rows?: WorkshopRow[];
+        feed?: NeedsFeedItem[];
+        feedError?: boolean;
+        feedCapped?: boolean;
+      } = {};
+      if (countsRes && countsRes.ok && state.rows) {
+        const data = await countsRes.json().catch(() => null);
+        if (data && data.counts && typeof data.counts === 'object') {
+          // The rows' app halves stand; the counts answer them again, so the
+          // owed lists of the read they came from go with them.
+          patch.rows = joinCounts(
+            state.rows.map(({ owed, ...rest }) => rest),
+            data.counts,
+          );
+        }
+      }
+      if (feedRes && feedRes.ok) {
+        const data = await feedRes.json().catch(() => null);
+        if (data && Array.isArray(data.items)) {
+          const feed = stripAnswered(data.items as NeedsFeedItem[]);
+          patch.feed = feed;
+          patch.feedError = false;
+          patch.feedCapped = Number(data.max) > 0 && feed.length >= Number(data.max);
+        }
+      }
+      if (patch.rows || patch.feed) workshopStore.set(patch);
+    } catch {
+      // Offline is a state, not a crash: the screen keeps what it had.
+    }
   },
   async reload() {
     const demo = demoQuery();
@@ -722,7 +885,9 @@ export const workshopController = {
     let feedCapped = false;
     try {
       const [appsRes, countsRes, feedRes] = await Promise.all([
-        fetch(`/api/apps${demo}`),
+        // Only the communities you are in (#5023): the list below keeps
+        // nothing else, so the rest of the catalog was payload for nothing.
+        fetch(`/api/apps?scope=joined${demo.replace('?', '&')}`),
         fetch(`/api/workshop/counts${demo}`).catch(() => null),
         fetch(`/api/workshop/needs-feed${demo}`).catch(() => null),
       ]);
@@ -742,11 +907,13 @@ export const workshopController = {
         if (data && data.counts && typeof data.counts === 'object') counts = data.counts;
       }
       // The Needs you feed is optional like the counts: losing it costs the
-      // feed its cards (it says so), never the screen.
+      // feed its cards (it says so), never the screen. A read issued before a
+      // vote in the feed and landing after it runs through the answered set
+      // with refreshNeeds()'s, so it cannot bring the card back.
       if (feedRes && feedRes.ok) {
         const data = await feedRes.json().catch(() => null);
         if (data && Array.isArray(data.items)) {
-          feed = data.items as NeedsFeedItem[];
+          feed = stripAnswered(data.items as NeedsFeedItem[]);
           feedCapped = Number(data.max) > 0 && feed.length >= Number(data.max);
         }
       }

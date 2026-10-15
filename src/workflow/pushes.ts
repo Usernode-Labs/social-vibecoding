@@ -22,6 +22,28 @@ export function appVersion(d: { appId: number; appSlug: string; sha: string | nu
     data: { type: 'app_version_changed', appSlug: d.appSlug, sha: d.sha || null, prNumber: d.prNumber || null } };
 }
 
+// The version pill's "deploying", started or ended: services/app-deploy-status.js
+// markStart/markEnd's broadcast, to everyone (ws.broadcastGlobal).
+export function redeployStatus(d: {
+  appSlug: string; deploying: boolean; startedAt: string; fromSha: string | null;
+  toSha?: string | null; failed?: boolean; missingSecrets?: string[] | null;
+}): Push {
+  const data: JsonObject = { type: 'app_redeploy_status', appSlug: d.appSlug, deploying: d.deploying, startedAt: d.startedAt, fromSha: d.fromSha };
+  if (!d.deploying) Object.assign(data, { toSha: d.toSha ?? null, failed: !!d.failed, missingSecrets: d.missingSecrets ?? null });
+  return { kind: 'global', data };
+}
+
+// Issues just closed on GitHub, to every web process's own copy of the
+// repository's open issues (github.js: the "just closed" suppression, since
+// GitHub's list lags, and the cache). `open`: issues hidden as about to
+// close that are still open after all, shown again. It reaches no browser:
+// services/ws.js applies it where it relays workflow pushes. The cache is
+// per process, and this is how a process that did not close them hears it.
+export function issuesClosed(d: { owner: string; repo: string; numbers: number[]; open?: number[] }): Push {
+  return { kind: 'issues_closed', routing: { owner: d.owner, repo: d.repo },
+    data: { numbers: d.numbers, ...(d.open?.length ? { open: d.open } : {}) } };
+}
+
 // One person's tabs (ws.pushToUser).
 export const toUser = (userId: number, data: JsonObject): Push => ({ kind: 'user', routing: { userId }, data });
 
@@ -44,3 +66,24 @@ export function chatLine(row: LineRow): Push {
     createdAt: (row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at) as Json,
   } };
 }
+
+// One session's live event (ws.broadcastGlobal's `session_event`, routed by
+// session as services/ws.js broadcastSessionEvent routes it): the owner's
+// tabs and the tabs watching the session, and for the few events lists and
+// boards draw (a checks run's progress and verdict, a preview built or
+// failed) everyone who may view the app. `seq` is the client's dedup key
+// (`_seq`), unique per event: the transition's instance and version.
+const SESSION_FANOUT_EVENTS: ReadonlySet<string> = new Set(['checks_ready', 'staging_ready', 'staging_failed']);
+export interface SessionRoute { sessionId: number; userId: number | null; appId: number | null; appSlug: string | null }
+export function sessionEvent(to: SessionRoute, event: string, seq: string, data: JsonObject): Push {
+  return {
+    kind: 'session',
+    routing: { sessionId: to.sessionId, userId: to.userId, appId: to.appId, appSlug: to.appSlug,
+      fanout: SESSION_FANOUT_EVENTS.has(event) },
+    data: { _seq: seq, ...data, type: 'session_event', sessionId: to.sessionId, event },
+  };
+}
+
+// A session's card moved on a board or list (ws.pushSessionUpdate, without
+// its in-process Workshop listener).
+export const sessionUpdate = (data: JsonObject) => scoped('session_update', data);

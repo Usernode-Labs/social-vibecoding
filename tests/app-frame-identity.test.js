@@ -802,7 +802,9 @@ test('#15: a first version being built shows its thumbnail, not the starter, and
   const shown = h.status();
   assert.equal(shown.thumb.slug, SLUG, 'the project\'s thumbnail');
   assert.equal(shown.buildLine, 'building');
-  assert.deepEqual([...shown.lines], ['It opens here when it’s ready.']);
+  // Run six: its maker is told when it is live, so their screen says so.
+  assert.equal(shown.promise, 'We’ll notify you when it’s live');
+  assert.equal('lines' in shown, false);
   // The creator (the record is theirs: mine) gets a small way into their chat
   // under the card; the plan is answered there (owner, 8 Oct 2026).
   assert.deepEqual({ ...shown.action }, { key: 'botChat', label: 'Open Homeroom bot', slug: SLUG, conversationId: 9, quiet: true, underCard: true });
@@ -866,7 +868,7 @@ test('#15: the first-version screenshot state is self-contained, and mounts no f
   assert.deepEqual({ ...shown.thumb }, { name: 'Plant Pal', slug: 'staging-demo-first-version', emoji: '🪴', description: 'Keep your plants alive: see which ones need water today.', sketch: false },
     'a made-up project: no sketch is asked for');
   assert.equal(shown.buildLine, 'building');
-  assert.deepEqual([...shown.lines], ['It opens here when it’s ready.']);
+  assert.equal(shown.promise, 'We’ll notify you when it’s live', 'its maker\'s screen');
   assert.equal(shown.action.label, 'Open Homeroom bot');
   assert.equal(AppView.appData.url, null, 'no address, so nothing is ever framed');
   const appJs = read('public/js/app.js');
@@ -879,21 +881,23 @@ test('#15: the first-version screenshot state is self-contained, and mounts no f
   AppView.showFirstVersionShot(true);
   const planned = h.status();
   assert.equal(planned.buildLine, 'plan', 'its plan waits for its creator');
-  assert.deepEqual([...planned.lines], ['It opens here when it’s ready.']);
+  assert.equal(planned.promise, 'We’ll notify you when it’s live');
   assert.equal(planned.action.label, 'Review the plan', 'the plan is answered in their chat: the button opens it');
   assert.equal('plan' in planned, false);
   AppView.showFirstVersionShot('plan');
   assert.equal(h.status().buildLine, 'plan', '\'plan\' is the same shot');
-  // Ready to try, as a member who still has to approve it…
+  // Ready to try, as its maker reads it: it goes live without a vote (13 Oct
+  // 2026, D1; Club Votes said "Waiting for your approval." all night)…
   AppView.showFirstVersionShot('ready');
   const waiting = h.status();
   assert.equal(bridge.frame(), null);
   assert.equal(waiting.thumb.name, 'Plant Pal');
   assert.equal(waiting.buildLine, 'ready', '"Ready to try" stays beside Try it (owner, 7 Oct)');
-  assert.deepEqual([...waiting.lines], ['Waiting for your approval.']);
+  assert.deepEqual([...waiting.lines], ['No vote needed. It goes live in a minute or two.']);
   assert.deepEqual([waiting.action.key, waiting.alt.key], ['tryChange', 'seeChange']);
   assert.equal('secondary' in waiting, false);
-  // …and as one who approved it, waiting on the other member.
+  // …and the one that still asks a Yes (it changes protected settings), as
+  // one who approved it, waiting on the other member.
   AppView.showFirstVersionShot('approved');
   const approved = h.status();
   assert.match(approved.lines[0], /^You approved it\. Waiting for @sam, or it goes live on \S+ if nobody objects\.$/);

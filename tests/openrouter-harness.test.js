@@ -417,9 +417,80 @@ test('both ledger completions pass the routed provider the listener saw', () => 
   const fs = require('node:fs');
   const sessions = fs.readFileSync(require.resolve('../src/routes/sessions'), 'utf8');
   assert.match(sessions, /usageScope: agentTurn\.usageScopeForHarness\(runtimeContext\.agentHarness\),[\s\S]{0,240}routedProvider: result\?\.routedProvider \|\| null,/);
+  // Run seven: and every host it used, with its shortlist fallbacks.
+  assert.match(sessions, /routedProvider: result\?\.routedProvider \|\| null,[\s\S]{0,200}routedProviders: result\?\.routedProviders \|\| null,\n\s+shortlistFallbacks: result\?\.shortlistFallbacks \?\? null,/);
   const ledger = fs.readFileSync(require.resolve('../src/services/agent-turn'), 'utf8');
-  assert.match(ledger, /usageScope: usageScopeForHarness\(activeTurn\.harness\),\n\s+routedProvider: result\?\.routedProvider \|\| null,/,
+  assert.match(ledger, /usageScope: usageScopeForHarness\(activeTurn\.harness\),\n\s+routedProvider: result\?\.routedProvider \|\| null,\n\s+routedProviders: result\?\.routedProviders \|\| null,\n\s+shortlistFallbacks: result\?\.shortlistFallbacks \?\? null,/,
     'and a recovered turn\'s');
+});
+
+// Run seven (14 Oct 2026): slow hosts still served builds, and a turn's row
+// kept only the last host it was routed to, so neither the hosts a build used
+// nor how often it left the shortlist could be read back.
+test('run seven: a turn\'s ledger row keeps every host its requests used and how many left the shortlist', async () => {
+  const state = worker.newWatchState();
+  state.agentBackend = 'codex_openrouter';
+  state.agentHarness = 'claude';
+  const provider = (event) => worker.parseLine(`__USERNODE_CODING_PROVIDER__ ${JSON.stringify(event)}`, () => {}, state);
+  assert.equal(state.shortlistFallbacks, undefined, 'not known before any request is seen');
+  provider({ kind: 'provider_request_result', requestOrdinal: 1, httpStatus: 200, outcome: 'ok', providerName: 'Fireworks' });
+  assert.equal(state.shortlistFallbacks, 0, 'none, once a request is seen');
+  provider({ kind: 'provider_request_result', requestOrdinal: 2, httpStatus: 200, outcome: 'ok', providerName: 'Sail Research', shortlistFallback: true });
+  provider({ kind: 'provider_request_result', requestOrdinal: 3, httpStatus: 200, outcome: 'ok', providerName: 'Fireworks' });
+  provider({ kind: 'provider_request_result', requestOrdinal: 4, httpStatus: 200, outcome: 'ok', providerName: 'GMICloud', shortlistFallback: true });
+  provider({ kind: 'provider_request_result', requestOrdinal: 5, httpStatus: 200, outcome: 'ok', shortlistFallback: 'yes' });
+  assert.deepEqual(state.routedProviders, ['Fireworks', 'Sail Research', 'GMICloud'], 'each once, first seen first');
+  assert.equal(state.routedProvider, 'GMICloud', 'the last, as before');
+  assert.equal(state.shortlistFallbacks, 2);
+
+  const ledgerRow = () => {
+    const row = {
+      session_id: 8, status: 'running', agent_thread_id: null, reasoning_effort: null, metadata: { pricing: null },
+      input_tokens: 0, cached_input_tokens: 0, cache_write_input_tokens: 0, output_tokens: 0, reasoning_output_tokens: 0,
+    };
+    const client = {
+      async query(text, params) {
+        if (/FOR UPDATE/.test(text)) return { rows: [row] };
+        if (/^\s*UPDATE agent_turns/.test(text)) { row.updateParams = params; return { rowCount: 1 }; }
+        return { rows: [] };
+      },
+      release() {},
+    };
+    return { row, pool: { async connect() { return client; } } };
+  };
+  // The live completion, as the attempt loop calls it.
+  const live = ledgerRow();
+  await agentTurn.completeCodexAttempt({
+    pool: live.pool, turnUuid: 'u-hosts', status: 'completed', usageScope: 'run',
+    routedProvider: state.routedProvider, routedProviders: state.routedProviders, shortlistFallbacks: state.shortlistFallbacks,
+  });
+  const meta = JSON.parse(live.row.updateParams[18]);
+  assert.deepEqual(meta.routed_providers, ['Fireworks', 'Sail Research', 'GMICloud']);
+  assert.equal(meta.shortlist_fallbacks, 2);
+  assert.equal(live.row.updateParams[20], 'GMICloud', 'routed_provider is the last, as before');
+
+  // A turn a restart recovered: the same, from the journal's result.
+  const recovered = ledgerRow();
+  await agentTurn.settleRecoveredAgentAttempt({
+    pool: recovered.pool, activeTurn: { backend: 'codex_openrouter', turnUuid: 'u-hosts-2', harness: 'claude' }, result: state,
+  });
+  const kept = JSON.parse(recovered.row.updateParams[18]);
+  assert.deepEqual(kept.routed_providers, ['Fireworks', 'Sail Research', 'GMICloud']);
+  assert.equal(kept.shortlist_fallbacks, 2);
+
+  // Only names in a provider's shape, each once and at most eight; a count
+  // that is not one, or nothing reported, leaves the row as it was.
+  assert.deepEqual(agentTurn.routedProvidersOf(['Near AI', '<b>x</b>', 'Near AI', 42, 'Z.AI']), ['Near AI', 'Z.AI']);
+  assert.equal(agentTurn.routedProvidersOf(Array.from({ length: 12 }, (_, i) => `Host ${i}`)).length, 8);
+  assert.equal(agentTurn.routedProvidersOf([]), null);
+  assert.equal(agentTurn.shortlistFallbacksOf(-1), null);
+  assert.equal(agentTurn.shortlistFallbacksOf(1.5), null);
+  assert.equal(agentTurn.shortlistFallbacksOf(0), 0);
+  const none = ledgerRow();
+  await agentTurn.completeCodexAttempt({ pool: none.pool, turnUuid: 'u-none', status: 'completed', usageScope: 'run' });
+  const bare = JSON.parse(none.row.updateParams[18]);
+  assert.equal('routed_providers' in bare, false);
+  assert.equal('shortlist_fallbacks' in bare, false);
 });
 
 // ── Worker: capability env ────────────────────────────────────────────
@@ -627,4 +698,79 @@ test('pickers mark the Claude Code models and keep their thinking level', () => 
   assert.match(choice, /OPENROUTER_CLAUDE_TITLE = 'agent:session\.model\.title\.openRouterClaudeCode'/);
   assert.equal(require('./lib/platform-i18n').message('agent:session.model.title.openRouterClaudeCode'),
     'Runs on your OpenRouter key, in Claude Code');
+});
+
+// Run four (13 Oct 2026): a 33-minute first version kept only counts, and its
+// transcript went with its pod. Its ledger row now keeps what its first and
+// last requests carried, the order it called its tools in (names alone), how
+// many old screenshots its requests left out, and the host a refusal came
+// from, whatever became of the turn.
+test('run four: a turn\'s metrics keep its first and last request sizes, its tools in order, and the images left out', async () => {
+  const state = worker.newWatchState();
+  state.agentBackend = 'codex_openrouter';
+  state.agentHarness = 'claude';
+  state.telemetryDiagnosticsEnabled = true;
+  assert.deepEqual([state.firstRequestSize, state.toolSequence, state.imagePrunedCount], [null, null, null], 'unknown until seen');
+  const provider = (event) => worker.parseLine(`__USERNODE_CODING_PROVIDER__ ${JSON.stringify(event)}`, () => {}, state);
+  const start = (n, payloadBytes, inputItems) => provider({
+    kind: 'provider_request_start', requestOrdinal: n, atMs: n * 1000, payloadBytes, inputBytes: payloadBytes - 300,
+    instructionBytes: 300, inputItems, previousResponseLinked: false, maxOutputTokens: 64000,
+  });
+  start(1, 68_577, 1);
+  start(2, 90_000, 9);
+  start(3, 41_000, 3);
+  const said = (id, blocks) => worker.parseLine(JSON.stringify({ type: 'assistant', message: { id, content: blocks } }), () => {}, state);
+  said('m1', [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'npm run build -- --secret-flag' } },
+    { type: 'tool_use', id: 't2', name: 'mcp__playwright__browser_take_screenshot', input: {} }]);
+  said('m2', [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'npm run build -- --secret-flag' } }]);
+  said('m3', [{ type: 'tool_use', id: 't3', name: 'Read', input: { file_path: '/home/node/workspace/app.js' } }]);
+  provider({ kind: 'provider_request_result', requestOrdinal: 3, httpStatus: 200, outcome: 'ok', images: { sent: 3, moved: 3, omitted: 0, pruned: 6 } });
+  assert.deepEqual(state.firstRequestSize, { payloadBytes: 68_577, inputBytes: 68_277, instructionBytes: 300, inputItems: 1 });
+  assert.deepEqual(state.lastRequestSize, { payloadBytes: 41_000, inputBytes: 40_700, instructionBytes: 300, inputItems: 3 });
+  assert.deepEqual(state.toolSequence, ['Bash', 'browser_take_screenshot', 'Read'], 'each call once, in order, by its bare name');
+  assert.equal(state.imagePrunedCount, 6);
+
+  const llmTelemetry = require('../src/services/llm-telemetry');
+  const metrics = llmTelemetry.normalizeDiagnostics(state);
+  assert.equal(metrics.first_request_payload_bytes, 68_577);
+  assert.equal(metrics.first_request_input_items, 1);
+  assert.equal(metrics.last_request_payload_bytes, 41_000);
+  assert.equal(metrics.last_request_instruction_bytes, 300);
+  assert.deepEqual(metrics.tool_sequence, ['Bash', 'browser_take_screenshot', 'Read']);
+  assert.equal(metrics.image_pruned_count, 6);
+  for (const content of ['secret-flag', 'app.js', 'playwright']) {
+    assert.equal(JSON.stringify(metrics).includes(content), false, `no ${content} in the ledger`);
+  }
+  // Only names the platform knows: a person's or a repository's own MCP
+  // server, or anything else, is `mcp` or `other`.
+  assert.deepEqual(llmTelemetry.normalizeDiagnostics({
+    toolSequence: ['Bash', 'rm -rf /', 7, 'mcp__private_server__secret_tool', 'mcp__homeroom__get_platform_conventions',
+      'mcp__visible_changes__declare_visible_changes', 'mcp__playwright__browser_navigate', 'private_tool', 'command'],
+  }).tool_sequence, ['Bash', 'other', 'other', 'mcp', 'get_platform_conventions', 'declare_visible_changes', 'browser_navigate', 'other', 'command']);
+  assert.equal(llmTelemetry.normalizeDiagnostics({ toolSequence: Array(500).fill('Bash') }).tool_sequence.length, 400);
+  // Bounded on the worker too, the rest counted.
+  const many = worker.newWatchState();
+  many.telemetryDiagnosticsEnabled = true;
+  for (let i = 0; i < 410; i += 1) {
+    worker.parseLine(JSON.stringify({ type: 'assistant', message: { id: `x${i}`, content: [{ type: 'tool_use', id: `u${i}`, name: 'Bash', input: {} }] } }), () => {}, many);
+  }
+  assert.equal(many.toolSequence.length, 400);
+  assert.equal(many.toolSequenceDropped, 10);
+});
+
+test('run four: a turn whose journal could not be read on still hands the ledger what it saw', () => {
+  const src = require('node:fs').readFileSync(require.resolve('../src/services/worker'), 'utf8');
+  assert.match(src, /if \(consumeError\) \{[\s\S]{0,600}consumeError\.turnResult = finalizeHarnessResult\(state\);[\s\S]{0,120}throw consumeError;/);
+  const sessions = require('node:fs').readFileSync(require.resolve('../src/routes/sessions'), 'utf8');
+  assert.match(sessions, /const observedResult = err\?\.turnResult \|\| null;/, 'which the attempt loop records, routed provider and all');
+});
+
+test('run four: a Codex turn records the host a refusal came from as its routed provider', () => {
+  const codex = require('../src/agents/codex-openrouter');
+  const state = {};
+  codex.normalizeCodexLine(JSON.stringify({ type: 'usernode.openrouter.request', diagnostic: { httpStatus: 429, providerName: 'InferenceNet' } }), state);
+  assert.equal(state.routedProvider, 'InferenceNet');
+  assert.deepEqual(state.routedProviders, ['InferenceNet']);
+  codex.normalizeCodexLine(JSON.stringify({ type: 'usernode.openrouter.request', diagnostic: { httpStatus: 200 } }), state);
+  assert.equal(state.routedProvider, 'InferenceNet', 'a line without a host leaves it');
 });

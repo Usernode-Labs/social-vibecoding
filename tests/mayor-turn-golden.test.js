@@ -707,6 +707,46 @@ test('build turn: commit, PR opened, staging, wrap-up with pills', async () => {
   check('build turn', result);
 });
 
+// #907: a build handed to the user's own machine runs the same tail. A local
+// turn has no durable turn record, so the tail stamps no milestone for it
+// (worker.noteTailMilestone without an owner throws, and once ended the
+// local tail right after the PR was opened: no preview, no card, no wrap-up).
+test('local build turn: the machine\'s commit gets the PR, the preview, the card and the wrap-up', async () => {
+  const lease = { id: '7', session_id: BASE_SESSION.id, user_id: 7, label: "Tester's laptop", runtime: 'claude-code' };
+  const saved = { activeLease: localAgent.activeLease, enqueueTurn: localAgent.enqueueTurn, awaitTurnResult: localAgent.awaitTurnResult };
+  localAgent.activeLease = async () => lease;
+  localAgent.enqueueTurn = async (_pool, args) => {
+    rec.calls.push({ fn: 'localAgent.enqueueTurn', mode: args.mode, branchName: args.branchName });
+    return { turn: { id: '11', session_id: BASE_SESSION.id }, lease, waiterId: 'waiter-1' };
+  };
+  localAgent.awaitTurnResult = async (_pool, turnId, opts) => {
+    rec.calls.push({ fn: 'localAgent.awaitTurnResult', turnId, waiterId: opts.waiterId });
+    return {
+      outcome: 'completed',
+      turn: { id: '11', status: 'completed', head_sha: 'e'.repeat(40), summary: 'Added the toggle on the laptop.', progress: [] },
+    };
+  };
+  try {
+    const result = await runTurn({
+      session: { spec_md: SCOUT_SPEC },
+      message: 'Build it',
+      llmSteps: [
+        buildCall(),
+        wrapUp('Done on your laptop. The toggle is in the toolbar.', ['Try it in the preview', 'What did it change?']),
+      ],
+    });
+    assert.deepEqual(result.worker.map((w) => JSON.parse(w)).filter((w) => w.fn === 'noteTailMilestone'), [],
+      'no milestone without a durable turn to stamp it on');
+    const contents = result.messages.map((m) => JSON.parse(m).content);
+    assert.ok(contents.includes('Staging deployed!'), 'the preview card');
+    assert.ok(contents.some((c) => /Coding done on Tester's laptop/.test(c)), 'the completion card');
+    assert.equal(contents.at(-1), 'Done on your laptop. The toggle is in the toolbar.', 'and the wrap-up');
+    check('local build turn', result);
+  } finally {
+    Object.assign(localAgent, saved);
+  }
+});
+
 test('build turn that changes nothing skips the tail', async () => {
   const result = await runTurn({
     session: { spec_md: SCOUT_SPEC },

@@ -23,7 +23,8 @@
 //   4. THE CHOKEPOINTS refuse a navigation before it lands — a link, a
 //      script's location.hash — and only at the moment the panel applies.
 //   5. THE PANEL'S DOCUMENT never adds a history entry, never runs an app,
-//      and hands everything it does not show to the top window.
+//      hands everything it does not show to the top window, and draws its
+//      own page when the comment's picture asks (#4975).
 //   6. THE ROUTER (public/js/app.js, run in a vm): openAppTab asks the panel
 //      first, the running app leaving drops it, and in the panel's document
 //      an App tab is forwarded, never parked, never polled for versions.
@@ -742,12 +743,39 @@ function panelWindow({ href = 'https://homeroom.test/app/notes-ab12/workshop?pan
   const boot = () => (docListeners['sv:authed'] || []).forEach((fn) => fn());
   return { win, runtime, reports, routed, history, fire, boot, navigate, url: () => url.href };
 }
-const tick = () => new Promise((r) => setTimeout(r, 5));
+// The runtime reports from a 0 ms timer, and `go()` (or a refused hash push)
+// sets that timer from a microtask, after the page has routed. A 5 ms timer
+// started before the microtask ran could fire first when routing took more
+// than 4 ms on a loaded machine, and the report was not there yet. Waiting
+// for the next turn first lets the runtime's timer be set before this one,
+// and timers fire in the order they expire.
+const tick = async () => {
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setTimeout(r, 5));
+};
 
 test('the runtime installs only in the panel\'s document', () => {
   globalThis.document = { documentElement: { classList: { contains: () => false } } };
   assert.equal(api.installEmbeddedRuntime({}), null, 'the top document is left alone');
   delete globalThis.document;
+});
+
+test('the runtime answers the comment\'s picture with this document\'s own page (#4975)', async () => {
+  // The drawing module is imported only when a picture is asked for: no
+  // comment work loads in a panel that is never screenshotted.
+  assert.match(read('frontend/src/features/side-panel/embedded.ts'), /import\('\.\.\/comment-pin\/picture'\)/);
+  const p = panelWindow();
+  assert.equal(typeof p.runtime.picture, 'function');
+  // A panel still booting has nothing settled to draw: null, without
+  // touching the page.
+  assert.equal(await p.runtime.picture(1), null);
+  p.boot();
+  await tick();
+  assert.equal(p.runtime.isBooted(), true);
+  // After boot it draws on this document's own turn (a 0 ms timer), and a
+  // draw that fails in this realm — here there is no page to draw — resolves
+  // null, never a rejection.
+  assert.equal(await p.runtime.picture(1), null);
 });
 
 test('a panel inside Preview reports readiness and navigation to its immediate parent', async () => {

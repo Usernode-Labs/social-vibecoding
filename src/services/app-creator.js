@@ -17,7 +17,10 @@ const { getPool } = require('../db/pool');
 const appCreationPhase = require('./app-creation-phase');
 const journeyEvents = require('./journey-events');
 const appSketch = require('./app-sketch');
+const creationTiming = require('./app-creation-timing');
 const { pushAppStatusUpdate, pushAppCreationPhase } = require('./ws');
+
+const SHA_RE = /^[a-f0-9]{40}$/i;
 
 // Record which step of creation is running, and tell the connected
 // clients. Two sinks for one fact: the in-memory store answers
@@ -94,6 +97,14 @@ async function createApp(config, appRow) {
     return;
   }
 
+  // Where this attempt's time goes (#4895; services/app-creation-timing.js):
+  // one stopwatch, written once the attempt ends, whatever its outcome.
+  // `kind`: a repository made from the starter now, or one that already
+  // exists (an import, or a Retry after the repository was made).
+  const timing = creationTiming.stopwatch();
+  timing.note('kind', appRow.repo_url ? 'existing_repo' : 'new_repo');
+  timing.note('starter', templateOf(appRow));
+
   try {
     // A fork with no repository has not finished copying its source yet.
     // Treating it as an ordinary create here would enter the fresh-app branch
@@ -116,14 +127,28 @@ async function createApp(config, appRow) {
     // future deploys / restarts / staging clones can reconstruct the
     // per-role URL without the shared superuser credential. See
     // SELF-HOSTING.md "Per-app postgres roles".
+    //
+    // Started here and awaited after step 2 (#4895): the two do not need
+    // each other (the starter writes no database URL into the repository,
+    // template.js), so a new project no longer waits for one before the
+    // other. The create dialog's 'repository' step is reported once the
+    // database is done, so it never ticks off a database still being made.
     reportPhase(appId, slug, 'database');
-    const dbName = dbManager.appDbName(slug);
-    const { password: dbPassword } = await dbManager.createDatabase(dbName);
-    await pool.query(
-      'UPDATE apps SET db_password = $1 WHERE id = $2',
-      [dbPassword, appId]
-    );
-    const dbUrl = dbManager.connectionUrl(dbName, dbPassword);
+    const databaseReady = timing.time('database', async () => {
+      const dbName = dbManager.appDbName(slug);
+      const { password: dbPassword } = await dbManager.createDatabase(dbName);
+      await pool.query(
+        'UPDATE apps SET db_password = $1 WHERE id = $2',
+        [dbPassword, appId]
+      );
+      return dbManager.connectionUrl(dbName, dbPassword);
+    }).then((url) => {
+      reportPhase(appId, slug, 'repository');
+      return url;
+    });
+    // Handled where it is awaited (below, or in step 2's failure); this
+    // only keeps a failure that arrives first from going unhandled.
+    databaseReady.catch(() => {});
 
     // 2. GitHub repo handling
     //    - Import-existing path: appRow.repo_url is preset by the route
@@ -131,41 +156,57 @@ async function createApp(config, appRow) {
     //      record useGitHub=true so the clone block below runs.
     //    - New-app path: create a fresh repo under the bot's account and
     //      seed it with the template (existing behavior).
-    reportPhase(appId, slug, 'repository');
+    timing.start('repository');
     let repoUrl = appRow.repo_url || null;
     let useGitHub = !!repoUrl;
+    // The starter commit this attempt made, when it made one into a fresh
+    // repository: its files and sha stand in for cloning it back (step 3).
+    let seeded = null;
 
     if (!repoUrl && github.isEnabled()) {
       try {
         const botUsername = await github.getBotUsername();
-        // The first session's card (services/app-sketch.js), if one is
-        // being made: waited for a little, so the first commit can carry it
-        // (design/sketch.json, and its emoji as dapp.json's icon). No sketch
-        // row, no wait.
-        const sketch = await appSketch.whenReady(pool, appId).catch(() => null);
-
         // adoptExisting: a Retry after a create that died between the
         // GitHub create call and the repo_url persist re-runs with the
         // SAME slug, so the repo already exists on the bot account and a
         // plain create would 422 "name already exists" on every retry.
-        const repo = await github.createRepo(botUsername, slug, {
+        // Asked for before the card is waited for (#4895), since neither
+        // needs the other; its failure still surfaces after the wait.
+        const repoCreated = github.createRepo(botUsername, slug, {
           description: `${name}: built on Homeroom`,
           adoptExisting: true,
         });
+        repoCreated.catch(() => {});
+        // The first session's card (services/app-sketch.js), if one is
+        // being made: waited for a little, so the first commit can carry it
+        // (design/sketch.json, and its emoji as dapp.json's icon). No sketch
+        // row, no wait.
+        timing.start('card');
+        const sketch = await appSketch.whenReady(pool, appId).catch(() => null);
+        timing.end('card');
+
+        const repo = await repoCreated;
         repoUrl = repo.html_url;
 
         // repoUrl makes the template name this repo as the app's canonical
         // one (.claude/homeroom-canonical-repo, read by the freshness check).
-        const files = getTemplateFiles(name, slug, dbUrl, repoUrl, { governance: governanceOf(appRow), description: descriptionOf(appRow) || appSketch.taglineOf(sketch), template: templateOf(appRow), sketch });
+        // No database URL: none goes into a repository.
+        const files = getTemplateFiles(name, slug, null, repoUrl, { governance: governanceOf(appRow), description: descriptionOf(appRow) || appSketch.taglineOf(sketch), template: templateOf(appRow), sketch });
         // Its description above is the creator's own line, else the card's
         // tagline (#4235), so the first dapp.json says what the app is for
         // rather than leaving the hub to quote the creator's prompt.
-        await github.pushFiles(botUsername, slug, files, {
+        const commit = await github.pushFiles(botUsername, slug, files, {
           message: `Initialize ${name} from Homeroom template`,
         });
 
         await pool.query('UPDATE apps SET repo_url = $1 WHERE id = $2', [repoUrl, appId]);
         useGitHub = true;
+        // A fresh repository holds GitHub's one README with these files
+        // over it, so the commit is exactly `files`. An adopted one may
+        // hold more: it is cloned back as before.
+        if (!repo.adopted && SHA_RE.test(commit?.sha || '')) {
+          seeded = { sha: commit.sha.toLowerCase(), files };
+        }
         if (sketch) {
           await appSketch.markCommitted(pool, appId).catch(() => {});
         } else {
@@ -174,6 +215,16 @@ async function createApp(config, appRow) {
           // never throws.
           appSketch.commitWhenReady(pool, { appId, name, owner: botUsername, repo: slug });
         }
+        // Newcomer run nine (15 Oct 2026): a project created with a
+        // description files it as its first request now, while the starter
+        // is built and deployed, not once it runs: 18 of the 40 s from the
+        // made screen's Submit to its spec were that wait, and the request
+        // needs only the repository, which holds the starter and its card
+        // from here (homeroom-bot-dm.js FILEABLE_SQL). Not awaited; the
+        // call once it runs (below) and the sweeps file it if this misses.
+        require('./homeroom-bot-dm').fileFirstVersion(pool, config, appId).catch((err) => {
+          log.warn('app-creator', 'Homeroom bot first version not filed yet', { appId, err: err.message });
+        });
       } catch (err) {
         // GitHub is enabled but the repo couldn't be provisioned. Falling
         // back to a local build here used to leave a healthy-looking app
@@ -184,7 +235,10 @@ async function createApp(config, appRow) {
         // the Retry button re-runs creation. The local-template fallback
         // below remains the designed path when GitHub is disabled entirely.
         err.repoFailed = true;
-        throw err;
+        // Not before the database beside it has settled, so nothing of
+        // this attempt is still running when its failure is recorded; and
+        // a database that failed too is reported first, as when it ran first.
+        throw (await settledFailure(databaseReady)) || err;
       }
     } else if (repoUrl) {
       log.info('app-creator', 'Importing existing repo (skipping create+push)', { appId, slug, repoUrl });
@@ -241,16 +295,23 @@ async function createApp(config, appRow) {
                  { appId, slug, repoUrl, error: err.message });
       }
     }
+    timing.end('repository');
+    const dbUrl = await databaseReady;
 
     // 3. Clone (or write) the working tree that the shared deploy tail
     // will build from. Container/image naming lives in finalizeDeploy.
+    timing.start('checkout');
     const tempDir = `/tmp/usernode-build-${slug}`;
-    const fs = require('fs');
-    const path = require('path');
 
     await docker.execFileAsync('rm', ['-rf', tempDir]).catch(() => {});
 
-    if (useGitHub) {
+    if (seeded) {
+      // The starter this attempt just committed is already in hand, so it
+      // is written out rather than cloned back from GitHub (#4895): the same
+      // bytes, without a clone token and a round trip. A Kubernetes build
+      // fetches that exact commit itself and reads only this tree's root.
+      writeTree(tempDir, seeded.files);
+    } else if (useGitHub) {
       // For new-app builds the repo lives at <botUsername>/<slug> (the
       // create+push block above just made it). For import-existing the
       // repo lives at whatever owner/name the user pasted, so we parse
@@ -286,22 +347,15 @@ async function createApp(config, appRow) {
         throw err;
       }
     } else {
-      fs.mkdirSync(tempDir, { recursive: true });
-      fs.mkdirSync(path.join(tempDir, 'public'), { recursive: true });
-
       const files = getTemplateFiles(name, slug, dbUrl, null, { governance: governanceOf(appRow), description: descriptionOf(appRow), template: templateOf(appRow) });
-      for (const f of files) {
-        const filePath = path.join(tempDir, f.path);
-        fs.mkdirSync(path.dirname(filePath), { recursive: true });
-        fs.writeFileSync(filePath, f.content);
-      }
+      writeTree(tempDir, files);
     }
 
     // Snapshot the SHA (if this was a git clone) so the UI can show
     // what commit is live on prod (#21). Local-template builds stay
     // null; that's fine — the pill just hides until the first merge.
-    let mainSha = null;
-    if (useGitHub) {
+    let mainSha = seeded ? seeded.sha : null;
+    if (useGitHub && !seeded) {
       try {
         const { stdout } = await docker.execFileAsync('git', [
           '-C', tempDir, 'rev-parse', 'HEAD',
@@ -311,20 +365,50 @@ async function createApp(config, appRow) {
         log.warn('app-creator', 'Failed to capture initial SHA', { slug, err: err.message });
       }
     }
+    timing.end('checkout');
 
     // Steps 3b–9 are identical for a fresh create and a fork (build →
     // run → health → reconcile → finalize), so they live in the shared
     // finalizeDeploy() below. app-forker.js calls the exact same helper
     // after it has staged the fork's cloned repo + db, so the two paths
     // can't drift.
-    await finalizeDeploy(config, { appId, name, slug, tempDir, dbUrl, repoUrl, mainSha });
+    // `starterTree`: what is about to be built is the starter exactly as
+    // this attempt generated and committed it, so its build may write the
+    // starter's shared layer cache (services/kubernetes-buildkit.js). A
+    // clone back (an import, an adopted repository) never says so.
+    await finalizeDeploy(config, {
+      appId, name, slug, tempDir, dbUrl, repoUrl, mainSha, timing,
+      template: appRow.template || null, starterTree: Boolean(seeded),
+    });
   } catch (err) {
     log.error('app-creator', 'App creation failed', { appId, slug, err: err.message });
+    timing.settle('error');
     const failure = deployFailure.record(err);
     await recordFailure(pool, appId, failure);
     await updateStatus(pool, appId, 'error');
     endPhases(slug);
     pushAppStatusUpdate({ id: appId, slug, status: 'error', errorReason: failure.reason });
+  } finally {
+    creationTiming.record(pool, { appId, userId: appRow.created_by ?? null, slug, watch: timing });
+  }
+}
+
+// What a promise failed with once it has settled, or null when it did not.
+function settledFailure(promise) {
+  return promise.then(() => null, (err) => err);
+}
+
+// Write a starter's files (template.js getTemplateFiles: platform-authored
+// paths and text) as the build's working tree.
+function writeTree(dir, files) {
+  const fs = require('fs');
+  const path = require('path');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.mkdirSync(path.join(dir, 'public'), { recursive: true });
+  for (const f of files) {
+    const filePath = path.join(dir, f.path);
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, f.content);
   }
 }
 
@@ -340,16 +424,34 @@ async function createApp(config, appRow) {
 // on missing required secrets, then builds + runs + health-checks the
 // production container and flips the row to `running`. Cleans up
 // `tempDir` on every exit path.
+//
+// `timing` (optional; createApp passes its stopwatch, services/
+// app-creation-timing.js) is told each stage this reaches and how the
+// attempt ended. Without one, nothing is timed.
+//
+// `template` and `starterTree` (optional; createApp passes them): the
+// starter the app was made from (apps.template), and whether `tempDir` is
+// that starter exactly as just generated. The build reads the starter's
+// shared layer cache for the first and writes it only for the second. A
+// fork passes neither: it is somebody's app, not a starter.
 async function finalizeDeploy(config, options) {
-  return withBuildUse(config, () => finalizeDeployInner(config, options));
+  const timing = options.timing || creationTiming.IDLE;
+  timing.start('lock');
+  return withBuildUse(config, () => {
+    timing.end('lock');
+    return finalizeDeployInner(config, { ...options, timing });
+  });
 }
 
-async function finalizeDeployInner(config, { appId, name, slug, tempDir, dbUrl, repoUrl, mainSha }) {
+async function finalizeDeployInner(config, {
+  appId, name, slug, tempDir, dbUrl, repoUrl, mainSha, timing, template = null, starterTree = false,
+}) {
   const pool = getPool(config);
   const containerName = `usernode-app-${slug}`;
   const imageName = `usernode-app-${slug}:latest`;
 
   try {
+    timing.start('manifest');
   // Read the dapp's `dapp.json` from the cloned working tree, then
     // snapshot it onto the app row so the Secrets API can render the
     // manifest-declared keys without re-cloning. Bail out
@@ -412,7 +514,9 @@ async function finalizeDeployInner(config, { appId, name, slug, tempDir, dbUrl, 
     const merge = appSecrets.mergeForDeploy(
       manifest, storedValues, appSecrets.platformDefaultsFromEnv()
     );
+    timing.end('manifest');
     if (merge.missingRequired.length) {
+      timing.settle('awaiting_secrets');
       log.info('app-creator', 'Required secrets unset; entering awaiting_secrets', {
         appId, slug, missing: merge.missingRequired,
       });
@@ -430,13 +534,30 @@ async function finalizeDeployInner(config, { appId, name, slug, tempDir, dbUrl, 
     }
 
     reportPhase(appId, slug, 'build');
+    // When BuildKit starts solving (its `[buildkit] building …` line), for
+    // the timing: the Job's time before that is scheduling, the daemon
+    // check and the source fetch. Within a second, as the log is followed.
+    const buildStartedAt = Date.now();
+    let solveStartMs = null;
+    timing.start('build');
     const build = await applicationRuntime.build(config, {
-      app: { id: appId, slug, repo_url: repoUrl },
+      app: { id: appId, slug, repo_url: repoUrl, template },
       revision: mainSha,
       environment: 'production',
       sourceDir: tempDir,
       dockerImage: imageName,
+      starterTree,
+      onProgress: (image) => {
+        if (solveStartMs == null && image?.phase === 'source' && /^building /.test(image.detail || '')) {
+          solveStartMs = Date.now() - buildStartedAt;
+        }
+      },
     });
+    timing.end('build');
+    timing.note('build', creationTiming.buildNote({
+      engine: applicationRuntime.mode(config) === 'docker' ? 'docker' : (build.engine || 'kpack'),
+      result: build, solveStartMs,
+    }));
     await docker.execFileAsync('rm', ['-rf', tempDir]).catch(() => {});
 
     // 5. Run the container. Production containers additionally get the
@@ -444,6 +565,7 @@ async function finalizeDeployInner(config, { appId, name, slug, tempDir, dbUrl, 
     // first deploy) so the app can call the platform's app-LLM proxy.
     // Staging deploys deliberately don't (see services/app-llm-env.js).
     reportPhase(appId, slug, 'deploy');
+    timing.start('deploy');
     const llmEnv = await appLlmEnv.productionLlmEnv(pool, appId);
     // Likewise the app-storage env pair (#752) — production only.
     const storageEnv = await appStorageEnv.productionStorageEnv(pool, appId);
@@ -465,7 +587,13 @@ async function finalizeDeployInner(config, { appId, name, slug, tempDir, dbUrl, 
         ...storageEnv,
         ...merge.env,
       },
+      // Applied: from here it is the container starting and answering
+      // /health (the 'rollout' stage).
+      onRollout: () => { timing.end('deploy'); timing.start('rollout'); },
     });
+    timing.end('deploy');
+    timing.end('rollout');
+    if (deployed.podTimeline) timing.note('pod', deployed.podTimeline);
     const { hostname, url: appUrl } = deployed;
 
     // 9. Update app status. last_deploy_at is bumped here so the home-
@@ -488,18 +616,22 @@ async function finalizeDeployInner(config, { appId, name, slug, tempDir, dbUrl, 
     // say when that was. Once only, and never a reason creation fails.
     await journeyEvents.markFirstRunning(pool, appId);
 
+    timing.settle('running');
     endPhases(slug);
     pushAppStatusUpdate({ id: appId, slug, status: 'running', url: appUrl });
     log.info('app-creator', 'App created successfully', { appId, slug, hostname, appUrl, repoUrl });
     // A project created with a description ("What should it do?") files it
-    // as its first request now that it runs; the Homeroom bot builds it for
-    // somebody it builds for (#3624). The leader's sweep (and the bot's)
-    // files it later if this misses; never a reason creation fails.
+    // as its first request; the Homeroom bot builds it for somebody it
+    // builds for (#3624). Filed once its repository was made (createApp)
+    // unless that missed, and then here, now that it runs; the leader's
+    // sweep (and the bot's) files it later if this misses too. Never a
+    // reason creation fails.
     require('./homeroom-bot-dm').fileFirstVersion(pool, config, appId).catch((err) => {
       log.warn('app-creator', 'Homeroom bot first version not filed yet', { appId, err: err.message });
     });
   } catch (err) {
     log.error('app-creator', 'App creation failed', { appId, slug, err: err.message });
+    timing.settle('error');
     const failure = deployFailure.record(err, { sha: mainSha || null });
     await recordFailure(pool, appId, failure);
     await updateStatus(pool, appId, 'error');

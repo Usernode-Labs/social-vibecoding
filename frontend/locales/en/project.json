@@ -249,11 +249,11 @@
   },
   "allItems.group.category": {
     "text": "By category",
-    "description": "Tab at the top of a project's All items page: groups the items by what part of the project they are about."
+    "description": "Name of an icon tab at the top of a project's All items page: groups the items by what part of the project they are about. Read as the tab's tooltip and by screen readers."
   },
   "allItems.group.stage": {
     "text": "By stage",
-    "description": "Tab at the top of a project's All items page: groups the items into columns by how far along they are (open, in progress, voting, done)."
+    "description": "Name of an icon tab at the top of a project's All items page: groups the items into columns by how far along they are (open, in progress, voting, done). Read as the tab's tooltip and by screen readers."
   },
   "boardEmpty.filtered": {
     "text": "Nothing here matches the current search and filters.",
@@ -271,45 +271,45 @@
     "text": "Nothing on the board yet. Press <0>⋯</0> to suggest an improvement or import a PR; to make one yourself, use Build it now there.",
     "description": "Note on a project's Hub when the project has no requests or proposals. <0>⋯</0> is the Hub's own More button, shown as its three-dot sign. \"Suggest an improvement\", \"Import a PR\" (a GitHub pull request) and \"Build it now\" are rows of that menu."
   },
-  "boardEmpty.press.hub.collab.short": {
-    "text": "Nothing on the board yet. Press <0>⋯</0> to suggest an improvement or import a PR.",
-    "description": "Note on a project's Hub when the project has no requests or proposals and a button to start the first change is already shown above. <0>⋯</0> is the Hub's own More button, shown as its three-dot sign. \"Suggest an improvement\" and \"Import a PR\" (a GitHub pull request) are rows of that menu."
-  },
   "boardEmpty.press.hub.plain.full": {
     "text": "Nothing on the board yet. Press <0>⋯</0> to suggest an improvement; to make one yourself, use Build it now there.",
     "description": "Note on a project's Hub when the project has no requests or proposals. <0>⋯</0> is the Hub's own More button, shown as its three-dot sign. \"Suggest an improvement\" and \"Build it now\" are rows of that menu."
-  },
-  "boardEmpty.press.hub.plain.short": {
-    "text": "Nothing on the board yet. Press <0>⋯</0> to suggest an improvement.",
-    "description": "Note on a project's Hub when the project has no requests or proposals and a button to start the first change is already shown above. <0>⋯</0> is the Hub's own More button, shown as its three-dot sign. \"Suggest an improvement\" is a row of that menu."
   },
   "boardEmpty.press.away.collab.full": {
     "text": "Nothing on the board yet. Press <0>⋯</0> on the hub to suggest an improvement or import a PR; to make one yourself, use Build it now there.",
     "description": "Note on a project's All items page when the project has no requests or proposals. <0>⋯</0> is the More button on the project's Hub, shown as its three-dot sign. \"Suggest an improvement\", \"Import a PR\" (a GitHub pull request) and \"Build it now\" are rows of that menu."
   },
-  "boardEmpty.press.away.collab.short": {
-    "text": "Nothing on the board yet. Press <0>⋯</0> on the hub to suggest an improvement or import a PR.",
-    "description": "Note shown away from a project's Hub when the project has no requests or proposals and a button to start the first change is already on screen. <0>⋯</0> is the More button on the project's Hub, shown as its three-dot sign. \"Suggest an improvement\" and \"Import a PR\" (a GitHub pull request) are rows of that menu."
-  },
   "boardEmpty.press.away.plain.full": {
     "text": "Nothing on the board yet. Press <0>⋯</0> on the hub to suggest an improvement; to make one yourself, use Build it now there.",
     "description": "Note on a project's All items page when the project has no requests or proposals. <0>⋯</0> is the More button on the project's Hub, shown as its three-dot sign. \"Suggest an improvement\" and \"Build it now\" are rows of that menu."
   },
-  "boardEmpty.press.away.plain.short": {
-    "text": "Nothing on the board yet. Press <0>⋯</0> on the hub to suggest an improvement.",
-    "description": "Note shown away from a project's Hub when the project has no requests or proposals and a button to start the first change is already on screen. <0>⋯</0> is the More button on the project's Hub, shown as its three-dot sign. \"Suggest an improvement\" is a row of that menu."
-  },
   "hub.startHere.title": {
     "text": "Start working on this app",
-    "description": "Heading of the prompt at the top of a project's Hub when nothing is open and nothing has ever been merged."
+    "description": "Heading of the prompt at the top of a project's Hub when nothing is open and nothing has ever been merged, for a person Homeroom bot does not build changes for on this project."
   },
   "hub.startHere.text": {
     "text": "Nothing is open and nothing has shipped yet. The first change is yours to start.",
-    "description": "Text of the prompt at the top of a project's Hub when the project has no open items and no merged change. Shipped means merged and live in the app."
+    "description": "Text of the prompt at the top of a project's Hub when the project has no open items and no merged change, for a person Homeroom bot does not build changes for on this project. Shipped means merged and live in the app."
   },
   "hub.startHere.start": {
     "text": "Start a new change",
     "description": "Button in the prompt at the top of an unstarted project's Hub: opens a new session with a coding agent to build a change to the app. Change is a noun."
+  },
+  "hub.startHere.bot.title": {
+    "text": "What do you want to change?",
+    "description": "Heading of the card at the top of a project's Hub when nothing is open and nothing has ever been merged, for a person Homeroom bot builds changes for there. \"Change\" is a verb; the project is what changes."
+  },
+  "hub.startHere.bot.text": {
+    "text": "Say it in your own words. Homeroom bot makes the change for you.",
+    "description": "Text of the card at the top of a project's Hub when nothing is open and nothing has ever been merged, under the heading \"What do you want to change?\". \"Homeroom bot\" is the name of Homeroom's assistant, which builds changes to the project; keep it as it is. \"Change\" is a noun here."
+  },
+  "hub.startHere.bot.button": {
+    "text": "Tell Homeroom bot what to change",
+    "description": "Button on the card at the top of a project's Hub when nothing is open and nothing has ever been merged: opens the person's chat with Homeroom bot (the assistant's name; keep it as it is) with this project attached, ready for them to type what they want changed. \"Change\" is a verb."
+  },
+  "hub.card.close": {
+    "text": "Close this card",
+    "description": "Accessible name and tooltip of the small close (✕) button at the top right of two cards on a project's hub: \"Share it\" and \"What do you want to change?\". Closing one hides it on that project for good; what it offered stays elsewhere on the page."
   },
   "workshop.allItems.title": {
     "text": "All items",
@@ -471,6 +471,42 @@
     "text": "Show {{count}} more",
     "description": "Button under the Your work list on a project's Workshop tab: shows the rest of this person's items. {{count}} is how many are hidden."
   },
+  "workshop.waiting.title": {
+    "text": "Waiting on you",
+    "description": "Heading of a part of the What's happening card on a project's Workshop tab: the viewer's items that need their answer before they can move (a plan waiting for Build it, a question from Homeroom bot, a conversation with Homeroom bot, a change of theirs that needs a fix)."
+  },
+  "workshop.waiting.count_one": {
+    "text": "{{count}} to answer",
+    "description": "Beside the \"Waiting on you\" heading in What's happening on a project's Workshop tab: how many of the viewer's items need their answer before they can move. {{count}} is that number."
+  },
+  "workshop.waiting.count_other": {
+    "text": "{{count}} to answer",
+    "description": "Beside the \"Waiting on you\" heading in What's happening on a project's Workshop tab: how many of the viewer's items need their answer before they can move. {{count}} is that number."
+  },
+  "workshop.yourVotes.title": {
+    "text": "Yours, up for a vote",
+    "description": "Heading of a part of the What's happening card on a project's Workshop tab: the viewer's own changes that are up for a vote now."
+  },
+  "workshop.yourVotes.count_one": {
+    "text": "{{count}} open",
+    "description": "Beside the \"Yours, up for a vote\" heading in What's happening on a project's Workshop tab: how many of the viewer's own changes and group decisions are up for a vote now. {{count}} is that number."
+  },
+  "workshop.yourVotes.count_other": {
+    "text": "{{count}} open",
+    "description": "Beside the \"Yours, up for a vote\" heading in What's happening on a project's Workshop tab: how many of the viewer's own changes and group decisions are up for a vote now. {{count}} is that number."
+  },
+  "workshop.goingLive.title": {
+    "text": "Going live",
+    "description": "Heading of a part of the What's happening card on a project's Workshop tab: the viewer's changes that were approved and merged and are not live yet, waiting for the release that makes them live."
+  },
+  "workshop.goingLive.count_one": {
+    "text": "{{count}} merged",
+    "description": "Beside the \"Going live\" heading in What's happening on a project's Workshop tab: how many of the viewer's changes were merged and are not live yet. {{count}} is that number."
+  },
+  "workshop.goingLive.count_other": {
+    "text": "{{count}} merged",
+    "description": "Beside the \"Going live\" heading in What's happening on a project's Workshop tab: how many of the viewer's changes were merged and are not live yet. {{count}} is that number."
+  },
   "workshop.fresh.title": {
     "text": "New for you",
     "description": "Heading of a card on the Workshop tab of a project's page: requests filed since the viewer's last visit."
@@ -482,6 +518,10 @@
   "workshop.fresh.count_other": {
     "text": "{{count}} since your last visit",
     "description": "Beside the \"New for you\" heading on the Workshop tab of a project's page: how many rows the card holds. {{count}} is that number."
+  },
+  "workshop.fresh.markAllSeen": {
+    "text": "Mark all seen",
+    "description": "Button beside the \"New for you\" heading on the Workshop tab of a project's page: marks everything new since the viewer's last visit as seen, which empties the card."
   },
   "workshop.fresh.buildIt": {
     "text": "Build it",
@@ -1331,9 +1371,9 @@
     "text": "{{shown}} new",
     "description": "Small badge in the head of the Discussion card: how many messages in the project's channel are unread. {{shown}} is that number as displayed, capped as 99+; the plural form follows the real count."
   },
-  "hub.channel.sayHi": {
-    "text": "Say hi to {{project}}",
-    "description": "Button on the Discussion card of a project's Hub when nobody has written in the project's channel yet: opens the Discussion tab to write the first message. {{project}} is the project's name."
+  "hub.channel.empty": {
+    "text": "No messages yet.",
+    "description": "Second line of the Discussion row in the \"For you\" card on a project's hub, when nobody has said anything in the project's channel yet. The row opens the channel."
   },
   "hub.firstVersion.review": {
     "text": "Review the plan",
@@ -1351,9 +1391,33 @@
     "text": "Open app",
     "description": "Button on the first-version card of a project's Hub once the first version is live. Open is a verb: goes to the running app."
   },
+  "hub.firstVersion.tryAgain": {
+    "text": "Try again",
+    "description": "Main button on the first-version card of a project's Hub, for the person who started the project, when Homeroom bot's build of the first version stopped before the app went live: opens the build's conversation in their chat with Homeroom bot, where they can start it again."
+  },
   "hub.firstVersion.seePlan": {
     "text": "See the plan",
     "description": "Quiet link on the first-version card of a project's Hub, for a member who did not start the project: opens the plan for the first version to read, without being able to answer it."
+  },
+  "hub.firstLook.kicker": {
+    "text": "First look",
+    "description": "Small label in capitals at the top of a card on a project's Hub, shown to the person who started the project while its first version is being built, beside a small picture of the app's main screen that the assistant called Homeroom bot drew before building it. \"Look\" is a noun: a first view of the app."
+  },
+  "hub.firstLook.title": {
+    "text": "Here's what you're making",
+    "description": "Title of the first-look card on a project's Hub, shown to the person who started the project while its first version is being built, beside a small picture of the app's main screen that Homeroom bot drew from their answers."
+  },
+  "hub.firstLook.text": {
+    "text": "Drawn from your answers. We'll tell you when the working app is live.",
+    "description": "Text of the first-look card on a project's Hub, under its title: the picture beside it was drawn from the answers the person gave when they made the project, the real app is still being built, and they will be told once it is published (\"live\")."
+  },
+  "hub.firstLook.watch": {
+    "text": "Watch Homeroom bot build it",
+    "description": "Button on the first-look card of a project's Hub: opens the project's App tab, where the app can be seen taking shape while the assistant called Homeroom bot builds it. \"It\" is the app; Homeroom bot is a name."
+  },
+  "hub.firstLook.alt": {
+    "text": "The first look at {{app}}'s main screen",
+    "description": "Description, for screen readers, of the small picture on the first-look card of a project's Hub: a drawing of the app's main screen, made before the app was built. {{app}} is the project's name."
   },
   "hub.needs.title": {
     "text": "Needs you",
@@ -1406,14 +1470,6 @@
   "hub.work.empty": {
     "text": "No work in progress.",
     "description": "Shown on the Your work card of a project's Hub when this person has nothing under way in the project."
-  },
-  "hub.work.emptyBot": {
-    "text": "Nothing in progress. To change something, tell Homeroom bot.",
-    "description": "Shown on the Your work card of a project's Hub when the person is alone in the project, has nothing under way, and Homeroom bot builds changes for them there. \"Homeroom bot\" is the assistant's name and stays as it is."
-  },
-  "hub.work.emptyMenu": {
-    "text": "Nothing in progress. Press <0>⋯</0> to suggest an improvement.",
-    "description": "Shown on the Your work card of a project's Hub when the person is alone in the project and has nothing under way. The ⋯ in <0></0> is the three-dot menu button on the same page, shown in the accent colour; keep the symbol."
   },
   "hub.people.active_one": {
     "text": "{{count}} active this week",
@@ -1498,6 +1554,14 @@
   "hub.recent.going": {
     "text": "Going live now",
     "description": "Line under a change's title in Recently live on a project's Hub, for a change that has merged and is still on its way to the live app, when there is no maker to name."
+  },
+  "hub.recent.own.today": {
+    "text": "Live since today",
+    "description": "Under the app's own name on the one card in the \"Recently live\" section of a project's hub, shown before any change to the app has gone live: the app itself went live today. The card opens the app."
+  },
+  "hub.recent.own.since": {
+    "text": "Live since {{date}}",
+    "description": "Under the app's own name on the one card in the \"Recently live\" section of a project's hub, shown before any change to the app has gone live: the day the app went live. {{date}} is a day in words, for example \"October 12\" or \"October 12, 2025\". The card opens the app."
   },
   "communityCard.rule.you": {
     "text": "A change goes live when you approve it.",
@@ -1747,6 +1811,10 @@
     "text": "Just you",
     "description": "Name of the audience of a project only its maker is in, used as the project's audience line when the server sent no label. It is one of the three audience names, beside Private community and Public community."
   },
+  "communityCard.audience.justYouSoFar": {
+    "text": "Just you so far",
+    "description": "Who a project is for, shown at the top of its Hub to the one person in it while nobody else has joined, with an Invite button beside it. \"Just you\" is the name of that audience (beside Private community and Public community); \"so far\" says it can grow."
+  },
   "communityCard.audience.withMembers_one": {
     "text": "{{audience}} · {{count}} member",
     "description": "One-line summary of who a project is for and how many people are in it. {{audience}} is the audience's name, already in the reader's language: Private community or Public community. {{count}} is the number of members."
@@ -1770,18 +1838,6 @@
   "communityCard.audienceChange.failed": {
     "text": "That did not go through. Try again.",
     "description": "Error shown when proposing to make a project public or private failed and the server gave no reason of its own: as a toast after the confirm dialog, or under the question in the Make it public popup."
-  },
-  "communityCard.week.privateCommunity": {
-    "text": "Private community",
-    "description": "Audience name shown in bold beside the faces at the top of a project's Hub in its first week, when the project is still just its maker's but an invite link has been sent out. One of the three audience names."
-  },
-  "communityCard.week.people_one": {
-    "text": "{{count}} person",
-    "description": "Small line under the audience name at the top of a project's Hub in its first week: how many people are in the community."
-  },
-  "communityCard.week.people_other": {
-    "text": "{{count}} people",
-    "description": "Small line under the audience name at the top of a project's Hub in its first week: how many people are in the community."
   },
   "communityCard.people.members_one": {
     "text": "{{count}} member",
@@ -1834,6 +1890,38 @@
   "communityCard.share.makePublic": {
     "text": "Make it public",
     "description": "Button on the \"Share it\" card: opens a small popup asking whether to propose making the project a public community. \"It\" is the project."
+  },
+  "communityCard.share.sent_one": {
+    "text": "Invite link sent",
+    "description": "Starts the one line on the \"Share it\" card of a project that is just the person's own, once they have made an invite link for it that still works. Followed by who has joined and how long the link has left, for example \"Invite link sent · nobody has joined yet · 7 days left\"."
+  },
+  "communityCard.share.sent_other": {
+    "text": "{{count}} invite links sent",
+    "description": "Starts the one line on the \"Share it\" card of a project that is just the person's own, when more than one invite link for it still works. Followed by who has joined and how long the soonest link has left, for example \"2 invite links sent · 1 joined · 3 days left\"."
+  },
+  "communityCard.share.nobodyJoined": {
+    "text": "nobody has joined yet",
+    "description": "Part of the one line on the \"Share it\" card, after \"Invite link sent\": nobody has joined the project through the invite link yet. Lower case because it follows a separator in the middle of the line."
+  },
+  "communityCard.share.joined_one": {
+    "text": "{{count}} joined",
+    "description": "Part of the one line on the \"Share it\" card, after \"Invite link sent\": how many people have joined the project through the invite link."
+  },
+  "communityCard.share.joined_other": {
+    "text": "{{count}} joined",
+    "description": "Part of the one line on the \"Share it\" card, after \"Invite link sent\": how many people have joined the project through the invite link."
+  },
+  "communityCard.share.daysLeft_one": {
+    "text": "{{count}} day left",
+    "description": "Ends the one line on the \"Share it\" card: how many days the invite link still works, rounded. Lower case because it follows a separator in the middle of the line."
+  },
+  "communityCard.share.daysLeft_other": {
+    "text": "{{count}} days left",
+    "description": "Ends the one line on the \"Share it\" card: how many days the invite link still works, rounded. Lower case because it follows a separator in the middle of the line."
+  },
+  "communityCard.share.expiresToday": {
+    "text": "expires today",
+    "description": "Ends the one line on the \"Share it\" card when the invite link stops working in less than a day. Lower case because it follows a separator in the middle of the line."
   },
   "communityCard.inviteCard.note": {
     "text": "“{{note}}”",
@@ -2187,6 +2275,14 @@
     "text": "No replies yet",
     "description": "Line under a change, on its page, when nobody has replied to it."
   },
+  "topic.change.stream.conversationOn": {
+    "text": "Conversation lives on <0>#{{number}}</0>",
+    "description": "Line under a change, on its page, when the change was built for a request and has no replies of its own: the conversation about the change is on that request's page instead. <0> is the link to the request, shown as its number; {{number}} is that number. Nothing follows the link on the line."
+  },
+  "topic.change.stream.moreConversationOn": {
+    "text": "More of the conversation is on <0>#{{number}}</0>",
+    "description": "Line above the \"N replies\" row on a change's page, when the change was built for a request and also has replies of its own: the fuller conversation is on that request's page. <0> is the link to the request, shown as its number; {{number}} is that number."
+  },
   "topic.change.stream.loading": {
     "text": "Loading replies…",
     "description": "Line under a change, on its page, while the replies to it are being fetched."
@@ -2206,6 +2302,10 @@
   "topic.change.line.postedSpecUnnamed": {
     "text": "<0>Someone</0> posted plan v{{version}}",
     "description": "One line among the replies on a change's page, saying something that happened: a plan (the written description the change is built from) was posted. Used when nobody can be named; \"Someone\" is written as the line has always shown it. {{version}} is the plan's version number."
+  },
+  "topic.change.line.botPlan": {
+    "text": "Plan v{{version}}: {{title}}",
+    "description": "One line among the replies on a change's page: Homeroom bot's plan (the written description the change is built from). {{version}} is the plan's version number; \"v\" abbreviates version. {{title}} is the plan's title. A \"Read\" link follows the line."
   },
   "topic.change.line.previewReady": {
     "text": "The preview is ready",
@@ -2288,8 +2388,8 @@
     "description": "Accessible name of the row on a change's page, under its summary, that names the requests (filed issues) the change is meant to resolve."
   },
   "topic.requests.addresses": {
-    "text": "Addresses",
-    "description": "Label at the start of the row on a change's page that names the requests it resolves: the first request follows it as a chip, with a \"+N more\" button when there are others. A verb in the third person: this change addresses these requests. Not postal addresses."
+    "text": "Built for",
+    "description": "Label at the start of the row on a change's page that names the requests (filed issues) the change was built for: the first request follows it as a chip, with a \"+N more\" button when there are others."
   },
   "topic.requests.more_one": {
     "text": "+{{count}} more",
@@ -2614,6 +2714,22 @@
   "topic.request.stream.postedSpecSystem": {
     "text": "<0>System</0> posted a plan",
     "description": "One line among the replies on a request's page, saying something that happened: a plan (the written description of the change) was posted on the request's GitHub issue. Used when the row came with no author and shows \"System\" in the author's place. Keep the <0> tag around the word."
+  },
+  "topic.request.stream.botPlanBuilding": {
+    "text": "Plan v{{version}}: {{title}}. I'm building it now.",
+    "description": "One line among the replies on a request's page: Homeroom bot (an assistant that builds requests, speaking in the first person) posted its plan (the written description of the change) and is building it. {{version}} is the plan's version number; \"v\" abbreviates version. {{title}} is the plan's title. A \"Read\" link follows the line."
+  },
+  "topic.request.stream.botPlanWaiting": {
+    "text": "Plan v{{version}}: {{title}}. Waiting for @{{requester}} to say Build it.",
+    "description": "One line among the replies on a request's page: Homeroom bot posted its plan (the written description of the change) and builds nothing until the person who asked for it approves it. {{version}} is the plan's version number; {{title}} is the plan's title; {{requester}} is that person's username, after an @. \"Build it\" is the name of the button they tap: keep it as the button reads in your language. A \"Read\" link follows the line."
+  },
+  "topic.request.stream.botPlanWaitingUnnamed": {
+    "text": "Plan v{{version}}: {{title}}. Waiting for the person who asked for it to say Build it.",
+    "description": "One line among the replies on a request's page: Homeroom bot posted its plan (the written description of the change) and builds nothing until the person who asked for the request approves it; used when that person cannot be named. {{version}} is the plan's version number; {{title}} is the plan's title. \"Build it\" is the name of the button they tap. A \"Read\" link follows the line."
+  },
+  "topic.request.stream.botPlan": {
+    "text": "Plan v{{version}}: {{title}}",
+    "description": "One line among the replies on a request's page: Homeroom bot posted its plan (the written description of the change). {{version}} is the plan's version number; \"v\" abbreviates version. {{title}} is the plan's title. A \"Read\" link follows the line."
   },
   "topic.request.stream.claimed": {
     "text": "<0>{{member}}</0> started working on this",
@@ -3577,11 +3693,11 @@
   },
   "filters.quick.assignedToYou": {
     "text": "Assigned to you",
-    "description": "Toggle chip in the filter strip above a project's list of requests and proposals: shows only the items assigned to the viewer."
+    "description": "Name of an icon toggle chip in the filter strip, read as its tooltip and by screen readers, above a project's list of requests and proposals: shows only the items assigned to the viewer."
   },
   "filters.quick.createdByYou": {
     "text": "Created by you",
-    "description": "Toggle chip in the filter strip above a project's list of requests and proposals: shows only the items the viewer started."
+    "description": "Name of an icon toggle chip in the filter strip, read as its tooltip and by screen readers, above a project's list of requests and proposals: shows only the items the viewer started."
   },
   "filters.search.placeholder": {
     "text": "Search requests, changes, comments or #",
@@ -3591,21 +3707,17 @@
     "text": "Filter cards",
     "description": "Accessible name of the search box above a project's list of requests and proposals; typing narrows the list. 'Filter' is a verb."
   },
-  "filters.button.hint": {
-    "text": "Filter the board",
-    "description": "Tooltip of the 'Filters' chip above a project's list of requests and proposals: opens the dialog with every filter. 'Filter' is a verb; the board is that list."
-  },
   "filters.button.none": {
     "text": "Filters",
-    "description": "Chip beside the search box above a project's list of requests and proposals, while no filter is on: opens the filters dialog. A plural noun."
+    "description": "Name of the sliders icon chip beside the search box, read as its tooltip and by screen readers, above a project's list of requests and proposals, while no filter is on: opens the filters dialog. A plural noun."
   },
   "filters.button.active_one": {
     "text": "Filters ({{count}})",
-    "description": "Chip beside the search box above a project's list of requests and proposals while filters are on: opens the filters dialog. {{count}} is how many filters are on."
+    "description": "Name of the sliders icon chip beside the search box, read as its tooltip and by screen readers, above a project's list of requests and proposals while filters are on: opens the filters dialog. {{count}} is how many filters are on."
   },
   "filters.button.active_other": {
     "text": "Filters ({{count}})",
-    "description": "Chip beside the search box above a project's list of requests and proposals while filters are on: opens the filters dialog. {{count}} is how many filters are on."
+    "description": "Name of the sliders icon chip beside the search box, read as its tooltip and by screen readers, above a project's list of requests and proposals while filters are on: opens the filters dialog. {{count}} is how many filters are on."
   },
   "filters.chip.remove": {
     "text": "Remove filter: {{filter}}",

@@ -304,6 +304,7 @@ module.exports = {
   LOCATOR_KINDS,
   VisibleChangesValidationError,
   validRelativePath,
+  validControlledFailurePath,
   credentialLike,
   parseIntent,
   declaredChanges,

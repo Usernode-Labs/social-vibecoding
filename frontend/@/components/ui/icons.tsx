@@ -52,6 +52,18 @@ import * as React from 'react';
  * enumerate them.
  */
 
+// Heroicons v2 outline microphone, verbatim and on the shell glyphs' grid and
+// stroke: the capsule, the cradle under it, the stem and its base in one path.
+// #5070 shipped a copy whose `m-12 0` began the cradle's left half as a new
+// subpath, so its `Z` closed to the wrong point and the stem and base drew on
+// the left, a hook rather than a microphone. Its name stays in double quotes:
+// tests/shell-icon-set.test.js reads every single-quoted string that starts
+// with M as path data.
+export const MicrophoneIcon = stroked(
+  "MicrophoneIcon",
+  'M12 18.75a6 6 0 0 0 6-6v-1.5m-6 7.5a6 6 0 0 1-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 0 1-3-3V4.5a3 3 0 1 1 6 0v8.25a3 3 0 0 1-3 3Z',
+);
+
 export type IconProps = Omit<
   React.SVGProps<SVGSVGElement>,
   'children' | 'viewBox' | 'fill' | 'stroke' | 'd'
@@ -420,6 +432,26 @@ export const BoltIcon = stroked('BoltIcon', 'M13 3 5 13.5h6l-1 7.5 8-10.5h-6l1-7
 export const AdjustmentsIcon = stroked('AdjustmentsIcon', [
   'M4 7h9M17 7h3M4 17h3M11 17h9',
   'M13 7a2 2 0 104 0 2 2 0 00-4 0zM7 17a2 2 0 104 0 2 2 0 00-4 0z',
+]);
+// #4916: All items' "By category" tab, beside BoardIcon for "By stage".
+// Heroicons v1 outline tag, the set this file draws from.
+export const TagIcon = stroked(
+  'TagIcon',
+  'M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z',
+);
+// #4916: the board's two "mine" toggles, drawn as a person with a mark:
+// a check for Assigned to you, a pen for Created by you. New glyphs, so not
+// transcribed from older markup: lucide's user-check and user-pen, on the
+// same 24 grid at the same 2px stroke as UserIcon.
+export const UserCheckIcon = stroked('UserCheckIcon', [
+  'M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2',
+  'M5 7a4 4 0 108 0 4 4 0 10-8 0z',
+  'M16 11l2 2 4-4',
+]);
+export const UserPenIcon = stroked('UserPenIcon', [
+  'M11.5 15H7a4 4 0 00-4 4v2',
+  'M6 7a4 4 0 108 0 4 4 0 10-8 0z',
+  'M21.38 16.63a2.12 2.12 0 00-3-3l-4.01 4a2 2 0 00-.51.86l-.84 2.87a.5.5 0 00.62.62l2.87-.84a2 2 0 00.86-.51z',
 ]);
 export const SparklesIcon = stroked(
   'SparklesIcon',

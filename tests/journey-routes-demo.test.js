@@ -78,6 +78,10 @@ test('every Journey route has a labelled demo payload with the real shape', asyn
   assert.equal(creation.weeks.length, 8);
   assert.equal(creation.weeks[0].steps.find((x) => x.key === 'running').reached.recorded, false,
     'a week before the record began reads "not recorded", never 0');
+  // #4895: where the time to running went, per stage and per newest project.
+  assert.equal(creation.timing.of, 5);
+  assert.equal(creation.timing.stages.find((x) => x.key === 'build').medianMs, 69000);
+  assert.ok(creation.examples.every((x) => x.timing && x.timing.stages.build > 0));
   const cohort = await (await fetch(`${base}/api/admin/journey/creation?demo=1&cohort=2026-10-05`)).json();
   assert.ok(cohort.examples.every((x) => [900101, 900102, 900103].includes(x.userId)), 'a cohort narrows the examples');
   const allTime = await (await fetch(`${base}/api/admin/journey/creation?demo=1&week=all`)).json();

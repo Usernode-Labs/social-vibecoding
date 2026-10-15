@@ -323,8 +323,10 @@ test('#3498: every wallpaper and bar rule that names Workshop names Your work to
   // The rules keyed on a visible screen root: `body:has(:is(<roots>):not(.hidden))`.
   const routeRules = SELECTORS.filter((sel) => /body:has\(:is\([^)]*#workshop-screen[^)]*\):not\(\.hidden\)\)/.test(sel));
   // The light and dark ground, their 640px layer sets and the launch cover
-  // (5); the cleared bar, its glass, its clip and its faked layer (4).
-  assert.equal(routeRules.length, 9, 'the nine route rules that name #workshop-screen are found');
+  // (5); the cleared bar, its glass, its clip and its faked layer, the
+  // opaque ground under that glass in an iOS browser tab, and (run seven)
+  // that bar sticky at the top there, the document not scrolling (6).
+  assert.equal(routeRules.length, 11, 'the eleven route rules that name #workshop-screen are found');
   for (const sel of routeRules) {
     assert.ok(sel.includes('#profile-proposals-screen'),
       `${sel.replace(/\s+/g, ' ').slice(0, 90)}… also names #profile-proposals-screen`);
@@ -332,7 +334,7 @@ test('#3498: every wallpaper and bar rule that names Workshop names Your work to
   const ground = routeRules.filter((sel) => !sel.includes('#platform-header'));
   assert.equal(ground.length, 5, 'so the page paints the wallpaper, not the gray body');
   const bar = routeRules.filter((sel) => sel.includes('#platform-header'));
-  assert.equal(bar.length, 4, 'and the bar wears the same glass as on Workshop');
+  assert.equal(bar.length, 6, 'and the bar wears the same glass as on Workshop');
 });
 
 test('#3498: on a desktop the screen moves over for the rail like its siblings', () => {

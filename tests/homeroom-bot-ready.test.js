@@ -230,8 +230,9 @@ test('B7: "ready to try" in the bell and on the phone, on by default', async () 
   assert.ok(push.ALLOWED_KINDS.has('change_ready'));
   const { buildNotificationCopy } = require('../src/services/mobile-push-policy');
   const copy = buildNotificationCopy('change_ready', { sourceUsername: 'ben', appName: 'Supper Club', sessionTitle: 'Sunday host reminder' });
-  assert.equal(copy.title, "@ben's change to Supper Club is ready to try");
-  assert.equal(copy.body, 'Sunday host reminder');
+  // "One story": the change and its project, over who asked and what to do.
+  assert.equal(copy.title, 'Sunday host reminder · Supper Club');
+  assert.equal(copy.body, "@ben's change is ready to try. Try it and vote.");
   if (!globalThis.window) globalThis.window = globalThis;
   globalThis.PlatformI18n = englishPlatformI18n();
   loadTsx('frontend/src/features/notifications/notifications.js');
@@ -395,6 +396,50 @@ test('B7: who approves, who is told, and the card, against the full PostgreSQL s
       `INSERT INTO pr_votes (session_id, user_id, vote, approval_epoch) VALUES ($1, $2, 'yes', 1)`, [id, ada.id],
     );
     assert.deepEqual(await dm.needsYesFrom(pool, await dm.approvalState(pool, { sessionId: id }), { except: [ben.id] }), []);
+  });
+
+  // Club Votes, 12 to 13 Oct 2026 (D1): its first version waited all night
+  // for its maker's own Yes. A project's first version goes live without a
+  // vote, so its card offers no Approve, nobody else is asked, and the words
+  // say it goes live; the next change the bot makes asks as before (D2).
+  await t.test('a first version: no Approve, nobody asked, and it says it goes live without a vote', async () => {
+    const club = await project('club-votes', 'Club Votes', { members: [maya, ben, ada] });
+    await active(club, [maya, ben, ada]);
+    await pool.query(
+      `INSERT INTO homeroom_bot_first_versions (app_id, user_id, brief, status, issue_number)
+       VALUES ($1, $2, 'Votes for the club', 'filed', 1)`,
+      [club.id, maya.id],
+    );
+    const id = await change(club, maya, 1);
+    const state = await dm.approvalState(pool, { sessionId: id, userId: maya.id });
+    assert.equal(state.firstVersion, true);
+    assert.equal(state.gate.mergeable, true, 'no vote needed');
+    assert.deepEqual([state.missing, state.needed, state.last], [0, 0, false]);
+    assert.deepEqual(await dm.needsYesFrom(pool, state, { except: [maya.id] }), [], 'nobody is waited on');
+    await dm.noteChangeReady(pool, id, { bot: homeroomBot, domain: 'app.example.test' });
+    const sent = await card(maya.id, id);
+    assert.deepEqual(sent.meta.actions.map((a) => a.id), ['try', 'change'], 'no Approve');
+    assert.match(sent.content, /It's ready to try\. As the first version, it goes live without a vote in a minute or two\.$/);
+    assert.doesNotMatch(sent.content, /approve/i);
+    assert.deepEqual(await told(id), [], 'nobody else is asked to approve it');
+    // The card under the message it was asked in asks nothing of her either.
+    const chat = await require('../src/services/homeroom-bot-chat').approvalOf(pool, { sessionId: id, viewer: { id: maya.id } });
+    assert.deepEqual([chat.youApprove, chat.missing, chat.waitingOn], [false, 0, []]);
+    // What the App tab reads (firstVersionApproval): the same, for anyone.
+    for (const who of [maya, ben]) {
+      assert.deepEqual(await dm.firstVersionApproval(pool, id, who.id), {
+        sessionId: id, noVote: true, mustApprove: false, approved: false, waitingOn: [], more: 0, missing: 0, goesLiveAt: null, soon: true,
+      });
+    }
+    // It goes live; the next change the bot makes there needs a person's Yes.
+    await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW() WHERE id = $1`, [id]);
+    const later = await change(club, ben, 2);
+    const next = await dm.approvalState(pool, { sessionId: later, userId: ben.id });
+    assert.equal(next.firstVersion, false);
+    assert.equal(next.gate.mergeable, false);
+    await dm.noteChangeReady(pool, later, { bot: homeroomBot, domain: 'app.example.test' });
+    assert.deepEqual((await card(ben.id, later)).meta.actions.map((a) => a.id), ['try', 'approve', 'change']);
+    assert.deepEqual((await told(later)).map((r) => r.username), ['ada', 'maya']);
   });
 
   await t.test('a public community tells nobody this way, unless it names its approvers', async () => {

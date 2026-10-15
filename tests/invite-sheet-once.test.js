@@ -211,6 +211,7 @@ test('the hub and the Share dialog open it with one call, not open() then a pane
 const LINK = {
   id: 7, token: 'tok', path: '/invite/tok', maxUses: 25, uses: 0,
   expiresAt: '2026-10-12T12:00:00Z', createdAt: '2026-10-05T12:00:00Z', createdBy: 'maya', mine: true, note: null,
+  status: 'live', joined: 0, waiting: 0,
 };
 const STATE = {
   links: [],
@@ -281,6 +282,29 @@ test('a viewer with a link of their own makes none; a failure is an answer, not 
     assert.equal(outcome.state, null);
     assert.equal(outcome.error, 'Internal server error');
   });
+});
+
+test('#4779: a viewer whose only link ended gets a new one made on opening, and it fills the link box', async () => {
+  const api = loadTsx('tests/fixtures/invite-pane-api.ts');
+  const ended = { ...LINK, id: 8, status: 'expired', waiting: 1 };
+  const fresh = { ...LINK, id: 9, token: 'tok9', path: '/invite/tok9' };
+  const { fake, calls } = stubFetch({
+    GET: { body: { ...STATE, links: [ended] } },
+    POST: { status: 201, body: { link: fresh } },
+  });
+  await withFetch(fake, async () => {
+    const outcome = await api.prepareInvite('notes-ab12');
+    assert.deepEqual(calls, [
+      'GET /api/apps/notes-ab12/invite-links',
+      'POST /api/apps/notes-ab12/invite-links',
+    ], 'a link that no longer works is not counted as one of theirs');
+    assert.deepEqual(outcome.state.links.map((l) => l.id), [9, 8], 'the new link leads, the ended one stays listed');
+  });
+  const html = renderToHtml(createElement(api.InvitePane, { slug: 'notes-ab12', label: 'Notes' }));
+  assert.match(html, /value="\/invite\/tok9"/, 'the new link is in the box, not the ended one');
+  assert.match(html, /data-invite-status="expired"/, 'the ended row says why it is ended');
+  assert.match(html, /0 of 25 used · expired/, 'the ended row keeps its use count and why it ended');
+  assert.match(html, /1 waiting/, 'the ended row keeps its waiting people');
 });
 
 // ── the pane ─────────────────────────────────────────────────────────────

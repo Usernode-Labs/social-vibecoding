@@ -10,6 +10,7 @@ const appManifest = require('../services/app-manifest');
 const appSecrets = require('../services/app-secrets');
 const platformEnv = require('../services/platform-env');
 const staging = require('../services/staging');
+const owedRedeploy = require('../services/owed-redeploy');
 const { encrypt, decrypt } = require('../services/secrets');
 const { issueKindLimiter, governanceVoteLimiter } = require('../middleware/rate-limits');
 const events = require('../services/events');
@@ -610,8 +611,7 @@ function isStagingMockIssueNumber(number) {
 // a short spec here is how the request page could pass every check and
 // still show the raw markers on every real request.
 const MOCK_BOT_SPEC_COMMENT = [
-  '[Mock] Homeroom bot wrote a plan for this request and is building it now. The change will be linked here '
-    + 'when it\'s ready to try.',
+  '[Mock] Homeroom bot wrote a plan for this request and is building it now.',
   '',
   '<details><summary>The plan</summary>',
   '',
@@ -2510,6 +2510,18 @@ function issueRoutes(config) {
       const used = await countWeeklyBountiesUsed(pool, req.user.id, weekStartUtc());
       const myRemaining = Math.max(0, WEEKLY_BOUNTY_LIMIT - used);
 
+      // #4772: what Homeroom bot waits on this viewer for here (its plans
+      // waiting for their Build it, its open questions to them, and the
+      // back and forths they are in with it), for the Workshop's Waiting on
+      // you. Best-effort: services/workshop-waiting.js never throws. The
+      // staging demo shows one of each on the mock requests.
+      const workshopWaiting = require('../services/workshop-waiting');
+      const waitingOnYou = IS_STAGING && req.query.demo === '1'
+        ? workshopWaiting.demoWaiting()
+        : await workshopWaiting.waitingOnViewer(pool, {
+          appId: app.id, userId: req.user.id, botId: (await botDm.botAccount(pool).catch(() => null))?.id || null,
+        });
+
       res.json({
         issues,
         truncatedList: !!result.truncatedList,
@@ -2523,6 +2535,7 @@ function issueRoutes(config) {
         myRemaining,
         limit: WEEKLY_BOUNTY_LIMIT,
         ...(botDoor ? { homeroomBot: botDoor } : {}),
+        waitingOnYou,
       });
     } catch (err) {
       log.error('issues', 'Failed to list GitHub issues', { message: err.message });
@@ -3846,6 +3859,14 @@ async function maybeApplySecretChangeProposal(config, pool, issue, options = {})
       `UPDATE issues SET status = 'closed', payload = $1 WHERE id = $2`,
       [JSON.stringify(auditPayload), locked.id]
     );
+    // The rebuild that carries the change to the running app is owed in the
+    // same commit (services/owed-redeploy.js), so a process that dies before
+    // giving it leaves it to the leader rather than losing it: nothing else
+    // would notice, since main_sha does not move for a secret. With the
+    // app-delivery machine on, the machine is asked for it instead, and
+    // nothing else deploys beside it.
+    const viaDelivery = !selfHosted && workflow().deliveryEnabled();
+    if (!selfHosted && !viaDelivery) await owedRedeploy.owe(client, issue.app_id, 'secret_change');
 
     await client.query('COMMIT');
 
@@ -3887,22 +3908,22 @@ async function maybeApplySecretChangeProposal(config, pool, issue, options = {})
       //
       // NEVER for the self-hosted row: rebuildProduction() would treat the
       // platform like a child container (see this function's header).
-      pool.query('SELECT * FROM apps WHERE id = $1', [issue.app_id])
-        .then(({ rows }) => rows[0] && staging.rebuildProduction(config, rows[0]))
-        .then(async (result) => {
-          if (!result) return;
-          await pool.query(
-            `UPDATE apps SET container_id = $1, main_sha = $2, status = 'running',
-                             last_deploy_at = NOW()
-             WHERE id = $3`,
-            [result.containerId, result.sha || null, issue.app_id]
-          );
-        })
-        .catch((err) => {
-          log.warn('issues', 'Post-secret-change redeploy failed', {
-            slug: issue.app_slug, err: err.message,
-          });
+      //
+      // With the app-delivery machine on, a recorded request it runs (kept
+      // across a restart: the stored key is never left undeployed).
+      if (viaDelivery) {
+        workflow().requestDeploy(issue.app_id, 'secret_change').catch((err) => {
+          log.warn('issues', 'Post-secret-change redeploy request failed', { slug: issue.app_slug, err: err.message });
         });
+      } else {
+        // Not awaited, and owed above: this run takes the mark whoever holds
+        // it, records the new container and clears it; if this process dies
+        // first, the leader's sweep runs it again (services/owed-redeploy.js).
+        void owedRedeploy.kick(config, pool, issue.app_id, {
+          takeover: true,
+          rebuild: (app) => staging.rebuildProduction(config, app),
+        });
+      }
     }
 
     if (locked.github_issue_number) {
@@ -4204,6 +4225,16 @@ async function maybeApplyCloseIssueProposal(pool, issue, options = {}) {
     null, { type: 'governance', ref: locked.id }).catch(() => {});
   await sendSystemMessage(pool, issue.app_id, closedMsg, 'system',
     null, { type: 'issue', ref: issueNumber }).catch(() => {});
+
+  // The Homeroom bot's proposals built for this request alone come down with
+  // it: one left up for a vote holds a slot of the bot's per-project cap for
+  // good, and could still merge what the group just voted to drop (#4968).
+  // After the line above, so the request's thread reads in order. Not
+  // awaited: a withdrawal takes a preview down and closes a pull request,
+  // which the GitHub close below has no reason to wait on. Never throws.
+  require('../services/homeroom-bot-closed-requests')
+    .noteRequestsClosed(pool, { appId: issue.app_id, closed: [issueNumber] })
+    .catch(() => {});
 
   // GitHub: close FIRST, then comment (same ordering rationale as the
   // rename path — a stale "closed by vote" comment must not land on an

@@ -92,6 +92,21 @@ function uiTelemetryRoutes(config, { pool = getPool(config) } = {}) {
     }
   });
 
+  // Page load times (#4965): one duration per full page load, credited to the
+  // first real screen the shell showed.
+  router.get('/api/admin/analytics/page-loads', adminMiddleware, async (req, res) => {
+    try {
+      const data = await telemetry.pageLoads(pool, {
+        days: telemetry.daysWindow(req.query.days),
+        includeAdmins: req.query.includeAdmins === 'true',
+      });
+      res.json(data);
+    } catch (err) {
+      log.error('ui-telemetry', 'Page load aggregate failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   router.use((err, req, res, next) => {
     if (err?.type === 'entity.too.large' && req.path === '/api/ui-telemetry/batch') {
       return res.status(413).json({ error: 'telemetry_too_large' });

@@ -405,6 +405,18 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     'M13 3 5 13.5h6l-1 7.5 8-10.5h-6l1-7.5Z',
     'M4 7h9M17 7h3M4 17h3M11 17h9',
     'M13 7a2 2 0 104 0 2 2 0 00-4 0zM7 17a2 2 0 104 0 2 2 0 00-4 0z',
+    // #4916: the board's filter strip draws as icons, the sliders above for
+    // Filters and these person glyphs for Assigned to you and Created by
+    // you, and All items' grouping tabs draw the tag (category) and the
+    // board (stage). The strip mounts once a project's board has loaded,
+    // and All items is a page of its own, so all of them render behind state.
+    'M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2',
+    'M5 7a4 4 0 108 0 4 4 0 10-8 0z',
+    'M16 11l2 2 4-4',
+    'M11.5 15H7a4 4 0 00-4 4v2',
+    'M6 7a4 4 0 108 0 4 4 0 10-8 0z',
+    'M21.38 16.63a2.12 2.12 0 00-3-3l-4.01 4a2 2 0 00-.51.86l-.84 2.87a.5.5 0 00.62.62l2.87-.84a2 2 0 00.86-.51z',
+    'M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z',
   ];
   assert.deepEqual(absent.sort(), expected.sort());
 });

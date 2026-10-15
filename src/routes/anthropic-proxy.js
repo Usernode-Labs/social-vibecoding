@@ -434,10 +434,66 @@ function anthropicProxyRoutes(config) {
     // read it synchronously to decide which cap+tracker to gate against.
     let workerMod = null;
     try { workerMod = require('../services/worker'); } catch {}
-    const isSyncTurn = (() => {
-      try { return !!workerMod && workerMod.getActiveTurnMode(sessionId) === 'sync'; }
-      catch { return false; }
-    })();
+
+    // A before & after shots eval's trial runs the shots agent on somebody
+    // else's merged proposal for an admin's comparison
+    // (services/shots-eval-runner.js). The platform's key pays for it and
+    // the eval's own cap bounds it: never the proposal author's allowance,
+    // never the system bucket the sync turns below live on, and never the
+    // change's ledger. Each call is added to the trial, and one that would
+    // take the eval past its cap is refused or cut off.
+    //
+    // The turn may run in another platform process (one finishing its work
+    // after a release), whose memory this one cannot read: its mode then
+    // comes from its durable record, and the trial's bill from its row
+    // (docs/plans/draining-releases.md).
+    let shotsEval = null;
+    let turnMode = null;
+    try { turnMode = workerMod ? await workerMod.turnModeFor(sessionId) : null; } catch { turnMode = null; }
+    try {
+      if (turnMode === 'shots') {
+        const evalRunner = require('../services/shots-eval-runner');
+        if (evalRunner.billsSession(sessionId)) {
+          shotsEval = {
+            overCap: (extra) => evalRunner.overCap(sessionId, extra),
+            noteSpend: (cents) => evalRunner.noteSpend(sessionId, cents),
+          };
+        } else {
+          const remote = await evalRunner.remoteTrialFor(pool, sessionId);
+          if (remote) {
+            shotsEval = {
+              overCap: (extra) => evalRunner.remoteOverCap(remote, extra),
+              noteSpend: (cents) => evalRunner.noteRemoteSpend(pool, remote.trialId, cents).catch((err) => {
+                log.warn('anthropic-proxy', 'Could not record a shots eval call', { sessionId, err: err.message });
+              }),
+            };
+          }
+        }
+      }
+    } catch { shotsEval = null; }
+    if (shotsEval) {
+      if (shotsEval.overCap(0)) {
+        return res.status(429).json({ ok: false, code: 'budget_exceeded', message: 'This shots eval reached its cap.' });
+      }
+      if (!config.anthropicApiKey) {
+        return res.status(502).json({ ok: false, code: 'no_platform_key' });
+      }
+      const evalPath = req.params[0] ? `/${req.params[0]}` : '/';
+      const evalQs = req.originalUrl.includes('?') ? req.originalUrl.slice(req.originalUrl.indexOf('?')) : '';
+      const result = await anthropicStream.forwardCall({
+        req,
+        res,
+        upstreamUrl: `${anthropicStream.ANTHROPIC_UPSTREAM}${evalPath}${evalQs}`,
+        apiKey: config.anthropicApiKey,
+        logTag: 'anthropic-proxy',
+        logCtx: { sessionId, userId, upstreamPath: evalPath, shotsEval: true },
+        shouldKill: (currentCallCents) => (shotsEval.overCap(currentCallCents) ? 'over_budget' : null),
+      });
+      shotsEval.noteSpend(result.costCents);
+      return;
+    }
+
+    const isSyncTurn = turnMode === 'sync';
 
     // Resolve effective cap + current spend snapshot. Both come from
     // small caches (limits.js's own 10s cache for the cap, our

@@ -209,32 +209,29 @@ test('the activity card: "Built it." and then when', () => {
   };
   const html = renderToHtml(createElement(BotActivityCardView, { meta: META, loaded: true, now: NOW, card: { ...card, release: release8 } }));
   assert.match(html, new RegExp(`<span role="status">Built it\\. ${SENTENCE.replace(/[()]/g, '\\$&')}</span>`));
+  // One request, one story: a child app's merge reads "Approved · going
+  // live" on the card; a Homeroom merge still says when its release comes.
   const child = renderToHtml(createElement(BotActivityCardView, { meta: META, loaded: true, now: NOW, card }));
-  assert.match(child, /<span role="status">Built it\. Going live now<\/span>/);
+  assert.match(child, /data-bot-activity-eyebrow="">Approved<[\s\S]*<span role="status">Going live<\/span>/);
 });
 
-test('the tray: Now, History and the status line say when for a Homeroom merge', () => {
-  const { trayStatus, BotWorkPanelView } = loadTsx('frontend/src/features/messages/bot-work.tsx');
+test('the strip: a Homeroom merge going live reads "going live", with no timing', () => {
+  // One request, one story: the tray's panel and the header's status line,
+  // which said when the next release carries a Homeroom merge, are gone.
+  // The activity drawer says no timings (its rows open the request's
+  // thread, whose card still counts down to the release, tested above).
+  const { stripGroups } = loadTsx('frontend/src/features/messages/bot-strip.tsx');
   const job = (extra) => ({
     key: 'usernode-2d5619#12', appSlug: 'usernode-2d5619', appName: 'Homeroom', iconUrl: null, iconEmoji: null,
     issueNumber: 12, title: 'Say when', firstVersion: false, href: null, links: { request: null, proposal: null, project: null }, earlier: [], ...extra,
   });
-  const merging = job({ phase: 'merging', step: null, of: null, stepName: null, doing: null, since: null });
-  const work = (extra) => ({ now: [], needsYou: [], history: [], ...extra });
-  assert.equal(trayStatus(work({ now: [{ ...merging, release: release8 }] }), NOW).long, 'Working on Homeroom #12 · goes live in about 8 minutes');
-  assert.equal(trayStatus(work({ now: [merging] }), NOW).long, 'Working on Homeroom #12 · going live');
-  const went = job({ id: 3, outcome: 'going_live', doing: null, at: new Date(NOW.getTime() - 2 * MIN).toISOString() });
-  assert.match(trayStatus(work({ history: [{ ...went, release: release8 }] }), NOW).long, /^Last: Homeroom #12 goes live in about 8 minutes · /);
-  assert.match(trayStatus(work({ history: [went] }), NOW).long, /^Last: Homeroom #12 going live · /);
-
-  const panel = renderToHtml(createElement(BotWorkPanelView, {
-    now: NOW, work: work({ now: [{ ...merging, release: release8 }], history: [{ ...went, release: release8 }] }), historyOpen: true,
-  }));
-  assert.ok(panel.includes(SENTENCE), 'Now says the sentence');
-  assert.ok(panel.includes(`Built it. ${SENTENCE}`), 'History says it as the card does');
-  const plain = renderToHtml(createElement(BotWorkPanelView, { now: NOW, work: work({ now: [merging], history: [went] }), historyOpen: true }));
-  assert.ok(!plain.includes('next release'));
-  assert.ok(plain.includes('Making the approved change live'));
+  const merging = job({ phase: 'merging', step: null, of: null, stepName: null, doing: null, since: null, release: release8 });
+  const went = job({ id: 3, outcome: 'going_live', doing: null, at: new Date(NOW.getTime() - 2 * MIN).toISOString(), release: release8 });
+  const progress = stripGroups({ now: [merging], needsYou: [], history: [] }, NOW).progress;
+  assert.deepEqual(progress.map((row) => row.state), ['going live']);
+  const done = stripGroups({ now: [], needsYou: [], history: [went] }, NOW).done;
+  assert.deepEqual(done.map((row) => row.state), ['Live']);
+  assert.ok(!progress.some((row) => row.state.includes(SENTENCE)));
 });
 
 test('the bot\'s reads keep `release` only where it belongs', () => {

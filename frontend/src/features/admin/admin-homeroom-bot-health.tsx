@@ -150,6 +150,13 @@ export const INCIDENT_OUTCOME: Record<string, string> = {
   resumed: 'carried on from its plan',
   requeued: 'started over from the request',
   failed: 'stopped: too many in a row',
+  // A first version's review a restart cut short (homeroom-bot.js
+  // noteReviewIncident): what was proposed.
+  fix_kept: 'review fix booted, proposed',
+  fix_rolled_back: 'review fix rolled back, proposed',
+  proposed_as_it_stood: 'proposed as it stood',
+  review_carried_on: 'review carried on where it was cut',
+  not_open: 'request no longer open',
 };
 
 /** One incident as a line: when, what, where, why, what became of it. Pure. */

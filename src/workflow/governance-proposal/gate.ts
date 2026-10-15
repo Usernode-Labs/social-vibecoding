@@ -1,15 +1,17 @@
 // The governance gate as a pure function of facts read under the instance
-// lock. services/governance.js computeGate is the rule (pure, shared with
+// lock. rules/governance-gate.ts computeGate is the rule (pure, shared with
 // every other merge path); this module folds in the vote being cast, so a
 // vote and the evaluation it triggers are one transition, and adds the
 // locked-app condition.
 
-import { legacy } from '../legacy.ts';
+import { computeGate } from '../rules/governance-gate.ts';
+import type { Governance } from '../rules/governance-gate.ts';
+import type { RulesFacts } from '../rules/governance-rules.ts';
 
 export type Vote = 'up' | 'down';
 
 export interface GateInputs {
-  gov: { approverPolicy: 'anyone' | 'invited'; approvalsRequired: number | null; rules?: unknown };
+  gov: Governance;
   active: number;
   yes: number;
   no: number;
@@ -20,10 +22,11 @@ export interface GateInputs {
   openedAt: string;
   locked: boolean;
   adminUpVoters: number[];     // full admins with an Up vote
-  // #4666: a project with rules of its own (governance-rules.js) decides by
-  // who voted: the counted voters, and what governance.rulesFacts read.
+  // #4666: a project with rules of its own (rules/governance-rules.ts)
+  // decides by who voted: the counted voters, and what governance.rulesFacts
+  // reads for every other path.
   voters?: { yes: number[]; no: number[] } | null;
-  rulesFacts?: unknown;
+  rulesFacts?: RulesFacts | null;
 }
 
 // The person voting, as the facts saw them before this vote.
@@ -69,7 +72,7 @@ export function withVote(g: GateInputs, voter: Voter, vote: Vote | null): GateIn
 }
 
 export function evaluate(g: GateInputs, now: Date): Evaluation {
-  const gate = legacy('services/governance').computeGate(
+  const gate = computeGate(
     g.gov, g.active, g.yes, g.no, g.openedAt, now.getTime(),
     {
       explicitApproval: g.explicitApproval, otherYes: g.otherYes, memberCount: g.memberCount,

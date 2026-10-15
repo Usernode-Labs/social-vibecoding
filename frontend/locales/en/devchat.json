@@ -31,6 +31,14 @@
     "text": "Add it back",
     "description": "Small button after \"No screenshot.\" in the comment box in comment mode (the box beside a pin where the person writes their request), after the screenshots were removed: attaches them again."
   },
+  "commentPin.shot.crop": {
+    "text": "Crop",
+    "description": "Tooltip of the small crop button beside the ✕ on the screenshot thumbnail in the comment box in comment mode (the box beside a pin where the person writes their request): opens the picture full-size to cut away the parts the person does not want to send."
+  },
+  "commentPin.shot.cropLabel": {
+    "text": "Crop the screenshot",
+    "description": "Accessible name of the small crop button beside the ✕ on the screenshot thumbnail in the comment box in comment mode (the box beside a pin where the person writes their request): opens the picture full-size to cut away the parts the person does not want to send."
+  },
   "commentPin.textLabel": {
     "text": "Your comment",
     "description": "Accessible name of the text box in the comment box in comment mode (the box beside a pin where the person writes their request) where the person writes their comment, when the request has only one."
@@ -390,6 +398,14 @@
   "ownTools.import": {
     "text": "Import Feature from a PR",
     "description": "Button under the own-tools guide in the dev chat: opens the dialog that turns an existing pull request into a proposal. PR is short for pull request."
+  },
+  "header.advisoryVotes_one": {
+    "text": "{{count}} advisory vote from a non-approver, so it doesn’t count toward merging",
+    "description": "Tooltip on the small \"+1\" beside a proposal's vote tally in the status pill at the top of a dev chat session. {{count}} is how many Yes votes came from people who are not approvers: they are recorded but do not count toward merging."
+  },
+  "header.advisoryVotes_other": {
+    "text": "{{count}} advisory votes from non-approvers, so they don’t count toward merging",
+    "description": "Tooltip on the small \"+N\" beside a proposal's vote tally in the status pill at the top of a dev chat session. {{count}} is how many Yes votes came from people who are not approvers: they are recorded but do not count toward merging."
   },
   "header.venue.busyTitle": {
     "text": "Wait for the current response to finish before changing where this session is built.",
@@ -1116,7 +1132,7 @@
     "description": "Status line in the coding-agent dialog when the settings failed to load and 'Homeroom · Claude' is selected. {{error}} is a whole sentence saying what went wrong. 'Homeroom · Claude' is a name and is not translated."
   },
   "agentChoice.status.claude": {
-    "text": "Homeroom · Claude builds in this chat on your daily Homeroom credits.",
+    "text": "Homeroom · Claude builds in this chat on your weekly Homeroom credits.",
     "description": "Status line in the coding-agent dialog while 'Homeroom · Claude' is selected. 'Homeroom · Claude' is a name and is not translated; 'builds' is a verb."
   },
   "agentChoice.status.openRouterDisabled": {
@@ -2223,6 +2239,38 @@
     "text": "Remove",
     "description": "Tooltip of the small ✕ on an image's thumbnail in the comment box in comment mode (the box beside a pin where the person writes their request): takes that image off the request."
   },
+  "commentPin.crop.title": {
+    "text": "Drag the corners or edges to crop",
+    "description": "Title in the band at the top of the screen while the person crops a screenshot in comment mode (the box beside a pin where the person writes their request): the picture is shown full-size with a frame they drag smaller."
+  },
+  "commentPin.crop.reset": {
+    "text": "Reset",
+    "description": "Button in the band at the top of the screen while the person crops a screenshot in comment mode (the box beside a pin where the person writes their request): puts the crop frame back over the whole picture."
+  },
+  "commentPin.crop.apply": {
+    "text": "Apply",
+    "description": "Button in the band at the top of the screen while the person crops a screenshot in comment mode (the box beside a pin where the person writes their request): cuts the picture down to the frame and returns to the comment box."
+  },
+  "commentPin.crop.dropping_one": {
+    "text": "{{count}} comment outside will be removed",
+    "description": "Note in the band at the top of the screen while the person crops a screenshot in comment mode (the box beside a pin where the person writes their request): a pin falls outside the frame, so applying the crop would delete that comment. {{count}} is how many."
+  },
+  "commentPin.crop.dropping_other": {
+    "text": "{{count}} comments outside will be removed",
+    "description": "Note in the band at the top of the screen while the person crops a screenshot in comment mode (the box beside a pin where the person writes their request): pins fall outside the frame, so applying the crop would delete their comments. {{count}} is how many."
+  },
+  "commentPin.crop.keepOne": {
+    "text": "Keep at least one pin inside",
+    "description": "Note in the band at the top of the screen while the person crops a screenshot in comment mode (the box beside a pin where the person writes their request), when every pin on the picture falls outside the frame: the Apply button is off until the frame covers a pin."
+  },
+  "commentPin.crop.removed_one": {
+    "text": "Removed {{count}} comment outside the crop.",
+    "description": "Toast after the person applied a crop to a screenshot in comment mode (the box beside a pin where the person writes their request): a comment whose pin fell outside the frame was deleted. {{count}} is how many."
+  },
+  "commentPin.crop.removed_other": {
+    "text": "Removed {{count}} comments outside the crop.",
+    "description": "Toast after the person applied a crop to a screenshot in comment mode (the box beside a pin where the person writes their request): comments whose pins fell outside the frame were deleted. {{count}} is how many."
+  },
   "commentPin.next.where": {
     "text": "Click on the page where it goes",
     "description": "Row in the comment box in comment mode (the box beside a pin where the person writes their request) after the person chose to add another comment to the same request: their next click on the page places it. Beside it, a Cancel button."
@@ -2262,6 +2310,14 @@
   "commentPin.box.discardLabel": {
     "text": "Discard this request",
     "description": "Accessible name of the ✕ button in the comment box in comment mode (the box beside a pin where the person writes their request): throws the request away without posting it."
+  },
+  "commentPin.box.minimize": {
+    "text": "Minimize",
+    "description": "Tooltip and accessible name of a button at the top of the comment sheet on a phone in comment mode (a layer over the page where a tap leaves a comment pinned to that spot): folds the sheet back to the small box beside the comment's pin, so the page is in sight again. Nothing written is lost."
+  },
+  "commentPin.box.write": {
+    "text": "Write your comment",
+    "description": "Accessible name of the small box beside a new comment's pin on a phone in comment mode (a layer over the page where a tap leaves a comment pinned to that spot), while nothing is written yet: tapping it opens the comment sheet with the keyboard."
   },
   "commentPin.textLabelNumbered": {
     "text": "Comment {{number}}",
@@ -2368,8 +2424,12 @@
     "description": "How the facts on the card of a request already posted from comment mode are joined, for example \"3 comments · 2 images · kudos for whoever solves it\". {{first}} is everything said so far and {{second}} the next fact. Keep the middle dot unless your language separates them otherwise."
   },
   "commentPin.card.open": {
-    "text": "Open request",
-    "description": "Button on the card of a request already posted from comment mode: leaves comment mode and opens that request's page."
+    "text": "View request",
+    "description": "Button on the card of a request already posted from comment mode (the sent card, and the card shown when you tap a pin posted earlier): the request is already posted, this button only shows it. It leaves comment mode and opens the request's page."
+  },
+  "commentPin.sent.label": {
+    "text": "Request posted",
+    "description": "Accessible name of the card shown in comment mode (a layer over the page where a click or tap leaves a comment pinned to that spot) right after a request was posted, saying where it went."
   },
   "commentPin.intro.title": {
     "text": "How comment mode works",

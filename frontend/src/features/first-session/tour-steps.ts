@@ -1,21 +1,30 @@
 /**
- * The first-session tours' steps: real screens, one screen whole and then the
- * tap that leads on (./index.tsx draws them). One short title and one short
- * sentence per card: the card names the place, the screen behind it says the
- * rest (#4044, the tour script on the onboarding canvas).
+ * The first-session tours' steps: real screens, each card pointing at one
+ * place (./index.tsx draws them). One short title and one short sentence per
+ * card: the card names the place, the screen behind it says the rest (#4044).
  *
- * Three tours. Starting a community and joining one share their first seven
- * cards, word for word: the project on Home, the project opened, Suggest an
- * improvement in its Homeroom menu, ✕ back to Home, where to find it under
- * Communities, and its hub. The maker's meets Homeroom bot on the way and
- * ends on that hub by opening the app (makerSteps); the invited one ends in
- * Discussion. "Look around first"
- * has its own four cards on Home (decision E, #4072): where to start a
- * project later, and what the tab bar's places are. A private member, let in
- * by an invite link before the waitlist let them in, gets the maker's walk
- * through the project, three cards reworded for someone invited, then
- * Homeroom bot and the waitlist, the first time they reach Home (#4080,
- * #4398, privateSteps).
+ * Two tours, both on Home, and neither takes anybody anywhere: every card
+ * rings its place and leads on with Next.
+ *
+ *   walk   "1, 2, 3 on Home" (Evan, 15 Oct 2026, the onboarding canvas's
+ *          "A tip in the app, then 1, 2, 3 on Home"). A newcomer's first
+ *          session hands them their app first, full screen, with one tip
+ *          under the Homeroom mark (./app-tip.tsx). The first time Home
+ *          shows after that, three cards about their own project: its
+ *          tile, Homeroom bot in Messages (with a change they could ask for
+ *          in it, when its starter has one), and Communities, where its hub
+ *          is. A private member (let in by an
+ *          invite link before the waitlist let them in) gets a fourth, the
+ *          waitlist card that is how they make apps of their own
+ *          (homeWalkSteps).
+ *   look   "Look around first" (decision E, #4072): four cards on Home,
+ *          where to start a project later and what the tab bar's places are
+ *          (lookAroundSteps).
+ *
+ * The walk replaced three longer tours that walked through the app, its
+ * Homeroom menu, ✕, the hub and (for an invited person) #general, pressing
+ * each control in turn. The tip says what the menu is for, in the app, and
+ * the walk says where everything else is, on Home.
  *
  * Every target is the product's own control or region, found by the
  * selectors the rest of the shell already pins (tests/baselines/
@@ -29,6 +38,18 @@
 import { t as translate } from '../../lib/i18n/runtime';
 
 export type TourScreen = 'home' | 'app' | 'hub' | 'discussion' | 'bot';
+
+/**
+ * What a step that points at the project's app waits for (#4900,
+ * ./tour-wait.ts): `running`, its tile on Home, until a tap on it opens it
+ * (the tile's status is no longer "Spinning up..."); `open`, the app on its
+ * own screen, until it has opened (its "Opening..." cover gone); `hub`, the
+ * project's hub, until it is drawn whole (onboarding run two, 12 Oct 2026:
+ * the hub's card stood over Home, then a blank page, then skeleton rows,
+ * then a first draft of the hub and the hub itself, 2.35s in all, the ring
+ * jumping as it redrew).
+ */
+export type AppWait = 'running' | 'open' | 'hub';
 
 export type TourStep = {
   screen: TourScreen;
@@ -60,8 +81,13 @@ export type TourStep = {
    * of Next. The hint presses that control too (./index.tsx pressTarget).
    */
   tap?: string;
-  /** Where the card goes: under the target or over it (auto), at the foot of the screen, or just above or below another element. */
-  place?: 'auto' | 'bottom' | { above: string } | { below: string };
+  /**
+   * Where the card goes: under the target or over it (auto), at the foot of
+   * the screen, just above or below another element, or clear of a surface
+   * whole (`{ clear }`: over it with a gap where a card fits, else under it;
+   * ./card-placement.ts clearOf).
+   */
+  place?: 'auto' | 'bottom' | { above: string } | { below: string } | { clear: string };
   /** Pressing the target lands on a list; open the next step's screen itself (the bot's chat, not the inbox). */
   opensNext?: boolean;
   /**
@@ -86,6 +112,14 @@ export type TourStep = {
    */
   saysWhereItOpens?: boolean;
   /**
+   * A step that points at the app itself waits for it to be ready (AppWait),
+   * so no card stands over a tile that cannot be opened yet or over the app's
+   * loading screen (onboarding run, 12 Oct 2026, #4900). Meanwhile its card
+   * says the app is getting ready, with Skip and Back; it waits at most
+   * ./tour-wait.ts TOUR_WAIT_MAX_MS, then shows as it always did.
+   */
+  waitsFor?: AppWait;
+  /**
    * A step inside the Homeroom menu (APP_MENU): the tour opens the menu
    * while the step is up, Back to it included, and closes it once the reader
    * moves on, Skip included (./index.tsx). The tour is drawn over the menu
@@ -94,7 +128,7 @@ export type TourStep = {
   inMenu?: boolean;
   /**
    * The tour's last card. A last tap step ends the tour when its control is
-   * pressed, and the press goes on to the control (the maker's Open app).
+   * pressed, and the press goes on to the control.
    */
   last?: boolean;
 };
@@ -102,9 +136,7 @@ export type TourStep = {
 /**
  * The platform's top bar, drawn with the screen under it (TourStep.alongside).
  * Its top padding is the status bar's inset, so its box starts at the top of
- * the screen inside the iOS app's WebView too. The steps that show a screen
- * whole cut it out with that screen: "include the header", on the app's
- * close step and the hub (Evan, on his phone, 5 October 2026).
+ * the screen inside the iOS app's WebView too.
  */
 export const SCREEN_HEADER = '#platform-header';
 
@@ -115,233 +147,94 @@ export const SCREEN_HEADER = '#platform-header';
  */
 export const BOTTOM_BARS = '#platform-parked, #platform-tabs';
 
-/**
- * The hub's Open app (../dev-board/workshop/community-card.tsx), where the
- * maker's tour ends (makerSteps).
- */
-export const OPEN_APP = '[data-ws-community-open-app]';
-
-/**
- * The app screen's Suggest steps, the same on the invited and maker paths
- * (request #4225, reordered by #4390): the Homeroom mark at the top of the
- * app, which the reader taps, then the real menu it opens with its "Suggest
- * an improvement" button pointed at but not pressed, so no suggestion
- * starts. The copy is honest about what happens to a suggestion: Homeroom
- * bot does not always build it, and sometimes brings it to the group as a
- * request instead.
- */
-export const MENU_TEXT = 'onboarding:firstSession.tour.menu.text';
-export const SUGGEST_TEXT = 'onboarding:firstSession.tour.suggest.text';
-
 /** The menu the Homeroom mark opens (../app-context/app-context-sheet.tsx). */
 export const APP_MENU = '#apps-switcher-sheet';
-
-function suggestSteps(): TourStep[] {
-  return [
-    {
-      screen: 'app',
-      target: '#platform-mark-btn',
-      title: translate('onboarding:firstSession.tour.menu.title'),
-      text: translate(MENU_TEXT),
-      tap: translate('onboarding:firstSession.tour.menu.tap'),
-    },
-    {
-      screen: 'app',
-      target: '#improve-row-feedback',
-      inMenu: true,
-      ringed: true,
-      title: translate('onboarding:firstSession.tour.suggest.title'),
-      text: translate(SUGGEST_TEXT),
-    },
-  ];
-}
 
 /**
  * Where a project's first version stands, as its App tab shows it
  * (GET /api/apps/:slug `first_version`; public/js/app-view.js
  * _firstVersionView): Homeroom bot still building it, built and waiting for
- * approval, or neither (null: the app is what there is). "You're in" reads it
- * (./index.tsx firstVersionStage); the cards no longer do, since the screen
- * behind the app's card says it (#4043, #4053).
+ * approval, or neither (null: the app is what there is). The made screen
+ * hands it on (./made.tsx madeStage): an app that is not live yet is not
+ * opened for its maker, who goes to Home and its walk instead.
  */
 export type FirstVersionStage = 'building' | 'ready' | null;
 
-export type TourProject = {
+/** The project's tile in Home's own grid (#app-list), never a card of the same app elsewhere on Home. */
+export function tileOf(slug: string): string {
+  return `#app-list .app-card[data-slug="${slug}"]`;
+}
+
+/**
+ * The project a walk is about: its slug (the tile), its name, the change
+ * its Homeroom bot card offers as an example, and whether its reader is a
+ * private member (the waitlist card).
+ */
+export type HomeWalkProject = {
   slug: string;
-  name: string;
-  conversationId?: number | null;
+  /** What the cards call it ("Best Brunch lives here, on Home."); the slug when it has none. */
+  name?: string;
+  /**
+   * A change somebody could ask for in this app ("add a cheap eats tier"):
+   * its ready-made starter's (GET /api/apps/:slug `exampleChange`,
+   * services/app-templates.js). None for any other project, or before it is
+   * known: the card then says where Homeroom bot is instead.
+   */
+  example?: string | null;
+  privateMember?: boolean;
 };
 
 /**
- * The project's hub, named without a possessive: "Page Turners's hub" was
- * what a name ending in s read as (first-session run-through, 5 October 2026).
+ * The walk on Home (see the header): three cards, or four for a private
+ * member, each ringing its place, with Next and Done on the last. Nothing is
+ * pressed: the tile is pointed at, not opened. Each card is about the
+ * reader's own project (Evan, 15 Oct 2026, "a more contextual tour"): where
+ * it lives, a change they could ask Homeroom bot for in it, and its hub.
  */
-export function hubTitle(name: string): string {
-  return translate('onboarding:firstSession.tour.hub.title', { community: name });
-}
-
-/**
- * The cards both paths open with, word for word (the tour script on the
- * onboarding canvas): the project on Home; the project opened, the app
- * screen whole with its top bar; Suggest an improvement (#4225, #4390), the
- * Homeroom mark tapped and the menu it opens; ✕, ringed alone, back to Home
- * (#4044: "focus the step on the ✕"); the Communities tab, naming the
- * project instead of "its hub and its group chat"; and the hub, by what is
- * on it (#4045). The Communities tab is ONE element, the phone's bottom bar
- * below 768px and the rail above it (features/nav/tab-bar.tsx; its key is
- * still `workshop`).
- */
-function sharedSteps(slug: string, name: string): TourStep[] {
-  return [
+export function homeWalkSteps({ slug, name, example = null, privateMember = false }: HomeWalkProject): TourStep[] {
+  const app = name || slug;
+  const steps: TourStep[] = [
     {
       screen: 'home',
-      target: `.app-card[data-slug="${slug}"]`,
-      title: translate('onboarding:firstSession.tour.onHome.title', { app: name }),
-      text: translate('onboarding:firstSession.tour.onHome.text'),
-      tap: translate('onboarding:firstSession.tour.onHome.tap'),
+      // Home's own grid only: the Discover rail's cards are `.app-card`s
+      // with a slug too (onboarding run three, 12 Oct 2026).
+      target: tileOf(slug),
+      ringed: true,
+      title: translate('onboarding:firstSession.walk.home.title'),
+      text: translate('onboarding:firstSession.walk.home.text', { app }),
     },
     {
-      // `#app-view` holds both halves of the screen, the build's progress
-      // (#app-content) and the running app (#app-frame-host), and the top
-      // bar over it is drawn in too.
-      screen: 'app',
-      target: '#app-view',
-      alongside: SCREEN_HEADER,
-      title: translate('onboarding:firstSession.tour.opens.title', { app: name }),
-      text: translate('onboarding:firstSession.tour.opens.text'),
-      saysWhereItOpens: true,
-      place: 'bottom',
-    },
-    ...suggestSteps(),
-    {
-      screen: 'app',
-      target: '#back-btn',
-      title: translate('onboarding:firstSession.tour.back.title'),
-      text: translate('onboarding:firstSession.tour.back.text', { app: name }),
-      tap: translate('onboarding:firstSession.tour.back.tap'),
-    },
-    {
+      // The tab bar's own tabs, the same elements on a phone's bar and on
+      // the rail from 768px up (features/nav/tab-bar.tsx).
       screen: 'home',
-      target: '#platform-tab-workshop',
-      title: translate('onboarding:firstSession.tour.communities.title', { community: name }),
-      text: translate('onboarding:firstSession.tour.communities.text'),
-      tap: translate('onboarding:firstSession.tour.communities.tap'),
-    },
-    {
-      // The hub whole: its top bar over it, down to the tab bar.
-      screen: 'hub',
-      target: '#app-content',
-      alongside: SCREEN_HEADER,
-      endsAbove: BOTTOM_BARS,
-      title: hubTitle(name),
-      text: translate('onboarding:firstSession.tour.hub.text'),
-      place: 'bottom',
-    },
-  ];
-}
-
-/** Joining a community: nine steps, ending in its Discussion, where the people already are. */
-export function invitedSteps({ slug, name }: TourProject): TourStep[] {
-  return [
-    ...sharedSteps(slug, name),
-    {
-      // #4417: #general's row in the places list beside the page (a wide
-      // window), or on a phone the place bar's button, which opens the list
-      // in its tray: whichever of the two is on screen is ringed. The press
-      // that opens the tray does not open #general itself, so the tour does.
-      screen: 'hub',
-      target: '[data-places] [data-place="discussion"], [data-places-btn]',
-      title: translate('onboarding:firstSession.tour.general.title'),
-      text: translate('onboarding:firstSession.tour.general.text', { community: name }),
-      tap: translate('onboarding:firstSession.tour.general.tap'),
-      opensNext: true,
-    },
-    {
-      screen: 'discussion',
-      target: '#gc-messages, #gc-form',
-      title: translate('onboarding:firstSession.tour.sayHi.title'),
-      text: translate('onboarding:firstSession.tour.sayHi.text'),
-      place: { above: '#gc-form' },
-      last: true,
-    },
-  ];
-}
-
-/**
- * A PRIVATE MEMBER's tour (users.private_member_since): an invite link let
- * them into a community's app before they were let in, and they reach the
- * rest of Homeroom only through the mark menu's "Go to Homeroom" (#4080).
- * The first time they do, nine cards (request #4398): the maker's walk
- * through the project (sharedSteps), with three cards reworded for someone
- * who was invited rather than someone who made it (the app opened, Suggest
- * an improvement in its menu, and the hub), then Homeroom bot and the
- * waitlist card that is how they make apps of their own. The ✕ step has its
- * control because goHome notes the Home visit before the tour starts
- * (App._privateNoClose turns false), so the app has its ✕ again.
- */
-export function privateSteps({ slug, name }: TourProject): TourStep[] {
-  const [home, app, menu, suggest, close, communities, hub] = sharedSteps(slug, name);
-  return [
-    home,
-    { ...app, text: translate('onboarding:firstSession.tour.private.opens.text') },
-    menu,
-    { ...suggest, text: translate('onboarding:firstSession.tour.private.suggest.text', { app: name }) },
-    close,
-    communities,
-    { ...hub, text: translate('onboarding:firstSession.tour.private.hub.text') },
-    {
-      screen: 'hub',
       target: '#platform-tab-messages',
       ringed: true,
-      // What the bot is for, then where it is (#4397); the maker's and "Look
-      // around first" tours keep their own card.
-      title: translate('onboarding:firstSession.tour.private.bot.title'),
-      text: translate('onboarding:firstSession.tour.private.bot.text', { app: name }),
+      title: translate('onboarding:firstSession.walk.bot.title'),
+      text: example
+        ? translate('onboarding:firstSession.walk.bot.textExample', { example })
+        : translate('onboarding:firstSession.walk.bot.text'),
     },
     {
-      // The card's own heading says what it is for ("Make and share your
-      // own apps"); this card says where, and what the card does.
+      // Its key is still `workshop`.
+      screen: 'home',
+      target: '#platform-tab-workshop',
+      ringed: true,
+      title: translate('onboarding:firstSession.walk.communities.title'),
+      text: translate('onboarding:firstSession.walk.communities.text', { app }),
+    },
+  ];
+  if (privateMember) {
+    // The card's own heading says what it is for; this card says what to
+    // do with it (../home/waitlist-card.tsx).
+    steps.push({
       screen: 'home',
       target: '#home-waitlist-card',
       ringed: true,
-      title: translate('onboarding:firstSession.tour.private.waitlist.title'),
-      text: translate('onboarding:firstSession.tour.private.waitlist.text'),
-      last: true,
-    },
-  ];
-}
-
-/**
- * Starting a community, after "Invite people later" or "Start the tour": the
- * same first seven cards, with one more before the Communities tab, "Meet
- * Homeroom bot", which says what it is for and where it always is (Evan, 10
- * Oct 2026: a ready-made tier list's tour ended without it). The tour ends on
- * the hub, its last card asking them to tap Open app, which opens their new
- * app and ends the tour: "that's probably where they want to go anyway"
- * (Evan, 10 Oct 2026). A ready-made app runs by then (the made screen waits
- * for it); one Homeroom bot is building opens on its build, which takes the
- * maker to the bot's chat when a plan or a question waits for them
- * (AppView._firstVersionView). That chat used to be the tour's last two
- * cards, Messages and then the plan, for a project the bot builds.
- */
-export function makerSteps({ slug, name }: TourProject): TourStep[] {
-  const steps = sharedSteps(slug, name);
-  const communities = steps.findIndex((step) => step.target === '#platform-tab-workshop');
-  steps.splice(communities, 0, {
-    screen: 'home',
-    target: '#platform-tab-messages',
-    ringed: true,
-    title: translate('onboarding:firstSession.tour.maker.meetBot.title'),
-    text: translate('onboarding:firstSession.tour.maker.meetBot.text', { app: name }),
-  });
-  const hub = steps[steps.length - 1];
-  steps[steps.length - 1] = {
-    ...hub,
-    press: OPEN_APP,
-    text: translate('onboarding:firstSession.tour.maker.hub.text', { app: name }),
-    tap: translate('onboarding:firstSession.tour.maker.hub.tap'),
-    last: true,
-  };
+      title: translate('onboarding:firstSession.walk.waitlist.title'),
+      text: translate('onboarding:firstSession.walk.waitlist.text'),
+    });
+  }
+  steps[steps.length - 1] = { ...steps[steps.length - 1], last: true };
   return steps;
 }
 

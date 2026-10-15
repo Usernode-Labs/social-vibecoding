@@ -283,9 +283,10 @@ test('the live queue reads which rows are follow-ups, lets only them past a busy
     liveSlugs: ['a1'], excludeAppIds: [103], busyAppIds: [101], botId: 77, pausedApps: [], excludeFollowUps: ['101:5'],
   });
   const { s, params } = asked[0];
-  // The last two are a scope's every-app flag and what it leaves out
-  // (live.liveScope): a bare list of slugs is just those apps.
-  assert.deepEqual(params, [['a1'], [103], [], 200, [101], 77, ['101:5'], 7, false, [], 20]);
+  // Then a scope's every-app flag and what it leaves out (live.liveScope):
+  // a bare list of slugs is just those apps. Last, whether only first
+  // versions are read (15 Oct 2026: runOnce's read ahead of its refresh).
+  assert.deepEqual(params, [['a1'], [103], [], 200, [101], 77, ['101:5'], 7, false, [], 20, false]);
   // One turn for a burst: a person still writing on the request or on the
   // bot's change for it is read once they pause (SETTLE_MS).
   assert.match(s, /m\.created_at > NOW\(\) - make_interval\(secs => \$11\)/);
@@ -625,28 +626,36 @@ test('a ready verdict waits on its run, and only for a build of the same project
   assert.match(src, /SET live_build_waiting_at = NULL, build_error = 'superseded: a later verdict on the same issue'/);
   // A build's slot is not the app's: reading goes on beside it.
   assert.match(src, /const sessionTaken = running\.filter\(\(e\) => !e\.followUp && !e\.build\)\.map\(\(e\) => Number\(e\.appId\)\);/);
-  // Once its session exists, restart recovery owns it.
-  assert.match(src, /SET build_session_id = \$2, live_build_waiting_at = NULL WHERE id = \$1/);
+  // Once its session exists, the run is its build's, and no longer waits.
+  assert.match(src, /SET build_session_id = \$2, live_build_waiting_at = NULL\s+WHERE id = \$1/);
 });
 
-test('a live build restart recovery finishes holds its project\'s build slot until it ends', async () => {
+// A live build outlives a restart on the workflow kernel (build-runs.js),
+// and the next leader takes its project's build slot again until it ends,
+// wherever it runs, as it held it when it started.
+test('a live build that outlived a restart holds its project\'s build slot until it ends', async (t) => {
   bot._resetForTests();
-  const pool = { async query(sql) {
-    if (/FROM homeroom_bot_runs\s+WHERE build_session_id = \$1 AND build_at IS NOT NULL/.test(String(sql))) return { rows: [] };
-    if (/WHERE r\.build_session_id = \$1 AND r\.mode = 'live' AND r\.build_ok IS NULL/.test(String(sql))) {
+  const buildRuns = require('../src/services/build-runs');
+  const real = { underWay: buildRuns.underWay, whenEnded: buildRuns.whenEnded };
+  t.after(() => { Object.assign(buildRuns, real); bot._resetForTests(); });
+  let finish;
+  const ended = new Promise((r) => { finish = r; });
+  const waited = [];
+  buildRuns.underWay = async (target) => (target === 'live' ? [{ key: 'run:950', target: 'live', id: 950, nonce: null, appId: 101 }] : []);
+  buildRuns.whenEnded = (key) => { waited.push(key); return ended; };
+  const pool = { async query(sql, params) {
+    if (/FROM homeroom_bot_runs r\s+LEFT JOIN homeroom_bot_requesters q/.test(String(sql)) && params[0] === 950) {
       return { rows: [{ id: 950, app_id: 101, issue_number: 6, person_id: 7 }] };
     }
     return { rows: [] };
   } };
-  let finish;
-  const recovery = new Promise((r) => { finish = r; });
-  const held = bot.holdSlotDuringRecovery(pool, 6001, recovery);
+  assert.equal(await bot.holdDurableBuildSlots(pool), 1);
+  assert.deepEqual(bot._inFlightForTests().map((e) => [e.appId, e.build, e.runId, e.durable, e.person]), [[101, true, 950, true, 'u7']]);
+  assert.deepEqual(waited, ['run:950'], 'held until its build ends');
+  assert.equal(await bot.holdDurableBuildSlots(pool), 0, 'a slot already held is not taken twice');
+  finish({ state: 'done' });
   await new Promise((r) => setTimeout(r, 5));
-  assert.deepEqual(bot._inFlightForTests().map((e) => [e.appId, e.build, e.runId, e.recovered]), [[101, true, 950, true]]);
-  finish('proposed');
-  assert.equal(await held, 'proposed');
   assert.deepEqual(bot._inFlightForTests(), [], 'freed when it ends');
-  bot._resetForTests();
 });
 
 test('Run now never starts a second turn on a request already being worked on', async () => {

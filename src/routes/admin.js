@@ -11,10 +11,14 @@ const log = require('../services/logger');
 const limits = require('../services/limits');
 const anthropicCredits = require('../services/anthropic-credits');
 const dbExport = require('../services/db-export');
+const adminAppsUsage = require('../services/admin-apps-usage');
 const events = require('../services/events');
 const llmTelemetry = require('../services/llm-telemetry');
 const appRollover = require('../services/app-rollover');
 const stagingReap = require('../services/staging-reap');
+// What the leader keeps in memory, for a process that does not lead
+// (services/leader-status.js, docs/plans/web-and-conductor.md).
+const leaderStatus = require('../services/leader-status');
 const { isSessionBusy } = require('../services/active-workers');
 const stagingEnv = require('../services/staging-env');
 const mail = require('../services/mail');
@@ -312,7 +316,7 @@ function adminRoutes(config) {
         stale: counts.stale,
         abandoned: counts.abandoned,
         expectedFingerprint: stagingEnv.expectedStagingFingerprint(config),
-        automatic: stagingReap.readAutomatic(),
+        automatic: await leaderStatus.readOr('staging-reap.automatic', pool, stagingReap.readAutomatic),
         staging,
         runtimeKind,
         available: !staging,
@@ -1099,6 +1103,18 @@ function adminRoutes(config) {
     });
   });
 
+  // Apps & usage: every app with its members, contributors and activity
+  // over a 7/30/90-day window (services/admin-apps-usage.js). Read-only, so
+  // view-only admins see it too.
+  router.get('/api/admin/apps-usage', async (req, res) => {
+    try {
+      res.json(await adminAppsUsage.adminPayload(pool, { days: (req.query || {}).days }));
+    } catch (err) {
+      log.error('admin', 'Read apps & usage failed', { message: err.message });
+      res.status(500).json({ error: 'Could not read apps & usage' });
+    }
+  });
+
   router.get('/api/admin/limits', async (_req, res) => {
     try {
       res.json(await readLimitsPayload());
@@ -1712,7 +1728,7 @@ function adminRoutes(config) {
   router.get('/api/admin/domains', async (req, res) => {
     try {
       const rows = await appDomains.adminList(pool);
-      res.json({ domains: rows.map(adminDomainRow), sweep: appDomains.getStatus() });
+      res.json({ domains: rows.map(adminDomainRow), sweep: await leaderStatus.readOr('app-domains.sweep', pool, appDomains.getStatus) });
     } catch (err) {
       log.error('admin', 'Read custom domains failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });

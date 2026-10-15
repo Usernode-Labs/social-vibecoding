@@ -178,20 +178,24 @@ test('the first version being built, from the records the bot leaves', { timeout
         assert.equal(res.status, 200);
         return (await res.json()).app.first_version;
       };
-      // Nobody else is in it yet: her Yes is the one it needs. Voting is a
-      // member's, so until she is one she is asked nothing.
-      assert.equal((await get()).approval.mustApprove, false);
+      // 13 Oct 2026 (D1): a project's first version goes live without a
+      // vote, whoever is in it. Run four's Club Votes waited all night on its
+      // maker's own Yes, which nothing on the App tab let them give. Nobody
+      // must approve it now, nobody is waited on, and it goes live as soon
+      // as it can (its checks passed: it is ready to try).
+      const noVote = {
+        sessionId: proposal.id, noVote: true, mustApprove: false, approved: false, waitingOn: [], more: 0, missing: 0, goesLiveAt: null, soon: true,
+      };
+      assert.deepEqual((await get()).approval, noVote, 'nobody else is in it yet, and she is not a member: nothing asked');
       const { rows: [{ community_id: communityId }] } = await pool.query('SELECT community_id FROM apps WHERE id = $1', [app.id]);
       await pool.query('INSERT INTO community_members (community_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [communityId, ada.id]);
       assert.deepEqual(await get(), {
         building: true, mine: true, step: 6, of: 7, line: 'ready', creator: ada.username,
         ready: true, question: false, conversationId: opened.conversationId,
-        approval: {
-          sessionId: proposal.id, mustApprove: true, approved: false, waitingOn: [], more: 0, missing: 1, goesLiveAt: null, soon: false,
-        },
-      });
+        approval: noVote,
+      }, 'Just you: her own first version needs no Yes from her');
 
-      // A group of two, both active: it needs both their Yes votes.
+      // A group of two, both active: still nobody's to approve.
       await pool.query(`UPDATE apps SET view_visibility = 'private', collab_visibility = 'private' WHERE id = $1`, [app.id]);
       for (const m of [ada, sam]) {
         await pool.query('INSERT INTO community_members (community_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [communityId, m.id]);
@@ -204,47 +208,40 @@ test('the first version being built, from the records the bot leaves', { timeout
         );
       }
       governance.invalidateGovernance(app.id);
-      const waits = (over) => ({
-        sessionId: proposal.id, mustApprove: false, approved: false, waitingOn: [], more: 0, missing: 2, goesLiveAt: null, soon: false, ...over,
-      });
-      assert.deepEqual((await get()).approval, waits({ mustApprove: true, waitingOn: [sam.username] }),
-        'its maker still has to approve it, and so does the other member');
+      assert.deepEqual((await get()).approval, noVote, 'its maker is not asked, and nor is the other member');
       viewer = sam;
       assert.deepEqual(await get(), {
         building: true, mine: false, step: 6, of: 7, line: 'ready', creator: ada.username,
         ready: true, question: false, conversationId: null,
-        approval: waits({ mustApprove: true, waitingOn: [ada.username] }),
-      }, 'somebody else\'s DM is never handed out; who it waits on is the same for everyone');
+        approval: noVote,
+      }, 'somebody else\'s DM is never handed out; what it waits on is the same for everyone');
 
-      // She approves: she reads whom it waits for, and the day the group's
-      // clock lets it go live anyway (the lazy-consensus window, from when
-      // it went up for approval).
+      // A Yes changes nothing: there was none to give.
       await pool.query(`INSERT INTO pr_votes (session_id, user_id, vote, approval_epoch) VALUES ($1, $2, 'yes', 0)`, [proposal.id, ada.id]);
-      const { rows: [{ promoted_at: promotedAt }] } = await pool.query('SELECT promoted_at FROM chat_sessions WHERE id = $1', [proposal.id]);
-      const goesLiveAt = new Date(promotedAt.getTime() + activeUsers.lazyWindowMs(2, 1, 0)).toISOString();
       viewer = ada;
-      assert.deepEqual((await get()).approval, waits({ approved: true, waitingOn: [sam.username], missing: 1, goesLiveAt }));
-      viewer = sam;
-      assert.deepEqual((await get()).approval, waits({ mustApprove: true, missing: 1, goesLiveAt }),
-        'the other member still has to, and nobody else is left to ask');
+      assert.deepEqual((await get()).approval, noVote);
 
-      // A project that names its approvers: a member who is not one is
-      // asked nothing, and her Yes is not counted as an approval.
+      // A project that names its approvers: the same.
       await pool.query(`UPDATE apps SET approver_policy = 'invited' WHERE id = $1`, [app.id]);
       await pool.query(`INSERT INTO app_approvers (app_id, user_id, status) VALUES ($1, $2, 'member')`, [app.id, sam.id]);
       governance.invalidateGovernance(app.id);
-      viewer = ada;
-      assert.deepEqual((await get()).approval, waits({ waitingOn: [sam.username], missing: 1 }));
       viewer = sam;
-      assert.deepEqual((await get()).approval, waits({ mustApprove: true, missing: 1 }));
+      assert.deepEqual((await get()).approval, noVote);
       await pool.query(`UPDATE apps SET approver_policy = 'anyone' WHERE id = $1`, [app.id]);
       await pool.query('DELETE FROM app_approvers WHERE app_id = $1', [app.id]);
       governance.invalidateGovernance(app.id);
 
-      // A change to protected settings has no clock: no day is promised.
+      // A first version that changes protected settings is the one that
+      // still asks a Yes (that rule is not the vote's): whom it waits on, and
+      // no day promised, since such a change has no clock.
       await pool.query('UPDATE chat_sessions SET requires_explicit_approval = TRUE WHERE id = $1', [proposal.id]);
+      const waits = (over) => ({
+        sessionId: proposal.id, mustApprove: false, approved: false, waitingOn: [], more: 0, missing: 2, goesLiveAt: null, soon: false, noVote: false, ...over,
+      });
       viewer = ada;
       assert.deepEqual((await get()).approval, waits({ approved: true, waitingOn: [sam.username], missing: 1 }));
+      viewer = sam;
+      assert.deepEqual((await get()).approval, waits({ mustApprove: true, missing: 1 }));
       await pool.query('UPDATE chat_sessions SET requires_explicit_approval = NULL WHERE id = $1', [proposal.id]);
 
       // A read of who it waits on that fails leaves the rest of the state.
@@ -295,17 +292,84 @@ test('the first version being built, from the records the bot leaves', { timeout
     assert.equal((await routes.firstVersionLinesFor(pool, [app], ada.id)).size, 0);
   });
 
+  // 14 Oct 2026 (newcomer run eight, Club Votes): a build that stopped was
+  // no state, so the App tab framed the starter template. It says Stopped,
+  // and its maker's way to Try again.
+  await t.test('a build that stopped is said, with where its maker can try again', async () => {
+    await pool.query('DELETE FROM homeroom_bot_runs WHERE app_id = $1', [app.id]);
+    const { rows: [run] } = await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, build_ok, build_error)
+       VALUES ($1, 1, 'live', 'ready', FALSE, 'the change was built but could not be proposed: Server is restarting') RETURNING id`,
+      [app.id],
+    );
+    const stopped = await state();
+    assert.deepEqual(steps(stopped), { step: 4, of: 7, line: 'stopped', question: false, ready: false });
+    assert.deepEqual(stopped.stopped, {}, 'not said in her chat yet: nothing to point at');
+    assert.equal(stopped.steps, undefined, 'nothing is under way');
+    // Homeroom bot said it in the request's thread, with Try again under it.
+    const card = await dm.sendDm(pool, { bot, userId: ada.id, content: 'Plant Pal, its first version' });
+    const said = await dm.sendDm(pool, {
+      bot, userId: ada.id, content: 'I built Plant Pal but couldn\'t put it live yet. Tap Try again and I\'ll finish it.',
+      threadRootId: card.messageId,
+    });
+    await pool.query(
+      `INSERT INTO homeroom_bot_dm_messages (message_id, user_id, conversation_id, app_id, issue_number, kind, run_id)
+       VALUES ($1, $2, $3, $4, 1, 'build_failed', $5)`,
+      [said.messageId, ada.id, said.conversationId, app.id, run.id],
+    );
+    const where = { conversationId: opened.conversationId, messageId: said.messageId, threadRootId: card.messageId };
+    assert.deepEqual((await state()).stopped, where);
+    assert.equal((await dm.firstVersionState(pool, app.id, { viewerId: sam.id })).line, 'stopped', 'for everyone');
+
+    let viewer = ada;
+    const server = express();
+    server.use(express.json());
+    server.use((req, _res, next) => { req.user = { id: viewer.id, username: viewer.username }; next(); });
+    server.use(appRoutes({}));
+    const listening = server.listen(0);
+    await new Promise((resolve) => listening.once('listening', resolve));
+    try {
+      const base = `http://127.0.0.1:${listening.address().port}`;
+      const get = async () => (await (await fetch(`${base}/api/apps/plant-pal?manifest=summary`)).json()).app.first_version;
+      const listed = async () => (await (await fetch(`${base}/api/apps`)).json()).apps.find((a) => a.slug === 'plant-pal');
+      assert.deepEqual(await get(), {
+        building: true, mine: true, step: 4, of: 7, line: 'stopped', creator: ada.username,
+        ready: false, question: false, conversationId: opened.conversationId,
+        stopped: true, thread: { conversationId: opened.conversationId, threadRootId: card.messageId, messageId: said.messageId },
+      }, 'its maker: Stopped, and the thread where Try again is');
+      assert.equal((await listed()).first_version_line, 'stopped', 'the Home tile says it');
+      viewer = sam;
+      const theirs = await get();
+      assert.deepEqual([theirs.line, theirs.stopped, theirs.thread, theirs.conversationId, theirs.member],
+        ['stopped', true, undefined, null, undefined], 'nobody else is handed her chat, nor a "While you wait"');
+      assert.equal((await listed()).first_version_line, 'stopped');
+    } finally {
+      if (typeof listening.closeAllConnections === 'function') listening.closeAllConnections();
+      listening.close();
+    }
+
+    // Try again (homeroom-bot-mayor.js start_request) puts it first in the
+    // queue: it is on its way again, read before it is planned.
+    await pool.query(`INSERT INTO homeroom_bot_queue (app_id, issue_number, priority, reason) VALUES ($1, 1, 0, 'dm_start')`, [app.id]);
+    const again = await state();
+    assert.equal(again.line, 'planning');
+    assert.equal(again.stopped, undefined);
+    await pool.query('DELETE FROM homeroom_bot_queue WHERE app_id = $1', [app.id]);
+  });
+
   await t.test('any other ending is the end of the state too', async () => {
     await pool.query('DELETE FROM homeroom_bot_runs WHERE app_id = $1', [app.id]);
     await pool.query(`INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict) VALUES ($1, 1, 'live', 'person')`, [app.id]);
     assert.equal(await state(), null, 'left for the group to decide');
-    await pool.query('DELETE FROM homeroom_bot_runs WHERE app_id = $1', [app.id]);
-    await pool.query(
-      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, build_ok, build_error)
-       VALUES ($1, 1, 'live', 'ready', FALSE, 'tests failed')`,
-      [app.id],
-    );
-    assert.equal(await state(), null, 'a build that did not succeed');
+    for (const error of ['skipped: its request was closed', 'blocked: needs a payment provider']) {
+      await pool.query('DELETE FROM homeroom_bot_runs WHERE app_id = $1', [app.id]);
+      await pool.query(
+        `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, build_ok, build_error)
+         VALUES ($1, 1, 'live', 'ready', FALSE, $2)`,
+        [app.id, error],
+      );
+      assert.equal(await state(), null, error);
+    }
     await pool.query('DELETE FROM homeroom_bot_runs WHERE app_id = $1', [app.id]);
     assert.equal((await state()).step, 2, 'with nothing recorded it waits to be read again');
     await pool.query(`UPDATE homeroom_bot_first_versions SET status = 'failed' WHERE app_id = $1`, [app.id]);

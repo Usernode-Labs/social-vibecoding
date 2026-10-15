@@ -13,7 +13,9 @@ import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals
 // of trend, the week's lifecycle as units, and the votes behind it), the
 // seven stages, the first mile per admit cohort (one track per newcomer,
 // under the staircase it sums to), the creation path (making a project to a
-// change of theirs going live, against its targets) and the pairs (the aha:
+// change of theirs going live, against its targets, with each first
+// version's stages and how it ended), the first session (with the made
+// screen and the tour after Make it, card by card) and the pairs (the aha:
 // two people active on a project together), the change loop and the invite
 // loop as rings, and where newcomers go next. Each check sits on the card whose
 // reading it qualifies: group votes and lockstep under the North Star, the
@@ -29,7 +31,10 @@ import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals
 // - every mark carries its count, and no share is printed as a percentage:
 //   at one to six people a rate claims more than the data holds. The one
 //   exception is the invite funnel's conversion from step to step (#4176),
-//   printed beside its counts and only from FUNNEL_RATE_FROM people.
+//   printed beside its counts and only from FUNNEL_RATE_FROM people; the
+//   made screen's steps after Make it are read the same way.
+// - what a maker asked for is shown in their own words, as text, never as
+//   markup or a link.
 //
 // Analytics is a separate section with its own definitions; this one does
 // not read or change it. On screen it is "project", never "app".
@@ -50,7 +55,7 @@ const consoleApi = () => (window as any).AdminConsole;
 const MILE_STEPS: Record<string, string> = {
   admitted: 'Admitted',
   mail_sent: 'Admit mail sent',
-  code_asked: 'Asked for a login code',
+  code_asked: 'Followed the mail',
   account: 'Account created',
   access: 'Has access',
   opened: 'Opened Homeroom',
@@ -598,7 +603,7 @@ function NorthStarCard({ s, scope, onOpen, onDetails }: { s: Summary; scope: Sco
 // ── First mile ─────────────────────────────────────────────────────────
 
 const MILE_SHORT: Record<string, string> = {
-  admitted: 'admit', mail_sent: 'mail', code_asked: 'code', account: 'acct', access: 'in',
+  admitted: 'admit', mail_sent: 'mail', code_asked: 'link', account: 'acct', access: 'in',
   opened: 'open', username: 'name', join: 'join', first_act: 'act',
 };
 
@@ -617,8 +622,8 @@ const MILE_KEYS = Object.keys(MILE_STEPS);
 // "mail" is the provider taking the message, not the inbox getting it.
 const MILE_HELP: Record<string, string> = {
   admitted: 'Let in from the waitlist.',
-  mail_sent: 'Our mail provider accepted the \u201cYou\u2019re in\u201d mail. Since 7 Oct it is tracked: a person\u2019s panel says whether they opened it or clicked its link. An open is approximate, and no open is not proof it went unread.',
-  code_asked: 'A sign-in code was asked for. The mail\u2019s button asks for one as it opens, so this is the first proof the link was followed.',
+  mail_sent: 'Our mail provider accepted the \u201cYou\u2019re in\u201d mail. Since 7 Oct it is tracked: a person\u2019s panel says whether they opened it or clicked its link, and that is kept after the mail log\u2019s 30 days. An open is approximate, and no open is not proof it went unread.',
+  code_asked: 'The mail\u2019s button was followed: its one-time sign-in link was used, or a sign-in code was asked for after the admit (the page asks for one when the link no longer works). A used link counts as a click on the mail even where opens are not tracked.',
   account: 'Account created and finished.',
   access: 'The account has platform access.',
   opened: 'Opened Homeroom for the first time.',
@@ -983,11 +988,201 @@ type Creation = {
   targets: Record<string, number>;
   recordedFrom: Record<string, string | null>;
   weeks: Array<{ week: string; steps: Array<{ key: string; reached: Count; medianSeconds: number | null }> }>;
+  timing?: CreationTimingSummary;
+  firstVersion?: FirstVersionSummary | (NotRecorded & { from?: string | null });
   examples: Array<{
     userId: number; name: string; slug: string; project: string; createdAt: string;
     steps: Array<{ key: string; recorded: boolean; seconds: number | null }>;
+    timing?: CreationTiming | null;
+    asked?: string | null; template?: string | null; firstVersion?: FirstVersionBrief | null;
   }>;
 };
+
+// Where the time to running goes (#4895): each stage of making a project,
+// its median over the projects made from a starter since creation was timed
+// (src/services/journey.js creationTimingSummary). Each stage is its own
+// clock: the database and the repository are made side by side, so the
+// stages do not add up to the total.
+type PodStart = { scheduleMs: number; startMs: number; readyMs: number };
+type CreationTiming = {
+  kind: string; totalMs: number | null; stages: Record<string, number>;
+  build?: { engine: string; reused?: boolean; steps: Array<{ name: string; ms: number }> };
+  pod?: PodStart;
+};
+type CreationTimingSummary = {
+  from: string | null; of: number; totalMs: number | null;
+  stages: Array<{ key: string; medianMs: number }>; pod: PodStart | null;
+};
+
+const TIMING_STAGES: Record<string, [string, string]> = {
+  database: ['Database', 'its own Postgres database and role'],
+  repository: ['Repository', 'its GitHub repository made and the starter committed'],
+  card: ['Card', 'waiting for the first session\'s card, inside Repository'],
+  checkout: ['Checkout', 'the starter written out for the image build'],
+  lock: ['Build lock', 'waiting to share the build-retention lock'],
+  manifest: ['Manifest', 'dapp.json read and reconciled, secrets checked'],
+  build: ['Image build', 'its container image built'],
+  deploy: ['Deploy', 'its Service, Deployment and Ingress applied'],
+  rollout: ['Start', 'its Pod placed, its image pulled and started, until /health answered'],
+};
+
+/** Milliseconds as a short duration: "0.4 s", "4.3 s", "71 s", "1.5 min". */
+function msDur(ms: number | null | undefined): string {
+  if (ms == null || !Number.isFinite(ms)) return '';
+  if (ms < 10000) return `${Math.round(ms / 100) / 10} s`;
+  return dur(ms / 1000);
+}
+
+function CreationTimingRows({ timing }: { timing: CreationTimingSummary | undefined }) {
+  if (!timing) return null;
+  if (!timing.of) {
+    return (
+      <p className={JUI.fine}>
+        {timing.from
+          ? `No project made from a starter in this time was timed. Timed from ${weekLabel(timing.from.slice(0, 10))}.`
+          : 'Not timed yet: each new project is timed from now on.'}
+      </p>
+    );
+  }
+  const most = Math.max(1, ...timing.stages.map((st) => st.medianMs));
+  return (
+    <div className="space-y-1">
+      {timing.stages.map((st) => {
+        const [label, means] = TIMING_STAGES[st.key] || [st.key, ''];
+        return (
+          <div key={st.key} data-journey-creation-stage={st.key} title={means}
+            className="grid grid-cols-[6.5rem_minmax(0,1fr)_3.5rem] items-center gap-2 text-xs">
+            <span className="truncate">{label}</span>
+            <div className={`h-2 rounded-sm ${JUI.empty}`}>
+              <div className="h-2 rounded-sm bg-violet-500" style={{ width: `${Math.max(2, Math.round((st.medianMs / most) * 100))}%` }} />
+            </div>
+            <span className="text-right tabular-nums">{msDur(st.medianMs)}</span>
+          </div>
+        );
+      })}
+      {timing.pod ? (
+        <p className={JUI.fine} data-journey-creation-pod="">
+          {`Start, from the Pod: placed ${msDur(timing.pod.scheduleMs)} · image pulled and started ${msDur(timing.pod.startMs)} · booted until healthy ${msDur(timing.pod.readyMs)}`}
+        </p>
+      ) : null}
+      <p className={JUI.fine}>
+        {`Median per stage over ${plural(timing.of, 'project', 'projects')} made from a starter, ${msDur(timing.totalMs)} in all. Each stage has its own clock: the database and the repository are made side by side, so the stages do not add up to the total.`}
+      </p>
+    </div>
+  );
+}
+
+/** One project's slowest stages, and how its image was built. */
+function exampleTiming(timing: CreationTiming): string {
+  const top = Object.entries(timing.stages).sort((a, b) => b[1] - a[1]).slice(0, 3)
+    .map(([key, ms]) => `${(TIMING_STAGES[key] || [key])[0]} ${msDur(ms)}`);
+  const b = timing.build;
+  const slowest = b && b.steps.length ? b.steps[0] : null;
+  const built = b
+    ? `built with ${b.engine}${b.reused ? ', reused' : ''}${slowest ? `, slowest ${slowest.name} ${msDur(slowest.ms)}` : ''}`
+    : null;
+  return [...top, ...(built ? [built] : [])].join(' · ');
+}
+
+// ── First versions ─────────────────────────────────────────────────────
+//
+// A first version the Homeroom bot builds, stage by stage as the pipeline
+// records them (src/services/journey.js firstVersionSummary): how many
+// projects reached each stage and how long each took, how each ended, where
+// the ones not live are, and whether their maker was there when it went
+// live. Projects, not people: a first version is one project's.
+
+type FirstVersionSummary = {
+  from: string | null; of: number;
+  stages: Array<{ key: string; reached: number; medianFromStart: number | null; medianFromPrevious: number | null }>;
+  outcomes: Record<string, number>;
+  stoppedAt: Array<{ key: string; count: number }>;
+  maker: { live: number; nearLive: number; cameBack: number; medianBackSeconds: number | null };
+  stallMinutes: number; nearMinutes: number;
+};
+type FirstVersionBrief = { recorded: boolean; outcome: string | null; last: string | null };
+
+// [stage, label, what it records], in pipeline order.
+const FIRST_VERSION_STAGES: Array<[string, string, string]> = [
+  ['plan_written', 'Plan written', 'its plan exists: written at Make it, or by the triage of its request'],
+  ['go_ahead', 'Go-ahead', 'its maker tapped Build it, or Submit under the plan\u2019s questions'],
+  ['picked_up', 'Build picked up', 'its build took its slot'],
+  ['spec_started', 'Screens started', 'the screens it will have are being drawn'],
+  ['first_look_saved', 'First look saved', 'its first look was drawn and kept'],
+  ['build_started', 'Build started', 'the build turn began'],
+  ['build_done', 'Build pushed', 'the build turn pushed its code'],
+  ['review_round', 'Reviewed', 'a review round began'],
+  ['testing_started', 'Checks started', 'it was proposed, so its checks began'],
+  ['merged', 'Merged', 'its proposal merged'],
+  ['live', 'Live', 'it answered on the build that was deployed'],
+];
+const FIRST_VERSION_LABEL: Record<string, string> = Object.fromEntries(FIRST_VERSION_STAGES.map(([key, label]) => [key, label]));
+
+// [outcome, words, fill], from the best to the worst.
+const FIRST_VERSION_OUTCOMES: Array<[string, string, string]> = [
+  ['live', 'live', 'bg-emerald-500'],
+  ['building', 'still building', 'bg-violet-500'],
+  ['waiting', 'waiting on its maker', 'bg-violet-300 dark:bg-violet-400/50'],
+  ['stalled', 'stalled', 'bg-amber-400'],
+  ['failed', 'failed', 'bg-red-500'],
+];
+const OUTCOME_WORDS: Record<string, string> = Object.fromEntries(FIRST_VERSION_OUTCOMES.map(([key, words]) => [key, words]));
+
+/** A project's first version in a few words: "first version live", "first version stalled at build picked up". */
+function firstVersionWords(fv: FirstVersionBrief | null | undefined): string | null {
+  if (!fv) return null;
+  if (!fv.recorded || !fv.outcome) return 'first version not recorded';
+  if (fv.outcome === 'live' || !fv.last) return `first version ${OUTCOME_WORDS[fv.outcome] || fv.outcome}`;
+  return `first version ${OUTCOME_WORDS[fv.outcome] || fv.outcome}, at ${(FIRST_VERSION_LABEL[fv.last] || fv.last).toLowerCase()}`;
+}
+
+/** What a maker asked for, in their words, or the ready-made app it was made from. */
+function Asked({ asked, template }: { asked?: string | null; template?: string | null }) {
+  if (asked) return <p className="mt-0.5 text-xs text-zinc-700 dark:text-zinc-300" data-journey-asked="">{`\u201c${asked}\u201d`}</p>;
+  if (template) return <p className={`mt-0.5 ${JUI.fine}`} data-journey-asked="">{`Ready-made: ${template}`}</p>;
+  return null;
+}
+
+function FirstVersionRows({ fv }: { fv: Creation['firstVersion'] }) {
+  if (!fv) return null;
+  if (isNotRecorded(fv)) return <Num v={fv} />;
+  if (!fv.of) return <Empty>No first version was started in this time.</Empty>;
+  const stalled = fv.stoppedAt.map((x) => `${x.count} at ${x.key === 'none' ? 'no stage yet' : (FIRST_VERSION_LABEL[x.key] || x.key).toLowerCase()}`);
+  return (
+    <div className="space-y-2.5">
+      <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs" data-journey-first-version-outcomes="">
+        <span className="text-zinc-600 dark:text-zinc-300">{plural(fv.of, 'project', 'projects')}</span>
+        {FIRST_VERSION_OUTCOMES.map(([key, words, fill]) => (fv.outcomes[key] ? (
+          <span key={key} className="inline-flex items-center gap-1.5"><Dot cls={fill} />{`${fv.outcomes[key]} ${words}`}</span>
+        ) : null))}
+      </div>
+      {fv.stages.map((st, i) => (
+        <div key={st.key} data-journey-first-version-stage={st.key} title={FIRST_VERSION_STAGES[i] ? FIRST_VERSION_STAGES[i][2] : undefined}>
+          <div className="flex items-baseline justify-between gap-2 text-sm">
+            <span>{FIRST_VERSION_LABEL[st.key] || st.key}</span>
+            <span className="tabular-nums shrink-0">{`${st.reached} of ${fv.of}`}</span>
+          </div>
+          <UnitBar n={st.reached} of={fv.of} fill={st.key === 'live' ? 'bg-emerald-500' : 'bg-violet-500'} />
+          <div className={`mt-0.5 ${JUI.fine}`}>
+            {st.medianFromStart == null ? 'nobody yet'
+              : i === 0 ? `median ${dur(st.medianFromStart)} from Make it`
+                : `median ${dur(st.medianFromStart)} from Make it · ${dur(st.medianFromPrevious)} after the step before`}
+          </div>
+        </div>
+      ))}
+      {stalled.length ? <p className={JUI.fine} data-journey-first-version-stopped="">{`Not live yet, by the furthest stage: ${stalled.join(' · ')}`}</p> : null}
+      <p className={JUI.fine} data-journey-first-version-maker="">
+        {fv.maker.live
+          ? `Of ${fv.maker.live} live: ${fv.maker.nearLive} had their maker active within ${fv.nearMinutes} min of it going live · `
+            + `${fv.maker.cameBack} opened it afterwards${fv.maker.medianBackSeconds != null ? `, median ${dur(fv.maker.medianBackSeconds)} after` : ''}`
+          : 'None live yet, so nothing to say about their makers.'}
+      </p>
+      <p className={JUI.fine}>
+        {`Stalled: not live and nothing moved for ${fv.stallMinutes} min. Waiting on its maker: its plan is written and waits for Build it.`}
+      </p>
+    </div>
+  );
+}
 
 const CREATION_STEPS: Array<[string, string, string]> = [
   ['created', 'Created', 'made a project'],
@@ -1059,6 +1254,16 @@ function CreationCard({ scope, onOpen }: { scope: Scope; onOpen: OpenPerson }) {
       </div>
       {since ? <p className={`${JUI.fine} mt-2`}>Running, Preview opened and Requested change live are recorded from {weekLabel(since)}.</p> : null}
 
+      <div className={`${JUI.label} mt-4 mb-1.5`}>Where the time to running goes</div>
+      <div id="admin-journey-creation-timing">
+        <CreationTimingRows timing={data.timing} />
+      </div>
+
+      <div className={`${JUI.label} mt-4 mb-1.5`}>First versions, stage by stage</div>
+      <div id="admin-journey-first-version">
+        <FirstVersionRows fv={data.firstVersion} />
+      </div>
+
       <div className={`${JUI.label} mt-4 mb-1.5`}>By week</div>
       <div className={JUI.weekGrid} id="admin-journey-creation-weeks">
         <span className={JUI.fine}>Week</span>
@@ -1094,6 +1299,8 @@ function CreationCard({ scope, onOpen }: { scope: Scope; onOpen: OpenPerson }) {
                 <PersonChip person={{ userId: e.userId, name: e.name }} onOpen={onOpen} />
                 <span className="text-sm font-medium truncate min-w-0">{e.project}</span>
               </div>
+              <Asked asked={e.asked} template={e.template} />
+              {e.firstVersion ? <div className={`mt-0.5 ${JUI.fine}`} data-journey-creation-example-first-version="">{firstVersionWords(e.firstVersion)}</div> : null}
               <div className={`mt-0.5 flex flex-wrap gap-x-2 ${JUI.fine}`}>
                 {e.steps.map((st) => (
                   <span key={st.key}>
@@ -1104,6 +1311,7 @@ function CreationCard({ scope, onOpen }: { scope: Scope; onOpen: OpenPerson }) {
                   </span>
                 ))}
               </div>
+              {e.timing ? <div className={`mt-0.5 ${JUI.fine}`} data-journey-creation-example-timing="">{exampleTiming(e.timing)}</div> : null}
             </div>
           ))}
         </div>
@@ -1138,12 +1346,85 @@ type FirstSessionData = {
   join: { people: number; steps: FirstSessionStep[]; aha: number };
   look: { people: number; notRecorded: NotRecorded | null; steps: FirstSessionStep[] };
   opens: InviteFunnel | NotRecorded;
+  made?: MadeScreen | NotRecorded;
   recordedFrom: { make: string | null; reward: string | null; opens: string | null; signedIn: string | null; look: string | null };
   examples: Array<{
     path: 'make' | 'join' | 'look'; userId: number; name: string; slug: string | null; project: string | null; startedAt: string | null;
     steps: Record<string, number | null>;
+    asked?: string | null; template?: string | null;
   }>;
 };
+
+// The made screen and the maker's tour after it (src/services/journey.js
+// madeScreenReading): people per step, in the order the screen offers them,
+// then the tour card by card and where it was left.
+type MadeScreen = {
+  from: string; people: number;
+  steps: Array<{ key: string; reached: number }>;
+  tour: {
+    started: number; cards: Array<{ step: number; reached: number }>; done: number;
+    skipped: Array<{ step: number; count: number }>; left: Array<{ step: number; count: number }>;
+  };
+};
+
+const MADE_STEPS: Record<string, [string, string]> = {
+  made_shown: ['Saw the made screen', 'the screen after Make it opened'],
+  questions_shown: ['Shown its questions', 'the plan\u2019s quick questions, for a plan that has some'],
+  submit_tapped: ['Answered them', 'Submit under the questions'],
+  invite_shown: ['Shown the invite', 'the invite line and its buttons'],
+  share_invite_tapped: ['Tapped Share invite', 'the share sheet opened'],
+  invite_sent: ['Shared or copied the link', 'the invite link went out from the share sheet, shared or copied'],
+  invite_later_tapped: ['Chose Invite later', 'nothing went out'],
+  continue_tapped: ['Went on', 'the way on from the made screen'],
+  tour_started: ['Started the tour', 'the maker\u2019s tour after the made screen'],
+};
+
+/** "1 at card 2 · 2 at card 3". */
+function atCards(list: Array<{ step: number; count: number }>): string {
+  return list.map((x) => `${x.count} at card ${x.step}`).join(' · ');
+}
+
+function TourCards({ tour }: { tour: MadeScreen['tour'] }) {
+  if (!tour.started) return <p className={JUI.fine}>Nobody started the tour.</p>;
+  return (
+    <div id="admin-journey-tour">
+      <div className="flex items-end gap-1 h-16" data-journey-tour-cards="">
+        {tour.cards.map((c) => (
+          <div key={c.step} className="flex-1 flex flex-col items-stretch justify-end h-full" data-journey-tour-card={c.step}>
+            <span className="text-center text-[11px] leading-none mb-0.5 text-zinc-500 dark:text-zinc-400">{c.reached}</span>
+            <div className="rounded-sm bg-violet-500" style={{ height: `${Math.max(4, Math.round((c.reached / tour.started) * 100))}%` }} />
+          </div>
+        ))}
+      </div>
+      <div className="flex gap-1 mt-0.5">
+        {tour.cards.map((c) => <span key={c.step} className="flex-1 text-center text-[10px] text-zinc-500 dark:text-zinc-400">{c.step}</span>)}
+      </div>
+      <p className={`${JUI.fine} mt-1`} data-journey-tour-ends="">
+        {`${tour.done} of ${tour.started} finished it`}
+        {tour.skipped.length ? ` · skipped: ${atCards(tour.skipped)}` : ''}
+        {tour.left.length ? ` · left with no end: ${atCards(tour.left)}` : ''}
+      </p>
+    </div>
+  );
+}
+
+function MadeScreenRows({ made }: { made: MadeScreen }) {
+  return (
+    <div className="space-y-2.5">
+      {made.steps.map((st) => (
+        <div key={st.key} data-journey-made-step={st.key} title={MADE_STEPS[st.key]?.[1]}>
+          <div className="flex items-baseline justify-between gap-2 text-sm">
+            <span>{MADE_STEPS[st.key]?.[0] || st.key}</span>
+            <span className="tabular-nums shrink-0">{conversion(st.reached, made.people)}</span>
+          </div>
+          <UnitBar n={st.reached} of={made.people} fill={st.key === 'invite_sent' ? 'bg-emerald-500' : 'bg-violet-500'} />
+        </div>
+      ))}
+      <div className={`${JUI.label} pt-1`}>The tour, card by card</div>
+      <TourCards tour={made.tour} />
+    </div>
+  );
+}
 
 const FIRST_SESSION_STEPS: Record<string, [string, string]> = {
   reward: ['Sketch shown', 'the sketch of what they described was in front of them'],
@@ -1298,6 +1579,11 @@ function FirstSessionCard({ scope, onOpen }: { scope: Scope; onOpen: OpenPerson 
           )}
         </div>
       </div>
+      <div id="admin-journey-first-session-made">
+        <div className={`${JUI.label} mt-4 mb-1.5`}>After Make it</div>
+        {!data.made ? null : isNotRecorded(data.made) ? <Num v={data.made} />
+          : data.made.people ? <MadeScreenRows made={data.made} /> : <Empty>Nobody saw the made screen in this time.</Empty>}
+      </div>
       {scope.cohort ? null : (
         <div id="admin-journey-first-session-opens">
           <div className={`${JUI.label} mt-4 mb-1.5`}>{funnelFrom ? `Invite links · from ${weekLabel(funnelFrom)}` : 'Invite links'}</div>
@@ -1314,6 +1600,7 @@ function FirstSessionCard({ scope, onOpen }: { scope: Scope; onOpen: OpenPerson 
                 {e.project ? <span className="text-sm font-medium truncate min-w-0">{e.project}</span> : null}
                 <span className={AdminUI.badge.outline}>{FIRST_SESSION_PATHS[e.path] || e.path}</span>
               </div>
+              {e.path === 'make' ? <Asked asked={e.asked} template={e.template} /> : null}
               <div className={`mt-0.5 flex flex-wrap gap-x-2 ${JUI.fine}`}>
                 {Object.entries(e.steps).map(([key, seconds]) => (
                   <span key={key}>
@@ -1650,7 +1937,31 @@ type PersonData = {
   failedAttempts: number; repeatedTaps: number;
   challenges: { openedAt: string | null; credits: Array<{ challengeId: number; title: string; points: number; at: string; firstChallenge: boolean }> };
   navigation: { recorded: true } | NotRecorded;
+  made?: Array<{
+    slug: string; project: string; createdAt: string; asked: string | null; template: string | null;
+    firstVersion: (FirstVersionBrief & { nearLive: boolean | null; backSeconds: number | null }) | null;
+  }>;
+  madeScreen?: Array<{ kind: string; at: string; how?: string; step?: number; steps?: number }>;
 };
+
+/** One moment of the made screen or the tour, in a word or two. */
+function momentLabel(m: { kind: string; how?: string; step?: number; steps?: number }): string {
+  switch (m.kind) {
+    case 'made_shown': return 'Made screen';
+    case 'planning_shown': return 'Planning';
+    case 'questions_shown': return 'Questions';
+    case 'submit_tapped': return 'Answered';
+    case 'invite_shown': return 'Invite shown';
+    case 'share_invite_tapped': return 'Share invite';
+    case 'invite_sent': return m.how === 'copied' ? 'Link copied' : 'Invite shared';
+    case 'invite_later_tapped': return 'Invite later';
+    case 'continue_tapped': return 'Went on';
+    case 'tour_started': return m.steps ? `Tour of ${m.steps}` : 'Tour';
+    case 'tour_step_shown': return `Card ${m.step ?? '?'}`;
+    case 'tour_ended': return m.how === 'done' ? 'Finished the tour' : `Skipped at card ${m.step ?? '?'}`;
+    default: return m.kind;
+  }
+}
 
 function PersonView({ userId, onBack, onName }: { userId: number; onBack: () => void; onName: (name: string) => void }) {
   const { data: p, failed } = useJourney<PersonData>(`/api/admin/journey/people/${userId}`);
@@ -1691,6 +2002,26 @@ function PersonView({ userId, onBack, onName }: { userId: number; onBack: () => 
               </div>
             );
           }))}
+          {section('Made', p.made && p.made.length ? p.made.map((m) => (
+            <div key={m.slug} className="py-2 border-b border-zinc-100 dark:border-zinc-800/60 last:border-b-0" data-journey-person-made={m.slug}>
+              <div className="flex flex-wrap items-baseline gap-x-2">
+                <span className="font-medium">{m.project}</span>
+                <span className={JUI.fine}>{when(m.createdAt)}</span>
+                {m.firstVersion ? <span className={JUI.fine}>{firstVersionWords(m.firstVersion)}</span> : null}
+                {m.firstVersion && m.firstVersion.nearLive != null ? (
+                  <span className={JUI.fine}>
+                    {`${m.firstVersion.nearLive ? 'there when it went live' : 'away when it went live'}${m.firstVersion.backSeconds != null ? `, opened it ${dur(m.firstVersion.backSeconds)} after` : ''}`}
+                  </span>
+                ) : null}
+              </div>
+              <Asked asked={m.asked} template={m.template} />
+            </div>
+          )) : <Empty>No project of their own.</Empty>)}
+          {p.madeScreen && p.madeScreen.length ? section('After Make it', (
+            <div className={`${JUI.path} mt-1`} id="admin-journey-person-made-screen">
+              {p.madeScreen.map((m, i) => <span key={i} className={JUI.pathStep}>{momentLabel(m)}</span>)}
+            </div>
+          )) : null}
           {section('Tour', p.firstMile.tour
             ? <p className="text-sm">{p.firstMile.tour.ended === 'skip' ? 'Skipped' : p.firstMile.tour.ended === 'finish' ? 'Finished' : p.firstMile.tour.ended}
               {p.firstMile.tour.step != null ? ` at step ${p.firstMile.tour.step + 1}` : ''}
@@ -1890,4 +2221,4 @@ const AdminJourney = {
 if (typeof window !== 'undefined') (window as any).AdminJourney = AdminJourney;
 
 // InviteFunnelRows for its render test (tests/admin-journey-section.test.js).
-export { AdminJourney, InviteFunnelRows };
+export { AdminJourney, InviteFunnelRows, CreationTimingRows, exampleTiming };

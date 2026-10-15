@@ -94,6 +94,30 @@ export interface HomeroomBotMeta {
   appEmoji?: string;
   /** B7: once its person approved it, what happens next (services/homeroom-bot-dm.js goesLiveAfterYes). */
   goesLive?: HomeroomBotGoesLive;
+  /** Why its buttons were closed ("No longer needed", "A newer plan replaced this"), said in their place. */
+  closedWhy?: string;
+  /**
+   * One request, one story: the request's activity card (its thread's root)
+   * that this message was posted under. Set on every message in a request's
+   * thread, as the message's own `threadRootId` is.
+   */
+  threadRootId?: number;
+  /**
+   * Which of the four moments that ring this is (`needs_you`, `ready`,
+   * `stopped`, `on_hold`, `live`), `reply` for the bot's own replies, or
+   * absent for a quiet one; `said` is its variant (services/homeroom-bot-
+   * dm.js). The bell and the push word them; the chat draws the message.
+   */
+  moment?: string;
+  said?: string;
+  /** The request's title, as the request page has it; absent for a first version. */
+  requestTitle?: string;
+  /** Who a ready change waits on ("you and @ada"), as the push says it. */
+  waiting?: string;
+  /** An on-hold summary: how many of the person's requests are held. */
+  count?: number;
+  /** A moment in a request's thread the main chat also lists, under its "↳ in …" label. */
+  alsoInChat?: boolean;
 }
 
 export interface HomeroomBotReady {
@@ -224,11 +248,47 @@ export interface HomeroomBotJob {
    * (services/release-watch.js), which the tray words. Absent otherwise.
    */
   release?: ReleaseOutlook;
+  /**
+   * One request, one story (services/homeroom-bot-tray.js threadsOf): the
+   * request's card in the chat with the bot, the root of its thread.
+   */
+  cardId?: number;
+  /** Its newest message there still waiting on the person: what the strip's Needs you button opens. */
+  ask?: HomeroomBotAsk;
+  /** Its newest "ready to try" card there, and what that card's buttons do. */
+  ready?: HomeroomBotReadyRef;
+  /** A build that stopped: why (as an activity card's `stopCause`). */
+  stopCause?: HomeroomBotActivity['stopCause'];
+}
+
+/** The newest message about a request still waiting on its person (tray entry `ask`). */
+export interface HomeroomBotAsk {
+  messageId: number | null;
+  /** question, followup_ask, plan, person, blocked, empty, build_failed, checks, needs_look, first_version_failed. */
+  kind: string;
+  said?: string;
+  /** A question's own words. */
+  question?: string;
+}
+
+/** A request's newest "ready to try" card (tray entry `ready`). */
+export interface HomeroomBotReadyRef {
+  messageId: number | null;
+  sessionId: number | null;
+  epoch: number;
+  /** Its buttons are still open. */
+  open: boolean;
+  /** The person's yes would count: Approve is theirs to press. */
+  approve: boolean;
+  /** Who it waits on ("@ada"), when not on them. */
+  waiting: string | null;
 }
 
 /** What the bot is doing for them now: its step of the request's steps, what it is doing, since when. */
 export interface HomeroomBotCurrentJob extends HomeroomBotJob {
   phase: HomeroomBotPhase;
+  /** The progress stage it is at (reading, planning, building, on_hold…), when the server says. */
+  stage?: string | null;
   step: number | null;
   of: number | null;
   stepName: string | null;
@@ -292,6 +352,12 @@ export interface HomeroomBotActivity {
   endedAt: string | null;
   /** How long the step it is at usually takes, in minutes, when it takes a while. */
   typicalMinutes?: { from: number; to: number };
+  /** While it is working: who it waits on (`them`, the viewer; `the group`; `time`, on hold until Monday), when it waits (services/homeroom-bot-progress.js). */
+  waitingOn?: string;
+  /** A `build_failed` ending: why the build stopped. */
+  stopCause?: 'time' | 'restart' | 'restarts' | 'no_change' | 'unproposed' | 'no_start' | 'other';
+  /** A `held` ending: which of the bot's limits holds it back. */
+  heldBy?: 'proposals_per_app' | 'proposals_total' | 'questions_per_day';
   /**
    * `going_live`, on a merge of the platform's own app: when the platform's
    * next release carries it (services/release-watch.js), which the card
@@ -393,6 +459,10 @@ export interface SharedObjectCard extends Omit<SharedObjectReference, 'type'> {
   state?: string | null;
   author?: string | null;
   href?: string | null;
+  /** An app's or a community's own icon, `/app-icons/<id>`, when it has one: drawn in place of the glyph. */
+  iconUrl?: string | null;
+  /** An app's or a community's emoji icon, for one with no image. */
+  iconEmoji?: string | null;
 }
 
 export interface ConversationMessage {
@@ -676,6 +746,13 @@ export interface MessagesSnapshot {
    * nothing was unread. Optional so a fixture without it reads as null.
    */
   unreadMark?: UnreadMark | null;
+  /**
+   * The message a reply thread opens at (store.openThreadAt): the strip's
+   * Needs you button opens a request's thread at the question it asks.
+   * Scrolled to and flashed once by the thread pane, never by the
+   * conversation beside it. Optional so a fixture without it reads as null.
+   */
+  threadFocusId?: number | null;
 }
 
 export interface ReplyThreadState {

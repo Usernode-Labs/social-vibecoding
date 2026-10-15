@@ -350,10 +350,26 @@ const RETIRED_IDS = {
   'dev-flow-pref-section': '#4311: the "Where changes get built" part of Settings → Connectors & CLI. Nothing chose a venue from its value any more.',
   'settings-dev-flow': '#4311: that part\'s dropdown, which saved users.dev_flow_preference through POST /api/me/dev-flow (removed).',
   'settings-dev-flow-status': '#4311: the dropdown\'s save/error line.',
+  // ── #4891: the email sign-up asks for no password ──────────────────
+  // The set-password step (#otp-step-password, named for its route) asks a
+  // new account for its username and nothing else: it signs in with an
+  // emailed code and adds a password in Settings (#cp-title-add below).
+  'otp-new-password': '#4891: the set-password step\'s optional New password field. A password is one more decision at the very first step; Settings → Account offers "Add a password" instead.',
+  'otp-confirm-password': '#4891: the same step\'s Confirm password field, gone with the password it confirmed.',
 };
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
+  'feedback-sent-edit': '#4803: correct a just-filed request from its confirmation for five minutes.',
+  'feedback-first-edit': '#4803: the same correction action on the first-request confirmation.',
+  'feedback-edit': '#4803: shared correction form, initially hidden; its controller owns the fields and visibility.',
+  'feedback-edit-heading': '#4803: accessible heading of the feedback correction form.',
+  'feedback-edit-window': '#4803: server-authorized time remaining to correct the request.',
+  'feedback-edit-title': '#4803: the existing request title, ready to correct.',
+  'feedback-edit-text': '#4803: the existing request description, ready to correct.',
+  'feedback-edit-status': '#4803: save failure, expiry or stale-edit message without losing the typed corrections.',
+  'feedback-edit-cancel': '#4803: return to the confirmation or close a profile-opened editor.',
+  'feedback-edit-save': '#4803: save the title and description to the same request.',
   // ── #4405: custom domains ───────────────────────────────────────────────
   'app-domain-modal': '#4405: the Custom domain dialog (features/dialogs/app-domain.tsx), opened from the hub\'s ⋯ menu\'s Settings & rules row for whoever manages the project, or by `?shot=app-domain`. Ships hidden and EMPTY but for its title, its error line and the Close pill; everything else arrives from GET /api/apps/:slug/domain in its onOpen, so the prerender and the first client render agree. The ids that render behind that read (and so are not in the prerender, nor here): #app-domain-input and #app-domain-add (the claim form), #app-domain-section with #app-domain-status (the state in words and the sentence that says why), #app-domain-records (the CNAME and TXT rows dapp.json\'s declared check selects on), #app-domain-check, #app-domain-open and #app-domain-remove.',
   'app-domain-error': '#4405: the dialog\'s error line, hidden until a request fails.',
@@ -1039,6 +1055,15 @@ const ADDED_IDS = {
   'feedback-video-btn': '#3940: the Video row of the paperclip popover (#4127; label becomes Replace video once a clip is attached). dapp.json\'s feedback check selects on it.',
   'feedback-video-input': '#3940: the hidden video file input behind the button (MP4, WebM and MOV).',
   'feedback-video-preview': '#3940: the clip preview row (first-frame thumbnail, progress bar, status, remove), empty and hidden until a clip is chosen.',
+  // ── #4891: Settings offers "Add a password" to an account with none ───
+  // Each pair is rendered once (features/settings/sections/password.tsx) and
+  // settings.js _setChangePasswordMode shows the one that fits, as it does
+  // #cp-current-row: the email sign-up no longer asks for a password, and
+  // sends the person here to add one.
+  'cp-title-change': '#4891: the Password part\'s "Change password" title, shown to an account that has a password.',
+  'cp-title-add': '#4891: its "Add a password" title, shown instead to an account that has none and signs in with an emailed code.',
+  'cp-save-change': '#4891: #cp-save\'s "Change password" label, beside its "Add password" one.',
+  'cp-save-add': '#4891: #cp-save\'s "Add password" label, for an account with no password yet.',
 };
 
 test('the shell still carries every id in the frozen baseline', () => {

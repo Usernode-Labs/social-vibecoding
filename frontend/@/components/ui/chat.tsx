@@ -100,7 +100,7 @@ export function ChatMessageRow({
   if (grouped) {
     return (
       <div className={cn('flex gap-3 px-4 py-0.5', className)} data-grouped="" {...props}>
-        <span className="w-11 shrink-0 pt-0.5 text-right text-[0.6875rem] leading-5 text-zinc-500 dark:text-zinc-500">{gutter}</span>
+        <span className="gc-msg-gutter w-11 shrink-0 pt-0.5 text-right text-[0.6875rem] leading-5 text-zinc-500 dark:text-zinc-500">{gutter}</span>
         <div className="min-w-0 flex-1">
           <div className="text-[1.0625rem] leading-snug text-zinc-900 dark:text-zinc-100">{children}</div>
         </div>
@@ -199,11 +199,21 @@ const FLOAT_MOTION = 'transition-[opacity,transform] duration-200 ease-out motio
  * bot's tray hangs from its own. The scroller keeps its size and its class
  * string, and nothing is drawn inside it. The box passes taps through; the
  * control inside takes its own.
+ *
+ * The banner is centred over the top. Jump to latest sits at the RIGHT edge
+ * of the foot, low, just above the composer, as iMessage puts it (run six,
+ * 14 Oct 2026): centred, it sat in the middle of the conversation on top of
+ * a message's words, where a line of text is widest.
  */
+const OVERLAY_EDGE = {
+  top: 'top-2 justify-center px-4',
+  foot: 'bottom-2 justify-end px-3',
+} as const;
+
 export function TranscriptOverlay({ edge, children }: { edge: 'top' | 'foot'; children?: React.ReactNode }) {
   return (
     <div className="relative z-10 h-0 shrink-0" data-transcript-overlay={edge}>
-      <div className={cn('pointer-events-none absolute inset-x-0 flex justify-center px-4', edge === 'top' ? 'top-2' : 'bottom-3')}>
+      <div className={cn('pointer-events-none absolute inset-x-0 flex', OVERLAY_EDGE[edge])}>
         {children}
       </div>
     </div>
@@ -235,8 +245,8 @@ export function NewMessagesBanner({
 }
 
 /**
- * Jump to latest: a round disc with a down chevron over the foot of the
- * transcript, up whenever the reader is not at the bottom (Claude's). The
+ * Jump to latest: a round disc with a down chevron at the right of the
+ * transcript's foot, up whenever the reader is not at the bottom. The
  * disc is the language's floating control, white on the sheet; `dot` is the
  * accent, for messages that arrived while the reader was up the
  * transcript, and the button's name says how many.

@@ -94,9 +94,30 @@ test('the head holds the body only while the make flag is set, with a floor', ()
     assert.equal(runHold(null, { search, hash }).classes.size, 0, `${search}${hash}: no hold`);
   }
 
+  // A link the landing spends as the page opens (straightLink: signup, its
+  // token and its one-time sign-in, in the shapes auth-screens.js keeps)
+  // shows "Signing you in…"'s spinner from the first paint (onboarding run
+  // two, 12 Oct 2026: about 220ms of blank ground came first). Lifted with
+  // the hold, and by the same floor.
+  const KEY = 'k'.repeat(43);
+  const spent = runHold(null, { search: `?signup=1&t=2bba5a944a0a487f&key=${KEY}` });
+  assert.deepEqual([...spent.classes], ['first-session-boot', 'release-signing-in']);
+  spent.timers[0].fn();
+  assert.equal(spent.classes.size, 0, 'the floor lifts both');
+  for (const [search, hash] of [[`?signup=1&t=abc&key=${KEY}`, ''], ['?signup=1&t=2bba5a944a0a487f&key=short', ''],
+    [`?login=1&t=2bba5a944a0a487f&key=${KEY}`, ''], [`?signup=1&t=2bba5a944a0a487f&key=${KEY}`, '#login']]) {
+    assert.ok(!runHold(null, { search, hash }).classes.has('release-signing-in'), `${search}${hash}: no spinner`);
+  }
+  assert.match(AUTH_SCREENS, /token: route === 'signup' && t && \/\^\[A-Za-z0-9_-\]\{8,128\}\$\/\.test\(t\) \? t : null,/);
+  assert.match(AUTH_SCREENS, /signIn: route === 'signup' && key && \/\^\[A-Za-z0-9_-\]\{43\}\$\/\.test\(key\) \? key : null,/);
+
   // Inline, beside the page ground, so it holds with no stylesheet at all.
   const style = /<style>([\s\S]*?)<\/style>/.exec(HEAD)[1];
   assert.match(style, /html\.first-session-boot body \{ visibility: hidden; \}/);
+  // The spinner sits where SigningIn draws its own, on <html>, which the hold leaves shown.
+  assert.match(style, /html\.release-signing-in::after \{[^}]*left: calc\(50% - 12px\); top: calc\(50% \+ 4px\); width: 24px; height: 24px;/);
+  assert.match(style, /@media \(prefers-reduced-motion: reduce\) \{ html\.release-signing-in::after \{ animation: none; \} \}/);
+  assert.match(LANDING, /<Wordmark className="h-8 w-auto text-zinc-950 dark:text-white" \/>\s+<SpinnerArcIcon className="mt-8 h-6 w-6 [^"]*" aria-hidden="true" \/>\s+<p className="mt-3 text-\[15px\] leading-5 /);
   // Head-blocking, after the theme block that must run first.
   assert.ok(HEAD.indexOf('window.Theme') < HEAD.indexOf("classList.add('first-session-boot')"));
 });
@@ -115,6 +136,20 @@ test('no saved session holds the body too: the landing, not Home\'s skeleton, is
   assert.equal(signedOut.timers[0].ms, 8000, 'with the same floor');
   assert.equal(runHold(null, { saved: null, search: '?shot=dark', hash: '#login' }).classes.size, 1, 'whatever the address');
   assert.equal(runHold(null).classes.size, 0, 'a browser that was signed in keeps the skeleton');
+  // Onboarding run three, 12 Oct 2026: a saved session that still owes "What
+  // do you want to make?" is drawn into it as the shell starts, so a reload
+  // of it holds as well, and painted no Home skeleton first. The same four
+  // facts as the join step's firstSessionNow.
+  const owes = (user) => runHold(null, { saved: JSON.stringify({ user: { id: 7, ...user } }) }).classes.size;
+  const OWES = { needsCommunitiesChoice: true, storyFirstSession: true, needsUsernameChoice: false, hasPlatformAccess: true };
+  assert.equal(owes(OWES), 1, 'owed: held until the make screen is drawn');
+  assert.equal(owes({ ...OWES, needsCommunitiesChoice: false }), 0, 'answered: Home is next');
+  assert.equal(owes({ ...OWES, storyFirstSession: false }), 0);
+  assert.equal(owes({ ...OWES, needsUsernameChoice: true }), 0, 'a username to choose comes first');
+  assert.equal(owes({ ...OWES, hasPlatformAccess: false }), 0, 'the waiting room');
+  assert.equal(runHold(null, { saved: '{not json' }).classes.size, 0, 'an unreadable snapshot holds nothing');
+  const GATE = read('frontend/src/features/auth/communities-first-run.js');
+  assert.match(GATE, /user\.needsCommunitiesChoice === true\s+&& user\.storyFirstSession === true\s+&& user\.needsUsernameChoice !== true/);
   assert.equal(runHold(null, { blocked: true }).classes.size, 0, 'storage blocked: nothing known, nothing held');
   // The signed-out boot lifts it once the landing is drawn.
   assert.match(APP, /if \(window\.AuthScreens\) AuthScreens\.enter\(\);\s+App\._liftFirstSessionBoot\(\);/);
@@ -122,6 +157,7 @@ test('no saved session holds the body too: the landing, not Home\'s skeleton, is
 
 test('the shell lifts the hold at every way its boot ends', () => {
   assert.match(APP, /_liftFirstSessionBoot\(\) \{\s+try \{ document\.documentElement\.classList\.remove\('first-session-boot'\); \}/);
+  assert.match(APP, /_liftFirstSessionBoot\(\) \{[\s\S]*?try \{ document\.documentElement\.classList\.remove\('release-signing-in'\); \}[^\n]*\n  \},/);
   // Signed in: after `sv:authed`, whose listeners draw the make screen in
   // this same tick, before anything paints.
   assert.match(APP, /document\.dispatchEvent\(new CustomEvent\('sv:authed', \{\s+detail: \{ user: App\.user \},\s+\}\)\);\s+(?:\/\/[^\n]*\n\s+)*App\._liftFirstSessionBoot\(\);\s+App\.restoreFromHash\(\);/);
@@ -132,7 +168,7 @@ test('the shell lifts the hold at every way its boot ends', () => {
 });
 
 test('a sign-in that reloads onto the live build keeps the session it confirmed', () => {
-  const fn = AUTH_SCREENS.slice(AUTH_SCREENS.indexOf('    async finishLogin() {'));
+  const fn = AUTH_SCREENS.slice(AUTH_SCREENS.indexOf('    async finishLogin(opts) {'));
   const body = fn.slice(0, fn.indexOf('\n    },'));
   // Saved before the reload, so the new page boots from it.
   assert.match(body, /try \{ App\.saveSessionSnapshot\?\.\(user\); \} catch \(_\) \{\}\s+await App\._moveToLiveShell\('signed-in', liveShell\);/);

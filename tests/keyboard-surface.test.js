@@ -301,6 +301,26 @@ test('a form that grows under the focused field with the keys up (a hint line) i
   assert.equal(observed.length, 0);
 });
 
+test('the keys coming up resize the content, and that waits for the one settled reveal (onboarding run two)', () => {
+  // A tap on the Welcome page's username scrolled the page once mid-way, a
+  // frame after the keys' band resized its content, and again once they had
+  // settled. A size change while that reveal waits schedules no other.
+  const r = rig();
+  let observe = null;
+  r.win.ResizeObserver = class { constructor(cb) { observe = cb; } observe() {} disconnect() {} };
+  r.scroller.children = [{ nodeType: 1 }];
+  surface.attachKeyboardSurface(r.scroller, r.win, r.doc);
+  r.tap(r.field); // focused without the pan; its reveal waits for the keys
+  r.vv.fire('resize'); // the keys' first report: the band moves
+  r.rootClasses.add('platform-kb-open');
+  observe(); // ...and the content with it
+  r.flush();
+  assert.equal(r.scrolls.length, 0, 'nothing mid-way');
+  r.advance(surface.SETTLE_MS);
+  r.flush();
+  assert.equal(r.scrolls.length, 1, 'one reveal, once they have settled');
+});
+
 test('a sheet rides the keys: one transform from where it was, the keys\' quarter second, none with reduced motion', () => {
   const r = rig();
   const detach = surface.attachKeyboardSurface(r.scroller, r.win, r.doc, { ride: true });
@@ -376,7 +396,7 @@ test('the sign-in sheet\'s panel rides the keys as a sheet in the band, and ever
   assert.match(SHEET, /ref=\{panelRef\}\s+role="dialog"/);
   assert.match(SHEET, /className=\{`platform-kb-sheet absolute inset-x-0 bottom-0 /);
   assert.doesNotMatch(SHEET, /\.focus\(\)/);
-  for (const step of ['sign-in-sheet-email', 'sign-in-sheet-code', 'sign-in-sheet-identifier', 'sign-in-sheet-password']) {
+  for (const step of ['sign-in-sheet-email', 'sign-in-sheet-code', 'sign-in-sheet-identifier', 'sign-in-sheet-username']) {
     const form = SHEET.slice(SHEET.lastIndexOf('<form', SHEET.indexOf(`id="${step}"`)), SHEET.indexOf('</form>', SHEET.indexOf(`id="${step}"`)));
     assert.match(form, /<button type="submit"/, `${step}'s form has the button the reveal brings with it`);
   }
@@ -419,7 +439,8 @@ test('the page behind the sheet stays still, and the sheet is the platform\'s: p
 // ── 7. Return walks the sheet's fields ─────────────────────────────────
 // The Homeroom app is losing the keyboard's ‹ › bar (flutter-mobile-app
 // #603): Return is the way from one field to the next. The account step
-// used to submit from its username and fail on the empty password.
+// used to submit from its username and fail on the empty password; it asks
+// for the username alone now (#4891), so its Return submits.
 
 test('returnTarget: the next empty field, else the last; the last field submits', () => {
   const { returnTarget } = loadTsx('frontend/src/features/auth/sign-in-sheet.tsx');
@@ -431,13 +452,12 @@ test('returnTarget: the next empty field, else the last; the last field submits'
   assert.equal(returnTarget(['only'], 0), null, 'a one-field step submits');
 });
 
-test('the password and account steps walk on Return, and each field says what its Return does', () => {
+test('the password step walks on Return, and each field says what its Return does', () => {
   const { returnWalks } = loadTsx('frontend/src/features/auth/sign-in-sheet.tsx');
   const field = (value) => ({ value, focused: null, focus(opts) { this.focused = opts; } });
   const user = field('');
   const pass = field('');
-  // The account step: the username, then the password, asked once (Evan,
-  // 10 Oct 2026: no "Password again"; a mistyped one is reset by email).
+  // The password step: the username or email, then the password.
   const refs = [{ current: user }, { current: pass }];
   const press = (target, extra = {}) => {
     const e = { key: 'Enter', shiftKey: false, nativeEvent: { isComposing: false }, currentTarget: target, prevented: false, preventDefault() { this.prevented = true; }, ...extra };
@@ -456,12 +476,11 @@ test('the password and account steps walk on Return, and each field says what it
   // submits the form with no handler of its own.
   assert.match(SHEET, /id="sign-in-sheet-identifier"[^>]*enterKeyHint="next" onKeyDown=\{returnWalks\(passwordStepFields, 0\)\}/);
   assert.match(SHEET, /id="sign-in-sheet-current-password"[^>]*enterKeyHint="go"/);
-  assert.match(SHEET, /id="sign-in-sheet-username"[^>]*enterKeyHint="next" onKeyDown=\{returnWalks\(accountStepFields, 0\)\}/);
-  assert.match(SHEET, /id="sign-in-sheet-password"[^>]*enterKeyHint="go"/);
-  assert.doesNotMatch(SHEET, /sign-in-sheet-confirm|Password again/);
-  for (const id of ['sign-in-sheet-email', 'sign-in-sheet-code', 'sign-in-sheet-provider-username']) {
+  // The account step is one field since #4891 (no password), so it goes too.
+  assert.doesNotMatch(SHEET, /id="sign-in-sheet-password"|sign-in-sheet-confirm|Password again|accountStepFields/);
+  for (const id of ['sign-in-sheet-email', 'sign-in-sheet-code', 'sign-in-sheet-provider-username', 'sign-in-sheet-username']) {
     assert.match(SHEET, new RegExp(`id="${id}"[^>]*enterKeyHint="go"`), `${id}: a one-field step's Return goes`);
   }
+  assert.doesNotMatch(SHEET, /id="sign-in-sheet-username"[^>]*onKeyDown=/);
   assert.match(SHEET, /const passwordStepFields = \[identifierField, currentPasswordField\];/);
-  assert.match(SHEET, /const accountStepFields = \[usernameField, passwordField\];/);
 });

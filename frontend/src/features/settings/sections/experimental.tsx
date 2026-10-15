@@ -27,7 +27,8 @@ import { LocalAgentsList } from '../local-agents-list';
  * #3624 Homeroom bot used to have a switch here too, while it was tried out
  * one person at a time. It works for everyone now, so the switch is gone.
  *
- * #4289 Press C to comment on the page (default OFF) is the one switch
+ * #4289 Comment on the page (default OFF; "Press C to comment on the page"
+ * until 13 Oct 2026, a name with no meaning on a phone) is the one switch
  * here kept on the DEVICE, not the account: a keyboard shortcut belongs to
  * the keyboard in front of you. C turns on comment mode, where a click leaves
  * a comment (../../comment-pin/), and Suggest an improvement opens it too,

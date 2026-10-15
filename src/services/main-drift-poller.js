@@ -44,7 +44,10 @@ const staging = require('./staging');
 const { broadcastGlobal } = require('./ws');
 const { checkAndResolveConflicts } = require('./conflict-resolver');
 const releaseWatch = require('./release-watch');
+const deployFailure = require('./deploy-failure');
 const githubBudget = require('./github-budget');
+const lifecycle = require('./lifecycle');
+const leaderTimers = require('./leader-timers');
 
 // 5 minutes default. GitHub's rest API has a 5000 req/hr limit per token.
 // A plain read of every running app's main every five minutes is 12 requests
@@ -58,7 +61,11 @@ const POLL_INTERVAL_MS = parseInt(process.env.MAIN_DRIFT_POLL_MS, 10) || 5 * 60 
 // settle first).
 const FIRST_POLL_DELAY_MS = 30_000;
 
-const inFlight = new Set();
+// A rebuild under way, for every process to see (services/processes.js
+// 'drift_rebuild'): the poll runs on the leader, and an admin's "Check for
+// updates" wherever the request landed (docs/plans/web-and-conductor.md).
+const processes = require('./processes');
+const inFlight = processes.heldSet('drift_rebuild');
 
 // Back off a rebuild that keeps failing for the same commit.
 //
@@ -184,7 +191,7 @@ async function fetchRemoteHead(owner, repo) {
 //
 // `manual: true` (the admin's "Check for updates") skips the backoff wait.
 async function checkAndRedeployOne(config, pool, app, { manual = false } = {}) {
-  if (inFlight.has(app.id)) {
+  if (inFlight.has(app.id) || processes.heldElsewhere('drift_rebuild', app.id)) {
     return { status: 'in_flight', slug: app.slug };
   }
 
@@ -251,6 +258,18 @@ async function checkAndRedeployOne(config, pool, app, { manual = false } = {}) {
     return releaseWatch.observe(config, pool, app, head, { octokit: head.octokit });
   }
 
+  // With the app-delivery machine on, the deploy is a recorded request it
+  // runs one at a time per app, and it writes main_sha when it succeeds.
+  const workflow = require('../workflow/platform.ts');
+  if (workflow.deliveryEnabled()) return requestDriftDeploy(config, pool, app, remoteSha, { manual, workflow });
+
+  // This commit's image was refused for running as root, and no retry can
+  // change that (deploy-failure.js waitsForNewCommit): wait for a commit that
+  // changes the Dockerfile. "Check for updates" still tries it.
+  if (!manual && deployFailure.waitsForNewCommit(app.last_failure, remoteSha)) {
+    return { status: 'waits_for_new_commit', slug: app.slug, from: app.main_sha, attempted: remoteSha };
+  }
+
   const retryInMs = manual ? 0 : backoffRemaining(app.id, remoteSha);
   if (retryInMs > 0) {
     const { failures } = failedAttempts.get(app.id);
@@ -272,7 +291,7 @@ async function checkAndRedeployOne(config, pool, app, { manual = false } = {}) {
   });
 
   try {
-    const { containerId, sha } = await staging.rebuildProduction(config, app);
+    const { containerId, sha } = await staging.rebuildProduction(config, app, manual ? { retrySameCommit: true } : {});
     // No PR number — this redeploy was triggered out-of-band, so we
     // explicitly null `main_pr_number` instead of leaving a stale PR
     // pointer that no longer corresponds to the running SHA.
@@ -320,12 +339,43 @@ async function checkAndRedeployOne(config, pool, app, { manual = false } = {}) {
   }
 }
 
+// How long a commit whose deploy failed waits before the poller asks for it
+// again (an admin's "Check for updates" does not wait).
+const DRIFT_RETRY_AFTER_FAILURE_MS = 30 * 60 * 1000;
+
+// The drift, asked of the app-delivery machine. What decides whether to ask
+// is durable (the app's deploy_state and last_failure), so another Pod or a
+// restarted one reads the same: nothing asked twice while a deploy runs,
+// and a commit whose deploy failed asked again after a wait.
+async function requestDriftDeploy(config, pool, app, remoteSha, { manual, workflow }) {
+  const { rows: [row] } = await pool.query('SELECT deploy_state, last_failure FROM apps WHERE id = $1', [app.id]);
+  if (row?.deploy_state === 'deploying') return { status: 'in_flight', slug: app.slug };
+  const failure = row?.last_failure && typeof row.last_failure === 'object' ? row.last_failure : null;
+  const failedAt = failure?.at ? Date.parse(failure.at) : NaN;
+  // A failure that names no commit (a clone that failed, a rollover's
+  // respawn) counts as this commit's: what failed is what main is now.
+  if (!manual && failure && (failure.sha == null || failure.sha === remoteSha) && Number.isFinite(failedAt)
+      && now() - failedAt < DRIFT_RETRY_AFTER_FAILURE_MS) {
+    return { status: 'backing_off', slug: app.slug, from: app.main_sha, attempted: remoteSha,
+      retryInMs: DRIFT_RETRY_AFTER_FAILURE_MS - (now() - failedAt) };
+  }
+  log.info('drift-poller', 'Detected main-branch drift; asking for a deploy', {
+    appId: app.id, slug: app.slug, from: app.main_sha.slice(0, 7), to: remoteSha.slice(0, 7),
+  });
+  await workflow.requestDeploy(app.id, manual ? 'check_updates' : 'drift');
+  // main moved out-of-band: promoted PRs on this app may now conflict.
+  checkAndResolveConflicts(config, { app_id: app.id }).catch((err) => {
+    log.error('drift-poller', 'Post-drift conflict resolution failed', { slug: app.slug, err: err.message });
+  });
+  return { status: 'deploy_requested', slug: app.slug, from: app.main_sha, to: remoteSha };
+}
+
 async function poll(config) {
   const pool = getPool(config);
   // Snapshot the candidate set once. Apps whose status changes during
   // the loop are filtered by the per-row claim above, not here.
   const { rows } = await pool.query(
-    `SELECT id, slug, repo_url, main_sha, self_hosted, release_stall, release_run, main_check_sha, main_check_state
+    `SELECT id, slug, repo_url, main_sha, self_hosted, release_stall, release_run, main_check_sha, main_check_state, last_failure
        FROM apps
       WHERE repo_url IS NOT NULL AND status = 'running'`
   );
@@ -347,6 +397,11 @@ async function poll(config) {
   // is never held.
   let checked = 0;
   for (const app of rows) {
+    // A redeploy started now would die with the process; the next leader's
+    // first poll picks the rest up.
+    if (lifecycle.isShuttingDown()) {
+      return { apps: rows.length, checked, held: false, stopped: true };
+    }
     if (!githubBudget.budgetAllows('background')) {
       log.debug('drift-poller', 'Pass held for the GitHub budget', { checked, left: rows.length - checked });
       return { apps: rows.length, checked, held: true };
@@ -367,12 +422,11 @@ function start(config) {
     return;
   }
   log.info('drift-poller', 'Starting', { intervalMs: POLL_INTERVAL_MS });
-  setTimeout(() => {
-    poll(config).catch((err) => log.error('drift-poller', 'Initial poll failed', { err: err.message }));
-  }, FIRST_POLL_DELAY_MS).unref?.();
-  setInterval(() => {
-    poll(config).catch((err) => log.error('drift-poller', 'Poll failed', { err: err.message }));
-  }, POLL_INTERVAL_MS).unref?.();
+  // A leader timer (services/leader-timers.js): no poll starts once shutdown
+  // has begun, and one under way is given the drain to finish.
+  leaderTimers.every('main-drift-poller', () => poll(config)
+    .catch((err) => log.error('drift-poller', 'Poll failed', { err: err.message })),
+  POLL_INTERVAL_MS, { firstDelayMs: FIRST_POLL_DELAY_MS });
 }
 
 module.exports = {

@@ -182,7 +182,7 @@ test('the Homeroom bot DM\'s activity tray reads one person\'s work, through the
     const by = new Map(work.now.map((job) => [key(job), job]));
     const sort = by.get('seed-swap#3');
     assert.equal(sort.phase, 'looking');
-    assert.deepEqual([sort.step, sort.of, sort.stepName], [1, 6, 'Read the request'], 'the step its activity card draws');
+    assert.deepEqual([sort.step, sort.of, sort.stepName], [1, 6, 'Reading'], 'the step its activity card draws');
     assert.equal(sort.title, 'Sort by date');
     assert.equal(sort.href, '#app/seed-swap/dev/issues/3');
     assert.ok(sort.since, 'and since when');
@@ -270,6 +270,16 @@ test('the Homeroom bot DM\'s activity tray reads one person\'s work, through the
     assert.equal(pin.links.request, '#app/note-board/dev/issues/5');
     assert.ok(Date.parse(pin.at) > Date.parse(dark.at));
 
+    // D1: had it been the project's first version, it merges without a
+    // vote: being tested until then, never waiting for approval.
+    await pool.query(
+      `INSERT INTO homeroom_bot_first_versions (app_id, user_id, brief, status, issue_number, filed_at)
+       VALUES ($1, $2, 'Notes to pin', 'filed', 5, NOW())`,
+      [notes.id, ada.id],
+    );
+    assert.equal((await tray.workFor(pool, { user: asAda })).history[0].outcome, 'checking');
+    await pool.query('DELETE FROM homeroom_bot_first_versions WHERE app_id = $1', [notes.id]);
+
     // The bot came back to it: still one entry, its build folded in as an earlier run.
     const { rows: [answer] } = await pool.query(
       `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, created_at)
@@ -341,6 +351,67 @@ test('the Homeroom bot DM\'s activity tray reads one person\'s work, through the
     await pool.query('DELETE FROM homeroom_bot_runs WHERE app_id = $1 AND issue_number = 6', [notes.id]);
     await pool.query('DELETE FROM homeroom_bot_requesters WHERE app_id = $1 AND issue_number = 6', [notes.id]);
     await pool.query('DELETE FROM issues WHERE app_id = $1 AND github_issue_number = 6', [notes.id]);
+  });
+
+  // #5009: the same read, for a look that found nothing to build. Closed, it
+  // leaves Needs you even while its chat still holds the open ask, which is
+  // what the strip reads besides the outcome; nothing is retired, so
+  // reopening brings it back with its ask.
+  await t.test('#5009: a closed request leaves Needs you even while its chat still asks', async () => {
+    await pool.query(
+      `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title) VALUES ($1, 8, $2, 'Tag colours')`,
+      [notes.id, ada.id],
+    );
+    await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, created_at)
+       VALUES ($1, 8, 'live', 'empty', NOW() - INTERVAL '40 minutes')`,
+      [notes.id],
+    );
+    await pool.query(
+      `INSERT INTO issues (app_id, github_issue_number, title, created_by) VALUES ($1, 8, 'Tag colours', $2)`,
+      [notes.id, ada.id],
+    );
+    const conversation = (await pool.query(
+      `INSERT INTO conversations (kind, created_by) VALUES ('direct', $1) RETURNING id`,
+      [bot.id],
+    )).rows[0].id;
+    const message = (await pool.query(
+      `INSERT INTO conversation_messages (conversation_id, sender_id, content) VALUES ($1, $2, 'Nothing to build yet') RETURNING id`,
+      [conversation, bot.id],
+    )).rows[0].id;
+    await pool.query(
+      `INSERT INTO homeroom_bot_dm_messages (message_id, user_id, conversation_id, app_id, issue_number, kind, question_status)
+       VALUES ($1, $2, $3, $4, 8, 'empty', 'open')`,
+      [message, ada.id, conversation, notes.id],
+    );
+
+    const open = await tray.workFor(pool, { user: asAda });
+    assert.deepEqual(open.needsYou.map(key), ['note-board#8', 'seed-swap#4'],
+      'open, its empty look waits on her, newest first');
+    assert.equal(open.needsYou[0].ask.kind, 'empty', 'with the chat\'s ask for the strip');
+
+    await pool.query(`UPDATE issues SET status = 'closed' WHERE app_id = $1 AND github_issue_number = 8`, [notes.id]);
+    const closed = await tray.workFor(pool, { user: asAda });
+    assert.ok(!closed.needsYou.some((job) => key(job) === 'note-board#8'),
+      'closed: it needs nobody, ask and all');
+    const tile = closed.history.find((job) => key(job) === 'note-board#8');
+    assert.equal(tile.outcome, 'stopped', 'and History says the work stopped');
+    assert.equal(tile.ask, undefined, 'its old ask does not put it back');
+    assert.equal(tile.answered, false, 'the rest of its story stays');
+
+    // Reopened, it waits again: nothing was deleted.
+    await pool.query(`UPDATE issues SET status = 'open' WHERE app_id = $1 AND github_issue_number = 8`, [notes.id]);
+    const again = await tray.workFor(pool, { user: asAda });
+    assert.ok(again.needsYou.some((job) => key(job) === 'note-board#8'), 'reopened, it waits on her again');
+    assert.equal(again.needsYou.find((job) => key(job) === 'note-board#8').ask.kind, 'empty');
+
+    // Leaving it as the later tests find it.
+    await pool.query('DELETE FROM homeroom_bot_dm_messages WHERE app_id = $1 AND issue_number = 8', [notes.id]);
+    await pool.query('DELETE FROM conversation_messages WHERE id = $1', [message]);
+    await pool.query('DELETE FROM conversations WHERE id = $1', [conversation]);
+    await pool.query('DELETE FROM homeroom_bot_runs WHERE app_id = $1 AND issue_number = 8', [notes.id]);
+    await pool.query('DELETE FROM homeroom_bot_requesters WHERE app_id = $1 AND issue_number = 8', [notes.id]);
+    await pool.query('DELETE FROM issues WHERE app_id = $1 AND github_issue_number = 8', [notes.id]);
   });
 
   await t.test('never anybody else\'s, and never an app they cannot view', async () => {

@@ -50,12 +50,12 @@ test('#3734: Now is the bot\'s own progress, its in-flight entries drawn as step
   assert.deepEqual(Object.keys(tray.PHASE_OF_STAGE).sort(), [...progress.IN_FLIGHT_STAGES].sort());
   const item = (extra) => ({
     project: 'ear trainer', projectName: 'Ear Trainer', number: 12, title: 'Sort by date', since: '2026-10-02T10:00:00.000Z',
-    step: 1, of: 6, stepName: 'Read the request', doing: 'reading the request to decide whether to ask a question or build it',
+    step: 1, of: 6, stepName: 'Reading', doing: 'reading the request to decide whether to ask a question or build it',
     ...extra,
   });
   assert.deepEqual(tray.jobOfProgress(item({ stage: 'reading' })), {
     key: 'ear trainer#12', appSlug: 'ear trainer', appName: 'Ear Trainer', issueNumber: 12, title: 'Sort by date', firstVersion: false,
-    phase: 'looking', stage: 'reading', step: 1, of: 6, stepName: 'Read the request',
+    phase: 'looking', stage: 'reading', step: 1, of: 6, stepName: 'Reading',
     doing: 'reading the request to decide whether to ask a question or build it',
     since: '2026-10-02T10:00:00.000Z', href: '#app/ear%20trainer/dev/issues/12',
     links: { request: '#app/ear%20trainer/dev/issues/12', proposal: null, project: null },
@@ -92,6 +92,9 @@ test('#3734: Now is the bot\'s own progress, its in-flight entries drawn as step
 test('what a run came to, in the activity cards\' words', () => {
   assert.deepEqual(tray.OUTCOMES, activity.OUTCOMES, 'one vocabulary');
   assert.equal(tray.outcomeOf({ verdict: 'ready', proposal_session_id: 5, proposal_status: 'promoted' }), 'proposed');
+  assert.equal(tray.outcomeOf({ verdict: 'ready', proposal_session_id: 5, proposal_status: 'promoted', first_version_change: true }), 'checking',
+    'D1: a first version is being tested until it merges, never waiting for approval');
+  assert.equal(tray.outcomeOf({ verdict: 'ready', proposal_session_id: 5, proposal_status: 'merging', first_version_change: true }), 'going_live');
   assert.equal(tray.outcomeOf({ verdict: 'ready', proposal_session_id: 5, proposal_status: 'merging' }), 'going_live', '#4227');
   assert.equal(tray.outcomeOf({ verdict: 'ready', proposal_session_id: 5, proposal_status: 'merged' }), 'live');
   assert.equal(tray.outcomeOf({ verdict: 'ready', proposal_session_id: 5, proposal_status: 'closed' }), 'closed');
@@ -127,7 +130,7 @@ const run = (id, issue, hoursAgo, extra = {}) => ({
 });
 const entry = (number, stage, extra = {}) => ({
   project: 'ear-trainer', projectName: 'Ear Trainer', number, title: `Request ${number}`, stage, step: 5, of: 6,
-  stepName: 'Approval', doing: 'reading the newest replies on the change', busyNow: true, since: at(0.15).toISOString(), ...extra,
+  stepName: 'Ready to try', doing: 'reading the newest replies on the change', busyNow: true, since: at(0.15).toISOString(), ...extra,
 });
 
 test('each request appears once: in Now while the bot has it, else in Needs you while it waits on them, else in History', () => {
@@ -147,7 +150,7 @@ test('each request appears once: in Now while the bot has it, else in Needs you 
   assert.deepEqual(work.now.map((job) => job.key), ['ear-trainer#5']);
   const five = work.now[0];
   assert.equal(five.phase, 'following_up');
-  assert.deepEqual([five.step, five.of, five.stepName], [5, 6, 'Approval']);
+  assert.deepEqual([five.step, five.of, five.stepName], [5, 6, 'Ready to try']);
   assert.deepEqual(five.earlier, [{ id: 8, outcome: 'failed', at: at(16.2).toISOString() }], 'its run before, folded in');
 
   assert.deepEqual(work.needsYou.map((job) => [job.key, job.outcome]), [['ear-trainer#14', 'blocked']],
@@ -226,9 +229,68 @@ test('#4539: a request closed while it waited on its person reads stopped, in Hi
   assert.deepEqual(proposed.history.map((job) => [job.id, job.outcome]), [[12, 'proposed']]);
 });
 
+// #5009: a closed request leaves Needs you under every ending that waits on
+// its person, not only a plan and a question: a look that found nothing to
+// build, one it cannot do as written, a decision it asked for, a build that
+// failed. Nothing is retired, so reopening brings it back.
+test('#5009: a closed request stops waiting whatever it waited for, and says so on the entry', () => {
+  const endings = [
+    ['empty', {}],
+    ['person', {}],
+    ['blocked', { verdict: 'ready', build_ok: false, build_error: 'blocked: it needs a secret' }],
+    ['build_failed', { verdict: 'ready', build_ok: false }],
+    ['failed', {}],
+  ];
+  for (const [verdict, extra] of endings) {
+    const rows = [run(20, 6, 1, { verdict, ...extra })];
+    // Open, it is what it was: blocked and empty still wait on them, the
+    // rest are History's news.
+    const open = tray.arrange([], rows);
+    if (verdict === 'blocked' || verdict === 'empty') {
+      assert.deepEqual(open.needsYou.map((job) => [job.key, job.outcome]), [['ear-trainer#6', verdict]],
+        `${verdict}: open, it waits on them`);
+      assert.deepEqual(open.history, [], `${verdict}: open, History has nothing to say`);
+    } else {
+      assert.deepEqual(open.history.map((job) => [job.key, job.outcome]), [['ear-trainer#6', verdict]],
+        `${verdict}: open, it keeps its own news`);
+    }
+    const closed = tray.arrange([], [run(20, 6, 1, { verdict, request_closed: true, ...extra })]);
+    assert.deepEqual(closed.needsYou, [], `${verdict}: a closed request needs nobody`);
+    const [tile] = closed.history;
+    assert.deepEqual([tile.key, tile.outcome, tile.requestClosed], ['ear-trainer#6', 'stopped', true],
+      `${verdict}: closed, it reads stopped and says its request row is closed`);
+  }
+  // A question that waits on them is Needs you while it is open.
+  assert.deepEqual(tray.arrange([], [run(20, 6, 1, {})]).needsYou.map((job) => job.outcome), ['question']);
+});
+
+// #5009: work the bot has taken back up never reaches Needs you, whatever
+// its last run asked: a newer run under way or queued, even past Now's
+// limit, and one held until later (on hold until Monday).
+test('#5009: work the bot has taken back up leaves Needs you, even past Now or on hold', () => {
+  const entries = [];
+  for (let n = 1; n <= 11; n += 1) entries.push(entry(n, 'building'));
+  entries.push(entry(12, 'on_hold', { waitingOn: 'time', busyNow: false }));
+  const rows = [
+    run(30, 11, 1),  // its question, answered since; the bot builds it again
+    run(31, 12, 2),  // its question, held until Monday
+  ];
+  const work = tray.arrange(entries, rows);
+  assert.equal(work.now.length, 10, 'Now holds its limit');
+  assert.ok(!work.now.some((job) => job.key === 'ear-trainer#11'), 'an eleventh in flight is past Now');
+  assert.deepEqual(work.needsYou, [], 'neither waits on the person any more');
+  const back = work.history.find((job) => job.key === 'ear-trainer#11');
+  assert.deepEqual([back.outcome, back.inHand], ['question', true], 'in History, saying the bot has it in hand');
+  const held = work.history.find((job) => job.key === 'ear-trainer#12');
+  assert.deepEqual([held.outcome, held.inHand], ['question', true], 'held until Monday is the bot\'s, not theirs');
+  // With room in Now, the same work stays where it was.
+  const roomy = tray.arrange([entry(11, 'building')], [run(30, 11, 1)]);
+  assert.deepEqual(roomy.now.map((job) => job.key), ['ear-trainer#11']);
+});
+
 test('a build the bot is still on is the work Now shows, not an earlier run; one nothing finished yet says so, never that it stopped', () => {
   const rows = [run(2, 7, 1, { verdict: 'ready' }), run(1, 7, 20, { verdict: 'question' })];
-  const building = tray.arrange([entry(7, 'building', { step: 3, stepName: 'Build it' })], rows);
+  const building = tray.arrange([entry(7, 'building', { step: 3, stepName: 'Building' })], rows);
   assert.deepEqual(building.now[0].earlier.map((r) => r.outcome), ['question']);
   // #8 (WP3): out of Now (the bot switched off, or the build gone quiet),
   // it is not "stopped", and the question it moved past is not its news.
@@ -253,9 +315,9 @@ test('B6: a first version\'s plan replaced before Build it is not one of its ear
     run(1, 1, 0.8, { ...fv, verdict: 'failed' }),
   ];
   const building = { project: 'flat-4b-chores', projectName: 'Flat 4B Chores', number: 1, firstVersion: true, stage: 'building',
-    step: 4, of: 7, stepName: 'Build it', doing: 'building it', busyNow: true, since: at(0.1).toISOString() };
+    step: 4, of: 7, stepName: 'Building', doing: 'building it', busyNow: true, since: at(0.1).toISOString() };
   const now = tray.arrange([building], rows).now[0];
-  assert.deepEqual([now.firstVersion, now.stepName, now.doing], [true, 'Build it', 'building it']);
+  assert.deepEqual([now.firstVersion, now.stepName, now.doing], [true, 'Building', 'building it']);
   assert.deepEqual(now.earlier.map((r) => [r.id, r.outcome]), [[1, 'failed']], 'its plans are not earlier runs; a look that failed still is');
   const built = [run(4, 1, 0.2, { ...fv, verdict: 'ready', proposal_session_id: 40, proposal_status: 'promoted', proposal_at: at(0.05) }), ...rows.slice(1)];
   const history = tray.arrange([], built).history[0];
@@ -382,10 +444,12 @@ test('#4201: every entry the endpoint returns carries its app\'s icon: its image
   assert.deepEqual(dressed.history[0], { appSlug: 'b', iconUrl: null, iconEmoji: null }, 'an app with no icon known carries nulls');
 });
 
+// One story: the demo is drawn as the strip above the chat, a representative
+// one: 1 needs you, 2 ready to try, 2 in progress, 1 done today.
 test('the staging demo draws work in flight at the step its card shows, a question waiting, and a history, and links nowhere', () => {
   const now = Date.parse('2026-10-02T12:00:00Z');
   const demo = tray.demoWork(now);
-  assert.deepEqual(demo.now.map((job) => job.phase), ['building', 'building', 'follow_up_queued']);
+  assert.deepEqual(demo.now.map((job) => job.phase), ['building', 'building']);
   assert.ok(demo.now.every((job) => tray.PHASES.includes(job.phase)));
   const card = activity.demoState({ working: 1 }, now).cards[0];
   assert.deepEqual([demo.now[0].step, demo.now[0].of, demo.now[0].stepName], [card.step, card.of, card.stepName],
@@ -397,14 +461,22 @@ test('the staging demo draws work in flight at the step its card shows, a questi
   assert.deepEqual([demo.now[1].stage, demo.now[1].step, demo.now[1].of, demo.now[1].stepName, demo.now[1].doing],
     [joined.stage, joined.step, joined.of, joined.stepName, joined.doing], 'the tray and the card it was given say the same step');
   assert.deepEqual(demo.needsYou.map((job) => job.outcome), ['question']);
-  assert.ok(demo.history.length >= 2);
-  assert.ok(demo.history.some((job) => job.earlier.length >= 2), 'a request the bot came back to');
+  assert.equal(demo.needsYou[0].issueNumber, 18);
+  assert.equal(demo.needsYou[0].ask.question, 'Which night should the rota start on?');
+  assert.deepEqual(demo.history.map((job) => job.outcome), ['proposed', 'live', 'proposed']);
+  assert.deepEqual([demo.history[0], demo.history[2]].map((job) => [job.ready.approve, job.ready.waiting]), [[true, null], [false, '@ada']]);
+  assert.ok(Date.parse(demo.history[1].at) > now - 24 * 3600 * 1000, 'done today');
+  assert.ok(demo.history.some((job) => job.earlier.length >= 1), 'a request the bot came back to');
+  // With the fixture's messages, rows open their threads and act on their own message.
+  const placed = tray.demoWork(now, { story: 70, storyQuestion: 74, ready: 61, working: 50, underWay: 80, done: 51 });
+  assert.deepEqual([placed.needsYou[0].cardId, placed.needsYou[0].ask.messageId, placed.history[0].ready.messageId, placed.now[1].cardId],
+    [70, 74, 61, 80]);
   const all = [...demo.now, ...demo.needsYou, ...demo.history];
   assert.equal(new Set(all.map((job) => job.key)).size, all.length, 'one entry per request');
   for (const job of all) {
     assert.equal(job.href, null, 'no project stands behind the demo');
     assert.deepEqual(job.links, { request: null, proposal: null, project: null });
-    assert.equal(job.appName, 'Staging demo app');
+    assert.ok(['Staging demo app', 'Staging demo plants'].includes(job.appName), 'the fixture\'s own demo projects');
     for (const r of job.earlier) assert.ok(activity.OUTCOMES.includes(r.outcome));
   }
   assert.ok(demo.history.every((job, i, list) => i === 0 || Date.parse(list[i - 1].at) > Date.parse(job.at)), 'newest first');
@@ -493,7 +565,15 @@ test('app.js turns the announcement into the tray\'s window event, and asks agai
   assert.match(resync, /window\.dispatchEvent\?\.\(new CustomEvent\('homeroom-bot-work-changed'\)\)/);
 });
 
-// ── The tray, drawn ───────────────────────────────────────────────────
+// ── The strip, drawn ──────────────────────────────────────────────────
+//
+// One request, one story: the tray is drawn as the "Your requests" strip
+// under the chat's header (bot-strip.tsx, pinned in full by
+// tests/messages-bot-strip.test.js). The Activity disc, its panel of tiles
+// and the header's long status line it replaced are gone, and so are the
+// tests that drew them; what they held that still matters is held here:
+// every phase and ending has words, in the person's vocabulary, and a row
+// with nowhere to open links nowhere.
 
 const NOW = new Date('2026-10-02T12:00:00Z');
 const minutesAgo = (m) => new Date(NOW.getTime() - m * 60000).toISOString();
@@ -502,232 +582,38 @@ const job = (extra) => ({
   key: `ear-trainer#${extra.issueNumber || 'first'}`, appSlug: 'ear-trainer', appName: 'Ear Trainer', iconUrl: null, iconEmoji: null,
   issueNumber: null, title: null, firstVersion: false, href: null, links: nowhere, earlier: [], ...extra,
 });
-const working = (extra) => job({ phase: 'building', step: null, of: null, stepName: null, doing: null, since: null, ...extra });
-const past = (extra) => job({ id: 1, outcome: 'live', doing: null, at: minutesAgo(60), ...extra });
-const work = (extra) => ({ now: [], needsYou: [], history: [], ...extra });
+const STRIP = 'frontend/src/features/messages/bot-strip.tsx';
 
-function status(w) {
-  const { trayStatus } = loadTsx(TRAY);
-  return trayStatus(w, NOW);
+function drawStrip(props) {
+  const { BotStripView } = loadTsx(STRIP);
+  return renderToHtml(createElement(BotStripView, { now: NOW, ...props }));
 }
 
-function drawPanel(props) {
-  const { BotWorkPanelView } = loadTsx(TRAY);
-  return renderToHtml(createElement(BotWorkPanelView, { now: NOW, ...props }));
-}
-
-test('the status line says what the bot is working on, else what waits on them, else the last thing it did', () => {
-  assert.deepEqual(status(null), { kind: 'idle', long: 'Activity', short: 'Activity' }, 'before the first read');
-  assert.deepEqual(status(work({})), { kind: 'idle', long: 'Activity', short: 'Activity' }, 'nothing at all yet');
-
-  const one = status(work({ now: [working({ issueNumber: 5, phase: 'following_up' })] }));
-  assert.deepEqual(one, { kind: 'working', long: 'Working on Ear Trainer #5 · following up', short: 'Working on #5' });
-  assert.equal(status(work({ now: [working({ firstVersion: true, phase: 'setting_up' })] })).long,
-    'Working on Ear Trainer first version · setting up');
-
-  const busy = status(work({
-    now: [working({ issueNumber: 5 }), working({ issueNumber: 6, phase: 'queued' })],
-    needsYou: [past({ issueNumber: 7, outcome: 'question' })],
-  }));
-  assert.deepEqual(busy, { kind: 'working', long: 'Working on 2 requests · 1 needs you', short: 'Working · 1 needs you' },
-    'a phone\'s line keeps what waits on them');
-  assert.equal(status(work({ now: [working({ issueNumber: 5 })], needsYou: [past({ issueNumber: 7 })] })).short, 'Working · 1 needs you');
-
-  assert.deepEqual(status(work({ needsYou: [past({ issueNumber: 7, outcome: 'question' })] })),
-    { kind: 'you', long: 'Ear Trainer #7 needs you', short: '#7 needs you' });
-  assert.deepEqual(status(work({ needsYou: [past({ issueNumber: 7 }), past({ issueNumber: 8 })] })),
-    { kind: 'you', long: '2 requests need you', short: '2 need you' });
-
-  assert.deepEqual(status(work({ history: [past({ issueNumber: 9, outcome: 'answer', at: minutesAgo(60 * 16) })] })),
-    { kind: 'last', long: 'Last: answered on Ear Trainer #9 · 16h ago', short: 'Last: answered on #9 · 16h ago' });
-  // 4 October: a first version up for approval read "Last: proposed Flat 4B Chore…".
-  assert.deepEqual(status(work({ history: [past({ appName: 'Flat 4B Chores', firstVersion: true, outcome: 'proposed', at: minutesAgo(2) })] })),
-    { kind: 'last', long: 'Last: Flat 4B Chores first version waiting for approval · 2m ago', short: 'Last: Flat 4B Chores waiting for approval · 2m ago' });
+test('a new project waiting for its secrets needs its person, and says so', () => {
+  // The activity drawer, open (it starts closed: messages-bot-strip.test.js).
+  const html = drawStrip({ remembered: true, work: { now: [], history: [], needsYou: [job({ id: 0, firstVersion: true, outcome: null, doing: 'waiting for its secrets', at: minutesAgo(10) })] } });
+  assert.match(html, /data-bot-strip-group="needs"/);
+  assert.match(html, /Ear Trainer, first version/);
+  assert.match(html, /Waiting for its secrets/);
 });
 
-test('the status line under the bot\'s name: a dot while it works, both lengths, and words only', () => {
-  const { BotWorkStatusView, trayStatus } = loadTsx(TRAY);
-  const draw = (w) => renderToHtml(createElement(BotWorkStatusView, { status: trayStatus(w, NOW) }));
-  const busy = draw(work({ now: [working({ issueNumber: 14, phase: 'building' })] }));
-  assert.match(busy, /^<div class="messages-thread-sub [^"]*text-\[color:var\(--brand-ink\)\]" data-bot-work-status="working">/);
-  assert.match(busy, /animate-ping/);
-  assert.match(busy, /<span class="hidden sm:inline">Working on Ear Trainer #14 · building<\/span><span class="sm:hidden">Working on #14<\/span>/);
-  // #3770: the Activity disc is the toggle, so the line draws no chevron of one.
-  assert.doesNotMatch(busy, /<svg|rotate-180/);
-  const quiet = draw(work({ history: [past({ issueNumber: 9 })] }));
-  assert.match(quiet, /data-bot-work-status="last"/);
-  assert.doesNotMatch(quiet, /animate-ping|brand-ink/);
-});
-
-test('#3770: the Activity disc opens the panel; #4198: its glyph is a turning ring while the bot works, its badge what waits on the viewer', () => {
-  const { BotWorkButtonView } = loadTsx(TRAY);
-  const draw = (w, open = false) => renderToHtml(createElement(BotWorkButtonView, { work: w, open }));
-  const quiet = draw(work({ history: [past({ issueNumber: 9 })] }));
-  assert.match(quiet, /^<button type="button" class="messages-thread-action messages-bot-work-button" aria-label="Activity" title="Activity" aria-expanded="false" aria-controls="messages-bot-work-panel" data-bot-work-toggle="">/,
-    'one of the header\'s discs, named, and the toggle the panel\'s Escape and outside press find');
-  assert.match(quiet, /<svg [^>]*aria-hidden="true"><path [^>]*d="M4 6h16M4 12h16M4 18h16"><\/path><\/svg><\/button>$/,
-    'a list, for what the panel holds, and no badge with nothing going on');
-  assert.doesNotMatch(quiet, /M12 6v6h4\.5/, '#4198: not the clock, which read as "history"');
-  assert.equal(draw(null), quiet, 'before the first read, the same');
-  assert.match(draw(work({}), true), /aria-expanded="true"/, 'open');
-
-  // The bot working: the turning ring, still under reduced motion, carrying
-  // the state the declared check (dapp.json homeroom-bot-dm-activity-tray)
-  // selects the toggle by. No dot beside it (#4198).
-  const busy = draw(work({ now: [working({ issueNumber: 14 })] }));
-  assert.match(busy, /<svg class="motion-safe:animate-spin motion-reduce:animate-none" fill="none" viewBox="0 0 24 24" data-bot-work-status="working" aria-hidden="true"><circle [^>]*stroke-dasharray="40 57"><\/circle><\/svg><\/button>$/);
-  assert.doesNotMatch(busy, /animate-ping|messages-bot-work-badge|M4 6h16/);
-
-  // Something waiting on the viewer: how many, which wins over the dot.
-  const both = draw(work({ now: [working({ issueNumber: 14 })], needsYou: [past({ issueNumber: 7, outcome: 'question' })] }));
-  assert.match(both, /<span class="messages-bot-work-badge messages-bot-work-count" data-bot-work-status="working" aria-hidden="true">1<\/span><\/button>$/);
-  assert.match(both, /data-bot-work-status="working" aria-hidden="true"><circle /, 'the ring turns beside the count');
-  assert.doesNotMatch(both, /animate-ping/);
-  const waiting = draw(work({ needsYou: [past({ issueNumber: 7 }), past({ issueNumber: 8 })] }));
-  assert.match(waiting, /data-bot-work-status="you" aria-hidden="true">2<\/span>/);
-  const many = draw(work({ needsYou: Array.from({ length: 12 }, (_, i) => past({ issueNumber: i + 1 })) }));
-  assert.match(many, /aria-hidden="true">9\+<\/span>/);
-
-  const check = JSON.parse(read('dapp.json')).tests.find((t) => t.id === 'homeroom-bot-dm-activity-tray');
-  assert.match(check.expectSelector, /> \.messages-thread-header \[data-bot-work-toggle\]\[aria-expanded=false\]:has\(\[data-bot-work-status=working\]\)$/,
-    'the check finds the disc, closed, with the bot at work');
-
-  const css = read('public/css/app.css');
-  assert.match(css, /\.messages-bot-work-button \{ position: relative; \}/);
-  assert.match(css, /\.messages-bot-work-count \{[^}]*color: var\(--accent-ink\);\s*background: var\(--accent\);/, 'a number for the viewer, in the accent');
-  assert.doesNotMatch(css, /\.messages-bot-work-button[^{]*\{[^}]*display: none/, 'drawn on a phone too, unlike the full-width toggle');
-});
-
-test('the panel: Now with the step it is at, Needs you, and History folded away', () => {
-  const html = drawPanel({
-    work: work({
-      now: [working({
-        issueNumber: 12, title: 'Sort by date', phase: 'building', step: 3, of: 6, stepName: 'Build it', doing: 'building it',
-        since: minutesAgo(4), href: '#app/ear-trainer/dev/issues/12',
-        links: { request: '#app/ear-trainer/dev/issues/12', proposal: null, project: null },
-        earlier: [{ id: 3, outcome: 'question', at: minutesAgo(60 * 20) }],
-      })],
-      needsYou: [past({
-        id: 4, issueNumber: 14, title: 'Add a metronome', outcome: 'question', at: minutesAgo(35),
-        links: { request: '#app/ear-trainer/dev/issues/14', proposal: null, project: null },
-      })],
-      history: [past({
-        id: 2, issueNumber: 9, title: 'Item counts', outcome: 'proposed', at: minutesAgo(90),
-        links: { request: '#app/ear-trainer/dev/issues/9', proposal: '#app/ear-trainer/dev/proposals/40', project: null },
-      }), past({ id: 1, firstVersion: true, outcome: 'live', at: minutesAgo(60 * 24 * 3) })],
-    }),
-  });
-  assert.match(html, /<section id="messages-bot-work-panel" class="absolute inset-x-3 [^"]*" aria-label="Homeroom bot activity" data-bot-work-panel="">/);
-  assert.match(html, />Now</);
-  assert.match(html, /data-bot-work-tile="now" data-bot-work-tone="working"/);
-  assert.match(html, /aria-label="Step 3 of 6: Build it"/, 'the ring the activity cards draw');
-  assert.match(html, /aria-label="Step 3 of 6: Build it" overflow="visible" data-progress-ring-spinning="">/, '#4199: with its arc circling it while it goes');
-  assert.doesNotMatch(html, /animate-ping/, 'and no pulsing dot on the tile');
-  assert.match(html, /Step 3 of 6 · Build it/);
-  assert.match(html, /Ear Trainer #12: Sort by date/);
-  assert.match(html, /Building it · 4m so far/);
-  assert.match(html, /<a href="#app\/ear-trainer\/dev\/issues\/12" [^>]*data-bot-work-link="">Request #12<\/a>/);
-  assert.match(html, /<button type="button" [^>]*aria-expanded="false" data-bot-work-earlier="1">1 earlier run/);
-  assert.match(html, />Needs you</);
-  assert.match(html, /data-bot-work-tile="you" data-bot-work-tone="you"/);
-  assert.match(html, /Asked you a question · 35m ago/);
-  assert.match(html, /<button type="button" [^>]*aria-expanded="false" aria-controls="messages-bot-work-history" data-bot-work-history-toggle="">Show history \(2\)/);
-  assert.doesNotMatch(html, /Item counts|data-bot-work-tile="history"/, 'History starts folded away');
-  assert.doesNotMatch(html, /I’m not working on anything/);
-
-  const unfolded = drawPanel({
-    historyOpen: true,
-    work: work({
-      history: [past({
-        id: 2, issueNumber: 9, title: 'Item counts', outcome: 'proposed', at: minutesAgo(90),
-        links: { request: '#app/ear-trainer/dev/issues/9', proposal: '#app/ear-trainer/dev/proposals/40', project: null },
-        earlier: [{ id: 5, outcome: 'revise', at: minutesAgo(100) }, { id: 6, outcome: 'answer', at: minutesAgo(110) }],
-      }), past({ id: 1, firstVersion: true, outcome: 'live', at: minutesAgo(60 * 24 * 3), links: { request: null, proposal: null, project: '#app/ear-trainer/app' } }),
-      past({ id: 7, issueNumber: 3, outcome: 'build_failed', at: minutesAgo(60 * 24 * 4) })],
-    }),
-  });
-  assert.match(unfolded, /aria-expanded="true" aria-controls="messages-bot-work-history" data-bot-work-history-toggle="">Hide history/);
-  assert.match(unfolded, /<div id="messages-bot-work-history"/);
-  // A change waiting for approval is Built, not Done; Done is for what went live.
-  assert.match(unfolded, /data-bot-work-tile="history" data-bot-work-tone="built"[\s\S]*?>Built<\/span>[\s\S]*?Built it\. Waiting for approval · 1h ago/, 'the cards\' words');
-  assert.match(unfolded, /data-bot-work-tile="history" data-bot-work-tone="done"[\s\S]*?>Done<\/span>[\s\S]*?Built it\. It’s live/);
-  assert.match(unfolded, />Open change<\/a>/);
-  assert.match(unfolded, /2 earlier runs/);
-  assert.match(unfolded, /Ear Trainer first version/);
-  assert.match(unfolded, /Built it\. It’s live/);
-  assert.match(unfolded, />Open project<\/a>/);
-  assert.match(unfolded, /data-bot-work-tone="trouble"[\s\S]*Couldn’t finish building it/);
-  assert.match(unfolded, /I’m not working on anything for you right now\./, 'nothing in hand and nothing waiting');
-});
-
-test('a new project waiting for its secrets says so in its own words', () => {
-  const html = drawPanel({
-    work: work({ needsYou: [past({ id: 0, firstVersion: true, outcome: null, doing: 'the project is waiting for its secrets to be set on its page before it can start', at: minutesAgo(10) })] }),
-  });
-  assert.match(html, /The project is waiting for its secrets to be set on its page before it can start · 10m ago/);
-});
-
-test('the panel with nothing yet, before its first read, and when the read failed', () => {
-  const empty = drawPanel({ work: work({}) });
-  assert.match(empty, /I’m not working on anything for you right now\./);
-  assert.match(empty, /Nothing yet\. When I work on a request of yours, it shows up here\./);
-  assert.doesNotMatch(empty, /Show history/);
-  const loading = drawPanel({ work: null });
-  assert.match(loading, /role="status">Loading activity</);
-  const failed = drawPanel({ work: null, failed: true });
-  assert.match(failed, /role="alert"/);
-  assert.match(failed, /Couldn’t load what I’m working on\./);
-  assert.match(failed, />Try again</);
-  const stale = drawPanel({ work: work({}), failed: true });
-  assert.match(stale, /may be out of date/, 'a failed refresh keeps what was read, and says so');
-});
-
-test('a tile with nowhere to open has no links', () => {
-  const html = drawPanel({ work: tray.demoWork(NOW.getTime()), historyOpen: true });
+test('the demo strip draws with nowhere to link: its rows open their threads, never a page', () => {
+  const html = drawStrip({ remembered: true, work: tray.demoWork(NOW.getTime()) });
   assert.doesNotMatch(html, /<a /);
-  assert.match(html, /Staging demo app #14: Staging demo, show a total under the list/);
-  assert.match(html, /Asked you a question · 35m ago/);
-  assert.match(html, /Waiting in the queue \(number 1\) to follow up on the newest replies on the change · 1m so far/);
-});
-
-test('#4201: History leads with the app\'s own icon and a badge of how it ended; Now and Needs you keep theirs', () => {
-  const html = drawPanel({
-    historyOpen: true,
-    work: work({
-      now: [working({ issueNumber: 12, step: 3, of: 6, stepName: 'Build it', iconUrl: '/app-icons/ab12' })],
-      needsYou: [past({ id: 4, issueNumber: 14, outcome: 'question', iconUrl: '/app-icons/ab12' })],
-      history: [
-        past({ id: 2, issueNumber: 9, outcome: 'live', iconUrl: '/app-icons/ab12', iconEmoji: '🎵' }),
-        past({ id: 3, issueNumber: 8, outcome: 'closed', appSlug: 'note-board', appName: 'Note Board', key: 'note-board#8', iconEmoji: '📝' }),
-        past({ id: 5, issueNumber: 7, outcome: 'build_failed', appSlug: 'seed-swap', appName: 'Seed Swap', key: 'seed-swap#7' }),
-      ],
-    }),
-  });
-  const tiles = html.split('data-bot-work-tile="').slice(1);
-  const [now, you, ...history] = tiles;
-  assert.match(now, /aria-label="Step 3 of 6: Build it"/, 'Now keeps its ring');
-  assert.doesNotMatch(now, /data-bot-work-app-lead|app-icons/);
-  assert.doesNotMatch(you, /data-bot-work-app-lead|app-icons/, 'Needs you keeps its tile');
-  assert.equal(history.length, 3);
-  for (const tile of history) assert.match(tile, /data-bot-work-app-lead=""[^>]*>\s*<span class="app-icon-tile [^"]*h-\[38px\] w-\[38px\][^"]*"/);
-  assert.match(history[0], /data-icon="image" aria-hidden="true"><img src="\/app-icons\/ab12"/, 'its image first');
-  assert.match(history[0], /data-bot-work-badge="done"/);
-  assert.match(history[1], /data-icon="emoji"[^>]*><span class="text-3xl leading-none" aria-hidden="true">📝<\/span>/, 'else its emoji');
-  assert.match(history[1], /data-bot-work-badge="ended"/);
-  assert.match(history[2], /data-icon="letter" aria-hidden="true">S<\/span>/, 'else its initial');
-  assert.match(history[2], /data-bot-work-badge="trouble"/);
-  assert.match(history[0], />Done<\/span>[\s\S]*Built it\. It’s live/, 'the words stay');
+  assert.match(html, /Staging demo, a weekly dinner rota/);
+  assert.match(html, /Which night should the rota start on\?/, 'the question itself');
+  assert.match(html, /1 needs you/);
 });
 
 test('every phase and ending has words', () => {
-  const { PHASE_LABELS, SHORT_PHASES, LAST_WORDS, jobTitle, jobName, newestBotMessageId, WORK_CHANGED_EVENT } = loadTsx(TRAY);
-  assert.deepEqual(Object.keys(PHASE_LABELS).sort(), [...tray.PHASES].sort());
-  assert.deepEqual(Object.keys(SHORT_PHASES).sort(), [...tray.PHASES].sort());
-  assert.deepEqual(Object.keys(LAST_WORDS).sort(), [...tray.OUTCOMES].sort());
-  for (const outcome of tray.OUTCOMES) assert.match(englishText(LAST_WORDS[outcome], { job: 'Ear Trainer #3' }), /Ear Trainer #3/, outcome);
-  for (const phase of tray.PHASES) assert.ok(englishText(PHASE_LABELS[phase]) && englishText(SHORT_PHASES[phase], { job: 'X' }), phase);
-  // The job and its stage are one whole message.
-  assert.equal(englishText(SHORT_PHASES.merging, { job: 'Ear Trainer #3' }), 'Working on Ear Trainer #3 · going live');
+  const { doingWord, needsRow, readyState } = loadTsx(STRIP);
+  const { jobTitle, jobName, newestBotMessageId, WORK_CHANGED_EVENT } = loadTsx(TRAY);
+  for (const phase of tray.PHASES) assert.ok(doingWord(job({ phase })), phase);
+  for (const outcome of tray.OUTCOMES) {
+    assert.ok(needsRow(job({ outcome })).state, `needs: ${outcome}`);
+    assert.ok(readyState(job({ outcome })), `ready: ${outcome}`);
+  }
+  assert.equal(doingWord(job({ phase: 'merging' })), 'going live');
   assert.equal(WORK_CHANGED_EVENT, 'homeroom-bot-work-changed');
   assert.equal(jobTitle(job({ firstVersion: true, title: 'ignored' })), 'Ear Trainer first version');
   assert.equal(jobTitle(job({ issueNumber: 3, title: 'Sort' })), 'Ear Trainer #3: Sort');
@@ -737,38 +623,14 @@ test('every phase and ending has words', () => {
   assert.equal(newestBotMessageId([message(9, false)]), null);
 });
 
-// 4 October: the header said "Last: proposed Flat 4B Chore…". What the bot
-// did last says the same ending its activity card names, in the server's
-// words and the client's alike, and none of the platform's own vocabulary.
-test('the status line\'s last thing says the activity card\'s ending, in the person\'s words', () => {
-  const { LAST_WORDS, PHASE_LABELS, SHORT_PHASES } = loadTsx(TRAY);
+// 4 October: the header said "Last: proposed Flat 4B Chore…". What the strip
+// and the cards say is the person's vocabulary, never the platform's.
+test('the strip and the cards say every ending in the person\'s words', () => {
+  const { doingWord, needsRow, readyState } = loadTsx(STRIP);
   const { ACTIVITY_OUTCOME_LABELS } = loadTsx('frontend/src/features/messages/bot-activity.tsx');
   const activity = require('../src/services/homeroom-bot-activity');
   const plain = (s) => s.replace(/’/g, '\'').toLowerCase();
-  // Each is one whole message that starts "Last: " (the catalog holds the sentence, not a clause).
-  const last = (o, job) => englishText(LAST_WORDS[o], { job });
-  for (const o of tray.OUTCOMES) assert.match(last(o, 'X'), /^Last: /, o);
-  assert.deepEqual(Object.fromEntries(tray.OUTCOMES.map((o) => [o, last(o, 'Ear Trainer #3').slice('Last: '.length)])), {
-    question: 'asked you about Ear Trainer #3',
-    proposed: 'Ear Trainer #3 waiting for approval',
-    live: 'Ear Trainer #3 went live',
-    closed: 'the change for Ear Trainer #3 was closed',
-    blocked: 'couldn’t build Ear Trainer #3 as written',
-    build_failed: 'couldn’t finish building Ear Trainer #3',
-    person: 'left Ear Trainer #3 to the group',
-    empty: 'found nothing to build in Ear Trainer #3',
-    failed: 'couldn’t finish looking at Ear Trainer #3',
-    held: 'held Ear Trainer #3 back for now',
-    stopped: 'stopped on Ear Trainer #3',
-    answer: 'answered on Ear Trainer #3',
-    revise: 'updated the change for Ear Trainer #3',
-    checking: 'checking Ear Trainer #3 before you try it',
-    needs_look: 'Ear Trainer #3 needs a look',
-    going_live: 'Ear Trainer #3 going live',
-  });
-  // Each says what its card says: the words the two have in common, in the
-  // server's labels (services/homeroom-bot-activity.js), the client's
-  // (bot-activity.tsx) and the status line's.
+  // Each card says what the server's card says: the words the two have in common.
   const SHARED = {
     question: 'asked you', proposed: 'waiting for approval', live: 'live', closed: 'was closed',
     blocked: 'written', build_failed: 'finish building', person: 'the group', empty: 'nothing to build',
@@ -780,14 +642,13 @@ test('the status line\'s last thing says the activity card\'s ending, in the per
     const words = SHARED[outcome];
     assert.ok(plain(activity.OUTCOME_LABELS[outcome]).includes(words), `server card: ${outcome}`);
     assert.ok(plain(englishText(ACTIVITY_OUTCOME_LABELS[outcome])).includes(words), `client card: ${outcome}`);
-    assert.ok(plain(last(outcome, 'X')).includes(words), `status line: ${outcome}`);
   }
-  // None of the platform's words, anywhere the header or the tray says them.
   const said = [
-    ...tray.OUTCOMES.map((o) => last(o, 'X')), ...Object.values(PHASE_LABELS).map((id) => englishText(id)), ...Object.values(SHORT_PHASES).map((id) => englishText(id, { job: 'X' })),
+    ...tray.PHASES.map((phase) => doingWord(job({ phase }))),
+    ...tray.OUTCOMES.flatMap((outcome) => [needsRow(job({ outcome })).state, readyState(job({ outcome }))]),
     ...Object.values(ACTIVITY_OUTCOME_LABELS).map((id) => englishText(id)), ...Object.values(activity.OUTCOME_LABELS), ...Object.values(activity.TONE_WORDS),
   ];
-  for (const line of said) assert.doesNotMatch(line, /propos|merg|\bPR\b|pull request|staging|\u2014/i, line);
+  for (const line of said) assert.doesNotMatch(line, /propos|merg|\bPR\b|pull request|staging|—/i, line);
 });
 
 test('the client keeps only the platform\'s own addresses as links, and known words', () => {
@@ -795,7 +656,7 @@ test('the client keeps only the platform\'s own addresses as links, and known wo
   const w = normalizeBotWork({
     now: [
       { appSlug: 'a', appName: 'A', issueNumber: 3, phase: 'building', since: 'x', href: 'javascript:alert(1)',
-        links: { request: 'https://example.test/x', proposal: '#app/a/dev/proposals/4' }, step: 3, of: 6, stepName: 'Build it' },
+        links: { request: 'https://example.test/x', proposal: '#app/a/dev/proposals/4' }, step: 3, of: 6, stepName: 'Building' },
       { appSlug: 'b', appName: 'B', phase: 'dancing', href: '#app/b/app', firstVersion: true, step: 7, of: 6 },
       ...tray.PHASES.map((phase) => ({ appSlug: 'c', appName: 'C', issueNumber: 1, phase })),
     ],
@@ -811,7 +672,7 @@ test('the client keeps only the platform\'s own addresses as links, and known wo
   });
   assert.equal(w.now[0].href, null);
   assert.deepEqual(w.now[0].links, { request: null, proposal: '#app/a/dev/proposals/4', project: null });
-  assert.deepEqual([w.now[0].step, w.now[0].of, w.now[0].stepName], [3, 6, 'Build it']);
+  assert.deepEqual([w.now[0].step, w.now[0].of, w.now[0].stepName], [3, 6, 'Building']);
   assert.equal(w.now[0].key, 'a#3');
   assert.equal(w.now[1].href, '#app/b/app');
   assert.equal(w.now[1].phase, 'looking');
@@ -848,33 +709,83 @@ test('a conversation is the bot\'s DM only when the server says so, and only a d
 
 // ── Where it is mounted ───────────────────────────────────────────────
 
-test('only a conversation with the Homeroom bot carries the tray: its Activity disc toggles the panel, which drops from under the header', () => {
+test('only a conversation with the Homeroom bot carries the strip, pinned right under its header', () => {
   const screen = read('frontend/src/features/messages/index.tsx');
   assert.match(screen, /const botDm = !!snap\.active && snap\.active\.id === conversationId && snap\.active\.kind === 'direct'\s*&& snap\.active\.membershipStatus === 'member' && snap\.active\.homeroomBot === true;/);
-  // The panel's anchor sits right under the header, so the panel covers the transcript and moves nothing.
-  assert.match(screen, /\{embedded \? null : <ThreadHeader \/>\}\s*(?:\{\/\*[^\n]*\*\/\}\s*)?\{botDm && !embedded \? <BotWorkPanel \/> : null\}/);
+  // One request, one story: the strip sits right under the header, in the pane's flow.
+  assert.match(screen, /\{embedded \? null : <ThreadHeader \/>\}\s*(?:\{\/\*[^\n]*\*\/\}\s*)?\{botDm && !embedded \? <BotStrip \/> : null\}/);
   assert.match(screen, /\{botDm \? <BotWorkSync conversationId=\{conversationId\} newsKey=\{newestBotMessageId\(snap\.messages\)\} \/> : null\}/);
 
   const header = screen.slice(screen.indexOf('function ThreadHeader()'), screen.indexOf('function isCardMessage('));
   assert.match(header, /const botDm = active\.kind === 'direct' && !!active\.homeroomBot && active\.membershipStatus === 'member';/);
-  // #3770: the disc, just before the full-width toggle; the name block above
-  // the status line is no longer a toggle, and draws no chevron.
-  assert.match(header, /\{botDm \? <BotWorkButton \/> : null\}\s*<FullWidthToggle \/>/);
-  const nameBlock = header.slice(header.indexOf('className="min-w-0 text-left flex-1"'), header.indexOf('</button>', header.indexOf('className="min-w-0 text-left flex-1"')));
-  assert.match(nameBlock, /onClick=\{\(\) => \{ if \(active\.kind === 'group'\) openDialog\('messagesMembers'\); \}\}/);
-  assert.doesNotMatch(nameBlock, /toggleBotWork|aria-expanded|aria-controls|data-bot-work-toggle|ChevronDownIcon/);
-  assert.match(nameBlock, /\{botDm \? <BotWorkStatusLine \/> : <div className="messages-thread-sub">\{subtitle\}<\/div>\}/);
-  assert.doesNotMatch(header, /useBotWork\(\)|toggleBotWork|BOT_WORK_PANEL_ID/, 'the disc reads the tray\'s store itself');
-  assert.doesNotMatch(header, /Activity &amp; history|data-bot-work-open/, 'the ⋯ menu no longer needs a way in');
+  // The Activity disc and the long status line are gone; the line under
+  // the bot's name says what it is for.
+  assert.doesNotMatch(header, /BotWorkButton|BotWorkStatusLine|data-bot-work-toggle/);
+  assert.match(header, /\{botDm \? t\('messages:header\.subtitle\.homeroomBot'\) : subtitle\}/);
+  assert.equal(englishText('messages:header.subtitle.homeroomBot'), 'Builds what you ask for');
+  const trayModule = read(TRAY);
+  assert.doesNotMatch(trayModule, /BotWorkPanel|BotWorkButton|BotWorkStatus|trayStatus/, 'the store and its sync alone');
+});
 
-  // A press on the full-width toggle widens the pane under the panel and leaves it open.
-  const fullWidth = screen.slice(screen.indexOf('function FullWidthToggle()'), screen.indexOf('function ThreadHeader()'));
-  assert.match(fullWidth, /title=\{label\}\s*data-bot-work-keep=""/);
-  const tray = read(TRAY);
-  const panel = tray.slice(tray.indexOf('export function BotWorkPanel()'), tray.indexOf('export function BotWorkSync('));
-  assert.match(panel, /target\.closest\?\.\('\[data-bot-work-toggle\], \[data-bot-work-keep\]'\)\) return;\s*setBotWorkOpen\(false\);/);
-  assert.match(panel, /setBotWorkOpen\(false\);\s*document\.querySelector<HTMLElement>\('\[data-bot-work-toggle\]'\)\?\.focus/, 'Escape hands focus back to the disc');
+// One story: where each request is in its person's chat with the bot, for
+// the strip's rows and buttons (homeroom-bot-tray.js threadsOf).
+test('the strip learns each request\'s card, what waits on its person, and its ready card from the chat\'s records', () => {
+  const rows = [
+    { message_id: 90, kind: 'proposal', slug: 'a', issue_number: 2, meta: {
+      status: 'open', sessionId: 5, epoch: 1, actions: [{ id: 'try' }, { id: 'approve' }], waiting: 'you and @ada',
+    } },
+    { message_id: 80, kind: 'question', slug: 'a', issue_number: 3, meta: { status: 'open', question: 'Which night?', said: 'question' } },
+    { message_id: 70, kind: 'question', slug: 'a', issue_number: 4, answered_at: 1, meta: { status: 'answered', question: 'Old?' } },
+    { message_id: 60, kind: 'activity', slug: 'a', issue_number: 3, thread_root_id: null, meta: {} },
+    { message_id: 55, kind: 'proposal', slug: 'a', issue_number: 2, meta: { status: 'closed', sessionId: 4 } },
+    { message_id: 50, kind: 'activity', slug: 'a', issue_number: 2, thread_root_id: null, meta: {} },
+    { message_id: 40, kind: 'build_failed', slug: 'a', issue_number: 5, meta: { status: 'open', said: 'build_time' } },
+  ];
+  const found = tray.threadsOf(rows);
+  assert.deepEqual(found.get(tray.keyOf('a', 3)), { answered: false, ask: { messageId: 80, kind: 'question', said: 'question', question: 'Which night?' }, cardId: 60 });
+  assert.deepEqual(found.get(tray.keyOf('a', 2)), {
+    ready: { messageId: 90, sessionId: 5, epoch: 1, open: true, approve: true, waiting: 'you and @ada' }, cardId: 50,
+  }, 'the newest ready card, and its approve only while open');
+  const answeredQuestion = found.get(tray.keyOf('a', 4));
+  assert.equal(answeredQuestion.ask, undefined, 'an answered question waits on nobody');
+  assert.equal(answeredQuestion.answered, true, '#4974: its ask row says it was answered');
+  assert.equal(found.get(tray.keyOf('a', 5)).answered, false, '#4974: an ask still open says so');
+  assert.deepEqual(found.get(tray.keyOf('a', 5)).ask, { messageId: 40, kind: 'build_failed', said: 'build_time' });
+});
 
-  const { BOT_WORK_PANEL_ID } = loadTsx(TRAY);
-  assert.equal(BOT_WORK_PANEL_ID, 'messages-bot-work-panel');
+// #4974: once a reply on the request's discussion settles a need, the tray
+// stops calling it Needs you: the entry folds into History like any finished
+// one. A need that still waits on its person — its ask open, or not yet
+// answered — stays put, as does anything that was never Needs you.
+test('settleAnswered folds an answered need into History and leaves the rest alone', () => {
+  const at = (h) => new Date(Date.UTC(2026, 9, 13, h)).toISOString();
+  const entry = (over) => ({
+    key: 'ear trainer#12', appSlug: 'ear trainer', issueNumber: 12, title: 'Sort by date',
+    phase: 'waiting', outcome: 'question', at: at(9),
+    ...over,
+  });
+  const answeredAsk = entry({ key: 'ear trainer#12', outcome: 'question', answered: true });
+  const stillWaiting = entry({ key: 'ear trainer#13', issueNumber: 13, outcome: 'question', ask: { messageId: 40, kind: 'question', question: 'Which night?' } });
+  const unanswered = entry({ key: 'ear trainer#14', issueNumber: 14, outcome: 'blocked' });
+  const built = entry({ key: 'ear trainer#15', issueNumber: 15, outcome: 'ready', answered: true });
+  const work = tray.settleAnswered({
+    now: [],
+    needsYou: [answeredAsk, stillWaiting, unanswered, built],
+    history: [entry({ key: 'ear trainer#11', issueNumber: 11, outcome: 'built', at: at(8) })],
+  });
+  assert.deepEqual(work.needsYou.map((j) => j.key), ['ear trainer#13', 'ear trainer#14', 'ear trainer#15'],
+    'an open ask, no answer yet, or a need that is not a question for its person, still waits');
+  assert.deepEqual(work.history.map((j) => j.key), ['ear trainer#12', 'ear trainer#11'],
+    'the answered one is newest in History');
+  assert.deepEqual(tray.settleAnswered({ now: [], needsYou: [unanswered], history: [] }).needsYou.map((j) => j.key),
+    ['ear trainer#14'], 'nothing answered, nothing moves');
+  // History keeps its cap: the oldest answered entries fall off first.
+  const many = [];
+  for (let i = 0; i < tray.HISTORY_LIMIT + 5; i += 1) {
+    many.push(entry({ key: `ear trainer#${100 + i}`, issueNumber: 100 + i, outcome: 'blocked', answered: true, at: at(9 - (i % 9)) }));
+  }
+  const capped = tray.settleAnswered({ now: [], needsYou: many, history: [] });
+  assert.equal(capped.history.length, tray.HISTORY_LIMIT, 'History keeps its limit');
+  assert.ok(!capped.history.some((j) => j.key === `ear trainer#${100 + tray.HISTORY_LIMIT + 4}`),
+    'the oldest of the answered ones fell off');
 });

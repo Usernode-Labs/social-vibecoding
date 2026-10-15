@@ -189,6 +189,21 @@ cat > "$BROWSER_MCP_CONFIG" <<JSON
   }
 }
 JSON
+# The same browser without visible_changes, for a first version's build
+# (run-cc.sh, BUILD_PROFILE=first_version): a first version is never asked to
+# declare its visible changes (homeroom-bot-live.js buildPrompt), and every
+# tool loaded is sent with every model request.
+BROWSER_ONLY_MCP_CONFIG=/home/node/.usernode-mcp-browser.json
+cat > "$BROWSER_ONLY_MCP_CONFIG" <<JSON
+{
+  "mcpServers": {
+    "playwright": {
+      "command": "/usr/local/bin/mcp-server-playwright",
+      "args": ["--browser", "chromium", "--headless", "--isolated", "--no-sandbox", "--config", "$BROWSER_PW_CONFIG", "--output-dir", "$BROWSER_OUTPUT_DIR"]
+    }
+  }
+}
+JSON
 echo "__USERNODE_PHASE__ seeded playwright mcp config"
 
 # Bootstrap: clone the repo if the workspace is empty. Re-warming

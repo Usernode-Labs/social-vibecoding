@@ -331,8 +331,11 @@ test('the recovery deadline is the mark\'s, given back the time restarts cost it
 
 test('server.js re-arms the clock for a marked follow-up and records it after the person\'s tail', () => {
   const server = read('server.js');
-  assert.match(server, /const botFollowUp = !benchTurn && !botTurn && homeroomBotRecovery\(\)\.isRecoveredBotFollowUp\(session, activeTurn\);/);
-  assert.match(server, /if \(botTurn \|\| benchTurn \|\| botFollowUp\) \{\n\s+const restarts = await turnLifecycle\.noteRestart/);
+  // The bot's builds and the bench's trials never reach the person's tail
+  // (their turns are their durable build's), so the follow-up is the only
+  // bot turn that clock is armed for.
+  assert.match(server, /const botFollowUp = homeroomBotRecovery\(\)\.isRecoveredBotFollowUp\(session, activeTurn\);/);
+  assert.match(server, /if \(botFollowUp\) \{\n\s+const restarts = await turnLifecycle\.noteRestart/);
   // Recorded once the tail has moved the proposal on, before the wrap-up.
   const tail = server.indexOf('const { outcome: finalizeOutcome, summary } = await finalizeRecoveredTurn({');
   const record = server.indexOf('await homeroomBotRecovery().finishRecoveredFollowUp({');
@@ -444,7 +447,8 @@ test('a recovered fix that pushed is a revise run on the head it looked at, with
   assert.equal(calls.spend, 31, 'debited from the bot\'s allowance as a live turn is');
   assert.equal(calls.onProposal.length, 1);
   assert.equal(calls.onProposal[0].kind, 'checks_revise');
-  assert.match(calls.onProposal[0].text, /fixed the failing checks on this change: The text-size button now says "Text size"\./);
+  // N3: what was fixed, from what failed, in plain words; never the turn's own summary.
+  assert.equal(calls.onProposal[0].text, 'Homeroom bot fixed the check that was failing. Its checks run again on the new version.');
   assert.equal(calls.reconciled.length, 0, 'the person\'s tail reset the votes and rebuilt staging already');
   assert.ok(calls.queries.some((q) => /DELETE FROM homeroom_bot_queue WHERE id = \$1/.test(q.s) && q.params[0] === 31), 'its queue row is spent');
   assert.ok(calls.queries.some((q) => /UPDATE homeroom_bot_queue SET wait_reason = NULL, wait_until = NULL WHERE app_id = \$1 AND issue_number = \$2/.test(q.s)));
@@ -549,8 +553,12 @@ test('queueWait: its own refusal, then its payer\'s week, then the bot\'s fault 
   assert.deepEqual(bot.queueWait({}, { now, fault: { until: Date.parse(later) } }), { reason: 'platform_fault', until: later });
   assert.equal(bot.queueWait({}, { now }), null);
   const src = read('src/services/homeroom-bot.js');
-  assert.match(src, /q\.held_until, q\.wait_reason, q\.wait_until,\n\s+a\.slug AS app_slug/);
-  assert.match(src, /const queueRows = queued\.map\(\(q\) => \(\{ \.\.\.q, waiting: queueWait\(q, \{ fault \}\) \}\)\);/);
+  assert.match(src, /q\.held_until, q\.wait_reason, q\.wait_until, q\.waiting_total, q\.running_total,\n\s+a\.slug AS app_slug/);
+  assert.match(src, /const items = rows\.map\(\(\{ waiting_total: _w, running_total: _r, \.\.\.q \}\) => \(\{ \.\.\.q, waiting: queueWait\(q, ctx\) \}\)\);/);
+  // The fault pause from the loop's memory, wherever the loop runs
+  // (memoryStatus, loopMemory: docs/plans/web-and-conductor.md).
+  assert.match(src, /fault: mem\.fault, now, off: settings\.mode === 'off'/);
+  assert.match(src, /function memoryStatus\(now = Date\.now\(\)\) \{\n\s+const fault = faultBackoff\(now\);/);
   assert.match(read('src/db/schema.sql'), /ALTER TABLE homeroom_bot_queue ADD COLUMN IF NOT EXISTS wait_reason TEXT;\nALTER TABLE homeroom_bot_queue ADD COLUMN IF NOT EXISTS wait_until TIMESTAMPTZ;/);
 });
 
@@ -631,7 +639,34 @@ test('a bot turn waits out the shots run on its session, at most its bound', asy
   assert.equal(await live.waitOutShotsRun(5001, {
     shotsRunFor: () => new Promise(() => {}), shotsWaitMs: 5,
   }), 'timeout');
-  // The runner calls it before its turn's clock starts.
-  assert.match(read('src/services/homeroom-bot-live.js'),
-    /await waitOutShotsRun\(session\.id, deps\);\n {4}let turnStopped = false;/);
+
+  // The runner waits it out before its turn's clock starts: a shots run
+  // that outlasts the turn's whole budget costs the turn none of it. The
+  // clock is durable-turn.js runTurn's, armed before it dispatches.
+  const stops = [];
+  const dispatched = [];
+  let shotsDone;
+  const shots = new Promise((resolve) => { shotsDone = resolve; });
+  const runTurn = live.buildTurnRunner({
+    pool: { async query() { return { rows: [] }; } },
+    config: {}, bot: BOT, session: { id: 5001, app_id: APP.id, repo_url: APP.repo_url },
+    model: 'z-ai/glm-5.3-flash', branchName: 'dev/homeroom_bot-5001', containerName: 'sv-worker-s5001',
+    deps: {
+      worker: { async stopTurn(id) { stops.push(id); return true; } },
+      sessions: { async runCodexAttemptLoop() { dispatched.push(Date.now()); return { result: { pushOk: true, ahead: 1, sha: NEW_HEAD } }; } },
+      agentTurn: {},
+      activeWorkers: { add() {}, delete() {} },
+      shotsRunFor: (id) => (id === 5001 ? shots : null),
+      shotsWaitMs: 60_000,
+    },
+  });
+  const turn = runTurn({ prompt: 'Fix the failing check.', budgetMs: 200, commitMsg: 'Fix', progress: { note() {} } });
+  await new Promise((r) => { setTimeout(r, 400); });
+  assert.deepEqual(dispatched, [], 'not dispatched while the shots run is under way');
+  shotsDone();
+  const out = await turn;
+  assert.equal(dispatched.length, 1, 'dispatched once it is over');
+  assert.deepEqual(stops, [], 'the wait is not charged to the turn\'s own clock');
+  assert.equal(out.stopped, false);
+  assert.equal(out.routed.result.sha, NEW_HEAD);
 });

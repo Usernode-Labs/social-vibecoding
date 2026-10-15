@@ -37,7 +37,9 @@
  * payload (vocabularies included), and the repaint every control triggers.
  */
 
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useLayoutEffect, useRef, useState, type ComponentType } from 'react';
+
+import { AdjustmentsIcon, UserCheckIcon, UserPenIcon, type IconProps } from '@/components/ui/icons';
 
 import {
   kanbanFiltersStore,
@@ -68,6 +70,21 @@ const CHIP_ON = 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900';
 
 const chipCls = (active: boolean) => `${CHIP_BASE} px-3 ${active ? CHIP_ON : CHIP_IDLE}`;
 
+/**
+ * #4916: Filters and the two quick toggles are ICON chips: a 16px glyph at
+ * the shell's 2px stroke, a 32px circle on the board (All items' head sizes
+ * every chip in its row as a 28px pill, app.css `.dev-ws-allbar`). Their
+ * words stay on each one three ways: `title` for the pointer's tooltip,
+ * `aria-label` for a screen reader, and an `sr-only` copy, which keeps the
+ * text in the page's innerText where the declared checks' `expectText`
+ * reads it (`relative` keeps that copy inside the chip, and so inside the
+ * strip's scroller on a phone). Filters with filters on adds its count
+ * after the glyph, so it grows to a pill.
+ */
+const ICON_CHIP_PAD = 'relative justify-center min-w-8 px-2';
+const iconChipCls = (active: boolean) => `${CHIP_BASE} ${ICON_CHIP_PAD} ${active ? CHIP_ON : CHIP_IDLE}`;
+const CHIP_ICON = 'w-4 h-4 shrink-0';
+
 const SEARCH_CLS = 'h-8 rounded-full border border-zinc-300 dark:border-zinc-700 '
   + 'bg-white dark:bg-zinc-800 px-3 text-xs text-zinc-900 dark:text-zinc-100 '
   + 'flex-1 min-w-[10rem]';
@@ -79,9 +96,13 @@ const SEARCH_CLS = 'h-8 rounded-full border border-zinc-300 dark:border-zinc-700
  * because "what is mine" is the filter people reach for most.
  */
 // `label` is a message id (frontend/locales/en/project.json), read when the strip renders.
-const QUICK_FILTERS: Array<{ key: 'assignedToMe' | 'createdByMe'; label: string }> = [
-  { key: 'assignedToMe', label: 'project:filters.quick.assignedToYou' },
-  { key: 'createdByMe', label: 'project:filters.quick.createdByYou' },
+const QUICK_FILTERS: Array<{
+  key: 'assignedToMe' | 'createdByMe';
+  label: string;
+  Icon: ComponentType<IconProps>;
+}> = [
+  { key: 'assignedToMe', label: 'project:filters.quick.assignedToYou', Icon: UserCheckIcon },
+  { key: 'createdByMe', label: 'project:filters.quick.createdByYou', Icon: UserPenIcon },
 ];
 
 /**
@@ -216,6 +237,7 @@ export function KanbanFiltersView({
     controller()?._setQuickFiltersInDialog?.(!fits);
   }, [fits, mounted]);
   if (!mounted) return null;
+  const filtersLabel = count > 0 ? t('project:filters.button.active', { count }) : t('project:filters.button.none');
   return (
     <div id="dev-filter-row" ref={rowRef} className="flex flex-wrap items-center gap-2">
       <input
@@ -236,22 +258,28 @@ export function KanbanFiltersView({
           id="dev-kanban-filters-btn"
           type="button"
           aria-haspopup="dialog"
-          className={chipCls(count > 0)}
-          title={t('project:filters.button.hint')}
+          aria-label={filtersLabel}
+          className={iconChipCls(count > 0)}
+          title={filtersLabel}
           onClick={() => controller()?._openKanbanFiltersDialog?.()}
         >
-          {count > 0 ? t('project:filters.button.active', { count }) : t('project:filters.button.none')}
+          <AdjustmentsIcon className={CHIP_ICON} aria-hidden="true" />
+          {count > 0 ? <span aria-hidden="true">{count}</span> : null}
+          <span className="sr-only">{filtersLabel}</span>
         </button>
-        {quick ? QUICK_FILTERS.map(({ key, label }) => (
+        {quick ? QUICK_FILTERS.map(({ key, label, Icon }) => (
           <button
             key={key}
             type="button"
             data-quick-filter={key}
             aria-pressed={quick[key] ? 'true' : 'false'}
-            className={chipCls(quick[key])}
+            aria-label={t(label)}
+            className={iconChipCls(quick[key])}
+            title={t(label)}
             onClick={() => controller()?._toggleKanbanQuickFilter?.(key)}
           >
-            {t(label)}
+            <Icon className={CHIP_ICON} aria-hidden="true" />
+            <span className="sr-only">{t(label)}</span>
           </button>
         )) : null}
         <span id="dev-kanban-active-chips" className="contents">

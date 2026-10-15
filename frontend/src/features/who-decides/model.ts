@@ -125,31 +125,30 @@ export function presetOf(value: RulesValue | null): PresetKey | null {
 // ── Words ────────────────────────────────────────────────────────────────
 
 /** Each preset's messages, by id (frontend/locales/en/dialogs.json). */
-const PRESET_IDS: Record<PresetKey, { name: string; line: string; you: string; other: string }> = {
+const PRESET_IDS: Record<PresetKey, { name: string; line: string }> = {
   you_or_the_group: {
     name: 'dialogs:whoDecides.preset.you_or_the_group.name',
     line: 'dialogs:whoDecides.preset.you_or_the_group.line',
-    you: 'dialogs:whoDecides.plays.you_or_the_group.you',
-    other: 'dialogs:whoDecides.plays.you_or_the_group.other',
   },
   two_yeses: {
     name: 'dialogs:whoDecides.preset.two_yeses.name',
     line: 'dialogs:whoDecides.preset.two_yeses.line',
-    you: 'dialogs:whoDecides.plays.two_yeses.you',
-    other: 'dialogs:whoDecides.plays.two_yeses.other',
   },
   open_floor: {
     name: 'dialogs:whoDecides.preset.open_floor.name',
     line: 'dialogs:whoDecides.preset.open_floor.line',
-    you: 'dialogs:whoDecides.plays.open_floor.you',
-    other: 'dialogs:whoDecides.plays.open_floor.other',
   },
   group_vote: {
     name: 'dialogs:whoDecides.preset.group_vote.name',
     line: 'dialogs:whoDecides.preset.group_vote.line',
-    you: 'dialogs:whoDecides.plays.group_vote.you',
-    other: 'dialogs:whoDecides.plays.group_vote.other',
   },
+};
+
+/** The one "Anyone makes a change" line of each preset that treats every change alike. */
+const PLAYS_ANYONE_IDS: Record<Exclude<PresetKey, 'you_or_the_group'>, string> = {
+  two_yeses: 'dialogs:whoDecides.plays.two_yeses.anyone',
+  open_floor: 'dialogs:whoDecides.plays.open_floor.anyone',
+  group_vote: 'dialogs:whoDecides.plays.group_vote.anyone',
 };
 
 /** "You or the group" to its creator; "evan or the group" to everyone else. */
@@ -218,25 +217,36 @@ export function ruleToday(rule: Rule, ctx: { groups: readonly Group[]; creator: 
   return translate('dialogs:whoDecides.rule.today.atLeast', { count: need });
 }
 
-/** The sentence "How it plays out" says for one preset, for the person reading and for someone else. */
-export function playsOut(key: PresetKey | null, viewer: { isCreator: boolean; creator: string | null; other: string }): { you: string; other: string } {
-  const values = { creator: viewer.creator || translate('dialogs:whoDecides.group.creator'), name: viewer.other };
-  if (!key) {
-    return {
-      you: translate('dialogs:whoDecides.plays.own.you'),
-      other: translate('dialogs:whoDecides.plays.own.other', values),
-    };
-  }
+/**
+ * What "How it plays out" says: one line for `anyone`, or one for the person
+ * reading (`you`) and one for anyone else (`other`).
+ */
+export type PlaysOutLines = { anyone: string } | { you: string; other: string };
+
+/**
+ * What "How it plays out" says for one preset, or for a project's own rules
+ * (`key` null) (#4894). Only You or the group treats a change by its creator
+ * differently from anyone else's, so it says both, from the reader's side:
+ * the reader's own change, then anyone else's. Two yeses, Open floor and
+ * Group vote treat every change alike, and a project's own rules say in one
+ * line how any change goes live, so each says it once, for anyone.
+ */
+export function playsOut(key: PresetKey | null, viewer: { isCreator: boolean; creator: string | null }): PlaysOutLines {
+  if (!key) return { anyone: translate('dialogs:whoDecides.plays.own.anyone') };
+  const values = { creator: viewer.creator || translate('dialogs:whoDecides.group.creator') };
   if (key === 'you_or_the_group' && !viewer.isCreator) {
     return {
       you: translate('dialogs:whoDecides.plays.you_or_the_group.youOther', values),
       other: translate('dialogs:whoDecides.plays.you_or_the_group.otherOther', values),
     };
   }
-  return {
-    you: translate(PRESET_IDS[key].you, values),
-    other: translate(PRESET_IDS[key].other, values),
-  };
+  if (key === 'you_or_the_group') {
+    return {
+      you: translate('dialogs:whoDecides.plays.you_or_the_group.you'),
+      other: translate('dialogs:whoDecides.plays.you_or_the_group.other'),
+    };
+  }
+  return { anyone: translate(PLAYS_ANYONE_IDS[key]) };
 }
 
 /** Problems with a value that the server would refuse, in words, or null. */

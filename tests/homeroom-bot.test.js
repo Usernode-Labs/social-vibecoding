@@ -1395,7 +1395,7 @@ test('the everyone moment: what the bot never read live before it went on for ev
   assert.match(SRC, /function everyoneSinceOf\(settings\) \{\n  return settings\?\.everyoneSince \|\| null;\n\}/);
 });
 
-test('a new first version on a live app gets its card when it is queued, under the key its read starts from; any other request is followed in the tray', async () => {
+test('a new request on a live app gets its card when it is queued, under the key its read starts from, whatever it is', async () => {
   const started = [];
   const pool = {
     async query(sql, params) {
@@ -1427,11 +1427,13 @@ test('a new first version on a live app gets its card when it is queued, under t
   };
   const app = { id: 9, slug: 'todo', name: 'Todo', repo_url: 'https://github.com/usernode-bot/todo' };
   const capRoom = { proposals_per_app: 5, proposals_total: 50, question_tripwire: 10 };
-  // A request filed on the board, not in the DM: no card; the tray follows it.
+  // One story: a request filed on the board gets its card too.
   let firstVersion = null;
   await bot.refreshApp(pool, app, { github, capRoom, bot: { id: 77 }, settings: { mode: 'shadow' }, dm });
-  assert.equal(started.length, 0);
-  // A project's first version always has one.
+  assert.equal(started.length, 1);
+  assert.equal(started[0].idempotencyKey, 'hrbot-activity-401');
+  started.length = 0;
+  // So does a project's first version.
   firstVersion = 1;
   await bot.refreshApp(pool, app, { github, capRoom, bot: { id: 77 }, settings: { mode: 'shadow' }, dm });
   assert.equal(started.length, 1);
@@ -1561,7 +1563,9 @@ test('capRoomFor counts the same two things the live check does', async () => {
   assert.equal((refresh.match(/deps\.bot && live\.isLiveFor\(settings, app\)/g) || []).length, 2,
     'both the timed refresh and a wake ask for room, and only on a live app');
   assert.match(SRC, /refreshQueue\(pool, settings, \{ \.\.\.deps, bot \}\)/);
-  assert.match(SRC, /refreshApps\(pool, settings, targeted, \{ \.\.\.deps, bot \}\)/);
+  // A wake's refresh, the woken first versions' ahead of the rest (15 Oct 2026).
+  assert.match(SRC, /refreshApps\(pool, settings, firstReads, \{ \.\.\.deps, bot \}\)/);
+  assert.match(SRC, /refreshApps\(pool, settings, rest, \{ \.\.\.deps, bot \}\)/);
 });
 
 test('refreshApp treats a degraded GitHub read as "no answer", not "no issues"', async () => {
@@ -1604,11 +1608,17 @@ test('the bot session is not work on any issue: is_headless FALSE, empty linked_
   const issues = read('src/routes/issues.js');
   assert.equal((issues.match(/AND u\.is_synthetic IS NOT TRUE/g) || []).length, 2,
     'headless and in_progress derivations both skip synthetic authors');
-  const sessions = read('src/routes/sessions.js');
+  // The global cap's one count leaves synthetic sessions out, and every
+  // route that starts a session passes the gate that asks it (#2779; the
+  // native proposal start once had a copy without the clause, 12 Oct 2026).
   const capClause = "AND user_id NOT IN (SELECT id FROM users WHERE is_synthetic = TRUE)";
-  // Four: the fork's count went with the fork (#2779).
-  assert.equal((sessions.match(new RegExp(capClause.replace(/[()]/g, '\\$&'), 'g')) || []).length, 4,
-    'every global-cap count leaves synthetic sessions out');
+  // None: the bot's proposals hold preview pods like anyone's, and the cap is
+  // sized from the cluster's pod slots, so every count includes them.
+  assert.ok(!require('../src/services/session-caps').GLOBAL_SESSIONS_SQL.includes(capClause),
+    'the global-cap count includes synthetic sessions');
+  assert.ok(!read('src/services/session-lifecycle.js').includes(capClause));
+  assert.equal((read('src/routes/sessions.js').match(/sessionLifecycle\.claimGlobalSlot\(/g) || []).length, 4);
+  assert.match(read('src/routes/proposal-handoff.js'), /sessionLifecycle\.claimGlobalSlot\(/);
 });
 
 test('the loop is leader-only, locked, ships off, and its spend joins the shared weekly pool', () => {
@@ -1811,8 +1821,10 @@ test('runTriage: the request comes first; the platform reference follows, small,
   // #4488 added the four tests for a `complicated` change (about 860
   // characters), which the work order asked to be in this prompt. `done`
   // (about 120 more) lets a request that is already there be offered for
-  // closing instead of left at "a person decides".
-  assert.ok(prompt.length < 21200, `a triage prompt stays small: ${prompt.length} chars`);
+  // closing instead of left at "a person decides". Newcomer run six (14 Oct
+  // 2026): the UI design guidance's line on forms on a phone (about 335
+  // characters), which every build reads, rides in the reference too.
+  assert.ok(prompt.length < 21500, `a triage prompt stays small: ${prompt.length} chars`);
   // The last thing the model reads is the one format parseVerdict accepts.
   assert.match(prompt, /END YOUR REPLY WITH EXACTLY ONE fenced JSON block in this format, and nothing after it:\n\{"verdict": "question" \| "empty" \| "ready" \| "person", "determined": true \| false, "missing_fact": "\.\.\.", "question": "\.\.\.", "default": "\.\.\.", "build_note": "\.\.\.", "reason": "\.\.\."\}$/);
 });
@@ -1952,6 +1964,67 @@ test('runTriage: a reply still without its block after the one ask fails as it a
   assert.ok(Math.abs(insert.params[14] - 0.025) < 1e-9, 'and it costs both turns');
   assert.ok(h.calls.queries.some((q) => /homeroom_bot_run_snapshots/.test(q.s)), 'still a benchmark case: a better model writes its block');
   assert.ok(h.calls.queries.some((q) => /DELETE FROM homeroom_bot_queue/.test(q.s)), 'a model failure consumes the row');
+});
+
+test('runTriage: an unreadable reply is kept on its run, with the reply to the ask, while its error stays one short line', async () => {
+  const long = `${'Reading the request. '.repeat(1500)}Verdict below.`;
+  const h = repairHarness(955, [{ ...WORDS_ONLY, lastResultText: long }, { lastResultText: 'It is fine to build.', agentThreadId: 'thr-1' }]);
+  const out = await bot.runTriage(h.pool, {}, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps: h.deps });
+  assert.equal(out.verdict, 'failed');
+  const insert = h.calls.queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
+  assert.ok(insert.params[18].length <= 320, 'the error is one short line');
+  const kept = h.calls.queries.find((q) => /SET unreadable_reply = \$2/.test(q.s));
+  assert.ok(kept, 'the reply is stored beside the row');
+  assert.equal(kept.params[0], 900);
+  const stored = JSON.parse(kept.params[1]);
+  assert.equal(stored.reply.chars, long.length);
+  assert.ok(stored.reply.text.startsWith('Reading the request. '), 'its start');
+  assert.ok(stored.reply.text.endsWith('Verdict below.'), 'and its end');
+  assert.match(stored.reply.text, /\[… \d+ characters left out …\]/);
+  assert.deepEqual(stored.repair, { text: 'It is fine to build.', chars: 20 }, 'and what the ask got back');
+});
+
+test('keptReply keeps a short reply whole and a long one as its first 4 KB and last 12 KB', () => {
+  assert.equal(bot.keptReply(''), null);
+  assert.equal(bot.keptReply('  \n'), null);
+  assert.deepEqual(bot.keptReply('No block.'), { text: 'No block.', chars: 9 });
+  const text = `${'a'.repeat(4096)}${'m'.repeat(5000)}${'z'.repeat(12 * 1024)}`;
+  const kept = bot.keptReply(text);
+  assert.equal(kept.chars, text.length);
+  assert.equal(kept.text, `${'a'.repeat(4096)}\n\n[… 5000 characters left out …]\n\n${'z'.repeat(12 * 1024)}`);
+  assert.equal(bot.unreadableReplyOf('', null), null, 'nothing to keep, nothing stored');
+  assert.deepEqual(bot.unreadableReplyOf('x', null), { reply: { text: 'x', chars: 1 }, repair: null });
+});
+
+test('seedStagingUnreadableReply: staging only, once, a fake failed run with its kept reply', async () => {
+  const queries = [];
+  let have = false;
+  const pool = { query: async (sql, params) => {
+    queries.push({ sql, params });
+    if (/SELECT 1 FROM homeroom_bot_runs WHERE issue_number/.test(sql)) return { rows: have ? [{}] : [] };
+    if (/FROM apps WHERE status = 'running'/.test(sql)) return { rows: [{ id: 7 }] };
+    if (/INSERT INTO homeroom_bot_runs/.test(sql)) return { rows: [{ id: 41 }] };
+    return { rows: [] };
+  } };
+  const env = process.env.USERNODE_ENV;
+  try {
+    delete process.env.USERNODE_ENV;
+    assert.equal(await bot.seedStagingUnreadableReply(pool), false);
+    assert.equal(queries.length, 0, 'nothing outside staging');
+    process.env.USERNODE_ENV = 'staging';
+    assert.equal(await bot.seedStagingUnreadableReply(pool), true);
+    const insert = queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.sql));
+    assert.match(insert.params[2], /^unparseable: /);
+    const kept = JSON.parse(queries.find((q) => /SET unreadable_reply/.test(q.sql)).params[1]);
+    assert.match(kept.reply.text, /^Staging demo:/);
+    assert.match(kept.repair.text, /^Staging demo:/);
+    have = true;
+    queries.length = 0;
+    assert.equal(await bot.seedStagingUnreadableReply(pool), false, 'seeded once');
+    assert.ok(!queries.some((q) => /INSERT/.test(q.sql)));
+  } finally {
+    if (env === undefined) delete process.env.USERNODE_ENV; else process.env.USERNODE_ENV = env;
+  }
 });
 
 test('runTriage: a thread the runtime will not resume is never asked on a fresh one', async () => {

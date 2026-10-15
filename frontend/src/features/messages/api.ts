@@ -260,6 +260,17 @@ export function normalizeBotMeta(input: unknown): { homeroomBot: HomeroomBotMeta
       // B6: a card Build it moved under its plan.
       ...(strictId(pick(bot, 'movedTo')) ? { movedTo: strictId(pick(bot, 'movedTo'))! } : {}),
       ...(goesLive ? { goesLive } : {}),
+      // Why its buttons were closed, said in their place.
+      ...(text(pick(bot, 'closedWhy')) ? { closedWhy: text(pick(bot, 'closedWhy')).slice(0, 120) } : {}),
+      // One request, one story: the thread it is in, the moment it rings
+      // as, and the names its label and its push use.
+      ...(strictId(pick(bot, 'threadRootId')) ? { threadRootId: strictId(pick(bot, 'threadRootId'))! } : {}),
+      moment: optional('moment'),
+      said: optional('said'),
+      requestTitle: optional('requestTitle'),
+      waiting: optional('waiting'),
+      ...(countOf(pick(bot, 'count')) !== null ? { count: countOf(pick(bot, 'count'))! } : {}),
+      ...(pick(bot, 'alsoInChat') === true ? { alsoInChat: true } : {}),
     },
   };
 }
@@ -327,6 +338,9 @@ function normalizeObject(input: unknown): SharedObjectCard {
     state: text(pick(row, 'state', 'status')) || null,
     author: text(pick(row, 'author', 'username')) || null,
     href: text(pick(row, 'href', 'url', 'webPath', 'web_path')) || null,
+    // An app's or a community's own icon (services/shared-objects.js appIcon).
+    iconUrl: appIconUrl(pick(row, 'iconUrl')),
+    iconEmoji: text(pick(row, 'iconEmoji')) || null,
   };
 }
 
@@ -822,6 +836,28 @@ export async function decideBotAction(actionId: number, choice: string, answers?
   return { label: text(pick(data, 'label')) || null };
 }
 
+/**
+ * Run six: whether the signed-in person is told when their first version of
+ * `slug` is ready and live (on from Make it), and turning it on or off.
+ * Null when it is not their first version.
+ */
+export async function getFirstVersionNotify(slug: string): Promise<boolean | null> {
+  try {
+    const data = record(await request<unknown>(`/api/conversations/homeroom-bot/first-versions/${encodeURIComponent(slug)}/notify`));
+    return bool(pick(data, 'on'), true);
+  } catch (err) {
+    if (err instanceof MessagesApiError && err.status === 404) return null;
+    throw err;
+  }
+}
+
+export async function setFirstVersionNotify(slug: string, on: boolean): Promise<boolean> {
+  const data = record(await request<unknown>(`/api/conversations/homeroom-bot/first-versions/${encodeURIComponent(slug)}/notify`, {
+    method: 'PUT', body: JSON.stringify({ on }),
+  }));
+  return bool(pick(data, 'on'), on);
+}
+
 /** B8: the signed-in person's chat with Homeroom bot, made the first time. */
 export async function openBotConversation(): Promise<number | null> {
   const data = record(await request<unknown>('/api/conversations/homeroom-bot', { method: 'POST', body: '{}' }));
@@ -901,6 +937,50 @@ function normalizeBotJob(row: JsonRecord): HomeroomBotJob {
         at: text(pick(run, 'at')) || null,
       };
     }).filter((run) => run.id),
+    ...threadFieldsOf(row),
+  };
+}
+
+const ASK_KINDS = new Set([
+  'question', 'followup_ask', 'plan', 'person', 'blocked', 'empty', 'build_failed', 'checks', 'needs_look', 'first_version_failed',
+]);
+const JOB_STOP_CAUSES = new Set(['time', 'restart', 'restarts', 'no_change', 'unproposed', 'no_start', 'other']);
+
+/**
+ * One request, one story: where a tray entry's request is in the chat with
+ * the bot (services/homeroom-bot-tray.js threadsOf), field by field: its
+ * card (`cardId`), its newest message waiting on the person (`ask`, a known
+ * kind only) and its newest ready card (`ready`).
+ */
+function threadFieldsOf(row: JsonRecord): Pick<HomeroomBotJob, 'cardId' | 'ask' | 'ready' | 'stopCause'> {
+  const cardId = strictId(pick(row, 'cardId'));
+  const askRow = pick(row, 'ask');
+  const ask = askRow && typeof askRow === 'object' ? record(askRow) : null;
+  const askKind = ask ? text(pick(ask, 'kind')) : '';
+  const readyRow = pick(row, 'ready');
+  const ready = readyRow && typeof readyRow === 'object' ? record(readyRow) : null;
+  const stopCause = text(pick(row, 'stopCause'));
+  return {
+    ...(cardId ? { cardId } : {}),
+    ...(ask && ASK_KINDS.has(askKind) ? {
+      ask: {
+        messageId: strictId(pick(ask, 'messageId')),
+        kind: askKind,
+        ...(text(pick(ask, 'said')) ? { said: text(pick(ask, 'said')).slice(0, 40) } : {}),
+        ...(text(pick(ask, 'question')) ? { question: text(pick(ask, 'question')).slice(0, 300) } : {}),
+      },
+    } : {}),
+    ...(ready ? {
+      ready: {
+        messageId: strictId(pick(ready, 'messageId')),
+        sessionId: strictId(pick(ready, 'sessionId')),
+        epoch: Number.isInteger(pick(ready, 'epoch')) ? Number(pick(ready, 'epoch')) : 0,
+        open: pick(ready, 'open') === true,
+        approve: pick(ready, 'approve') === true,
+        waiting: text(pick(ready, 'waiting')).slice(0, 120) || null,
+      },
+    } : {}),
+    ...(JOB_STOP_CAUSES.has(stopCause) ? { stopCause: stopCause as HomeroomBotJob['stopCause'] } : {}),
   };
 }
 
@@ -936,6 +1016,7 @@ export function normalizeBotWork(input: unknown): HomeroomBotWork {
       ...normalizeBotJob(row),
       ...(release ? { release } : {}),
       phase: BOT_PHASES.has(phase) ? phase : 'looking',
+      ...(/^[a-z_]{1,40}$/.test(text(pick(row, 'stage'))) ? { stage: text(pick(row, 'stage')) } : {}),
       step: whole ? step : null,
       of: whole ? of : null,
       stepName: whole ? text(pick(row, 'stepName')) || null : null,
@@ -965,6 +1046,9 @@ export async function getHomeroomBotWork(options?: ReadOptions): Promise<Homeroo
  * "N of M"; an unknown state or outcome reads as a piece of work that
  * stopped, never as one still going.
  */
+const STOP_CAUSES = new Set(['time', 'restart', 'restarts', 'no_change', 'unproposed', 'no_start', 'other']);
+const HELD_BY = new Set(['proposals_per_app', 'proposals_total', 'questions_per_day']);
+
 export function normalizeBotActivity(input: unknown): HomeroomBotActivity[] {
   return array(pick(record(input), 'cards')).map((entry): HomeroomBotActivity | null => {
     const row = record(entry);
@@ -999,6 +1083,15 @@ export function normalizeBotActivity(input: unknown): HomeroomBotActivity[] {
       endedAt: working ? null : text(pick(row, 'endedAt')) || null,
       // Whole minutes, the shorter first, and under two hours.
       ...(working && from && to && from <= to && to <= 120 ? { typicalMinutes: { from, to } } : {}),
+      // Who the work waits on while it waits (`them`: the viewer), so the card can say it needs them.
+      ...(working && text(pick(row, 'waitingOn')) ? { waitingOn: text(pick(row, 'waitingOn')).slice(0, 40) } : {}),
+      // The stage it is at while it works (`on_hold`: until Monday), a short word.
+      ...(working && /^[a-z_]{1,40}$/.test(text(pick(row, 'stage'))) ? { stage: text(pick(row, 'stage')) } : {}),
+      // Why a build stopped, and which limit holds a request back: known words only.
+      ...(!working && outcome === 'build_failed' && STOP_CAUSES.has(text(pick(row, 'stopCause')))
+        ? { stopCause: text(pick(row, 'stopCause')) as HomeroomBotActivity['stopCause'] } : {}),
+      ...(!working && outcome === 'held' && HELD_BY.has(text(pick(row, 'heldBy')))
+        ? { heldBy: text(pick(row, 'heldBy')) as HomeroomBotActivity['heldBy'] } : {}),
       ...(release ? { release } : {}),
     };
   }).filter((card): card is HomeroomBotActivity => !!card);

@@ -82,8 +82,9 @@ test('it steps before the browser paints, while the foot ends below the foot of 
   // toolbar coming and going does not.
   assert.match(SOURCE, /const TOOLBAR_SLACK = 120;/);
   assert.match(SOURCE, /if \(window\.innerWidth === f\.width && Math\.abs\(window\.innerHeight - f\.height\) < TOOLBAR_SLACK\) return;\s+fitting\.current = null;\s+setFit\(0\);/);
-  // The two examples left are the first two: the tier list and the game.
-  assert.match(SOURCE, /TEMPLATES\.slice\(0, s\.count\)\.map/);
+  // The two examples left are the first two of the front three: the tier
+  // list and the game.
+  assert.match(SOURCE, /FRONT\.slice\(0, s\.count\)\.map/);
 });
 
 // Evan, 10 Oct 2026, iPhone 13 mini in Safari, through #4691 and #4695: the
@@ -114,9 +115,11 @@ test('a "You\'re in" link\'s address is greeted under the welcome', () => {
   const html = renderComponent(STORY, 'Story', { primaryClass: 'pill', welcomeEmail: 'ada@example.com', onStart() {}, onSignIn() {} });
   assert.match(html, />Welcome to Homeroom<\/div><div data-landing-story-email="" class="[^"]*">ada@example\.com<\/div>/);
   assert.match(SOURCE, /if \(fittedFor\.current !== welcomeEmail\) \{\s+fittedFor\.current = welcomeEmail;\s+fitting\.current = null;\s+if \(fit !== 0\) \{ setFit\(0\); return; \}\s+\}/);
-  // The landing looks the address up from the link's token, as the sheet does.
+  // The landing looks the address up from the link's token, through the
+  // sign-in screen's own lookup, which also says whether the account is
+  // still new (tests/release-link-straight-flow.test.js).
   const landing = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/auth/landing.tsx'), 'utf8');
-  assert.match(landing, /const releaseToken = release\?\.route === 'signup' \? release\.token : null;/);
-  assert.match(landing, /void inviteEmailFromToken\(releaseToken\)\.then\(\(email\) => \{ if \(live\) setReleaseEmail\(email\); \}\);/);
+  assert.match(landing, /if \(!release \|\| release\.route !== 'signup' \|\| !release\.token\) return undefined;/);
+  assert.match(landing, /void Promise\.all\(\[releaseAccountFromToken\(token\), straightLink\(link\) \? waitlistOptions\(\) : null\]\)\.then\(async \(\[account, options\]\) => \{\s+if \(!live\) return;\s+setReleaseEmail\(account\?\.email \?\? null\);/);
   assert.match(landing, /<Story primaryClass=\{PRIMARY_PILL\} welcomeEmail=\{releaseEmail\}/);
 });

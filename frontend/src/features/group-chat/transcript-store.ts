@@ -143,6 +143,8 @@ export interface BotRequestState {
   more?: number;
   missing?: number;
   needed?: number;
+  /** A project's first version, which goes live without a vote (13 Oct 2026, D1). */
+  noVote?: boolean;
   /**
    * `approved`, on a merge of the platform's own app that is not live yet:
    * when the platform's next release carries it (services/release-watch.js),
@@ -460,6 +462,13 @@ export interface SpecShareView {
   built: string | null;
   prNumber: number | null;
   sessionId: number | null;
+  /**
+   * Homeroom bot's plan, in its sentence on a request's page: `building`
+   * ("I'm building it now.") or `waiting` (for `waitingFor` to say Build
+   * it). Absent on a person's share and on older rows.
+   */
+  botNote?: 'building' | 'waiting' | null;
+  waitingFor?: string | null;
   snippetHtml: string | null;
   snippetText: string | null;
 }
@@ -508,9 +517,11 @@ export interface TranscriptLead {
   /**
    * #4455: a change's page. `loaded` once its thread's history has answered;
    * `closed` is what the page says instead of a stream while nobody else can
-   * see the change (its thread is not read then).
+   * see the change (its thread is not read then). #5007: `issue` is the
+   * request the change was built for — the pointer above the replies opens
+   * its page, where the conversation about the change lives.
    */
-  change?: { loaded: boolean; closed: string | null } | null;
+  change?: { loaded: boolean; closed: string | null; issue?: { n: number; href: string } | null } | null;
   /**
    * The general chat only: where the reader's reading stood when the
    * channel opened (`GroupChat._takeUnreadMark`), the newest message read

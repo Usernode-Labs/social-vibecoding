@@ -39,10 +39,10 @@ const OWNED_SOURCE_SQL = "source IS DISTINCT FROM 'imported'";
 // still proving ancestry/updating GitHub. Serialize that adoption per session
 // so an older request can never persist its SHA after the newer request and
 // regress the durable reviewed head. This matches staging.js's process model;
-// deployments run one platform process, while different sessions still move
-// independently.
+// different sessions still move independently. A pipeline is also this
+// process's hold (services/processes.js), so another platform process sees it.
 const handoffSubmissionTails = new Map();
-const handoffPipelines = new Set();
+const handoffPipelines = require('./processes').heldSet('handoff');
 
 function serializeHandoffSubmission(sessionId, fn) {
   const key = String(sessionId);
@@ -57,7 +57,8 @@ function serializeHandoffSubmission(sessionId, fn) {
 }
 
 function hasInFlightHandoffPipeline(sessionId) {
-  return handoffPipelines.has(String(sessionId));
+  if (handoffPipelines.has(String(sessionId))) return true;
+  try { return require('./processes').heldElsewhere('handoff', String(sessionId)); } catch { return false; }
 }
 
 function beginHandoffPipeline(sessionId) {
@@ -76,7 +77,12 @@ function beginHandoffPipeline(sessionId) {
 function startHandoffPipeline(
   config, pool, session, app, headSha, releasePipeline, trigger = 'commit-push'
 ) {
-  const run = runStaging(config, pool, session, app, headSha, trigger);
+  // With WF_PREVIEWS_ENABLED on the preview machine builds and checks the
+  // submitted upload; its pin (handoff_head_sha) refuses a stale one.
+  const workflow = require('./preview-workflow');
+  const run = workflow.enabled()
+    ? workflow.revision({ pool, session, head: headSha, source: 'cli', trigger })
+    : runStaging(config, pool, session, app, headSha, trigger);
   run.catch((err) => {
     log.error('handoff-pipeline', 'Unexpected handoff run rejection', {
       sessionId: session.id, err: err.message,

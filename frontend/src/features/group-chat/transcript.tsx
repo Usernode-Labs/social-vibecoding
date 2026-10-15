@@ -1041,6 +1041,11 @@ const GitHubRow = memo(function GitHubRow({ msg }: { msg: TranscriptMessage }) {
   );
 });
 
+/** Whether a shared plan is Homeroom bot's, which a request's page words in its own sentence. */
+function isBotPlan(spec: { sharedBy: string; sharedByUnknown?: boolean; botNote?: string | null }): boolean {
+  return !!spec.botNote || (!spec.sharedByUnknown && /^homeroom_bot$/i.test(spec.sharedBy));
+}
+
 /**
  * #4453: something that happened on a request — a claim, a spec posted, a
  * notice — as one quiet line with a glyph, where the stream reached it.
@@ -1056,7 +1061,18 @@ const RequestEvent = memo(function RequestEvent({ msg, onRead }: { msg: Transcri
   let glyph = '•';
   let text: ReactNode = msg.systemText;
   // Each line is one whole message, with <0> around who did it.
-  if (spec) {
+  if (spec && isBotPlan(spec)) {
+    // Homeroom bot's plan says where it stands, in its own sentence:
+    // "Plan v1: Dark mode. I'm building it now." (homeroom-bot-live.js specCard).
+    glyph = '📋';
+    const values = { version: spec.version, title: spec.title };
+    text = spec.botNote === 'building' ? t('project:topic.request.stream.botPlanBuilding', values)
+      : spec.botNote === 'waiting'
+        ? (spec.waitingFor
+          ? t('project:topic.request.stream.botPlanWaiting', { ...values, requester: spec.waitingFor })
+          : t('project:topic.request.stream.botPlanWaitingUnnamed', values))
+        : t('project:topic.request.stream.botPlan', values);
+  } else if (spec) {
     glyph = '📋';
     text = spec.sharedByUnknown
       ? <RichMessage id="project:topic.request.stream.postedSpecVersionUnnamed" values={{ version: spec.version }} components={[<b />]} />
@@ -1199,6 +1215,10 @@ const ChangeEvent = memo(function ChangeEvent({ msg }: { msg: TranscriptMessage 
         {line.tryIt && sessionId ? (
           <>{' · '}<button type="button" className="dev-request-event-link" onClick={() => (window as any).AppView?._tryChangePreview?.(sessionId)}>{t('project:topic.change.stream.tryIt')}</button></>
         ) : null}
+        {/* A plan's line opens the version it posted, as the request page's does. */}
+        {line.kind === 'spec' && msg.specShare?.sessionId ? (
+          <>{' · '}<button type="button" className="dev-request-event-link" onClick={() => controller()?.openSharedSpec?.(msg.specShare?.sessionId, msg.specShare?.version, msg.specShare?.previewTitle)}>{t('project:topic.request.stream.read')}</button></>
+        ) : null}
         {msg.time ? <span className="dev-request-event-time" title={msg.timeTitle}>{` · ${msg.time}`}</span> : null}
       </span>
     </div>
@@ -1213,16 +1233,51 @@ const ChangeEvent = memo(function ChangeEvent({ msg }: { msg: TranscriptMessage 
  * one line. While nobody else can see the change, the stream is the one
  * line that says so (`lead.change.closed`).
  */
+/**
+ * #5007: the line that says where a change built for a request carries its
+ * conversation: on the request, whose number is a link that opens it, the
+ * same way the head's Built for chip does. Drawn in place of the "No
+ * replies yet" row while the change has none of its own, and above the "N
+ * replies" row once it has some.
+ */
+function IssuePointer({ issue, id }: { issue: { n: number; href: string }; id: string }) {
+  return (
+    <RichMessage
+      id={id}
+      values={{ number: issue.n }}
+      components={[<a
+        key="link"
+        href={issue.href}
+        className="dev-change-issue-link"
+        data-issue-ref={issue.n}
+        onClick={(event) => {
+          if (!issue.href.startsWith('#') && !issue.href.startsWith('/app/')) return;
+          if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+          event.preventDefault();
+          (window as any).AppView?.openTopic?.('issue', issue.n);
+        }}
+      />]}
+    />
+  );
+}
+
 export function ChangeRows({ view }: { view: TranscriptView }) {
   const rows = useMemo(() => changeStream(foldRepeats(view.messages)), [view.messages]);
   const count = changeReplyCount(rows);
   const lead = view.lead.change;
   const loaded = !!lead?.loaded;
+  const issue = lead?.issue || null;
   const t = useMessages('project');
   if (lead?.closed) {
     return (
       <>
-        <div className="messages-reply-count" data-change-replies="0"><span>{t('project:topic.change.stream.noReplies')}</span></div>
+        {issue ? (
+          <div className="messages-reply-count dev-change-issue-pointer" data-change-issue={issue.n}>
+            <span><IssuePointer issue={issue} id="project:topic.change.stream.conversationOn" /></span>
+          </div>
+        ) : (
+          <div className="messages-reply-count" data-change-replies="0"><span>{t('project:topic.change.stream.noReplies')}</span></div>
+        )}
         <p className="dev-change-closed-note">{lead.closed}</p>
       </>
     );
@@ -1246,9 +1301,24 @@ export function ChangeRows({ view }: { view: TranscriptView }) {
   });
   return (
     <>
-      <div className="messages-reply-count" data-change-replies={count}>
-        <span>{count ? t('project:topic.change.stream.replies', { count }) : loaded ? t('project:topic.change.stream.noReplies') : t('project:topic.change.stream.loading')}</span>
-      </div>
+      {issue && count ? (
+        <p className="dev-change-issue-pointer" data-change-issue={issue.n}>
+          <span><IssuePointer issue={issue} id="project:topic.change.stream.moreConversationOn" /></span>
+        </p>
+      ) : null}
+      {count || !loaded || !issue ? (
+        <div className="messages-reply-count" data-change-replies={count}>
+          <span>{count
+            ? t('project:topic.change.stream.replies', { count })
+            : loaded
+              ? t('project:topic.change.stream.noReplies')
+              : t('project:topic.change.stream.loading')}</span>
+        </div>
+      ) : (
+        <div className="messages-reply-count dev-change-issue-pointer" data-change-issue={issue.n}>
+          <span><IssuePointer issue={issue} id="project:topic.change.stream.conversationOn" /></span>
+        </div>
+      )}
       {view.lead.earlier ? (
         <div className="text-center py-1">
           <button type="button" id="gc-thread-earlier" className="messages-load-older" onClick={() => controller()?.loadThreadHistoryForOpen?.()}>

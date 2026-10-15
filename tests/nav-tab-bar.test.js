@@ -1057,17 +1057,64 @@ test('five recent apps, newest first, once each; the app on screen leads before 
   assert.deepEqual(stripApps([]), []);
 });
 
+// #4935: the strip leads with the top row of My apps, in the order Home
+// publishes it, and the recents fill what is left. A pinned app is never
+// listed a second time; the recents keep at least one slot.
+test('#4935: the pinned part leads in Home\'s order, once each, and leaves the recents a slot', () => {
+  const { stripApps } = loadTsx(STRIP);
+  const src = read(STRIP);
+  assert.match(src, /data-strip-pinned/,
+    'the pinned part marks its edge for the hairline in app.css');
+  assert.match(css,
+    /\.platform-strip-app\[data-strip-pinned\] \+ \.platform-strip-app:not\(\[data-strip-pinned\]\)::before/,
+    'the hairline between the two groups is drawn on that edge');
+
+  const recents = [
+    stripApp('notes', '2026-09-20T10:00:00Z'), stripApp('chess', '2026-09-20T12:00:00Z'),
+    stripApp('run', '2026-09-20T11:00:00Z'), stripApp('plant', '2026-09-19T10:00:00Z'),
+    stripApp('trade', '2026-09-18T10:00:00Z'),
+  ];
+  const pins = [stripApp('pin-a', null), stripApp('pin-b', null)];
+
+  // Pinned first, in Home's order, flagged, and the current app follows
+  // when it is not itself pinned.
+  const withPins = stripApps(recents, stripApp('fresh', null), [], 5, pins);
+  assert.deepEqual(withPins.map((a) => a.slug), ['pin-a', 'pin-b', 'fresh', 'chess', 'run']);
+  assert.deepEqual(withPins.filter((a) => a.pinned === true).map((a) => a.slug), ['pin-a', 'pin-b']);
+
+  // Never more than limit - 1 pins: the recents keep a slot.
+  const crowded = stripApps(recents, null, [], 5, [
+    stripApp('p1', null), stripApp('p2', null), stripApp('p3', null),
+    stripApp('p4', null), stripApp('p5', null),
+  ]);
+  assert.deepEqual(crowded.map((a) => a.slug), ['p1', 'p2', 'p3', 'p4', 'chess'],
+    'four pins and the newest recent');
+  assert.deepEqual(crowded.filter((a) => a.pinned === true).map((a) => a.slug),
+    ['p1', 'p2', 'p3', 'p4']);
+
+  // A pinned slug is never repeated by the current app, a live frame or
+  // the recents: the one on screen stays in its pinned slot.
+  const pinnedChess = stripApps(recents, stripApp('chess', null), ['chess', 'run'], 5,
+    [stripApp('chess', null), stripApp('pin-a', null)]);
+  assert.deepEqual(pinnedChess.map((a) => a.slug), ['chess', 'pin-a', 'run', 'notes', 'plant']);
+  assert.equal(pinnedChess[0].pinned === true, true, 'the on-screen app keeps its pinned slot');
+  assert.equal(pinnedChess.filter((a) => a.slug === 'chess').length, 1);
+
+  // No pins: exactly the recent-apps behaviour pinned above.
+  assert.deepEqual(stripApps(recents).map((a) => a.slug), ['chess', 'run', 'notes', 'plant', 'trade']);
+});
+
 test('the still-open dot only on the apps kept alive, said aloud; the app on screen lit', () => {
   const src = read(STRIP);
   assert.match(src, /const live = useLiveAppSlugs\(\);/, 'read off the frame store\'s kept frames');
   assert.match(src, /\{running \? <LiveAppDot className="platform-strip-live" \/> : null\}/);
   assert.match(src, /aria-label=\{running \? listText\(\[app\.name, liveAppLabel\(\)\]\) : undefined\}/);
   assert.equal(message('core:liveApp.stillOpen'), 'still open');
-  assert.equal(message('core:stripApps.label'), 'Recent apps');
+  assert.equal(message('core:stripApps.label'), 'My apps and recent apps');
   assert.match(src, /aria-current=\{lit \? 'page' : undefined\}/);
   // Nothing before mount: the prerender ships the root empty and hidden.
   const html = renderComponent(STRIP, 'StripApps', {});
-  assert.equal(html, '<div id="platform-strip-apps" class="platform-strip-apps hidden" role="group" aria-label="Recent apps"></div>');
+  assert.equal(html, '<div id="platform-strip-apps" class="platform-strip-apps hidden" role="group" aria-label="My apps and recent apps"></div>');
   // A closed app shrinks into its tile, and a resumed one grows out of it.
   const motion = read('frontend/src/features/nav/resume-motion.ts');
   assert.match(motion, /doc\.querySelectorAll\('#platform-strip-apps a\.platform-strip-app\[data-strip-app\]'\)/);

@@ -525,11 +525,16 @@ export interface LoginCompletionFailure {
   code: 'session-rejected' | 'server-response' | 'network-error' | 'timeout' | 'invalid-response' | 'client-error';
 }
 
-export async function finishLogin(): Promise<LoginCompletionFailure | null> {
+/**
+ * `beforeShell` runs once the session is confirmed and the page stays on its
+ * build, just before the signed-in shell starts: the sign-in sheet's
+ * hand-off to the make screen (./sign-in-sheet.tsx), held until then.
+ */
+export async function finishLogin(beforeShell?: () => Promise<void>): Promise<LoginCompletionFailure | null> {
   const fn = legacy().AuthScreens?.finishLogin as undefined |
-    (() => Promise<LoginCompletionFailure | null>);
+    ((opts?: { beforeShell?: () => Promise<void> }) => Promise<LoginCompletionFailure | null>);
   if (!fn) return { stage: 'open-session', status: null, code: 'client-error' };
-  return fn();
+  return beforeShell ? fn({ beforeShell }) : fn();
 }
 
 /** What a password sign-in came to: in, or what to say and (in the app) the bridge's report. */
@@ -569,8 +574,10 @@ export async function passwordSignIn(username: string, password: string): Promis
  * `/?signup=1&t=<token>[&key=<one-time link>]` for a new account and `/?login=1` for one that
  * exists (src/services/mail/index.js); AuthScreens.enter() reads either off
  * the query, keeps it here and puts the address back to `/`, so the story
- * (./landing.tsx) opens with it: a new account's Get started takes it to
- * the sheet, and an existing account's Sign in sheet is open over it.
+ * (./landing.tsx) opens with it: a new account's link is spent as the page
+ * opens, once a read that spends nothing says the account is still new, and
+ * otherwise Get started takes it to the sheet; an existing account's Sign in
+ * sheet is open over it.
  */
 export interface ReleaseLink {
   route: 'signup' | 'login';
@@ -578,8 +585,10 @@ export interface ReleaseLink {
   token: string | null;
   /**
    * #4594: the mail's one-time sign-in link (src/services/release-links.js),
-   * spent by the sheet's POST to /api/auth/release-link. Null when the mail
-   * carried none; an expired or used one falls back to `token`'s code.
+   * spent by a POST to /api/auth/release-link: the landing's as the page
+   * opens for a new account, the sheet's on Get started otherwise. Null when
+   * the mail carried none; an expired or used one falls back to `token`'s
+   * code.
    */
   signIn?: string | null;
 }

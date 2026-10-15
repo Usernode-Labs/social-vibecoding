@@ -159,6 +159,44 @@ test('an invitation resolves metadata before deciding whether history may be fet
     'the committed global block/decline is followed immediately by local invitation purge');
 });
 
+// #5019: scrolling up near the top of a conversation reads the previous page
+// in, in place of the button that used to sit at its top. The button returns
+// only to retry a failed load.
+test('a conversation loads earlier messages on scroll, one page at a time', () => {
+  assert.match(screen, /import \{ centreInScroller, isNearTop, needsMoreHistory, useStickToBottom \} from '\.\/stick-to-bottom';/);
+  const thread = screen.slice(screen.indexOf('function ConversationThread('), screen.indexOf('function ThreadActivityRow('));
+  assert.ok(thread.length > 0);
+  assert.match(thread, /if \(!isNearTop\(el\)\) return;/,
+    'the scroll position decides, not a click');
+  assert.match(thread, /olderGate\.current = \{ conversationId, nextBefore: snap\.nextBefore, loadingOlder: snap\.loadingOlder, loadingThread: snap\.loadingThread, olderFailed \}/,
+    'the scroll listener reads the latest values through a ref, so it attaches once per scroller');
+  assert.match(thread, /if \(!gate\.nextBefore \|\| gate\.loadingOlder \|\| gate\.loadingThread \|\| gate\.olderFailed\) return;/,
+    'one page at a time, and nothing while loading or after a failure');
+  assert.match(thread, /el\.addEventListener\('scroll', onScroll, \{ passive: true \}\)/);
+  assert.match(thread, /return \(\) => el\.removeEventListener\('scroll', onScroll\)/,
+    'the listener is removed with the conversation');
+  assert.match(thread, /if \(!ok\) setOlderFailed\(true\)/,
+    'a failed load restores the button as the manual retry');
+  assert.match(thread, /useIsomorphicLayoutEffect\(\(\) => \{ setOlderFailed\(false\); \}, \[conversationId, snap\.nextBefore\]\)/,
+    'a new conversation, or a new cursor, clears the failure');
+  assert.match(thread, /if \(needsMoreHistory\(el\)\) maybeLoadOlder\(\)/,
+    'a short thread keeps reading pages in until the screen fills');
+  // The row where the button used to be: fixed height, the "Loading…" line
+  // while it works, the button only after a failure.
+  const olderRow = thread.slice(thread.indexOf('data-load-older=""') - 60);
+  assert.ok(olderRow.length > 0);
+  assert.match(olderRow, /className="flex h-12 items-center justify-center" data-load-older=""/);
+  assert.match(olderRow, /role="status"/);
+  assert.match(olderRow, /\{t\('messages:thread\.loadingOlder'\)\}/);
+  assert.match(olderRow, /\{t\('messages:thread\.loadEarlier'\)\}/);
+  // loadOlder says whether it read a page, and the scroll anchor follows it.
+  const loadOlder = store.slice(store.indexOf('export async function loadOlder('), store.indexOf('function validId('));
+  assert.match(loadOlder, /Promise<boolean>/);
+  assert.match(loadOlder, /return false;/, 'only the failed request says false');
+  assert.match(screen, /const ok = await loadOlder\(\);/);
+  assert.match(screen, /return ok;/);
+});
+
 test('message creation realtime carries ids and refetches viewer-authorized REST data', () => {
   for (const type of [
     'conversation_message_created', 'conversation_message_updated',

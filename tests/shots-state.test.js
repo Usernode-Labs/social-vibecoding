@@ -569,6 +569,23 @@ test('shot results come only from a shots verdict and carry nothing but id, stat
   ]);
 });
 
+// The verdict keeps it ready with `unchanged: true` (shots-files.markUnchanged);
+// read as plain ready, a change whose shots show no difference looked shot.
+test('a ready change whose before and after came out the same reads unchanged, with its note', () => {
+  const base = { state: 'verified', base_sha: BASE_SHA, head_sha: HEAD_SHA, intent: intent() };
+  const summary = state.runSummary({ ...base, hard_verdict: shotsVerdict([
+    { id: 'invite-suggestions', status: 'ready', files: 2, unchanged: true, note: 'any visible difference.' },
+    { id: 'invite-empty', status: 'ready', files: 2 },
+  ]) });
+  assert.deepEqual(summary.shotResults, [
+    { id: 'invite-suggestions', status: 'unchanged', reason: null, note: 'any visible difference.' },
+    { id: 'invite-empty', status: 'ready', reason: null, note: null },
+  ]);
+  // Nothing that decides whether a change works reads it as failing.
+  const row = { shots_state: 'verified', shots_detail: { ...summary, intent: intent() } };
+  assert.deepEqual(state.brokenOnHead(row, HEAD_SHA), []);
+});
+
 test('problems the shots agent noticed are kept beside the results and never read as a change failing', () => {
   const notices = [
     { text: 'The sort control overlaps the Done heading.', change: 'invite-suggestions', screen: 'desktop', shot: 'screen', alsoBefore: true },
@@ -775,6 +792,8 @@ test('interruption budgets: rollouts spend only the ceiling, crashes keep the or
   assert.equal(allowed(0, 1), true, 'a first crash is retried');
   assert.equal(allowed(2, 3), false, 'a third crash is not: the run may be what kills the process');
   assert.equal(allowed(5, 0), true, 'five rollouts in a row are still retried');
+  assert.equal(allowed(20, 0), true, 'and twenty: a burst of rollouts does not spend them');
+  assert.equal(allowed(20, 3), false, 'while a third crash among them still ends it');
   assert.equal(allowed(state.MAX_INTERRUPTED_RETRIES, 0), false, 'but not forever');
   assert.equal(state.interruptedRetryAllowed({}), false, 'uncounted means no promise');
 });

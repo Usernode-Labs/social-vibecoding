@@ -609,7 +609,8 @@ has `self_hosted = TRUE`, append a paragraph (after the existing
 > any code that reads or writes `JWT_SECRET`,
 > `DATA_ENCRYPTION_KEY`, the `IFRAME_JWT_*` pair,
 > `WORKER_JWT_SECRET`, `EDGE_JWT_SECRET`, or anything in
-> `src/services/secrets.js` / `src/services/platform-jwt.js`;
+> `src/services/secrets.js` / `src/workflow/rules/secrets.ts` /
+> `src/services/platform-jwt.js`;
 > `src/db/migrate.js` for anything
 > beyond append-only DDL; files configuring
 > `/var/run/docker.sock` mounting; `docker-compose.yml`;

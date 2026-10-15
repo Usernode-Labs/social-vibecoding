@@ -122,16 +122,45 @@ test('the prompt names each failing check and what it said, as data, and offers 
 
 test('what it says has no em dashes, and the hand-off says a person takes it', () => {
   const texts = [
-    followup.checksRevisedText({ summary: 'The button now reads "Text size".', prNumber: 82, link: 'https://x' }),
+    followup.checksRevisedText({ failing: [{ name: 'The settings button reads "Text size"', path: 'tests/settings.test.js' }] }),
     followup.checksPersonText({ why: 'The check expects a step the request removed.', prNumber: 82, failingCount: 1 }),
     followup.checksPersonText({ why: '', prNumber: 82, failingCount: 3 }),
   ];
   for (const t of texts) assert.ok(!/—/.test(t), t);
-  assert.match(texts[0], /fixed the failing checks on this change: The button now reads "Text size"\./);
-  assert.match(texts[0], /Earlier approvals were cleared/);
+  assert.match(texts[0], /^Homeroom bot fixed the check that was failing: "The settings button reads "Text size""\./);
+  // One note per update: the cleared votes are the platform's line to say.
+  assert.doesNotMatch(texts[0], /approvals/);
+  assert.match(texts[0], /Its checks run again on the new version\./);
   for (const t of texts) assert.ok(!/PR #|proposal/.test(t), t);
   assert.match(texts[1], /1 check is still failing\. The check expects a step the request removed\. A person needs to look/);
   assert.match(texts[2], /3 checks are still failing\. A person needs to look/);
+});
+
+// Run four (13 Oct 2026): the fix round's note on Club Votes said the
+// turn's own build note ("...pass the form as contentEl and call
+// dismiss(). Rebuild list rows...") and a bare link to the page it was
+// posted on. It says what was fixed, from what failed, in plain words: the
+// checks by their names, a name that is code by how many, and no address.
+test('the fix round\'s note says what was fixed from what failed, with no code and no link', () => {
+  const said = (opts) => followup.checksRevisedText(opts);
+  assert.equal(said({ failing: [{ name: 'Creating a poll shows it in the list (#12)', path: 'tests/polls.test.js' }] }),
+    'Homeroom bot fixed the check that was failing: "Creating a poll shows it in the list". Its checks run again on the new version.');
+  assert.equal(said({ failing: [{ name: 'A poll closes' }, { name: 'Votes are counted' }] }),
+    'Homeroom bot fixed the 2 checks that were failing: "A poll closes" and "Votes are counted". Its checks run again on the new version.');
+  assert.equal(said({ failing: ['A poll closes', 'pollForm submits', 'Votes are counted', 'Ballots open'].map((name) => ({ name })) }),
+    'Homeroom bot fixed the 4 checks that were failing, among them "A poll closes" and "Votes are counted". Its checks run again on the new version.');
+  // A check named by its file or by an identifier says nothing to the group.
+  for (const name of ['tests/polls.test.js', 'pollForm submits the vote', 'submit_vote works', 'calls dismiss() after', 'unit']) {
+    assert.equal(said({ failing: [{ name }] }), 'Homeroom bot fixed the check that was failing. Its checks run again on the new version.', name);
+  }
+  // Old arguments are not read: no build note, no reply, no address.
+  const old = said({ failing: [{ name: 'A poll closes' }], summary: 'pass the form as contentEl and call dismiss()', reply: 'Rebuild list rows', link: 'https://homeroom.example/#app/club-votes/dev/proposals/7' });
+  assert.doesNotMatch(old, /contentEl|dismiss|Rebuild|https?:|#app\//);
+  assert.ok(old.split('. ').length <= 2, 'one or two sentences');
+  // The caller hands over what failed, and no link.
+  const bot = read('src/services/homeroom-bot.js');
+  assert.match(bot, /text: followup\.checksRevisedText\(\{ failing, broken, skipped \}\),/);
+  assert.doesNotMatch(bot, /checksRevisedText\(\{[^}]*link/);
 });
 
 // ── runTriage, down the checks path ──────────────────────────────────────
@@ -139,9 +168,9 @@ test('what it says has no em dashes, and the hand-off says a person takes it', (
 function harness({
   row = checksRow(), revisions = 0, comments = [], proposalThread = [],
   result = { lastResultText: '```json\n{"action":"revise","reply":"Renamed the control.","summary":"The text-size button now says \\"Text size\\"."}\n```', pushOk: true, sha: NEW_HEAD },
-  routed = null,
+  routed = null, sync = { synced: false, why: 'level' },
 } = {}) {
-  const calls = { queries: [], exec: [], loop: null, posts: [], onProposal: [], reconciled: [], seen: [] };
+  const calls = { queries: [], exec: [], loop: null, posts: [], onProposal: [], reconciled: [], seen: [], sync: [] };
   const pool = {
     async query(sql, params) {
       const s = String(sql);
@@ -196,6 +225,15 @@ function harness({
     sessionLifecycle: {},
     domain: 'app.onhomeroom.com',
     votes: { async reconcileNativeReviewedHead(args) { calls.reconciled.push(args); return { enforced: true }; } },
+    // Before a hand-off (fixed-check-sync.js syncBeforeHandOff): level with
+    // main unless a test says otherwise, so nothing is synced.
+    fixedCheckSync: {
+      async syncBeforeHandOff(args) {
+        calls.sync.push({ sessionId: args.sessionId, head: args.head });
+        if (sync instanceof Error) throw sync;
+        return sync;
+      },
+    },
   };
   return { pool, deps, calls };
 }
@@ -239,7 +277,9 @@ test('red checks on its own proposal: one build turn fixes them, the proposal is
   assert.equal(h.calls.posts.length, 0, 'nothing on the issue');
   assert.equal(h.calls.onProposal.length, 1, 'said on the proposal, where the checks are');
   assert.equal(h.calls.onProposal[0].kind, 'checks_revise');
-  assert.match(h.calls.onProposal[0].text, /fixed the failing checks on this change/);
+  // Run four (13 Oct): what was fixed, by the failing check's own name.
+  assert.equal(h.calls.onProposal[0].text,
+    'Homeroom bot fixed the check that was failing: "Cooking mode text-size control offers all steps". Its checks run again on the new version.');
   assert.ok(h.calls.queries.some((q) => /DELETE FROM homeroom_bot_queue WHERE id = \$1/.test(q.s) && q.params[0] === 31));
 });
 
@@ -253,7 +293,8 @@ test('out of revisions: no turn, and one note hands it to a person', async (t) =
   assert.equal(post.kind, 'followup_person');
   assert.equal(post.proposalSessionId, 5001, 'on the proposal too');
   assert.match(post.text, /can't get this change past its checks on its own: 1 check is still failing/);
-  assert.match(post.text, /already updated this change 3 times/);
+  // Why, as a whole sentence (followup.whySentence).
+  assert.match(post.text, /Homeroom bot has already updated it 3 times, as many as it may on its own\. A person/);
   assert.match(post.dm.reason, /its checks are failing/, 'the requester hears it in the DM');
   assert.equal(insertOf(h).params[21], HEAD, 'and it is not said again for the same head');
 });
@@ -281,12 +322,71 @@ test('red checks the change did not cause go to admins as an incident; the chang
   assert.equal(h.calls.onProposal.length, 1);
   assert.equal(h.calls.onProposal[0].kind, 'checks_not_change');
   assert.equal(h.calls.onProposal[0].text, followup.checksNotChangeText({ failingCount: 1 }));
-  assert.match(h.calls.onProposal[0].text, /not caused by it/);
+  assert.match(h.calls.onProposal[0].text, /^The failing check on this change isn't caused by it: it fails without it too\./);
   // An incident is an event admins read (platform-incidents.js record).
   const incident = h.calls.queries.find((q) => /INSERT INTO events/.test(q.s) && /checks_not_change/.test(JSON.stringify(q.params)));
   assert.ok(incident, 'recorded for admins');
   assert.equal(incident.params[2], 5001, 'on the change');
   assert.equal(insertOf(h).params[21], HEAD, 'and not looked at again for the same head');
+  assert.deepEqual(h.calls.sync, [{ sessionId: 5001, head: HEAD }], 'a sync was asked for first, and declined');
+});
+
+// PR #4851 (request #4813): red from 12 Oct with 18 yes votes, on a test
+// #4843 had fixed on main. The fix turn said it fails without the change too,
+// and the hand-off went to admins; the proposal was 182 commits behind main
+// and merged with it cleanly, and nothing ever brought it up to date.
+const NOT_CHANGE = { lastResultText: '```json\n{"action":"person","cause":"not_change","reply":"The Kudos test fails on main too."}\n```', pushOk: true, sha: HEAD };
+
+test('a red check the change did not cause, on a change behind main: synced with main once and run again, and nobody is asked yet', async (t) => {
+  const h = harness({ result: NOT_CHANGE, sync: { synced: true, why: null, sha: NEW_HEAD } });
+  const out = await run(t, h);
+  assert.equal(out.acted, 'checks_synced');
+  assert.equal(out.verdict, 'person', 'the run says what the turn found');
+  assert.deepEqual(h.calls.sync, [{ sessionId: 5001, head: HEAD }], 'the failing head it looked at');
+  assert.equal(h.calls.posts.length, 0, 'nothing on the request, on GitHub or in the DM');
+  assert.ok(!h.calls.queries.some((q) => /INSERT INTO events/.test(q.s)), 'no incident: main may have fixed it');
+  assert.deepEqual(h.calls.onProposal.map((p) => p.kind), ['checks_synced'], 'one line where the group votes');
+  assert.equal(h.calls.onProposal[0].text, followup.checksSyncedText({ failingCount: 1 }));
+  assert.equal(h.calls.onProposal[0].text,
+    'I\'ve brought this change up to date with main. Its failing check may already be fixed there, so its checks run again on the new version, and the votes it has keep counting.');
+  const insert = insertOf(h);
+  assert.equal(insert.params[4], 'person');
+  assert.equal(insert.params[21], HEAD, 'the old head is looked at; the synced one gets its own round');
+  const note = h.calls.queries.find((q) => /UPDATE homeroom_bot_runs SET build_note = \$2 WHERE id = \$1/.test(q.s));
+  assert.deepEqual(note.params, [901, 'Brought up to date with main before handing it over; its checks run again.'],
+    'the ledger says what happened instead of the hand-off');
+  assert.equal(h.calls.reconciled.length, 0, 'the sync starts the new head\'s run itself');
+});
+
+test('out of revisions: a change behind main is synced first, with no turn spent', async (t) => {
+  const h = harness({ revisions: followup.MAX_REVISIONS, sync: { synced: true, why: null, sha: NEW_HEAD } });
+  const out = await run(t, h);
+  assert.equal(out.acted, 'checks_synced');
+  assert.equal(h.calls.exec.length, 0, 'nothing spent');
+  assert.equal(h.calls.posts.length, 0);
+  assert.deepEqual(h.calls.onProposal.map((p) => p.kind), ['checks_synced']);
+});
+
+test('no sync for failures the turn calls the change\'s own, and a sync that fails hands over as before', async (t) => {
+  const own = harness({
+    result: { lastResultText: '```json\n{"action":"person","cause":"change","reply":"My change breaks the check and I cannot fix it safely."}\n```', pushOk: true, sha: HEAD },
+    sync: { synced: true, why: null, sha: NEW_HEAD },
+  });
+  assert.equal((await run(t, own)).acted, 'checks_person');
+  assert.deepEqual(own.calls.sync, [], 'main cannot fix what the change breaks');
+  assert.equal(own.calls.posts.length, 1);
+
+  const broke = harness({ result: NOT_CHANGE, sync: new Error('worker went away') });
+  assert.equal((await run(t, broke)).acted, 'checks_not_change', 'a sync that throws is a sync that did not happen');
+  assert.equal(broke.calls.sync.length, 1);
+});
+
+test('the bot asks fixed-check-sync for the sync, once per proposal, on the failing head', () => {
+  const src = read('src/services/homeroom-bot.js');
+  const hand = src.slice(src.indexOf('const handOff = async ('), src.indexOf('// Only shots that could not reach a change'));
+  assert.match(hand, /if \(failing\.length && !broken\.length && cause !== 'change'\) \{/);
+  assert.match(hand, /\.syncBeforeHandOff\(\{ config, pool, sessionId: session\.id, head \}\)/);
+  assert.match(src, /cause: parsed\?\.action === 'person' \? parsed\.cause : null,\n {2}\}\);\n\}/);
 });
 
 test('a person the change needs is still a person: only cause not_change goes to admins', () => {
@@ -478,7 +578,8 @@ test('a change its shots show failing: one build turn fixes it, said as what did
   assert.match(commitMsg, /fix what did not work on #50/);
   assert.equal(h.calls.reconciled.length, 1, 'a revision like any other: votes cleared, checks and shots again');
   assert.equal(insertOf(h).params[21], HEAD, 'the head is looked at once');
-  assert.match(h.calls.onProposal[0].text, /^Homeroom bot fixed what didn't work on this change: Marking a chore done records the member/);
+  assert.equal(h.calls.onProposal[0].text,
+    'Homeroom bot fixed what didn\'t work when Homeroom tried it: "Tapping "mark as done" ticks a chore off". Homeroom tries it again on the new version.');
 });
 
 test('a change its shots show failing, with no revisions left: handed to a person, and its card goes out saying what is wrong', async (t) => {
@@ -499,4 +600,79 @@ test('a red-checks hand-off with nothing failing in the shots does not send a re
   h.deps.dm = { ...require('../src/services/homeroom-bot-dm'), noteChangeReady: async (_pool, id) => { told.push(id); return null; } };
   await run(t, h);
   assert.deepEqual(told, []);
+});
+
+// ── A declared change its shots skipped for want of data it can seed ────
+//
+// Proposal 7818 (11 Oct 2026): the bot built an advisory line for the vote
+// picker, every check passed, and the shots agent skipped the change because
+// the copies had no change where the member's vote is advisory. The group
+// voted without pictures of it. Now the same round adds that data to the
+// change's staging seed, and the shots are taken again on the new head
+// (tests/shots-skipped-change.test.js has the rest).
+
+const SKIP_REASON = 'The after copy has no \'[Mock] Advisory vote\' row, so the advisory state could not be reached.';
+
+function skippedRow(extra = {}) {
+  return checksRow({
+    check_state: 'passing',
+    test_results: [{ name: 'votes', path: '/', status: 'pass' }],
+    shots_state: 'failed',
+    shots_detail: {
+      headSha: HEAD,
+      claims: [{ id: 'advisory-vote-picker', claim: 'The vote picker says a non-approver\'s vote is advisory.', steps: ['Open the change', 'Press Vote'], baseState: 'not_present' }],
+      shotResults: [{ id: 'advisory-vote-picker', status: 'skipped', reason: SKIP_REASON }],
+    },
+    ...extra,
+  });
+}
+
+test('a skip the change can seed: one build turn adds the data, said as what the shots need', async (t) => {
+  const h = harness({
+    row: skippedRow(),
+    result: { lastResultText: '```json\n{"action":"revise","reply":"Seeded it.","summary":"The staging seed adds a change where the member\'s vote is advisory."}\n```', pushOk: true, sha: NEW_HEAD },
+  });
+  const out = await run(t, h);
+  assert.equal(out.verdict, 'revise');
+  const { prompt, commitMsg } = h.calls.exec[0].opts;
+  assert.match(prompt, /could not show one of the changes you declared/);
+  assert.match(prompt, /Why it was skipped: The after copy has no '\[Mock\] Advisory vote' row/);
+  assert.match(prompt, /gated on IS_STAGING/);
+  assert.match(commitMsg, /seed what the before and after shots of #50 need/);
+  assert.equal(h.calls.reconciled.length, 1, 'a revision like any other: votes cleared, checks and shots again on the new head');
+  assert.equal(insertOf(h).params[21], HEAD, 'the head is looked at once');
+  assert.match(h.calls.onProposal[0].text, /^Homeroom bot added sample data so this change's before and after screens can show "/);
+  assert.match(h.calls.onProposal[0].text, /\. They are taken again on the new version\.$/);
+  assert.doesNotMatch(h.calls.onProposal[0].text, /The staging seed adds/, 'the turn\'s own summary stays on its run');
+  // Its new head's shots are taken again once; a skip there starts no second round.
+  assert.match(read('src/services/homeroom-bot.js'),
+    /WHERE r\.proposal_session_id = cs\.id\n\s+AND r\.verdict = 'revise' AND r\.checks_head_sha IS NOT NULL\n\s+\) AS fix_revised/);
+  const again = harness({ row: skippedRow({ fix_revised: true }) });
+  assert.deepEqual(await run(t, again), { ran: false, reason: 'no_new_replies' });
+});
+
+test('a skip it adds no data for says nothing, marks the head, and sends the card that waited', async (t) => {
+  for (const opts of [
+    { result: { lastResultText: '```json\n{"action":"person","reply":"It needs a reply from a model, which no seed gives."}\n```', pushOk: true, sha: HEAD } },
+    { revisions: followup.MAX_REVISIONS },
+  ]) {
+    const told = [];
+    const h = harness({ row: skippedRow(), ...opts });
+    h.deps.dm = { ...require('../src/services/homeroom-bot-dm'), noteChangeReady: async (_pool, id) => { told.push(id); return null; } };
+    const out = await run(t, h);
+    assert.equal(out.acted, 'checks_shots_left');
+    assert.equal(h.calls.posts.length + h.calls.onProposal.length, 0, 'the shots card already gives the reason');
+    assert.equal(h.calls.reconciled.length, 0);
+    assert.equal(insertOf(h).params[21], HEAD, 'never asked again for the same head');
+    assert.deepEqual(told, [5001]);
+  }
+});
+
+test('a skip no seed can fix is not a reason to look again', async (t) => {
+  const row = skippedRow();
+  row.shots_detail.shotResults[0].reason = 'These copies have no model key, so the bot never answered.';
+  const h = harness({ row });
+  const out = await run(t, h);
+  assert.deepEqual(out, { ran: false, reason: 'no_new_replies' });
+  assert.equal(h.calls.exec.length, 0);
 });

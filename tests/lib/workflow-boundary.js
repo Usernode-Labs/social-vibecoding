@@ -255,6 +255,102 @@ function sqlWrites(text) {
   return out;
 }
 
+// SQL text a template interpolates by name: a module's string constant
+// (`const INVALIDATE_SQL = \`...\``) or a function that returns one template
+// (`function invalidateHeadMoveSql(p) { ... return \`...\`; }`). An UPDATE's
+// SET list built from one is read with the fragment's own columns rather than
+// as "every column", but only where the name can only mean that fragment:
+// defined in the same file or in a module the file requires or imports, and
+// not declared anywhere else in the file (a local of the same name is not
+// the fragment). Anything else stays "dynamic", counted as every column.
+function templateText(node) {
+  if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text;
+  if (ts.isTemplateExpression(node)) return [node.head.text, ...node.templateSpans.map((x) => x.literal.text)].join(' $x ');
+  return null;
+}
+function sqlFragments(root, files) {
+  const found = new Map();   // name -> Map(file -> text)
+  const add = (name, text) => {
+    if (text == null) return;
+    if (!found.has(name)) found.set(name, new Map());
+    found.get(name).set(currentFile, text);
+  };
+  let currentFile = null;
+  for (const file of files) {
+    const text = read(root, file);
+    if (!/\b(SET|UPDATE)\b|=/.test(text)) continue;
+    currentFile = file;
+    const sf = parse(root, file);
+    for (const st of sf.statements) {
+      if (ts.isVariableStatement(st)) {
+        for (const d of st.declarationList.declarations) {
+          if (ts.isIdentifier(d.name) && /^[A-Z][A-Z0-9_]*$/.test(d.name.text) && d.initializer) add(d.name.text, templateText(d.initializer));
+        }
+      }
+      if (ts.isFunctionDeclaration(st) && st.name && st.body) {
+        const last = [...st.body.statements].reverse().find((x) => ts.isReturnStatement(x));
+        if (last && last.expression) add(st.name.text, templateText(last.expression));
+      }
+    }
+  }
+  return found;
+}
+// What one file can mean by a fragment's name: the modules it requires or
+// imports, and the names it declares locally other than as a top-level
+// fragment or a binding from one of those modules.
+function fragmentScope(root, file, sf) {
+  const modules = new Set([file]);
+  const locals = new Set();
+  const fromModule = (init) => {
+    let e = init;
+    while (e && (ts.isPropertyAccessExpression(e) || ts.isParenthesizedExpression(e))) e = e.expression;
+    return !!e && ts.isCallExpression(e) && ts.isIdentifier(e.expression) && e.expression.text === 'require';
+  };
+  const visit = (n) => {
+    if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === 'require'
+      && n.arguments[0] && ts.isStringLiteralLike(n.arguments[0])) {
+      const m = resolve(root, file, n.arguments[0].text, false);
+      if (m) modules.add(m);
+    }
+    if (ts.isImportDeclaration(n) && ts.isStringLiteral(n.moduleSpecifier)) {
+      const m = resolve(root, file, n.moduleSpecifier.text, false);
+      if (m) modules.add(m);
+    }
+    const top = n.parent && ts.isVariableDeclarationList(n.parent) && n.parent.parent && ts.isVariableStatement(n.parent.parent)
+      && n.parent.parent.parent === sf;
+    if (ts.isVariableDeclaration(n) && !(top && ts.isIdentifier(n.name) && n.initializer && (templateText(n.initializer) != null || fromModule(n.initializer)))
+      && !(n.initializer && fromModule(n.initializer))) {
+      const names = ts.isIdentifier(n.name) ? [n.name.text] : [];
+      for (const x of names) locals.add(x);
+    }
+    if (ts.isParameter(n) && ts.isIdentifier(n.name)) locals.add(n.name.text);
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  return { modules, locals };
+}
+
+// A template's text, its spans replaced by the fragment they name, else $x.
+function withFragments(node, fragments, scope) {
+  const nameOf = (e) => {
+    if (ts.isIdentifier(e)) return e.text;
+    if (ts.isPropertyAccessExpression(e)) return e.name.text;
+    if (ts.isCallExpression(e)) return nameOf(e.expression);
+    return null;
+  };
+  const fragment = (name) => {
+    if (!name || !scope || scope.locals.has(name)) return null;
+    const texts = [...(fragments.get(name) || new Map())].filter(([file]) => scope.modules.has(file)).map(([, t]) => t);
+    return texts.length && texts.every((t) => t === texts[0]) ? texts[0] : null;
+  };
+  let out = node.head.text;
+  for (const span of node.templateSpans) {
+    const frag = fragment(nameOf(span.expression));
+    out += (frag != null ? ` ${frag} ` : ' $x ') + span.literal.text;
+  }
+  return out;
+}
+
 // Columns machines own, and the triggers that assign columns.
 function readSchema(root) {
   const schema = read(root, 'src/db/schema.sql');
@@ -282,12 +378,16 @@ function readSchema(root) {
 // ── The list ───────────────────────────────────────────────────────────
 
 // A machine is the code under its directory; platform.ts is the routes'
-// side; the kernel is the mechanism.
+// side; the kernel is the mechanism. rules/ is not a machine: it is the
+// decisions' own code (gate rules, line wording, domain writes), shared by
+// the machines and imported back by the code not migrated yet, and it is
+// held to what a transition may do.
+const RULES = `${WORKFLOW}rules/`;
 function machines(root) {
   const dir = path.join(root, WORKFLOW);
   const out = new Map();
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
-    if (e.isDirectory()) out.set(e.name, listFiles(root, `${WORKFLOW}${e.name}`));
+    if (e.isDirectory() && e.name !== 'rules') out.set(e.name, listFiles(root, `${WORKFLOW}${e.name}`));
   }
   out.set('platform', [`${WORKFLOW}platform.ts`]);
   return out;
@@ -299,6 +399,7 @@ const FORBIDDEN = new Map([
   ['services', new Set(['state', 'timer', 'hook'])],
   ['notifiers', new Set(['state', 'timer', 'hook'])],
   ['shared', new Set(['state', 'timer', 'hook'])],
+  ['rules', new Set(['state', 'timer', 'hook', 'io'])],
   ['web', new Set(['state', 'timer', 'hook', 'io'])],
   ['kernel', new Set(['state', 'timer', 'hook', 'io'])],
 ]);
@@ -306,6 +407,7 @@ const FORBIDDEN = new Map([
 function roleOf(name, file, top) {
   if (name === 'kernel') return 'kernel';
   if (name === 'platform') return 'web';
+  if (file.startsWith(RULES)) return 'rules';
   if (!file.startsWith(`${WORKFLOW}${name}/`)) return 'shared';
   if (!file.endsWith('/services.ts')) return 'decider';
   return top.endsWith('Notifiers') ? 'notifiers' : 'services';
@@ -336,14 +438,20 @@ function boundary(root = REPO, allowed = new Set()) {
   for (const [name, files] of groups) {
     const entries = new Map();
     const add = (e, from) => { if (!allowed.has(e.replace(/^\w+ \| /, '')) && !entries.has(e)) entries.set(e, from); };
-    // Its files, and the shared workflow modules they import.
+    // Its files, and the shared workflow modules they import, and what
+    // those import in turn.
     const all = new Set(files);
-    for (const f of files) {
+    const queue = [...files];
+    while (queue.length) {
+      const f = queue.shift();
       for (const st of scan(f).sf.statements) {
-        if (!ts.isImportDeclaration(st) || !ts.isStringLiteral(st.moduleSpecifier)) continue;
+        if (!(ts.isImportDeclaration(st) || ts.isExportDeclaration(st)) || !st.moduleSpecifier || !ts.isStringLiteral(st.moduleSpecifier)) continue;
         const m = resolve(root, f, st.moduleSpecifier.text, false);
         if (m && m.startsWith(WORKFLOW) && !m.startsWith(`${WORKFLOW}kernel/`) && m !== `${WORKFLOW}platform.ts`
-          && ![...groups.keys()].some((g) => m.startsWith(`${WORKFLOW}${g}/`))) all.add(m);
+          && ![...groups.keys()].some((g) => m.startsWith(`${WORKFLOW}${g}/`)) && !all.has(m)) {
+          all.add(m);
+          queue.push(m);
+        }
       }
     }
     for (const f of all) {
@@ -363,13 +471,16 @@ function boundary(root = REPO, allowed = new Set()) {
   // Other writers of owned columns: SQL anywhere under src/ outside the
   // owning machine's directory, and triggers that assign them.
   const owners = new Map();
-  for (const file of [...listFiles(root, 'src'), ...(fs.existsSync(path.join(root, 'server.js')) ? ['server.js'] : [])]) {
+  const sources = [...listFiles(root, 'src'), ...(fs.existsSync(path.join(root, 'server.js')) ? ['server.js'] : [])];
+  const fragments = sqlFragments(root, sources);
+  for (const file of sources) {
     const text = read(root, file);
     if (!/\bUPDATE\b/i.test(text)) continue;
     const sf = parse(root, file);
+    const scope = fragmentScope(root, file, sf);
     const visit = (n) => {
       if (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n) || ts.isTemplateExpression(n)) {
-        const sql = ts.isTemplateExpression(n) ? [n.head.text, ...n.templateSpans.map((x) => x.literal.text)].join(' $x ') : n.text;
+        const sql = ts.isTemplateExpression(n) ? withFragments(n, fragments, scope) : n.text;
         for (const w of sqlWrites(sql)) {
           if (!w.cols) continue;
           for (const o of schema.owned) {

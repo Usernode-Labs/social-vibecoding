@@ -145,13 +145,20 @@ const events = require('./src/services/events');
 const ws = require('./src/services/ws');
 const log = require('./src/services/logger');
 const lifecycle = require('./src/services/lifecycle');
+const leaderTimers = require('./src/services/leader-timers');
+// The platform's processes and what each holds (docs/plans/draining-releases.md).
+const processes = require('./src/services/processes');
+const drain = require('./src/services/drain');
+const processRole = require('./src/services/process-role');
+const { singleFlight } = require('./src/services/single-flight');
+const inflightWork = require('./src/services/inflight-work');
+const inflightRequests = require('./src/middleware/inflight-requests');
 const chainPoller = require('./src/services/chain-poller');
 const genesisAccounts = require('./src/services/genesis-accounts');
 const nodeStatus = require('./src/services/node-status');
 const statusService = require('./src/services/status');
 const mobilePush = require('./src/services/mobile-push');
 const { getActiveWorkerCount } = require('./src/routes/sessions');
-const { sweepStuckCreatingApps } = require('./src/routes/apps');
 const appAccess = require('./src/services/app-access');
 const platformJwt = require('./src/services/platform-jwt');
 const usernames = require('./src/services/usernames');
@@ -168,6 +175,12 @@ log.setLevel(config.logLevel);
 
 const app = express();
 let startupDiagnostics = null;
+
+// First of all: count every request until it is answered, so the shutdown
+// drain in cleanup() can wait for the handlers still writing rather than
+// exit from under them. Event streams and long polls leave the count (see
+// src/middleware/inflight-requests.js).
+app.use(inflightRequests.inflightRequests());
 
 // Express never trusts forwarding headers globally. Docker mode resolves one
 // configured proxy peer; Kubernetes mode lets Cilium/Envoy supply the client
@@ -317,6 +330,7 @@ app.use((req, res, next) => {
   // also carries an app's state snapshot. Both routes check the length
   // themselves and refuse an oversized body with the numbers.
   if ((req.method === 'POST' && req.path === '/api/feedback')
+      || (req.method === 'PATCH' && /^\/api\/feedback\/\d+$/.test(req.path))
       || (req.method === 'PATCH' && /^\/api\/apps\/[^/]+\/github-issues\/[^/]+\/body$/.test(req.path))) {
     return express.json({ limit: '1mb' })(req, res, next);
   }
@@ -646,6 +660,7 @@ app.use(illustrationRoutes(config));
 app.use(appFileShellRoutes(config));
 app.use(chatRoutes(config));
 app.use(conversationRoutes(config));
+app.use(require('./src/routes/dictation').dictationRoutes(config));
 // #2386: mutual friends — the viewer's own lists, requests and answers.
 app.use(friendRoutes(config));
 app.use(contentReportRoutes(config));
@@ -692,6 +707,9 @@ app.use(require('./src/routes/homeroom-bench').homeroomBenchRoutes(config));
 app.use(require('./src/routes/bench-studio').benchStudioRoutes(config));
 // The Homeroom bot's first-version configurations, and their blind pairs.
 app.use(require('./src/routes/bot-configs').botConfigRoutes(config));
+// Before & after shots evals: the shots agent's configurations compared with
+// the live one on merged proposals, through the admin connector.
+app.use(require('./src/routes/shots-evals').shotsEvalRoutes(config));
 // Test accounts for first-run testing, minted by a full admin's connector
 // session (services/test-accounts.js).
 app.use(require('./src/routes/test-accounts').testAccountRoutes(config));
@@ -1105,15 +1123,32 @@ app.use(errorHandler);
 // is gated to the leader so it never double-runs. See services/leadership.js.
 let leadership = null;
 
+// What every process does for itself, whatever its role
+// (services/process-role.js) and whether or not it leads: each one sweeps
+// what only it holds. A staging preview runs none of it, as it runs no
+// leader duties (config.runsClusterMaintenance).
+function startProcessDuties() {
+  // Idle-eviction sweeper. Warm workers cost ~256MB resident; eviction
+  // reclaims that memory after a tunable idle period. The CC volume
+  // (cc-volume-<sessionId>) is preserved so the next dispatch's
+  // re-warm replays prior conversation state via `claude --resume`.
+  //
+  // WORKER_IDLE_EVICTION_MS is the only knob (default 10min). Lower it
+  // if memory headroom shrinks; raise it if we're seeing frequent
+  // re-warms in production logs.
+  startIdleEvictionSweeper();
+}
+
 // Leader-only singleton work. Runs exactly once per cluster — at boot for
 // the leader / the single-instance case (PLATFORM_LEADER_LOCK unset), or at
 // promotion for a follower whose old leader has exited (blue-green handoff).
 // EVERYTHING here either mutates shared cluster state (worker containers,
 // PR/merge rows, staging, Postgres roles, GitHub) or is a singleton
 // poller/sweeper that must never double-run across the two colors. The
-// follower serves HTTP from boot; the couple of leader-scoped capabilities
-// (prod-debug SQL, whose role password lives in the leader's memory) degrade
-// to a clean 503 on the follower for the seconds until promotion.
+// follower serves HTTP from boot, and so does a web process, which never
+// leads (docs/plans/web-and-conductor.md): what the leader sets up or keeps
+// in memory and a route reads (the read-only database roles, the admin
+// statuses) is recorded for them (platform_db_roles, services/leader-status.js).
 async function becomeLeader() {
   log.info('server', 'Running leader duties (role bootstraps, recovery, sweepers)', {
     identity: leadership && leadership.identity,
@@ -1125,6 +1160,20 @@ async function becomeLeader() {
   await require('./src/workflow/platform.ts').startWorkflowLoops().catch((err) => {
     log.error('server', 'Workflow loops failed to start', { err: err.message });
   });
+
+  // What leader work keeps in memory and an admin screen reads, written for
+  // the processes that do not lead (services/leader-status.js): a web process
+  // never does (docs/plans/web-and-conductor.md), and a follower of a rollout
+  // reads the same copy.
+  const leaderStatus = require('./src/services/leader-status');
+  leaderStatus.provide(require('./src/services/homeroom-bot').MEMORY_STATUS_KEY,
+    () => require('./src/services/homeroom-bot').memoryStatus());
+  leaderStatus.provide('bench-lane', () => require('./src/services/bench/lane').laneStatus());
+  leaderStatus.provide('staging-reap.automatic', () => stagingReap.readAutomatic());
+  leaderStatus.provide('app-domains.sweep', () => require('./src/services/app-domains').getStatus());
+  leaderStatus.provide(require('./src/services/app-storage-cap').LAST_SWEEP_STATUS_KEY,
+    () => require('./src/services/app-storage-cap').lastSweep());
+  leaderStatus.start({ pool: getPool(config) });
 
   // #2045: reconcile the shared hosted-asset backend once per rollout.
   //
@@ -1165,10 +1214,10 @@ async function becomeLeader() {
     .catch((err) => {
       log.warn('cli-auth', 'Retention cleanup failed', { message: err.message });
     });
-  runCliAuthCleanup();
-  setInterval(() => {
-    runCliAuthCleanup();
-  }, 6 * 60 * 60 * 1000).unref?.();
+  // Six-hourly on the clock leader_sweeps keeps (services/leader-timers.js),
+  // rather than once at every election and then on an interval that the
+  // next release reset: due at once if it never ran.
+  leaderTimers.every('cli-auth-cleanup', runCliAuthCleanup, 6 * 60 * 60 * 1000, { durable: getPool(config) });
 
   // Before & after shots is private, revision-scoped data. Recover runs whose
   // worker died, remove their deterministic paired runtimes/databases, and
@@ -1176,9 +1225,9 @@ async function becomeLeader() {
   const shotsGc = require('./src/services/shots-gc');
   let shotsGcRunning = false;
   const runShotsGc = () => {
-    if (shotsGcRunning) return;
+    if (shotsGcRunning) return leaderTimers.SKIPPED;
     shotsGcRunning = true;
-    shotsGc.sweep(config, getPool(config))
+    return shotsGc.sweep(config, getPool(config))
       .then((counts) => {
         if (Object.values(counts).some((count) => count > 0)) {
           log.info('shots', 'Retention/recovery sweep completed', counts);
@@ -1187,16 +1236,16 @@ async function becomeLeader() {
       .catch((err) => log.warn('shots', 'Retention/recovery sweep failed', { err: err.message }))
       .finally(() => { shotsGcRunning = false; });
   };
-  runShotsGc();
-  setInterval(runShotsGc, 6 * 60 * 60 * 1000).unref?.();
+  // Six-hourly on the durable clock, like the cleanup above.
+  leaderTimers.every('shots-gc', runShotsGc, 6 * 60 * 60 * 1000, { durable: getPool(config) });
   // Shots runs execute after their scheduling HTTP request has returned.
   // A platform rollout can terminate that process mid-build; heartbeats stop
   // then, and this short recovery poll releases the abandoned proposal slot.
   // The six-hour sweep above still owns retention and orphan-file pruning.
   const recoverInterruptedShots = () => {
-    if (shotsGcRunning) return;
+    if (shotsGcRunning) return undefined;
     shotsGcRunning = true;
-    shotsGc.recoverInterrupted(config, getPool(config))
+    return shotsGc.recoverInterrupted(config, getPool(config))
       .then(({ failed, cancelled, cleanupRetried }) => {
         if (failed || cancelled || cleanupRetried) {
           log.warn('shots', 'Interrupted before & after shots runs recovered', {
@@ -1207,7 +1256,7 @@ async function becomeLeader() {
       .catch((err) => log.warn('shots', 'Interrupted shots recovery failed', { err: err.message }))
       .finally(() => { shotsGcRunning = false; });
   };
-  setInterval(recoverInterruptedShots, 2 * 60 * 1000).unref?.();
+  leaderTimers.every('shots-recover-interrupted', recoverInterruptedShots, 2 * 60 * 1000);
   // Recover intent-only proposals separately from the six-hour retention
   // sweep. A missed checks hand-off should start within minutes, while the
   // durable run claim ensures this cannot duplicate a live runner.
@@ -1217,7 +1266,7 @@ async function becomeLeader() {
     })
     .catch((err) => log.warn('shots', 'Unstarted shots recovery failed', { err: err.message }));
   runUnstartedShots();
-  setInterval(runUnstartedShots, 2 * 60 * 1000).unref?.();
+  leaderTimers.every('shots-recover-unstarted', runUnstartedShots, 2 * 60 * 1000);
   // A rollout interrupts runs through no fault of the proposal; start the
   // same head again (bounded) rather than waiting for someone to click Retry.
   // Its own, shorter timer: the run is marked interrupted as the old process
@@ -1226,17 +1275,24 @@ async function becomeLeader() {
   // indexed read that usually finds nothing.
   let shotsRetryRunning = false;
   const retryInterruptedShots = () => {
-    if (shotsRetryRunning) return;
+    if (shotsRetryRunning) return undefined;
     shotsRetryRunning = true;
-    shotsGc.retryInterrupted(config, getPool(config))
+    return shotsGc.retryInterrupted(config, getPool(config))
       .then((result) => {
         if (result?.scheduled) log.info('shots', 'Retried interrupted before & after shots runs', result);
       })
       .catch((err) => log.warn('shots', 'Interrupted shots retry failed', { err: err.message }))
+      // A run a platform step failed (the copies' database, a clone, GitHub's
+      // hourly limit, the shots agent's exit) is taken again once, the same way.
+      .then(() => shotsGc.retryPlatformFaults(config, getPool(config)))
+      .then((result) => {
+        if (result?.scheduled) log.info('shots', 'Retried before & after shots runs a platform fault ended', result);
+      })
+      .catch((err) => log.warn('shots', 'Platform-fault shots retry failed', { err: err.message }))
       .finally(() => { shotsRetryRunning = false; });
   };
   retryInterruptedShots();
-  setInterval(retryInterruptedShots, 30 * 1000).unref?.();
+  leaderTimers.every('shots-retry-interrupted', retryInterruptedShots, 30 * 1000);
 
   // #616: ensure the read-only prod-debug Postgres role (fresh in-memory
   // password every boot) and refresh its deny-listed grants so tables
@@ -1278,9 +1334,18 @@ async function becomeLeader() {
     });
   });
 
-  // Any app stuck in 'creating' from a previous process crash gets flipped
-  // to 'error' so the creator can retry instead of staring at a spinner.
-  await sweepStuckCreatingApps(getPool(config)).catch(() => {});
+  // A project being set up when its process died is resumed, not failed
+  // (services/app-creation-owner.js): each attempt keeps a heartbeat on its
+  // row, and the leader takes over one that went quiet, at boot and every
+  // minute after. A row nobody owns (from before that) is taken by the old
+  // boot rule: at boot, once it is ten minutes old.
+  await require('./src/services/app-creation-owner').start(config).catch(() => {});
+  // A production redeploy a vote owed an app and its process died before
+  // giving (services/owed-redeploy.js): run again, every minute.
+  require('./src/services/owed-redeploy').start(config);
+  // And the first session's card a restart kept out of a new repository
+  // (services/app-sketch.js sweepUncommitted): every quarter hour.
+  require('./src/services/app-sketch').startCommitSweep(config);
 
   // A normal failed build deletes itself in services/kubernetes.js. This
   // leader-only boot pass catches terminal Builds left behind if the platform
@@ -1340,10 +1405,15 @@ async function becomeLeader() {
   // Resume fleet maintenance campaigns interrupted by the restart —
   // campaign state is a DB state machine (maintenance_campaign_apps),
   // so re-entering the loop just continues from the first pending app.
+  // Again every two minutes: a driver that stopped anywhere (a follower's
+  // run, a process that died) lets its lease lapse, and this takes it up;
+  // one still running keeps it (fleet-maintenance.runCampaign).
   const { resumeRunningCampaigns } = require('./src/services/fleet-maintenance');
-  resumeRunningCampaigns(config, getPool(config)).catch((err) => {
+  const resumeCampaigns = () => resumeRunningCampaigns(config, getPool(config)).catch((err) => {
     log.warn('server', 'Campaign resume failed', { err: err.message });
   });
+  resumeCampaigns();
+  leaderTimers.every('campaign-resume', resumeCampaigns, 2 * 60 * 1000);
 
   // The push SENDER claims queued jobs — a singleton. Enqueueing (HTTP
   // side) works on every color; only the leader drains the queue.
@@ -1386,6 +1456,10 @@ async function becomeLeader() {
   // #3654: its benchmark lane. Leader-only like the bot (a trial runs a
   // container turn that costs money) and inert until an admin launches a run.
   require('./src/services/bench/lane').start(config);
+  // Before & after shots evals' runner (services/shots-eval-runner.js).
+  // Leader-only for the same reason: a trial builds two copies and runs the
+  // shots agent, which costs money. Inert until an admin launches an eval.
+  require('./src/services/shots-eval-runner').startRunner(config);
   // #3654 Core v1: the default suite, made from its checked-in definition in
   // the background a little after boot (reads GitHub only; a no-op once it
   // is done). Production and staging, when GitHub is configured.
@@ -1449,41 +1523,56 @@ async function becomeLeader() {
           log.warn('server', 'Quick-reply backfill failed', { err: err.message });
         });
     });
+  // What a process leaves behind later (it exits at its drain deadline, or
+  // dies) is adopted as it goes, not at the next election: the replaced Pod
+  // may still be finishing turns when this one is elected
+  // (docs/plans/draining-releases.md). Turns, then headless runs that have
+  // not moved for a while and that no live process holds.
+  leaderTimers.every('orphan-turn-sweep', () => sweepOrphanTurns(config)
+    .catch((err) => log.warn('server', 'Orphan turn sweep failed', { err: err.message })),
+  ORPHAN_SWEEP_MS, { firstDelayMs: ORPHAN_SWEEP_MS });
+  leaderTimers.every('process-reap', () => processes.reap()
+    .catch((err) => log.warn('server', 'Reaping gone processes failed', { err: err.message })),
+  5 * 60 * 1000);
+  leaderTimers.every('orphan-headless-sweep', () => require('./src/routes/sessions')
+    .resumeHeadlessRuns(config, { minIdleMs: ORPHAN_MIN_AGE_MS })
+    .catch((err) => log.warn('server', 'Orphan headless sweep failed', { err: err.message })),
+  ORPHAN_SWEEP_MS, { firstDelayMs: ORPHAN_SWEEP_MS });
+  // And the warm workers of a process that exited: a web process's release
+  // or crash elects nobody (docs/plans/web-and-conductor.md), so nobody would
+  // adopt and later evict them.
+  leaderTimers.every('left-warm-worker-sweep', () => sweepLeftWarmWorkers(config)
+    .catch((err) => log.warn('server', 'Left-behind warm worker sweep failed', { err: err.message })),
+  LEFT_WARM_SWEEP_MS, { firstDelayMs: LEFT_WARM_SWEEP_MS });
 
   // Durable deletion tasks survive provider outages and platform restarts.
   const runAccountDeletionCleanup = () => require('./src/services/account-deletion-cleanup')
     .sweep(getPool(config), config).catch(err => log.warn('account-deletion', 'Cleanup sweep failed', { code: err.code }));
   void runAccountDeletionCleanup();
-  setInterval(runAccountDeletionCleanup, 60_000).unref();
+  leaderTimers.every('account-deletion-cleanup', runAccountDeletionCleanup, 60_000);
 
   // A project created with a description files it as its first request once
-  // it runs (services/homeroom-bot-dm.js). The creation hook in
-  // app-creator.js does it; this files one the hook missed or could not
-  // file yet, whether or not the Homeroom bot is on. A no-op on staging.
+  // its repository holds the starter (services/homeroom-bot-dm.js
+  // FILEABLE_SQL; 15 Oct 2026, while it is still being set up). The
+  // creation hooks in app-creator.js do it; this files one the hooks missed
+  // or could not file yet, whether or not the Homeroom bot is on. A no-op on
+  // staging.
   const runFirstRequestSweep = () => require('./src/services/homeroom-bot-dm')
     .sweepFirstVersions(getPool(config), config)
     .then((n) => { if (n) log.info('apps', 'First requests filed', { filed: n }); })
     .catch((err) => log.warn('apps', 'First-request sweep failed', { err: err.message }));
-  setInterval(runFirstRequestSweep, 5 * 60 * 1000).unref();
+  leaderTimers.every('first-request-sweep', runFirstRequestSweep, 5 * 60 * 1000);
 
   // #2779: delegated connector grants — the agent-session Mayor's, one or two
   // a turn — are dead the moment their turn ends. Keep a week for the audit
-  // trail's sake, then remove them and their tokens.
+  // trail's sake, then remove them and their tokens. Hourly on the durable
+  // clock: as a bare setInterval it restarted at every election and, with a
+  // release every twenty minutes, hardly ever ran.
   const runDelegationPrune = () => require('./src/services/mcp-oauth')
     .pruneDelegations(getPool(config))
     .then((n) => { if (n) log.info('mcp', 'Pruned ended delegated grants', { count: n }); })
     .catch((err) => log.warn('mcp', 'Delegated-grant prune failed', { code: err.code, message: err.message }));
-  setInterval(runDelegationPrune, 60 * 60 * 1000).unref();
-
-  // Idle-eviction sweeper. Warm workers cost ~256MB resident; eviction
-  // reclaims that memory after a tunable idle period. The CC volume
-  // (cc-volume-<sessionId>) is preserved so the next dispatch's
-  // re-warm replays prior conversation state via `claude --resume`.
-  //
-  // WORKER_IDLE_EVICTION_MS is the only knob (default 10min). Lower it
-  // if memory headroom shrinks; raise it if we're seeing frequent
-  // re-warms in production logs.
-  startIdleEvictionSweeper();
+  leaderTimers.every('delegation-prune', runDelegationPrune, 60 * 60 * 1000, { durable: getPool(config) });
 
   // Session auto-pause sweeper (separate, longer timer than worker
   // eviction above). Flips long-idle 'active' sessions to 'paused' so
@@ -1567,12 +1656,16 @@ async function becomeLeader() {
       log.warn('server', 'Boot check-harvest sweep failed (non-fatal)', { err: err.message });
     })
     .then(() => recoverStuckMerges(config))
-    .then(() => {
+    .then((reconciled) => {
       // With the merge-followups machine on, a merge's follow-ups are its
       // durable work, and this sweep would only race its delivery.
       if (config.wfMergeFollowupsEnabled) return;
       mergeFollowups.recover(config).catch((err) => {
         log.warn('server', 'Boot merge follow-up recovery failed', { err: err.message });
+      });
+      // #144, after the heal: see below.
+      resumeIssueCloseWatches(config, { skip: reconciled?.followedUp }).catch((err) => {
+        log.warn('server', 'Issue-close watch resume failed', { err: err.message });
       });
     })
     .then(() => reconcileEligibleMerges(config))
@@ -1615,10 +1708,14 @@ async function becomeLeader() {
   // until someone happens to reload after the cache TTL. Re-watching
   // recently-merged sessions on boot closes that gap (and covers crash
   // restarts mid-watch for ordinary apps too).
-  // With the merge-followups machine on, the watch is its durable work.
-  if (!config.wfMergeFollowupsEnabled) resumeIssueCloseWatches(config).catch((err) => {
-    log.warn('server', 'Issue-close watch resume failed', { err: err.message });
-  });
+  //
+  // It runs in the chain above, after recoverStuckMerges rather than beside
+  // it: a merge the heal records as merged reads as merged only once the
+  // heal's GitHub round trips are done, and one it records later, on the
+  // eligible-merge timer, is past this boot's look. So the heal watches each
+  // merge it records itself, with the rest of its follow-ups, and the resume
+  // leaves those (`followedUp`) out. With the merge-followups machine on,
+  // the watch is its durable work.
 
   // Fallback recovery: for sessions whose container is already gone but
   // whose branch is ahead of main (i.e. CC pushed commits during an old
@@ -1645,15 +1742,14 @@ async function becomeLeader() {
   }
 
   // Merge-debug retention: prune /debug runs (and their cascaded steps)
-  // older than the window once at boot and then on a slow timer, so the
-  // staging:private merge_debug_* tables can't grow without bound. Off the
-  // critical path; swallows its own errors.
+  // older than the window every six hours, on the durable clock (once at
+  // every election, before), so the staging:private merge_debug_* tables
+  // can't grow without bound. Off the critical path; swallows its own errors.
   const mergeDebug = require('./src/services/merge-debug');
   const MERGE_DEBUG_RETENTION_DAYS = parseInt(process.env.MERGE_DEBUG_RETENTION_DAYS || '30', 10);
-  mergeDebug.pruneOldRuns(getPool(config), MERGE_DEBUG_RETENTION_DAYS).catch(() => {});
-  setInterval(() => {
-    mergeDebug.pruneOldRuns(getPool(config), MERGE_DEBUG_RETENTION_DAYS).catch(() => {});
-  }, 6 * 60 * 60 * 1000).unref();
+  leaderTimers.every('merge-debug-prune',
+    () => mergeDebug.pruneOldRuns(getPool(config), MERGE_DEBUG_RETENTION_DAYS).catch(() => {}),
+    6 * 60 * 60 * 1000, { durable: getPool(config) });
 
   // #451: periodic auto-merge safety net. The boot sequence above runs
   // reconcileEligibleMerges / reconcileStuckChecks exactly once; the live
@@ -1677,6 +1773,9 @@ async function becomeLeader() {
 
 async function start() {
   const startedAt = Date.now();
+  // web, conductor or all (services/process-role.js): read before anything
+  // starts, so a value that names no role fails boot here.
+  const ownRole = processRole.processRole();
   const migrationsOnStartup = process.env.RUN_MIGRATIONS_ON_STARTUP !== 'false';
   let migration = null;
   // Schema migration is serialized across colors with an advisory lock so
@@ -1691,6 +1790,10 @@ async function start() {
     migration = await withMigrationLock(getPool(config), () => migrate(config));
   }
   const servicesStartedAt = Date.now();
+  // This process, and what it holds, for every other one to see
+  // (docs/plans/draining-releases.md): before anything here can start work.
+  // Never fatal: holds stay this process's own until the database takes them.
+  await processes.start({ pool: getPool(config), role: ownRole });
   // The clients every process that runs the workflow machines makes
   // (src/workflow/setup.ts): the push sender, GitHub, the model.
   await require('./src/workflow/setup.ts').startWorkflowClients(config);
@@ -1723,8 +1826,13 @@ async function start() {
   // for the entire drain, then exited from under them.
   const server = app.listen(config.port, () => {
     log.info('server', `Listening on :${config.port}`);
-    // The merges into Homeroom this build carries are live now that it serves.
-    require('./src/services/platform-release').recordRunning(getPool(config));
+    // The merges into Homeroom this build carries are live now that it serves
+    // (a conductor serves nobody: its web processes say so), and this process
+    // is up (a second boot in one pod is a crash).
+    const platformRelease = require('./src/services/platform-release');
+    if (processRole.servesRequests(ownRole)) platformRelease.recordRunning(getPool(config));
+    platformRelease.recordBoot(getPool(config));
+    if (processRole.servesRequests(ownRole)) require('./src/workflow/platform.ts').releaseServing(getPool(config));
   });
   // Let Envoy retire idle upstream connections at 60s before Node closes them.
   // Keep a 15s margin for transit and timer scheduling; applies to self-previews too.
@@ -1755,8 +1863,17 @@ async function start() {
   // that never stops. Previews last touched a week ago were measured still
   // holding six warm Postgres connections each, on a server whose
   // max_connections is the stock 100. See config.runsClusterMaintenance.
+  //
+  // A web process (PROCESS_ROLE=web, docs/plans/web-and-conductor.md) never
+  // stands either: the conductor leads, and a release of the web Pods leaves
+  // its leader work where it is. What every process does for itself (the
+  // idle eviction of its own warm workers, ...) runs from
+  // startProcessDuties(), whatever its role.
+  if (runsClusterMaintenance()) startProcessDuties();
   if (!runsClusterMaintenance()) {
     log.info('server', 'Leader duties skipped — staging preview serves requests only');
+  } else if (!processRole.standsForLeader(ownRole)) {
+    log.info('server', 'Leader duties run on the conductor — this web process serves requests only', { role: ownRole });
   } else {
     leadership = createLeadership({ databaseUrl: config.databaseUrl });
     leadership.start(becomeLeader).catch((err) => {
@@ -1797,6 +1914,15 @@ module.exports = {
   // sends with a shell asset (tests/spec-frame-styles.test.js).
   app,
   adoptOrphanWorker,
+  // docs/plans/draining-releases.md: the leader's sweep for turns their
+  // process left behind.
+  sweepOrphanTurns,
+  // docs/plans/web-and-conductor.md: and for idle warm workers.
+  sweepLeftWarmWorkers,
+  // 14 Oct 2026: the idle eviction and the auto-pause sweeper's first pass,
+  // each of which leaves a session a durable build holds alone.
+  sweepIdleWarmWorkers,
+  autoPauseIdleSessions,
   // #1378: the detached-turn resume itself, so tests can prove a stop that
   // lands on an ADOPTED turn terminalizes it as a stop instead of narrating
   // an interruption (or retrying it). Driving it through adoptOrphanWorker
@@ -1810,6 +1936,7 @@ module.exports = {
   finalizeRecoveredTurn,
   restoreMissingQuickReplies,
   recoverStuckMerges,
+  resumeIssueCloseWatches,
   reconcileEligibleMerges,
   reconcileStuckChecks,
   cleanup,
@@ -1819,10 +1946,18 @@ module.exports = {
   get DRAIN_TIMEOUT_MS() { return DRAIN_TIMEOUT_MS; },
   get POOL_CLOSE_TIMEOUT_MS() { return POOL_CLOSE_TIMEOUT_MS; },
   get SUCCESSOR_ANNOUNCE_TIMEOUT_MS() { return SUCCESSOR_ANNOUNCE_TIMEOUT_MS; },
-  __setShutdownTargets: ({ server, pool } = {}) => {
+  get SHOTS_SHUTDOWN_MARK_TIMEOUT_MS() { return SHOTS_SHUTDOWN_MARK_TIMEOUT_MS; },
+  get BUILD_SHUTDOWN_MARK_TIMEOUT_MS() { return BUILD_SHUTDOWN_MARK_TIMEOUT_MS; },
+  get SUCCESSOR_WAIT_MS() { return SUCCESSOR_WAIT_MS; },
+  shutdownDrainMs: (...args) => shutdownDrainMs(...args),
+  // `finishesWork`, `drainMs` and `leadership` stand in for a Kubernetes
+  // Pod's drain (docs/plans/draining-releases.md) and its leader lock.
+  __setShutdownTargets: ({ server, pool, finishesWork, drainMs, successor, leadership: lead } = {}) => {
     httpServer = server ?? null;
     shutdownPool = pool ?? null;
     cleanupStarted = false;
+    shutdownOverrides = { finishesWork, drainMs, successor };
+    if (lead !== undefined) leadership = lead;
   },
 };
 
@@ -1937,12 +2072,31 @@ const OLD_MERGE_ATTEMPT_RECHECK_MS = 60 * 60 * 1000;
 // sessionId -> when the timer sweep last looked up its old attempt.
 const oldMergeAttemptLookedUpAt = new Map();
 
+// On the legacy path (WF_MERGE_FOLLOWUPS_ENABLED off) a heal also runs what
+// the merge still owed (routes/votes.js runMergeFollowups), and the sweep
+// first resumes the follow-ups of merges recorded as merged that a restart
+// cut off (merge_followups_due_at). Resolves { followedUp }: the sessions
+// whose follow-ups this sweep ran, the request watch among them, which the
+// boot's resumeIssueCloseWatches then leaves alone.
 async function recoverStuckMerges(config, { attemptedOnly = false, now = Date.now } = {}) {
   const { getPool } = require('./src/db/pool');
   const github = require('./src/services/github');
   const githubBudget = require('./src/services/github-budget');
   const mergeLock = require('./src/services/merge-finalization-lock');
   const pool = getPool(config);
+  const workflow = require('./src/workflow/platform.ts');
+  const followedUp = [];
+  const result = { followedUp };
+
+  // Owed follow-ups need no GitHub lookup, so they are resumed first and
+  // whatever GitHub's state.
+  if (!workflow.mergeFollowupsEnabled()) {
+    try {
+      followedUp.push(...await require('./src/routes/votes').resumeOwedMergeFollowups(config, pool));
+    } catch (err) {
+      log.warn('server', 'recoverStuckMerges: resuming owed merge follow-ups failed', { err: err.message });
+    }
+  }
 
   let rows;
   try {
@@ -1958,16 +2112,16 @@ async function recoverStuckMerges(config, { attemptedOnly = false, now = Date.no
     ));
   } catch (err) {
     log.warn('server', 'recoverStuckMerges query failed', { err: err.message });
-    return;
+    return result;
   }
-  if (!rows.length) return;
+  if (!rows.length) return result;
 
   // Without GitHub auth the outcome is unknown. Keep the claim until a
   // later sweep can ask GitHub; a blind demotion can reopen a merged PR.
   if (!github.isEnabled()) {
     const merging = rows.filter((row) => row.status === 'merging').length;
     if (merging) log.warn('server', 'Cannot reconcile merging sessions without GitHub auth', { count: merging });
-    return;
+    return result;
   }
 
   // An old attempt the timer looked up within the hour waits its turn.
@@ -1984,7 +2138,7 @@ async function recoverStuckMerges(config, { attemptedOnly = false, now = Date.no
       if (last && now() - last < OLD_MERGE_ATTEMPT_RECHECK_MS) { deferred++; return false; }
       return true;
     });
-    if (!rows.length) return;
+    if (!rows.length) return result;
   }
 
   log.info('server', 'Reconciling open PR sessions against GitHub', { count: rows.length, deferred });
@@ -2020,7 +2174,6 @@ async function recoverStuckMerges(config, { attemptedOnly = false, now = Date.no
         try {
           const pr = await github.getPR(owner, repo, row.pr_number);
           if (attemptedOnly) oldMergeAttemptLookedUpAt.set(row.id, now());
-          const workflow = require('./src/workflow/platform.ts');
           if (pr && pr.merged && workflow.mergeFollowupsEnabled()) {
             // The merge-followups machine records the merge and runs every
             // follow-up the lost report would have (F2), not only the status.
@@ -2033,12 +2186,23 @@ async function recoverStuckMerges(config, { attemptedOnly = false, now = Date.no
               sessionId: row.id, prNumber: row.pr_number, repo: `${owner}/${repo}`, mergeSha: pr.merge_commit_sha || null,
             });
           } else if (pr && pr.merged) {
+            // The merge that did this never finished: most often a restart
+            // cut off a child app's finalizer in its production rebuild.
+            // What it still owes is done here, as finalizeMerge does it
+            // (routes/votes.js): the values the proposal declared first, so
+            // the delivery merge-followup-recovery makes next has them; then
+            // the status, owing the follow-ups (merge_followups_due_at); then
+            // the follow-ups, the request watch among them (#144). Delivery
+            // and the combined-main check are merge-followup-recovery's.
+            const votes = require('./src/routes/votes');
+            await votes.applyDeclaredValues({ config, pool, session: { id: row.id, app_id: row.app_id } });
             const { rowCount } = await pool.query(
               `UPDATE chat_sessions
                   SET status = 'merged',
                       merged_at = COALESCE(merged_at, $2, NOW()),
                       live_at = COALESCE(live_at, NOW()),
-                      merge_commit_sha = COALESCE(merge_commit_sha, $3)
+                      merge_commit_sha = COALESCE(merge_commit_sha, $3),
+                      merge_followups_due_at = NOW()
                 WHERE id = $1 AND status IN ('promoted', 'merging')`,
               [row.id, pr.merged_at || null, pr.merge_commit_sha || null]
             );
@@ -2048,6 +2212,15 @@ async function recoverStuckMerges(config, { attemptedOnly = false, now = Date.no
                 sessionId: row.id, prNumber: row.pr_number,
                 repo: `${owner}/${repo}`, mergeSha: pr.merge_commit_sha || null,
               });
+              // Under the lock this worker holds. A failure leaves the row
+              // owing them, for the next sweep's resume.
+              try {
+                if ((await votes.runOwedMergeFollowups(config, pool, row.id)).ran) followedUp.push(Number(row.id));
+              } catch (err) {
+                log.warn('server', 'recoverStuckMerges: the follow-ups of a healed merge failed; the next sweep resumes them', {
+                  sessionId: row.id, err: err.message,
+                });
+              }
             }
           } else if (row.status === 'merging' && oldAttempt) {
             // Not merged on GitHub and stuck in 'merging' (crash mid-merge):
@@ -2099,6 +2272,7 @@ async function recoverStuckMerges(config, { attemptedOnly = false, now = Date.no
     scanned: rows.length, healed, demoted, errors,
     ...(held ? { heldForGithubBudget: held } : {}),
   });
+  return result;
 }
 
 // Boot-time auto-merge reconcile sweep (#390). recoverStuckMerges above
@@ -2157,7 +2331,9 @@ async function reconcileEligibleMerges(config) {
   let errors = 0;
 
   async function worker() {
-    while (queue.length) {
+    // A drain started now would die with the process; the next leader's boot
+    // reconcile takes every app with open proposals.
+    while (queue.length && !lifecycle.isShuttingDown()) {
       const { app_id: appId } = queue.shift();
       try {
         await checkAndResolveConflicts(config, { app_id: appId });
@@ -2292,6 +2468,8 @@ async function reconcileStuckChecks(config) {
   let leftToHarvest = 0;
   for (const session of rows) {
     if (rechecked >= MAX_RECHECKS) break;
+    // A recheck started now builds a preview the exit would cut.
+    if (lifecycle.isShuttingDown()) break;
     if (checkRecoveryInFlight(session.id)) continue;
     if (await checkRunLeftToHarvest(config, pool, session, 'stuck-checks-boot')) {
       leftToHarvest++;
@@ -2330,15 +2508,16 @@ const ELIGIBLE_MERGE_SWEEP_MS = Math.max(
 // pass can then act on) are idempotent and bounded, so re-running them on a
 // timer is safe. Guards: skip when GitHub isn't enabled (both are no-ops
 // then), never overlap a still-running sweep, and swallow all errors so the
-// timer can't crash the process. Not awaited — fire-and-forget per tick.
+// timer can't crash the process. A leader timer (services/leader-timers.js):
+// no pass starts once shutdown has begun, and one under way is drained.
 function startEligibleMergeSweeper(config) {
   const github = require('./src/services/github');
   let running = false;
-  setInterval(() => {
-    if (running) return;
-    if (!github.isEnabled()) return;
+  leaderTimers.every('eligible-merge-sweep', () => {
+    if (running) return undefined;
+    if (!github.isEnabled()) return undefined;
     running = true;
-    Promise.resolve()
+    return Promise.resolve()
       // A merge request may outlive a leader rollout. Revisit attempts even
       // after demotion, since GitHub may report their merge a little later.
       .then(() => recoverStuckMerges(config, { attemptedOnly: true }))
@@ -2348,7 +2527,7 @@ function startEligibleMergeSweeper(config) {
         log.warn('server', 'Eligible-merge sweep tick failed', { err: err.message });
       })
       .finally(() => { running = false; });
-  }, ELIGIBLE_MERGE_SWEEP_MS).unref?.();
+  }, ELIGIBLE_MERGE_SWEEP_MS);
 }
 
 // How often the title auto-heal sweep runs (services/title-heal.js). Ten
@@ -2371,16 +2550,15 @@ function startTitleHealSweeper(config) {
   const titleHeal = require('./src/services/title-heal');
   let running = false;
   const tick = () => {
-    if (running) return;
+    if (running) return undefined;
     running = true;
-    titleHeal.sweep(config)
+    return titleHeal.sweep(config)
       .catch((err) => {
         log.warn('server', 'Title-heal sweep tick failed', { err: err.message });
       })
       .finally(() => { running = false; });
   };
-  setTimeout(tick, 90 * 1000).unref?.();
-  setInterval(tick, TITLE_HEAL_SWEEP_MS).unref?.();
+  leaderTimers.every('title-heal', tick, TITLE_HEAL_SWEEP_MS, { firstDelayMs: 90 * 1000 });
 }
 
 // #907: how often expired local-agent leases are swept. A lease is a 120s
@@ -2399,15 +2577,48 @@ function startLocalAgentLeaseSweeper(config) {
   const { getPool } = require('./src/db/pool');
   let running = false;
   const tick = () => {
-    if (running) return;
+    if (running) return undefined;
     running = true;
-    localAgent.sweepExpiredLeases(getPool(config))
+    return localAgent.sweepExpiredLeases(getPool(config))
       .catch((err) => {
         log.warn('server', 'Local-agent lease sweep tick failed', { err: err.message });
       })
+      // A turn the sweep just failed may have lost its waiter too (the
+      // restart that took the platform took the laptop's connection with
+      // it): finish it now rather than on the next recovery tick.
+      .then(() => recoverLocalAgentTurns(config))
       .finally(() => { running = false; });
   };
-  setInterval(tick, LOCAL_AGENT_SWEEP_MS).unref?.();
+  leaderTimers.every('local-agent-lease-sweep', tick, LOCAL_AGENT_SWEEP_MS);
+  // Turns whose platform-side waiter died with its process are taken over
+  // and finished (services/local-agent-recovery.js): at boot, and on a
+  // tick well inside the waiter's stale window.
+  recoverLocalAgentTurns(config);
+  leaderTimers.every('local-agent-recovery', () => recoverLocalAgentTurns(config), LOCAL_AGENT_RECOVERY_MS);
+}
+
+const LOCAL_AGENT_RECOVERY_MS = 15 * 1000;
+let localAgentRecoveryRunning = false;
+
+// One recovery pass; never overlaps itself, never throws. The turns it takes
+// over are finished in the background (a turn still running on the laptop
+// is waited for), so a pass is one UPDATE.
+async function recoverLocalAgentTurns(config) {
+  if (localAgentRecoveryRunning) return 0;
+  localAgentRecoveryRunning = true;
+  try {
+    const { adopted } = await require('./src/services/local-agent-recovery').recoverOrphanedLocalTurns({
+      config,
+      pool: getPool(config),
+      deps: { finalizeRecoveredTurn, buildRecoveryStopHandle },
+    });
+    return adopted;
+  } catch (err) {
+    log.warn('server', 'Local-agent turn recovery pass failed', { err: err.message });
+    return 0;
+  } finally {
+    localAgentRecoveryRunning = false;
+  }
 }
 
 // Resume post-merge issue-close watches for sessions merged shortly
@@ -2415,13 +2626,15 @@ function startLocalAgentLeaseSweeper(config) {
 // 15-minute window comfortably covers the merge → GHA build → rolling
 // restart sequence of the self-edits app; re-watching an issue GitHub
 // already closed is cheap (first poll confirms, one cache bust + panel
-// broadcast) and idempotent.
-async function resumeIssueCloseWatches(config) {
+// broadcast) and idempotent. `skip` names sessions whose watch the boot's
+// recoverStuckMerges already started with the rest of their follow-ups.
+async function resumeIssueCloseWatches(config, { skip = [] } = {}) {
   const github = require('./src/services/github');
   if (!github.isEnabled()) return;
+  const watched = new Set((skip || []).map(Number));
   const { getPool } = require('./src/db/pool');
   const pool = getPool(config);
-  const { rows } = await pool.query(
+  let { rows } = await pool.query(
     `SELECT cs.id, cs.pr_number, cs.linked_issues,
             a.repo_url, a.slug AS app_slug, a.id AS app_id
        FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
@@ -2429,6 +2642,7 @@ async function resumeIssueCloseWatches(config) {
         AND cs.merged_at > NOW() - INTERVAL '15 minutes'
         AND cs.pr_number IS NOT NULL`
   );
+  rows = rows.filter((row) => !watched.has(Number(row.id)));
   if (!rows.length) return;
   const { watchIssuesClosedAfterMerge } = require('./src/services/issue-close-watcher');
   log.info('server', 'Resuming post-merge issue-close watches', {
@@ -2492,6 +2706,10 @@ async function recoverSessions(config) {
       // does: a boot is not a reason to try it again
       // (stagingRecovery.previewRetryPending).
       if (stagingRecovery.previewRetryPending(session)) { backedOff += 1; continue; }
+      // A live process still working on the session (the Pod a release
+      // replaced, finishing a turn or a build: docs/plans/draining-releases.md)
+      // builds its preview itself.
+      if ((await processes.holders(['session', 'staging_build', 'capture'], session.id, pool)).length) continue;
       if (!(await stagingRecovery.stagingNeedsRebuild(session, { config }))) continue;
       // Boot is when the old leader's runs are being harvested. A rebuild
       // would replace the preview under one and abort its harvest, so a
@@ -2543,7 +2761,7 @@ async function restoreMissingQuickReplies(config) {
   const { broadcastGlobal } = require('./src/services/ws');
 
   const { rows } = await pool.query(
-    `SELECT id, pr_number, spec_md FROM chat_sessions
+    `SELECT id, pr_number, spec_md, agent_session_id FROM chat_sessions
      WHERE status IN ('active', 'promoted')
        AND source IS DISTINCT FROM 'imported'
        AND is_headless = FALSE
@@ -2561,10 +2779,25 @@ async function restoreMissingQuickReplies(config) {
 
   for (const session of rows) {
     try {
+      // A change an agent session started has no dev chat of its own: its
+      // rows are the conversation's, whose Mayor holds a lease of its own
+      // (agent-sessions.js) and whose dead turns end, once that lease is
+      // stale, with the conversation's own Retry note (agent-turn.js
+      // sweepInterruptedTurns). A Mayor turn still running on this pod or
+      // another sets no busy flag on the change, so this sweep would read
+      // its message as unanswered, bell "stopped before finishing", and pin
+      // dev-chat pills onto the conversation's Mayor rows. None of that is
+      // this sweep's to say.
+      if (session.agent_session_id != null) { skipped++; continue; }
       // A live consumer owns this session right now (a detached-turn
-      // resume started above, or a turn came in while we were sweeping) —
-      // its own wrap-up/breadcrumb will supply the pills.
-      if (activeWorkersSvc.isSessionBusy(session.id)) { skipped++; continue; }
+      // resume started above, a turn came in while we were sweeping, or a
+      // Mayor turn this process is still answering: its stop handle is
+      // registered from the turn's first token) — its own
+      // wrap-up/breadcrumb will supply the pills.
+      if (activeWorkersSvc.isSessionBusy(session.id) || stopRegistry.get(session.id)) {
+        skipped++;
+        continue;
+      }
 
       // System rows are transparent to the client's pill resolution, so
       // the deciding row is the newest user/assistant one.
@@ -2702,6 +2935,108 @@ async function recoverActiveWorkers(config) {
   }
 }
 
+// docs/plans/draining-releases.md: a turn its process leaves behind (it
+// exited at its drain deadline, or died) is adopted by the leader within
+// ORPHAN_SWEEP_MS, not only when a leader is elected: since a release lets
+// the replaced Pod finish its work while this one leads, election is no
+// longer when the previous owner is known to be gone. An orphan is a turn in
+// a recoverable phase that no live process holds (services/processes.js),
+// whose record has not moved for ORPHAN_MIN_AGE_MS (a dispatch just made has
+// its hold written long before then), and whose worker is still there. The
+// adoption itself is adoptOrphanWorker's, which reads the holders again.
+const ORPHAN_SWEEP_MS = 60 * 1000;
+const ORPHAN_MIN_AGE_MS = 2 * 60 * 1000;
+
+// docs/plans/web-and-conductor.md: a worker left running by a process that
+// exited, with no turn on it (a turn is sweepOrphanTurns'), that no live
+// process keeps warm or runs anything in: adopted here as an election would,
+// so this process's idle eviction reclaims it in its time. Read exactly
+// (holders), and a session whose holders cannot be read is left for the next
+// pass.
+const LEFT_WARM_SWEEP_MS = 5 * 60 * 1000;
+const HELD_WORKER_KINDS = ['warm', 'session', 'shots', 'sync'];
+
+async function sweepLeftWarmWorkers(config, { list = () => worker.listOrphanWorkers(), adopt = adoptOrphanWorker } = {}) {
+  const pool = getPool(config);
+  const mine = new Set(worker.warmRegistrySnapshot().map((m) => Number(m.sessionId)));
+  const candidates = [];
+  for (const w of await list()) {
+    const id = Number(w.sessionId);
+    if (!Number.isInteger(id) || id <= 0 || w.state !== 'running' || mine.has(id)) continue;
+    if (HELD_WORKER_KINDS.some((kind) => processes.heldHere(kind, id))) continue;
+    if (activeWorkersSvc.isSessionBusyHere(id) || worker.getActiveTurnMode(id)) continue;
+    let holders;
+    try { holders = await processes.holders(HELD_WORKER_KINDS, id, pool); } catch { continue; }
+    if (!holders.length) candidates.push(w);
+  }
+  if (!candidates.length) return 0;
+  const { rows } = await pool.query(
+    'SELECT id FROM chat_sessions WHERE id = ANY($1::int[]) AND active_turn IS NOT NULL',
+    [candidates.map((w) => Number(w.sessionId))]);
+  const withTurn = new Set(rows.map((r) => Number(r.id)));
+  const deps = { config, pool, staging: require('./src/services/staging'), ghub: require('./src/services/github'),
+    broadcastGlobal: require('./src/services/ws').broadcastGlobal };
+  let adopted = 0;
+  for (const w of candidates) {
+    if (withTurn.has(Number(w.sessionId))) continue;
+    log.info('server', 'Adopting a warm worker its process left behind', { sessionId: w.sessionId, containerName: w.name });
+    adopted += 1;
+    await Promise.resolve().then(() => adopt(w, deps)).catch((err) => {
+      log.warn('server', 'Adopting a left-behind warm worker failed', { sessionId: w.sessionId, err: err.message });
+    });
+  }
+  return adopted;
+}
+
+async function sweepOrphanTurns(config, { adopt = adoptOrphanWorker } = {}) {
+  const pool = getPool(config);
+  const { rows } = await pool.query(
+    `SELECT cs.id FROM chat_sessions cs
+      WHERE cs.active_turn IS NOT NULL
+        AND cs.active_turn->>'phase' = ANY($1::text[])
+        AND COALESCE(cs.active_turn->>'lifecycleUpdatedAt', cs.active_turn->>'startedAt') < $2
+        AND NOT EXISTS (
+          SELECT 1 FROM process_holds h JOIN platform_processes p ON p.id = h.process_id
+           WHERE h.kind = ANY($3::text[]) AND h.ref = cs.id::text
+             AND p.heartbeat_at > NOW() - make_interval(secs => $4))
+        -- What adoption leaves as it is, and so would come back every pass:
+        -- a headless run (resumeHeadlessRuns carries it), and a durable
+        -- build's session (its build carries it, wherever it runs).
+        AND cs.is_headless IS NOT TRUE
+        AND NOT (cs.workflow_owner IS NOT NULL AND EXISTS (
+          SELECT 1 FROM wf_instances w
+           WHERE w.machine = split_part(cs.workflow_owner, '/', 1)
+             AND w.key = substr(cs.workflow_owner, length(split_part(cs.workflow_owner, '/', 1)) + 2)
+             AND w.state = 'building'))
+      ORDER BY cs.id
+      LIMIT 20`,
+    [[...turnLifecycle.RECOVERABLE_PHASES], new Date(Date.now() - ORPHAN_MIN_AGE_MS).toISOString(),
+      ['session', 'shots', 'sync'], processes.LIVE_SECONDS],
+  );
+  let adopted = 0;
+  for (const { id } of rows) {
+    // What this process holds, whether or not its write has landed yet.
+    if (['session', 'shots', 'sync'].some((kind) => processes.heldHere(kind, id))) continue;
+    if (activeWorkersSvc.isSessionBusyHere(id) || worker.getActiveTurnMode(id)) continue;
+    const name = worker.workerContainerName(id);
+    let state;
+    try { state = await worker.getWorkerStatus(name); } catch { continue; }
+    if (!state || state === 'not_found') continue;
+    const deps = { config, pool, staging: require('./src/services/staging'), ghub: require('./src/services/github'),
+      broadcastGlobal: require('./src/services/ws').broadcastGlobal };
+    log.info('server', 'Adopting a turn its process left behind', { sessionId: id, containerName: name, state });
+    adopted += 1;
+    Promise.resolve().then(() => adopt({ name, sessionId: id, state }, deps)).catch((err) => {
+      if (err?.retainActiveTurn && recoveryRetry.shouldRetryRecoveryError(err)) {
+        scheduleRetainedOrphanRecovery({ name, sessionId: id, state, retryWorkerRecovery: !!err.retryWorkerRecovery }, deps);
+        return;
+      }
+      log.warn('server', 'Adopting a left-behind turn failed', { sessionId: id, err: err.message });
+    });
+  }
+  return { examined: rows.length, adopted };
+}
+
 async function persistedActiveTurnExists(pool, sessionId) {
   try {
     const { rows } = await pool.query(
@@ -2729,6 +3064,12 @@ async function reconcilePendingTurnCleanup(config) {
     [turnLifecycle.PHASE_CLEANUP_PENDING],
   );
   for (const row of rows) {
+    // A live process still finishing the turn cleans it up itself
+    // (docs/plans/draining-releases.md); one whose holders cannot be read is
+    // left for a later sweep.
+    let held = true;
+    try { held = (await processes.holders('session', row.id, pool)).length > 0; } catch { held = true; }
+    if (held) continue;
     const args = turnCleanupArgs(row.active_turn);
     const cleared = await worker.finishTurn(row.id, args);
     if (!cleared) {
@@ -2944,11 +3285,12 @@ async function abandonOrphanShotsTurn({
   if (!containerRunning) await worker.destroyWorker(containerName);
 }
 
-// #3654: a benchmark trial's worker that outlived a restart, when its turn
-// is not one recovery can finish (adoptBenchOrphan, below). The same
-// abandonment as a shots turn's (above), then the session is archived and
-// the trial put straight back in the lane's queue, what the attempt spent
-// charged to its run: the lane runs it again from the start.
+// #3654: a benchmark trial's worker that outlived a restart and that no
+// durable trial owns (trials are durable builds: services/build-runs.js; this
+// is one that started before they were). The same abandonment as a shots
+// turn's (above), then the session is archived and the trial put straight
+// back in the lane's queue, what the attempt spent charged to its run: the
+// lane runs it again from the start.
 async function abandonOrphanBenchTurn({
   pool, session, sessionId, containerName, containerRunning, retryRuntimeRecovery,
 }) {
@@ -2987,101 +3329,43 @@ async function abandonOrphanBenchTurn({
   });
 }
 
-/**
- * #3654: a benchmark trial's worker that outlived a restart, still running
- * the trial's LAST turn (a triage, a follow-up, a checks fix, a build's build
- * turn). Followed to its end like the bot's own (adoptBotOrphan): the journal
- * is replayed by resumeDetachedTurn, which hands the result to the lane
- * instead of the dev-chat tail (no PR, staging, wrap-up or notification),
- * while the trial holds its lane slot and keeps its own clock. Resolves
- * false, having done nothing, for a turn the lane cannot finish this way;
- * the caller abandons it. A recovery that fails without a retry scheduled
- * puts the trial back in the queue.
- */
-async function adoptBenchOrphan({
-  config, pool, staging, broadcastGlobal, session, sessionId, containerName, containerState,
-}) {
-  const activeTurn = session.active_turn || null;
-  if (containerState !== 'running' || !activeTurn || !activeTurn.journal) return false;
-  if (session.status !== 'active') return false;
-  const lane = require('./src/services/bench/lane');
-  let plan = null;
-  try {
-    plan = await lane.recoveryPlan(pool, session, activeTurn);
-  } catch (err) {
-    log.warn('server', 'Benchmark recovery plan failed; abandoning the turn', { sessionId, err: err.message });
-    return false;
-  }
-  if (!plan || !plan.resumable) return false;
-  if (worker.usesKubernetesWorkers()) {
-    // As for any adoption: the startup inventory may be stale. A worker that
-    // cannot be confirmed running is abandoned instead.
-    let state = null;
-    try { state = await worker.getWorkerStatus(containerName); } catch (_) { state = null; }
-    if (state !== 'running') return false;
-  }
-  log.info('server', 'Adopting a benchmark trial\'s last turn for the lane to finish', {
-    sessionId, containerName, trialId: plan.trial.id, stage: plan.trial.stage, mode: activeTurn.mode,
-  });
-  worker.adoptWarmWorker(sessionId, containerName);
-  try {
-    await lane.holdRecoveredTrial(plan.trial, sessionId, resumeDetachedTurn({
-      config, pool, staging, broadcastGlobal, session, sessionId, containerName, activeTurn,
-    }));
-  } catch (err) {
-    // A retained turn is retried by the caller's scheduler and adopted
-    // again; anything else will not be, so the trial goes back now.
-    if (!(err?.retainActiveTurn && recoveryRetry.shouldRetryRecoveryError(err))) {
-      await lane.releaseTrialOfSession(pool, sessionId, { why: `recovery failed: ${err.message}` });
-    }
-    throw err;
-  }
-  await worker.destroyWorker(containerName).catch(() => {});
-  return true;
-}
-
 function homeroomBotRecovery() {
   return require('./src/services/homeroom-bot');
 }
 
 /**
- * #3401: a worker of the Homeroom bot's that outlived a restart. With a
- * turn in flight, the journal is followed to its end as any recovered turn
- * is, and resumeDetachedTurnInner hands the result to the bot instead of
- * the dev-chat tail; the build holds its lane slot meanwhile. With nothing
- * to follow (the worker is gone, or idle between the spec and the build),
- * the bot puts its run back in the queue unspent.
+ * #3401: a worker of the Homeroom bot's that outlived a restart and that no
+ * durable build owns (a build's session is its build's: adoptOrphanWorker
+ * leaves it alone before this). What is left is a read (its triage), which
+ * the bot's queue reads again: its turn is stopped and its record cleared,
+ * its ledger attempt closed, and its session put back to rest. The bot's
+ * builds no longer come here: they carry themselves on (services/build-runs.js).
  */
-async function adoptBotOrphan({
-  config, pool, staging, broadcastGlobal, session, sessionId, containerName, containerState,
-}) {
+async function adoptBotOrphan({ pool, session, sessionId, containerName, containerState }) {
   const bot = homeroomBotRecovery();
   const activeTurn = session.active_turn || null;
-  if (containerState === 'running' && activeTurn && activeTurn.journal) {
-    log.info('server', 'Adopting a Homeroom bot turn for the bot to finish', {
-      sessionId, containerName, mode: activeTurn.mode,
-    });
-    worker.adoptWarmWorker(sessionId, containerName);
-    await bot.holdSlotDuringRecovery(pool, sessionId, resumeDetachedTurn({
-      config, pool, staging, broadcastGlobal, session, sessionId, containerName, activeTurn,
-    }));
-    // #3471: a live build is proposed (or said to have failed) only now,
-    // with the session free, the order the live path promotes in.
-    await bot.completeRecoveredLive({ pool, config, sessionId });
-    return;
-  }
   if (activeTurn) {
-    const cleanupArgs = turnCleanupArgs(activeTurn);
+    const args = turnCleanupArgs(activeTurn);
+    if (containerState === 'running') {
+      worker.adoptWarmWorker(sessionId, containerName);
+      await worker.stopTurn(sessionId).catch(() => {});
+      worker.clearPendingStop(sessionId);
+    }
+    await abandonCodexAttempt(pool, sessionId, activeTurn, {
+      label: 'Orphaned Homeroom bot read',
+      errorDetail: 'A Homeroom bot read was stopped after the platform process that dispatched it exited; its request is read again.',
+    });
     recoveryRetry.requireDurableTurnCleanup(
-      await worker.finishTurn(sessionId, cleanupArgs),
-      cleanupArgs,
+      containerState === 'running'
+        ? await worker.finishTurn(sessionId, args)
+        : await worker.clearActiveTurn(sessionId, args),
+      args,
     );
   }
-  await worker.destroyWorker(containerName).catch(() => {});
+  if (containerState !== 'running') await worker.destroyWorker(containerName).catch(() => {});
   await bot.abandonRecoveredTurn({
-    pool, session, why: containerState === 'running' ? 'no turn was in flight' : 'the worker is gone',
+    pool, session, why: activeTurn ? 'the platform restarted during its turn' : 'no turn was in flight',
   });
-  await bot.completeRecoveredLive({ pool, config, sessionId });
 }
 
 async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcastGlobal }) {
@@ -3096,9 +3380,17 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
     // #896: app_self_hosted rides along so the recovered turn's Mayor
     // wrap-up gets the same system prompt a live turn would (the
     // self-hosted block changes what the Mayor is allowed to say).
+    // And whether a durable build that owns the session is still under way
+    // (bot-build, docs/plans/bot-build-workflow.md).
     `SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url,
             a.self_hosted AS app_self_hosted, u.username,
-            u.is_synthetic AS user_is_synthetic
+            u.is_synthetic AS user_is_synthetic,
+            (cs.workflow_owner IS NOT NULL AND EXISTS (
+              SELECT 1 FROM wf_instances w
+               WHERE w.machine = split_part(cs.workflow_owner, '/', 1)
+                 AND w.key = substr(cs.workflow_owner, length(split_part(cs.workflow_owner, '/', 1)) + 2)
+                 AND w.state = 'building'
+            )) AS workflow_owned
      FROM chat_sessions cs
      JOIN apps a ON cs.app_id = a.id
      JOIN users u ON cs.user_id = u.id
@@ -3112,6 +3404,44 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
     return;
   }
   const session = rows[0];
+
+  // A turn this process is following itself is no orphan. A follower serves
+  // requests and starts turns during a rollout's overlap, before it is
+  // promoted; adopting its own live turn here put a second consumer on its
+  // journal and finished it twice (cards, vote resets, wrap-ups), and the
+  // adoption's `finally` took the live owner's busy flag with it.
+  if (worker.getActiveTurnMode(sessionId) || activeWorkersSvc.isSessionBusyHere(sessionId)) {
+    log.info('server', 'A turn on this worker is live in this process; not adopting it', { containerName, sessionId });
+    return;
+  }
+  // Nor one another live process is following: the Pod a release replaced
+  // finishes its turns while this one leads (docs/plans/draining-releases.md),
+  // holding their sessions until they end (services/processes.js). Read
+  // exactly: a session whose holders cannot be read is retried, not taken.
+  let holders;
+  try {
+    holders = await processes.holders(['session', 'shots', 'sync'], sessionId, pool);
+  } catch (err) {
+    throw retryRuntimeRecovery(`could not read who holds the session: ${err.message}`);
+  }
+  if (holders.length) {
+    log.info('server', 'A turn on this worker is live in another process; not adopting it', {
+      containerName, sessionId, holders,
+    });
+    return;
+  }
+
+  // A durable build's session: its worker and its turns are that build's,
+  // whose work item the next leader claims and carries on from its last
+  // saved step (services/build-runs.js). The worker is kept and registered;
+  // nothing else is done to it here.
+  if (session.workflow_owned) {
+    if (containerState === 'running') worker.adoptWarmWorker(sessionId, containerName);
+    log.info('server', 'Leaving a durable build\'s worker to its build', {
+      containerName, sessionId, owner: session.workflow_owner, state: containerState,
+    });
+    return;
+  }
 
   const recoveryAction = turnLifecycle.recoveryAction(session.active_turn);
   if (recoveryAction === 'quarantine') {
@@ -3135,11 +3465,12 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
   }
 
   // #1006: except a Homeroom bot session paused under a turn in flight,
-  // which is the bot's to follow or hand back (adoptBotOrphan below).
-  // Destroying it here, in silence and with its turn record left, lost six
-  // platform builds on 10-02 and spent their attempts.
+  // whose turn is stopped and its record cleared (adoptBotOrphan below),
+  // and a benchmark trial's (abandonOrphanBenchTurn): destroying it here, in
+  // silence and with its turn record left, lost six platform builds on 10-02.
   if (!['active', 'promoted'].includes(session.status)
-      && !homeroomBotRecovery().isRecoveredBotSession(session)) {
+      && !homeroomBotRecovery().isRecoveredBotSession(session)
+      && !require('./src/services/bench/runner').isRecoveredBenchSession(session)) {
     // Session became non-runnable while we were down — drop the container.
     await worker.destroyWorker(containerName);
     return;
@@ -3147,14 +3478,11 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
 
   // #3654: a Homeroom bot benchmark trial is never recovered into the
   // dev-chat tail below, which would open a PR, build staging and notify,
-  // none of which a trial may do. Its last turn is followed to its end and
-  // finished by the lane (adoptBenchOrphan); any other turn is stopped and
-  // abandoned, and the trial put back in the lane's queue at once
-  // (services/bench/lane.js).
+  // none of which a trial may do. A trial is a durable build, left to its
+  // build above; one that is not (it started before trials were durable)
+  // has its turn stopped and abandoned, and the trial put back in the
+  // lane's queue (services/bench/lane.js).
   if (require('./src/services/bench/runner').isBenchSession(session)) {
-    if (await adoptBenchOrphan({
-      config, pool, staging, broadcastGlobal, session, sessionId, containerName, containerState,
-    })) return;
     await abandonOrphanBenchTurn({
       pool, session, sessionId, containerName,
       containerRunning: containerState === 'running',
@@ -3273,6 +3601,14 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
         });
         await narrateDanglingTail({ config, pool, session, sessionId, broadcastGlobal });
         worker.adoptWarmWorker(sessionId, containerName);
+        return;
+      }
+      // Kept warm by a live process (a web process's, which never leads,
+      // docs/plans/web-and-conductor.md): its own, and its idle eviction's.
+      let warmThere = [];
+      try { warmThere = await processes.holders('warm', sessionId, pool); } catch { warmThere = []; }
+      if (warmThere.some((id) => id !== processes.ID)) {
+        log.info('server', 'A live process keeps this idle worker warm; not adopting it', { containerName, sessionId });
         return;
       }
       log.info('server', 'Adopting warm-idle worker (no in-flight exec)', {
@@ -3641,9 +3977,18 @@ async function finalizeRecoveredTurn({
   config, pool, staging, session, sessionId, result, repoOwner, repoName,
   emit, containerName, keepWorker, startedAtMs, alreadyDone = null,
   activeTurn = null,
+  // The machine a local agent's turn ran on (services/local-agent-recovery.js):
+  // its completion card names it, as the live card does.
+  localAgentLabel = null,
 }) {
   const done = alreadyDone && typeof alreadyDone === 'object' ? alreadyDone : {};
   const recoveryAgent = recoveredAgentIdentity(session, activeTurn);
+  if (localAgentLabel) {
+    recoveryAgent.metadata = {
+      agentBackend: 'claude_code', agentModel: null,
+      runner: 'local', localAgentLabel, localMode: 'build',
+    };
+  }
   const noteMilestone = async (milestone) => {
     if (!activeTurn) return false;
     const noted = await worker.noteTailMilestone(
@@ -3690,13 +4035,14 @@ async function finalizeRecoveredTurn({
       else summaryParts.unshift(`What the agent did:\n${ccText}`);
       return;
     }
-    const statusText = ccOutcome === 'success'
+    const statusText = (ccOutcome === 'success'
       ? `${recoveryAgent.name} finished`
       : ccOutcome === 'no_changes'
         ? (recoveryAgent.isOpenRouter
           ? `${recoveryAgent.name} replied`
           : `${recoveryAgent.name} made no changes`)
-        : `${recoveryAgent.name} did not complete`;
+        : `${recoveryAgent.name} did not complete`)
+      + (localAgentLabel ? ` Coding done on ${localAgentLabel}, so no Homeroom credits were used.` : '');
     const metadata = {
       ccOutput: ccText,
       ccOutcome,
@@ -3963,39 +4309,23 @@ async function finalizeRecoveredTurn({
     }
 
     // Live-path parity for a PROMOTED session (sessions.js's post-staging
-    // block): a new commit invalidates the votes cast against the old one.
-    // Recovery used to skip this entirely, which was harmless while an
-    // interrupted tail simply never finished — now that it DOES finish, a
-    // resumed tail must not leave a promoted proposal carrying votes for a
-    // commit nobody reviewed. Gated on the milestone so a reset the live
-    // tail already performed is never re-announced.
-    if (session.status === 'promoted' && done.votesResetFor !== result.sha) {
+    // block): a new commit invalidates the votes cast against the old one,
+    // once its preview is up, and only then: a preview that failed leaves
+    // the votes where the live tail leaves them. Gated on the milestone so
+    // a reset the live tail already performed is never re-announced.
+    const retireVotesOnceStaged = async () => {
+      if (session.status !== 'promoted' || done.votesResetFor === result.sha) return;
       try {
         // Claim before the destructive delete. If recovery dies after this
         // point, repeating the reset/announcement would be worse than
         // leaving the already-reset votes unannounced.
         await noteMilestone({ votesResetFor: result.sha });
-        await require('./src/services/app-admins')
-          .refreshExplicitApproval(pool, session, session);
         // #1688: retired by an epoch bump, not deleted — the same step the
-        // live tail takes (services/vote-revision.js), so the recovered
-        // turn also asks the prior Yes voters back.
-        const { sendSystemMessage, pushVoteUpdate } = require('./src/services/ws');
-        const retired = await require('./src/services/vote-revision').retireAndRecheck(
-          pool, { ...session, id: sessionId }, result.sha,
-          {
-            announce: async ({ retired: dropped }) => {
-              pushVoteUpdate({ sessionId, appSlug: session.app_slug, merged: false });
-              const resetMsg = `An update was pushed to PR #${session.pr_number || sessionId} (commit ${result.sha.substring(0, 8)}). Earlier votes were on the old version, so take another look.`;
-              await sendSystemMessage(pool, session.app_id, resetMsg, 'system').catch(() => {});
-              await sendSystemMessage(pool, session.app_id, resetMsg, 'system',
-                null, { type: 'session', ref: sessionId }).catch(() => {});
-              log.info('server', 'Recovered turn: retired PR votes after new commit', {
-                sessionId, commitHash: result.sha.substring(0, 8), votesRetired: dropped,
-              });
-            },
-          },
-        );
+        // live tail takes, so the recovered turn also asks the prior Yes
+        // voters back, in the proposal's own thread.
+        const retired = await require('./src/routes/sessions').retireVotesForNewCommit({
+          pool, session, sessionId, commitHash: result.sha,
+        });
         if (retired.retired > 0) {
           summaryParts.push('Group-chat votes were reset for the new commit.');
         }
@@ -4004,7 +4334,7 @@ async function finalizeRecoveredTurn({
           sessionId, err: err.message,
         });
       }
-    }
+    };
 
     const app = { id: session.app_id, slug: session.app_slug, name: session.app_name, repo_url: session.repo_url };
 
@@ -4018,12 +4348,21 @@ async function finalizeRecoveredTurn({
     // The transcript card and its replay checkpoint commit together. The
     // staging build itself is external and may already have happened, but a
     // retained tail must never publish its outcome twice on a later wrap-up
-    // retry. A failed outcome is checkpointed too so retrying Mayor/spend
-    // work does not launch another expensive build known to have failed.
+    // retry, nor after the live tail already did: both write it through
+    // publishStagingOutcome, under one receipt. A failed outcome is
+    // checkpointed too so retrying Mayor/spend work does not launch another
+    // expensive build known to have failed.
     const publishRecoveredStaging = async ({ outcome, stagingUrl = null, failure = null }) => {
       const succeeded = outcome === 'success';
-      const content = succeeded ? 'Staging deployed!' : 'Staging build failed';
-      const metadata = succeeded
+      const metadata = outcome === 'building'
+        ? {
+            changesReady: true,
+            stagingBuild: 'running',
+            prNumber: prResult?.prNumber || session.pr_number || null,
+            prUrl: prResult?.prUrl || session.pr_url || null,
+            recovered: true,
+          }
+        : succeeded
         ? {
             stagingUrl,
             changesReady: true,
@@ -4041,40 +4380,16 @@ async function finalizeRecoveredTurn({
             prUrl: prResult?.prUrl || session.pr_url || null,
             recovered: true,
           };
-      const checkpoint = succeeded
-        ? { stagingPublished: true }
-        : { stagingPublished: true, stagingFailed: failure || { errMsg: metadata.error } };
-      const persist = async (client) => {
-        await client.query(
-          `INSERT INTO chat_session_messages (session_id, role, content, metadata)
-           VALUES ($1, 'system', $2, $3)`,
-          [sessionId, content, JSON.stringify(metadata)],
-        );
-        if (activeTurn) {
-          await turnLifecycle.mergeTailMilestones(client, {
-            sessionId,
-            ...turnLifecycle.cleanupArgs(activeTurn),
-            milestones: checkpoint,
-          });
-        }
-        return { outcome, metadata, failure, checkpoint };
-      };
-
-      let applied = true;
-      let value;
-      if (activeTurn?.turnId) {
-        const receipt = await turnEffects.runDbEffect({
+      const { applied, ...value } = await require('./src/routes/sessions')
+        .publishStagingOutcome({
           pool,
-          turnId: activeTurn.turnId,
-          effectKey: turnEffects.EFFECT_KEYS.RECOVERED_STAGING_PUBLICATION,
           sessionId,
-          run: persist,
+          turnId: activeTurn?.turnId || null,
+          tailIdentity: activeTurn ? turnLifecycle.cleanupArgs(activeTurn) : null,
+          outcome,
+          metadata,
+          failure,
         });
-        applied = receipt.applied;
-        value = receipt.value || { outcome, metadata, failure, checkpoint };
-      } else {
-        value = await persist(pool);
-      }
       // A completed receipt is authoritative if two recovery owners reached
       // this boundary with different observations. Restore the checkpoint
       // that committed with the card, not the retrying owner's proposal.
@@ -4097,7 +4412,7 @@ async function finalizeRecoveredTurn({
           testingMd: session.testing_md || null,
           testingPath: session.testing_path || null,
         });
-      } else if (applied) {
+      } else if (applied && value.outcome !== 'building') {
         emit('staging_failed', {
           error: value.metadata.error,
           errorName: value.metadata.stagingErrorName,
@@ -4142,30 +4457,67 @@ async function finalizeRecoveredTurn({
 
     if (!reusedStaging) emit('status', { text: 'Building staging preview...' });
 
+    // With WF_PREVIEWS_ENABLED on the preview machine builds and checks the
+    // recovered commit (a preview it already serves for it is joined). A
+    // promoted proposal's votes are retired first: its reviewed head is the
+    // pin the machine checks a revision against.
+    if (require('./src/services/preview-workflow').enabled()) {
+      await retireVotesOnceStaged();
+      if (await require('./src/services/preview-workflow').revision({
+        pool, session, head: result.sha, source: 'turn', trigger: 'boot-reconcile',
+      })) {
+        await publishRecoveredStaging({ outcome: 'building' });
+        summaryParts.push('The staging preview is building; its checks run once it is up.');
+        return { outcome: 'done', summary: summaryParts.join('\n\n') };
+      }
+    }
+
+    // A reused preview is the one the live tail built for this commit, and
+    // its checks may already have a verdict for it: the live tail pended
+    // them and started the capture before the restart. Only a head the
+    // checks have not seen is reset; a verdict for this very commit is kept
+    // (a passing one is not wiped and re-run), and a capture that was still
+    // pending when the restart took it is started again.
+    let checksForHead = null;
+    if (reusedStaging) {
+      const { rows: checkRows } = await pool.query(
+        'SELECT checks_commit_sha, check_state FROM chat_sessions WHERE id = $1',
+        [sessionId]
+      ).catch(() => ({ rows: [] }));
+      const checks = checkRows[0] || null;
+      if (checks && checks.checks_commit_sha === result.sha) checksForHead = checks;
+    }
+
     // #461 parity: pend the checks for the NEW commit before the build
     // starts, so the previous commit's verdict (e.g. a stale 'passing')
     // can't satisfy the merge gate while this build runs — or after it
     // fails. The live dev-turn path does this; recovery used to skip it.
     const visuals = require('./src/services/visuals');
-    await visuals.setChecksPending(pool, sessionId, result.sha, 'building', 'boot-reconcile')
-      .catch((err) => log.warn('server', 'Recovered turn: setChecksPending failed (non-fatal)', {
-        sessionId, err: err.message,
-      }));
+    if (!checksForHead) {
+      await visuals.setChecksPending(pool, sessionId, result.sha, 'building', 'boot-reconcile')
+        .catch((err) => log.warn('server', 'Recovered turn: setChecksPending failed (non-fatal)', {
+          sessionId, err: err.message,
+        }));
+    }
 
     // Preview already up for this commit: skip straight to the
-    // Changes-ready card the interrupted tail never got to post. The
-    // checks capture still re-runs below (setChecksPending just voided the
-    // verdict), so the merge gate resolves either way.
+    // Changes-ready card the interrupted tail never got to post (the
+    // receipt keeps it to one if it did). The checks capture re-runs unless
+    // this commit already has its verdict, so the merge gate resolves
+    // either way.
     if (reusedStaging) {
       log.info('server', 'Recovered turn: reusing healthy staging preview', {
-        sessionId, url: reusedStaging,
+        sessionId, url: reusedStaging, checksKept: checksForHead ? checksForHead.check_state : null,
       });
       await publishRecoveredStaging({ outcome: 'success', stagingUrl: reusedStaging });
       summaryParts.push(`Staging preview is live: ${reusedStaging}`);
-      visuals.captureForSession(config, session, app, result.sha, null, { send: () => {}, trigger: 'boot-reconcile' })
-        .catch((err) => log.warn('server', 'Recovered turn: reused-preview capture failed (non-fatal)', {
-          sessionId, err: err.message,
-        }));
+      if (!checksForHead || checksForHead.check_state === 'pending') {
+        visuals.captureForSession(config, session, app, result.sha, null, { send: () => {}, trigger: 'boot-reconcile' })
+          .catch((err) => log.warn('server', 'Recovered turn: reused-preview capture failed (non-fatal)', {
+            sessionId, err: err.message,
+          }));
+      }
+      await retireVotesOnceStaged();
       // The `finally` below owns worker teardown — don't pre-empt it.
       return { outcome: 'done', summary: summaryParts.join('\n\n') };
     }
@@ -4219,6 +4571,7 @@ async function finalizeRecoveredTurn({
         .catch((err) => log.warn('server', 'Recovered turn: capture failed (non-fatal)', {
           sessionId, err: err.message,
         }));
+      await retireVotesOnceStaged();
     } else {
       const { describeStagingFailure } = require('./src/routes/sessions');
       const { fix, missingKeys, errMsg, errName } = describeStagingFailure(stagingErr);
@@ -4333,9 +4686,14 @@ async function resumeDetachedTurn(args) {
   // sweepers see the session as busy — the sessions 2391/2386 incident
   // was the sweeper pausing sessions and destroying their workers in
   // the window between the journal tail ending and finalize completing.
-  activeWorkersSvc.activeWorkers.add(sessionId);
+  await activeWorkersSvc.activeWorkers.enter(sessionId);
+  // Whether the recovery got to the end of the turn's work: only then has
+  // the conversation that dispatched it something new to read.
+  let recoveredToEnd = false;
   try {
-    return await resumeDetachedTurnInner({ ...args, stopHandle });
+    const out = await resumeDetachedTurnInner({ ...args, stopHandle });
+    recoveredToEnd = true;
+    return out;
   } catch (err) {
     let retainedTurn;
     try {
@@ -4365,7 +4723,7 @@ async function resumeDetachedTurn(args) {
     // that Mayor's dead turn, and its screen follows the run. Whether the run
     // finished, stopped or failed, it is over.
     require('./src/services/mayor/agent-turn')
-      .handBackAfterRecovery({ pool, changeId: sessionId })
+      .handBackAfterRecovery({ pool, changeId: sessionId, finished: recoveredToEnd })
       .catch((err) => log.warn('server', 'Recovered turn: conversation hand-back failed (non-fatal)', {
         sessionId, err: err.message,
       }));
@@ -4531,38 +4889,24 @@ async function resumeDetachedTurnInner({
     emit('done', {});
   };
 
-  // #3401: a bot turn keeps the bot's own clock across the restart. The
-  // live path stopped it at its budget; recovery would otherwise follow it
-  // for as long as the agent cares to run.
+  // The bot's builds and the bench's trials never reach this: a durable
+  // build's turns are its build's to follow (services/durable-turn.js), and
+  // adoptOrphanWorker leaves them alone.
   //
-  // #3654: and a benchmark trial's, whose result is the lane's to record.
-  // Checked first: a trial's session is never the bot's, but the dev-chat
-  // tail must be unreachable for it whatever the bot check says.
-  //
-  // Each restart that reaches the turn is counted on its record first, and
-  // the bot's clock gives that time back (homeroom-bot.js
-  // RESTART_ALLOWANCE_MS): the worker ran on, so a restart costs a build only
-  // the calls it makes back to the platform while the platform is down. A
-  // build whose clock still runs out ran too long on its own (7 Oct 2026:
-  // two builds that ran on through every restart were each sent round again
-  // from the start, twice).
-  //
-  // #4533: and a follow-up of the bot's on its own PROMOTED proposal, which
-  // goes on through the person's tail below (isRecoveredBotSession leaves it
-  // there on purpose) but keeps the bot's clock, from the deadline its turn
-  // record carries. Only a turn with the bot's mark: a person's turn on the
-  // same session is never stopped on it.
-  const benchTurn = require('./src/services/bench/runner').isBenchSession(session);
-  const botTurn = !benchTurn && homeroomBotRecovery().isRecoveredBotSession(session);
-  const botFollowUp = !benchTurn && !botTurn && homeroomBotRecovery().isRecoveredBotFollowUp(session, activeTurn);
+  // #4533: a follow-up of the bot's on its own PROMOTED proposal goes on
+  // through the person's tail below (isRecoveredBotSession leaves it there on
+  // purpose) but keeps the bot's clock, from the deadline its turn record
+  // carries. Each restart that reaches the turn is counted on its record
+  // first, and the clock gives that time back (durable-turn.js
+  // RESTART_ALLOWANCE_MS). Only a turn with the bot's mark: a person's turn
+  // on the same session is never stopped on it.
+  const botFollowUp = homeroomBotRecovery().isRecoveredBotFollowUp(session, activeTurn);
   let botTimedOut = false;
   let botClock = null;
-  if (botTurn || benchTurn || botFollowUp) {
+  if (botFollowUp) {
     const restarts = await turnLifecycle.noteRestart(pool, { sessionId, turnId: activeTurn.turnId }).catch(() => null);
     const clockTurn = Number.isInteger(restarts) ? { ...activeTurn, restarts } : activeTurn;
-    const deadline = await (benchTurn
-      ? require('./src/services/bench/lane').recoveryDeadline(pool, config, session, clockTurn)
-      : homeroomBotRecovery().recoveryDeadline(pool, config, session, clockTurn)).catch(() => null);
+    const deadline = await homeroomBotRecovery().recoveryDeadline(pool, config, session, clockTurn).catch(() => null);
     if (deadline != null) {
       const botClockMs = Math.max(0, deadline - Date.now());
       botClock = setTimeout(() => {
@@ -4609,6 +4953,10 @@ async function resumeDetachedTurnInner({
       // post-restart switched calls accumulate on top of pre-restart ones.
       byokCentsSoFar: Number(activeTurn.byokCents || 0),
       onProgress: onRecoveredProgress,
+      // The registry state execInWorker kept for this turn (worker.js).
+      mode: activeTurn.mode || null,
+      branchName: session.branch_name || null,
+      stopRequestedAt: turnLifecycle.stopRequestOf(activeTurn)?.atMs || null,
     });
   } catch (err) {
     if (botClock) clearTimeout(botClock);
@@ -4617,7 +4965,7 @@ async function resumeDetachedTurnInner({
     // when it does throw, the user still asked for this to end. Close it as
     // a stop instead of reporting a failure they caused on purpose. (A
     // benchmark turn writes no stop card: its trial is put back below.)
-    if (handle.stopped && !benchTurn) {
+    if (handle.stopped) {
       await finishAsStopped(activeTurn);
       return;
     }
@@ -4663,32 +5011,6 @@ async function resumeDetachedTurnInner({
         });
         throw ledgerErr;
       }
-    }
-    // #3654: the trial goes back in the lane's queue, its spend charged;
-    // nothing is said anywhere.
-    if (benchTurn) {
-      const benchCleanup = turnCleanupArgs(activeTurn);
-      recoveryRetry.requireDurableTurnCleanup(
-        await worker.finishTurn(sessionId, benchCleanup),
-        benchCleanup,
-      );
-      await require('./src/services/bench/lane').releaseTrialOfSession(pool, sessionId, {
-        why: `the journal replay failed: ${err.message}`,
-      });
-      return;
-    }
-    // #3401: the bot's run goes back in the queue unspent; no breadcrumb
-    // or stalled notification, which nobody reads on the bot's session.
-    if (botTurn) {
-      const botCleanup = turnCleanupArgs(activeTurn);
-      recoveryRetry.requireDurableTurnCleanup(
-        await worker.finishTurn(sessionId, botCleanup),
-        botCleanup,
-      );
-      await homeroomBotRecovery().abandonRecoveredTurn({
-        pool, session, why: `the journal replay failed: ${err.message}`,
-      });
-      return;
     }
     // Terminal marker: the card must not stay frozen on the last line
     // the journal managed to deliver before the resume died. When the
@@ -4739,7 +5061,7 @@ async function resumeDetachedTurnInner({
   // going, so none of it may run. Close the turn as a stop and return.
   // (A benchmark turn writes no stop card either: the lane records the
   // trial as stopped on its clock, below.)
-  if (handle.stopped && !benchTurn) {
+  if (handle.stopped) {
     await finishAsStopped(recoveryActiveTurn, result);
     return;
   }
@@ -4829,42 +5151,6 @@ async function resumeDetachedTurnInner({
       sessionId, err: err.message,
     });
     throw err;
-  }
-
-  // #3401: the journal is followed and the attempt settled; the rest is the
-  // dev-chat tail (a PR, staging, a wrap-up, a notification), which a bot
-  // turn must not get. The bot records the result on its run, then the
-  // turn record is cleared. Recording first: a failed clear is retried by
-  // the retained-recovery timer, and the bot's writes are guarded so the
-  // repeat records nothing twice.
-  // #3654: likewise a benchmark trial's: the lane reads the result as the
-  // live stage would and records the trial (or, failing that, puts it back
-  // in the queue), then the turn record is cleared. Its writes are guarded
-  // on the trial still running, so a retried clear records nothing twice.
-  if (benchTurn) {
-    await require('./src/services/bench/lane').finishRecoveredTrial({
-      pool, config, session, activeTurn: recoveryActiveTurn, result, timedOut: botTimedOut || !!handle.stopped,
-      // Every line of the turn, from its start: the looks it took (progress.js).
-      progress: progressLines,
-    });
-    const benchCleanup = turnCleanupArgs(recoveryActiveTurn);
-    recoveryRetry.requireDurableTurnCleanup(
-      await worker.finishTurn(sessionId, benchCleanup),
-      benchCleanup,
-    );
-    return;
-  }
-
-  if (botTurn) {
-    await homeroomBotRecovery().finishRecoveredTurn({
-      pool, session, activeTurn: recoveryActiveTurn, result, timedOut: botTimedOut,
-    });
-    const botCleanup = turnCleanupArgs(recoveryActiveTurn);
-    recoveryRetry.requireDurableTurnCleanup(
-      await worker.finishTurn(sessionId, botCleanup),
-      botCleanup,
-    );
-    return;
   }
 
   // Terminal marker for the progress card: pessimistic default so a
@@ -5138,6 +5424,46 @@ const SWEEP_INTERVAL_MS = 30 * 1000;
 
 let sweeperHandle = null;
 
+// 14 Oct 2026 (#5162's follow-up): a durable build holds its session for
+// its whole run, its turns and the time between them, wherever the build
+// runs (services/build-runs.js holdsSession), and ensureWorker keeps its
+// worker on its image until the build ends. A release's draining process
+// forgets its idle warm workers and the new leader adopts them
+// (sweepLeftWarmWorkers), so the worker a DRAINING process's build is still
+// using between turns can sit in this registry, idle by its clock, or in a
+// sweep's list of idle sessions: stopping it there takes the build's worker
+// from under it. So every sweep that stops or pauses a session's worker
+// without that session asking (the idle eviction below, the auto-pause
+// sweeper's first pass, and session-lifecycle.js's slot eviction) asks this
+// first, of a session it would otherwise act on, and leaves a held one
+// alone until its build ends. A read that fails answers false (build-runs
+// logs it), and the sweep does what it did before.
+function heldByDurableBuild(sessionId, pool = getPool(config)) {
+  return require('./src/services/build-runs').holdsSession(pool, sessionId);
+}
+
+// What a sweep left to a build is logged once while it stays a candidate,
+// not on every pass: each sweep keeps the ids it said (`said`), and forgets
+// those it no longer finds (`seen`, this pass's candidates).
+function sayLeftToBuild(said, sessionId, message, fields = {}) {
+  const id = Number(sessionId);
+  if (said.has(id)) return;
+  said.add(id);
+  log.info('server', message, { sessionId: id, ...fields });
+}
+
+function forgetUnseen(said, seen) {
+  const ids = new Set([...seen].map(Number));
+  for (const id of said) if (!ids.has(id)) said.delete(id);
+}
+
+const idleLeftToBuilds = new Set();
+
+// Every process sweeps its own warm registry (startProcessDuties): a web
+// process never leads, and its turns' workers are its own. A session busy
+// anywhere is left alone: a turn on another process may be using the very
+// worker this registry last used (a session's turns land wherever the
+// Service sends them).
 function startIdleEvictionSweeper() {
   if (sweeperHandle) return;
   log.info('server', 'Worker idle-eviction sweeper started', {
@@ -5146,29 +5472,58 @@ function startIdleEvictionSweeper() {
   });
   sweeperHandle = setInterval(async () => {
     if (lifecycle.isShuttingDown()) return;
-    const now = Date.now();
-    const snapshot = worker.warmRegistrySnapshot();
-    for (const meta of snapshot) {
-      if (meta.inFlight) continue;
-      if (meta.bootstrapping) continue;
-      if (now - meta.lastUsedMs < WORKER_IDLE_EVICTION_MS) continue;
-      try {
-        await worker.evictWorker(meta.sessionId);
-        log.info('server', 'Idle warm worker evicted', {
-          sessionId: meta.sessionId,
-          containerName: meta.containerName,
-          idleMs: now - meta.lastUsedMs,
-        });
-      } catch (err) {
-        log.warn('server', 'Idle eviction failed', {
-          sessionId: meta.sessionId, err: err.message,
-        });
-      }
-    }
+    await sweepIdleWarmWorkers().catch((err) => {
+      log.warn('server', 'Idle eviction sweep failed', { err: err.message });
+    });
   }, SWEEP_INTERVAL_MS).unref();
   // .unref() so the sweeper doesn't hold the event loop open if everything
   // else has shut down. We still clearInterval explicitly in cleanup() to
   // race-free stop the sweeper before exit.
+}
+
+// One pass of the idle eviction: every worker in this registry idle past
+// WORKER_IDLE_EVICTION_MS is evicted, unless it is in use, busy elsewhere,
+// kept warm by another process, or a durable build holds its session
+// (heldByDurableBuild). `held` is that question, for tests.
+async function sweepIdleWarmWorkers({ now = Date.now(), held = heldByDurableBuild } = {}) {
+  const snapshot = worker.warmRegistrySnapshot();
+  forgetUnseen(idleLeftToBuilds, snapshot.map((meta) => meta.sessionId));
+  for (const meta of snapshot) {
+    if (meta.inFlight) continue;
+    if (meta.bootstrapping) continue;
+    if (now - meta.lastUsedMs < WORKER_IDLE_EVICTION_MS) continue;
+    if (activeWorkersSvc.isSessionBusyElsewhere(meta.sessionId)) continue;
+    // Warm in another process too: forget it here and leave it to them;
+    // the last one keeping it warm evicts it. If they all forget it at
+    // once, the leader's sweep for left-behind workers adopts it.
+    if (processes.heldElsewhere('warm', meta.sessionId)) {
+      worker.forgetWorker(meta.sessionId);
+      log.info('server', 'Idle warm worker left to another process that keeps it warm', {
+        sessionId: meta.sessionId, containerName: meta.containerName,
+      });
+      continue;
+    }
+    // A durable build's, between its turns, wherever the build runs.
+    if (await held(meta.sessionId)) {
+      sayLeftToBuild(idleLeftToBuilds, meta.sessionId, 'Not evicting an idle warm worker: a durable build holds its session', {
+        containerName: meta.containerName, idleMs: now - meta.lastUsedMs,
+      });
+      continue;
+    }
+    idleLeftToBuilds.delete(Number(meta.sessionId));
+    try {
+      await worker.evictWorker(meta.sessionId);
+      log.info('server', 'Idle warm worker evicted', {
+        sessionId: meta.sessionId,
+        containerName: meta.containerName,
+        idleMs: now - meta.lastUsedMs,
+      });
+    } catch (err) {
+      log.warn('server', 'Idle eviction failed', {
+        sessionId: meta.sessionId, err: err.message,
+      });
+    }
+  }
 }
 
 // Session auto-pause sweeper. Distinct from the worker idle-eviction
@@ -5183,14 +5538,15 @@ function startIdleEvictionSweeper() {
 // should stay live, and pausing+resuming would currently lose the
 // promoted distinction).
 let sessionSweeperHandle = null;
-let conversationAttachmentSweeperHandle = null;
 
 // Messages attachment retention is independent of session auto-pause. In
 // deployments that disable SESSION_AUTOPAUSE_IDLE_MS, abandoned private
-// composer uploads must still be reclaimed. Run once at leader start and on
-// a slow independent cadence; linked rows remain retained with messages.
+// composer uploads must still be reclaimed. Hourly on the durable clock
+// leader_sweeps keeps (services/leader-timers.js) — due at once when it never
+// ran, and otherwise when the last pass says, whichever Pod leads by then —
+// rather than at every election; linked rows remain retained with messages.
 function startConversationAttachmentSweeper(config) {
-  if (conversationAttachmentSweeperHandle) return;
+  if (leaderTimers.has('conversation-attachment-gc')) return;
   const pool = getPool(config);
   const sweep = async () => {
     if (lifecycle.isShuttingDown()) return;
@@ -5206,9 +5562,7 @@ function startConversationAttachmentSweeper(config) {
       log.warn('server', 'Orphaned conversation attachment sweep failed', { err: err.message });
     }
   };
-  sweep();
-  conversationAttachmentSweeperHandle = setInterval(sweep, 60 * 60 * 1000);
-  conversationAttachmentSweeperHandle.unref?.();
+  leaderTimers.every('conversation-attachment-gc', sweep, 60 * 60 * 1000, { durable: pool });
 }
 
 // Per-session throttle for the sweeper's staging-heal pass (Pass 3). Maps
@@ -5262,6 +5616,50 @@ const FRESHNESS_REFRESH_COOLDOWN_MS = Math.max(
   60 * 1000
 );
 
+const autoPauseLeftToBuilds = new Set();
+
+// The auto-pause sweeper's first pass (startSessionAutoPauseSweeper below):
+// idle 'active' sessions paused, their workers destroyed and their slots
+// freed. Never one mid-turn (active_turn, isSessionBusy), and, since 14 Oct
+// 2026, never one a durable build holds between its turns
+// (heldByDurableBuild): the auto-pause idle window is minutes, and a build
+// on a draining process can be quiet that long while its review runs.
+// `held` is that question, for tests. Resolves the ids it paused.
+async function autoPauseIdleSessions(pool, { idleMs, exemptFixtures = false, held = (id) => heldByDurableBuild(id, pool) } = {}) {
+  const paused = [];
+  try {
+    const { rows } = await pool.query(
+      `SELECT id FROM chat_sessions
+       WHERE status = 'active'
+         AND active_turn IS NULL
+         AND source IS DISTINCT FROM 'imported'
+         AND last_activity_at < NOW() - make_interval(secs => $1::double precision / 1000.0)
+         AND NOT ($2::boolean AND COALESCE(branch_name, '') LIKE 'staging-fixture/%')
+       ORDER BY last_activity_at ASC
+       LIMIT 50`,
+      [idleMs, !!exemptFixtures]
+    );
+    forgetUnseen(autoPauseLeftToBuilds, rows.map((row) => row.id));
+    for (const row of rows) {
+      if (activeWorkersSvc.isSessionBusy(row.id)) continue;
+      if (await held(row.id)) {
+        sayLeftToBuild(autoPauseLeftToBuilds, row.id, 'Not auto-pausing an idle session: a durable build holds it');
+        continue;
+      }
+      autoPauseLeftToBuilds.delete(Number(row.id));
+      try {
+        const out = await sessionLifecycle.pauseSession({ pool, sessionId: row.id, reason: 'auto-idle' });
+        if (out && out.paused) paused.push(Number(row.id));
+      } catch (err) {
+        log.warn('server', 'Auto-pause failed', { sessionId: row.id, err: err.message });
+      }
+    }
+  } catch (err) {
+    log.warn('server', 'Session auto-pause sweep failed', { err: err.message });
+  }
+  return paused;
+}
+
 function startSessionAutoPauseSweeper(config) {
   if (sessionSweeperHandle) return;
   if (!config.sessionAutopauseIdleMs || config.sessionAutopauseIdleMs <= 0) {
@@ -5274,7 +5672,14 @@ function startSessionAutoPauseSweeper(config) {
     stagingIdleMs: config.stagingIdleTeardownMs,
     sweepIntervalMs: config.sessionSweepIntervalMs,
   });
-  sessionSweeperHandle = setInterval(async () => {
+  // Not held for the shutdown drain as a whole: a pass can be minutes into a
+  // staging rebuild, which a shutdown leaves to be re-driven (cleanup marks
+  // it), and waiting for one held a release's drain to its 60s deadline on
+  // 14 Oct 2026. Its long loops stop at their next row once shutdown begins,
+  // and the proposal measurement, whose write the closing pool cut, is held
+  // on its own below. One pass at a time (services/single-flight.js): a pass
+  // minutes into a staging heal had later ticks start beside it.
+  sessionSweeperHandle = setInterval(singleFlight('session-sweeper', async () => {
     if (lifecycle.isShuttingDown()) return;
 
     // Pass 1: auto-pause idle 'active' sessions (worker + slot only;
@@ -5299,30 +5704,9 @@ function startSessionAutoPauseSweeper(config) {
     // them costs no capacity. The predicate is the branch prefix migrate.js
     // seeds them under, and it is gated on USERNODE_ENV so production's
     // sweep is byte-for-byte what it was.
-    const exemptFixtures = process.env.USERNODE_ENV === 'staging';
-    try {
-      const { rows } = await pool.query(
-        `SELECT id FROM chat_sessions
-         WHERE status = 'active'
-           AND active_turn IS NULL
-           AND source IS DISTINCT FROM 'imported'
-           AND last_activity_at < NOW() - make_interval(secs => $1::double precision / 1000.0)
-           AND NOT ($2::boolean AND COALESCE(branch_name, '') LIKE 'staging-fixture/%')
-         ORDER BY last_activity_at ASC
-         LIMIT 50`,
-        [config.sessionAutopauseIdleMs, exemptFixtures]
-      );
-      for (const row of rows) {
-        if (activeWorkersSvc.isSessionBusy(row.id)) continue;
-        try {
-          await sessionLifecycle.pauseSession({ pool, sessionId: row.id, reason: 'auto-idle' });
-        } catch (err) {
-          log.warn('server', 'Auto-pause failed', { sessionId: row.id, err: err.message });
-        }
-      }
-    } catch (err) {
-      log.warn('server', 'Session auto-pause sweep failed', { err: err.message });
-    }
+    await autoPauseIdleSessions(pool, {
+      idleMs: config.sessionAutopauseIdleMs, exemptFixtures: process.env.USERNODE_ENV === 'staging',
+    });
 
     // Pass 2: staging GC. Reclaim the staging container + cloned DB from
     // sessions cold past the (much longer) staging-idle window. Skips
@@ -5380,11 +5764,18 @@ function startSessionAutoPauseSweeper(config) {
         // pr_number: a reaped TAIL row names the PR its work landed on.
         // username / user_is_synthetic: a reaped turn of the Homeroom bot's
         // or of a benchmark trial goes back to its owner, not to a person.
-        `SELECT cs.id, cs.user_id, cs.app_id, cs.status, cs.pr_number, cs.active_turn,
+        // A durable build's turn is its build's (services/durable-turn.js),
+        // which follows it wherever the build runs next: never reaped here.
+        `SELECT cs.id, cs.user_id, cs.app_id, cs.status, cs.pr_number, cs.active_turn, cs.workflow_owner,
                 u.username, u.is_synthetic AS user_is_synthetic
            FROM chat_sessions cs
            LEFT JOIN users u ON u.id = cs.user_id
          WHERE cs.active_turn IS NOT NULL
+           AND NOT (cs.workflow_owner IS NOT NULL AND EXISTS (
+             SELECT 1 FROM wf_instances w
+              WHERE w.machine = split_part(cs.workflow_owner, '/', 1)
+                AND w.key = substr(cs.workflow_owner, length(split_part(cs.workflow_owner, '/', 1)) + 2)
+                AND w.state = 'building'))
          ORDER BY (cs.active_turn->>'startedAt') ASC NULLS FIRST
          LIMIT 20`
       );
@@ -5487,10 +5878,9 @@ function startSessionAutoPauseSweeper(config) {
           // notification below are for a person; these go back to the bot's
           // queue (attempt unspent) or the bench lane instead.
           if (require('./src/services/bench/runner').isBenchSession(row)) {
-            await require('./src/services/bench/lane').releaseTrialOfSession(pool, row.id, {
-              why: 'the stale-turn watchdog reaped its turn',
-            });
-            log.warn('server', 'Watchdog handed a reaped benchmark turn back to the lane', { sessionId: row.id });
+            // A trial's turn no durable trial owns (one started before trials
+            // were durable): nothing is waiting on it.
+            log.warn('server', 'Watchdog reaped a benchmark turn no trial owns', { sessionId: row.id });
             continue;
           }
           if (homeroomBotRecovery().isRecoveredBotSession(row)) {
@@ -5583,7 +5973,7 @@ function startSessionAutoPauseSweeper(config) {
       const MAX_HEALS_PER_SWEEP = 5;
       let healed = 0;
       for (const session of rows) {
-        if (healed >= MAX_HEALS_PER_SWEEP) break;
+        if (healed >= MAX_HEALS_PER_SWEEP || lifecycle.isShuttingDown()) break;
         if (activeWorkersSvc.isSessionBusy(session.id)) continue;
         // #866: worker.isInFlight only covers agent turns. An imported
         // proposal's first staging build runs from the import path with no
@@ -5753,7 +6143,9 @@ function startSessionAutoPauseSweeper(config) {
         // A getPR per imported proposal: background work, held while
         // GitHub's hourly budget is nearly used up (services/github-budget.js).
         if (!githubBudget.budgetAllows('background')) break;
-        if (worker.isInFlight(session.id)) continue;
+        // A turn on any process (a web process runs the turns its routes
+        // start, docs/plans/web-and-conductor.md), not only this one's.
+        if (worker.isInFlight(session.id) || activeWorkersSvc.isSessionBusy(session.id)) continue;
         const last = importedHeadSyncAttempts.get(session.id) || 0;
         if (Date.now() - last < IMPORTED_HEAD_SYNC_COOLDOWN_MS) continue;
         // Stamp BEFORE the getPR (+ possible minutes-long rebuild) so a
@@ -5797,13 +6189,20 @@ function startSessionAutoPauseSweeper(config) {
           ORDER BY cs.app_id, cs.integration_measured_at NULLS FIRST`
       );
       let measured = 0;
-      for (const session of rows) {
-        // A session mid-turn is about to move its own head; measuring it now
-        // records an answer that is wrong before it is written.
-        if (worker.isInFlight(session.id)) continue;
-        const written = await integrationSvc.measure({ pool, session }, { force: true });
-        if (written && !written.skipped) measured++;
-      }
+      // Held for the shutdown drain, which therefore waits for one
+      // measurement at most: the loop stops at its next row once shutdown
+      // begins, rather than writing into the closed pool.
+      await inflightWork.track('session-sweeper:measure', async () => {
+        for (const session of rows) {
+          if (lifecycle.isShuttingDown()) break;
+          // A session mid-turn is about to move its own head; measuring it now
+          // records an answer that is wrong before it is written. Mid-turn on
+          // any process, not only this one.
+          if (worker.isInFlight(session.id) || activeWorkersSvc.isSessionBusy(session.id)) continue;
+          const written = await integrationSvc.measure({ pool, session }, { force: true });
+          if (written && !written.skipped) measured++;
+        }
+      });
       if (measured) log.info('server', 'Measured proposals against main', { count: measured });
     } catch (err) {
       log.warn('server', 'Proposal measurement sweep failed', { err: err.message });
@@ -5861,11 +6260,17 @@ function startSessionAutoPauseSweeper(config) {
     try {
       if (stagingReap.pressureSweepDue()) {
         await stagingReap.sweepConnectionPressure(config);
+        // The preview database server has its own budget
+        // (STAGING_DB_ADMIN_URL). A no-op without one.
+        await stagingReap.sweepConnectionPressure(config, { server: 'preview' });
       }
+      // While a preview database server is being drained: what still depends
+      // on it, logged every ten minutes. A no-op otherwise.
+      await stagingReap.previewServerDrainStatus(config);
     } catch (err) {
       log.warn('server', 'Connection-pressure sweep failed', { err: err.message });
     }
-  }, config.sessionSweepIntervalMs).unref();
+  }), config.sessionSweepIntervalMs).unref();
 }
 
 let governanceApplyTickerHandle = null;
@@ -5967,8 +6372,6 @@ function startGovernanceApplyTicker(config) {
   }, intervalMs).unref();
 }
 
-let stalePrSweeperHandle = null;
-
 // Stale-promoted-PR policy + reversible-archive hard GC.
 //   Pass 1 (notify): a promoted PR with no voting interest for
 //     PR_STALE_NOTIFY_MS gets its author a 'stale_pr' notification, and
@@ -5980,8 +6383,15 @@ let stalePrSweeperHandle = null;
 //     change's Kubernetes worker volume that outlived its merge is freed.
 // "Interest" = the later of promoted_at and the newest vote; casting a
 // vote clears stale_notified_at (see routes/votes.js), reviving the PR.
+//
+// Hourly (staleSweepIntervalMs) on the durable clock leader_sweeps keeps
+// (services/leader-timers.js). As a bare setInterval its clock restarted at
+// every election, and with a release every twenty minutes or so it almost
+// never fired: warnings, auto-archive, Pass 0b's superseded close-issue
+// retirement, archived volume GC and merged worker-volume reclaim (a disk
+// leak) all waited for a quiet night.
 function startStalePrSweeper(config) {
-  if (stalePrSweeperHandle) return;
+  if (leaderTimers.has('stale-pr-sweep')) return;
   const notifyEnabled = config.prStaleNotifyMs > 0;
   const gcEnabled = config.archivedRetentionMs > 0;
   if (!notifyEnabled && !gcEnabled) {
@@ -6001,7 +6411,7 @@ function startStalePrSweeper(config) {
   const issuesModule = require('./src/routes/issues');
   const governance = require('./src/services/governance');
   const appAdmins = require('./src/services/app-admins');
-  stalePrSweeperHandle = setInterval(async () => {
+  leaderTimers.every('stale-pr-sweep', async () => {
     if (lifecycle.isShuttingDown()) return;
 
     // Pass 0: window-elapsed merges. A promoted PR can become mergeable
@@ -6254,19 +6664,19 @@ function startStalePrSweeper(config) {
         log.warn('server', 'Merged worker volume sweep failed', { err: err.message });
       }
     }
-  }, config.staleSweepIntervalMs).unref();
+  }, config.staleSweepIntervalMs, { durable: pool });
 }
-
-let workshopThemeSweeperHandle = null;
 
 // The Workshop's theme sweep (services/workshop-themes.js sweep): the daily
 // re-draft's clock, and the backstop for cards that arrived without a
 // broadcast (an issue filed directly on GitHub). Leader-only, like the
 // other sweepers: two instances re-drafting the same app is two model
 // calls for one grouping. WORKSHOP_THEMES_SWEEP_INTERVAL_MS=0 disables it;
-// the change hook and the GET backstop still place cards.
+// the change hook and the GET backstop still place cards. Hourly on the
+// durable clock (services/leader-timers.js), so the daily re-draft is not
+// postponed by every release that changes the leader.
 function startWorkshopThemeSweeper(config) {
-  if (workshopThemeSweeperHandle) return;
+  if (leaderTimers.has('workshop-theme-sweep')) return;
   if (!(config.workshopSweepIntervalMs > 0)) {
     log.info('server', 'Workshop theme sweeper disabled');
     return;
@@ -6275,8 +6685,9 @@ function startWorkshopThemeSweeper(config) {
   const workshopThemes = require('./src/services/workshop-themes');
   log.info('server', 'Workshop theme sweeper started', { intervalMs: config.workshopSweepIntervalMs });
   let running = false;
-  workshopThemeSweeperHandle = setInterval(async () => {
-    if (lifecycle.isShuttingDown() || running) return;
+  leaderTimers.every('workshop-theme-sweep', async () => {
+    if (lifecycle.isShuttingDown()) return undefined;
+    if (running) return leaderTimers.SKIPPED;
     running = true;
     try {
       const out = await workshopThemes.sweep({ pool, isShuttingDown: () => lifecycle.isShuttingDown() });
@@ -6286,7 +6697,8 @@ function startWorkshopThemeSweeper(config) {
     } finally {
       running = false;
     }
-  }, config.workshopSweepIntervalMs).unref();
+    return undefined;
+  }, config.workshopSweepIntervalMs, { durable: pool });
 }
 
 // #2253: the per-app database storage cap. Every APP_DB_STORAGE_SWEEP_INTERVAL_MS
@@ -6409,8 +6821,22 @@ function startPlatformIncidentAlertSweeper(config) {
 }
 
 // Graceful shutdown: mark drain state so new chats/app-creates/builds get
-// 503'd, wait up to DRAIN_TIMEOUT_MS for in-flight HTTP handlers to
-// finish flushing DB writes, then exit.
+// 503'd, stop every leader timer, wait up to the drain deadline
+// (shutdownDrainMs below) for in-flight HTTP handlers and registered
+// background work to finish, then exit.
+//
+// What the drain waits for, and for how long:
+//   - HTTP handlers still answering (src/middleware/inflight-requests.js,
+//     less event streams and long polls) and the work registered in
+//     services/inflight-work.js — a merge pass, a leader timer's tick — up to
+//     shutdownDrainMs(): DRAIN_TIMEOUT_MS under docker-compose, a minute by
+//     default on Kubernetes, whose 90s grace period this used to leave almost
+//     entirely unspent. Before this the drain asked about workers alone, so
+//     on a pod with none busy it returned at once and the exit cut every
+//     handler and every background pass mid-write.
+//   - Busy workers and before & after shots runs, up to DRAIN_TIMEOUT_MS
+//     only, wherever this runs: both are restart-safe (below), so waiting
+//     out a turn buys nothing and would only hold the leader lock longer.
 //
 // IMPORTANT: we deliberately do NOT force-remove worker containers here.
 // Two reasons in the long-lived worker world:
@@ -6433,6 +6859,20 @@ function startPlatformIncidentAlertSweeper(config) {
 // compose stop_grace_period (tests/caddy-deploy-grace.test.js pins the
 // relationship).
 const DRAIN_TIMEOUT_MS = 5000;
+
+// The handler drain's deadline for this process (services/lifecycle.js
+// drainDeadlineMs): long only on the platform's own Kubernetes Pods. A
+// staging preview runs as an app Deployment with the default 30s grace and
+// nothing of the fleet's to finish, so it keeps the short drain.
+function shutdownDrainMs() {
+  let kubernetes = false;
+  try {
+    kubernetes = require('./src/services/application-runtime').mode(config) === 'kubernetes'
+      && runsClusterMaintenance();
+  } catch { /* an unknown APP_RUNTIME fails boot long before this */ }
+  return lifecycle.drainDeadlineMs({ kubernetes, shortMs: DRAIN_TIMEOUT_MS, env: process.env });
+}
+
 // Budget for closing the pg pool after the handler drain (#767). Sits
 // INSIDE the same compose stop_grace_period as DRAIN_TIMEOUT_MS —
 // tests/caddy-deploy-grace.test.js pins drain + evidence marking + pool close
@@ -6489,6 +6929,8 @@ async function announceSuccessorBuild() {
 }
 
 let cleanupStarted = false;
+// Tests only (__setShutdownTargets).
+let shutdownOverrides = null;
 // Set by start() once the listener is up. cleanup() runs at module scope,
 // so both need to be reachable from here.
 let httpServer = null;
@@ -6498,26 +6940,89 @@ async function cleanup() {
   if (cleanupStarted) return;
   cleanupStarted = true;
   lifecycle.setShuttingDown();
+  // docs/plans/draining-releases.md: on the platform's own Kubernetes Pods a
+  // release no longer cuts the work this process started. Everything below
+  // that would cut it (ending the Mayor's turns, stopping the workflow
+  // runtime's work, closing the listener) waits until drainUntilIdle has
+  // let it finish, or its deadline has passed; the rest stops at once, as
+  // before. A docker-compose color and a staging preview keep the short
+  // drain: neither has a grace period to spend.
+  const cleanupStartedAt = Date.now();
+  let finishesWork = shutdownOverrides?.finishesWork ?? finishesWorkOnShutdown();
+  let drainMs = shutdownOverrides?.drainMs ?? shutdownDrainMs();
+  // Only beside a successor that says what it holds: a release from before
+  // the registry would adopt this process's live turns as orphans the moment
+  // it led (a rollback across it), and a Pod evicted before its replacement
+  // is up would leave nobody leading. Without one, the cutover it always had:
+  // a minute's drain, the lock released last.
+  // Draining first, so a process stopping beside this one (a scale to zero,
+  // a restart of every replica) never counts it as its successor.
+  if (finishesWork) {
+    await boundedStep(processes.markDraining(new Date(cleanupStartedAt + drainMs)), 1000)
+      .catch((err) => log.warn('server', 'Could not mark this process draining', { err: err.message }));
+    // Its idle warm workers are no longer its own: it starts no turn, and
+    // its idle eviction stops. Forgotten here, before it resigns, so the
+    // next leader adopts them (adoptOrphanWorker) rather than leave them to
+    // a process that will not evict them.
+    for (const meta of worker.warmRegistrySnapshot()) {
+      if (!meta.inFlight && !meta.bootstrapping) worker.forgetWorker(meta.sessionId);
+    }
+  }
+  const askSuccessor = shutdownOverrides?.successor ?? successorServing;
+  if (finishesWork && !(await askSuccessor())) {
+    finishesWork = false;
+    drainMs = Math.min(drainMs, lifecycle.KUBERNETES_DRAIN_DEFAULT_MS);
+    log.warn('server', 'No process that knows what this one holds is serving; cutting over without finishing the work', { drainMs });
+  }
+  // From SIGTERM, not from here: waiting for a successor spends the drain.
+  const drainDeadline = cleanupStartedAt + drainMs;
   // The Mayor's turns in agent sessions end with this process: each one
   // records what it had said and that it was interrupted (with Retry), and
   // hands its lease back, so the conversation is never left looking busy
   // with nobody working. A turn whose coding agent is running is left to
   // restart recovery. Awaited with the drain below, before the pool closes.
-  const agentTurnsEnded = require('./src/services/mayor/agent-turn').interruptLocalTurns({ timeoutMs: 3000 })
+  // A process finishing its work ends only those still running at its
+  // drain's end.
+  const endAgentTurns = () => require('./src/services/mayor/agent-turn').interruptLocalTurns({ timeoutMs: 3000 })
     .catch((err) => log.warn('server', 'Interrupting agent turns failed', { err: err.message }));
+  let agentTurnsEnded = finishesWork ? null : endAgentTurns();
   require('./src/services/mayor/agent-turn').stopInterruptedTurnSweeper();
   // The Homeroom bot's loops and its benchmark lane: nothing new is claimed
   // or dispatched on a process whose pool is about to close. Their turns
   // already running are restart recovery's to finish.
+  // The leader's statuses stop being written: the new leader's replace them.
+  require('./src/services/leader-status').stop();
   try { require('./src/services/homeroom-bot').stop(); } catch (err) {
     log.warn('server', 'Stopping the Homeroom bot failed', { err: err.message });
   }
   try { require('./src/services/bench/lane').stop(); } catch (err) {
     log.warn('server', 'Stopping the benchmark lane failed', { err: err.message });
   }
+  try { require('./src/services/shots-eval-runner').stopRunner(); } catch (err) {
+    log.warn('server', 'Stopping the shots eval runner failed', { err: err.message });
+  }
   try { require('./src/services/homeroom-bot-welcome').stop(); } catch (err) {
     log.warn('server', 'Stopping the Homeroom bot welcome failed', { err: err.message });
   }
+  // The leader's sweeps on timers of their own: none may run beside the new
+  // leader's while this process finishes its work. A creation or a redeploy
+  // under way here keeps its own heartbeat until it ends.
+  for (const [name, stop] of [
+    ['app creation', () => require('./src/services/app-creation-owner').stop()],
+    ['owed redeploy', () => require('./src/services/owed-redeploy').stop()],
+    ['sketch commit', () => require('./src/services/app-sketch').stopCommitSweep()],
+  ]) {
+    try { stop(); } catch (err) { log.warn('server', `Stopping the ${name} sweep failed`, { err: err.message }); }
+  }
+  // The bot's builds and the bench's trials under way here are durable
+  // builds (services/build-runs.js). A process finishing its work only
+  // quiesces the workflow runtime below, so each goes on here to its end,
+  // its own steps included (a build's promote passes the drain guard:
+  // lifecycle.js OWN_WORK, after 14 Oct 2026's refused first version), and
+  // the drain waits for it (workflowWorkRunning). Stopping the runtime, at
+  // once without a drain or at the drain's deadline, stops each at its next
+  // step, its turn left running in its worker, and gives its work item up, so
+  // the next leader carries it on from the step it saved.
   const retentionStop = require('./src/services/build-retention').stop();
   const checkRetentionStop = require('./src/services/check-retention').stop();
   const fixedCheckSyncStop = require('./src/services/fixed-check-sync').stop();
@@ -6525,10 +7030,16 @@ async function cleanup() {
   const scorerStop = require('./src/services/topochain/challenge-scorer').stop();
   // Stop claiming push jobs immediately. The bounded drain runs in
   // parallel with HTTP/session draining and is awaited before pool close.
-  // The workflow runtime has its own pool; its running work reports nothing
-  // and is reclaimed when its lease runs out.
-  const workflowStop = require('./src/workflow/platform.ts').stopWorkflow()
+  // The workflow runtime has its own pool; its running work reports nothing,
+  // and gives its lease up so the next leader claims it at once.
+  // A process finishing its work only quiesces it here (no slot, timer or
+  // claim): the work it runs goes on until the drain ends.
+  const stopWorkflowNow = () => require('./src/workflow/platform.ts').stopWorkflow()
     .catch((err) => log.warn('server', 'Stopping the workflow runtime failed', { err: err.message }));
+  let workflowStop = finishesWork
+    ? require('./src/workflow/platform.ts').quiesceWorkflow()
+      .catch((err) => log.warn('server', 'Quiescing the workflow runtime failed', { err: err.message }))
+    : stopWorkflowNow();
   const pushStop = mobilePush.stop({ timeoutMs: DRAIN_TIMEOUT_MS }).catch((err) => {
     log.warn('server', 'Mobile push shutdown failed', {
       code: typeof err?.code === 'string' ? err.code : 'unknown',
@@ -6543,22 +7054,20 @@ async function cleanup() {
   // dropped at once; connections still serving a request get until the
   // drain deadline, then closeAllConnections cuts them so `close()` can
   // actually complete.
-  if (httpServer) {
-    try {
-      httpServer.close(() => {});
-      httpServer.closeIdleConnections?.();
-      const cutoff = setTimeout(() => {
-        try { httpServer.closeAllConnections?.(); } catch { /* already gone */ }
-      }, DRAIN_TIMEOUT_MS);
-      cutoff.unref?.();
-      log.info('server', 'Listener closed to new connections', { timeoutMs: DRAIN_TIMEOUT_MS });
-    } catch (err) {
-      log.warn('server', 'Listener close failed', { err: err.message });
-    }
-  }
+  //
+  // A process finishing its work keeps listening until its drain ends:
+  // Kubernetes has already taken it out of the Service, and a shots worker
+  // calls the Pod that runs its run by its own address.
+  if (!finishesWork) closeListener(drainMs);
   // Behind the listener close, deliberately: what the tabs fetch on hearing
   // this must not be able to land here. Awaited with the drain below.
   const announced = announceSuccessorBuild();
+  // Every leader timer, wherever it lives (services/leader-timers.js): no
+  // tick starts from here on — no merge, rebuild or redeploy that the exit
+  // would cut moments later — and a tick already running is held in the
+  // in-flight registry the drain below waits for. The handles kept here
+  // predate it; they are guarded and cleared the same way by hand.
+  const stoppedTimers = leaderTimers.stopAll();
   if (sweeperHandle) {
     clearInterval(sweeperHandle);
     sweeperHandle = null;
@@ -6566,18 +7075,6 @@ async function cleanup() {
   if (sessionSweeperHandle) {
     clearInterval(sessionSweeperHandle);
     sessionSweeperHandle = null;
-  }
-  if (conversationAttachmentSweeperHandle) {
-    clearInterval(conversationAttachmentSweeperHandle);
-    conversationAttachmentSweeperHandle = null;
-  }
-  if (stalePrSweeperHandle) {
-    clearInterval(stalePrSweeperHandle);
-    stalePrSweeperHandle = null;
-  }
-  if (workshopThemeSweeperHandle) {
-    clearInterval(workshopThemeSweeperHandle);
-    workshopThemeSweeperHandle = null;
   }
   if (appStorageCapFirstRunHandle) {
     clearTimeout(appStorageCapFirstRunHandle);
@@ -6608,6 +7105,36 @@ async function cleanup() {
     governanceApplyTickerHandle = null;
   }
 
+  // Stop leading, then finish what this process started, up to its drain
+  // deadline (drainUntilIdle); only then cut what is left, as below.
+  let handlerDrainMs = drainMs;
+  if (finishesWork) {
+    await drainUntilIdle({ deadline: drainDeadline, announced });
+    closeListener(DRAIN_TIMEOUT_MS);
+    agentTurnsEnded = endAgentTurns();
+    await workflowStop;
+    workflowStop = stopWorkflowNow();
+    handlerDrainMs = DRAIN_TIMEOUT_MS;
+  }
+
+  // The handlers still answering and the background work still running
+  // (a merge pass, a leader timer's tick, whatever else registered with
+  // services/inflight-work.js), up to this process's drain deadline. Started
+  // here and awaited after the worker wait below, so the two run together;
+  // the leader lock is released only after both.
+  const startingRequests = inflightRequests.pending();
+  const startingWork = inflightWork.snapshot();
+  log.info('server', 'Draining in-flight requests and background work', {
+    requests: startingRequests,
+    background: startingWork.slice(0, 20),
+    deadlineMs: drainMs,
+    timersStopped: stoppedTimers.length,
+  });
+  const handlersDrained = inflightWork.waitIdle({
+    timeoutMs: handlerDrainMs,
+    also: () => inflightRequests.pending() === 0,
+  });
+
   const shotsRuns = require('./src/services/shots-orchestrator').inFlightSnapshot;
   const startingCount = getActiveWorkerCount();
   const startingShots = shotsRuns();
@@ -6631,6 +7158,15 @@ async function cleanup() {
     });
   } else if (startingCount > 0 || startingShots.length > 0) {
     log.info('server', 'All handlers and before & after shots runs drained');
+  }
+  if (!(await handlersDrained)) {
+    log.warn('server', 'Drain deadline passed with requests or background work in flight', {
+      deadlineMs: handlerDrainMs,
+      requests: inflightRequests.snapshot().slice(0, 20),
+      background: inflightWork.snapshot().slice(0, 20),
+    });
+  } else if (startingRequests > 0 || startingWork.length > 0) {
+    log.info('server', 'In-flight requests and background work drained');
   }
   await pushStop;
   await agentTurnsEnded;
@@ -6714,6 +7250,12 @@ async function cleanup() {
     });
   }
 
+  // This process's row goes, and its holds with it: what it leaves is the
+  // next leader's at once rather than once its heartbeat lapses
+  // (services/processes.js). Bounded like the marks above.
+  await boundedStep(processes.stop(), BUILD_SHUTDOWN_MARK_TIMEOUT_MS)
+    .catch((err) => log.warn('server', 'Could not remove this process\'s row', { err: err.message }));
+
   // Close the pg pool so in-flight queries settle instead of being severed
   // by process.exit(). Bounded: a pool that won't drain must not hold the
   // process past the SIGKILL deadline.
@@ -6745,12 +7287,120 @@ async function cleanup() {
   // against a quiesced process, not one still finishing a turn. Uses its
   // own dedicated pg connection, so the pool close above doesn't affect
   // it. (Process exit would release the session lock anyway; doing it
-  // explicitly just hands off promptly.)
+  // explicitly just hands off promptly.) A process that finished its work
+  // resigned long before (drainUntilIdle), and adoption skipped what it held.
   if (leadership) {
     await leadership.stop().catch(() => {});
   }
 
   process.exit(0);
+}
+
+// docs/plans/draining-releases.md: whether this process finishes its work on
+// SIGTERM rather than cutting it: the platform's own Kubernetes Pods, the
+// processes the long drain is for (shutdownDrainMs).
+function finishesWorkOnShutdown() {
+  try {
+    return require('./src/services/application-runtime').mode(config) === 'kubernetes' && runsClusterMaintenance();
+  } catch { return false; }
+}
+
+// Waits up to SUCCESSOR_WAIT_MS for another process of this role to be
+// serving (services/processes.js servingOthers). On a rollout the new Pod has
+// been Ready since before SIGTERM; on an eviction its replacement is starting.
+const SUCCESSOR_WAIT_MS = 60 * 1000;
+async function successorServing({ timeoutMs = SUCCESSOR_WAIT_MS, pollMs = 2000 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try { if ((await processes.servingOthers()) > 0) return true; } catch { /* asked again below */ }
+    if (Date.now() + pollMs > deadline) return false;
+    await new Promise((r) => { const t = setTimeout(r, pollMs); t.unref?.(); });
+  }
+}
+
+function boundedStep(promise, ms) {
+  let timer = null;
+  return Promise.race([
+    Promise.resolve(promise),
+    new Promise((resolve) => { timer = setTimeout(resolve, ms); timer.unref?.(); }),
+  ]).finally(() => { if (timer) clearTimeout(timer); });
+}
+
+// Stop accepting new connections. Idle keep-alives are dropped at once;
+// connections still serving a request get until `timeoutMs`, then
+// closeAllConnections cuts them so `close()` can complete.
+function closeListener(timeoutMs) {
+  if (!httpServer) return;
+  try {
+    httpServer.close(() => {});
+    httpServer.closeIdleConnections?.();
+    const cutoff = setTimeout(() => {
+      try { httpServer.closeAllConnections?.(); } catch { /* already gone */ }
+    }, timeoutMs);
+    cutoff.unref?.();
+    log.info('server', 'Listener closed to new connections', { timeoutMs });
+  } catch (err) {
+    log.warn('server', 'Listener close failed', { err: err.message });
+  }
+}
+
+// What of this process's background work is its leader work: a leader
+// timer's tick (services/leader-timers.js) and a merge pass (merge-queue.js).
+// The lock goes only once they are done, or at the drain deadline: the new
+// leader would run the same sweep, or the same app's merges, beside them.
+const isLeaderWork = (name) => name.startsWith('timer:') || name === 'merge-queue';
+
+// A release replaced this process: stop leading, send its tabs to the new
+// Pod, and finish what it holds (services/processes.js), its background work
+// (inflight-work.js), its workflow work and its requests still answering,
+// until it is idle, the deadline passes, or too many newer processes are
+// draining too (services/drain.js). Its leader work, its loops and its
+// timers stopped before this is called, and it refuses anything new
+// (lifecycle.setShuttingDown).
+async function drainUntilIdle({ deadline, announced }) {
+  const workflowPlatform = require('./src/workflow/platform.ts');
+  const leaderWorkDone = await inflightWork.waitIdle({ timeoutMs: Math.max(0, deadline - Date.now()), only: isLeaderWork });
+  if (!leaderWorkDone) {
+    log.warn('server', 'Resigning with leader work still running at the drain deadline', {
+      work: inflightWork.snapshot().filter((e) => isLeaderWork(e.name)).slice(0, 20),
+    });
+  }
+  if (leadership) await leadership.resign().catch((err) => log.warn('server', 'Resigning leadership failed', { err: err.message }));
+  await announced;
+  const closed = ws.closeAllForRelease();
+  const busy = () => ({
+    holds: processes.localSnapshot(20),
+    background: inflightWork.snapshot().slice(0, 20),
+    workflowWork: workflowPlatform.workflowWorkRunning(),
+    requests: inflightRequests.pending(),
+  });
+  log.info('server', 'Finishing this process\'s work before exiting', {
+    sockets: closed, deadlineMs: Math.max(0, deadline - Date.now()), ...busy(),
+  });
+  const maxDraining = drain.drainingMax();
+  let why = null;
+  const outcome = await drain.untilIdle({
+    deadline,
+    idle: () => processes.localCount() === 0 && inflightWork.size() === 0
+      && workflowPlatform.workflowWorkRunning() === 0 && inflightRequests.pending() === 0,
+    // Too many newer processes draining, or no successor serving any more
+    // (it died, and nothing leads): hand the rest over now.
+    superseded: async () => {
+      if ((await processes.newerDraining()) >= maxDraining) { why = 'crowded'; return true; }
+      if ((await processes.servingOthers()) === 0) { why = 'alone'; return true; }
+      return false;
+    },
+    describe: busy,
+  });
+  if (outcome.reason === 'idle') {
+    log.info('server', 'Finished this process\'s work', { waitedMs: outcome.waitedMs });
+  } else {
+    const message = outcome.reason === 'deadline' ? 'Drain deadline passed; handing the rest of this process\'s work over'
+      : why === 'alone' ? 'No successor is serving any more; handing the rest of this process\'s work over'
+        : 'Newer processes are draining too; handing the rest of this one\'s work over';
+    log.warn('server', message, { waitedMs: outcome.waitedMs, maxDraining, ...busy() });
+  }
+  return outcome;
 }
 
 process.on('SIGTERM', cleanup);

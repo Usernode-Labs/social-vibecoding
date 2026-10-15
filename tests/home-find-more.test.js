@@ -27,7 +27,7 @@ const { installAppCard } = require('./helpers/app-card');
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 const { HOME_SRC, PANELS_SRC } = require('./helpers/home-modules');
 const { installPanelsStore } = require('./helpers/home-grid-store');
-const { renderComponent } = require('./lib/render-tsx');
+const { loadTsx, renderComponent } = require('./lib/render-tsx');
 const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 // The panel RENDERERS moved to frontend/src/features/home/panels/*.tsx when
 // the three sections became React (#1191); home-panels.js keeps the data and
@@ -244,51 +244,96 @@ test('featuredApps: ?shot=discover-empty still wins over a kept slug', () => {
   assert.equal(Home.featuredApps(apps).length, 0);
 });
 
+// ── discoverMetaLine: the card's fallback facts line (#4937) ─────────
+//
+// A card with no manifest description still says more than "N contributors":
+// who is using the app and how recently it changed, in the SAME WORDS the
+// Discover directory's rows use (discover:row.meta.*), so the two surfaces
+// never disagree about one app. Pure: no fetch, no state.
+test('discoverMetaLine composes the facts line from the words the Discover rows use', () => {
+  const Home = makeHome();
+  const threeDaysAgo = new Date(Date.now() - 3 * 86400 * 1000).toISOString();
+  assert.equal(
+    Home.discoverMetaLine({ active_users: 12, last_deploy_at: threeDaysAgo }),
+    '12 users · Updated 3d ago',
+  );
+  // A singular count, and created_at standing in while nothing has shipped.
+  assert.equal(
+    Home.discoverMetaLine({ active_users: 1, created_at: threeDaysAgo }),
+    '1 user · Updated 3d ago',
+  );
+  // The count is printed even at zero, exactly as the directory's own rows
+  // print it (browse.js metaLine pushes the users bit unconditionally); with
+  // no date to add the line is the count alone. No app at all: null.
+  assert.equal(Home.discoverMetaLine({}), '0 users');
+  assert.equal(Home.discoverMetaLine(null), null);
+});
+
 test('_wireDiscoveryCards binds each badge once, however often the lane re-runs it', () => {
   const Home = makeHome();
-  let toggles = 0;
-  Home.toggleAdded = () => { toggles += 1; };
-  // BY TYPE, since #1763: the badge carries two listeners now — its click,
-  // and the pointerdown guard that keeps a press on ⊕ from arming the lane's
-  // drag recognizer. Both are bound through the same WeakSet, so both are the
-  // claim this test makes.
-  const mkBtn = (cls, slug) => {
+  const calls = { joins: [], leaves: [], toggles: [] };
+  Home.setMembership = (slug, desired) => { calls[desired ? 'joins' : 'leaves'].push(slug); };
+  Home.toggleAdded = (slug, desired) => { calls.toggles.push([slug, desired]); };
+  // BY TYPE, since #1763: the pill carries two listeners now — its click,
+  // and the pointerdown guard that keeps a press on it from arming the
+  // lane's drag recognizer. Both are bound through the same WeakSet, so both
+  // are the claim this test makes.
+  const mkBtn = (cls, slug, join) => {
     const handlers = {};
     return {
       className: cls,
-      dataset: { slug, added: 'false' },
+      dataset: { slug, added: 'false', join },
       addEventListener: (t, fn) => { (handlers[t] || (handlers[t] = [])).push(fn); },
       handlers,
     };
   };
-  const badge = mkBtn('card-add-btn', 'fresh');
-  const card = {
-    dataset: { slug: 'fresh', status: 'running' },
-    addEventListener: () => {},
+  const laneFor = (badge) => {
+    const card = {
+      dataset: { slug: badge.dataset.slug, status: 'running' },
+      addEventListener: () => {},
+    };
+    return {
+      querySelectorAll: (sel) => {
+        if (sel === '.app-card') return [card];
+        if (sel === '.card-add-btn') return [badge];
+        return [];
+      },
+    };
   };
-  const lane = {
-    querySelectorAll: (sel) => {
-      if (sel === '.app-card') return [card];
-      if (sel === '.card-add-btn') return [badge];
-      return [];
-    },
-  };
-  // Twice, which is what really happens now: the badge flipping to "added"
+  const badge = mkBtn('card-add-btn', 'fresh', 'join');
+  const lane = laneFor(badge);
+  // Twice, which is what really happens now: the pill flipping to "joined"
   // changes the effect's key while React keeps the very same element.
   Home._wireDiscoveryCards(lane);
   Home._wireDiscoveryCards(lane);
   assert.equal(badge.handlers.click.length, 1, 'one listener, not two');
   assert.equal(badge.handlers.pointerdown.length, 1, 'and one guard, not two');
+
+  // JOIN: the real membership write, and the slug lands in _discoverKeep or
+  // the rail repaints without the card (popularApps drops joined apps).
   badge.handlers.click[0]({ stopPropagation: () => {} });
-  assert.equal(toggles, 1, 'so one tap is one toggle');
+  assert.deepEqual(calls.joins, ['fresh'], 'one tap is one join');
+  assert.ok(Home._discoverKeep.has('fresh'), 'the joined card keeps its place in the rail');
+
+  // JOINED: the tap asks the leave confirm and then writes the leave.
+  const joined = mkBtn('card-add-btn', 'fresh', 'joined');
+  Home._wireDiscoveryCards(laneFor(joined));
+  joined.handlers.click[0]({ stopPropagation: () => {} });
+  assert.deepEqual(calls.leaves, ['fresh']);
+
+  // ADD: a member whose community is not on Home yet is pinned, not joined.
+  const add = mkBtn('card-add-btn', 'fresh', 'add');
+  Home._wireDiscoveryCards(laneFor(add));
+  add.handlers.click[0]({ stopPropagation: () => {} });
+  assert.deepEqual(calls.toggles, [['fresh', true]]);
 
   // The guard's whole job: the kit's recognizer listens for pointerdown on the
   // LANE and takes the first card that contains the target, so a press on the
-  // badge is a press on the card unless the event stops here (#1763). On
+  // pill is a press on the card unless the event stops here (#1763). On
   // desktop it arms after 6px, which is inside the slop of an ordinary click.
   let stopped = 0;
   badge.handlers.pointerdown[0]({ stopPropagation: () => { stopped += 1; } });
-  assert.equal(stopped, 1, 'a press on ⊕ never reaches the lane');
+  assert.equal(stopped, 1, 'a press on the pill never reaches the lane');
 });
 
 test('featuredApps: a hidden member app IS offered again (#618)', () => {
@@ -872,4 +917,66 @@ test('staging discovery fixtures never write outside staging', async () => {
   for (const env of ['production', 'local', undefined]) {
     await stagingFeaturedSeed(env === undefined ? '' : env)({ query() { assert.fail(`seed ran in ${env}`); } });
   }
+});
+
+// ── the Add apps sheet's lists (#4669) ───────────────────────────────
+//
+// Edit mode's trailing tile opens a sheet with two lists, and the decision
+// of what goes in them lives in addSheetLists — pure, so it is read here as
+// data against a real Home from the harness above rather than through sheet
+// markup. The sheet module reads `window.Home` at call time, the way every
+// consumer outside home.js does.
+
+const SHEET_SRC = 'frontend/src/features/home/add-apps-sheet.tsx';
+const { addSheetLists } = loadTsx(SHEET_SRC, {});
+
+// The module resolves `window` against the Node global at call time; the
+// sandboxed Home is a vm object, and property reads cross realms fine.
+function withHome(Home, fn) {
+  const saved = globalThis.window;
+  globalThis.window = { Home };
+  try {
+    return fn();
+  } finally {
+    if (saved === undefined) delete globalThis.window;
+    else globalThis.window = saved;
+  }
+}
+
+test('the sheet lists joined-but-untiled apps first, popular second, never twice', () => {
+  const Home = makeHome();
+  const apps = [
+    app({ slug: 'tile', is_favorited: true, is_member: true }),
+    app({ slug: 'joined', is_member: true }),
+    // A collaborator who hid their tile: not "yours" as isYours reads it,
+    // not "joined" as popularApps reads it — so it reaches BOTH lists, and
+    // the sheet may show it once.
+    app({ slug: 'collab-hidden', is_collaborator: true, your_apps_hidden: true }),
+    app({ slug: 'open', active_users: 5 }),
+    app({ slug: 'demo', demo: true, active_users: 50 }),
+  ];
+  const lists = withHome(Home, () => addSheetLists(apps));
+  assert.deepEqual(lists.yours.map((a) => a.slug), ['joined', 'collab-hidden'],
+    '"Your other apps": the viewer belongs to them and keeps no tile');
+  assert.deepEqual(lists.popular.map((a) => a.slug), ['open'],
+    '"Popular" is popularApps\' answer minus the first list, and minus demo tiles');
+});
+
+test('a demo tile is offered by neither list, and no Home means no lists', () => {
+  // popularApps itself does not screen demo tiles out — the Discover rails
+  // want them — but the sheet's Add button on one would be a silent no-op:
+  // toggleAdded returns early for staging ?demo=1 tiles with no DB row.
+  const Home = makeHome();
+  const lists = withHome(Home, () => addSheetLists([app({ slug: 'demo', demo: true })]));
+  assert.deepEqual(lists, { yours: [], popular: [] });
+  // No window.Home (a sheet opened where the module never loaded): empty
+  // lists, never a throw — the empty sheet is a real state ("Nothing to add
+  // right now" and the browse link).
+  assert.deepEqual(withHome(null, () => addSheetLists([app({})])), { yours: [], popular: [] });
+  assert.deepEqual(withHome(null, () => addSheetLists('not-a-list')), { yours: [], popular: [] });
+});
+
+test('the sheet\'s Add press is the same toggleAdded(true) the rails run', () => {
+  assert.match(read(SHEET_SRC), /home\(\)\?\.toggleAdded\?\.\(slug, true\)/,
+    'one write path: flip the flag, repaint the grid, POST /favorite');
 });

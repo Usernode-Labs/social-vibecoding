@@ -106,7 +106,7 @@ type DrillView = {
       canonicalSuccessRate: string | null;
     } | null;
   };
-  activities: Triple & { items: { label: string; points: string; at: string | null }[] | null };
+  activities: Triple & { items: { label: string; points: string; at: string | null; precision?: 'day' | 'instant' | null }[] | null };
   epoch: Triple & {
     rows: { epoch: string; wonSlots: string; produced: string; successRate: string }[] | null;
   };
@@ -124,6 +124,21 @@ const ALIGN: Record<ColumnKey, string> = {
 };
 
 const HINT = 'text-sm text-zinc-500 py-8 text-center dark:text-zinc-400';
+
+/**
+ * #4869: the card the other Leaderboard panes draw — History's season cards
+ * and Your standing are `rounded-2xl bg-white dark:bg-zinc-900`, white on the
+ * page ground with no border. The table, its skeleton and the drill-in all
+ * sit on it, so Standings stops being the one pane drawn as a bordered grey
+ * box.
+ */
+const CARD = 'rounded-2xl bg-white dark:bg-zinc-900';
+
+/** Row hairline, the one Your standing draws between its own parts. */
+const RULE = 'border-t border-zinc-100 dark:border-zinc-800';
+
+/** Figures line up by digit, the way Your standing's rank does, not in mono. */
+const FIGURE = 'px-4 py-3 text-[0.9375rem] tabular-nums text-right';
 
 function Disclaimer({ text }: { text: string | null }): ReactNode {
   if (!text) return null;
@@ -204,11 +219,11 @@ function Cell({ column, row }: { column: ColumnKey; row: RowView }): ReactNode {
   // any other; gray is not disabled.
   const ink = row.nonPodium ? ' text-zinc-500 dark:text-zinc-400' : '';
   if (column === 'rank') {
-    return <td className={`px-3 py-2 text-sm font-mono text-zinc-500 dark:text-zinc-400${ink}`}>{row.rank}</td>;
+    return <td className="w-14 px-4 py-3 text-[0.9375rem] tabular-nums text-zinc-500 dark:text-zinc-400">{row.rank}</td>;
   }
   if (column === 'user') {
     return (
-      <td className="px-3 py-2 text-sm">
+      <td className="px-4 py-3 text-[0.9375rem]">
         {row.nonPodium ? (
           <RichMessage
             id="leaderboard:standings.nonPodium"
@@ -222,23 +237,23 @@ function Cell({ column, row }: { column: ColumnKey; row: RowView }): ReactNode {
             ]}
           />
         ) : (
-          <span className="font-medium text-zinc-900 dark:text-zinc-100">{row.user}</span>
+          <span className="font-[650] text-zinc-900 dark:text-zinc-100">{row.user}</span>
         )}
       </td>
     );
   }
   if (column === 'points') {
     return (
-      <td className={`px-3 py-2 text-sm font-mono text-right${ink}`}>
+      <td className={`${FIGURE}${ink}`}>
         {row.points}
-        <span className="text-zinc-500 dark:text-zinc-400">{` +${row.extra}`}</span>
+        <span className="text-[0.8125rem] text-zinc-500 dark:text-zinc-400">{` +${row.extra}`}</span>
       </td>
     );
   }
   if (column === 'blocks') {
-    return <td className={`px-3 py-2 text-sm font-mono text-right${ink}`}>{row.blocks}</td>;
+    return <td className={`${FIGURE}${ink}`}>{row.blocks}</td>;
   }
-  return <td className={`px-3 py-2 text-sm font-mono text-right${ink}`}>{`${row.success}%`}</td>;
+  return <td className={`${FIGURE}${ink}`}>{`${row.success}%`}</td>;
 }
 
 function StandingsTable(
@@ -246,12 +261,14 @@ function StandingsTable(
 ): ReactNode {
   const t = useMessages('leaderboard');
   return (
-    <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
+    <div className={`overflow-x-auto ${CARD}`}>
       <table className="w-full">
-        <thead className="bg-zinc-50 dark:bg-zinc-900 text-[0.9375rem] text-zinc-500 dark:text-zinc-400">
+        {/* The headings read as the rows' subtitles (13px, muted), on the
+            card itself rather than on a grey strip of their own. */}
+        <thead className="text-[0.8125rem] text-zinc-500 dark:text-zinc-400">
           <tr>
             {view.columns.map((c) => (
-              <th key={c} className={`px-3 py-2 ${ALIGN[c]}`}>{view.headers[c]}</th>
+              <th key={c} className={`px-4 pt-3 pb-2 font-medium ${ALIGN[c]}`}>{view.headers[c]}</th>
             ))}
           </tr>
         </thead>
@@ -262,7 +279,7 @@ function StandingsTable(
           {view.rows.map((row) => (
             <tr
               key={row.index}
-              className="tc-lb-row border-b border-zinc-100 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-800/60 cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-violet-500 focus-visible:bg-zinc-50 dark:focus-visible:bg-zinc-800/60"
+              className={`tc-lb-row ${RULE} hover:bg-zinc-50 dark:hover:bg-zinc-800/60 cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-violet-500 focus-visible:bg-zinc-50 dark:focus-visible:bg-zinc-800/60`}
               data-row-index={row.index}
               tabIndex={0}
               aria-label={row.anonymous ? t('leaderboard:standings.openDetailsAnonymous') : t('leaderboard:standings.openDetails', { name: row.user })}
@@ -288,7 +305,7 @@ function Pagination(
 ): ReactNode {
   const t = useMessages('leaderboard');
   if (!meta) return null;
-  const btn = 'rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-1 text-xs font-medium disabled:opacity-40';
+  const btn = 'rounded-full bg-white dark:bg-zinc-900 px-3 py-1 text-xs font-medium disabled:opacity-40';
   return (
     <div className="flex items-center justify-between mt-3 text-sm">
       <span className="text-zinc-500 dark:text-zinc-400">
@@ -339,9 +356,9 @@ function StandingsSkeleton(): ReactNode {
   return (
     <SkeletonGroup
       label={t('leaderboard:standings.loading')}
-      className="overflow-hidden rounded-lg border border-zinc-200 dark:border-zinc-800"
+      className={`overflow-hidden ${CARD}`}
     >
-      <div className="bg-zinc-50 dark:bg-zinc-900 px-3 py-2.5 flex items-center gap-3">
+      <div className="px-4 pt-3 pb-2 flex items-center gap-3">
         <Skeleton shape="muted" className="w-8" />
         <Skeleton shape="muted" className="w-20" />
         <Skeleton shape="muted" className="ml-auto w-12" />
@@ -350,7 +367,7 @@ function StandingsSkeleton(): ReactNode {
       {Array.from({ length: 6 }, (_, i) => (
         <div
           key={i}
-          className="border-t border-zinc-100 dark:border-zinc-800 px-3 py-2.5 flex items-center gap-3"
+          className={`${RULE} px-4 py-3 flex items-center gap-3`}
         >
           <Skeleton shape="muted" className="w-4" />
           <Skeleton className={i % 2 ? 'w-28' : 'w-36'} />
@@ -430,7 +447,7 @@ function Activities({ view }: { view: DrillView['activities'] }): ReactNode {
   return (
     <ul className="space-y-1">
       {view.items.map((a, i) => (
-        <ActivityRow key={i} text={a.label} points={`+${a.points}`} at={a.at} />
+        <ActivityRow key={i} text={a.label} points={`+${a.points}`} at={a.at} precision={a.precision} />
       ))}
     </ul>
   );
@@ -522,9 +539,9 @@ function Drill({ view }: { view: DrillView | null }): ReactNode {
   if (!view) return <div id="tc-lb-drill" className="hidden mt-4" />;
   return (
     <div id="tc-lb-drill" className="mt-4">
-      <div className="bg-zinc-50 dark:bg-zinc-900 rounded-lg border border-zinc-200 dark:border-zinc-800 p-4">
+      <div className={`${CARD} p-4`}>
         <div className="flex items-center justify-between mb-3">
-          <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+          <h3 className="text-[1.0625rem] font-bold text-zinc-900 dark:text-zinc-100">
             {view.displayName}
           </h3>
           <button

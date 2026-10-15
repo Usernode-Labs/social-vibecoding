@@ -128,9 +128,12 @@ export function sharedNow(card: BotRequestCard): boolean {
  * (../messages/approval-words.ts, as ../messages/bot-ready.tsx waitingLine
  * says it): "Waiting for approval from you and @jordan." when it needs every
  * one of them, "Needs one more approval from @priya or @mo." when any of
- * them will do, and nobody named once it has the approvals it needs.
+ * them will do, and nobody named once it has the approvals it needs. A
+ * project's first version waits on nobody: "It goes live without a vote."
  */
 export function approvalWords(state?: BotRequestState): string {
+  // A project's first version is not put to a vote (D1).
+  if (state?.noVote) return translate('chat:group.botCard.approval.noVote');
   if (state?.missing === 0) return translate('chat:group.botCard.approval.has');
   // The card's own sentences, each with its full stop (`sentence`).
   const words = waitingWords({

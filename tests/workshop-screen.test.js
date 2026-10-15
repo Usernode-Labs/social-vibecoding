@@ -221,6 +221,17 @@ test('the visibility filter is GET /api/apps\'s, so the two lists cannot disagre
   assert.match(sql, /\+ COALESCE\(op\.n, 0\) \+ COALESCE\(og\.n, 0\)\) > 0/);
 });
 
+test('#5023: the Workshop asks GET /api/apps for joined rows only, not the whole catalog', () => {
+  const apps = read('src/routes/apps.js');
+  assert.match(apps, /const joinedOnly = req\.query\.scope === 'joined' && userId != null;/);
+  assert.match(apps, /AND \(NOT \$4::boolean OR cm\.user_id IS NOT NULL\)/,
+    'the filter is the is_member column\'s own join, so a kept row is one the client kept before');
+  assert.match(apps, /\[showSelfHosted, userId, isAdmin, joinedOnly\]/);
+  for (const file of ['frontend/src/features/workshop/index.tsx', 'frontend/src/features/workshop/community-scope.ts']) {
+    assert.match(read(file), /fetch\(`\/api\/apps\?scope=joined\$\{/, `${file} reads the joined scope`);
+  }
+});
+
 test('the demo overlay never overwrites a real count', () => {
   const { withDemoCounts, DEMO_COUNTS } = route;
   // `issues` survives the staging clone, so a preview can have genuine
@@ -575,6 +586,41 @@ test('rowSubtitle: one short fact, members for a community or group, recency for
   assert.equal(rowSubtitle({ slug: 'x', audience: 'solo', last_active_at: null, working: 0, needs: 0 }, now), '');
 });
 
+test('15 Oct 2026: a project with an invite link out and nobody in yet says "Invite link out", and stays under Just you', () => {
+  const mod = loadTsx('frontend/src/features/workshop/index.tsx');
+  const now = Date.parse('2026-09-25T12:00:00Z');
+  const row = (over = {}) => ({
+    slug: 'garden', name: 'Garden', audience: 'solo', member_count: 1, last_active_at: '2026-09-25T11:55:00Z',
+    working: 0, needs: 0, ...over,
+  });
+  assert.equal(mod.rowSubtitle(row({ invite_link_out: true }), now), 'Invite link out', 'in place of when it last moved');
+  assert.equal(mod.rowSubtitle(row({ invite_link_out: false }), now), '5m ago');
+  assert.equal(mod.rowSubtitle(row(), now), '5m ago', 'an older server without the field: as before');
+  assert.equal(message('communities:row.inviteOut'), 'Invite link out');
+  // Which section it sits in is its audience's: a link out is not a member.
+  mod.workshopStore.set({ open: true, error: false, tab: 'status', rows: [row({ invite_link_out: true }), row({ slug: 'club', name: 'Club', audience: 'invited', member_count: 3 })] });
+  const html = renderToHtml(createElement(mod.WorkshopScreen, {}));
+  assert.match(html, /data-workshop-section="solo"[\s\S]*?data-workshop-app="garden"[\s\S]*?Invite link out/,
+    'under Just you, saying so');
+  const invited = html.slice(html.indexOf('data-workshop-section="invited"'), html.indexOf('data-workshop-section="solo"'));
+  assert.ok(invited.includes('data-workshop-app="club"') && !invited.includes('data-workshop-app="garden"'), 'not among the groups');
+  assert.match(html, /data-workshop-app="garden" data-workshop-audience="solo"/);
+  mod.workshopStore.set({ open: false, rows: null });
+  // One read for the whole list (GET /api/apps), never one per project; the
+  // server says it only while nobody else is in it.
+  const route = read('src/routes/apps.js');
+  assert.match(route, /linksOut = await communityInvites\.linksOutFor\(pool, rows\.filter\(\(a\) => a\.is_member\)\.map\(\(a\) => a\.id\), userId\);/);
+  assert.match(route, /invite_link_out: inviteLinkOut\(linksOut\.get\(Number\(a\.id\)\), a\.member_count\),/);
+  const { inviteLinkOut } = require('../src/routes/apps');
+  assert.equal(inviteLinkOut({ links: 1, joined: 0 }, 1), true);
+  assert.equal(inviteLinkOut({ links: 2, joined: 1 }, 1), false, 'somebody came in through one');
+  assert.equal(inviteLinkOut({ links: 1, joined: 0 }, '2'), false, 'somebody else is in it');
+  assert.equal(inviteLinkOut(undefined, 1), false, 'no live link out');
+  assert.equal(inviteLinkOut({ links: 0, joined: 0 }, 1), false);
+  // It does not move the row: the audience is derived as it always was.
+  assert.doesNotMatch(read('src/services/communities.js').slice(0, read('src/services/communities.js').indexOf('async function isMember(')), /community_invites/);
+});
+
 test('a row says its status in words, leaves zeroes out, and keeps both numbers in the document', () => {
   const mod = loadTsx('frontend/src/features/workshop/index.tsx');
   const line = (working, needs) => renderToHtml(createElement(mod.StatusLine, { working, needs }));
@@ -606,7 +652,7 @@ test('the controller loads both reads and survives losing the counts', async () 
   global.window = { Home: { isJoined: (app) => !!(app && app.is_member) } };
   try {
     const answers = new Map([
-      ['/api/apps', { ok: true, json: async () => ({ apps }) }],
+      ['/api/apps?scope=joined', { ok: true, json: async () => ({ apps }) }],
       ['/api/workshop/counts', { ok: true, json: async () => ({ counts: { b: { working: 1, needs: 2 } } }) }],
     ]);
     global.fetch = async (url) => answers.get(url) || { ok: false, json: async () => ({}) };
@@ -624,14 +670,14 @@ test('the controller loads both reads and survives losing the counts', async () 
     assert.equal(workshopStore.get().error, false);
     assert.deepEqual(workshopStore.get().rows.map((r) => r.needs), [0, 0]);
 
-    answers.set('/api/apps', { ok: false, json: async () => ({}) });
+    answers.set('/api/apps?scope=joined', { ok: false, json: async () => ({}) });
     await workshopController.reload();
     assert.equal(workshopStore.get().error, true);
 
     // A LOAD THAT LANDS AFTER THE VIEWER LEFT PUBLISHES NOTHING. `open` is
     // the liveness flag, not decoration: without the check, a slow fetch
     // repaints a screen nobody is on and races the next entry's own load.
-    answers.set('/api/apps', { ok: true, json: async () => ({ apps }) });
+    answers.set('/api/apps?scope=joined', { ok: true, json: async () => ({ apps }) });
     workshopStore.set({ rows: [{ slug: 'kept', working: 9, needs: 9 }], error: false });
     const inFlight = workshopController.reload();
     workshopController.close();
@@ -646,6 +692,175 @@ test('the controller loads both reads and survives losing the counts', async () 
 });
 
 // ── 3. The route in, and the way back out ──────────────────────────────
+
+test('#4794: re-entering Needs you reloads the feed, and a vote cast in it stays cast', async () => {
+  const mod = loadTsx('frontend/src/features/workshop/index.tsx');
+  const { workshopController, workshopStore } = mod;
+  const apps = [{ slug: 'a', name: 'A', is_member: true }];
+  const item = (id, epoch) => ({
+    kind: 'proposal', id, epoch, title: `Change ${id}`, summary: null, author: null,
+    number: null, at: null, yes: 0, no: 0,
+    app: { slug: 'a', name: 'A', icon_url: null, icon_emoji: null },
+  });
+  const countsFor = (ids) => ({ a: { working: 0, needs: ids.length, owed: ids.map((id) => `proposal:${id}@2`) } });
+  const priorWindow = global.window;
+  const priorFetch = global.fetch;
+  global.window = { Home: { isJoined: (app) => !!(app && app.is_member) } };
+  try {
+    const answers = new Map();
+    const reads = [];
+    global.fetch = async (url) => {
+      reads.push(url);
+      return answers.get(url) || { ok: false, json: async () => ({}) };
+    };
+    const feedAnswer = (items) => answers.set('/api/workshop/needs-feed', { ok: true, json: async () => ({ items, max: 0 }) });
+    const countsAnswer = (counts) => answers.set('/api/workshop/counts', { ok: true, json: async () => ({ counts }) });
+    answers.set('/api/apps?scope=joined', { ok: true, json: async () => ({ apps }) });
+    feedAnswer([item(7, 2), item(8, 2)]);
+    countsAnswer(countsFor([7, 8]));
+    // A microtask flush: refreshNeeds() is fired, not awaited, by setTab.
+    const settle = async () => {
+      for (let i = 0; i < 3; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+    };
+
+    await workshopController.open();
+    assert.equal(workshopStore.get().feed.length, 2);
+
+    // OPENING THE FEED AGAIN READS AGAIN. setTab is the tab switch and the
+    // quiet reload behind it: the counts and the feed, not the app list.
+    reads.length = 0;
+    workshopController.setTab('needs');
+    await settle();
+    assert.deepEqual(reads, ['/api/workshop/counts', '/api/workshop/needs-feed']);
+    feedAnswer([item(8, 2)]);
+    countsAnswer(countsFor([8]));
+    workshopController.setTab('status');
+    await settle();
+    assert.deepEqual(workshopStore.get().feed.map((it) => it.id), [8],
+      'the feed takes the fresh answer, without a skeleton or a flash');
+    assert.equal(workshopStore.get().rows[0].needs, 1, 'and so does the Needs you row');
+    assert.equal(workshopStore.get().error, false);
+
+    // A READ THAT FAILS LEAVES ITS HALF AS IT WAS. Offline is a state, not
+    // an error card over the feed that was showing.
+    answers.set('/api/workshop/needs-feed', { ok: false, json: async () => ({}) });
+    workshopController.setTab('needs');
+    await settle();
+    assert.deepEqual(workshopStore.get().feed.map((it) => it.id), [8], 'the feed is untouched');
+    assert.equal(workshopStore.get().feedError, false);
+    assert.equal(workshopStore.get().error, false);
+
+    // A VOTE CAST IN THE FEED TAKES ITS CARD OUT AT ONCE, and every later
+    // read keeps it out at the epoch it was voted at.
+    feedAnswer([item(7, 2), item(8, 2)]);
+    await workshopController.reload();
+    assert.deepEqual(workshopStore.get().feed.map((it) => it.id), [7, 8]);
+    workshopController.answered(7, 2);
+    assert.deepEqual(workshopStore.get().feed.map((it) => it.id), [8],
+      'the answered card leaves the store while the viewer is still in the feed');
+    workshopController.setTab('status');
+    await settle();
+    assert.deepEqual(workshopStore.get().feed.map((it) => it.id), [8],
+      'a read issued before the vote and landing after it cannot bring it back');
+    // A NEWER EPOCH PASSES: the card changed under the vote and asks again.
+    feedAnswer([item(7, 3), item(8, 2)]);
+    workshopController.setTab('needs');
+    await settle();
+    assert.deepEqual(workshopStore.get().feed.map((it) => it.id), [7, 8]);
+
+    // LEFT THE SCREEN: setTab fetches nothing, and the answered set is
+    // dropped with the visit — a fresh visit starts from the server's word.
+    workshopController.close();
+    reads.length = 0;
+    workshopController.setTab('needs');
+    await settle();
+    assert.deepEqual(reads, [], 'a closed screen fetches nothing');
+  } finally {
+    if (priorWindow === undefined) delete global.window; else global.window = priorWindow;
+    global.fetch = priorFetch;
+  }
+});
+
+test('#5164: the open screen quietly re-reads what waits, and stops when it closes', async () => {
+  const mod = loadTsx('frontend/src/features/workshop/index.tsx');
+  const { workshopController, workshopStore, WORKSHOP_REFRESH_MS } = mod;
+  assert.equal(WORKSHOP_REFRESH_MS, 30000, 'the quiet interval is about half a minute');
+  const priorWindow = global.window;
+  const priorFetch = global.fetch;
+  const priorDocument = global.document;
+  const apps = [{ slug: 'a', name: 'A', is_member: true }];
+  const counts = { a: { working: 1, needs: 0 } };
+  try {
+    const reads = [];
+    const answers = new Map([
+      ['/api/apps?scope=joined', { ok: true, json: async () => ({ apps }) }],
+      ['/api/workshop/counts', { ok: true, json: async () => ({ counts }) }],
+      ['/api/workshop/needs-feed', { ok: true, json: async () => ({ items: [], max: 0 }) }],
+    ]);
+    global.fetch = async (url, opts) => {
+      reads.push([url, opts && opts.cache]);
+      return answers.get(url) || { ok: false, json: async () => ({}) };
+    };
+    let visibility = 'visible';
+    const visibilityListeners = new Set();
+    global.document = {
+      get visibilityState() { return visibility; },
+      addEventListener(kind, fn) { if (kind === 'visibilitychange') visibilityListeners.add(fn); },
+      removeEventListener(kind, fn) { visibilityListeners.delete(fn); },
+    };
+    const timers = [];
+    let nextId = 1;
+    global.window = {
+      Home: { isJoined: (app) => !!(app && app.is_member) },
+      setInterval(fn, ms) { const id = nextId++; timers.push({ id, fn, ms }); return id; },
+      clearInterval(id) { const i = timers.findIndex((t) => t.id === id); if (i >= 0) timers.splice(i, 1); },
+    };
+    const settle = async () => {
+      for (let i = 0; i < 3; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+    };
+
+    await workshopController.open();
+    assert.equal(workshopStore.get().open, true);
+    assert.equal(timers.length, 1, 'the open screen runs ONE quiet timer');
+    assert.equal(timers[0].ms, WORKSHOP_REFRESH_MS);
+    assert.equal(visibilityListeners.size, 1, 'and listens for the tab coming back');
+
+    // A VISIBLE TICK re-reads exactly the quiet reads, asking for the
+    // CURRENT answer rather than the worker's saved copy.
+    reads.length = 0;
+    timers[0].fn();
+    await settle();
+    assert.deepEqual(reads, [
+      ['/api/workshop/counts', 'no-cache'],
+      ['/api/workshop/needs-feed', 'no-cache'],
+    ]);
+
+    // A HIDDEN TAB reads nothing: the return listener catches up instead.
+    visibility = 'hidden';
+    reads.length = 0;
+    timers[0].fn();
+    await settle();
+    assert.deepEqual(reads, []);
+
+    // RETURNING TO THE TAB reads at once, not at the next tick.
+    visibility = 'visible';
+    reads.length = 0;
+    for (const fn of visibilityListeners) fn();
+    await settle();
+    assert.deepEqual(reads.map(([url]) => url), ['/api/workshop/counts', '/api/workshop/needs-feed']);
+
+    // RE-ENTRY never stacks a second timer; leaving stops the watch.
+    await workshopController.open();
+    assert.equal(timers.length, 1, 'a second open replaces the timer, never adds one');
+    workshopController.close();
+    assert.equal(timers.length, 0, 'closing the screen stops the timer');
+    assert.equal(visibilityListeners.size, 0, 'and its listener');
+  } finally {
+    if (priorDocument === undefined) delete global.document; else global.document = priorDocument;
+    if (priorWindow === undefined) delete global.window; else global.window = priorWindow;
+    global.fetch = priorFetch;
+  }
+});
 
 test('coming back from an app re-reveals the screen', () => {
   // `_inWorkshop` and workshopController.isOpen() both stay true while the
@@ -830,7 +1045,7 @@ test('the app\'s own Workshop switches communities through Your communities, the
   assert.match(scope, /switcher: SwitcherFrom \| null;/);
   // The list loads on open, and never during render.
   assert.match(scope, /communityScopeStore\.set\(\{ switcher: from, anchor \}\);\s*void loadCommunities\(\);/);
-  assert.match(scope, /fetch\(`\/api\/apps\$\{q\}`/);
+  assert.match(scope, /fetch\(`\/api\/apps\?scope=joined\$\{q\.replace\('\?', '&'\)\}`/);
 });
 
 // ── 4. The rows behind the counts (#3051) ──────────────────────────────
@@ -1003,7 +1218,7 @@ test('#3270, #3488: the Needs you pane is one feed, every project mixed, drawn b
   assert.match(pane, /<div class="dev-ws-item-caption"><a class="workshop-reel-app" data-ws-item-app=""[^>]*>[\s\S]*?<\/a><p class="dev-ws-item-by">/);
   assert.match(pane, /data-ws-rail-btn="more" data-card-menu="" data-card-menu-open="#app\/garden\/dev\/proposals\/8"/,
     'the ⋯ offers the card\'s page, the one entry that holds across projects');
-  assert.match(pane, /class="dev-ws-item-of">1 \/ 3</);
+  assert.match(pane, /class="dev-ws-needs-of">1 \/ 3</);
   assert.match(pane, /class="dev-ws-done-cta">Back to your communities</);
   assert.doesNotMatch(pane, /data-ws-done-hub/, 'the Communities screen has its own way on, and no Hub to go back to');
 
@@ -1024,7 +1239,7 @@ test('#3270: the controller reads the Needs you feed alongside, and survives los
   global.window = { Home: { isJoined: (app) => !!(app && app.is_member) } };
   try {
     const answers = new Map([
-      ['/api/apps', { ok: true, json: async () => ({ apps: [{ slug: 'a', name: 'A', is_member: true }] }) }],
+      ['/api/apps?scope=joined', { ok: true, json: async () => ({ apps: [{ slug: 'a', name: 'A', is_member: true }] }) }],
       ['/api/workshop/counts', { ok: true, json: async () => ({ counts: { a: { working: 0, needs: 1 } } }) }],
       ['/api/workshop/needs-feed', { ok: true, json: async () => ({ items: [{ kind: 'proposal', id: 1, app: { slug: 'a' } }], max: 60 }) }],
     ]);
@@ -1138,4 +1353,8 @@ test('#4486: the one-row head and the pipeline pin together under the project’
   // would be what it pinned to), so it follows the board's scroll instead.
   assert.match(kanbanTsx, /export function syncStrip\(board: HTMLElement \| null\): void \{/);
   assert.match(appCss, /\.dev-kanban-stages \{[^}]*overflow: hidden;/);
+  // On a phone (#5029) the search keeps its own line and the switch and the
+  // filters share the one under it: the chips fill the space beside the
+  // switch instead of taking a line of their own.
+  assert.match(appCss, /@media \(max-width: 639px\) \{[\s\S]*?\.dev-ws-allbar #dev-kanban-search \{ flex-basis: 100%; max-width: none; min-width: 0; \}\s*\.dev-ws-allbar #dev-filter-chips \{ flex: 1 1 0; min-width: 0; /);
 });

@@ -183,6 +183,15 @@ function cleanAttrValue(name, value, tag) {
   return value;
 }
 
+/** Whether a <link>'s attributes name a stylesheet (rrweb's own test, and a style preload). Pure. */
+function isStylesheetLink(attrs) {
+  const a = attrs && typeof attrs === 'object' ? attrs : {};
+  const rel = typeof a.rel === 'string' ? a.rel.toLowerCase().split(/\s+/) : [];
+  if (rel.includes('stylesheet')) return true;
+  if (!rel.includes('preload')) return false;
+  return String(a.as || '').toLowerCase() === 'style' || /\.css(?:[?#]|$)/i.test(String(a.href || ''));
+}
+
 /** The attributes of one element, cleaned. Pure. */
 function cleanAttributes(attrs, tag) {
   const out = {};
@@ -211,7 +220,14 @@ function sanitizeNode(node, parentTag = null) {
     if (tag === 'link') {
       // A stylesheet rrweb inlined is its _cssText; any other link goes.
       const css = node.attributes && typeof node.attributes._cssText === 'string' ? sanitizeCss(node.attributes._cssText) : null;
-      return { type: NODE.Element, id: node.id, tagName: css != null ? 'style' : 'meta', attributes: css != null ? { _cssText: css } : {}, childNodes: [] };
+      if (css != null) return { type: NODE.Element, id: node.id, tagName: 'style', attributes: { _cssText: css }, childNodes: [] };
+      // N6: a stylesheet not loaded yet when the snapshot was taken is an
+      // empty <style>, never a fetch: rrweb sends its text once it loads,
+      // as an attribute change on this node, and the player fills a
+      // <style> (or <link>) with it. As a <meta> that text was lost, and the
+      // replay drew the app unstyled.
+      if (isStylesheetLink(node.attributes)) return { type: NODE.Element, id: node.id, tagName: 'style', attributes: {}, childNodes: [] };
+      return { type: NODE.Element, id: node.id, tagName: 'meta', attributes: {}, childNodes: [] };
     }
     return {
       ...node,
@@ -429,6 +445,7 @@ async function ingest(pool, runId, msg, stats) {
       stats.bytes = bytes;
       stats.kept += 1;
       stats.goodFrame = true;
+      tally(stats, 'causes', msg.cause);
     } else {
       await pool.query('UPDATE first_version_live SET bytes = bytes + $2, event_at = NOW() WHERE bot_run_id = $1', [id, bytes]);
       stats.bytes += bytes;
@@ -437,6 +454,11 @@ async function ingest(pool, runId, msg, stats) {
   }
   if (msg.t === 'fail') {
     stats.failed += 1;
+    // N6: why each restart was not kept, and what started it, for the
+    // run's live_build_stream event: 19 restarts in one build (Club Votes,
+    // 12 October 2026) could not be told apart afterwards.
+    tally(stats, 'failWhys', msg.why);
+    tally(stats, 'causes', msg.cause);
     await pool.query('UPDATE first_version_live SET restarts_failed = restarts_failed + 1, failed_at = NOW() WHERE bot_run_id = $1', [id]);
     return;
   }
@@ -451,6 +473,14 @@ async function ingest(pool, runId, msg, stats) {
     if (why === 'memory') stats.memoryStop = true;
     await pool.query('UPDATE first_version_live SET stopped_why = COALESCE(stopped_why, $2) WHERE bot_run_id = $1', [id, why]);
   }
+}
+
+/** Count one value under `stats[key]` ({ value: n }), cut short, at most 12 values. Pure but for `stats`. */
+function tally(stats, key, value) {
+  const name = String(value || 'unknown').replace(/\s+/g, ' ').trim().slice(0, 60) || 'unknown';
+  const counts = stats[key] && typeof stats[key] === 'object' ? stats[key] : {};
+  if (name in counts || Object.keys(counts).length < 12) counts[name] = (counts[name] || 0) + 1;
+  stats[key] = counts;
 }
 
 // ── The build turn's controller ──────────────────────────────────────────
@@ -537,6 +567,7 @@ function liveController({ pool, runId, appId, sessionId = null, worker }) {
                   runId: Number(runId), restartsKept: stats.kept, restartsFailed: stats.failed, goodFrame: stats.goodFrame,
                   memoryStop: stats.memoryStop, stoppedWhy: stats.stoppedWhy || 'ended', bytes: stats.bytes,
                   incDropped: stats.dropped, minHeadroomMb: stats.minHeadroomMb,
+                  failWhys: stats.failWhys || {}, causes: stats.causes || {},
                 },
               });
             }
@@ -555,10 +586,15 @@ function liveController({ pool, runId, appId, sessionId = null, worker }) {
 
 // ── What the App tab reads ───────────────────────────────────────────────
 
+// The newest BUILD of the project's first version: its newest live run
+// that went ahead to be built. N7: never a follow-up on its proposal (a fix
+// of its failing checks is a run of its own, verdict 'revise'), which has no
+// recording, so the card kept the build's last frame through it.
 const RUN_SQL = `SELECT r.id
                    FROM homeroom_bot_first_versions f
                    JOIN homeroom_bot_runs r ON r.app_id = f.app_id AND r.issue_number = f.issue_number
                   WHERE f.app_id = $1 AND f.bot_builds = TRUE
+                    AND r.mode = 'live' AND r.verdict = 'ready'
                   ORDER BY r.id DESC
                   LIMIT 1`;
 
@@ -571,10 +607,38 @@ function liveState(row) {
 }
 
 /**
+ * N6 (a): whether the project's first version has a recording to show: its
+ * newest build's Live (RUN_SQL) has kept a good restart, and still has its
+ * recording (`good`: the watcher's settled, error-free frame,
+ * worker/usernode-live-watch.js), and
+ * whether the watcher has ended (`ended`: its build turn is over). Null
+ * when there is no build, or no Live for it yet. The App tab offers Live
+ * only once `good`: before the watcher's first good frame there is nothing
+ * to show but "Starting the app…" over an empty phone.
+ */
+async function liveStatusOf(pool, appId) {
+  const { rows: [run] } = await pool.query(RUN_SQL, [Number(appId)]);
+  if (!run) return null;
+  // Its good restart's recording still kept: a build's chunks go a day
+  // after it ended (openRun), and a first version can wait longer than that.
+  const { rows: [row] } = await pool.query(
+    `SELECT l.base_seq, l.good_at, l.ended_at,
+            EXISTS (SELECT 1 FROM first_version_live_chunks c
+                     WHERE c.bot_run_id = l.bot_run_id AND c.seq = l.base_seq) AS kept
+       FROM first_version_live l WHERE l.bot_run_id = $1`,
+    [Number(run.id)],
+  );
+  if (!row) return null;
+  return { runId: Number(run.id), good: row.base_seq != null && row.kept !== false, ended: row.ended_at != null };
+}
+
+/**
  * The project's first version's Live, from `since` (the last chunk the
- * viewer has): { runId, state, seq, reset, events, age }. `reset` says the
- * viewer starts over from a new good restart; `age` is seconds since the
- * last event. Null when there is no run.
+ * viewer has): { runId, state, seq, reset, events, age, ended }. `reset`
+ * says the viewer starts over from a new good restart; `age` is seconds
+ * since the last event; `ended`, that its watcher has stopped, so nothing
+ * more will come (N7: the card keeps its last frame). Null when there is no
+ * run.
  */
 async function liveOf(pool, appId, since = 0) {
   const { rows: [run] } = await pool.query(RUN_SQL, [Number(appId)]);
@@ -587,7 +651,8 @@ async function liveOf(pool, appId, since = 0) {
   );
   const runId = Number(run.id);
   const state = liveState(row);
-  if (!row || row.base_seq == null) return { runId, state, seq: 0, reset: false, events: [], age: null };
+  const ended = !!(row && row.ended_at);
+  if (!row || row.base_seq == null) return { runId, state, seq: 0, reset: false, events: [], age: null, ended };
   const base = Number(row.base_seq);
   const after = Number.isInteger(since) && since >= base ? since : null;
   // From the base (a viewer starting over), or after what the viewer has.
@@ -605,6 +670,7 @@ async function liveOf(pool, appId, since = 0) {
   return {
     runId, state, seq, reset: after == null, events: out,
     age: row.age == null ? null : Math.max(0, Math.round(Number(row.age))),
+    ended,
   };
 }
 
@@ -634,6 +700,7 @@ module.exports = {
   liveEnabled,
   forgetSetting,
   sanitizeCss,
+  isStylesheetLink,
   sanitizeNode,
   sanitizeEvent,
   sanitizeEvents,
@@ -641,8 +708,10 @@ module.exports = {
   splitLines,
   openRun,
   ingest,
+  tally,
   liveController,
   liveState,
+  liveStatusOf,
   liveOf,
   recordView,
 };

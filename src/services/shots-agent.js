@@ -122,6 +122,19 @@ If a screen needs data you create through the app (hints.setup), create it
 the same way on both addresses before you shoot either, so the two sides
 differ only by the change.
 
+The member, read_only_admin and full_admin browsers are three different
+accounts. When a change needs somebody other than its persona to act first,
+such as a reply to the member's message or a vote on their change, take that
+step in another of those browsers as the brief's secondAccount says, on both
+addresses alike, then shoot in the browser screenBrowsers names.
+
+When the brief has afterOnly, the proposal builds the app's first real
+screens and the before address still shows only the starter template's
+placeholder, which has none of the declared changes. Then there is no
+before to take: leave out step 7 and the before clip, do not open the
+before address at all, create hints.setup data on the after address only,
+and save after shots alone. A change is ready with its after shots.
+
 If the brief has previewAt, the change only shows at certain times, and
 previewAt.label says when in plain words. Open both copies at that moment:
 add the query parameter named by previewAt.param, set to previewAt.at, to
@@ -151,9 +164,29 @@ shots. For a change to the strip itself, open the start path with
 installStrip.param added to its query (before any #), on both addresses and
 in the phone browser, so the strip shows as it does on a member's phone.
 
+If the brief has makeProject, a project made on these copies never finishes
+setting up, on either address. Read makeProject.note before a change whose
+steps make, remix or import a project: it says what can be shot, and a
+change that needs a made project to run is skipped at once.
+
 If a change declares intent.controlledFailurePath, call fail_request with
 that path and enabled true just before the step that triggers it, and with
 enabled false once the error is on screen.
+
+If a change shows a loading or error state that the steps alone do not
+reach (a skeleton or spinner that shows only while a request is on its way,
+an error only when one fails) and it declares no controlledFailurePath, call
+control_request with the change, the exact API GET path and query the page
+sends (browser_network_requests lists them), and mode "hold" for the loading
+state or "fail" for the error, just before the step that sends it. Shoot
+both sides that way, then call it again with mode "off". People see a line
+beside the shots saying which request you held or made fail.
+
+If a change's steps choose a file (a photo, a spreadsheet, a document), click
+the page's upload control; when the browser says a file chooser is open,
+call upload_file with that browser, the change and the files from the
+brief's sampleFiles that fit, the same ones on both sides. They are the only
+files you can give a page. People see a line beside the shots naming them.
 
 If your shots show the change but not everything the claim says, for example
 part of it needs data these copies do not have, keep them and call
@@ -189,17 +222,24 @@ running off the screen, text or controls overlapping each other, an error
 message or a broken image on screen, a layout that falls apart at the phone
 size. Call note_problem with the change and screen where you saw it, what is
 broken in one short sentence, the after shot it shows in if you saved one,
-and alsoBefore: true when the before address shows the same thing, false
-when it does not, "unknown" when you did not look. People read these under
-"Also noticed"; they change nothing about the shots. Note only what any
-person would agree is broken, at most a handful per run: never a matter of
-taste, style or wording, and never whether the declared change is shown or
-works (that is note_change and skip_change). Do not go looking for problems
-on other screens; note what you see on the way.`;
+and alsoBefore. You shoot the before side of that screen anyway: look at
+that before shot, or the same place on the before address, and say
+alsoBefore true when it shows the same thing, false when it does not (also
+when that place is new with this change), so people can tell a problem the
+change brought from one that was already there. Say "unknown" only when you
+could not look. If you noticed it before you shot the before side, note it
+again once you have: the same problem at the same place is updated, not
+added. People read these under "Also noticed"; they change nothing about
+the shots. Note only what any person would agree is broken, at most a
+handful per run: never a matter of taste, style or wording, and never
+whether the declared change is shown or works (that is note_change and
+skip_change). Do not go looking for problems on other screens; note what
+you see on the way.`;
 
 const TASK_PROMPT = `Read your brief with get_brief, then save a before and an
 after shot of every declared change on each of its screens (plus a clip of
-each side for motion changes), or skip a change you cannot reach and say why.`;
+each side for motion changes), or skip a change you cannot reach and say why.
+When the brief has afterOnly, save the after side only.`;
 
 function resultThreadId(result) {
   return result?.sessionId || result?.initSessionId || null;
@@ -284,8 +324,10 @@ async function dispatchClaude(config, options, deps) {
   let result;
   try { result = await withDispatchTimeout(deps.workerService.execInWorker(session.id, {
     mode: 'shots',
-    prompt: TASK_PROMPT,
-    systemPrompt: SYSTEM_PROMPT,
+    // A shots eval's trial (shots-eval-runner.js) tries other prompts; every
+    // proposal's own run takes these.
+    prompt: options.taskPrompt || TASK_PROMPT,
+    systemPrompt: options.systemPrompt || SYSTEM_PROMPT,
     model,
     // Always a fresh thread: the brief carries everything the agent needs,
     // and the author's thread belongs to a different model.

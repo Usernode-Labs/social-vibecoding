@@ -15,20 +15,27 @@ const os = require('node:os');
 const path = require('node:path');
 const http = require('node:http');
 const { spawn } = require('node:child_process');
+const { RUNNER_TEST_ENV } = require('./lib/runner-env');
 
 const {
-  startMessagesAdapter, applyTurnPolicy, makeRedactor, claudeChildEnv, PROVIDER_PREFERENCES,
+  startMessagesAdapter, applyTurnPolicy, pairToolIds, makeRedactor, claudeChildEnv, PROVIDER_PREFERENCES,
 } = require('../worker/claude-openrouter-request');
 
 const ROOT = path.join(__dirname, '..');
 const GLM = 'z-ai/glm-5.3-flash';
+const KIMI = 'moonshotai/kimi-k2';
+const OTHER = 'deepseek/deepseek-v4.1-flash';
+// GLM's routing: the preferences every model gets, and its fast hosts.
+const GLM_ROUTED = {
+  ...PROVIDER_PREFERENCES, only: ['relace', 'fireworks', 'parasail', 'together', 'baseten'], sort: 'throughput', allow_fallbacks: true,
+};
 const KEY = 'sk-or-v1-0123456789abcdef-user-key';
 
 test('every request is pinned to the session model and capped at its output limit', () => {
   assert.deepEqual(
     applyTurnPolicy({ model: 'claude-haiku-4-5', max_tokens: 200_000, messages: [] },
       { model: GLM, maxOutputTokens: 64_000, countTokens: false }),
-    { model: GLM, max_tokens: 64_000, messages: [], provider: PROVIDER_PREFERENCES },
+    { model: GLM, max_tokens: 64_000, messages: [], provider: GLM_ROUTED },
   );
   // A smaller ask is kept; a missing or invalid one gets the cap.
   assert.equal(applyTurnPolicy({ max_tokens: 4096 }, { model: GLM, maxOutputTokens: 64_000 }).max_tokens, 4096);
@@ -58,21 +65,105 @@ test('every request is pinned to the session model and capped at its output limi
 test('every model request prefers hosts that answer promptly, without excluding any or overriding a preference sent', () => {
   // A GLM build on 2026-10-06 sat on a host averaging 44 s a request until
   // its clock ran out. OpenRouter moves a host that misses these to the end
-  // of its list; it never drops one, and price still decides among the rest.
+  // of its list; it never drops one, and for a model with no shortlist price
+  // still decides among the rest.
   assert.deepEqual(PROVIDER_PREFERENCES, {
     preferred_max_latency: { p90: 15 },
     preferred_min_throughput: { p50: 30 },
   });
   assert.equal(Object.isFrozen(PROVIDER_PREFERENCES), true);
-  const body = applyTurnPolicy({ max_tokens: 10, messages: [] }, { model: GLM, maxOutputTokens: 64_000 });
+  const body = applyTurnPolicy({ max_tokens: 10, messages: [] }, { model: OTHER, maxOutputTokens: 64_000 });
   assert.deepEqual(body.provider, PROVIDER_PREFERENCES);
   assert.equal(body.provider.sort, undefined, 'no sort or order: OpenRouter keeps balancing by price');
   assert.equal(body.provider.order, undefined);
-  const asked = applyTurnPolicy({ max_tokens: 10, provider: { preferred_max_latency: 5, zdr: true } }, { model: GLM, maxOutputTokens: 64_000 });
+  assert.equal(body.provider.only, undefined);
+  const asked = applyTurnPolicy({ max_tokens: 10, provider: { preferred_max_latency: 5, zdr: true } }, { model: OTHER, maxOutputTokens: 64_000 });
   assert.deepEqual(asked.provider, { preferred_max_latency: 5, preferred_min_throughput: { p50: 30 }, zdr: true });
   assert.equal(applyTurnPolicy({ messages: [] }, { model: GLM, countTokens: true }).provider, undefined, 'counting tokens is not routed');
   // The Codex listener asks for the same.
-  assert.deepEqual(require('../worker/codex-openrouter-request').PROVIDER_PREFERENCES, PROVIDER_PREFERENCES);
+  const codex = require('../worker/codex-openrouter-request');
+  assert.deepEqual(codex.PROVIDER_PREFERENCES, PROVIDER_PREFERENCES);
+});
+
+test('GLM\'s coding turns go to its fast hosts, fastest first, and never to no host at all', () => {
+  // Run four (13 Oct 2026): 31 of a 33-minute GLM build's minutes waiting on
+  // InferenceNet at 12 s a call, which price balancing kept choosing.
+  const mod = require('../worker/claude-openrouter-request');
+  const codex = require('../worker/codex-openrouter-request');
+  assert.deepEqual(mod.PROVIDER_ROUTING_BY_MODEL, {
+    [GLM]: { only: ['relace', 'fireworks', 'parasail', 'together', 'baseten'], sort: 'throughput' },
+  });
+  assert.deepEqual(codex.PROVIDER_ROUTING_BY_MODEL, mod.PROVIDER_ROUTING_BY_MODEL, 'the Codex listener routes the same');
+  assert.equal(Object.isFrozen(mod.PROVIDER_ROUTING_BY_MODEL[GLM].only), true);
+  const glm = applyTurnPolicy({ max_tokens: 10, messages: [] }, { model: GLM, maxOutputTokens: 64_000 });
+  assert.deepEqual(glm.provider, GLM_ROUTED);
+  // A preference sent is kept beside it; routing sent of its own replaces it,
+  // so the shortlist never intersects a filter (require_parameters) to nothing.
+  const zdr = applyTurnPolicy({ max_tokens: 10, provider: { zdr: true } }, { model: GLM, maxOutputTokens: 64_000 });
+  assert.deepEqual(zdr.provider, { ...GLM_ROUTED, zdr: true });
+  for (const own of [{ require_parameters: true }, { only: ['z-ai'] }, { order: ['fireworks'] }, { ignore: ['wafer'] }, { sort: 'price' }]) {
+    const p = applyTurnPolicy({ max_tokens: 10, provider: own }, { model: GLM, maxOutputTokens: 64_000 }).provider;
+    assert.deepEqual(p, { ...PROVIDER_PREFERENCES, ...own }, JSON.stringify(own));
+    assert.deepEqual(codex.providerRoutingFor(GLM, own), p, 'and the Codex listener the same');
+  }
+  // The platform's list for the turn replaces the default; `none` turns it off.
+  const listed = applyTurnPolicy({ max_tokens: 10 }, { model: GLM, maxOutputTokens: 64_000, providerShortlist: ['fireworks'] });
+  assert.deepEqual(listed.provider.only, ['fireworks']);
+  const off = applyTurnPolicy({ max_tokens: 10 }, { model: GLM, maxOutputTokens: 64_000, providerShortlist: [] });
+  assert.deepEqual(off.provider, PROVIDER_PREFERENCES);
+  assert.deepEqual(mod.parseShortlist('Fireworks, parasail/fp4,, bad slug!, together'), ['fireworks', 'parasail/fp4', 'together']);
+  assert.deepEqual(mod.parseShortlist('none'), []);
+  assert.equal(mod.parseShortlist(''), null);
+  assert.equal(mod.parseShortlist('!!'), null, 'a list naming no valid slug is no list');
+  assert.deepEqual(codex.parseShortlist('relace,fireworks'), mod.parseShortlist('relace,fireworks'));
+  // The safety net drops the shortlist, and only it.
+  assert.deepEqual(mod.withoutShortlist(GLM_ROUTED, {}), PROVIDER_PREFERENCES);
+  assert.deepEqual(mod.withoutShortlist({ ...GLM_ROUTED, zdr: true }, { zdr: true }), { ...PROVIDER_PREFERENCES, zdr: true });
+  assert.equal(mod.withoutShortlist(PROVIDER_PREFERENCES, {}), null, 'nothing to drop');
+  assert.equal(mod.withoutShortlist({ only: ['z-ai'] }, { only: ['z-ai'] }), null, 'a list the request sent is its own');
+  assert.deepEqual([...mod.SHORTLIST_FALLBACK_STATUSES].sort(), [404, 429, 502, 503]);
+});
+
+test('a GLM request its shortlist refuses is sent once more to every host, and says so', async (t) => {
+  const bodies = [];
+  let refuse = 1;
+  const fetchImpl = async (url, init) => {
+    bodies.push(JSON.parse(init.body).provider);
+    if (refuse > 0) {
+      refuse -= 1;
+      return new Response('{"error":{"message":"No allowed providers are available for the selected model.","code":404}}',
+        { status: 404, headers: { 'content-type': 'application/json' } });
+    }
+    return new Response('{"id":"msg-1","type":"message","provider":"Fireworks","usage":{"input_tokens":3,"output_tokens":1}}',
+      { status: 200, headers: { 'content-type': 'application/json', 'x-request-id': 'req-2' } });
+  };
+  const timing = [];
+  const adapter = await startMessagesAdapter({
+    baseUrl: 'https://openrouter.ai/api/v1', apiKey: KEY, model: GLM, localToken: 'local-token', fetchImpl,
+    onTiming: (e) => timing.push(e),
+  });
+  t.after(() => adapter.close());
+  const reply = await fetch(`${adapter.baseUrl}/v1/messages`, {
+    method: 'POST', headers: { 'x-api-key': 'local-token', 'content-type': 'application/json' },
+    body: JSON.stringify({ model: 'x', max_tokens: 10, messages: [] }),
+  });
+  assert.equal(reply.status, 200, 'Claude Code never sees the refusal');
+  assert.deepEqual(bodies, [GLM_ROUTED, PROVIDER_PREFERENCES]);
+  const result = timing.find((e) => e.kind === 'provider_request_result');
+  assert.equal(result.shortlistFallback, true);
+  assert.equal(result.providerName, 'Fireworks');
+  // A refusal of its own (a bad request) is not sent again.
+  bodies.length = 0;
+  refuse = 0;
+  const bad = async (url, init) => { bodies.push(JSON.parse(init.body).provider); return new Response('{"error":{"message":"bad","code":400}}', { status: 400 }); };
+  const strict = await startMessagesAdapter({ baseUrl: 'https://openrouter.ai/api/v1', apiKey: KEY, model: GLM, localToken: 'local-token', fetchImpl: bad });
+  t.after(() => strict.close());
+  const refused = await fetch(`${strict.baseUrl}/v1/messages`, {
+    method: 'POST', headers: { 'x-api-key': 'local-token', 'content-type': 'application/json' },
+    body: JSON.stringify({ model: 'x', max_tokens: 10, messages: [] }),
+  });
+  assert.equal(refused.status, 400);
+  assert.equal(bodies.length, 1);
 });
 
 test('the thinking level is sent as output_config.effort, which OpenRouter maps for every model', () => {
@@ -163,6 +254,114 @@ test('images and documents become a note, because OpenRouter models run on text'
   assert.ok(!JSON.stringify(body).includes('AAAA'));
 });
 
+// OpenRouter sends a non-Anthropic model's request in OpenAI's chat format,
+// where each tool_result is a `tool` message carrying tool_call_id. One with
+// an empty id fails the request: "400 messages[N]: tool messages must include
+// a non-empty string tool_call_id" (GLM, 2026-10-04 and 2026-10-09).
+function everyResultPaired(messages) {
+  let calls = [];
+  for (const message of messages) {
+    if (!Array.isArray(message.content)) continue;
+    if (message.role === 'assistant') {
+      calls = message.content.filter((b) => b.type === 'tool_use').map((b) => b.id);
+      for (const id of calls) assert.ok(typeof id === 'string' && id.trim(), 'every tool call has an id');
+      continue;
+    }
+    for (const block of message.content.filter((b) => b.type === 'tool_result')) {
+      assert.ok(typeof block.tool_use_id === 'string' && block.tool_use_id.trim(), 'every tool result has an id');
+      assert.ok(calls.includes(block.tool_use_id), `${block.tool_use_id} answers a call just before it`);
+      calls = calls.filter((id) => id !== block.tool_use_id);
+    }
+    assert.deepEqual(calls, [], 'and every call is answered');
+    calls = [];
+  }
+}
+
+test('a tool call and result with an empty or missing id are paired by an id made for them, the same on every request', () => {
+  const conversation = () => [
+    { role: 'user', content: 'Fix the button.' },
+    { role: 'assistant', content: [
+      { type: 'text', text: 'Reading.' },
+      { type: 'tool_use', id: '', name: 'Read', input: { file_path: 'a.js' } },
+      { type: 'tool_use', name: 'Read', input: { file_path: 'b.js' } },
+    ] },
+    { role: 'user', content: [
+      { type: 'tool_result', tool_use_id: '', content: 'a' },
+      { type: 'tool_result', content: [{ type: 'text', text: 'b' }] },
+    ] },
+    { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_ok', name: 'Bash', input: { command: 'ls' } }] },
+    { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_ok', content: 'x' }] },
+  ];
+  const body = applyTurnPolicy({ messages: conversation() }, { model: GLM, countTokens: false });
+  everyResultPaired(body.messages);
+  assert.deepEqual(body.messages[1].content.slice(1).map((b) => b.id), ['toolu_hr_1_1', 'toolu_hr_1_2']);
+  assert.deepEqual(body.messages[2].content.map((b) => b.tool_use_id), ['toolu_hr_1_1', 'toolu_hr_1_2'], 'results in order');
+  assert.equal(body.messages[2].content[1].content[0].text, 'b', 'what the result said is kept');
+  assert.equal(body.messages[3].content[0].id, 'toolu_ok', 'a good id is left alone');
+  const again = applyTurnPolicy({ messages: conversation() }, { model: GLM, countTokens: true });
+  assert.deepEqual(again.messages, body.messages, 'the same ids on the next request, so the cached prefix holds');
+});
+
+test('a tool result with no id and no call left to answer becomes text; one with an id is never touched', () => {
+  const fine = [
+    { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'Read', input: {} }] },
+    { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'ok' }] },
+  ];
+  assert.equal(pairToolIds(fine), fine);
+  const out = pairToolIds([
+    { role: 'user', content: [{ type: 'tool_result', tool_use_id: '', content: 'lost' }] },
+    { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'Read', input: {} }] },
+    { role: 'user', content: [
+      { type: 'tool_result', tool_use_id: 't1', content: 'ok' },
+      { type: 'tool_result', tool_use_id: 't9', content: 'stray' },
+      { type: 'tool_result', tool_use_id: ' ', content: 'extra' },
+    ] },
+  ]);
+  assert.deepEqual(out[0].content, [{ type: 'text', text: '[a tool result that answers no tool call:\nlost]' }]);
+  assert.deepEqual(out[2].content, [
+    { type: 'tool_result', tool_use_id: 't1', content: 'ok' },
+    { type: 'tool_result', tool_use_id: 't9', content: 'stray' },
+    { type: 'text', text: '[a tool result that answers no tool call:\nextra]' },
+  ]);
+  for (const message of out) {
+    for (const block of Array.isArray(message.content) ? message.content : []) {
+      if (block.type === 'tool_result') assert.ok(block.tool_use_id.trim(), 'no result is left without an id');
+    }
+  }
+});
+
+test('the adapter sends OpenRouter a request whose every tool result carries its call\'s id', async (t) => {
+  let received = null;
+  const upstream = http.createServer((req, res) => {
+    let raw = '';
+    req.on('data', (c) => { raw += c; });
+    req.on('end', () => {
+      received = JSON.parse(raw);
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ id: 'gen-1', type: 'message', content: [] }));
+    });
+  });
+  await new Promise((resolve) => upstream.listen(0, '127.0.0.1', resolve));
+  t.after(() => upstream.close());
+  const adapter = await startMessagesAdapter({
+    baseUrl: `http://127.0.0.1:${upstream.address().port}/api/v1`, apiKey: KEY, model: GLM, localToken: 'local-token-0123456789',
+  });
+  t.after(() => adapter.close());
+  const res = await fetch(`${adapter.baseUrl}/v1/messages`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-api-key': 'local-token-0123456789' },
+    body: JSON.stringify({ model: 'claude-sonnet-4-5', max_tokens: 100, messages: [
+      { role: 'user', content: 'Go.' },
+      { role: 'assistant', content: [{ type: 'tool_use', id: '', name: 'Bash', input: { command: 'ls' } }] },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: '', content: 'a.js' }] },
+    ] }),
+  });
+  assert.equal(res.status, 200);
+  await res.text();
+  everyResultPaired(received.messages);
+  assert.equal(received.messages[2].content[0].tool_use_id, 'toolu_hr_1_0');
+});
+
 test('Claude Code gets the adapter and a local token, never the key', () => {
   const env = claudeChildEnv({
     PATH: '/bin', OPENROUTER_API_KEY: KEY, ANTHROPIC_AUTH_TOKEN: 'stale', HOMEROOM_MCP_TOKEN: 'grant',
@@ -182,21 +381,88 @@ test('Claude Code gets the adapter and a local token, never the key', () => {
   assert.ok(!Object.values(env).includes(KEY));
 });
 
-test('Claude Code compacts at the limit Codex does, or the model\'s window when smaller, and knows the real window', () => {
-  const base = { baseUrl: 'http://127.0.0.1:4000', localToken: 'local', model: GLM };
-  const glm = claudeChildEnv({ PATH: '/bin', AGENT_MODEL_CONTEXT_WINDOW: '1310720' }, base);
-  assert.equal(glm.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '200000', 'a 1.3M window is compacted at 200k, never at 1.2M');
-  assert.equal(glm.CLAUDE_CODE_MAX_CONTEXT_TOKENS, '1310720');
-  const small = claudeChildEnv({ AGENT_MODEL_CONTEXT_WINDOW: '128000' }, base);
-  assert.equal(small.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '128000');
+test('Claude Code compacts a non-Anthropic, non-GLM model at 120k, or the model\'s window when smaller, and knows the real window', () => {
+  const base = { baseUrl: 'http://127.0.0.1:4000', localToken: 'local', model: KIMI };
+  const kimi = claudeChildEnv({ PATH: '/bin', AGENT_MODEL_CONTEXT_WINDOW: '262144' }, base);
+  assert.equal(kimi.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '120000', 'a 262k window is compacted at 120k');
+  assert.equal(kimi.CLAUDE_CODE_MAX_CONTEXT_TOKENS, '262144');
+  const small = claudeChildEnv({ AGENT_MODEL_CONTEXT_WINDOW: '100000' }, base);
+  assert.equal(small.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '100000');
   const unknown = claudeChildEnv({ AGENT_MODEL_CONTEXT_WINDOW: '' }, base);
-  assert.equal(unknown.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '200000', 'no catalog window: still compacted');
+  assert.equal(unknown.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '120000', 'no catalog window: still compacted');
   assert.equal(unknown.CLAUDE_CODE_MAX_CONTEXT_TOKENS, undefined, 'and no window is made up');
-  const chosen = claudeChildEnv({ AGENT_MODEL_CONTEXT_WINDOW: '1310720', CLAUDE_CODE_AUTO_COMPACT_WINDOW: '90000' }, base);
+  const chosen = claudeChildEnv({ AGENT_MODEL_CONTEXT_WINDOW: '262144', CLAUDE_CODE_AUTO_COMPACT_WINDOW: '90000' }, base);
   assert.equal(chosen.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '90000', 'a window already set is kept');
   const codex = fs.readFileSync(require.resolve('../worker/build-codex-model-catalog.js'), 'utf8');
   assert.match(codex, /const AUTO_COMPACT_TOKEN_LIMIT = 200_000;/, 'the same limit as Codex');
   assert.equal(require('../worker/claude-openrouter-request').AUTO_COMPACT_TOKEN_LIMIT, 200_000);
+});
+
+// GLM 5.3 Flash's window is 1M tokens (1,048,576 on OpenRouter). App bench
+// run 196 put 120k against 200k over 9 pairs from the same shared plans:
+// compactions fell from 23 to 4, the build was about 12% faster and blind
+// grades were level. So every GLM coding turn compacts at 200k, not only a
+// first version's.
+test('a GLM turn compacts at 200k with no ROOMY_CONTEXT, still never past its window, and knows the real window', () => {
+  const mod = require('../worker/claude-openrouter-request');
+  for (const model of [GLM, 'z-ai/glm-4.6', 'z-ai/glm-5.3']) {
+    assert.equal(mod.autoCompactLimit(model), 200_000, model);
+  }
+  const base = { baseUrl: 'http://127.0.0.1:4000', localToken: 'local', model: GLM };
+  const glm = claudeChildEnv({ PATH: '/bin', AGENT_MODEL_CONTEXT_WINDOW: '1048576' }, base);
+  assert.equal(glm.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '200000', 'a 1M GLM window is compacted at 200k, never at 1M');
+  assert.equal(glm.CLAUDE_CODE_MAX_CONTEXT_TOKENS, '1048576');
+  assert.equal(claudeChildEnv({}, base).CLAUDE_CODE_AUTO_COMPACT_WINDOW, '200000', 'no catalog window');
+  assert.equal(claudeChildEnv({ AGENT_MODEL_CONTEXT_WINDOW: '150000' }, base).CLAUDE_CODE_AUTO_COMPACT_WINDOW, '150000',
+    'never past the model\'s own window');
+  const chosen = claudeChildEnv({ AGENT_MODEL_CONTEXT_WINDOW: '1048576', CLAUDE_CODE_AUTO_COMPACT_WINDOW: '90000' }, base);
+  assert.equal(chosen.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '90000', 'a window already set is kept');
+  assert.equal(chosen.CLAUDE_CODE_MAX_CONTEXT_TOKENS, '1048576');
+  const told = claudeChildEnv({ AGENT_MODEL_CONTEXT_WINDOW: '1048576', CLAUDE_CODE_MAX_CONTEXT_TOKENS: '500000' }, base);
+  assert.equal(told.CLAUDE_CODE_MAX_CONTEXT_TOKENS, '500000', 'a context size already set is kept');
+  assert.equal(told.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '200000');
+});
+
+test('the compaction limit is per model family: Anthropic\'s and GLM\'s at 200k, every other provider\'s at 120k', () => {
+  const mod = require('../worker/claude-openrouter-request');
+  assert.equal(mod.NON_ANTHROPIC_AUTO_COMPACT_TOKEN_LIMIT, 120_000);
+  for (const model of ['anthropic/claude-sonnet-4.5', '~anthropic/claude-opus-latest', GLM, 'z-ai/glm-4.6']) {
+    assert.equal(mod.autoCompactLimit(model), 200_000, model);
+  }
+  for (const model of [KIMI, 'openai/gpt-5', 'deepseek/deepseek-v4.1-flash', 'z-ai/other-model', 'example/z-ai/glm-5', '', undefined]) {
+    assert.equal(mod.autoCompactLimit(model), 120_000, String(model));
+  }
+  const base = { baseUrl: 'http://127.0.0.1:4000', localToken: 'local' };
+  const claude = claudeChildEnv({ AGENT_MODEL_CONTEXT_WINDOW: '1000000' }, { ...base, model: 'anthropic/claude-sonnet-4.5' });
+  assert.equal(claude.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '200000', 'Anthropic models unchanged');
+  const glm = claudeChildEnv({ AGENT_MODEL_CONTEXT_WINDOW: '1048576' }, { ...base, model: GLM });
+  assert.equal(glm.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '200000');
+  const kimi = claudeChildEnv({ AGENT_MODEL_CONTEXT_WINDOW: '262144' }, { ...base, model: KIMI });
+  assert.equal(kimi.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '120000', 'any other provider unchanged');
+});
+
+// App bench run 191: GLM builds compacted 2 to 3 times each at about 65k
+// tokens of context. A first version's roomy_context tweak (ROOMY_CONTEXT=1)
+// compacts any model at 200k instead. GLM has that limit without it now, so
+// for GLM the tweak changes nothing; it still raises every other model.
+test('roomy_context: ROOMY_CONTEXT=1 compacts a non-Anthropic model at 200k, still never past its window', () => {
+  const mod = require('../worker/claude-openrouter-request');
+  assert.equal(mod.ROOMY_AUTO_COMPACT_TOKEN_LIMIT, 200_000);
+  assert.equal(mod.autoCompactLimit(KIMI, { ROOMY_CONTEXT: '1' }), 200_000);
+  assert.equal(mod.autoCompactLimit(KIMI, { ROOMY_CONTEXT: '0' }), 120_000);
+  assert.equal(mod.autoCompactLimit(KIMI), 120_000, 'as before without it');
+  assert.equal(mod.autoCompactLimit(GLM, { ROOMY_CONTEXT: '1' }), 200_000);
+  assert.equal(mod.autoCompactLimit(GLM, { ROOMY_CONTEXT: '0' }), 200_000, 'for GLM it changes nothing');
+  assert.equal(mod.autoCompactLimit('anthropic/claude-sonnet-4.5', { ROOMY_CONTEXT: '1' }), 200_000);
+  const base = { baseUrl: 'http://127.0.0.1:4000', localToken: 'local', model: KIMI };
+  assert.equal(claudeChildEnv({ AGENT_MODEL_CONTEXT_WINDOW: '262144', ROOMY_CONTEXT: '1' }, base).CLAUDE_CODE_AUTO_COMPACT_WINDOW, '200000');
+  assert.equal(claudeChildEnv({ ROOMY_CONTEXT: '1' }, base).CLAUDE_CODE_AUTO_COMPACT_WINDOW, '200000', 'no catalog window');
+  assert.equal(claudeChildEnv({ AGENT_MODEL_CONTEXT_WINDOW: '150000', ROOMY_CONTEXT: '1' }, base).CLAUDE_CODE_AUTO_COMPACT_WINDOW, '150000',
+    'never past the model\'s own window');
+  assert.equal(claudeChildEnv({ AGENT_MODEL_CONTEXT_WINDOW: '262144' }, base).CLAUDE_CODE_AUTO_COMPACT_WINDOW, '120000');
+  const glm = { ...base, model: GLM };
+  assert.equal(claudeChildEnv({ AGENT_MODEL_CONTEXT_WINDOW: '1048576', ROOMY_CONTEXT: '1' }, glm).CLAUDE_CODE_AUTO_COMPACT_WINDOW,
+    claudeChildEnv({ AGENT_MODEL_CONTEXT_WINDOW: '1048576' }, glm).CLAUDE_CODE_AUTO_COMPACT_WINDOW, 'GLM: the same with or without it');
 });
 
 test('redaction is literal and ignores values too short to be secrets', () => {
@@ -281,7 +547,7 @@ test('the adapter forwards Messages requests to OpenRouter with the key and stre
   assert.equal(timing[0].maxOutputTokens, 64_000);
   assert.deepEqual(timing[3], {
     kind: 'provider_request_result', requestOrdinal: 1, httpStatus: 200, outcome: 'ok', requestId: 'req-1',
-    usage: { inputTokens: 12, outputTokens: 1 }, images: { sent: 0, moved: 0, omitted: 0 },
+    usage: { inputTokens: 12, outputTokens: 1 }, images: { sent: 0, moved: 0, omitted: 0, pruned: 0 },
   });
   assert.equal(timing[4].outcome, 'ok');
   assert.ok(!JSON.stringify(timing).includes('hi'), 'timing carries sizes and counts, never content');
@@ -380,7 +646,7 @@ test('a streamed reply names its generation and the provider OpenRouter routed i
   assert.deepEqual(result, {
     kind: 'provider_request_result', requestOrdinal: 1, httpStatus: 200, outcome: 'ok',
     requestId: 'req-9', generationId: 'gen-1759626000-abc', providerName: 'DeepInfra',
-    usage: { inputTokens: 12 }, images: { sent: 0, moved: 0, omitted: 0 },
+    usage: { inputTokens: 12 }, images: { sent: 0, moved: 0, omitted: 0, pruned: 0 },
   });
   assert.ok(!JSON.stringify(timing).includes('secret prompt') && !JSON.stringify(timing).includes('reply text'),
     'never content');
@@ -543,7 +809,7 @@ test('run-cc.sh runs an OpenRouter scout through the adapter with the key out of
   const env = {
     PATH: `${fx.bin}:${process.env.PATH}`,
     HOME: fx.dir,
-    PROMPT_FILE: fx.prompt, BRANCH: 'smoke', SESSION_ID: '1', PLATFORM_URL: 'http://platform',
+    ...RUNNER_TEST_ENV, PROMPT_FILE: fx.prompt, BRANCH: 'smoke', SESSION_ID: '1', PLATFORM_URL: 'http://platform',
     MODE: 'scout', WORKSPACE_DIR: fx.ws,
     AGENT_PROVIDER: 'openrouter', MODEL: GLM, AGENT_MODEL: GLM,
     AGENT_MODEL_MAX_OUTPUT_TOKENS: '64000', AGENT_REASONING_EFFORT: 'xhigh',
@@ -588,7 +854,7 @@ test('run-cc.sh refuses OpenRouter modes and configs it cannot run safely', asyn
   const fx = runnerFixture();
   const base = {
     PATH: `${fx.bin}:${process.env.PATH}`, HOME: fx.dir,
-    PROMPT_FILE: fx.prompt, BRANCH: 'smoke', SESSION_ID: '1', PLATFORM_URL: 'http://platform',
+    ...RUNNER_TEST_ENV, PROMPT_FILE: fx.prompt, BRANCH: 'smoke', SESSION_ID: '1', PLATFORM_URL: 'http://platform',
     WORKSPACE_DIR: fx.ws, WORKER_JWT: 'push', AGENT_PROVIDER: 'openrouter',
     MODEL: GLM, AGENT_MODEL: GLM, OPENROUTER_API_KEY: KEY,
   };
@@ -782,9 +1048,62 @@ test("each request's result line says how many images it sent, moved and left ou
     return { forwarded: upstream.seen[0].body, result: timing.find((e) => e.kind === 'provider_request_result') };
   };
   const sees = await run({ imageInput: true });
-  assert.deepEqual(sees.result.images, { sent: 3, moved: 3, omitted: 0 });
+  assert.deepEqual(sees.result.images, { sent: 3, moved: 3, omitted: 0, pruned: 0 });
   assert.deepEqual(sees.forwarded.messages[2].content[4], png('READ'), 'what OpenRouter receives');
   const blind = await run({});
-  assert.deepEqual(blind.result.images, { sent: 0, moved: 0, omitted: 3 });
+  assert.deepEqual(blind.result.images, { sent: 0, moved: 0, omitted: 3, pruned: 0 });
   assert.ok(!JSON.stringify(sees.result).includes('READ'), 'counts, never content');
+});
+
+// Run four (13 Oct 2026): 30 screenshots resent on every request of a
+// first-version build that compacted four times.
+test('only the latest few images reach the model; an older one becomes a note, and the cut moves only every few images', () => {
+  const mod = require('../worker/claude-openrouter-request');
+  assert.equal(mod.KEEP_LATEST_IMAGES, 3);
+  assert.equal(mod.PRUNE_STEP_IMAGES, 3);
+  const shot = (n) => ({ type: 'image', source: { type: 'base64', media_type: 'image/png', data: `SHOT${n}` } });
+  const conversation = (n) => {
+    const messages = [{ role: 'user', content: 'Build it.' }];
+    for (let i = 1; i <= n; i += 1) {
+      messages.push({ role: 'assistant', content: [{ type: 'tool_use', id: `t${i}`, name: 'mcp__playwright__browser_take_screenshot', input: {} }] });
+      messages.push({ role: 'user', content: [{ type: 'tool_result', tool_use_id: `t${i}`, content: [{ type: 'text', text: `shot ${i}` }, shot(i)] }] });
+    }
+    return messages;
+  };
+  const kept = (messages) => JSON.stringify(messages).match(/SHOT\d+/g) || [];
+  for (const [n, sent] of [[3, 3], [4, 4], [5, 5], [6, 3], [8, 5], [9, 3], [30, 3]]) {
+    const counts = {};
+    const out = mod.pruneOldImages(conversation(n), { counts });
+    assert.equal(kept(out).length, sent, `${n} images: ${sent} sent`);
+    assert.deepEqual(kept(out), Array.from({ length: sent }, (_, i) => `SHOT${n - sent + i + 1}`), 'the latest');
+    assert.equal(counts.pruned || 0, n - sent);
+  }
+  // Between cuts the request's prefix is byte for byte the last one's, so
+  // the provider's cache still holds it.
+  const seven = JSON.stringify(mod.pruneOldImages(conversation(7)));
+  const eight = JSON.stringify(mod.pruneOldImages(conversation(8)));
+  assert.equal(eight.slice(0, seven.length - 2), seven.slice(0, seven.length - 2));
+  const input = conversation(6);
+  const pruned = mod.pruneOldImages(input);
+  assert.deepEqual(pruned[2].content[0].content[1], { type: 'text', text: mod.PRUNED_IMAGE_NOTE });
+  assert.equal(pruned[0], input[0], 'untouched messages are kept as they came');
+  assert.equal(pruned.at(-1), input.at(-1));
+  assert.equal(input[2].content[0].content[1].type, 'image', 'the conversation it was given is not changed');
+  // Through the policy: a model that reads images gets the latest few; the
+  // request's counts say how many were left out.
+  const counts = { sent: 0, moved: 0, omitted: 0, pruned: 0 };
+  const body = applyTurnPolicy({ max_tokens: 10, messages: conversation(9) }, { model: GLM, maxOutputTokens: 64_000, imageInput: true, imageCounts: counts });
+  assert.deepEqual([counts.sent, counts.pruned], [3, 6]);
+  assert.equal(kept(body.messages).length, 3);
+});
+
+test('Claude Code keeps less of each tool\'s output, unless the environment already says how much', () => {
+  const mod = require('../worker/claude-openrouter-request');
+  assert.deepEqual(mod.TOOL_OUTPUT_LIMITS, { BASH_MAX_OUTPUT_LENGTH: '15000', MAX_MCP_OUTPUT_TOKENS: '12000' });
+  const base = { baseUrl: 'http://127.0.0.1:4000', localToken: 'local', model: GLM };
+  const env = claudeChildEnv({ PATH: '/bin' }, base);
+  assert.equal(env.BASH_MAX_OUTPUT_LENGTH, '15000');
+  assert.equal(env.MAX_MCP_OUTPUT_TOKENS, '12000');
+  const set = claudeChildEnv({ BASH_MAX_OUTPUT_LENGTH: '40000' }, base);
+  assert.equal(set.BASH_MAX_OUTPUT_LENGTH, '40000');
 });

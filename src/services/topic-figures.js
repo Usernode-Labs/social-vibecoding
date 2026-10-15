@@ -52,7 +52,7 @@ const PEOPLE_MIN = 10;
 const PEOPLE_FIVE = 20;
 const PEOPLE_EXACT = 50;
 // How many figures one topic may show.
-const MAX_TOPIC_FIGURES = 6;
+const MAX_TOPIC_FIGURES = 9;
 
 const NOTE_PEOPLE = 'Totals only. Smaller groups are rounded more; under 10 people shows “Not enough data”.';
 const FEW_PEOPLE = 'Fewer than 10 people so far';
@@ -245,6 +245,42 @@ const BOT_SPEND_SQL = `
              AND cs.merged_at >= $1::timestamptz AND cs.merged_at < $2::timestamptz
              AND ($3::boolean OR (cs.app_id = ANY($4::int[])) = $5::boolean))::int AS merged`;
 
+// The bot's live builds started in the window (a ready run with a build
+// session: homeroom_bot_runs.build_session_id) and what came of them. One
+// that became a proposal worked; one that ended without one failed, a build
+// a restart cut short or the platform lost among them. A build stopped
+// because it was no longer needed (build_error 'skipped: ...': its request
+// was closed, read again or already had a proposal; 'superseded: ...': a
+// later verdict replaced it) is not a failure and is not counted, nor is one
+// still under way. Shadow runs are left out, and the side builds a change
+// is compared with are kept in their own table. A first version is a
+// request filed as a project's first version (homeroom_bot_requesters,
+// homeroom_bot_first_versions). `spent` is every live build's spend, so
+// `failed_spent` is the part of it that bought no proposal.
+const BOT_BUILDS_SQL = `
+  WITH builds AS (
+    SELECT r.proposal_session_id IS NOT NULL AS proposed,
+           (r.proposal_session_id IS NULL
+             AND (r.build_error LIKE 'skipped:%' OR r.build_error LIKE 'superseded:%')) AS skipped,
+           (r.proposal_session_id IS NOT NULL OR r.build_ok IS NOT NULL) AS settled,
+           (EXISTS (SELECT 1 FROM homeroom_bot_requesters q
+                     WHERE q.app_id = r.app_id AND q.issue_number = r.issue_number AND q.first_version)
+             OR EXISTS (SELECT 1 FROM homeroom_bot_first_versions fv
+                         WHERE fv.app_id = r.app_id AND fv.issue_number = r.issue_number)) AS first_version,
+           COALESCE(r.build_cost_usd, 0) AS cost
+      FROM homeroom_bot_runs r
+     WHERE r.mode = 'live' AND r.verdict = 'ready' AND r.build_session_id IS NOT NULL
+       AND r.created_at >= $1::timestamptz AND r.created_at < $2::timestamptz
+       AND ($3::boolean OR (r.app_id = ANY($4::int[])) = $5::boolean)
+  )
+  SELECT COUNT(*) FILTER (WHERE settled AND NOT skipped)::int AS built,
+         COUNT(*) FILTER (WHERE proposed)::int AS proposed,
+         COUNT(*) FILTER (WHERE settled AND NOT skipped AND first_version)::int AS first_built,
+         COUNT(*) FILTER (WHERE proposed AND first_version)::int AS first_proposed,
+         COALESCE(SUM(cost), 0)::float8 AS spent,
+         COALESCE(SUM(cost) FILTER (WHERE settled AND NOT skipped AND NOT proposed), 0)::float8 AS failed_spent
+    FROM builds`;
+
 // Check runs (merge_debug_runs kind 'checks', kept 30 days): the ones that
 // reached a verdict, how long they took (from the start of the preview build
 // the run followed, when it followed one: visuals.captureForSession), and the
@@ -383,6 +419,102 @@ const LIMITS_SQL = `
    WHERE n.kind = 'platform_limit' AND n.detail ~ '^[a-z_]+_full:'
      AND n.created_at >= $1::timestamptz AND n.created_at < $2::timestamptz`;
 
+// Each pause of a project's merges by a red main that overlapped the window,
+// and how long they lasted inside it (main-watch.notePauseChange records
+// main_paused and main_resumed). A pause ends at the next mark for its app,
+// whichever it is, so one lost mark cannot stretch it; one still running
+// counts up to the window's end. The week before the window is read too, for
+// a pause that began before it.
+const MAIN_PAUSED_SQL = `
+  WITH marks AS (
+    SELECT e.app_id, e.event_type, e.created_at,
+           LEAD(e.created_at) OVER (PARTITION BY e.app_id ORDER BY e.created_at, e.id) AS next_at
+      FROM events e
+     WHERE e.event_type IN ('main_paused', 'main_resumed')
+       AND e.created_at >= $1::timestamptz - interval '7 days' AND e.created_at < $2::timestamptz
+       AND ($3::boolean OR (e.app_id = ANY($4::int[])) = $5::boolean)
+  ), spans AS (
+    SELECT created_at AS started_at, COALESCE(next_at, $2::timestamptz) AS ended_at
+      FROM marks WHERE event_type = 'main_paused'
+  )
+  SELECT COUNT(*)::int AS n,
+         COALESCE(SUM(EXTRACT(EPOCH FROM LEAST(ended_at, $2::timestamptz) - GREATEST(started_at, $1::timestamptz))), 0)::float8 AS secs
+    FROM spans
+   WHERE ended_at > $1::timestamptz`;
+
+// Each time somebody asked for a session and a session cap turned them away
+// (session-lifecycle.recordCapacityRefusal). LIMITS_SQL above counts the
+// admins' alerts, which sample the count every few minutes: how often a cap
+// was full, not how many people met it.
+const TURNED_AWAY_SQL = `
+  SELECT COUNT(*)::int AS n FROM events
+   WHERE event_type = 'session_capacity_refused'
+     AND created_at >= $1::timestamptz AND created_at < $2::timestamptz`;
+
+// The check triggers that run a proposal's code again without moving it
+// (services/visuals.js CHECK_TRIGGERS): a person's "Re-run checks", the run
+// promotion asks for before merging, and the re-drives of a run a restart or
+// a stall interrupted. A commit, a sync with main, an imported head moving
+// or a conflict resolved runs different code.
+const SAME_CODE_TRIGGERS = Object.freeze(['manual-recheck', 'promote-kick', 'boot-reconcile', 'stuck-sweep']);
+
+// Reds the same code did not keep when it ran again: a flaky test or the
+// platform, not the change. A proposal's red check run counts when the next
+// run on that proposal that reached a verdict, or that ran different code,
+// passed on the same code ($6: SAME_CODE_TRIGGERS). Main's red counts once
+// per merge commit, and flaked when main watch saw that commit not keep it
+// (main_watch_verdicts.flake). Every red is in the total, run again or not,
+// so the share is a floor.
+const REDS_RERUN_SQL = `
+  WITH proposal_reds AS (
+    SELECT COALESCE(nxt.status = 'passing' AND nxt.same_code, FALSE) AS flaked
+      FROM merge_debug_runs r
+      LEFT JOIN LATERAL (
+        SELECT n.status, COALESCE(n.trigger = ANY($6::text[]), FALSE) AS same_code
+          FROM merge_debug_runs n
+         WHERE n.kind = 'checks' AND n.session_id = r.session_id
+           AND (n.started_at, n.id) > (r.started_at, r.id)
+           AND (n.status IN ('passing', 'failing') OR NOT COALESCE(n.trigger = ANY($6::text[]), FALSE))
+         ORDER BY n.started_at, n.id
+         LIMIT 1
+      ) nxt ON TRUE
+     WHERE r.kind = 'checks' AND r.status = 'failing' AND r.session_id IS NOT NULL
+       AND r.started_at >= $1::timestamptz AND r.started_at < $2::timestamptz
+       AND ($3::boolean OR (r.app_id = ANY($4::int[])) = $5::boolean)
+  ), main_reds AS (
+    SELECT bool_or(v.flake) AS flaked
+      FROM main_watch_verdicts v
+     WHERE (v.state = 'failing' OR v.flake)
+       AND v.created_at >= $1::timestamptz AND v.created_at < $2::timestamptz
+       AND ($3::boolean OR (v.app_id = ANY($4::int[])) = $5::boolean)
+     GROUP BY v.app_id, v.sha
+  )
+  SELECT ((SELECT COUNT(*) FROM proposal_reds) + (SELECT COUNT(*) FROM main_reds))::int AS reds,
+         ((SELECT COUNT(*) FROM proposal_reds WHERE flaked) + (SELECT COUNT(*) FROM main_reds WHERE flaked))::int AS flaked`;
+
+// Merged commits of Homeroom that did not become the running release in
+// time (release-watch.js records each once per kind): the release workflow
+// failed or stood still, or it published and the new build never came up,
+// as when it crashes on start. One commit is one stall, whatever its kinds.
+const RELEASE_STALLS_SQL = `
+  SELECT COUNT(DISTINCT e.metadata->>'sha')::int AS n FROM events e
+   WHERE e.event_type = 'release_stalled'
+     AND e.created_at >= $1::timestamptz AND e.created_at < $2::timestamptz`;
+
+// A Homeroom process that came up in a pod where one had come up before:
+// Kubernetes started the container again after its process died
+// (platform-release.recordBoot). A rollout's new pods are not counted.
+const HOMEROOM_CRASHES_SQL = `
+  SELECT COUNT(*)::int AS n FROM events b
+   WHERE b.event_type = 'platform_booted'
+     AND b.created_at >= $1::timestamptz AND b.created_at < $2::timestamptz
+     AND EXISTS (
+       SELECT 1 FROM events p
+        WHERE p.event_type = 'platform_booted'
+          AND p.metadata->>'pod' = b.metadata->>'pod'
+          AND p.created_at < b.created_at
+          AND p.created_at >= b.created_at - interval '7 days')`;
+
 const PLATFORM_APPS_SQL = 'SELECT id FROM apps WHERE self_hosted = TRUE ORDER BY id';
 
 // ── Sources: one query each, shared by the figures that read it ─────────
@@ -407,6 +539,7 @@ const SOURCES = Object.freeze({
   botReplyTime: { days: 7, scoped: true, read: (pool, w, s) => pool.query(BOT_REPLY_TIME_SQL, [w.from, w.until, ...scoped(s)]) },
   botProposals: { days: 7, scoped: true, read: (pool, w, s) => pool.query(BOT_PROPOSALS_SQL, [w.from, w.until, ...scoped(s), BOT_USERNAME]) },
   botSpend: { days: 7, scoped: true, read: (pool, w, s) => pool.query(BOT_SPEND_SQL, [w.from, w.until, ...scoped(s), BOT_USERNAME]) },
+  botBuilds: { days: 7, scoped: true, read: (pool, w, s) => pool.query(BOT_BUILDS_SQL, [w.from, w.until, ...scoped(s)]) },
   checks: { days: 7, scoped: true, read: (pool, w, s) => pool.query(CHECKS_SQL, [w.from, w.until, ...scoped(s)]) },
   shots: { days: 7, scoped: true, read: (pool, w, s) => pool.query(SHOTS_SQL, [w.from, w.until, ...scoped(s)]) },
   voteToMerged: { days: 7, scoped: true, read: (pool, w, s) => pool.query(VOTE_TO_MERGED_SQL, [w.from, w.until, ...scoped(s)]) },
@@ -415,6 +548,11 @@ const SOURCES = Object.freeze({
   appOpens: { days: 7, read: (pool, w) => pool.query(APP_OPENS_SQL, [w.from, w.until]) },
   restarts: { days: 7, read: (pool, w) => pool.query(RESTARTS_SQL, [w.from, w.until]) },
   limits: { days: 7, read: (pool, w) => pool.query(LIMITS_SQL, [w.from, w.until]) },
+  turnedAway: { days: 7, read: (pool, w) => pool.query(TURNED_AWAY_SQL, [w.from, w.until]) },
+  mainPaused: { days: 7, scoped: true, read: (pool, w, s) => pool.query(MAIN_PAUSED_SQL, [w.from, w.until, ...scoped(s)]) },
+  redsRerun: { days: 7, scoped: true, read: (pool, w, s) => pool.query(REDS_RERUN_SQL, [w.from, w.until, ...scoped(s), SAME_CODE_TRIGGERS]) },
+  releaseStalls: { days: 7, read: (pool, w) => pool.query(RELEASE_STALLS_SQL, [w.from, w.until]) },
+  homeroomCrashes: { days: 7, read: (pool, w) => pool.query(HOMEROOM_CRASHES_SQL, [w.from, w.until]) },
 });
 
 // ── Formatting ───────────────────────────────────────────────────────────
@@ -522,7 +660,8 @@ function peopleDuration(secs, count) {
 // each read from `source`, or from `sources[side]` when the two are
 // recorded apart). `target`: { atLeast } or { atMost } in the measure's
 // own unit (a share 0..1, seconds, dollars, a count). `noun` names what a
-// rate counts in its line ("13 of 412 runs").
+// rate counts in its line ("13 of 412 runs"); a `money` rate is a share of
+// dollars, and its line reads them ("$12.40 of $310").
 
 const FIGURES = Object.freeze({
   'onboarding.sign-up': {
@@ -591,6 +730,24 @@ const FIGURES = Object.freeze({
     target: { atMost: 3600 },
     measure: (r) => ({ secs: r.median_secs, n: r.timed }),
   },
+  'bot.builds-proposed': {
+    source: 'botBuilds', kind: 'rate', covers: 'split', group: 'builds', column: 'quality', label: 'Builds that reached a vote', noun: 'builds',
+    tip: 'The share of the bot’s builds that ended as a proposal up for a vote. A build that failed, or that a restart or the platform cut short, counts against it. One stopped because it was no longer needed (its request was closed, read again or already had a proposal) is not counted, nor are practice builds.',
+    target: { atLeast: 0.9 },
+    measure: (r) => ({ hits: r.proposed, total: r.built }),
+  },
+  'bot.first-versions': {
+    source: 'botBuilds', kind: 'rate', covers: 'split', group: 'builds', column: 'quality', label: 'First versions built', noun: 'first versions',
+    tip: 'The share of the bot’s builds of a new project’s first version that ended as a proposal. It is the first thing someone sees the bot make for them.',
+    target: { atLeast: 0.9 },
+    measure: (r) => ({ hits: r.first_proposed, total: r.first_built }),
+  },
+  'bot.failed-spend': {
+    source: 'botBuilds', kind: 'rate', money: true, covers: 'split', group: 'builds', column: 'cost', label: 'Spend on failed builds', noun: 'build spend',
+    tip: 'The share of what the bot spent building that went on builds that ended without a proposal. Practice builds are left out.',
+    target: { atMost: 0.1 },
+    measure: (r) => ({ hits: r.failed_spent, total: r.spent }),
+  },
   'pipeline.checks-time': {
     source: 'checks', kind: 'duration', covers: 'split', label: 'Time to a checks verdict',
     tip: 'How long from a check run starting to its checks passing or failing, including the build and any wait in the queue. Half are faster.',
@@ -614,6 +771,18 @@ const FIGURES = Object.freeze({
     tip: 'How long from a proposal’s vote passing to it being merged. A long wait means something held it, such as failing checks or merges being paused.',
     target: { atMost: 900 },
     measure: (r) => ({ secs: r.median_secs, n: r.n }),
+  },
+  'pipeline.main-paused': {
+    source: 'mainPaused', kind: 'count', covers: 'split', label: 'Merges paused by a red main',
+    tip: 'How many times a project’s merges were paused because its main branch failed its own tests, and how long the pauses lasted in all. While one lasts, approved changes wait; a fix that turns main green, or an admin’s Resume, ends it.',
+    target: { atMost: 0 },
+    measure: (r) => ({ n: r.n, secs: r.secs }),
+  },
+  'pipeline.reds-rerun': {
+    source: 'redsRerun', kind: 'rate', covers: 'split', label: 'Reds that passed on a re-run', noun: 'reds',
+    tip: 'Of the red checks on proposals and on main, the share that passed when the same code ran again: a flaky test or the platform, not the change. Each one cost a re-run, and on main it can pause merges. A red nobody ran again is counted as real, so the share is at least this.',
+    target: { atMost: 0.05 },
+    measure: (r) => ({ hits: r.flaked, total: r.reds }),
   },
   'infra.merge-to-live': {
     kind: 'duration', covers: 'split', sources: { homeroom: 'homeroomLive', others: 'mergeLive' }, label: 'Merge → live',
@@ -641,6 +810,24 @@ const FIGURES = Object.freeze({
   'infra.limits-filled': {
     source: 'limits', kind: 'count', label: 'Limits that filled up',
     tip: 'How many times a platform limit filled up, such as the cap on sessions running at once. While one is full, people are turned away.',
+    target: { atMost: 0 },
+    measure: (r) => ({ n: r.n }),
+  },
+  'infra.turned-away': {
+    source: 'turnedAway', kind: 'count', label: 'Turned away at a session cap',
+    tip: 'How many times somebody asked to start or reopen a session and was refused because a cap was full: the platform’s cap on sessions running at once, or their own.',
+    target: { atMost: 0 },
+    measure: (r) => ({ n: r.n }),
+  },
+  'infra.homeroom-stalls': {
+    source: 'releaseStalls', kind: 'count', label: 'Homeroom releases that stalled',
+    tip: 'How many merges into Homeroom did not go live within ten minutes of their turn: the release build failed or stood still, or it was published and the new version never came up, as when it crashes on start. Until one is fixed, Homeroom keeps running the version before.',
+    target: { atMost: 0 },
+    measure: (r) => ({ n: r.n }),
+  },
+  'infra.homeroom-crashes': {
+    source: 'homeroomCrashes', kind: 'count', label: 'Homeroom crashes',
+    tip: 'How many times one of Homeroom’s own server processes died without being asked to stop (a crash, running out of memory, or failing its health check) and was started again in its place. A release replacing them is not counted.',
     target: { atMost: 0 },
     measure: (r) => ({ n: r.n }),
   },
@@ -740,8 +927,10 @@ function reading(def, measure) {
   const calm = (value, detail) => ({ state: 'calm', value, detail, off: null, final: true });
 
   if (def.kind === 'rate') {
-    const total = int(measure.total);
-    const hits = Math.min(int(measure.hits), total);
+    // A share of dollars keeps its cents; a count is whole.
+    const amount = def.money ? (v) => Math.max(0, num(v) || 0) : int;
+    const total = amount(measure.total);
+    const hits = Math.min(amount(measure.hits), total);
     if (def.people) {
       if (total < PEOPLE_MIN) return calm('Not enough data', FEW_PEOPLE);
       const shown = peopleRate(hits, total);
@@ -751,6 +940,10 @@ function reading(def, measure) {
     }
     if (!total) return empty(`No ${def.noun || 'runs'} yet`);
     const off = offTarget(def.target, hits / total);
+    if (def.money) {
+      return { state: verdict(off), value: sharpen(def, 'rate', hits / total, formatPercent(hits / total), off), off, final: false, since,
+        detail: `${formatUsd(hits)} of ${formatUsd(total)}` };
+    }
     return { state: verdict(off), value: sharpen(def, 'rate', hits / total, formatPercent(hits / total), off), off, final: false, since,
       detail: joinWords(`${hits.toLocaleString('en-US')} of ${total.toLocaleString('en-US')} ${def.noun || ''}`.trim(), since && `since ${since}`) };
   }
@@ -786,7 +979,13 @@ function reading(def, measure) {
       const apps = int(measure.apps);
       detail = apps ? `in ${apps} ${apps === 1 ? 'project' : 'projects'}` : '';
     }
-    return { state: verdict(off), value: n ? `${n} ${n === 1 ? 'time' : 'times'}` : 'None', detail, off, final: false };
+    // How long they lasted in all, when the source adds it up.
+    const total = measure.secs != null && n ? `${formatDuration(Number(measure.secs))} in all` : null;
+    if (total != null) detail = total;
+    return {
+      state: verdict(off), value: n ? `${n} ${n === 1 ? 'time' : 'times'}` : 'None', detail, off, final: false,
+      ...(total ? { sideDetail: total } : {}),
+    };
   }
 
   if (def.kind === 'compare') {
@@ -834,7 +1033,8 @@ function present(id, measure) {
       // not read, says so in its value alone, unless its record is new
       // (#4697): then when counting began.
       const detail = !read.final && def.kind === 'rate' ? read.detail
-        : read.since ? (read.final ? read.detail : `since ${read.since}`) : '';
+        : read.sideDetail ? read.sideDetail
+          : read.since ? (read.final ? read.detail : `since ${read.since}`) : '';
       return { key: side.key, name: side.name, state: read.state, value: read.value, detail };
     });
     const state = SPLIT_STATE_ORDER.find((st) => sides.some((side) => side.state === st)) || 'error';
@@ -842,7 +1042,8 @@ function present(id, measure) {
       ...base,
       state,
       value: sides.map((side) => `${side.name} ${side.value}`).join(' · '),
-      sub: joinLine(def.kind === 'duration' ? 'median' : '', targetLine(def.target, def.kind, false)),
+      sub: joinLine(def.kind === 'duration' ? 'median' : '',
+        def.kind === 'count' ? (def.target ? 'target none' : '') : targetLine(def.target, def.kind, false)),
       sides,
     };
   }
@@ -1006,15 +1207,23 @@ const DEMO_MEASURES = Object.freeze({
   'bot.merged': { rate: 0.58, n: 24, other: 0.64 },
   'bot.merged-cost': { homeroom: { value: 5.9, n: 9 }, others: { value: 2.4, n: 5 } },
   'bot.request-to-proposal': { homeroom: { secs: 4800, n: 12 }, others: { secs: 2900, n: 8 } },
+  'bot.builds-proposed': { homeroom: { hits: 21, total: 26 }, others: { hits: 34, total: 36 } },
+  'bot.first-versions': { homeroom: { hits: 0, total: 0 }, others: { hits: 9, total: 17 } },
+  'bot.failed-spend': { homeroom: { hits: 18.4, total: 96.2 }, others: { hits: 3.1, total: 61.5 } },
   'pipeline.checks-time': { homeroom: { secs: 310, n: 140 }, others: { secs: 95, n: 259 } },
   'pipeline.checks-couldnt-run': { homeroom: { hits: 3, total: 143 }, others: { hits: 2, total: 262 } },
   'pipeline.shots': { homeroom: { hits: 30, total: 32 }, others: { hits: 26, total: 29 } },
   'pipeline.vote-to-merged': { homeroom: { secs: 540, n: 18 }, others: { secs: 240, n: 13 } },
+  'pipeline.main-paused': { homeroom: { n: 2, secs: 9000 }, others: { n: 0, secs: 0 } },
+  'pipeline.reds-rerun': { homeroom: { hits: 6, total: 41 }, others: { hits: 1, total: 23 } },
   'infra.merge-to-live': { homeroom: { secs: 1140, n: 18 }, others: { secs: 80, n: 56 } },
   'infra.deploys-failed': { hits: 3, total: 74 },
   'infra.apps-up': { hits: 1204, total: 1213 },
   'infra.restarts': { n: 4, apps: 3 },
   'infra.limits-filled': { n: 2 },
+  'infra.turned-away': { n: 3 },
+  'infra.homeroom-stalls': { n: 1 },
+  'infra.homeroom-crashes': { n: 0 },
 });
 
 /** The demo strip for `ids`. Pure. */
@@ -1034,6 +1243,7 @@ function _resetForTests() {
 
 module.exports = {
   FIGURES,
+  SAME_CODE_TRIGGERS,
   FIGURE_IDS,
   SIDES,
   COVERS,

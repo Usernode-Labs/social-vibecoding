@@ -11,9 +11,11 @@ const { McpServer } = require('/usr/local/lib/node_modules/@modelcontextprotocol
 const { StdioServerTransport } = require('/usr/local/lib/node_modules/@modelcontextprotocol/sdk/dist/cjs/server/stdio.js');
 const { z } = require('/usr/local/lib/node_modules/zod');
 const fs = require('node:fs');
+const net = require('node:net');
 const path = require('node:path');
 const { hostedAppSlugs } = require('./shots-hosted-origins');
 const boundary = require('./shots-boundary');
+const samples = require('./shots-samples');
 
 const platform = String(process.env.PLATFORM_URL || '').replace(/\/$/, '');
 const runId = String(process.env.SHOTS_RUN_ID || '');
@@ -26,6 +28,11 @@ const proxyControlToken = String(process.env.SHOTS_PROXY_CONTROL_TOKEN || '');
 const shotsDir = String(process.env.SHOTS_DIR || '');
 const PERSONA_DIRS = Object.freeze(['member', 'admin', 'full_admin', 'guest']);
 const BROWSER_DIRS = Object.freeze([...PERSONA_DIRS, ...PERSONA_DIRS.map((dir) => `${dir}_phone`)]);
+// Each browser's observer answers upload_file on a socket of its own here,
+// named for its directory (shots-browser-observer.js startControl).
+const browserControlDir = String(process.env.SHOTS_BROWSER_CONTROL_DIR || '');
+const browserControlToken = String(process.env.SHOTS_BROWSER_CONTROL_TOKEN || '');
+const BROWSER_SERVERS = Object.freeze(BROWSER_DIRS.map((dir) => `browser_${dir}`));
 if (!/^https?:\/\//.test(platform) || !/^[0-9a-f]{32}$/.test(runId) || !token) {
   process.stderr.write('Shots MCP configuration is incomplete.\n');
   process.exit(1);
@@ -159,6 +166,59 @@ function requireOnApp(side, origins, pair) {
   if (reason) throw refused('shot_not_on_app', reason);
 }
 
+function declaredChangeIn(context, change) {
+  const declared = context?.declaredChanges?.find((story) => story.id === change);
+  if (!declared) throw refused('unknown_change', `Change ${JSON.stringify(change)} is not one the author declared.`);
+  return declared;
+}
+
+// The shots proxy's control plane: which API GETs on the pair's two
+// addresses fail or wait (shots-origin-proxy.js).
+async function proxyControl(body) {
+  if (!/^http:\/\/127\.0\.0\.1:\d+$/.test(proxy) || !/^[0-9a-f]{64}$/.test(proxyControlToken)) {
+    throw new Error('The request-failure control is unavailable.');
+  }
+  const response = await fetch(`${proxy}/__usernode_shots_control/request-failure`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-shots-control-token': proxyControlToken },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!response.ok) throw new Error(`The request-failure control refused this (${response.status}).`);
+  return response.json();
+}
+
+// One request to a browser's observer (shots-browser-observer.js
+// startControl), on its own socket, with the turn's control token.
+function browserControl(browser, message, timeoutMs = 45_000) {
+  const socketPath = path.join(browserControlDir, `${browser.replace(/^browser_/, '')}.sock`);
+  return new Promise((resolve, reject) => {
+    let data = '';
+    let settled = false;
+    let timer = null;
+    const socket = net.createConnection(socketPath);
+    const finish = (settle, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      socket.destroy();
+      settle(value);
+    };
+    timer = setTimeout(() => finish(reject, refused('browser_control_timeout', 'The browser did not answer in time.')), timeoutMs);
+    socket.setEncoding('utf8');
+    socket.on('connect', () => socket.write(`${JSON.stringify({ ...message, token: browserControlToken })}\n`));
+    socket.on('data', (chunk) => {
+      data += chunk;
+      if (data.length > 1_000_000) finish(reject, refused('browser_control_failed', 'The browser answered with too much.'));
+    });
+    socket.on('end', () => {
+      try { finish(resolve, JSON.parse(data)); }
+      catch { finish(reject, refused('browser_control_failed', 'The browser gave no answer.')); }
+    });
+    socket.on('error', () => finish(reject, refused('browser_unavailable', `${browser} is not running in this turn.`)));
+  });
+}
+
 const annotations = { readOnlyHint: false, destructiveHint: false, openWorldHint: false };
 const server = new McpServer(
   { name: 'usernode-before-after-shots', version: '2.0.0' },
@@ -181,7 +241,7 @@ server.registerTool('get_brief', {
 });
 
 server.registerTool('save_shot', {
-  description: 'Save screenshots for declared changes, several in one call. First call browser_take_screenshot with a filename for each (the visible screen, or one element with kind "element"), then list them here: for each, the change id, the screen name, side "before" or "after", the kind, and the filename. One screenshot can serve several changes: list it once for each. Every screen of a change needs a before and an after screen shot. A before shot must be taken on the before address and an after shot on the after address; a screenshot of any other site is refused. Saving the same change, screen, side and kind again replaces it. The answer says which saved and why any did not.',
+  description: 'Save screenshots for declared changes, several in one call. First call browser_take_screenshot with a filename for each (the visible screen, or one element with kind "element"), then list them here: for each, the change id, the screen name, side "before" or "after", the kind, and the filename. One screenshot can serve several changes: list it once for each. Every screen of a change needs a before and an after screen shot, or only an after one when the brief has afterOnly. A before shot must be taken on the before address and an after shot on the after address; a screenshot of any other site is refused. Saving the same change, screen, side and kind again replaces it. The answer says which saved and why any did not.',
   inputSchema: {
     shots: z.array(z.object({
       change: z.string().min(1).max(96),
@@ -281,7 +341,7 @@ server.registerTool('note_change', {
 });
 
 server.registerTool('note_problem', {
-  description: 'Note a clear problem you saw on the after address while taking the shots that is not about the declared change itself: content cut off or running off the screen, text or controls overlapping, an error message or a broken image on screen, a layout that falls apart at the phone size. Only what any person would agree is broken, never a matter of taste, style or wording. Whether the declared change is shown or works is note_change and skip_change, not this. It is shown on the proposal under "Also noticed" and changes nothing about the shots. At most five per run; noting the same problem at the same place again updates it.',
+  description: 'Note a clear problem you saw on the after address while taking the shots that is not about the declared change itself: content cut off or running off the screen, text or controls overlapping, an error message or a broken image on screen, a layout that falls apart at the phone size. Only what any person would agree is broken, never a matter of taste, style or wording. Whether the declared change is shown or works is note_change and skip_change, not this. It is shown on the proposal under "Also noticed" and changes nothing about the shots. Say whether the before build shows it too (alsoBefore): you shoot the before side of the same screen anyway, so look at that shot. At most five per run; noting the same problem at the same place again updates it.',
   inputSchema: {
     change: z.string().min(1).max(96)
       .describe('The declared change you were shooting when you saw it.'),
@@ -289,8 +349,11 @@ server.registerTool('note_problem', {
       .describe('The screen (viewport name) it shows at.'),
     problem: z.string().trim().min(1).max(300)
       .describe('What is broken, in one short sentence a person will understand, e.g. "The results table is cut off at the right edge."'),
-    alsoBefore: z.union([z.boolean(), z.literal('unknown')]).optional()
-      .describe('true if the before address shows the same problem, false if it does not, "unknown" (the default) if you did not look.'),
+    // Required since 2026-10-12: left out, it was "unknown" for every
+    // problem noted in the proposals merged 10-09 to 10-12, though the
+    // agent holds the before shot of the same screen.
+    alsoBefore: z.union([z.boolean(), z.literal('unknown')])
+      .describe('true if your before shot of the same screen (or the same place on the before address) shows the same problem; false if it does not, also when that place is new with this change; "unknown" only if you could not look.'),
     shot: z.enum(['screen', 'element']).optional()
       .describe('Which after shot you saved for this change and screen shows it, if one does.'),
   },
@@ -315,18 +378,94 @@ server.registerTool('fail_request', {
     if (!context?.declaredChanges?.some((story) => story.intent?.controlledFailurePath === apiPath)) {
       throw refused('undeclared_controlled_failure', 'That exact API path is not declared by any change.');
     }
-    if (!/^http:\/\/127\.0\.0\.1:\d+$/.test(proxy) || !/^[0-9a-f]{64}$/.test(proxyControlToken)) {
-      throw new Error('The request-failure control is unavailable.');
-    }
-    const response = await fetch(`${proxy}/__usernode_shots_control/request-failure`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-shots-control-token': proxyControlToken },
-      body: JSON.stringify({ path: apiPath, enabled }),
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!response.ok) throw new Error(`The request-failure control refused this (${response.status}).`);
-    const result = await response.json();
+    const result = await proxyControl({ path: apiPath, enabled });
     return resultContent({ ok: true, path: apiPath, enabled: result.enabled, hitCount: result.hitCount });
+  } catch (error) { return toolError(error); }
+});
+
+// A loading or error state the author did not declare a controlledFailurePath
+// for (reloop PR 12's loading and error states, smart-cashier PR 2's
+// skeleton, 2026-10-09 to 10-12). The same exact-GET rule and the same
+// proxy, on both addresses alike. It is recorded with the platform before the
+// proxy is told, so no shot is taken under a request held or failed that
+// people are not shown beside it.
+server.registerTool('control_request', {
+  description: 'Make one API GET the page sends wait or fail on both the before and the after address, so a loading or error state can be shot when the change does not declare intent.controlledFailurePath. mode "hold" keeps every matching request waiting, unanswered (a loading state), until you set mode "off" or two minutes pass, when it goes on as normal; "fail" makes it fail as a lost connection would (an error state); "off" lets it through again. path is the exact path and query the page requests, for example "/api/items?page=1" (browser_network_requests lists them), with no address. Name the change you are shooting: people see a "Controlled test" line beside its shots naming the request and what you did to it. Set it just before the step that sends the request, take both sides, then set "off".',
+  inputSchema: {
+    change: z.string().min(1).max(96),
+    path: z.string().min(6).max(512),
+    mode: z.enum(['hold', 'fail', 'off']),
+  },
+  annotations,
+}, async ({ change, path: apiPath, mode }) => {
+  try {
+    if (!boundary.controlledRequestPath(apiPath)) {
+      throw refused('invalid_request_path',
+        'Name one exact API GET: its path under /api/ and its query if it has one, as browser_network_requests shows it, with no address, wildcard or #.');
+    }
+    const context = (await request('/context', { timeoutMs: 30_000 })).context;
+    const declared = declaredChangeIn(context, change);
+    // A declared controlled failure already says so in the change's steps.
+    const declaredFailure = mode === 'fail' && declared.intent?.controlledFailurePath === apiPath;
+    if (mode !== 'off' && !declaredFailure) {
+      await request('/condition', {
+        method: 'POST',
+        body: { change, kind: mode === 'hold' ? 'request_held' : 'request_failed', request: apiPath },
+        timeoutMs: 30_000,
+      });
+    }
+    const result = await proxyControl({ path: apiPath, mode });
+    return resultContent({ ok: true, change, path: apiPath, mode: result.mode || mode, hitCount: result.hitCount });
+  } catch (error) { return toolError(error); }
+});
+
+// A change to a file upload (pixora PR 3, 2026-10-10: "no file-upload
+// tool"). The agent's own browser_file_upload stays blocked: it would hand the
+// page any file on the worker. This one hands it only Homeroom's sample files
+// (shots-samples.js), through the browser's observer, which picks the files
+// itself. Recorded first, as control_request is.
+server.registerTool('upload_file', {
+  description: `Choose Homeroom's sample files where a page asks for a file, the same way on the before and the after address. First click the page's upload control: when the browser answers that a file chooser is open (it names browser_file_upload, which you do not have), call this with that browser, the change you are shooting and the files to choose. The sample files: ${samples.SAMPLE_FILES.map((file) => `${file.name} (${file.about})`).join(' ')} An empty files list closes the chooser without choosing. The answer ends with the browser's own answer, as after a click. People see a "Sample file" line beside the change's shots.`,
+  inputSchema: {
+    change: z.string().min(1).max(96),
+    browser: z.enum(BROWSER_SERVERS),
+    files: z.array(z.enum(samples.SAMPLE_NAMES)).max(samples.MAX_FILES),
+  },
+  annotations,
+}, async ({ change, browser, files }) => {
+  try {
+    if (!browserControlDir || !/^[0-9a-f]{64}$/.test(browserControlToken)) {
+      throw refused('upload_unavailable', 'Uploading a sample file is not set up for this turn.');
+    }
+    if (!BROWSER_SERVERS.includes(browser)) {
+      throw refused('unknown_browser', `Use one of the browsers the brief names: ${BROWSER_SERVERS.join(', ')}.`);
+    }
+    const chosen = Array.isArray(files) ? files : [];
+    if (chosen.length > samples.MAX_FILES || new Set(chosen).size !== chosen.length
+        || !chosen.every((name) => samples.SAMPLE_NAMES.includes(name))) {
+      throw refused('invalid_sample_files',
+        `Choose up to ${samples.MAX_FILES} different sample files: ${samples.SAMPLE_NAMES.join(', ')}.`);
+    }
+    const context = (await request('/context', { timeoutMs: 30_000 })).context;
+    declaredChangeIn(context, change);
+    if (chosen.length) {
+      await request('/condition', {
+        method: 'POST', body: { change, kind: 'sample_file', files: chosen }, timeoutMs: 30_000,
+      });
+    }
+    const answer = await browserControl(browser, { action: 'upload', files: chosen });
+    if (answer?.ok !== true) {
+      const text = String(answer?.text || answer?.message || '');
+      throw refused(answer?.code || 'upload_failed', /related modal state|No file chooser/i.test(text)
+        ? `No file chooser is open in ${browser}. Click the page's upload control first, then call upload_file.`
+        : `The browser did not take the files (${String(answer?.outcome || answer?.code || 'unknown')}). ${text}`.trim());
+    }
+    return {
+      content: [
+        { type: 'text', text: JSON.stringify({ ok: true, change, browser, uploaded: chosen }) },
+        ...(answer.text ? [{ type: 'text', text: String(answer.text) }] : []),
+      ],
+    };
   } catch (error) { return toolError(error); }
 });
 

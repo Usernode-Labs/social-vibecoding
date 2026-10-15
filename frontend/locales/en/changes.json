@@ -93,7 +93,15 @@
   },
   "firstVersion.opensWhenReady": {
     "text": "It opens here when it’s ready.",
-    "description": "Line under a new project's card on its App tab while the first version is being built. \"It\" is the app."
+    "description": "Line under a new project's card on its App tab while the first version is being built, for everyone but the person who started the project. \"It\" is the app."
+  },
+  "firstVersion.notifyWhenLive": {
+    "text": "We’ll notify you when it’s live",
+    "description": "Line beside a small check under a new project's card on its App tab, for the person who started the project, while its first version is being made: a promise that Homeroom will send them a notification once the app is live. \"It\" is the app; \"live\" means published and running for everyone."
+  },
+  "firstVersion.tryAgain": {
+    "text": "Try again",
+    "description": "Button under a new project's card on its App tab, for the person who started the project, when Homeroom bot's build of its first version stopped before the app went live: opens the build's conversation in their chat with Homeroom bot, where they can start it again."
   },
   "firstVersion.tryFromChat": {
     "text": "Try it from your chat.",
@@ -118,6 +126,14 @@
   "firstVersion.waitingForYourApproval": {
     "text": "Waiting for your approval.",
     "description": "Line on a new project's App tab when the first version cannot go live until the person reading approves it."
+  },
+  "firstVersion.noVote.soon": {
+    "text": "No vote needed. It goes live in a minute or two.",
+    "description": "Line on a new project's App tab when its first version is ready: a project's first version goes live without a vote once it passes its checks, and it has, so it is about to be released. \"It\" is the first version of the app."
+  },
+  "firstVersion.noVote.onceTested": {
+    "text": "No vote needed. It goes live once it passes its checks.",
+    "description": "Line on a new project's App tab when its first version is ready to try: a project's first version goes live without a vote, and it is released as soon as its automated checks pass. \"It\" is the first version of the app."
   },
   "firstVersion.wait.soon": {
     "text": "It goes live in a minute or two.",
@@ -446,6 +462,10 @@
   "card.waiting.approval": {
     "text": "Waiting for approval",
     "description": "Status of a proposal that has been put up for the group's vote and is not approved yet."
+  },
+  "card.waiting.noVote": {
+    "text": "Goes live without a vote",
+    "description": "Status of a proposal that is a project's first version: it is not put to a vote, and goes live once its automated checks pass."
   },
   "board.plusMenu.settingsTitle": {
     "text": "Settings & rules",
@@ -1474,6 +1494,30 @@
   "workshop.row.tag.homeroomBot": {
     "text": "Homeroom bot",
     "description": "Small tag, beside a sparkle, on a row in a project's Your work when Homeroom bot built the change from a request the viewer made; \"Homeroom bot\" is the platform's builder bot, a name."
+  },
+  "workshop.row.tag.planWaits": {
+    "text": "Plan ready: tap Build it",
+    "description": "Small status tag on a row under Waiting on you on a project's Workshop tab. On a request of the viewer's: Homeroom bot wrote a plan for it and waits for the viewer to tap the \"Build it\" button before it builds. \"Build it\" is that button's label; keep it the same as the button."
+  },
+  "workshop.row.tag.botAsked": {
+    "text": "Homeroom bot asked you",
+    "description": "Small status tag on a row under Waiting on you on a project's Workshop tab. On a request of the viewer's: Homeroom bot asked the viewer a question about it and waits for their answer. \"Homeroom bot\" is the platform's builder bot, a name."
+  },
+  "workshop.row.tag.botReplied": {
+    "text": "With Homeroom bot · it replied {{ago}}",
+    "description": "Small status tag on a row under Waiting on you on a project's Workshop tab, on a change or request where the viewer and Homeroom bot are talking in its discussion and Homeroom bot wrote last. {{ago}} is a time such as \"2h ago\". \"Homeroom bot\" is the platform's builder bot, a name."
+  },
+  "workshop.row.tag.botRepliedNow": {
+    "text": "With Homeroom bot · it replied",
+    "description": "The same tag as \"With Homeroom bot · it replied 2h ago\", when the time it replied is not known."
+  },
+  "workshop.row.tag.youReplied": {
+    "text": "With Homeroom bot · you replied {{ago}}",
+    "description": "Small status tag on a row under Waiting on you on a project's Workshop tab, on a change or request where the viewer and Homeroom bot are talking in its discussion and the viewer wrote last. {{ago}} is a time such as \"1d ago\". \"Homeroom bot\" is the platform's builder bot, a name."
+  },
+  "workshop.row.tag.youRepliedNow": {
+    "text": "With Homeroom bot · you replied",
+    "description": "The same tag as \"With Homeroom bot · you replied 1d ago\", when the time is not known."
   },
   "countdown.daysHours": {
     "text": "~{{days}}d {{hours}}h",
@@ -4615,6 +4659,22 @@
     "text": "Homeroom bot is on it",
     "description": "Main button on a request's card (a request is a filed issue): disabled, shown to other people while the request waits in Homeroom bot's queue. \"Homeroom bot\" is the name of the platform's builder bot; \"is on it\" means it has taken the job."
   },
+  "issue.action.botPlanWaiting": {
+    "text": "Waiting for the plan's OK",
+    "description": "Main button on a request's card: disabled, shown to other people while Homeroom bot's plan for the request waits for the person who asked for it to approve it (say Build it). \"OK\" is a noun: approval."
+  },
+  "issue.action.botPlanWaitingTitle": {
+    "text": "Homeroom bot wrote a plan for this and builds it once the person who asked for it says Build it",
+    "description": "Tooltip of the disabled \"Waiting for the plan's OK\" button on a request's card. \"Build it\" is the name of the button that person taps: keep it as the button reads."
+  },
+  "issue.action.botHeld": {
+    "text": "Homeroom bot will build this",
+    "description": "Main button on a request's card: disabled, shown while Homeroom bot waits to build the request because it already has as many changes up for a vote on this project as it may."
+  },
+  "issue.action.botHeldTitle": {
+    "text": "Homeroom bot starts when one of its changes here is voted in or closed",
+    "description": "Tooltip of the disabled \"Homeroom bot will build this\" button on a request's card. \"Here\" is the project."
+  },
   "issue.action.botReading": {
     "text": "Homeroom bot is reading…",
     "description": "Main button on a request's card (a request is a filed issue): disabled, shown while Homeroom bot is reading the request before building. \"Homeroom bot\" is the name of the platform's builder bot. Keep the ellipsis."
@@ -4632,23 +4692,23 @@
     "description": "Tooltip of the disabled \"Homeroom bot is on it\" / \"Homeroom bot is building…\" button on a request's card."
   },
   "issue.action.generating": {
-    "text": "Generating proposal…",
-    "description": "Main button on a request's card (a request is a filed issue): disabled, shown while an automatic AI run drafts a proposal (a change to vote on) for the request. Keep the ellipsis."
+    "text": "Drafting a change…",
+    "description": "Main button on a request's card (a request is a filed issue): disabled, shown while an automatic AI run drafts a change (to vote on) for the request. Keep the ellipsis."
   },
   "issue.action.generatingTitle": {
-    "text": "A headless AI session is working on this issue",
-    "description": "Tooltip of the disabled \"Generating proposal…\" button on a request's card. \"headless\" means the AI session runs on its own with nobody chatting with it."
+    "text": "A headless AI session is working on this request",
+    "description": "Tooltip of the disabled \"Drafting a change…\" button on a request's card. \"headless\" means the AI session runs on its own with nobody chatting with it."
   },
   "issue.action.generatingTitleBy": {
-    "text": "A headless AI session is working on this issue (started by {{username}})",
-    "description": "Tooltip of the disabled \"Generating proposal…\" button on a request's card. \"headless\" means the AI session runs on its own. {{username}} is the person who started it."
+    "text": "A headless AI session is working on this request (started by {{username}})",
+    "description": "Tooltip of the disabled \"Drafting a change…\" button on a request's card. \"headless\" means the AI session runs on its own. {{username}} is the person who started it."
   },
   "issue.action.goToSession": {
     "text": "Go to session",
     "description": "Main button on a request's card (a request is a filed issue): opens the working session the viewer already started from this request's AI-drafted proposal."
   },
   "issue.action.goToSessionTitle": {
-    "text": "You already started a session from this proposal. Open it",
+    "text": "You already started a session from this request. Open it",
     "description": "Tooltip of the \"Go to session\" button on a request's card. \"Open it\" is an instruction."
   },
   "issue.action.answer": {
@@ -4660,7 +4720,7 @@
     "description": "Tooltip of the \"Answer & regenerate\" button on a request's card, for the person who started the run. An auto-solve run is an automatic AI attempt at the request. \"Open\" is a verb."
   },
   "issue.action.answerOthersTitle": {
-    "text": "This auto-solve run has a question. Answer it on this issue",
+    "text": "This auto-solve run has a question. Answer it on this request",
     "description": "Tooltip of the \"Answer & regenerate\" button on a request's card, for people who did not start the run. An auto-solve run is an automatic AI attempt at the request."
   },
   "issue.action.startWork": {
@@ -4964,8 +5024,8 @@
     "description": "Toast shown when an automatic AI run that drafts a proposal for a request (\"Generate proposal\") could not be started. {{error}} is the error's own message."
   },
   "issue.autoRun.outOfCredits": {
-    "text": "You're out of today's free AI credits.",
-    "description": "Toast shown when an automatic AI run that drafts a proposal for a request (\"Generate proposal\") was refused because the viewer has used up the day's free AI allowance, and no fuller message came back."
+    "text": "You're out of free AI credits.",
+    "description": "Toast shown when an automatic AI run that drafts a proposal for a request (\"Generate proposal\") was refused because the viewer has used up the week's free AI allowance, and no fuller message came back."
   },
   "issue.autoRun.model.free": {
     "text": "Free",
@@ -5263,6 +5323,10 @@
     "text": "Homeroom restarted while taking these shots, so it starts them again on its own in a moment.",
     "description": "Tooltip of the status tag on a proposal's card, and text of the matching ledger row on its page: taking the screenshots was interrupted. \"Homeroom\" is the product's name. \"Shots\" are the before and after screenshots Homeroom takes of what a proposal changes."
   },
+  "badge.reason.shots.retryingFaultDetail": {
+    "text": "Something on Homeroom’s side stopped these shots, so it takes them again on its own.",
+    "description": "Tooltip of the status tag on a proposal's card, and text of the matching ledger row on its page: taking the screenshots failed for a reason on Homeroom's own side (not the proposal's), and Homeroom takes them again once by itself. \"Homeroom\" is the product's name. \"Shots\" are the before and after screenshots Homeroom takes of what a proposal changes."
+  },
   "badge.reason.shots.enforcedDetail": {
     "text": "Voting and merging wait for before & after shots of the current proposal commit.",
     "description": "Tooltip of the status tag on a proposal's card, and text of the matching ledger row on its page: the screenshots are missing, on a project where they are required before a vote. \"Shots\" are the before and after screenshots Homeroom takes of what a proposal changes."
@@ -5386,6 +5450,14 @@
   "badge.pill.yourApprovalTitle": {
     "text": "Approve it, and it goes live",
     "description": "Tooltip of the status pill on a change's card when it reads \"Waiting for your approval\"."
+  },
+  "badge.pill.noVote": {
+    "text": "No vote needed",
+    "description": "Label of the status pill on a change's card (the rounded bar that shows the vote) for a project's first version, which goes live without a vote once it passes its checks."
+  },
+  "badge.pill.noVoteTitle": {
+    "text": "A project’s first version goes live without a vote once testing passes.",
+    "description": "Tooltip of the status pill on a change's card when it reads \"No vote needed\"."
   },
   "badge.pill.needsYourYes": {
     "text": "Needs your Yes · {{yes}}/{{majority}}",
@@ -5699,6 +5771,10 @@
     "text": "Homeroom restarted while taking these shots, so it starts them again on its own in a moment.",
     "description": "Sentence under \"Trying the shots again\" on a proposal's shots card. Homeroom is the product's name."
   },
+  "shots.state.retryingFault.detail": {
+    "text": "Something on Homeroom’s side stopped these shots, so it takes them again on its own.",
+    "description": "Sentence under \"Trying the shots again\" on a proposal's shots card, when taking the screenshots failed for a reason on Homeroom's own side (not the proposal's) and Homeroom takes them again once by itself. Homeroom is the product's name."
+  },
   "shots.state.couldNot.label": {
     "text": "Couldn’t take the shots",
     "description": "Heading of the shots card on a proposal when the before/after screenshots failed for a reason other than the change itself."
@@ -5794,6 +5870,10 @@
   "shots.sentence.retrying": {
     "text": "Trying the shots again. Homeroom restarted while taking these shots, so it starts them again on its own in a moment.",
     "description": "Line on a change's page, under \"What changes for you\", when taking the screenshots was interrupted and starts again by itself. Homeroom is the product's name."
+  },
+  "shots.sentence.retryingFault": {
+    "text": "Trying the shots again. Something on Homeroom’s side stopped these shots, so it takes them again on its own.",
+    "description": "Line on a change's page, under \"What changes for you\", when taking the screenshots failed for a reason on Homeroom's own side (not the proposal's) and Homeroom takes them again once by itself. Homeroom is the product's name."
   },
   "shots.sentence.couldNot": {
     "text": "Couldn’t take the shots. The shots agent could not take the before & after shots.",
@@ -5970,6 +6050,14 @@
   "shots.card.introClips": {
     "text": "Taken on the exact before and after builds of this proposal. Look at the shots and clips to decide whether they show the change.",
     "description": "Opening line of a proposal's shots card, above the before/after viewer, when it holds short video clips as well as screenshots."
+  },
+  "shots.card.introNewApp": {
+    "text": "New app: nothing before. This proposal builds the app’s first real screens, so these are its after shots only. Look at them to decide whether they show the change.",
+    "description": "Opening line of a proposal's shots card, above the viewer, when the proposal builds a new app's first real screens: before it there was only the starter template's placeholder screen, so only screenshots after the change were taken."
+  },
+  "shots.card.introNewAppClips": {
+    "text": "New app: nothing before. This proposal builds the app’s first real screens, so these are its after shots and clips only. Look at them to decide whether they show the change.",
+    "description": "Opening line of a proposal's shots card, above the viewer, when the proposal builds a new app's first real screens and the card holds short video clips as well as screenshots: before it there was only the starter template's placeholder screen, so only the after side was recorded."
   },
   "shots.card.label": {
     "text": "Before & after",
@@ -6271,6 +6359,18 @@
     "text": "<0>Not in these shots:</0> {{note}}",
     "description": "Note under a declared change on a proposal's shots card. {{note}} is what the shots agent wrote about the part of the change its screenshots do not show. The tags make the lead-in bold."
   },
+  "shots.claim.requestHeld": {
+    "text": "<0>Controlled test:</0> the shots agent kept {{request}} waiting on both builds, to show it loading.",
+    "description": "Note under a declared change on a proposal's shots card, when the screenshots were taken while the app's request for some data was deliberately left unanswered on both the version before and the version after the proposal, so that its loading state shows. {{request}} is that request as written in code, for example \"GET /api/items?page=1\"; leave it as it is. The tags make the lead-in bold."
+  },
+  "shots.claim.requestFailed": {
+    "text": "<0>Controlled test:</0> the shots agent made {{request}} fail on both builds, to show what happens when it does.",
+    "description": "Note under a declared change on a proposal's shots card, when the screenshots were taken while the app's request for some data was deliberately made to fail on both the version before and the version after the proposal, so that its error state shows. {{request}} is that request as written in code, for example \"GET /api/items?page=1\"; leave it as it is. The tags make the lead-in bold."
+  },
+  "shots.claim.sampleFile": {
+    "text": "<0>Sample file:</0> the shots agent uploaded {{files}} on both builds, from Homeroom's own sample files.",
+    "description": "Note under a declared change on a proposal's shots card, when the screenshots show the app after a file was uploaded into it, the same on the version before and the version after the proposal. {{files}} is the list of file names, for example \"landscape.png and table.csv\"; the files are made-up pictures, a table and a document that Homeroom provides for this. The tags make the lead-in bold."
+  },
   "shots.clip.beforeCaption": {
     "text": "Before clip · {{size}}",
     "description": "Caption over a short video of a declared change as it was before the proposal. {{size}} is the screen size it was recorded at, for example \"desktop\"."
@@ -6310,6 +6410,10 @@
   "shots.screen.noShot": {
     "text": "No shot",
     "description": "Placeholder in the before/after viewer where one side has no screenshot."
+  },
+  "shots.screen.nothingBefore": {
+    "text": "New app: nothing before",
+    "description": "Shown in the before/after viewer in place of the screenshot before the change, when the change builds a new app's first real screens: before it the app had only the starter template's placeholder screen, so there is no before."
   },
   "shots.screen.altAfter": {
     "text": "After: {{changes}}",
@@ -7728,11 +7832,11 @@
     "description": "Opening line of the dialog that asks whether an app may use AI, when it would be paid for with the person's own Anthropic API key. Anthropic is a company's name. Used when the app's name is not known; \"This app\" is written as the dialog has always shown it."
   },
   "dialog.llm.introBudget": {
-    "text": "This lets {{app}} spend from your daily AI budget (the same one your agent sessions use) up to the daily cap below.",
+    "text": "This lets {{app}} spend from your weekly AI budget (the same one your agent sessions use) up to the daily cap below.",
     "description": "Opening line of the dialog that asks whether an app may use AI on the person's daily Homeroom AI budget. {{app}} is the app's name; the cap is the spending limit set in the field below."
   },
   "dialog.llm.introBudgetUnnamed": {
-    "text": "This lets This app spend from your daily AI budget (the same one your agent sessions use) up to the daily cap below.",
+    "text": "This lets This app spend from your weekly AI budget (the same one your agent sessions use) up to the daily cap below.",
     "description": "Opening line of the dialog that asks whether an app may use AI on the person's daily Homeroom AI budget. The cap is the spending limit set in the field below. Used when the app's name is not known; \"This app\" is written as the dialog has always shown it."
   },
   "dialog.llm.capSuggested": {
@@ -7748,7 +7852,7 @@
     "description": "Checkbox label in the AI access dialog when the person has no platform AI credits, so the app can only run on their own API key."
   },
   "dialog.llm.ownKeyFallback": {
-    "text": "If my daily platform budget runs out, let this app keep going on my own API key (still limited by the cap above).",
+    "text": "If my weekly platform budget runs out, let this app keep going on my own API key (still limited by the cap above).",
     "description": "Checkbox label in the AI access dialog: lets the app continue on the person's own API key once their daily Homeroom budget is spent."
   },
   "dialog.llm.capInvalid": {
@@ -7835,13 +7939,41 @@
     "text": "someone",
     "description": "Stands in for the name of the person who filed a request, at the top of the request's page, when that person is not known. Lower case, as a username would sit there."
   },
-  "request.status.lead.votedIn": {
-    "text": "Voted in.",
-    "description": "The one sentence on the status card of a request's page that says where the request stands. The change that fulfils the request was approved by the group's vote."
+  "request.status.lead.live": {
+    "text": "Live.",
+    "description": "The one sentence on the status card of a request's page that says where the request stands. The change that fulfils the request was approved by the group's vote and is now part of the running app (\"live\")."
   },
   "request.status.lead.nobody": {
     "text": "Nobody is working on this yet.",
     "description": "The one sentence on the status card of a request's page that says where the request stands. \"This\" is the request."
+  },
+  "request.status.lead.botQuestion": {
+    "text": "Waiting for an answer to Homeroom bot's question.",
+    "description": "The one sentence on the status card of a request's page that says where the request stands. \"Homeroom bot\" is the name of the platform's assistant, which builds changes; it asked a question on the request and waits for someone to answer it."
+  },
+  "request.status.lead.botPlanWaiting": {
+    "text": "Waiting for @{{username}} to OK the plan.",
+    "description": "The one sentence on the status card of a request's page that says where the request stands. Homeroom bot (the platform's assistant) wrote a plan for the change and builds nothing until the person who asked for it approves the plan. {{username}} is that person's username, after an @. \"OK\" is a verb: approve."
+  },
+  "request.status.lead.botPlanWaitingUnnamed": {
+    "text": "Waiting for the person who asked for it to OK the plan.",
+    "description": "The one sentence on the status card of a request's page that says where the request stands. Homeroom bot (the platform's assistant) wrote a plan for the change and builds nothing until the person who asked for the request approves it; used when that person cannot be named. \"OK\" is a verb: approve."
+  },
+  "request.status.lead.botHeld": {
+    "text": "Homeroom bot will start when one of its changes here is voted in or closed.",
+    "description": "The one sentence on the status card of a request's page that says where the request stands. \"Homeroom bot\" is the name of the platform's assistant, which builds changes; it already has as many changes waiting for a vote on this project as it may, so it starts on this request when one of them is approved or closed. \"Here\" is the project."
+  },
+  "request.status.lead.upForVote": {
+    "text": "Up for a vote.",
+    "description": "The one sentence on the status card of a request's page that says where the request stands. The change that fulfils the request is built and waits for the group's vote; used when how many more yes votes it needs is not known."
+  },
+  "request.status.lead.upForVoteNeeds_one": {
+    "text": "Up for a vote: needs 1 more yes.",
+    "description": "The one sentence on the status card of a request's page that says where the request stands. The change that fulfils the request is built and waits for the group's vote; it needs one more yes vote. English spells the one out; a translation may use {{count}}."
+  },
+  "request.status.lead.upForVoteNeeds_other": {
+    "text": "Up for a vote: needs {{count}} more yes.",
+    "description": "The one sentence on the status card of a request's page that says where the request stands. The change that fulfils the request is built and waits for the group's vote; it needs {{count}} more yes votes. \"Yes\" is the vote, as a noun."
   },
   "request.status.lead.reviewYours": {
     "text": "Your change for this is waiting for approval.",
@@ -7959,14 +8091,6 @@
     "text": "Change closed it.",
     "description": "Second sentence on the status card of a request's page, after the one that says where the request stands. A change that has no pull request number went live and closed the request. \"Change\" is a noun standing where the change's number would."
   },
-  "request.status.note.liveNumber": {
-    "text": "#{{number}} is live.",
-    "description": "Second sentence on the status card of a request's page, after the one that says where the request stands. The change with pull request number {{number}} that addresses the request is applied to the running app, and the request is still open. Keep the # before the number."
-  },
-  "request.status.note.liveChange": {
-    "text": "Change is live.",
-    "description": "Second sentence on the status card of a request's page, after the one that says where the request stands. A change that addresses the request and has no pull request number is applied to the running app. \"Change\" is a noun standing where the change's number would."
-  },
   "request.status.note.review": {
     "text": "A change for it is waiting for approval.",
     "description": "Second sentence on the status card of a request's page, after the one that says where the request stands. \"It\" is the request; a change (a proposal that fulfils it) is up for the group's vote."
@@ -8071,6 +8195,14 @@
     "text": "Share this change to start a discussion.",
     "description": "Notice in place of the message box at the bottom of a person's own change that is not shared with the project's members yet. \"Share\" is a verb; \"change\" is a noun."
   },
+  "page.thread.onlyYouLinked": {
+    "text": "Only you can see this change. Its conversation so far is on the request.",
+    "description": "Shown where the replies would be on a person's own change that they have not shared with the project's members yet, when the change was built for a request: the request's page is where its conversation is. \"Change\" is a noun; \"request\" is a filed issue."
+  },
+  "page.thread.shareToDiscussLinked": {
+    "text": "Share this change to discuss it here. Until then, reply on the request.",
+    "description": "Notice in place of the message box at the bottom of a person's own change that is not shared with the project's members yet, when the change was built for a request: sharing opens the discussion here; until then people reply on the request. \"Share\" is a verb; \"request\" is a filed issue."
+  },
   "page.thread.replyPlaceholder": {
     "text": "Reply…",
     "description": "Placeholder in the message box at the bottom of a change's page and of a request's page. A verb: write a reply."
@@ -8155,6 +8287,26 @@
     "text": "{{people}} said yes.",
     "description": "One sentence of the line under the figure on the Votes card of a change's page: who voted Yes. {{people}} is one username or a list of them and {{count}} how many people that is."
   },
+  "page.votes.note.youSaidYes": {
+    "text": "You said yes.",
+    "description": "One sentence of the line under the figure on the Votes card of a change's page, shown to the person reading it when they are the only one who voted Yes."
+  },
+  "page.votes.note.youAndOthersSaidYes": {
+    "text": "{{people}} said yes.",
+    "description": "One sentence of the line under the figure on the Votes card of a change's page, when the person reading it voted Yes along with others. {{people}} is a list of two or more people that starts with the word for \"You\" (the reader), for example \"You and maya\" or \"You, maya and ash\", so the verb is plural."
+  },
+  "page.votes.people.you": {
+    "text": "You",
+    "description": "The person reading, as the first name in a list of people who voted on a change, for example \"You and maya said yes.\" Capitalized because it starts the sentence."
+  },
+  "page.votes.note.yourEarlierYes": {
+    "text": "Your yes was on an earlier version.",
+    "description": "One sentence of the line under the figure on the Votes card of a change's page: the reader's own Yes vote no longer counts because the change was updated after it."
+  },
+  "page.votes.note.yourEarlierNo": {
+    "text": "Your no was on an earlier version.",
+    "description": "One sentence of the line under the figure on the Votes card of a change's page: the reader's own No vote no longer counts because the change was updated after it."
+  },
   "page.votes.note.live": {
     "text": "It’s live.",
     "description": "One sentence of the line under the figure on the Votes card of a change's page once the approved change is applied to the running app."
@@ -8238,6 +8390,26 @@
   "page.votes.note.liveOnceTested": {
     "text": "It goes live once testing passes.",
     "description": "One sentence of the line under the figure on the Votes card of a change's page when the change has the votes it needs and its automated checks have not passed yet."
+  },
+  "page.votes.figure.noVote": {
+    "text": "No vote needed",
+    "description": "The large figure on the Votes card of a change's page when the change is a project's first version, which goes live without a vote."
+  },
+  "page.votes.label.noVote": {
+    "text": "Votes: no vote needed",
+    "description": "Accessible description of the progress bar on the Votes card of a change's page when the change is a project's first version, which goes live without a vote."
+  },
+  "page.votes.note.firstVersion": {
+    "text": "It’s the project’s first version, so it goes live without a vote.",
+    "description": "The line under the figure on the Votes card of a change's page when the change is a project's first version and its automated checks have passed. \"It\" is the change."
+  },
+  "page.votes.note.firstVersionOnceTested": {
+    "text": "It’s the project’s first version, so it goes live without a vote once testing passes.",
+    "description": "The line under the figure on the Votes card of a change's page when the change is a project's first version and its automated checks have not passed yet. \"It\" is the change."
+  },
+  "page.votes.note.firstVersionOnceFixed": {
+    "text": "It’s the project’s first version, so it goes live without a vote once a fix passes testing.",
+    "description": "The line under the figure on the Votes card of a change's page when the change is a project's first version and its automated checks are failing. \"It\" is the change."
   },
   "page.testing.name.testing": {
     "text": "Testing",

@@ -138,10 +138,9 @@ export const TOUR_STEPS: readonly TourStep[] = [
     targets: ['#platform-tab-workshop'],
   },
   {
-    // The My apps section as a whole — its tiles and its "Show all" —
-    // since #4759 left the section with no heading for the card to sit on.
-    // `#app-list` is the fallback for a section that has not rendered its
-    // box yet.
+    // The My apps section, heading and grid together, so the card never
+    // sits on the heading the step is about. `#app-list` is the fallback
+    // for a section that has not rendered its box yet.
     id: 'apps',
     title: 'onboarding:tour.step.apps.title',
     body: 'onboarding:tour.step.apps.body',

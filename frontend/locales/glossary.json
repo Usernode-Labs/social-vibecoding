@@ -20,7 +20,14 @@
       "es": "proyecto",
       "fr": "projet",
       "pt-BR": "projeto",
-      "vi": "dự án"
+      "vi": "dự án",
+      "zh-CN": "项目",
+      "hi": "प्रोजेक्ट",
+      "ar": "مشروع",
+      "ja": "プロジェクト",
+      "ko": "프로젝트",
+      "tr": "proje",
+      "ru": "проект"
     },
     "community": {
       "meaning": "The people a project belongs to; what a person joins.",
@@ -28,7 +35,14 @@
       "es": "comunidad",
       "fr": "communauté",
       "pt-BR": "comunidade",
-      "vi": "cộng đồng"
+      "vi": "cộng đồng",
+      "zh-CN": "社区",
+      "hi": "समुदाय",
+      "ar": "مجتمع",
+      "ja": "コミュニティ",
+      "ko": "커뮤니티",
+      "tr": "topluluk",
+      "ru": "сообщество"
     },
     "proposal": {
       "meaning": "A finished change put to the community's vote before it merges.",
@@ -36,7 +50,14 @@
       "es": "propuesta",
       "fr": "proposition",
       "pt-BR": "proposta",
-      "vi": "đề xuất"
+      "vi": "đề xuất",
+      "zh-CN": "提案",
+      "hi": "प्रस्ताव",
+      "ar": "مقترح",
+      "ja": "提案",
+      "ko": "제안",
+      "tr": "öneri",
+      "ru": "предложение"
     },
     "request": {
       "meaning": "A feature idea or bug report filed on a project's board.",
@@ -44,7 +65,14 @@
       "es": "solicitud",
       "fr": "demande",
       "pt-BR": "solicitação",
-      "vi": "yêu cầu"
+      "vi": "yêu cầu",
+      "zh-CN": "请求",
+      "hi": "अनुरोध",
+      "ar": "طلب",
+      "ja": "リクエスト",
+      "ko": "요청",
+      "tr": "istek",
+      "ru": "запрос"
     },
     "change": {
       "meaning": "A piece of work on a project's code, from first draft to merge.",
@@ -52,7 +80,14 @@
       "es": "cambio",
       "fr": "modification",
       "pt-BR": "alteração",
-      "vi": "thay đổi"
+      "vi": "thay đổi",
+      "zh-CN": "更改",
+      "hi": "बदलाव",
+      "ar": "تغيير",
+      "ja": "変更",
+      "ko": "변경",
+      "tr": "değişiklik",
+      "ru": "изменение"
     },
     "plan": {
       "meaning": "What a change will do and how, written before it is built so the community can read it.",
@@ -60,7 +95,14 @@
       "es": "plan",
       "fr": "plan",
       "pt-BR": "plano",
-      "vi": "kế hoạch"
+      "vi": "kế hoạch",
+      "zh-CN": "计划",
+      "hi": "योजना",
+      "ar": "خطة",
+      "ja": "プラン",
+      "ko": "계획",
+      "tr": "plan",
+      "ru": "план"
     },
     "vote": {
       "meaning": "A member's yes or no on a proposal or request (noun).",
@@ -68,7 +110,14 @@
       "es": "voto",
       "fr": "vote",
       "pt-BR": "voto",
-      "vi": "phiếu bầu"
+      "vi": "phiếu bầu",
+      "zh-CN": "投票",
+      "hi": "वोट",
+      "ar": "تصويت",
+      "ja": "投票",
+      "ko": "투표",
+      "tr": "oy",
+      "ru": "голос"
     },
     "merge": {
       "meaning": "Bring an approved change into the live project (verb).",
@@ -76,7 +125,14 @@
       "es": "fusionar",
       "fr": "fusionner",
       "pt-BR": "mesclar",
-      "vi": "hợp nhất"
+      "vi": "hợp nhất",
+      "zh-CN": "合并",
+      "hi": "मर्ज करें",
+      "ar": "دمج",
+      "ja": "マージする",
+      "ko": "병합",
+      "tr": "birleştir",
+      "ru": "объединить"
     },
     "preview": {
       "meaning": "A running test copy of a project with a change applied.",
@@ -84,7 +140,14 @@
       "es": "vista previa",
       "fr": "aperçu",
       "pt-BR": "prévia",
-      "vi": "bản xem trước"
+      "vi": "bản xem trước",
+      "zh-CN": "预览",
+      "hi": "प्रीव्यू",
+      "ar": "معاينة",
+      "ja": "プレビュー",
+      "ko": "미리보기",
+      "tr": "önizleme",
+      "ru": "предпросмотр"
     },
     "checks": {
       "meaning": "The automated tests a proposal must pass before it can merge.",
@@ -92,7 +155,14 @@
       "es": "comprobaciones",
       "fr": "vérifications",
       "pt-BR": "verificações",
-      "vi": "kiểm tra"
+      "vi": "kiểm tra",
+      "zh-CN": "检查",
+      "hi": "जाँचें",
+      "ar": "الفحوصات",
+      "ja": "チェック",
+      "ko": "검사",
+      "tr": "kontroller",
+      "ru": "проверки"
     },
     "member": {
       "meaning": "A person who has joined a community.",
@@ -100,7 +170,14 @@
       "es": "miembro",
       "fr": "membre",
       "pt-BR": "membro",
-      "vi": "thành viên"
+      "vi": "thành viên",
+      "zh-CN": "成员",
+      "hi": "सदस्य",
+      "ar": "عضو",
+      "ja": "メンバー",
+      "ko": "멤버",
+      "tr": "üye",
+      "ru": "участник"
     },
     "Workshop": {
       "meaning": "Name of the project page's tab where changes are built and reviewed.",
@@ -108,7 +185,14 @@
       "es": "Taller",
       "fr": "Atelier",
       "pt-BR": "Oficina",
-      "vi": "Xưởng"
+      "vi": "Xưởng",
+      "zh-CN": "工坊",
+      "hi": "वर्कशॉप",
+      "ar": "الورشة",
+      "ja": "ワークショップ",
+      "ko": "워크숍",
+      "tr": "Atölye",
+      "ru": "Мастерская"
     },
     "Needs you": {
       "meaning": "Name of the tab and feed listing the decisions waiting on the reader.",
@@ -116,7 +200,14 @@
       "es": "Te necesita",
       "fr": "Vous attend",
       "pt-BR": "Precisa de você",
-      "vi": "Cần bạn"
+      "vi": "Cần bạn",
+      "zh-CN": "待你处理",
+      "hi": "आपके लिए",
+      "ar": "بانتظارك",
+      "ja": "対応待ち",
+      "ko": "내 확인 필요",
+      "tr": "Seni bekliyor",
+      "ru": "Ждёт вас"
     }
   },
   "style": {
@@ -124,6 +215,13 @@
     "es": "Neutral Spanish that reads naturally across Latin America and Spain, addressing the reader as \"tú\". Avoid region-only vocabulary.",
     "fr": "French addressing the reader as \"vous\", concise as in a polished mobile app. Follow French typography: a narrow no-break space before ; ! ? and a no-break space before :, and « » for quotations.",
     "pt-BR": "Brazilian Portuguese addressing the reader as \"você\", friendly and concise as in a polished mobile app.",
-    "vi": "Natural, concise Vietnamese addressing the reader as \"bạn\", as in a polished mobile app."
+    "vi": "Natural, concise Vietnamese addressing the reader as \"bạn\", as in a polished mobile app.",
+    "tr": "Turkish addressing the reader as \"sen\", friendly and concise as in a polished mobile app. Follow Turkish capitalisation (i/İ, ı/I).",
+    "ru": "Russian addressing the reader as \"вы\" (lowercase), concise as in a polished mobile app. Use « » for quotations and write ё where it belongs.",
+    "ar": "Modern Standard Arabic, clear and friendly as in a polished mobile app. Prefer phrasing that avoids gendered verb forms where it reads naturally. Use Arabic punctuation (، ؛ ؟).",
+    "hi": "Everyday Hindi in Devanagari as popular Indian apps write it, addressing the reader as \"आप\". Keep common English tech words people already use (such as ऐप, लॉग इन) rather than rare Sanskritised terms. End sentences with ।.",
+    "zh-CN": "Simplified Chinese as polished mainland apps write it: concise and friendly, addressing the reader as \"你\". Use full-width punctuation (，。：？！) and “ ” for quotations, with no spaces between Chinese characters.",
+    "ja": "Polite Japanese (です/ます) as polished Japanese apps write it, with short noun or plain-form labels on buttons. Use full-width punctuation (、。) and 「」 for quotations, with no spaces between Japanese words.",
+    "ko": "Polite Korean (해요체) as popular Korean apps write it, concise on buttons, with standard Korean spacing."
   }
 }

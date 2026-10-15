@@ -398,6 +398,27 @@ async function hasCommit(dir, committish) {
   return r.code === 0;
 }
 
+/**
+ * The commits `head` added on its own line over `base`, newest first: who
+ * committed each and its subject ([{ committer, subject }]). First parents
+ * only and no merges, so a merge of main brings none of main's in. Null when
+ * git cannot say, or when there are more than `limit` (an answer about some
+ * of them would be an answer about none).
+ */
+async function commitsBetween(dir, base, head, { limit = 50 } = {}) {
+  const r = await git(dir, [
+    'log', '--first-parent', '--no-merges', `--max-count=${limit + 1}`,
+    '--format=%ce%x1f%s%x1e', `${safeSha(base)}..${safeSha(head)}`,
+  ], { allowFail: true });
+  if (r.code !== 0) return null;
+  const commits = text(r.stdout).split('\x1e').map((line) => line.trim()).filter(Boolean)
+    .map((line) => {
+      const [committer, subject] = line.split('\x1f');
+      return { committer: String(committer || '').toLowerCase(), subject: subject || '' };
+    });
+  return commits.length > limit ? null : commits;
+}
+
 module.exports = {
   ensureMirror,
   mirrorPath,
@@ -411,6 +432,7 @@ module.exports = {
   changedPaths,
   resolveBranch,
   hasCommit,
+  commitsBetween,
   // Exported for the unit tests, which drive the plumbing against a real
   // temporary repository rather than a mock — the whole point of this module
   // is that the answers are git's, so stubbing git would test nothing.

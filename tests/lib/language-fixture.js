@@ -65,9 +65,10 @@ function browser(t, { root, deviceLanguages = ['en-US'], storage = new Map() } =
     saved[name] = Object.getOwnPropertyDescriptor(globalThis, name);
   }
   const define = (name, value) => Object.defineProperty(globalThis, name, { configurable: true, writable: true, value });
-  // tamper(bytes): alter a pack. unavailable(url): answer 503. hold(url): a
+  // tamper(bytes): alter a pack. unavailable(url): answer 503. missing(url):
+  // answer 404 (a pack name the server no longer serves). hold(url): a
   // promise the pack waits on. api(url, init): answer a non-pack request.
-  const state = { requests: [], events: [], tamper: null, unavailable: null, hold: null, api: null, storage };
+  const state = { requests: [], events: [], tamper: null, unavailable: null, missing: null, hold: null, api: null, storage };
   define('localStorage', {
     getItem: (key) => (storage.has(key) ? storage.get(key) : null),
     setItem: (key, value) => { storage.set(key, String(value)); },
@@ -86,6 +87,7 @@ function browser(t, { root, deviceLanguages = ['en-US'], storage = new Map() } =
     state.requests.push(url);
     if (state.hold) await state.hold(url);
     if (state.unavailable && state.unavailable(url)) return new Response('', { status: 503 });
+    if (state.missing && state.missing(url)) return new Response('', { status: 404 });
     const bytes = fs.readFileSync(path.join(root, 'public', url));
     return new Response(state.tamper ? state.tamper(bytes) : bytes);
   });

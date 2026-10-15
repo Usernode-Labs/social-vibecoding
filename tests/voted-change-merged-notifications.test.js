@@ -84,7 +84,9 @@ test('one row per voter, yes or no; the author never double-told, a muted voter 
     'every vote row (both directions), the author dropped, then the category filter');
   assert.equal(pool.queries.length, 2);
   const [voters, insert] = pool.queries;
-  assert.match(voters.sql, /SELECT DISTINCT user_id FROM pr_votes\s+WHERE session_id = \$1/);
+  assert.match(voters.sql, /SELECT v\.user_id, v\.vote FROM pr_votes v\s+WHERE v\.session_id = \$1/);
+  // "One story": never the requester of a change Homeroom bot built.
+  assert.match(voters.sql, /v\.user_id NOT IN \(SELECT q\.user_id\s+FROM homeroom_bot_runs r\s+JOIN homeroom_bot_requesters q/);
   assert.deepEqual(insert.params, [5, 41, 8, 12], 'a muted voter is filtered out before the insert');
   assert.match(insert.sql, /\(\$3::int, \$1::int, \$2::int/);
   assert.match(insert.sql, /'voted_change_merged'::text/);
@@ -157,7 +159,8 @@ test('against PostgreSQL: the insert runs, dedupes, and never tells the author',
     assert.deepEqual(all.map((r) => r.kind).sort(), ['voted_change_merged', 'voted_change_merged']);
     for (const r of all) {
       assert.equal(r.source_user_id, null, 'system-generated');
-      assert.equal(r.detail, null);
+      // "One story": how they voted ("It's live. You voted yes.").
+      assert.equal(r.detail, Number(r.user_id) === Number(ada.id) ? 'yes' : null);
     }
   } finally {
     await pool.end();
@@ -179,16 +182,19 @@ test('the banner: live on a child app, approved now on the platform\'s own', () 
     sessionTitle: 'Dark mode for the reading list', prTitle: null, branchName: null, detail: null,
   };
   const banner = (over = {}) => buildMessage({ ...INPUT, context: { ...CONTEXT, ...over } }).notification;
+  // "One story": the change and its project, over what happened and how
+  // they voted.
   let n = banner();
-  assert.equal(n.title, '"Dark mode for the reading list" is live · Page Turners');
-  assert.equal(n.body, 'You voted on it. Open it to see what changed');
-  n = banner({ appSelfHosted: true });
-  assert.equal(n.title, '"Dark mode for the reading list" was approved · Page Turners');
-  assert.equal(n.body, 'You voted on it. It will be live in a few minutes');
+  assert.equal(n.title, 'Dark mode for the reading list · Page Turners');
+  assert.equal(n.body, 'It\'s live. You voted on it.');
+  assert.equal(banner({ detail: 'yes' }).body, 'It\'s live. You voted yes.');
+  n = banner({ appSelfHosted: true, detail: 'yes' });
+  assert.equal(n.title, 'Dark mode for the reading list · Page Turners');
+  assert.equal(n.body, 'Approved. It will be live in a few minutes. You voted yes.');
   // A change with no title: the words name the kind, not a machine label.
   const untitled = banner({ sessionTitle: null });
-  assert.equal(untitled.title, 'A change you voted on is live · Page Turners');
-  assert.equal(untitled.body, 'You voted on it. Open it to see what changed');
+  assert.equal(untitled.title, 'A change you voted on is live');
+  assert.equal(untitled.body, 'It\'s live. You voted on it.');
   // Muted push category: the row is written, the phone is not rung.
   const prefs = require('../src/services/mobile-push-preferences');
   assert.equal(prefs.ALLOWED_KINDS.has('voted_change_merged'), true, 'push-eligible: muting proposal_alerts stops the phone, not the bell');
@@ -224,6 +230,35 @@ test('the row is drawn like the author\'s "Live" row, with no button of its own'
 
   const src = fs.readFileSync(path.join(__dirname, '../frontend/src/features/notifications/notifications.js'), 'utf8');
   assert.match(src, /'voted_change_merged',\s*\n\s*\]\);/, 'a proposal kind: opens the proposal');
+});
+
+// #5064: "A change you voted on is live" while it was still merging. The
+// row reads where the change stands (`sessionStatus`, the server's
+// session_status), as a "ready to try" row does, and says going live until
+// production runs it. The author's "Live" row says the same.
+test('#5064: going live until production runs it, then live', () => {
+  const going = controller()._rowView({ ...ROW, kind: 'voted_change_merged', sessionStatus: 'merging' });
+  assert.equal(going.label, 'A change you voted on is going live');
+  assert.equal(subjectOf(going), 'Dark mode for the reading list');
+  assert.equal(going.icon, '\u{1F680}', 'the "Going live" tile a "ready to try" row uses');
+  const live = controller()._rowView({ ...ROW, kind: 'voted_change_merged', sessionStatus: 'merged' });
+  assert.equal(live.label, 'A change you voted on is live');
+  assert.equal(live.icon, '\u{1F389}');
+
+  const author = (extra) => controller()._rowView({ ...ROW, kind: 'pr_merged', ...extra });
+  assert.equal(author({ sessionStatus: 'merging' }).label, 'Going live');
+  assert.equal(author({ sessionStatus: 'merging' }).icon, '\u{1F680}');
+  assert.equal(author({ sessionStatus: 'merged' }).label, 'Live');
+  assert.equal(author({}).label, 'Live', 'a row without the field reads as it always did');
+  assert.equal(author({ sessionStatus: 'merging', detail: 'forced' }).label, 'Made live by an admin');
+  const credited = author({ sessionStatus: 'merging', detail: 'Backed by alice.' });
+  assert.equal(credited.label, 'Going live');
+  assert.match(subjectOf(credited), /Backed by alice\.$/, 'the credits still ride along');
+
+  // The server hands the status to both rows, read with them.
+  const service = fs.readFileSync(path.join(__dirname, '../src/services/notifications.js'), 'utf8');
+  assert.match(service, /SESSION_STATUS_KINDS = new Set\(\['change_ready', 'pr_merged', 'voted_change_merged'\]\)/);
+  assert.match(service, /cs\.status = 'merged' AND \(cs\.live_at IS NULL OR \$\{RELEASE_PENDING_SQL\}\)/);
 });
 
 // ── 4. The merge paths ────────────────────────────────────────────────

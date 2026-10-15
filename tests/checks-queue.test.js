@@ -195,11 +195,14 @@ test('merge-queue counts a queued run as in flight, so nothing re-drives it', ()
   assert.match(src, /function checkRunInFlight\(row\) \{[\s\S]{0,400}return !require\('\.\/staging-recovery'\)\.checkRunOverdue\(row\);/);
 });
 
-test('main-watch\'s interrupted-run sweep leaves a run alive in the queue, and re-drives a dead waiting one now', () => {
+test('main-watch\'s interrupted-run sweep leaves a run alive in the queue, and takes a dead one now, waiting or admitted', () => {
   const src = stripComments(read('src/services/main-watch.js'));
   const sweep = src.slice(src.indexOf('async function resumeInterrupted('));
   assert.match(sweep, /AND NOT EXISTS \(\s*SELECT 1 FROM check_runs cr\s+WHERE cr\.kind = 'main' AND cr\.app_id = apps\.id[\s\S]{0,120}cr\.heartbeat_at >= NOW\(\)/);
-  assert.match(sweep, /OR EXISTS \(\s*SELECT 1 FROM check_runs cr\s+WHERE cr\.kind = 'main'[\s\S]{0,200}cr\.admitted_at IS NULL\)\)/);
+  // A dead row of the merge's own, whether it was waiting or admitted
+  // (tests/main-watch.test.js and checks-queue-postgres pin what follows).
+  assert.match(sweep, /LEFT JOIN LATERAL \(\s*SELECT cr\.run_id, cr\.owner, cr\.admitted_at FROM check_runs cr\s+WHERE cr\.kind = 'main' AND cr\.app_id = apps\.id/);
+  assert.match(sweep, /OR dead\.run_id IS NOT NULL\)/);
 });
 
 test('the harvest leaves main-watch rows to main-watch, and runOnCluster counts a waiting run as the run', () => {
@@ -239,7 +242,7 @@ test('captureForSession waits for its slot after the preview is up and before an
 test('a newer request for a session whose run is still waiting supersedes it at once', () => {
   const src = read('src/services/visuals.js');
   assert.match(src, /if \(movedOn && typeof running\.leaveQueue === 'function' && running\.leaveQueue\(\)\) \{/);
-  assert.match(src, /const flight = \{ operation, commitHash: commitHash \|\| null \};\s+_inFlight\.set\(key, flight\);/);
+  assert.match(src, /const flight = \{ operation, commitHash: commitHash \|\| null \};\s+if \(!workflow\) _inFlight\.set\(key, flight\);/);
 });
 
 test('every run\'s row going wakes this process\'s waiters', () => {
@@ -250,9 +253,9 @@ test('every run\'s row going wakes this process\'s waiters', () => {
 test('the harvest re-drives a run in the place it had in line', () => {
   const src = stripComments(read('src/services/check-harvest.js'));
   assert.match(src, /const queuedSince = row\.queued_at \|\| null;/);
-  assert.match(src, /recheckSessionChecks\(\{\s+config, pool, session, reason: 'orphaned-run', \.\.\.\(queuedSince \? \{ queuedSince \} : \{\}\),\s+\}\)/);
+  assert.match(src, /recheckSessionChecks\(\{\s+config, pool, session, reason: 'orphaned-run', \.\.\.\(queuedSince \? \{ queuedSince \} : \{\}\),\s+(\.\.\.\(mark \? \{ redrive: mark \} : \{\}\),\s+)?\}\)/);
   const recovery = stripComments(read('src/services/staging-recovery.js'));
-  assert.match(recovery, /async function recheckSessionChecks\(\{ config, pool, session, reason, queuedSince = null \}\)/);
+  assert.match(recovery, /async function recheckSessionChecks\(\{ config, pool, session, reason, queuedSince = null(, redrive = null)? \}\)/);
   assert.match(recovery, /\.\.\.\(queuedSince \? \{ queuedSince \} : \{\}\),/);
 });
 

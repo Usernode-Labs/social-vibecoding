@@ -25,12 +25,18 @@ const { loadCadence } = require('../src/services/topochain/challenge-scorer');
 const { TEMPLATE_JOIN_COLUMNS_SQL, buildChallengeListItem } = require('../src/routes/topochain/challenge-view');
 const { attachForkLineage, accessFlags } = require('../src/routes/apps');
 const suggestBack = require('../src/services/suggest-back');
+const appAllowance = require('../src/services/app-allowance');
 const conversations = require('../src/services/conversations');
 const botActivity = require('../src/services/homeroom-bot-activity');
 const mayor = require('../src/services/homeroom-bot-mayor');
 const { currentVotePredicateSql } = require('../src/services/pr-vote-revision');
 const { composeInProgress } = require('../src/routes/issues');
 const { resolveIssueProposalRefs } = require('../src/services/issue-proposal-ref');
+const notificationsSvc = require('../src/services/notifications');
+const { botRequestedBySql } = require('../src/services/bot-requested-by');
+const homeroomBot = require('../src/services/homeroom-bot');
+const botDm = require('../src/services/homeroom-bot-dm');
+const limits = require('../src/services/limits');
 const express = require('express');
 const path = require('node:path');
 const vm = require('node:vm');
@@ -200,12 +206,16 @@ test('demo states go into both shots copies or neither, once', { timeout: 180000
 
   assert.deepEqual(await demoStates.inspectDemoStates(base.input), demoStates.STATE_IDS,
     'a copy with the staging seeds can hold every state');
-  // A revision whose schema lacks what a state writes cannot hold it.
+  // A revision whose schema lacks what a state writes cannot hold it, nor
+  // one that does not know the kind of row a state writes: the voted-live
+  // bell row's kind is in each revision's own push categories.
   await head.pool.query('DROP TABLE friendships CASCADE');
+  await head.pool.query(`DELETE FROM mobile_push_kind_categories WHERE kind = 'voted_change_merged'`);
   const headReady = await demoStates.inspectDemoStates(head.input);
   assert.ok(!headReady.includes('shots-demo-member-friend-request-v1'));
+  assert.ok(!headReady.includes('shots-demo-member-voted-change-live-v1'));
   const both = demoStates.STATE_IDS.filter((id) => headReady.includes(id));
-  assert.equal(both.length, demoStates.STATE_IDS.length - 1);
+  assert.equal(both.length, demoStates.STATE_IDS.length - 2);
 
   // A state that fails on one side while being written is left out of both.
   await head.pool.query(
@@ -221,6 +231,8 @@ test('demo states go into both shots copies or neither, once', { timeout: 180000
   }
   assert.equal((await base.pool.query('SELECT COUNT(*)::int AS n FROM friendships')).rows[0].n, 0,
     'base could hold the friend request; head could not, so neither has it');
+  assert.equal((await base.pool.query('SELECT COUNT(*)::int AS n FROM notifications')).rows[0].n, 0,
+    'nor the bell row head does not know');
 
   // The same rows on both sides, and nothing left to add a second time.
   const shape = async (pool) => (await pool.query(
@@ -234,10 +246,12 @@ test('demo states go into both shots copies or neither, once', { timeout: 180000
             (SELECT COUNT(*)::int FROM user_activities) AS credits,
             (SELECT COUNT(*)::int FROM pr_votes) AS votes`)).rows[0];
   assert.deepEqual(await shape(base.pool), await shape(head.pool));
-  // Only what was left out is still free: the friend request base could
-  // hold and head could not, and the verdict head refused.
+  // Only what was left out is still free: the friend request and the
+  // voted-live row base could hold and head could not, and the verdict head
+  // refused.
   assert.deepEqual(await demoStates.inspectDemoStates(base.input),
-    ['shots-demo-homeroom-bot-verdict-v1', 'shots-demo-member-friend-request-v1']);
+    ['shots-demo-homeroom-bot-verdict-v1', 'shots-demo-member-friend-request-v1',
+      'shots-demo-member-voted-change-live-v1']);
   assert.deepEqual(await demoStates.inspectDemoStates(head.input), ['shots-demo-homeroom-bot-verdict-v1']);
 
   // Every row is in the reserved block or marked as the fixture's.
@@ -435,6 +449,23 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
     [accessApp.id, member]);
   assert.equal(collab.status, 'member');
 
+  // Room to make projects (PR 4777): the member owns the three projects the
+  // states above made, and both the member and the read-only admin have
+  // five slots free beside what they own, read through the allowance the
+  // make screen and POST /api/apps read. Five free hides the allowance card
+  // (app-allowance.tsx allowanceWorthShowing) as for anybody with room.
+  const memberRoom = await appAllowance.read(pool, { id: member });
+  assert.deepEqual(memberRoom.quota, { used: 3, limit: 8, remaining: 5 });
+  assert.equal(memberRoom.canCreateApps, true);
+  const adminRoom = await appAllowance.read(pool, { id: ids['usernode-capture-admin'] });
+  assert.deepEqual(adminRoom.quota, { used: 0, limit: 5, remaining: 5 });
+  assert.equal(adminRoom.canCreateApps, true);
+  // A project whose setup stopped (as every one made on a copy does) holds
+  // no slot, so making one never uses the room up.
+  await pool.query(`UPDATE apps SET status = 'error' WHERE id = $1`, [demoStates.IDS.firstVersionApp]);
+  assert.equal((await appAllowance.read(pool, { id: member })).quota.remaining, 6);
+  await pool.query(`UPDATE apps SET status = 'running' WHERE id = $1`, [demoStates.IDS.firstVersionApp]);
+
   // The member's chat with the Homeroom bot: two activity cards on one
   // request, read through the cards' own reader. The older one's build is
   // ready and waiting its turn, so it is working though a newer card began
@@ -453,7 +484,9 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
   const chat = chats.find((conversation) => conversation.id === demoStates.IDS.botConversation);
   assert.equal(chat.homeroomBot, true);
   assert.equal(chat.unreadCount, 0);
-  assert.equal((await pool.query('SELECT COUNT(*)::int AS n FROM notifications')).rows[0].n, 0);
+  // The one row in the bell is the voted-live state's, and it is read.
+  const { rows: bellRows } = await pool.query('SELECT kind, read_at FROM notifications');
+  assert.deepEqual(bellRows.map((row) => [row.kind, !!row.read_at]), [['voted_change_merged', true]]);
 
   // After them in the same chat, the plan for the member's new project,
   // answered with Build it, and the bot's thanks under it: the card Build
@@ -485,6 +518,35 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
             (SELECT COUNT(*)::int FROM homeroom_bot_first_versions f WHERE f.app_id = a.id) AS first_versions
        FROM apps a WHERE a.id = $1`, [demoStates.IDS.firstVersionApp]);
   assert.deepEqual(project, { created_by: member, view_visibility: 'private', first_versions: 0 });
+
+  // Between the bot run card's cards and the plan, the bot's hand-off on a
+  // request of the member's on a project somebody else runs (#4763): who
+  // decides there is its maker, as the bot's own whoDecides reads the
+  // project, and the message names them, in dmText's words, with no Go
+  // ahead. It is read, and it adds nothing to the bot's tray (no run).
+  const { rows: [garden] } = await pool.query(
+    'SELECT id, slug, name, created_by FROM apps WHERE slug = $1', ['shots-demo-garden-club']);
+  assert.equal(Number(garden.id), demoStates.IDS.decidersApp);
+  assert.equal(Number(garden.created_by), ids['staging-demo-general-lin']);
+  const decider = await homeroomBot.whoDecides(pool, garden, { userId: member, username: 'usernode-capture' });
+  assert.equal(decider.requesterDecides, false);
+  assert.deepEqual(decider.deciders.map((d) => [d.username, d.role]), [['staging-demo-general-lin', 'creator']]);
+  const handOff = messages.find((message) => message.metadata?.homeroomBot?.kind === 'person');
+  assert.ok(newer.messageId < handOff.id && handOff.id < plan.id, 'after the run card\'s cards, before the plan');
+  assert.equal(handOff.sender.id, (await pool.query('SELECT id FROM users WHERE username = $1', ['homeroom_bot'])).rows[0].id);
+  assert.equal(handOff.content, botDm.dmText('person', {
+    reason: 'Taking a page down changes what the club offers its members, so the people who run the project should decide it.',
+    deciders: decider.deciders.map((d) => d.username),
+  }, { appName: garden.name, issueNumber: 2, issueTitle: 'Take the plant swap page down' }));
+  assert.match(handOff.content, /On \[shots fixture\] Garden club, @staging-demo-general-lin decides things like this\./);
+  assert.equal(handOff.metadata.homeroomBot.actions, undefined, 'no Go ahead');
+  assert.equal(handOff.metadata.homeroomBot.mirrors, true);
+  const { rows: [handOffRecord] } = await pool.query(
+    'SELECT kind, app_id, issue_number, user_id FROM homeroom_bot_dm_messages WHERE message_id = $1', [handOff.id]);
+  assert.deepEqual([handOffRecord.kind, Number(handOffRecord.app_id), handOffRecord.issue_number, handOffRecord.user_id],
+    ['person', demoStates.IDS.decidersApp, 2, member]);
+  assert.equal((await pool.query('SELECT COUNT(*)::int AS n FROM homeroom_bot_runs WHERE app_id = $1',
+    [garden.id])).rows[0].n, 0);
 
   // Second to last in the same chat, the bot's offer to open a vote on
   // closing request #900001, quoting the member's message that says it is
@@ -603,6 +665,76 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
       assert.ok(Date.parse(activity.activity_at) < Date.now(), 'it says when it happened');
     }
   }
+
+  // A change the member voted on that went live, and its row in their
+  // bell, read through the bell's own reader (#4787): the voted-live kind
+  // on that change, live rather than going live, with its title, and read,
+  // so the bell's count is nothing new.
+  const bell = await notificationsSvc.listForUser(pool, member);
+  const votedLive = bell.filter((row) => row.kind === 'voted_change_merged');
+  assert.equal(votedLive.length, 1);
+  assert.equal(Number(votedLive[0].session_id), demoStates.IDS.votedLiveProposal);
+  assert.equal(votedLive[0].session_status, 'merged', 'live, not going live');
+  assert.equal(votedLive[0].pr_title, '[shots fixture] Bigger buttons on the request list');
+  assert.equal(votedLive[0].app_slug, SLUG);
+  assert.ok(votedLive[0].read_at);
+  assert.equal(await notificationsSvc.countUnread(pool, member), 0);
+  const { rows: [votedOn] } = await pool.query(
+    `SELECT pv.vote, cs.user_id, cs.status FROM pr_votes pv JOIN chat_sessions cs ON cs.id = pv.session_id
+      WHERE pv.session_id = $1 AND pv.user_id = $2`, [demoStates.IDS.votedLiveProposal, member]);
+  assert.deepEqual([votedOn.vote, votedOn.user_id, votedOn.status], ['yes', ids['usernode-capture-admin'], 'merged']);
+
+  // A change Homeroom bot built from the member's request, up for a vote:
+  // the bot's account made it, from the request it links, and the shared
+  // fragment the Workshop's payloads carry (requested_by_me) reads it as
+  // the member's and nobody else's, so it is their Your work, by the bot.
+  const { rows: [botBuilt] } = await pool.query(
+    `SELECT cs.status, cs.check_state, cs.linked_issues, u.username, u.is_synthetic,
+            ${botRequestedBySql('cs', '$2')} AS mine, ${botRequestedBySql('cs', '$3')} AS admins
+       FROM chat_sessions cs JOIN users u ON u.id = cs.user_id WHERE cs.id = $1`,
+    [demoStates.IDS.botBuiltProposal, member, ids['usernode-capture-admin']]);
+  assert.deepEqual(botBuilt, {
+    status: 'promoted', check_state: 'pending', linked_issues: [demoStates.IDS.botBuiltRequest],
+    username: 'homeroom_bot', is_synthetic: true, mine: true, admins: false,
+  });
+  const memberView = loadAppView({ id: member, username: 'usernode-capture' });
+  assert.equal(memberView._botBuilt(botBuilt), true);
+
+  // A change of the member's whose checks are part-way through, read the
+  // way the Testing card and the Workshop row's Checks chip read it: the
+  // slower half is the declared checks', three quarters done (#4727).
+  const { rows: [partWay] } = await pool.query(
+    `SELECT id, status, user_id, staging_url, check_state, check_phase, checks_progress
+       FROM chat_sessions WHERE id = $1`, [demoStates.IDS.checksProposal]);
+  assert.deepEqual([partWay.status, partWay.user_id, partWay.check_state, partWay.check_phase],
+    ['promoted', member, 'pending', 'testing']);
+  const testingCard = JSON.parse(JSON.stringify(memberView._changeTestingView(partWay)));
+  assert.deepEqual(testingCard.segments.map((s) => [s.pct, s.state]), [[100, 'done'], [74, 'moving']]);
+  assert.match(testingCard.note[0], /three quarters done/);
+  const chip = JSON.parse(JSON.stringify(memberView._checksChipProgress(
+    memberView._checksProgressView(partWay), true, partWay.checks_progress)));
+  assert.deepEqual(chip, { done: 620, total: 840, pct: 74, text: '620 of 840 checks done' });
+  assert.equal(partWay.checks_progress.unit.done, true, 'the unit suite finished');
+
+  // The full admin's weekly allowance nearly spent: under 15% left, so the
+  // credits pill is red, whichever credit policy the copy runs; the
+  // member's is untouched.
+  const fullAdmin = ids['usernode-shots-full-admin'];
+  const policy = process.env.IDENTITY_CREDIT_POLICY;
+  try {
+    for (const each of [undefined, 'tiered']) {
+      if (each) process.env.IDENTITY_CREDIT_POLICY = each;
+      else delete process.env.IDENTITY_CREDIT_POLICY;
+      const budget = await limits.getBudgetSnapshot(pool, fullAdmin);
+      assert.deepEqual([budget.limitCents, budget.spentCents, budget.remainingCents, budget.capWindow],
+        [5000, 4600, 400, 'weekly'], each || 'legacy');
+      assert.ok(budget.remainingCents / budget.limitCents < 0.15, 'red');
+    }
+  } finally {
+    if (policy === undefined) delete process.env.IDENTITY_CREDIT_POLICY;
+    else process.env.IDENTITY_CREDIT_POLICY = policy;
+  }
+  assert.equal((await limits.getBudgetSnapshot(pool, member)).spentCents, 0, 'the member\'s allowance is untouched');
 });
 
 // Every row a table holds, keyed by its primary key (the whole row where it

@@ -69,7 +69,7 @@ import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { liveAppLabel, LiveAppDot, useLiveAppSlugs } from '../app-frame/live-apps';
 import { AppsLoadError } from '../apps/load-error';
 import { TileSkeleton } from '../apps/tile-skeleton';
-import { BUILD_LINE_TILE_CARD, buildLineTileClass } from '../first-session/build-line-words.js';
+import { buildLineTileClass } from '../first-session/build-line-words.js';
 import { CreateTile } from './create-tile';
 import { gridStore, type GridItem, type GridPlacement, type HomeAppView, type IconView } from './grid-store';
 
@@ -107,6 +107,10 @@ function AppIcon({ icon }: { icon: IconView }) {
  * one press.
  */
 const wired = new WeakSet<Element>();
+
+// The edit-mode remove badges (#4669), for the same reason: one native
+// pointerdown stopper per button element.
+const removeWired = new WeakSet<Element>();
 
 /**
  * The launcher's loading state.
@@ -160,8 +164,8 @@ const RETRY_BTN = 'retry-btn relative inline-flex items-center rounded-full bg-v
   + "before:absolute before:-inset-x-1.5 before:-inset-y-2 before:content-[''] "
   + 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-1';
 
-function AppCardTile({ app, style, yours, live }: {
-  app: HomeAppView; style?: string; yours: boolean; live: boolean;
+function AppCardTile({ app, style, yours, live, editing }: {
+  app: HomeAppView; style?: string; yours: boolean; live: boolean; editing: boolean;
 }) {
   const t = useMessages('home');
   const node = useRef<HTMLDivElement | null>(null);
@@ -203,7 +207,7 @@ function AppCardTile({ app, style, yours, live }: {
       className={`app-card app-card-draggable touch-pan-y relative rounded-xl transition-colors p-3 flex flex-col items-center text-center gap-1.5 ${
         app.clickable ? (yours ? 'cursor-grab' : 'cursor-pointer')
           : app.showRetry ? 'cursor-not-allowed' : 'cursor-not-allowed grayscale-[0.75]'
-      }${app.buildLine ? ` ${BUILD_LINE_TILE_CARD}` : ''}`}
+      }`}
       data-slug={app.slug}
       data-status={app.status}
       data-locked={String(app.locked)}
@@ -216,7 +220,9 @@ function AppCardTile({ app, style, yours, live }: {
       {...(yours ? { 'data-yours': 'true' } : null)}
       {...(live ? { 'data-live': 'true' } : null)}
       onPointerDownCapture={(e) => {
-        if ((e.target as HTMLElement).closest('.retry-btn')) { e.stopPropagation(); return; }
+        if ((e.target as HTMLElement).closest('.retry-btn')
+          // #4669: the edit-mode remove button owns its own press.
+          || (e.target as HTMLElement).closest('.app-card-remove')) { e.stopPropagation(); return; }
         const N = controller();
         if (N) N._cardPointerType = e.pointerType;
       }}
@@ -252,7 +258,9 @@ function AppCardTile({ app, style, yours, live }: {
           controller()?.openCardMenu?.(app.slug, e.currentTarget);
         } else if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
-          if (!e.repeat && app.clickable) (window as any).App?.navigateToApp(app.slug);
+          // #4669: while the grid is being arranged, a tile's own activation
+          // is off — arranging must never open an app by mistake.
+          if (!e.repeat && app.clickable && !editing) (window as any).App?.navigateToApp(app.slug);
         }
       }}
       onClick={(e) => {
@@ -263,11 +271,50 @@ function AppCardTile({ app, style, yours, live }: {
         if (N?._suppressClick) { N._suppressClick = false; return; }
         const t = e.target as HTMLElement;
         if (t.closest('.retry-btn')) return;
+        if (t.closest('.app-card-remove')) return;
+        // #4669: a tap while editing does nothing — the grid's one job is
+        // arranging, and a tile under the finger is a thing being moved, not
+        // a door.
+        if (editing) return;
         if (!app.clickable) return;
         (window as any).App?.navigateToApp(app.slug);
       }}
     >
       <div className={app.showRetry ? 'relative w-14 h-14 shrink-0 grayscale-[0.75]' : 'relative w-14 h-14 shrink-0'}>
+        {/*
+            EDIT MODE (#4669). The remove badge sits on the icon wrapper, not
+            the card, so the wiggle's transform on this node and the kit's
+            drag transform on the card never meet. One per tile of your own,
+            never on a demo tile — their menu has no remove item either.
+            The pointerdown stopper is NATIVE (ref, not a React prop) for the
+            same reason home.js gives for the Discover lanes' stopDrag: React
+            attaches at the root, and the kit's recognizer on #app-list has
+            already claimed the event by the time a synthetic handler runs.
+        */}
+        {editing && yours && !app.demo ? (
+          <button
+            ref={(el) => {
+              // Same once-per-element guard the card's own wireRef uses: an
+              // inline ref runs again on every render that keeps the node,
+              // and a second listener would still be only one stopPropagation,
+              // but the WeakSet keeps the intent honest.
+              if (!el || removeWired.has(el)) return;
+              removeWired.add(el);
+              el.addEventListener('pointerdown', (e) => e.stopPropagation());
+            }}
+            type="button"
+            className="app-card-remove absolute -top-1.5 -left-1.5 z-10 flex h-5 w-5 items-center justify-center rounded-full bg-zinc-700 text-white shadow-[0_0_0_1.5px_var(--app-sheet-line)] dark:bg-zinc-500"
+            aria-label={t('home:edit.removeNamed', { app: app.name })}
+            onClick={(e) => {
+              e.stopPropagation();
+              controller()?._editRemove?.(app.slug);
+            }}
+          >
+            {/* No MinusIcon in the kit's set: the glyph is the minus itself,
+                a text node at the badge's 20px scale. */}
+            <span aria-hidden="true" className="text-[14px] leading-none font-semibold">&minus;</span>
+          </button>
+        ) : null}
         {/*
             The tile KEEPS its 3.5rem box — the grid's cell height, the drag
             overlay's mirror and HomeLayout's geometry are all measured
@@ -423,6 +470,9 @@ export function AppGrid() {
       id="app-list"
       className="grid grid-cols-4 gap-1.5 sm:gap-2 p-2 pt-1.5 sm:p-3 sm:pt-2"
       data-view={state.ready ? state.view : undefined}
+      // EDIT MODE (#4669). app.css keys the wiggle on this attribute; absent
+      // otherwise, so the resting grid's markup is untouched.
+      data-editing={state.editing ? 'true' : undefined}
     >
       {state.notice && state.notice.tone === 'error' ? (
         // #1899: a failed load is the shared error card, with a Retry.
@@ -462,6 +512,7 @@ export function AppGrid() {
           style={cellStyle(item)}
           yours={state.view === 'grid'}
           live={live.includes(item.app.slug)}
+          editing={state.editing}
         />
       ))}
       {/*
@@ -469,6 +520,13 @@ export function AppGrid() {
           until Home.render() has painted the launcher — the store's initial
           value — so the prerender and the first client render agree on this
           node's children. Its cell comes from the same paint as the tiles'.
+
+          In EDIT MODE (#4669) it stays exactly what it is at rest — same
+          face, same label, same cell — so the shelf's last tile never
+          changes identity under the viewer. The mode's other entry, the
+          "Add apps" sheet, lives in the heading's action seat instead
+          (index.tsx), beside "Done".
+
           A held-back tile (#4757) draws nothing HERE: that grid state's
           compact New project entry lives on the "Show all N apps" line
           outside this canvas, so the markup in every state is what it was.

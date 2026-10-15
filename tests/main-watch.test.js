@@ -500,7 +500,7 @@ function sweepPool(rows, { claim } = {}) {
     calls: inner.calls,
     writes: inner.writes,
     async query(sql, params) {
-      if (/FROM apps\s+WHERE main_check_state IN \('running', 'confirming'\)/.test(sql)) {
+      if (/FROM apps\b/.test(sql) && /main_check_state IN \('running', 'confirming'\)/.test(sql)) {
         inner.calls.push({ sql, params });
         return { rows, rowCount: rows.length };
       }
@@ -521,7 +521,7 @@ test('resumeInterrupted: an interrupted confirmation resumes at the re-run, with
   const suite = scripted(pass);
   try {
     const out = await mainWatch.resumeInterrupted(config, { pool, olderThanMs: 1000 });
-    assert.deepEqual(out.resumed, [{ appId: 12, sha: SHA, was: 'confirming' }]);
+    assert.deepEqual(out.resumed, [{ appId: 12, sha: SHA, was: 'confirming', adopting: false }]);
     await out.done;
     // Only the rows a live run could not still be stamping.
     const sel = pool.calls.find((c) => /main_check_state IN \('running', 'confirming'\)/.test(c.sql));
@@ -566,12 +566,197 @@ test('resumeInterrupted: an interrupted first run runs the suite again for that 
   const suite = scripted(pass);
   try {
     const out = await mainWatch.resumeInterrupted(config, { pool, olderThanMs: 1000 });
-    assert.deepEqual(out.resumed, [{ appId: 12, sha: SHA, was: 'running' }]);
+    assert.deepEqual(out.resumed, [{ appId: 12, sha: SHA, was: 'running', adopting: false }]);
     await out.done;
     assert.equal(suite.calls.length, 1);
     assert.deepEqual(pool.writes().map(([state]) => state), ['passing']);
     assert.equal(posted.length, 0, 'green after nothing: nobody is told');
   } finally { suite.restore(); }
+});
+
+// 12 Oct 2026: a release restarted the platform while main was confirming a
+// red, and main stayed held until the run was 12 minutes stale and ran from
+// the start. The run's Jobs were still on the cluster. Now a run whose queue
+// row has stopped being heartbeated is taken over at once, and its Jobs read.
+const kubernetes = require('../src/services/kubernetes');
+const DEAD = { dead_run_id: '0f0e0d0c-0b0a-4908-8706-050403020100', dead_owner: 'platform-old-pod', dead_admitted_at: new Date() };
+const KUBE = { workerRuntime: 'kubernetes', kubernetes: { workerNamespace: 'workers' } };
+
+function adoptStubs({ jobs = [{ name: 'sv-unit-suite-smain-12-0f0e0d0c', state: 'running' }], result = { state: 'succeeded' }, outcome = pass } = {}) {
+  const real = {
+    find: kubernetes.findCheckJobs, collect: kubernetes.collectCheckJob,
+    del: kubernetes.deleteSettledCheckJobs, read: unitSuite.outcomeFromLog,
+  };
+  const seen = { find: [], collect: [], deleted: [], read: [] };
+  kubernetes.findCheckJobs = async (cfg, args) => {
+    seen.find.push(args);
+    return { unitSuites: jobs, unitSuite: jobs[0] || null, unitShards: 1, captures: [], capture: null };
+  };
+  kubernetes.collectCheckJob = async (cfg, args) => { seen.collect.push(args); return { stdout: '', stderr: '', exitCode: 0, timedOut: false, ...result }; };
+  kubernetes.deleteSettledCheckJobs = async (cfg, args) => { seen.deleted.push(args); return 1; };
+  unitSuite.outcomeFromLog = async (args) => { seen.read.push(args); return outcome; };
+  return {
+    seen,
+    restore() {
+      kubernetes.findCheckJobs = real.find; kubernetes.collectCheckJob = real.collect;
+      kubernetes.deleteSettledCheckJobs = real.del; unitSuite.outcomeFromLog = real.read;
+    },
+  };
+}
+
+// The sweep's pool, also answering the queue row's take-over: claimed
+// unless `claimed` is false.
+function adoptPool(row, { claimed = true } = {}) {
+  const pool = sweepPool([row]);
+  const query = pool.query;
+  pool.query = async (sql, params) => {
+    if (/UPDATE check_runs SET owner = \$2, heartbeat_at = NOW\(\)/.test(sql)) {
+      pool.calls.push({ sql, params });
+      return { rows: [], rowCount: claimed ? 1 : 0 };
+    }
+    return query(sql, params);
+  };
+  return pool;
+}
+
+test('resumeInterrupted: a run whose process died is taken over at once, and its Jobs read rather than run again', async () => {
+  const pool = adoptPool({ ...INTERRUPTED_CONFIRMING, ...DEAD });
+  const stubs = adoptStubs();
+  const suite = scripted();
+  try {
+    const out = await mainWatch.resumeInterrupted(KUBE, { pool });
+    assert.deepEqual(out.resumed, [{ appId: 12, sha: SHA, was: 'confirming', adopting: true }]);
+    await out.done;
+    const sel = pool.calls.find((c) => /main_check_state IN \('running', 'confirming'\)/.test(c.sql));
+    assert.match(sel.sql, /OR dead\.run_id IS NOT NULL/, 'a dead queue row is enough; no 12-minute wait');
+    assert.equal(suite.calls.length, 0, 'no new run: the confirming run\'s own Jobs are read');
+    assert.deepEqual(stubs.seen.find, [{ sessionId: 'main-12', previewRunId: DEAD.dead_run_id }]);
+    assert.equal(stubs.seen.collect.length, 1);
+    assert.equal(stubs.seen.read[0].sessionId, 'main-12');
+    const claim = pool.calls.find((c) => /UPDATE check_runs SET owner = \$2/.test(c.sql));
+    assert.deepEqual([claim.params[0], claim.params[2]], [DEAD.dead_run_id, 'platform-old-pod'], 'claimed from the owner it was seen with');
+    assert.ok(pool.calls.some((c) => /DELETE FROM check_runs WHERE run_id = \$1/.test(c.sql) && c.params[0] === DEAD.dead_run_id),
+      'its queue row is cleared');
+    assert.deepEqual(stubs.seen.deleted, [{ sessionId: 'main-12', previewRunId: DEAD.dead_run_id }], 'and its read-out Jobs deleted');
+    assert.deepEqual(pool.writes().map(([state]) => state), ['confirming', 'passing']);
+  } finally { suite.restore(); stubs.restore(); }
+});
+
+test('resumeInterrupted: a dead run that left no Jobs, or one another process took first, does not stand in the way', async () => {
+  let pool = adoptPool({ ...INTERRUPTED_CONFIRMING, ...DEAD });
+  let stubs = adoptStubs({ jobs: [] });
+  let suite = scripted(pass);
+  try {
+    await (await mainWatch.resumeInterrupted(KUBE, { pool })).done;
+    assert.equal(suite.calls.length, 1, 'no Jobs to read: the confirmation runs again');
+  } finally { suite.restore(); stubs.restore(); }
+
+  pool = adoptPool({ ...INTERRUPTED_CONFIRMING, ...DEAD }, { claimed: false });
+  stubs = adoptStubs();
+  suite = scripted(pass);
+  try {
+    await (await mainWatch.resumeInterrupted(KUBE, { pool })).done;
+    assert.equal(suite.calls.length, 0);
+    assert.equal(stubs.seen.find.length, 0, 'the process that took it reads it');
+    assert.deepEqual(pool.writes().map(([state]) => state), ['confirming'], 'and stores the verdict');
+  } finally { suite.restore(); stubs.restore(); }
+
+  // A row still waiting for its slot had no Jobs: it is re-driven, as before.
+  pool = adoptPool({ ...INTERRUPTED_CONFIRMING, ...DEAD, dead_admitted_at: null });
+  stubs = adoptStubs();
+  suite = scripted(pass);
+  try {
+    const out = await mainWatch.resumeInterrupted(KUBE, { pool });
+    assert.equal(out.resumed[0].adopting, false);
+    await out.done;
+    assert.equal(stubs.seen.find.length, 0);
+    assert.equal(suite.calls.length, 1);
+  } finally { suite.restore(); stubs.restore(); }
+});
+
+// Two adopters of one dead run at once (a boot sweep and the timer, or two
+// processes in a rollout's overlap): the queue row's claim is a compare-and-
+// set, and the one that lost it used to clear the row anyway, in its
+// `finally`. That deleted the row the winner heartbeats and freed its checks
+// slot while its Jobs still ran. The row here is one in-memory check_runs row
+// that the claim, the delete and the heartbeat really act on.
+function contestedPool(row) {
+  const pool = sweepPool([row], { claim: { was_state: 'running', was_sha: SHA, was_paused_sha: null } });
+  const query = pool.query;
+  const queueRow = { run_id: DEAD.dead_run_id, owner: DEAD.dead_owner, present: true };
+  pool.queueRow = queueRow;
+  pool.query = async (sql, params) => {
+    if (/UPDATE check_runs SET owner = \$2, heartbeat_at = NOW\(\)/.test(sql)) {
+      pool.calls.push({ sql, params });
+      const won = queueRow.present && params[0] === queueRow.run_id && queueRow.owner === params[2];
+      if (won) queueRow.owner = params[1];
+      return { rows: [], rowCount: won ? 1 : 0 };
+    }
+    if (/DELETE FROM check_runs WHERE run_id = \$1/.test(sql)) {
+      pool.calls.push({ sql, params });
+      const hit = queueRow.present && params[0] === queueRow.run_id;
+      if (hit) queueRow.present = false;
+      return { rows: [], rowCount: hit ? 1 : 0 };
+    }
+    return query(sql, params);
+  };
+  return pool;
+}
+
+test('resumeInterrupted: of two adopters of one dead run, only the one that claimed it clears its queue row', async () => {
+  const pool = contestedPool({
+    ...INTERRUPTED_CONFIRMING, ...DEAD, main_check_state: 'running',
+    main_check_detail: { prNumber: 41, sessionId: 3 },
+  });
+  const stubs = adoptStubs();
+  // The winner's Job is still running: its read waits until it ends.
+  let endJob;
+  const jobEnded = new Promise((resolve) => { endJob = resolve; });
+  const collect = kubernetes.collectCheckJob;
+  kubernetes.collectCheckJob = async (cfg, args) => { await jobEnded; return collect(cfg, args); };
+  const suite = scripted(pass);
+  try {
+    const [first, second] = await Promise.all([
+      mainWatch.resumeInterrupted(KUBE, { pool }),
+      mainWatch.resumeInterrupted(KUBE, { pool }),
+    ]);
+    assert.equal(first.resumed[0].adopting, true);
+    assert.equal(second.resumed[0].adopting, true);
+    // Both have tried the claim; the loser has gone, the winner is reading.
+    for (let i = 0; i < 50 && stubs.seen.collect.length === 0; i++) await new Promise((r) => setImmediate(r));
+    const claims = pool.calls.filter((c) => /UPDATE check_runs SET owner = \$2/.test(c.sql));
+    assert.equal(claims.length, 2, 'both asked for the row');
+    assert.equal(stubs.seen.find.length, 1, 'only the winner looks for the Jobs');
+    assert.equal(pool.queueRow.present, true, 'the loser left the row the winner holds');
+    assert.ok(!pool.calls.some((c) => /DELETE FROM check_runs/.test(c.sql)), 'nothing has cleared it yet');
+
+    endJob();
+    await Promise.all([first.done, second.done]);
+    const deletes = pool.calls.filter((c) => /DELETE FROM check_runs WHERE run_id = \$1/.test(c.sql));
+    assert.equal(deletes.length, 1, 'cleared once, by the winner, after its read');
+    assert.equal(pool.queueRow.present, false);
+    assert.equal(suite.calls.length, 0, 'nobody ran the suite again');
+    assert.deepEqual(pool.writes().map(([state]) => state), ['passing'], 'one verdict, the winner\'s');
+  } finally {
+    kubernetes.collectCheckJob = collect;
+    suite.restore(); stubs.restore();
+  }
+});
+
+test('a main run labels its Jobs with its queue row, so a successor can find them', () => {
+  const src = require('node:fs').readFileSync(path.join(__dirname, '..', 'src/services/main-watch.js'), 'utf8');
+  assert.match(src, /\.\.\.\(slot\.runId \? \{ previewRunId: slot\.runId \} : \{\}\)/);
+  // The names a UUID run id gives an app's split suite, at the longest app
+  // ids: each Job and each input Secret its own, within the 63-character
+  // limit (the 10 Oct 2026 outage was shards sharing one Secret).
+  const runId = 'ffffffff-ffff-4fff-bfff-ffffffffffff';
+  const run = kubernetes.checkJobRunName('unit-suite', 'main-99999', runId);
+  const names = [run, ...['u2', 'u3'].map((sfx) => kubernetes.withSuffix(run, sfx))];
+  const secrets = [kubernetes.withSuffix(run, 'input'), ...['u2', 'u3'].map((sfx) => kubernetes.withSuffix(run, `${sfx}-input`))];
+  for (const n of [...names, ...secrets]) assert.ok(n.length <= 63, n);
+  assert.equal(new Set(names.map((n) => n.slice(0, 63))).size, 3);
+  assert.equal(new Set(secrets).size, 3);
+  assert.ok(names.every((n) => n.startsWith('sv-unit-suite-smain-99999-')), 'found by findCheckJobs\' name prefix');
 });
 
 test('resumeInterrupted: nothing interrupted, nothing runs; the switch off, no query', async () => {

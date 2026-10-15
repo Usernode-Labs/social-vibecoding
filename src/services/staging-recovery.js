@@ -39,6 +39,11 @@ function checkRunOverdue(session, { now = Date.now(), staleMs = checksStaleMs() 
   // process dies. findStuckCheckSessions below is the backstop for one whose
   // place in line was lost.
   if (session?.check_phase === 'queued') return false;
+  // With WF_PREVIEWS_ENABLED on, 'pending' means the preview machine has a
+  // build or run outstanding, alive while its work lease is: nothing is
+  // overdue by clock (bug 9). A row it never touched is enrolled by the
+  // stuck-checks sweep, which still judges by clock.
+  if (session?.check_state === 'pending' && require('./preview-workflow').enabled()) return false;
   if (!(session?.checks_commit_sha || session?.handoff_head_sha)) return false;
   const checkedAt = session?.checks_checked_at == null
     ? NaN
@@ -93,6 +98,9 @@ async function markInterruptedBuilds(pool, sessionIds) {
 // its row in the checks queue (services/checks-queue.js) is the queue's and,
 // if its process died, the harvest's. Only a 'queued' session with no row
 // left in line is overdue, by the same clock as any other.
+// A session the preview machine is building or checking is left out: its
+// work is alive while its lease is, and its errors run again on its own
+// timer.
 async function findStuckCheckSessions({
   pool,
   staleMs = checksStaleMs(),
@@ -131,7 +139,18 @@ async function findStuckCheckSessions({
   );
   // The SQL is the efficient filter; this is the executable invariant that
   // keeps a future query refactor from widening recovery to ordinary sessions.
-  return { rows: rows.filter(isStuckCheckRecoveryScope) };
+  const inScope = rows.filter(isStuckCheckRecoveryScope);
+  if (!inScope.length || !workflow().enabled()) return { rows: inScope };
+  // Left to the machine only while it builds or checks the session: a
+  // 'pending' from before it held the row is still re-driven here (and the
+  // recheck is then the machine's).
+  const { rows: held } = await pool.query(
+    `SELECT DISTINCT key FROM wf_work
+      WHERE machine = 'preview' AND key = ANY($1::text[]) AND kind IN ('preview.prepare', 'checks.run')
+        AND status IN ('queued', 'running', 'reported')`,
+    [inScope.map((r) => `session:${r.id}`)]);
+  const machines = new Set(held.map((h) => h.key));
+  return { rows: inScope.filter((r) => !machines.has(`session:${r.id}`)) };
 }
 
 // #237: how many 'error' verdicts in a row the error lane above re-runs on
@@ -239,6 +258,23 @@ const ROLLOUT_RETRY_DETAIL = 'Checks ran while Homeroom was updating, so they wi
 // merely-unhealthy-but-running container (that's a 502, an app bug, not
 // a missing preview) to avoid churn.
 //
+//
+//   5. The preview's DATABASE is gone, or is on a server being emptied.
+//      Only possible with a separate preview database server
+//      (STAGING_DB_ADMIN_URL, db-manager.js), which holds nothing but copies
+//      and may be wiped and come back empty. The container built against it
+//      keeps running and answers an error for every page that reads its
+//      database, so a liveness check sees nothing wrong and a checks run
+//      would record those errors against the proposal. Detected from the
+//      runtime's own labels, which name the exact database it was given and
+//      the server it was made on (dbManager.previewDatabaseVerdict): a
+//      session can have older clones elsewhere, and they must not vouch for
+//      this one. A server that cannot be read is "cannot tell". The rebuild
+//      rebuilds the app's template on the empty server and copies again.
+//      The same look moves previews off a preview server that is being
+//      drained before it is removed. With one server the question is not
+//      asked, and a preview built before the setting has no such labels.
+//
 // `config` is optional. Without it the staleness comparison is skipped and
 // the verdict is liveness-only — the pre-#851 behaviour. Every real caller
 // passes one; the fallback keeps the function usable from a context that has
@@ -276,6 +312,7 @@ async function stagingNeedsRebuild(session, { config = null, headSha = null } = 
   // exited/dead/created.
   if (state.status !== 'running') return true;
   if (previewIsOfAnotherCommit(session, headSha)) return true;
+  if (await previewDatabaseNeedsRebuild(session, state)) return true;
   if (!config) return false;
 
   const stagingEnv = require('./staging-env');
@@ -287,6 +324,43 @@ async function stagingNeedsRebuild(session, { config = null, headSha = null } = 
     sessionId: session.id, expected, actual,
   });
   return true;
+}
+
+// The state and labels of a session's preview runtime, as stagingNeedsRebuild
+// reads them, for a caller that only wants to look (the drain status in
+// staging-reap). Null when there is no runtime to read or it could not be
+// read. Never throws.
+async function inspectPreviewRuntime(session, config = null) {
+  try {
+    if (session.staging_runtime_kind === 'kubernetes') {
+      if (!session.staging_runtime_name) return null;
+      return await require('./application-runtime').inspect({
+        ...config, appRuntime: 'kubernetes',
+        kubernetes: { appNamespace: process.env.APP_NAMESPACE || 'social-apps', ...config?.kubernetes },
+      }, { runtimeKind: 'kubernetes', runtimeName: session.staging_runtime_name });
+    }
+    if (!session.staging_container_id) return null;
+    return await require('./docker').inspectContainer(session.staging_container_id);
+  } catch (_) { return null; }
+}
+
+// Shape 5 above. Never throws: a failed look is "cannot tell".
+async function previewDatabaseNeedsRebuild(session, state) {
+  let dbManager;
+  try { dbManager = require('./db-manager'); } catch (_) { return false; }
+  if (typeof dbManager.previewDatabaseVerdict !== 'function') return false;
+  let verdict = null;
+  try { verdict = await dbManager.previewDatabaseVerdict(state?.labels || null); } catch (_) { return false; }
+  if (verdict === 'gone') {
+    log.info('staging-recovery', 'Preview database is gone from the server it was made on, so a rebuild is needed', {
+      sessionId: session.id,
+    });
+  } else if (verdict === 'draining') {
+    log.info('staging-recovery', 'Preview database is on a server being drained, so a rebuild is needed', {
+      sessionId: session.id,
+    });
+  }
+  return !!verdict;
 }
 
 // Is the preview of a session whose checks keep erroring still inside the
@@ -320,15 +394,60 @@ function previewIsOfAnotherCommit(session, headSha) {
   return true;
 }
 
+// A proposal up for approval: its reviewed head is the head its votes and
+// the merge gate are about (routes/votes.js keeps it current on every head
+// move). Any other row's reviewed head may be left over from an earlier
+// review (unpromote keeps it), so it is not read as the head.
+const UP_FOR_APPROVAL = new Set(['promoted', 'merging']);
+
+// The head a proposal is up for approval on: an imported row's own PR head,
+// a native proposal's reviewed head; null for anything else, or none
+// recorded.
+function approvedHeadSha(session) {
+  if (!session) return null;
+  if (session.source === 'imported') return session.imported_pr_head_sha || null;
+  return UP_FOR_APPROVAL.has(session.status) ? (session.reviewed_head_sha || null) : null;
+}
+
 // The commit a recheck is about to judge, from the row's own pins: the
-// imported head for an imported row, otherwise the checks pin (which a clean
+// imported head for an imported row, the reviewed head for a proposal up
+// for approval (approvedHeadSha), otherwise the checks pin (which a clean
 // sync carries forward to the sync commit — exactly the case where the
 // preview is a commit behind). No GitHub read: the pin is what the votes and
 // the verdict describe, and a recheck is asked to judge that.
+//
+// The reviewed head comes before the checks pin: when the branch moved under
+// a run (restart recovery rolled Club Votes' head back from a review fix to
+// the commit before it, 12 October 2026), the pin is the run's old commit,
+// and judging it again, or collecting its run, says nothing about the head
+// people vote on. Its pass read as ready to try; its own head then failed.
 function recheckHeadSha(session) {
   if (!session) return null;
-  if (session.source === 'imported') return session.imported_pr_head_sha || null;
+  const approved = approvedHeadSha(session);
+  if (approved || session.source === 'imported') return approved;
   return session.checks_commit_sha || session.handoff_head_sha || session.reviewed_head_sha || null;
+}
+
+// The pins a recheck decides by, read now: a caller's row can predate a
+// promote (the promote route's own copy still says 'active') or a head move.
+// The caller's copy, with these, else the copy as it was.
+async function currentPins(pool, session) {
+  if (!session || !session.id || !pool) return session;
+  try {
+    const { rows: [row] } = await pool.query(
+      `SELECT id, status, source, reviewed_head_sha, imported_pr_head_sha, checks_commit_sha, handoff_head_sha
+         FROM chat_sessions WHERE id = $1`,
+      [session.id]
+    );
+    if (!row || Number(row.id) !== Number(session.id)) return session;
+    const { id, ...pins } = row;
+    return { ...session, ...pins };
+  } catch (err) {
+    log.warn('staging-recovery', 'Could not read the row before a recheck; deciding by the copy given', {
+      sessionId: session.id, err: err.message,
+    });
+    return session;
+  }
 }
 
 // Recovery's own `reason` strings name the CODE PATH; visuals.CHECK_TRIGGERS
@@ -376,6 +495,16 @@ const FORCED_RECHECK_REASONS = new Set(['manual-recheck', 'testing-update']);
 // shots changed, so that run answers the old question. Every other recheck,
 // a manual one included, leaves such a run to be collected.
 const REPLACING_RECHECK_REASONS = new Set(['testing-update', 'shots-update']);
+// With WF_PREVIEWS_ENABLED on, the paths below hand their request to the
+// preview machine (services/preview-workflow.js). The reasons that are an
+// observation of a runtime that is gone: for a session the machine holds,
+// those report PreviewLost and the machine rebuilds what served. A Preview
+// click is one: the route rebuilds only once it found the runtime missing or
+// stale (routes/sessions.js inspectPreview). Asked as a plain "ensure", the
+// machine would answer that it already serves that head, and the reviewer's
+// loader would wait for a preview nothing builds.
+const OBSERVED_REASONS = new Set(['startup', 'heal', 'preview-click']);
+const workflow = () => require('./preview-workflow');
 
 // Rebuild the staging preview for a single session that has a branch +
 // commits ahead of main but a NULL/dead staging_url. Shared by the
@@ -394,9 +523,14 @@ const REPLACING_RECHECK_REASONS = new Set(['testing-update', 'shots-update']);
 // (broadcastGlobal session_event) AND the group-chat vote panel
 // (pushSessionUpdate) so the Preview button reappears on the PR card
 // without anyone needing to reload.
-async function rebuildSessionStaging({ config, pool, session, reason }) {
+async function rebuildSessionStaging({ config, pool, session, reason, headSha = null }) {
   const staging = require('./staging');
   const { broadcastGlobal, pushSessionUpdate } = require('./ws');
+  const handOff = workflow().enabled();
+  if (handOff && OBSERVED_REASONS.has(reason) && await workflow().held(session.id)
+      && await workflow().lost({ session, detail: reason })) {
+    return 'handed_off';
+  }
 
   const [, owner, repo] = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
   if (!owner || !repo) {
@@ -457,6 +591,13 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
     });
     compare = data;
   } catch (err) {
+    // The machine builds the head the row knows; a branch that is gone
+    // fails its build, which the error lane bounds.
+    if (handOff) {
+      await workflow().revision({ pool, session, head: importedHead || session.checks_commit_sha, source: reason,
+        trigger: checkTriggerForReason(reason) });
+      return 'handed_off';
+    }
     // Transient (API hiccup) or a deleted branch — record a retryable
     // 'error' verdict so the existing exponential backoff +
     // CHECK_MAX_AUTO_RETRIES bound the retries instead of the old silent
@@ -500,7 +641,15 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
   // imported_pr_head_sha (and every vote cast against it) still points at
   // the older commit. The head-change sweep is what advances that SHA, and
   // it clears the tally when it does; this path must not front-run it.
+  // The same for a native proposal up for approval: its reviewed head
+  // (approvedHeadSha, or the head a recheck read for it) is the commit its
+  // votes describe, and the one recheckHeadSha judges a preview by. A tip
+  // past it is a push its reconcile has not taken in yet, which moves the
+  // reviewed head and re-runs the checks itself. Building the tip here left
+  // a preview of another commit than the head, rebuilt again on every look.
   const commitHash = importedHead
+    || headSha
+    || approvedHeadSha(session)
     || compare.commits[compare.commits.length - 1]?.sha
     || 'latest';
   const app = { id: session.app_id, slug: session.app_slug, name: session.app_name, repo_url: session.repo_url };
@@ -511,11 +660,13 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
   // allowed through storeChecks' latest-head CAS instead of being discarded
   // as stale and leaving the old commit permanently pending. Imported rows
   // remain pinned to importedHead above.
-  await visuals.setChecksPending(pool, session.id, commitHash, null, checkTriggerForReason(reason)).catch((err) =>
-    log.warn('staging-recovery', 'rebuild setChecksPending failed (non-fatal)', {
-      sessionId: session.id, err: err.message,
-    }));
-  visuals.notifyChecksPending(session.id, commitHash, null, checkTriggerForReason(reason));
+  if (!handOff) {
+    await visuals.setChecksPending(pool, session.id, commitHash, null, checkTriggerForReason(reason)).catch((err) =>
+      log.warn('staging-recovery', 'rebuild setChecksPending failed (non-fatal)', {
+        sessionId: session.id, err: err.message,
+      }));
+    visuals.notifyChecksPending(session.id, commitHash, null, checkTriggerForReason(reason));
+  }
 
   // Create PR if missing (active-session recovery only). Route through
   // applyPrMetadata — NOT a bare createPR — so the PR gets a real
@@ -583,6 +734,17 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
         ...require('./github').describeGithubError(err),
       });
     }
+  }
+
+  // The machine builds, checks and announces it (a Preview click on a
+  // session whose machine serves nothing yet asks for the preview itself).
+  if (handOff) {
+    if (reason === 'preview-click') {
+      await workflow().request({ pool, session, head: commitHash, reason: 'ensure' });
+    } else {
+      await workflow().revision({ pool, session, head: commitHash, source: reason, trigger: checkTriggerForReason(reason) });
+    }
+    return 'handed_off';
   }
 
   // Announce the rebuild BEFORE it starts. Building a preview takes
@@ -763,6 +925,13 @@ async function announceRebuildStarted({ pool, session, imported }) {
 async function recordChecksSkipped({
   config, pool, session, commitSha, expectedCommitSha = commitSha, reason,
 }) {
+  if (workflow().enabled()) {
+    await workflow().skipped({ session, head: commitSha, reason }).catch((err) =>
+      log.warn('staging-recovery', 'Could not hand the skipped verdict to the preview machine', {
+        sessionId: session.id, err: err.message,
+      }));
+    return;
+  }
   const visuals = require('./visuals');
   try {
     const stored = await visuals.storeChecksSkipped(
@@ -810,8 +979,16 @@ async function recordStagingBootFailure({ config, pool, session, commitHash, err
   // detail; this decides who gets told.
   const infrastructure = bootFailureIsInfrastructure(err);
 
+  // A clone that failed on the preview database server (or because of it) is
+  // the platform's fault (dbManager.cloneDatabase marks it). Stored as one,
+  // so check_error_platform is set and the platform-fault retry allowance
+  // applies (errorWithinAutoRetries, rearmPlatformFaults). Nothing else is
+  // stored differently: the connection-limit case above keeps the plain
+  // error it always had.
+  const platformFault = err?.previewDatabaseServerFault === true;
   const stored = await visuals.storeChecks(
-    pool, session.id, commitHash, { state: 'error', results: [] }, detail
+    pool, session.id, commitHash,
+    { state: 'error', results: [], ...(platformFault ? { platformFault: true } : {}) }, detail
   );
   if (stored === false) {
     log.info('staging-recovery', 'Discarded stale staging failure', {
@@ -963,7 +1140,28 @@ async function recordStagingBootFailure({ config, pool, session, commitHash, err
 // `queuedSince` is the place in the checks queue an interrupted run had
 // (check-harvest's re-drive): the direct re-run asks for its slot as of then.
 // A rebuild is a new run and queues anew once its preview is up.
-async function recheckSessionChecks({ config, pool, session, reason, queuedSince = null }) {
+async function recheckSessionChecks({ config, pool, session, reason, queuedSince = null, redrive = null }) {
+  // The machine decides between a run against what serves and a new build.
+  // A deferred head that merges cleanly now resumes its own episode.
+  if (workflow().enabled()) {
+    const platform = require('../workflow/platform.ts');
+    if (reason === 'conflict-resolved' && session.checks_commit_sha && await workflow().held(session.id)) {
+      await platform.conflictResolved(Number(session.id), Number(session.app_id), session.checks_commit_sha);
+      return 'handed_off';
+    }
+    await workflow().recheck({ pool, session, reason, trigger: checkTriggerForReason(reason) || null,
+      system: !FORCED_RECHECK_REASONS.has(reason) && reason !== 'preview-click' });
+    return 'handed_off';
+  }
+  // The head is decided from the row as it stands now, never from a pin a
+  // run of an earlier commit left behind (recheckHeadSha).
+  session = await currentPins(pool, session);
+  const head = recheckHeadSha(session);
+  if (head && session.checks_commit_sha && head.toLowerCase() !== String(session.checks_commit_sha).toLowerCase()) {
+    log.info('staging-recovery', 'The head moved from the commit its checks were pinned to; checking the head', {
+      sessionId: session.id, reason, was: session.checks_commit_sha, head,
+    });
+  }
   const replaceRun = REPLACING_RECHECK_REASONS.has(reason);
   // A run of this commit still on the cluster, running or finished but not
   // yet read, is the run a recheck asks for: the harvest collects it
@@ -971,9 +1169,12 @@ async function recheckSessionChecks({ config, pool, session, reason, queuedSince
   // set a run that is testing back to "building", and before a rebuild,
   // which would replace the preview under it and take the lifecycle row its
   // harvest writes through. Its verdict, when stored, clears its manifest,
-  // and a recheck after that starts a fresh run as before.
+  // and a recheck after that starts a fresh run as before. Only a run of the
+  // HEAD is asked about: one of an earlier commit is not the run a recheck
+  // asks for, and the stamp below moves the pin off it, so its verdict is
+  // never stored (visuals.storeChecks writes only for the pinned commit).
   if (!replaceRun) {
-    const left = await require('./check-harvest').runToCollect(config, pool, session.id, session.checks_commit_sha || null);
+    const left = await require('./check-harvest').runToCollect(config, pool, session.id, head);
     if (left) {
       log.info('staging-recovery', 'A run of this commit is still on the cluster; leaving it to the harvest', {
         sessionId: session.id, reason, ...left,
@@ -988,26 +1189,29 @@ async function recheckSessionChecks({ config, pool, session, reason, queuedSince
   // re-stamps idempotently (same commit sha → failure streak preserved).
   {
     const visuals = require('./visuals');
-    await visuals.setChecksPending(pool, session.id, session.checks_commit_sha || null, 'building', checkTriggerForReason(reason))
+    await visuals.setChecksPending(pool, session.id, head, 'building', checkTriggerForReason(reason))
       .catch((err) => log.warn('staging-recovery', 'recheck setChecksPending failed (non-fatal)', {
         sessionId: session.id, err: err.message,
       }));
-    visuals.notifyChecksPending(session.id, session.checks_commit_sha || null, 'building', checkTriggerForReason(reason));
+    visuals.notifyChecksPending(session.id, head, 'building', checkTriggerForReason(reason));
   }
+  // The pin is the head now: what the paths below record against it.
+  if (head) session = { ...session, checks_commit_sha: head };
   // The head this run is about to judge rides along, so a preview that is
   // still of the pre-sync commit is rebuilt rather than tested against.
   if (await stagingNeedsRebuild(session, { config, headSha: recheckHeadSha(session) })) {
     // rebuildSessionStaging owns the capture (see above) and the no-op
     // short-circuits (missing owner/repo or bot token → 'skipped').
-    return rebuildSessionStaging({ config, pool, session, reason });
+    return rebuildSessionStaging({ config, pool, session, reason, headSha: approvedHeadSha(session) });
   }
   // Healthy preview: re-run the checks directly. captureForSession reaches
   // the staging container by name over the docker network, so it needs only
-  // the app descriptor + a commit to stamp (best-effort: the commit the
-  // prior verdict described). _inFlight-guarded internally.
+  // the app descriptor + a commit to stamp (the head). _inFlight-guarded
+  // internally, and a capture of an earlier commit still in flight is
+  // superseded by this one.
   const visuals = require('./visuals');
   const app = { id: session.app_id, slug: session.app_slug, name: session.app_name, repo_url: session.repo_url };
-  visuals.captureForSession(config, session, app, session.checks_commit_sha || null, null, {
+  visuals.captureForSession(config, session, app, head, null, {
     send: null,
     trigger: checkTriggerForReason(reason),
     // A human pressing "Re-run checks" — or an agent correcting the capture
@@ -1016,6 +1220,8 @@ async function recheckSessionChecks({ config, pool, session, reason, queuedSince
     force: FORCED_RECHECK_REASONS.has(reason),
     replaceRun,
     ...(queuedSince ? { queuedSince } : {}),
+    // Why the harvest re-drives it (check-harvest.js), kept in its manifest.
+    ...(redrive ? { redrive } : {}),
   })
     .catch((err) => log.warn('staging-recovery', 'Direct checks re-run failed (non-fatal)', {
       sessionId: session.id, reason, err: err.message,
@@ -1038,8 +1244,11 @@ module.exports = {
   rearmPlatformFaults,
   ROLLOUT_RETRY_DETAIL,
   stagingNeedsRebuild,
+  inspectPreviewRuntime,
   previewIsOfAnotherCommit,
   recheckHeadSha,
+  approvedHeadSha,
+  currentPins,
   rebuildSessionStaging,
   recheckSessionChecks,
   // Exported for tests + so the client-facing wording has one owner.

@@ -19,6 +19,10 @@
     "text": "{{count}} results",
     "description": "Small heading over the app tiles on Home while a search is active. {{count}} is how many of the viewer's apps match."
   },
+  "grid.heading": {
+    "text": "My apps",
+    "description": "Heading over the grid of app tiles on the Home screen: the apps this person keeps a tile for. The same name is used in \"Add to My apps\"."
+  },
   "grid.loading": {
     "text": "Loading your apps",
     "description": "Read by screen readers while the grid of app tiles on Home is still loading."
@@ -89,10 +93,10 @@
   },
   "create.label": {
     "text": "New project",
-    "description": "Label under the dashed + tile at the end of Home's grid, and on the small dashed-plus button beside \"Show all N apps\" when the grid is folded and has no room for the tile: starts a new project (an app and the community that builds it)."
+    "description": "Label under the dashed + tile at the end of Home's grid, and on the small dashed-plus New project button beside \"Show all N apps\" when the grid is folded and has no room for the tile: starts a new project (an app and the community that builds it)."
   },
   "create.tip": {
-    "text": "Start a new project",
+    "text": "Start a project: an app for you or for a community",
     "description": "Tooltip of the + tile at the end of Home's grid, and of the small New project button beside \"Show all N apps\" that stands in for it there."
   },
   "create.disabledHint": {
@@ -330,6 +334,10 @@
   "check.redeployed": {
     "text": "Redeployed to {{sha}}.",
     "description": "Brief notice after \"Check for updates\" found a newer version and deployed it. {{sha}} is the first seven characters of that version's commit id."
+  },
+  "check.deployRequested": {
+    "text": "Main has a newer version ({{sha}}). Deploying it now: watch the version pill.",
+    "description": "Brief notice after \"Check for updates\" found a newer version and asked for it to be deployed; the deploy runs in the background. {{sha}} is the first seven characters of that version's commit id. The version pill is the small chip showing the app's version, where progress appears."
   },
   "check.inFlight": {
     "text": "A redeploy is already in progress for this app.",
@@ -601,19 +609,47 @@
   },
   "discover.card.addTip": {
     "text": "Add to My apps",
-    "description": "Tooltip of the round + button on an app's card in Home's Discover Communities rail: puts a tile for the app in My apps."
+    "description": "Tooltip of the labelled pill in the corner of an app's card in Home's Discover Communities rail, shown when the viewer is already a member but the app is not in My apps: puts a tile for the app in My apps."
   },
   "discover.card.addedTip": {
     "text": "Added. Tap to remove from My apps",
     "description": "Tooltip of the round check button on an app's card in Home's Discover Communities rail when the app is already in My apps."
   },
-  "discover.card.addNamed": {
-    "text": "Add {{app}} to My apps",
-    "description": "Accessible name of the round + button on an app's card in Home's Discover Communities rail. {{app}} is the app's name; \"My apps\" is the name of the grid on Home."
-  },
   "discover.card.removeNamed": {
     "text": "Remove {{app}} from My apps",
     "description": "Accessible name of the round check button on an app's card in Home's Discover Communities rail when the app is already in My apps. {{app}} is the app's name."
+  },
+  "discover.card.join": {
+    "text": "Join",
+    "description": "Label of the pill in the corner of an app's card in Home's Discover Communities rail, shown when the viewer has not joined the app's community. Tapping it joins that community and puts a tile for the app in My apps."
+  },
+  "discover.card.joined": {
+    "text": "Joined",
+    "description": "Label of the pill in the corner of an app's card in Home's Discover Communities rail, shown when the viewer is a member and the app is in My apps. Tapping it asks whether to leave the community."
+  },
+  "discover.card.add": {
+    "text": "Add",
+    "description": "Label of the pill in the corner of an app's card in Home's Discover Communities rail, shown when the viewer is already a member but the app is not in My apps. Tapping it puts a tile for the app in My apps."
+  },
+  "discover.card.joinNamed": {
+    "text": "Join {{app}}",
+    "description": "Accessible name of the Join pill on an app's card in Home's Discover Communities rail. {{app}} is the app's name."
+  },
+  "discover.card.joinedNamed": {
+    "text": "Joined {{app}}",
+    "description": "Accessible name of the pill on an app's card in Home's Discover Communities rail when the viewer is a member and the app is in My apps; tapping it asks whether to leave. {{app}} is the app's name."
+  },
+  "discover.card.joinTip": {
+    "text": "Join this community. It also goes on My apps",
+    "description": "Tooltip of the Join pill in the corner of an app's card in Home's Discover Communities rail. \"My apps\" is the name of the grid on Home."
+  },
+  "discover.card.joinedTip": {
+    "text": "You're a member. Tap to leave",
+    "description": "Tooltip of the Joined pill in the corner of an app's card in Home's Discover Communities rail; tapping it opens the leave confirmation."
+  },
+  "discover.card.addNamed": {
+    "text": "Add {{app}} to My apps",
+    "description": "Accessible name of the Add pill in the corner of an app's card in Home's Discover Communities rail, shown when the viewer is already a member. {{app}} is the app's name; \"My apps\" is the name of the grid on Home."
   },
   "discover.card.contributors_one": {
     "text": "{{count}} contributor",
@@ -814,5 +850,45 @@
   "tone.gray": {
     "text": "Gray",
     "description": "Name of a card colour, a neutral grey: tooltip and accessible name of its swatch in the featured illustration editor."
+  },
+  "edit.done": {
+    "text": "Done",
+    "description": "Button beside the My apps heading on Home while the grid is in edit mode after a long press: ends edit mode."
+  },
+  "edit.removeNamed": {
+    "text": "Remove {{app}} from My apps",
+    "description": "Accessible name of the small round remove button on an app tile while the My apps grid on Home is in edit mode. {{app}} is the app's name."
+  },
+  "edit.addTile": {
+    "text": "Add apps",
+    "description": "Button beside the My apps heading on Home while the grid is in edit mode after a long press, next to Done: it opens the sheet of apps to add."
+  },
+  "addSheet.title": {
+    "text": "Add to My apps",
+    "description": "Title of the sheet that lists apps to put on My apps, opened from the Add apps button beside the My apps heading in edit mode. The same words as the tile menu's add action."
+  },
+  "addSheet.yours": {
+    "text": "Your other apps",
+    "description": "Small-caps section label in the Add to My apps sheet, over the apps this person belongs to that have no tile on My apps."
+  },
+  "addSheet.popular": {
+    "text": "Popular",
+    "description": "Small-caps section label in the Add to My apps sheet, over the popular public communities the person has not joined."
+  },
+  "addSheet.add": {
+    "text": "Add",
+    "description": "Button on a row of the Add to My apps sheet: puts that app at the end of My apps."
+  },
+  "addSheet.added": {
+    "text": "Added",
+    "description": "What a row of the Add to My apps sheet reads once its app is on My apps."
+  },
+  "addSheet.empty": {
+    "text": "Nothing to add right now",
+    "description": "Shown in the Add to My apps sheet when there is no app to offer: everything the person can reach is already on My apps."
+  },
+  "addSheet.browse": {
+    "text": "Browse all apps",
+    "description": "Link under the empty line in the Add to My apps sheet, to the full app directory. The same words as the link beside the Discover heading."
   }
 }

@@ -30,8 +30,10 @@ type Work = {
   id: string; kind: string; workKey: string; status: string; attemptCount: number; lastError: any;
   result: any; dueAt: string; attempts: { number: number; outcome: string; service_id: string }[];
 };
+type Guard = { machine: string; flag: string; on: boolean; flagHere: boolean; blocked?: string | null };
 type Overview = {
   running: boolean;
+  guards?: Guard[];
   actions: Record<string, string[]>;
   counts: { machine: string; state: string; count: number }[];
   problems: {
@@ -73,9 +75,27 @@ function InstanceLink({ r, onOpen }: { r: Ref; onOpen: (r: Ref) => void }) {
   );
 }
 
-function Problems({ overview, onOpen }: { overview: Overview; onOpen: (r: Ref) => void }) {
+// A machine's guard left on while its flag is off here: after a rollback,
+// legacy writes to the rows it held are logged (or refused) until an admin
+// turns it off. A boot with the flag off never does (the flag is per
+// process, and another process may still run the machine).
+async function turnGuardOff(g: Guard, onChanged: () => void) {
+  const what = 'Turn the guard off';
+  if (!(await console_()._confirm({ title: what, confirmLabel: what,
+    message: `Only once no process runs ${g.machine} (${g.flag} off everywhere): its rows go back to the legacy writers.` }))) return;
+  try { await post('/api/admin/workflow/guard-off', { machine: g.machine }); onChanged(); } catch (err: any) {
+    console_()._alert(`${what} failed: ${err.message}`);
+  }
+}
+
+function Problems({ overview, onOpen, onChanged = () => {} }: { overview: Overview; onOpen: (r: Ref) => void; onChanged?: () => void }) {
   const p = overview.problems;
-  const none = !p.flagged.length && !p.overdueDeadlines.length && !p.work.length && !p.ownershipViolations.length;
+  const stray = (overview.guards || []).filter((g) => g.on && !g.flagHere);
+  // A flag set here whose machine does not run (app delivery without merge follow-ups).
+  const blocked = (overview.guards || []).filter((g) => g.blocked);
+  const canWrite = typeof window !== 'undefined' && !!console_()?.canWrite();
+  const none = !p.flagged.length && !p.overdueDeadlines.length && !p.work.length && !p.ownershipViolations.length
+    && !stray.length && !blocked.length;
   return (
     <div id="admin-wf-problems" className={`${AdminUI.card} p-4 mb-4`}>
       <div className={AdminUI.cardHeader}>
@@ -108,6 +128,25 @@ function Problems({ overview, onOpen }: { overview: Overview; onOpen: (r: Ref) =
             <code className="text-xs">{`${w.kind} ${w.workKey}`}</code>
             <InstanceLink r={w} onOpen={onOpen} />
             <span className={AdminUI.muted}>{w.lastError?.message || ''}</span>
+          </li>
+        ))}
+        {stray.map((g) => (
+          <li key={`g:${g.machine}`} data-wf-problem="guard" className="flex flex-wrap items-center gap-2">
+            <span className={AdminUI.badge.warn}>guard on, flag off here</span>
+            <code className="text-xs">{g.machine}</code>
+            <span className={AdminUI.muted}>{`${g.flag} is off in this process; the rows the machine held are still guarded.`}</span>
+            {canWrite ? (
+              <button type="button" className={`${AdminUI.btn.outlineSm} ml-auto`} onClick={() => turnGuardOff(g, onChanged)}>
+                Turn the guard off
+              </button>
+            ) : null}
+          </li>
+        ))}
+        {blocked.map((g) => (
+          <li key={`b:${g.machine}`} data-wf-problem="blocked" className="flex flex-wrap items-center gap-2">
+            <span className={AdminUI.badge.warn}>flag set, machine off</span>
+            <code className="text-xs">{g.machine}</code>
+            <span className={AdminUI.muted}>{`${g.blocked}: it does not run in this process.`}</span>
           </li>
         ))}
         {p.ownershipViolations.map((v) => (
@@ -313,6 +352,27 @@ function InstanceView({ at, actions, onOpen, onBack }: {
               <button type="button" disabled={busy} className={AdminUI.btn.primarySm}
                 onClick={() => act('Retry delivery', ...event('RetryDelivery'))}>Retry delivery</button>
             ) : null}
+            {actions.includes('AdminRetry') && ['failed', 'settled', 'deferred', 'retiring'].includes(inst.state) ? (
+              <button type="button" disabled={busy} className={AdminUI.btn.primarySm}
+                onClick={() => act('Retry the preview', ...event('AdminRetry'),
+                  'Builds the preview again if nothing serves its head, else runs its checks again (or retries a retirement that did not close).')}>
+                Retry preview
+              </button>
+            ) : null}
+            {actions.includes('AdminEnd') && ['preparing', 'checking'].includes(inst.state) ? (
+              <button type="button" disabled={busy} className={AdminUI.btn.outlineSm}
+                onClick={() => act('End the build or run', ...event('AdminEnd'),
+                  'Ends a build or checks run that never answers: it is recorded as an error, and its late result is ignored.')}>
+                End build or run
+              </button>
+            ) : null}
+            {actions.includes('AdminRetire') && !['retiring', 'retired', 'detached'].includes(inst.state) ? (
+              <button type="button" disabled={busy} className={AdminUI.btn.destructiveSm}
+                onClick={() => act('Retire the preview', ...event('AdminRetire'),
+                  'Deletes the preview and every database it built, and stops its checks. The next revision builds a new one.')}>
+                Retire preview
+              </button>
+            ) : null}
             {actions.includes('AdminApply') && inst.state === 'open' ? (
               <button type="button" disabled={busy} className={AdminUI.btn.destructiveSm}
                 onClick={() => act('Apply now', ...event('AdminApply'),
@@ -387,10 +447,10 @@ function WorkflowsSection() {
     <div>
       {!overview.running ? (
         <p id="admin-wf-off" className={`${AdminUI.muted} mb-4`}>
-          No workflow runs in this process (WF_GOVERNANCE_ENABLED is off). What is recorded is still shown.
+          The workflow runtime is not running in this process: it did not start (see the log). The bot's builds run unkept until it does. What is recorded is still shown.
         </p>
       ) : null}
-      <Problems overview={overview} onOpen={setAt} />
+      <Problems overview={overview} onOpen={setAt} onChanged={load} />
       <Instances overview={overview} onOpen={setAt} />
     </div>
   );

@@ -217,6 +217,15 @@ const CLONE_BACKOFF_MS = Object.freeze([2_000, 6_000]);
 
 const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 
+// A step the platform runs for the copies, failed past its own retries:
+// nothing in it is about the proposal. The kind rides on the error so the
+// run's trace records it and the recovery sweep takes the run again once
+// (shots-orchestrator.platformFault, shots-gc.retryPlatformFaults).
+function platformFaultError(error, kind) {
+  if (error && typeof error === 'object' && !error.shotsPlatformFault) error.shotsPlatformFault = kind;
+  return error;
+}
+
 async function cloneWithRetry(cloneUrl, checkoutDir, {
   attempts = CLONE_ATTEMPTS, backoffMs = CLONE_BACKOFF_MS, wait = sleep,
 } = {}) {
@@ -241,7 +250,7 @@ async function cloneWithRetry(cloneUrl, checkoutDir, {
       }
     }
   }
-  throw lastError;
+  throw platformFaultError(lastError, 'clone');
 }
 
 async function checkoutExactRevision({ app, session, sha, side, parentDir }) {
@@ -399,7 +408,7 @@ async function preparePair(config, { pool = getPool(config), run, session, app, 
     stage('prepare_fixture');
     const source = await dbManager.prepareStagingCloneSource(
       dbManager.appDbName(app.slug), { sourceId: run.id }
-    );
+    ).catch((error) => { throw platformFaultError(error, 'database'); });
     prepared = source;
     stage('build_revisions');
     const [baseImage, headImage] = await allSettledValues([
@@ -482,7 +491,7 @@ async function resetPair(config, pair, { onProgress = null } = {}) {
       const spec = pair.sides[side];
       const cloned = await dbManager.cloneFromPreparedSource(pair.preparedSource, spec.dbName, {
         onProgress: (phase) => onProgress?.({ stage: `clone_${side}_${phase}` }),
-      });
+      }).catch((error) => { throw platformFaultError(error, 'database'); });
       clones.push([side, cloned]);
     }
     const cloneBySide = Object.fromEntries(clones);
@@ -508,7 +517,7 @@ async function resetPair(config, pair, { onProgress = null } = {}) {
         runtimeName: spec.runtimeName,
         internalOnly: true,
         env: {
-          DATABASE_URL: dbManager.connectionUrl(spec.dbName, cloneBySide[side].password),
+          DATABASE_URL: dbManager.connectionUrl(spec.dbName, cloneBySide[side].password, { server: cloneBySide[side].server }),
           ...spec.env,
           ...shotsEnv,
           ...shotsPhoneSignInEnv(config, pair.app, phoneTestCode),
@@ -533,7 +542,7 @@ async function resetPair(config, pair, { onProgress = null } = {}) {
       // here, never by either side's own clock (shots-fixtures.pairMoment).
       const at = shotsFixtures.pairMoment();
       const fixtureInputs = Object.fromEntries(['base', 'head'].map((side) => [side, {
-        databaseUrl: dbManager.connectionUrl(pair.sides[side].dbName, cloneBySide[side].password),
+        databaseUrl: dbManager.connectionUrl(pair.sides[side].dbName, cloneBySide[side].password, { server: cloneBySide[side].server }),
         slug: pair.app.slug, runId: pair.runId, side, at,
       }]));
       onProgress?.({ stage: 'seed_shots_identities' });
@@ -667,6 +676,7 @@ module.exports = {
   ensureHostedFixtureRuntime,
   CLONE_ATTEMPTS,
   cloneWithRetry,
+  platformFaultError,
   SHOTS_FALLBACK_UID,
   deployShotsRuntime,
   checkoutExactRevision,

@@ -31,6 +31,7 @@ const os = require('node:os');
 const path = require('node:path');
 const http = require('node:http');
 const { spawn } = require('node:child_process');
+const { RUNNER_TEST_ENV } = require('./lib/runner-env');
 
 const registry = require('../src/agents/registry');
 const agentTurn = require('../src/services/agent-turn');
@@ -213,7 +214,7 @@ const JOURNAL = [
 // reading `journal`. A shadow build by default (propose: false: the same
 // spec and build turns, nothing promoted); `propose` puts it to a stub of
 // the promote route, which records what it was asked to put up for a vote.
-async function runBotBuild(t, model, { journal = JOURNAL, propose = false } = {}) {
+async function runBotBuild(t, model, { journal = JOURNAL, propose = false, config = CONFIG } = {}) {
   const resolved = stubRuntime(t);
   const { worker, calls } = loadWorker(t, journal);
   const execs = [];
@@ -249,7 +250,7 @@ async function runBotBuild(t, model, { journal = JOURNAL, propose = false } = {}
     votesRouter: { handle(req, res) { promotions.push(req.url); res.json({ ok: true, prNumber: 88 }); } },
   };
   const out = await live.buildAndPropose({
-    pool, deps, config: CONFIG, bot: BOT, app: APP, repo: { owner: 'usernode-bot', repo: 'todo' }, issueNumber: 12,
+    pool, deps, config, bot: BOT, app: APP, repo: { owner: 'usernode-bot', repo: 'todo' }, issueNumber: 12,
     issue: { title: 'Pins drift' }, seed: 'Please work on GitHub issue #12: "Pins drift".', buildNote: 'Pin the markers.',
     turnBudgetMs: 60_000, model, propose,
   });
@@ -350,6 +351,7 @@ function runRunCc(env, fx, upstream, extra = {}) {
         INLOOP_PGDATA: path.join(fx.dir, 'absent-pgdata'),
         RUNNER: path.join(ROOT, 'worker', 'run-cc.sh'),
         TURN_JOURNAL: journal,
+        ...RUNNER_TEST_ENV,
         ...extra,
       },
       stdio: ['ignore', 'ignore', 'ignore'],
@@ -434,7 +436,7 @@ test('a bot build on GLM 5.3 Flash runs in Claude Code, and OpenRouter receives 
     { type: 'text', text: '[image 1 of the mcp__playwright__browser_take_screenshot result (toolu_shot):]' },
     { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'iVBORw0KGgoSCREENSHOT' } },
   ]);
-  assert.match(ran.out, /"images":\{"sent":1,"moved":1,"omitted":0\}/, 'and the turn\'s journal counts it');
+  assert.match(ran.out, /"images":\{"sent":1,"moved":1,"omitted":0,"pruned":0\}/, 'and the turn\'s journal counts it');
   assert.equal(upstream.seen[0].body.model, GLM);
   assert.ok(!ran.out.includes(KEY), 'the journal never carries the key');
 });
@@ -774,7 +776,9 @@ test('a GLM bot build whose agent failed opens no proposal, even when its partia
   const run = await runBotBuild(t, GLM, { journal: FAILED_PUSHED_JOURNAL, propose: true });
   assert.equal(run.execs[1].agentHarness, 'claude');
   assert.equal(run.out.ok, false);
-  assert.equal(run.out.error, 'the build turn failed (the agent exited with code 1)');
+  // The reason first, then the turn's final message, so the run says why.
+  assert.equal(run.out.error, 'the build turn failed (the agent exited with code 1); it last said: '
+    + '# Pin the markers to the map ## User-facing changes The markers stay put. ## Technical implementation In map.js.');
   assert.deepEqual(run.promotions, [], 'nothing was put up for a vote');
   // And the build asked run-cc.sh not to keep a failed turn in the first place.
   assert.equal(run.execs[1].discardFailedTurn, true);
@@ -805,14 +809,16 @@ test('a build that ended on an error result, or on the runtime\'s API error noti
     '__USERNODE_EXIT__ 0',
   ];
   const isError = await runBotBuild(t, GLM, { journal: ended({ is_error: true, result: 'Stopped.' }), propose: true });
-  assert.equal(isError.out.error, 'the build turn failed (the agent reported an error)');
+  assert.equal(isError.out.error, 'the build turn failed (the agent reported an error); it last said: Stopped.');
   assert.deepEqual(isError.promotions, []);
   t.mock.restoreAll();
   const wire = await runBotBuild(t, GLM, {
     journal: ended({ is_error: false, result: 'Edited app.js.\n\nAPI Error: Connection lost mid-response. The response above may be incomplete.' }),
     propose: true,
   });
-  assert.equal(wire.out.error, 'the build turn failed (it ended on an API error)');
+  // The notice itself, read before any exit code, and not said twice.
+  assert.equal(wire.out.error, 'the build turn failed (it ended on an API error: API Error: Connection lost mid-response. '
+    + 'The response above may be incomplete.)');
   assert.deepEqual(wire.promotions, []);
 });
 
@@ -946,7 +952,9 @@ test('the worker and the host read one definition of the API error notice', () =
   assert.equal(shared.failedFinalResult(journal('done')), null);
   assert.equal(shared.failedFinalResult('no result at all'), null);
   // The host reads the same notice the same way.
-  assert.equal(live.failedClaudeTurn({ agentHarness: 'claude', ccExit: 0, exitCode: 0, lastResultText: API_ERROR }), 'it ended on an API error');
+  assert.equal(live.failedClaudeTurn({ agentHarness: 'claude', ccExit: 0, exitCode: 0, lastResultText: API_ERROR }), `it ended on an API error: ${API_ERROR}`);
+  // Read before the exit code: run-cc.sh exits 1 after such a turn.
+  assert.equal(live.failedClaudeTurn({ agentHarness: 'claude', ccExit: 0, exitCode: 1, lastResultText: API_ERROR }), `it ended on an API error: ${API_ERROR}`);
   assert.equal(live.failedClaudeTurn({ agentHarness: 'claude', ccExit: 0, exitCode: 0, lastResultText: 'Fixed the API error handling.' }), null);
   // The image ships it beside the runner that calls it.
   assert.match(fs.readFileSync(path.join(ROOT, 'worker', 'Dockerfile'), 'utf8'), /COPY agent-api-failure\.js \/usr\/local\/bin\/agent-api-failure\.js/);
@@ -999,7 +1007,8 @@ test('a GLM follow-up that ended on an API error with exit 0 pushes nothing, and
   state.agentHarness = 'claude';
   for (const line of ran.out.split('\n')) worker.parseLine(line, () => {}, state);
   state.exitCode = ran.code;
-  assert.equal(live.failedClaudeTurn(state), 'the agent exited with code 1');
+  // The notice the turn ended on, not the wrapper's exit code it caused.
+  assert.equal(live.failedClaudeTurn(state), `it ended on an API error: ${API_ERROR}`);
   assert.equal(followup.headMoved({ mode: 'build', result: state, reviewedHeadSha: 'a'.repeat(40), action: 'revise' }), false);
 
   // A good turn that only mentions an API error is committed as before.
@@ -1010,4 +1019,173 @@ test('a GLM follow-up that ended on an API error with exit 0 pushes nothing, and
   assert.equal(good.code, 0, good.out);
   assert.match(good.out, /__USERNODE_PHASE__ commit/);
   assert.ok(committed(fx2).some((line) => line.startsWith('commit')), 'committed');
+});
+
+// ── Run four (13 Oct 2026): what a first version's build loads ──────────
+//
+// A 33-minute GLM first version sent 52 tool definitions with each of its 156
+// model calls. Its build and review fixes now ask the worker for the
+// first-version profile (BUILD_PROFILE=first_version: no visible_changes, the
+// Homeroom read tools narrowed to the conventions, no web or notebook tools;
+// run-cc.sh and run-codex-agent.sh), and the platform can override the hosts
+// a model's turns may use (AGENT_PROVIDER_SHORTLIST).
+
+test('run four: a first version\'s build turns ask for the first-version profile; the worker gives it to a build alone', async (t) => {
+  stubRuntime(t);
+  const { worker, calls } = loadWorker(t, JOURNAL);
+  const execs = [];
+  const session = { id: 5003, branch_name: 'dev/homeroom_bot-5003', agent_backend: 'codex_openrouter', agent_model: GLM, agent_config_version: 1 };
+  worker.adoptWarmWorker(5003, 'usernode-worker-5003');
+  const runner = (firstVersion) => live.buildTurnRunner({
+    pool: { async query() { return { rows: [], rowCount: 1 }; } },
+    config: CONFIG, bot: BOT, session, model: GLM, branchName: session.branch_name, containerName: 'usernode-worker-5003',
+    deps: {
+      worker: { execInWorker(id, opts) { execs.push(opts); return worker.execInWorker(id, opts); }, async stopTurn() {} },
+      sessions: { runCodexAttemptLoop: sessions.runCodexAttemptLoop },
+      agentTurn,
+      activeWorkers: new Set(),
+    },
+    firstVersion,
+  });
+  const turn = { prompt: 'Build it.', budgetMs: 60_000, commitMsg: 'Homeroom bot: #1 First version', progress: { note() {} } };
+  assert.ok(!(await runner(true)(turn)).routed?.error);
+  assert.ok(!(await runner(false)(turn)).routed?.error);
+  assert.deepEqual(execs.map((o) => o.buildProfile), ['first_version', undefined]);
+  const envs = calls.filter((c) => c.args?.[0] === 'exec' && c.args?.[1] === '-d').map(readDispatch).map((d) => d.env);
+  assert.deepEqual(envs.map((e) => e.BUILD_PROFILE), ['first_version', undefined]);
+
+  const dispatch = async (id, opts) => {
+    worker.adoptWarmWorker(id, `usernode-worker-${id}`);
+    await worker.execInWorker(id, {
+      prompt: 'Build it.', branchName: `dev/someone-${id}`, agentBackend: 'codex_openrouter', agentHarness: 'claude',
+      agentModel: GLM, openrouterApiKey: KEY, openrouterApiBase: 'https://openrouter.ai/api/v1',
+      turnUuid: `attempt-${id}`, logicalTurnId: `turn-${id}`, attemptNumber: 1, ...opts,
+    });
+    return readDispatch(calls.filter((c) => c.args?.[0] === 'exec' && c.args?.[1] === '-d').at(-1)).env;
+  };
+  assert.equal((await dispatch(821, { mode: 'scout', buildProfile: 'first_version' })).BUILD_PROFILE, undefined, 'a scout loads what it always did');
+  assert.equal((await dispatch(822, { mode: 'build', buildProfile: 'something_else' })).BUILD_PROFILE, undefined);
+  assert.equal((await dispatch(823, { mode: 'build', agentHarness: 'codex', buildProfile: 'first_version' })).BUILD_PROFILE, 'first_version',
+    'the Codex runner reads it too');
+});
+
+// Build speed (L7, 13 Oct 2026): a first version's configuration with the
+// lean_turns tweak asks for LEAN_TURNS, which reaches a first version's
+// build that Claude Code runs and nothing else.
+test('lean_turns: a first version\'s build turns ask for LEAN_TURNS; the worker gives it to a Claude Code first-version build alone', async (t) => {
+  stubRuntime(t);
+  const { worker, calls } = loadWorker(t, JOURNAL);
+  const execs = [];
+  const session = { id: 5004, branch_name: 'dev/homeroom_bot-5004', agent_backend: 'codex_openrouter', agent_model: GLM, agent_config_version: 1 };
+  worker.adoptWarmWorker(5004, 'usernode-worker-5004');
+  const runner = (tweaks, firstVersion = true) => live.buildTurnRunner({
+    pool: { async query() { return { rows: [], rowCount: 1 }; } },
+    config: CONFIG, bot: BOT, session, model: GLM, branchName: session.branch_name, containerName: 'usernode-worker-5004',
+    deps: {
+      worker: { execInWorker(id, opts) { execs.push(opts); return worker.execInWorker(id, opts); }, async stopTurn() {} },
+      sessions: { runCodexAttemptLoop: sessions.runCodexAttemptLoop },
+      agentTurn,
+      activeWorkers: new Set(),
+    },
+    firstVersion, tweaks,
+  });
+  const turn = { prompt: 'Build it.', budgetMs: 60_000, commitMsg: 'Homeroom bot: #1 First version', progress: { note() {} } };
+  assert.ok(!(await runner(['lean_turns'])(turn)).routed?.error);
+  assert.ok(!(await runner(['one_look'])(turn)).routed?.error);
+  assert.ok(!(await runner(['lean_turns'], false)(turn)).routed?.error);
+  assert.deepEqual(execs.map((o) => o.leanTurns), [true, undefined, undefined]);
+  const envs = calls.filter((c) => c.args?.[0] === 'exec' && c.args?.[1] === '-d').map(readDispatch).map((d) => d.env);
+  assert.deepEqual(envs.map((e) => e.LEAN_TURNS), ['1', undefined, undefined]);
+
+  const dispatch = async (id, opts) => {
+    worker.adoptWarmWorker(id, `usernode-worker-${id}`);
+    await worker.execInWorker(id, {
+      prompt: 'Build it.', branchName: `dev/someone-${id}`, agentBackend: 'codex_openrouter', agentHarness: 'claude',
+      agentModel: GLM, openrouterApiKey: KEY, openrouterApiBase: 'https://openrouter.ai/api/v1',
+      turnUuid: `attempt-${id}`, logicalTurnId: `turn-${id}`, attemptNumber: 1, ...opts,
+    });
+    return readDispatch(calls.filter((c) => c.args?.[0] === 'exec' && c.args?.[1] === '-d').at(-1)).env;
+  };
+  assert.equal((await dispatch(831, { mode: 'build', leanTurns: true })).LEAN_TURNS, undefined, 'not without the first-version profile');
+  assert.equal((await dispatch(832, { mode: 'scout', buildProfile: 'first_version', leanTurns: true })).LEAN_TURNS, undefined);
+  assert.equal((await dispatch(833, { mode: 'build', agentHarness: 'codex', buildProfile: 'first_version', leanTurns: true })).LEAN_TURNS,
+    undefined, 'the Codex runner has no request adapter to prune with');
+  assert.equal((await dispatch(834, { mode: 'build', buildProfile: 'first_version', leanTurns: true })).LEAN_TURNS, '1');
+});
+
+// App bench run 191: GLM builds compacted their context 2 to 3 times each,
+// about 3.3 minutes a build. A configuration's roomy_context tweak asks for
+// ROOMY_CONTEXT, which reaches a first version's build that Claude Code runs
+// and nothing else.
+test('roomy_context: a first version\'s build turns ask for ROOMY_CONTEXT; the worker gives it to a Claude Code first-version build alone', async (t) => {
+  stubRuntime(t);
+  const { worker, calls } = loadWorker(t, JOURNAL);
+  const execs = [];
+  const session = { id: 5005, branch_name: 'dev/homeroom_bot-5005', agent_backend: 'codex_openrouter', agent_model: GLM, agent_config_version: 1 };
+  worker.adoptWarmWorker(5005, 'usernode-worker-5005');
+  const runner = (tweaks, firstVersion = true) => live.buildTurnRunner({
+    pool: { async query() { return { rows: [], rowCount: 1 }; } },
+    config: CONFIG, bot: BOT, session, model: GLM, branchName: session.branch_name, containerName: 'usernode-worker-5005',
+    deps: {
+      worker: { execInWorker(id, opts) { execs.push(opts); return worker.execInWorker(id, opts); }, async stopTurn() {} },
+      sessions: { runCodexAttemptLoop: sessions.runCodexAttemptLoop },
+      agentTurn,
+      activeWorkers: new Set(),
+    },
+    firstVersion, tweaks,
+  });
+  const turn = { prompt: 'Build it.', budgetMs: 60_000, commitMsg: 'Homeroom bot: #1 First version', progress: { note() {} } };
+  assert.ok(!(await runner(['roomy_context', 'lean_plan'])(turn)).routed?.error);
+  assert.ok(!(await runner(['lean_turns'])(turn)).routed?.error);
+  assert.ok(!(await runner(['roomy_context'], false)(turn)).routed?.error);
+  assert.deepEqual(execs.map((o) => o.roomyContext), [true, undefined, undefined]);
+  assert.deepEqual(execs.map((o) => o.leanTurns), [undefined, true, undefined], 'each tweak on its own');
+  const envs = calls.filter((c) => c.args?.[0] === 'exec' && c.args?.[1] === '-d').map(readDispatch).map((d) => d.env);
+  assert.deepEqual(envs.map((e) => e.ROOMY_CONTEXT), ['1', undefined, undefined]);
+
+  const dispatch = async (id, opts) => {
+    worker.adoptWarmWorker(id, `usernode-worker-${id}`);
+    await worker.execInWorker(id, {
+      prompt: 'Build it.', branchName: `dev/someone-${id}`, agentBackend: 'codex_openrouter', agentHarness: 'claude',
+      agentModel: GLM, openrouterApiKey: KEY, openrouterApiBase: 'https://openrouter.ai/api/v1',
+      turnUuid: `attempt-${id}`, logicalTurnId: `turn-${id}`, attemptNumber: 1, ...opts,
+    });
+    return readDispatch(calls.filter((c) => c.args?.[0] === 'exec' && c.args?.[1] === '-d').at(-1)).env;
+  };
+  assert.equal((await dispatch(841, { mode: 'build', roomyContext: true })).ROOMY_CONTEXT, undefined, 'not without the first-version profile');
+  assert.equal((await dispatch(842, { mode: 'scout', buildProfile: 'first_version', roomyContext: true })).ROOMY_CONTEXT, undefined);
+  assert.equal((await dispatch(843, { mode: 'build', agentHarness: 'codex', buildProfile: 'first_version', roomyContext: true })).ROOMY_CONTEXT,
+    undefined, 'the Codex runner keeps its own catalog limit');
+  assert.equal((await dispatch(844, { mode: 'build', buildProfile: 'first_version', roomyContext: true })).ROOMY_CONTEXT, '1');
+});
+
+test('run four: the platform\'s host shortlist for a model reaches the turn\'s listener, checked; none sent, none set', async (t) => {
+  const { worker, calls } = loadWorker(t, JOURNAL);
+  const dispatch = async (id, opts) => {
+    worker.adoptWarmWorker(id, `usernode-worker-${id}`);
+    await worker.execInWorker(id, {
+      prompt: 'Build it.', branchName: `dev/someone-${id}`, agentBackend: 'codex_openrouter', agentHarness: 'claude',
+      agentModel: GLM, openrouterApiKey: KEY, openrouterApiBase: 'https://openrouter.ai/api/v1',
+      turnUuid: `attempt-${id}`, logicalTurnId: `turn-${id}`, attemptNumber: 1, mode: 'build', ...opts,
+    });
+    return readDispatch(calls.filter((c) => c.args?.[0] === 'exec' && c.args?.[1] === '-d').at(-1)).env;
+  };
+  assert.equal((await dispatch(831, {})).AGENT_PROVIDER_SHORTLIST, '', 'the listener\'s own');
+  assert.equal((await dispatch(832, { agentProviderShortlist: 'fireworks,parasail/fp4' })).AGENT_PROVIDER_SHORTLIST, 'fireworks,parasail/fp4');
+  assert.equal((await dispatch(833, { agentProviderShortlist: 'none' })).AGENT_PROVIDER_SHORTLIST, 'none');
+  assert.equal((await dispatch(834, { agentProviderShortlist: 'fireworks; rm -rf /' })).AGENT_PROVIDER_SHORTLIST, '', 'never a value it cannot read');
+  assert.equal((await dispatch(835, { agentHarness: 'codex', agentProviderShortlist: 'together' })).AGENT_PROVIDER_SHORTLIST, 'together');
+
+  // From the platform's config, for the turn's model alone.
+  const config = require('../src/config');
+  const lists = config.openRouterProviderShortlists(JSON.stringify({
+    [GLM]: ['Fireworks', 'together', 'not a slug'], [DEEPSEEK]: 'none', 'bad model!': ['x'], [TEXT_ONLY]: 'fast',
+  }));
+  assert.deepEqual(lists, { [GLM]: 'fireworks,together', [DEEPSEEK]: 'none' });
+  assert.deepEqual(config.openRouterProviderShortlists('not json'), {});
+  assert.deepEqual(config.openRouterProviderShortlists(''), {});
+  const run = await runBotBuild(t, GLM, { config: { ...CONFIG, openrouterProviderShortlists: lists } });
+  assert.equal(run.out.ok, true, run.out.error);
+  assert.deepEqual(run.execs.map((o) => o.agentProviderShortlist), ['fireworks,together', 'fireworks,together']);
+  assert.equal(run.dispatches[1].env.AGENT_PROVIDER_SHORTLIST, 'fireworks,together');
 });

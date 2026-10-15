@@ -3,7 +3,7 @@ import { useSyncExternalStore } from 'react';
 import { t } from '../../lib/i18n/runtime';
 import { navStore } from '../nav/nav-store.js';
 import * as api from './api';
-import { WORK_CHANGED_EVENT, openAppTarget } from './bot-shared';
+import { WORK_CHANGED_EVENT, inMainStream, openAppTarget, threadsAllowed } from './bot-shared';
 import { channelDirectory, normalizeHandle, type ChannelRef } from './channels';
 import { platformHubServed, platformSlug, subscribePlatformSlug } from './channel-hub';
 import { savedInboxFilter, type AppDiscussion, type InboxFilter } from './inbox';
@@ -78,6 +78,7 @@ let state: InternalState = {
   listCrowded: false,
   showMoreChannels: false,
   unreadMark: null,
+  threadFocusId: null,
 };
 
 /*
@@ -476,12 +477,14 @@ let focusLoaded: number | null = null;
  * The newest message of the conversation itself on screen — the read cursor's
  * position. Since the #2387 follow-up the main stream also carries its
  * threads' replies as lines, and a reply is no position in it: the server
- * reads a thread when handed one, and leaves the cursor where it was.
+ * reads a thread when handed one, and leaves the cursor where it was. One
+ * request, one story: a moment the chat with Homeroom bot also lists in its
+ * main stream (`alsoInChat`) is a position in it, as the server counts it.
  */
 function newestMainId(messages: ConversationMessage[]): number | null {
   for (let i = messages.length - 1; i >= 0; i -= 1) {
     const item = messages[i];
-    if (item.id > 0 && !item.threadRootId) return item.id;
+    if (item.id > 0 && inMainStream(item)) return item.id;
   }
   return null;
 }
@@ -746,13 +749,16 @@ export function jumpToPresent(): void {
   void loadThread(conversationId, true);
 }
 
-export async function loadOlder(): Promise<void> {
+// #5019: resolves `true` when a page was read (or there was nothing to read),
+// `false` only when the request failed — the caller offers the button back as
+// a manual retry on `false`.
+export async function loadOlder(): Promise<boolean> {
   const conversationId = state.route.conversationId;
-  if (!conversationId || !state.nextBefore || state.loadingOlder) return;
+  if (!conversationId || !state.nextBefore || state.loadingOlder) return true;
   publish({ loadingOlder: true });
   try {
     const page = await api.listMessages(conversationId, state.nextBefore);
-    if (state.route.conversationId !== conversationId) return;
+    if (state.route.conversationId !== conversationId) return true;
     const known = new Set(state.messages.map((message) => message.id));
     const older = page.messages.filter((message) => !known.has(message.id));
     publish({
@@ -760,8 +766,10 @@ export async function loadOlder(): Promise<void> {
       nextBefore: page.nextBefore,
       loadingOlder: false,
     });
+    return true;
   } catch (error) {
     publish({ loadingOlder: false, threadError: errorMessage(error, t('messages:store.error.loadOlder')) });
+    return false;
   }
 }
 
@@ -1540,6 +1548,39 @@ export function setReply(scope: ComposerScope, message: ConversationMessage | nu
 }
 
 /**
+ * One request, one story: the request thread a bot message belongs to in the
+ * chat with Homeroom bot (a reply's root), or null: the main stream, and
+ * any chat that keeps no threads (bot-shared.ts threadsAllowed).
+ */
+function botThreadOf(message: ConversationMessage): number | null {
+  if (!message.sender.bot || !threadsAllowed(state.active) || state.active?.kind !== 'direct') return null;
+  return validId(message.threadRootId) ? message.threadRootId as number : null;
+}
+
+/**
+ * Quote a bot message in the composer and put the caret there, for an
+ * answer of one's own (Write my own, Change something, a `reply` button).
+ * A message in a request's thread is quoted in that thread's composer, the
+ * thread opened beside the chat first when it is not the one open.
+ */
+export function quoteInComposer(message: ConversationMessage, conversationId: number): void {
+  const rootId = conversationId === state.route.conversationId ? botThreadOf(message) : null;
+  setReply(scopeKey(conversationId, rootId), message);
+  if (rootId && state.route.threadRootId !== rootId) openThread(rootId);
+  if (typeof window === 'undefined') return;
+  // The thread's composer is drawn once its pane is: look for it a few frames.
+  const selector = rootId ? '.messages-reply-pane .messages-composer-input' : '.messages-composer-input';
+  let tries = 10;
+  const focus = () => {
+    const input = document.querySelector<HTMLTextAreaElement>(selector);
+    if (input) { input.focus({ preventScroll: true }); return; }
+    tries -= 1;
+    if (tries > 0) window.requestAnimationFrame(focus);
+  };
+  window.requestAnimationFrame(focus);
+}
+
+/**
  * #3624: answer the Homeroom bot's question with one of its suggested
  * answers. Sent as an ordinary message quoting the question, which is how
  * the server knows which request it answers; whatever the person had
@@ -1548,11 +1589,14 @@ export function setReply(scope: ComposerScope, message: ConversationMessage | nu
 export async function answerBotQuestion(question: ConversationMessage, answer: string): Promise<void> {
   const conversationId = state.route.conversationId;
   if (!conversationId || conversationId !== question.conversationId) return;
-  const scope = scopeKey(conversationId, null);
+  // One request, one story: the answer goes in the request's thread,
+  // whether it was tapped there or on the moment the main chat also shows.
+  const rootId = botThreadOf(question);
+  const scope = scopeKey(conversationId, rootId);
   const draft = draftFor(scope);
   const staged = replyFor(scope);
   replyTargets.set(scope, question);
-  const sending = send({ content: answer });
+  const sending = send({ content: answer, threadRootId: rootId, anyThread: true });
   if (draft) setDraft(scope, draft);
   if (staged && staged.id !== question.id) setReply(scope, staged);
   await sending;
@@ -1574,14 +1618,17 @@ export async function tapBotAction(message: ConversationMessage, action: Homeroo
   if (action.type === 'prompt') {
     const conversationId = state.route.conversationId;
     if (!conversationId || conversationId !== message.conversationId) return;
-    const scope = scopeKey(conversationId, null);
+    // In the chat with Homeroom bot, a button on a message in a request's
+    // thread says its words in that thread.
+    const rootId = botThreadOf(message);
+    const scope = scopeKey(conversationId, rootId);
     const staged = replyFor(scope);
     // A `quote` prompt replies to the message it sits on, so it is about what
     // that message is about; any other is sent on its own. Either way a
     // reply they had staged is theirs again after.
     if (action.quote) setReply(scope, message);
     else if (staged) setReply(scope, null);
-    const sending = send({ content: action.label });
+    const sending = send({ content: action.label, threadRootId: rootId, anyThread: true });
     if (action.quote || staged) setReply(scope, staged || null);
     await sending;
     return;
@@ -1596,10 +1643,19 @@ function idempotencyKey(): string {
   return `web-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 }
 
-export async function send(input: { content: string; attachmentIds?: string[]; object?: SharedObjectReference; attachments?: ConversationMessage['attachments']; threadRootId?: number | null }): Promise<void> {
+export async function send(input: {
+  content: string; attachmentIds?: string[]; object?: SharedObjectReference; attachments?: ConversationMessage['attachments']; threadRootId?: number | null;
+  /**
+   * Send into `threadRootId`'s thread even when it is not the one open: an
+   * answer tapped on a moment the chat with Homeroom bot also shows in its
+   * main stream goes in its request's thread (answerBotQuestion).
+   */
+  anyThread?: boolean;
+}): Promise<void> {
   const conversationId = state.route.conversationId;
   if (!conversationId) return;
-  const threadRootId = input.threadRootId && state.thread?.rootId === input.threadRootId ? input.threadRootId : null;
+  const open = !!input.threadRootId && state.thread?.rootId === input.threadRootId;
+  const threadRootId = input.threadRootId && (open || (input.anyThread && validId(input.threadRootId))) ? input.threadRootId : null;
   const scope = scopeKey(conversationId, threadRootId);
   const content = input.content.slice(0, 8000);
   const reply = replyFor(scope);
@@ -1626,8 +1682,11 @@ export async function send(input: { content: string; attachmentIds?: string[]; o
   unsent.set(pending.idempotencyKey, { conversationId, payload: pending, after: newestServerId(state.messages) });
   setDraft(scope, '');
   setReply(scope, null);
-  if (threadRootId && state.thread) {
+  if (threadRootId && open && state.thread) {
     publish({ thread: { ...state.thread, messages: [...state.thread.messages, optimistic], error: null } });
+  } else if (threadRootId) {
+    // Into a thread that is not open: drawn in that thread once it lands,
+    // and the row it answers says so meanwhile (its own pressed state).
   } else {
     publish({ messages: [...state.messages, optimistic], threadError: null });
     // Sending from a linked window part-way back (#2387) goes to the present,
@@ -1722,6 +1781,12 @@ async function deliverToThread(conversationId: number, pending: PendingSend): Pr
           error: errorMessage(error, t('messages:store.error.sendReply')),
         },
       });
+    } else if (state.route.conversationId === conversationId) {
+      // Sent into a thread that is not open (send `anyThread`): it has no
+      // row of its own to fail on, so the conversation says it.
+      unsent.delete(key);
+      publish({ threadError: errorMessage(error, t('messages:store.error.sendReply')) });
+      throw error;
     }
   }
 }
@@ -1860,6 +1925,33 @@ export function messageAddress(conversationId: number, messageId: number): strin
 /** The address of a reply thread beside its conversation (#2387). */
 export function threadAddress(conversationId: number, rootId: number): string {
   return `#messages/${conversationId}/thread/${rootId}`;
+}
+
+/**
+ * Open a request's thread at one of its messages (the strip's buttons, a
+ * news line in the chat with Homeroom bot): the thread pane scrolls to it
+ * and flashes it (`threadFocusId`). Without a root it opens the message
+ * itself, wherever it is, by its link.
+ */
+export function openThreadAt(rootId: number | null | undefined, focusId: number | null | undefined = null): void {
+  const conversationId = state.route.conversationId;
+  if (typeof window === 'undefined' || !conversationId) return;
+  if (!validId(rootId)) {
+    if (validId(focusId)) openAddress(messageAddress(conversationId, focusId));
+    return;
+  }
+  publish({ threadFocusId: validId(focusId) && focusId !== rootId ? focusId : null });
+  openThread(rootId);
+}
+
+/** The open conversation's main stream as loaded, for a request's story (./bot-request.ts storyRootIn). */
+export function loadedMessages(): readonly ConversationMessage[] {
+  return state.messages;
+}
+
+/** The thread pane has shown the message it was opened at. */
+export function clearThreadFocus(): void {
+  if (state.threadFocusId) publish({ threadFocusId: null });
 }
 
 /** Open the thread that hangs off a message of the open conversation. */

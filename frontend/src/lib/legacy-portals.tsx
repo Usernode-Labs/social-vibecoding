@@ -165,6 +165,18 @@ export function unmountAllLegacyPortals(): void {
   commit();
 }
 
+/**
+ * What the live portal on `host` renders, or null for none (or a host that
+ * has left the document). Lets an owner that publishes through a store
+ * update its region in place only while it is still the one on the host
+ * (the App tab's placeholder: appStatusBridge.update).
+ */
+export function legacyPortalNode(host: Element | null): ReactNode | null {
+  if (!host || !host.isConnected) return null;
+  const entry = entries.get(host);
+  return entry ? entry.node : null;
+}
+
 /** Live portal count — the leak assertion in tests/dev-board-island.test.js. */
 export function legacyPortalCount(): number {
   return entries.size;

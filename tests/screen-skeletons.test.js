@@ -119,10 +119,10 @@ test('the placeholders borrow the REAL row classes, so they cannot drift', () =>
     + 'and the inset separator, all in app.css');
   assert.match(KUDOS, /<div key=\{i\} className=\{ROW\}>/,
     'kudos: ROW, the constant all four of that pane’s lists draw with');
-  assert.match(STANDINGS, /rounded-lg border border-zinc-200 dark:border-zinc-800/,
-    'standings: the table’s own container');
-  assert.match(STANDINGS, /bg-zinc-50 dark:bg-zinc-900/,
-    'and the <thead>’s own ground for the header strip');
+  assert.match(STANDINGS, /className=\{`overflow-hidden \$\{CARD\}`\}/,
+    'standings: CARD, the white card the table itself sits on (#4869)');
+  assert.match(STANDINGS, /className=\{`\$\{RULE\} px-4 py-3 flex items-center gap-3`\}/,
+    'and RULE, the hairline between the real rows');
   assert.match(PROFILE, /rounded-2xl \$\{PLANE_FILL\} p-4 mb-3/,
     'profile: the identity card’s face, verbatim (the plane colour, like Discover)');
   assert.match(PROFILE, /rounded-2xl \$\{PLANE_FILL\} px-2 py-3/,

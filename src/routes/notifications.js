@@ -4,6 +4,8 @@ const { queueTestAlert } = require('../services/test-alert');
 const { getPool } = require('../db/pool');
 const notifications = require('../services/notifications');
 const messageBookmarks = require('../services/message-bookmarks');
+const notificationBookmarks = require('../services/notification-bookmarks');
+const { notificationBookmarkLimiter } = require('../middleware/rate-limits');
 const mobilePushPreferences = require('../services/mobile-push-preferences');
 const notificationPreferences = require('../services/notification-preferences');
 const groupChannelNotify = require('../services/group-channel-notify');
@@ -51,6 +53,10 @@ function stagingMockNotifications() {
   const now = Date.now();
   const base = {
     readAt: null,
+    // #4769: every mock starts unsaved; the check_failed row below opts in,
+    // so a preview can show both bookmark states and the Saved section's
+    // notification row.
+    saved: false,
     appId: 0,
     appSlug: 'staging-demo',
     appName: 'Staging demo app',
@@ -174,6 +180,8 @@ function stagingMockNotifications() {
     {
       ...base,
       id: 990204, kind: 'check_failed',
+      saved: true,
+      savedAt: new Date(now - 1 * 60 * 1000).toISOString(),
       createdAt: new Date(now - 55 * 60 * 1000).toISOString(),
       sessionId: 990104,
       sessionTitle: "[Mock] Proposal whose preview won't boot",
@@ -300,6 +308,20 @@ function stagingMockSavedMessages() {
       messageCreatedAt: new Date(now - 27 * 60 * 60 * 1000).toISOString(),
     },
   ];
+}
+
+// #4769: staging demo row for the Saved section's notification half. The
+// notification_bookmarks table is `staging:private` like everything else
+// here, so a clone has the table and none of the rows — same problem
+// stagingMockSavedMessages above solves, solved the same way: the mock
+// that ships already-saved (990204, `saved: true`) is what the section
+// shows, prepended at request time. Saving another mock hits a
+// notification id that matches no DB row, the PUT answers 404, and the
+// client rolls its optimistic flip back — visible, and harmless.
+// Unsaving one of these DELETEs nothing and answers 200 with removed: 0,
+// exactly like a mark-read on a mock.
+function stagingMockSavedNotifications() {
+  return stagingMockNotifications().filter((m) => m.saved);
 }
 
 // Routes for the top-right notifications dropdown. All routes assume
@@ -561,8 +583,9 @@ function notificationsRoutes(config) {
     }
   });
 
-  // Full dropdown payload: recent notifications (read and unread) + an
-  // unread count so the badge and list stay in sync on initial page load.
+  // Full dropdown payload: recent notifications (read and unread; asks about
+  // a merged change are left out — #4795) + an unread count so the badge and
+  // list stay in sync on initial page load.
   //
   // Pagination (#84 scroll-to-load-more): the client passes
   // `?before=<createdAt>&before_id=<id>&limit=<n>` to fetch the page
@@ -656,6 +679,14 @@ function notificationsRoutes(config) {
         payload.savedMessages = [...appSaved, ...conversationSaved]
           .sort((a, b) => new Date(b.savedAt) - new Date(a.savedAt))
           .slice(0, messageBookmarks.MAX_SAVED);
+        // #4769: this user's saved notifications, for the same pinned
+        // section as the saved messages just above. First page only and
+        // best-effort for the same reasons: the section is pinned, not
+        // paginated, and must never be the reason the dropdown 500s. The
+        // 50-save cap is applied client-side across the merged list —
+        // see the client's _renderSaved.
+        payload.savedNotifications = (await notifications.listSavedForUserSafe(pool, req.user.id))
+          .map(notifications.serialize);
         // Staging-only demo rows (?demo=1) — see stagingMockNotifications.
         // First page only (they'd duplicate on cursor follow-ups), unread
         // count bumped to match so the bell's number counts the mocks it is
@@ -696,6 +727,14 @@ function notificationsRoutes(config) {
             ...stagingMockSavedMessages(),
             ...(payload.savedMessages || []),
           ];
+          // Pinned saved-notification demo rows (#4769) — see
+          // stagingMockSavedNotifications. Prepended like the message
+          // mocks above; the 990204 mock also carries `saved: true` in the
+          // feed itself, so its row shows the filled bookmark in place.
+          payload.savedNotifications = [
+            ...stagingMockSavedNotifications(),
+            ...(payload.savedNotifications || []),
+          ];
         }
       }
       res.json(payload);
@@ -730,6 +769,60 @@ function notificationsRoutes(config) {
         id,
         message: err.message,
       });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // #4769: save one notification to the drawer's pinned Saved section.
+  // Same shape as the message bookmark toggles in src/routes/chat.js: an
+  // idempotent save, the same id validation as the GET above, and the
+  // same deliberate 404 for a row that is absent or another user's — the
+  // service's INSERT only lands when the notification already has the
+  // caller as its user, so there is nothing to hide behind an
+  // authorization check. Per-user rate limit (the message-bookmark
+  // bucket's twin) and no caching, like every route here.
+  router.put('/api/notifications/:id/save', notificationBookmarkLimiter, sameOriginBrowserOnly, async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+    res.set('Cache-Control', 'private, no-store');
+    const rawId = String(req.params.id || '');
+    if (!/^[1-9]\d{0,9}$/.test(rawId)) {
+      return res.status(404).json({ error: 'Notification not found' });
+    }
+    const id = Number(rawId);
+    if (!Number.isSafeInteger(id) || id > 2147483647) {
+      return res.status(404).json({ error: 'Notification not found' });
+    }
+    try {
+      const saved = await notificationBookmarks.save(pool, req.user.id, id);
+      if (!saved) {
+        return res.status(404).json({ error: 'Notification not found' });
+      }
+      return res.json({ saved: true });
+    } catch (err) {
+      log.error('notifications', 'save failed', { id, message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Unsave one. Idempotent from the client's point of view: an id that was
+  // never saved (or was already unsaved) answers 200 with removed: 0, so
+  // a double-tap or a stale row cannot error.
+  router.delete('/api/notifications/:id/save', notificationBookmarkLimiter, sameOriginBrowserOnly, async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+    res.set('Cache-Control', 'private, no-store');
+    const rawId = String(req.params.id || '');
+    if (!/^[1-9]\d{0,9}$/.test(rawId)) {
+      return res.status(404).json({ error: 'Notification not found' });
+    }
+    const id = Number(rawId);
+    if (!Number.isSafeInteger(id) || id > 2147483647) {
+      return res.status(404).json({ error: 'Notification not found' });
+    }
+    try {
+      const removed = await notificationBookmarks.remove(pool, req.user.id, id);
+      return res.json({ saved: false, removed });
+    } catch (err) {
+      log.error('notifications', 'unsave failed', { id, message: err.message });
       return res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -872,4 +965,5 @@ function notificationsRoutes(config) {
 
 module.exports = {
   notificationsRoutes, stagingMockNotifications, stagingMockSavedMessages,
+  stagingMockSavedNotifications,
 };

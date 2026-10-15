@@ -1,6 +1,6 @@
 /**
- * #platform-strip-apps — the five apps you used most recently, on the
- * desktop strip (#4417).
+ * #platform-strip-apps — your pinned apps, then the recent ones, on the
+ * desktop strip (#4417, #4935).
  *
  * ── It replaces Recents ──────────────────────────────────────────────
  *
@@ -13,6 +13,15 @@
  * home to Messages' own list, where every one of them already was, and what
  * is left here is the apps: the five you used last, newest first, each its
  * own tile over its name.
+ *
+ * ── The pinned part (#4935) ──────────────────────────────────────────
+ *
+ * Those five were a random handful of Home's tiles, and read as duplicates
+ * of them. The strip now leads with the apps in the top row of My apps —
+ * Home publishes them (./pinned-apps-store.js) — separated from the recents
+ * by a hairline, and the recents fill the slots that are left. A pinned app
+ * is never listed a second time: the one on screen stays in its pinned slot
+ * and stays lit.
  *
  * ── Still open ───────────────────────────────────────────────────────
  *
@@ -54,6 +63,7 @@ import { liveAppLabel, LiveAppDot, useCurrentAppSlug, useLiveAppSlugs } from '..
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { improveStore } from '../improve/improve-store.js';
 import { navStore } from './nav-store.js';
+import { pinnedAppsStore, readPinnedApps } from './pinned-apps-store.js';
 import { readRecentApps, recentAppsStore } from './recent-apps-store.js';
 import { noteResumeOrigin } from './resume-motion';
 
@@ -67,26 +77,33 @@ export interface StripApp {
   iconUrl: string | null;
   iconEmoji: string | null;
   at?: string;
+  /** In the strip's pinned part: an app from My apps' top row (#4935). */
+  pinned?: boolean;
 }
 
 /**
- * The strip's apps, at most STRIP_APPS, each once: the app you are in first,
- * even before it has ever been left (its header record names it, `current`);
- * then the apps still running behind it (`live`, the frame store's order,
- * named from the stored list where it has them, else by slug); then the rest
- * of the stored list, the most recently used first. Pure.
+ * The strip's apps, at most STRIP_APPS, each once: the pinned apps first
+ * (#4935, `pinned` — never more than limit - 1 of them, so the rest of the
+ * strip keeps at least one slot), then the app you are in, even before it
+ * has ever been left (its header record names it, `current`); then the apps
+ * still running behind it (`live`, the frame store's order, named from the
+ * stored list where it has them, else by slug); then the rest of the stored
+ * list, the most recently used first. A pinned slug is never repeated by a
+ * later part. Pure.
  */
 export function stripApps(
   apps: StripApp[],
   current: StripApp | null = null,
   live: string[] = [],
   limit: number = STRIP_APPS,
+  pinned: StripApp[] = [],
 ): StripApp[] {
   const out: StripApp[] = [];
-  const push = (app: StripApp | null | undefined) => {
+  const push = (app: StripApp | null | undefined, pinnedSlot = false) => {
     if (!app || !app.slug || out.some((a) => a.slug === app.slug)) return;
-    out.push({ ...app, name: app.name || app.slug });
+    out.push({ ...app, name: app.name || app.slug, ...(pinnedSlot ? { pinned: true } : null) });
   };
+  for (const app of pinned.slice(0, Math.max(0, limit - 1))) push(app, true);
   push(current);
   for (const slug of live) {
     push(apps.find((a) => a.slug === slug) || { slug, name: slug, iconUrl: null, iconEmoji: null });
@@ -138,6 +155,7 @@ export function StripApps() {
   const [mounted, setMounted] = useState(false);
   const [more, setMore] = useState(false);
   const { apps } = useStoreState(recentAppsStore);
+  const { apps: pinned } = useStoreState(pinnedAppsStore);
   const live = useLiveAppSlugs();
   const frameSlug = useCurrentAppSlug();
   const improve = useStoreState(improveStore);
@@ -146,13 +164,18 @@ export function StripApps() {
 
   // POST-MOUNT, for hydration. The stored apps are read by ./mount.ts when
   // the router names the viewer, since the list is theirs; this covers a
-  // viewer named before the island hydrated.
+  // viewer named before the island hydrated. The pinned part (#4935) is read
+  // the same way, from Home's published list.
   useEffect(() => {
     setMounted(true);
     const who = navStore.get().viewer;
     if (who && !recentAppsStore.get().apps.length) {
       const stored = readRecentApps(who);
       if (stored.length) recentAppsStore.set({ apps: stored });
+    }
+    if (who && !pinnedAppsStore.get().apps.length) {
+      const stored = readPinnedApps(who);
+      if (stored.length) pinnedAppsStore.set({ apps: stored });
     }
   }, []);
 
@@ -161,7 +184,9 @@ export function StripApps() {
     ? (apps.find((a: StripApp) => a.slug === on)
       || (improve.slug === on ? { slug: on, name: improve.name || on, iconUrl: improve.iconUrl || null, iconEmoji: improve.iconEmoji || null } : { slug: on, name: on, iconUrl: null, iconEmoji: null }))
     : null;
-  const items = mounted && viewer ? stripApps(apps as StripApp[], current, live) : [];
+  const items = mounted && viewer
+    ? stripApps(apps as StripApp[], current, live, STRIP_APPS, pinned as StripApp[])
+    : [];
   useHiddenClass(ref, items.length === 0);
 
   // THE SCROLL CUE (#4738): the fade shows only while apps sit below the
@@ -203,6 +228,10 @@ export function StripApps() {
             className="platform-strip-app"
             href={`/app/${encodeURIComponent(app.slug)}`}
             data-strip-app={app.slug}
+            // The pinned part's edge is where the hairline between the two
+            // groups is drawn (app.css): the last pinned row before a
+            // non-pinned one.
+            {...(app.pinned ? { 'data-strip-pinned': 'true' } : null)}
             title={app.name}
             // A kept-alive app says so aloud after its name: two facts, joined
             // the way the language joins them.

@@ -157,27 +157,103 @@ export function CreditPill({ credit, onOpen }: { credit: CreditView; onOpen: () 
 }
 
 /**
- * The low-credits note (#4784): before a conversation's first message, and
- * only when the credits pill is already red, one small line above the send
- * row says how much is left and that a build can cost more than that and may
- * stop partway. It is a note, not a gate — Send stays the composer's one
- * primary action — and it sits and reads like the composer's "saved as a
- * draft, not sent" note, in the pill's red so the two read together. Once the
- * conversation is under way it is the out-of-credits card that speaks, not
- * this.
+ * The low-credits note (#4784, kept up mid-session by #4801): whenever the
+ * credits pill is red — before the first message and once the conversation is
+ * under way — one small line above the send row says how much is left, that a
+ * build can cost more than that and may stop partway, and the two ways to
+ * keep going (the person's own Anthropic API key, or the free credits'
+ * reset). It is a note, not a gate — Send stays the composer's one primary
+ * action — and it sits and reads like the composer's "saved as a draft, not
+ * sent" note, in the pill's red so the two read together. When the credits
+ * have run out and the agent refused, it is the out-of-credits card that
+ * speaks instead, so the note hides while that card is open.
  */
-export function showLowCreditNote(credit: CreditView | null, started: boolean): boolean {
-  return !!credit && credit.tone === 'red' && !started;
+export function showLowCreditNote(credit: CreditView | null, refused: boolean): boolean {
+  return !!credit && credit.tone === 'red' && !refused;
 }
 
 export function LowCreditNote({ credit }: { credit: CreditView }) {
-  const t = useMessages('agent');
   return (
     <p className="px-2 text-[13px] text-red-600 dark:text-red-400" data-agent-session-low-credit>
       {credit.remainingCents > 0
-        ? t('agent:session.credits.lowNote', { amount: dollars(credit.remainingCents) })
-        : t('agent:session.credits.lowNoteNone')}
+        ? <RichMessage id="agent:session.credits.lowNote" values={{ amount: dollars(credit.remainingCents) }} components={[<a className="font-semibold underline" href="#settings/api-key" data-agent-session-low-credit-key />]} />
+        : <RichMessage id="agent:session.credits.lowNoteNone" components={[<a className="font-semibold underline" href="#settings/api-key" data-agent-session-low-credit-key />]} />}
     </p>
+  );
+}
+
+/**
+ * The low-credits check (#4792): when the person presses Send with almost no
+ * credits left, the composer stops for one tap first. Low means less than $1
+ * left, or less than 10% of the allowance, whichever comes first — the two
+ * thresholds together, because either alone misses a case: a small allowance
+ * can have $0.80 of it left at 16%, and a large one $2 at 4%. It is a warning
+ * only: Continue always sends, and the person is not asked again for the rest
+ * of the visit (once per page load — a module variable, never storage —
+ * shared across conversations).
+ */
+export const LOW_CREDIT_CENTS = 100;
+export const LOW_CREDIT_FRACTION = 0.10;
+
+export function isLowCredit(credit: CreditView | null): boolean {
+  return !!credit && (credit.remainingCents < LOW_CREDIT_CENTS || credit.fraction < LOW_CREDIT_FRACTION);
+}
+
+let lowCreditConfirmedOnce = false;
+
+export function lowCreditConfirmed(): boolean {
+  return lowCreditConfirmedOnce;
+}
+
+export function confirmLowCredit(): void {
+  lowCreditConfirmedOnce = true;
+}
+
+/** Tests only: the flag is per page load, and a test is a shorter page. */
+export function resetLowCreditConfirmedForTest(): void {
+  lowCreditConfirmedOnce = false;
+}
+
+export function needsLowCreditCheck(credit: CreditView | null): boolean {
+  return isLowCredit(credit) && !lowCreditConfirmedOnce;
+}
+
+/**
+ * The check itself, drawn like the composer's archived strip — a rounded
+ * strip with the buttons on its right, tinted red to match the red credits
+ * pill — in the low-credits note's slot, between the text box and the send
+ * row. Its sentence is the note's own wording, so the two always match; the
+ * buttons are the composer's card buttons, Cancel outlined and Continue the
+ * filled primary. Like Send, they keep the field focused through the press.
+ * The button classes come in as props so the composer's CARD_BUTTON /
+ * CARD_PRIMARY literals are reused, not copied.
+ */
+export function LowCreditConfirm({ credit, buttonClass, primaryClass, onContinue, onCancel }: {
+  credit: CreditView;
+  buttonClass: string;
+  primaryClass: string;
+  onContinue: () => void;
+  onCancel: () => void;
+}) {
+  const t = useMessages('agent');
+  return (
+    <div
+      role="alert"
+      className="flex flex-wrap items-center gap-2 rounded-2xl bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950/40 dark:text-red-300"
+      data-agent-session-low-credit-confirm
+    >
+      <span className="min-w-0 flex-1">
+        {credit.remainingCents > 0
+          ? <RichMessage id="agent:session.credits.lowNote" values={{ amount: dollars(credit.remainingCents) }} components={[<a className="font-semibold underline" href="#settings/api-key" data-agent-session-low-credit-key />]} />
+          : <RichMessage id="agent:session.credits.lowNoteNone" components={[<a className="font-semibold underline" href="#settings/api-key" data-agent-session-low-credit-key />]} />}
+      </span>
+      <button type="button" className={buttonClass} onMouseDown={(event) => event.preventDefault()} onClick={onCancel}>
+        {t('agent:session.credits.confirmCancel')}
+      </button>
+      <button type="button" className={primaryClass} onMouseDown={(event) => event.preventDefault()} onClick={onContinue}>
+        {t('agent:session.credits.confirmContinue')}
+      </button>
+    </div>
   );
 }
 

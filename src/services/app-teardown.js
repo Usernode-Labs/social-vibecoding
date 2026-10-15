@@ -25,11 +25,14 @@ const appAccess = require('./app-access');
 // rebuilds. It asks here first. On 2026-10-05 it did not: a test account was
 // retired, its app's database drop took 30 seconds, and the sweep rebuilt the
 // production Deployment ten seconds in. The row was then deleted, and the
-// Deployment crash-looped against the dropped database for a week.
-const tearingDown = new Set();
+// Deployment crash-looped against the dropped database for a week. Each slug
+// is also this process's hold (services/processes.js): a heal sweep on
+// another platform process sees the teardown too.
+const tearingDown = require('./processes').heldSet('teardown');
 
 function isTearingDown(slug) {
-  return tearingDown.has(slug);
+  if (tearingDown.has(slug)) return true;
+  try { return require('./processes').heldElsewhere('teardown', slug); } catch { return false; }
 }
 
 async function teardownApp(pool, config, app) {
@@ -97,6 +100,21 @@ async function removeApp(pool, config, app) {
     log.warn('apps', 'Object-store cleanup failed on app delete (orphans remain under app/<id>/)', {
       appId: app.id, err: err.message,
     });
+  }
+
+  // With WF_PREVIEWS_ENABLED on, the previews the preview machine holds for
+  // this app are retired by it, by identity. Its work needs only the names
+  // it recorded, so the rows can go below.
+  try {
+    const previewWorkflow = require('./preview-workflow');
+    if (previewWorkflow.enabled()) {
+      const { rows } = await pool.query(
+        `SELECT cs.id FROM chat_sessions cs JOIN wf_instances w ON w.machine = 'preview' AND w.key = 'session:' || cs.id
+          WHERE cs.app_id = $1 AND w.state NOT IN ('retired', 'detached', '(none)')`, [app.id]);
+      for (const r of rows) await previewWorkflow.retire({ session: { id: r.id, app_id: app.id }, reason: 'app_deleted', terminal: true });
+    }
+  } catch (err) {
+    log.warn('apps', 'Could not hand the app\'s previews to the preview machine', { appId: app.id, err: err.message });
   }
 
   // Delete from DB (cascades to chat_messages, sessions, etc.)

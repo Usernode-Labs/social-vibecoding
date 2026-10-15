@@ -1,3 +1,4 @@
+import { SpeakButton } from '../dictation/speak-button';
 import {
   memo,
   useCallback,
@@ -57,14 +58,18 @@ import { badgeFor, formatSize, pastedName } from './attachments';
 import {
   CreditPill,
   BuildSheetBody,
+  LowCreditConfirm,
   LowCreditNote,
   ModelPill,
   ModelSheet,
   ModelSheetBody,
   type BuildTab,
   SentAttachments,
+  confirmLowCredit,
   creditView,
+  isLowCredit,
   modelList,
+  needsLowCreditCheck,
   showLowCreditNote,
   type CreditView,
 } from './composer-parts';
@@ -1804,11 +1809,13 @@ function Composer({ id }: { id: string }) {
     stopPending: s.turn.stopPending,
     stopError: s.turn.stopError,
     turnPhase: s.turn.phase,
-    // The low-credits note is a word to a NEW conversation (#4784): a sent
-    // message shown or still on its way is a conversation under way.
-    started: s.messages.length > 0 || s.outbox.length > 0,
+    // The low-credits note covers a conversation under way too (#4801); the
+    // out-of-credits card is what replaces it, so a refusal set on the store
+    // hides the note while the card is open.
+    refused: !!s.credits,
   }));
   const [value, setValue] = useState('');
+  const [dictating, setDictating] = useState(false);
   const input = useRef<HTMLTextAreaElement | null>(null);
   const running = snapshot.running;
   const archived = snapshot.session?.status === 'archived';
@@ -1820,6 +1827,10 @@ function Composer({ id }: { id: string }) {
   const saving = running && !snapshot.stopping && !!value.trim();
   const model = useModelChoice();
   const credit = useCredit();
+  // #4792: a send held for the low-credits check — the message that would
+  // have gone out, waiting on Continue. Null when nothing is held. The text
+  // itself is not copied here: the box keeps it, and Continue reads it.
+  const [pendingSend, setPendingSend] = useState<null | { kind: 'text' } | { kind: 'draft'; draft: SavedDraft }>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [buildTab, setBuildTab] = useState<BuildTab>('homeroom');
   const pill = useRef<HTMLButtonElement | null>(null);
@@ -1934,8 +1945,22 @@ function Composer({ id }: { id: string }) {
     return () => observer.disconnect();
   }, [fitField]);
 
+  // The sends themselves, lifted out of the form handlers so the low-credits
+  // check's Continue can run the same body (#4792).
+  const sendTyped = () => {
+    const text = value.trim();
+    update('');
+    void sendAgentMessage(text);
+  };
+  const sendDraft = (draft: SavedDraft) => {
+    const typed = value;
+    update('');
+    void sendSavedDraft(draft.id, typed);
+  };
+
   function submit(event?: FormEvent) {
     event?.preventDefault();
+    if (dictating) return;
     const text = value.trim();
     if (running) {
       if (saveComposerDraft(text)) update('');
@@ -1944,8 +1969,13 @@ function Composer({ id }: { id: string }) {
     if (!text && !files.length) return;
     // Files still uploading hold the send: the button says so, and Ctrl/Cmd+Enter waits too.
     if (uploading) return;
-    update('');
-    void sendAgentMessage(text);
+    // Almost no credits left (#4792): stop for one tap first. The box keeps
+    // its text; Continue sends it, Cancel keeps it.
+    if (needsLowCreditCheck(credit)) {
+      setPendingSend({ kind: 'text' });
+      return;
+    }
+    sendTyped();
   }
 
   // Pasted or dropped files join the tray (a pasted screenshot gets a name).
@@ -1960,10 +1990,36 @@ function Composer({ id }: { id: string }) {
 
   const onSendDraft = (draft: SavedDraft) => {
     if (running) return;
-    const typed = value;
-    update('');
-    void sendSavedDraft(draft.id, typed);
+    if (needsLowCreditCheck(credit)) {
+      setPendingSend({ kind: 'draft', draft });
+      return;
+    }
+    sendDraft(draft);
   };
+
+  // The check's two taps. Continue confirms for the rest of the visit and
+  // runs the held send; Cancel only closes the check, so the next Send asks
+  // again. The text send reads the box's current value, which it still holds.
+  const onConfirmSend = () => {
+    const held = pendingSend;
+    confirmLowCredit();
+    setPendingSend(null);
+    if (!held) return;
+    if (held.kind === 'draft') sendDraft(held.draft);
+    else sendTyped();
+  };
+  const onCancelSend = () => setPendingSend(null);
+
+  // The held send belongs to this conversation and this credit level: a
+  // switch of conversation, a turn that starts, or figures that refresh
+  // above the threshold (a top-up) close the check, and the next Send goes
+  // straight through.
+  useEffect(() => {
+    setPendingSend(null);
+  }, [target, running]);
+  useEffect(() => {
+    if (pendingSend && !isLowCredit(credit)) setPendingSend(null);
+  }, [credit, pendingSend]);
   const onEditDraft = (draft: SavedDraft) => {
     const text = editSavedDraft(draft.id, value);
     if (text == null) return;
@@ -2041,10 +2097,22 @@ function Composer({ id }: { id: string }) {
           }
         }}
       />
-      {/* The low-credits note (#4784): a new conversation and the credits
-          pill is already red — one line, before the send row. Hidden in an
-          archived conversation, and only before the first message. */}
-      {!archived && showLowCreditNote(credit, snapshot.started) ? <LowCreditNote credit={credit} /> : null}
+      {/* The low-credits note (#4784, #4801): the credits pill is red — one
+          line, before the send row, before the first message and once the
+          conversation is under way. Hidden in an archived conversation, and
+          while the out-of-credits card is open. While the low-credits check
+          (#4792) is open it gives way to the check, which says the same
+          words with Cancel and Continue beside them. */}
+      {!archived && pendingSend && credit ? (
+        <LowCreditConfirm
+          credit={credit}
+          buttonClass={CARD_BUTTON}
+          primaryClass={CARD_PRIMARY}
+          onContinue={onConfirmSend}
+          onCancel={onCancelSend}
+        />
+      ) : null}
+      {!archived && !pendingSend && showLowCreditNote(credit, snapshot.refused) ? <LowCreditNote credit={credit} /> : null}
       {/* #3574: the row is a size container so the model pill can tighten
           its padding on the narrowest phones (composer-parts.tsx ModelPill).
           Its width is the composer's, never its contents'. */}
@@ -2063,6 +2131,7 @@ function Composer({ id }: { id: string }) {
         >
           <PaperclipIcon className="h-5 w-5" aria-hidden="true" />
         </button>
+        <SpeakButton scope={`agent:${target}`} getText={() => input.current?.value || ''} onText={update} maxLength={20000} disabled={archived || !!pendingSend || snapshot.phase === 'loading'} onBusyChange={setDictating} />
         <input
           ref={picker}
           type="file"
@@ -2110,6 +2179,7 @@ function Composer({ id }: { id: string }) {
             key="save"
             type="submit"
             data-agent-session-send="save"
+            disabled={dictating}
             onMouseDown={(event) => event.preventDefault()}
             variant="unstyled"
             ink="solid"
@@ -2134,7 +2204,7 @@ function Composer({ id }: { id: string }) {
             size="icon"
             ink={running ? 'dangerTint' : 'solid'}
             className="inline-flex h-10 w-10 shrink-0 items-center justify-center"
-            disabled={running ? (snapshot.stopping || snapshot.turnPhase === 'mayor2') : (!sendable || uploading)}
+            disabled={running ? (snapshot.stopping || snapshot.turnPhase === 'mayor2') : (dictating || !sendable || uploading)}
             aria-label={running ? t('agent:session.composer.stop') : uploading ? t('agent:session.composer.sendWaitingLabel') : t('agent:session.composer.send')}
             title={running
               ? (snapshot.turnPhase === 'mayor2' ? t('agent:session.composer.stopUnavailableTitle') : t('agent:session.composer.stop'))

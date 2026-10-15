@@ -195,9 +195,10 @@ test('the row bound widens to the viewport budget, and never below two', () => {
 
 test('the visible row budget is measured from the screen, floored and capped', () => {
   const HOME = read('frontend/src/features/home/home.js');
-  // Two-thirds of the screen, as a named constant rather than a number in the
-  // middle of render().
-  assert.match(HOME, /APPS_VIEWPORT_FRACTION: 2 \/ 3,/);
+  // Half of the screen, as a named constant rather than a number in the
+  // middle of render(). #4937 moved Discover up to follow the launcher
+  // directly, and the bottom half is what keeps the launcher peeking.
+  assert.match(HOME, /APPS_VIEWPORT_FRACTION: 1 \/ 2,/);
   // Floored at the two-row contract and capped by the canvas itself, so no
   // measurement can strand a tile or draw a row the model does not have.
   assert.match(

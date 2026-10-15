@@ -34,13 +34,15 @@ function ctx(input, resumeFrom = null) {
 
 const MARKER = 'homeroom-governance:issue:5:close';
 
-// It pushes nothing itself: the transition that applies its result tells
-// browsers to re-read (tests/workflow-governance-postgres.test.js).
-test('github.closeIssue closes, checkpoints, comments with its marker, and busts the cache', async () => {
+// It pushes nothing and touches no cache itself: the transition that applies
+// its result tells every web process to stop listing the issue and browsers
+// to re-read (tests/workflow-governance-postgres.test.js). The cache is per
+// process, and this runs in one.
+test('github.closeIssue closes, checkpoints and comments with its marker; the cache is not its own', async () => {
   calls.length = 0;
   const { saved, ctx: c } = ctx({ owner: 'a', repo: 'b', number: 7, comment: 'Closed.', marker: MARKER, bustCache: true, appId: 1, appSlug: 's' });
   assert.deepEqual(await services['github.closeIssue'].run(c), { closed: true });
-  assert.deepEqual(calls, [['close', 7], ['comment', 7, `Closed.\n\n<!-- ${MARKER} -->`], ['note'], ['bust']]);
+  assert.deepEqual(calls, [['close', 7], ['comment', 7, `Closed.\n\n<!-- ${MARKER} -->`]]);
   assert.equal(saved.length, 3);
   assert.deepEqual([saved[0], saved[2]], [{ closed: true }, { closed: true, commented: true }]);
   assert.ok(!Number.isNaN(Date.parse(saved[1].commenting)), 'records when it started posting');

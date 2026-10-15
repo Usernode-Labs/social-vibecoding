@@ -52,7 +52,16 @@
 
 const log = require('./logger');
 const { countedVotePredicateSql } = require('./pr-vote-revision');
+// The gate's rule and the electorate are the workflow's
+// (src/workflow/rules/), one copy for this module and the governance
+// machine, which decides with them inside its transaction.
+const gateRules = require('../workflow/rules/governance-gate.ts');
+const electorateRules = require('../workflow/rules/electorate.ts');
 const governanceRules = require('./governance-rules');
+// 13 Oct 2026, D1: whether a change is its project's first version, which
+// goes live without a vote (the gate's own rule is governance-gate.ts
+// applyFirstVersion).
+const { firstVersionSql, isFirstVersion } = require('./first-version-rule');
 
 // Lazy accessor rather than a top-level destructure: tests stub
 // services/active-users via require.cache, and this module may be
@@ -114,58 +123,14 @@ async function readRules(pool, appId) {
   }
 }
 
-// apps.governance_rules as the gate reads it: `{ preset, groups, rules }`,
-// each group `{ name, key, people, ids }`, or null for anything unusable.
-function rulesFromColumn(raw) {
-  let v = raw;
-  if (typeof v === 'string') {
-    try { v = JSON.parse(v); } catch { return null; }
-  }
-  if (!v || typeof v !== 'object' || !Array.isArray(v.rules) || !v.rules.length) return null;
-  const groups = Array.isArray(v.groups) ? v.groups.filter((g) => g && typeof g.name === 'string').map((g) => ({
-    name: g.name,
-    key: governanceRules.groupKey(g.name),
-    people: Array.isArray(g.people) ? g.people.filter((p) => typeof p === 'string') : [],
-    ids: Array.isArray(g.ids) ? g.ids.map((id) => parseInt(id, 10)).filter(Number.isFinite) : [],
-  })) : [];
-  const keys = new Set(groups.map((g) => g.key));
-  const rules = v.rules.filter((r) => r && typeof r.group === 'string'
-    && ['atLeast', 'percentOfActive', 'percentOfEveryone', 'majority'].includes(r.kind)
-    && (governanceRules.BUILT_IN_GROUPS.includes(r.group) || keys.has(r.group)))
-    .map((r) => ({ group: r.group, kind: r.kind, n: r.kind === 'majority' ? null : parseInt(r.n, 10) || 1 }));
-  if (!rules.length) return null;
-  const preset = typeof v.preset === 'string' && governanceRules.PRESET_KEYS.includes(v.preset) ? v.preset : null;
-  return { preset, groups, rules };
-}
-
-// The governance columns of an apps row, as readGovernance returns them.
-// A row that carries governance_rules (the workflow machine's facts read)
-// brings its rules too.
-function governanceFromRow(row) {
-  return {
-    approverPolicy: row?.approver_policy === 'invited' ? 'invited' : 'anyone',
-    approvalsRequired: row?.approvals_required != null
-      ? parseInt(row.approvals_required, 10)
-      : null,
-    rules: row && Object.prototype.hasOwnProperty.call(row, 'governance_rules')
-      ? rulesFromColumn(row.governance_rules) : null,
-  };
-}
+// The governance columns of an apps row (and its rules, when the row
+// carries governance_rules), and apps.governance_rules as the gate reads it.
+const { governanceFromRow, rulesFromColumn } = gateRules;
 
 // The approver electorate for an 'invited'-policy app: member rows in
-// app_approvers, or — when the roster is empty — the full-admin
-// fallback described in the header. Returns { ids, adminFallback }.
-async function getApproverSet(pool, appId) {
-  const { rows } = await pool.query(
-    `SELECT user_id FROM app_approvers WHERE app_id = $1 AND status = 'member'`,
-    [appId]
-  );
-  if (rows.length) return { ids: rows.map((r) => r.user_id), adminFallback: false };
-  const { rows: admins } = await pool.query(
-    `SELECT id FROM users WHERE is_admin = TRUE AND admin_readonly = FALSE`
-  );
-  return { ids: admins.map((r) => r.id), adminFallback: true };
-}
+// app_approvers, or (when the roster is empty) the full-admin fallback
+// described in the header. Returns { ids, adminFallback }.
+const { getApproverSet } = electorateRules;
 
 // Whether a user's vote QUALIFIES (counts toward the gate) on this
 // app. Under 'anyone' every vote qualifies; under 'invited' only the
@@ -179,274 +144,28 @@ async function isApprover(pool, appId, userId) {
   return ids.includes(userId);
 }
 
-// Pure "at least N" gate, shaped exactly like mergeGate's return so
-// every consumer (merge routes, sweeper, countdown pill) reads one
-// object regardless of mode. Every MERGE clock is off by design: no
-// visibility window, no lazy consensus, no contested state — N approvals
-// and nothing else opens the merge.
-//
-// #2494: the REJECTION clock is no longer off with them. It was, and the
-// consequence was that a promoted proposal on an at-least-N app could
-// never close itself however it was voted: `server.js` archives on
-// `gate.rejectable`, and this gate could not produce a true one. A
-// proposal reported eighteen days promoted at 2 yes / 2 no, still being
-// prebuilt, re-checked and re-synced with main on every sweep.
-//
-// The rule is the default mode's, unchanged — same `REJECT_MIN_NO` floor,
-// same dominance curve, same window (active-users.js oppositionWindowMs).
-// Only the KEEP-ALIVE differs, because the two modes measure support
-// differently: the default mode protects a proposal whose Yes share of
-// active users clears a fraction; at-least-N has no active denominator,
-// and its own measure of support is the threshold itself. A proposal with
-// its approvals is mergeable, so it must never auto-close.
-//
-// WHAT THIS DOES NOT DO, because it is the group's decision and not
-// this function's: expire a proposal for AGE. A tie is still a stalemate
-// in both modes — `no <= yes` never arms — so a 2-2 proposal still sits
-// there. "N approvals, no clock" has no notion of losing, so the real
-// failure state is never-approved, and the only honest remedy is time:
-// how long, whether the author is warned, whether a vote resets it.
+// The pure gate (src/workflow/rules/governance-gate.ts explains each
+// part): "at least N" (atLeastGate), the #788 no-timer modifier
+// (applyNoTimerMerge), the member floor (memberFloor) and the mode dispatch
+// (computeGate). The default mode's curves are reached through
+// services/active-users.js, as they always were, so a test that stubs that
+// module still reaches the gate it stubbed.
+const { applyNoTimerMerge, memberFloor } = gateRules;
+
 function atLeastGate(n, yesCount, noCount = 0, openedAt = null, now = Date.now(), opts = {}) {
-  const yes = Math.max(parseInt(yesCount, 10) || 0, 0);
-  const required = Math.max(parseInt(n, 10) || 1, 1);
-  const thresholdMet = yes >= required;
-  // The member floor (applyNoTimerMerge below): a flagged proposal whose
-  // only qualifying Yes is its author's is not mergeable however many
-  // approvals the count shows. `floorMet` defaults to true, so every caller
-  // that is not flagged keeps exactly the old gate.
-  const floorMet = opts.floorMet !== false;
-  const mergeable = thresholdMet && floorMet;
-  // Keep-alive: a proposal that already has its approvals is mergeable,
-  // and must not be auto-rejected out from under them. Keyed on MERGEABLE,
-  // not on the count: an author's own Yes on a flagged proposal is not
-  // support the floor accepts, so it must not keep a proposal the group is
-  // voting down alive forever either.
-  const rejWindowMs = mergeable
-    ? null
-    : activeUsers().oppositionWindowMs(yes, noCount);
-  const rejectionArmed = rejWindowMs !== null;
-  const openedMs = openedAt ? new Date(openedAt).getTime() : NaN;
-  // A NULLISH `now` means "now", not the epoch. The default parameter only
-  // covers `undefined`, and routes/votes.js passes an explicit `null` here
-  // to reach the options argument — `new Date(null).getTime()` is 0, which
-  // would put every proposal's clock fifty-six years in the future and
-  // report `rejectable: false` forever. That is the same shape as the bug
-  // this change exists to fix, so it is normalised the way mergeGate's own
-  // `toMs(now, Date.now())` does.
-  const nowMs = now == null
-    ? Date.now()
-    : (typeof now === 'number' ? now : new Date(now).getTime());
-  // An unknown open time cannot be elapsed. `NaN >= window` is already
-  // false, so this guard is explicit rather than load-bearing here — it
-  // says the intent out loud, because the reading that matters is the one
-  // below: `rejectionEndsAt` must not become `new Date(NaN)`. The
-  // behaviour either way is to stay ARMED but not yet rejectable, which
-  // is the safe direction for a proposal whose age we cannot establish.
-  const rejectionElapsed = rejectionArmed
-    && Number.isFinite(openedMs) && nowMs - openedMs >= rejWindowMs;
-  return {
-    required,
-    windowMs: 0,
-    windowEndsAt: null,
-    contested: false,
-    thresholdMet,
-    windowElapsed: true,
-    lazyArmed: false,
-    lazyWindowMs: null,
-    mergeable,
-    rejectionWindowMs: rejWindowMs,
-    rejectionArmed,
-    rejectionEndsAt: rejectionArmed && Number.isFinite(openedMs)
-      ? new Date(openedMs + rejWindowMs).toISOString()
-      : null,
-    rejectable: rejectionArmed && rejectionElapsed,
-  };
+  return gateRules.atLeastGate(n, yesCount, noCount, openedAt, now, opts, activeUsers().oppositionWindowMs);
 }
 
-// #788 "explicit approval" modifier. A proposal whose diff changes a
-// protected dapp.json block (admins, governance, visibility,
-// platform_env, secrets; services/explicit-approval.js) keeps the app's
-// NORMAL approval rules — same threshold, same
-// electorate, same at-least-N / invited-approver configuration, same
-// contested handling — but loses every TIME-BASED merge path:
-//
-//   - the minimum visibility window (a clock that DELAYS an
-//     already-approved proposal) is zeroed, so it merges the instant
-//     its normal threshold is met by votes actually cast;
-//   - lazy consensus (a clock that MERGES an under-threshold proposal
-//     because nobody objected) is disarmed outright. Silence must
-//     never hand out admin rights.
-//
-// Everything else passes through untouched — `required`, `contested`,
-// `thresholdMet`, and all four rejection fields. That last point is the
-// whole reason this is a modifier rather than a separate gate: the
-// auto-takedown countdown and the stale-PR sweep keep behaving exactly
-// as they do for any other proposal on that app, so a flagged proposal
-// nobody wants still dies on schedule.
-//
-// Note this is a no-op on the merge side under 'at_least' (atLeastGate
-// is already clock-free), and deliberately does NOT re-arm that mode's
-// rejection fields — "as before" means as that app normally behaves.
-//
-// THE MEMBER FLOOR. `floor` (memberFloor below) adds one condition on
-// top: whenever the community has more than one member, a flagged
-// proposal also needs at least one qualifying Yes from someone other than
-// its author. Without it the "real votes" the modifier asks for could be
-// the author's alone: on a small app the eased threshold is often one Yes,
-// so a proposal to make the app private, change its admins or carry a key
-// value merged on its author's own say-so the moment it was proposed. The
-// threshold (`required`, `thresholdMet`) still reports the vote count; the
-// floor is its own fact, so a surface can say which of the two is missing.
-// `floor` null means "not evaluated" (a display serializer that does not
-// read it): the merge side then behaves as before, and every merge path
-// that decides anything goes through governedGate, which always evaluates
-// it.
-function applyNoTimerMerge(gate, floor = null) {
-  const floorMet = !floor || floor.met !== false;
-  return {
-    ...gate,
-    windowMs: 0,
-    windowEndsAt: null,
-    windowElapsed: true,
-    lazyArmed: false,
-    lazyWindowMs: null,
-    mergeable: !!gate.thresholdMet && floorMet,
-  };
-}
-
-// The member floor for one flagged proposal, from the community's member
-// count and the qualifying Yes votes cast by someone other than the author.
-// Returns null when the member count is unknown (not evaluated), else
-// { applies, otherYes, met }: `applies` is false for a one-member
-// community, where nobody else exists to ask (the author alone decides, as
-// on any solo project), and `met` is true whenever the floor does not apply.
-function memberFloor({ memberCount, otherYes } = {}) {
-  if (memberCount === undefined || memberCount === null) return null;
-  const members = parseInt(memberCount, 10);
-  if (!Number.isFinite(members)) return null;
-  const applies = members > 1;
-  const other = Math.max(parseInt(otherYes, 10) || 0, 0);
-  return { applies, otherYes: other, met: !applies || other >= 1 };
-}
-
-// Pure mode dispatch given already-resolved governance + counts. The
-// async governedGate below resolves the electorate/counts and calls
-// this; serializers with batch-fetched counts call it directly.
-//
-// `opts.explicitApproval` layers the #788 no-timer modifier on top of
-// whichever regime the app configured — `mode` still reports the real
-// regime ('default' / 'at_least'), because the app's rules are what
-// still decide the threshold.
-//
-// `opts.memberCount` + `opts.otherYes` evaluate the member floor for a
-// flagged proposal (applyNoTimerMerge above); `memberFloor` on the result
-// is null when the proposal is not flagged or the floor was not evaluated.
 function computeGate(gov, active, yesCount, noCount, openedAt, now, opts = {}) {
-  if (gov && gov.rules) return computeRulesGate(gov, active, yesCount, noCount, openedAt, now, opts);
-  const explicitApproval = !!opts.explicitApproval;
-  const floor = explicitApproval ? memberFloor(opts) : null;
-  const base = gov.approvalsRequired != null
-    ? atLeastGate(gov.approvalsRequired, yesCount, noCount, openedAt, now,
-      { floorMet: !floor || floor.met })
-    : activeUsers().mergeGate(active, yesCount, noCount, openedAt, now);
-  const gated = explicitApproval ? applyNoTimerMerge(base, floor) : base;
-  return {
-    ...gated,
-    policy: gov.approverPolicy,
-    mode: gov.approvalsRequired != null ? 'at_least' : 'default',
-    approvalsRequired: gov.approvalsRequired,
-    explicitApproval,
-    memberFloor: floor,
-    qualifiedYes: Math.max(parseInt(yesCount, 10) || 0, 0),
-    qualifiedNo: Math.max(parseInt(noCount, 10) || 0, 0),
-    activeCount: Math.max(parseInt(active, 10) || 0, 1),
-  };
+  const au = activeUsers();
+  return gateRules.computeGate(gov, active, yesCount, noCount, openedAt, now, opts,
+    { mergeGate: au.mergeGate, oppositionWindowMs: au.oppositionWindowMs });
 }
 
-// #4666: whether a flagged proposal is a change to WHO DECIDES (who can see
-// the project, its admins, its groups, its rule, the platform's settings) as
-// opposed to a change to its keys. Who decides goes by WHO_DECIDES whatever
-// the project picked; keys follow the project's own rule. A flag with no
-// reason (a row stamped before reasons existed) is treated as who decides,
-// the stricter reading.
-function isWhoDecidesReason(reason) {
-  return reason !== 'secrets';
-}
-
-// computeGate for a project with rules of its own (governance-rules.js). The
-// counts stand in for the members group when the caller has no voter sets
-// (`opts.voters`) or app facts (`opts.rulesFacts`); a rule they cannot answer
-// does not pass, and `partial` says so. Every path that decides goes through
-// governedGate, which always reads both.
-//
-// Returns the mergeGate shape every consumer reads, plus `mode: 'rules'`,
-// `preset`, `whoDecides`, `rules` (each rule's status), `passedBy` (the rule
-// that let it in, or null) and `creatorYes`.
-function computeRulesGate(gov, active, yesCount, noCount, openedAt, now, opts = {}) {
-  const explicitApproval = !!opts.explicitApproval;
-  const whoDecides = explicitApproval && isWhoDecidesReason(opts.explicitReason ?? null);
-  const value = whoDecides ? { rules: governanceRules.WHO_DECIDES } : gov.rules;
-  const facts = opts.rulesFacts || {
-    creatorId: null, memberCount: opts.memberCount ?? 0, membersActive: active,
-    adminIds: [], groups: new Map(), activeIds: null,
-  };
-  const membersActive = Math.max(parseInt(active, 10) || 0, 1);
-  const voters = opts.voters ? {
-    yes: opts.voters.yes instanceof Set ? opts.voters.yes : new Set(opts.voters.yes || []),
-    no: opts.voters.no instanceof Set ? opts.voters.no : new Set(opts.voters.no || []),
-  } : null;
-  const authorId = opts.authorId != null && Number.isFinite(parseInt(opts.authorId, 10))
-    ? parseInt(opts.authorId, 10) : null;
-  // The member floor on the majority rules of a flagged proposal: a yes from
-  // someone other than its author, once the community has more than one member.
-  let floor = null;
-  if (explicitApproval) {
-    const otherYes = voters
-      ? [...voters.yes].filter((id) => id !== authorId).length
-      : opts.otherYes;
-    floor = memberFloor({ memberCount: opts.memberCount ?? facts.memberCount, otherYes });
-  }
-  const evaluated = governanceRules.evaluateRules({
-    value,
-    facts: { ...facts, membersActive },
-    voters,
-    counts: { yes: Math.max(parseInt(yesCount, 10) || 0, 0), no: Math.max(parseInt(noCount, 10) || 0, 0) },
-    authorId,
-    openedAt,
-    now,
-    noTimers: explicitApproval,
-    memberFloor: floor,
-    mergeGate: activeUsers().mergeGate,
-    applyNoTimerMerge,
-    atLeastGate,
-  });
-  const { gate, owner, shown, results, passedBy } = evaluated;
-  const creatorYes = !!(facts.creatorId && voters
-    && (voters.yes.has(facts.creatorId)
-      || (authorId === facts.creatorId && !voters.no.has(facts.creatorId))));
-  return {
-    ...gate,
-    policy: 'anyone',
-    mode: 'rules',
-    approvalsRequired: null,
-    explicitApproval,
-    // The floor is the group's side of a flagged change only: reported while
-    // it is what holds the proposal, never once a rule has let it in.
-    memberFloor: floor && !gate.mergeable ? floor : (floor ? { ...floor, applies: false, met: true } : null),
-    qualifiedYes: shown.yes,
-    qualifiedNo: owner.no,
-    activeCount: membersActive,
-    preset: whoDecides ? null : (gov.rules.preset || governanceRules.matchPreset(gov.rules.rules)),
-    whoDecides,
-    creatorYes,
-    partial: evaluated.partial,
-    passedBy: passedBy ? { group: passedBy.group, kind: passedBy.kind, n: passedBy.n } : null,
-    rules: results.map((r) => ({
-      group: r.group, kind: r.kind, n: r.n, size: r.size, yes: r.yes, need: r.need,
-      passed: r.passed, empty: r.empty,
-    })),
-  };
-}
+// #4666: whether a flagged proposal is a change to who decides, and the
+// gate for a project with rules of its own (computeGate dispatches to it):
+// src/workflow/rules/governance-gate.ts.
+const { isWhoDecidesReason } = gateRules;
 
 // Qualifying yes/no counts for ONE proposal. `kind` picks the vote
 // table: 'pr' → pr_votes (yes/no keyed by session_id), 'issue' →
@@ -614,21 +333,29 @@ async function proposalAuthorId(pool, kind, id) {
   return Number.isFinite(n) ? n : null;
 }
 
-// Electorate resolution: who counts, and how many of them there are.
-// 'anyone' → the active-user stats (approverIds null = count every
-// vote); 'invited' → the approver member set (admin fallback when
-// empty). Exposed for serializers that batch-count many rows.
-// `appMeta` ({ selfHosted, collabPrivate }) is passed on to
-// getActiveUserStats by a caller that has already read the app row.
-async function getElectorate(pool, appId, gov, appMeta = null) {
-  // #4666: a rules project's groups are the rules' business; the electorate
-  // is the active members, as under 'anyone'.
-  if (gov.approverPolicy === 'invited' && !gov.rules) {
-    const { ids, adminFallback } = await getApproverSet(pool, appId);
-    return { active: Math.max(ids.length, 1), approverIds: ids, adminFallback };
+// Whether an author is an account the platform runs (users.is_synthetic:
+// Homeroom bot), whose proposing is nobody's yes on a rules project
+// (governance-rules.ts). A failed read answers true: the stricter reading,
+// which asks a person's yes of a change rather than counting one nobody gave.
+async function authorIsBot(pool, authorId) {
+  const id = parseInt(authorId, 10);
+  if (!Number.isFinite(id)) return false;
+  try {
+    const res = await pool.query('SELECT is_synthetic FROM users WHERE id = $1', [id]);
+    return !!(res && res.rows && res.rows[0] && res.rows[0].is_synthetic === true);
+  } catch (err) {
+    log.warn('governance', 'Could not read whether a proposal\'s author is a person; counting no yes for it', { authorId: id, err: err.message });
+    return true;
   }
-  const { active } = await activeUsers().getActiveUserStats(pool, appId, appMeta);
-  return { active, approverIds: null, adminFallback: false };
+}
+
+// Electorate resolution: who counts, and how many of them there are
+// (src/workflow/rules/electorate.ts). Exposed for serializers that
+// batch-count many rows. `appMeta` ({ selfHosted, collabPrivate }) is passed
+// on to getActiveUserStats by a caller that has already read the app row.
+async function getElectorate(pool, appId, gov, appMeta = null) {
+  return electorateRules.electorate(pool, appId, gov, appMeta,
+    (db, id, meta) => activeUsers().getActiveUserStats(db, id, meta));
 }
 
 // #4747: whether this viewer's vote can affect a proposal's outcome under
@@ -761,6 +488,31 @@ async function voterSetsBatch(pool, kind, ids) {
   return out;
 }
 
+// The proposals of `ids` whose author is an account the platform runs
+// (Homeroom bot): a Set of ids. Their proposing is nobody's yes on a rules
+// project. A failed read counts every one as the bot's (authorIsBot above).
+async function botAuthoredBatch(pool, kind, ids) {
+  const list = (ids || []).map((id) => parseInt(id, 10)).filter(Number.isFinite);
+  if (!list.length) return new Set();
+  try {
+    const res = kind === 'issue'
+      ? await pool.query(
+        `SELECT i.id FROM issues i JOIN users u ON u.id = i.created_by
+          WHERE i.id = ANY($1::int[]) AND u.is_synthetic = TRUE`,
+        [list]
+      )
+      : await pool.query(
+        `SELECT cs.id FROM chat_sessions cs JOIN users u ON u.id = cs.user_id
+          WHERE cs.id = ANY($1::int[]) AND u.is_synthetic = TRUE`,
+        [list]
+      );
+    return new Set(((res && res.rows) || []).map((r) => parseInt(r.id, 10)));
+  } catch (err) {
+    log.warn('governance', 'Could not read which proposals Homeroom bot made; counting no author yes for any', { err: err.message });
+    return new Set(list);
+  }
+}
+
 /**
  * For a serializer that batch-counts many proposals on ONE app: what
  * computeGate needs to answer a rules project's gate, read once. Null for a
@@ -769,11 +521,12 @@ async function voterSetsBatch(pool, kind, ids) {
  */
 async function rulesContext(pool, appId, gov, kind, ids) {
   if (!gov || !gov.rules) return null;
-  const [facts, voters] = await Promise.all([
+  const [facts, voters, botAuthored] = await Promise.all([
     rulesFacts(pool, appId, gov),
     voterSetsBatch(pool, kind, ids),
+    botAuthoredBatch(pool, kind, ids),
   ]);
-  return { facts, voters };
+  return { facts, voters, botAuthored };
 }
 
 /** The computeGate options for one proposal out of a rulesContext. */
@@ -783,6 +536,7 @@ function rulesGateOpts(ctx, id, authorId, explicitReason) {
     rulesFacts: ctx.facts,
     voters: ctx.voters.get(parseInt(id, 10)) || { yes: new Set(), no: new Set() },
     authorId: authorId ?? null,
+    authorIsBot: !!(ctx.botAuthored && ctx.botAuthored.has(parseInt(id, 10))),
     memberCount: ctx.facts.memberCount,
     ...(explicitReason !== undefined ? { explicitReason } : {}),
   };
@@ -810,13 +564,22 @@ async function storedExplicitReason(pool, kind, id) {
 // deleted author), else it is read off the row. This is the path every
 // merge and apply decision takes, so the floor can never be skipped by a
 // caller that forgot to ask for it.
+//
+// The same goes for a project's first version (13 Oct 2026, D1): a change
+// is read for it here unless the caller says (`firstVersion`), and the gate
+// waives its vote (governance-gate.ts applyFirstVersion). An issue never is
+// one.
 async function governedGate(pool, appId, {
-  kind = 'pr', id, openedAt, now, explicitApproval = false, authorId, explicitReason,
+  kind = 'pr', id, openedAt, now, explicitApproval = false, authorId, explicitReason, firstVersion,
 } = {}) {
   const gov = await getGovernance(pool, appId);
+  const first = firstVersion !== undefined
+    ? !!firstVersion
+    : (kind === 'pr' ? await isFirstVersion(pool, id) : false);
   if (gov.rules) {
     // #4666: a rules project reads who voted and what its groups are; the
-    // author always, because proposing counts as their yes.
+    // author always, because proposing counts as their yes, and whether they
+    // are a person, because only a person's proposing does.
     const [facts, voters, author] = await Promise.all([
       rulesFacts(pool, appId, gov),
       voterSets(pool, kind, id),
@@ -827,7 +590,9 @@ async function governedGate(pool, appId, {
       : null;
     return computeGate(gov, facts.membersActive, voters.yes.size, voters.no.size, openedAt, now, {
       explicitApproval, explicitReason: reason, authorId: author, voters,
+      authorIsBot: author != null ? await authorIsBot(pool, author) : false,
       rulesFacts: facts, memberCount: facts.memberCount,
+      firstVersion: first,
     });
   }
   const electorate = await getElectorate(pool, appId, gov);
@@ -848,7 +613,7 @@ async function governedGate(pool, appId, {
   // #788: the no-timer modifier rides on top of whatever regime the app
   // configured — see applyNoTimerMerge — and with it the member floor.
   const gate = computeGate(gov, electorate.active, yes, no, openedAt, now, {
-    explicitApproval, otherYes, memberCount,
+    explicitApproval, otherYes, memberCount, firstVersion: first,
   });
   if (electorate.adminFallback && gov.approverPolicy === 'invited') {
     log.debug('governance', 'Approver roster empty; full admins acting as approvers', { appId });
@@ -952,6 +717,11 @@ module.exports = {
   voterSetsBatch,
   rulesContext,
   rulesGateOpts,
+  botAuthoredBatch,
+  authorIsBot,
+  firstVersionSql,
+  isFirstVersion,
+  applyFirstVersion: gateRules.applyFirstVersion,
   rulesFromColumn,
   isWhoDecidesReason,
   electorateAtPromote,

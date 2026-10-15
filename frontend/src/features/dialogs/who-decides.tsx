@@ -13,8 +13,9 @@
  *                             or Make your own: groups and rules, any one
  *                             passing is enough, starting from the one
  *                             picked.
- *   How it plays out          what the pick means for you and for someone
- *                             else in it.
+ *   How it plays out          what the pick means: for a change anyone
+ *                             makes, or (You or the group) for you and
+ *                             for anyone else.
  *   People                    who is in it and its admins, a door to the
  *                             Members dialog, where they are managed.
  *
@@ -43,7 +44,6 @@ import { Input } from '@/components/ui/input';
 
 import { changeHref } from '../../lib/change-href';
 import { useMessages } from '../../lib/i18n/react';
-import { t as translate } from '../../lib/i18n/runtime';
 import { audienceLine, reloadCommunity, useCommunity } from '../dev-board/workshop/community-card';
 import {
   currentValue, groupKey, groupLabel, groupNameProblem, groupSize, matchPreset, MAX_AT_LEAST,
@@ -148,16 +148,7 @@ export function WhoDecidesDialog() {
   const current = useMemo(() => currentValue(approval), [approval]);
   const nowPreset = presetOf(current);
   const creator = approval?.creator?.username || null;
-  // Read only while open: the prerender has no window, and draws nothing here.
-  const meName = typeof window !== 'undefined'
-    ? (window as unknown as { App?: { user?: { username?: string } } }).App?.user?.username || ''
-    : '';
-  const others = (community?.members || []).map((m) => m.username).filter((u) => u && u !== meName);
-  const viewer: Viewer = {
-    isCreator: !!community?.is_creator,
-    creator,
-    other: others.find((u) => u !== creator) || others[0] || translate('dialogs:whoDecides.someone'),
-  };
+  const viewer: Viewer = { isCreator: !!community?.is_creator, creator };
   const visibility = community?.visibility || null;
   const currentVis: Visibility = visibility?.view === 'public' ? 'public' : 'private';
   const buildLimited = visibility?.view === 'public' && visibility?.build === 'private';
@@ -238,11 +229,6 @@ export function WhoDecidesDialog() {
       });
       if (result.state === 'notVerified') {
         setError(t('dialogs:whoDecides.notVerified'));
-        return;
-      }
-      if (result.state === 'waiting') {
-        setError(t('dialogs:whoDecides.alreadyWaiting'));
-        void reloadCommunity(slug);
         return;
       }
       setOpened({ sessionId: result.sessionId, prNumber: result.prNumber });
@@ -342,15 +328,6 @@ export function WhoDecidesDialog() {
     return (
       <>
         <Header title={t('dialogs:whoDecides.title')} sub={sub} onClose={close} />
-
-        {waiting ? (
-          <p className="mt-3 rounded-2xl bg-white px-4 py-3 text-[13px] leading-snug shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900" data-who-waiting="">
-            {`${t('dialogs:whoDecides.waiting')} `}
-            <a className={`font-semibold ${ACCENT_TEXT}`} href={changeHref(slug, waiting.session_id)} onClick={() => dialog.closeForNavigation()}>
-              {t('dialogs:whoDecides.open')}
-            </a>
-          </p>
-        ) : null}
 
         {community?.can_manage !== false ? (
           <>
@@ -461,14 +438,27 @@ export function WhoDecidesDialog() {
             </>
           ) : changes.length ? (
             <>
-              <p className="text-[15px] font-[650]">{t('dialogs:whoDecides.count', { count: changes.length })}</p>
+              {/* #4960: another access change may already be up for a vote;
+                  competing ones are allowed, so Propose stays enabled and
+                  the heading warns here, where the person is looking. */}
+              <p className="text-[15px] font-[650]">
+                {waiting ? t('dialogs:whoDecides.waitingTitle') : t('dialogs:whoDecides.count', { count: changes.length })}
+              </p>
               {changes.map((c) => (
                 <p key={c.label} className="mt-1 text-[13px] leading-snug text-zinc-600 dark:text-zinc-300">
                   {t('dialogs:whoDecides.changeLine', { what: c.label, from: c.from, to: c.to })}
                 </p>
               ))}
+              {waiting ? (
+                <p className="mt-1 text-[13px] leading-snug text-zinc-600 dark:text-zinc-300" data-who-waiting-warning="">
+                  {`${t('dialogs:whoDecides.waitingSub')} `}
+                  <a className={`font-semibold ${ACCENT_TEXT}`} href={changeHref(slug, waiting.session_id)} onClick={() => dialog.closeForNavigation()}>
+                    {t('dialogs:whoDecides.open')}
+                  </a>
+                </p>
+              ) : null}
               <Button type="button" layout="full" variant="pillAccent" size="pillLg" ink="solidLate" className="mt-3 flex items-center justify-center"
-                data-who-propose="" disabledStyle="block" disabled={busy || !!waiting} onClick={() => void propose()}>
+                data-who-propose="" disabledStyle="block" disabled={busy} onClick={() => void propose()}>
                 {busy ? t('dialogs:whoDecides.proposing') : t('dialogs:whoDecides.propose', { count: changes.length })}
               </Button>
               <p className="mt-2 text-[12.5px] leading-snug text-zinc-500 dark:text-zinc-400">

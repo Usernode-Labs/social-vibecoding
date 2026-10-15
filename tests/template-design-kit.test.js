@@ -161,7 +161,11 @@ test('the component layer: 44 px controls, a list, a card, a label, and the thre
   const css = file(generate(), 'styles/tailwind-input.css');
   const c = componentsOf(css);
   assert.deepEqual(Object.keys(c).sort(), ['.btn-primary', '.btn-secondary', '.card', '.field', '.list', '.list-row',
-    '.section-label', '.skeleton', '.state-empty', '.state-error'].sort());
+    '.page-column', '.section-label', '.skeleton', '.state-empty', '.state-error'].sort());
+  // App bench run 193: desktop layouts stretched across the window, and
+  // loading states shaped unlike the rows they stood for.
+  assert.match(c['.page-column'], /^mx-auto w-full max-w-2xl$/, 'one centred column');
+  assert.match(css.replace(/\s+/g, ' '), /loading: the content's own shape, never a blank: the same list and rows at their height, with \.skeleton bars where their text goes, so nothing moves when the data arrives;/);
   for (const sel of ['.btn-primary', '.btn-secondary']) {
     assert.match(c[sel], /\bmin-h-11\b/, `${sel}: 44 px tall`);
     assert.match(c[sel], /\bmin-w-11\b/, `${sel}: and wide`);
@@ -205,7 +209,7 @@ test('the kit compiles: tokens in both looks, components only when used', (t) =>
   // it; the rest of the kit stays in the input stylesheet (pinned above) and
   // compiles when the real app's screens use those components.
   assert.match(out, /\.card \{/);
-  for (const sel of ['.btn-primary', '.btn-secondary', '.field', '.list', '.list-row',
+  for (const sel of ['.page-column', '.btn-primary', '.btn-secondary', '.field', '.list', '.list-row',
     '.section-label', '.skeleton', '.state-empty', '.state-error']) {
     assert.doesNotMatch(out, new RegExp(`${sel.replace(/\./g, '\\.')} \\{`),
       `${sel} is unused, so it is not shipped`);
@@ -271,9 +275,12 @@ test('the starter\'s CLAUDE.md has a short "## Design" section the first build f
   // The rules.
   assert.match(flat, /never a raw hex value or a stock palette class/);
   assert.match(flat, /Tap targets are at least 44 px/);
-  assert.match(flat, /honest loading, empty and error states\. Never show the empty state while loading or after a failure; an error says what failed, what still works, and offers Retry\./);
+  assert.match(flat, /honest loading, empty and error states\. Never show the empty state while loading or after a failure; an error says what failed, what still works, and offers Retry\. Loading has the content's own shape \(its rows, with `skeleton` bars for their text\)\./);
+  assert.match(flat, /Each screen sits in `page-column`, one centred column on a wide window\./);
   assert.match(flat, /Seed obviously fake staging demo data so the populated screen can be seen \("Staging mock data" in the platform conventions\)\./);
   assert.match(flat, /No cards in cards, no uppercase eyebrows, no emoji as icons\./);
+  // Run five (13 Oct 2026, fix 7): a blank lavender square in the header.
+  assert.match(flat, /A header that shows the app's own mark shows the project's icon there \(the emoji in `dapp\.json`'s `icon` block\) or no mark at all: never an empty tile, and never `brand\/icon\.png`, which the app does not serve\./);
   assert.match(flat, /The kit is in `styles\/tailwind-input\.css`/);
   assert.ok(section.trim().split('\n').length <= 40, 'short: the long form belongs in a design skill');
   assert.doesNotMatch(section, /—/, 'no em dashes: the agent copies the voice it is given');

@@ -100,16 +100,9 @@ const LIMITS = Object.freeze([
     envKey: 'MAX_GLOBAL_SESSIONS',
     enabled: (config) => Number(config && config.maxGlobalSessions) > 0,
     cap: async (config) => Number(config && config.maxGlobalSessions),
-    async count(pool) {
-      // routes/sessions.js — the global-cap probe every start/resume runs.
-      const { rows } = await pool.query(
-        `SELECT COUNT(*)::int AS n FROM chat_sessions
-          WHERE status IN ('active', 'promoted')
-            AND source IS DISTINCT FROM 'imported'
-            AND user_id NOT IN (SELECT id FROM users WHERE is_synthetic = TRUE)`
-      );
-      return Number(rows[0] && rows[0].n);
-    },
+    // The count every start, resume and reopen asks
+    // (session-caps.countGlobalSessions), so the alert and the refusal agree.
+    count: (pool) => require('./session-caps').countGlobalSessions(pool),
   }),
   Object.freeze({
     key: 'github',

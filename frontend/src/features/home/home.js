@@ -28,7 +28,7 @@ import { AppCard } from '../apps/app-card.js';
 import { gridStore } from './grid-store';
 import { chromeStore } from './chrome-store';
 import { detectInstallHost } from '../mobile-install/environment';
-import { BUILD_LINE_TILE_CARD, BUILD_LINE_WORDS, buildLineTileClass, buildLineTileOf } from '../first-session/build-line-words.js';
+import { buildLineTileClass, buildLineTileOf, buildLineTileWordsOf, tileStageOf } from '../first-session/build-line-words.js';
 
 // Which discovery cards and add badges already carry their listeners.
 // `_wireDiscoveryCards` runs again whenever a lane's tiles change identity,
@@ -90,6 +90,12 @@ const Home = {
   _loadQueued: null,
 
   load() {
+    // Edit mode (#4669) does not survive a reload of the catalog. The router
+    // calls load() on every visit to Home, so leaving the screen and coming
+    // back starts clean; a WS-triggered refresh ends it too, which is the
+    // honest reading of "the shelf changed under you". A failure inside
+    // toggleAdded also lands here, ending edit mode with the revert.
+    Home._editing = false;
     if (Home._loadInFlight) {
       if (!Home._loadQueued) {
         const rerun = () => { Home._loadQueued = null; return Home.load(); };
@@ -196,6 +202,8 @@ const Home = {
           gridStore.set({
             ready: true, view: 'grid', rowTemplate: '', items: [],
             resultsHeading: null, emptyQuery: null, create: null,
+            // load() has already cleared edit mode; the merge would keep it.
+            editing: false,
             notice: {
               text: message('home:grid.notice.offline'),
               tone: 'muted',
@@ -210,6 +218,8 @@ const Home = {
         // No Create tile beside a load notice: the notice is the grid's whole
         // answer (offline, or the error card and its Retry) until apps load.
         resultsHeading: null, emptyQuery: null, create: null,
+        // load() has already cleared edit mode; the merge would keep it.
+        editing: false,
         // #1899: the grid draws this as the shared error card
         // (features/apps/load-error.tsx) with a Retry that re-runs load().
         notice: { text: message('home:grid.notice.loadFailed'), tone: 'error' },
@@ -230,6 +240,80 @@ const Home = {
   // value and a legitimate loaded result for an account with no apps.
   _appsLoaded: false,
   _query: '',
+
+  // ── Edit mode (#4669) ──────────────────────────────────────────────
+  //
+  // Long-pressing a tile of your own puts My apps into edit mode, like a
+  // phone's home screen: the tiles wiggle, each one grows a remove button,
+  // and the trailing tile becomes "Add apps". The menu the hold opens is
+  // unchanged — edit mode rides along with it. Pure UI state, per visit:
+  // load() clears it, so it is never remembered between visits, and nothing
+  // here writes a preference.
+  _editing: false,
+
+  // The one setter. Render is the same call every other path funnels through,
+  // so the wiggle, the remove buttons and the "Done" link all arrive in one
+  // paint. While a drag is live render() must not run (grid-store.ts's
+  // header): the flag goes down and `_rerenderPending` takes the flush, which
+  // onSettle already drains — so on touch, where the lift happens mid-gesture,
+  // the wiggle starts when the finger comes up.
+  //
+  // The paint is also held back while the hold's own menu is up. The mouse
+  // hold opens the card menu and THEN starts edit mode; a synchronous render
+  // here would expand the grid (edit mode shows every tile), re-run the
+  // placement effect whose deps include items.length, and the detach that
+  // cleanup calls is closeCardMenu — killing the menu the same press opened.
+  // The paint waits for the menu's dismiss instead, so the popover finishes
+  // its life anchored to the tile that opened it.
+  setEditing(on) {
+    const next = !!on;
+    if (Home._editing === next) return;
+    Home._editing = next;
+    if (Home._dragActive) {
+      Home._rerenderPending = true;
+      return;
+    }
+    if (Home._menu) {
+      Home._menu.then(() => {
+        if (Home._dragActive) { Home._rerenderPending = true; return; }
+        Home.render();
+      });
+      return;
+    }
+    Home.render();
+  },
+
+  // The remove button's action. It is the tile menu's own "Remove from My
+  // apps" by another door: _menuToggleFavorite(app, false) unfavourites a
+  // pinned app and, for a collaborator, hides the member pin — exactly the
+  // two branches the menu's item passes (line ~3679). The toast and the
+  // "Leave … too?" prompt for members come from toggleAdded unchanged.
+  _editRemove(slug) {
+    const app = (Home._apps || []).find((a) => a && a.slug === slug);
+    if (!app) return;
+    return Home._menuToggleFavorite(app, false);
+  },
+
+  // Escape ends edit mode. Wired once, lazily, from render() like the search
+  // bar — the listener reads the flag at event time, so it costs nothing
+  // while edit mode is off.
+  _editExitWired: false,
+  _wireEditExit() {
+    if (Home._editExitWired) return;
+    if (typeof document === 'undefined'
+      || typeof document.addEventListener !== 'function') return;
+    Home._editExitWired = true;
+    document.addEventListener('keydown', (e) => {
+      if (!e || e.key !== 'Escape' || !Home._editing) return;
+      // A presented sheet or modal owns the keyboard: the Add-apps sheet
+      // sits above edit mode, and Escape must not end the state behind it.
+      // The kit's own Escape path works off its modal stack, which a sheet
+      // is not on, so read the presented surfaces directly.
+      if (document.querySelector('.un-sheet, .un-backdrop')) return;
+      Home.setEditing(false);
+    });
+  },
+
 
   // Slugs the Discover rails keep showing even though they now count as
   // "yours" (#1567). Adding an app from a rail repaints "Your apps"
@@ -269,6 +353,26 @@ const Home = {
   // propose and vote, and it is what the Workshop lists.
   isJoined(app) {
     return !!(app && app.is_member);
+  },
+
+  // The Discover card's fallback facts line — "12 users · Updated 3d ago" —
+  // for an app whose manifest declares no description. The same pair the
+  // directory's rows draw (browse.js metaLine's recommended variant), so the
+  // two surfaces say the same thing about the same app in the same words:
+  // who is using it and how recently it changed. Pure: no fetch, no state,
+  // and a null from formatRelativeTime drops that half rather than printing
+  // "Updated —".
+  discoverMetaLine(app) {
+    if (!app) return null;
+    const users = message('discover:row.meta.users', {
+      count: parseInt(app.active_users || 0, 10) || 0,
+    });
+    const when = formatRelativeTime(app.last_deploy_at || app.created_at);
+    const facts = [users, when ? message('discover:row.meta.updated', { when }) : null]
+      .filter(Boolean);
+    if (!facts.length) return null;
+    return facts.reduce((first, second) =>
+      message('discover:row.meta.pair', { first, second }));
   },
 
   // Split the full list into { yours, rest }. Personal ordering
@@ -504,13 +608,14 @@ const Home = {
   // it was also the ceiling, so a tall desktop window drew two rows of tiles,
   // a "Show all" button, and then a lot of nothing before the next section.
   //
-  // The rule now: the launcher may fill the first two-thirds of the screen,
-  // and never less than the two-row contract. The bottom third is what keeps
-  // the section under the grid visible without scrolling, which is the whole
-  // point of capping the launcher at all — so the cap is stated as the thing
-  // it is protecting rather than as a row count that only happened to protect
-  // it at one viewport.
-  APPS_VIEWPORT_FRACTION: 2 / 3,
+  // The rule now: the launcher may fill the first half of the screen, and
+  // never less than the two-row contract. Discover moved up beside it
+  // (#4937) — the section under the grid is the rail of community cards now,
+  // and the bottom half is what keeps it peeking without scrolling, which is
+  // the whole point of capping the launcher at all — so the cap is stated as
+  // the thing it is protecting rather than as a row count that only happened
+  // to protect it at one viewport.
+  APPS_VIEWPORT_FRACTION: 1 / 2,
 
   // The row count that fraction buys, measured rather than assumed.
   //
@@ -697,11 +802,44 @@ const Home = {
     // widget list and would have persisted a repair that erased the viewer's
     // Challenges/Discover/Create cells. Nothing on the canvas depends on a
     // second endpoint any more, so a repair is always safe to keep.
+    //
+    // Only a repair that changes what the server would STORE is written.
+    // With more apps than the canvas has cells, repair() parks the rest on
+    // the overflow row and reports `changed` on every call; toWire() drops
+    // that row, the server keeps the same cells, its answer resets
+    // _layouts, and the next render repaired and wrote again: three PUTs
+    // every few seconds for as long as the home screen was open, each one
+    // queued on the server's per-user lock, until the browser's connections
+    // were all waiting on them.
     if (changed && Array.isArray(stored) && stored.length) {
       Home._layouts[String(cols)] = layout;
-      Home._persistLayout(cols, layout);
+      const wire = (l) => JSON.stringify(HomeLayout.toWire(l));
+      if (wire(layout) !== wire(stored)) Home._persistLayout(cols, layout);
     }
     return layout;
+  },
+
+  // THE DESKTOP STRIP'S PINNED PART (#4935): the apps in the layout's top
+  // row, in reading order, as display data the strip can draw without
+  // fetching anything. "Pinned" is the top row of My apps on purpose — the
+  // part people arrange and can see, favourites and own apps alike. Holes
+  // are skipped, and so is anything that is not on My apps (which covers the
+  // demo tiles: they are never favourites, so isYours drops them). Pure.
+  topRowApps(layout) {
+    const items = HomeLayout.canvasItems(layout || [])
+      .filter((it) => it && it.type === 'app' && it.row === 0);
+    const out = [];
+    for (const item of items) {
+      const app = (Home._apps || []).find((a) => a && a.slug === item.slug && Home.isYours(a));
+      if (!app) continue;
+      out.push({
+        slug: app.slug,
+        name: app.name || app.slug,
+        iconUrl: app.icon_url || null,
+        iconEmoji: app.icon_emoji || null,
+      });
+    }
+    return out;
   },
 
   // One fetch per TTL, shared by concurrent callers — Home.load() runs from
@@ -781,8 +919,14 @@ const Home = {
     const apps = Home._apps || [];
     Home._wireSearch();
     Home._wireRowBudget();
+    Home._wireEditExit();
 
     const query = (Home._query || '').trim();
+    // EDIT MODE (#4669) is a grid-view state only: a search is a transient
+    // list of matches, not the shelf, so nothing there wiggles or offers a
+    // remove button. The flag itself is cleared by the search input's own
+    // listener (see _wireSearch) the moment it is given a value.
+    const editing = !!Home._editing && !query;
     // Home is "Your apps" only now — every other app lives on the
     // #apps browse screen (public/js/browse.js), so the old All Apps
     // section and its drag-to-add gesture are gone.
@@ -824,6 +968,20 @@ const Home = {
       // order in this array.
       const cols = Home.currentCols();
       const layout = Home.currentLayout(cols);
+      // THE STRIP'S PINNED PART (#4935): every grid paint names the top row
+      // to the nav bridge, so the desktop strip leads with the same apps in
+      // the same order. Home is the one writer. A search render is a
+      // transient list of matches, not the shelf, so it publishes nothing —
+      // and neither do the offline and error states below. The bridge is
+      // optional (a vm test, a page before the nav island mounts): a missing
+      // or throwing one must not take the grid render down with it.
+      if (Home._appsLoaded) {
+        try {
+          window.UsernodeReact?.nav?.setPinnedApps?.(Home.topRowApps(layout));
+        } catch {
+          // The strip following Home is a convenience, never a dependency.
+        }
+      }
       // AS MANY ROWS AS THE FIRST TWO-THIRDS OF THE SCREEN HOLDS, AND NEVER
       // FEWER THAN TWO (HomeLayout.DEFAULT_ROWS). The cap is on what is SHOWN,
       // never on what a viewer may have or where they may put it: the canvas
@@ -858,7 +1016,7 @@ const Home = {
         const landed = canvas.find((it) => it && it.slug === Home._revealSlug);
         if (landed && landed.row > rowBound) Home._appsExpanded = true;
       }
-      const hiddenRows = !Home._appsExpanded
+      const hiddenRows = !editing && !Home._appsExpanded
         && canvas.some((it) => it.row > rowBound);
       const shown = hiddenRows
         ? canvas.filter((it) => it.row <= rowBound)
@@ -869,7 +1027,7 @@ const Home = {
       // the hidden rows instead, and the expander appears for it even when
       // every app already fits: a launcher of exactly eight apps shows two
       // rows and "Show all 8 apps", and the tile ends the expanded grid.
-      const createHidden = !Home._appsExpanded
+      const createHidden = !editing && !Home._appsExpanded
         && HomeLayout.createTileCollapsed(shown, cols, rowBound);
       const collapsed = hiddenRows || createHidden;
       const overflow = collapsed ? [] : HomeLayout.overflowItems(layout);
@@ -924,7 +1082,10 @@ const Home = {
           : { ...HomeLayout.trailingCell(placed, cols), w: 1, h: 1 },
       };
       // A private member makes no apps until they are let in off the
-      // waitlist (their Home's waitlist card says so), so no tile at all.
+      // waitlist (their Home's waitlist card says so), so no tile at all —
+      // in edit mode too (#4669): the mode's own entry, "Add apps", is the
+      // button beside the heading, not this tile, so the trailing tile keeps
+      // exactly the presence it has at rest.
       if (App.user?.privateMember) create = null;
     }
 
@@ -937,7 +1098,7 @@ const Home = {
     // desktop and the search view get — app.css's grid-auto-rows is then the
     // only row sizing, exactly as before. Written BEFORE the innerHTML so the
     // first layout of the new children already has its tracks.
-    gridStore.set({ ready: true, view, rowTemplate, items, resultsHeading, emptyQuery, notice: null, create });
+    gridStore.set({ ready: true, view, rowTemplate, items, resultsHeading, emptyQuery, notice: null, create, editing });
     // ...and, in the same push, the two hosts outside it: "Show all N apps"
     // and the iOS widget-editing strip. The strip renders ABOVE the grid, in
     // its own section, because a full-width flow item cannot coexist with the
@@ -1001,8 +1162,10 @@ const Home = {
 
     // Every leg bails WITHOUT stamping. A half-finished round trip must not
     // read as a passing one, and the check's selector is the final stamp.
+    // The corner control is a pill now, and the state it acts on is
+    // data-join: "join" for a card the viewer has neither joined nor added.
     const badge = await until(() => document.querySelector(
-      '#home-discover-section .app-card:not([data-demo]) .card-add-btn[data-added="false"]',
+      '#home-discover-section .app-card:not([data-demo]) .card-add-btn[data-join="join"]',
     ), 8000);
     if (!badge) return;
     const slug = badge.dataset.slug;
@@ -1018,18 +1181,15 @@ const Home = {
     if (!tile) return;
     document.body.dataset.shotAdd = 'added';
 
-    // The card stayed put in the rail (that is _discoverKeep) with its badge
-    // ticked, so the same finger can undo it.
+    // The card stayed put in the rail (that is _discoverKeep) with its pill
+    // now saying "Joined", so the same finger can undo it. A click would open
+    // the leave confirm — a person's path — so the undo here is the call the
+    // confirm's own accept makes, quiet, as befits the fixture's finger.
     const ticked = await until(() => document.querySelector(
-      `#home-discover-section .card-add-btn[data-slug="${slug}"][data-added="true"]`,
+      `#home-discover-section .card-add-btn[data-slug="${slug}"][data-join="joined"]`,
     ), 8000);
     if (!ticked) return;
-    // The unpin below is the fixture's, not a person's: no "Leave too?" for
-    // it (see _offerLeaveAfterUnpin). Left set for the rest of this page
-    // load, which is the shot's: the offer runs after the unpin's request
-    // lands, which can be after `gone` below has already been seen.
-    Home._quietLeaveOffer = true;
-    ticked.click();
+    Home.setMembership(slug, false, undefined, { confirmed: true });
 
     const gone = await until(
       () => !document.querySelector(`#app-list .app-card[data-slug="${slug}"]`),
@@ -1051,10 +1211,13 @@ const Home = {
     // a launcher icon should read as an app, not a dashboard row. Every
     // non-running status still says so in words.
     // #4053 (owner, 7 Oct 2026): a project whose first version Homeroom bot
-    // is making says where it is in the build line's words, from the time it
-    // is set up until it is live (Home.tileBuildLine), not "Spinning up...".
-    const buildLine = Home.tileBuildLine(app);
-    const statusLabel = buildLine ? message(BUILD_LINE_WORDS[buildLine])
+    // is making says where it is in the build line, from the time it is set
+    // up until it is live (Home.tileBuildLine), not "Spinning up...". In the
+    // tile's short words (run four, 13 Oct: the whole phrases were cut off),
+    // and while it is built, its stage's (`first_version_phase`, run five:
+    // the tile said "Building" while the App tab said "Drawing the screens").
+    const { line: buildLine, phase: buildPhase } = Home.tileBuildStage(app);
+    const statusLabel = buildLine ? message(buildLineTileWordsOf(buildLine, buildPhase))
       : isRunning ? ''
       : app.status === 'creating' ? message('home:grid.tile.status.creating')
       : isAwaiting ? message('home:grid.tile.status.awaitingSecrets')
@@ -1101,8 +1264,19 @@ const Home = {
    * null. An app that failed to set up says that instead: Error and Retry.
    */
   tileBuildLine(app) {
-    if (!app || app.status === 'error') return null;
-    return buildLineTileOf(app.first_version_line);
+    return Home.tileBuildStage(app).line;
+  },
+
+  /**
+   * The tile's first version, { line, phase }: the list's line and its
+   * stage (`first_version_phase`), as the made screen says them from the
+   * moment its Submit went through (run six, build-line-words.js
+   * tileStageOf: "Starting", grey, never the list's "Plan ready" from before
+   * Submit). `line` is null for none.
+   */
+  tileBuildStage(app) {
+    if (!app || app.status === 'error') return { line: null, phase: null };
+    return tileStageOf(app.slug, buildLineTileOf(app.first_version_line), app.first_version_phase);
   },
 
   // One placed item -> its view-model entry. The string version spliced
@@ -1164,6 +1338,12 @@ const Home = {
         if (Home._cardPointerType === 'touch') {
           Home._contextLift = { item, origin: null };
           Home.openCardMenu(item.dataset.slug, item);
+          // EDIT MODE (#4669). The recognizer's itemSelector is
+          // `.app-card[data-yours]:not([data-demo])`, so the hold that reaches
+          // here is already on a tile of the viewer's own. The flag goes down
+          // while `_dragActive` holds and setEditing defers the paint to the
+          // settle flush — the wiggle starts when the finger comes up.
+          Home.setEditing(true);
         } else {
           Home.closeCardMenu();
           Home._showGridOverlay(listEl, cols, item);
@@ -2000,6 +2180,9 @@ const Home = {
       // Typing pins the bar open — a re-render must never scroll the
       // field the user is typing into off the top of the screen.
       Home._searchReveal.pin();
+      // EDIT MODE (#4669): a value in the field ends it, so arranging the
+      // shelf and searching never happen at once.
+      if (Home._editing && input.value) Home._editing = false;
       clearTimeout(Home._searchDebounce);
       Home._searchDebounce = setTimeout(apply, 100);
     });
@@ -2100,7 +2283,26 @@ const Home = {
       btn.addEventListener('pointerdown', stopDrag);
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
-        Home.toggleAdded(btn.dataset.slug, btn.dataset.added !== 'true', onChange);
+        // The pill is one control with three jobs, stamped by data-join: a
+        // real join (which also pins the card to My apps), the quiet "Joined"
+        // that taps through to the leave confirm, and a plain pin for a
+        // member whose community is not on Home yet. data-added is still
+        // stamped for the existing readers (the shot state and the checks).
+        const slug = btn.dataset.slug;
+        const join = btn.dataset.join;
+        if (!slug || !join) return;
+        if (join === 'join') {
+          // A join repaints the rail (setMembership's optimistic flip ends in
+          // Home.render), and popularApps drops joined apps from Discover —
+          // so the card has to be kept the way an add keeps it, or it
+          // vanishes the moment the join lands.
+          Home._discoverKeep.add(slug);
+          Home.setMembership(slug, true, onChange);
+        } else if (join === 'joined') {
+          Home.setMembership(slug, false, onChange);
+        } else {
+          Home.toggleAdded(slug, true, onChange);
+        }
       });
     });
     listEl.querySelectorAll('.card-menu-btn').forEach((btn) => {
@@ -2437,6 +2639,9 @@ const Home = {
       case 'in_flight':
         PlatformUI.toast(message('home:check.inFlight'));
         return;
+      case 'deploy_requested':
+        PlatformUI.toast(message('home:check.deployRequested', { sha: (data.to || '').slice(0, 7) }));
+        return;
       case 'first_seen':
         PlatformUI.toast(message('home:check.firstSeen', { sha: (data.sha || '').slice(0, 7) }));
         return;
@@ -2508,8 +2713,8 @@ const Home = {
     // Every non-running status still says so in words on the tile — see
     // statusLabel / warningHtml below — so "Spinning up…", "Awaiting
     // secrets" and "Error" are unaffected.
-    const buildLine = Home.tileBuildLine(app);
-    const statusLabel = buildLine ? htmlText(BUILD_LINE_WORDS[buildLine])
+    const { line: buildLine, phase: buildPhase } = Home.tileBuildStage(app);
+    const statusLabel = buildLine ? htmlText(buildLineTileWordsOf(buildLine, buildPhase))
       : app.status === 'running' ? ''
       : app.status === 'creating' ? htmlText('home:grid.tile.status.creating')
       : isAwaiting ? htmlText('home:grid.tile.status.awaitingSecrets')
@@ -2643,7 +2848,7 @@ const Home = {
     // would 404. They keep the long-press menu instead.
     const demoAttr = app.demo ? ' data-demo="true"' : '';
     return `
-      <div class="app-card app-card-draggable touch-pan-y relative rounded-xl transition-colors p-3 flex flex-col items-center text-center gap-1.5 ${cursorClass}${buildLine ? ` ${BUILD_LINE_TILE_CARD}` : ''}" data-slug="${app.slug}" data-status="${app.status}" data-locked="${isLocked}"${demoAttr}>
+      <div class="app-card app-card-draggable touch-pan-y relative rounded-xl transition-colors p-3 flex flex-col items-center text-center gap-1.5 ${cursorClass}" data-slug="${app.slug}" data-status="${app.status}" data-locked="${isLocked}"${demoAttr}>
         <div class="relative w-14 h-14 shrink-0${showRetry ? ' grayscale-[0.75]' : ''}">
           <div class="app-icon-tile w-14 h-14 rounded-xl overflow-hidden flex items-center justify-center font-bold text-xl" data-icon="${icon.kind}">
             ${icon.html}
@@ -5133,7 +5338,10 @@ const Home = {
       cleanup();
       if ((e.pointerType !== 'touch' && e.pointerType !== 'pen' && e.pointerType !== 'mouse')
           || e.button !== 0 || e.isPrimary === false) return;
-      if (e.target.closest('.card-menu-btn') || e.target.closest('.retry-btn')) return;
+      if (e.target.closest('.card-menu-btn') || e.target.closest('.retry-btn')
+        // #4669: a press on the edit-mode remove button is not a hold on the
+        // tile — it removes the app, and must never arm the 400ms menu timer.
+        || e.target.closest('.app-card-remove')) return;
       // Placed touch tiles share the kit's lift/drag sequence above. Pen,
       // mouse and search/demo tiles have no touch placement recognizer to do
       // the hold.
@@ -5152,6 +5360,13 @@ const Home = {
         Home._suppressClick = true;
         opened = true;
         Home.openCardMenu(card.dataset.slug, card);
+        // EDIT MODE (#4669): the same hold starts it, for mouse and pen (touch
+        // enters through the kit recognizer's onLift above). Search results,
+        // demo tiles and Discover cards carry no data-yours, and a hold on
+        // them is a menu and nothing else, exactly as before.
+        if (card.hasAttribute('data-yours') && !card.hasAttribute('data-demo')) {
+          Home.setEditing(true);
+        }
       }, 400);
       cleanup = () => {
         if (timer) { clearTimeout(timer); timer = null; }

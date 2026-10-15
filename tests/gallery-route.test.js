@@ -271,3 +271,54 @@ test('artifact-dependent filters are not vacuously true for a proposal with no a
     );
   }
 });
+
+// ── the current shots over a recent window (the connector's stats) ──────
+
+test('resolveDays defaults to a week and clamps to 90', () => {
+  assert.equal(gallery.DEFAULT_STATS_DAYS, 7);
+  for (const raw of [undefined, '', '0', '-3', 'soon']) assert.equal(gallery.resolveDays(raw), 7, String(raw));
+  assert.equal(gallery.resolveDays('14'), 14);
+  assert.equal(gallery.resolveDays(30), 30);
+  assert.equal(gallery.resolveDays('365'), 90);
+});
+
+// The console strip's counters are the retired route-capture pipeline's
+// over all time; these read only the shots slot and its current run.
+test('the shots stats count the window\'s merged proposals by how their shots ended and their changes came out', async () => {
+  const seen = [];
+  const pool = {
+    async query(sql, params) {
+      seen.push({ sql, params });
+      return { rows: [{
+        proposals: 12, declared: 20,
+        states: { verified: 7, failed: 2, not_required: 1, exploring: 1, none: 1 },
+        results: { ready: 9, unchanged: 2, skipped: 3, failed: 1 },
+        notices: { true: 1, unknown: 4 },
+        failure_codes: { shots_agent_failed: 1, shots_capture_incomplete: 1 },
+      }] };
+    },
+  };
+  const now = Date.parse('2026-10-12T12:00:00Z');
+  const stats = await gallery.shotsStats(pool, { app: 'bread', days: '3' }, { now });
+  assert.deepEqual(seen[0].params, ['2026-10-09T12:00:00.000Z', null, 'bread']);
+  assert.deepEqual(stats, {
+    window: { days: 3, since: '2026-10-09T12:00:00.000Z' },
+    proposals: 12,
+    shots: { verified: 7, failed: 2, notRequired: 1, overridden: 0, cancelled: 0, stale: 0, inFlight: 1, none: 1 },
+    changes: { declared: 20, ready: 9, unchanged: 2, skipped: 3, failed: 1 },
+    notices: { total: 5, alsoBefore: 1, notBefore: 0, unknown: 4 },
+    failureCodes: { shots_agent_failed: 1, shots_capture_incomplete: 1 },
+  });
+  // A numeric app is its id; no app is every app; the window defaults to a week.
+  await gallery.shotsStats(pool, { app: '42' }, { now });
+  assert.deepEqual(seen[1].params, ['2026-10-05T12:00:00.000Z', 42, null]);
+  // The query reads the shots slot and its run, never the legacy captures.
+  assert.doesNotMatch(seen[0].sql, /session_visuals|capture_state/);
+  assert.match(seen[0].sql, /LEFT JOIN shot_runs r ON r\.id = cs\.shots_run_id/);
+  assert.match(seen[0].sql, /s\.story->>'unchanged' = 'true' THEN 'unchanged'/);
+
+  const empty = await gallery.shotsStats({ async query() { return { rows: [{}] }; } }, {}, { now });
+  assert.equal(empty.proposals, 0);
+  assert.deepEqual(empty.changes, { declared: 0, ready: 0, unchanged: 0, skipped: 0, failed: 0 });
+  assert.deepEqual(empty.failureCodes, {});
+});

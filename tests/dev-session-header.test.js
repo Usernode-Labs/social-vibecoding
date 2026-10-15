@@ -291,6 +291,21 @@ test('an in-vote session carries its tally, and its advisory surplus separately'
   assert.match(html, / · 1\/3/, 'the header has no vote pill of its own, so the tally rides in the label');
 });
 
+test('the advisory chip\'s tooltip is a devchat catalog message, counted', () => {
+  const { message } = require('./lib/platform-i18n');
+  const { view } = makeDevChat();
+  const html = pillHtml(view({
+    ...SESSION, status: 'promoted', check_state: 'passing',
+    yes_count: 3, no_count: 0, majority: 3,
+    qualified_yes_count: 1, approval_policy: 'invited', approvals_required: 3,
+  }).life);
+  assert.match(html, /class="ms-advisory" title="2 advisory votes from non-approvers, so they don’t count toward merging">\+2</);
+  assert.equal(message('devchat:header.advisoryVotes', { count: 1 }),
+    '1 advisory vote from a non-approver, so it doesn’t count toward merging');
+  assert.match(HEADER_TSX, /t\('devchat:header\.advisoryVotes', \{ count: advisory \}\)/);
+  assert.doesNotMatch(HEADER_TSX, /advisory vote\$\{/, 'no English assembled in the component');
+});
+
 test('the strip hosts no lifecycle pill — the header chip does', () => {
   const { view } = makeDevChat();
   const html = headerHtml(view({ ...SESSION, check_state: 'passing' }));

@@ -311,7 +311,9 @@ test('#4053: while it is being built, the thumbnail with its build line, and whe
     detail: null,
     thumb: THUMB,
     buildLine: 'planning',
-    lines: ['It opens here when it’s ready.'],
+    // Run six: its maker is told when it is live (the bell's Live), so their
+    // screen promises that, with a small check, in place of the line.
+    promise: 'We’ll notify you when it’s live',
     tourSays: true,
     // The creator's way into their chat, under the card (owner, 8 Oct 2026).
     action: { key: 'botChat', label: 'Open Homeroom bot', slug: 'plant-pal', conversationId: 42, quiet: true, underCard: true },
@@ -322,16 +324,21 @@ test('#4053: while it is being built, the thumbnail with its build line, and whe
   assert.match(out, />Plant Pal</);
   assert.match(out, />Know which plants need water today</);
   assert.match(out, /data-build-line="planning"[^>]*>.*Homeroom bot is planning it/);
-  assert.match(out, />It opens here when it’s ready\.</);
+  assert.match(out, /<p data-app-first-version-promise="" class="flex max-w-sm items-center justify-center gap-1\.5 pt-1 text-\[15px\] leading-5"><svg[^>]*aria-hidden="true"[^>]*>[\s\S]*?<\/svg><span>We’ll notify you when it’s live<\/span><\/p>/,
+    'the promise, beside a small check, in the screen\'s quiet ink');
+  assert.doesNotMatch(out, /It opens here when it’s ready/);
   assert.doesNotMatch(out, /status-dot|Step \d of|being built from/, 'no dot, no step count, no title');
   assert.doesNotMatch(out, /Start a new change|starter/i);
   // One small button, under the card and its build line and ahead of the note.
   assert.equal((out.match(/<button/g) || []).length, 1);
   assert.match(out, /<\/span><\/span><\/div><\/div><\/div><button id="app-first-version-chat"[^>]*>Open Homeroom bot<\/button><p /);
   assert.match(out, /rounded-full bg-white shadow-sm[^"]*text-violet-600[^"]*min-h-9/, 'secondary and small: raised pill, accent ink');
-  // Members get no way into somebody else's chat.
+  // Members get no way into somebody else's chat, and no promise: nobody
+  // tells them (#4396), so they keep "It opens here when it’s ready."
   const member = html(view(makeAppView().AppView, firstVersionApp({}, { mine: false, conversationId: null })));
   assert.doesNotMatch(member, /<button|Open Homeroom bot/);
+  assert.match(member, />It opens here when it’s ready\.</);
+  assert.doesNotMatch(member, /notify you|data-app-first-version-promise/);
 });
 
 test('#4053: the build line is one line under the card (8px below it), not a row inside it', () => {
@@ -343,7 +350,7 @@ test('#4053: the build line is one line under the card (8px below it), not a row
 
 test('#4053: "It opens here when it’s ready." hides only while a tour card that says it is on the page', () => {
   const { AppView } = makeAppView();
-  const out = html(view(AppView, firstVersionApp()));
+  const out = html(view(AppView, firstVersionApp({}, { mine: false, conversationId: null })));
   // Hidden by a card that says where the app opens marking itself, not by the
   // tour being up: a card that says something else leaves the line in place,
   // so the screen reads right whichever of the tour and this lands first.
@@ -352,6 +359,10 @@ test('#4053: "It opens here when it’s ready." hides only while a tour card tha
   const ready = html(view(AppView, readyApp({}, { mustApprove: true })));
   assert.match(ready, /<p class="max-w-sm pt-1 text-\[15px\] leading-5">Waiting for your approval\.<\/p>/);
   assert.doesNotMatch(ready, /first-session-tour|data-app-first-version-note/);
+  // The maker's promise says something no tour card says: it stays.
+  const mine = html(view(AppView, firstVersionApp()));
+  assert.doesNotMatch(mine, /data-tour-says-where-it-opens|data-app-first-version-note/);
+  assert.match(mine, /We’ll notify you when it’s live/);
 });
 
 test('#4053: the line is the server\'s for this reader; the plan and the bot\'s questions stay in the chat', () => {
@@ -362,7 +373,7 @@ test('#4053: the line is the server\'s for this reader; the plan and the bot\'s 
   };
   const mine = view(AppView, firstVersionApp({}, { line: 'plan', plan }));
   assert.equal(mine.buildLine, 'plan');
-  assert.deepEqual(mine.lines, ['It opens here when it’s ready.']);
+  assert.equal(mine.promise, 'We’ll notify you when it’s live');
   // Its plan waits on them: "Review the plan", the primary button, opens their chat with Homeroom bot.
   assert.deepEqual({ ...mine.action }, { key: 'botChat', label: 'Review the plan', slug: 'plant-pal', conversationId: 42, quiet: false, underCard: true });
   assert.equal('plan' in mine, false, 'no plan card on the App tab');
@@ -548,6 +559,41 @@ test('5 Oct: "Waiting for your approval." is never said to a reader whose own Ye
   assert.equal(view(other, asked).lines[0], 'Waiting for your approval.');
 });
 
+// Club Votes, 12 to 13 Oct 2026 (D1): the first version was ready at 22:54
+// and the App tab said "Waiting for your approval." all night, with no way
+// to give it here. A first version goes live without a vote now
+// (firstVersionApproval `noVote`), and nobody reads that it waits.
+const NO_VOTE = { sessionId: 31, noVote: true, mustApprove: false, approved: false, waitingOn: [], more: 0, missing: 0, goesLiveAt: null, soon: true };
+
+test('D1: a first version that needs no vote says so, to its maker and to everyone else', () => {
+  const { AppView } = makeAppView();
+  const maker = view(AppView, firstVersionApp({}, { ...READY, approval: NO_VOTE }));
+  assert.deepEqual(maker, {
+    dot: null,
+    message: 'Plant Pal',
+    detail: null,
+    thumb: THUMB,
+    buildLine: 'ready',
+    lines: ['No vote needed. It goes live in a minute or two.'],
+    action: { key: 'tryChange', label: 'Try it', slug: 'plant-pal', sessionId: 31 },
+    alt: { key: 'seeChange', label: 'See the change', slug: 'plant-pal', sessionId: 31 },
+  });
+  const out = html(maker);
+  assert.match(out, />No vote needed\. It goes live in a minute or two\.</);
+  assert.doesNotMatch(out, /approval|approve/i);
+  // A member, or anyone else: the same words, and the change's page.
+  const theirs = view(AppView, firstVersionApp({ }, { ...READY, mine: false, conversationId: null, approval: NO_VOTE }));
+  assert.deepEqual(theirs.lines, ['No vote needed. It goes live in a minute or two.']);
+  assert.deepEqual(theirs.action, { key: 'seeChange', label: 'See the change', slug: 'plant-pal', sessionId: 31 });
+  assert.equal(theirs.alt, undefined);
+  // Not yet through its checks: when it will go live.
+  assert.equal(AppView._firstVersionWaitLine({ ...NO_VOTE, soon: false }), 'No vote needed. It goes live once it passes its checks.');
+  // A Yes this page cast changes nothing: there was none to give.
+  AppView.appData = maker;
+  AppView._noteOwnVote(31, 'yes');
+  assert.deepEqual(view(AppView, firstVersionApp({}, { ...READY, approval: NO_VOTE })).lines, ['No vote needed. It goes live in a minute or two.']);
+});
+
 test('ready: the wait line, worded for each state of the gate, in the reader\'s week', () => {
   const { AppView } = makeAppView();
   // A Monday at noon, local time, so the days below are the reader's own.
@@ -593,8 +639,13 @@ test('ready: Try it opens the change\'s preview on this app; See the change open
   assert.equal(staged[0][2], null);
   assert.deepEqual({ ...staged[0][3] }, {}, 'the app on screen, as its viewer may see it');
   assert.equal(sandbox.location.hash, '');
+  // Run four (13 Oct): See the change opens the change at its Votes card,
+  // asked of the dev board's bridge before the page opens.
+  const shown = [];
+  sandbox.UsernodeReact = { devBoard: { showVotes: (id) => shown.push([id, sandbox.location.hash]) } };
   AppView.openFirstVersionChange('plant-pal', 31);
   assert.equal(sandbox.location.hash, '#app/plant-pal/dev/proposals/31');
+  assert.deepEqual(shown, [[31, '']], 'asked before the address changes');
   // Off its own screen, Try it goes to the change page instead.
   sandbox.location.hash = '';
   AppView.appData = { slug: 'other' };
@@ -606,6 +657,11 @@ test('ready: Try it opens the change\'s preview on this app; See the change open
   AppView.tryFirstVersion('plant-pal', null);
   AppView.openFirstVersionChange('plant-pal', 0);
   assert.equal(sandbox.location.hash, '');
+  assert.deepEqual(shown, [[31, ''], [31, '']], 'Try it off its screen lands at the same cards; no change, no ask');
+  // Without the bundle's bridge it still opens the page.
+  delete sandbox.UsernodeReact;
+  AppView.openChangeAtVotes('plant-pal', 32);
+  assert.equal(sandbox.location.hash, '#app/plant-pal/dev/proposals/32');
   // The card hands each opener the change's id.
   const src = fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src', 'features', 'app-frame', 'app-status.tsx'), 'utf8');
   assert.match(src, /tryChange: \{ id: 'app-first-version-try', opener: 'tryFirstVersion' \}/);
@@ -617,7 +673,7 @@ test('#15: while the project is still being set up, the same thumbnail: Homeroom
   const { AppView } = makeAppView();
   const v = view(AppView, firstVersionApp({ status: 'creating', url: null }, { step: 1, line: 'planning' }));
   assert.equal(v.buildLine, 'planning');
-  assert.deepEqual(v.lines, ['It opens here when it’s ready.']);
+  assert.equal(v.promise, 'We’ll notify you when it’s live');
   assert.equal(v.action.label, 'Open Homeroom bot');
   // Not building any more (or never was): the ordinary states, unchanged.
   assert.deepEqual(view(AppView, { status: 'creating', slug: 'plant-pal', first_version: null }),
@@ -765,6 +821,24 @@ test('#4387: building, the first look in a phone frame and the caption as the li
   assert.doesNotMatch(out, /data-first-version-dots/, 'one picture, no dots');
 });
 
+test('15 Oct 2026: a first look only drawn so far is its drawn screen, framed in the same phone', () => {
+  // Newcomer run nine: its picture came 11 seconds after Submit, the screen
+  // it is drawn from long before (tests/first-look-drawn.test.js).
+  const { AppView } = makeAppView();
+  const v = view(AppView, firstVersionApp({}, { ...MEMBER, line: 'building', screens: { ...LOOK, drawn: true } }));
+  assert.deepEqual(v.screens, {
+    kind: 'first_look', at: LOOK.at, images: ['/api/apps/plant-pal/first-version/first-look/drawn?v=1791453600000'],
+  });
+  const out = html(v);
+  assert.match(out, /data-first-version-screens="first_look"/);
+  assert.match(out, /First look · drawn from the plan/);
+  assert.match(out, /<div role="img" aria-label="A first look at Plant Pal, drawn from the plan" data-first-look-drawn=""[^>]*><iframe src="\/api\/apps\/plant-pal\/first-version\/first-look\/drawn\?v=1791453600000"[^>]* sandbox=""/);
+  assert.doesNotMatch(out, /<img src="\/api\/apps\/plant-pal\/first-version/);
+  // A real screen is never "drawn", and a picture stays a picture.
+  const real = view(AppView, firstVersionApp({}, { ...MEMBER, step: 5, line: 'testing', screens: { kind: 'real', count: 1, at: null, v: '7', drawn: true } }));
+  assert.deepEqual(real.screens.images, ['/api/apps/plant-pal/first-version/screens/real/0?v=7']);
+});
+
 test('#4387: the maker gets the same, and keeps their way into the chat', () => {
   const { AppView } = makeAppView();
   const v = view(AppView, firstVersionApp({}, { mine: true, line: 'building', caption: 'Adding the tier rows', screens: LOOK }));
@@ -821,22 +895,41 @@ test('#4387: the pill says how long ago the real screens were taken', () => {
 });
 
 // #4449: Live, the app itself taking shape, beside the first look. While it
-// is built, a member's band gets a "Preview | Live" switch (Preview first,
-// and exactly #4387's first look); at Testing it the switch goes.
+// is built, a member's band gets a "Preview | Live" switch; at Testing it
+// the switch goes. Run six: Live is chosen as soon as it is offered (it has
+// frames), and a choice made for the project sticks.
 
-test('#4449: building with Live offered, the switch over the band with Preview chosen', () => {
+test('#4449, run six: building with Live offered, the switch over the band with Live chosen', () => {
   const { AppView } = makeAppView();
   const v = view(AppView, firstVersionApp({}, { ...MEMBER, line: 'building', caption: 'Adding the tier rows', screens: LOOK, live: true }));
   assert.deepEqual(v.live, { slug: 'plant-pal', userKey: '1' });
   const out = html(v);
-  assert.match(out, /data-first-version-live-switch="preview"/);
-  assert.match(out, /<button type="button" aria-pressed="true" data-live-choice="preview"[^>]*>Preview<\/button>/);
-  assert.match(out, /<button type="button" aria-pressed="false" data-live-choice="live"[^>]*>Live<\/button>/);
-  // Preview is exactly the first look, and the build line is unchanged.
+  assert.match(out, /data-first-version-live-switch="live"/);
+  assert.match(out, /<button type="button" aria-pressed="false" data-live-choice="preview"[^>]*>Preview<\/button>/);
+  assert.match(out, /<button type="button" aria-pressed="true" data-live-choice="live"[^>]*>Live<\/button>/);
+  // The player loads after the first paint; until it does, the first look
+  // holds the band (Suspense's fallback), and the build line is unchanged.
   assert.match(out, /First look · drawn from the plan/);
-  assert.doesNotMatch(out, /data-first-version-live=/, 'the player is not loaded');
   assert.match(out, /Building it · Adding the tier rows/);
   assert.equal((out.match(/role="status"/g) || []).length, 1, 'one build line');
+});
+
+test('run six: Preview picked for the project sticks; another project still opens on Live', () => {
+  const { AppView } = makeAppView();
+  const sw = loadTsx('frontend/src/features/app-frame/live-switch.tsx');
+  const store = new Map([[sw.choiceKey('1', 'plant-pal'), 'preview']]);
+  global.localStorage = { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, v) };
+  try {
+    const out = html(view(AppView, firstVersionApp({}, { ...MEMBER, line: 'building', screens: LOOK, live: true })));
+    assert.match(out, /data-first-version-live-switch="preview"/);
+    assert.match(out, /<button type="button" aria-pressed="true" data-live-choice="preview"[^>]*>Preview<\/button>/);
+    assert.match(out, /First look · drawn from the plan/);
+    assert.doesNotMatch(out, /data-first-version-live=/, 'the player is not loaded');
+    const other = html(view(AppView, firstVersionApp({ slug: 'tier-list', name: 'Tier List' }, { ...MEMBER, line: 'building', screens: LOOK, live: true })));
+    assert.match(other, /data-first-version-live-switch="live"/, 'per project');
+  } finally {
+    delete global.localStorage;
+  }
 });
 
 test('#4449: no switch without Live, off the build line, or once it is tested', () => {
@@ -853,8 +946,8 @@ test('#4449: no switch without Live, off the build line, or once it is tested', 
   }
   // Without a first look the switch still shows, on the icon's band.
   const out = html(view(AppView, firstVersionApp({}, { ...MEMBER, line: 'building', live: true })));
-  assert.match(out, /data-first-version-live-switch="preview"/);
-  assert.doesNotMatch(out, /h-\[340px\]/);
+  assert.match(out, /data-first-version-live-switch="live"/);
+  assert.match(out, /h-\[340px\]/, 'Live, chosen, has the taller band for its phone');
 });
 
 test('#4449: the screenshot state plays a made-up recording and fetches nothing', () => {
@@ -866,4 +959,72 @@ test('#4449: the screenshot state plays a made-up recording and fetches nothing'
   assert.match(band, /if \(live\.sample\) \{[\s\S]*sampleRecording\(\)/);
   assert.match(band, /'Sample live stream'/);
   assert.match(band, /'Not a real app'/);
+});
+
+// ── 14 Oct 2026, newcomer run eight: a first version whose build stopped ──
+//
+// Club Votes was built and its proposal refused, and the answer had no first
+// version any more, so this screen framed the starter template ("Welcome to
+// your new app! Everything on this screen is placeholder content…") with no
+// sign that anything had gone wrong. The server says it stopped now
+// (`first_version.stopped`, tests/first-version-stopped.test.js), and the
+// screen keeps the card and its first look, says Stopped, and gives its
+// maker Try again: the build's thread in their chat with Homeroom bot.
+
+const STOPPED = { line: 'stopped', step: 4, stopped: true, thread: { conversationId: 42, threadRootId: 880, messageId: 901 } };
+
+test('a stopped first version: the card and its first look, Stopped, and Try again for its maker; never the starter', () => {
+  const { AppView } = makeAppView();
+  const app = firstVersionApp({}, { ...STOPPED, screens: LOOK });
+  assert.equal(AppView._firstVersionPending(app), true, 'its first version is still in hand: nothing frames the starter');
+  const v = view(AppView, app);
+  assert.deepEqual(v, {
+    dot: null,
+    message: 'Plant Pal',
+    detail: null,
+    thumb: THUMB,
+    buildLine: 'stopped',
+    screens: { kind: 'first_look', at: LOOK.at, images: ['/api/apps/plant-pal/first-version/screens/first_look/0?v=1791453600000'] },
+    action: { key: 'botThread', label: 'Try again', slug: 'plant-pal', conversationId: 42, threadRootId: 880, messageId: 901, underCard: true },
+  });
+  const out = html(v);
+  assert.match(out, /data-app-first-version="stopped"/);
+  assert.match(out, /data-first-version-screens="first_look"/, 'the first look, as while it was built');
+  assert.match(out, /<span role="status" data-build-line="stopped"[^>]*>.*<span class="truncate">Stopped<\/span>/);
+  assert.match(out, /rounded-full bg-\[color:var\(--state-attention\)\]/, 'a still dot: something went wrong');
+  assert.doesNotMatch(out, /animate-spin/, 'nothing turns');
+  // Try again, the one primary button, right under the card and its line.
+  assert.equal((out.match(/<button/g) || []).length, 1);
+  assert.match(out, /<\/span><\/span><\/div><\/div><\/div><button id="app-first-version-retry"[^>]*>Try again<\/button>/);
+  assert.doesNotMatch(out, /min-h-9/, 'not the small quiet chat button: it is what to do now');
+  // Nothing promised while nothing is being made, and no steps under way.
+  assert.doesNotMatch(out, /notify you|data-app-first-version-promise|data-app-first-version-steps|Starter template|Welcome to your new app|placeholder/i);
+  // Nobody else can start it again: Stopped, and where it will open.
+  const member = html(view(makeAppView().AppView, firstVersionApp({}, { ...STOPPED, mine: false, conversationId: null, thread: undefined })));
+  assert.match(member, /data-build-line="stopped"[^>]*>.*>Stopped</);
+  assert.doesNotMatch(member, /<button|Try again/);
+  assert.match(member, />It opens here when it’s ready\.</);
+});
+
+test('a stopped first version\'s Try again opens the build\'s thread, else the message, else the chat', () => {
+  const { AppView, sandbox } = makeAppView();
+  const opened = [];
+  sandbox.UsernodeReact = { messages: { openAddress: (href) => opened.push(href), open: (id) => opened.push(`open:${id}`) } };
+  AppView.openFirstVersionThread('plant-pal', 42, 880, 901);
+  AppView.openFirstVersionThread('plant-pal', 42, null, 901);
+  AppView.openFirstVersionThread('plant-pal', 42, null, null);
+  AppView.openFirstVersionThread('plant-pal', null, 880, 901);
+  assert.deepEqual(opened, ['#messages/42/thread/880', '#messages/42/m/901', '#messages/42', 'open:null']);
+  // Without the bundle, the address does it.
+  sandbox.UsernodeReact = null;
+  sandbox.location = { hash: '' };
+  AppView.openFirstVersionThread('plant-pal', 42, 880, 901);
+  assert.equal(sandbox.location.hash, '#messages/42/thread/880');
+  // The button dispatches by name, with the thread.
+  const status = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/app-frame/app-status.tsx'), 'utf8');
+  assert.match(status, /botThread: \{ id: 'app-first-version-retry', opener: 'openFirstVersionThread' \},/);
+  assert.match(status, /call\(opener, action\.slug, action\.conversationId \?\? null, action\.threadRootId \?\? null, action\.messageId \?\? null\);/);
+  // Its maker's thread from the record, else their chat with the bot.
+  const v = view(AppView, firstVersionApp({}, { ...STOPPED, thread: undefined }));
+  assert.deepEqual([v.action.conversationId, v.action.threadRootId, v.action.messageId], [42, null, null]);
 });

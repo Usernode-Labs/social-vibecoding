@@ -272,6 +272,7 @@ function settingsPage(t, runtime, page) {
     // fixture runtime decides which language is chosen and saved.
     ...englishPlatformI18n(),
     changeLanguage: runtime.changeLanguage, languageName: runtime.languageName, saveAccountLocale,
+    getLanguages: runtime.getLanguages,
   };
   const posted = [];
   page.api = async (url, init) => {
@@ -509,9 +510,14 @@ test('Switch to English saves to the account when signed in, and to the device w
 // and newer packs for one they do. The runtime takes its list and checks
 // every pack it names against the hash the list gave, as it checks a build's.
 function liveSetup(t, options = {}) {
+  const { namespaces = [], ...browserOptions } = options;
   const fixture = catalogFixture(t);
+  for (const name of namespaces) {
+    fixture.put(`en/${name}.json`, { hi: says('Hi there') });
+    fixture.put(`es/${name}.json`, { hi: from('Hi there', 'Hola') });
+  }
   const { catalogs } = fixture.build();
-  const page = browser(t, { root: fixture.root, ...options });
+  const page = browser(t, { root: fixture.root, ...browserOptions });
   // This build ships English only; the cache has the Spanish, served under
   // /locales/live/ like the server serves it.
   const englishOnly = { ...catalogs, languages: { en: 'English' }, manifest: {} };
@@ -525,7 +531,7 @@ function liveSetup(t, options = {}) {
       live.manifest[language][namespace] = { url: `/locales/live/${name}`, hash: entry.hash };
     }
   }
-  return { page, live, runtime: runtimeFor(englishOnly) };
+  return { fixture, page, live, runtime: runtimeFor(englishOnly) };
 }
 
 test('a language only the server\'s cache has is offered once its list arrives, and a session that wants it shows it', async (t) => {
@@ -578,13 +584,101 @@ test('somebody whose first language ships never waits for the list', async (t) =
   assert.equal(runtime.getLanguage(), 'en', 'and the list arriving changes nothing for them');
 });
 
+test('a pack the list no longer names is fetched again from a fresh list', async (t) => {
+  const { page, live, runtime, fixture } = liveSetup(t);
+  assert.equal(runtime.setLiveCatalogs(live), true);
+
+  // The page booted on this list; since, a translation pass has reworded
+  // Spanish and the cache serves the pack under its new content's name. The
+  // name this page holds answers 404 now, and the list it asks for again
+  // names the pack where the server serves it now.
+  fixture.put('es/core.json', { ...SPANISH, hello: from('Hello {{name}}', 'Hola, {{name}}') });
+  const { catalogs: newer } = fixture.build();
+  const fresh = { languages: newer.languages, manifest: {} };
+  for (const [language, packs] of Object.entries(newer.manifest)) {
+    fresh.manifest[language] = {};
+    for (const [namespace, entry] of Object.entries(packs)) {
+      const name = entry.url.split('/').pop();
+      fs.copyFileSync(path.join(fixture.root, 'public', entry.url), path.join(fixture.root, 'public/locales/live', name));
+      fresh.manifest[language][namespace] = { url: `/locales/live/${name}`, hash: entry.hash };
+    }
+  }
+  assert.notEqual(fresh.manifest.es.core.url, live.manifest.es.core.url);
+  page.missing = (url) => url === live.manifest.es.core.url;
+  const asked = [];
+  page.api = async (url) => {
+    asked.push(url);
+    return new Response(JSON.stringify(fresh), { headers: { 'Content-Type': 'application/json' } });
+  };
+  // The refresher runtime.ts installs: ask the server for its list again,
+  // and take what it now offers.
+  runtime.setLiveRefresh(async () => {
+    const response = await fetch('/api/languages');
+    return runtime.setLiveCatalogs(await response.json());
+  });
+
+  assert.equal(await runtime.changeLanguage('es'), true);
+  assert.equal(runtime.getLanguage(), 'es');
+  assert.equal(runtime.t('hello', { name: 'Ana' }), 'Hola, Ana');
+  assert.deepEqual(asked, ['/api/languages'], 'the list was asked for once');
+  assert.deepEqual(page.requests, [live.manifest.es.core.url, fresh.manifest.es.core.url], 'each pack name was fetched once');
+});
+
+test('a language the fresh list drops fails the switch once, and is no longer offered', async (t) => {
+  const { page, live, runtime } = liveSetup(t);
+  assert.equal(runtime.setLiveCatalogs(live), true);
+  assert.deepEqual(runtime.getLanguages().map((language) => language.tag), ['en', 'es']);
+
+  // The cache no longer ships Spanish at all, and the stale name is gone.
+  const gone = { languages: { en: 'English' }, manifest: {} };
+  page.missing = (url) => url === live.manifest.es.core.url;
+  page.api = async () => new Response(JSON.stringify(gone), { headers: { 'Content-Type': 'application/json' } });
+  runtime.setLiveRefresh(async () => {
+    const response = await fetch('/api/languages');
+    return runtime.setLiveCatalogs(await response.json());
+  });
+
+  await assert.rejects(runtime.changeLanguage('es'), /Unknown language pack/);
+  assert.equal(runtime.getLanguage(), 'en', 'the screen is where it was');
+  assert.deepEqual(runtime.getLanguages().map((language) => language.tag), ['en'], 'the fresh list no longer offers it');
+  assert.deepEqual(page.requests, [live.manifest.es.core.url], 'the vanished pack was asked for once');
+});
+
+test('parallel packs share one refresh, and a failed refresh keeps the first error', async (t) => {
+  // Twenty namespaces are asked together (prepareLanguage loads what the
+  // screen has registered in one go), and every pack name has moved.
+  const { page, live, runtime } = liveSetup(t, {
+    namespaces: Array.from({ length: 20 }, (_, i) => `extra${String.fromCharCode(97 + i)}`),
+  });
+  assert.equal(runtime.setLiveCatalogs(live), true);
+  for (const namespace of Object.keys(live.manifest.es)) {
+    if (namespace !== 'core') runtime.registerNamespace(namespace);
+  }
+  page.missing = () => true;
+  let refreshes = 0;
+  runtime.setLiveRefresh(async () => { refreshes += 1; return false; });
+
+  await assert.rejects(runtime.changeLanguage('es'), /Language pack unavailable/,
+    'the pack request\'s own error stands when the refresh cannot help');
+  assert.equal(refreshes, 1, 'twenty failing readers share one refresh');
+  assert.equal(page.requests.length, 21, 'each namespace was asked for once');
+  assert.equal(runtime.getLanguage(), 'en');
+});
+
 test('the shell asks for the list once it boots, and Settings lists what it adds', () => {
   const runtime = read('frontend/src/lib/i18n/runtime.ts');
-  assert.match(runtime, /fetch\('\/api\/languages', \{ credentials: 'same-origin', signal: controller\.signal, redirect: 'error' \}\)/);
+  assert.match(runtime, /fetch\('\/api\/languages', \{ credentials: 'same-origin', signal: controller\.signal, redirect: 'error', cache: 'no-cache' \}\)/,
+    'a caller asking again is asking because its list is old');
+  assert.match(runtime, /runtime\.setLiveRefresh\(loadLiveLanguages\);/,
+    'a moved pack asks for the list again through this');
   assert.match(runtime, /runtime\.waitForLive\(loadLiveLanguages\(\)\);/);
   assert.match(runtime, /applySessionLanguage, saveAccountLocale, getLanguages,\n\};/, 'legacy modules read the list too');
   const settings = read('frontend/src/features/settings/settings.js');
   assert.match(settings, /for \(const \{ tag, name \} of window\.PlatformI18n\?\.getLanguages\?\.\(\) \|\| \[\]\) \{/);
+  assert.match(settings, /this\._liveLanguageTags\.add\(tag\);/,
+    'what Settings added is remembered, so a later render can take it back');
+  assert.match(settings, /_pruneLiveLanguages\(select\);/,
+    'a language the fresh list no longer offers is taken back');
   assert.match(settings, /document\.addEventListener\('homeroom:languages-changed', \(\) => \{\n\s+if \(!Settings\._open\) return;\n\s+try \{ Settings\._renderLanguageSection\(\); \}/,
     'a list that arrives while Settings is open is listed there');
 });

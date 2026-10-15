@@ -110,13 +110,18 @@ test('#1771: becomeLeader is still where the fleet duties live', () => {
   const body = src.slice(src.indexOf('async function becomeLeader()'), src.indexOf('async function start()'));
   assert.ok(body.length > 1000, 'becomeLeader must still exist');
   for (const starter of [
-    'startIdleEvictionSweeper', 'startConversationAttachmentSweeper',
+    'startConversationAttachmentSweeper',
     'startSessionAutoPauseSweeper', 'startStalePrSweeper', 'startWorkshopThemeSweeper',
     'startLocalAgentLeaseSweeper', 'startGovernanceApplyTicker', 'startEligibleMergeSweeper',
     'startTitleHealSweeper',
   ]) {
     assert.ok(body.includes(`${starter}(`), `${starter} is started under the leader gate`);
   }
+  // What each process sweeps of its own (the idle eviction of its warm
+  // workers) runs whether or not it leads, and still never on a preview.
+  assert.match(src, /if \(runsClusterMaintenance\(\)\) startProcessDuties\(\);/);
+  const duties = src.slice(src.indexOf('function startProcessDuties()'), src.indexOf('async function becomeLeader()'));
+  assert.ok(duties.includes('startIdleEvictionSweeper('), 'the idle eviction is a process duty');
 });
 
 // ─── a preview's pool ceiling ───────────────────────────────────────
@@ -363,11 +368,15 @@ test('#1771: both clone paths converge on one place that sets the ceiling', () =
   const src = stripComments(read('src/services/db-manager.js'));
   const fn = src.slice(src.indexOf('async function cloneDatabase(sourceDb'));
   const body = fn.slice(0, fn.indexOf('\nasync function cloneDatabaseDirect'));
-  assert.equal((body.match(/applyStagingConnectionLimit\(targetDb\)/g) || []).length, 2,
+  // Each call names the server the clone was made on (the main one unless
+  // STAGING_DB_ADMIN_URL names a preview server): the ceiling is set where
+  // the database is.
+  assert.equal((body.match(/applyStagingConnectionLimit\(targetDb, \{ server \}\)/g) || []).length, 2,
     'the template path and the direct path each land on it');
   // After the copy, never before: pg_restore opens its own connections and a
   // ceiling applied mid-restore would cap the restore itself.
-  assert.ok(body.indexOf('cloneDatabaseDirect(sourceDb, targetDb)') < body.lastIndexOf('applyStagingConnectionLimit'));
+  const direct = body.indexOf('cloneDatabaseDirect(sourceDb, targetDb, { server })');
+  assert.ok(direct > 0 && direct < body.lastIndexOf('applyStagingConnectionLimit'));
 });
 
 test('#1771: pressure reclaim skips every preview somebody is using', () => {

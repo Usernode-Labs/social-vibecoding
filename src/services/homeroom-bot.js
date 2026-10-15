@@ -57,9 +57,49 @@ const githubBudget = require('./github-budget');
 const { HOMEROOM_BOT_LOCK } = require('./advisory-locks');
 const live = require('./homeroom-bot-live');
 const followup = require('./homeroom-bot-followup');
+const durableSteps = require('./durable-steps');
+const durableTurn = require('./durable-turn');
+const { FIX_COMMIT_MESSAGES } = require('./homeroom-commits');
 const snapshots = require('./homeroom-bot-snapshots');
 const { withoutEmDashes } = require('./em-dashes');
 const { agentApiFailure } = require('./agent-result-text');
+// Newcomer run five: a first version's stages, as they happen.
+const timeline = require('./first-version-timeline');
+
+// The bot-build machine's legacy side (src/workflow/bot-build/): live and
+// shadow builds are durable builds there. Lazy: it reaches back into this
+// module for what each build runs.
+function buildRuns() { return require('./build-runs'); }
+
+/** Whether the run has said `kind` on its request (homeroom_bot_posts): a post is never said twice. */
+async function runPosted(pool, runId, kind) {
+  if (!runId) return false;
+  try {
+    // A post still going out when a restart came is not said yet (live.post).
+    const { rows } = await pool.query(
+      'SELECT 1 FROM homeroom_bot_posts WHERE run_id = $1 AND kind = $2 AND pending IS NOT TRUE LIMIT 1',
+      [Number(runId), String(kind)],
+    );
+    return rows.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Debit the bot's allowance for a build's spend, once per build: a restart
+ * that brings the build back here does not debit it again (the step is kept
+ * before the debit: a restart between the two leaves it undebited rather
+ * than debited twice).
+ */
+async function debitBuildOnce(steps, key, totalUsd, debit) {
+  if (!(Number(totalUsd) > 0)) return 0;
+  if (steps.has(key)) return 0;
+  await steps.set(key, { usd: Number(totalUsd) });
+  await debit(Number(totalUsd));
+  return Number(totalUsd);
+}
+
 // #3692: the activity tray in a person's DM with the bot. Lazy, as the DM
 // module is: it reads this module's settings.
 function tray() { return require('./homeroom-bot-tray'); }
@@ -73,6 +113,8 @@ function botConfigs() { return require('./bot-configs'); }
 function firstVersionScreens() { return require('./first-version-screens'); }
 // #4449: and Live, the app itself while it is built.
 function firstVersionLive() { return require('./first-version-live'); }
+// Newcomer run six: the early first look, drawn from the plan at Make it.
+function firstVersionEarlyLook() { return require('./first-version-early-look'); }
 function botReview() { return require('./bot-review'); }
 // #4210: interrupted builds, kept for admins.
 function incidents() { return require('./platform-incidents'); }
@@ -82,6 +124,9 @@ function addressedMod() { return require('./homeroom-bot-addressed'); }
 // The bot's voice outside its DM (homeroom-bot-voice.js): which places it
 // answers in, and the asks it queues on its changes.
 function voiceModule(deps) { return (deps && deps.voice) || require('./homeroom-bot-voice'); }
+// Its proposals for requests closed some other way (a person's change, a
+// close vote, GitHub): withdrawn, which frees their slots.
+function closedRequests() { return require('./homeroom-bot-closed-requests'); }
 
 // One name, in the live module, which compares thread authors against it.
 const { BOT_USERNAME } = live;
@@ -291,9 +336,10 @@ const SETTLE_MS = 20 * 1000;
 // What wakes the loop for a person's words, and so waits to settle.
 const SETTLE_REASONS = new Set(['thread', 'proposal_thread']);
 // What a person asked for in their DM with the bot queues with one of these
-// (homeroom-bot-mayor.js, homeroom-bot-dm.js): that work gets a card in the
-// DM (homeroom-bot-activity.js startCard `inDm`); anything else is followed
-// in the tray until it needs them.
+// (homeroom-bot-mayor.js, homeroom-bot-dm.js). One story per request: every
+// request gets a card in its requester's chat with the bot, however it was
+// asked (homeroom-bot-activity.js startCard); `inDm` says only that its
+// thread starts "Filed from our chat."
 const DM_REASONS = new Set(['dm_request', 'dm_start', 'dm_answer', 'dm_comment', 'dm_revise', 'plan_change']);
 
 // Eligibility windows. A human claim counts while it is younger than the
@@ -354,6 +400,10 @@ const RESTART_REASON = 'restart';
 // are triaged without either post: they speak only when they have
 // something to say (a question, a spec, a proposal).
 const APP_AGAIN_REASON = 'app_again';
+// The queue reason of a request whose last verdict a cap held, brought back
+// once that cap has room (refreshApp). A held ready verdict is reused then,
+// with no new read, when the request has not changed since (reuseHeldVerdict).
+const CAP_FREED_REASON = 'cap_freed';
 // The queue reason of an issue whose bot proposal's checks settled failing
 // on its current head (noteProposalChecks): a follow-up turn fixes them.
 const CHECKS_REASON = 'checks_failing';
@@ -460,6 +510,13 @@ const FIRST_VERSION_NOTE = [
   'you would otherwise make yourself that change what they will see or do, each a plain question with 2 to 4 short',
   '`answers`, the one you suggest first. They can tap another; one they leave goes with yours. Only a choice they would',
   'care about, never the look or the theme. Often there are none: then give `choices` as an empty list.',
+  // Newcomer run seven (14 Oct 2026, Club Votes): a plan line settled what
+  // a question asked ("Vote yes, no or maybe on each one" beside "How should
+  // votes be counted?"), and the spec, bound by both, built a maybe that the
+  // creator's answer had ruled out (first-version-plan.js PLAN_SYSTEM).
+  'A `plan` line, `build_note` and `assumptions` never settle a point one of the `choices` asks: their answer decides',
+  'it. Where a choice decides something, the line says what the app does without the answer ("Vote on each',
+  'decision", not "Vote yes, no or maybe on each one"), and `build_note` leaves that point to the answer.',
 ].join('\n');
 
 /**
@@ -544,11 +601,28 @@ let lastLiveSweepAt = 0;
 // reconcile was asked for (the mode was switched on, say). Read and cleared
 // at the top of every pass; only meaningful on the Pod running the loop.
 const pendingApps = new Set();
+// A failed run whose retry (RETRY_FAILED_REASON) went to its proposal's
+// follow-up and found nothing to answer: `${appId}#${issueNumber}` -> that
+// run's id. The follow-up records no run when nobody said anything new, so
+// the refresh offered the same retry again straight away, and the live lane
+// re-woke the app after each slot (#3703): issue #4813 on 15 Oct 2026, about
+// three passes a second for 45 minutes, until GitHub's hourly budget was
+// spent. Spent once, it is not offered again; a newer run or new activity
+// on the issue is. In memory: a new leader gives it one more look.
+const spentRetries = new Map();
 let refreshAllRequested = false;
 let wakeRequested = false;
 // What the last pass did, for the dashboard: a loop that is on but idle
 // on budget or on a worker fault should say so rather than show nothing.
+// `startedAt` and `ms` say how long it took, and `passStartedAt` is the one
+// running now: the live loop's own, not the shadow build lane's
+// (lastBuildDrain), which run five (13 Oct 2026) first read it as.
 let lastPass = null;
+let passStartedAt = null;
+// The minute sweep for DM answers a process that died had promised
+// (homeroom-bot-mayor.js resumeDeferred).
+let deferResumeTimer = null;
+const DEFER_RESUME_MS = 60 * 1000;
 
 // Failures the platform, not the model, produced: the worker could not be
 // bootstrapped, the bot has no key or model, the ledger refused the turn.
@@ -1089,6 +1163,76 @@ function parseVerdict(text) {
   return plainVerdict(readVerdict(text));
 }
 
+// How much of a reply whose verdict could not be read is kept on its run:
+// its start (what it set out to do) and its end (where a verdict block
+// would be). The run's error line keeps only a short tail.
+const KEPT_REPLY_HEAD_CHARS = 4 * 1024;
+const KEPT_REPLY_TAIL_CHARS = 12 * 1024;
+
+/**
+ * A reply kept for an admin to read: { text, chars }, the text whole when it
+ * fits, else its first and last characters around a line saying how many
+ * were left out; `chars` is the whole reply's length. Null for no reply.
+ * Pure.
+ */
+function keptReply(value) {
+  const text = String(value == null ? '' : value);
+  if (!text.trim()) return null;
+  const chars = text.length;
+  if (chars <= KEPT_REPLY_HEAD_CHARS + KEPT_REPLY_TAIL_CHARS) return { text, chars };
+  const left = chars - KEPT_REPLY_HEAD_CHARS - KEPT_REPLY_TAIL_CHARS;
+  return {
+    text: `${text.slice(0, KEPT_REPLY_HEAD_CHARS)}\n\n[… ${left} characters left out …]\n\n${text.slice(-KEPT_REPLY_TAIL_CHARS)}`,
+    chars,
+  };
+}
+
+/** A run's unreadable_reply: the reply, and the repair turn's reply if one was asked for. Null when neither has text. */
+function unreadableReplyOf(reply, repair = null) {
+  const kept = { reply: keptReply(reply), repair: keptReply(repair) };
+  return kept.reply || kept.repair ? kept : null;
+}
+
+// The fixed issue number that marks the staging run below.
+const STAGING_UNREADABLE_ISSUE = 936711;
+
+/**
+ * Staging only (USERNODE_ENV), idempotent, and never throws: one obviously
+ * fake failed triage whose reply had no verdict block, with the reply and the
+ * repair turn's reply kept as keptReply keeps them, so a preview of the
+ * console's run row has an unreadable reply to show. Run on a running app,
+ * under an issue number no request has.
+ */
+async function seedStagingUnreadableReply(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return false;
+  try {
+    const { rows: [have] } = await pool.query(
+      'SELECT 1 FROM homeroom_bot_runs WHERE issue_number = $1 LIMIT 1', [STAGING_UNREADABLE_ISSUE],
+    );
+    if (have) return false;
+    const { rows: [app] } = await pool.query("SELECT id FROM apps WHERE status = 'running' ORDER BY id LIMIT 1");
+    if (!app) return false;
+    const reply = [
+      'Staging demo: I read the request and the files it names.',
+      'The change is small and bounded: one button, no schema, nothing anyone else is working on.',
+      'So it can be built now. Verdict below.',
+    ].join('\n\n');
+    const repair = 'Staging demo: it is ready to build, as I said.';
+    const { rows: [run] } = await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, model, cost_usd, duration_ms, error, created_at)
+       VALUES ($1, $2, 'shadow', 'failed', 'staging/demo', 0.02, 95000, $3, NOW() - INTERVAL '1 hour')
+       RETURNING id`,
+      [app.id, STAGING_UNREADABLE_ISSUE, `unparseable: ${clip(reply.slice(-300), 300)}`],
+    );
+    await pool.query('UPDATE homeroom_bot_runs SET unreadable_reply = $2 WHERE id = $1',
+      [run.id, JSON.stringify(unreadableReplyOf(reply, repair))]);
+    return true;
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not seed the staging unreadable reply', { err: err.message });
+    return false;
+  }
+}
+
 /**
  * Every JSON object a reply holds, as text, the one that ends last first
  * (and, of two that end together, the outer one). Each `{` is matched to its
@@ -1283,11 +1427,19 @@ function parseRepo(url) {
 
 // ── The queue ───────────────────────────────────────────────────────────
 
+// The projects the refresh reads: every one that runs on a repository, and
+// (newcomer run nine, 15 Oct 2026) one still being set up whose first
+// version the bot builds is filed (homeroom-bot-dm.js FILEABLE_SQL files it
+// once its repository holds the starter), so its request is read while the
+// starter is built and deployed, not once it runs.
 async function listApps(pool) {
   const { rows } = await pool.query(
     `SELECT id, slug, name, repo_url, self_hosted
        FROM apps
       WHERE status = 'running' AND repo_url IS NOT NULL
+         OR (status = 'creating' AND repo_url IS NOT NULL AND EXISTS (
+           SELECT 1 FROM homeroom_bot_first_versions fv
+            WHERE fv.app_id = apps.id AND fv.bot_builds AND fv.status = 'filed'))
       ORDER BY id`,
   );
   return rows;
@@ -1450,12 +1602,13 @@ function latestOf(a, b) {
  * recovery that costs nothing afterwards.
  *
  * `live_building`: that run is a live build waiting its turn or under way
- * (classifyIssue), as liveCandidates reads it. One the abandoned-build
- * sweep can no longer reach (older than its window) holds nothing.
+ * (classifyIssue), as liveCandidates reads it. One older than the window a
+ * build from before builds were durable is asked for again in
+ * (requeueLegacyBuilds) holds nothing.
  */
 async function lastRunsByIssue(pool, appId) {
   const { rows } = await pool.query(
-    `SELECT DISTINCT ON (issue_number) issue_number, thread_seen_at, verdict, cap_suppressed, created_at, mode,
+    `SELECT DISTINCT ON (issue_number) id, issue_number, thread_seen_at, verdict, cap_suppressed, created_at, mode,
             (mode = 'live' AND verdict = 'ready' AND build_ok IS NULL AND proposal_session_id IS NULL
              AND (live_build_waiting_at IS NOT NULL OR build_session_id IS NOT NULL)
              AND created_at > NOW() - make_interval(days => $2)) AS live_building,
@@ -1494,6 +1647,18 @@ async function refreshApp(pool, app, {
   const fetched = await github.fetchPublicIssues(repo.owner, repo.repo);
   const issues = Array.isArray(fetched?.issues) ? fetched.issues : [];
   if (!issues.length && fetched?.note) { out.skipped = 'github_unavailable'; return out; }
+
+  // A proposal of the bot's for requests closed on GitHub, where Homeroom
+  // gets no signal (a person's change and a close vote withdraw theirs as
+  // they close: homeroom-bot-closed-requests.js), is withdrawn here, and the
+  // slot it held goes to a held request in this same refresh. Live apps
+  // only, and only from a whole, fresh list; GitHub then confirms each close.
+  if (capRoom && bot && !fetched?.note && !fetched?.truncatedList) {
+    const { withdrawn } = await closedRequests().sweepClosedRequests(pool, {
+      appId: app.id, openNumbers: issues.map((issue) => Number(issue.number)), deps: { github },
+    });
+    if (withdrawn.length) capRoom = await capRoomFor(pool, bot, app.id, settings);
+  }
 
   // #3264: on a live app (capRoom is set only there) a person's reply in the
   // discussion of the bot's own open proposal is activity on its issue, so
@@ -1553,6 +1718,11 @@ async function refreshApp(pool, app, {
       busy: busy.has(n),
       lastRun,
     });
+    if (verdict.eligible && verdict.reason === RETRY_FAILED_REASON && lastRun?.id != null
+        && spentRetries.get(`${app.id}#${n}`) === Number(lastRun.id)) {
+      quiet.push(n);
+      continue;
+    }
     if (verdict.eligible) eligible.push({ n, ...verdict });
     else if (verdict.reason === 'held') held.push({ n, heldAt: toMs(lastRun.created_at), ...verdict });
     // A request the bot is building keeps a row it queued for itself, as an
@@ -1565,7 +1735,7 @@ async function refreshApp(pool, app, {
     for (const h of held) {
       if (!(room[h.cap] > 0)) continue;
       room[h.cap] -= 1;
-      eligible.push({ n: h.n, eligible: true, reason: 'cap_freed', priority: 2, threadSeenAt: h.threadSeenAt });
+      eligible.push({ n: h.n, eligible: true, reason: CAP_FREED_REASON, priority: 2, threadSeenAt: h.threadSeenAt });
     }
   }
 
@@ -2224,10 +2394,25 @@ async function insertRun(pool, run) {
       [id, JSON.stringify(run.plan)],
     ).catch((err) => log.warn('homeroom-bot', 'Could not record a plan', { runId: id, err: err.message }));
   }
+  // A reply whose verdict could not be read (keptReply), the same way.
+  if (id && run.unreadableReply && typeof run.unreadableReply === 'object') {
+    await pool.query(
+      'UPDATE homeroom_bot_runs SET unreadable_reply = $2 WHERE id = $1',
+      [id, JSON.stringify(run.unreadableReply)],
+    ).catch((err) => log.warn('homeroom-bot', 'Could not record an unreadable reply', { runId: id, err: err.message }));
+  }
   // #4488: a ready verdict labelled complicated, the same way.
   if (id && run.complicated) {
     await pool.query('UPDATE homeroom_bot_runs SET complicated = TRUE WHERE id = $1', [id])
       .catch((err) => log.warn('homeroom-bot', 'Could not record a complicated verdict', { runId: id, err: err.message }));
+  }
+  // What the read saw of its request (readFingerprintOf), and the held run
+  // a reused verdict came from (reuseHeldVerdict), the same way.
+  if (id && (run.readFingerprint || run.reusedRunId)) {
+    await pool.query(
+      'UPDATE homeroom_bot_runs SET read_fingerprint = $2, reused_run_id = $3 WHERE id = $1',
+      [id, run.readFingerprint ? JSON.stringify(run.readFingerprint) : null, Number(run.reusedRunId) || null],
+    ).catch((err) => log.warn('homeroom-bot', 'Could not record what a read saw', { runId: id, err: err.message }));
   }
   // #4239: a person verdict about Homeroom itself, the same way.
   if (id && run.aboutPlatform) {
@@ -2786,6 +2971,300 @@ async function clearStaleTurn(pool, session, { worker, maxAgeMs, now = Date.now(
   return { ageMs };
 }
 
+// ── A held verdict, reused when its turn comes ──────────────────────────
+//
+// A ready verdict a cap held is stored as it was reached (cap_suppressed on
+// its run), and the refresh brings its request back once the cap has room
+// (CAP_FREED_REASON). That used to read the request again from the start:
+// a whole model turn, a second "looking at this" note, and then the caps
+// checked again, often only to be held again (46 such reads in a week, 25
+// of them in 75 minutes). Each read now records what it saw
+// (readFingerprintOf); when the request has not changed since the held
+// verdict read it, that verdict is acted on again as it stands.
+
+const READ_FINGERPRINT_VERSION = 1;
+
+// A GitHub login or a Homeroom username, compared as the seed compares the
+// bot's own login (thread-context.js renderEntry).
+function authorKey(name) {
+  return String(name || '').trim().toLowerCase().replace(/\[bot\]$/, '');
+}
+
+/**
+ * Pure: what a read saw of its request, as a hash to compare with a later
+ * look: its title and body, its GitHub comments (id, author, body) and its
+ * Homeroom discussion (author, time, body). A screenshot is a link in one
+ * of those, so a new or changed one changes the hash too. The bot's own
+ * posts (`botLogins`: its GitHub login and Homeroom username) are left
+ * out: the held note it posts after the read is not a change to the
+ * request. The counts beside the hash are for whoever reads the run.
+ */
+function readFingerprintOf({ issue, comments = [], threadMessages = [], botLogins = [] } = {}) {
+  const own = new Set((Array.isArray(botLogins) ? botLogins : []).map(authorKey).filter(Boolean));
+  const theirs = (entry) => !own.has(authorKey(entry?.author));
+  const github = (Array.isArray(comments) ? comments : []).filter(theirs)
+    .map((c) => [c?.id == null ? null : String(c.id), authorKey(c?.author), String(c?.body || '')]);
+  const discussion = (Array.isArray(threadMessages) ? threadMessages : []).filter(theirs)
+    .map((m) => [authorKey(m?.author), String(m?.createdAt || ''), String(m?.body || '')]);
+  const title = String(issue?.title || '');
+  const body = String(issue?.body || '');
+  const hash = crypto.createHash('sha256')
+    .update(JSON.stringify([READ_FINGERPRINT_VERSION, title, body, github, discussion]))
+    .digest('hex');
+  const ids = github.map(([id]) => id).filter(Boolean);
+  return {
+    v: READ_FINGERPRINT_VERSION,
+    hash,
+    comments: github.length,
+    lastCommentId: ids.length ? ids[ids.length - 1] : null,
+    messages: discussion.length,
+  };
+}
+
+/**
+ * The request's last run, as lastRunsByIssue reads it, when it is a live
+ * ready verdict a cap held and it recorded what it read; else null.
+ */
+async function heldReadyRun(pool, appId, issueNumber) {
+  const { rows } = await pool.query(
+    `SELECT id, verdict, cap_suppressed, mode, read_fingerprint, determined, missing_fact, build_note, reason,
+            plan, complicated, about_platform, model
+       FROM homeroom_bot_runs
+      WHERE app_id = $1 AND issue_number = $2
+        AND budget_stop IS DISTINCT FROM 'input tokens'
+        AND (error IS NULL OR error NOT LIKE 'collateral:%')
+      ORDER BY created_at DESC, id DESC
+      LIMIT 1`,
+    [appId, issueNumber],
+  );
+  const run = rows[0];
+  if (!run || run.verdict !== 'ready' || !run.cap_suppressed || run.mode !== 'live') return null;
+  if (!run.read_fingerprint?.hash) return null;
+  return run;
+}
+
+/**
+ * A newer verdict on a request replaces any build still waiting for an
+ * older one: the shadow lane's, and a live build waiting its turn.
+ */
+async function supersedeEarlierBuilds(pool, { app, issueNumber, runId }) {
+  await supersedeQueuedBuilds(pool, { appId: app.id, issueNumber, runId }).catch((err) => {
+    log.warn('homeroom-bot', 'Could not supersede a queued shadow build', { app: app.slug, issueNumber, err: err.message });
+  });
+  await pool.query(
+    `UPDATE homeroom_bot_runs SET live_build_waiting_at = NULL, build_error = 'superseded: a later verdict on the same issue'
+      WHERE app_id = $1 AND issue_number = $2 AND id <> $3
+        AND live_build_waiting_at IS NOT NULL AND build_ok IS NULL AND build_session_id IS NULL`,
+    [app.id, issueNumber, runId],
+  ).catch((err) => log.warn('homeroom-bot', 'Could not supersede a waiting live build', { app: app.slug, issueNumber, err: err.message }));
+}
+
+/**
+ * A cap_freed request whose held ready verdict still answers it: the
+ * request as it stands is compared with what that verdict read, and when
+ * nothing changed, a new run carries the held one's verdict (its plan,
+ * build note and the rest) at no cost, the caps are checked again, and it
+ * is acted on as a fresh ready verdict is: built, or held again without
+ * the held note said twice. Nothing is posted before it, as nothing was
+ * read. Returns runTriage's result, or null to read the request as usual:
+ * a held run that recorded nothing, or a request that changed.
+ */
+async function reuseHeldVerdict(pool, config, {
+  bot, app, repo, item, issue, settings, runMode, startedMs, turnBudgetMs, deps,
+}) {
+  const { github, threadContext, sessions } = deps;
+  const issueNumber = Number(item.issue_number);
+  const held = await heldReadyRun(pool, app.id, issueNumber).catch((err) => {
+    log.warn('homeroom-bot', 'Could not read a request\'s held verdict', { app: app.slug, issueNumber, err: err.message });
+    return null;
+  });
+  if (!held) return null;
+  const personAt = await personActivityAt(pool, app.id, issueNumber).catch(() => null);
+  const seedReadAt = new Date().toISOString();
+  const [{ comments = [] } = {}, thread, botLogin] = await Promise.all([
+    github.fetchIssueComments(repo.owner, repo.repo, issueNumber).catch(() => ({ comments: [] })),
+    threadContext.loadIssueThread(pool, app.id, issueNumber),
+    live.botUsernameOf(github),
+  ]);
+  const fingerprint = readFingerprintOf({
+    issue, comments, threadMessages: thread?.messages || [], botLogins: [botLogin, bot.username],
+  });
+  if (fingerprint.hash !== held.read_fingerprint.hash) {
+    log.info('homeroom-bot', 'Held request changed since its verdict; reading it again', {
+      app: app.slug, issueNumber, heldRunId: Number(held.id),
+    });
+    return null;
+  }
+  let parsed = {
+    verdict: 'ready', determined: held.determined, missingFact: held.missing_fact, buildNote: held.build_note,
+    reason: held.reason, plan: held.plan && typeof held.plan === 'object' ? held.plan : null,
+    complicated: held.complicated === true, platform: held.about_platform === true,
+  };
+  // As a fresh read: a change its requester was asked to plan is planned
+  // with them again.
+  if (!parsed.complicated && await plannedWithRequester(pool, { appId: app.id, issueNumber })) {
+    parsed = { ...parsed, complicated: true };
+  }
+  const capSuppressed = await simulateCaps(pool, bot, app.id, 'ready', settings)
+    || (parsed.complicated ? await planTripwire(pool, app.id) : null);
+  const runId = await insertRun(pool, {
+    ...billingOf(item, runMode),
+    readReason: readReasonOf(item),
+    appId: app.id, issueNumber, mode: runMode,
+    verdict: 'ready', determined: parsed.determined, missingFact: parsed.missingFact,
+    plan: parsed.plan, aboutPlatform: parsed.platform, complicated: parsed.complicated,
+    buildNote: parsed.buildNote, reason: parsed.reason, capSuppressed,
+    threadSeenAt: [issue.updatedAt, issue.createdAt, personAt].reduce(latestOf, item.thread_seen_at || null),
+    model: held.model || null, costUsd: 0, inputTokens: 0, outputTokens: 0,
+    durationMs: Date.now() - startedMs,
+    readFingerprint: fingerprint, reusedRunId: Number(held.id),
+  });
+  await pool.query('DELETE FROM homeroom_bot_queue WHERE id = $1', [item.id]);
+  clearRefusals(app.id);
+  await supersedeEarlierBuilds(pool, { app, issueNumber, runId });
+  log.info('homeroom-bot', 'Held verdict reused: the request is unchanged since it was read', {
+    app: app.slug, issueNumber, runId, heldRunId: Number(held.id), cap: capSuppressed,
+  });
+  let acted = null;
+  try {
+    acted = await actOnVerdict({
+      pool, config, bot, app, repo, issueNumber, issue, parsed, capSuppressed, runId,
+      seed: sessions.buildHeadlessSeed(issueNumber, issue, comments, botLogin, thread?.messages || []),
+      seedReadAt, postedAt: [], turnBudgetMs, botLogin, comments,
+      model: stageModel(settings, config, 'build'), specModel: stageModel(settings, config, 'spec'),
+      // Its requester was told it is held when it was; held again says nothing.
+      quietHold: true,
+      proposalCeiling: botProposalCeiling(settings),
+      deps,
+    });
+  } catch (err) {
+    log.error('homeroom-bot', 'Acting on a reused verdict failed', { app: app.slug, issueNumber, err: err.message });
+  }
+  return { ran: true, verdict: 'ready', runId, reused: Number(held.id), ...(acted ? { acted } : {}) };
+}
+
+/**
+ * A project's first version whose plan was written at Make it
+ * (services/first-version-plan.js, newcomer run four, 13 October 2026): its
+ * request is not read by a triage turn. A run is made from that plan as a
+ * ready verdict whose plan it is (its bullets and choices, its build note),
+ * and acted on as a first version's ready verdict is (actOnVerdict, then
+ * awaitGo). When its maker already answered its questions on the made
+ * screen, or it asks none, it goes ahead at once with those answers
+ * (goAheadIfDecided): no Build it, and the chat's plan card says it is
+ * being built, sent without a ring. Otherwise it waits for them as before,
+ * and their Submit, or Build it in the chat, goes ahead with it.
+ *
+ * Only the request's first look: a plan somebody asked to change, a read a
+ * restart sent back, or a request already planned is read by the triage as
+ * before; so is one whose plan failed or is not there. A plan still being
+ * written is waited for a few seconds (first-version-plan.js whenReady).
+ * Returns runTriage's result, or null to read the request as usual.
+ */
+async function planFromEarly(pool, config, {
+  bot, app, repo, item, issue, settings, runMode, startedMs, turnBudgetMs, deps,
+}) {
+  const { github, threadContext, sessions } = deps;
+  const fvPlan = require('./first-version-plan');
+  const issueNumber = Number(item.issue_number);
+  if (item.reason === 'plan_change' || item.reason === RESTART_REASON || item.reason === READ_AGAIN_REASON) return null;
+  let row;
+  try {
+    const { rows: planned } = await pool.query(
+      `SELECT 1 FROM homeroom_bot_runs
+        WHERE app_id = $1 AND issue_number = $2 AND mode = 'live' AND verdict = 'ready' LIMIT 1`,
+      [app.id, issueNumber],
+    );
+    if (planned.length) return null;
+    row = await fvPlan.whenReady(pool, app.id);
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not read a first version\'s plan from Make it; reading the request', { app: app.slug, issueNumber, err: err.message });
+    return null;
+  }
+  if (!row || Number(row.issue_number) !== issueNumber || fvPlan.planStatus(row) !== 'ready') return null;
+  const plan = fvPlan.planOf(row);
+  if (!plan) return null;
+  const personAt = await personActivityAt(pool, app.id, issueNumber).catch(() => null);
+  const seedReadAt = new Date().toISOString();
+  const [{ comments = [] } = {}, thread, botLogin] = await Promise.all([
+    github.fetchIssueComments(repo.owner, repo.repo, issueNumber).catch(() => ({ comments: [] })),
+    threadContext.loadIssueThread(pool, app.id, issueNumber),
+    live.botUsernameOf(github),
+  ]);
+  const fingerprint = readFingerprintOf({
+    issue, comments, threadMessages: thread?.messages || [], botLogins: [botLogin, bot.username],
+  });
+  const decidedNow = fvPlan.decided(row);
+  const parsed = {
+    verdict: 'ready', determined: true, missingFact: null, buildNote: plan.buildNote, reason: null,
+    plan: { bullets: plan.bullets, questions: plan.questions }, complicated: false, platform: false,
+    // Decided already: the chat's plan card is news, not a question.
+    ...(decidedNow ? { quietPlan: true } : {}),
+    // Its timeline has the plan from Make it already (first-version-timeline.js).
+    fromMakeIt: true,
+  };
+  const capSuppressed = await simulateCaps(pool, bot, app.id, 'ready', settings);
+  const runId = await insertRun(pool, {
+    ...billingOf(item, runMode),
+    readReason: readReasonOf(item),
+    appId: app.id, issueNumber, mode: runMode,
+    verdict: 'ready', determined: true, buildNote: parsed.buildNote, plan: parsed.plan, capSuppressed,
+    threadSeenAt: [issue.updatedAt, issue.createdAt, personAt].reduce(latestOf, item.thread_seen_at || null),
+    // What it cost was its maker's, at Make it (first-version-plan.js).
+    model: plan.model || fvPlan.PLAN_MODEL, costUsd: 0, inputTokens: 0, outputTokens: 0,
+    durationMs: Date.now() - startedMs,
+    readFingerprint: fingerprint,
+  });
+  await pool.query('DELETE FROM homeroom_bot_queue WHERE id = $1', [item.id]);
+  clearRefusals(app.id);
+  await supersedeEarlierBuilds(pool, { app, issueNumber, runId });
+  log.info('homeroom-bot', 'A first version is planned from its plan at Make it, with no read', {
+    app: app.slug, issueNumber, runId, questions: plan.questions.length, decided: decidedNow, cap: capSuppressed,
+  });
+  let acted = null;
+  try {
+    acted = await actOnVerdict({
+      pool, config, bot, app, repo, issueNumber, issue, parsed, capSuppressed, runId,
+      seed: sessions.buildHeadlessSeed(issueNumber, issue, comments, botLogin, thread?.messages || []),
+      seedReadAt, postedAt: [], turnBudgetMs, botLogin, comments,
+      model: stageModel(settings, config, 'build'), specModel: stageModel(settings, config, 'spec'),
+      proposalCeiling: botProposalCeiling(settings),
+      firstVersion: true,
+      deps,
+    });
+    if (acted === PLAN_ACTED.waiting || acted === PLAN_ACTED.unsent) {
+      const went = await goAheadIfDecided(pool, { appId: app.id, issueNumber, runId, deps: { dm: deps.dm, ws: deps.ws } });
+      if (went) acted = 'build_queued';
+    }
+  } catch (err) {
+    log.error('homeroom-bot', 'Acting on a first version\'s plan from Make it failed', { app: app.slug, issueNumber, err: err.message });
+  }
+  return { ran: true, verdict: 'ready', runId, early: true, ...(acted ? { acted } : {}) };
+}
+
+/**
+ * A first version's plan that waits for Build it, gone ahead with now when
+ * its maker's answers are in (the made screen's Submit,
+ * first-version-plan.js recordAnswers) or its plan from Make it asks
+ * nothing: through its chat card when it has one (homeroom-bot-dm.js
+ * buildFromAnswers decides it as Build it does), else straight on. True
+ * when it went ahead. Never throws.
+ */
+async function goAheadIfDecided(pool, { appId, issueNumber, runId, deps = {} }) {
+  try {
+    const fvPlan = require('./first-version-plan');
+    const row = await fvPlan.readEarlyPlan(pool, appId);
+    if (!row || Number(row.issue_number) !== Number(issueNumber) || !fvPlan.decided(row)) return false;
+    const went = await (deps.dm || require('./homeroom-bot-dm')).buildFromAnswers(pool, {
+      appId, issueNumber, runId, userId: Number(row.user_id), answers: fvPlan.answersOf(row) || [], deps,
+    });
+    return !!went?.ok;
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not go ahead with a decided first version\'s plan', { appId, issueNumber, runId, err: err.message });
+    return false;
+  }
+}
+
 /**
  * One issue, one read-only scout turn, one ledger row. Returns
  * { ran: true, verdict } or { ran: false, reason }. `budget` is the one
@@ -3000,7 +3479,7 @@ async function runTriage(pool, config, {
           recordFailure,
           deps: {
             github, worker, agentTurn, limits, threadContext, managedOpenRouter, sessions,
-            activeWorkers, votes: deps.votes || null, dm: deps.dm || null, ...liveD,
+            activeWorkers, votes: deps.votes || null, dm: deps.dm || null, fixedCheckSync: deps.fixedCheckSync || null, ...liveD,
             ...(deps.voice ? { voice: deps.voice } : {}), ...(deps.voiceDeps ? { voiceDeps: deps.voiceDeps } : {}),
           },
         });
@@ -3016,6 +3495,18 @@ async function runTriage(pool, config, {
     if (await buildItOnRequest(pool, { appId: app.id, issueNumber, requester, deps: { dm: deps.dm, ws: liveD.ws } })) {
       await pool.query('DELETE FROM homeroom_bot_queue WHERE id = $1', [item.id]);
       return { ran: false, reason: 'build_it' };
+    }
+    // A ready verdict a cap held, its turn come: reused as it stands when
+    // the request has not changed since it was read (reuseHeldVerdict), with
+    // no read and nothing said first. A first version is planned afresh.
+    if (item.reason === CAP_FREED_REASON && !requester?.firstVersion) {
+      const reused = await reuseHeldVerdict(pool, config, {
+        bot, app, repo, item, issue, settings, runMode, startedMs, turnBudgetMs,
+        deps: {
+          github, worker, agentTurn, limits, threadContext, managedOpenRouter, sessions, activeWorkers, ...liveD,
+        },
+      });
+      if (reused) return reused;
     }
     // An issue a restart sent back (#3471), or a read started over because
     // somebody changed the request mid-read, was already told the bot is
@@ -3039,7 +3530,8 @@ async function runTriage(pool, config, {
     // pass. Never throws.
     if (item.reason !== RESTART_REASON && item.reason !== APP_AGAIN_REASON && item.reason !== READ_AGAIN_REASON) {
       await activity().startCard(pool, {
-        app, issueNumber, requester, bot, jobKey: item.id, settings, inDm: DM_REASONS.has(item.reason), deps: { dm: deps.dm },
+        app, issueNumber, requester, bot, jobKey: item.id, settings, inDm: DM_REASONS.has(item.reason), reason: item.reason,
+        deps: { dm: deps.dm },
       });
       // B9: the chat message it was asked in, if it was, says it is read.
       await require('./homeroom-bot-chat').noteRequestStatus(pool, { appId: app.id, issueNumber, status: 'reading' });
@@ -3048,6 +3540,19 @@ async function runTriage(pool, config, {
     // it reads the request again. Its buttons go now, so a tap while this
     // look runs builds nothing; this look sends a plan of its own.
     await retireWaitingPlans(pool, { appId: app.id, issueNumber, why: 'the request was read again', deps: { dm: deps.dm } });
+    // 13 Oct 2026: a first version whose plan was written at Make it is
+    // planned from that plan, with no read (planFromEarly); one without
+    // such a plan is read below, as before.
+    if (requester?.firstVersion) {
+      const early = await planFromEarly(pool, config, {
+        bot, app, repo, item, issue, settings, runMode, startedMs, turnBudgetMs,
+        deps: {
+          github, worker, agentTurn, limits, threadContext, managedOpenRouter, sessions, activeWorkers, ...liveD,
+          ...(deps.dm ? { dm: deps.dm } : {}),
+        },
+      });
+      if (early) return early;
+    }
   }
   // From here the read has the request as it stands: a person changing it
   // now sends this read back to start over (interruptRead), once.
@@ -3080,6 +3585,11 @@ async function runTriage(pool, config, {
   const seed = sessions.buildHeadlessSeed(
     issueNumber, issue, comments, botUsername, thread?.messages || [],
   );
+  // What this read saw of the request, so a ready verdict a cap holds can be
+  // reused when its turn comes if nothing has changed (reuseHeldVerdict).
+  const readFingerprint = readFingerprintOf({
+    issue, comments, threadMessages: thread?.messages || [], botLogins: [botUsername, bot.username],
+  });
   // #3772: on a project of one, the person who asked decides what the group
   // would; on a project with more, its creator and admins do. Only on a
   // project the bot acts on, where it says its verdict.
@@ -3544,6 +4054,7 @@ async function runTriage(pool, config, {
     // failed triages in the week to 2026-10-06: "Small, bounded, no schema
     // … so it can", "Verdict below."). The reading is done; one short turn
     // on the same thread asks for the block alone before the run fails.
+    let repairText = null;
     const repair = await askForVerdictBlock(pool, config, {
       bot, session, model, containerName, harness: triageHarness,
       threadId: result.agentThreadId || null,
@@ -3556,7 +4067,8 @@ async function runTriage(pool, config, {
       costUsd = addKnown(costUsd, spent.costUsd);
       usage.inputTokens = addKnown(usage.inputTokens, spent.inputTokens);
       usage.outputTokens = addKnown(usage.outputTokens, spent.outputTokens);
-      parsed = repair.stopped || repair.routed?.error ? null : parseVerdict(repair.routed?.result?.lastResultText);
+      repairText = repair.routed?.result?.lastResultText || null;
+      parsed = repair.stopped || repair.routed?.error ? null : parseVerdict(repairText);
       log.info('homeroom-bot', parsed ? 'Triage verdict recovered by asking for its JSON block' : 'Asking for the JSON block did not recover a verdict', {
         app: app.slug, issueNumber, verdict: parsed?.verdict || null, costUsd: spent.costUsd,
         stopped: repair.stopped || null, error: repair.routed?.error || null,
@@ -3564,7 +4076,7 @@ async function runTriage(pool, config, {
     }
     if (!parsed) {
       return recordFailure(`unparseable: ${body}`, {
-        sessionId: session.id, costUsd, ...usage,
+        sessionId: session.id, costUsd, ...usage, unreadableReply: unreadableReplyOf(text, repairText),
       });
     }
   }
@@ -3592,7 +4104,7 @@ async function runTriage(pool, config, {
     buildNote: parsed.buildNote, reason: parsed.reason, capSuppressed,
     threadSeenAt: item.thread_seen_at || null, model, costUsd,
     inputTokens: usage.inputTokens, outputTokens: usage.outputTokens,
-    durationMs: Date.now() - startedMs,
+    durationMs: Date.now() - startedMs, readFingerprint,
   });
   await recordSnapshot(runId);
   await pool.query('DELETE FROM homeroom_bot_queue WHERE id = $1', [item.id]);
@@ -3606,17 +4118,8 @@ async function runTriage(pool, config, {
     });
   }
   // A newer verdict on the issue replaces any build still waiting for an
-  // older one: the lane builds what the bot thinks now.
-  await supersedeQueuedBuilds(pool, { appId: app.id, issueNumber, runId }).catch((err) => {
-    log.warn('homeroom-bot', 'Could not supersede a queued shadow build', { app: app.slug, issueNumber, err: err.message });
-  });
-  // And a live build still waiting its turn: what was said since replaces it.
-  await pool.query(
-    `UPDATE homeroom_bot_runs SET live_build_waiting_at = NULL, build_error = 'superseded: a later verdict on the same issue'
-      WHERE app_id = $1 AND issue_number = $2 AND id <> $3
-        AND live_build_waiting_at IS NOT NULL AND build_ok IS NULL AND build_session_id IS NULL`,
-    [app.id, issueNumber, runId],
-  ).catch((err) => log.warn('homeroom-bot', 'Could not supersede a waiting live build', { app: app.slug, issueNumber, err: err.message }));
+  // older one, shadow or live: the lane builds what the bot thinks now.
+  await supersedeEarlierBuilds(pool, { app, issueNumber, runId });
   // Before anything is posted: whoever asked the bot to stop tagging them
   // is left out of this post and every later one on the issue, and whoever
   // asked to be tagged again is back in.
@@ -3873,8 +4376,14 @@ async function releaseStaleBuilds(pool, settings) {
       WHERE build_queued_at IS NOT NULL AND build_at IS NOT NULL AND build_ok IS NULL
         AND build_at < NOW() - make_interval(secs => $1)
         AND NOT (id = ANY($2::int[]))
-        -- A build whose worker outlived a restart is restart recovery's to
-        -- finish (#3401): its session still carries the turn in flight.
+        -- A durable build is its work item's to finish, wherever it runs
+        -- (services/build-runs.js); this releases only a build that ran in
+        -- a process with no workflow runtime and died with it.
+        AND NOT EXISTS (
+          SELECT 1 FROM wf_instances w
+           WHERE w.machine = 'bot-build' AND w.state = 'building'
+             AND w.data->>'target' = 'shadow' AND (w.data->>'id')::int = homeroom_bot_runs.id
+        )
         AND NOT EXISTS (
           SELECT 1 FROM chat_sessions cs
            WHERE cs.id = homeroom_bot_runs.build_session_id AND cs.active_turn IS NOT NULL
@@ -3919,7 +4428,7 @@ const CLAIM_BUILDS_SQL = `WITH building AS (
      SET build_at = NOW(), build_attempts = r.build_attempts + 1
     FROM picked
    WHERE r.id = picked.id AND r.build_at IS NULL
-  RETURNING r.id, r.app_id, r.issue_number, r.build_note, r.build_spec_md`;
+  RETURNING r.id, r.app_id, r.issue_number, r.build_note, r.build_spec_md, r.build_attempts`;
 
 /** A build error the platform, not the model, produced. */
 function isInfraBuildError(error) {
@@ -3975,7 +4484,9 @@ async function shadowBuild({
   settings = null,
 }) {
   const { limits, managedOpenRouter } = deps;
-  const version = firstVersion ? null : await botConfigs().laterVersion(pool);
+  // A durable build's steps (services/durable-steps.js), as a live build's.
+  const steps = durableSteps.of(deps);
+  const version = firstVersion ? null : await steps.once('version', () => botConfigs().laterVersion(pool));
   const recipe = version ? version.recipe : null;
   const model = recipe ? recipe.models.build : stageBuildModel;
   const specModel = recipe ? recipe.models.spec : stageSpecModel;
@@ -3986,30 +4497,32 @@ async function shadowBuild({
   }
   // A first version made from a game starter builds on it (starterOfApp).
   const starter = firstVersion ? await starterOfApp(pool, app.id).catch(() => null) : null;
-  const snapshotId = await recordBuildSnapshot(pool, {
+  const snapshotId = await steps.once('snapshot', () => recordBuildSnapshot(pool, {
     runId, app, repo, issueNumber, seed, buildNote: parsed.buildNote, github: deps.github, presetSpec,
     firstVersion, platformRepo: isPlatformRepo(app, config), model, specModel, starter,
-  });
+  }));
   if (version) {
-    await botConfigs().spawnSideBuilds(pool, config, {
+    await steps.once('side_builds', () => botConfigs().spawnSideBuilds(pool, config, {
       botRunId: runId, app, snapshotId, current: version, scope: 'later', skipReason: laterSideSkipReason(settings, app, config),
-    });
+    }));
   }
-  const buildStartedMs = Date.now();
+  const buildStartedMs = Number(await steps.once('build_started_at', async () => Date.now())) || Date.now();
   // A first version builds as the live lane builds it: its doubled clock,
   // and the spec and build that decide its look (buildOne).
   // #4645: the requester's language preference, for the prompts' wording
   // rule (localeRule); unset, everything the group reads stays English.
   const requester = await (deps.dm || require('./homeroom-bot-dm'))
     .requesterOf(pool, app.id, issueNumber).catch(() => null);
-  const built = await live.buildAndPropose({
+  const built = await steps.once('try', () => live.buildAndPropose({
     pool, config, bot, app, repo, issueNumber, issue, seed, buildNote: parsed.buildNote,
-    ...buildBudgets(app, config, turnBudgetMs, { firstVersion }), model, specModel, deps, presetSpec,
+    ...buildBudgets(app, config, turnBudgetMs, { firstVersion }), model, specModel,
+    deps: { ...deps, durable: steps.scope('try') }, presetSpec,
     firstVersion, starter,
     locale: requester?.locale || null,
     platformRepo: isPlatformRepo(app, config),
     onSession: (session) => pool.query(
-      'UPDATE homeroom_bot_runs SET build_session_id = $2 WHERE id = $1', [runId, session.id],
+      'UPDATE homeroom_bot_runs SET build_session_id = $2 WHERE id = $1',
+      [runId, session.id],
     ),
     ...(version ? {
       harnessOf: live.recipeHarness,
@@ -4019,17 +4532,20 @@ async function shadowBuild({
     origin: { lane: 'shadow', runId },
     onNoChange: (noChange) => keepNoChange(pool, runId, noChange),
     propose: false,
-  });
+  }));
   const buildMs = Date.now() - buildStartedMs;
   if (built.costUsd > 0) {
     try {
       if (await managedOpenRouter.usesIncludedKey(pool, bot.id)) {
-        await limits.recordSpend(pool, bot.id, Math.round(built.costUsd * 1e6) / 1e4, { byok: false });
+        await debitBuildOnce(steps, 'debited', built.costUsd,
+          (usd) => limits.recordSpend(pool, bot.id, Math.round(usd * 1e6) / 1e4, { byok: false }));
       }
     } catch (err) {
+      durableSteps.rethrowStop(err, 'shadow debit');
       log.warn('homeroom-bot', 'Shadow build spend debit failed', { err: err.message });
     }
   }
+  steps.fence();
   if (!built.ok && isInfraBuildError(built.error)) {
     await pool.query(
       `UPDATE homeroom_bot_runs
@@ -4067,7 +4583,12 @@ async function shadowBuild({
     ...(version ? { configVersionId: version.id } : {}),
   });
   // What the later configuration made of it; then its pairs.
-  if (version) await botConfigs().finishLive(pool, { botRunId: runId, version, built, activeMs: buildMs });
+  if (version) {
+    await steps.once('configs', async () => {
+      await botConfigs().finishLive(pool, { botRunId: runId, version, built, activeMs: buildMs });
+      return true;
+    });
+  }
   return built.ok ? 'shadow_built' : 'shadow_failed';
 }
 
@@ -4114,16 +4635,24 @@ async function runQueuedBuild(pool, config, { bot, claim, settings, deps = {} })
     'SELECT id, slug, name, repo_url, self_hosted FROM apps WHERE id = $1', [claim.app_id],
   );
   const app = appRows[0];
-  if (!app) return skip('the app is gone');
-  const why = shadowBuildSkipReason(settings, app, config);
-  if (why) return skip(why);
+  // Asked once, as a step: a build a restart caught is carried on from where
+  // it was, never stopped (its turn left running) by a check its first
+  // attempt passed (an issue closed since, GitHub down for a moment).
+  const checked = await durableSteps.of(deps).once('precheck', async () => {
+    if (!app) return { acted: await skip('the app is gone') };
+    const why = shadowBuildSkipReason(settings, app, config);
+    if (why) return { acted: await skip(why) };
+    if (!parseRepo(app.repo_url)) return { acted: await skip('the app has no GitHub repository') };
+    if (!github.isEnabled()) return { acted: await handBack('github_unavailable') };
+    const r = parseRepo(app.repo_url);
+    const fetched = await github.fetchPublicIssue(r.owner, r.repo, issueNumber);
+    const found = fetched?.issue || null;
+    if (!found || (found.state && found.state !== 'open')) return { acted: await skip('the issue is no longer open') };
+    return { issue: found };
+  });
+  if (checked.acted) return checked.acted;
   const repo = parseRepo(app.repo_url);
-  if (!repo) return skip('the app has no GitHub repository');
-  if (!github.isEnabled()) return handBack('github_unavailable');
-
-  const fetched = await github.fetchPublicIssue(repo.owner, repo.repo, issueNumber);
-  const issue = fetched?.issue || null;
-  if (!issue || (issue.state && issue.state !== 'open')) return skip('the issue is no longer open');
+  const issue = checked.issue;
 
   const [{ comments = [] } = {}, thread, botUsername] = await Promise.all([
     github.fetchIssueComments(repo.owner, repo.repo, issueNumber).catch(() => ({ comments: [] })),
@@ -4143,6 +4672,7 @@ async function runQueuedBuild(pool, config, { bot, claim, settings, deps = {} })
     model: stageModel(settings, config, 'build'), specModel: stageModel(settings, config, 'spec'), settings,
     deps: {
       worker, agentTurn, limits, managedOpenRouter, sessions, activeWorkers, sessionLifecycle, github,
+      ...(deps.durable ? { durable: deps.durable } : {}),
     },
   });
 }
@@ -4157,7 +4687,7 @@ async function drainBuilds(pool, config, deps = {}) {
   // Shutting down (stop()): nothing new starts on a process about to close
   // its pool. A build that started anyway failed at dispatch with "Cannot use
   // a pool after calling end on the pool" (page-turners #2, 2026-10-05).
-  if (stopped) { out.paused = 'stopped'; return out; }
+  if (refusingNew()) { out.paused = 'stopped'; return out; }
   // A pass is already filling the lane: it runs again when it ends.
   if (buildDrainRunning) { buildDrainAgain = true; return { ...out, busy: true }; }
   buildDrainRunning = true;
@@ -4190,10 +4720,28 @@ async function drainBuilds(pool, config, deps = {}) {
       out.detail = budget.reason || budget.error;
       return out;
     }
+    // Shutdown may have begun during the reads above.
+    if (refusingNew()) { out.paused = 'stopped'; return out; }
     const { rows } = await pool.query(CLAIM_BUILDS_SQL, [free, settings.pausedApps || []]);
     for (const claim of rows) {
-      const promise = runQueuedBuild(pool, config, { bot, claim, settings, deps })
+      // A durable build on the workflow kernel (services/build-runs.js):
+      // resolves once it has ended, wherever it ran.
+      const promise = buildRuns().start({
+        pool, config, target: 'shadow', id: Number(claim.id), nonce: `a${Number(claim.build_attempts) || 0}.${Date.now().toString(36)}`,
+        appId: Number(claim.app_id), input: {},
+        deps: { ...deps, bot, settings, inProcessClaim: claim },
+      })
         .catch(async (err) => {
+          // Not started: the platform began stopping. Back in the queue, its
+          // claim not spent, for the next leader.
+          if (err?.notStarted) {
+            await pool.query(
+              `UPDATE homeroom_bot_runs SET build_at = NULL, build_attempts = GREATEST(build_attempts - 1, 0)
+                WHERE id = $1 AND build_ok IS NULL`,
+              [claim.id],
+            ).catch(() => {});
+            return 'not_started';
+          }
           log.error('homeroom-bot', 'Shadow build threw', { runId: claim.id, err: err.message });
           await pool.query(
             'UPDATE homeroom_bot_runs SET build_ok = FALSE, build_error = $2 WHERE id = $1',
@@ -4255,39 +4803,36 @@ function wakeBuilds() {
   return true;
 }
 
-// ── After a restart ──────────────────────────────────────────────────────
+// ── Builds that outlive their process ────────────────────────────────────
 //
 // A platform redeploy restarts the server, not the worker: a build's worker
-// is its own Pod, and its turn runs detached with a journal. Restart
-// recovery (server.js adoptOrphanWorker → resumeDetachedTurn) follows that
-// journal to the end, as it does a person's turn. What it does NEXT is the
-// dev-chat tail: a draft PR, a staging preview, a wrap-up and a
-// notification, none of which a shadow build may leave. So recovery hands
-// the bot's own turns back here instead (#3401), the way Mayor's
-// handBackAfterRecovery takes back its conversations, and the bot records
-// what the turn did on the run it belongs to.
+// is its own Pod, and its turns run detached with a journal. The bot's live
+// builds and its shadow builds are durable builds on the workflow kernel's
+// bot-build machine (services/build-runs.js, docs/plans/bot-build-workflow.md):
+// the build's work item outlives the process, the next leader claims it, and
+// the build carries itself on from the last step it saved, following a turn
+// that was under way (services/durable-turn.js). Nothing here adopts, holds,
+// resumes or sweeps a build after a restart; that was a second copy of the
+// pipeline (completeRecoveredLive and its sweeps), and every restart bug of
+// October 2026 lived in the gaps between the two.
 //
-// Which sessions: the bot's, while `active`, which is every bot turn except
-// a follow-up on a proposal the group is voting on. That session is
-// `promoted`, and a person's recovery (the PR and staging updated) is the
-// right end for it.
-//
-// #4533: but a follow-up is still the bot's turn, with the bot's clock and
-// the bot's ledger. Its record carries the bot's mark (homeroom-bot-followup
-// TURN_MARK), which isRecoveredBotFollowUp reads: recovery re-arms its clock
-// from the deadline on the mark (recoveryDeadline), and once the person's
-// tail has moved the proposal on, records what the turn did as the follow-up
-// itself would have (finishRecoveredFollowUp).
+// What is left here for a restart is a bot turn that is no build's: a read
+// (its triage), which the queue reads again, and a follow-up on a proposal
+// the group is voting on. That session is `promoted`, and a person's
+// recovery (the PR and staging updated) is the right end for it; #4533: but
+// it keeps the bot's clock and ledger. Its record carries the bot's mark
+// (homeroom-bot-followup TURN_MARK), which isRecoveredBotFollowUp reads:
+// recovery re-arms its clock from the deadline on the mark
+// (recoveryDeadline), and once the person's tail has moved the proposal on,
+// records what the turn did as the follow-up itself would have
+// (finishRecoveredFollowUp).
 
 /**
- * True when restart recovery should hand this session to the bot.
- *
- * A bot session found `paused` WITH a turn record is the bot's too. The
- * bot never pauses a session under its own turn, but before #1006 its
- * triage pass paused a running build's session (ensureBotSession took the
- * newest one), and recovery read the pause as "nobody wants this" and
- * destroyed the worker in silence. A turn record means something was
- * running: the bot follows it or hands its run back, never neither.
+ * True when restart recovery should hand this session to the bot rather than
+ * to a person's dev-chat tail: the bot's own session, while `active`, or
+ * `paused` with a turn record on it. A session a durable build owns
+ * (`workflow_owner`) is that build's, and server.js leaves it alone before
+ * it asks this.
  */
 function isRecoveredBotSession(session) {
   return !!session
@@ -4310,100 +4855,39 @@ function isRecoveredBotFollowUp(session, activeTurn = session?.active_turn) {
     && !!followup.turnMarkOf(activeTurn);
 }
 
-/** The build run a session is the build of, while it is still under way. */
-async function runOfSession(pool, sessionId) {
-  const { rows } = await pool.query(
-    `SELECT id, app_id, issue_number, build_attempts
-       FROM homeroom_bot_runs
-      WHERE build_session_id = $1 AND build_at IS NOT NULL AND build_ok IS NULL
-      ORDER BY id DESC LIMIT 1`,
-    [sessionId],
-  );
-  return rows[0] || null;
-}
-
-// What a restart may cost a turn that runs on through it, given back on the
-// bot's clock once for each restart that reached the turn (server.js counts
-// them on the turn's record: turn-lifecycle.js noteRestart). The worker never
-// stops at a restart, and the new server follows its journal; the turn loses
-// only the calls it makes back to the platform while the platform is down
-// (its push, its Homeroom reads, the app's platform endpoints in-loop), a
-// minute at most, so two is generous on purpose.
-//
-// It replaces building such a build again. Until 7 Oct 2026 a build whose
-// clock ran out after any restart had reached it went back to be triaged
-// and built from the start (restartRanItOut, #3895), later from its plan
-// (#4283), and with a deploy behind most merges (60 to 80 restarts a day)
-// that was most long builds: that evening two requests that simply needed
-// more than their 20 minutes were each built three times, to the same
-// clock each time. A build whose clock still runs out, with this given
-// back, ran too long on its own and is said so. Capped, so a turn a run of
-// restarts keeps catching is not followed for ever.
-const RESTART_ALLOWANCE_MS = 2 * 60 * 1000;
-const MAX_RESTARTS_ALLOWED = 10;
+// What a restart may cost a turn that runs on through it (durable-turn.js).
+const RESTART_ALLOWANCE_MS = durableTurn.RESTART_ALLOWANCE_MS;
 
 /** The time a turn's restarts so far give back on its clock (`activeTurn.restarts`). Pure. */
 function restartAllowanceMs(activeTurn) {
-  const n = Number(activeTurn?.restarts);
-  return Number.isInteger(n) && n > 0 ? Math.min(n, MAX_RESTARTS_ALLOWED) * RESTART_ALLOWANCE_MS : 0;
+  return durableTurn.allowanceMs(activeTurn?.restarts);
 }
 
 /**
- * When the bot's own clock ends a recovered turn: its start plus the budget
- * the turn had (a build's or a spec's, the platform's tripled, a first
- * version's doubled) and the time its restarts cost it
- * (RESTART_ALLOWANCE_MS each), or null to leave it unbounded (no start on
- * record).
- *
- * A live build is found by its own run (liveRunOfSession): runOfSession
- * reads the lane's, and a live build never has the lane's build_at. Before,
- * a live build fell through to a triage turn's one plain budget, so a
- * restart halved a first version's clock, cut a platform build's to a
- * third, and gave a spec turn twice its 10 minutes.
+ * When the bot's own clock ends a follow-up a restart caught: the deadline
+ * on its mark plus what its restarts cost it, or null for any other turn
+ * (a build's turns keep their own clock: durable-turn.js).
  */
 async function recoveryDeadline(pool, config, session, activeTurn) {
-  // #4533: a follow-up's own deadline, as its live clock had it.
   const mark = followup.turnMarkOf(activeTurn);
   if (mark) return toMs(mark.deadlineAt) + restartAllowanceMs(activeTurn);
-  const startedAt = toMs(activeTurn?.startedAt);
-  if (!startedAt) return null;
-  const allowance = restartAllowanceMs(activeTurn);
-  const settings = await readSettings(pool);
-  const turnMs = 1000 * clampInt(settings?.turnSeconds, DEFAULTS.turnSeconds, MIN_TURN_SECONDS, MAX_TURN_SECONDS);
-  const app = { repo_url: session.repo_url };
-  let budgets;
-  const laneRun = await runOfSession(pool, session.id);
-  if (laneRun) {
-    budgets = buildBudgets(app, config, turnMs, {
-      firstVersion: await isFirstVersionRequest(pool, laneRun.app_id, laneRun.issue_number),
-    });
-  } else {
-    const liveRun = await liveRunOfSession(pool, session.id);
-    if (!liveRun) return startedAt + turnMs + allowance; // a triage turn: one turn's budget
-    // As buildOne passes it to the build: whether the request is the
-    // project's first version, from who it is for.
-    const { rows: [requester] = [] } = await pool.query(
-      'SELECT first_version FROM homeroom_bot_requesters WHERE app_id = $1 AND issue_number = $2',
-      [liveRun.app_id, liveRun.issue_number],
-    );
-    budgets = buildBudgets(app, config, turnMs, { firstVersion: requester?.first_version === true });
-  }
-  return startedAt + allowance + (activeTurn.mode === 'scout'
-    ? Math.min(budgets.turnBudgetMs, budgets.specBudgetMs)
-    : budgets.turnBudgetMs);
+  return null;
 }
 
-/** Put a run back in the queue without spending an attempt: a restart is not the build's failure. */
-async function handBackRun(pool, runId, why) {
-  await pool.query(
-    `UPDATE homeroom_bot_runs
-        SET build_at = NULL, build_attempts = GREATEST(build_attempts - 1, 0), build_session_id = NULL
-      WHERE id = $1 AND build_ok IS NULL`,
-    [runId],
-  );
-  log.info('homeroom-bot', 'Handed a build back to the queue after a restart', { runId, why });
-  wakeBuilds();
-}
+// How the run of a live build a restart cut short, and that was sent back to
+// be triaged again, ends its error. No build is sent back any more; the
+// note stays for the runs that were, which the person's activity card reads
+// past (homeroom-bot-activity.js, homeroom-bot-chat.js).
+const RESTARTED_BUILD_NOTE = 'by a restart; the issue was sent back to be triaged again';
+// How many builds of one request in a row a restart could send back, before
+// builds outlived restarts (the activity card's window still reads it).
+const MAX_RESTARTED_BUILDS = 3;
+// How far back the waiting views look for a live build (homeroom-bot-progress.js).
+const ABANDONED_LIVE_WINDOW_DAYS = 7;
+// What a live build lost for good says on its request.
+const LOST_LIVE_REASON = 'the platform failed while it was building, and the build was lost';
+// A build every restart took from the process carrying it on.
+const ABANDONED_LIVE_REASON = 'the platform restarted while it was building, and the build was lost';
 
 /** A build session is archived once its run is recorded; the triage session rests paused. */
 async function putAwayRecoveredSession(pool, session, { archive }) {
@@ -4421,1078 +4905,268 @@ async function putAwayRecoveredSession(pool, session, { archive }) {
   ).catch(() => {});
 }
 
-/** Both turns of a build session are the build's cost, as on the live path. */
-async function sessionCostUsd(pool, sessionId) {
-  const { rows } = await pool.query(
-    'SELECT SUM(estimated_cost_usd)::float8 AS cost FROM agent_turns WHERE session_id = $1',
-    [sessionId],
-  );
-  const cost = Number(rows[0]?.cost);
-  return Number.isFinite(cost) ? cost : null;
-}
-
-/** A recovered turn's cost, debited from the bot's allowance as the live path debits a build. */
-async function debitRecovered(pool, session, costUsd, deps = {}) {
-  if (!(costUsd > 0)) return;
-  try {
-    const managedOpenRouter = deps.managedOpenRouter || require('./openrouter-managed-keys');
-    const limits = deps.limits || require('./limits');
-    if (await managedOpenRouter.usesIncludedKey(pool, session.user_id)) {
-      await limits.recordSpend(pool, session.user_id, Math.round(costUsd * 1e6) / 1e4, { byok: false });
-    }
-  } catch (err) {
-    log.warn('homeroom-bot', 'Recovered turn spend debit failed', { sessionId: session.id, err: err.message });
-  }
-}
-
 /**
- * What a build turn restart recovery followed to its end adds to its run's
- * record of a turn that changed nothing (build_no_change, homeroom-bot-live.js
- * buildNudgePrompt), counted as the build counts it (recordNoChange):
- *   - a nudge's outcome, added to what its build turn left on the run before
- *     the nudge started. A turn is a nudge by its ledger name, or by a record
- *     that says a nudge started and has none;
- *   - a build turn of its own that ended cleanly and changed nothing. It is
- *     not nudged here: that would mean rebuilding the whole build prompt and
- *     holding a slot for it, and a turn that quits early ends in seconds, so a
- *     restart rarely catches one. It is recorded as having changed nothing.
- * Resolves the record to keep, or null when there is nothing to add. Never
- * throws.
- */
-async function recoveredNoChange(pool, {
-  runId, session, result = {}, timedOut = false, component = null, origin = null, appId = null, issueNumber = null,
-}) {
-  try {
-    const { rows: [row] = [] } = await pool.query(
-      'SELECT build_no_change FROM homeroom_bot_runs WHERE id = $1', [runId],
-    );
-    const before = row?.build_no_change && Array.isArray(row.build_no_change.turns) ? row.build_no_change : null;
-    const nudgeTurn = component === live.BUILD_NUDGE_TELEMETRY
-      || (!!before?.nudged && !before.turns.some((t) => t.turn === 'nudge'));
-    const routed = { result: result || {} };
-    const facts = live.turnFacts({ routed, stopped: timedOut }, {
-      turn: nudgeTurn ? 'nudge' : 'build', model: session.agent_model || null,
-    });
-    const where = { appId, sessionId: session.id, userId: session.user_id || null, issueNumber, origin };
-    let noChange;
-    if (nudgeTurn) {
-      const committed = facts.ended === 'changed';
-      noChange = {
-        ...(before || { notNudged: null }),
-        turns: [...(before ? before.turns.filter((t) => t.turn !== 'nudge') : []),
-          { ...facts, said: committed ? null : live.agentSaid(result?.lastResultText) }],
-        nudged: true, committed, recovered: true,
-      };
-      await live.recordNoChange(pool, { ...where, noChange, which: 'nudge', recovered: true });
-    } else {
-      if (facts.ended !== 'no_change' && facts.ended !== 'not_pushed') return null;
-      noChange = {
-        turns: [{ ...facts, said: live.agentSaid(result?.lastResultText) }],
-        nudged: false, notNudged: 'a restart caught the turn, and recovery does not nudge', committed: null, recovered: true,
-      };
-      await live.recordNoChange(pool, { ...where, noChange, which: 'first', recovered: true });
-    }
-    log.warn('homeroom-bot', nudgeTurn ? 'Recovered a nudge after a restart' : 'A build turn a restart caught changed nothing', {
-      runId, sessionId: session.id, lane: origin?.lane || null, ...noChange.turns[noChange.turns.length - 1],
-      committed: noChange.committed,
-    });
-    return noChange;
-  } catch (err) {
-    log.warn('homeroom-bot', 'Could not record a recovered build turn that changed nothing', { runId, err: err.message });
-    return null;
-  }
-}
-
-/**
- * A recovered turn of the bot's, finished. `result` is what the journal
- * replay returned; `timedOut` says the bot's clock, re-armed by recovery,
- * ended it, its time given back for each restart that reached the turn
- * (recoveryDeadline). Never throws on the run's account: recovery clears
- * the turn record whatever this does.
- *
- *   - a build turn: recorded on its run, built or failed, as shadowBuild
- *     records one, and its cost debited from the allowance;
- *   - a spec turn: the spec kept on the run, and the run put back in the
- *     queue, where its build starts from that spec; a spec that found the
- *     request impossible is recorded as such;
- *   - a turn no build run owns (a triage): nothing to record; the queue
- *     row it held is released and triaged again.
- */
-async function finishRecoveredTurn({
-  pool, session, activeTurn, result = {}, timedOut = false, deps = {},
-}) {
-  const run = await runOfSession(pool, session.id);
-  if (!run && await noteRecoveredLive(pool, session, {
-    mode: activeTurn?.mode, result, timedOut, component: activeTurn?.telemetryComponent || null,
-  })) {
-    return 'live_pending';
-  }
-  if (!run) {
-    await putAwayRecoveredSession(pool, session, { archive: false });
-    log.info('homeroom-bot', 'Recovered a bot turn no build owns; left for the queue', { sessionId: session.id });
-    return 'released';
-  }
-  const note = ' (finished after a restart)';
-  if (activeTurn?.mode === 'scout') {
-    const read = timedOut ? { ok: false, error: 'the spec ran past its time limit' } : live.readSpec(result.lastResultText, { parts: result.answerParts });
-    await putAwayRecoveredSession(pool, session, { archive: true });
-    const specCostUsd = await sessionCostUsd(pool, session.id);
-    await debitRecovered(pool, session, specCostUsd, deps);
-    if (read.blocked) {
-      await pool.query(
-        `UPDATE homeroom_bot_runs SET build_ok = FALSE, build_error = $2, build_cost_usd = $3
-          WHERE id = $1 AND build_ok IS NULL`,
-        [run.id, clip(read.error + note, MAX_ERROR_CHARS), specCostUsd],
-      );
-      await finishConfiguredShadow(pool, run.id, { ok: false, sessionId: session.id, blocked: read.blocked, error: read.error });
-      wakeBuilds();
-      return 'blocked';
-    }
-    if (read.ok) {
-      await pool.query('UPDATE homeroom_bot_runs SET build_spec_md = $2 WHERE id = $1', [run.id, read.specMd]);
-    }
-    await handBackRun(pool, run.id, read.ok ? 'the spec is written; the build goes on from it' : read.error);
-    return 'requeued';
-  }
-
-  const turnFailed = timedOut ? null : live.failedClaudeTurn(result);
-  const built = result.pushOk === true && Number(result.ahead) > 0 && !timedOut && !turnFailed;
-  const error = built ? null
-    : timedOut ? `the build ran past its time limit${note}`
-      : turnFailed ? `the build turn failed (${turnFailed})${note}`
-        : `the build produced no change to propose${note}`;
-  const costUsd = await sessionCostUsd(pool, session.id);
-  const noChange = await recoveredNoChange(pool, {
-    runId: run.id, session, result, timedOut, component: activeTurn?.telemetryComponent || null,
-    origin: { lane: 'shadow', runId: run.id }, appId: run.app_id, issueNumber: run.issue_number,
-  });
-  await pool.query(
-    `UPDATE homeroom_bot_runs r
-        SET build_ok = $2, build_branch = $3, build_sha = $4, build_commits = $5,
-            build_error = $6, build_cost_usd = $7,
-            build_spec_md = COALESCE(r.build_spec_md, (SELECT spec_md FROM chat_sessions WHERE id = $8)),
-            build_no_change = COALESCE($9::jsonb, r.build_no_change)
-      WHERE r.id = $1 AND r.build_ok IS NULL`,
-    [run.id, built, built ? session.branch_name || null : null, result.sha || null,
-      built ? Number(result.ahead) : null, error, costUsd, session.id,
-      noChange ? JSON.stringify(noChange) : null],
-  );
-  await putAwayRecoveredSession(pool, session, { archive: true });
-  await debitRecovered(pool, session, costUsd, deps);
-  await finishConfiguredShadow(pool, run.id, {
-    ok: built, sessionId: session.id, sha: built ? result.sha || null : null,
-    commits: built ? Number(result.ahead) : null, error, costUsd,
-  });
-  log.info('homeroom-bot', 'Recorded a shadow build that finished after a restart', {
-    runId: run.id, sessionId: session.id, ok: built, commits: result.ahead ?? null, costUsd,
-  });
-  wakeBuilds();
-  return built ? 'shadow_built' : 'shadow_failed';
-}
-
-/**
- * A later change's shadow build a restart finished, recorded for the
- * configuration that built it (bot_config_version_id), as shadowBuild
- * records one: its result, then its pairs. Nothing for any other run.
- * Never throws.
- */
-async function finishConfiguredShadow(pool, runId, built) {
-  const version = await runConfigVersion(pool, runId).catch(() => null);
-  if (version) await botConfigs().finishLive(pool, { botRunId: runId, version, built, activeMs: await recoveredBuildMs(pool, built?.sessionId) });
-}
-
-/**
- * How long a build a restart finished was under way: from its session's
- * start, which live.buildAndPropose opens as its spec turn begins (where the
- * live path's own buildMs starts too), to now, the restart included, since
- * its worker went on building through it; or to `until` (a review a restart
- * stopped with nothing running: its last step), when that is earlier. A side
- * build's time is counted the same way (bench/lane.js releaseTrial adds each
- * claim's to prior_ms). Without it, a configuration's result for a build
- * finished after a restart held its triage's time alone (95 s beside a side
- * build's 940 s). Null when the session is gone. Never throws.
- */
-async function recoveredBuildMs(pool, sessionId, { until = null } = {}) {
-  if (!sessionId) return null;
-  try {
-    const { rows: [s] } = await pool.query(
-      `SELECT (EXTRACT(EPOCH FROM LEAST(NOW(), COALESCE($2::timestamptz, NOW())) - created_at) * 1000)::float8 AS ms
-         FROM chat_sessions WHERE id = $1`,
-      [Number(sessionId), until && Number.isFinite(Date.parse(until)) ? new Date(until).toISOString() : null],
-    );
-    return s && Number.isFinite(Number(s.ms)) ? Math.max(Math.round(Number(s.ms)), 0) : null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * A bot turn recovery could not follow: the worker is gone, or the journal
- * replay failed. The run goes back in the queue unspent; the session is put
- * away. The caller clears the turn record.
+ * A bot turn restart recovery found and no build owns (a read: its triage,
+ * which the queue reads again). Its session rests paused; the caller has
+ * stopped the turn and cleared its record.
  */
 async function abandonRecoveredTurn({ pool, session, why }) {
-  const run = await runOfSession(pool, session.id);
-  if (!run && await noteRecoveredLive(pool, session, { lost: true, why })) return 'live_pending';
-  if (run) await handBackRun(pool, run.id, why);
-  await putAwayRecoveredSession(pool, session, { archive: !!run });
-  return run ? 'requeued' : 'released';
+  await putAwayRecoveredSession(pool, session, { archive: false });
+  log.info('homeroom-bot', 'Recovered a bot turn no build owns; left for the queue', { sessionId: session.id, why });
+  return 'released';
 }
 
 /**
- * A bot turn the stale-turn watchdog reaped (server.js): its worker stopped
- * with nothing in this process following it, and the watchdog has cleared
- * the turn record. A person is told to retry; the bot has nobody to tell,
- * so its run goes back in the queue unspent, or a live one is settled the
- * way restart recovery settles one it could not follow. Before #1006 the
- * reap was the end of it: the run sat claimed until the stale-build release
- * spent its attempt, and after two the build was recorded lost. A build
- * this process is still running records its own outcome, untouched.
+ * A bot turn the stale-turn watchdog reaped (server.js). A durable build's
+ * turn is its build's: the step following it reads the turn's end. Any
+ * other is a read the queue takes again.
  */
-async function settleReapedTurn({ pool, config = {}, session }) {
-  const run = await runOfSession(pool, session.id);
-  if (run && buildsInFlight.has(run.id)) return 'in_flight';
-  const outcome = await abandonRecoveredTurn({
-    pool, session, why: 'the stale-turn watchdog reaped its turn',
-  });
-  await completeRecoveredLive({ pool, config, sessionId: session.id });
-  return outcome;
+async function settleReapedTurn({ pool, session }) {
+  if (session?.workflow_owner) return 'durable';
+  return abandonRecoveredTurn({ pool, session, why: 'the stale-turn watchdog reaped its turn' });
 }
 
-// ── A live build after a restart (#3471) ─────────────────────────────────
-//
-// A live build is the live path's, not the lane's: its triage pass already
-// dropped the issue's queue row, said it was looking and posted the spec,
-// and meant to promote the build and say so. A restart ends that pass, so
-// recovery does the rest. It is noted while the journal is followed and done
-// once recovery has let go of the session (completeRecoveredLive, called by
-// server.js's adoptBotOrphan), the order the live path promotes in: after
-// the build turn, not inside it.
+// ── Live and shadow builds on the kernel ─────────────────────────────────
 
-// sessionId → what recovery found, until completeRecoveredLive acts on it.
-const pendingLive = new Map();
-
-// How the run of a live build a restart cut short, and that was sent back to
-// be triaged again, ends its error. The piece of work goes on in the look
-// that follows, so it is not what that work came to: the person's activity
-// card reads past it to that look's run (homeroom-bot-activity.js).
-const RESTARTED_BUILD_NOTE = 'by a restart; the issue was sent back to be triaged again';
-
-// How many builds of one request in a row a restart may send back to be
-// triaged again. Nothing counted them: on 30 Sep, with 85 merges to main and
-// a deploy behind most of them, a request a restart kept catching went round
-// again each time (a new ready run, a new spec on the issue, more spend) and
-// never ended in a proposal or in a word about why. A build with a plan no
-// longer goes round (resumeLiveBuildFromSpec, #4210), but it is counted all
-// the same: a worker lost with the restart, or a spec turn cut short. (A
-// build turn whose time ran out is no longer one of them: its restarts are
-// given back on its clock, recoveryDeadline, and what time it still ran
-// past is its own.) The third one in a row within the window is neither
-// resumed nor sent back: it is recorded failed and said, as any failed build
-// is, and a reply or Run now starts it again.
-const MAX_RESTARTED_BUILDS = 3;
-const RESTARTED_BUILDS_WINDOW_HOURS = 24;
-
-/**
- * How many of the request's latest live builds before `runId`, back to back
- * and within the window, a restart sent back. A run that never started a
- * build (a held verdict, a question) is not one of its builds and does not
- * break the count.
- */
-async function restartedBuildsBefore(pool, { appId, issueNumber, runId }) {
-  const { rows } = await pool.query(
-    `SELECT build_error FROM homeroom_bot_runs
-      WHERE app_id = $1 AND issue_number = $2 AND mode = 'live' AND id < $3
-        AND build_session_id IS NOT NULL
-        AND created_at > NOW() - make_interval(hours => $4)
-      ORDER BY id DESC
-      LIMIT $5`,
-    [appId, issueNumber, runId, RESTARTED_BUILDS_WINDOW_HOURS, MAX_RESTARTED_BUILDS - 1],
-  );
-  let n = 0;
-  for (const row of rows) {
-    if (!String(row.build_error || '').endsWith(RESTARTED_BUILD_NOTE)) break;
-    n += 1;
-  }
-  return n;
-}
-
-/**
- * Put a live run whose spec turn a restart interrupted back in line for its
- * build, with the spec recovery read from that turn kept on it: buildOne
- * builds from it (buildAndPropose's presetSpec) rather than writing another.
- * The interrupted session is not its build's any more, so the link to it is
- * cleared, and what the spec turn cost stays on the run for the build to
- * carry. True when the run was put back; never throws.
- */
-async function resumeLiveBuildFromSpec(pool, { runId, appId, specMd, specHtml = null, costUsd = null }) {
-  try {
-    const { rows } = await pool.query(
-      `UPDATE homeroom_bot_runs
-          SET build_spec_md = $2, build_cost_usd = $3, build_session_id = NULL, live_build_waiting_at = NOW(),
-              build_spec_html = $4
-        WHERE id = $1 AND mode = 'live' AND build_ok IS NULL AND proposal_session_id IS NULL
-        RETURNING id`,
-      [runId, specMd, Number.isFinite(costUsd) ? costUsd : null, specHtml || null],
-    );
-    if (!rows.length) return false;
-  } catch (err) {
-    log.warn('homeroom-bot', 'Could not put a live build back in line with its plan', { runId, err: err.message });
-    return false;
-  }
-  wake({ appId });
-  return true;
-}
-
-/** The plan a live run kept from an earlier build (resumeLiveBuildFromSpec), or null. Never throws. */
-async function keptRunSpec(pool, runId) {
-  const { rows: [r] = [] } = await pool.query(
-    'SELECT build_spec_md, build_spec_html FROM homeroom_bot_runs WHERE id = $1', [Number(runId)],
-  ).catch(() => ({ rows: [] }));
-  if (!r?.build_spec_md) return null;
-  return { md: r.build_spec_md, html: r.build_spec_html || null };
-}
-
-/** The live run a session is the build of, while it has no proposal or recorded outcome yet. */
-async function liveRunOfSession(pool, sessionId) {
-  const { rows } = await pool.query(
-    `SELECT id, app_id, issue_number
-       FROM homeroom_bot_runs
-      WHERE build_session_id = $1 AND mode = 'live' AND proposal_session_id IS NULL
-        AND build_ok IS NULL
-      ORDER BY id DESC LIMIT 1`,
-    [sessionId],
-  );
-  return rows[0] || null;
-}
-
-/** Note a recovered live build for completeRecoveredLive. False when the session is no live build's. */
-async function noteRecoveredLive(pool, session, outcome) {
-  const run = await liveRunOfSession(pool, session.id);
-  if (!run) return false;
-  pendingLive.set(Number(session.id), { runId: run.id, appId: run.app_id, issueNumber: run.issue_number, ...outcome });
-  return true;
-}
-
-/** Send an issue back to be triaged again, without saying "looking" twice. */
-async function requeueForRestart(pool, appId, issueNumber) {
-  await pool.query(
-    `INSERT INTO homeroom_bot_queue (app_id, issue_number, priority, reason)
-     VALUES ($1, $2, 1, $3)
-     ON CONFLICT (app_id, issue_number) DO UPDATE
-       SET priority = LEAST(homeroom_bot_queue.priority, 1), reason = EXCLUDED.reason,
-           started_at = NULL, enqueued_at = NOW()`,
-    [appId, issueNumber, RESTART_REASON],
-  );
-  wake({ appId });
-}
-
-/** A live run's review state while its loop runs (bot-review.js inProgress), else null. Never throws. */
-async function reviewInProgress(pool, runId) {
-  try {
-    const { rows: [r] } = await pool.query(
-      'SELECT review, bot_config_version_id FROM homeroom_bot_runs WHERE id = $1', [Number(runId)],
-    );
-    return r && botReview().inProgress(r.review) ? { ...r.review, configVersionId: r.bot_config_version_id } : null;
-  } catch {
-    return null;
-  }
-}
-
-/** The configuration version a live run was built by, or null. */
-async function runConfigVersion(pool, runId) {
-  const { rows: [r] } = await pool.query('SELECT bot_config_version_id FROM homeroom_bot_runs WHERE id = $1', [Number(runId)])
-    .catch(() => ({ rows: [] }));
-  return r?.bot_config_version_id ? botConfigs().versionById(pool, r.bot_config_version_id).catch(() => null) : null;
-}
-
-/**
- * A review a restart cut short: recorded as stopped `interrupted`, at the
- * state it is proposed in (and `rolledBack` when that state is the last one
- * a capture saw boot rather than a fix nobody looked at). Never throws.
- */
-async function noteReviewInterrupted(pool, runId, review, pushed = {}, rolledBack = null) {
-  const { configVersionId: _v, ...state } = review || {};
-  const done = {
-    ...state, state: 'done', stop: 'interrupted', stopDetail: 'the platform restarted during the review',
-    finalSha: pushed.sha || state.finalSha || null, finishedAt: new Date().toISOString(),
-    ...(pushed.commits != null ? { finalCommits: pushed.commits } : {}),
-    ...(rolledBack ? { rolledBack } : {}),
+/** What a build runs with: the caller's injected modules, else the real ones. */
+function liveBuildDeps(deps = {}) {
+  return {
+    github: deps.github || require('./github'),
+    worker: deps.worker || require('./worker'),
+    agentTurn: deps.agentTurn || require('./agent-turn'),
+    limits: deps.limits || require('./limits'),
+    threadContext: deps.threadContext || require('./thread-context'),
+    managedOpenRouter: deps.managedOpenRouter || require('./openrouter-managed-keys'),
+    sessions: deps.sessions || require('../routes/sessions'),
+    activeWorkers: deps.activeWorkers || require('./active-workers').activeWorkers,
+    ...(deps.notifications ? { notifications: deps.notifications } : {}),
+    ...(deps.dm ? { dm: deps.dm } : {}),
+    ...liveDeps(deps),
   };
-  await recordReviewState(pool, runId, done).catch((err) => {
-    log.warn('homeroom-bot', 'Could not record an interrupted review', { runId, err: err.message });
+}
+
+// What a live build starts from, as its work item keeps it (JSON): what
+// buildOne read and decided. The rest (the pool, the bot, the app, the
+// modules) is read again where it runs.
+const LIVE_BUILD_INPUT_KEYS = [
+  'issueNumber', 'issue', 'parsed', 'seed', 'seedReadAt', 'turnBudgetMs', 'botLogin', 'model', 'specModel',
+  'proposalCeiling', 'firstVersion', 'presetSpec', 'carriedCostUsd', 'complicated', 'plan', 'presetSpecHtml',
+];
+function liveBuildInput(args) {
+  const out = {};
+  for (const k of LIVE_BUILD_INPUT_KEYS) if (args[k] !== undefined) out[k] = args[k];
+  return durableSteps.plain(out);
+}
+
+// What tells two builds of one run apart (bot-build's key): the moment it
+// was asked for, which a plan's Build it sets anew.
+function liveBuildNonce(run) {
+  const at = run?.live_build_waiting_at ? new Date(run.live_build_waiting_at).getTime() : NaN;
+  return Number.isFinite(at) ? `w${at}` : null;
+}
+
+/**
+ * bot-build's `live` target (services/build-runs.js): one live build, from
+ * what buildOne read when it started it (`input.args`), on the durable
+ * context `steps`. Run again after a restart, the same call carries the
+ * build on from its last saved step. Resolves { acted }.
+ */
+async function runLiveBuild({ pool, config, id, input = {}, steps, deps = {} }) {
+  // Run in its caller's process (no workflow runtime, or a test): the
+  // arguments buildOne made, as they are.
+  if (deps.inProcessArgs) {
+    const a = deps.inProcessArgs;
+    return { acted: await buildLive({ ...a, deps: { ...a.deps, durable: steps } }) };
+  }
+  const args = input.args || {};
+  const { rows: [run] = [] } = await pool.query(
+    'SELECT id, app_id, issue_number FROM homeroom_bot_runs WHERE id = $1', [Number(id)],
+  );
+  if (!run) return { acted: 'gone' };
+  const { rows: [app] = [] } = await pool.query(
+    'SELECT id, slug, name, repo_url, self_hosted FROM apps WHERE id = $1', [run.app_id],
+  );
+  if (!app) return { acted: 'gone' };
+  const repo = parseRepo(app.repo_url);
+  if (!repo) return { acted: 'gone' };
+  const bot = deps.bot || await ensureBotUser(pool, config);
+  const settings = deps.settings || await readSettings(pool);
+  const buildDeps = { ...liveBuildDeps(deps), durable: steps };
+  const acted = await buildLive({
+    ...args, pool, config, bot, app, repo, runId: Number(run.id), issueNumber: Number(run.issue_number),
+    settings, deps: buildDeps, postedAt: [],
   });
-}
-
-// How long a review's state may go unchanged, with nothing in this process
-// running it and no turn on its session, before it counts as cut short by a
-// restart: past the longest step that saves nothing on the way (a capture).
-const INTERRUPTED_REVIEW_GRACE_MINUTES = 20;
-
-/**
- * First versions a restart caught in their review with no turn in flight (a
- * capture or a reviewer call: restart recovery follows only a turn): each is
- * proposed as it stands, through the same path restart recovery finishes a
- * live build by (completeRecoveredLive), its review recorded interrupted.
- * Resolves how many it finished. Never throws.
- */
-async function finishInterruptedReviews(pool, config = {}, deps = {}) {
-  let rows = [];
-  try {
-    ({ rows } = await pool.query(
-      `SELECT r.id, r.app_id, r.issue_number, r.build_session_id
-         FROM homeroom_bot_runs r
-         JOIN chat_sessions cs ON cs.id = r.build_session_id
-        WHERE (r.review->>'state') IN ('reviewing', 'capturing')
-          AND r.mode = 'live' AND r.build_ok IS NULL AND r.proposal_session_id IS NULL
-          -- A turn still on the session is restart recovery's to finish, for
-          -- as long as one could plausibly be running (ABANDONED_LIVE_SQL's
-          -- backstop): past a day, the review is proposed as it stands.
-          AND (cs.active_turn IS NULL OR r.created_at < NOW() - INTERVAL '1 day')
-          AND COALESCE((r.review->>'updatedAt')::timestamptz, r.created_at) < NOW() - make_interval(mins => $1)
-          AND NOT (r.id = ANY($2::int[]))
-          AND NOT (r.build_session_id = ANY($3::int[]))
-        ORDER BY r.id
-        LIMIT 10`,
-      [INTERRUPTED_REVIEW_GRACE_MINUTES, [...liveBuildsInFlight], [...pendingLive.keys()]],
-    ));
-  } catch (err) {
-    log.warn('homeroom-bot', 'Could not look for reviews a restart cut short', { err: err.message });
-    return 0;
-  }
-  let finished = 0;
-  // The turn a restart cut short was the build's own (a fix turn of the
-  // review), which completeRecoveredLive proposes from what it committed.
-  const mode = 'build';
-  for (const run of rows) {
-    pendingLive.set(Number(run.build_session_id), {
-      runId: Number(run.id), appId: Number(run.app_id), issueNumber: Number(run.issue_number),
-      mode, lost: true, why: 'the platform restarted during its review', result: {},
-    });
-    // eslint-disable-next-line no-await-in-loop
-    const acted = await completeRecoveredLive({ pool, config, sessionId: run.build_session_id, deps });
-    log.info('homeroom-bot', 'Finished a first version a restart caught in its review', {
-      runId: run.id, sessionId: run.build_session_id, acted,
-    });
-    if (acted) finished += 1;
-  }
-  return finished;
+  return { acted };
 }
 
 /**
- * Review a first version whose own build turn a restart caught, before
- * recovery proposes it: the review the live path runs once its build turn
- * lands (live.reviewLanded, bot-review.js runReviewLoop), with what that
- * path had in hand rebuilt from what the run kept. Its request from the
- * build snapshot (recordBuildSnapshot), its spec from the session, its
- * reviewer from the configuration the run was built under, its fix turns
- * run in the same session by the same runner (live.buildTurnRunner).
- *
- * On 7 Oct 2026 five restarts in half an hour caught a first version's
- * build (run 1077) and recovery proposed it as it stood: its configuration
- * named a reviewer, and the reviewer never saw it.
- *
- * Holds the project's build slot while it reviews, as the turn it follows
- * did. A restart during the review is the case recovery already handles: a
- * fix turn in flight is followed and proposed as it stands, and a capture
- * or a reviewer call is finished by finishInterruptedReviews. Resolves the
- * loop's final state, or null when there is nothing to review (no reviewer,
- * not a first version, no snapshot to rebuild the request from) or it could
- * not start. Never throws: a review that cannot run leaves the build to be
- * proposed as it stands, as the live path's does.
+ * bot-build's `live` target, lost for good: recorded failed, and said on its
+ * request. One restarts kept taking from every process that carried it on
+ * (the kernel's `lease_lost`) is said to be the restarts' doing.
  */
-async function reviewRecoveredBuild({ pool, config, bot, app, repo, session, plan, costUsd, deps = {} }) {
-  try {
-    if (!repo || !session.branch_name) return null;
-    const version = await runConfigVersion(pool, plan.runId);
-    const recipe = version ? version.recipe : null;
-    if (!recipe || !botConfigs().reviews(recipe)) return null;
-    if (!(await isFirstVersionRequest(pool, app.id, plan.issueNumber))) return null;
-    const snapshot = await snapshots.snapshotForRun(pool, plan.runId, 'build');
-    const seed = snapshot && snapshot.texts ? String(snapshot.texts.seed || '') : '';
-    if (!seed) {
-      log.warn('homeroom-bot', 'No build snapshot to review a first version a restart caught; proposing it as it stands', {
-        runId: plan.runId, sessionId: session.id,
-      });
-      return null;
-    }
-    const model = recipe.models.build;
-    const settings = await readSettings(pool).catch(() => null);
-    const turnMs = 1000 * clampInt(settings?.turnSeconds, DEFAULTS.turnSeconds, MIN_TURN_SECONDS, MAX_TURN_SECONDS);
-    const { turnBudgetMs } = buildBudgets(app, config, turnMs, { firstVersion: true });
-    const github = deps.github || require('./github');
-    const turnDeps = {
-      github,
-      worker: deps.worker || require('./worker'),
-      sessions: deps.sessions || require('../routes/sessions'),
-      agentTurn: deps.agentTurn || require('./agent-turn'),
-      activeWorkers: deps.activeWorkers || require('./active-workers').activeWorkers,
-      ...(deps.captureRound ? { captureRound: deps.captureRound } : {}),
-      ...(deps.reviewDeps ? { reviewDeps: deps.reviewDeps } : {}),
-    };
-    const { rows: [full] } = await pool.query(
-      `SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url, a.self_hosted AS app_self_hosted
-         FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
-        WHERE cs.id = $1`,
-      [session.id],
-    );
-    if (!full) return null;
-    const readsImages = typeof deps.seesImages === 'boolean'
-      ? deps.seesImages
-      : await live.buildSeesImages({ pool, config, userId: bot.id, model });
-    await turnDeps.worker.ensureWorkerImage();
-    const containerName = await turnDeps.worker.ensureWorker(session.id, {
-      repoOwner: repo.owner, repoName: repo.repo, branchName: session.branch_name,
-      temporary: true, onProgress: () => {},
-    });
-    const runBuildTurn = live.buildTurnRunner({
-      pool, config, bot, session: full, model, branchName: session.branch_name, containerName,
-      deps: turnDeps, harness: live.recipeHarness(model, config),
-    });
-    log.info('homeroom-bot', 'Reviewing a first version a restart caught before proposing it', {
-      app: app.slug, issueNumber: plan.issueNumber, runId: plan.runId, sessionId: session.id,
-    });
-    // Under way in this process from before its first step, so the sweep
-    // for lost live builds cannot take it while the slot is being held.
-    liveBuildsInFlight.add(Number(plan.runId));
-    try {
-      const reviewing = live.reviewLanded({
-        pool, config, bot, app, repo, session: full, branchName: session.branch_name, seed,
-        spec: session.spec_md || null,
-        review: {
-          reviewer: recipe.reviewer,
-          owner: { botRunId: plan.runId },
-          onState: (state) => recordReviewState(pool, plan.runId, state),
-          budgetCheck: ({ spentUsd } = {}) => botBudgetStop(pool, bot, deps, { spentUsd }),
-        },
-        deps: turnDeps, runBuildTurn, turnBudgetMs, readsImages, platformRepo: isPlatformRepo(app, config),
-        skipNow: () => whyNotBuild(pool, {
-          runId: plan.runId, botId: bot.id, appId: app.id, issueNumber: plan.issueNumber, github, repo,
-        }),
-        onProgress: null,
-        start: {
-          sha: plan.result?.sha || null, commits: Number(plan.result?.ahead) || 0,
-          costUsd, activeMs: null, buildText: plan.result?.lastResultText || null,
-        },
-      });
-      // Handled where it is awaited below: holding the slot reads the run
-      // first, and a review that fails at once must not reject unhandled
-      // meanwhile.
-      reviewing.catch(() => {});
-      return await holdSlotDuringRecovery(pool, session.id, reviewing);
-    } finally {
-      liveBuildsInFlight.delete(Number(plan.runId));
-    }
-  } catch (err) {
-    log.warn('homeroom-bot', 'Could not review a first version a restart caught; proposing it as it stands', {
-      runId: plan.runId, sessionId: session.id, err: err.message,
-    });
-    return null;
-  }
-}
-
-/**
- * Finish a live build recovery noted, once the session is free:
- *   - a build turn that pushed commits is proposed, and the proposal (and its
- *     spec) said on the issue, as the live path would have;
- *   - a build turn that pushed nothing, or whose time ran out (its clock
- *     gave back what its restarts cost it: recoveryDeadline), is said to
- *     have failed;
- *   - a spec turn that found the request impossible says so;
- *   - a spec turn that wrote a plan keeps it, and the build goes on from it
- *     (resumeLiveBuildFromSpec); so does (#4210) a build turn recovery could
- *     not follow, from the plan it was building: nothing is said to the
- *     person, whose activity card still shows it building;
- *   - any other spec turn, and a turn with no plan to carry on from, send
- *     the issue back to be triaged again: its queue row is gone, and
- *     without this the issue would sit on "looking into it" for good. The
- *     person is told it started again.
- *   The third interruption in a row (MAX_RESTARTED_BUILDS), resumed or sent
- *   back, is said to have failed instead. Each one is recorded for admins
- *   (platform-incidents.js).
- * Never throws; returns what it did, or null when nothing was noted.
- */
-async function completeRecoveredLive({ pool, config = {}, sessionId, deps = {} }) {
-  const plan = pendingLive.get(Number(sessionId));
-  if (!plan) return null;
-  pendingLive.delete(Number(sessionId));
-  try {
-    const { rows: [session] } = await pool.query(
-      `SELECT cs.id, cs.user_id, cs.status, cs.branch_name, cs.spec_md, cs.agent_model, cs.spec_html,
-              (SELECT MAX(version) FROM chat_session_specs WHERE session_id = cs.id) AS spec_version
-         FROM chat_sessions cs WHERE cs.id = $1`,
-      [sessionId],
-    );
-    const { rows: [app] } = await pool.query(
-      'SELECT id, slug, name, repo_url, self_hosted FROM apps WHERE id = $1', [plan.appId],
-    );
-    if (!session || !app) return 'gone';
-    const archive = () => putAwayRecoveredSession(pool, session, { archive: true });
-    const costUsd = await sessionCostUsd(pool, session.id);
-    await debitRecovered(pool, session, costUsd, deps);
-
-    // A first version in its review (bot-review.js) when the restart came:
-    // its build landed, so it is proposed as it stands, its last committed
-    // state, and the review is recorded as interrupted. A fix turn cut short
-    // left nothing (a failed turn is neither committed nor pushed).
-    const reviewing = plan.mode !== 'scout' ? await reviewInProgress(pool, plan.runId) : null;
-    // Its reviewer calls are not agent turns, so the session's ledger above
-    // does not hold them: debited here as the live path debits them with
-    // the build.
-    const reviewerUsd = reviewing ? botReview().reviewerCost(reviewing) : 0;
-    if (reviewerUsd > 0) await debitRecovered(pool, session, reviewerUsd, deps);
-    const specRead = plan.mode === 'scout' && !plan.lost && !plan.timedOut
-      ? live.readSpec(plan.result?.lastResultText, { parts: plan.result?.answerParts }) : null;
-    // Set when restarts have cut this request's builds short too many times
-    // in a row to send it round again (MAX_RESTARTED_BUILDS).
-    let restartedOut = 0;
-    if (!reviewing && (plan.lost || (plan.mode === 'scout' && !specRead?.blocked))) {
-      await archive();
-      // WP1 (#2): a build its request no longer needs (stopped by its merge,
-      // or answered by another proposal of the bot's) is not started again:
-      // recorded as the skip it is, with nothing said.
-      const notNeeded = await whyNotBuild(pool, {
-        runId: plan.runId, botId: session.user_id, appId: app.id, issueNumber: plan.issueNumber,
-      });
-      if (notNeeded) {
-        await recordLiveBuild(pool, plan.runId, { ok: false, sessionId: Number(sessionId), costUsd, error: notNeeded });
-        await botConfigs().abandonSideBuilds(pool, plan.runId, 'not needed any more');
-        log.info('homeroom-bot', 'A live build a restart interrupted is not needed any more', {
-          app: app.slug, issueNumber: plan.issueNumber, sessionId, why: notNeeded,
-        });
-        return 'skipped';
-      }
-      // What interrupted it, for the run and for admins.
-      const what = plan.lost ? (plan.why || 'the turn was lost') : 'the spec turn was cut short';
-      // #4210: every interruption is kept where admins see it, whatever
-      // became of the build: it is an error that should not happen.
-      const noteIncident = (outcome) => incidents().record(pool, {
-        kind: incidents().KINDS.BUILD_INTERRUPTED, appId: app.id, sessionId: Number(sessionId),
-        detail: { runId: Number(plan.runId), issueNumber: Number(plan.issueNumber), mode: plan.mode || null, why: what, outcome },
-      });
-      // The person it is for hears it only when it has to start over from
-      // the request (WP1, #9): a build that carries on from its plan is
-      // still building, as their activity card shows. Never a reason
-      // recovery fails.
-      const sayRestarted = () => (deps.dm || require('./homeroom-bot-dm')).noteBuildRestarted(pool, {
-        app, issueNumber: plan.issueNumber, runId: plan.runId,
-      }).catch((err) => log.warn('homeroom-bot', 'Could not say a build was started again', { sessionId, err: err.message }));
-      // Restarts in a row, back to back: the request's earlier builds sent
-      // back, and this run's own builds that carried on from their plan.
-      const before = (await restartedBuildsBefore(pool, plan).catch(() => 0))
-        + await incidents().resumesOfRun(pool, plan.runId, { hours: RESTARTED_BUILDS_WINDOW_HOURS });
-      if (before + 1 < MAX_RESTARTED_BUILDS) {
-        // The plan to carry on from: a spec turn recovery followed to its
-        // end with one in it, or (#4210) the plan a build turn was building
-        // from, on its session or kept on its run. Thrown away, the request
-        // went back to be triaged and planned from the start (a new run, a
-        // new spec, the creator asked to Build it again), and the next
-        // restart could land in that plan too. The run keeps its build note,
-        // which holds what the creator approved. A bot session holds a spec
-        // only once its spec turn finished with one (homeroom-bot-live.js
-        // draftSpec publishes it after the turn), so a spec turn cut short
-        // has none to carry on from.
-        const keptSpec = specRead?.ok ? { md: specRead.specMd, html: specRead.specHtml || null }
-          : session.spec_md ? { md: session.spec_md, html: session.spec_html || null }
-          : await keptRunSpec(pool, plan.runId);
-        if (keptSpec?.md && await resumeLiveBuildFromSpec(pool, {
-          runId: plan.runId, appId: plan.appId, specMd: keptSpec.md, specHtml: keptSpec.html, costUsd,
-        })) {
-          log.info('homeroom-bot', 'Kept the plan of a live build a restart interrupted; its build goes on from it', {
-            app: app.slug, issueNumber: plan.issueNumber, sessionId, why: what,
-          });
-          await noteIncident('resumed');
-          return 'resumed';
-        }
-        // The run says what became of its build: it was interrupted, and the
-        // issue goes round again as a new run, which speaks for itself. Left
-        // unrecorded, it read as a build with a session and no outcome (run
-        // 613), indistinguishable from one still going.
-        await recordLiveBuild(pool, plan.runId, {
-          ok: false, sessionId: Number(sessionId), costUsd,
-          error: `interrupted: ${what} ${RESTARTED_BUILD_NOTE}`,
-        });
-        await requeueForRestart(pool, plan.appId, plan.issueNumber);
-        // The new run makes side builds of its own.
-        await botConfigs().abandonSideBuilds(pool, plan.runId, 'sent back to be built again after a restart');
-        log.info('homeroom-bot', 'Sent a live issue back to be triaged after a restart', {
-          app: app.slug, issueNumber: plan.issueNumber, sessionId, why: what,
-        });
-        await noteIncident('requeued');
-        await sayRestarted();
-        return 'requeued';
-      }
-      await noteIncident('failed');
-      // Not sent round again: said below as a failed build, so the person
-      // hears why, and recorded without RESTARTED_BUILD_NOTE, so their
-      // activity card stops on it instead of reading past it.
-      restartedOut = before + 1;
-      await botConfigs().abandonSideBuilds(pool, plan.runId, 'cut short by restarts too many times');
-      log.warn('homeroom-bot', 'Restarts cut a live build short too many times in a row; not sending it back', {
-        app: app.slug, issueNumber: plan.issueNumber, sessionId, inARow: restartedOut,
-        why: plan.why || plan.mode,
-      });
-    }
-
-    const github = deps.github || require('./github');
-    const repo = parseRepo(app.repo_url);
-    const fetched = repo ? await github.fetchPublicIssue(repo.owner, repo.repo, plan.issueNumber).catch(() => null) : null;
-    const issue = fetched?.issue || null;
-    if (!issue || (issue.state && issue.state !== 'open')) {
-      await archive();
-      await botConfigs().abandonSideBuilds(pool, plan.runId, 'for a request that is no longer open');
-      // Out of its review either way, so the sweep for reviews a restart cut
-      // short does not come back to it.
-      if (reviewing) await noteReviewInterrupted(pool, plan.runId, reviewing);
-      return 'not_open';
-    }
-    // The session's own user: recovery hands the bot only its own sessions
-    // (isRecoveredBotSession checks the name and the synthetic flag).
-    const bot = { id: session.user_id, username: live.BOT_USERNAME };
-    const liveD = liveDeps(deps);
-    // #4553: what it posts, so its own note is not read back as a change
-    // (advanceSeen below, as the live path does). Without it, a build that
-    // "couldn't finish (finished after a restart)" left that note newer than
-    // anything the run had seen, and the next refresh built the request
-    // again from scratch ('changed:github', run 1278 then 1291).
-    const postedAt = [];
-    const say = liveSayer({
-      pool, github, ws: liveD.ws, app, repo, issueNumber: plan.issueNumber, issue, runId: plan.runId, bot,
-      botLogin: await live.botUsernameOf(github), notifications: deps.notifications || null, postedAt,
-    });
-    const note = ' (finished after a restart)';
-    // A failed turn is a failed build here as on the live path.
-    const turnFailed = plan.mode === 'scout' || plan.timedOut
-      ? null : live.failedClaudeTurn(plan.result);
-    // A build turn that changed nothing, or a nudge (recoveredNoChange): what
-    // it said and did, kept on the run with the outcome below.
-    const noChange = plan.mode !== 'scout' && !plan.lost && !reviewing && !restartedOut
-      ? await recoveredNoChange(pool, {
-        runId: plan.runId, session, result: plan.result || {}, timedOut: !!plan.timedOut,
-        component: plan.component || null, origin: { lane: 'live', runId: plan.runId },
-        appId: app.id, issueNumber: plan.issueNumber,
-      })
-      : null;
-    const noChangeOut = noChange ? { noChange } : {};
-    let built;
-    // The review recovery ran itself, when the restart caught the build turn
-    // rather than the review (reviewRecoveredBuild).
-    let reviewedNow = null;
-    if (restartedOut) {
-      built = {
-        ok: false, sessionId: Number(sessionId),
-        error: `the platform restarted in the middle of each of its last ${restartedOut} tries at building this`,
-      };
-    } else if (plan.mode === 'scout') {
-      built = { ok: false, sessionId: Number(sessionId), blocked: specRead.blocked };
-    } else if (reviewing || (plan.result?.pushOk === true && Number(plan.result?.ahead) > 0 && !plan.timedOut && !turnFailed)) {
-      // A fix turn that finished and pushed moved the branch on; anything
-      // else left it where the review last recorded it.
-      const fixLanded = !!reviewing && plan.result?.pushOk === true && !plan.timedOut && !turnFailed && !plan.lost;
-      const pushed = reviewing ? {
-        branchName: session.branch_name || null,
-        sha: (fixLanded && plan.result.sha) || reviewing.finalSha || null,
-        commits: (fixLanded && Number(plan.result.ahead)) || Number(reviewing.finalCommits) || null,
-      } : {
-        branchName: session.branch_name || null, sha: plan.result.sha || null, commits: Number(plan.result.ahead) || 0,
-      };
-      // A first version whose own build turn the restart caught is reviewed
-      // now, as the live path would have reviewed it, before it is proposed
-      // (reviewRecoveredBuild). The loop puts the branch where it ends and
-      // rolls back a fix it did not see boot itself.
-      if (!reviewing) {
-        reviewedNow = await reviewRecoveredBuild({ pool, config, bot, app, repo, session, plan, costUsd, deps });
-        if (reviewedNow) {
-          if (reviewedNow.finalSha) pushed.sha = reviewedNow.finalSha;
-          if (Number(reviewedNow.finalCommits) > 0) pushed.commits = Number(reviewedNow.finalCommits);
-        }
-      }
-      // A fix no capture saw boot is not what is proposed (bot-review.js
-      // runReviewLoop's rule): the branch goes back to the last commit one
-      // did.
-      let rolledBack = null;
-      const booted = reviewing?.lastBooted?.sha || null;
-      if (booted && pushed.sha && pushed.sha !== booted && repo) {
-        try {
-          await live.rollbackReviewBranch({ github, repo, branchName: session.branch_name, sha: booted });
-          rolledBack = { from: pushed.sha, to: booted, why: 'not seen to boot before the restart' };
-          pushed.sha = booted;
-          if (Number(reviewing.lastBooted.commits) > 0) pushed.commits = Number(reviewing.lastBooted.commits);
-        } catch (err) {
-          log.warn('homeroom-bot', 'Could not roll an unchecked review fix back; proposing it as it stands', {
-            runId: plan.runId, sessionId, err: err.message,
-          });
-        }
-      }
-      if (reviewing) await noteReviewInterrupted(pool, plan.runId, reviewing, pushed, rolledBack);
-      // WP1 (#2): not proposed once a proposal of the bot's answers the
-      // request, or it was closed, as the live path does (whyNotBuild).
-      const skipped = await whyNotBuild(pool, {
-        runId: plan.runId, botId: bot.id, appId: app.id, issueNumber: plan.issueNumber, github, repo,
-      });
-      if (skipped) {
-        await archive();
-        await recordLiveBuild(pool, plan.runId, { ok: false, sessionId: Number(sessionId), costUsd, ...pushed, error: skipped });
-        log.info('homeroom-bot', 'A live build a restart interrupted was not proposed', {
-          app: app.slug, issueNumber: plan.issueNumber, sessionId, why: skipped,
-        });
-        return 'skipped';
-      }
-      // Named and described from the spec and the build's own message, as
-      // the live path does before it proposes (#3518). A review's fix turn
-      // is not the build's message: the build's, kept with the review.
-      await live.prepareProposal({
-        pool, bot, sessionId, spec: session.spec_md || null,
-        buildText: reviewing ? (reviewing.buildText || '') : plan.result.lastResultText, model: session.agent_model || null,
-      });
-      const promoted = await live.promoteAsBot({
-        config, bot, sessionId, router: liveD.votesRouter, ceiling: botProposalCeiling(await readSettings(pool).catch(() => null)),
-      });
-      if (promoted.status === 200 && promoted.body?.ok) {
-        built = {
-          ok: true, sessionId: Number(sessionId), prNumber: promoted.body.prNumber || null,
-          specMd: session.spec_md || null, specVersion: session.spec_version || null, ...pushed, ...noChangeOut,
-        };
-      } else {
-        // Built but not proposed: left as the live path leaves it, for a
-        // person to open and propose.
-        const why = promoted.body?.error || promoted.body?.message || `promotion answered ${promoted.status}`;
-        await putAwayRecoveredSession(pool, session, { archive: false });
-        built = {
-          ok: false, sessionId: Number(sessionId), ...pushed,
-          error: `the change was built but could not be proposed: ${why}`, ...noChangeOut,
-        };
-      }
-    } else {
-      await archive();
-      built = {
-        ok: false, sessionId: Number(sessionId),
-        error: (plan.timedOut ? 'the build ran past its time limit'
-          : turnFailed ? `the build turn failed (${turnFailed})`
-            : 'the build produced no change to propose') + note,
-        ...noChangeOut,
-      };
-    }
-    if (built.blocked) await archive();
-    built.costUsd = reviewerUsd > 0 ? (Number(costUsd) || 0) + reviewerUsd : costUsd;
-    // What the review recovery ran cost (its reviewer calls and fix turns),
-    // added as the live path adds a review's cost to its build's.
-    if (reviewedNow && Number(reviewedNow.costUsd) > 0) {
-      built.costUsd = (Number(built.costUsd) || 0) + Number(reviewedNow.costUsd);
-    }
-    // The configuration's results: the current one's from the state it was
-    // proposed in (no final screenshots, so no pair to pick), and a derived
-    // side one's from the round-0 snapshot the review kept. A configured
-    // first version whose own build turn the restart caught records its
-    // outcome too, so its round-0 result does not stay pending.
-    const version = reviewing
-      ? (await botConfigs().versionById(pool, reviewing.configVersionId || 0).catch(() => null) || await runConfigVersion(pool, plan.runId))
-      : await runConfigVersion(pool, plan.runId);
-    // (Not one restarts cut short too many times: that is the platform's
-    // failure, and its side builds were stopped above.)
-    if (version && !restartedOut) {
-      await botConfigs().finishLive(pool, {
-        botRunId: plan.runId, version,
-        // Its real time, as a side build's is counted; to the review's last
-        // step when the restart left the review with nothing running.
-        activeMs: await recoveredBuildMs(pool, sessionId, { until: plan.lost ? reviewing?.updatedAt : null }),
-        built: reviewing ? { ...built, review: { ...reviewing, finalCapture: null } }
-          : reviewedNow ? { ...built, review: reviewedNow } : built,
-      });
-    }
-    const acted = await announceBuilt({
-      pool, ws: liveD.ws, app, bot, issueNumber: plan.issueNumber, runId: plan.runId, built, say, domain: liveD.domain,
-    });
-    // #4553: the read that started this build is gone with the restart, so
-    // what the run last recorded as seen stands for it: a person who wrote
-    // after that still has the request read again.
-    const { rows: [seenRow] = [] } = await pool.query(
-      'SELECT COALESCE(thread_seen_at, created_at) AS since FROM homeroom_bot_runs WHERE id = $1', [plan.runId],
-    ).catch(() => ({ rows: [] }));
-    const since = seenRow?.since ? new Date(seenRow.since).toISOString() : null;
-    if (since) {
-      await live.advanceSeen({
-        pool, github, threadContext: deps.threadContext || require('./thread-context'), app, repo,
-        issueNumber: plan.issueNumber, runId: plan.runId, since, postedAt,
-      }).catch((err) => log.warn('homeroom-bot', 'Could not record what the bot has seen', { err: err.message }));
-    }
-    log.info('homeroom-bot', 'Finished a live build a restart interrupted', {
-      app: app.slug, issueNumber: plan.issueNumber, sessionId, acted,
-    });
-    return acted;
-  } catch (err) {
-    log.warn('homeroom-bot', 'Could not finish a recovered live build', { sessionId, err: err.message });
-    return 'error';
-  }
-}
-
-/**
- * Hold a lane slot for a build recovery is finishing, so the lane does not
- * start more than `buildConcurrency` builds beside it. Resolves with the
- * recovery's own outcome.
- */
-async function holdSlotDuringRecovery(pool, sessionId, recovery) {
-  let run = null;
-  try { run = await runOfSession(pool, sessionId); } catch (_) { run = null; }
-  if (!run) return holdLiveBuildDuringRecovery(pool, sessionId, recovery);
-  if (buildsInFlight.has(run.id)) return recovery;
-  const promise = Promise.resolve(recovery).finally(() => {
-    buildsInFlight.delete(run.id);
-    wakeBuilds();
+async function recordLostLiveBuild({ pool, config, id, error = null }) {
+  const why = error?.code === 'lease_lost'
+    ? ABANDONED_LIVE_REASON
+    : `the build could not finish (${clip(error?.message || 'it failed', 200)})`;
+  const { rows: [run] = [] } = await pool.query(
+    `UPDATE homeroom_bot_runs SET build_ok = FALSE, build_error = $2, live_build_waiting_at = NULL
+      WHERE id = $1 AND build_ok IS NULL AND proposal_session_id IS NULL
+      RETURNING id, app_id, issue_number, build_session_id`,
+    [Number(id), clip(`lost: ${error?.message || 'the build failed'}`, MAX_ERROR_CHARS)],
+  );
+  if (!run) return 'recorded_already';
+  if (run.build_session_id) await putAwayRecoveredSession(pool, { id: run.build_session_id }, { archive: true });
+  const settings = await readSettings(pool);
+  const said = await sayBuildLost(pool, settings, run, { reason: why }).catch((err) => {
+    log.warn('homeroom-bot', 'Could not say a lost build failed', { runId: run.id, err: err.message });
+    return 'not_said';
   });
-  buildsInFlight.set(run.id, {
-    appId: run.app_id, issueNumber: run.issue_number, startedAt: new Date().toISOString(),
-    promise: promise.catch(() => null), recovered: true,
-  });
-  return promise;
+  if (settings) await botConfigs().abandonSideBuilds(pool, run.id, why).catch(() => {});
+  log.warn('homeroom-bot', 'A live build was lost', { runId: run.id, said, why });
+  return said;
 }
 
 /**
- * A live build restart recovery is finishing holds a build slot of its own
- * (`build:<runId>`, see dispatch), so it counts against its project's
- * BUILDS_PER_PROJECT like any build under way. Resolves with the recovery's
- * own outcome.
+ * bot-build's `shadow` target: one claimed shadow build (runQueuedBuild), on
+ * the durable context `steps`. Resolves { acted }.
  */
-async function holdLiveBuildDuringRecovery(pool, sessionId, recovery) {
-  let run = null;
+async function runShadowBuild({ pool, config, id, steps, deps = {} }) {
+  // Its claim, read again where it runs; after a restart even with its
+  // outcome in (its last steps carry it on and finish it).
+  const claim = deps.inProcessClaim || (await pool.query(
+    `SELECT id, app_id, issue_number, build_note, build_spec_md, build_attempts
+       FROM homeroom_bot_runs WHERE id = $1 AND (build_ok IS NULL OR $2::boolean)`,
+    [Number(id), !!steps?.resumed],
+  )).rows[0];
+  if (!claim) return { acted: 'gone' };
+  const bot = deps.bot || await ensureBotUser(pool, config);
+  const settings = deps.settings || await readSettings(pool);
+  let acted;
+  try {
+    acted = await runQueuedBuild(pool, config, { bot, claim, settings, deps: { ...deps, durable: steps } });
+  } catch (err) {
+    durableSteps.rethrowStop(err, 'shadow build');
+    log.error('homeroom-bot', 'Shadow build threw', { runId: claim.id, err: err.message });
+    await pool.query(
+      'UPDATE homeroom_bot_runs SET build_ok = FALSE, build_error = $2 WHERE id = $1 AND build_ok IS NULL',
+      [claim.id, clip(`threw: ${err.message}`, MAX_ERROR_CHARS)],
+    ).catch(() => {});
+    acted = 'shadow_failed';
+  }
+  return { acted };
+}
+
+/** bot-build's `shadow` target, lost for good: recorded failed. */
+async function recordLostShadowBuild({ pool, id, error = null }) {
+  await pool.query(
+    `UPDATE homeroom_bot_runs SET build_ok = FALSE, build_error = $2
+      WHERE id = $1 AND build_ok IS NULL`,
+    [Number(id), clip(`lost: ${error?.message || 'the build failed'}`, MAX_ERROR_CHARS)],
+  );
+  wakeBuilds();
+  return 'recorded';
+}
+
+/**
+ * Take the slots of the builds under way again, after a restart: each holds
+ * its slot (a live build its project's build slot, a shadow build the lane's)
+ * until it ends, wherever it runs, as it did when it started. Resolves how
+ * many it took. Never throws.
+ */
+async function holdDurableBuildSlots(pool) {
+  let taken = 0;
+  try {
+    for (const b of await buildRuns().underWay('live')) {
+      const slot = buildSlot(b.id);
+      if (inFlight.has(slot)) continue;
+      const { rows: [run] = [] } = await pool.query(
+        `SELECT r.id, r.app_id, r.issue_number, COALESCE(q.user_id, 0) AS person_id
+           FROM homeroom_bot_runs r
+           LEFT JOIN homeroom_bot_requesters q ON q.app_id = r.app_id AND q.issue_number = r.issue_number
+          WHERE r.id = $1`,
+        [b.id],
+      );
+      if (!run) continue;
+      taken += 1;
+      void track(pool, slot, {
+        lane: 'live', build: true, durable: true, appId: Number(run.app_id),
+        person: personKeyOf({ person_id: Number(run.person_id) || null, app_id: run.app_id }),
+        issueNumber: Number(run.issue_number), runId: Number(run.id), itemId: null, startedAt: new Date().toISOString(),
+      }, async () => {
+        await buildRuns().whenEnded(b.key);
+        return { processed: 0, refusals: [], budgets: [], paused: null, stop: false };
+      });
+    }
+    for (const b of await buildRuns().underWay('shadow')) {
+      if (buildsInFlight.has(b.id)) continue;
+      const { rows: [run] = [] } = await pool.query(
+        'SELECT id, app_id, issue_number FROM homeroom_bot_runs WHERE id = $1', [b.id],
+      );
+      if (!run) continue;
+      taken += 1;
+      const promise = buildRuns().whenEnded(b.key).finally(() => {
+        buildsInFlight.delete(b.id);
+        wakeBuilds();
+      });
+      buildsInFlight.set(b.id, {
+        appId: run.app_id, issueNumber: run.issue_number, startedAt: new Date().toISOString(),
+        promise: promise.catch(() => null), durable: true,
+      });
+    }
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not take the slots of the builds under way', { err: err.message });
+  }
+  if (taken) log.info('homeroom-bot', 'Holding the slots of builds that outlived a restart', { builds: taken });
+  return taken;
+}
+
+/**
+ * Builds started before they were durable (a run with the checkpoint column
+ * the old recovery kept, and no build on the machine): the restart that
+ * brought this code took their process, and nothing else will finish them.
+ * Each is asked for again: a live build from its plan when it had one
+ * (build_spec_md), a shadow build back in the lane's queue. Once per run:
+ * the column is cleared. Resolves how many. Never throws.
+ */
+async function requeueLegacyBuilds(pool) {
   try {
     const { rows } = await pool.query(
-      `SELECT r.id, r.app_id, r.issue_number, COALESCE(q.user_id, 0) AS person_id
-         FROM homeroom_bot_runs r
-         LEFT JOIN homeroom_bot_requesters q ON q.app_id = r.app_id AND q.issue_number = r.issue_number
-        WHERE r.build_session_id = $1 AND r.mode = 'live' AND r.build_ok IS NULL
-        ORDER BY r.id DESC LIMIT 1`,
-      [sessionId],
+      `UPDATE homeroom_bot_runs r
+          SET build_checkpoint = NULL,
+              build_session_id = CASE WHEN r.mode = 'live' THEN NULL ELSE r.build_session_id END,
+              live_build_waiting_at = CASE WHEN r.mode = 'live' THEN NOW() ELSE r.live_build_waiting_at END,
+              build_spec_md = COALESCE(r.build_spec_md, NULLIF(r.build_checkpoint->'spec'->>'specMd', '')),
+              build_at = CASE WHEN r.mode = 'live' THEN r.build_at ELSE NULL END,
+              build_attempts = CASE WHEN r.mode = 'live' THEN r.build_attempts ELSE GREATEST(r.build_attempts - 1, 0) END
+        WHERE r.build_checkpoint IS NOT NULL
+          AND r.build_ok IS NULL AND r.proposal_session_id IS NULL
+          AND r.created_at > NOW() - make_interval(days => $1)
+        RETURNING r.id, r.mode, r.build_session_id`,
+      [ABANDONED_LIVE_WINDOW_DAYS],
     );
-    run = rows[0] || null;
-  } catch (_) { run = null; }
-  const slot = run ? buildSlot(run.id) : null;
-  if (!run || inFlight.has(slot)) return recovery;
-  inFlight.set(slot, {
-    lane: 'live', build: true, recovered: true, appId: Number(run.app_id),
-    person: personKeyOf({ person_id: Number(run.person_id) || null, app_id: run.app_id }),
-    issueNumber: Number(run.issue_number), runId: Number(run.id), itemId: null, startedAt: new Date().toISOString(),
-  });
-  liveBuildsInFlight.add(Number(run.id));
-  return Promise.resolve(recovery).finally(() => {
-    inFlight.delete(slot);
-    liveBuildsInFlight.delete(Number(run.id));
-    requestPass();
-  });
-}
-
-// ── A live build nothing finished ────────────────────────────────────────
-//
-// A live build is recorded on its run by the live path (announceBuilt), or
-// by restart recovery when its worker outlived a restart (#3471). Neither
-// runs when the restart took the worker with it and recovery never saw the
-// session, or when a second restart lost what recovery had noted, and the
-// run was left with a build session and no outcome: nothing said on the
-// issue, and its queue row long gone. This sweep is the backstop. A live
-// run whose build started longer ago than any build can take, and that
-// nothing in this process is still building or recovering, is recorded as
-// failed, its session put away, and the issue told once that the build was
-// lost (the same "couldn't build" note, in the DM too), unless the issue has
-// moved on: a newer run speaks for it, a closed issue needs nothing, an app
-// the bot is no longer live on is not posted on, and a run whose outcome
-// was already said (before #3509 recorded it) is only recorded.
-
-// runId of every live build actOnVerdict has under way in this process.
-const liveBuildsInFlight = new Set();
-// How far back the sweep looks. Older runs are history, not a build anybody
-// is waiting on.
-const ABANDONED_LIVE_WINDOW_DAYS = 7;
-const ABANDONED_LIVE_BATCH = 20;
-// What the run records, and what the issue is told.
-const ABANDONED_LIVE_ERROR = 'interrupted: the platform restarted mid-build and nothing recovered the build';
-const ABANDONED_LIVE_REASON = 'the platform restarted while it was building, and the build was lost';
-
-const ABANDONED_LIVE_SQL = `SELECT r.id, r.app_id, r.issue_number, r.build_session_id,
-            cs.status AS session_status,
-            EXISTS (
-              SELECT 1 FROM homeroom_bot_runs n
-               WHERE n.app_id = r.app_id AND n.issue_number = r.issue_number AND n.id > r.id
-            ) AS superseded,
-            (SELECT p.kind FROM homeroom_bot_posts p
-              WHERE p.run_id = r.id AND p.kind IN ('proposal', 'build_failed', 'blocked')
-              ORDER BY p.id DESC LIMIT 1) AS said
-       FROM homeroom_bot_runs r
-       JOIN chat_sessions cs ON cs.id = r.build_session_id
-      WHERE r.mode = 'live' AND r.build_ok IS NULL AND r.proposal_session_id IS NULL
-        AND r.build_queued_at IS NULL
-        AND r.created_at < NOW() - make_interval(secs => $1)
-        AND r.created_at > NOW() - make_interval(days => $2)
-        AND NOT (r.id = ANY($3::int[]))
-        AND NOT (r.build_session_id = ANY($4::int[]))
-        -- A turn still on the session is restart recovery's to finish, for
-        -- as long as one could plausibly be running.
-        AND (cs.active_turn IS NULL OR r.created_at < NOW() - INTERVAL '1 day')
-        -- A first version in its review landed: finishInterruptedReviews
-        -- proposes it rather than calling it lost.
-        AND COALESCE(r.review->>'state', '') NOT IN ('reviewing', 'capturing')
-      ORDER BY r.id
-      LIMIT $5`;
-
-/** How long after its run a live build is past any build's clocks (the platform's, the longest). */
-function abandonedLiveAfterSeconds(settings) {
-  const turnSeconds = Number(settings?.turnSeconds) || DEFAULTS.turnSeconds;
-  return PLATFORM_BUILD_TIME_FACTOR * (turnSeconds + live.SPEC_TURN_MAX_MS / 1000) + STALE_CLAIM_MARGIN_SECONDS;
+    await pool.query(
+      'UPDATE homeroom_bot_runs SET build_checkpoint = NULL WHERE build_checkpoint IS NOT NULL',
+    ).catch(() => {});
+    if (rows.length) {
+      log.warn('homeroom-bot', 'Asked again for builds that started before builds were durable', {
+        runs: rows.map((r) => Number(r.id)),
+      });
+      wakeBuilds();
+    }
+    return rows.length;
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not ask again for the builds started before builds were durable', { err: err.message });
+    return 0;
+  }
 }
 
 /**
- * Record, and say once, every live build nothing finished (see above).
- * Resolves how many runs it recorded. Never throws.
+ * A live build lost for good, said on its request (the same "couldn't
+ * build" note, in the DM too), unless the issue has moved on: a closed issue
+ * needs nothing, and an app the bot is no longer live on is not posted on.
  */
-async function settleAbandonedLiveBuilds(pool, settings, deps = {}) {
-  let rows;
-  try {
-    ({ rows } = await pool.query(ABANDONED_LIVE_SQL, [
-      abandonedLiveAfterSeconds(settings), ABANDONED_LIVE_WINDOW_DAYS,
-      [...liveBuildsInFlight], [...pendingLive.keys()], ABANDONED_LIVE_BATCH,
-    ]));
-  } catch (err) {
-    log.warn('homeroom-bot', 'Could not look for live builds nothing finished', { err: err.message });
-    return 0;
-  }
-  let settled = 0;
-  for (const run of rows) {
-    try {
-      // A session that became a proposal after all (the process died
-      // between the promote and its announcement): the build worked.
-      const proposed = ['promoted', 'merging', 'merged'].includes(run.session_status);
-      const error = proposed ? null
-        : run.said ? `not recorded when it ended; the issue was told: ${run.said}`
-          : ABANDONED_LIVE_ERROR;
-      // The claim: only the first process to record it says anything.
-      const { rows: claimed } = await pool.query(
-        `UPDATE homeroom_bot_runs
-            SET build_ok = $2, build_error = $3,
-                proposal_session_id = CASE WHEN $2 THEN build_session_id ELSE proposal_session_id END
-          WHERE id = $1 AND build_ok IS NULL
-          RETURNING id`,
-        [run.id, proposed, error],
-      );
-      if (!claimed.length) continue;
-      settled += 1;
-      if (!proposed) {
-        await putAwayRecoveredSession(pool, { id: run.build_session_id }, { archive: true });
-        await botConfigs().abandonSideBuilds(pool, run.id, 'lost');
-      }
-      log.warn('homeroom-bot', 'Recorded a live build nothing finished', {
-        runId: run.id, appId: run.app_id, issueNumber: run.issue_number, sessionId: run.build_session_id,
-        proposed, said: run.said || null, superseded: !!run.superseded,
-      });
-      if (proposed || run.said || run.superseded) continue;
-      await sayBuildLost(pool, settings, run, deps);
-    } catch (err) {
-      log.warn('homeroom-bot', 'Could not record a live build nothing finished', { runId: run.id, err: err.message });
-    }
-  }
-  return settled;
-}
-
-/** The "couldn't build" note for a lost live build, on an open issue of an app the bot is live on. */
 async function sayBuildLost(pool, settings, run, deps = {}) {
+  const reason = deps.reason || LOST_LIVE_REASON;
   const { rows: [app] } = await pool.query(
     'SELECT id, slug, name, repo_url, self_hosted FROM apps WHERE id = $1', [run.app_id],
   );
@@ -5517,7 +5191,7 @@ async function sayBuildLost(pool, settings, run, deps = {}) {
     pool, github, ws: liveD.ws, app, repo, issueNumber, issue, runId: run.id, bot, botLogin,
     notifications: deps.notifications || null, postedAt,
   });
-  await say('build_failed', live.buildFailedText(ABANDONED_LIVE_REASON), { dm: { reason: ABANDONED_LIVE_REASON } });
+  await say('build_failed', live.buildFailedText(reason), { dm: { reason } });
   await live.advanceSeen({
     pool, github, threadContext: deps.threadContext || require('./thread-context'), app, repo, issueNumber,
     runId: run.id, since, postedAt,
@@ -5553,11 +5227,12 @@ async function sayBuildLost(pool, settings, run, deps = {}) {
 function isLiveLaneSaturated(settings = null, counts = null) {
   const limit = clampInt(settings?.liveAtOnce, DEFAULTS.liveAtOnce, 1, MAX_LIVE_AT_ONCE);
   const live = counts && Number.isFinite(counts.live) ? counts.live
-    : Math.max([...inFlight.values()].filter((e) => e.lane === 'live').length, liveBuildsInFlight.size);
+    : [...inFlight.values()].filter((e) => e.lane === 'live').length;
   return live + (Number(counts?.besides) || 0) >= limit;
 }
 
-async function buildLaneSummary(pool) {
+async function buildLaneSummary(pool, memory = null) {
+  const mem = memory || memoryStatus();
   const { rows } = await pool.query(
     `SELECT COUNT(*) FILTER (WHERE build_at IS NULL AND build_ok IS NULL)::int AS queued,
             COUNT(*) FILTER (WHERE build_at IS NOT NULL AND build_ok IS NULL)::int AS building,
@@ -5574,8 +5249,8 @@ async function buildLaneSummary(pool) {
     built: t.built || 0,
     failed: t.failed || 0,
     costUsd: Number(t.cost_usd) || 0,
-    lane: lastBuildDrain,
-    fault: buildFault ? { error: buildFault.error, retryAt: new Date(buildFault.until).toISOString() } : null,
+    lane: mem.buildLane,
+    fault: mem.buildFault,
   };
 }
 
@@ -5853,6 +5528,9 @@ async function runFollowUp(pool, config, {
       );
     }
     await pool.query('DELETE FROM homeroom_bot_queue WHERE id = $1', [item.id]);
+    if (item.reason === RETRY_FAILED_REASON && lastRun?.id != null) {
+      spentRetries.set(`${app.id}#${issueNumber}`, Number(lastRun.id));
+    }
     log.info('homeroom-bot', 'Activity on a bot proposal\'s issue, but nobody said anything new', {
       app: app.slug, issueNumber, sessionId: proposal.id,
     });
@@ -6016,7 +5694,9 @@ async function runFollowUp(pool, config, {
   const turnFailed = live.failedClaudeTurn(result);
   if (!parsed && !moved) {
     if (turnFailed) return fail(`the follow-up turn failed (${turnFailed})`, spent);
-    return fail(`unparseable: ${clip(String(result.lastResultText || '').slice(-300), 300) || '(empty reply)'}`, spent);
+    return fail(`unparseable: ${clip(String(result.lastResultText || '').slice(-300), 300) || '(empty reply)'}`, {
+      ...spent, unreadableReply: unreadableReplyOf(result.lastResultText),
+    });
   }
 
   let runId = null;
@@ -6232,7 +5912,7 @@ async function reconcileRevision({ config, pool, session, app, issueNumber, deps
       [session.id],
     );
     await votes.reconcileNativeReviewedHead({
-      config, pool, session: fresh[0] || session, fresh: true, notify: true,
+      config, pool, session: fresh[0] || session, fresh: true, notify: true, madeBy: 'bot',
     });
   } catch (err) {
     log.error('homeroom-bot', 'Follow-up revision pushed, but reconciling the proposal failed', {
@@ -6258,6 +5938,10 @@ async function reconcileRevision({ config, pool, session, app, issueNumber, deps
 //     is due the same turn (followup.brokenClaims): every settled shots run
 //     reaches homeroom-bot-dm.noteShotsSettled, whose noteChangeReady calls
 //     noteProposalChecks before it would offer the change as ready to try.
+//     So is one they skipped for want of data the change can seed
+//     (followup.skippedClaims); its revision is a new head, whose shots are
+//     taken again once. A skip is never a reason for a round once a fix
+//     round has revised the proposal (`fix_revised`), so it never loops.
 
 const CHECKS_ROW_SQL = `SELECT cs.id, cs.app_id, cs.linked_issues, cs.check_state, cs.checks_commit_sha,
             cs.reviewed_head_sha, cs.test_results, cs.shots_state, cs.shots_detail, a.slug, a.name, a.repo_url,
@@ -6265,7 +5949,12 @@ const CHECKS_ROW_SQL = `SELECT cs.id, cs.app_id, cs.linked_issues, cs.check_stat
               SELECT 1 FROM homeroom_bot_runs r
                WHERE r.proposal_session_id = cs.id
                  AND r.checks_head_sha = LOWER(cs.reviewed_head_sha)
-            ) AS looked
+            ) AS looked,
+            EXISTS (
+              SELECT 1 FROM homeroom_bot_runs r
+               WHERE r.proposal_session_id = cs.id
+                 AND r.verdict = 'revise' AND r.checks_head_sha IS NOT NULL
+            ) AS fix_revised
        FROM chat_sessions cs
        JOIN apps a ON a.id = cs.app_id
        JOIN users u ON u.id = cs.user_id
@@ -6294,8 +5983,9 @@ async function checksToFix(pool, sessionId) {
 
 /**
  * A check verdict settled 'failing' on proposal `sessionId` (visuals.js),
- * or its before & after shots showed a declared change failing while its
- * checks passed (homeroom-bot-dm.noteChangeReady). When it is the bot's own
+ * or its before & after shots showed a declared change failing, or skipped
+ * one for want of data the change can seed, while its checks passed
+ * (homeroom-bot-dm.noteChangeReady). When it is the bot's own
  * open proposal, on an app it is live on, and a fix is due on its current
  * head, its issue is queued for a checks follow-up and the loop woken. A
  * run that looks like the platform's fault (followup.checksLookLikeInfra)
@@ -6334,9 +6024,11 @@ async function noteProposalChecks(pool, { sessionId } = {}) {
     );
     log.info('homeroom-bot', due.failing.length
       ? 'Its proposal\'s checks failed; queued to fix them'
-      : 'Part of its proposal failed when Homeroom tried it; queued to fix it', {
+      : due.broken?.length
+        ? 'Part of its proposal failed when Homeroom tried it; queued to fix it'
+        : 'Its proposal\'s shots could not reach a change for want of data; queued to add it', {
       app: row.slug, issueNumber, sessionId: row.id, head: due.head, failing: due.failing.length, total: due.total,
-      broken: due.broken?.length || 0,
+      broken: due.broken?.length || 0, skipped: due.skipped?.length || 0,
     });
     noteIssueActivity({ appId: row.app_id, issueNumber, reason: CHECKS_REASON });
     return true;
@@ -6348,7 +6040,9 @@ async function noteProposalChecks(pool, { sessionId } = {}) {
 
 /**
  * ONE turn on the bot's own proposal to fix its failing checks, or the
- * hand-off to a person when it may not or cannot. Every outcome that spent
+ * hand-off to a person when it may not or cannot; before the first hand-off
+ * of a red check, a change behind main is brought up to date with it once
+ * instead, and its checks run again (handOff). Every outcome that spent
  * a turn, and every hand-off, records the head it looked at, so the same
  * failing head is never looked at twice; a platform fault records nothing
  * of the kind and keeps the queue row, as a triage's does.
@@ -6368,6 +6062,9 @@ async function runChecksFix(pool, config, {
   const { head, failing, total } = checks;
   // The declared changes its shots show failing on this head, if any.
   const broken = Array.isArray(checks.broken) ? checks.broken : [];
+  // And those they skipped for want of data the change can seed itself.
+  const skipped = Array.isArray(checks.skipped) ? checks.skipped : [];
+  const onlyShots = followup.onlyShotsDue(checks);
   // The run keeps what the bot has seen of the issue: nobody said anything,
   // so the last run's mark stands (without one the next refresh would read
   // the whole thread as new).
@@ -6388,7 +6085,7 @@ async function runChecksFix(pool, config, {
   }
 
   let runId = null;
-  const handOff = async ({ why, verdict, extra = {}, notChange = false }) => {
+  const handOff = async ({ why, verdict, extra = {}, notChange = false, cause = null }) => {
     runId = await insertRun(pool, {
       ...billingOf(item, runMode),
       readReason: readReasonOf(item),
@@ -6399,6 +6096,44 @@ async function runChecksFix(pool, config, {
     });
     await recordSnapshot(runId);
     await dropRow();
+    // Before anybody is asked, a change behind main is brought up to date
+    // with it once and its checks run again (fixed-check-sync.js
+    // syncBeforeHandOff): a red check its fix turn could not get past is
+    // often main's of the time, fixed since. PR #4851 sat red from 12 Oct,
+    // 18 yes votes waiting, on a test #4843 had fixed on main. Not when the
+    // turn said the failures are the change's own, nor for what its shots
+    // showed not working, which no sync changes. A check still failing on
+    // the synced head comes back through this round, and is handed over.
+    if (failing.length && !broken.length && cause !== 'change') {
+      const synced = await Promise.resolve()
+        .then(() => (deps.fixedCheckSync || require('./fixed-check-sync'))
+          .syncBeforeHandOff({ config, pool, sessionId: session.id, head }))
+        .catch(() => null);
+      if (synced?.synced) {
+        await pool.query('UPDATE homeroom_bot_runs SET build_note = $2 WHERE id = $1',
+          [runId, 'Brought up to date with main before handing it over; its checks run again.']).catch(() => {});
+        await live.postOnProposal({
+          pool, ws: deps.ws, app, issueNumber, runId, kind: 'checks_synced', bot, sessionId: session.id,
+          text: followup.checksSyncedText({ failingCount: failing.length }),
+        }).catch((err) => log.warn('homeroom-bot', 'Checks sync note failed', { app: app.slug, issueNumber, err: err.message }));
+        log.info('homeroom-bot', 'Synced its proposal with main before handing its failing checks to a person', {
+          app: app.slug, issueNumber, sessionId: session.id, head, sha: synced.sha || null, runId,
+        });
+        return { ran: true, verdict, runId, acted: 'checks_synced' };
+      }
+    }
+    // Only shots that could not reach a change, and no data was added: the
+    // change works, and its shots card already says why each was skipped, so
+    // nobody is told anything more. The head is looked at, so this is not
+    // asked again; the ready card that waited on this round goes out now.
+    if (onlyShots) {
+      log.info('homeroom-bot', 'Its proposal\'s shots could not reach a change, and it added no data for them', {
+        app: app.slug, issueNumber, sessionId: session.id, head, why, skipped: skipped.length,
+      });
+      (deps.dm || require('./homeroom-bot-dm')).noteChangeReady(pool, session.id, { ws: deps.ws || null })
+        .catch(() => {});
+      return { ran: true, verdict, runId, acted: 'checks_shots_left' };
+    }
     if (notChange) {
       // Not the change's doing: the platform's to look at. Admins are told
       // (the Unexpected events list and its digest), the group voting on the
@@ -6429,10 +6164,10 @@ async function runChecksFix(pool, config, {
       sender: bot, senderId: bot.id, mentions: targets, notifications: deps.notifications || null,
       // Said where the group votes too: the checks are the proposal's.
       proposalSessionId: session.id,
-      // A change's checks are its discussion's news, not a DM message
-      // (homeroom-bot-dm.js cardOnly); what does not work yet is theirs.
+      // Red checks a person must look at reach the requester as a stop
+      // (homeroom-bot-dm.js, kind 'checks'); what does not work yet is theirs.
       dm: failing.length
-        ? { reason: `its checks are failing: ${why}`, checks: true }
+        ? { reason: `its checks are failing: ${why}`, checks: true, failing: failing.length, sessionId: session.id }
         : { reason: `part of it does not work yet: ${why}` },
     }).catch((err) => {
       log.warn('homeroom-bot', 'Checks hand-off post failed', { app: app.slug, issueNumber, err: err.message });
@@ -6477,7 +6212,7 @@ async function runChecksFix(pool, config, {
     const requester = await (deps.dm || require('./homeroom-bot-dm'))
       .requesterOf(pool, app.id, issueNumber).catch(() => null);
     const prompt = followup.checksFixPrompt({
-      seed, proposalBlock, prNumber, failing, total, broken, locale: requester?.locale || null,
+      seed, proposalBlock, prNumber, failing, total, broken, skipped, locale: requester?.locale || null,
     });
     snapshot = {
       stage: 'checks_fix', appId: app.id, issueNumber,
@@ -6486,6 +6221,7 @@ async function runChecksFix(pool, config, {
         seed, prompt, proposal_block: proposalBlock,
         failing: JSON.stringify(failing),
         ...(broken.length ? { broken: JSON.stringify(broken) } : {}),
+        ...(skipped.length ? { skipped: JSON.stringify(skipped) } : {}),
         thread: snapshots.frozenThread({
           issueNumber, issue, comments, threadMessages: issueThread?.messages || [], botLogin,
         }),
@@ -6495,15 +6231,17 @@ async function runChecksFix(pool, config, {
     turn = await followup.runFollowUpTurn({
       // `mode` is runFollowUp's: a build turn, since revisions remain.
       pool, config, bot, repo, session, prompt, mode, issueNumber, turnBudgetMs, model, deps,
-      commitMsg: failing.length
-        ? `Homeroom bot: fix the failing checks on #${issueNumber}`
-        : `Homeroom bot: fix what did not work on #${issueNumber}`,
+      // A fix round's own message, which the reconcile reads back to know
+      // the move changed how the change works, not what it does
+      // (homeroom-commits.js).
+      commitMsg: FIX_COMMIT_MESSAGES[failing.length ? 'checks' : broken.length ? 'broken' : 'shots'](issueNumber),
       turnMark: followUpMark({
         kind: 'checks_fix', app, item, runMode, model, startedMs, seedReadAt, session, threadSeenAt,
         extra: {
           checks: {
             head, total, failing: failing.length,
             broken: broken.slice(0, 5).map((b) => ({ claim: clip(String(b?.claim || ''), 300) })),
+            ...(skipped.length ? { skipped: skipped.slice(0, 5).map((s) => ({ claim: clip(String(s?.claim || ''), 300) })) } : {}),
           },
         },
       }),
@@ -6542,7 +6280,9 @@ async function runChecksFix(pool, config, {
     // #4533: after a restart, the person's recovery tail has already done
     // this for the new head (server.js finalizeRecoveredTurn).
     if (!recovered) await reconcileRevision({ config, pool, session, app, issueNumber, deps });
-    const summary = parsed?.summary || parsed?.reply || 'It updated the change so its checks pass.';
+    const summary = parsed?.summary || parsed?.reply || (onlyShots
+      ? 'It added the data the before and after shots need.'
+      : 'It updated the change so its checks pass.');
     runId = await insertRun(pool, {
       ...billingOf(item, runMode),
       readReason: readReasonOf(item),
@@ -6557,16 +6297,15 @@ async function runChecksFix(pool, config, {
     // Said in the proposal's own discussion, where the group votes and the
     // checks are shown; not on the issue, whose people asked for the change,
     // not for its checks. The reconcile has already said the votes were
-    // cleared there.
-    const link = deps.domain ? live.proposalLink(deps.domain, app.slug, session.id, session.pr_number) : null;
+    // cleared there. Run four (13 Oct): what was fixed, from what failed, in
+    // plain words; the turn's own summary stays on the run, and the note
+    // links nowhere, as it is on the change's page already.
     await live.postOnProposal({
       pool, ws: deps.ws, app, issueNumber, runId, kind: 'checks_revise', bot, sessionId: session.id,
-      text: followup.checksRevisedText({
-        summary, reply: parsed?.reply, prNumber, link, broken: broken.length > 0, failing: failing.length > 0,
-      }),
+      text: followup.checksRevisedText({ failing, broken, skipped }),
     }).catch((err) => log.warn('homeroom-bot', 'Checks revision post failed', { app: app.slug, issueNumber, err: err.message }));
     log.info('homeroom-bot', 'Revised its proposal to fix its failing checks', {
-      app: app.slug, issueNumber, sessionId: session.id, head, failing: failing.length, costUsd, runId,
+      app: app.slug, issueNumber, sessionId: session.id, head, failing: failing.length, skipped: skipped.length, costUsd, runId,
     });
     return { ran: true, verdict: 'revise', runId, acted: 'checks_revise' };
   }
@@ -6590,7 +6329,7 @@ async function runChecksFix(pool, config, {
     await dropRow();
     await live.postOnProposal({
       pool, ws: deps.ws, app, issueNumber, runId, kind: 'checks_retry', bot, sessionId: session.id,
-      text: followup.checksRetryText({ broken: broken.length > 0, failing: failing.length > 0 }),
+      text: followup.checksRetryText({ broken: broken.length > 0, failing: failing.length > 0, skipped: skipped.length > 0 }),
     }).catch((err) => log.warn('homeroom-bot', 'Checks retry post failed', { app: app.slug, issueNumber, err: err.message }));
     log.warn('homeroom-bot', 'Fix of its proposal\'s checks ran out of time; trying once more', {
       app: app.slug, issueNumber, sessionId: session.id, head, runId,
@@ -6613,6 +6352,7 @@ async function runChecksFix(pool, config, {
     extra: { ...spent, ...(turn.stopped ? { budgetStop: 'wall clock' } : {}) },
     // The turn found the failures are not the change's (followup.CAUSES).
     notChange: parsed?.action === 'person' && parsed.cause === 'not_change' && failing.length > 0 && !broken.length,
+    cause: parsed?.action === 'person' ? parsed.cause : null,
   });
 }
 
@@ -6766,6 +6506,7 @@ async function finishRecoveredFollowUp({
         managedOpenRouter: deps.managedOpenRouter || require('./openrouter-managed-keys'),
         agentTurn: deps.agentTurn || require('./agent-turn'),
         votes: deps.votes || null, dm: deps.dm || null, notifications: deps.notifications || null,
+        fixedCheckSync: deps.fixedCheckSync || null,
         ...liveDeps(deps),
       };
       const common = {
@@ -6790,6 +6531,7 @@ async function finishRecoveredFollowUp({
             // How many failed is all that is said again; the turn read why.
             failing: Array.from({ length: Math.max(0, Number(c.failing) || 0) }, () => ({})),
             broken: Array.isArray(c.broken) ? c.broken : [],
+            skipped: Array.isArray(c.skipped) ? c.skipped : [],
           },
           canRevise: true, mode: recovered.mode, lastRun: null, seedReadAt: mark.seedReadAt || null,
           comments: [], issueThread: null, proposalThread: null, botLogin: await live.botUsernameOf(github),
@@ -6866,8 +6608,8 @@ function liveSayer({
 /**
  * A build turn that changed nothing, kept on its run the moment it ends,
  * before its nudge starts (homeroom-bot-live.js buildAndPropose's
- * onNoChange), so a restart in the middle of the nudge still finds what the
- * first turn said (recoveredNoChange). The outcome's own record replaces it.
+ * onNoChange), so the run says what the first turn said while the nudge
+ * runs. The outcome's own record replaces it.
  */
 async function keepNoChange(pool, runId, noChange) {
   if (!runId || !noChange) return;
@@ -6875,6 +6617,51 @@ async function keepNoChange(pool, runId, noChange) {
     'UPDATE homeroom_bot_runs SET build_no_change = $2::jsonb WHERE id = $1',
     [runId, JSON.stringify(noChange)],
   ).catch((err) => log.warn('homeroom-bot', 'Could not keep a build turn that changed nothing on its run', { runId, err: err.message }));
+}
+
+/**
+ * Whether a live first version's build that did not become a proposal is
+ * one to try once more on its own: it failed (not stopped as a skip, found
+ * impossible, another build's, or built and only not proposed) and it has
+ * the plan to build from. Pure.
+ */
+function autoRetryable(built) {
+  if (!built || built.ok || built.skipped || built.blocked || built.lostClaim || built.notProposed) return false;
+  // Its project's setup failed (15 Oct 2026): another try would stop the same way.
+  if (built.setupFailed) return false;
+  if (built.partial) return false;
+  return typeof built.specMd === 'string' && built.specMd.trim().length > 0;
+}
+
+/**
+ * Claim a first version's one automatic retry: its run gives up the failed
+ * session's link and waits again, with the plan kept, so a restart before
+ * the retry links its own session builds it from the lane (buildOne's
+ * presetSpec). Only once per first version: no run of the request has been
+ * retried before. Resolves whether it was claimed; never throws.
+ */
+async function claimAutoRetry(pool, { runId, appId, issueNumber, built }) {
+  try {
+    const { rows } = await pool.query(
+      `UPDATE homeroom_bot_runs r
+          SET build_retry = jsonb_build_object('at', NOW(), 'error', $4::text, 'session_id', $3::int),
+              build_session_id = NULL, live_build_waiting_at = NOW(),
+              build_spec_md = COALESCE(r.build_spec_md, $5)
+        WHERE r.id = $1 AND r.build_retry IS NULL AND r.build_ok IS NULL AND r.proposal_session_id IS NULL
+          AND r.build_session_id IS NOT DISTINCT FROM $3::int
+          AND NOT EXISTS (
+            SELECT 1 FROM homeroom_bot_runs o
+             WHERE o.app_id = $2 AND o.issue_number = r.issue_number AND o.build_retry IS NOT NULL
+          )
+          AND r.issue_number = $6
+        RETURNING r.id`,
+      [runId, appId, built.sessionId || null, clip(built.error || 'unknown', MAX_ERROR_CHARS), built.specMd, issueNumber],
+    );
+    return rows.length > 0;
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not claim a first version\'s retry; it ends as it is', { runId, err: err.message });
+    return false;
+  }
 }
 
 /**
@@ -6890,11 +6677,22 @@ async function keepNoChange(pool, runId, noChange) {
  */
 async function recordLiveBuild(pool, runId, built, model = null) {
   if (!runId || !built) return;
+  // A build that finished from a failed turn's work (buildAndPropose's
+  // keepPartial), and a first version tried once more (buildLive), say so
+  // beside what came of it.
+  // 15 Oct 2026: and one its maker's Try again proposed after it was built
+  // and could not be (finishBuiltFirstVersion), with why it could not.
+  const notes = [
+    built.partial ? `finished from partial work (${built.partial.reason})` : null,
+    built.retried ? `tried once more after: ${built.retried.error || 'unknown'}` : null,
+    built.finished ? `proposed on its maker's Try again after: ${built.finished.error || 'unknown'}` : null,
+    built.specNote,
+  ].filter(Boolean);
   const error = built.ok
-    ? (built.specNote ? clip(built.specNote, MAX_ERROR_CHARS) : null)
+    ? (notes.length ? clip(notes.join('; '), MAX_ERROR_CHARS) : null)
     : clip([
       built.blocked ? `blocked: ${built.blocked}` : (built.error || 'unknown'),
-      built.specNote,
+      ...notes,
     ].filter(Boolean).join('; '), MAX_ERROR_CHARS);
   await pool.query(
     `UPDATE homeroom_bot_runs
@@ -6918,9 +6716,11 @@ async function recordLiveBuild(pool, runId, built, model = null) {
  * What a live build came to, said on its issue: the proposal (and the spec
  * on it, where the group votes), the request found impossible, or the build
  * that did not become a proposal. Shared by the live path and the recovery
- * of a live build a restart interrupted (#3471). Returns what was done.
+ * of a live build a restart interrupted (#3471). `firstVersion`: the
+ * project's first version, whose stop is said without approval (14 Oct
+ * 2026, live.buildFailedText). Returns what was done.
  */
-async function announceBuilt({ pool, ws, app, bot, issueNumber, runId, built, say, domain }) {
+async function announceBuilt({ pool, ws, app, bot, issueNumber, runId, built, say, domain, firstVersion = false }) {
   await recordLiveBuild(pool, runId, built, built.model || null);
   if (built.ok) {
     // The run's first proposal stays its proposal (recordLiveBuild).
@@ -6930,8 +6730,21 @@ async function announceBuilt({ pool, ws, app, bot, issueNumber, runId, built, sa
     ).catch(() => {});
     // The vote-card metadata the promote route's own activity rows carry,
     // so the issue's thread shows the live proposal card, not only a link.
+    // Said once per run: a restart after it was said, before the run was
+    // recorded, finishes the build without saying it again.
+    if (await runPosted(pool, runId, 'proposal')) {
+      log.info('homeroom-bot', 'The proposal was said before a restart; not saying it again', { app: app.slug, issueNumber, runId });
+      return 'proposed';
+    }
     const link = live.proposalLink(domain, app.slug, built.sessionId, built.prNumber);
-    await say('proposal', live.proposalText({ link, prNumber: built.prNumber }), {
+    // Homeroom names the change by its title, over its vote card; GitHub links it.
+    const { rows: [named] = [] } = await pool.query(
+      `SELECT COALESCE(NULLIF(pr_title, ''), NULLIF(proposed_pr_title, ''), NULLIF(session_title, '')) AS title
+         FROM chat_sessions WHERE id = $1`,
+      [built.sessionId],
+    ).catch(() => ({ rows: [] }));
+    await say('proposal', live.proposalText({ link }), {
+      homeroomText: live.proposalHomeroomText({ title: named?.title || null }),
       msgType: 'vote', metadata: { vote: { sessionId: built.sessionId, prNumber: built.prNumber } },
       dm: { link, prNumber: built.prNumber, sessionId: built.sessionId },
     });
@@ -6948,14 +6761,290 @@ async function announceBuilt({ pool, ws, app, bot, issueNumber, runId, built, sa
   if (built.blocked) {
     // Impossible as written, which only reading the code showed: said on
     // the issue like a question, so a reply sends it round again.
-    await say('blocked', live.blockedText(built.blocked), { dm: { reason: built.blocked } });
+    if (!await runPosted(pool, runId, 'blocked')) {
+      await say('blocked', live.blockedText(built.blocked), { dm: { reason: built.blocked } });
+    }
     return 'blocked';
   }
   log.warn('homeroom-bot', 'Live build did not become a proposal', {
     app: app.slug, issueNumber, sessionId: built.sessionId || null, error: built.error,
   });
-  await say('build_failed', live.buildFailedText(built.error), { dm: { reason: built.error } });
+  // Said once per run, whatever brought the build here again.
+  if (!await runPosted(pool, runId, 'build_failed')) {
+    await say('build_failed', live.buildFailedText(built.error, { firstVersion }), { dm: { reason: built.error } });
+  }
   return 'build_failed';
+}
+
+// ── Try again finishes a first version that was built (15 Oct 2026) ─────
+//
+// A first version built to the end whose proposal was refused stops "built
+// but could not be proposed": its session paused, its branch pushed
+// (homeroom-bot-live.js buildAndPropose; promoteOwnBuild throws a refusal it
+// can wait out back to the build, #5162, so this is one it could not). Its
+// maker read "Tap Try again" (#5170), and Try again started over: the tap
+// reached the bot's chat model, which put the request first in the queue
+// (homeroom-bot-mayor.js start_request), so it was read again, planned again
+// for Build it, and built again in a new session, tens of minutes paid from
+// the maker's allowance, with the built session left behind; and
+// claimAutoRetry leaves such a build alone on purpose. Now the tap is
+// decided without the model (homeroom-bot-dm.js finishOnTryAgain): the
+// session the build left is proposed exactly as the build proposes one
+// (promoteOwnBuild: as the bot, past the drain guard with OWN_WORK, under its
+// ceiling), the run records it as its proposal and says so (announceBuilt),
+// and from there it is any proposed first version: tested, ready to try, live
+// without a vote. Whatever would make that unsafe (any other stop, a newer
+// look at the request, its session or branch gone or moved, the request
+// closed or answered) leaves the tap to the model, which starts it over.
+
+// A claim this old with no outcome is a process that died holding it: the
+// promote route itself refuses a session already up, so taking it again
+// cannot propose twice.
+const FINISH_STALE_MINUTES = 10;
+
+/**
+ * The run Try again would finish, with what deciding it reads: its build
+ * session; the request's newest run; the fields progress.firstVersionStopped
+ * reads, as homeroom-bot-progress.js requestRows reads them (the request's
+ * newest proposal's state, whether the request is closed); whether it is in
+ * the queue (a start over asked for already); its project; and the maker of
+ * the project's first version when this request is it. Null when no run.
+ */
+async function finishableRun(pool, runId) {
+  const { rows: [run] = [] } = await pool.query(
+    `SELECT r.id, r.app_id, r.issue_number, r.mode, r.verdict, r.build_ok, r.build_error,
+            r.build_session_id, r.build_branch, r.build_sha, r.build_commits, r.build_spec_md,
+            r.proposal_session_id, r.build_finish,
+            COALESCE((r.build_finish->>'at')::timestamptz < NOW() - make_interval(mins => $2), FALSE) AS finish_stale,
+            (SELECT n.id FROM homeroom_bot_runs n
+              WHERE n.app_id = r.app_id AND n.issue_number = r.issue_number
+              ORDER BY n.id DESC LIMIT 1) AS newest_run_id,
+            bs.status AS session_status, bs.user_id AS session_user_id, bs.branch_name AS session_branch,
+            bs.is_headless AS session_headless,
+            ps.status AS own_proposal_status,
+            (SELECT CASE WHEN cs.status = 'merged' AND cs.live_at IS NULL THEN 'merging' ELSE cs.status END
+               FROM homeroom_bot_runs p JOIN chat_sessions cs ON cs.id = p.proposal_session_id
+              WHERE p.app_id = r.app_id AND p.issue_number = r.issue_number
+              ORDER BY p.id DESC LIMIT 1) AS proposal_status,
+            (SELECT ri.status = 'closed' FROM issues ri
+              WHERE ri.app_id = r.app_id AND ri.github_issue_number = r.issue_number
+              ORDER BY ri.id DESC LIMIT 1) AS request_closed,
+            EXISTS (SELECT 1 FROM homeroom_bot_queue q
+                     WHERE q.app_id = r.app_id AND q.issue_number = r.issue_number) AS queued,
+            f.user_id AS maker_id,
+            a.slug, a.name, a.repo_url
+       FROM homeroom_bot_runs r
+       JOIN apps a ON a.id = r.app_id
+       LEFT JOIN chat_sessions bs ON bs.id = r.build_session_id
+       LEFT JOIN chat_sessions ps ON ps.id = r.proposal_session_id
+       LEFT JOIN homeroom_bot_first_versions f
+         ON f.app_id = r.app_id AND f.issue_number = r.issue_number AND f.bot_builds = TRUE AND f.status = 'filed'
+      WHERE r.id = $1`,
+    [Number(runId), FINISH_STALE_MINUTES],
+  );
+  return run || null;
+}
+
+/**
+ * Pure (15 Oct 2026): why Try again from `userId` cannot finish `run`
+ * (finishableRun) from what was built, or null when it can: the newest look
+ * at the first version of `userId`'s own project, stopped as its screens say
+ * (progress.firstVersionStopped) because it was built and only not proposed,
+ * nothing else under way for it (no queue row: a start over is asked for
+ * already), and its session still the bot's, paused, on the branch the build
+ * pushed. The branch's head on GitHub is checked after this.
+ */
+function whyNotFinish(run, { userId, botId }) {
+  if (!run) return 'no_run';
+  if (!run.maker_id || Number(run.maker_id) !== Number(userId)) return 'not_their_first_version';
+  if (Number(run.newest_run_id) !== Number(run.id)) return 'not_newest';
+  if (!require('./homeroom-bot-progress').firstVersionStopped(run)) return 'not_stopped';
+  if (require('./homeroom-bot-dm').buildFailedCause(run.build_error).cause !== 'unproposed') return 'not_unproposed';
+  if (run.proposal_session_id) return 'proposed';
+  if (run.queued) return 'queued';
+  if (!run.build_session_id || run.session_status !== 'paused') return 'session_gone';
+  if (Number(run.session_user_id) !== Number(botId) || run.session_headless === true) return 'not_the_bots';
+  if (!run.session_branch || (run.build_branch && run.build_branch !== run.session_branch)) return 'branch_moved';
+  return null;
+}
+
+/**
+ * 15 Oct 2026: Try again from `user` under their first version that was
+ * built and could not be proposed (homeroom-bot-dm.js finishOnTryAgain): the
+ * session its build left proposed, and the run on its way as any proposed
+ * first version is. `onProposed(app)` is called once it is proposed, before
+ * the run says so. Resolves
+ *   { ok: true, sessionId, prNumber, app }  proposed now;
+ *   { ok: true, already: true, app }        another tap has it, or it is up;
+ *   { ok: false, why, app }                 not proposed: the caller starts
+ *                                           it over, as Try again did before.
+ * Claimed once per run (build_finish), so a double tap proposes once. Never
+ * throws, and never answers ok: false once it has proposed.
+ */
+async function finishBuiltFirstVersion(pool, config, { runId, user, bot, deps = {}, onProposed = null }) {
+  let run;
+  let app = null;
+  try {
+    run = await finishableRun(pool, runId);
+    if (!run || !user?.id || !bot?.id) return { ok: false, why: 'no_run', app };
+    app = { id: Number(run.app_id), slug: run.slug, name: run.name, repo_url: run.repo_url };
+    const mine = run.maker_id && Number(run.maker_id) === Number(user.id);
+    // Up already (this run's proposal, a tap's or its build's own), or
+    // another tap is proposing it now: nothing more is proposed.
+    if (mine && run.proposal_session_id && ['promoted', 'merging'].includes(run.own_proposal_status)) {
+      return { ok: true, already: true, app };
+    }
+    const finish = run.build_finish && typeof run.build_finish === 'object' ? run.build_finish : null;
+    if (mine && finish && !finish.outcome && !run.finish_stale) return { ok: true, already: true, app };
+    // Proposed by a tap, and not recorded on the run yet (proposeFinished
+    // says so under that tap first): up, as long as its session is.
+    if (mine && finish?.outcome === 'proposed' && ['promoted', 'merging'].includes(run.session_status)) {
+      return { ok: true, already: true, app };
+    }
+    // Tried once and refused: what follows is the start over.
+    if (finish?.outcome === 'failed') return { ok: false, why: 'finish_failed', app };
+    // A claim whose process died after it proposed and before the run said
+    // so: its session is up, and is recorded and said now (proposeFinished
+    // reads it back, proposedAlready), with nothing checked again.
+    const recovering = !!(mine && finish && !finish.outcome && run.finish_stale && !run.proposal_session_id
+      && Number(finish.session_id) === Number(run.build_session_id)
+      && ['promoted', 'merging'].includes(run.session_status));
+    if (!recovering) {
+      // #5211 (15 Oct 2026): the checks below run after this tap's read,
+      // against the live database. While one is under way, another tap can
+      // claim the run and put its proposal up, which this tap's checks then
+      // read as a reason to start over (its whyNotBuild finds the proposal
+      // and skips). Every refusal they make is looked at once more first:
+      // a claim set since the read, any outcome but failed, is another tap
+      // finishing it, answered already. An outcome of failed is the start
+      // over that tap already spent, and the refusal stands.
+      const refusal = async (why, detail = null) => {
+        const fresh = await finishableRun(pool, run.id);
+        const freshFinish = fresh?.build_finish && typeof fresh.build_finish === 'object' ? fresh.build_finish : null;
+        if (freshFinish && freshFinish.outcome !== 'failed') return { ok: true, already: true, app };
+        return { ok: false, why, ...(detail ? { detail } : {}), app };
+      };
+      const why = whyNotFinish(run, { userId: user.id, botId: bot.id });
+      if (why) return refusal(why);
+      const settings = await readSettings(pool);
+      if (!live.isLiveFor(settings, app)) return refusal('not_live');
+      const repo = parseRepo(run.repo_url);
+      const github = deps.github || require('./github');
+      if (!repo || typeof github.isEnabled !== 'function' || !github.isEnabled()) return refusal('no_github');
+      // What the build pushed is still there, as it was: a branch deleted, or
+      // moved by somebody since, is not what was built.
+      const head = await Promise.resolve()
+        .then(() => github.getBranchSha(repo.owner, repo.repo, run.session_branch))
+        .catch((err) => {
+          log.info('homeroom-bot', 'Try again: the built branch could not be read', { runId: run.id, err: err.message });
+          return null;
+        });
+      if (!head) return refusal('branch_gone');
+      if (run.build_sha && String(head).toLowerCase() !== String(run.build_sha).toLowerCase()) {
+        return refusal('branch_moved');
+      }
+      // The backstop every proposal of the bot's meets (whyNotBuild): another
+      // proposal of the request, another build of it under way, or its issue
+      // closed on GitHub.
+      const skip = await whyNotBuild(pool, {
+        runId: run.id, botId: bot.id, appId: app.id, issueNumber: Number(run.issue_number), github, repo,
+      });
+      if (skip) return refusal('skip', skip);
+    }
+    const { rows: claimed } = await pool.query(
+      `UPDATE homeroom_bot_runs
+          SET build_finish = jsonb_build_object('at', NOW(), 'by', $2::int, 'session_id', $3::int)
+        WHERE id = $1 AND build_ok = FALSE AND proposal_session_id IS NULL AND build_session_id = $3
+          AND (build_finish IS NULL
+               OR (build_finish->>'outcome' IS NULL
+                   AND (build_finish->>'at')::timestamptz < NOW() - make_interval(mins => $4)))
+        RETURNING id`,
+      [run.id, Number(user.id), Number(run.build_session_id), FINISH_STALE_MINUTES],
+    );
+    if (!claimed.length) return { ok: true, already: true, app };
+  } catch (err) {
+    log.warn('homeroom-bot', 'Try again could not read a first version it built; it starts over', { runId, err: err.message });
+    return { ok: false, why: 'error', app };
+  }
+  return proposeFinished(pool, config, { run, app, user, bot, deps, onProposed });
+}
+
+/**
+ * finishBuiltFirstVersion once its claim is taken: propose, then record and
+ * say it as the build would have. A refusal gives the claim its outcome and
+ * answers ok: false; from the proposal on, nothing answers ok: false.
+ */
+async function proposeFinished(pool, config, { run, app, user, bot, deps, onProposed }) {
+  const sessionId = Number(run.build_session_id);
+  const issueNumber = Number(run.issue_number);
+  const settle = (outcome) => pool.query(
+    'UPDATE homeroom_bot_runs SET build_finish = build_finish || jsonb_build_object(\'outcome\', $2::text) WHERE id = $1',
+    [run.id, outcome],
+  ).catch((err) => log.warn('homeroom-bot', 'Could not record what Try again came to', { runId: run.id, outcome, err: err.message }));
+  const since = new Date().toISOString();
+  let promoted;
+  try {
+    const settings = await readSettings(pool);
+    promoted = await live.proposedAlready(pool, sessionId) || await live.promoteOwnBuild({
+      pool, steps: durableSteps.none(), ...(Array.isArray(deps.proposeRetryMs) ? { waits: deps.proposeRetryMs } : {}),
+      config, bot, sessionId, router: deps.votesRouter || null, ceiling: botProposalCeiling(settings),
+    });
+  } catch (err) {
+    promoted = { status: 500, body: { error: err.message } };
+  }
+  if (promoted?.status !== 200 || !promoted.body?.ok) {
+    const why = promoted?.body?.error || promoted?.body?.message || `promotion answered ${promoted?.status}`;
+    await settle('failed');
+    log.warn('homeroom-bot', 'Try again could not propose a first version it built; it starts over', {
+      app: app.slug, issueNumber, runId: run.id, sessionId, why,
+    });
+    return { ok: false, why: 'refused', detail: why, app };
+  }
+  const prNumber = promoted.body.prNumber ?? null;
+  await settle('proposed');
+  log.info('homeroom-bot', 'Try again proposed a first version it had built', {
+    app: app.slug, issueNumber, runId: run.id, sessionId, prNumber, userId: user.id,
+  });
+  void timeline.recordStep(pool, { runId: run.id, step: 'proposed', sessionId, detail: prNumber ? { prNumber: Number(prNumber) } : null });
+  if (typeof onProposed === 'function') {
+    try { await onProposed(app); } catch (err) {
+      log.warn('homeroom-bot', 'Could not say a first version is being finished', { runId: run.id, err: err.message });
+    }
+  }
+  // Recorded and said as the build says a proposal: the run's proposal, its
+  // card on the request and in its maker's chat (built and being tested,
+  // then ready to try), the plan on the proposal, and what the bot has seen.
+  try {
+    const github = deps.github || require('./github');
+    const ws = deps.ws || require('./ws');
+    const repo = parseRepo(run.repo_url);
+    const postedAt = [];
+    const botLogin = await live.botUsernameOf(github);
+    const say = liveSayer({
+      pool, github, ws, app, repo, issueNumber, issue: null, runId: run.id, bot, botLogin,
+      notifications: deps.notifications || null, postedAt,
+    });
+    const { rows: [spec] = [] } = await pool.query(
+      'SELECT version FROM chat_session_specs WHERE session_id = $1 ORDER BY version DESC LIMIT 1', [sessionId],
+    ).catch(() => ({ rows: [] }));
+    await announceBuilt({
+      pool, ws, app, bot, issueNumber, runId: run.id, say, domain: deps.domain || require('./caddy').USERNODE_DOMAIN,
+      firstVersion: true,
+      built: {
+        ok: true, sessionId, prNumber, branchName: run.session_branch, sha: run.build_sha || null,
+        commits: run.build_commits == null ? undefined : Number(run.build_commits),
+        specMd: run.build_spec_md || null, specVersion: spec?.version ?? null,
+        finished: { error: run.build_error },
+      },
+    });
+    await live.advanceSeen({
+      pool, github, threadContext: deps.threadContext || require('./thread-context'), app, repo, issueNumber,
+      runId: run.id, since, postedAt,
+    }).catch((err) => log.warn('homeroom-bot', 'Could not record what the bot has seen', { err: err.message }));
+  } catch (err) {
+    log.warn('homeroom-bot', 'Try again proposed a first version, but could not say so', { runId: run.id, sessionId, err: err.message });
+  }
+  return { ok: true, sessionId, prNumber, app };
 }
 
 async function actOnVerdict({
@@ -6996,6 +7085,10 @@ async function actOnVerdict({
       app: app.slug, issueNumber, verdict: parsed.verdict,
     });
     acted = 'unaddressed';
+    // A note about Homeroom itself held so offers no move: the run says why.
+    if (parsed.verdict === 'person' && parsed.platform) {
+      await require('./homeroom-bot-move').noteMoveOffer(pool, runId, 'repeat_held');
+    }
   } else if (capSuppressed) {
     const kind = live.heldKind(capSuppressed);
     const already = await live.lastPostKind(pool, app.id, issueNumber) === kind;
@@ -7005,12 +7098,13 @@ async function actOnVerdict({
     if (!already && !quietHold) {
       const limit = capSuppressed === 'proposals_per_app' ? PROPOSALS_PER_APP_CAP
         : capSuppressed === 'proposals_total' ? proposalCeiling : QUESTION_TRIPWIRE_PER_DAY;
-      // A build a proposal cap holds is said in the requester's DM too, so
-      // waiting is never a mystery (homeroom-bot-dm.js dmText). A question
+      // A build a proposal cap holds is a quiet line in the request's thread
+      // (homeroom-bot-dm.js dmText) and its card says Waiting. A question
       // the daily tripwire holds is not: there is nothing to tell them yet.
       const toDm = capSuppressed === 'proposals_per_app' || capSuppressed === 'proposals_total';
       await say(kind, live.heldText({
         cap: capSuppressed, verdict: parsed.verdict === 'ready' && parsed.complicated ? 'plan' : parsed.verdict, limit,
+        project: app.name || app.slug,
       }), toDm ? { dm: { limit } } : undefined);
     }
   } else if (parsed.verdict === 'question') {
@@ -7031,7 +7125,13 @@ async function actOnVerdict({
     const deciders = decider && !decider.requesterDecides && Array.isArray(decider.deciders)
       ? decider.deciders.map((d) => d?.username).filter(Boolean)
       : [];
-    await say('person', live.personText(parsed), {
+    // Homeroom's copy names who can say Go ahead: the people who decide, or
+    // the person who asked for it.
+    const asker = deciders.length || parsed.platform ? null
+      : await require('./homeroom-bot-dm').requesterOf(pool, app.id, issueNumber).catch(() => null);
+    const project = app.name || app.slug;
+    await say('person', live.personText({ ...parsed, project }), {
+      homeroomText: live.personHomeroomText({ ...parsed, project, requester: asker?.username || null, deciders }),
       dm: {
         reason: parsed.reason, ...(parsed.platform ? { platform: true } : {}), ...(deciders.length ? { deciders } : {}),
         ...(parsed.done ? { done: true } : {}),
@@ -7086,8 +7186,11 @@ async function actOnVerdict({
 // built is left alone.
 async function queueLiveBuild(pool, { runId, appId }) {
   try {
+    // Queued with no Build it to wait for: that is its go-ahead (goAhead
+    // keeps the tap's time for a plan that waited for one).
     await pool.query(
-      `UPDATE homeroom_bot_runs SET live_build_waiting_at = COALESCE(live_build_waiting_at, NOW())
+      `UPDATE homeroom_bot_runs SET live_build_waiting_at = COALESCE(live_build_waiting_at, NOW()),
+              go_ahead_at = COALESCE(go_ahead_at, NOW())
         WHERE id = $1 AND build_ok IS NULL AND build_session_id IS NULL`,
       [runId],
     );
@@ -7105,7 +7208,9 @@ async function queueLiveBuild(pool, { runId, appId }) {
 // something (homeroom-bot-dm.js sendPlanCard), and its run waits with
 // `awaiting_go_at`. Build it (goAhead) sets live_build_waiting_at, as a
 // ready verdict does, with the plan and its choices written into the build
-// note as what the creator approved.
+// note as what the creator approved. (The made screen's Submit, which shows
+// the questions alone, writes the bullets as the plan's own lines and only
+// the answers as theirs: creatorChoiceNote's `planShown`, run seven.)
 // Change something (dm.changePlan) and a new look at the request
 // (retireWaitingPlans) end the wait; so does a week with no tap
 // (settleStalePlans). A waiting plan is not a build: a new look at its
@@ -7148,13 +7253,28 @@ function choicesFrom(questions, answers = []) {
  */
 // #4488: `requester` for a complicated change on an existing project, whose
 // requester approved it: said as theirs, under its own heads.
-function creatorChoiceNote(chosen, { bullets = [], requester = false } = {}) {
+// Newcomer run seven (14 Oct 2026, Club Votes): `planShown` false for a plan
+// gone ahead with from the made screen's Submit, which shows its questions
+// and never its bullets (homeroom-bot-dm.js buildFromAnswers). Its bullets
+// are then the plan's own lines, in the sketch the spec may improve on
+// (live.PLAN_LINES_HEAD), and only the answers are the creator's, under a
+// head that says they win over a line (live.MADE_SCREEN_CHOICES_HEAD). The
+// default is Build it under the plan card, word for word as before.
+function creatorChoiceNote(chosen, { bullets = [], requester = false, planShown = true } = {}) {
   const plan = (Array.isArray(bullets) ? bullets : []).map((b) => String(b || '').trim()).filter(Boolean);
   const picks = Array.isArray(chosen) ? chosen : [];
+  const answers = picks.map((c) => `- ${c.question} ${c.answer}`);
+  if (!planShown && !requester) {
+    const blocks = [
+      ...(plan.length ? [[live.PLAN_LINES_HEAD, ...plan.map((b) => `- ${b}`)].join('\n')] : []),
+      ...(picks.length ? [[live.MADE_SCREEN_CHOICES_HEAD, ...answers].join('\n')] : []),
+    ];
+    return blocks.length ? `\n\n${blocks.join('\n\n')}` : '';
+  }
   const lines = [];
   if (plan.length) lines.push(requester ? live.APPROVED_BY_REQUESTER_HEAD : live.APPROVED_PLAN_HEAD, ...plan.map((b) => `- ${b}`));
   if (picks.length) {
-    lines.push(requester ? live.REQUESTER_CHOICES_HEAD : live.CREATOR_CHOICES_HEAD, ...picks.map((c) => `- ${c.question} ${c.answer}`));
+    lines.push(requester ? live.REQUESTER_CHOICES_HEAD : live.CREATOR_CHOICES_HEAD, ...answers);
   }
   return lines.length ? `\n\n${lines.join('\n')}` : '';
 }
@@ -7198,7 +7318,14 @@ async function awaitGo(pool, { runId, app, issueNumber, parsed, bot, deps = {} }
     log.warn('homeroom-bot', 'Could not record a first version\'s plan', { app: app.slug, issueNumber, runId, err: err.message });
     return 'failed';
   }
-  return sendRunPlan(pool, { runId, app, issueNumber, plan, bot, deps });
+  // The triage wrote it just now; a plan from Make it was recorded when it
+  // was written (first-version-plan.js startEarlyPlan).
+  if (!parsed?.fromMakeIt) {
+    void timeline.record(pool, { runId, stage: 'plan_written', detail: { source: 'triage', questions: plan.questions.length } });
+  }
+  // A plan its maker already decided on the made screen (planFromEarly) is
+  // sent without a ring: it goes ahead the moment it is sent.
+  return sendRunPlan(pool, { runId, app, issueNumber, plan, bot, deps, quiet: parsed?.quietPlan === true });
 }
 
 /**
@@ -7208,11 +7335,11 @@ async function awaitGo(pool, { runId, app, issueNumber, parsed, bot, deps = {} }
  * tries have failed, and then stops. Resolves 'waiting', 'unsent' or
  * 'stopped'. Never throws.
  */
-async function sendRunPlan(pool, { runId, app, issueNumber, plan, bot, deps = {} }) {
+async function sendRunPlan(pool, { runId, app, issueNumber, plan, bot, deps = {}, quiet = false }) {
   let sent = null;
   try {
     const dm = deps.dm || require('./homeroom-bot-dm');
-    sent = await dm.sendPlanCard(pool, { app, issueNumber, runId, plan, bot, ws: deps.ws || null });
+    sent = await dm.sendPlanCard(pool, { app, issueNumber, runId, plan, bot, ws: deps.ws || null, ...(quiet ? { quiet: true } : {}) });
   } catch (err) {
     log.warn('homeroom-bot', 'Could not send a first version\'s plan (it waits, and is sent again)', {
       app: app.slug, issueNumber, runId, err: err.message,
@@ -7336,7 +7463,9 @@ async function carryApprovedPlan(pool, { runId, appId, issueNumber }) {
     );
     if (!prev || !Array.isArray(prev.plan?.chosen)) return false;
     if (!String(prev.build_error || '').endsWith(RESTARTED_BUILD_NOTE)) return false;
-    const note = creatorChoiceNote(prev.plan.chosen, { bullets: prev.plan.bullets });
+    // Run seven: the same note goAhead wrote, for a plan its maker was not
+    // shown as for one they tapped Build it under.
+    const note = creatorChoiceNote(prev.plan.chosen, { bullets: prev.plan.bullets, planShown: prev.plan.planShown !== false });
     const { rowCount } = await pool.query(
       `UPDATE homeroom_bot_runs SET build_note = CONCAT(build_note, $2::text), plan = $3::jsonb
         WHERE id = $1 AND build_ok IS NULL AND build_session_id IS NULL AND awaiting_go_at IS NULL`,
@@ -7446,34 +7575,34 @@ async function planBeforeBuilding({
   const { github, ws } = deps;
   const questions = planQuestions(plan?.questions || []);
   let drafted;
-  liveBuildsInFlight.add(runId);
-  try {
+  // Each part a step of the durable build: run again after a restart, the
+  // plan is not drafted, debited, recorded, sent or said a second time.
+  const planSteps = durableSteps.of(deps);
+  {
     // #4645: the requester's language preference, for the plan's wording
     // rule (localeRule); unset, the plan stays English.
     const requester = await (deps.dm || require('./homeroom-bot-dm'))
       .requesterOf(pool, app.id, issueNumber).catch(() => null);
-    drafted = await live.buildAndPropose({
+    drafted = await planSteps.once('plan', () => live.buildAndPropose({
       pool, config, bot, app, repo, issueNumber, issue, seed,
       buildNote: `${parsed.buildNote || ''}${planChoicesNote(questions)}`,
-      ...buildBudgets(app, config, turnBudgetMs), model, specModel, deps,
+      ...buildBudgets(app, config, turnBudgetMs), model, specModel, deps: { ...deps, durable: planSteps.scope('plan') },
       platformRepo: isPlatformRepo(app, config), planOnly: true,
       locale: requester?.locale || null,
       skipCheck: () => whyNotBuild(pool, { runId, botId: bot.id, appId: app.id, issueNumber, github, repo }),
       origin: { lane: 'live', runId },
       ...(harnessed ? { harnessOf: live.recipeHarness, specGuidance: guidance?.spec || null } : {}),
-    });
-  } finally {
-    liveBuildsInFlight.delete(runId);
+    }));
   }
-  if (drafted.costUsd > 0) {
+  await debitBuildOnce(planSteps, 'plan_debited', drafted.costUsd, async (usd) => {
     try {
       if (await deps.managedOpenRouter.usesIncludedKey(pool, bot.id)) {
-        await deps.limits.recordSpend(pool, bot.id, Math.round(drafted.costUsd * 1e6) / 1e4, { byok: false });
+        await deps.limits.recordSpend(pool, bot.id, Math.round(usd * 1e6) / 1e4, { byok: false });
       }
     } catch (err) {
       log.warn('homeroom-bot', 'Plan spend debit failed', { err: err.message });
     }
-  }
+  });
   const settle = () => pool.query('UPDATE homeroom_bot_runs SET live_build_waiting_at = NULL WHERE id = $1', [runId]).catch(() => {});
   if (drafted.skipped) {
     await recordLiveBuild(pool, runId, drafted, model);
@@ -7491,8 +7620,9 @@ async function planBeforeBuilding({
     ...(drafted.specVersion ? { spec: { sessionId: Number(drafted.sessionId), version: Number(drafted.specVersion) } } : {}),
   };
   // Once: a plan another drafting of this run already put to its requester
-  // stays the one they are asked about (turnly #6 was asked about two).
-  const { rowCount } = await pool.query(
+  // stays the one they are asked about (turnly #6 was asked about two). A
+  // step: this drafting, run again after a restart, keeps the answer it had.
+  const { rowCount } = await planSteps.once('plan_recorded', async () => ({ rowCount: (await pool.query(
     `UPDATE homeroom_bot_runs
         SET live_build_waiting_at = NULL, awaiting_go_at = NOW(), plan = $2::jsonb, plan_send_attempts = 0, plan_unsent_at = NULL,
             build_spec_md = $3, build_cost_usd = $4, build_model = COALESCE($5, build_model)
@@ -7500,29 +7630,39 @@ async function planBeforeBuilding({
         AND awaiting_go_at IS NULL`,
     [runId, JSON.stringify(shown), drafted.specMd, Number.isFinite(drafted.costUsd) ? drafted.costUsd : null, specModel || model || null],
   ).catch((err) => {
+    durableSteps.rethrowStop(err, 'plan recorded');
     log.warn('homeroom-bot', 'Could not record a complicated change\'s plan', { app: app.slug, issueNumber, runId, err: err.message });
     return { rowCount: 0 };
-  });
+  })).rowCount }));
   if (!rowCount) return 'already_built';
   if (shown.spec) await live.shareSpecVersion(pool, shown.spec.sessionId, shown.spec.version).catch(() => {});
   // Their DM first, so the request's post does not ring them twice.
   const dmSvc = deps.dm || require('./homeroom-bot-dm');
-  let sent = null;
-  try {
-    sent = await dmSvc.sendPlanCard(pool, { app, issueNumber, runId, plan: shown, bot, ws: ws || null });
-  } catch (err) {
-    log.warn('homeroom-bot', 'Could not send a complicated change\'s plan to its requester (it waits on the request)', {
-      app: app.slug, issueNumber, runId, err: err.message,
-    });
-  }
-  await pool.query(
-    'UPDATE homeroom_bot_runs SET plan_send_attempts = 1, plan_unsent_at = $2 WHERE id = $1',
-    [runId, sent?.messageId || sent?.stop ? null : new Date()],
-  ).catch(() => {});
-  const told = sent?.messageId ? await dmSvc.requesterOf(pool, app.id, issueNumber).catch(() => null) : null;
-  await say('plan', live.planCommentText({ spec: drafted.specMd, questions }), {
+  const sent = await planSteps.once('plan_card', async () => {
+    let out = null;
+    try {
+      out = await dmSvc.sendPlanCard(pool, { app, issueNumber, runId, plan: shown, bot, ws: ws || null });
+    } catch (err) {
+      durableSteps.rethrowStop(err, 'plan card');
+      log.warn('homeroom-bot', 'Could not send a complicated change\'s plan to its requester (it waits on the request)', {
+        app: app.slug, issueNumber, runId, err: err.message,
+      });
+    }
+    await pool.query(
+      'UPDATE homeroom_bot_runs SET plan_send_attempts = 1, plan_unsent_at = $2 WHERE id = $1',
+      [runId, out?.messageId || out?.stop ? null : new Date()],
+    ).catch(() => {});
+    return { messageId: out?.messageId ?? null, stop: out?.stop ?? null };
+  });
+  const asker = await Promise.resolve().then(() => dmSvc.requesterOf(pool, app.id, issueNumber)).catch(() => null);
+  const told = sent?.messageId ? asker : null;
+  // Said once per run (a restart after it does not say it again).
+  if (!(await runPosted(pool, runId, 'plan'))) await say('plan', live.planCommentText({ spec: drafted.specMd, questions }), {
     threadMessage: shown.spec
-      ? live.specCard({ sessionId: shown.spec.sessionId, version: shown.spec.version, spec: drafted.specMd, bot, asking: true })
+      ? live.specCard({
+        sessionId: shown.spec.sessionId, version: shown.spec.version, spec: drafted.specMd, bot, asking: true,
+        requester: asker?.username || null,
+      })
       : null,
     ...(told?.username ? { untag: told.username } : {}),
   });
@@ -7590,8 +7730,16 @@ async function buildItOnRequest(pool, { appId, issueNumber, requester, deps = {}
  * any ready verdict's does. Once: a plan already built, replaced or stopped
  * is `gone`. Resolves { ok: true,
  * appId, issueNumber, chosen } or { ok: false, why }.
+ *
+ * Newcomer run seven (14 Oct 2026): `planShown` false when its maker went
+ * ahead without being shown the bullets (the made screen's Submit, or a
+ * plan decided before it was sent: homeroom-bot-dm.js buildFromAnswers).
+ * The bullets are then written as the plan's own lines and only the answers
+ * as theirs (creatorChoiceNote), and the plan keeps `planShown: false` next
+ * to `chosen`, so a run a restart sent back writes the same note
+ * (carryApprovedPlan).
  */
-async function goAhead(pool, { runId, answers = [] }) {
+async function goAhead(pool, { runId, answers = [], planShown = true }) {
   const { rows: [run] } = await pool.query(
     `SELECT plan FROM homeroom_bot_runs
       WHERE id = $1 AND awaiting_go_at IS NOT NULL AND build_ok IS NULL AND build_session_id IS NULL`,
@@ -7599,19 +7747,37 @@ async function goAhead(pool, { runId, answers = [] }) {
   );
   if (!run) return { ok: false, why: 'gone' };
   const chosen = choicesFrom(run.plan?.questions, answers);
-  const note = creatorChoiceNote(chosen, { bullets: run.plan?.bullets, requester: run.plan?.complicated === true });
+  const requester = run.plan?.complicated === true;
+  // A complicated change's plan is only ever gone ahead with by its
+  // requester's own Build it, under the plan they were shown.
+  const shown = planShown !== false || requester;
+  const note = creatorChoiceNote(chosen, { bullets: run.plan?.bullets, requester, planShown: shown });
+  // `go_ahead_at` keeps when, after live_build_waiting_at is cleared (the
+  // build's start): how long the build waited for its slot (buildLive).
   const { rows: [went] } = await pool.query(
     `UPDATE homeroom_bot_runs
-        SET awaiting_go_at = NULL, live_build_waiting_at = NOW(), build_note = CONCAT(build_note, $2::text),
-            plan = COALESCE(plan, '{}'::jsonb) || jsonb_build_object('chosen', $3::jsonb)
+        SET awaiting_go_at = NULL, live_build_waiting_at = NOW(), go_ahead_at = NOW(),
+            build_note = CONCAT(build_note, $2::text),
+            plan = COALESCE(plan, '{}'::jsonb) || jsonb_build_object('chosen', $3::jsonb) || $4::jsonb
       WHERE id = $1 AND awaiting_go_at IS NOT NULL AND build_ok IS NULL AND build_session_id IS NULL
       RETURNING app_id, issue_number`,
-    [runId, note, JSON.stringify(chosen)],
+    [runId, note, JSON.stringify(chosen), JSON.stringify(shown ? {} : { planShown: false })],
   );
   if (!went) return { ok: false, why: 'gone' };
+  void timeline.record(pool, { runId, stage: 'go_ahead', detail: { answers: chosen.length } });
+  // The tap is served by whichever Pod the person reached, and only the
+  // leader runs the loop that starts the build: the local wake does nothing
+  // anywhere else, and the build waited for the leader's next idle pass (up
+  // to IDLE_PASS_DELAY_MS; 43 s in run four, 13 Oct 2026). The bus wake
+  // reaches the leader, as an issue event's does (noteIssueActivity).
+  // Run five (13 Oct 2026): the wake only queued a pass, and a pass started
+  // builds after its refresh (46 s from Submit to the spec). The build is
+  // started on its own wake now, on the leader, even while a pass runs.
   wake({ appId: Number(went.app_id) });
+  wakeLiveBuilds();
+  publishWake({ appId: Number(went.app_id), buildRunId: Number(runId) });
   log.info('homeroom-bot', 'Build it: a first version\'s plan goes ahead', {
-    appId: Number(went.app_id), issueNumber: Number(went.issue_number), runId, choices: chosen.length,
+    appId: Number(went.app_id), issueNumber: Number(went.issue_number), runId, choices: chosen.length, planShown: shown,
   });
   return { ok: true, appId: Number(went.app_id), issueNumber: Number(went.issue_number), chosen };
 }
@@ -7637,6 +7803,7 @@ async function retireWaitingPlans(pool, { appId, issueNumber = null, issues = nu
     ));
     if (rows.length) await (deps.dm || require('./homeroom-bot-dm')).closePlanCards(pool, rows.map((r) => Number(r.id)));
   } catch (err) {
+    if (deps.strict) throw err;
     log.warn('homeroom-bot', 'Could not end a waiting plan', { appId, issueNumber, err: err.message });
   }
   return rows.map((r) => Number(r.id));
@@ -7736,6 +7903,30 @@ async function botBudgetStop(pool, bot, deps = {}, { spentUsd = 0 } = {}) {
 }
 
 /**
+ * A live build's claim on its run (buildLive's `onSession`): its session
+ * linked and its wait over (live_build_waiting_at cleared), only when no
+ * other build has the run and no outcome is in.
+ * Resolves { claimed, waitedMs }: how long after it went ahead
+ * (go_ahead_at, which the claim leaves) it took its slot, or null when that
+ * is not known.
+ */
+async function claimLiveBuild(pool, { runId, sessionId }) {
+  const { rows } = await pool.query(
+    `UPDATE homeroom_bot_runs SET build_session_id = $2, live_build_waiting_at = NULL
+      WHERE id = $1
+        -- Its own link again: a restart between the link and the build's
+        -- saving its claim step runs the claim twice.
+        AND (build_session_id IS NULL OR build_session_id = $2)
+        AND build_ok IS NULL AND proposal_session_id IS NULL
+      RETURNING id, ROUND(EXTRACT(EPOCH FROM (NOW() - go_ahead_at)) * 1000)::bigint AS waited_ms`,
+    [runId, sessionId],
+  );
+  if (!rows.length) return { claimed: false, waitedMs: null };
+  const waited = rows[0].waited_ms;
+  return { claimed: true, waitedMs: waited == null ? null : Math.max(0, Number(waited)) };
+}
+
+/**
  * Build a live 'ready' verdict and say what came of it on the issue: the
  * spec as it is written, then the proposal, the request found impossible,
  * or the build that did not finish. What actOnVerdict did inline until the
@@ -7752,6 +7943,9 @@ async function buildLive({
   complicated = false, plan = null, presetSpecHtml = null,
 }) {
   const { github, ws } = deps;
+  // The build's durable steps (services/durable-steps.js): run again after
+  // a restart, this goes on from the last one it finished.
+  const steps = durableSteps.of(deps);
   // A project's first version is built by the CURRENT CONFIGURATION
   // (services/bot-configs.js): its spec and build models, its pack's
   // guidance, and its reviewer (services/bot-review.js); its side
@@ -7759,8 +7953,10 @@ async function buildLive({
   // change is built by the `later` scope's current version the same way,
   // with no review and no capture; with none (or one the catalog cannot
   // run, or a lookup that fails: laterVersion) it keeps the per-stage
-  // settings it was handed, exactly as before.
-  const version = firstVersion ? await botConfigs().currentVersion(pool) : await botConfigs().laterVersion(pool);
+  // settings it was handed, exactly as before. Chosen once: a restart does
+  // not move a build onto a configuration promoted since it started.
+  const version = await steps.once('version', async () => (firstVersion
+    ? botConfigs().currentVersion(pool) : botConfigs().laterVersion(pool)));
   const recipe = version ? version.recipe : null;
   const model = recipe ? recipe.models.build : stageBuildModel;
   const specModel = recipe ? recipe.models.spec : stageSpecModel;
@@ -7787,10 +7983,24 @@ async function buildLive({
   // its requester approved (#4488) was posted when they were asked.
   const onSpec = async ({ sessionId, version, specMd }) => {
     if (version) await live.shareSpecVersion(pool, sessionId, version);
-    await say('spec', live.specCommentText(specMd, { approved: checkFirst }), {
-      threadMessage: version ? live.specCard({ sessionId, version, spec: specMd, bot, approved: checkFirst }) : null,
-      dm: { building: true },
-    });
+    // Said once per run: a build asked for again from its kept plan (a build
+    // from before builds were durable: requeueLegacyBuilds) has it on the
+    // issue already.
+    if (await runPosted(pool, runId, 'spec')) {
+      log.info('homeroom-bot', 'The plan was said before a restart; not saying it again', { app: app.slug, issueNumber, runId, sessionId });
+    } else {
+      // #4488: a plan its requester said Build it to is on the request
+      // already: a short note says so, and no second card.
+      const asker = checkFirst
+        ? await require('./homeroom-bot-dm').requesterOf(pool, app.id, issueNumber).catch(() => null)
+        : null;
+      await say('spec', live.specCommentText(specMd, { approved: checkFirst }), {
+        threadMessage: version && !checkFirst ? live.specCard({ sessionId, version, spec: specMd, bot }) : null,
+        ...(checkFirst ? { homeroomText: live.approvedBuildHomeroomText({ requester: asker?.username || null }) } : {}),
+        // The plan in a line, for the quiet line in the request's thread.
+        dm: { building: true, plan: live.specTitle(specMd) || null },
+      });
+    }
     // WP1 (#2): what the run has seen moves past its own plan comment now,
     // not only once the build is announced. The request is held while it is
     // built (classifyIssue), but a build can end without that last step (it
@@ -7802,26 +8012,24 @@ async function buildLive({
       since: seedReadAt, postedAt,
     }).catch((err) => log.warn('homeroom-bot', 'Could not record what the bot has seen', { err: err.message }));
   };
-  // Under way in this process: the sweep for live builds nothing finished
-  // (settleAbandonedLiveBuilds) leaves it alone whatever its age.
-  liveBuildsInFlight.add(runId);
   let built;
   let buildMs = null;
-  try {
+  {
     // A first version made from a game starter builds on it (starterOfApp),
     // and so do its side builds, which replay this snapshot.
     const starter = firstVersion ? await starterOfApp(pool, app.id).catch(() => null) : null;
-    const snapshotId = await recordBuildSnapshot(pool, {
+    const snapshotId = await steps.once('snapshot', () => recordBuildSnapshot(pool, {
       runId, app, repo, issueNumber, seed, buildNote: parsed.buildNote, github,
       firstVersion, platformRepo: isPlatformRepo(app, config), model, specModel, starter,
-    });
+    }));
     // The side builds, queued on the App bench lane before the live build
     // starts, from the same request, plan and commit (the snapshot above).
+    // Once: each is a trial of its own.
     const sides = version
-      ? await botConfigs().spawnSideBuilds(pool, config, {
+      ? await steps.once('side_builds', () => botConfigs().spawnSideBuilds(pool, config, {
         botRunId: runId, app, snapshotId, current: version,
         ...(firstVersion ? {} : { scope: 'later', skipReason: laterSideSkipReason(settings, app, config) }),
-      })
+      }))
       : null;
     const reviewing = firstVersion && version && botConfigs().reviews(recipe);
     // A first version's first build is captured whenever something is
@@ -7833,12 +8041,15 @@ async function buildLive({
       onState: (state) => recordReviewState(pool, runId, state),
       budgetCheck: ({ spentUsd } = {}) => botBudgetStop(pool, bot, deps, { spentUsd }),
     } : checkFirst ? await complicatedReview(pool, { runId, bot, deps }) : null;
-    const buildStartedMs = Date.now();
+    const buildStartedMs = Number(await steps.once('build_started_at', async () => Date.now())) || Date.now();
+    // How many times a build of this run took its slot: a first version that
+    // did not finish is tried once more (below), and claims it again.
+    let claims = 0;
     // #4645: the requester's language preference, for the prompts' wording
     // rule (localeRule); unset, everything the group reads stays English.
     const requester = await (deps.dm || require('./homeroom-bot-dm'))
       .requesterOf(pool, app.id, issueNumber).catch(() => null);
-    built = await live.buildAndPropose({
+    const buildArgs = {
       pool, config, bot, app, repo, issueNumber, issue, seed, buildNote: parsed.buildNote,
       ...buildBudgets(app, config, turnBudgetMs, { firstVersion }), model, specModel, deps, onSpec, proposalCeiling,
       platformRepo: isPlatformRepo(app, config), presetSpec,
@@ -7846,23 +8057,54 @@ async function buildLive({
       // #3737: a first version's spec and build decide and record its look;
       // made from a game starter, they build on it.
       firstVersion, starter,
+      // Newcomer run six (14 Oct 2026): and its spec starts its main screen
+      // from the early first look its maker has been shown, when that was
+      // drawn from the plan it is built from (first-version-early-look.js).
+      ...(firstVersion ? {
+        earlyLook: () => firstVersionEarlyLook().forSpec(pool, { appId: app.id, buildNote: parsed.buildNote }),
+      } : {}),
       // WP1 (#2): asked once the plan is written and again just before it is
       // proposed (whyNotBuild).
       skipCheck: () => whyNotBuild(pool, { runId, botId: bot.id, appId: app.id, issueNumber, github, repo }),
+      // Newcomer run nine (15 Oct 2026): a first version filed while its
+      // project was set up stops at the same steps when that setup failed,
+      // and waits for the project to run before it is proposed.
+      ...(firstVersion ? { setupCheck: setupCheckFor(pool, app.id) } : {}),
       // Linked before any turn runs, so a restart mid-build can find the run
       // (#3471): the build's worker outlives the restart; this process does
       // not. From here restart recovery owns it, so it is no longer waiting.
       // And only once: the link is the build's claim on its run, and a run
       // another build already linked (or whose outcome is in) refuses it, so
       // a second build of one run stops before its plan (LOST_CLAIM).
+      // Run five (13 Oct 2026): and says how long the build waited for its
+      // slot since it went ahead (`waitedMs`, from go_ahead_at, which the
+      // claim leaves; live_build_waiting_at is the one it clears).
       onSession: async (session) => {
-        const { rows } = await pool.query(
-          `UPDATE homeroom_bot_runs SET build_session_id = $2, live_build_waiting_at = NULL WHERE id = $1
-              AND build_session_id IS NULL AND build_ok IS NULL AND proposal_session_id IS NULL
-            RETURNING id`,
-          [runId, session.id],
-        );
-        return rows.length ? null : LOST_CLAIM;
+        const claim = await claimLiveBuild(pool, { runId, sessionId: session.id });
+        if (!claim.claimed) return LOST_CLAIM;
+        claims += 1;
+        const { waitedMs } = claim;
+        log.info('homeroom-bot', 'A live build took its slot', {
+          app: app.slug, issueNumber, runId, sessionId: session.id, waitedMs, attempt: claims,
+        });
+        if (firstVersion) {
+          void timeline.record(pool, {
+            runId, stage: 'picked_up', sessionId: session.id,
+            detail: { ...(waitedMs != null ? { waitedMs } : {}), attempt: claims },
+          });
+        }
+        return null;
+      },
+      onStep: (name, data) => {
+        // A first version's step boundaries that are stages of its timeline
+        // (first-version-timeline.js STAGE_OF_STEP), as the build reaches them.
+        if (firstVersion) {
+          void timeline.recordStep(pool, {
+            runId, step: name, sessionId: data.sessionId,
+            detail: name === 'landed' ? { partial: !!data.landed?.partial }
+              : name === 'proposed' && data.prNumber ? { prNumber: Number(data.prNumber) } : null,
+          });
+        }
       },
       origin: { lane: 'live', runId },
       onNoChange: (noChange) => keepNoChange(pool, runId, noChange),
@@ -7877,12 +8119,30 @@ async function buildLive({
         const liveWatch = firstVersionLive().liveController({
           pool, runId, appId: app.id, worker: deps.worker || require('./worker'),
         });
+        // 13 Oct 2026: the main screen the spec saved first is drawn as the
+        // first look at once, while the spec goes on; the spec's own figure
+        // is drawn once it is in only when that did not happen.
+        let drewEarly = false;
         return {
           onProgress: (line) => { caption(line); liveWatch.onProgress(line); },
           onBuildTurn: (turn) => liveWatch.onBuildTurn(turn),
-          onFirstLook: ({ specHtml, containerName }) => firstVersionScreens().renderFirstLook({
+          onScreen: ({ n, markup, containerName }) => {
+            if (Number(n) !== 1) return;
+            void firstVersionScreens().renderSavedFirstLook({
+              pool, worker: deps.worker || require('./worker'), containerName, runId, markup,
+            }).then((drawn) => {
+              if (!drawn) return;
+              drewEarly = true;
+              log.info('homeroom-bot', 'A first version\'s first look is drawn from its saved main screen', { app: app.slug, runId });
+              void timeline.record(pool, { runId, stage: 'first_look_saved', detail: { from: 'saved_screen' } });
+            });
+          },
+          onFirstLook: ({ specHtml, containerName }) => (drewEarly ? false : firstVersionScreens().renderFirstLook({
             pool, worker: deps.worker || require('./worker'), containerName, runId, specHtml,
-          }),
+          }).then((drawn) => {
+            if (drawn) void timeline.record(pool, { runId, stage: 'first_look_saved', detail: { from: 'spec' } });
+            return drawn;
+          })),
         };
       })() : {}),
       ...(version ? {
@@ -7890,6 +8150,8 @@ async function buildLive({
         review,
         specGuidance: guidance?.spec || null,
         buildGuidance: guidance?.build || null,
+        // Build speed: the configuration's tweaks, a first version's only.
+        ...(firstVersion ? { tweaks: botConfigs().tweaksOf(recipe) } : {}),
       } : {}),
       // #4662: a kept plan's screens ride along whatever the build: a
       // recovered build publishes its plan whole, as a fresh one does.
@@ -7897,10 +8159,45 @@ async function buildLive({
       // #4488: a complicated change's review, whatever builds later changes;
       // and its description says it was checked first.
       ...(checkFirst ? { review, checkedFirst: !!presetSpec } : {}),
-    });
+      // A first version's build turn that does not finish keeps its work.
+      ...(firstVersion ? { keepPartial: true } : {}),
+    };
+    // A first version that did not finish is tried once more on its own,
+    // from the plan it wrote and its creator approved: no new read, plan
+    // card, Build it or spec turn. Once per first version.
+    let first = null;
+    for (;;) {
+      // Each try is a step of its own, its own steps scoped under it, so a
+      // restart in the second try does not run the first again.
+      const tryKey = first ? 'retry' : 'try';
+      const tryArgs = first ? {
+        ...buildArgs, presetSpec: first.specMd, onSpec: null,
+        // Its first look was drawn by the first try.
+        onFirstLook: null, onScreen: null,
+      } : buildArgs;
+      built = await steps.once(tryKey, () => live.buildAndPropose({
+        ...tryArgs, deps: { ...tryArgs.deps, durable: steps.scope(tryKey) },
+      }));
+      if (first) {
+        built.retried = { error: first.error, sessionId: first.sessionId || null };
+        if (Number(first.costUsd) > 0) built.costUsd = (Number(built.costUsd) || 0) + Number(first.costUsd);
+        break;
+      }
+      if (!firstVersion || !autoRetryable(built)
+          || !await steps.once('retry_claim', () => claimAutoRetry(pool, { runId, appId: app.id, issueNumber, built }))) break;
+      first = built;
+      log.warn('homeroom-bot', 'A first version did not finish; trying once more from its plan', {
+        app: app.slug, issueNumber, runId, sessionId: first.sessionId || null, error: first.error,
+      });
+      await steps.once('retry_said', () => say('spec', live.retryCommentText(), { dm: { building: true, retry: true } })
+        .then(() => true)
+        .catch((err) => {
+          durableSteps.rethrowStop(err, 'retry note');
+          log.warn('homeroom-bot', 'Could not say the first version is tried once more', { runId, err: err.message });
+          return false;
+        }));
+    }
     buildMs = Date.now() - buildStartedMs;
-  } finally {
-    liveBuildsInFlight.delete(runId);
   }
   // Its run refused the link (onSession): another build of it has it, and
   // records the run, settles its side builds and says what came of it, or
@@ -7916,7 +8213,10 @@ async function buildLive({
   // #4387: and, once it is reviewed, up to three of its real screens, from
   // the review's last capture, for its App tab from "Testing it".
   if (firstVersion && built?.review?.finalCapture) {
-    await firstVersionScreens().keepRealScreens(pool, runId, built.review.finalCapture);
+    await steps.once('real_screens', async () => {
+      await firstVersionScreens().keepRealScreens(pool, runId, built.review.finalCapture);
+      return true;
+    });
   }
   if (built.specMd) {
     await pool.query('UPDATE homeroom_bot_runs SET build_spec_md = $2 WHERE id = $1', [runId, built.specMd])
@@ -7925,26 +8225,32 @@ async function buildLive({
   if (built.costUsd > 0) {
     try {
       if (await deps.managedOpenRouter.usesIncludedKey(pool, bot.id)) {
-        await deps.limits.recordSpend(pool, bot.id, Math.round(built.costUsd * 1e6) / 1e4, { byok: false });
+        await debitBuildOnce(steps, 'debited', built.costUsd,
+          (usd) => deps.limits.recordSpend(pool, bot.id, Math.round(usd * 1e6) / 1e4, { byok: false }));
       }
     } catch (err) {
+      durableSteps.rethrowStop(err, 'debit');
       log.warn('homeroom-bot', 'Build spend debit failed', { err: err.message });
     }
   }
   // A build from a kept plan records what the plan cost beside its own. The
-  // plan was debited when recovery finished it (debitRecovered), so it is
-  // added only after this build's own debit.
+  // plan was debited when it was written, so it is added only after this
+  // build's own debit.
   if (carriedCostUsd > 0) built.costUsd = (Number(built.costUsd) || 0) + carriedCostUsd;
   // What the current configuration made of it, and what its round-0
   // snapshot says for a side configuration with no reviewer; then the pairs.
   // A later change stopped before it was proposed (its request merged or
   // closed) says nothing about its configuration: its side builds are
   // stopped instead.
-  if (version && built.skipped && !firstVersion) {
-    await botConfigs().abandonSideBuilds(pool, runId, `stopped before it was proposed (${clip(built.skipped, 120)})`);
-  } else if (version) {
-    await botConfigs().finishLive(pool, { botRunId: runId, version, built, activeMs: buildMs, carriedUsd: carriedCostUsd });
-  }
+  await steps.once('configs', async () => {
+    if (version && built.skipped && !firstVersion) {
+      await botConfigs().abandonSideBuilds(pool, runId, `stopped before it was proposed (${clip(built.skipped, 120)})`);
+    } else if (version) {
+      await botConfigs().finishLive(pool, { botRunId: runId, version, built, activeMs: buildMs, carriedUsd: carriedCostUsd });
+    }
+    return true;
+  });
+  steps.fence();
   let acted;
   if (built.skipped) {
     // WP1 (#2): stopped, not failed, and nothing said: a proposal of the
@@ -7957,7 +8263,11 @@ async function buildLive({
     });
     acted = 'skipped';
   } else {
-    acted = await announceBuilt({ pool, ws, app, bot, issueNumber, runId, built, say, domain: deps.domain });
+    // Once: a restart after it was said does not say it again (and each post
+    // is also guarded on the posts table: runPosted).
+    acted = await steps.once('announced', () => announceBuilt({
+      pool, ws, app, bot, issueNumber, runId, built, say, domain: deps.domain, firstVersion,
+    }));
   }
   await pool.query('UPDATE homeroom_bot_runs SET live_build_waiting_at = NULL WHERE id = $1', [runId]).catch(() => {});
   await live.advanceSeen({
@@ -8178,6 +8488,98 @@ function heldForFirstVersion(holds, { appId, issueNumber, firstVersion = false, 
 }
 
 /**
+ * Newcomer run nine (15 Oct 2026): the projects among `appIds` whose first
+ * version the bot builds is filed and not read yet, which runOnce refreshes
+ * and starts the read of before anything else in its pass.
+ */
+async function firstVersionsToRead(pool, appIds = []) {
+  const ids = [...new Set((Array.isArray(appIds) ? appIds : [])
+    .map(Number).filter((n) => Number.isInteger(n) && n > 0))];
+  if (!ids.length) return [];
+  const { rows } = await pool.query(
+    `SELECT fv.app_id
+       FROM homeroom_bot_first_versions fv
+      WHERE fv.app_id = ANY($1::int[]) AND fv.bot_builds AND fv.status = 'filed' AND fv.issue_number IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM homeroom_bot_runs r
+           WHERE r.app_id = fv.app_id AND r.issue_number = fv.issue_number)`,
+    [ids],
+  );
+  return rows.map((r) => Number(r.app_id));
+}
+
+// ── A first version filed while its project is set up ───────────────────
+//
+// Newcomer run nine (15 Oct 2026): a first version is filed once its
+// repository holds the starter (homeroom-bot-dm.js FILEABLE_SQL), while the
+// starter is still built and deployed, so its plan, spec and build start
+// without waiting for the project to run. They need only the repository and
+// the build's own worker (its review's captures run the app in that worker
+// on a database of its own). What does need the project is its proposal:
+// the proposal's preview copies the project's database, and its merge
+// deploys over the project's container. So a first version's build waits for
+// its project to run before it is proposed, and stops, as a build that did
+// not finish does (announceBuilt), when the project's setup failed: before
+// it starts (buildOne), at its steps (homeroom-bot-live.js buildAndPropose
+// `setupCheck`), and before it is proposed.
+
+// The reasons a first version stops for its project's setup, as the run
+// records them; their words are a build's that could not start, did not
+// finish, or was built and not put live (homeroom-bot-dm.js
+// buildFailedCause), so nothing new is said.
+const SETUP_FAILED_BEFORE = 'the build could not start (its project could not be set up)';
+const SETUP_FAILED_DURING = 'its project could not be set up, so the build was stopped';
+const SETUP_NOT_PROPOSED = 'the change was built but could not be proposed: its project was still being set up';
+// How long a built first version waits for its project to run before it is
+// proposed, and how often it looks. A project is 'creating' for a minute or
+// so, and the creation watchdog fails one that takes ten
+// (app-creation-owner.js), long before a build ends.
+const SETUP_WAIT_MS = 15 * 60 * 1000;
+const SETUP_POLL_MS = 5 * 1000;
+
+/**
+ * Why a first version on `appId` stops for its project's setup, or null to
+ * go on: 'failed' when its creation failed (or it is gone), 'timeout' when
+ * it was still being set up for all of `waitMs`. Without `wait` a project
+ * still being set up is no reason; with it, it is waited for. A project
+ * running, or in any other state (awaiting its secrets, say), is set up as
+ * far as its first version is concerned: what such a project does to a
+ * proposal is what it always did. `fence` (a durable build's) is called
+ * between looks, so a build this process no longer holds stops waiting.
+ * Throws what the read throws.
+ */
+async function projectSetUpStop(pool, appId, {
+  wait = false, waitMs = SETUP_WAIT_MS, pollMs = SETUP_POLL_MS, fence = null, sleep = null, now = Date.now,
+} = {}) {
+  const until = now() + waitMs;
+  for (;;) {
+    if (typeof fence === 'function') fence();
+    // eslint-disable-next-line no-await-in-loop
+    const { rows: [app] = [] } = await pool.query('SELECT status FROM apps WHERE id = $1', [appId]);
+    if (!app || app.status === 'error' || app.status === 'deleted') return 'failed';
+    if (app.status !== 'creating' || !wait) return null;
+    if (now() + pollMs > until) return 'timeout';
+    // eslint-disable-next-line no-await-in-loop
+    await (sleep ? sleep(pollMs) : new Promise((resolve) => { setTimeout(resolve, pollMs); }));
+  }
+}
+
+/**
+ * A first version's `setupCheck` for buildAndPropose: resolves null to go
+ * on, or what the build comes to: `{ error }` (stopped), or `{ error,
+ * notProposed }` (built, and its session left for a person to propose, as a
+ * proposal refused is). `waiting` is projectSetUpStop's clock, for a test.
+ */
+function setupCheckFor(pool, appId, waiting = {}) {
+  return async ({ wait = false, fence = null } = {}) => {
+    const stop = await projectSetUpStop(pool, appId, { ...waiting, wait, fence });
+    if (stop === 'timeout') return { error: SETUP_NOT_PROPOSED, notProposed: true };
+    if (stop === 'failed') return { error: SETUP_FAILED_DURING };
+    return null;
+  };
+}
+
+/**
  * The live queue's heads, in priority order, with who each one is for.
  * Nothing on an app in `excludeAppIds` (backed off); on an app in
  * `busyAppIds` (its session taken), only follow-ups. A follow-up (#3703),
@@ -8186,8 +8588,11 @@ function heldForFirstVersion(holds, { appId, issueNumber, firstVersion = false, 
  * that proposal's discussion, and it is one turn on the proposal's own
  * session.
  */
+// `firstVersionsOnly` (15 Oct 2026): only a project's first version's own
+// request, for the read runOnce starts before its full refresh and sweeps.
 async function liveCandidates(pool, {
   scope: given = null, liveSlugs = [], excludeAppIds, pausedApps, busyAppIds = [], botId = null, limit = 200, excludeFollowUps = [],
+  firstVersionsOnly = false,
 }) {
   // A scope from live.liveScope; a bare list of slugs is just those apps.
   const scope = given || { all: false, slugs: liveSlugs, except: [] };
@@ -8255,10 +8660,14 @@ async function liveCandidates(pool, {
                OR (fu.id IS NOT NULL AND m.thread_type = 'session' AND m.thread_ref = fu.id))
              AND m.created_at > NOW() - make_interval(secs => $11)
         )
+        AND (NOT $12::boolean OR EXISTS (
+          SELECT 1 FROM homeroom_bot_first_versions fvo
+           WHERE fvo.app_id = q.app_id AND fvo.issue_number = q.issue_number AND fvo.bot_builds
+        ))
       ORDER BY (q.priority = 0) DESC, (fu.id IS NOT NULL) DESC, q.priority, q.enqueued_at
       LIMIT $4`,
     [scope.slugs, excludeAppIds, pausedApps, limit, busyAppIds, botId, excludeFollowUps, ABANDONED_LIVE_WINDOW_DAYS,
-      scope.all, scope.except, SETTLE_MS / 1000],
+      scope.all, scope.except, SETTLE_MS / 1000, !!firstVersionsOnly],
   );
   return rows;
 }
@@ -8451,21 +8860,8 @@ async function whyNotBuild(pool, { runId, botId, appId, issueNumber, github = nu
  * as failed and said, so it is never started again in a loop.
  */
 async function buildOne(pool, config, { bot, app, run, settings, deps = {} }) {
-  const github = deps.github || require('./github');
-  const sessions = deps.sessions || require('../routes/sessions');
-  const threadContext = deps.threadContext || require('./thread-context');
-  const buildDeps = {
-    github,
-    worker: deps.worker || require('./worker'),
-    agentTurn: deps.agentTurn || require('./agent-turn'),
-    limits: deps.limits || require('./limits'),
-    threadContext,
-    managedOpenRouter: deps.managedOpenRouter || require('./openrouter-managed-keys'),
-    sessions,
-    activeWorkers: deps.activeWorkers || require('./active-workers').activeWorkers,
-    ...(deps.notifications ? { notifications: deps.notifications } : {}),
-    ...liveDeps(deps),
-  };
+  const buildDeps = liveBuildDeps(deps);
+  const { github, sessions, threadContext } = buildDeps;
   const issueNumber = Number(run.issue_number);
   const repo = parseRepo(app.repo_url);
   if (!repo || !github.isEnabled()) return { ran: false, reason: 'infra', detail: 'github_unavailable' };
@@ -8512,6 +8908,30 @@ async function buildOne(pool, config, { bot, app, run, settings, deps = {} }) {
   }
   const dm = deps.dm || require('./homeroom-bot-dm');
   const requester = await dm.requesterOf(pool, app.id, issueNumber).catch(() => null);
+  // Newcomer run nine (15 Oct 2026): a first version filed while its project
+  // was set up is not started once that setup failed. It ends as a build
+  // that could not start does (below), and nothing of it runs.
+  if (requester?.firstVersion) {
+    const stop = await projectSetUpStop(pool, app.id).catch((err) => {
+      log.warn('homeroom-bot', 'Could not read whether a first version\'s project is set up (building it)', {
+        app: app.slug, issueNumber, err: err.message,
+      });
+      return null;
+    });
+    if (stop) {
+      log.warn('homeroom-bot', 'First version not built: its project could not be set up', { app: app.slug, issueNumber, runId: run.id });
+      const say = liveSayer({
+        pool, github, ws: buildDeps.ws, app, repo, issueNumber, issue, runId: Number(run.id), bot,
+        botLogin: await live.botUsernameOf(github).catch(() => null), notifications: deps.notifications || null,
+      });
+      await announceBuilt({
+        pool, ws: buildDeps.ws, app, bot, issueNumber, runId: Number(run.id), say, domain: buildDeps.domain,
+        firstVersion: true, built: { ok: false, error: SETUP_FAILED_BEFORE, setupFailed: true },
+      }).catch(() => {});
+      await pool.query('UPDATE homeroom_bot_runs SET live_build_waiting_at = NULL WHERE id = $1', [run.id]).catch(() => {});
+      return { ran: true, verdict: 'ready', runId: Number(run.id), acted: 'build_failed' };
+    }
+  }
   const seedReadAt = new Date().toISOString();
   const [{ comments = [] } = {}, thread, botLogin] = await Promise.all([
     github.fetchIssueComments(repo.owner, repo.repo, issueNumber).catch(() => ({ comments: [] })),
@@ -8526,8 +8946,9 @@ async function buildOne(pool, config, { bot, app, run, settings, deps = {} }) {
     seed, seedReadAt, postedAt: [], turnBudgetMs, botLogin,
     model: stageModel(settings, config, 'build'), specModel: stageModel(settings, config, 'spec'),
     proposalCeiling: botProposalCeiling(settings), firstVersion: !!requester?.firstVersion, settings, deps: buildDeps,
-    // The plan of a build a restart interrupted, kept by recovery
-    // (resumeLiveBuildFromSpec), and what writing it cost.
+    // The plan a build kept on its run (one from before builds were
+    // durable, asked for again: requeueLegacyBuilds), and what writing it
+    // cost.
     presetSpec: run.build_spec_md || null,
     carriedCostUsd: run.build_spec_md ? Number(run.build_cost_usd) || 0 : 0,
     // #4488: a complicated change, planned with its requester first; once
@@ -8542,13 +8963,33 @@ async function buildOne(pool, config, { bot, app, run, settings, deps = {} }) {
       ? ((run.complicated === true ? await approvedSpecHtml(pool, run.plan) : null) || run.build_spec_html || null)
       : null,
   };
+  // How long it waited its turn since its go-ahead (a ready verdict, or
+  // Build it under a plan): live_build_waiting_at is cleared once the build
+  // links its session, so the time is kept here (run five, 13 Oct 2026).
+  const waitingSince = run.live_build_waiting_at ? new Date(run.live_build_waiting_at).getTime() : NaN;
   log.info('homeroom-bot', 'Live build started', {
     app: app.slug, issueNumber, runId: run.id, ...(run.build_spec_md ? { fromKeptPlan: true } : {}),
+    waitedMs: Number.isFinite(waitingSince) ? Math.max(0, Date.now() - waitingSince) : null,
   });
   try {
-    const acted = await buildLive(args);
+    // A durable build on the workflow kernel (services/build-runs.js): this
+    // resolves once it has ended, wherever it ran, so the slot it holds is
+    // held for as long as it runs. What it starts from is what was read
+    // here, so a restart does not read the request again under it.
+    const ended = await buildRuns().start({
+      pool, config, target: 'live', id: Number(run.id), nonce: liveBuildNonce(run), appId: Number(app.id),
+      input: { args: liveBuildInput(args) },
+      deps: { ...deps, bot, settings, inProcessArgs: args },
+    });
+    const acted = ended?.acted || ended?.result?.acted || (ended?.state === 'failed' ? 'build_failed' : 'built');
     return { ran: true, verdict: 'ready', runId: Number(run.id), acted };
   } catch (err) {
+    // The platform began stopping before the build could start: it is still
+    // asked for (still waiting), and the next leader starts it.
+    if (err?.notStarted) {
+      log.info('homeroom-bot', 'Live build left for the next leader: the platform is stopping', { app: app.slug, issueNumber, runId: run.id });
+      return { ran: false, verdict: 'ready', runId: Number(run.id), acted: 'not_started' };
+    }
     log.error('homeroom-bot', 'Live build threw', { app: app.slug, issueNumber, runId: run.id, err: err.message });
     const say = liveSayer({
       pool, github, ws: buildDeps.ws, app, repo, issueNumber, issue, runId: Number(run.id), bot, botLogin,
@@ -8556,6 +8997,7 @@ async function buildOne(pool, config, { bot, app, run, settings, deps = {} }) {
     });
     await announceBuilt({
       pool, ws: buildDeps.ws, app, bot, issueNumber, runId: Number(run.id), say, domain: buildDeps.domain,
+      firstVersion: !!requester?.firstVersion,
       built: { ok: false, error: `the build could not start (${clip(err.message, 200)})` },
     }).catch(() => {});
     await pool.query('UPDATE homeroom_bot_runs SET live_build_waiting_at = NULL WHERE id = $1', [run.id]).catch(() => {});
@@ -8584,6 +9026,11 @@ async function buildOne(pool, config, { bot, app, run, settings, deps = {} }) {
  * queue rows that started after it: the merge-followups workflow machine
  * can run this well after the merge, and work begun since is not what the
  * merge made unneeded.
+ *
+ * `deps.strict` (the machine's durable work, which retries) throws what it
+ * could not do instead of resolving null. Run again, it stops the builds
+ * an earlier run marked but may not have reached, so a crash between the
+ * two leaves nothing running.
  */
 async function noteRequestMerged(pool, session, deps = {}) {
   if (!session?.id) return null;
@@ -8616,12 +9063,28 @@ async function noteRequestMerged(pool, session, deps = {}) {
         RETURNING r.id, r.build_session_id`,
       [appId, issues, why, Number(merged.id), before],
     );
+    // Builds an earlier run of this marked with the same skip, whose turn
+    // may not have been stopped (a crash in between): stopped again.
+    const { rows: marked } = await pool.query(
+      `SELECT r.id, r.build_session_id FROM homeroom_bot_runs r
+        WHERE r.app_id = $1 AND r.issue_number = ANY($2::int[])
+          AND r.mode = 'live' AND r.build_ok = FALSE AND r.build_error = $3
+          AND r.build_session_id IS NOT NULL AND r.build_session_id IS DISTINCT FROM $4
+          AND ($5::timestamptz IS NULL OR r.created_at <= $5::timestamptz)
+          AND EXISTS (SELECT 1 FROM chat_sessions bs
+                       WHERE bs.id = r.build_session_id AND bs.status IN ('active', 'paused'))`,
+      [appId, issues, why, Number(merged.id), before],
+    );
+    for (const run of marked) {
+      if (!settled.some((s) => Number(s.id) === Number(run.id))) settled.push({ ...run, again: true });
+    }
     // B6: and a first version's plan still waiting for Build it.
     out.skipped += (await retireWaitingPlans(pool, { appId, issues, why: why.replace(/^skipped:\s*/, ''), before, deps })).length;
     const worker = deps.worker || require('./worker');
     for (const run of settled) {
       if (!run.build_session_id) { out.skipped += 1; continue; }
-      out.stopped += 1;
+      // A stop asked again is not news: the counts say what this run did.
+      if (!run.again) out.stopped += 1;
       await Promise.resolve(worker.stopTurn(run.build_session_id)).catch((err) => {
         log.warn('homeroom-bot', 'Could not stop a build its request\'s merge made unneeded', {
           runId: run.id, sessionId: run.build_session_id, err: err.message,
@@ -8644,6 +9107,7 @@ async function noteRequestMerged(pool, session, deps = {}) {
         const done = await sessionLifecycle.archiveSession({ pool, sessionId: Number(other.id), reason: 'superseded' });
         if (done?.archived) out.withdrawn += 1;
       } catch (err) {
+        if (deps.strict) throw err;
         log.warn('homeroom-bot', 'Could not withdraw a duplicate proposal', { sessionId: other.id, err: err.message });
       }
     }
@@ -8677,6 +9141,7 @@ async function noteRequestMerged(pool, session, deps = {}) {
     }
     return out;
   } catch (err) {
+    if (deps.strict) throw err;
     log.warn('homeroom-bot', 'Could not settle a merged request\'s other work', { sessionId: session.id, err: err.message });
     return null;
   }
@@ -8804,24 +9269,113 @@ function track(pool, slot, entry, work) {
   })();
 }
 
+// ── Live builds, started as soon as they may ────────────────────────────
+//
+// A live build waiting its turn (a ready verdict, or a plan its creator
+// tapped Build it under) used to be started only inside a pass's dispatch,
+// after the pass's refresh, and every REFRESH_INTERVAL_MS that refresh is
+// the full sweep of every app. A wake cannot cut into a running pass, so
+// run five's Submit (13 Oct 2026) waited 46 s for its spec to begin. Now a
+// pass starts them first, before its refresh and sweeps, and Build it's
+// wake (goAhead, onBusMessage) starts them on the leader at once, even
+// while a pass runs. One dispatch at a time in this process
+// (liveDispatchRunning): a call that finds one running asks it to look
+// again rather than reading the same waiting rows beside it, so a run is
+// never started twice from the two paths; across processes only the leader
+// runs the loop, as before.
+
+// Whether a dispatch is under way in this process (set before its first
+// await), whether another call asked it to look again, and a promise that
+// settles when it ends, for those calls to wait on.
+let liveDispatchRunning = false;
+let liveDispatchAgain = false;
+let liveDispatchDone = Promise.resolve();
+// The dispatch Build it's wake started, for a test to wait on.
+let liveKick = null;
+// Test seams for the wake's dispatch: the pool and deps it uses.
+let liveKickSeams = {};
+
 /**
- * Fill the free slots, live first. Returns the promises of the work it
- * started (each resolves to its outcome). `seen` keeps one drain from
- * starting the same row twice.
+ * Start the live builds waiting their turn that have a slot, and return
+ * the promises of the work started. Guarded like drainBuilds: a call that
+ * finds a dispatch under way asks it to look again, waits for it (so what
+ * it started is in its slots before the caller counts them), and returns
+ * []. Never throws.
  */
-async function dispatch(pool, config, { settings, bot, backedOff = [], deps = {}, seen = new Set(), now = Date.now() }) {
-  if (stopped || settings.mode === 'off') return [];
-  if (faultBackoff(now) || budgetPausedUntil > Date.now()) return [];
+async function dispatchLiveBuilds(pool, config, { settings = null, bot = null, deps = {}, seen = new Set(), now = null } = {}) {
+  if (liveDispatchRunning) {
+    liveDispatchAgain = true;
+    await liveDispatchDone;
+    return [];
+  }
+  liveDispatchRunning = true;
+  let done;
+  liveDispatchDone = new Promise((resolve) => { done = resolve; });
+  const started = [];
+  try {
+    let given = settings;
+    do {
+      liveDispatchAgain = false;
+      if (refusingNew()) break;
+      const at = now ?? (deps.now ? deps.now() : Date.now());
+      // eslint-disable-next-line no-await-in-loop
+      const s = given || await readSettings(pool);
+      given = null;
+      if (s.mode === 'off' || faultBackoff(at) || budgetPausedUntil > Date.now()) break;
+      // A build reads GitHub: held, as a pass is, while its hourly budget
+      // is nearly used up (runOnce checks this before its own call).
+      if (githubBudget.backgroundHold({ now: at })) break;
+      // eslint-disable-next-line no-await-in-loop
+      const b = bot || await ensureBotUser(pool, config);
+      // eslint-disable-next-line no-await-in-loop
+      started.push(...await startLiveBuilds(pool, config, { settings: s, bot: b, deps, seen }));
+    } while (liveDispatchAgain);
+  } catch (err) {
+    log.error('homeroom-bot', 'Live build dispatch failed', { err: err.message });
+  } finally {
+    // In the same turn as the last look-again check: a call that arrives
+    // after it starts a dispatch of its own.
+    liveDispatchAgain = false;
+    liveDispatchRunning = false;
+    done();
+  }
+  return started;
+}
+
+/**
+ * Build it was tapped (goAhead here, or its bus message from another Pod):
+ * where the loop runs, start the build now rather than at the next pass.
+ * Returns whether a dispatch was started. Never throws.
+ */
+function wakeLiveBuilds() {
+  const running = timer !== null || passInFlight;
+  if (stopped || !running || !loopConfig) return false;
+  const config = loopConfig;
+  let pool;
+  try {
+    pool = liveKickSeams.pool || require('../db/pool').getPool(config);
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not start a live build on its wake', { err: err.message });
+    return false;
+  }
+  liveKick = dispatchLiveBuilds(pool, config, { deps: liveKickSeams.deps || {} })
+    .then((started) => {
+      if (started.length) log.info('homeroom-bot', 'Live builds started on Build it\'s wake', { started: started.length });
+      return started;
+    });
+  return true;
+}
+
+/** One dispatch of live builds; dispatchLiveBuilds holds the guard. */
+async function startLiveBuilds(pool, config, { settings, bot, deps = {}, seen }) {
   const started = [];
   // A staging copy never acts (live.liveScope), so there every app is the
   // background lane's.
   const scope = live.liveScope(settings);
   const liveAtOnce = settings.liveAtOnce || DEFAULTS.liveAtOnce;
   const perPerson = settings.perPerson || DEFAULTS.perPerson;
-
-  // Live builds waiting their turn first: they are further along than
-  // anything still to be read. Up to BUILDS_PER_PROJECT per project, each in
-  // a slot of its own, so the project's read slot stays free (buildLive).
+  // Up to BUILDS_PER_PROJECT per project, each in a slot of its own, so the
+  // project's read slot stays free (buildLive).
   const buildSlots = Math.max(0, liveAtOnce - [...inFlight.values()].filter((e) => e.lane === 'live').length);
   if (buildSlots && !live.scopeIsEmpty(scope)) {
     const running = [...inFlight.values()];
@@ -8833,8 +9387,7 @@ async function dispatch(pool, config, { settings, bot, backedOff = [], deps = {}
     // or three times from one run, and turnly #6's requester was asked about
     // two plans. A slot frees when its work ends, whatever it came to.
     const waiting = (await liveBuildCandidates(pool, { scope, pausedApps: settings.pausedApps || [] }))
-      .filter((row) => !seen.has(`build:${Number(row.id)}`) && !inFlight.has(buildSlot(row.id))
-        && !liveBuildsInFlight.has(Number(row.id)));
+      .filter((row) => !seen.has(`build:${Number(row.id)}`) && !inFlight.has(buildSlot(row.id)));
     const picks = pickLiveBuilds(waiting, {
       buildingAppIds: running.filter((e) => e.build).map((e) => Number(e.appId)),
       active: running.filter((e) => e.lane === 'live'), slots: buildSlots, perPerson,
@@ -8859,6 +9412,8 @@ async function dispatch(pool, config, { settings, bot, backedOff = [], deps = {}
       const byId = new Map(apps.map((a) => [Number(a.id), a]));
       const dm = deps.dm || require('./homeroom-bot-dm');
       for (const pick of picks) {
+        // Shutdown began during this pass: start nothing more.
+        if (refusingNew()) break;
         const app = byId.get(Number(pick.app_id));
         if (!app) continue;
         seen.add(`build:${Number(pick.id)}`);
@@ -8895,6 +9450,31 @@ async function dispatch(pool, config, { settings, bot, backedOff = [], deps = {}
     }
   }
 
+  return started;
+}
+
+/**
+ * Fill the free slots, live first. Returns the promises of the work it
+ * started (each resolves to its outcome). `seen` keeps one drain from
+ * starting the same row twice. `firstVersionsOnly` (15 Oct 2026): only the
+ * reads of projects' first versions, which runOnce starts before its full
+ * refresh and sweeps; nothing of the build lane or the background lane.
+ */
+async function dispatch(pool, config, {
+  settings, bot, backedOff = [], deps = {}, seen = new Set(), now = Date.now(), firstVersionsOnly = false,
+}) {
+  if (refusingNew() || settings.mode === 'off') return [];
+  if (faultBackoff(now) || budgetPausedUntil > Date.now()) return [];
+  const started = [];
+  // A staging copy never acts (live.liveScope), so there every app is the
+  // background lane's.
+  const scope = live.liveScope(settings);
+  const liveAtOnce = settings.liveAtOnce || DEFAULTS.liveAtOnce;
+
+  // Live builds waiting their turn first: they are further along than
+  // anything still to be read.
+  if (!firstVersionsOnly) started.push(...await dispatchLiveBuilds(pool, config, { settings, bot, deps, seen, now }));
+
   const running = [...inFlight.values()];
   const liveActive = running.filter((e) => e.lane === 'live');
   // The apps whose one session is taken. A follow-up runs on its
@@ -8907,7 +9487,7 @@ async function dispatch(pool, config, { settings, bot, backedOff = [], deps = {}
   if (liveSlots && !live.scopeIsEmpty(scope)) {
     const candidates = (await liveCandidates(pool, {
       scope, excludeAppIds: backedOff, busyAppIds: sessionTaken, botId: bot?.id ?? null,
-      pausedApps: settings.pausedApps || [], excludeFollowUps: followUpsBackedOff(now),
+      pausedApps: settings.pausedApps || [], excludeFollowUps: followUpsBackedOff(now), firstVersionsOnly,
     })).filter((row) => !seen.has(Number(row.id)));
     const picks = pickLive(candidates, {
       busyAppIds: sessionTaken, blockedAppIds: backedOff, active: liveActive,
@@ -8920,6 +9500,7 @@ async function dispatch(pool, config, { settings, bot, backedOff = [], deps = {}
       );
       const byId = new Map(apps.map((a) => [Number(a.id), a]));
       for (const pick of picks) {
+        if (refusingNew()) break;
         const app = byId.get(Number(pick.app_id));
         if (!app) continue;
         // Claimed before the work starts: the row is this Pod's.
@@ -8959,9 +9540,11 @@ async function dispatch(pool, config, { settings, bot, backedOff = [], deps = {}
     }
   }
 
+  if (firstVersionsOnly) return started;
   // Background: a batch of one app's issues per start, as before.
   const shadowActive = [...inFlight.values()].filter((e) => e.lane === 'background').length;
   for (let i = shadowActive; i < (settings.concurrency || DEFAULTS.concurrency); i += 1) {
+    if (refusingNew()) break;
     const batch = await nextBatch(pool, {
       batchSize: settings.batchSize,
       excludeAppIds: [...new Set([...inFlight.values()].map((e) => Number(e.appId))), ...backedOff],
@@ -9042,9 +9625,13 @@ async function workingNow(pool, settings, { userId = null } = {}) {
 }
 
 // A live build is under way from the moment its session is linked (onSession)
-// until its outcome is recorded; one older than this is the abandoned-build
-// sweep's, not work under way (a platform build's plan and build turn, the
-// longest, take under two hours).
+// until its outcome is recorded; one older than this is not work under way
+// (a platform build's plan and build turn, the longest, take under two
+// hours, and a durable build that cannot finish ends failed). Its session is
+// paused between its turns (buildTurnRunner pauses it after each), through a
+// first version's review (captures and reviewer calls) above all, and that is
+// still the build: run 1746's console showed nothing building for most of its
+// review (run four, 13 Oct 2026).
 const BUILD_UNDER_WAY_HOURS = 4;
 
 // The live builds under way (a session linked, no outcome yet, the session
@@ -9059,7 +9646,7 @@ const BUILDS_UNDER_WAY_SQL = `
     LEFT JOIN homeroom_bot_requesters q ON q.app_id = r.app_id AND q.issue_number = r.issue_number
     LEFT JOIN users u ON u.id = q.user_id
    WHERE r.mode = 'live' AND r.verdict = 'ready' AND r.build_ok IS NULL AND r.proposal_session_id IS NULL
-     AND r.awaiting_go_at IS NULL AND bs.status = 'active'
+     AND r.awaiting_go_at IS NULL AND bs.status IN ('active', 'paused')
      AND bs.created_at > NOW() - make_interval(hours => $1)
    ORDER BY bs.created_at
    LIMIT 50`;
@@ -9113,6 +9700,7 @@ async function buildsNow(pool) {
  */
 async function runOnce(pool, config, deps = {}) {
   const out = { mode: null, busy: false, refreshed: false, processed: 0, paused: null };
+  const startedAt = Date.now();
   let client;
   let locked = false;
   try {
@@ -9122,6 +9710,7 @@ async function runOnce(pool, config, deps = {}) {
     );
     if (lock.rows[0]?.acquired !== true) { out.busy = true; return out; }
     locked = true;
+    passStartedAt = new Date(startedAt).toISOString();
 
     const settings = await readSettings(pool);
     out.mode = settings.mode;
@@ -9155,6 +9744,46 @@ async function runOnce(pool, config, deps = {}) {
     // Before the refresh: on a live app it asks how much room the caps have
     // for the bot's held issues (#3152).
     const bot = await ensureBotUser(pool, config);
+    // Run five (13 Oct 2026): a build waiting its turn starts before the
+    // refresh and the sweeps, which every REFRESH_INTERVAL_MS read every app
+    // and held a Submit's spec back 46 s. The pass's dispatch below fills
+    // what is left, the slots its reads take counted after these.
+    const seen = new Set();
+    const pausedBefore = budgetPausedUntil > Date.now();
+    const early = await dispatchLiveBuilds(pool, config, { settings, bot, deps, seen, now });
+    out.liveBuilds = early.length;
+    // An app inside its backoff window is skipped exactly like a paused one
+    // (#2737). Without this, a session that refuses every turn is retried on
+    // every wake, which is how one wedged app wrote 121 rows in a day.
+    const backedOff = [];
+    for (const [appId] of appBackoff) {
+      if (backoffFor(appId, now)) backedOff.push(Number(appId));
+      else appBackoff.delete(appId);
+    }
+    out.backedOffApps = backedOff.length;
+    // Newcomer run nine (15 Oct 2026): a woken project whose first version
+    // was just filed is refreshed and its request's read started here,
+    // before the full refresh and the sweeps, which every
+    // REFRESH_INTERVAL_MS read every app first: 14.6 s from filing to its
+    // run, against about 4 s in runs seven and eight. Its read alone; the
+    // rest of the pass is as it was.
+    const firstReads = targeted.length
+      ? await firstVersionsToRead(pool, targeted).catch((err) => {
+        log.warn('homeroom-bot', 'Could not read which woken projects wait on their first version', { err: err.message });
+        return [];
+      })
+      : [];
+    if (firstReads.length) {
+      const summary = await refreshApps(pool, settings, firstReads, { ...deps, bot });
+      out.refreshed = true;
+      if (summary.queued) log.info('homeroom-bot', 'First versions queued ahead of the pass', summary);
+      const reads = await dispatch(pool, config, { settings, bot, backedOff, deps, seen, now, firstVersionsOnly: true });
+      out.firstVersionReads = reads.length;
+      early.push(...reads);
+    }
+    // A pass that was not already paused says what it dispatched, even when
+    // these builds found the budget spent and it stops below.
+    if (!pausedBefore) out.dispatched = early.length;
     if (forceAll || now - lastRefreshAt >= REFRESH_INTERVAL_MS) {
       // #3624: a project waiting for its first version whose creation hook
       // missed it is filed here, before the refresh that queues it.
@@ -9169,7 +9798,9 @@ async function runOnce(pool, config, deps = {}) {
       out.refreshed = true;
       if (summary.queued) log.info('homeroom-bot', 'Queue refreshed', summary);
     } else if (targeted.length) {
-      const summary = await refreshApps(pool, settings, targeted, { ...deps, bot });
+      // The first versions' projects were refreshed above.
+      const rest = targeted.filter((id) => !firstReads.includes(Number(id)));
+      const summary = rest.length ? await refreshApps(pool, settings, rest, { ...deps, bot }) : { queued: 0 };
       out.refreshed = true;
       out.woken = targeted.length;
       if (summary.queued) log.info('homeroom-bot', 'Queue refreshed on activity', summary);
@@ -9192,14 +9823,10 @@ async function runOnce(pool, config, deps = {}) {
     // cadence: it only has to be noticed, not raced.
     if (now - lastLiveSweepAt >= REFRESH_INTERVAL_MS) {
       lastLiveSweepAt = now;
-      // A first version a restart caught in its review is proposed as it
-      // stands, before anything could call its build lost.
-      const reviewsFinished = await finishInterruptedReviews(pool, config, deps);
-      if (reviewsFinished) out.reviewsFinished = reviewsFinished;
-      // And review screenshots past their keeping (a few times a day).
+      // A build a restart caught is its work item's to carry on
+      // (services/build-runs.js): nothing here resumes or settles one.
+      // Review screenshots past their keeping (a few times a day).
       await botConfigs().maybePruneCaptureArtifacts(pool, now);
-      const settledLive = await settleAbandonedLiveBuilds(pool, settings, deps);
-      if (settledLive) out.liveBuildsSettled = settledLive;
       // B6: and a plan nobody tapped Build it under for a week stops waiting.
       const stalePlans = await settleStalePlans(pool, { dm: deps.dm });
       if (stalePlans) out.plansStopped = stalePlans;
@@ -9225,15 +9852,6 @@ async function runOnce(pool, config, deps = {}) {
       return out;
     }
 
-    // An app inside its backoff window is skipped exactly like a paused one
-    // (#2737). Without this, a session that refuses every turn is retried on
-    // every wake, which is how one wedged app wrote 121 rows in a day.
-    const backedOff = [];
-    for (const [appId] of appBackoff) {
-      if (backoffFor(appId, now)) backedOff.push(Number(appId));
-      else appBackoff.delete(appId);
-    }
-    out.backedOffApps = backedOff.length;
     // The weekly cap ran out under a piece of work: wait for the idle pass.
     if (budgetPausedUntil > Date.now()) {
       out.paused = 'budget';
@@ -9243,8 +9861,7 @@ async function runOnce(pool, config, deps = {}) {
     // #3624 stage 2: fill the free slots and, unless a test asks to drain,
     // return without waiting for the work (see "How much at once").
     const drain = deps.drain !== false;
-    const seen = new Set();
-    let started = await dispatch(pool, config, { settings, bot, backedOff, deps, seen, out, now });
+    let started = [...early, ...await dispatch(pool, config, { settings, bot, backedOff, deps, seen, out, now })];
     out.dispatched = started.length;
     if (!drain) {
       out.inFlight = inFlight.size;
@@ -9279,7 +9896,10 @@ async function runOnce(pool, config, deps = {}) {
     log.error('homeroom-bot', 'Pass failed', { err: err.message });
     return out;
   } finally {
-    lastPass = { at: new Date().toISOString(), ...out };
+    // `at` is when it ended, as before; `startedAt` and `ms` say how long
+    // the live loop's pass took (a lock another process held is no pass).
+    if (locked) passStartedAt = null;
+    lastPass = { at: new Date().toISOString(), startedAt: new Date(startedAt).toISOString(), ms: Date.now() - startedAt, ...out };
     if (client) {
       if (locked) {
         await client.query('SELECT pg_advisory_unlock($1, $2)', [HOMEROOM_BOT_LOCK, 0]).catch(() => {});
@@ -9325,6 +9945,14 @@ function start(config) {
   if (timer) return;
   stopped = false;
   loopConfig = config;
+  // Before the first pass: builds from before builds were durable are asked
+  // for again, and the durable builds under way (a restart's) hold their
+  // slots again, so the first dispatch counts them.
+  {
+    const { getPool } = require('../db/pool');
+    const pool = getPool(config);
+    void requeueLegacyBuilds(pool).then(() => holdDurableBuildSlots(pool)).catch(() => {});
+  }
   schedule(config, FIRST_PASS_DELAY_MS);
   // The build lane, on its own timer: a build never holds up a triage pass.
   buildLaneOn = true;
@@ -9336,20 +9964,50 @@ function start(config) {
     require('./homeroom-bot-mayor').resumeDeferred(getPool(config), config);
   }, FIRST_PASS_DELAY_MS);
   if (typeof resume.unref === 'function') resume.unref();
+  // And every minute after: the web processes answer DMs and never lead
+  // (docs/plans/web-and-conductor.md), so one that died left its promises
+  // with no election to pick them up. What a live process holds is its own.
+  if (!deferResumeTimer) {
+    deferResumeTimer = setInterval(() => {
+      if (refusingNew()) return;
+      const { getPool } = require('../db/pool');
+      require('./homeroom-bot-mayor').resumeDeferred(getPool(config), config, {}, { minAgeSeconds: 60 });
+    }, DEFER_RESUME_MS);
+    if (typeof deferResumeTimer.unref === 'function') deferResumeTimer.unref();
+  }
 }
 
 /**
- * Stops both loops. A build already under way runs to its own time limit
- * and records itself; nothing new starts. server.js calls it first thing on
+ * True once the loops are stopped or shutdown has begun (lifecycle, set
+ * first thing in server.js cleanup): no new read, build, follow-up or checks
+ * fix starts. A durable build under way is not new: in a process a release
+ * replaced it goes on to its end there, its own steps included (its promote
+ * passes the drain guard: lifecycle.js OWN_WORK), and the drain waits for
+ * it (docs/plans/draining-releases.md). Only a process that stops at once,
+ * or one whose drain ran out, gives its work item up at the next step, and
+ * the next leader carries it on (services/build-runs.js).
+ */
+function refusingNew() {
+  if (stopped) return true;
+  try { return !!require('./lifecycle').isShuttingDown(); } catch { return false; }
+}
+
+/**
+ * Stops both loops; nothing new starts. A durable build under way is its
+ * work item's: it finishes in this process while it drains, and only what
+ * the workflow runtime gives up as it stops (no drain, or its deadline) is
+ * carried on by the next leader. server.js calls it first thing on
  * shutdown, before the pool closes: a pass or lane drain that started after
  * that read and wrote a closed pool (93 "Cannot use a pool after calling end
  * on the pool" lines from 10-03 to 10-05, and one live build lost at
- * dispatch). A turn still running is restart recovery's, as before.
+ * dispatch).
  */
 function stop() {
   stopped = true;
   if (timer) clearTimeout(timer);
   timer = null;
+  if (deferResumeTimer) clearInterval(deferResumeTimer);
+  deferResumeTimer = null;
   buildLaneOn = false;
   if (buildTimer) clearTimeout(buildTimer);
   buildTimer = null;
@@ -9465,7 +10123,10 @@ function onBusMessage(data) {
   if (data.issueNumber != null) interruptRead({ appId: data.appId, issueNumber: data.issueNumber, reason: data.reason });
   const woke = wake({ appId: data.appId, all: !!data.all });
   if (woke && SETTLE_REASONS.has(data.reason)) wakeAfterSettle(Number(data.appId));
-  return woke;
+  // Build it on another Pod (goAhead): its build starts now, not at the
+  // next pass's dispatch.
+  const built = data.buildRunId != null && wakeLiveBuilds();
+  return woke || built;
 }
 
 // ── The dashboard's read and writes ─────────────────────────────────────
@@ -9481,15 +10142,15 @@ const RUNS_SQL = `SELECT r.id, r.issue_number, r.mode, r.verdict, r.determined, 
             r.budget_stop,
             r.question, r.question_default, r.build_note, r.reason, r.cap_suppressed,
             r.rating, r.rating_note, r.rated_at, r.thread_seen_at, r.model, r.cost_usd::float8 AS cost_usd,
-            r.input_tokens, r.output_tokens, r.duration_ms, r.error, r.created_at,
+            r.input_tokens, r.output_tokens, r.duration_ms, r.error, r.unreadable_reply, r.created_at,
             r.proposal_session_id,
             r.build_ok, r.build_branch, r.build_sha, r.build_commits, r.build_error,
             r.build_cost_usd::float8 AS build_cost_usd, r.build_at, r.build_queued_at, r.build_spec_md,
-            r.build_session_id, r.build_no_change,
+            r.build_session_id, r.build_no_change, r.live_build_waiting_at, r.awaiting_go_at,
             r.question_answers, dm.dm_sent_at, dm.dm_answered_at, r.checks_head_sha,
             r.label_verdict, r.build_model,
             r.bot_config_version_id, bc.key AS bot_config_key, bc.label AS bot_config_label,
-            bc.version AS bot_config_version, r.review_rounds, r.review_stop, r.read_reason,
+            bc.version AS bot_config_version, r.review_rounds, r.review_stop, r.read_reason, r.reused_run_id,
             r.charged, r.payer_user_id, pu.username AS payer_username,
             a.slug AS app_slug, a.name AS app_name, a.repo_url, u.username AS rated_by
        FROM homeroom_bot_runs r
@@ -9563,6 +10224,8 @@ const EXPORT_COLUMNS = Object.freeze([
   'label_verdict', 'build_model',
   // What started the read ('new', 'changed:github', 'retry_failed', …).
   'read_reason',
+  // The held run whose verdict this one reused, with no read of its own.
+  'reused_run_id',
 ]);
 
 /** A question's suggested answers as one cell: "Yes | No | Later". */
@@ -9613,14 +10276,34 @@ async function* iterateRunsForExport(pool, {
 
 /**
  * #4533: why a queue row that is not running waits, and until when, or null
- * when it is simply next in line: { reason, until }. Its own refusal first
- * (`session_busy`: a turn is running on its session, recorded by runTriage's
- * recordRefusal with its backoff), then its payer's week (`allowance`,
- * held_until), then the whole bot's pause on a platform fault
- * (`platform_fault`, faultBackoff, known on the Pod running the loop). A
- * wait whose time has passed is no wait. Pure.
+ * when it is simply next in line: { reason, until } (`until` null when the
+ * wait has no clock), and the first version's request number for
+ * `first_version_pending`. In the order the loop meets them:
+ *   - its own refusal (`wait_reason`, recorded by runTriage's recordRefusal
+ *     with its backoff), then its payer's week (`allowance`, held_until),
+ *     then the whole bot's pause on a platform fault (`platform_fault`,
+ *     faultBackoff, known on the Pod running the loop);
+ *   - `bot_paused`: the bot is off (`off`), or its weekly budget is spent
+ *     (`budgetUntil`; dispatch starts nothing until then);
+ *   - `app_paused`: its app is on the paused list (`row.app_paused`);
+ *   - `first_version_pending`: its project's first version is not live yet
+ *     (FIRST_VERSION_PENDING_SQL; never the first version's own request, a
+ *     follow-up or an admin's Run now, as liveCandidates reads it);
+ *   - `build_pending`: a live build of the same request waits or runs
+ *     (liveCandidates' NOT EXISTS), read once it ends;
+ *   - `session_busy`: something else runs on its app's one session, or the
+ *     app is backed off (`busyApps`: Map(app id → until ms or null)); never
+ *     a follow-up, which runs on its proposal's session;
+ *   - `per_person`: the person it is for already has `perPerson` pieces of
+ *     live work running (`personCounts`: Map(person key → count));
+ *   - `settling`: a person wrote on it under SETTLE_MS ago (`settle_from`),
+ *     so it is read once they pause.
+ * A wait whose time has passed is no wait. Pure.
  */
-function queueWait(row, { fault = null, now = Date.now() } = {}) {
+function queueWait(row, {
+  fault = null, now = Date.now(), off = false, budgetUntil = 0,
+  busyApps = new Map(), personCounts = new Map(), perPerson = DEFAULTS.perPerson,
+} = {}) {
   if (!row || row.started_at) return null;
   const at = (ms) => new Date(ms).toISOString();
   const own = toMs(row.wait_until);
@@ -9628,13 +10311,188 @@ function queueWait(row, { fault = null, now = Date.now() } = {}) {
   const held = toMs(row.held_until);
   if (held > now) return { reason: 'allowance', until: at(held) };
   if (fault && Number(fault.until) > now) return { reason: 'platform_fault', until: at(Number(fault.until)) };
+  if (off) return { reason: 'bot_paused', until: null };
+  if (Number(budgetUntil) > now) return { reason: 'bot_paused', until: at(Number(budgetUntil)) };
+  if (row.app_paused) return { reason: 'app_paused', until: null };
+  const followUp = row.follow_up_session_id != null;
+  if (row.first_version_pending && !followUp && row.reason !== 'admin') {
+    const n = Number(row.first_version_issue);
+    return { reason: FIRST_VERSION_HOLD, until: null, firstVersionIssue: Number.isInteger(n) && n > 0 ? n : null };
+  }
+  if (row.build_pending) return { reason: 'build_pending', until: null };
+  if (!followUp && busyApps instanceof Map && busyApps.has(Number(row.app_id))) {
+    const until = Number(busyApps.get(Number(row.app_id)));
+    return { reason: 'session_busy', until: until > now ? at(until) : null };
+  }
+  if (personCounts instanceof Map && (personCounts.get(personKeyOf(row)) || 0) >= Math.max(1, Number(perPerson) || 1)) {
+    return { reason: 'per_person', until: null };
+  }
+  const settle = toMs(row.settle_from) + SETTLE_MS;
+  if (row.settle_from && settle > now) return { reason: 'settling', until: at(settle) };
   return null;
+}
+
+// How many queued rows the console and get_homeroom_bot list: the first
+// QUEUE_LISTED waiting, in the order they are read, and every running one
+// (at most 24 run at once, liveAtOnce's ceiling, with room for the
+// background lane).
+const QUEUE_LISTED = 12;
+const QUEUE_RUNNING_LISTED = 40;
+
+// One statement, so one snapshot: the counts (window functions, taken before
+// the list is cut) and the rows listed always describe the same queue. Each
+// listed row carries what queueWait needs from the database, read with the
+// rules liveCandidates applies.
+const QUEUE_SNAPSHOT_SQL = `
+  WITH snap AS (
+    SELECT q.*,
+           COUNT(*) FILTER (WHERE q.started_at IS NULL) OVER ()::int AS waiting_total,
+           COUNT(*) FILTER (WHERE q.started_at IS NOT NULL) OVER ()::int AS running_total,
+           ROW_NUMBER() OVER (PARTITION BY (q.started_at IS NULL)
+                              ORDER BY q.started_at DESC, (q.priority = 0) DESC, q.priority, q.enqueued_at, q.id) AS rn
+      FROM homeroom_bot_queue q
+  )
+  SELECT q.id, q.app_id, q.issue_number, q.priority, q.reason, q.enqueued_at, q.started_at,
+         q.held_until, q.wait_reason, q.wait_until, q.waiting_total, q.running_total,
+         a.slug AS app_slug, a.name AS app_name,
+         (a.slug = ANY($1::text[])) AS app_paused,
+         COALESCE(r.user_id, i.created_by) AS person_id,
+         fu.id AS follow_up_session_id,
+         fvh.issue_number AS first_version_issue,
+         (fvh.app_id IS NOT NULL) AS first_version_pending,
+         EXISTS (
+           SELECT 1 FROM homeroom_bot_runs b
+            WHERE b.app_id = q.app_id AND b.issue_number = q.issue_number
+              AND b.mode = 'live' AND b.verdict = 'ready' AND b.build_ok IS NULL AND b.proposal_session_id IS NULL
+              AND (b.live_build_waiting_at IS NOT NULL OR b.build_session_id IS NOT NULL)
+              AND b.created_at > NOW() - make_interval(days => $2)
+         ) AS build_pending,
+         (SELECT MAX(m.created_at) FROM chat_messages m
+            LEFT JOIN users mu ON mu.id = m.user_id
+           WHERE m.app_id = q.app_id AND m.msg_type = 'message' AND m.deleted_at IS NULL
+             AND mu.is_synthetic IS NOT TRUE
+             AND ((m.thread_type = 'issue' AND m.thread_ref = q.issue_number)
+               OR (fu.id IS NOT NULL AND m.thread_type = 'session' AND m.thread_ref = fu.id))
+             AND m.created_at > NOW() - make_interval(secs => $3)) AS settle_from
+    FROM snap q
+    JOIN apps a ON a.id = q.app_id
+    LEFT JOIN homeroom_bot_requesters r ON r.app_id = q.app_id AND r.issue_number = q.issue_number
+    LEFT JOIN LATERAL (
+      SELECT created_by FROM issues
+       WHERE app_id = q.app_id AND github_issue_number = q.issue_number
+       ORDER BY id LIMIT 1
+    ) i ON TRUE
+    LEFT JOIN LATERAL (
+      SELECT cs.id FROM chat_sessions cs
+       WHERE cs.app_id = q.app_id AND cs.user_id = $4
+         AND q.issue_number = ANY(cs.linked_issues)
+         AND cs.status = 'promoted' AND cs.is_headless = FALSE
+       ORDER BY cs.id DESC LIMIT 1
+    ) fu ON TRUE
+    LEFT JOIN LATERAL (
+      SELECT fv.app_id, fv.issue_number FROM homeroom_bot_first_versions fv
+       WHERE fv.app_id = q.app_id AND fv.bot_builds AND fv.issue_number IS DISTINCT FROM q.issue_number
+         AND ${FIRST_VERSION_PENDING_SQL}
+       LIMIT 1
+    ) fvh ON TRUE
+   WHERE (q.started_at IS NULL AND q.rn <= $5) OR (q.started_at IS NOT NULL AND q.rn <= $6)
+   ORDER BY q.started_at DESC NULLS LAST, q.rn`;
+
+/**
+ * The queue as the console and get_homeroom_bot show it, from one snapshot:
+ * { depth (waiting), running, items, listedWaiting, listedRunning }, the
+ * running rows first, each waiting row with why it waits (queueWait).
+ * `depth` keeps its name: it has always been the rows not running.
+ */
+async function queueSnapshot(pool, settings = {}, { botId = null, now = Date.now(), memory = null } = {}) {
+  const { rows } = await pool.query(QUEUE_SNAPSHOT_SQL, [
+    settings.pausedApps || [], ABANDONED_LIVE_WINDOW_DAYS, SETTLE_MS / 1000,
+    botId, QUEUE_LISTED, QUEUE_RUNNING_LISTED,
+  ]);
+  const mem = memory || memoryStatus(now);
+  const running = rows.filter((q) => q.started_at);
+  // The apps whose one session is taken: a read running there (not a
+  // follow-up, which runs on its proposal's), from the snapshot and from
+  // the loop's own record, and the apps backed off after a refusal.
+  const busyApps = new Map();
+  for (const q of running) if (q.follow_up_session_id == null) busyApps.set(Number(q.app_id), null);
+  for (const e of mem.inFlight) if (!e.followUp && !e.build) busyApps.set(Number(e.appId), null);
+  for (const [appId, until] of mem.backoff) if (Number(until) > now) busyApps.set(Number(appId), Number(until));
+  // Live work running per person: the reads running, and the builds the
+  // loop runs (they run from their runs, not the queue).
+  const personCounts = new Map();
+  const bump = (key) => personCounts.set(key, (personCounts.get(key) || 0) + 1);
+  for (const q of running) bump(personKeyOf(q));
+  for (const e of mem.inFlight) if (e.build && e.lane === 'live' && e.person) bump(e.person);
+  const ctx = {
+    fault: mem.fault, now, off: settings.mode === 'off', budgetUntil: mem.budgetUntil,
+    busyApps, personCounts, perPerson: settings.perPerson || DEFAULTS.perPerson,
+  };
+  const items = rows.map(({ waiting_total: _w, running_total: _r, ...q }) => ({ ...q, waiting: queueWait(q, ctx) }));
+  return {
+    depth: Number(rows[0]?.waiting_total) || 0,
+    running: Number(rows[0]?.running_total) || 0,
+    items,
+    listedWaiting: items.length - running.length,
+    listedRunning: running.length,
+  };
+}
+
+// What the loop keeps in memory and the console and get_homeroom_bot show,
+// as one plain object: the last pass and its refusals, what runs, the apps
+// backed off, the platform fault, the budget pause and the build lane's
+// last drain. The process running the loop publishes it
+// (services/leader-status.js); one that does not (a web process, which never
+// leads: docs/plans/web-and-conductor.md) reads that copy (loopMemory).
+const MEMORY_STATUS_KEY = 'homeroom-bot';
+
+function memoryStatus(now = Date.now()) {
+  const fault = faultBackoff(now);
+  return {
+    // A refusal shows while its app is still backed off (#3624 stage 2:
+    // work ends between passes now, so the list is pruned here).
+    loop: lastPass ? {
+      ...lastPass,
+      refusals: lastRefusals.filter((r) => !r.appId || backoffFor(r.appId, now))
+        .map((r) => (r.appId && backoffFor(r.appId, now) ? { ...r, retryInMs: Math.max(0, appBackoff.get(Number(r.appId)).until - now) } : r)),
+      // The pass running now, if one is: a long one is a sweep.
+      runningSince: passStartedAt,
+    } : lastPass,
+    inFlight: [...inFlight.values()].map((e) => ({
+      appId: Number(e.appId), followUp: !!e.followUp, build: !!e.build, lane: e.lane || null, person: e.person || null,
+    })),
+    backoff: [...appBackoff.keys()].map((appId) => [Number(appId), backoffFor(appId, now)?.until || 0])
+      .filter(([, until]) => until > now),
+    fault: fault ? { attempts: fault.attempts, until: fault.until, error: fault.error, at: fault.at } : null,
+    budgetUntil: budgetPausedUntil,
+    buildLane: lastBuildDrain,
+    buildFault: buildFault ? { error: buildFault.error, retryAt: new Date(buildFault.until).toISOString() } : null,
+  };
+}
+
+/** Whether the loop runs in this process (start() and not stop()). */
+function runsHere() {
+  return !!loopConfig && !stopped;
+}
+
+/**
+ * The loop's memory wherever it runs: this process's own when the loop runs
+ * here, else the copy its process published, else this process's (empty)
+ * own, which is what a follower always showed.
+ */
+async function loopMemory(pool, now = Date.now()) {
+  if (!runsHere()) {
+    const published = await require('./leader-status').read(MEMORY_STATUS_KEY, pool);
+    if (published && Array.isArray(published.inFlight) && Array.isArray(published.backoff)) return published;
+  }
+  return memoryStatus(now);
 }
 
 async function adminPayload(pool, config, {
   app = null, verdict = null, before = null, limit = RUNS_PAGE, budgetOnly = false,
 } = {}) {
   const settings = await readSettings(pool);
+  const memory = await loopMemory(pool);
   const limits = require('./limits');
   const managedOpenRouter = require('./openrouter-managed-keys');
 
@@ -9706,20 +10564,11 @@ async function adminPayload(pool, config, {
     costUsd: Number(t.cost_usd) || 0,
   };
 
-  const { rows: queued } = await pool.query(
-    `SELECT q.id, q.issue_number, q.priority, q.reason, q.enqueued_at, q.started_at,
-            q.held_until, q.wait_reason, q.wait_until,
-            a.slug AS app_slug, a.name AS app_name
-       FROM homeroom_bot_queue q JOIN apps a ON a.id = q.app_id
-      ORDER BY q.started_at DESC NULLS LAST, q.priority, q.enqueued_at
-      LIMIT 12`,
-  );
-  // #4533: and why each one that is not running waits, and until when.
-  const fault = faultBackoff();
-  const queueRows = queued.map((q) => ({ ...q, waiting: queueWait(q, { fault }) }));
-  const { rows: depthRows } = await pool.query(
-    'SELECT COUNT(*)::int AS depth FROM homeroom_bot_queue WHERE started_at IS NULL',
-  );
+  // The queue from one snapshot (queueSnapshot): how many wait and how many
+  // run, and the rows listed, read by one statement so the counts and the
+  // lists describe the same set. #4533 and after: why each one that is not
+  // running waits, and until when.
+  const queue = await queueSnapshot(pool, settings, { botId: botRow?.id ?? null, memory });
   // Running now and Waiting count builds too: they run from their runs, not
   // from the queue, and were left out of both while the bot was busy.
   const builds = await buildsNow(pool);
@@ -9748,15 +10597,9 @@ async function adminPayload(pool, config, {
     modes: MODES,
     defaultModel: config.openrouterDefaultCodexModel || null,
     bot,
-    // A refusal shows while its app is still backed off (#3624 stage 2:
-    // work ends between passes now, so the list is pruned here).
-    loop: lastPass ? {
-      ...lastPass,
-      refusals: lastRefusals.filter((r) => !r.appId || backoffFor(r.appId))
-        .map((r) => (r.appId && backoffFor(r.appId) ? { ...r, retryInMs: Math.max(0, appBackoff.get(r.appId).until - Date.now()) } : r)),
-    } : lastPass,
+    loop: memory.loop,
     totals,
-    queue: { depth: depthRows[0]?.depth || 0, items: queueRows, buildsWaiting: builds.waiting },
+    queue: { ...queue, buildsWaiting: builds.waiting },
     runs: runRows.map((r) => ({
       ...r, issueUrl: issueUrlFor(r), buildUrl: buildUrlFor(r), replayStages: replayable[r.id] || [],
     })),
@@ -9766,7 +10609,13 @@ async function adminPayload(pool, config, {
       proposalsTotal: botProposalCeiling(settings),
       questionsPerAppPerDay: QUESTION_TRIPWIRE_PER_DAY,
     },
-    builds: await buildLaneSummary(pool),
+    // The shadow lane's own counts (buildLaneSummary, which never counts a
+    // live build, #3509), and beside them the live builds under way and
+    // waiting (buildsNow): first versions above all, which until run four
+    // (13 Oct 2026) the lane's figures left at 0 while one built. The live
+    // build loop's own last pass is the loop's status (`loop`), which the
+    // connector carries as live.lastPass (bench/connector-data.js, #4993).
+    builds: { ...await buildLaneSummary(pool, memory), live: { building: builds.building.length, waiting: builds.waiting } },
     mentionOptOuts: await mentionOptOutList(pool),
     // #3624 stage 2: what runs now, and what the DM's answers cost.
     workingNow: [...await workingNow(pool, settings), ...builds.building],
@@ -9781,6 +10630,12 @@ async function adminPayload(pool, config, {
     // The configurations' pairs waiting for a pick, per scope: picked only
     // through the connector, so the Overview says they wait.
     pairsWaiting: await botConfigs().pairsWaitingByScope(pool),
+    // Requests about Homeroom itself: the move offers of the last week, how
+    // they were decided, and the verdicts that sent none, with why.
+    moveOffers: await require('./homeroom-bot-move').moveOfferSummary(pool).catch((err) => {
+      log.warn('homeroom-bot', 'Could not read the move offers', { err: err.message });
+      return null;
+    }),
   };
 }
 
@@ -10070,6 +10925,9 @@ module.exports = {
   validateSettingsPatch,
   parseSettings,
   adminPayload,
+  memoryStatus,
+  loopMemory,
+  MEMORY_STATUS_KEY,
   iterateRunsForExport,
   exportRow,
   EXPORT_COLUMNS,
@@ -10142,13 +11000,26 @@ module.exports = {
   PLAN_SEND_ATTEMPTS,
   goAhead,
   carryApprovedPlan,
+  autoRetryable,
+  claimAutoRetry,
+  // 15 Oct 2026: Try again finishes a first version that was built.
+  finishBuiltFirstVersion,
+  finishableRun,
+  whyNotFinish,
+  FINISH_STALE_MINUTES,
   retireWaitingPlans,
   settleStalePlans,
   planChangesFor,
   planChangeNote,
+  // 13 Oct 2026: a first version planned at Make it (first-version-plan.js).
+  planFromEarly,
+  goAheadIfDecided,
+  planBullets,
+  planQuestions,
+  parseAssumptions,
+  noteWithAssumptions,
   liveBuildCandidates,
   pickLiveBuilds,
-  holdLiveBuildDuringRecovery,
   noteFollowUpRefusal,
   clearFollowUpRefusals,
   followUpsBackedOff,
@@ -10162,6 +11033,8 @@ module.exports = {
   relaySpend,
   STOP_SETTLE_MS,
   ABANDONED_LIVE_WINDOW_DAYS,
+  ABANDONED_LIVE_REASON,
+  LOST_LIVE_REASON,
   BACKOFF_BASE_MS,
   BACKOFF_CEILING_MS,
   TRIPWIRE_VERDICTS,
@@ -10190,11 +11063,17 @@ module.exports = {
   replyFailedWhy,
   PLATFORM_BUILD_TIME_FACTOR,
   isRecoveredBotSession,
+  runLiveBuild,
+  recordLostLiveBuild,
+  runShadowBuild,
+  recordLostShadowBuild,
+  holdDurableBuildSlots,
+  requeueLegacyBuilds,
+  liveBuildInput,
+  liveBuildNonce,
+  runPosted,
   settleReapedTurn,
-  completeRecoveredLive,
   // #4662: put a live run back in line with its kept plan, markdown and HTML.
-  resumeLiveBuildFromSpec,
-  reviewRecoveredBuild,
   liveSayer,
   announceBuilt,
   RESTART_REASON,
@@ -10218,21 +11097,14 @@ module.exports = {
   finishRecoveredFollowUp,
   RECOVERED_FOLLOWUP_EFFECT,
   queueWait,
-  settleAbandonedLiveBuilds,
-  finishInterruptedReviews,
+  queueSnapshot,
   recordReviewState,
   CAPTURE_ONLY_MINUTES,
-  abandonedLiveAfterSeconds,
-  ABANDONED_LIVE_ERROR,
-  ABANDONED_LIVE_REASON,
   FIRST_VERSION_BUILD_TIME_FACTOR,
   recordLiveBuild,
   keepNoChange,
-  recoveredNoChange,
   recoveryDeadline,
-  finishRecoveredTurn,
   abandonRecoveredTurn,
-  holdSlotDuringRecovery,
   isInfraBuildError,
   wakeBuilds,
   MAX_BUILD_CONCURRENCY,
@@ -10252,6 +11124,9 @@ module.exports = {
   simulateCaps,
   planTripwire,
   parseVerdict,
+  keptReply,
+  unreadableReplyOf,
+  seedStagingUnreadableReply,
   parseRepo,
   BOT_USERNAME,
   MODES,
@@ -10276,6 +11151,9 @@ module.exports = {
   enqueueFront,
   billingOf,
   readReasonOf,
+  readFingerprintOf,
+  reuseHeldVerdict,
+  CAP_FREED_REASON,
   skippedAtTriage,
   liveCandidates,
   buildsNow,
@@ -10286,9 +11164,20 @@ module.exports = {
   firstVersionHolds,
   isFirstVersionRequest,
   heldForFirstVersion,
+  // 15 Oct 2026: a first version filed while its project is set up.
+  firstVersionsToRead,
+  listApps,
+  projectSetUpStop,
+  setupCheckFor,
+  SETUP_FAILED_BEFORE,
+  SETUP_FAILED_DURING,
+  SETUP_NOT_PROPOSED,
   workingNow,
   dmChatSummary,
   dispatch,
+  claimLiveBuild,
+  dispatchLiveBuilds,
+  wakeLiveBuilds,
   DEFAULT_WEEKLY_LIMIT_CENTS,
   REFRESH_INTERVAL_MS,
   IDLE_PASS_DELAY_MS,
@@ -10301,10 +11190,11 @@ module.exports = {
     appBackoff.clear(); followUpBackoff.clear(); lastRefusals = []; platformFault = null; lastVolumeSweepAt = 0; lastLiveSweepAt = 0;
     inFlight.clear(); budgetPausedUntil = 0; platformSlugsCache = null;
     readsInFlight.clear(); lastReads.clear();
-    liveBuildsInFlight.clear();
+    passStartedAt = null; liveDispatchRunning = false; liveDispatchAgain = false; liveDispatchDone = Promise.resolve();
+    liveKick = null; liveKickSeams = {};
     if (timer) clearTimeout(timer);
-    timer = null; loopConfig = null; pendingApps.clear(); refreshAllRequested = false; wakeRequested = false;
-    pendingLive.clear();
+    if (deferResumeTimer) clearInterval(deferResumeTimer); deferResumeTimer = null;
+    timer = null; loopConfig = null; pendingApps.clear(); spentRetries.clear(); refreshAllRequested = false; wakeRequested = false;
     buildsInFlight.clear(); buildLaneOn = false; buildDrainRunning = false; buildDrainAgain = false;
     buildFault = null; lastBuildDrain = null;
     if (buildTimer) clearTimeout(buildTimer);
@@ -10317,7 +11207,12 @@ module.exports = {
   _buildsInFlightForTests() { return [...buildsInFlight.keys()]; },
   // Test seams for the wake path.
   _pendingForTests() { return { apps: [...pendingApps], all: refreshAllRequested, wake: wakeRequested, armed: timer !== null }; },
-  _armForTests(config) { stopped = false; loopConfig = config; passInFlight = false; timer = setTimeout(() => {}, 1e9); timer.unref(); },
+  // `seams` gives Build it's wake (wakeLiveBuilds) its pool and deps.
+  _armForTests(config, seams = {}) {
+    stopped = false; loopConfig = config; passInFlight = false; timer = setTimeout(() => {}, 1e9); timer.unref();
+    liveKickSeams = seams;
+  },
+  async _awaitLiveKickForTests() { return liveKick ? liveKick : []; },
   _setPassInFlightForTests(v) { passInFlight = !!v; },
   _inFlightForTests() { return [...inFlight.values()].map((e) => ({ ...e })); },
 };

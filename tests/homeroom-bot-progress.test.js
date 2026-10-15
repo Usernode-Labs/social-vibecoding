@@ -18,11 +18,12 @@ const stage = (row) => progress.stageOf(row, { now: NOW });
 
 test('the steps a request and a first version go through, and which step each stage is', () => {
   // #4053: a first version's steps say what is happening, never what to do
-  // ("Build it" read as an instruction). A request's steps keep their names.
+  // ("Build it" read as an instruction). One story: a request's steps are
+  // named the same way (contract 2.3).
   assert.deepEqual(progress.FIRST_VERSION_STEPS, [
-    'Setting up the project', 'Reading the description', 'Planning it', 'Building it', 'Testing it', 'Ready to try', 'Live',
+    'Setting up', 'Reading', 'Planning', 'Building', 'Testing', 'Ready to try', 'Live',
   ]);
-  assert.deepEqual(progress.REQUEST_STEPS, ['Read the request', 'Write a plan', 'Build it', 'Test it', 'Approval', 'Live']);
+  assert.deepEqual(progress.REQUEST_STEPS, ['Reading', 'Planning', 'Building', 'Testing', 'Ready to try', 'Live']);
   assert.equal(progress.stepNumber('setting_up', true), 1);
   assert.equal(progress.stepNumber('reading', true), 2);
   assert.equal(progress.stepNumber('reading', false), 1);
@@ -53,15 +54,18 @@ test('#4053: the build line a first version\'s thumbnail shows, for its creator 
   for (const s of ['checks', 'checks_failed', 'fix_queued', 'fixing']) assert.equal(line(s), 'testing', s);
   for (const s of ['vote', 'merging', 'followup_queued', 'revising']) assert.equal(line(s), 'ready', s);
   assert.equal(line('nonsense'), null);
-  assert.deepEqual(progress.BUILD_LINE_STATES, ['planning', 'plan', 'plan-member', 'question', 'building', 'testing', 'ready', 'live']);
-  // The chat's step names for steps 4 to 7 are the line's own words
-  // (frontend/src/features/first-session/build-line-words.js).
+  // 14 Oct 2026: and `stopped`, which no stage is (firstVersionStopped).
+  assert.deepEqual(progress.BUILD_LINE_STATES, ['planning', 'plan', 'plan-member', 'question', 'building', 'testing', 'ready', 'live', 'stopped']);
+  // The chat's step names for steps 4 to 7 lead the line's own words
+  // (frontend/src/features/first-session/build-line-words.js): one story
+  // names a step in a word ("Building"), the thumbnail's line in a phrase
+  // ("Building it").
   const words = require('node:fs').readFileSync(require('node:path').join(__dirname, '../frontend/src/features/first-session/build-line-words.js'), 'utf8');
   for (const [state, step] of [['building', 4], ['testing', 5], ['ready', 6], ['live', 7]]) {
     // The table holds each line's message id; its English is the step's name.
     const id = new RegExp(`\\b${state}: '(onboarding:buildLine\\.[A-Za-z]+)',`).exec(words);
     assert.ok(id, state);
-    assert.equal(require('./lib/platform-i18n').message(id[1]), progress.FIRST_VERSION_STEPS[step - 1], state);
+    assert.ok(require('./lib/platform-i18n').message(id[1]).startsWith(progress.FIRST_VERSION_STEPS[step - 1]), state);
   }
 });
 
@@ -138,6 +142,21 @@ test('a proposal: its checks, then the group\'s vote', () => {
   assert.equal(progress.outcomeOf({ mode: 'live', build_ok: false, build_error: 'skipped: the request was closed before its build started' }),
     'not built: the request was closed before its build started');
   assert.equal(progress.outcomeOf({ mode: 'shadow', verdict: 'person' }), null);
+});
+
+// 13 Oct 2026 (D1): a project's first version goes live without a vote, so
+// once its tests pass it waits on nobody, and while they run the bot does
+// not say it is waiting for approval.
+test('D1: a first version up for testing waits on nobody\'s approval', () => {
+  const open = { proposal_status: 'promoted', proposal_at: ago(20), first_version: true };
+  assert.deepEqual(stage({ ...open, check_state: 'passing' }), {
+    stage: 'vote', since: ago(20), doing: 'its tests passed, and as the project\'s first version it goes live without a vote in a minute or two',
+  });
+  assert.equal(stage({ ...open, check_state: 'pending', check_phase: 'building' }).doing,
+    'it goes live without a vote once its tests pass, and its tests are running: building the preview first');
+  const failing = stage({ ...open, check_state: 'failing', test_results: [{ status: 'fail' }] });
+  assert.equal(failing.doing, 'it goes live without a vote once its tests pass, and its tests failed (1 test did not pass)');
+  assert.equal(progress.inFlight({ stage: 'vote' }), false, 'nor is it the bot\'s work in flight');
 });
 
 test('#3734: in flight is what the bot is doing now or has in its queue, never what waits on others', () => {

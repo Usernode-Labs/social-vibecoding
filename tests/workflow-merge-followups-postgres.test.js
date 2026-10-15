@@ -95,7 +95,9 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
       return typeof r === 'function' ? r(input) : (r || { ok: true });
     },
   });
-  const machine = mergeFollowups({ dataKey: DATA_KEY, notifiers });
+  // Whether a merge asks app-delivery for its deploy (its flag, per process).
+  const delivery = { on: false };
+  const machine = mergeFollowups({ dataKey: DATA_KEY, notifiers, delivery: () => delivery.on });
   const rt = createRuntime({
     pool, machines: [machine], pollMs: 50, publish: async (q, list) => { pushed.push(...list); },
     services: Object.fromEntries(Object.values(WORK).map((k) => [k, fake(k)])),
@@ -150,8 +152,9 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
     assert.ok(said.some((c) => /Secret "API_TOKEN" was declared and set/.test(c)));
     assert.ok(said.some((c) => /Bounty on issue #7/.test(c)));
     assert.ok(!said.some((c) => /is live/.test(c)), 'nothing says live yet');
+    // The preview waits for the delivery's result (demo mode deploys its build).
     const kinds = (await workOf(s)).map((w) => w.kind).sort();
-    assert.deepEqual(kinds, [WORK.deliver, WORK.bot, WORK.find, WORK.issues, WORK.mainCheck, WORK.teardown, WORK.retire].sort());
+    assert.deepEqual(kinds, [WORK.deliver, WORK.bot, WORK.find, WORK.issues, WORK.mainCheck, WORK.retire].sort());
   });
 
   await t.test('F2: a merge observed by recovery gets the same follow-ups', async () => {
@@ -160,7 +163,7 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
     assert.equal((await merge(s, { observedBy: 'recovery', tally: null })).result, 'accepted');
     assert.equal((await row(s.id)).status, 'merged');
     const kinds = (await workOf(s)).map((w) => w.kind).sort();
-    assert.deepEqual(kinds, [WORK.deliver, WORK.bot, WORK.find, WORK.issues, WORK.mainCheck, WORK.teardown, WORK.retire].sort());
+    assert.deepEqual(kinds, [WORK.deliver, WORK.bot, WORK.find, WORK.issues, WORK.mainCheck, WORK.retire].sort());
     assert.equal((await events(s, 'pr_merged')).length, 1);
   });
 
@@ -412,7 +415,8 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
     const s = await proposal(a);
     await merge(s);
     assert.ok(!(await workOf(s)).some((w) => w.kind === WORK.deliver), 'no rebuild for the self-hosted app');
-    assert.ok(notified.some((n) => n.type === 'nudgeDeployer' && n.sha === SHA('a')));
+    // The host deployer's nudge is durable work now, not a notifier.
+    assert.equal((await workOf(s)).find((w) => w.kind === WORK.nudge)?.input?.sha, SHA('a'));
     await settle();
     assert.equal((await instance(s)).state, 'delivering');
     await send(s, 'Deployed', { sha: SHA('a') });
@@ -432,6 +436,254 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
     await assert.rejects(pool.query('UPDATE chat_sessions SET merge_commit_sha = NULL WHERE id = $1', [m.id]), /WF_OWNERSHIP_VIOLATION/);
     // Outside sources cannot append the internal events.
     const forged = await send(m, 'Deployed', { sha: SHA('a') }, { kind: 'route' });
+    await rt.drain();
+    assert.equal((await outcome(forged)).reason, 'internal_only');
+  });
+
+  // ── Fixed in the steps 1-2 fix (workflow-foundation design-fix-steps-1-2.md) ──
+
+  await t.test('the preview goes once its delivery has a result: demo mode deploys the preview\'s build', async () => {
+    const a = await app();
+    const s = await proposal(a);
+    await merge(s);
+    assert.ok(!(await workOf(s)).some((w) => w.kind === WORK.teardown), 'not while the delivery may still reuse it');
+    work.calls.length = 0;
+    await settle();
+    const order = work.calls.filter((c) => c.input.sessionId === s.id).map((c) => c.kind);
+    assert.ok(order.includes(WORK.teardown), 'requested by the delivery\'s result');
+    assert.ok(order.indexOf(WORK.deliver) < order.indexOf(WORK.teardown), order.join(', '));
+    // A delivery that failed for good lets it go too.
+    const failed = await proposal(a);
+    work.fail.set(WORK.deliver, 'permanent');
+    try {
+      await merge(failed);
+      await settle();
+    } finally { work.fail.delete(WORK.deliver); }
+    assert.equal((await instance(failed)).state, 'deploy_failed');
+    assert.ok((await workOf(failed)).some((w) => w.kind === WORK.teardown));
+    // The platform's own app has no delivery here: its preview goes at once.
+    const own = await proposal(await app({ selfHosted: true }));
+    await merge(own);
+    assert.ok((await workOf(own)).some((w) => w.kind === WORK.teardown));
+  });
+
+  await t.test('a shots run still in the worker: its retire is asked again later, never used up', async () => {
+    const a = await app();
+    const s = await proposal(a);
+    work.results.set(WORK.retire, { waiting: 'a'.repeat(32) });
+    try {
+      await merge(s);
+      await settle();
+    } finally { work.results.delete(WORK.retire); }
+    const { rows } = await pool.query(
+      `SELECT work_key, status, due_at > NOW() + INTERVAL '90 seconds' AS later
+         FROM wf_work WHERE machine = $1 AND key = $2 AND kind = $3 ORDER BY created_at`,
+      [MACHINE, sessionKey(s.id), WORK.retire]);
+    assert.equal(rows.length, 2, 'the first answer named the run; a second retire waits');
+    assert.equal(rows[0].status, 'settled');
+    assert.match(rows[1].work_key, /^worker~\d+$/);
+    assert.deepEqual([rows[1].status, rows[1].later], ['queued', true], 'about two minutes later');
+    assert.equal((await instance(s)).data.followups[rows[1].work_key].status, 'pending');
+  });
+
+  await t.test('a carried change is left alone when its head moved, or shots or checks are running on it', async () => {
+    const a = await app();
+    const carrier = await proposal(a, { title: 'Carrier' });
+    const moved = await proposal(a, { status: 'promoted', extra: { head: SHA('1') } });
+    const shooting = await proposal(a, { status: 'promoted', extra: { head: SHA('2') } });
+    const checking = await proposal(a, { status: 'promoted', extra: { head: SHA('3') } });
+    const idle = await proposal(a, { status: 'promoted', extra: { head: SHA('4') } });
+    await pool.query(
+      `INSERT INTO shot_runs (id, session_id, base_sha, head_sha, intent, state, trace_summary)
+       VALUES ($1, $2, $3, $4, '{}', 'exploring', '{"progress": {}}')`,
+      [crypto.randomBytes(16).toString('hex'), shooting.id, SHA('0'), SHA('2')]);
+    await pool.query(`INSERT INTO check_runs (run_id, session_id, owner, manifest) VALUES ($1, $2, 'pod-a', '{}')`,
+      [crypto.randomUUID(), checking.id]);
+    work.results.set(WORK.find, (input) => (input.sessionId === carrier.id ? { found: [
+      { id: moved.id, head: SHA('9') }, { id: shooting.id, head: SHA('2') },
+      { id: checking.id, head: SHA('3') }, { id: idle.id, head: SHA('4') },
+    ] } : { found: [] }));
+    try {
+      await merge(carrier);
+      await pool.query(`UPDATE wf_work SET status = 'settled' WHERE key = $1 AND kind = $2`, [sessionKey(carrier.id), WORK.deliver]);
+      await settle();
+    } finally { work.results.delete(WORK.find); }
+    const reason = async (c) => (await pool.query(
+      `SELECT result, reason FROM wf_events WHERE machine = $1 AND key = $2 AND type = 'Included'`, [MACHINE, sessionKey(c.id)])).rows[0];
+    assert.deepEqual({ ...await reason(moved) }, { result: 'rejected', reason: 'head_moved' });
+    assert.deepEqual({ ...await reason(shooting) }, { result: 'rejected', reason: 'shots_running' });
+    assert.deepEqual({ ...await reason(checking) }, { result: 'rejected', reason: 'checks_running' });
+    for (const c of [moved, shooting, checking]) assert.equal((await row(c.id)).status, 'promoted');
+    assert.equal((await row(idle.id)).included_in_session_id, carrier.id, 'the idle one is carried');
+  });
+
+  await t.test('the bell settles what the decision answered, and tells the people it settled and everyone with a row about the change', async () => {
+    const a = await app();
+    const [digested, asked, read] = [await user(), await user(), await user()];
+    const s = await proposal(a, { status: 'promoted' });
+    await pool.query('INSERT INTO app_favorites (app_id, user_id) VALUES ($1, $2)', [a.id, digested.id]);
+    // A one-change digest that counted only this change (no session: a digest names none).
+    await pool.query(`INSERT INTO notifications (user_id, app_id, kind, detail, created_at) VALUES ($1, $2, 'vote_digest', '1', NOW() + INTERVAL '1 second')`,
+      [digested.id, a.id]);
+    await pool.query(`INSERT INTO notifications (user_id, app_id, session_id, kind) VALUES ($1, $2, $3, 'pr_proposed')`, [asked.id, a.id, s.id]);
+    await pool.query(`INSERT INTO notifications (user_id, app_id, session_id, kind, read_at) VALUES ($1, $2, $3, 'pr_proposed', NOW())`, [read.id, a.id, s.id]);
+    pushed.length = 0;
+    await merge(s);
+    const { rows: [digest] } = await pool.query(`SELECT read_at FROM notifications WHERE user_id = $1 AND kind = 'vote_digest'`, [digested.id]);
+    assert.ok(digest.read_at, 'its one waiting change is decided, though the row still read promoted when it settled');
+    const told = pushed.filter((p) => p.kind === 'user' && p.data.type === 'notifications_changed').map((p) => p.routing.userId).sort();
+    // And everyone with a row about the change: its wording follows the change's status.
+    assert.deepEqual(told, [digested.id, asked.id, read.id].sort());
+  });
+
+  await t.test('every web process stops listing the requests a merge closes, and re-reads when they close', async () => {
+    const a = await app();
+    const s = await proposal(a, { linked: [5, 6] });
+    pushed.length = 0;
+    await merge(s);
+    const closed = pushed.filter((p) => p.kind === 'issues_closed');
+    assert.deepEqual(closed.map((p) => [p.routing, p.data.numbers]), [[{ owner: 'acme', repo: a.slug }, [5, 6]]]);
+    work.results.set(WORK.issues, { closed: [5], skipped: [], stillOpen: [9] });
+    try { await settle(); } finally { work.results.delete(WORK.issues); }
+    const ended = pushed.filter((p) => p.kind === 'issues_closed').at(-1);
+    assert.deepEqual(ended.data, { numbers: [5], open: [9] }, 'what the work closed, and what it found still open, in every process');
+  });
+
+  await t.test('the merge\'s secret apply without the data key throws (failing its transition) instead of discarding held values', async () => {
+    const { applyInTransaction } = require('../src/workflow/rules/pending-secret-apply.ts');
+    const a = await app();
+    const s = await proposal(a);
+    await pool.query(
+      `INSERT INTO pending_secret_declarations (app_id, session_id, scope, key, declaration, value_enc, created_by)
+       VALUES ($1, $2, 'app', 'KEPT', '{}', $3, $4)`, [a.id, s.id, secrets.encrypt('v', DATA_KEY), s.author.id]);
+    await assert.rejects(applyInTransaction(pool, { sessionId: s.id, dataKey: '' }), /data encryption key is not configured/);
+    // A merge that declared nothing needs no key.
+    const plain = await proposal(a);
+    assert.deepEqual(await applyInTransaction(pool, { sessionId: plain.id, dataKey: '' }), { applied: [], refused: [] });
+    const { rows: [held] } = await pool.query('SELECT status FROM pending_secret_declarations WHERE session_id = $1', [s.id]);
+    assert.equal(held.status, 'pending', 'kept for a process that can read it');
+  });
+
+  await t.test('what counts as a shots run still using the worker: heard from lately, or a planned row just made', async () => {
+    const { liveShotsRun } = require('../src/workflow/merge-followups/facts.ts');
+    const a = await app();
+    const run = async (state, { ago, progress = true } = {}) => {
+      const s = await proposal(a);
+      const id = crypto.randomBytes(16).toString('hex');
+      await pool.query(
+        `INSERT INTO shot_runs (id, session_id, base_sha, head_sha, intent, state, trace_summary, updated_at)
+         VALUES ($1, $2, $3, $4, '{}', $5, $6, NOW() - make_interval(secs => $7))`,
+        [id, s.id, SHA('0'), SHA('1'), state, progress ? '{"progress": {}}' : null, ago]);
+      return (await liveShotsRun(pool, s.id)) === id;
+    };
+    assert.equal(await run('exploring', { ago: 4 * 60 }), true, 'heartbeated four minutes ago');
+    assert.equal(await run('exploring', { ago: 6 * 60 }), false, 'silent past five minutes: interrupted');
+    assert.equal(await run('provisioning', { ago: 30 * 60, progress: false }), true, 'never reported progress: forty-five minutes');
+    assert.equal(await run('planned', { ago: 30 }), true, 'just made, about to be claimed');
+    assert.equal(await run('planned', { ago: 3 * 60 }), false, 'a planned row nobody claimed will never start');
+    assert.equal(await run('failed', { ago: 0 }), false, 'finished');
+  });
+
+  // ── With app delivery on: the deploy is asked of app-delivery ─────────
+  // Its answers are appended here as app-delivery's messages; the two
+  // machines together run in tests/workflow-processes-postgres.test.js.
+  const deliveryAnswer = (s, type, payload) => rt.append(machine, sessionKey(s.id), { type, payload },
+    { requestKey: `t-${++rk}`, appId: s.app_id, source: { kind: 'message', from: { machine: 'app-delivery', key: `app:${s.app_id}`, eventId: 1 } } });
+  const asked = async (a) => (await pool.query(
+    `SELECT payload, source FROM wf_events WHERE machine = 'app-delivery' AND key = $1 ORDER BY id`, [`app:${a.id}`])).rows;
+
+  await t.test('with app delivery on, a merge asks it for the deploy and goes live on its answer', async () => {
+    delivery.on = true;
+    try {
+      const a = await app();
+      const s = await proposal(a);
+      await merge(s);
+      assert.ok(!(await workOf(s)).some((w) => w.kind === WORK.deliver), 'no deploy of its own');
+      assert.ok(!(await workOf(s)).some((w) => w.kind === WORK.teardown), 'the preview waits for the answer');
+      const [req] = await asked(a);
+      assert.deepEqual(req.payload, { appId: a.id, reason: 'merge', prNumber: s.pr_number, revision: SHA('a'), reuse: null });
+      assert.equal(req.source.from.key, sessionKey(s.id), 'from this merge, which the answer comes back to');
+      assert.equal((await instance(s)).data.delivery, 'app-delivery');
+      await deliveryAnswer(s, 'Delivered', { sha: SHA('a') });
+      await settle();
+      assert.equal((await instance(s)).state, 'live');
+      assert.ok((await workOf(s)).some((w) => w.kind === WORK.teardown), 'its first answer lets the preview go');
+    } finally { delivery.on = false; }
+  });
+
+  await t.test('with app delivery on, a failed deploy is deploy_failed, and its later answer still makes it live', async () => {
+    delivery.on = true;
+    try {
+      const a = await app();
+      const s = await proposal(a);
+      await merge(s);
+      await deliveryAnswer(s, 'DeliveryFailed', { message: 'the build failed', missingSecrets: null });
+      await settle();
+      assert.equal((await instance(s)).state, 'deploy_failed');
+      assert.ok((await lines(s)).some((l) => /the build failed/.test(l.content)));
+      assert.ok((await workOf(s)).some((w) => w.kind === WORK.teardown));
+      // An admin's retry asks again, where it asked first.
+      await send(s, 'RetryDelivery', {}, { kind: 'admin' });
+      await settle();
+      assert.equal((await instance(s)).state, 'delivering');
+      assert.equal((await asked(a)).length, 2);
+      await deliveryAnswer(s, 'Delivered', { sha: SHA('b') });
+      await settle();
+      assert.ok((await workOf(s)).some((w) => w.kind === WORK.verify && w.input.sha === SHA('b')),
+        'a build that is not the merge commit is checked for it, as any deploy is');
+    } finally { delivery.on = false; }
+  });
+
+  await t.test('with app delivery on, a merge counts no other deploy before its own request is answered, whatever the order', async () => {
+    delivery.on = true;
+    try {
+      const a = await app();
+      const s = await proposal(a);
+      await merge(s);
+      // An earlier deploy's result reaches it before its own request was
+      // even recorded there (queued behind that result): that deploy started
+      // before this merge applied its declared keys.
+      const early = await deliveryAnswer(s, 'Deployed', { sha: SHA('a') });
+      const fromRelease = await send(s, 'Deployed', { sha: SHA('a') });
+      await settle();
+      assert.deepEqual([(await outcome(early)).reason, (await outcome(fromRelease)).reason], ['awaiting_own_answer', 'awaiting_own_answer']);
+      assert.equal((await instance(s)).state, 'delivering');
+      // Its own deploy's answer counts, and the preview goes with it.
+      await deliveryAnswer(s, 'DeliveryFailed', { message: 'missing required secrets: API_KEY', missingSecrets: ['API_KEY'] });
+      await settle();
+      assert.equal((await instance(s)).state, 'deploy_failed');
+      assert.ok((await workOf(s)).some((w) => w.kind === WORK.teardown));
+      // Answered once, any later deploy that contains it makes it live.
+      await deliveryAnswer(s, 'Deployed', { sha: SHA('a') });
+      await settle();
+      assert.equal((await instance(s)).state, 'live');
+    } finally { delivery.on = false; }
+  });
+
+  await t.test('a retry after app delivery was turned off is the merge\'s own deploy again', async () => {
+    delivery.on = true;
+    const a = await app();
+    const s = await proposal(a);
+    try {
+      await merge(s);
+      await deliveryAnswer(s, 'DeliveryFailed', { message: 'the build failed', missingSecrets: null });
+      await settle();
+    } finally { delivery.on = false; }
+    await send(s, 'RetryDelivery', {}, { kind: 'admin' });
+    await settle();
+    assert.equal((await asked(a)).length, 1, 'nothing asked of a machine that no longer runs');
+    assert.ok((await workOf(s)).some((w) => w.kind === WORK.deliver), 'its own deploy');
+    assert.equal((await instance(s)).data.delivery, undefined);
+  });
+
+  await t.test('an answer from anyone but app-delivery, or to a merge that did not ask it, is refused', async () => {
+    const a = await app();
+    const s = await proposal(a);
+    await merge(s);
+    const id = await deliveryAnswer(s, 'Delivered', { sha: SHA('a') });
+    await rt.drain();
+    assert.deepEqual([(await outcome(id)).result, (await outcome(id)).reason], ['rejected', 'not_asked']);
+    const forged = await send(s, 'Delivered', { sha: SHA('a') });
     await rt.drain();
     assert.equal((await outcome(forged)).reason, 'internal_only');
   });

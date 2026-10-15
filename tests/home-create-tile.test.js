@@ -283,7 +283,9 @@ test('#3047: the tile goes behind "Show all" when it would add a row past 2 rows
 
 test('#3047: the expander appears for the tile alone, naming every app', () => {
   const HOME = HOME_SRC;
-  assert.match(HOME, /const createHidden = !Home\._appsExpanded\s*&& HomeLayout\.createTileCollapsed\(shown, cols, rowBound\);/);
+  // #4669 added the `!editing` half: edit mode shows every tile and its
+  // trailing tile, so the collapsed-grid gates step aside while it holds.
+  assert.match(HOME, /const createHidden = !editing && !Home\._appsExpanded\s*&& HomeLayout\.createTileCollapsed\(shown, cols, rowBound\);/);
   assert.match(HOME, /const collapsed = hiddenRows \|\| createHidden;/);
   assert.match(HOME, /moreCount = collapsed \? \(canvas\.length \+ HomeLayout\.overflowItems\(layout\)\.length\) : 0;/);
   // #4757: a held-back tile is no longer dropped — the view is pushed with
@@ -349,9 +351,17 @@ test('the Show-all line carries the compact entry exactly when the tile is held 
   assert.match(entry[1], /\bhome-create-btn\b/, 'the focus-ring hook app.css keys');
   assert.doesNotMatch(entry[1], /\bhome-create-tile\b/,
     'not a tile of the grid canvas: the drag-time #app-list rules do not apply');
+  // Not a filled button: dim ink at rest that turns violet on hover, and the
+  // tile's dashed face in front of the label.
+  assert.doesNotMatch(entry[1], /\bbg-violet-600\b/, 'not a filled blue button');
+  assert.doesNotMatch(entry[1], /\btext-white\b/, 'no white ink: dim zinc text, not filled');
+  assert.match(entry[1], /\btext-zinc-600\b/, 'dim zinc ink at rest');
+  assert.match(entry[1], /\bgroup-hover:text-violet-700\b/, 'the violet hover accent');
+  assert.match(html, /<span class="[^"]*border-dashed[^"]*group-hover:border-violet-500[^"]*"/,
+    'the entry renders its dashed face, which turns violet on hover');
   assert.match(html, /data-panel-slot="create"/);
   assert.match(html, /data-create-enabled="true"/);
-  assert.match(html, /title="Start a new project"/);
+  assert.match(html, /title="Start a project: an app for you or for a community"/);
   assert.match(html, />New project</, 'the tile\'s own label');
   assert.doesNotMatch(html, /<button[^>]*\sdisabled/, 'never the disabled attribute');
 });
@@ -451,7 +461,7 @@ test('the tile draws both states, and never the disabled attribute', () => {
   assert.match(on, /id="home-create-tile"/);
   assert.match(on, />New project</, 'the create dialog\'s own title (communities, stage 4)');
   assert.match(on, /data-create-enabled="true"/);
-  assert.match(on, /title="Start a new project"/);
+  assert.match(on, /title="Start a project: an app for you or for a community"/);
   assert.doesNotMatch(on, /aria-label=/, 'its name is its visible label');
 
   const off = renderToHtml(createElement(CreateTile, { view: { ...CREATE, enabled: false } }));
@@ -502,9 +512,12 @@ test('its cell is written as an attribute, like the app tiles\'', () => {
   assert.match(src, /el\.setAttribute\('style', style\)/);
   assert.doesNotMatch(src, /style=\{style\}/,
     'the style prop would fold grid-column + grid-row into a grid-area shorthand');
-  // …from the same template the tiles use, handed down by AppGrid.
+  // …from the same template the tiles use, handed down by AppGrid. #4669:
+  // edit mode leaves the trailing tile alone — one CreateTile, in edit
+  // mode as at rest; the mode's own entry is the heading's Add apps button.
   const grid = read(GRID);
   assert.match(grid, /<CreateTile view=\{state\.create\} style=\{placementStyle\(state\.create\.placement\)\} \/>/);
+  assert.doesNotMatch(grid, /AddAppsTile/);
   assert.ok(grid.indexOf('<CreateTile') > grid.indexOf('state.items.map('),
     'rendered after the app tiles, so it is the last child');
 });
@@ -536,4 +549,43 @@ test('the declared Create checks select the grid\'s last child', () => {
     const sel = (t.expectSelector || '').replace(/:not\(:has\(#home-create-section\)\)/g, '');
     assert.doesNotMatch(sel, /home-create-section/, t.name);
   }
+});
+
+// ── EDIT MODE (#4669): the trailing tile keeps its place ──────────────
+
+test('while editing, the trailing tile is still the Create tile, as at rest', () => {
+  const items = ['a', 'b'].map((slug, col) => ({
+    kind: 'card', placement: { col, row: 0, w: 1, h: 1 }, app: { ...CARD, slug, name: slug },
+  }));
+  const html = renderGrid({
+    ready: true, editing: true, items,
+    create: { ...CREATE, placement: { col: 2, row: 0, w: 1, h: 1 } },
+  });
+  const kids = childrenOf(html, 'app-list');
+  assert.deepEqual(kids.map((k) => k.attrs['data-slug'] || k.attrs.id),
+    ['a', 'b', 'home-create-tile'],
+    'the same last child as the resting grid, same id, no Add-apps tile');
+  const tile = kids[kids.length - 1];
+  assert.equal(tile.tag, 'button');
+  assert.match(tile.attrs.class, /\bhome-create-tile\b/);
+  assert.doesNotMatch(html, /home-add-apps-tile/,
+    'the Add-apps entry is the heading button now, not a tile');
+  assert.equal(tile.attrs['data-panel-slot'], 'create',
+    'the declared checks still select the Create entry by this hook');
+  assert.equal(tile.attrs['data-create-enabled'], 'true');
+  assert.match(html, />New project</);
+  // The grid itself is marked for the wiggle's CSS.
+  assert.match(html, /data-editing="true"/);
+});
+
+test('not editing, the trailing tile is the Create tile as before', () => {
+  const html = renderGrid({
+    ready: true, items: [],
+    create: { ...CREATE, placement: null },
+  });
+  assert.match(html, /id="home-create-tile"/);
+  assert.doesNotMatch(html, /home-add-apps-tile/);
+  assert.doesNotMatch(html, /data-editing=/, 'the attribute is absent, not "false"');
+  // The initial store renders neither the tile nor an editing mark.
+  assert.doesNotMatch(renderGrid({}), /home-create-tile|data-editing/);
 });

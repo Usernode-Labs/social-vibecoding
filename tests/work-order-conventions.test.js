@@ -332,6 +332,7 @@ test('the work order says the checks gate merge and how to clear them', () => {
   assert.match(step7, /`failed` includes a specific reason/);
   assert.match(step7, /a ready change's `note` says what its shots leave out/);
   assert.match(step7, /fix `steps` or `hints` rather than accepting a partial pair/);
+  assert.match(step7, /An `unchanged` change's before and after came out the same, so its\s+shots cannot show it: treat it as a skip/);
   assert.match(step7, /does not substitute a home-page screenshot/);
   assert.doesNotMatch(step7, /captureDefaultedToRoot/);
 });

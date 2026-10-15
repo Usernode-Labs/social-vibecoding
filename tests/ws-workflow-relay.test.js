@@ -78,3 +78,33 @@ test('a notification named by a workflow push is read by the relay and reaches i
   author.terminate();
   other.terminate();
 });
+
+// GitHub's open-issues list is cached in each web process, which also hides
+// issues it was told were just closed (GitHub's list lags). A machine says
+// which it closed as a push every process relays: the relaying process
+// updates its own copy, and no socket hears anything.
+test('issues a workflow closed reach this process\'s copy of the open-issues list, and no socket', async () => {
+  const github = require('../src/services/github');
+  const calls = [];
+  // Applied here only (github.js applyIssuesChange): every process hears the
+  // transition itself, so none passes it on.
+  const saved = { apply: github.applyIssuesChange };
+  github.applyIssuesChange = (...a) => { calls.push(['apply', ...a]); };
+  const sock = await openEvents('author');
+  try {
+    relay({ kind: 'issues_closed', routing: { owner: 'acme', repo: 'shop' }, data: { numbers: [5, 6] }, fromWorkflow: true });
+    // Still open after all: shown again.
+    relay({ kind: 'issues_closed', routing: { owner: 'acme', repo: 'shop' }, data: { numbers: [], open: [8] }, fromWorkflow: true });
+    // Only a machine says so: a peer's publish of this kind is not one.
+    relay({ kind: 'issues_closed', routing: { owner: 'acme', repo: 'shop' }, data: { numbers: [7] } });
+    await settle();
+    assert.deepEqual(calls, [
+      ['apply', 'acme', 'shop', { closed: [5, 6], open: undefined, invalidate: true }],
+      ['apply', 'acme', 'shop', { closed: [], open: [8], invalidate: true }],
+    ]);
+    assert.deepEqual(sock.received.filter((m) => m.type !== 'platform_version'), [], 'nothing for browsers');
+  } finally {
+    github.applyIssuesChange = saved.apply;
+    sock.close();
+  }
+});

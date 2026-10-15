@@ -289,7 +289,13 @@ test('at a desk an unread row carries its ×, beside the row and never inside it
 
 test('on touch there is no × at all: the swipe is the way to clear', () => {
   const html = renderSheet({ touch: true, list: [view(10)] });
-  assert.match(html, /<div class="notifications-row-slot group\/notif relative"><button data-notif-id="10"/);
+  // #4769: on touch the row and its bookmark sit in a swipe host the kit
+  // holds, so a swipe translates row and bookmark together; the slot keeps
+  // that host as its only child. Desktop keeps the flat slot (pinned above),
+  // which is what dapp.json's selectors read.
+  assert.match(html, /<div class="notifications-row-slot group\/notif relative"><div data-notif-swipe="true" class="relative"><button data-notif-id="10"/);
+  assert.match(html, /<button data-notif-id="10"[\s\S]*?<\/button><button type="button" data-notification-save="10"/,
+    'the bookmark is inside the swipe host, so it slides with the row');
   assert.doesNotMatch(html, /data-notification-clear/,
     'no hover on a phone, and an invisible target on a tile corner would clear by accident');
 });
@@ -324,7 +330,13 @@ test('the slot is what React places, and it is keyed on what the kit holds', () 
   // dropped whole rather than having its row swapped out from under the kit.
   assert.match(SHEET_SRC,
     /<div key=\{`\$\{clearable \? 'unread' : 'read'\}:\$\{shape\}`\} className="notifications-row-slot group\/notif relative">/);
-  assert.equal((SHEET_SRC.match(/ref=\{setRow\}/g) || []).length, 2, 'both row shapes hand the kit the row');
+  // #4769: the kit must hold whichever node translates — the row itself on
+  // desktop, the swipe host (row + bookmark) on touch — so the rows hand it
+  // over only off touch, and the host hands itself over on touch.
+  assert.equal((SHEET_SRC.match(/ref=\{touch \? undefined : setRow\}/g) || []).length, 2,
+    'both row shapes hand the kit the row on desktop');
+  assert.equal((SHEET_SRC.match(/<div ref=\{setRow\} data-notif-swipe/g) || []).length, 1,
+    'on touch the swipe host is the node the kit holds');
 });
 
 test('the × is its own click, and keyboard focus has somewhere to go after it', () => {

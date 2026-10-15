@@ -21,6 +21,7 @@ const ROOT = path.join(__dirname, '..');
 const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
 const SCREEN = read('frontend/src/features/messages/index.tsx');
 const SERVICE = read('src/services/conversations.js');
+const APP_CSS = read('public/css/app.css');
 const HEADER = SCREEN.slice(SCREEN.indexOf('function ThreadHeader('), SCREEN.indexOf('/** The day a message was sent'));
 
 test('Rename group is offered to whoever the server lets rename: the owner (canManage)', () => {
@@ -55,7 +56,24 @@ test('the header counts "1 member" and "N members", and an invitee reads the inv
   assert.equal(message('messages:header.subtitle.groupOwner', { count: 1 }), '1 member · you own this group');
   assert.equal(message('messages:header.subtitle.groupOwner', { count: 4 }), '4 members · you own this group');
   // The list row's member-count tag is not drawn for an invitee either.
-  assert.match(SCREEN, /conversation\.kind === 'group' && !invited \? <span className="messages-group-tag">/);
+  assert.match(SCREEN, /conversation\.kind === 'group' && !invited \? <GroupMemberCount count=\{conversation\.memberCount\} \/>/);
+});
+
+test('a group row counts its members with the people glyph, and says the words to a screen reader', () => {
+  // AGENTS.md, "Say it in words or a very obvious glyph": the join screen's
+  // people glyph at its size, the bare figure hidden from a screen reader,
+  // which hears "N members" instead; the hover title says the same.
+  assert.equal(message('messages:inbox.memberCount', { count: 1 }), '1 member');
+  assert.equal(message('messages:inbox.memberCount', { count: 5 }), '5 members');
+  const fn = SCREEN.slice(SCREEN.indexOf('function GroupMemberCount('), SCREEN.indexOf('const ConversationRow = memo('));
+  assert.ok(fn.length > 0, 'GroupMemberCount is defined before the row');
+  assert.match(fn, /if \(!Number\.isFinite\(n\) \|\| n < 1\) return null;/, 'a zero says nothing');
+  assert.match(fn, /const words = t\('messages:inbox\.memberCount', \{ count: n \}\);/);
+  assert.match(fn, /<span className="messages-group-tag" title=\{words\}>/);
+  assert.match(fn, /<UserGroupIcon className="w-3\.5 h-3\.5" aria-hidden="true" \/>/);
+  assert.match(fn, /<span aria-hidden="true">\{n\}<\/span>/);
+  assert.match(fn, /<span className="sr-only">\{words\}<\/span>/);
+  assert.match(APP_CSS, /\.messages-group-tag \{[^}]*display: inline-flex;[^}]*gap: 3px;/);
 });
 
 function harness(updateConversation) {

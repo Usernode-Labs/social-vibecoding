@@ -21,7 +21,7 @@
  * node suite can reach it; this file only turns it into elements.
  */
 
-import { useRef, type ReactNode } from 'react';
+import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { GroupedList, ListRow } from '@/components/ui/grouped-list';
@@ -49,6 +49,7 @@ export interface FeedbackRowView {
   statusLabel: string;
   statusClassName: string;
   href: string | null;
+  edit: { reportId: number; version: number; title: string; description: string; secondsLeft: number; expiresAt: number } | null;
 }
 
 export interface FeedbackListView {
@@ -56,6 +57,39 @@ export interface FeedbackListView {
   summary: string | null;
   truncated: boolean;
   rows: FeedbackRowView[];
+}
+
+function EditRow({ row }: { row: FeedbackRowView }): ReactNode {
+  const t = useMessages('profile');
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!row.edit) return;
+    const deadline = row.edit.expiresAt;
+    const timer = setInterval(() => {
+      const at = Date.now();
+      setNow(at);
+      if (at >= deadline) clearInterval(timer);
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [row.edit]);
+  const secondsLeft = row.edit ? Math.max(0, (row.edit.expiresAt - now) / 1000) : 0;
+  if (!row.edit || secondsLeft <= 0) return null;
+  return (
+    <ListRow as="button" data-feedback-edit={row.key}
+      title={t('profile:feedback.edit')} titleClassName="text-violet-700 dark:text-violet-300"
+      subtitle={t('profile:feedback.editLeft', { count: Math.ceil(secondsLeft / 60) })} chevron={false}
+      onClick={() => {
+        if (!row.edit) return;
+        const remaining = Math.max(0, (row.edit.expiresAt - Date.now()) / 1000);
+        if (!remaining) { setNow(Date.now()); return; }
+        const open = window.App?.openFeedbackModal;
+        if (typeof open !== 'function') return;
+        Profile._dismissFeedback();
+        open({ edit: { ...row.edit, secondsLeft: remaining },
+          onEditSaved: () => { void Profile.refreshFeedback(); } });
+      }}
+    />
+  );
 }
 
 function Rows({ view }: { view: FeedbackListView }): ReactNode {
@@ -78,29 +112,31 @@ function Rows({ view }: { view: FeedbackListView }): ReactNode {
     <>
       <GroupedList id="profile-feedback-list" className="mx-0">
         {view.rows.map((row) => (
-          <ListRow
-            key={row.key}
-            as={row.href ? 'a' : 'div'}
-            href={row.href || undefined}
-            data-feedback-report={row.key}
-            data-feedback-status={row.status}
-            // Leaving for the request closes the list first, as the editor's
-            // links do; the back record is spent after the navigation lands.
-            onClick={row.href ? () => Profile._dismissFeedback() : undefined}
-            title={row.title}
-            titleClassName="text-[0.9375rem] font-semibold whitespace-normal line-clamp-2"
-            // The status leads the second line rather than taking the row's
-            // trailing edge: on a phone a chip and a chevron side by side
-            // left the title two words a line.
-            subtitle={(
-              <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                <span className={row.statusClassName}>{row.statusLabel}</span>
-                <span>{row.meta}</span>
-              </span>
-            )}
-            subtitleClassName="mt-1 text-[0.8125rem] whitespace-normal"
-            chevron={!!row.href}
-          />
+          <Fragment key={row.key}>
+            <ListRow
+              as={row.href ? 'a' : 'div'}
+              href={row.href || undefined}
+              data-feedback-report={row.key}
+              data-feedback-status={row.status}
+              // Leaving for the request closes the list first, as the editor's
+              // links do; the back record is spent after the navigation lands.
+              onClick={row.href ? () => Profile._dismissFeedback() : undefined}
+              title={row.title}
+              titleClassName="text-[0.9375rem] font-semibold whitespace-normal line-clamp-2"
+              // The status leads the second line rather than taking the row's
+              // trailing edge: on a phone a chip and a chevron side by side
+              // left the title two words a line.
+              subtitle={(
+                <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <span className={row.statusClassName}>{row.statusLabel}</span>
+                  <span>{row.meta}</span>
+                </span>
+              )}
+              subtitleClassName="mt-1 text-[0.8125rem] whitespace-normal"
+              chevron={!!row.href}
+            />
+            {row.edit ? <EditRow row={row} /> : null}
+          </Fragment>
         ))}
       </GroupedList>
       {view.truncated ? (

@@ -23,7 +23,10 @@
 #   AGENT_MODEL_NAME, AGENT_MODEL_CONTEXT_WINDOW,
 #   AGENT_MODEL_SUPPORTS_REASONING, AGENT_MODEL_REASONING_EFFORTS,
 #   AGENT_MODEL_SUPPORTS_IMAGES (read by build-codex-model-catalog.js),
-#   COMMIT_MSG, TURN_UUID, OPENROUTER_API_BASE, WORKER_JWT (build-only)
+#   COMMIT_MSG, TURN_UUID, OPENROUTER_API_BASE, WORKER_JWT (build-only),
+#   AGENT_PROVIDER_SHORTLIST (read by codex-openrouter-request.js),
+#   BUILD_PROFILE (first_version: no visible_changes server, and the
+#   Homeroom read tools narrowed to get_platform_conventions, as run-cc.sh)
 
 set -u
 
@@ -51,6 +54,11 @@ die() {
 : "${TURN_UUID:=}"
 : "${WORKER_JWT:=}"
 : "${BRANCH:=}"
+: "${BUILD_PROFILE:=}"
+FIRST_VERSION_BUILD=""
+if [ "$MODE" = "build" ] && [ "$BUILD_PROFILE" = "first_version" ]; then
+  FIRST_VERSION_BUILD=1
+fi
 case "$MODE" in
   build|scout) ;;
   shots) die "shots turns run on Claude Code (run-cc.sh)" ;;
@@ -219,6 +227,11 @@ TOML
     cat <<'TOML'
 startup_timeout_sec = 30
 tool_timeout_sec = 60
+TOML
+    # A first version declares no visible changes (homeroom-bot-live.js
+    # buildPrompt), and every tool loaded rides on every model request.
+    if [ -z "$FIRST_VERSION_BUILD" ]; then
+      cat <<'TOML'
 
 [mcp_servers.visible_changes]
 command = "node"
@@ -228,6 +241,7 @@ enabled_tools = ["declare_visible_changes", "declare_diagram"]
 startup_timeout_sec = 15
 tool_timeout_sec = 30
 TOML
+    fi
   fi
   # #2779: the coding agent's read-only Homeroom tools, for a build or scout
   # turn the platform issued a grant to. The bridge receives the grant from
@@ -240,7 +254,14 @@ TOML
 command = "node"
 args = ["/usr/local/bin/homeroom-read-mcp.js"]
 env_vars = ["HOMEROOM_MCP_TOKEN", "PLATFORM_URL"]
-enabled_tools = ["get_platform_conventions", "get_app", "list_requests", "get_request", "get_proposal", "get_change"]
+TOML
+    # A brand-new app has nothing but the conventions to read.
+    if [ -z "$FIRST_VERSION_BUILD" ]; then
+      echo 'enabled_tools = ["get_platform_conventions", "get_app", "list_requests", "get_request", "get_proposal", "get_change"]'
+    else
+      echo 'enabled_tools = ["get_platform_conventions"]'
+    fi
+    cat <<'TOML'
 startup_timeout_sec = 15
 tool_timeout_sec = 30
 TOML

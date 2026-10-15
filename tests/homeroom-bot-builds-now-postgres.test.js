@@ -74,6 +74,9 @@ test('the live builds under way and waiting, for the dashboard, against the full
   await t.test('under way: a live build with its session open and no outcome', async () => {
     await run(3, { build_session_id: await session({ ago: 900 }) });
     await run(4, { build_session_id: await session({ ago: 300 }) });
+    // Between its turns, a first version's review above all, its session is
+    // paused, and it is still building: run 1746 read as idle (13 Oct 2026).
+    await run(16, { build_session_id: await session({ status: 'paused', ago: 600 }) });
     // Not under way: ended, proposed, its session put away, a shadow build,
     // a plan waiting for Build it, and one the abandoned-build sweep owns.
     await run(5, { build_session_id: await session(), build_ok: false, build_error: 'x' });
@@ -86,6 +89,7 @@ test('the live builds under way and waiting, for the dashboard, against the full
     const { building } = await bot.buildsNow(pool);
     assert.deepEqual(building.map((b) => [b.appSlug, b.appName, b.issueNumber, b.lane, b.kind, b.person]), [
       ['seed-swap', 'Seed swap', 3, 'live', 'build', 'ada'],
+      ['seed-swap', 'Seed swap', 16, 'live', 'build', null],
       ['seed-swap', 'Seed swap', 4, 'live', 'build', null],
     ], 'oldest first, with who it is for when somebody asked');
     assert.ok(building.every((b) => b.since instanceof Date), 'since its session started');
@@ -112,8 +116,22 @@ test('the live builds under way and waiting, for the dashboard, against the full
        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
     );
     const payload = await bot.adminPayload(pool, {});
-    assert.deepEqual(payload.workingNow.map((w) => [w.issueNumber, w.kind]), [[20, 'read'], [3, 'build'], [4, 'build']]);
+    assert.deepEqual(payload.workingNow.map((w) => [w.issueNumber, w.kind]), [[20, 'read'], [3, 'build'], [16, 'build'], [4, 'build']]);
     assert.deepEqual({ depth: payload.queue.depth, buildsWaiting: payload.queue.buildsWaiting }, { depth: 1, buildsWaiting: 2 });
+    // And the build lane says so beside the shadow lane's own counts, which
+    // never count a live build (#3509).
+    // With the live build loop's own last pass, none in this process yet
+    // (run five, 13 Oct 2026: the lane's `lane` is the shadow lane's).
+    assert.deepEqual(payload.builds.live, { building: 3, waiting: 2 });
+    assert.equal(payload.builds.building, 0);
+    // The run list says where each got to (get_homeroom_bot's build.state).
+    const data = require('../src/services/bench/connector-data');
+    const states = Object.fromEntries(payload.runs.map((r) => [`${r.issue_number}:${r.id}`, data.buildStateOf(r)]));
+    const stateOf = (issue) => Object.entries(states).filter(([k]) => k.startsWith(`${issue}:`)).map(([, v]) => v);
+    assert.deepEqual(stateOf(3), ['building']);
+    assert.deepEqual(stateOf(16), ['building'], 'paused between its turns, still building');
+    assert.deepEqual(stateOf(11), ['queued'], 'waiting its turn');
+    assert.deepEqual(stateOf(9), ['awaiting_go'], 'a plan waiting for Build it');
   });
 
   await t.test('a failed read leaves the tiles as they were, not the dashboard broken', async () => {

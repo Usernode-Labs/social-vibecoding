@@ -492,9 +492,17 @@ function authRoutes(config) {
   // (expired, used, unknown), and the page falls back to the code. The raw
   // token is never logged. Rate-limited per source on failures, like the
   // code it stands in for.
+  //
+  // `newAccountOnly: true` is the page's spend as it opens, before any tap
+  // (features/auth/landing.tsx): it answers only `set-password`, and refuses
+  // an account already set up with `account_set_up`, the link unspent and
+  // no session made, so that account waits for the person's own tap.
   router.post('/api/auth/release-link', releaseLinkLimiter, async (req, res) => {
     try {
-      const verified = await releaseLinks.spend(pool, req.body?.token, { createSession });
+      const verified = await releaseLinks.spend(pool, req.body?.token, {
+        createSession,
+        newAccountOnly: req.body?.newAccountOnly === true,
+      });
       // The welcome names the address; only somebody holding the mailbox's
       // link reaches this line.
       return await answerProvenEmail(req, res, verified, { via: 'link', extra: { email: verified.email } });

@@ -232,6 +232,47 @@ test('a motion change also needs a before and an after clip', () => {
   assert.deepEqual(toast, { id: 'saved-toast', status: 'ready', files: 4 });
 });
 
+// A project's first version: its before build is the starter template's
+// placeholder (services/shots-starter.js), so there is no before to take.
+test('a first version\'s change is ready with its after shots alone, and publishes nothing from before', () => {
+  const intent = twoScreenIntent();
+  const saved = new Map();
+  const shot = (screen, side, kind) => save(saved, intent,
+    { change: 'invite-suggestions', screen, side, kind }, sideShot(side));
+
+  let summary = shots.summarize(intent, saved, new Map(), { afterOnly: true });
+  assert.equal(summary.stories[0].reason,
+    'The shots agent did not save the after shot on desktop, the after shot on mobile.',
+    'only the after side is missing');
+  shot('desktop', 'after');
+  shot('mobile', 'after');
+  shot('mobile', 'after', 'element');
+  summary = shots.summarize(intent, saved, new Map(), { afterOnly: true });
+  assert.deepEqual(summary.stories, [{ id: 'invite-suggestions', status: 'ready', files: 3 }]);
+  assert.deepEqual(summary.verdict, {
+    passed: true, mode: 'shots', runs: 1, stories: summary.stories, afterOnly: true,
+  });
+
+  // Even a before shot that got saved is not published.
+  shot('desktop', 'before');
+  summary = shots.summarize(intent, saved, new Map(), { afterOnly: true });
+  assert.deepEqual(summary.files.map((file) => file.side), ['head', 'head', 'head']);
+  // An ordinary run still needs both sides.
+  assert.equal(shots.summarize(intent, saved).stories[0].status, 'skipped');
+  assert.equal('afterOnly' in shots.summarize(intent, saved).verdict, false);
+
+  // A motion change needs its after clip, and no before clip.
+  const motion = motionIntent();
+  const clips = new Map();
+  save(clips, motion, { change: 'saved-toast', screen: 'desktop', side: 'after' }, sideShot('after'));
+  assert.equal(shots.summarize(motion, clips, new Map(), { afterOnly: true }).stories
+    .find((story) => story.id === 'saved-toast').reason,
+  'The shots agent did not save the after clip on desktop.');
+  save(clips, motion, { change: 'saved-toast', screen: 'desktop', side: 'after', kind: 'clip' }, fixtures.webm());
+  assert.deepEqual(shots.summarize(motion, clips, new Map(), { afterOnly: true }).stories
+    .find((story) => story.id === 'saved-toast'), { id: 'saved-toast', status: 'ready', files: 2 });
+});
+
 test('the agent\'s own skip reason is shown instead of the list of what is missing', () => {
   const intent = motionIntent();
   const saved = new Map();
@@ -462,6 +503,24 @@ test('markUnchanged only marks ready changes, once', () => {
   ]);
   assert.deepEqual(shots.markUnchanged(marked, new Set(['a'])), marked, 'a second pass adds nothing');
   assert.deepEqual(shots.markUnchanged(stories, new Set()), stories);
+});
+
+// The verdict keeps an unchanged change ready (its shots publish and count
+// toward the run); every result read off it says unchanged, so a change
+// whose before and after came out the same is not read as plain ready.
+test('a result reads unchanged for a ready change marked unchanged, and keeps the other three', () => {
+  assert.deepEqual(shots.RESULT_STATUSES, ['ready', 'unchanged', 'skipped', 'failed']);
+  const [unchanged] = shots.markUnchanged([{ id: 'a', status: 'ready', files: 2 }], new Set(['a']));
+  assert.equal(unchanged.status, 'ready', 'the verdict itself is as it was');
+  assert.equal(shots.resultStatus(unchanged), 'unchanged');
+  assert.equal(shots.resultStatus({ id: 'a', status: 'ready', files: 2 }), 'ready');
+  assert.equal(shots.resultStatus({ id: 'a', status: 'ready', unchanged: 'yes' }), 'ready', 'only the flag the fold sets');
+  assert.equal(shots.resultStatus({ id: 'a', status: 'failed', reason: 'A 500.' }), 'failed');
+  for (const other of [{ status: 'skipped' }, { status: 'published' }, { status: 'skipped', unchanged: true }, {}, null]) {
+    assert.equal(shots.resultStatus(other), 'skipped', JSON.stringify(other));
+  }
+  const verdict = shots.summarize(stillIntent(), new Map()).verdict;
+  assert.ok(verdict.stories.every((story) => shots.RESULT_STATUSES.includes(shots.resultStatus(story))));
 });
 
 test('an element shot must fit the screen it was taken on', () => {

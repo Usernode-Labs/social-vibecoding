@@ -2779,13 +2779,13 @@
     "text": "Now",
     "description": "Small badge on the approval option the project uses today."
   },
-  "whoDecides.someone": {
-    "text": "Someone else",
-    "description": "Stand-in for another member's name in \"How it plays out\" when nobody else is in the project yet."
+  "whoDecides.waitingTitle": {
+    "text": "Another change is up for a vote too",
+    "description": "Summary heading when something was changed and another change to who can see and change it is already up for a vote; competing changes are allowed, so this one can still be proposed."
   },
-  "whoDecides.waiting": {
-    "text": "A change to who can see and change it is already up for a vote.",
-    "description": "Note at the top of the sheet when such a proposal is waiting for votes; followed by a link that opens it."
+  "whoDecides.waitingSub": {
+    "text": "A change to who can see and change it is already up for a vote. If both pass, the later one may overwrite the earlier.",
+    "description": "Warning line in the summary when another change to who can see and change it is already up for a vote; followed by a link that opens it."
   },
   "whoDecides.open": {
     "text": "Open it",
@@ -2881,15 +2881,19 @@
   },
   "whoDecides.plays.title": {
     "text": "How it plays out",
-    "description": "Section label over two rows showing what the picked rule means for the reader and for someone else."
+    "description": "Section label over the rows showing what the picked rule means: one row for anyone, or two, for the reader and for anyone else."
+  },
+  "whoDecides.plays.anyoneTitle": {
+    "text": "Anyone makes a change",
+    "description": "Row title under How it plays out, for a rule that treats every change alike (Two yeses, Open floor, Group vote, or a project's own rules): what happens to a change anyone makes, the reader's included."
   },
   "whoDecides.plays.youTitle": {
     "text": "You make a change",
-    "description": "Row title: what happens to a change the reader makes."
+    "description": "Row title under How it plays out, for You or the group: what happens to a change the reader makes."
   },
-  "whoDecides.plays.otherTitle": {
-    "text": "{{name}} makes a change",
-    "description": "Row title: what happens to a change someone else makes. {{name}} is another member's username."
+  "whoDecides.plays.anyoneElseTitle": {
+    "text": "Anyone else makes a change",
+    "description": "Row title under How it plays out, for You or the group, below the row You make a change: what happens to a change anyone other than the reader makes."
   },
   "whoDecides.plays.you_or_the_group.you": {
     "text": "Your yes is enough. Live once its checks pass.",
@@ -2907,37 +2911,21 @@
     "text": "Live when {{creator}} says yes, or when most of the group does.",
     "description": "You or the group, for a change someone else makes, when the reader is not the creator."
   },
-  "whoDecides.plays.two_yeses.you": {
-    "text": "Live once one other person says yes too.",
-    "description": "Two yeses, for a change the reader makes."
+  "whoDecides.plays.two_yeses.anyone": {
+    "text": "Live once one more person says yes.",
+    "description": "Two yeses, under the row Anyone makes a change: one yes besides that of the person who made the change puts it live."
   },
-  "whoDecides.plays.two_yeses.other": {
-    "text": "Live once one more person says yes. That can be you.",
-    "description": "Two yeses, for a change someone else makes, under a row titled with that person's name: one yes besides theirs puts it live, and the reader's counts."
+  "whoDecides.plays.open_floor.anyone": {
+    "text": "Their own yes is enough. Live once its checks pass.",
+    "description": "Open floor, under the row Anyone makes a change: \"their\" is whoever made the change, whose own yes puts it live."
   },
-  "whoDecides.plays.open_floor.you": {
-    "text": "Your yes is enough. Live once its checks pass.",
-    "description": "Open floor, for a change the reader makes."
-  },
-  "whoDecides.plays.open_floor.other": {
-    "text": "{{name}}’s own yes is enough, same as yours.",
-    "description": "Open floor, for a change someone else makes. {{name}} is that person's username."
-  },
-  "whoDecides.plays.group_vote.you": {
+  "whoDecides.plays.group_vote.anyone": {
     "text": "Live when most active members say yes, or after a wait if nobody objects.",
-    "description": "Group vote, for a change the reader makes."
+    "description": "Group vote, under the row Anyone makes a change: the group decides, whoever made the change."
   },
-  "whoDecides.plays.group_vote.other": {
-    "text": "Same as yours: the group decides.",
-    "description": "Group vote, for a change someone else makes."
-  },
-  "whoDecides.plays.own.you": {
-    "text": "Live when any one of its rules passes.",
-    "description": "A project's own rules, for a change the reader makes."
-  },
-  "whoDecides.plays.own.other": {
-    "text": "Same as yours: any one rule passing is enough.",
-    "description": "A project's own rules, for a change someone else makes."
+  "whoDecides.plays.own.anyone": {
+    "text": "Live when any one of its rules passes. Their own yes counts toward the rules they’re in.",
+    "description": "A project's own rules, under the row Anyone makes a change: one passing rule puts a change live. \"Their\" and \"they\" are whoever made the change, whose own yes counts in each rule whose group includes them."
   },
   "whoDecides.alwaysYou": {
     "text": "Changing who can see it, its admins or this rule always works like You or the group: your yes is enough, or the group’s real yes votes are.",
@@ -3379,10 +3367,6 @@
     "text": "It’s up for a vote now, and goes live once it passes.",
     "description": "Line under Proposed."
   },
-  "whoDecides.alreadyWaiting": {
-    "text": "A change to who can see and change it is already up for a vote. Open it from the note at the top.",
-    "description": "Error when another such proposal is already waiting."
-  },
   "whoDecides.notVerified": {
     "text": "Nothing changed. Making it public needs a verified phone first.",
     "description": "Status after the person declined to verify before making the project public."
@@ -3406,5 +3390,61 @@
   "appSettings.access.open": {
     "text": "Who can see & change it",
     "description": "Button in App settings' Access section: opens the sheet that sets who can see the project and how its changes are approved."
+  },
+  "feedback.edit.button": {
+    "text": "Edit",
+    "description": "Button on a sent-feedback confirmation: correct this request during its five-minute edit window."
+  },
+  "feedback.edit.heading": {
+    "text": "Edit your request",
+    "description": "Heading of the editor for recently submitted feedback."
+  },
+  "feedback.edit.titleLabel": {
+    "text": "Title",
+    "description": "Label above the title field in the recently submitted feedback editor."
+  },
+  "feedback.edit.window_one": {
+    "text": "You can edit it for {{count}} more minute.",
+    "description": "Time remaining in the feedback edit window; {{count}} is the number of minutes, rounded up."
+  },
+  "feedback.edit.window_other": {
+    "text": "You can edit it for {{count}} more minutes.",
+    "description": "Time remaining in the feedback edit window; {{count}} is the number of minutes, rounded up."
+  },
+  "feedback.edit.save": {
+    "text": "Save changes",
+    "description": "Button: save corrections to a recently submitted request."
+  },
+  "feedback.edit.saving": {
+    "text": "Saving…",
+    "description": "Save button while a request correction is being sent."
+  },
+  "feedback.edit.saved": {
+    "text": "Changes saved.",
+    "description": "Notice on the feedback confirmation after correcting the same request."
+  },
+  "feedback.edit.savedToast": {
+    "text": "Changes saved",
+    "description": "Toast after correcting a request opened from Your feedback."
+  },
+  "feedback.edit.required": {
+    "text": "Fill in both the title and what should change.",
+    "description": "Validation message when a feedback correction has an empty title or description."
+  },
+  "feedback.edit.closed": {
+    "text": "The 5 minutes to edit this have passed. Send more feedback to add to it.",
+    "description": "Notice when the feedback edit window expires; the typed corrections remain available to copy."
+  },
+  "feedback.edit.failed": {
+    "text": "Your changes could not be saved. Check your connection and try again.",
+    "description": "Notice after a failed feedback correction; the person can retry and their words remain in the editor."
+  },
+  "feedback.edit.conflict": {
+    "text": "This request changed elsewhere. Close and reopen it from Your feedback before trying again. You can copy your corrections here.",
+    "description": "Notice when another save or automatic title update changed the request since this editor opened."
+  },
+  "feedback.edit.tooLong": {
+    "text": "The title or words are too long. Shorten them and try again.",
+    "description": "Notice when a feedback correction exceeds the field or full request length limit."
   }
 }

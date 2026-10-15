@@ -54,6 +54,19 @@
 //   5. THE TELLS LINT over the app's client source: emoji used as icons,
 //      `uppercase tracking-*` eyebrows, arbitrary `text-[Npx]` sizes, hex
 //      colour literals, all as counts with a few examples.
+//   6. THE APP'S OWN DECLARED CHECKS (L2), dapp.json's `tests`, which every
+//      proposal's checks run against its staging copy, signed in, and which
+//      block the merge when they fail: run here on the copy this step
+//      booted, signed in as the same viewer, before anything changes its
+//      data (runDeclaredChecks). With BENCH_CAPTURE_MODE=checks they are all
+//      the step does: the Homeroom bot's build and fix turns run it before
+//      they end (worker/build-stop-hook.js), so a failing check is fixed in
+//      the turn rather than in a round after the proposal. The `?demo=1`
+//      checks run first: a proposal's checks share one database and one
+//      signed-in viewer, so whatever a demo stores for the viewer is there
+//      for every other check on the platform, and here too (App bench run
+//      191: a `/` check of the empty state passed here now and then, and
+//      failed on the proposal).
 //
 // An app that will not install, build or boot is a RESULT (booted: false
 // and why), never a crash: the trial records it and the run goes on.
@@ -915,6 +928,24 @@ function probe(port) {
   });
 }
 
+/**
+ * Make sure nothing answers on `port` before this step boots its own copy
+ * there: an earlier run of this step whose app outlived it (App bench run
+ * 191: a check command piped to `head` died on the closed pipe before it
+ * stopped its app, and the next run checked that app, the old code) is
+ * stopped through usernode-run-inloop, which recorded it; anything else
+ * still answering is reported, never checked. Resolves { ok, error? }.
+ */
+async function clearPort({ env, port, launcher = env.BENCH_RUN_INLOOP || '/usr/local/bin/usernode-run-inloop', answers = probe }) {
+  if (fs.existsSync(launcher)) {
+    spawnSync(process.execPath, [launcher, '--stop'], { env: { ...env, INLOOP_PORT: String(port) }, encoding: 'utf8', timeout: 20000 });
+  }
+  if (await answers(port)) {
+    return { ok: false, error: `port ${port} is held by a process this step did not start, so it was not checked: stop it and run again` };
+  }
+  return { ok: true };
+}
+
 /** Launch the app through usernode-run-inloop and wait until it answers. */
 async function bootApp({ dir, env, command, port }) {
   const launcher = env.BENCH_RUN_INLOOP || '/usr/local/bin/usernode-run-inloop';
@@ -1043,7 +1074,222 @@ async function overflowAt360(browser, baseUrl, token, look) {
   }
 }
 
+// ── The app's own declared checks (L2) ──────────────────────────────────
+//
+// capture/capture.js's semantics, as worker/usernode-run-checks mirrors
+// them: checks on one route share one navigation; the page loads (network
+// idle, or loaded), settles, and its console errors are counted then; a
+// status of 400 or more fails every check on it; then each check's element
+// and text are polled against one shared deadline; console errors fail a
+// check unless it allows them. The difference from usernode-run-checks is
+// the viewer: signed in with this step's throwaway identity, as the checks
+// on a proposal sign in, where a plain in-loop launch is signed out and
+// every route of an app behind the platform's identity answers 401.
+
+const CHECK_SETTLE_MS = 1500;
+const CHECK_ASSERT_MS = 5000;
+const CHECK_POLL_MS = 100;
+const CHECK_NAV_TIMEOUT_MS = 30000;
+const CHECK_CONCURRENCY = 2;
+// A suite past these is cut, and says so: the turn that runs it is on a
+// clock, and the platform's own checks run all of it on the proposal.
+const MAX_DECLARED_CHECKS = 40;
+const DECLARED_CHECKS_BUDGET_MS = 120000;
+const MAX_CHECK_REASON = 300;
+
+/** A declared check's route, as the platform reads it (app-manifest.js validatePath): one leading slash, no scheme, no spaces or markup. Pure. */
+function checkPath(p) {
+  if (typeof p !== 'string') return null;
+  const s = p.trim();
+  if (!s.startsWith('/') || s.startsWith('//')) return null;
+  if (/[\s<>"'`]/.test(s) || s.includes('://')) return null;
+  return s.slice(0, 512);
+}
+
+/** dapp.json's declared checks, as the platform reads them (app-manifest.js readTests): named, de-duplicated, bounded. Pure. */
+function declaredChecks(manifest) {
+  const raw = Array.isArray(manifest && manifest.tests) ? manifest.tests : [];
+  const out = [];
+  const seen = new Set();
+  for (const t of raw) {
+    if (!t || typeof t !== 'object') continue;
+    const p = checkPath(t.path);
+    if (!p) continue;
+    const name = typeof t.name === 'string' && t.name.trim() ? t.name.trim().slice(0, 120) : p;
+    const key = `${name}\n${p}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({
+      name,
+      path: p,
+      expectSelector: typeof t.expectSelector === 'string' && t.expectSelector.trim() ? t.expectSelector.trim().slice(0, 256) : null,
+      expectText: typeof t.expectText === 'string' && t.expectText.trim() ? t.expectText.trim().slice(0, 256) : null,
+      allowConsoleErrors: !!t.allowConsoleErrors,
+    });
+  }
+  return out;
+}
+
+function readDeclaredChecks(dir) {
+  try {
+    return declaredChecks(JSON.parse(fs.readFileSync(path.join(dir, 'dapp.json'), 'utf8')));
+  } catch {
+    return [];
+  }
+}
+
+/** Whether a declared check's route opens the populated demo (`?demo=1` in its query). Pure. */
+function isDemoPath(route) {
+  try { return new URL(String(route || '/'), 'http://localhost/').searchParams.get('demo') === '1'; } catch { return false; }
+}
+
+// Said of a check on a plain route that fails after the `?demo=1` checks ran.
+const AFTER_DEMO_NOTE = '(It ran after the ?demo=1 checks, as the same viewer on the same database, as on the platform: '
+  + 'demo rows stored for the viewer are there.)';
+
+/** A check's URL on this copy, signed in: its route, with the viewer's token added to its query (a hash route keeps its hash). Pure. */
+function checkUrl(baseUrl, route, token) {
+  const url = new URL(route, `${String(baseUrl).replace(/\/+$/, '')}/`);
+  if (token) url.searchParams.set('token', token);
+  return url.toString();
+}
+
+/** One route's checks, on one navigation. Resolves [{ name, path, pass, reason }]. */
+async function runCheckGroup(browser, url, tests, secrets, {
+  settleMs = CHECK_SETTLE_MS, assertMs = CHECK_ASSERT_MS, pollMs = CHECK_POLL_MS,
+} = {}) {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  const errors = [];
+  const results = [];
+  try {
+    const page = await context.newPage();
+    page.on('console', (msg) => { if (msg.type() === 'error' && errors.length < 20) errors.push(clip(msg.text(), 300)); });
+    page.on('pageerror', (err) => { if (errors.length < 20) errors.push(clip(err && err.message ? err.message : err, 300)); });
+    let status = 0;
+    try {
+      const resp = await page.goto(url, { waitUntil: 'networkidle', timeout: CHECK_NAV_TIMEOUT_MS })
+        .catch(async (err) => {
+          // A page that never goes quiet is checked once it has loaded.
+          if (/Timeout/i.test(String(err && err.message))) { await page.waitForLoadState('load').catch(() => {}); return null; }
+          throw err;
+        });
+      status = resp ? resp.status() : 200;
+    } catch (err) {
+      const why = redact(`the page failed to load: ${clip(err.message, MAX_CHECK_REASON)}`, secrets);
+      return tests.map((t) => ({ name: t.name, path: t.path, pass: false, reason: why }));
+    }
+    await sleep(settleMs);
+    const loadFailure = status >= 400 ? `the page answered HTTP ${status}` : '';
+    const errorCount = errors.length;
+    const deadline = Date.now() + assertMs;
+    const waitFor = async (probe) => {
+      let ok = await probe();
+      while (!ok && Date.now() < deadline) {
+        // eslint-disable-next-line no-await-in-loop
+        await sleep(Math.min(pollMs, Math.max(1, deadline - Date.now())));
+        // eslint-disable-next-line no-await-in-loop
+        ok = await probe();
+      }
+      return ok;
+    };
+    for (const t of tests) {
+      let reason = loadFailure;
+      if (!reason && t.expectSelector) {
+        // eslint-disable-next-line no-await-in-loop
+        const found = await waitFor(async () => { try { return !!(await page.$(t.expectSelector)); } catch { return false; } });
+        if (!found) reason = `the element "${t.expectSelector}" it expects was not found`;
+      }
+      if (!reason && t.expectText) {
+        // eslint-disable-next-line no-await-in-loop
+        const found = await waitFor(async () => {
+          try {
+            return await page.evaluate((text) => (document.body ? document.body.innerText : '').toLowerCase().includes(String(text).toLowerCase()), t.expectText);
+          } catch { return false; }
+        });
+        if (!found) reason = `the text "${t.expectText}" it expects was not on the page`;
+      }
+      if (!reason && !t.allowConsoleErrors && errorCount > 0) {
+        reason = `${errorCount} console error${errorCount === 1 ? '' : 's'} on load: ${errors[0]}`;
+      }
+      results.push({ name: t.name, path: t.path, pass: !reason, reason: reason ? redact(clip(reason, MAX_CHECK_REASON), secrets) : null });
+    }
+    return results;
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
+/**
+ * Run the declared checks on the booted copy, signed in with `token`, within
+ * DECLARED_CHECKS_BUDGET_MS. Resolves { total, ran, passed, failed: [{ name,
+ * path, reason }], cut } (`cut`: checks not run, past the bound or the
+ * budget). Never throws.
+ */
+async function runDeclaredChecks(browser, baseUrl, token, tests, {
+  budgetMs = DECLARED_CHECKS_BUDGET_MS, secrets = [], settleMs, assertMs, pollMs,
+} = {}) {
+  const timing = {
+    ...(settleMs != null ? { settleMs } : {}), ...(assertMs != null ? { assertMs } : {}), ...(pollMs != null ? { pollMs } : {}),
+  };
+  const started = Date.now();
+  const list = tests.slice(0, MAX_DECLARED_CHECKS);
+  const groups = new Map();
+  for (const t of list) {
+    const url = checkUrl(baseUrl, t.path, token);
+    if (!groups.has(url)) groups.set(url, []);
+    groups.get(url).push(t);
+  }
+  // The `?demo=1` routes first, then the rest (see the header, 6).
+  const all = [...groups.entries()];
+  const waves = [all.filter(([, g]) => isDemoPath(g[0].path)), all.filter(([, g]) => !isDemoPath(g[0].path))];
+  const afterDemo = waves[0].length > 0;
+  const results = [];
+  for (const [wave, entries] of waves.entries()) {
+    let cursor = 0;
+    const lane = async () => {
+      for (;;) {
+        if (cursor >= entries.length || Date.now() - started > budgetMs) return;
+        const [url, group] = entries[cursor];
+        cursor += 1;
+        let ran;
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          ran = await runCheckGroup(browser, url, group, secrets, timing);
+        } catch (err) {
+          const why = redact(`the check could not run: ${clip(err.message, MAX_CHECK_REASON)}`, secrets);
+          ran = group.map((t) => ({ name: t.name, path: t.path, pass: false, reason: why }));
+        }
+        // What a plain route's failure may be: the demo's rows (see the header, 6).
+        if (wave === 1 && afterDemo) {
+          ran = ran.map((r) => (r.pass ? r : { ...r, reason: `${clip(r.reason, MAX_CHECK_REASON - AFTER_DEMO_NOTE.length - 1)} ${AFTER_DEMO_NOTE}` }));
+        }
+        results.push(...ran);
+      }
+    };
+    // eslint-disable-next-line no-await-in-loop
+    await Promise.all(Array.from({ length: Math.min(CHECK_CONCURRENCY, entries.length) }, lane));
+  }
+  const failed = results.filter((r) => !r.pass).map((r) => ({ name: r.name, path: r.path, reason: r.reason }));
+  return {
+    total: tests.length, ran: results.length, passed: results.length - failed.length, failed,
+    cut: tests.length - results.length, ms: Date.now() - started,
+  };
+}
+
+/** The declared checks' result as lines a person (or an agent) reads. Pure. */
+function checksReport(declared, { booted = true, error = null } = {}) {
+  if (!booted) return [`The app did not boot, so no check ran: ${clip(error || 'it did not start', 600)}`];
+  if (!declared || !declared.total) return ['This app declares no checks in dapp.json: nothing to run.'];
+  const lines = [`Ran ${declared.ran} of the ${declared.total} checks dapp.json declares, signed in, on a fresh copy of the app:`];
+  for (const f of declared.failed) lines.push(`  FAIL  ${f.name} (${f.path}): ${f.reason}`);
+  lines.push(`${declared.passed} passed, ${declared.failed.length} failed${declared.cut ? `, ${declared.cut} not run (past the bound or the time)` : ''}.`);
+  return lines;
+}
+
 async function main() {
+  // A reader that stops reading (`| head`) must not end this step before it
+  // stops the app it booted (see clearPort): its output is simply dropped.
+  process.stdout.on('error', () => {});
   const dir = process.cwd();
   const env = { ...process.env };
   const port = Number(env.INLOOP_PORT) || 3100;
@@ -1052,15 +1298,25 @@ async function main() {
   // corner, which no screen inside the platform's frame ever shows.
   const baseUrl = `http://localhost:${port}`;
   const started = Date.now();
-  const result = { ok: true, booted: false, error: null, steps: {}, shots: [], primaryAction: null, checks: null, tells: null };
+  // BENCH_CAPTURE_MODE=checks: the declared checks alone (see the header).
+  const checksOnly = String(env.BENCH_CAPTURE_MODE || '').trim() === 'checks';
+  const result = {
+    ok: true, booted: false, error: null, steps: {}, shots: [], primaryAction: null, checks: null, tells: null, declaredChecks: null,
+  };
   const emit = () => {
     result.ms = Date.now() - started;
+    if (checksOnly) {
+      // What an agent running it reads, then the line the platform parses.
+      for (const line of checksReport(result.declaredChecks, result)) process.stdout.write(`${line}\n`);
+      result.exitCode = !result.booted ? 2 : (result.declaredChecks && result.declaredChecks.failed.length ? 1 : 0);
+    }
     const shots = result.shots.map((s) => ({ ...s, png: s.png ? s.png.toString('base64') : null }));
     process.stdout.write(`${MARKER} ${JSON.stringify({ ...result, shots })}\n`);
+    return result;
   };
 
   // The tells first: they read the source, whatever the app does next.
-  result.tells = lintTells(readLintFiles(dir));
+  if (!checksOnly) result.tells = lintTells(readLintFiles(dir));
   let pkg = {};
   try { pkg = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')); } catch { pkg = {}; }
 
@@ -1082,6 +1338,11 @@ async function main() {
   };
   const command = startCommand(pkg, (f) => fs.existsSync(path.join(dir, f)));
   result.steps.boot = { command: command.join(' ') };
+  const cleared = await clearPort({ env: appEnv, port });
+  if (!cleared.ok) {
+    result.error = cleared.error;
+    return emit();
+  }
   const booted = await bootApp({ dir, env: appEnv, command, port });
   if (!booted.ok) {
     result.error = booted.error;
@@ -1089,6 +1350,12 @@ async function main() {
     return emit();
   }
   result.booted = true;
+  // Stopped from outside (a check command past its time, a detached step
+  // stopped): the app it booted, in a process group of its own, goes too,
+  // rather than holding its port for the next run.
+  const onStop = () => { stopApp(booted.child); process.exit(143); };
+  process.once('SIGTERM', onStop);
+  process.once('SIGINT', onStop);
   const playwright = loadPlaywright(env);
   let browser = null;
   try {
@@ -1097,6 +1364,13 @@ async function main() {
       channel: 'chromium', headless: true,
       args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'],
     });
+    // The declared checks first, on the app's own seed, as a proposal's
+    // checks see it: before a tap or the empty state changes the data.
+    const declared = readDeclaredChecks(dir);
+    result.declaredChecks = declared.length
+      ? await runDeclaredChecks(browser, baseUrl, identity.token, declared, { secrets: [identity.token, identity.publicKeyPem] })
+      : { total: 0, ran: 0, passed: 0, failed: [], cut: 0, ms: 0 };
+    if (checksOnly) return emit();
     const plan = capturePlan();
     const overflow = [];
     let resultMs = 0;
@@ -1160,7 +1434,9 @@ async function main() {
 
 if (require.main === module) {
   main().then(
-    () => setTimeout(() => process.exit(0), 100),
+    // 0 whenever the line was written; in checks mode, 1 for a failing
+    // check and 2 for an app that did not boot, for an agent that runs it.
+    (out) => setTimeout(() => process.exit(out && Number.isInteger(out.exitCode) ? out.exitCode : 0), 100),
     (err) => {
       process.stdout.write(`${MARKER} ${JSON.stringify({ ok: false, booted: false, error: `the capture step failed: ${clip(err.message, 300)}`, shots: [] })}\n`);
       setTimeout(() => process.exit(0), 100);
@@ -1193,6 +1469,15 @@ module.exports = {
   primaryActionRecord,
   takeShot,
   throwawayIdentity,
+  MAX_DECLARED_CHECKS,
+  AFTER_DEMO_NOTE,
+  isDemoPath,
+  clearPort,
+  declaredChecks,
+  checkUrl,
+  runCheckGroup,
+  runDeclaredChecks,
+  checksReport,
   colorMath,
   measurePage,
   measureExpression,

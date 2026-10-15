@@ -8,9 +8,12 @@
  *   1. THE LINK. Your newest live link for this project, or a new one made
  *      the first time you open the pane: opening it again does not mint
  *      another. Copy, and Share where the device has a share sheet.
- *   2. YOUR LINKS. Every live one, with Turn off. Someone who manages the
- *      project sees everyone's, with who made each. How long each lasts and
- *      how many it is for is on its row, so the pane spells out nothing
+ *   2. YOUR LINKS. The live ones, with Turn off, and the ones that ended in
+ *      the last 30 days, greyed, with how each ended instead of a Turn off.
+ *      Every row says who came in through its link: how many joined and how
+ *      many are waiting, or that nobody has used it yet. Someone who manages
+ *      the project sees everyone's, with who made each. How long each lasts
+ *      and how many it is for is on its row, so the pane spells out nothing
  *      else (#4599: the sentence under the link, the line about newcomers
  *      and the joining rule are gone).
  *   3. CHANGE, a small link beside that heading: how long and for how many,
@@ -82,20 +85,46 @@ const NO_LIMIT = 0;
 const DAY_CHOICES = [1, 7, 30, NO_LIMIT];
 const USE_CHOICES = [1, 5, 10, 25, 50, 100, NO_LIMIT];
 
-/** "3 of 25 joined · 5 days left", for a row of Your links. */
-export function linkDetail(link: Pick<InviteLink, 'expiresAt' | 'maxUses' | 'uses'>, now = Date.now()): string {
-  // #4785: a link nobody has used says so, instead of "0 of 25 used", which
-  // read as if nothing were happening.
-  const uses = link.uses <= 0
-    ? t('agent:appContext.invite.detail.nobodyYet')
-    : link.maxUses == null
-      ? t('agent:appContext.invite.detail.joined', { count: link.uses })
-      : t('agent:appContext.invite.detail.joinedOf', { joined: link.uses, max: link.maxUses });
-  // Two facts about the link, side by side.
-  if (link.expiresAt == null) return t('agent:appContext.invite.detail.pair', { uses, expiry: t('agent:appContext.invite.detail.noEnd') });
-  const days = daysUntil(link.expiresAt, now);
-  const expiry = days <= 1 ? t('agent:appContext.invite.detail.underDay') : t('agent:appContext.invite.detail.daysLeft', { count: days });
+/** "3 of 25 used · 5 days left", for a row of Your links. */
+export function linkDetail(
+  link: Pick<InviteLink, 'expiresAt' | 'maxUses' | 'uses' | 'status'>,
+  now = Date.now(),
+): string {
+  // A link for anyone says so; how many came in by it is the row's second
+  // line (statusLine), like every other link's.
+  const uses = link.maxUses == null
+    ? t('agent:appContext.invite.detail.anyone')
+    : t('agent:appContext.invite.detail.used', { used: link.uses, max: link.maxUses });
+  // Two facts about the link, side by side. For a link that has ended, the
+  // second is why, in place of how long it had left.
+  let expiry: string;
+  if (link.status && link.status !== 'live') {
+    expiry = link.status === 'expired'
+      ? t('agent:appContext.invite.detail.expired')
+      : link.status === 'used_up'
+        ? t('agent:appContext.invite.detail.usedUp')
+        : t('agent:appContext.invite.detail.turnedOff');
+  } else if (link.expiresAt == null) {
+    expiry = t('agent:appContext.invite.detail.noEnd');
+  } else {
+    const days = daysUntil(link.expiresAt, now);
+    expiry = days <= 1 ? t('agent:appContext.invite.detail.underDay') : t('agent:appContext.invite.detail.daysLeft', { count: days });
+  }
   return t('agent:appContext.invite.detail.pair', { uses, expiry });
+}
+
+/**
+ * The row's second line: who came in through the link. "2 joined · 1
+ * waiting"; each count is left out at zero, and when nobody has used the
+ * link at all it says so.
+ */
+export function statusLine(link: Pick<InviteLink, 'joined' | 'waiting'>): string {
+  const parts: string[] = [];
+  if (link.joined > 0) parts.push(t('agent:appContext.invite.detail.joined', { count: link.joined }));
+  if (link.waiting > 0) parts.push(t('agent:appContext.invite.status.waiting', { count: link.waiting }));
+  if (!parts.length) return t('agent:appContext.invite.status.nobody');
+  if (parts.length === 1) return parts[0];
+  return t('agent:appContext.invite.status.pair', { joined: parts[0], waiting: parts[1] });
 }
 
 function absolute(path: string): string {
@@ -218,7 +247,7 @@ export function InvitePane({ slug, label, unnamed = false }: { slug: string | nu
     return () => { live = false; };
   }, [slug, apply]);
 
-  const current = state?.links.find((l) => l.mine) || null;
+  const current = state?.links.find((l) => l.mine && l.status === 'live') || null;
   const url = current ? absolute(current.path) : '';
 
   const copy = async () => {
@@ -324,7 +353,11 @@ export function InvitePane({ slug, label, unnamed = false }: { slug: string | nu
 
       <div id="app-invite-links">
         <div className={SECTION_ROW}>
-          <h4 className={SECTION}>{state.manages ? t('agent:appContext.invite.liveLinks') : t('agent:appContext.invite.yourLinks')}</h4>
+          <h4 className={SECTION}>
+            {state.manages
+              ? t('agent:appContext.invite.liveLinks')
+              : t('agent:appContext.invite.yourLinks')}
+          </h4>
           {changing ? null : (
             <button id="app-invite-change-open" type="button" className={CHANGE_LINK} onClick={() => setChanging(true)}>
               {t('agent:appContext.invite.change')}
@@ -357,24 +390,35 @@ export function InvitePane({ slug, label, unnamed = false }: { slug: string | nu
             </div>
           </div>
         ) : null}
-        {state.links.length ? state.links.map((link) => (
-          <div key={link.id} className={ROW} data-invite-link={link.id}>
-            <span className="flex-1 min-w-0">
-              <span className="block truncate">{linkDetail(link)}</span>
-              {!link.mine && link.createdBy ? (
-                <span className="block truncate text-xs text-zinc-500 dark:text-zinc-400">{t('agent:appContext.invite.madeBy', { username: link.createdBy })}</span>
-              ) : null}
-            </span>
-            <button
-              type="button"
-              className="shrink-0 text-sm font-medium text-red-600 dark:text-red-400 hover:underline disabled:opacity-50"
-              disabled={busy}
-              onClick={() => turnOff(link)}
+        {state.links.length ? state.links.map((link) => {
+          const ended = link.status !== 'live';
+          return (
+            <div
+              key={link.id}
+              className={ended ? `${ROW} text-zinc-500 dark:text-zinc-400` : ROW}
+              data-invite-link={link.id}
+              data-invite-status={link.status}
             >
-              {t('agent:appContext.invite.turnOff')}
-            </button>
-          </div>
-        )) : (changing ? null : <p className={NOTE}>{t('agent:appContext.invite.noLinks')}</p>)}
+              <span className="flex-1 min-w-0">
+                <span className="block truncate">{linkDetail(link)}</span>
+                <span className="block truncate text-xs text-zinc-500 dark:text-zinc-400">{statusLine(link)}</span>
+                {!link.mine && link.createdBy ? (
+                  <span className="block truncate text-xs text-zinc-500 dark:text-zinc-400">{t('agent:appContext.invite.madeBy', { username: link.createdBy })}</span>
+                ) : null}
+              </span>
+              {ended ? null : (
+                <button
+                  type="button"
+                  className="shrink-0 text-sm font-medium text-red-600 dark:text-red-400 hover:underline disabled:opacity-50"
+                  disabled={busy}
+                  onClick={() => turnOff(link)}
+                >
+                  {t('agent:appContext.invite.turnOff')}
+                </button>
+              )}
+            </div>
+          );
+        }) : (changing ? null : <p className={NOTE}>{t('agent:appContext.invite.noLinks')}</p>)}
       </div>
     </div>
   );

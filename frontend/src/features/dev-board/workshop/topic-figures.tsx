@@ -16,7 +16,8 @@
  *   └────────────────────────┴─────────────────┴────────────────┘
  *
  * The Homeroom bot's figures are a grid instead: a row each for Answers
- * and Builds, a column each for Quality, Cost and Speed.
+ * and Builds, a column each for Quality, Cost and Speed. A group with more
+ * than one figure in a column runs on into rows under its first.
  *
  * The server words every figure (its label, value, line and what it means)
  * and does the rounding that protects people, so this draws what it is
@@ -250,18 +251,26 @@ export function TopicFiguresView({ handle, data }: {
       <div className="dev-ws-figs-card dev-ws-figs-grid" data-topic-figures-layout="grid">
         <div className="dev-ws-figs-corner" aria-hidden="true" />
         {columns.map((c) => <div key={c.key} className="dev-ws-figs-colhead">{c.name}</div>)}
-        {data.groups.map((g) => (
-          <div key={g.key} className="dev-ws-figs-row" data-fig-group={g.key}>
-            <div className="dev-ws-figs-rowhead">
-              <span className="dev-ws-figs-rowname">{g.name}</span>
-              <span className="dev-ws-figs-rowabout">{g.about}</span>
+        {data.groups.flatMap((g) => {
+          // A column with more than one of the group's figures runs on into
+          // a row under the first, in the order the topic names them.
+          const inColumn = columns.map((c) => data.figures.filter((f) => f.group === g.key && f.column === c.key));
+          const rows = Math.max(1, ...inColumn.map((list) => list.length));
+          return Array.from({ length: rows }, (_, i) => (
+            <div key={`${g.key}-${i}`} className="dev-ws-figs-row" data-fig-group={g.key}>
+              {i === 0 ? (
+                <div className="dev-ws-figs-rowhead">
+                  <span className="dev-ws-figs-rowname">{g.name}</span>
+                  <span className="dev-ws-figs-rowabout">{g.about}</span>
+                </div>
+              ) : <div className="dev-ws-figs-rowhead dev-ws-figs-rowhead-more" aria-hidden="true" />}
+              {columns.map((c, at) => {
+                const figure = inColumn[at][i];
+                return figure ? cell(figure) : <div key={c.key} className="dev-ws-fig" aria-hidden="true" />;
+              })}
             </div>
-            {columns.map((c) => {
-              const figure = data.figures.find((f) => f.group === g.key && f.column === c.key);
-              return figure ? cell(figure) : <div key={c.key} className="dev-ws-fig" aria-hidden="true" />;
-            })}
-          </div>
-        ))}
+          ));
+        })}
       </div>
     );
   } else {

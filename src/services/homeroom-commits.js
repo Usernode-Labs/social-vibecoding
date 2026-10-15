@@ -1,0 +1,56 @@
+'use strict';
+
+// What a native change's head move was, read from the commits it added
+// (routes/votes.js reconcileNativeReviewedHead), so the line in the change's
+// thread and its description's freshness come from the push itself and not
+// from which of a dozen callers happened to reconcile it first. Run four
+// (13 Oct 2026): a fix round of the bot's read "was updated on GitHub.
+// Earlier votes were cleared, so please re-review commit 3f2a…" and marked
+// the description "Written for an earlier version of this change."
+//
+// WHO. Every commit Homeroom writes is committed under one of its own
+// identities: a hosted coding turn's, the Homeroom bot's included
+// (services/worker.js), the platform's own git work (external-agent-head.js,
+// external-agent-patch.js), and a commit uploaded from someone's own agent
+// (github.js, "Homeroom CLI"). A person pushing to the branch on GitHub
+// commits as themselves, or as GitHub for an edit made on its website.
+//
+// WHAT. The bot's fix rounds commit with the fixed messages below
+// (homeroom-bot.js runChecksFix, homeroom-bot-live.js reviewLanded): a fix of
+// its own red checks, of what its shots showed broken, the sample data its
+// shots need, a review round's fixes. Each changes how the change works,
+// never what it does, so the description written before it still describes
+// it. A round whose agent committed under its own message is not recognised,
+// and reads as any other update did.
+//
+// Pure.
+
+const HOMEROOM_COMMITTERS = Object.freeze([
+  'usernode-bot@users.noreply.github.com',
+  'cli@usernodelabs.org',
+]);
+
+/** The messages the bot's fix rounds commit with. */
+const FIX_COMMIT_MESSAGES = Object.freeze({
+  checks: (issueNumber) => `Homeroom bot: fix the failing checks on #${issueNumber}`,
+  broken: (issueNumber) => `Homeroom bot: fix what did not work on #${issueNumber}`,
+  shots: (issueNumber) => `Homeroom bot: seed what the before and after shots of #${issueNumber} need`,
+  review: (round) => `Homeroom bot: review fixes, round ${round}`,
+});
+
+const FIX_SUBJECT = /^Homeroom bot: (?:fix the failing checks on #\d+|fix what did not work on #\d+|seed what the before and after shots of #\d+ need|review fixes, round \d+)$/;
+
+/**
+ * What the commits a move added say about it: `madeByHomeroom` when Homeroom
+ * committed every one, `fixOnly` when every one is also a fix round's.
+ * `commits` is [{ committer, subject }] (repo-mirror.js commitsBetween), or
+ * null when they could not be read, which says neither.
+ */
+function classify(commits) {
+  if (!Array.isArray(commits) || !commits.length) return { madeByHomeroom: false, fixOnly: false };
+  const madeByHomeroom = commits.every((c) => HOMEROOM_COMMITTERS.includes(String(c && c.committer || '').trim().toLowerCase()));
+  const fixOnly = madeByHomeroom && commits.every((c) => FIX_SUBJECT.test(String(c && c.subject || '').trim()));
+  return { madeByHomeroom, fixOnly };
+}
+
+module.exports = { HOMEROOM_COMMITTERS, FIX_COMMIT_MESSAGES, FIX_SUBJECT, classify };

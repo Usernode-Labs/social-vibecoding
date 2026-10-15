@@ -27,7 +27,6 @@ import { SectionHeader } from '@/components/ui/grouped-list';
 import { ShieldCheckIcon, XIcon } from '@/components/ui/icons';
 
 import { RichMessage, useMessages } from '../../lib/i18n/react';
-import { t as translate } from '../../lib/i18n/runtime';
 import { presetName, type PresetKey } from './model';
 import { PlaysOut, PresetTiles, type Viewer } from './parts';
 
@@ -93,7 +92,7 @@ function PresetsSheet({ now, viewer, onPick, onClose }: {
 export function MakeRuleLine({ preset, onPick, who }: { preset: PresetKey; onPick: (key: PresetKey) => void; who: string }) {
   const t = useMessages('onboarding');
   const [open, setOpen] = useState(false);
-  const viewer: Viewer = { isCreator: true, creator: who || null, other: translate('dialogs:whoDecides.someone') };
+  const viewer: Viewer = { isCreator: true, creator: who || null };
   return (
     <>
       <p data-make-rule={preset} className="mt-3 flex items-center gap-2 px-1 text-[13px] leading-[1.4] text-zinc-600 dark:text-zinc-300">

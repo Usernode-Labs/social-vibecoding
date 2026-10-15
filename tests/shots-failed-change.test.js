@@ -165,17 +165,21 @@ test('the stored summary, the public view and get_proposal keep "failed"; old ro
 
   assert.deepEqual(shotsView.cleanShotResults([{ id: 'tick-and-undo', status: 'failed', reason: SAW }]),
     [{ id: 'tick-and-undo', status: 'failed', reason: SAW, note: null }]);
-  // A failed run serves its results only when a change failed, so the page can say which.
+  // A failed run serves its results when a change failed, so the page can
+  // say which, or when none could be reached, so its author's agent reads
+  // why each was skipped (tests/shots-skipped-change.test.js).
   const session = { id: 6269, app_slug: 'flat-4b-chores', shots_detail: {} };
   const served = shotsView.serialize({ ...summary, failureCode: 'shots_change_failed' }, session, 'flat-4b-chores', HEAD);
   assert.equal(served.state, 'failed');
   assert.equal(served.shotResults[0].status, 'failed');
   const incomplete = shotsView.serialize({ ...summary, failureCode: 'shots_capture_incomplete' }, session, 'flat-4b-chores', HEAD);
-  assert.deepEqual(incomplete.shotResults, [], 'an incomplete run keeps showing only its reason');
+  assert.equal(incomplete.shotResults.length, 1, 'an incomplete run serves each change\'s reason too');
+  assert.deepEqual(shotsView.serialize({ ...summary, failureCode: 'shots_agent_failed' }, session, 'flat-4b-chores', HEAD).shotResults, [],
+    'any other failure keeps showing only its reason');
   assert.deepEqual(shotsView.serialize({ ...summary, failureCode: 'shots_change_failed' }, session, 'flat-4b-chores', OTHER_HEAD).shotResults, [],
     'never on a newer commit');
 
-  assert.match(read('src/services/mcp-tools.js'), /status: z\.enum\(\['ready', 'skipped', 'failed'\]\)/);
+  assert.match(read('src/services/mcp-tools.js'), /status: z\.enum\(\['ready', 'unchanged', 'skipped', 'failed'\]\)/);
 });
 
 test('brokenOnHead reads the failed changes of shots on exactly that head', () => {
@@ -343,7 +347,7 @@ test('a failed change on the current head is due a fix even when every check pas
   assert.equal(followup.checksDue(botRow({ check_state: 'pending' })), null, 'it waits for the checks, so one turn sees everything');
   assert.equal(followup.checksDue(botRow({ reviewed_head_sha: OTHER_HEAD })), null, 'shots of an older commit');
   assert.equal(followup.checksDue(botRow({ shots_detail: { ...botRow().shots_detail, shotResults: [{ id: 'tick-and-undo', status: 'skipped', reason: 'r' }] } })), null,
-    'a skip is never the bot\'s to fix');
+    'a skip that names no data the change could seed is never the bot\'s to fix');
   // Failing checks and a failed change on one head: one turn, both lists.
   const both = followup.checksDue(botRow({ check_state: 'failing', test_results: [{ name: 'rota.week', status: 'fail', failureReason: 'no text' }] }));
   assert.equal(both.failing.length, 1);
@@ -366,9 +370,12 @@ test('what the bot says about it is plain, and never about checks that passed', 
   const due = followup.checksDue(botRow());
   const person = followup.checksPersonText({ why: 'The route needs a schema change I may not make', failingCount: 0, broken: due.broken });
   assert.equal(person, 'Homeroom bot can\'t get this change working on its own: "Tapping "mark as done" ticks a chore off and offers undo." didn\'t work when Homeroom tried it. The route needs a schema change I may not make. A person needs to look at it from here.');
-  const revised = followup.checksRevisedText({ summary: 'Mark as done records the member, not the account.', broken: true, failing: false });
-  assert.match(revised, /^Homeroom bot fixed what didn't work on this change: Mark as done records the member/);
-  assert.match(revised, /it is tried again on the new version/);
+  // Run four (13 Oct): what was fixed, in the words of what Homeroom tried,
+  // never the turn's own build note.
+  const revised = followup.checksRevisedText({ broken: due.broken, failing: [] });
+  assert.equal(revised, 'Homeroom bot fixed what didn\'t work when Homeroom tried it: "Tapping "mark as done" ticks a chore off and offers undo". '
+    + 'Homeroom tries it again on the new version.');
+  // One note per update: the cleared votes are the platform's line.
   assert.match(followup.checksPersonText({ why: '', failingCount: 2, broken: due.broken }),
     /2 checks are still failing, and one thing it says it does didn't work when Homeroom tried it\./);
   for (const t of [person, revised]) assert.ok(!/—|PR #|proposal/.test(t), t);
@@ -402,7 +409,7 @@ test('ready to try waits for the shots on its head, and carries what they show f
   const waiting = await dm.changeReadiness(readinessPool(sessionRow({
     shots_state: 'exploring', shots_detail: { headSha: HEAD, required: true, intent: chores() },
   })), 6269);
-  assert.deepEqual(waiting, { ready: false, epoch: 3, waitingOnShots: true, broken: [], title: null });
+  assert.deepEqual(waiting, { ready: false, epoch: 3, waitingOnShots: true, broken: [], skipped: [], title: null });
   // #3870: what the change is, for its card: the proposal's title unless it
   // is the placeholder, else the session's.
   const titled = (extra) => dm.changeReadiness(readinessPool(sessionRow(extra)), 6269).then((s) => s.title);
@@ -481,10 +488,12 @@ test('the card and its message say what does not work instead of "ready to try"'
 
 test('a ready card for a change that does not fully work rings as such, not as "ready to try"', async () => {
   const pool = { async query() { return { rows: [{ members: 2 }] }; } };
-  assert.equal(await dm.notificationDetail(pool, 'ready', { kind: 'proposal', appName: 'Flat 4B Chores', appSlug: 'f', firstVersion: true, ready: { broken: ['x'] } }),
-    'hrbot:ready_broken:Flat 4B Chores');
-  assert.equal(await dm.notificationDetail(pool, 'ready', { kind: 'proposal', appName: 'Flat 4B Chores', appSlug: 'f', firstVersion: true, ready: { broken: [] } }),
-    'hrbot:ready:Flat 4B Chores');
+  const { botMomentCopy } = require('../src/services/homeroom-bot-notify-copy');
+  const said = async (metadata) => botMomentCopy(await dm.notificationDetail(pool, 'ready', metadata));
+  const broken = await said({ kind: 'proposal', appName: 'Flat 4B Chores', appSlug: 'f', firstVersion: true, ready: { broken: ['x'] } });
+  assert.deepEqual([broken.said, broken.body], ['ready_broken', 'Built, but one thing isn\'t working yet. Try it to see.']);
+  const ready = await said({ kind: 'proposal', appName: 'Flat 4B Chores', appSlug: 'f', firstVersion: true, ready: { broken: [] } });
+  assert.deepEqual([ready.said, ready.body], ['ready_first', 'Your first version is ready to try.']);
 });
 
 test('the bot\'s builds are asked to try the main action, not just look at the page', () => {
@@ -526,10 +535,11 @@ test('with no phone to push to, the email says it is built but not everything wo
   const templates = require('../src/services/mail/templates');
   const unsubscribeUrl = 'https://app.onhomeroom.com/mail/unsubscribe?u=7&t=abc';
   const mail = templates.buildMessage('build_ready', { appName: 'Flat 4B Chores', url: 'https://x/#messages/12', unsubscribeUrl, notWorking: true });
-  assert.equal(mail.subject, 'Flat 4B Chores is built, but not everything works yet');
-  assert.match(mail.text, /Homeroom bot built what you asked for in Flat 4B Chores, but not everything works yet\. Open it to see what\./);
+  // "One story": the push's words (homeroom-bot-notify-copy.js), never "ready to try" alone.
+  assert.equal(mail.subject, 'Flat 4B Chores: Built, but something isn\'t working yet');
+  assert.match(mail.text, /^Built, but something isn't working yet\. Try it to see\./);
   assert.match(mail.text, /To stop these emails/);
   assert.equal(templates.buildMessage('build_ready', { appName: 'Flat 4B Chores', url: 'https://x', unsubscribeUrl }).subject,
-    'Flat 4B Chores is ready to try');
+    'Flat 4B Chores: Ready to try');
   assert.match(read('src/services/homeroom-bot-dm.js'), /metadata\.ready\.broken\.length \? \{ notWorking: true \} : \{\}/);
 });

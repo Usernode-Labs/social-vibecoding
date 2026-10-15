@@ -529,6 +529,11 @@ export interface RequestStatusView {
   action: { label: string; title?: string; disabled?: boolean; act?: { fn: string; args?: unknown[] }; href?: string } | null;
   /** A closed request: the words that say so, and no stepper. */
   closed: string | null;
+  /**
+   * The sentence already says what Homeroom bot is doing with its plan (or
+   * its change), so no "Plan v1 is ready for comments." after it.
+   */
+  botSays?: boolean;
 }
 
 /** #4455: one part of a Votes or Testing card's bar. */
@@ -574,6 +579,12 @@ export interface ChangeGateView {
 export interface ChangeThreadView {
   /** The pull request's number, for "Change #N"; null before it has one. */
   number: number | null;
+  /**
+   * The status pill the board card shows, beside "Change #N": "✓ Live",
+   * "Going live…", or the vote's own words. Null while the change is being
+   * built or closed (AppView._changeThreadView).
+   */
+  status: StatusPillState | null;
   category: string | null;
   author: string;
   at: string | null;

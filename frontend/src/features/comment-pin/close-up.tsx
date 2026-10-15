@@ -1,14 +1,24 @@
 /**
  * The close-up at the top of the phone's comment sheet (#4554): the area of
- * the page around the open comment's pin, drawn from the view picture at a
- * pinch-and-pan zoom, so the person can check what they pinned without the
- * whole sheet covering the page.
+ * the page around the open comment's pin, drawn at a pinch-and-pan zoom, so
+ * the person can check what they pinned without the whole sheet covering
+ * the page. `view` is the full picture the pin is on: the comment's own once
+ * it is drawn, the view picture until then.
+ *
+ * It used to fall back, whenever the page had moved since the pin went down,
+ * to the comment's 160px thumbnail stretched over the whole box, with the pin
+ * placed as a fraction of the box rather than of the cropped picture. On a
+ * phone the keyboard rising counted as the page moving, so every comment
+ * showed blurred text and a pin on another part of the page (iPhone 17
+ * simulator, 12 Oct 2026). One picture, always at full size, always zoomed
+ * about its own pin. A cut picture is shown whole (#5020): `crop` frames the
+ * part kept in white and dims the rest, so what was cropped away stays seen.
  */
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import { useMessages } from '../../lib/i18n/react';
-import { closeUpView, type Point, type Size } from './picture';
+import { closeUpView, CROP_SHADE, type Point, type Rect, type Size } from './picture';
 
 const HEIGHT = 150;
 const START_ZOOM = 2;
@@ -17,12 +27,18 @@ const MAX_ZOOM = 4;
 const midOf = (a: Point, b: Point): Point => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
 const distOf = (a: Point, b: Point): number => Math.max(1, Math.hypot(a.x - b.x, a.y - b.y));
 
-/** The zoomed view of the pin, or, when the page has moved on since the pin, the comment's own thumbnail. */
-export function CloseUp({ view, pin, own }: { view: string; pin: Point; own?: string | null }) {
+/** The zoomed view of the pin on `view`, the picture it was put on. When the
+ * picture was cut, `crop` frames the part kept on the full picture. */
+export function CloseUp({ view, pin, crop }: { view: string; pin: Point; crop?: Rect | null }) {
   const t = useMessages('devchat');
   const boxRef = useRef<HTMLDivElement>(null);
   const [boxWidth, setBoxWidth] = useState(0);
-  const [picture, setPicture] = useState<Size | null>(null);
+  // The size the picture loaded at, kept with the picture it belongs to: a
+  // picture already in memory (the comment's own, a blob) can finish loading
+  // before an effect runs, so a reset on a new picture would wipe the size
+  // its own load had just set and leave the box empty.
+  const [loaded, setLoaded] = useState<{ src: string; size: Size } | null>(null);
+  const picture = loaded && loaded.src === view ? loaded.size : null;
   const [pinched, setPinched] = useState(false);
   const [drawn, setDrawn] = useState(0);
   // Gesture math reads and writes these directly; `drawn` only asks for the
@@ -39,7 +55,6 @@ export function CloseUp({ view, pin, own }: { view: string; pin: Point; own?: st
   useEffect(() => {
     zoomRef.current = START_ZOOM;
     panRef.current = { x: 0, y: 0 };
-    setPicture(null);
     setDrawn((n) => n + 1);
   }, [view]);
 
@@ -134,7 +149,7 @@ export function CloseUp({ view, pin, own }: { view: string; pin: Point; own?: st
     ? closeUpView({ pin: pinPx, box: { width: boxWidth, height: HEIGHT }, picture, zoom: zoomRef.current, pan: panRef.current })
     : null;
   const scale = picture ? view2!.size.width / picture.width : 1;
-  const handlers = own ? {} : {
+  const handlers = {
     onPointerDown: onDown,
     onPointerMove: onMove,
     onPointerUp: onUp,
@@ -148,41 +163,45 @@ export function CloseUp({ view, pin, own }: { view: string; pin: Point; own?: st
       className="relative shrink-0 overflow-hidden rounded-[12px] bg-zinc-100 ring-1 ring-black/10 dark:bg-zinc-800 dark:ring-white/10"
       style={{ height: HEIGHT, touchAction: 'none' }}
     >
-      {own ? (
-        <>
-          {/* The page has moved on since this comment was pinned, so the view
-              picture would show somewhere else: its own picture instead, as
-              it is, no zoom. */}
-          <img src={own} alt="" draggable={false} className="absolute inset-0 h-full w-full object-cover object-left-top" />
-          <span
-            aria-hidden="true"
-            className="absolute h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-violet-600 shadow-[0_0_0_1.5px_#fff]"
-            style={{ left: `${pin.x * 100}%`, top: `${pin.y * 100}%` }}
-          />
-        </>
-      ) : (
-        <>
-          <img
-            src={view}
-            alt=""
-            draggable={false}
-            onLoad={(e) => setPicture({ width: e.currentTarget.naturalWidth || 1, height: e.currentTarget.naturalHeight || 1 })}
-            className="absolute left-0 top-0 max-w-none select-none"
-            style={view2
-              ? { width: view2.size.width, height: view2.size.height, transform: `translate(${view2.offset.x}px, ${view2.offset.y}px)` }
-              : { visibility: 'hidden' }}
-          />
-          {view2 && pinPx ? (
-            <span
-              aria-hidden="true"
-              className="absolute h-2.5 w-2.5 rounded-full bg-violet-600 shadow-[0_0_0_1.5px_#fff]"
-              style={{ left: view2.offset.x + pinPx.x * scale, top: view2.offset.y + pinPx.y * scale, transform: 'translate(-50%, -50%)' }}
-            />
-          ) : null}
-          {pinched ? null : (
-            <span className="absolute left-2 top-2 rounded-full bg-zinc-900/80 px-2 py-0.5 text-[11px] font-semibold text-white">{t('devchat:commentPin.closeUp.pinchHint')}</span>
-          )}
-        </>
+      {/* No picture yet (the comment's still drawing on a page that has
+          moved since the view picture): the empty box, never an empty src. */}
+      {view ? (
+        <img
+          key={view}
+          src={view}
+          alt=""
+          draggable={false}
+          onLoad={(e) => setLoaded({ src: view, size: { width: e.currentTarget.naturalWidth || 1, height: e.currentTarget.naturalHeight || 1 } })}
+          className="absolute left-0 top-0 max-w-none select-none"
+          style={view2
+            ? { width: view2.size.width, height: view2.size.height, transform: `translate(${view2.offset.x}px, ${view2.offset.y}px)` }
+            : { visibility: 'hidden' }}
+        />
+      ) : null}
+      {view2 && crop ? (
+        /* The crop, at the place the zoomed picture is drawn: the part kept
+           framed in white, the rest dimmed (#5020). */
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute border-2 border-white"
+          style={{
+            left: view2.offset.x + crop.x * view2.size.width,
+            top: view2.offset.y + crop.y * view2.size.height,
+            width: crop.width * view2.size.width,
+            height: crop.height * view2.size.height,
+            boxShadow: CROP_SHADE,
+          }}
+        />
+      ) : null}
+      {view2 && pinPx ? (
+        <span
+          aria-hidden="true"
+          className="absolute h-2.5 w-2.5 rounded-full bg-violet-600 shadow-[0_0_0_1.5px_#fff]"
+          style={{ left: view2.offset.x + pinPx.x * scale, top: view2.offset.y + pinPx.y * scale, transform: 'translate(-50%, -50%)' }}
+        />
+      ) : null}
+      {pinched || !view ? null : (
+        <span className="absolute left-2 top-2 rounded-full bg-zinc-900/80 px-2 py-0.5 text-[11px] font-semibold text-white">{t('devchat:commentPin.closeUp.pinchHint')}</span>
       )}
     </div>
   );

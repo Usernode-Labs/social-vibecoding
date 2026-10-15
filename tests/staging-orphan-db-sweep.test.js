@@ -37,6 +37,9 @@ let fx;
 function freshFixture() {
   return {
     dropped: [],
+    dropOptions: [],
+    previewServer: null,
+    retired: 0,
     dropError: null,
     inFlight: new Set(),
     // pg_database rows / live sessions / connected datnames served by the
@@ -59,10 +62,21 @@ function loadReap() {
     hasInFlightBuild: (sessionId) => fx.inFlight.has(Number(sessionId)),
   });
   stub(ids.dbManager, {
-    dropDatabase: async (dbName) => {
+    dropDatabase: async (dbName, options) => {
       if (fx.dropError) throw new Error(fx.dropError);
       fx.dropped.push(dbName);
+      fx.dropOptions.push(options);
     },
+    // A second server for preview databases (STAGING_DB_ADMIN_URL). Absent
+    // unless a test sets fx.previewServer.
+    PRIMARY_SERVER: 'primary',
+    PREVIEW_SERVER: 'preview',
+    previewServerConfigured: () => !!fx.previewServer,
+    listPreviewServerStagingDatabases: async () => {
+      if (fx.previewServer.error) throw new Error(fx.previewServer.error);
+      return { dbNames: fx.previewServer.dbNames, connectedDbNames: new Set(fx.previewServer.connected || []) };
+    },
+    retireStrayTemplates: async () => { fx.retired += 1; return { examined: 0, dropped: 0, failed: 0 }; },
   });
   stub(ids.pool, {
     getPool: () => ({
@@ -154,6 +168,58 @@ test('sweep drops orphans via dbManager and reports a summary', async () => {
   assert.equal(summary.dropped, 2);
   assert.equal(summary.failed, 0);
   assert.deepEqual(fx.dropped, ['app_a_staging_s1_aaaaaa', 'app_b_staging_s2_bbbbbb']);
+});
+
+test('one server: each drop is the plain call it always was', async () => {
+  const reap = loadReap();
+  fx.dbRows = [{ datname: 'app_a_staging_s1_aaaaaa' }];
+  await reap.sweepOrphanDbs({});
+  assert.deepEqual(fx.dropOptions, [undefined]);
+  assert.equal(fx.retired, 0);
+});
+
+test('with a preview server, each server is classified on its own and each orphan is dropped where it was found', async () => {
+  const reap = loadReap();
+  // Main server: one orphan from before the switch, and a database a client
+  // is still connected to.
+  fx.dbRows = [
+    { datname: 'app_a_staging_s1_aaaaaa' },
+    { datname: 'app_b_staging_s2_bbbbbb' },
+  ];
+  fx.connectedRows = [{ datname: 'app_b_staging_s2_bbbbbb' }];
+  fx.liveSessionRows = [{ id: 5 }];
+  // Preview server: an orphan, a live preview, one with a client on it, and
+  // the same name as the main server's connected database, idle here.
+  fx.previewServer = {
+    dbNames: [
+      'app_c_staging_s3_cccccc',
+      'app_d_staging_s5_dddddd',
+      'app_e_staging_s6_eeeeee',
+      'app_b_staging_s2_bbbbbb',
+      'app_c_stgtmpl',
+    ],
+    connected: ['app_e_staging_s6_eeeeee'],
+  };
+
+  const summary = await reap.sweepOrphanDbs({});
+  assert.equal(summary.examined, 7);
+  assert.equal(summary.dropped, 3);
+  const drops = fx.dropped.map((name, i) => `${name}@${fx.dropOptions[i].server}`);
+  assert.deepEqual(drops, [
+    'app_c_staging_s3_cccccc@preview',
+    'app_b_staging_s2_bbbbbb@preview',
+    'app_a_staging_s1_aaaaaa@primary',
+  ], 'the copy of s2 still in use on the main server is not reached by the preview server\'s drop');
+  assert.equal(fx.retired, 1, 'stray templates are retired in the same pass');
+});
+
+test('a preview server that cannot be listed is skipped; the main server is still swept', async () => {
+  const reap = loadReap();
+  fx.dbRows = [{ datname: 'app_a_staging_s1_aaaaaa' }];
+  fx.previewServer = { error: 'connection refused' };
+  const summary = await reap.sweepOrphanDbs({});
+  assert.equal(summary.dropped, 1);
+  assert.deepEqual(fx.dropOptions, [{ server: 'primary' }]);
 });
 
 test('sweep respects the per-pass limit and defers the rest', async () => {

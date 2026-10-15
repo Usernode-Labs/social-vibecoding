@@ -104,7 +104,7 @@ test('the island opens the Create door over nothing else, on importing when aske
     assert.equal(island.openCreate(setMode, true), true);
     assert.deepEqual(state, { kind: 'make', entry: 'create', startImport: true });
     // Something already up stays.
-    state = { kind: 'tour', info: { slug: 'x', name: 'X' }, path: 'maker' };
+    state = { kind: 'tour', info: { slug: 'x', name: 'X' }, path: 'walk' };
     assert.equal(island.openCreate(setMode), false);
     assert.equal(state.kind, 'tour');
   });
@@ -121,8 +121,10 @@ test('from Create: nothing is answered, the grid is refreshed, and it ends on th
   assert.doesNotMatch(door, /noteAnswered|recordLookAround|onLookAround/);
   assert.match(door, /onClose=\{\(\) => leaveDoor\(false\)\}/);
   // The made screen's way on: the hub from Create, the tour on the first session.
-  const made = src.slice(src.indexOf("if (mode.kind === 'made') {"), src.indexOf("if (mode.kind === 'welcome') {"));
-  assert.match(made, /if \(fromCreate\) \{\s+leaveDoor\(true\);\s+enterScreen\('hub', made\.slug\);\s+return;\s+\}\s+enterScreen\('home', made\.slug\);\s+setMode\(\{ kind: 'tour', info, path: 'maker' \}\);/);
+  const made = src.slice(src.indexOf("if (mode.kind === 'made') {"), src.indexOf("if (mode.kind === 'held') return <WelcomeHeld />;"));
+  // The hub from Create, before anything of the first session's is owed;
+  // the first session's app or walk otherwise (tests/first-session-app-tip.test.js).
+  assert.match(made, /if \(fromCreate\) \{\s+leaveDoor\(true\);\s+enterScreen\('hub', made\.slug\);\s+return;\s+\}\s+const uid = legacy\(\)\.App\?\.user\?\.id;/);
   assert.match(made, /onSetSecrets=\{\(\) => \{\s+leaveDoor\(true\);\s+legacy\(\)\.Secrets\?\.open\?\.\(made\.slug\);\s+\}\}/);
   assert.match(made, /if \(fromCreate\) leaveDoor\(true\);\s+enterScreen\('bot', made\.slug, conversationId\);/);
 });
@@ -175,7 +177,7 @@ test('the make screen from Create: New project, a close, a small "Import from a 
   assert.match(src, /useState<'make' \| 'import'>\(fromCreate && startImport \? 'import' : 'make'\)/, 'only Create imports');
   assert.match(src, /if \(e\.key === 'Escape'\) onClose\(\);/);
   // One request at a time, as the dialog's Create (QA 2026-09-24 Q5).
-  assert.match(src, /if \(busy \|\| makingRef\.current\) return;/);
+  assert.match(src, /if \(dictating \|\| busy \|\| makingRef\.current\) return;/);
   assert.match(src, /makingRef\.current = true;\s+setBusy\(true\);/);
   assert.match(src, /\} finally \{\s+makingRef\.current = false;\s+setBusy\(false\);\s+\}/);
 });
@@ -261,7 +263,11 @@ test('a ready-made app lands on the made screen like an import: set up, then rea
     made: { slug: 'groceries-1', name: 'Grocery List', emoji: '🛒', description: 'A grocery list', example: null, conversationId: null, readyMade: true },
     me: 'sam', entry: 'first-session', onContinue() {}, onOpenChat() {},
   }));
-  assert.match(html, />Setting it up…</);
+  // While it is set up, the card under it says how far it has got, in place
+  // of the plain card's "Setting it up…" (#4900, tests/first-session-started).
+  assert.match(html, /data-made-setup="started"/);
+  assert.match(html, />Getting it ready…</);
+  assert.doesNotMatch(html, /data-first-session-build=""/);
   assert.match(html, />🛒</, 'the ready-made app\'s own icon');
   assert.match(html, />Share invite<\/button>/);
   assert.doesNotMatch(html, /data-first-session-sketch/, 'a ready-made app is never sketched');
@@ -304,9 +310,10 @@ test('a setup that stopped says so on the made screen, with Try again or Set sec
   const src = read(`${DIR}/made.tsx`);
   // The same retry route the progress view pressed.
   assert.match(src, /fetch\(`\/api\/apps\/\$\{encodeURIComponent\(made\.slug\)\}\/retry`, \{ method: 'POST', credentials: 'same-origin' \}\)/);
-  assert.match(src, /if \(res\.ok\) setAppStatus\('creating'\);/);
+  assert.match(src, /if \(res\.ok\) \{\s+setAppStatus\('creating'\);/);
   // And the plan's card is not drawn over it.
-  assert.match(src, /\{plan && !stalled && fromCreate \? <PlanWaitsCard/);
+  // (Nor while the made screen asks the plan's questions itself, 13 Oct 2026.)
+  assert.match(src, /\{plan && !stalled && fromCreate && !asked \? <PlanWaitsCard/);
 });
 
 test('the server sketches the idea for both doors, and only the first session answers the join screen and counts in the Journey', () => {
@@ -332,7 +339,8 @@ test('a stopped setup is not "Ready to try", and a Just me sketch is shared with
   const src = read(`${DIR}/made.tsx`);
   assert.match(src, /const stalled = stalledOf\(appStatus\);[\s\S]{0,500}const making = imported \|\| readyMade \? appStatus !== 'running' : \(!!stalled \|\| !\(building && !fv\)\);/);
   // #4053: no build line either: nothing is being made while it is stopped.
-  assert.match(src, /const line = madeLine\(fv, botBuilds, !making, stalled, imported\);/);
+  // (13 Oct 2026: answered on the made screen, it says it is built.)
+  assert.match(src, /const served = madeLine\(fv, botBuilds, !making, stalled, imported\);/);
   const { madeLine } = loadTsx(`${DIR}/made.tsx`);
   assert.equal(madeLine({ ready: true, line: 'ready' }, true, false, 'failed'), null);
   assert.equal(madeLine({ ready: true, line: 'ready' }, true, false, 'needs-secrets'), null);

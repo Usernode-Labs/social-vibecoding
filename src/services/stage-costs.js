@@ -133,6 +133,55 @@ async function withLedgerTokens(pool, parts) {
 }
 
 /**
+ * Parts for turns known only by their ledger ids (agent_turns
+ * .logical_turn_id): a turn restart recovery followed to its end names no
+ * cost of its own, but the ledger holds it under the id its record carried
+ * (a bench trial keeps that id on its checkpoint). `wanted` is
+ * { stage: { turnIds, model } }; each stage with a priced turn in the
+ * ledger comes back as a part() of their sum and tokens, on its model (else
+ * the turn's), naming the turns found. One query; {} with nothing to read
+ * or an unreadable ledger. Never throws.
+ */
+async function turnParts(pool, wanted = {}) {
+  const want = Object.entries(wanted || {})
+    .filter(([stage, w]) => STAGES.includes(stage) && Array.isArray(w?.turnIds))
+    .map(([stage, w]) => [stage, {
+      model: w.model || null,
+      turnIds: [...new Set(w.turnIds.filter((id) => typeof id === 'string' && UUID_RE.test(id)).map((id) => id.toLowerCase()))],
+    }]);
+  const ids = [...new Set(want.flatMap(([, w]) => w.turnIds))];
+  if (!pool || !ids.length) return {};
+  let rows;
+  try {
+    ({ rows } = await pool.query(
+      `SELECT logical_turn_id::text AS id, MAX(requested_model) AS model,
+              COALESCE(SUM(estimated_cost_usd), 0)::float8 AS cost, COUNT(estimated_cost_usd)::int AS priced,
+              COALESCE(SUM(input_tokens), 0)::bigint AS input, COALESCE(SUM(output_tokens), 0)::bigint AS output
+         FROM agent_turns WHERE logical_turn_id = ANY($1::uuid[])
+        GROUP BY logical_turn_id`,
+      [ids],
+    ));
+  } catch {
+    return {};
+  }
+  const byId = new Map((rows || []).map((r) => [String(r.id).toLowerCase(), r]));
+  const out = {};
+  for (const [stage, w] of want) {
+    const found = w.turnIds.map((id) => [id, byId.get(id)]).filter(([, r]) => r && Number(r.priced) > 0);
+    if (!found.length) continue;
+    const p = part({
+      usd: found.reduce((s, [, r]) => s + (Number(r.cost) || 0), 0),
+      model: w.model || modelOf(found[0][1].model),
+      inputTokens: found.reduce((s, [, r]) => s + (Number(r.input) || 0), 0),
+      outputTokens: found.reduce((s, [, r]) => s + (Number(r.output) || 0), 0),
+      turnIds: found.map(([id]) => id),
+    });
+    if (p) out[stage] = p;
+  }
+  return out;
+}
+
+/**
  * A build session's parts as its turn ledger holds them, beside `parts`, what
  * the build knew of itself (fromStages, reviewParts). A turn a part names by
  * id stays that part's; any other priced turn takes the stage its component
@@ -312,6 +361,7 @@ module.exports = {
   reviewParts,
   fromStages,
   withLedgerTokens,
+  turnParts,
   ledgerParts,
   byComponent,
   sessionPart,

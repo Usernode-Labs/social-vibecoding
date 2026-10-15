@@ -15,6 +15,14 @@ const { reindexAfterHostMove } = require('./reindex-after-host-move');
 // of seeded sends tracks the rule instead of restating it.
 const mailRateLimit = require('../services/mail/rate-limit');
 
+// What a staging fixture's password is hashed at. Each is a literal written
+// in this file, or random bytes nobody keeps, for an account that exists
+// only in a preview, so a slow hash protects nothing, and at the cost real
+// passwords get (12) the three of them were 0.6 seconds of every preview's
+// start. bcrypt.compare reads the cost from the hash, so signing in with
+// them works as before. Never used for anything a person chose.
+const STAGING_FIXTURE_BCRYPT_COST = 4;
+
 async function migrate(config) {
   const startedAt = Date.now();
   const timings = {};
@@ -93,6 +101,7 @@ async function migrate(config) {
   await seedStagingRestartEligibleMerge(pool, config);
   await seedStagingOtherUserProposal(pool, config);
   await seedStagingTopicScrollThreads(pool, config);
+  await seedStagingGroupedFollowOns(pool, config);
   await seedStagingArchiveProposalFixtures(pool, config);
   await seedStagingActiveSessions(pool, config);
   await seedStagingStartScreenSession(pool, config);
@@ -104,6 +113,9 @@ async function migrate(config) {
   await seedStagingSessionOptions(pool, config);
   await seedStagingNoBranchSession(pool, config);
   await seedStagingSharedSession(pool, config);
+  // #5007: independent of the fixtures above — its two sessions are keyed
+  // on their own branch_name.
+  await seedStagingChangeBuiltForRequest(pool, config);
   // #945: must run AFTER seedStagingSharedSession — the proposal-thread
   // half hangs off that fixture's session id.
   await seedStagingDiscussionContext(pool, config);
@@ -160,6 +172,8 @@ async function migrate(config) {
   await seedStagingCloneSpecPills(pool, config);
   await seedStagingRestartRecoveredPills(pool, config);
   await seedStagingGeneralChannel(pool);
+  // After it: this thread's second speaker is that seed's fake person.
+  await seedStagingScrollTestThread(pool);
   await seedStagingQuickReplyFallback(pool, config);
   await seedStagingChatAttachments(pool, config);
   await seedStagingGroupChatAttachments(pool, config);
@@ -183,6 +197,7 @@ async function migrate(config) {
   await seedStagingAppCapApps(pool, config);
   await seedStagingSystemTokenUsage(pool);
   await seedStagingDashboardAdminSplit(pool);
+  await seedStagingModerationCase(pool);
   await seedStagingAnalyticsCharts(pool);
   await seedStagingTopicAttributes(pool, config);
   await seedStagingSubmittedFeatures(pool, config);
@@ -196,6 +211,8 @@ async function migrate(config) {
   await require('../services/bench/demo').seedStagingStudio(pool);
   // The Homeroom bot's configurations table, with first versions to measure.
   await require('../services/bot-configs').seedStagingBotConfigs(pool);
+  // A failed bot run whose reply had no verdict block, kept on the run.
+  await require('../services/homeroom-bot').seedStagingUnreadableReply(pool);
   // After the proposal seeds above: the platform-env fixture stamps a
   // failing verdict onto an existing staging proposal.
   await seedStagingPlatformEnv(pool, config);
@@ -208,6 +225,8 @@ async function migrate(config) {
   await seedStagingProfileCustomization(pool, config);
   await seedStagingPhoneFailures(pool);
   await seedStagingPlatformMail(pool);
+  // #4803: feedback is private in clones and GitHub writes are unavailable.
+  await require('../services/staging-feedback').seedStagingFeedback(pool, config);
   finishPhase('stagingFixturesMs');
   await sweepInterruptedDbExports(pool);
   await backfillEvents(pool);
@@ -959,26 +978,76 @@ async function backfillVotesRequired(pool) {
     candidates: sessions.length,
   });
 
+  // The newest merge announcement of each candidate, found in ONE pass over
+  // the chat and handed back as at most one line per candidate.
+  //
+  // This used to be one search of the app's chat per merged row. A preview
+  // starts with nine merged fixtures that have no announcement at all, and
+  // the nine searches of Homeroom's copied chat were 0.8 seconds of each
+  // start. Now the chat of the apps concerned is read once: every merge
+  // line (the two LIKEs; promote / vote / revert lines also mention the PR
+  // but carry neither phrase) gives up the PR numbers it names, those are
+  // matched to the candidates by equality, and the newest line per
+  // candidate wins before its figure is read, as it did.
+  //
+  // "(^|[^0-9])PR #" and a greedy run of digits is the old per-row pattern
+  // "(^|[^0-9])PR #<ref>([^0-9]|$)" read the other way round: "PR #12"
+  // yields 12 and never 1, and the comparison is on text, so "PR #012" is
+  // not PR 12, as before. Only ids and timestamps are held while matching;
+  // a line's text is fetched for the winners alone, so what reaches this
+  // process does not grow with the chat. Both CTEs are MATERIALIZED so the
+  // planner cannot turn the pass back into one chat scan per candidate.
+  //
+  // Two things differ from the per-row search when something else writes
+  // while this runs. The statement sees the chat at ONE moment, where each
+  // search saw its own: a line that arrives too late leaves its row empty
+  // for a later boot, and that boot finds it only if it is still there
+  // (clearAutomatedChannelLines, below in migrate(), deletes a system line
+  // with no sender and no thread; nothing writes one now, see
+  // ws.sendSystemMessage). And `candidate` reads app_id and pr_number
+  // again by id, rather than using the values the query above returned.
+  // PostgreSQL still reads every merge line of these apps once and sorts
+  // their ids, on disk if they outgrow work_mem; what is bounded is what
+  // comes back here.
+  let winners;
+  try {
+    ({ rows: winners } = await pool.query(
+      `WITH candidate AS MATERIALIZED (
+         SELECT id, app_id, COALESCE(NULLIF(pr_number, 0), id)::text AS ref
+           FROM chat_sessions
+          WHERE id = ANY($1::int[])
+       ), named AS MATERIALIZED (
+         SELECT m.id, m.app_id, m.created_at, hit.pr[1] AS ref
+           FROM chat_messages m
+          CROSS JOIN LATERAL regexp_matches(m.content, '(?:^|[^0-9])PR #([0-9]+)', 'g') AS hit(pr)
+          WHERE m.app_id IN (SELECT app_id FROM candidate)
+            AND m.msg_type = 'system'
+            AND (m.content LIKE '%merged and deployed!%'
+                 OR m.content LIKE '%force-merged by admin%')
+       ), winner AS (
+         SELECT DISTINCT ON (c.id) c.id AS session_id, n.id AS message_id
+           FROM candidate c
+           JOIN named n ON n.app_id = c.app_id AND n.ref = c.ref
+          ORDER BY c.id, n.created_at DESC
+       )
+       SELECT w.session_id, m.content
+         FROM winner w
+         JOIN chat_messages m ON m.id = w.message_id`,
+      [sessions.map((s) => s.id)]
+    ));
+  } catch (err) {
+    // One statement now, so one failure: nothing is filled on this boot and
+    // the next one tries again (the per-row search could lose one row and
+    // carry on). Never abort boot here.
+    log.warn('db', 'votes_required backfill skipped (query failed)', { err: err.message });
+    return;
+  }
+  const announcementOf = new Map(winners.map((w) => [w.session_id, w.content]));
+
   let filled = 0;
   for (const s of sessions) {
-    // The announcement label uses `pr_number || session.id` as the PR ref.
-    const ref = s.pr_number || s.id;
     try {
-      // Find the merge announcement for this PR. The word-boundary regex
-      // (`(^|[^0-9])PR #<ref>([^0-9]|$)`) stops "PR #1" from matching
-      // "PR #12", and the two LIKEs restrict to merge/force-merge lines
-      // (promote / vote / revert messages also mention the PR ref but
-      // carry neither phrase).
-      const { rows: msgs } = await pool.query(
-        `SELECT content FROM chat_messages
-          WHERE app_id = $1 AND msg_type = 'system'
-            AND content ~ $2
-            AND (content LIKE '%merged and deployed!%'
-                 OR content LIKE '%force-merged by admin%')
-          ORDER BY created_at DESC
-          LIMIT 1`,
-        [s.app_id, `(^|[^0-9])PR #${ref}([^0-9]|$)`]
-      );
+      const msgs = announcementOf.has(s.id) ? [{ content: announcementOf.get(s.id) }] : [];
       if (!msgs.length) continue;
 
       const m = /\((\d+)\s*\/\s*(\d+)\s+vote/.exec(msgs[0].content);
@@ -1542,6 +1611,84 @@ async function seedStagingGeneralChannel(pool) {
   }
 }
 
+// #5019's before/after shots follow a conversation being paged from its top,
+// which needs a thread longer than one page of fifty: a fresh clone has no
+// such conversation, and typing one through the UI is not a step anybody can
+// take. One direct thread between the shots' own member fixture
+// (usernode-capture) and one of the fake speakers above, its lines marked as
+// a staging demo throughout. Two pages and a tail, so a reader at the bottom
+// starts with real older history to load. Idempotent through the direct pair
+// and the messages' idempotency keys; strictly a no-op outside staging.
+async function seedStagingScrollTestThread(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const people = await pool.query(
+      `SELECT id, username FROM users
+        WHERE username IN ('usernode-capture', 'staging-demo-general-ada')`
+    );
+    const member = people.rows.find((row) => row.username === 'usernode-capture');
+    const other = people.rows.find((row) => row.username === 'staging-demo-general-ada');
+    if (!member || !other || member.id === other.id) {
+      log.warn('db', 'Staging scroll-test thread skipped: fixture users missing');
+      return;
+    }
+    const low = Math.min(member.id, other.id);
+    const high = Math.max(member.id, other.id);
+    const found = await pool.query(
+      `SELECT c.id FROM conversations c
+         JOIN conversation_direct_pairs p ON p.conversation_id = c.id
+        WHERE p.user_low_id = $1 AND p.user_high_id = $2
+        LIMIT 1`,
+      [low, high]
+    );
+    let conversationId = found.rows[0]?.id;
+    if (!conversationId) {
+      const created = await pool.query(
+        `INSERT INTO conversations (kind, created_by) VALUES ('direct', $1) RETURNING id`,
+        [member.id]
+      );
+      conversationId = created.rows[0].id;
+      await pool.query(
+        `INSERT INTO conversation_direct_pairs
+           (conversation_id, user_low_id, user_high_id)
+         VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
+        [conversationId, low, high]
+      );
+    }
+    // Re-asserted even on an existing thread, so a partial earlier boot
+    // self-heals, as the #general seed does for its members.
+    await pool.query(
+      `INSERT INTO conversation_members
+         (conversation_id, user_id, role, status, responded_at, joined_at)
+       SELECT $1, u.id, 'member', 'member', NOW(), NOW()
+         FROM users u WHERE u.id IN ($2, $3)
+       ON CONFLICT (conversation_id, user_id) DO NOTHING`,
+      [conversationId, member.id, other.id]
+    );
+    const inserted = await pool.query(
+      `INSERT INTO conversation_messages
+         (conversation_id, sender_id, content, idempotency_key, created_at)
+       SELECT $1::int,
+              CASE WHEN n % 2 = 0 THEN $3::int ELSE $2::int END,
+              'Staging demo: history line ' || n || ' of 130 of the scroll test.',
+              'staging-scroll-' || n,
+              NOW() - ((131 - n) * INTERVAL '30 seconds')
+         FROM generate_series(1, 130) AS n
+       ON CONFLICT (conversation_id, sender_id, idempotency_key)
+         WHERE sender_id IS NOT NULL AND idempotency_key IS NOT NULL
+       DO NOTHING`,
+      [conversationId, member.id, other.id]
+    );
+    if (inserted.rowCount > 0) {
+      log.info('db', 'Staging scroll-test thread seeded', {
+        conversationId, inserted: inserted.rowCount,
+      });
+    }
+  } catch (err) {
+    log.warn('db', 'Staging scroll-test thread seeding failed', { message: err.message });
+  }
+}
+
 // Declared dapp.json checks are authenticated as this exact view-only user
 // (services/visuals.js), not as the first administrator in the database.
 // Owner-scoped staging fixtures must therefore resolve their owner by
@@ -1726,6 +1873,47 @@ async function seedStagingAdminConsoleData(pool) {
   }
 }
 
+// A moderation case for the console's Moderation section (#5072). The
+// moderation tables are staging:private, so a preview clone starts with an
+// empty queue and the section's deep link (#admin/reports/<id>) has nothing
+// to open. Two obviously-fake people of their own, never the viewer, and a
+// report that says it is a staging fixture. Idempotent: the case keys on its
+// UNIQUE(target_type, target_id), the report on an existence check scoped to
+// the fake target. Strictly a no-op outside staging.
+async function seedStagingModerationCase(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    await pool.query(
+      `INSERT INTO users (id, username, password, profile_published)
+       VALUES (900320, 'staging-demo-reported', 'staging-demo-not-a-login', TRUE),
+              (900321, 'staging-demo-reporter', 'staging-demo-not-a-login', TRUE)
+       ON CONFLICT DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO moderation_cases (target_type, target_id, target_label, target_user_id, status)
+       VALUES ('user', 900320, '@staging-demo-reported', 900320, 'new')
+       ON CONFLICT (target_type, target_id) DO NOTHING`
+    );
+    const has = await pool.query(
+      `SELECT 1 FROM moderation_reports r JOIN moderation_cases c ON c.id = r.case_id
+        WHERE c.target_type = 'user' AND c.target_id = 900320 LIMIT 1`
+    );
+    if (!has.rowCount) {
+      await pool.query(
+        `INSERT INTO moderation_reports (case_id, cycle, reporter_user_id, reason, detail, evidence)
+         SELECT c.id, c.cycle, 900321, 'spam',
+                'Staging fixture: a fake report so the Moderation screens have a case to open.',
+                NULL
+           FROM moderation_cases c
+          WHERE c.target_type = 'user' AND c.target_id = 900320`
+      );
+    }
+    log.info('db', 'Staging moderation case seeded');
+  } catch (err) {
+    log.warn('db', 'Staging moderation case seeding failed', { message: err.message });
+  }
+}
+
 // Email-code sign-in fixtures (issue #1586). Verifying an email code now
 // branches on the account's credential state, and none of those states are
 // reachable in a staging preview by clicking: `mobile_otp_codes` is
@@ -1759,10 +1947,11 @@ async function seedStagingEmailCodeAccounts(pool) {
   if (process.env.USERNODE_ENV !== 'staging') return;
 
   try {
-    const knownHash = await bcrypt.hash('staging-code-password', 12);
+    const knownHash = await bcrypt.hash('staging-code-password', STAGING_FIXTURE_BCRYPT_COST);
+    // Nobody knows what this one hashes: 32 random bytes, thrown away.
     const unusableHash = await bcrypt.hash(
       crypto.randomBytes(32).toString('hex'),
-      12
+      STAGING_FIXTURE_BCRYPT_COST
     );
 
     await pool.query(
@@ -11719,6 +11908,134 @@ async function seedStagingTopicScrollThreads(pool, config) {
   });
 }
 
+// #5007: a change built for a request points its reply thread at that
+// request — "Conversation lives on #N" where "No replies yet" used to be,
+// #5165: the grouped-gutter fix shows only where ONE author posted two
+// messages in a row, and every thread fixture above hands each turn to a
+// different voice so every row draws a header. Two consecutive follow-on
+// messages from staging-demo-user at the tail of the mock issue's thread,
+// inside the seven-minute window so the second groups under the first and
+// its text lines up with the first message's. Idempotent on content, like
+// seedStagingTopicScrollThreads; strictly a no-op outside staging.
+async function seedStagingGroupedFollowOns(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1',
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) return;
+
+  const { rows: demoRows } = await pool.query(
+    'SELECT id FROM users WHERE username = $1', ['staging-demo-user']
+  );
+  const authorId = demoRows[0]?.id;
+  if (!authorId) return;
+
+  const bodies = [
+    '[Staging demo] grouped follow-on #1: The narrow-phone layout is the part I would keep as it is.',
+    '[Staging demo] grouped follow-on #2: And the dark-mode contrast holds up on my screen too.',
+  ];
+  await pool.query(
+    `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, created_at)
+     SELECT $1::int, $2::int, m.content, 'message', 'issue', 900001::int,
+            NOW() - (m.minutes_ago * INTERVAL '1 minute')
+       FROM jsonb_to_recordset($3::jsonb) AS m(content text, minutes_ago float8)
+      WHERE NOT EXISTS (
+        SELECT 1 FROM chat_messages existing
+         WHERE existing.app_id = $1 AND existing.content = m.content
+      )`,
+    [appId, authorId, JSON.stringify(bodies.map((content, i) => ({ content, minutes_ago: bodies.length - i - 0.5 })))]
+  );
+  log.info('db', 'Staging grouped follow-on messages seeded', { appId, threadRef: 900001 });
+}
+
+// "More of the conversation is on #N" above the count, and the closed
+// notes say the conversation is on the request. Every session fixture
+// above has linked_issues = {}, so a fresh staging copy has no state that
+// shows any of it. Two changes owned by usernode-capture (the signed-in
+// capture identity), both built for mock issue #900001 — the one the
+// mock-issues fallback in routes/issues.js always serves in staging: one
+// unshared, for the closed notes and the pointer row, and one shared with
+// a single stored reply, for the "More of the conversation" line above the
+// count. Idempotent on branch_name; the reply on (thread_type, thread_ref,
+// content).
+async function seedStagingChangeBuiltForRequest(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1',
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', 'Staging change-built-for-request fixture skipped: self-app row missing', {
+      slug: config.selfAppSlug,
+    });
+    return;
+  }
+
+  const { rows: captureRows } = await pool.query(
+    'SELECT id FROM users WHERE username = $1',
+    ['usernode-capture']
+  );
+  const ownerId = captureRows[0]?.id;
+  if (!ownerId) {
+    log.warn('db', 'Staging change-built-for-request fixture skipped: capture user missing');
+    return;
+  }
+
+  // The stored reply's author: anyone but the owner, so the thread reads
+  // as a back-and-forth. Falls back to the owner when staging has one user.
+  const { rows: otherRows } = await pool.query(
+    'SELECT id FROM users WHERE id <> $1 ORDER BY is_admin DESC, id ASC LIMIT 1',
+    [ownerId]
+  );
+  const replyAuthorId = otherRows[0]?.id || ownerId;
+
+  const seedSession = async (branch, title, sharedMinutesAgo, createdMinutesAgo) => {
+    const { rows: existing } = await pool.query(
+      'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+      [appId, branch]
+    );
+    if (existing.length) return existing[0].id;
+    const { rows } = await pool.query(
+      `INSERT INTO chat_sessions
+         (app_id, user_id, branch_name, pr_title, status, linked_issues, shared_at, created_at)
+       VALUES
+         ($1, $2, $3, $4, 'active', ARRAY[900001]::int[], $5,
+          NOW() - ($6 * INTERVAL '1 minute'))
+       RETURNING id`,
+      [appId, ownerId, branch, title,
+        sharedMinutesAgo == null ? null : new Date(Date.now() - sharedMinutesAgo * 60000),
+        createdMinutesAgo]
+    );
+    return rows[0].id;
+  };
+
+  const unsharedId = await seedSession('staging-fixture/change-built-for-request',
+    '[staging fixture] Change built for a request — only you can see it', null, 20);
+  const sharedId = await seedSession('staging-fixture/change-built-for-request-shared',
+    '[staging fixture] Change built for a request — shared, one reply', 10, 30);
+
+  const reply = '[staging fixture] This covers what the request asked for — replying here from now on.';
+  await pool.query(
+    `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, created_at)
+     SELECT $1, $2, $3, 'message', 'session', $4, NOW() - INTERVAL '8 minutes'
+      WHERE NOT EXISTS (
+        SELECT 1 FROM chat_messages existing
+         WHERE existing.app_id = $1 AND existing.thread_type = 'session'
+           AND existing.thread_ref = $4 AND existing.content = $3
+      )`,
+    [appId, replyAuthorId, reply, sharedId]
+  );
+
+  log.info('db', 'Staging change-built-for-request fixtures seeded', {
+    appId, unsharedId, sharedId,
+  });
+}
+
 // #313/#321/#827: a PROMOTED proposal owned by a user OTHER than the
 // tester, so the card-level "✨ Explore in dev chat" pill (rendered only on
 // proposals you do NOT own) is exercisable in staging.
@@ -12073,7 +12390,7 @@ async function seedStagingTopochain(pool, config) {
     // Participant 8 is also the one row with `accept_logs = FALSE` (the
     // column defaults to TRUE), so the users screen shows both values of
     // the flag instead of a column that is the same all the way down.
-    const realHash = await bcrypt.hash('staging-demo-topochain-password', 12);
+    const realHash = await bcrypt.hash('staging-demo-topochain-password', STAGING_FIXTURE_BCRYPT_COST);
     await pool.query(
       `INSERT INTO users
          (id, username, password, email, exclude_podium, accept_logs,
@@ -13940,7 +14257,7 @@ module.exports = {
   seedStagingPlatformMail, auditDuplicatePrSessions,
   migrateWaitlistCountryCodes,
   clearAutomatedChannelLines,
-  backfillProposalIssuerAssignments,
+  backfillProposalIssuerAssignments, backfillVotesRequired,
   seedStagingTopicScrollThreads, seedStagingLlmUsage, seedStagingHomeLayout,
   seedStagingAnalyticsCharts, seedStagingSpendDistribution,
   seedStagingGeneralChannel, seedStagingShotsNoticed,

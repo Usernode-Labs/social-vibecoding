@@ -294,7 +294,9 @@ test('a first version\'s populated demo: the viewer\'s own data, a screen and a 
   const doc = getAppConventions();
   const mock = doc.slice(doc.indexOf('## Staging mock data'), doc.indexOf('### Seeded data must not fabricate a signal your logic reads'));
   // The general rule names the carve-out that wins over it, as "Small" does.
-  assert.match(mock, /- \*\*Obviously fake\.\*\* Give seeded rows a consistent "Staging demo …"\n  prefix so they can't be mistaken for real user content\. \(A first\n  version's `\?demo=1` demo is labelled once instead: see "A first\n  version's populated demo" below\.\)/);
+  // Run 196's blind grades: a first version's boot-time rows were stamped
+  // "Staging demo" on each row too, so the carve-out names them.
+  assert.match(mock, /- \*\*Obviously fake\.\*\* Give seeded rows a consistent "Staging demo …"\n  prefix so they can't be mistaken for real user content\. \(A first\n  version's `\?demo=1` demo, and any rows it seeds on boot, are\n  labelled once instead, on an element marked\n  `data-usernode-demo-note`: see "A first version's populated demo"\n  below\.\)/);
   assert.match(mock, /- \*\*Small\.\*\* A handful of rows — just enough for the testing steps\.\n  \(A project's first version is the one exception: see "A first\n  version's populated demo" below\.\)/);
   const demo = mock.slice(mock.indexOf("### A first version's populated demo"));
   assert.ok(demo.length > 500, 'the carve-out is there, inside "Staging mock data"');
@@ -302,7 +304,10 @@ test('a first version\'s populated demo: the viewer\'s own data, a screen and a 
   assert.match(flat, /For that build only, and on `\?demo=1` only, four seed rules change\. Every later change keeps the rules above\./);
   assert.match(flat, /\*\*Enough to look lived in\.\*\* Varied, realistic rows filling about a screen and a half of the main screen at phone width \(390×844\), not a handful\. - \*\*Labelled once/);
   // Labelled once, at the top or in the list's name, not on every row; the rows stay made up.
-  assert.match(flat, /\*\*Labelled once, not on every row\.\*\* The screen says "Staging demo" once, plainly and visibly: a banner or a line at the top of the screen, or the name of the list or collection the rows belong to\. Each row needs no label of its own \(a "Staging demo" pill or prefix on every row only clutters the screen\), and this replaces the "Staging demo …" prefix above for these rows\. The rows themselves stay obviously made up: no real people and no real private data\./);
+  assert.match(flat, /\*\*Labelled once, not on every row\.\*\* The screen says "Staging demo" once, plainly and visibly: a banner or a line of its own at the top of the screen \(never the app's name, nor in place of its tagline\), or the name of the list or collection the rows belong to\. Each row needs no label of its own \(a "Staging demo" pill or prefix on every row only clutters the screen\), and this replaces the "Staging demo …" prefix above for these rows\. The rows themselves stay obviously made up: no real people and no real private data\./);
+  // Newcomer run seven (14 Oct 2026): the label's element is marked, so
+  // Homeroom can hide it where it shows the app under a label of its own.
+  assert.match(flat, /no real private data\. The element that carries the label gets the attribute `data-usernode-demo-note`: the banner or the line itself, or, in a list's name, a `<span data-usernode-demo-note>` around the label's own words, so the name stays\. Homeroom hides that element where it shows the app with its sample data under a label of its own\./);
   assert.doesNotMatch(flat, /Each still reads "Staging demo/);
   assert.match(flat, /\*\*The viewer's own data too\.\*\*/);
   assert.match(flat, /Either add the viewer's demo rows to the `\?demo=1` responses without storing them, or write them for the viewing account on its first `\?demo=1` request, once \(fixed ids, `ON CONFLICT DO NOTHING`/);
@@ -329,11 +334,38 @@ test('conventions doc says no shots persona is the app\'s creator or admin, and 
   const start = doc.indexOf('### Who the before & after shots see');
   assert.ok(start > 0, 'the section is there');
   const section = doc.slice(start, doc.indexOf('\n### ', start + 1)).replace(/\s+/g, ' ');
-  assert.match(section, /Four things it cannot do by itself/);
+  assert.match(section, /Five things it cannot do by itself/);
   assert.match(section, /\*\*No persona is your app's creator or one of its admins\.\*\*/);
   assert.match(section, /Homeroom tells your app who is signed in, never their role in it/);
   assert.match(section, /`read_only_admin` and `full_admin` are Homeroom's own administrators, which your app is not told/);
   assert.match(section, /refuses every shots browser, and its changes are skipped/);
   assert.match(section, /Do not hard-code people into a screen the project works on/);
   assert.match(section, /name that way in `hints\.setup`/);
+});
+
+// From 2026-10-09 to 10-12, 22 shot runs failed and 13 more changes were
+// skipped because the copies lacked the state the change shows, most of
+// them new in the proposal itself. A seed in the same proposal reaches the
+// after copy, the side a new state needs, so the doc says to add one, and
+// squares it with the seed rule: a fixture account is not whoever opened
+// the preview, and no seed answers the question the change's code asks.
+test('conventions doc says to seed a new state in the same proposal, within the seed rule', () => {
+  const doc = getAppConventions();
+  const start = doc.indexOf('### Who the before & after shots see');
+  const section = doc.slice(start, doc.indexOf('\n### ', start + 1)).replace(/\s+/g, ' ');
+  assert.match(section, /\*\*It finds only the data the copies hold\.\*\*/);
+  assert.match(section, /add an idempotent, obviously fake seed for it in the same proposal: the seed reaches the after copy, which is the side a state new in this proposal needs\./);
+  assert.match(section, /`usernode-capture` is the member/);
+  assert.match(section, /a fixture account is one named account, not whoever opens the preview/);
+  assert.match(section, /never seed a signal your code reads to decide something, so a seed never answers the question the change's own code asks/);
+  assert.match(section, /A reply from an AI feature is seeded as the stored reply, never asked for/);
+  assert.match(section, /A seed cannot help a change to a state that already existed, which both copies need/);
+
+  // The seed rule points there, in the full text and in the offline excerpt.
+  const visitor = doc.slice(doc.indexOf('**Never seed the visitor.**'), doc.indexOf('**Request-time seeding only'))
+    .replace(/\s+/g, ' ');
+  assert.match(visitor, /The before & after shots' fixture accounts are not the visitor/);
+  const excerpt = doc.slice(doc.indexOf('<!-- work-order:begin -->'), doc.indexOf('<!-- work-order:end -->'))
+    .replace(/\s+/g, ' ');
+  assert.match(excerpt, /The shots' fixture accounts are not whoever opened the preview: a state new in a change is seeded in that change/);
 });

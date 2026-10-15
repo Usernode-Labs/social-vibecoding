@@ -204,19 +204,24 @@ test('Home has no Getting started card, and the server no longer draws one', () 
     'no declared check on the retired card');
 });
 
-// ── no "My apps" heading on Home (#4759) ───────────────────────────────
+// ── the "My apps" heading is back on Home (#4961) ──────────────────────
 
-// The app tiles start right under the search bar: the area label above
-// them is gone, its catalog entry with it. The set keeps its name
-// everywhere else ("Add to My apps", the browse badge, the tour card).
-test('the Home apps section draws no heading, and its catalog entry is gone', () => {
+// The area label above the tiles returns, drawn by the same SectionHeading
+// the Discover and Challenges areas use, and its catalog entry with it.
+// The set keeps its one name everywhere else ("Add to My apps", the browse
+// badge, the tour card).
+test('the Home apps section opens with its "My apps" heading, and the catalog entry is back', () => {
   const section = HOME_SRC.slice(
     HOME_SRC.indexOf('<section id="home-apps-section"'),
     HOME_SRC.indexOf('<AppsMore />'));
-  assert.doesNotMatch(section, /SectionHeading/, 'no heading over the tiles');
-  assert.doesNotMatch(HOME_SRC, /home:grid\.heading/, 'and no ask for its text anywhere on Home');
-  assert.equal('grid.heading' in JSON.parse(read('frontend/locales/en/home.json')), false,
-    'the catalog entry went with the heading');
+  const heading = section.indexOf('<SectionHeading');
+  const grid = section.indexOf('<AppGrid />');
+  assert.notEqual(heading, -1, 'a heading over the tiles');
+  assert.notEqual(grid, -1, 'the grid is here');
+  assert.ok(heading < grid, 'the heading sits above the grid');
+  assert.match(section, /\{t\('home:grid\.heading'\)\}/, 'and the heading asks for its text');
+  assert.equal(JSON.parse(read('frontend/locales/en/home.json'))['grid.heading'].text, 'My apps',
+    'the catalog entry is back, in the set\'s one name');
 });
 
 // ── the tile mark (stage 4) ────────────────────────────────────────────
