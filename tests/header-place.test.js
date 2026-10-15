@@ -106,6 +106,36 @@ test('the page publishes what the header\'s button draws and how its tray opens'
   assert.match(WS, /const header = trayButton\(\);/, 'focus returns to the header\'s button first');
 });
 
+test('the header\'s places button asks #5168: the app view must be the screen on show', () => {
+  // A project page stays mounted behind the other tabs, and improveStore
+  // still names the app, so `mounted !== slug` alone passed on Discover,
+  // Home, Messages and Profile and the button drew there. The gate is the
+  // same one header-title.tsx's `inApp` reads.
+  const src = read(`${DIR}/place-bar.tsx`);
+  assert.match(src, /const \{ screen \} = useStoreState\(navStore\);/,
+    'the route\'s screen comes from navStore');
+  assert.match(src, /if \(!phone \|\| !slug \|\| mounted !== slug \|\| screen !== 'app-view'\) return null;/,
+    'and a non-app screen draws nothing');
+  // The fixtures bundle the same navStore the component reads, so the
+  // render below runs the new hook against the store the router publishes.
+  // The phone flag is effect-settled, so a static render cannot show the
+  // drawn button on either screen; what the render buys is that the gate
+  // does not throw on it, and that the initial store agrees on nothing
+  // drawn. The source assertions above are the guard.
+  ui.publishPlace('notes-ab12', 'workshop', 4, 3, true);
+  try {
+    assert.equal(ui.navStore.get().screen, null, 'INITIAL has no screen, like placeStore');
+    ui.navStore.set({ ...ui.navStore.get(), screen: 'browse-screen' });
+    assert.equal(renderToHtml(createElement(ui.HeaderPlace, { slug: 'notes-ab12', name: 'Notes' })), '',
+      'the place is mounted, the screen is not the app view: nothing draws');
+    ui.navStore.set({ ...ui.navStore.get(), screen: 'app-view' });
+    assert.equal(renderToHtml(createElement(ui.HeaderPlace, { slug: 'notes-ab12', name: 'Notes' })), '',
+      'the screen is the app view, but no width is settled yet: nothing draws');
+  } finally {
+    ui.clearPlace('notes-ab12');
+  }
+});
+
 test('the prerendered header emits none of the merged row, so hydration is safe', () => {
   // The phone flag and the mounted place are both settled after hydration,
   // so the server render — and the first client render — draw neither the

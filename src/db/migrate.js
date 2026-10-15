@@ -101,6 +101,7 @@ async function migrate(config) {
   await seedStagingRestartEligibleMerge(pool, config);
   await seedStagingOtherUserProposal(pool, config);
   await seedStagingTopicScrollThreads(pool, config);
+  await seedStagingGroupedFollowOns(pool, config);
   await seedStagingArchiveProposalFixtures(pool, config);
   await seedStagingActiveSessions(pool, config);
   await seedStagingStartScreenSession(pool, config);
@@ -11909,6 +11910,47 @@ async function seedStagingTopicScrollThreads(pool, config) {
 
 // #5007: a change built for a request points its reply thread at that
 // request — "Conversation lives on #N" where "No replies yet" used to be,
+// #5165: the grouped-gutter fix shows only where ONE author posted two
+// messages in a row, and every thread fixture above hands each turn to a
+// different voice so every row draws a header. Two consecutive follow-on
+// messages from staging-demo-user at the tail of the mock issue's thread,
+// inside the seven-minute window so the second groups under the first and
+// its text lines up with the first message's. Idempotent on content, like
+// seedStagingTopicScrollThreads; strictly a no-op outside staging.
+async function seedStagingGroupedFollowOns(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1',
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) return;
+
+  const { rows: demoRows } = await pool.query(
+    'SELECT id FROM users WHERE username = $1', ['staging-demo-user']
+  );
+  const authorId = demoRows[0]?.id;
+  if (!authorId) return;
+
+  const bodies = [
+    '[Staging demo] grouped follow-on #1: The narrow-phone layout is the part I would keep as it is.',
+    '[Staging demo] grouped follow-on #2: And the dark-mode contrast holds up on my screen too.',
+  ];
+  await pool.query(
+    `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, created_at)
+     SELECT $1::int, $2::int, m.content, 'message', 'issue', 900001::int,
+            NOW() - (m.minutes_ago * INTERVAL '1 minute')
+       FROM jsonb_to_recordset($3::jsonb) AS m(content text, minutes_ago float8)
+      WHERE NOT EXISTS (
+        SELECT 1 FROM chat_messages existing
+         WHERE existing.app_id = $1 AND existing.content = m.content
+      )`,
+    [appId, authorId, JSON.stringify(bodies.map((content, i) => ({ content, minutes_ago: bodies.length - i - 0.5 })))]
+  );
+  log.info('db', 'Staging grouped follow-on messages seeded', { appId, threadRef: 900001 });
+}
+
 // "More of the conversation is on #N" above the count, and the closed
 // notes say the conversation is on the request. Every session fixture
 // above has linked_issues = {}, so a fresh staging copy has no state that

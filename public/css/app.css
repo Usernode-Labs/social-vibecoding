@@ -16257,6 +16257,9 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 #dev-topic-thread .gc-msg > .min-w-0 > .flex > .shrink-0 { font-size: 12.5px; }
 #dev-topic-thread .gc-msg > .min-w-0 > .leading-snug { font-size: 15px; }
 #dev-topic-thread .gc-msg > [aria-hidden="true"] { width: 26px; height: 26px; font-size: 11px; border-radius: 999px; margin-top: 6px; }
+/* (#5165) Grouped gutter follows the 26px bubble avatar, so a continuation bubble lines up under the first one. */
+#dev-topic-thread .gc-msg[data-grouped] > .gc-msg-gutter { width: 26px; }
+#dev-topic-thread #gc-thread-messages[data-language="chat"] .gc-msg[data-grouped] > .gc-msg-gutter { width: 44px; }
 #dev-topic-thread .gc-msg-system { padding: 2px 12px; font-size: 12px; }
 #dev-topic-thread .gc-msg-system-repeat { color: var(--text-faint); }
 @media (max-width: 639px) {
@@ -16565,6 +16568,10 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   border-radius: 12px;
   margin-top: 0;
 }
+/* (#5165) The grouped row's gutter span keeps Tailwind's w-11 (44px) while
+   this surface draws a 36px avatar, so every line after the first is indented
+   8px. Match the gutter to the avatar so the text lines up under it. */
+#dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg[data-grouped] > .gc-msg-gutter { width: 36px; }
 #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg-time { font-size: inherit; }
 #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg-content {
   font-size: 17px;

@@ -746,6 +746,87 @@ test('#4794: re-entering Needs you reloads the feed, and a vote cast in it stays
   }
 });
 
+test('#5164: the open screen quietly re-reads what waits, and stops when it closes', async () => {
+  const mod = loadTsx('frontend/src/features/workshop/index.tsx');
+  const { workshopController, workshopStore, WORKSHOP_REFRESH_MS } = mod;
+  assert.equal(WORKSHOP_REFRESH_MS, 30000, 'the quiet interval is about half a minute');
+  const priorWindow = global.window;
+  const priorFetch = global.fetch;
+  const priorDocument = global.document;
+  const apps = [{ slug: 'a', name: 'A', is_member: true }];
+  const counts = { a: { working: 1, needs: 0 } };
+  try {
+    const reads = [];
+    const answers = new Map([
+      ['/api/apps?scope=joined', { ok: true, json: async () => ({ apps }) }],
+      ['/api/workshop/counts', { ok: true, json: async () => ({ counts }) }],
+      ['/api/workshop/needs-feed', { ok: true, json: async () => ({ items: [], max: 0 }) }],
+    ]);
+    global.fetch = async (url, opts) => {
+      reads.push([url, opts && opts.cache]);
+      return answers.get(url) || { ok: false, json: async () => ({}) };
+    };
+    let visibility = 'visible';
+    const visibilityListeners = new Set();
+    global.document = {
+      get visibilityState() { return visibility; },
+      addEventListener(kind, fn) { if (kind === 'visibilitychange') visibilityListeners.add(fn); },
+      removeEventListener(kind, fn) { visibilityListeners.delete(fn); },
+    };
+    const timers = [];
+    let nextId = 1;
+    global.window = {
+      Home: { isJoined: (app) => !!(app && app.is_member) },
+      setInterval(fn, ms) { const id = nextId++; timers.push({ id, fn, ms }); return id; },
+      clearInterval(id) { const i = timers.findIndex((t) => t.id === id); if (i >= 0) timers.splice(i, 1); },
+    };
+    const settle = async () => {
+      for (let i = 0; i < 3; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+    };
+
+    await workshopController.open();
+    assert.equal(workshopStore.get().open, true);
+    assert.equal(timers.length, 1, 'the open screen runs ONE quiet timer');
+    assert.equal(timers[0].ms, WORKSHOP_REFRESH_MS);
+    assert.equal(visibilityListeners.size, 1, 'and listens for the tab coming back');
+
+    // A VISIBLE TICK re-reads exactly the quiet reads, asking for the
+    // CURRENT answer rather than the worker's saved copy.
+    reads.length = 0;
+    timers[0].fn();
+    await settle();
+    assert.deepEqual(reads, [
+      ['/api/workshop/counts', 'no-cache'],
+      ['/api/workshop/needs-feed', 'no-cache'],
+    ]);
+
+    // A HIDDEN TAB reads nothing: the return listener catches up instead.
+    visibility = 'hidden';
+    reads.length = 0;
+    timers[0].fn();
+    await settle();
+    assert.deepEqual(reads, []);
+
+    // RETURNING TO THE TAB reads at once, not at the next tick.
+    visibility = 'visible';
+    reads.length = 0;
+    for (const fn of visibilityListeners) fn();
+    await settle();
+    assert.deepEqual(reads.map(([url]) => url), ['/api/workshop/counts', '/api/workshop/needs-feed']);
+
+    // RE-ENTRY never stacks a second timer; leaving stops the watch.
+    await workshopController.open();
+    assert.equal(timers.length, 1, 'a second open replaces the timer, never adds one');
+    workshopController.close();
+    assert.equal(timers.length, 0, 'closing the screen stops the timer');
+    assert.equal(visibilityListeners.size, 0, 'and its listener');
+  } finally {
+    if (priorDocument === undefined) delete global.document; else global.document = priorDocument;
+    if (priorWindow === undefined) delete global.window; else global.window = priorWindow;
+    global.fetch = priorFetch;
+  }
+});
+
 test('coming back from an app re-reveals the screen', () => {
   // `_inWorkshop` and workshopController.isOpen() both stay true while the
   // viewer is inside an app they opened from here — navigateToApp reveals
