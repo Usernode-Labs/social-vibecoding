@@ -4029,6 +4029,14 @@ const App = {
   // caught up by the drawer's stale-revision indicator
   // (renderPlatformVersionPill) or by pull-to-refresh (_refreshOrReload).
   handleVoteUpdate(data) {
+    // #5233: a merge lands while the viewer is anywhere but the board itself
+    // — the app tab, the proposal's own page, Home — and the board's cached
+    // lists still hold it as open. The helper checks which app the lists
+    // belong to, so it is called whatever is showing here; the burst below
+    // covers the board showing live.
+    if (data.merged && typeof AppView !== 'undefined' && AppView.noteSessionMerged) {
+      AppView.noteSessionMerged(data.sessionId, data.appSlug);
+    }
     // Refresh the proposals tab / inline chat vote state if we're in this
     // app's Dev view, and the work drawer and Home, which track tallies:
     // once for the burst this event arrives in, which usually also carries
