@@ -6052,12 +6052,14 @@ async function noteProposalChecks(pool, { sessionId } = {}) {
 
 /**
  * ONE turn on the bot's own proposal to fix its failing checks, or the
- * hand-off to a person when it may not or cannot; before the first hand-off
- * of a red check, a change behind main is brought up to date with it once
- * instead, and its checks run again (handOff). Every outcome that spent
- * a turn, and every hand-off, records the head it looked at, so the same
- * failing head is never looked at twice; a platform fault records nothing
- * of the kind and keeps the queue row, as a triage's does.
+ * hand-off to a person when it may not or cannot; before the turn itself,
+ * a failure that looks like main's staleness brings the change up to date
+ * with main instead of spending the turn (checks_synced, #5220), and before
+ * the first hand-off of a red check, a change behind main is brought up to
+ * date with it once instead, and its checks run again (handOff). Every
+ * outcome that spent a turn, and every hand-off, records the head it looked
+ * at, so the same failing head is never looked at twice; a platform fault
+ * records nothing of the kind and keeps the queue row, as a triage's does.
  *
  * #4533: `recovered` is a fix turn restart recovery followed to its end
  * ({ turn, mark, mode }, finishRecoveredFollowUp): no turn is run, and
@@ -6097,6 +6099,41 @@ async function runChecksFix(pool, config, {
   }
 
   let runId = null;
+  // #5220: before its own fix turn, a failure that looks like main's
+  // staleness brings the change up to date with main once
+  // (fixed-check-sync.js syncBeforeFix), so the paid turn is not spent on
+  // something main has already fixed, and the votes the change has keep
+  // counting. The same safe rule the sweep decides, without its need for a
+  // second proposal failing the same check; not when the turn was a
+  // restart recovery (it has run already), nor for what its shots showed
+  // not working, which no sync changes.
+  if (!recovered && failing.length && !broken.length) {
+    const synced = await Promise.resolve()
+      .then(() => (deps.fixedCheckSync || require('./fixed-check-sync'))
+        .syncBeforeFix({ config, pool, sessionId: session.id, head }))
+      .catch(() => null);
+    if (synced?.synced) {
+      runId = await insertRun(pool, {
+        ...billingOf(item, runMode),
+        readReason: readReasonOf(item),
+        appId: app.id, issueNumber, mode: runMode, verdict: 'answer',
+        reason: 'Brought up to date with main before fixing its checks; its checks run again.',
+        buildNote: 'Brought up to date with main before fixing its checks; its checks run again.',
+        threadSeenAt, model, durationMs: Date.now() - startedMs,
+        proposalSessionId: session.id, checksHeadSha: head,
+      });
+      await recordSnapshot(runId);
+      await dropRow();
+      await live.postOnProposal({
+        pool, ws: deps.ws, app, issueNumber, runId, kind: 'checks_synced', bot, sessionId: session.id,
+        text: followup.checksSyncedText({ failingCount: failing.length }),
+      }).catch((err) => log.warn('homeroom-bot', 'Checks sync note failed', { app: app.slug, issueNumber, err: err.message }));
+      log.info('homeroom-bot', 'Synced its proposal with main before fixing its failing checks', {
+        app: app.slug, issueNumber, sessionId: session.id, head, sha: synced.sha || null, runId,
+      });
+      return { ran: true, verdict: 'answer', runId, acted: 'checks_synced' };
+    }
+  }
   const handOff = async ({ why, verdict, extra = {}, notChange = false, cause = null }) => {
     runId = await insertRun(pool, {
       ...billingOf(item, runMode),
