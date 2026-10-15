@@ -219,8 +219,9 @@ test('the first look is the picture tour step 9 and the App tab show, and it is 
   assert.match(CODE, /const found = firstLookSrc\(body, made\.slug\);\s+if \(found\) setLook\(found\);/);
   // One that will not load counts as none until another comes.
   assert.match(CODE, /const lookShown = look && look !== brokenLook \? look : null;/);
-  // Asked for as often as tour step 9 asks while there is none.
-  assert.match(CODE, /const lookWaits = firstLookHere && !lookShown;/);
+  // Asked for as often as tour step 9 asks while there is none, or only its
+  // drawn screen (15 Oct 2026, tests/first-look-drawn.test.js).
+  assert.match(CODE, /const lookWaits = firstLookHere && \(!lookShown \|\| isDrawnLook\(lookShown\)\);/);
   assert.match(CODE, /const t = window\.setInterval\(read, settingUp \|\| planComing \? READY_POLL_MS : lookWaits \? FIRST_LOOK_POLL_MS : 10000\);/);
   assert.equal(loadTsx(`${DIR}/first-look.tsx`).FIRST_LOOK_POLL_MS, 5000);
 });

@@ -2883,6 +2883,17 @@ function applyIssuesChange(owner, repo, data = {}) {
   const open = numbers(data.open);
   if (open.length) unsuppressIssuesHere(owner, repo, open);
   if (data.invalidate || closed.length || open.length) invalidateIssuesCacheHere(owner, repo);
+  // An issue another process filed (noteIssueCreated): into this process's
+  // overlay, as if it had filed it here. One too big to carry is read from
+  // GitHub, once, by its number.
+  const createdTtl = Number(data.createdTtlMs);
+  const ttlMs = Number.isFinite(createdTtl) && createdTtl > 0 ? createdTtl : ISSUES_CREATED_OVERLAY_TTL_MS;
+  const created = createdFromShare(data.created);
+  if (created) {
+    recordCreatedHere(owner, repo, created, ttlMs);
+  } else if (Number.isInteger(Number(data.createdNumber)) && Number(data.createdNumber) > 0) {
+    void readCreatedHere(owner, repo, Number(data.createdNumber), ttlMs);
+  }
 }
 
 // Record a just-created issue so every fetchPublicIssues result includes
@@ -2904,9 +2915,67 @@ function applyIssuesChange(owner, repo, data = {}) {
 // (mirrors how repo_url parsing can capture it). Dedupes by issue number.
 // Returns true whenever the issue was recorded (i.e. for any valid
 // input, cache entry or not); false only on malformed input.
+//
+// Newcomer run nine (15 Oct 2026): and every other process hears of it
+// (shareIssuesChange, applied by applyIssuesChange). A web process files a
+// project's first version, and the conductor, whose loop reads the request,
+// had only its own copy of the list: the request was there for it once
+// GitHub's list had it, up to ISSUES_CACHE_TTL_MS later when it had read the
+// repository's list just before, and the other web processes' boards did not
+// show it either. The issue rides the bus whole when it fits in a NOTIFY
+// (CREATED_SHARE_MAX_BYTES), else its number does, and each process reads it.
 function noteIssueCreated(owner, repo, rawIssue, ttlMs = ISSUES_CREATED_OVERLAY_TTL_MS) {
   if (!owner || !repo || !rawIssue || rawIssue.number == null) return false;
   const normalized = normalizeIssue(rawIssue);
+  recordCreatedHere(owner, repo, normalized, ttlMs);
+  shareIssuesChange(owner, repo, {
+    ...createdShare(normalized),
+    ...(ttlMs !== ISSUES_CREATED_OVERLAY_TTL_MS ? { createdTtlMs: ttlMs } : {}),
+  });
+  return true;
+}
+
+// The most of a NOTIFY a created issue may take on the bus: its envelope
+// (ws-bus.js MAX_PAYLOAD_BYTES, 7000) carries the instance, the kind and the
+// repository besides.
+const CREATED_SHARE_MAX_BYTES = 6000;
+
+/** Pure: what noteIssueCreated shares of a normalized issue: it whole, or its number. */
+function createdShare(issue) {
+  try {
+    if (Buffer.byteLength(JSON.stringify({ created: issue }), 'utf8') <= CREATED_SHARE_MAX_BYTES) return { created: issue };
+  } catch { /* its number, below */ }
+  return { createdNumber: issue.number };
+}
+
+/** Pure: a created issue another process shared, in the shape normalizeIssue makes, or null. */
+function createdFromShare(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const number = Number(raw.number);
+  if (!Number.isInteger(number) || number <= 0) return null;
+  const text = (v) => (typeof v === 'string' ? v : null);
+  return {
+    number,
+    title: text(raw.title) || '',
+    body: text(raw.body) || '',
+    labels: Array.isArray(raw.labels) ? raw.labels.filter((l) => typeof l === 'string' && l) : [],
+    createdAt: text(raw.createdAt),
+    updatedAt: text(raw.updatedAt),
+    htmlUrl: text(raw.htmlUrl),
+    user: text(raw.user),
+    state: 'open',
+    closedAt: null,
+  };
+}
+
+/** A created issue too big for the bus, read here by its number. Never throws. */
+async function readCreatedHere(owner, repo, number, ttlMs) {
+  const { issue } = await fetchPublicIssue(owner, repo, number, { fresh: true }).catch(() => ({ issue: null }));
+  if (issue && issue.state !== 'closed') recordCreatedHere(owner, repo, issue, ttlMs);
+}
+
+/** noteIssueCreated's own half, for a normalized issue: this process's overlay and cache. */
+function recordCreatedHere(owner, repo, normalized, ttlMs = ISSUES_CREATED_OVERLAY_TTL_MS) {
   const target = normRepoKey(owner, repo);
 
   let overlay = recentIssueCreations.get(target);

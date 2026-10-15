@@ -9,10 +9,13 @@
 //                 FIRST_VERSION_SCREENS_BRIEF). The main one is rendered to
 //                 a phone-sized PNG in the build's own worker
 //                 (worker/usernode-first-look.js: scripts off, no network)
-//                 and stored for the run. Nobody is ever sent the HTML.
-//                 Until then (newcomer run six, 14 Oct 2026), the EARLY
-//                 first look drawn the same way from the plan at Make it
-//                 (first-version-early-look.js) stands in for it.
+//                 and stored for the run. Nobody is ever sent the spec's
+//                 HTML. Until then (newcomer run six, 14 Oct 2026), the
+//                 EARLY first look drawn the same way from the plan at Make
+//                 it (first-version-early-look.js) stands in for it, and
+//                 (15 Oct 2026) until ITS picture is saved, its drawn screen,
+//                 as a document that runs and loads nothing
+//                 (readDrawnDocument, DRAWN_CSP).
 //   CAPTION       while it builds. The build agent runs
 //                 `usernode-progress "Adding the tier rows"` as it starts
 //                 each point of the plan (homeroom-bot-live.js
@@ -28,7 +31,8 @@
 //
 // What the App tab is told (routes/apps.js GET /api/apps/:slug
 // `first_version.caption` and `.screens`) and the images themselves (GET
-// /api/apps/:slug/first-version/screens/:kind/:n) are for the project's
+// /api/apps/:slug/first-version/screens/:kind/:n, and the drawn screen at
+// GET /api/apps/:slug/first-version/first-look/drawn) are for the project's
 // MEMBERS only: the screens and the phrases come from the plan, which is a
 // read for members (routes/apps.js hubFirstVersion).
 
@@ -477,7 +481,14 @@ async function showcaseOf(pool, appId) {
   }
   if (!screens.first_look?.count) {
     const early = await earlyLooks().shownFor(pool, appId, run || null).catch(() => null);
-    if (early) screens.first_look = { count: 1, at: early.at ? new Date(early.at).toISOString() : null };
+    if (early) {
+      screens.first_look = {
+        count: 1,
+        at: early.at ? new Date(early.at).toISOString() : null,
+        // 15 Oct 2026: its drawn screen, before its picture is saved.
+        ...(early.drawn ? { drawn: true } : {}),
+      };
+    }
   }
   if (!run && !screens.first_look) return null;
   return {
@@ -493,7 +504,10 @@ async function showcaseOf(pool, appId) {
  * screens from "Testing it" on, the first look while it is built and tested
  * without them. A build that stopped (14 Oct 2026, newcomer run eight) keeps
  * the first look it showed while it was built, else the real screens it got
- * to: never the starter's own page. Pure.
+ * to: never the starter's own page. A first look that is only drawn so far
+ * says so (`drawn: true`, 15 Oct 2026): it is read from
+ * GET /api/apps/:slug/first-version/first-look/drawn, never as a picture.
+ * Pure.
  */
 function firstVersionShowcase(showcase, line) {
   if (!showcase) return {};
@@ -507,7 +521,10 @@ function firstVersionShowcase(showcase, line) {
         : null;
   if (pick) {
     const at = pick[1].at || null;
-    out.screens = { kind: pick[0], count: pick[1].count, at, v: at ? String(new Date(at).getTime()) : '0' };
+    out.screens = {
+      kind: pick[0], count: pick[1].count, at, v: at ? String(new Date(at).getTime()) : '0',
+      ...(pick[0] === 'first_look' && pick[1].drawn === true ? { drawn: true } : {}),
+    };
   }
   return out;
 }
@@ -530,6 +547,102 @@ async function readScreen(pool, appId, kind, position) {
   }
   if (kind !== 'first_look' || position !== 0) return null;
   return earlyLooks().pictureFor(pool, appId, run || null).catch(() => null);
+}
+
+// ── The drawn screen, before its picture (15 Oct 2026) ───────────────────
+//
+// Newcomer run nine: the early first look's screen was drawn well inside 20
+// seconds, but the worker its picture is drawn in took 30 seconds longer
+// than usual to start, and the made screen showed an empty phone for 11
+// seconds after Submit. Until its picture is saved, the drawn screen itself
+// is shown: the document the worker draws (firstLookDocument), served to a
+// member's browser (routes/apps.js GET /api/apps/:slug/first-version/
+// first-look/drawn) under DRAWN_CSP and framed by the shell with
+// sandbox="" (frontend/src/features/first-session/drawn-look.tsx), as the
+// spec's screens are framed (frontend/src/lib/spec-html.ts) and as a locked
+// report is served (routes/report-snapshots.js SANDBOX_CSP).
+//
+// The CSP is what makes it safe: an opaque origin with scripts, forms and
+// navigation off, and nothing loaded but its inline styles and data: images
+// and fonts, the worker's own document's rules. inertMarkup only keeps the
+// console quiet: anything the CSP would refuse (a script, an image by URL, a
+// stylesheet link) is taken out first, because each refusal is a console
+// error on the page that frames it, as the spec's screens are cleaned for
+// the same reason (spec-html.ts cleanScreenMarkup).
+
+const DRAWN_CSP = "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:";
+
+// Elements that would run or load something, with what they hold, and the
+// empty ones.
+const INERT_DROP_RE = /<(script|noscript|iframe|frame|frameset|object|embed|applet|portal|audio|video)\b[\s\S]*?<\/\1\s*>/gi;
+const INERT_TAG_RE = /<\/?(?:script|noscript|iframe|frame|frameset|object|embed|applet|portal|audio|video|base|meta|link|source|track|param)\b[^>]*>/gi;
+const STYLE_BLOCK_RE = /(<style\b[^>]*>)([\s\S]*?)(<\/style\s*>)/gi;
+// A start tag and its attributes, a quoted ">" included.
+const START_TAG_RE = /<([a-zA-Z][\w:-]*)((?:\s+[^\s"'=<>`/]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?)*)(\s*\/?)>/g;
+const ATTR_RE = /\s+([^\s"'=<>`/]+)(?:\s*=\s*("[^"]*"|'[^']*'|[^\s"'=<>`]+))?/g;
+const LOADING_ATTRS = new Set(['src', 'srcset', 'poster', 'background', 'data', 'action', 'formaction', 'ping',
+  'href', 'xlink:href', 'srcdoc', 'lowsrc', 'dynsrc', 'codebase', 'manifest', 'archive', 'longdesc']);
+
+/** CSS with nothing it would fetch: no @import, and url() only for data. Pure. */
+function inertCss(css) {
+  return String(css || '')
+    .replace(/@import[^;]*;?/gi, '')
+    .replace(/url\(\s*(['"]?)\s*(?!data:)[^)]*\)/gi, 'none');
+}
+
+/** An attribute that loads or runs nothing, as written; else null. Pure. */
+function inertAttr(name, raw) {
+  const lower = name.toLowerCase();
+  const value = raw == null ? '' : raw.replace(/^(["'])([\s\S]*)\1$/, '$2');
+  if (lower.startsWith('on')) return null;
+  if (lower === 'style') return ` style="${inertCss(value).replace(/"/g, '&quot;')}"`;
+  if (LOADING_ATTRS.has(lower)) {
+    const data = /^\s*data:image\//i.test(value) && (lower === 'src' || lower === 'href' || lower === 'xlink:href');
+    // An SVG's own reference (<use href="#icon">) loads nothing.
+    const own = (lower === 'href' || lower === 'xlink:href') && /^\s*#/.test(value);
+    if (!data && !own) return null;
+  }
+  return raw == null ? ` ${name}` : ` ${name}=${raw}`;
+}
+
+/**
+ * A drawn screen's markup with what the frame's CSP would refuse taken out:
+ * scripts, frames, embeds, media, <base>, <meta> and <link>, event handler
+ * attributes, any URL that is not a data: image (an in-page #reference
+ * stays), and @import and url() that is not data: in its CSS. Not the
+ * safety of the frame (DRAWN_CSP is), only its quiet. Pure.
+ */
+function inertMarkup(markup) {
+  return String(markup || '')
+    .replace(INERT_DROP_RE, '')
+    .replace(INERT_TAG_RE, '')
+    .replace(STYLE_BLOCK_RE, (_, open, css, close) => `${open}${inertCss(css)}${close}`)
+    .replace(START_TAG_RE, (_, tag, attrs, end) => {
+      let kept = '';
+      for (const m of String(attrs || '').matchAll(ATTR_RE)) kept += inertAttr(m[1], m[2]) || '';
+      return `<${tag}${kept}${end}>`;
+    });
+}
+
+/**
+ * The early first look's drawn screen as the document a member's browser
+ * frames until its picture is saved: the worker's own document
+ * (firstLookDocument), its markup made inert (inertMarkup). Null when the
+ * run has a first look of its own, or there is no drawn screen to show
+ * (first-version-early-look.js screenFor).
+ */
+async function readDrawnDocument(pool, appId) {
+  const { rows: [run] } = await pool.query(RUN_SQL, [Number(appId)]);
+  if (run) {
+    const { rows } = await pool.query(
+      `SELECT 1 FROM first_version_screens WHERE bot_run_id = $1 AND kind = 'first_look' LIMIT 1`,
+      [Number(run.id)],
+    );
+    if (rows.length) return null;
+  }
+  const markup = await earlyLooks().screenFor(pool, appId, run || null).catch(() => null);
+  const screen = markup ? mainScreenOf(screenDocument(markup)) : null;
+  return screen ? firstLookDocument({ ...screen, markup: inertMarkup(screen.markup) }) : null;
 }
 
 module.exports = {
@@ -562,4 +675,8 @@ module.exports = {
   showcaseOf,
   firstVersionShowcase,
   readScreen,
+  // 15 Oct 2026: the drawn screen, before its picture.
+  DRAWN_CSP,
+  inertMarkup,
+  readDrawnDocument,
 };

@@ -3317,9 +3317,13 @@ const AppView = {
    * drawn to a picture, from Building it, then up to three REAL screens of
    * the build from Testing it, through Ready to try. Each is an image the
    * server keeps for the project's members
-   * (/api/apps/:slug/first-version/screens/:kind/:n), never a page. A
-   * screenshot state's made-up project carries its own pictures. Null for
-   * none: the thumbnail is as it was.
+   * (/api/apps/:slug/first-version/screens/:kind/:n). 15 Oct 2026: a first
+   * look whose picture is not saved yet (`screens.drawn`) is its drawn
+   * screen, a document that runs and loads nothing
+   * (/api/apps/:slug/first-version/first-look/drawn), which the band frames
+   * (frontend/src/features/first-session/drawn-look.tsx drawnLookUrl spells
+   * the same URL). A screenshot state's made-up project carries its own
+   * pictures. Null for none: the thumbnail is as it was.
    */
   _firstVersionScreens(appData) {
     const fv = appData.first_version || {};
@@ -3334,6 +3338,9 @@ const AppView = {
     if (!count || !appData.slug) return null;
     const v = encodeURIComponent(String(sc.v || '0'));
     const slug = encodeURIComponent(appData.slug);
+    if (sc.kind === 'first_look' && sc.drawn === true) {
+      return { kind: 'first_look', at, images: [`/api/apps/${slug}/first-version/first-look/drawn?v=${v}`] };
+    }
     return {
       kind: sc.kind,
       at,

@@ -215,6 +215,16 @@ async function createApp(config, appRow) {
           // never throws.
           appSketch.commitWhenReady(pool, { appId, name, owner: botUsername, repo: slug });
         }
+        // Newcomer run nine (15 Oct 2026): a project created with a
+        // description files it as its first request now, while the starter
+        // is built and deployed, not once it runs: 18 of the 40 s from the
+        // made screen's Submit to its spec were that wait, and the request
+        // needs only the repository, which holds the starter and its card
+        // from here (homeroom-bot-dm.js FILEABLE_SQL). Not awaited; the
+        // call once it runs (below) and the sweeps file it if this misses.
+        require('./homeroom-bot-dm').fileFirstVersion(pool, config, appId).catch((err) => {
+          log.warn('app-creator', 'Homeroom bot first version not filed yet', { appId, err: err.message });
+        });
       } catch (err) {
         // GitHub is enabled but the repo couldn't be provisioned. Falling
         // back to a local build here used to leave a healthy-looking app
@@ -595,9 +605,11 @@ async function finalizeDeployInner(config, { appId, name, slug, tempDir, dbUrl, 
     pushAppStatusUpdate({ id: appId, slug, status: 'running', url: appUrl });
     log.info('app-creator', 'App created successfully', { appId, slug, hostname, appUrl, repoUrl });
     // A project created with a description ("What should it do?") files it
-    // as its first request now that it runs; the Homeroom bot builds it for
-    // somebody it builds for (#3624). The leader's sweep (and the bot's)
-    // files it later if this misses; never a reason creation fails.
+    // as its first request; the Homeroom bot builds it for somebody it
+    // builds for (#3624). Filed once its repository was made (createApp)
+    // unless that missed, and then here, now that it runs; the leader's
+    // sweep (and the bot's) files it later if this misses too. Never a
+    // reason creation fails.
     require('./homeroom-bot-dm').fileFirstVersion(pool, config, appId).catch((err) => {
       log.warn('app-creator', 'Homeroom bot first version not filed yet', { appId, err: err.message });
     });

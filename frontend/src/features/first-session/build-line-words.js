@@ -70,7 +70,7 @@ export const BUILD_LINE_TILE_WORDS = Object.freeze({
  * stage under way included (run six: blue is for something to act on, and a
  * build going on by itself asks nothing). One line, so the project's name
  * keeps its two (app.css, the --home-cell-h derivation: a two-line name and
- * one caption line fill the tile's 38px), and a longer translation ends in
+ * one caption line fill the tile's 40px), and a longer translation ends in
  * an ellipsis rather than painting over the tile below. A build that
  * stopped (14 Oct 2026) is something wrong, so it is in the attention colour
  * a tile's "Awaiting secrets" is.

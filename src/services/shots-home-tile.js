@@ -156,7 +156,7 @@ function renderPage(tile, { side }) {
   .app-icon-tile img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .app-icon-tile .emoji { font-size: 30px; line-height: 1; }
   .app-card-title { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
-    overflow: hidden; width: 100%; min-height: 26px; font-size: 11px; line-height: 1.18; font-weight: 500;
+    overflow: hidden; width: 100%; min-height: 28px; font-size: 12px; line-height: 1.1667; font-weight: 500;
     text-align: center; overflow-wrap: anywhere; word-break: break-word; }
   .sizes { display: flex; gap: 24px; margin: 4px 0 0; font-size: 12px; color: var(--faint); }
   .sizes span:first-child { width: 80px; text-align: center; }

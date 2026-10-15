@@ -98,6 +98,24 @@ async function mint(pool, { signupId, email }) {
   return token;
 }
 
+// The first time the row's link was spent, for the admin Journey's first
+// mile (services/journey.js): the mail's own click tracking leaves this link
+// out, and its rows are deleted a day after they expire, so this is the one
+// lasting record that the button was followed. The earliest spend stands.
+const FOLLOWED_SQL = `UPDATE waitlist_signups
+    SET release_link_followed_at = NOW()
+  WHERE id = $1::bigint AND release_link_followed_at IS NULL`;
+
+/** A record beside the spend, never part of it: a failure is a warning. */
+async function noteFollowed(pool, signupId) {
+  if (signupId == null) return;
+  try {
+    await pool.query(FOLLOWED_SQL, [signupId]);
+  } catch (error) {
+    log.warn('release-links', 'Could not record a followed link', { message: error.message });
+  }
+}
+
 /**
  * Spend a link: the mailbox is proven, so continue as an email code would.
  * Throws EmailSignupError `invalid_release_link` for anything that is not a
@@ -116,9 +134,10 @@ async function spend(pool, rawToken, { createSession, newAccountOnly = false } =
     throw new emailSignup.EmailSignupError('invalid_release_link', INVALID_MESSAGE);
   }
   let email = null;
+  let signupId = null;
   const result = await emailSignup.withTransaction(pool, async (client) => {
     const { rows } = await client.query(
-      `SELECT l.token_hash, l.email, l.expires_at, l.consumed_at,
+      `SELECT l.token_hash, l.signup_id, l.email, l.expires_at, l.consumed_at,
               w.email AS signup_email, w.released_at,
               EXISTS (SELECT 1 FROM waitlist_release_links n
                        WHERE n.signup_id = l.signup_id AND n.created_at > l.created_at) AS superseded
@@ -153,11 +172,13 @@ async function spend(pool, rawToken, { createSession, newAccountOnly = false } =
       );
     }
     email = link.email;
+    signupId = link.signup_id;
     return emailSignup.continueProvenEmail(client, email, { createSession, newAccountOnly });
   });
   if (result.invalid) {
     throw new emailSignup.EmailSignupError('invalid_release_link', INVALID_MESSAGE);
   }
+  await noteFollowed(pool, signupId);
   const finished = await emailSignup.finishProvenEmail(pool, email, result);
   return { ...finished, email };
 }
@@ -181,4 +202,4 @@ async function isNewAccount(pool, signup) {
   }
 }
 
-module.exports = { RELEASE_LINK_TTL_MS, TOKEN_RE, mint, spend, hashToken, isNewAccount };
+module.exports = { RELEASE_LINK_TTL_MS, TOKEN_RE, FOLLOWED_SQL, mint, spend, hashToken, isNewAccount };

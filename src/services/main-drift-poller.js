@@ -44,6 +44,7 @@ const staging = require('./staging');
 const { broadcastGlobal } = require('./ws');
 const { checkAndResolveConflicts } = require('./conflict-resolver');
 const releaseWatch = require('./release-watch');
+const deployFailure = require('./deploy-failure');
 const githubBudget = require('./github-budget');
 const lifecycle = require('./lifecycle');
 const leaderTimers = require('./leader-timers');
@@ -262,6 +263,13 @@ async function checkAndRedeployOne(config, pool, app, { manual = false } = {}) {
   const workflow = require('../workflow/platform.ts');
   if (workflow.deliveryEnabled()) return requestDriftDeploy(config, pool, app, remoteSha, { manual, workflow });
 
+  // This commit's image was refused for running as root, and no retry can
+  // change that (deploy-failure.js waitsForNewCommit): wait for a commit that
+  // changes the Dockerfile. "Check for updates" still tries it.
+  if (!manual && deployFailure.waitsForNewCommit(app.last_failure, remoteSha)) {
+    return { status: 'waits_for_new_commit', slug: app.slug, from: app.main_sha, attempted: remoteSha };
+  }
+
   const retryInMs = manual ? 0 : backoffRemaining(app.id, remoteSha);
   if (retryInMs > 0) {
     const { failures } = failedAttempts.get(app.id);
@@ -283,7 +291,7 @@ async function checkAndRedeployOne(config, pool, app, { manual = false } = {}) {
   });
 
   try {
-    const { containerId, sha } = await staging.rebuildProduction(config, app);
+    const { containerId, sha } = await staging.rebuildProduction(config, app, manual ? { retrySameCommit: true } : {});
     // No PR number — this redeploy was triggered out-of-band, so we
     // explicitly null `main_pr_number` instead of leaving a stale PR
     // pointer that no longer corresponds to the running SHA.
@@ -367,7 +375,7 @@ async function poll(config) {
   // Snapshot the candidate set once. Apps whose status changes during
   // the loop are filtered by the per-row claim above, not here.
   const { rows } = await pool.query(
-    `SELECT id, slug, repo_url, main_sha, self_hosted, release_stall, release_run, main_check_sha, main_check_state
+    `SELECT id, slug, repo_url, main_sha, self_hosted, release_stall, release_run, main_check_sha, main_check_state, last_failure
        FROM apps
       WHERE repo_url IS NOT NULL AND status = 'running'`
   );

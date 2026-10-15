@@ -29,6 +29,19 @@ class MissingSecretsError extends Error {
   }
 }
 
+// A production rebuild of the commit whose image was already refused for
+// running as root (deploy-failure.js waitsForNewCommit): building and rolling
+// it out again can only end the same way, so it stops after the clone, with
+// the original failure left on the row. A new commit, or a deploy asked for
+// by hand (options.retrySameCommit), goes ahead.
+class WaitsForNewCommitError extends Error {
+  constructor(sha) {
+    super(`Not deploying ${String(sha).slice(0, 7)} again: its image runs as root, so it waits for a commit that changes the Dockerfile`);
+    this.name = 'WaitsForNewCommitError';
+    this.sha = sha;
+  }
+}
+
 // Distinct error for the staging-specific case where a `required + private`
 // secret has no manifest-committed `staging_default` (or `default`). Surfaces
 // with a different message because the remediation is different from
@@ -1174,6 +1187,14 @@ async function rebuildProductionInner(config, app, options = {}) {
       log.warn('staging', 'Failed to capture main SHA', { app: app.slug, err: err.message });
     }
 
+    if (!options.retrySameCommit && mainSha) {
+      const { rows: [current] } = await getPool(config).query('SELECT last_failure FROM apps WHERE id = $1', [app.id]);
+      if (require('./deploy-failure').waitsForNewCommit(current?.last_failure, mainSha)) {
+        await docker.execFileAsync('rm', ['-rf', cloneDir]).catch(() => {});
+        throw new WaitsForNewCommitError(mainSha);
+      }
+    }
+
     // Read manifest from the cloned working tree. Snapshot it onto
     // the app row first so the Secrets UI knows about a brand-new
     // required key the moment we observe it (even if the deploy then
@@ -1340,7 +1361,12 @@ async function rebuildProductionInner(config, app, options = {}) {
       sha: mainSha,
     };
   } catch (err) {
-    if (err instanceof MissingSecretsError) {
+    if (err instanceof WaitsForNewCommitError) {
+      // The row already says why and which commit; nobody needs telling again.
+      log.info('staging', 'Production rebuild skipped: this commit\'s image runs as root', {
+        app: app.slug, sha: err.sha,
+      });
+    } else if (err instanceof MissingSecretsError) {
       missingSecretsFromErr = err.missingSecrets;
       log.warn('staging', 'Production rebuild blocked — missing required secrets', {
         app: app.slug, missing: err.missingSecrets,
@@ -1463,5 +1489,6 @@ module.exports = {
   // not re-entrant.
   serializeRebuild,
   MissingSecretsError,
+  WaitsForNewCommitError,
   PrivateSecretMissingStagingDefaultError,
 };

@@ -283,9 +283,10 @@ test('the live queue reads which rows are follow-ups, lets only them past a busy
     liveSlugs: ['a1'], excludeAppIds: [103], busyAppIds: [101], botId: 77, pausedApps: [], excludeFollowUps: ['101:5'],
   });
   const { s, params } = asked[0];
-  // The last two are a scope's every-app flag and what it leaves out
-  // (live.liveScope): a bare list of slugs is just those apps.
-  assert.deepEqual(params, [['a1'], [103], [], 200, [101], 77, ['101:5'], 7, false, [], 20]);
+  // Then a scope's every-app flag and what it leaves out (live.liveScope):
+  // a bare list of slugs is just those apps. Last, whether only first
+  // versions are read (15 Oct 2026: runOnce's read ahead of its refresh).
+  assert.deepEqual(params, [['a1'], [103], [], 200, [101], 77, ['101:5'], 7, false, [], 20, false]);
   // One turn for a burst: a person still writing on the request or on the
   // bot's change for it is read once they pause (SETTLE_MS).
   assert.match(s, /m\.created_at > NOW\(\) - make_interval\(secs => \$11\)/);

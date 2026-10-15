@@ -1552,9 +1552,11 @@ async function becomeLeader() {
   leaderTimers.every('account-deletion-cleanup', runAccountDeletionCleanup, 60_000);
 
   // A project created with a description files it as its first request once
-  // it runs (services/homeroom-bot-dm.js). The creation hook in
-  // app-creator.js does it; this files one the hook missed or could not
-  // file yet, whether or not the Homeroom bot is on. A no-op on staging.
+  // its repository holds the starter (services/homeroom-bot-dm.js
+  // FILEABLE_SQL; 15 Oct 2026, while it is still being set up). The
+  // creation hooks in app-creator.js do it; this files one the hooks missed
+  // or could not file yet, whether or not the Homeroom bot is on. A no-op on
+  // staging.
   const runFirstRequestSweep = () => require('./src/services/homeroom-bot-dm')
     .sweepFirstVersions(getPool(config), config)
     .then((n) => { if (n) log.info('apps', 'First requests filed', { filed: n }); })

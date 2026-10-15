@@ -59,10 +59,12 @@ stub(ids.github, {
 });
 
 const rebuilds = [];
+const rebuildOptions = [];
 let rebuildOutcome = () => { throw new Error('docker build failed: apt-get update timed out'); };
 stub(ids.staging, {
-  rebuildProduction: async (config, app) => {
+  rebuildProduction: async (config, app, options) => {
     rebuilds.push(app.slug);
+    rebuildOptions.push(options);
     return rebuildOutcome(app);
   },
   MissingSecretsError: class extends Error {},
@@ -100,6 +102,7 @@ function reset() {
   poller._forTest.setClock(() => clock);
   clock = 1_000_000;
   rebuilds.length = 0;
+  rebuildOptions.length = 0;
   queries.length = 0;
   logged.length = 0;
   remoteSha = RED;
@@ -305,4 +308,26 @@ test('with app delivery on, drift asks it for the deploy, from durable state: on
     delivery.row = { deploy_state: null, last_failure: { sha: null, at: new Date(clock - 60 * 1000).toISOString() } };
     assert.equal((await poller.checkAndRedeployOne(config, pool, app)).status, 'backing_off');
   } finally { delivery.on = false; }
+});
+
+// A commit whose image was refused for running as root (deploy-failure.js)
+// waits for a commit that changes it; "Check for updates" still tries, and
+// tells the rebuild a person asked.
+test('a commit refused for running as root waits for a new one; a manual check still retries it', async () => {
+  reset();
+  const refused = { ...app, last_failure: { stage: 'healthcheck', kind: 'root_image', sha: RED, reason: 'runs as root' } };
+  const waiting = await poller.checkAndRedeployOne(config, pool, refused);
+  assert.equal(waiting.status, 'waits_for_new_commit');
+  assert.equal(rebuilds.length, 0);
+
+  rebuildOutcome = () => ({ containerId: 'c', sha: RED });
+  const manual = await poller.checkAndRedeployOne(config, pool, refused, { manual: true });
+  assert.equal(manual.status, 'redeployed');
+  assert.deepEqual(rebuildOptions, [{ retrySameCommit: true }]);
+
+  remoteSha = FIXED;
+  rebuildOptions.length = 0;
+  const fixed = await poller.checkAndRedeployOne(config, pool, refused);
+  assert.equal(fixed.status, 'redeployed', 'a new commit on main is deployed');
+  assert.deepEqual(rebuildOptions, [{}]);
 });

@@ -1493,7 +1493,8 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       });
 
       // What the project should do, from the create dialog: filed as its
-      // first request, under its creator's name, once the project runs. For
+      // first request, under its creator's name, once its repository holds
+      // the starter (homeroom-bot-dm.js FILEABLE_SQL). For
       // somebody the Homeroom bot builds for (#3624), the bot builds it and
       // says so in their DM, which the dialog then offers to open; for
       // anybody else it is left to the group. Optional here (a connector
@@ -1971,6 +1972,37 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       return res.send(Buffer.isBuffer(row.data) ? row.data : Buffer.from(row.data || ''));
     } catch (err) {
       log.error('apps', 'Failed to read a first version screen', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // 15 Oct 2026 (newcomer run nine): the early first look's DRAWN screen,
+  // which the first look shows until its picture above is saved
+  // (`first_version.screens.drawn`, services/first-version-screens.js
+  // readDrawnDocument), for the same readers as the picture: the project's
+  // MEMBERS, 404 for anyone else and for none. It is model-written HTML, so
+  // every answer is a document that can do nothing (DRAWN_CSP): `sandbox`
+  // gives it an opaque origin with scripts, forms and navigation off, and
+  // nothing loads but its inline styles and data: images and fonts. The
+  // shell frames it with sandbox="" as well (frontend/src/features/
+  // first-session/drawn-look.tsx). Cached no longer than the picture.
+  router.get('/api/apps/:slug/first-version/first-look/drawn', async (req, res) => {
+    const fvScreens = require('../services/first-version-screens');
+    res.set({
+      'Content-Security-Policy': fvScreens.DRAWN_CSP,
+      'X-Content-Type-Options': 'nosniff',
+      'Referrer-Policy': 'no-referrer',
+    });
+    try {
+      if (!req.user?.id) return res.status(404).json({ error: 'Not found' });
+      const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS);
+      if (!app || !(await communities.isMember(pool, app.id, req.user.id))) return res.status(404).json({ error: 'Not found' });
+      const doc = await fvScreens.readDrawnDocument(pool, app.id);
+      if (!doc) return res.status(404).json({ error: 'Not found' });
+      res.set({ 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'private, max-age=3600' });
+      return res.send(doc);
+    } catch (err) {
+      log.error('apps', 'Failed to read a first version\'s drawn screen', { message: err.message });
       return res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -2798,8 +2830,10 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         return res.json({ ok: true });
       }
       // Fire-and-forget: same fan-out as the drift-poller and dev-chat
-      // merge paths use. Errors land on the deploy-status broadcast.
-      staging.rebuildProduction(config, app)
+      // merge paths use. Errors land on the deploy-status broadcast. Asked
+      // for by hand, so it retries even a commit the automatic paths have
+      // stopped retrying (deploy-failure.js waitsForNewCommit).
+      staging.rebuildProduction(config, app, { retrySameCommit: true })
         .then(async ({ containerId, sha }) => {
           await pool.query(
             `UPDATE apps SET container_id = $1, main_sha = $2, status = 'running',

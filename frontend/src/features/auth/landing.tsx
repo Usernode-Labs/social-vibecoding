@@ -401,7 +401,7 @@ export function LandingTile({
           screen renders, so it lost the active-users badge with it — an icon
           and a label, nothing else. The count still shows in the Browse-all
           directory, which is a ranked list where it is the point. The label is
-          .app-card-title (app.css) — iOS-sized 11px/13px type clamped to two
+          .app-card-title (app.css) — iOS-sized 12px/14px type clamped to two
           lines in a fixed-height lane, same as the authed grid (#951), so both
           launchers show the same amount of a name.
       */}

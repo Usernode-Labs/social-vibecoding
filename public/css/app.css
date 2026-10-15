@@ -4589,30 +4589,39 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
   opacity: 0.7;
 }
 
-/* THE TILE LABEL — iOS-homescreen sized (#951).
-   11px on a 13px line, TWO lines, ellipsised on overflow. The old label
-   was one 14px/20px line with `truncate`, which cut most real app names
-   after ~12 characters; at this size and two lines a tile shows roughly
+/* THE TILE LABEL — iOS-homescreen sized (#951), one step up (#4934).
+   12px on a 14px line, TWO lines, ellipsised on overflow. It was 11px on
+   13px: legible on a white card, but people reading Home over the
+   wallpaper's washes (the dark one most of all) called it tiny. One pixel
+   of type and one of line height is what that costs: the two-line lane is
+   2px taller, and the --home-cell-h derivation below grows by the same 2px. The colour is inherited from the
+   body's text-zinc-900 / dark:text-zinc-100, which clears 13:1 on the
+   cream ground and its washes and 10:1 on the darkest dark wash (the
+   ember); the label sets no colour of its own so the Create tile's muted
+   ink still applies.
+
+   Before #951 the label was one 14px/20px line with `truncate`, which cut
+   most real app names after ~12 characters; at this size and two lines a tile shows roughly
    three times as much of a long name.
 
-   The lane measures exactly two lines (26px, 2 x 13) as a MIN-height, not
+   The lane measures exactly two lines (28px, 2 x 14) as a MIN-height, not
    a fixed height: a one-line title and a two-line title still occupy the
    same box at the design size, so the caption below a tile — and the
-   tile's whole content height — does not shift per tile, and the 124px
-   budget in the --home-cell-h derivation is unchanged. But the box now
+   tile's whole content height — does not shift per tile, and the 126px
+   budget in the --home-cell-h derivation holds. But the box now
    GROWS when a device renders the font larger than the design size (#3661):
    Android's text scaling / font boosting inflates this label's font-size
    and line-height (~14px on ~17px lines) while rem-based lengths stay put,
-   and the old fixed 26px height clipped that second line mid-glyph. With
+   and the old fixed-height lane clipped that second line mid-glyph. With
    the floor the inflated text simply takes its two lines' worth of room —
    at most a few pixels into the row gap on such a device, never a cut-off
    word. The grid's rows themselves stay fixed; only the label's own box
    is content-sized beyond its floor.
 
-   line-height is unitless (13px at the design size, 13/11) for the same
+   line-height is unitless (14px at the design size, 14/12) for the same
    reason: it tracks whatever font-size the device actually renders, so
    the two line boxes scale with the glyphs instead of staying 13px under
-   them.
+   them (as 13/11 did before #4934).
 
    -webkit-line-clamp is the only cross-browser way to ellipsise at a
    line COUNT (the standard `line-clamp` is listed alongside it for the
@@ -4627,9 +4636,9 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
   line-clamp: 2;
   overflow: hidden;
   width: 100%;
-  min-height: 1.625rem; /* 26px — exactly two lines at the design size */
-  font-size: 0.6875rem; /* 11px */
-  line-height: 1.18; /* 13px at the design size; unitless so it tracks the font */
+  min-height: 1.75rem; /* 28px: exactly two lines at the design size */
+  font-size: 0.75rem; /* 12px */
+  line-height: 1.1667; /* 14px at the design size; unitless so it tracks the font */
   font-weight: 500;
   text-align: center;
   overflow-wrap: anywhere;
@@ -4637,9 +4646,9 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
 }
 
 /* The status caption ("Spinning up…" / "Awaiting secrets" / "Error")
-   steps down with it: 11px on a 12px line, no top margin, so the two
-   text lanes together are 26 + 12 = 38px — the same as the old
-   20 (title) + 16 (caption) + 2 (mt-0.5) budget. */
+   stays a step below it: 11px on a 12px line, no top margin, so the two
+   text lanes together are 28 + 12 = 40px (38px, the old 20 (title) +
+   16 (caption) + 2 (mt-0.5) budget, until #4934 grew the title lane). */
 .app-card-status {
   font-size: 0.6875rem; /* 11px */
   line-height: 0.75rem; /* 12px */
@@ -4796,17 +4805,20 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
        p-3        0.75rem x 2  = 1.5rem
        w-14 h-14  3.5rem       = 3.5rem
        gap-1.5    0.375rem     = 0.375rem
-       title      2 x 13px     = 1.625rem  <- .app-card-title, two lines
+       title      2 x 14px     = 1.75rem   <- .app-card-title, two lines
        caption    12px line    = 0.75rem   <- .app-card-status, see below
                                 --------
-                                7.75rem   (124px)
+                                7.875rem  (126px)
 
      #951 shrank the label from one 14px/20px line to two 11px/13px lines
      and tightened the icon->label gap and the caption line to match, so
      the total is UNCHANGED and nothing derived from --home-cell-h moved.
      Both text lanes are fixed heights, so a one-line and a two-line title
      produce identical tiles.
-     The phone variant is 116px: index.html tightens the tile to `p-2`
+     #4934 then grew the label to 12px on 14px lines, which is the one
+     term that moved: 2px more per row, here and on the phone (the blank
+     row below is derived, so it follows by itself).
+     The phone variant is 118px: index.html tightens the tile to `p-2`
      (0.5rem x 2), which is 8px less. Four 56px icons per row only read as a
      home screen at that density.
 
@@ -4818,9 +4830,9 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
      no room doesn't push the row taller — it paints over the tile below.
      Budgeting for it is what keeps an errored app legible instead of
      bleeding into its neighbour. */
-  --home-cell-h: 7.75rem; /* 124px — see the derivation above */
-  /* ONE EMPTY ROW on a phone (#975). Half a cell — 58px against the phone's
-     116px — so a row the viewer left empty keeps its place in the arrangement
+  --home-cell-h: 7.875rem; /* 126px: see the derivation above */
+  /* ONE EMPTY ROW on a phone (#975). Half a cell — 59px against the phone's
+     118px — so a row the viewer left empty keeps its place in the arrangement
      without reserving a whole tile to be empty. DERIVED from the cell rather
      than written out, so the two can never drift.
 
@@ -5584,8 +5596,8 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    lays out against a column count the CSS isn't rendering. */
 @media (max-width: 639.98px) {
   :root {
-    /* 116px — p-2 (16) + icon 56 + gap-1.5 (6) + title 26 + caption 12 */
-    --home-cell-h: 7.25rem;
+    /* 118px: p-2 (16) + icon 56 + gap-1.5 (6) + title 28 + caption 12 */
+    --home-cell-h: 7.375rem;
     /* --home-panel-max-h was redefined here as ONE CELL (#968), because a
        block was a grid item whose phone footprint was a single row and a
        238px cap in a 116px cell would have let an oversized system text size
@@ -5596,7 +5608,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
   }
   .home-grid-overlay { gap: 0.375rem; }
   /* The doubled class is deliberate. This rule is what makes the phone
-     cell 116px rather than 124px, but the card element carries Tailwind's
+     cell 118px rather than 126px, but the card element carries Tailwind's
      own `p-3`, and tailwind.css is linked AFTER app.css in index.html — so
      at equal specificity the utility won and this tightening never applied
      (the cell budget above said p-2 while tiles rendered at p-3, which is
@@ -5604,7 +5616,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
      is the same element, one specificity step up, so the intended phone
      padding lands without an !important or a #app-list scope that would
      miss the landing grid's tiles. It also buys the label 8px of extra
-     line width, which at 11px is roughly two more characters per line.
+     line width, which at 12px is roughly two more characters per line.
 
      NOT the Discover card. It carries `.app-card` only as the wiring contract
      with `_wireDiscoveryCards`; it is a tile of its own whose art block is
