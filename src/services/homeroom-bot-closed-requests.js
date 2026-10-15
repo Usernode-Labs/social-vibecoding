@@ -25,6 +25,18 @@
 //   - the bot's own refresh, for a request closed on GitHub, where Homeroom
 //     gets no signal (homeroom-bot.js refreshApp, sweepClosedRequests).
 // Best effort everywhere: never a reason a merge, a vote or a refresh fails.
+//
+// The platform's own row for such a request stayed open too. The tray already
+// moves a request whose row is closed out of Needs you (homeroom-bot-tray.js,
+// pastRuns' request_closed, #4539 and #5009), so once the row closes the
+// strip lets the request go — but nothing closed it: a merge and a close vote
+// do, a close on GitHub does not, and #4752 kept showing in Needs you after
+// the bot's own chat answer had read it closed on GitHub. closeRequestRows
+// below closes it, on the bot's refresh: for the tracked requests the
+// refresh's open list no longer names, GitHub is asked once, and only a close
+// GitHub itself reports closes the row (one-way; a reopen never reopens it),
+// then the caches are busted and open trays re-read, the same way a merge's
+// close does (issue-close-watcher.js bustAndBroadcast, closeTwinRows).
 
 const log = require('./logger');
 
@@ -185,4 +197,96 @@ async function sweepClosedRequests(pool, { appId, openNumbers, deps = {} } = {})
   }
 }
 
-module.exports = { noteRequestsClosed, sweepClosedRequests, closedNote, REASON };
+// The bot's tracked requests whose platform row still says open and whose
+// GitHub number is NOT on the refresh's open list, newest first, a few at a
+// time (RECONCILE_LIMIT): a large backlog clears over several refreshes
+// instead of asking GitHub about all of it at once. Tracked means somebody
+// filed it through the bot (homeroom_bot_requesters) or the bot has a live
+// run on it — a request filed straight on GitHub has no row of ours to close
+// and is never a candidate.
+const RECONCILE_LIMIT = 25;
+
+const OPEN_TRACKED_SQL = `
+  SELECT DISTINCT i.github_issue_number
+    FROM issues i
+   WHERE i.app_id = $1 AND i.kind = 'general' AND i.status = 'open'
+     AND i.github_issue_number IS NOT NULL
+     AND NOT (i.github_issue_number = ANY($2::int[]))
+     AND (EXISTS (SELECT 1 FROM homeroom_bot_requesters q
+                   WHERE q.app_id = i.app_id AND q.issue_number = i.github_issue_number)
+       OR EXISTS (SELECT 1 FROM homeroom_bot_runs r
+                   WHERE r.app_id = i.app_id AND r.issue_number = i.github_issue_number
+                     AND r.mode = 'live'))
+   ORDER BY 1 DESC
+   LIMIT $3`;
+
+// The same statement closeTwinRows uses: open `general` rows only, one-way.
+const CLOSE_REQUEST_ROWS_SQL = `
+  UPDATE issues SET status = 'closed'
+   WHERE app_id = $1 AND kind = 'general' AND status = 'open'
+     AND github_issue_number = ANY($2::int[])`;
+
+/**
+ * The bot's refresh of one app read its open requests (`openNumbers`): its
+ * tracked requests missing from that list may have been closed on GitHub by
+ * hand, where Homeroom gets no signal. Each candidate is confirmed with
+ * GitHub once — the open list alone is never trusted, for the same reasons
+ * sweepClosedRequests gives — and only a close GitHub itself reports closes
+ * the platform's row, which the tray's Needs you reads. One-way: nothing
+ * reopens a row here. When anything closed, the issues cache is busted and
+ * `github_synced` broadcast (a merge's close does the same), and every
+ * requester whose request closed has their open tray re-read. Never throws;
+ * resolves { closed: [number] }.
+ */
+async function closeRequestRows(pool, { appId, appSlug, repoUrl, openNumbers, deps = {} } = {}) {
+  const numbers = numbersOf(openNumbers);
+  const repo = parseRepo(repoUrl);
+  if (!pool || !(Number(appId) > 0) || !repo || !Array.isArray(openNumbers)) return { closed: [] };
+  try {
+    const { rows: candidates } = await pool.query(OPEN_TRACKED_SQL, [Number(appId), numbers, RECONCILE_LIMIT]);
+    const isClosed = deps.isClosed || githubClosed(repo, deps);
+    const confirmed = [];
+    for (const row of candidates) {
+      if (await isClosed(Number(row.github_issue_number))) confirmed.push(Number(row.github_issue_number));
+    }
+    if (!confirmed.length) return { closed: [] };
+    await pool.query(CLOSE_REQUEST_ROWS_SQL, [Number(appId), confirmed]);
+    await announceClosed(pool, { repo, appId: Number(appId), appSlug, closed: confirmed, deps });
+    return { closed: confirmed };
+  } catch (err) {
+    log.warn('homeroom-bot-closed-requests', 'Reconciling rows of requests closed on GitHub failed', { appId, err: err.message });
+    return { closed: [] };
+  }
+}
+
+// The side effects of rows just closed, awaited by closeRequestRows so a
+// caller (a test, the next refresh) sees them done: the caches a merge's
+// close busts, and an open tray re-read per requester. Both lazy requires
+// (the tray and the watcher are siblings this file's other callers already
+// require), both best-effort: the rows are closed either way.
+async function announceClosed(pool, { repo, appId, appSlug, closed, deps }) {
+  try {
+    const watcher = deps.watcher || require('./issue-close-watcher');
+    watcher.bustAndBroadcast({
+      owner: repo.owner, repo: repo.repo, appSlug: appSlug || null, appId, closed,
+    });
+  } catch (err) {
+    log.warn('homeroom-bot-closed-requests', 'Cache bust / broadcast after closing request rows failed', { appId, err: err.message });
+  }
+  try {
+    const tray = deps.tray || require('./homeroom-bot-tray');
+    const { rows } = await pool.query(
+      'SELECT DISTINCT user_id FROM homeroom_bot_requesters WHERE app_id = $1 AND issue_number = ANY($2::int[])',
+      [appId, closed],
+    );
+    for (const row of rows) tray.noteWorkChanged(Number(row.user_id));
+  } catch (err) {
+    log.warn('homeroom-bot-closed-requests', 'Could not re-read the open trays after closing request rows', { appId, err: err.message });
+  }
+  log.info('homeroom-bot-closed-requests', 'Closed the platform\'s rows for requests closed on GitHub', { appId, closed });
+}
+
+module.exports = {
+  noteRequestsClosed, sweepClosedRequests, closeRequestRows, closedNote, REASON,
+  RECONCILE_LIMIT,
+};

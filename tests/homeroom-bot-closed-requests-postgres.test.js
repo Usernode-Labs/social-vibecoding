@@ -18,7 +18,11 @@
 //     touched;
 //   - the refresh's sweep finds the ones closed on GitHub, trusting GitHub's
 //     own answer and never the open list alone, and gives the freed slot to a
-//     held request in the same refresh.
+//     held request in the same refresh;
+//   - a request closed by hand on GitHub also closes the platform's own row
+//     the tray's Needs you reads (#5218), for the tracked requests the
+//     refresh's open list no longer names, a few at a time, and never the
+//     other way round.
 //
 // Like the repository's other postgres tests it skips when no database is
 // reachable, unless TEST_DATABASE_URL insists on one.
@@ -31,6 +35,7 @@ const { Pool } = require('pg');
 
 const closedRequests = require('../src/services/homeroom-bot-closed-requests');
 const bot = require('../src/services/homeroom-bot');
+const tray = require('../src/services/homeroom-bot-tray');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL
   || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
@@ -258,6 +263,208 @@ test('the bot\'s proposals for closed requests are withdrawn, against the full P
       assert.equal(line.content, '“Repotting reminders” was withdrawn: this request is closed.');
     } finally {
       if (orig) require.cache[lifecyclePath] = orig; else delete require.cache[lifecyclePath];
+    }
+  });
+
+  // The ws stub stands in for the real one while these subtests run: what an
+  // open tray hears (noteWorkChanged) and what the group chat hears
+  // (bustAndBroadcast's github_synced) is how the strip and the panel learn.
+  const wsId = require.resolve('../src/services/ws');
+  const realWs = require.cache[wsId];
+  const stubWs = () => {
+    const pushes = [];
+    const broadcasts = [];
+    require.cache[wsId] = {
+      id: wsId, filename: wsId, loaded: true,
+      exports: {
+        pushToUser(userId, payload) { pushes.push([Number(userId), payload]); return 1; },
+        pushIssueUpdate(update) { broadcasts.push(update); },
+        pushConversationEvent() { return 0; },
+        pushNotificationToUser() { return 1; },
+      },
+    };
+    return { pushes, broadcasts, restore: () => { if (realWs) require.cache[wsId] = realWs; else delete require.cache[wsId]; } };
+  };
+
+  await t.test('a request closed by hand on GitHub closes the row the tray\'s Needs you reads (#5218)', async () => {
+    const { rows: [mia] } = await pool.query(
+      `INSERT INTO users (username, password, has_platform_access) VALUES ('mia', 'x', TRUE) RETURNING id`,
+    );
+    await pool.query('DELETE FROM homeroom_bot_runs');
+    await pool.query('DELETE FROM homeroom_bot_requesters');
+    await pool.query('DELETE FROM issues');
+    await pool.query('DELETE FROM chat_sessions');
+    // #60 was closed on GitHub by hand; its `general` row still says open.
+    // #61 was filed straight on GitHub (no row of ours to close), #62 is
+    // still on the open list, #63 is closed here already, #64 GitHub cannot
+    // answer about, #65 is a pull request wearing the number.
+    await pool.query(
+      `INSERT INTO issues (app_id, github_issue_number, title, kind, status) VALUES
+         ($1, 60, 'Water the ferns', 'general', 'open'),
+         ($1, 61, 'Untracked on GitHub', 'general', 'open'),
+         ($1, 62, 'Still on the list', 'general', 'open'),
+         ($1, 63, 'Already closed here', 'general', 'open'),
+         ($1, 64, 'GitHub unreadable', 'general', 'open'),
+         ($1, 65, 'A pull request', 'general', 'open')`,
+      [app.id],
+    );
+    await pool.query(`UPDATE issues SET status = 'closed' WHERE app_id = $1 AND github_issue_number = 63`, [app.id]);
+    await pool.query(
+      `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title) VALUES
+         ($1, 60, $2, 'Water the ferns'), ($1, 62, $2, 'Still on the list'), ($1, 63, $2, 'Already closed here'),
+         ($1, 64, $2, 'GitHub unreadable'), ($1, 65, $2, 'A pull request')`,
+      [app.id, mia.id],
+    );
+    for (const n of [60, 62, 63, 64, 65]) {
+      await pool.query(
+        `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, thread_seen_at) VALUES ($1, $2, 'live', 'question', $3)`,
+        [app.id, n, SEEN],
+      );
+    }
+    // The ask the strip's Needs you row acts on: the bot's question, open in
+    // its DM, waiting on mia.
+    const conversation = (await pool.query(
+      `INSERT INTO conversations (kind, created_by) VALUES ('direct', $1) RETURNING id`,
+      [mia.id],
+    )).rows[0].id;
+    const message = (await pool.query(
+      `INSERT INTO conversation_messages (conversation_id, sender_id, content) VALUES ($1, $2, 'How deep does the pot drain?') RETURNING id`,
+      [conversation, botUser.id],
+    )).rows[0].id;
+    await pool.query(
+      `INSERT INTO homeroom_bot_dm_messages (message_id, user_id, conversation_id, app_id, issue_number, kind, question_status)
+       VALUES ($1, $2, $3, $4, 60, 'question', 'open')`,
+      [message, mia.id, conversation, app.id],
+    );
+
+    const asMia = { id: mia.id, username: mia.username, isAdmin: false };
+    const key = (job) => `${job.appSlug}#${job.issueNumber}`;
+    const work = await tray.workFor(pool, { user: asMia });
+    assert.ok(work.needsYou.some((job) => key(job) === 'plant-pal#60'),
+      'before the reconcile: the row is open, so the request waits on them');
+
+    const github = gh({ closed: [60], broken: [64], prs: [65] });
+    const busted = [];
+    const w = stubWs();
+    try {
+      const out = await closedRequests.closeRequestRows(pool, {
+        appId: app.id, appSlug: app.slug, repoUrl: app.repo_url,
+        openNumbers: [62], deps: { github, watcher: { bustAndBroadcast(args) { busted.push(args); } } },
+      });
+      assert.deepEqual(out, { closed: [60] });
+      assert.deepEqual(github.asked.sort((a, b) => a - b), [60, 64, 65],
+        'GitHub is asked only about the tracked, row-open numbers off the list; #61 untracked, #62 on the list, #63 already closed');
+      assert.deepEqual(busted, [{
+        owner: 'usernode-bot', repo: 'plant-pal', appSlug: app.slug, appId: app.id, closed: [60],
+      }], 'the same cache bust and broadcast a merge\'s close does');
+      assert.deepEqual(w.pushes, [[mia.id, { type: 'homeroom_bot_work_changed' }]], 'the requester\'s open tray re-reads');
+
+      const { rows: after } = await pool.query(
+        'SELECT github_issue_number, status FROM issues WHERE app_id = $1 ORDER BY github_issue_number', [app.id],
+      );
+      assert.deepEqual(after.map((r) => [r.github_issue_number, r.status]), [
+        [60, 'closed'], [61, 'open'], [62, 'open'], [63, 'closed'], [64, 'open'], [65, 'open'],
+      ], 'only the confirmed close closed a row; nothing reopened');
+
+      const closed = await tray.workFor(pool, { user: asMia });
+      assert.ok(!closed.needsYou.some((job) => key(job) === 'plant-pal#60'), 'Needs you lets it go');
+      const tile = closed.history.find((job) => key(job) === 'plant-pal#60');
+      assert.equal(tile.outcome, 'stopped', 'History says the work stopped');
+      assert.equal(tile.ask, undefined, 'its old ask does not put it back');
+      assert.equal(tile.answered, false, 'the rest of its story stays');
+    } finally {
+      w.restore();
+    }
+
+    // A second refresh reads only what is still open; nothing reopens.
+    const again = { query: () => Promise.reject(new Error('connection lost')) };
+    assert.deepEqual(await closedRequests.closeRequestRows(again, {
+      appId: app.id, appSlug: app.slug, repoUrl: app.repo_url, openNumbers: [],
+    }), { closed: [] }, 'a failed read closes nothing');
+    const { rows: status } = await pool.query(
+      `SELECT status FROM issues WHERE app_id = $1 AND github_issue_number = 60`, [app.id],
+    );
+    assert.equal(status[0].status, 'closed', 'still closed');
+  });
+
+  await t.test('a backlog of hand-closed requests clears a few at a time, newest first', async () => {
+    await pool.query('DELETE FROM homeroom_bot_runs');
+    await pool.query('DELETE FROM homeroom_bot_requesters');
+    await pool.query(`DELETE FROM issues WHERE app_id = $1 AND github_issue_number >= 200`, [app.id]);
+    await pool.query(
+      `INSERT INTO issues (app_id, github_issue_number, title, kind, status)
+        SELECT $1, 200 + g, 'Backlog ' || g, 'general', 'open' FROM generate_series(1, 30) g`,
+      [app.id],
+    );
+    await pool.query(
+      `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title)
+        SELECT $1, 200 + g, $2, 'Backlog ' || g FROM generate_series(1, 30) g`,
+      [app.id, lee.id],
+    );
+    const github = gh({ closed: [...Array(30).keys()].map((g) => 201 + g) });
+    const out = await closedRequests.closeRequestRows(pool, {
+      appId: app.id, appSlug: app.slug, repoUrl: app.repo_url, openNumbers: [], deps: { github },
+    });
+    assert.equal(out.closed.length, closedRequests.RECONCILE_LIMIT, 'at most the limit per refresh');
+    assert.deepEqual(out.closed, [...Array(30).keys()].map((g) => 230 - g).slice(0, closedRequests.RECONCILE_LIMIT),
+      'newest numbers first, GitHub asked about each');
+    const second = await closedRequests.closeRequestRows(pool, {
+      appId: app.id, appSlug: app.slug, repoUrl: app.repo_url, openNumbers: [], deps: { github },
+    });
+    assert.deepEqual(second.closed, [205, 204, 203, 202, 201], 'the rest clear on the next refresh');
+    const { rows: left } = await pool.query(
+      `SELECT count(*)::int AS open FROM issues WHERE app_id = $1 AND github_issue_number >= 200 AND status = 'open'`, [app.id],
+    );
+    assert.equal(left[0].open, 0);
+  });
+
+  await t.test('the refresh reconciles on a whole fresh list, never on a partial one', async () => {
+    bot._resetForTests();
+    await pool.query('DELETE FROM homeroom_bot_runs');
+    await pool.query('DELETE FROM homeroom_bot_requesters');
+    await pool.query('DELETE FROM issues');
+    await pool.query('DELETE FROM chat_sessions');
+    await pool.query(
+      `INSERT INTO issues (app_id, github_issue_number, title, kind, status) VALUES ($1, 70, 'Mist the moss', 'general', 'open')`,
+      [app.id],
+    );
+    await pool.query(
+      `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title) VALUES ($1, 70, $2, 'Mist the moss')`,
+      [app.id, lee.id],
+    );
+    await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, thread_seen_at) VALUES ($1, 70, 'live', 'question', $2)`,
+      [app.id, SEEN],
+    );
+    const github = gh({ closed: [70] });
+    const list = (over = {}) => ({
+      github,
+      async fetchPublicIssues() { return { issues: [], truncatedList: false, ...over }; },
+      getIssue: github.getIssue,
+    });
+    const rowStatus = async () => (await pool.query(
+      `SELECT status FROM issues WHERE app_id = $1 AND github_issue_number = 70`, [app.id],
+    )).rows[0].status;
+
+    const w = stubWs();
+    try {
+      // A partial list, or GitHub half down: the refresh reconciles nothing.
+      for (const [why, over] of [['a truncated list', { truncatedList: true }], ['a stale list', { note: 'rate limited', stale: true }]]) {
+        await bot.refreshApp(pool, app, { github: list(over) });
+        assert.deepEqual(github.asked, [], why);
+        assert.equal(await rowStatus(), 'open', why);
+      }
+
+      github.asked.length = 0;
+      await bot.refreshApp(pool, app, { github: list() });
+      assert.deepEqual(github.asked, [70], 'a whole, fresh list: GitHub is asked about the request it no longer names');
+      assert.equal(await rowStatus(), 'closed', 'the row closes within the refresh');
+      assert.deepEqual(w.broadcasts, [{
+        action: 'github_synced', appSlug: app.slug, appId: app.id, source: 'issue_close_watcher',
+      }], 'the group chat refetches, as after a merge\'s close');
+      assert.deepEqual(w.pushes, [[lee.id, { type: 'homeroom_bot_work_changed' }]], 'the requester\'s open tray re-reads');
+    } finally {
+      w.restore();
     }
   });
 });
