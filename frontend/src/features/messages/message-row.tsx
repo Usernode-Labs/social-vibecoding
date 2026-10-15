@@ -12,8 +12,9 @@ import {
   deleteMessage, discardFailed, edit, markUnread, messageAddress, openThread, react, retrySend, scopeKey, setReply,
   setUserBlocked, toggleSaved,
 } from './store';
-import type { ConversationKind, ConversationMessage } from './types';
+import type { ConversationKind, ConversationMessage, DiscussionMessage } from './types';
 import { fileSize, fullTime, MessageMarkdown, ObjectCard, UserAvatar, senderName } from './format';
+import { issueRefHref } from './channels';
 import { BotActivityCard, isActivityMessage } from './bot-activity';
 import { BotQuestion, botMeta } from './bot-question';
 import { BotPlanCard, BotTwoQuestions, isPlanMessage, isTwoQuestions } from './bot-plan';
@@ -484,6 +485,41 @@ export const MessageRow = memo(function MessageRow({
         items={sheetItems}
         preview={{ who: senderName(message.sender, { bare }), text: message.content }}
       />
+    </article>
+  );
+});
+
+/*
+ * #5219: A message from the request's public discussion, shown inside a
+ * request's thread in the chat with Homeroom bot. The same row a reply draws
+ * (avatar, name, time, text), with no reaction, reply or menu: taking part
+ * happens on the request page, and the line under the name is the way there.
+ */
+export const DiscussionRow = memo(function DiscussionRow({
+  message,
+  appSlug,
+  issueNumber,
+}: {
+  message: DiscussionMessage;
+  appSlug: string;
+  issueNumber: number;
+}) {
+  const t = useMessages('messages');
+  const time = messageStamp(message.createdAt, { hour: 'numeric' }).text;
+  return (
+    <article id={`messages-discussion-${message.id}`} data-discussion-message-id={message.id} className="messages-message">
+      <UserAvatar user={message.sender} size="md" shape="square" />
+      <div className="min-w-0 flex-1">
+        <div className="messages-message-head">
+          <span className="messages-message-author">{senderName(message.sender, { bare: true })}</span>
+          <time dateTime={message.createdAt} title={fullTime(message.createdAt)}>{time}</time>
+        </div>
+        <a
+          className="block max-w-full truncate text-left text-[0.8125rem] font-medium text-zinc-500 hover:text-zinc-900 hover:underline dark:text-zinc-400 dark:hover:text-zinc-100"
+          href={issueRefHref(appSlug, String(issueNumber))}
+        >{t('messages:replies.discussion.from')}</a>
+        {message.content ? <MessageMarkdown content={message.content} appSlug={appSlug} /> : null}
+      </div>
     </article>
   );
 });

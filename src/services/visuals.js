@@ -772,24 +772,33 @@ function reportedTestIndexes(stdout) {
 // What the capture container wrote down about itself while it ran
 // (capture.js emitDiag), one line each:
 //   __USERNODE_DIAG__ kind=<kind> <base64 JSON>
-// Today one kind: 'network-changed', the pod's network state when a cold load
-// was cancelled by a network change and its group started over. Logged, not
-// stored: it is for finding out what changes the network, not a verdict.
+// Two kinds: 'network-changed', the pod's network state when a cold load
+// was cancelled by a network change and its group started over, and
+// 'checks-timing', one line per pod at its end: how long its groups and cold
+// loads took. Logged, not stored: they are for finding out what the runs do,
+// not verdicts. A sharded run's stdout
+// is its pods' joined, so the timing lines have a cap of their own (eight
+// shards and a sweep) and never take the other kinds' places.
 const MAX_DIAGNOSTICS = 5;
+const MAX_TIMING_DIAGNOSTICS = 9;
 
 function parseDiagnostics(stdout) {
   const out = [];
+  let others = 0;
+  let timings = 0;
   for (const line of String(stdout || '').split('\n')) {
     if (!line.startsWith('__USERNODE_DIAG__ ')) continue;
     const m = line.match(/^__USERNODE_DIAG__ kind=([\w-]+) (\S+)$/);
     if (!m) continue;
+    const timing = m[1] === 'checks-timing';
+    if (timing ? timings >= MAX_TIMING_DIAGNOSTICS : others >= MAX_DIAGNOSTICS) continue;
     let data = {};
     try {
       const parsed = JSON.parse(Buffer.from(m[2], 'base64').toString('utf8'));
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) data = parsed;
     } catch { /* malformed: the kind alone still says something happened */ }
     out.push({ kind: m[1], data });
-    if (out.length >= MAX_DIAGNOSTICS) break;
+    if (timing) timings += 1; else others += 1;
   }
   return out;
 }
@@ -2855,11 +2864,15 @@ async function settleCaptureRun(config, pool, run) {
   }
 
   for (const diag of parseDiagnostics(stdout)) {
+    const fields = { sessionId: session.id, commitHash: commitHash || null, kind: diag.kind, ...diag.data };
+    // A pod's own timing summary is a reading, not a warning.
+    if (diag.kind === 'checks-timing') {
+      log.info('visuals', 'Checks timing', fields);
+      continue;
+    }
     log.warn('visuals', diag.kind === 'network-changed'
       ? 'Checks browser saw its network change; the group started over'
-      : 'Checks container diagnostic', {
-      sessionId: session.id, commitHash: commitHash || null, kind: diag.kind, ...diag.data,
-    });
+      : 'Checks container diagnostic', fields);
   }
 
   const parsedTests = parseTests(stdout);
