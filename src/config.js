@@ -976,6 +976,10 @@ function load() {
         topochainMailTransport: chosen.transport,
       };
     })(),
+    // Where new content reports are mailed (services/moderation.js
+    // submitReport). Optional, like every mail key: the platform's own
+    // compliance inbox is the default.
+    complianceEmail: (process.env.PLATFORM_COMPLIANCE_EMAIL || '').trim() || 'compliance@usernodelabs.org',
   };
 
   for (const [name, value] of [
