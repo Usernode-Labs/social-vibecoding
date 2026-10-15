@@ -48,7 +48,7 @@ import { useDismiss } from '../message-actions/use-dismiss';
 import { ShareItemDialog } from './share-dialog';
 import { ShareToDialog } from './share-to-dialog';
 import { JumpToLatest } from './jump-to-latest';
-import { isNearTop, needsMoreHistory, useStickToBottom } from './stick-to-bottom';
+import { centreInScroller, isNearTop, needsMoreHistory, useStickToBottom } from './stick-to-bottom';
 import {
   firstUnreadId, jumpLabel, lineTopIn, messageRow, newMessagesLabel, openingScrollTop, useLineHold, useUnreadAffordances,
 } from './unread-anchor';
@@ -1856,7 +1856,7 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
         shownFocus.current = focusId;
         previousLast.current = last;
         pinned.current = false;
-        requestAnimationFrame(() => row.scrollIntoView({ block: 'center' }));
+        requestAnimationFrame(() => centreInScroller(el, row));
         setFlashId(focusId);
         window.setTimeout(() => setFlashId((id) => (id === focusId ? null : id)), 2400);
         return;
@@ -2189,12 +2189,15 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
           </div>
         ) : null}
       </div>
-      {/* Jump to latest, over the transcript's foot whenever the reader is
-          not at the bottom, with a dot for what arrived while they were up. */}
+      <div className="messages-typing" aria-live="polite">{typingLine(t, typing)}</div>
+      {/* Jump to latest whenever the reader is not at the bottom, with a dot
+          for what arrived while they were up. Run six: at the right edge,
+          hung just above the composer (below the typing line, which is
+          empty on the right), so it covers the strip under the words rather
+          than a message in the middle of the conversation. */}
       <TranscriptOverlay edge="foot">
         <JumpToLatestButton shown={unread.jump} dot={unread.arrived > 0} aria-label={jumpLabel(unread.arrived)} title={t('messages:thread.jumpToLatest')} onClick={jumpToLatest} />
       </TranscriptOverlay>
-      <div className="messages-typing" aria-live="polite">{typingLine(t, typing)}</div>
       <MessageComposer />
     </section>
   );
@@ -2290,7 +2293,7 @@ function ReplyThreadPanel() {
     if (!row) return;
     shownFocus.current = wanted;
     pinned.current = false;
-    requestAnimationFrame(() => row.scrollIntoView({ block: 'center' }));
+    requestAnimationFrame(() => centreInScroller(el, row));
     setFlashId(wanted);
     window.setTimeout(() => {
       setFlashId((id) => (id === wanted ? null : id));

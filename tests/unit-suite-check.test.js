@@ -684,3 +684,26 @@ test('a harvested Job outcome keeps the same excerpts', async () => {
   assert.equal(out.row.failureDetails[0].test, 'harvested regression');
   assert.match(out.row.failureDetails[0].excerpt, /error: 'boom'/);
 });
+
+// ── strict (the preview machine's checks runs) ─────────────────────────
+
+function strictRun(t, { pkg = async () => '{"scripts":{"test":"node --test"}}', graduated = false }) {
+  const github = require('../src/services/github');
+  const history = require('../src/services/check-history');
+  t.mock.method(github, 'isEnabled', () => true);
+  t.mock.method(github, 'getFileContent', pkg);
+  t.mock.method(history, 'loadGraduated', async () => new Set(graduated
+    ? [require('../src/services/app-manifest').checkKey(unitSuite.UNIT_CHECK_NAME, unitSuite.UNIT_CHECK_PATH)] : []));
+  return unitSuite.maybeRunUnitSuite({ config: {}, pool: { query: async () => ({ rows: [] }) }, appId: 10, sessionId: 7,
+    repoOwner: 'example', repoName: 'repo', ref: 'a'.repeat(40), strict: true });
+}
+
+test('strict: only an absent package.json exempts the suite; a read error is a suite that could not run', async (t) => {
+  assert.equal(await strictRun(t, { pkg: async () => null }), null, 'verifiably absent: nothing to run');
+  t.mock.restoreAll();
+  const out = await strictRun(t, { graduated: true, pkg: async () => { throw Object.assign(new Error('Bad gateway'), { status: 502 }); } });
+  assert.equal(out.row.couldNotRun, true);
+  assert.equal(out.row.advisory, false, 'a suite that blocks merges, so the run is an error rather than a pass without it');
+  assert.match(out.row.failureReason, /package\.json could not be read \(Bad gateway\)/);
+  assert.equal(out.history, null, 'a suite that never ran records nothing');
+});

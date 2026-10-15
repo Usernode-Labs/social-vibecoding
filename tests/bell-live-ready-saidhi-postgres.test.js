@@ -398,4 +398,53 @@ test('the bell after a change is decided, against the full PostgreSQL schema', {
     assert.equal(folded.detail, '2');
     assert.equal(folded.requestNumber, null, 'its newest message is not the request');
   });
+
+  // #5064: "A change you voted on is live" while Homeroom's own release had
+  // not shipped it. With the merge-followups flag off the merge stamps
+  // live_at at once, so the bell also reads the running build
+  // (apps.main_sha): a change merged after the one it was built from is
+  // going live; once the build carries it, it is live. A child app's merge,
+  // rebuilt before the row is written, stays live.
+  await t.test('#5064: a merge of Homeroom itself is going live until the running build carries it', async () => {
+    const { rows: [home] } = await pool.query(
+      `INSERT INTO apps (name, slug, status, created_by, view_visibility, collab_visibility, self_hosted, main_sha)
+       VALUES ('Homeroom', 'homeroom-5064', 'running', $1, 'public', 'public', TRUE, 'AAAA1111') RETURNING id`,
+      [alex.id],
+    );
+    const merged = async (sha, ago) => (await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, pr_title, merge_commit_sha, merged_at)
+       VALUES ($1, $2, $3, 'merged', 'Say going live', $4, NOW() - $5::interval) RETURNING id, live_at`,
+      [home.id, alex.id, `b-${crypto.randomBytes(4).toString('hex')}`, sha, ago],
+    )).rows[0];
+    const running = await merged('aaaa1111', '1 hour');
+    const fresh = await merged('bbbb2222', '2 minutes');
+    assert.notEqual(fresh.live_at, null, 'the legacy merge stamps live_at at once');
+    const ring = async (sessionId, kind, userId) => (await pool.query(
+      `INSERT INTO notifications (user_id, app_id, session_id, kind, detail)
+       VALUES ($1, $2, $3, $4, 'yes') RETURNING id`, [userId, home.id, sessionId, kind])).rows[0].id;
+    const voterRow = await ring(fresh.id, 'voted_change_merged', priya.id);
+    const authorRow = await ring(fresh.id, 'pr_merged', alex.id);
+    const olderRow = await ring(running.id, 'voted_change_merged', priya.id);
+
+    assert.equal((await listed(priya.id, voterRow)).sessionStatus, 'merging', 'not in the running build: going live');
+    assert.equal((await listed(alex.id, authorRow)).sessionStatus, 'merging', 'the author\'s row too');
+    assert.equal(notifications.serialize(await notifications.getForUser(pool, priya.id, voterRow)).sessionStatus, 'merging',
+      'the exact lookup (a push opened) reads the same');
+    assert.equal((await listed(priya.id, olderRow)).sessionStatus, 'merged', 'the build that serves: live');
+
+    // The release ships it.
+    await pool.query(`UPDATE apps SET main_sha = 'bbbb2222' WHERE id = $1`, [home.id]);
+    assert.equal((await listed(priya.id, voterRow)).sessionStatus, 'merged');
+    assert.equal((await listed(alex.id, authorRow)).sessionStatus, 'merged');
+
+    // A running build no merged change matches proves nothing: live, as before.
+    await pool.query(`UPDATE apps SET main_sha = 'cccc3333' WHERE id = $1`, [home.id]);
+    assert.equal((await listed(priya.id, voterRow)).sessionStatus, 'merged');
+
+    // A child app's merge is live with the row (the first test's app).
+    const child = await change('A child app change');
+    await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW() WHERE id = $1`, [child]);
+    const childRow = await notify(priya.id, 'voted_change_merged', { sessionId: child, source: null });
+    assert.equal((await listed(priya.id, childRow)).sessionStatus, 'merged');
+  });
 });

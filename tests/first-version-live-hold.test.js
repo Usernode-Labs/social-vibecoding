@@ -380,7 +380,12 @@ test('N7: the pill says it is the build\'s last screen once its watcher stopped'
   assert.equal(en['appFrame.live.frame.ended'].text, '{{project}}, as it last looked while it was built');
 });
 
-test('(a) a choice remembered for Live holds when Live is offered after the card drew', () => {
+test('(a) a choice remembered for the project holds when Live is offered after the card drew; else Live', () => {
   const src = read('frontend/src/features/app-frame/live-switch.tsx');
-  assert.match(src, /const choice: LiveChoice = picked && picked\.key === userKey\s+\? picked\.choice\s+: \(userKey != null \? readChoice\(userKey\) : 'preview'\);/);
+  assert.match(src, /const choice: LiveChoice = picked && picked\.key === key\s+\? picked\.choice\s+: shownChoice\(offered, offered \? readChoice\(userKey as string, slug as string\) : null\);/);
+  const sw = loadTsx('frontend/src/features/app-frame/live-switch.tsx');
+  assert.equal(sw.shownChoice(true, null), 'live', 'offered (it has frames), nothing picked: Live');
+  assert.equal(sw.shownChoice(true, 'preview'), 'preview', 'Preview picked for the project sticks');
+  assert.equal(sw.shownChoice(true, 'live'), 'live');
+  assert.equal(sw.shownChoice(false, 'live'), 'preview', 'not offered: Preview, whatever was picked');
 });

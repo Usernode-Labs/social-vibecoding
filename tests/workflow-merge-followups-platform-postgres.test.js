@@ -217,7 +217,7 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
     assert.equal(await guard(), 1, 'log mode: a flag-off boot leaves the guard on');
     await assert.rejects(platform.turnGuardOff(pool, config, 'merge-followups', { id: 1 }), /WF_MERGE_FOLLOWUPS_ENABLED is on in this process/);
     assert.deepEqual((await platform.guards(pool, logOff)).find((g) => g.machine === 'merge-followups'),
-      { machine: 'merge-followups', flag: 'WF_MERGE_FOLLOWUPS_ENABLED', on: true, flagHere: false });
+      { machine: 'merge-followups', flag: 'WF_MERGE_FOLLOWUPS_ENABLED', on: true, flagHere: false, blocked: null });
     await platform.turnGuardOff(pool, logOff, 'merge-followups', { id: 1 });
     assert.equal(await guard(), 0, 'turned off by the admin');
     await platform.syncSettings(pool, off);   // back to raise mode for what follows
@@ -226,7 +226,11 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
     await quiet();
     await platform.stopWorkflow();
     await platform.startWorkflow(off, { loops: true });
-    assert.equal(platform.workflowRunning(), false, 'nothing left: no runtime');
+    // Nothing left of the merges: the runtime still runs, for the bot's
+    // builds (docs/plans/bot-build-workflow.md), without the merge machine.
+    assert.equal(platform.workflowRunning(), true, 'the runtime runs for the bot\'s builds');
+    assert.equal(platform.mergeFollowupsEnabled(), false, 'and takes no merges');
+    await platform.stopWorkflow();
   });
 
   await t.test('with the flag off, a merge still waiting for a deploy keeps the runtime (review finding 3)', async () => {
@@ -249,6 +253,40 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
     await platform.stopWorkflow();
   });
 
+  await t.test('a conductor booting a build says nothing is live; a process serving it does', async () => {
+    // The platform's own app: its merges go live when a build containing
+    // them serves (Deployed), not when the merge machine deploys anything.
+    const { rows: [own] } = await pool.query(
+      `INSERT INTO apps (name, slug, created_by, self_hosted, repo_url)
+       VALUES ('Homeroom', 'homeroom-own', $1, TRUE, 'https://github.com/acme/homeroom') RETURNING *`, [author.id]);
+    const { rows: [s] } = await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status, pr_number, pr_title) VALUES ($1, $2, 'merging', $3, 'Change') RETURNING *`,
+      [own.id, author.id, ++seq]);
+    await platform.stopWorkflow();
+    await platform.startWorkflow(config, { loops: true });
+    await platform.mergeConfirmed({ sessionId: s.id, appId: own.id, mergeSha: SHA('a'), force: false, tally: { yes: 1, required: 1, active: 1 } });
+    await until(async () => (await state(s)) === 'delivering', 'waiting for a build that contains it');
+    const booted = async () => (await pool.query('SELECT booted_shas FROM apps WHERE id = $1', [own.id])).rows[0].booted_shas;
+    const was = process.env.GIT_SHA;
+    process.env.GIT_SHA = SHA('c');   // a build that contains the merge
+    try {
+      // The release's conductor boots first: it runs the workflow and serves
+      // nobody.
+      await quiet();
+      await platform.stopWorkflow();
+      await platform.startWorkflow(config, { loops: true });
+      await quiet();
+      assert.equal(await state(s), 'delivering', 'not live: nobody is served that build yet');
+      assert.deepEqual(await booted(), [], 'nor recorded as one production ran');
+      // Its web Pods come up and serve it.
+      await platform.releaseServing(pool);
+      await until(async () => (await state(s)) === 'live', 'live once a serving process runs it');
+      assert.deepEqual((await booted()).map((b) => b.sha), [SHA('c')]);
+    } finally {
+      if (was === undefined) delete process.env.GIT_SHA; else process.env.GIT_SHA = was;
+    }
+  });
+
   await t.test('a booting process records the build it runs; the migration\'s main_sha is not that (review finding, second pass)', async () => {
     const { rows: [self] } = await pool.query(
       `INSERT INTO apps (name, slug, created_by, self_hosted, repo_url, main_sha)
@@ -258,6 +296,7 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
     const boot = async (sha) => {
       process.env.GIT_SHA = sha;
       await platform.startWorkflow(config, { loops: false });
+      await platform.releaseServing(pool);
       await platform.stopWorkflow();
     };
     const history = async () => (await pool.query('SELECT main_sha, booted_shas FROM apps WHERE id = $1', [self.id])).rows[0];

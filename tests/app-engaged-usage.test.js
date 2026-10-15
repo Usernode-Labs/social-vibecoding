@@ -397,3 +397,103 @@ test('server parsing keeps legacy compatibility and bounds receipt-backed days',
     }, now), null);
   }
 });
+
+test('afternoon occurrence intervals survive offline delivery, reload and receipt retries', async () => {
+  const attempts = [];
+  const h = await collectorHarness({
+    startAt: Date.parse('2026-10-01T15:16:50Z'),
+    fetch: async (_url, options) => {
+      attempts.push(JSON.parse(options.body));
+      throw new Error('offline');
+    },
+  });
+  h.signal('ready');
+  h.signal('activity');
+  h.advance(5_000);
+  h.advance(5_000);
+  await h.usage.flushPromise;
+  const body = attempts[0];
+  assert.equal(body.version, 2);
+  assert.deepEqual(body.entries, [{ date: '2026-10-01', seconds: 10, intervals: [{
+    startedAt: '2026-10-01T15:16:50.000Z', endedAt: '2026-10-01T15:17:00.000Z',
+  }] }]);
+  const restored = await collectorHarness({
+    startAt: Date.parse('2026-10-02T20:00:00Z'), storage: h.storage,
+  });
+  await restored.usage.flushPromise;
+  assert.deepEqual(restored.requests[0].body, body, 'neither the receipt nor occurrence time changes');
+  assert.ok(activityService.parseActivityRequest(body, new Date('2026-10-02T20:00:00Z')));
+});
+
+test('fractional engaged intervals retain their pauses while delivering whole seconds', async () => {
+  const h = await collectorHarness({ startAt: Date.parse('2026-10-01T15:00:00Z') });
+  h.signal('ready');
+  h.signal('activity');
+  h.advance(500);
+  h.setVisible(false);
+  h.advance(5_000);
+  h.setVisible(true);
+  h.signal('activity');
+  h.advance(500);
+  await h.usage.flush();
+  const body = h.requests[0].body;
+  assert.equal(body.entries[0].seconds, 1);
+  assert.deepEqual(body.entries[0].intervals, [
+    { startedAt: '2026-10-01T15:00:00.000Z', endedAt: '2026-10-01T15:00:00.500Z' },
+    { startedAt: '2026-10-01T15:00:05.500Z', endedAt: '2026-10-01T15:00:06.000Z' },
+  ]);
+  assert.ok(activityService.parseActivityRequest(body, new Date(h.now())));
+});
+
+test('an upgrade preserves old queued receipts and sends old buffers without invented timestamps', async () => {
+  const storage = new MemoryStorage();
+  const old = {
+    id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', slug: 'notes',
+    entries: [{ date: '2026-10-01', seconds: 10 }],
+    createdAt: Date.parse('2026-10-01T15:00:00Z'),
+  };
+  storage.setItem('sv:engaged-app-usage:v1', JSON.stringify({
+    version: 1, owner: '7', batches: [old], buffers: {
+      'notes\n2026-10-01': { slug: 'notes', day: '2026-10-01', milliseconds: 2_000 },
+    },
+  }));
+  const h = await collectorHarness({ startAt: Date.parse('2026-10-02T20:00:00Z'), storage });
+  await h.usage.flushPromise;
+  assert.deepEqual(h.requests[0].body, { version: 1, batchId: old.id, entries: old.entries });
+  assert.deepEqual(h.requests[1].body.entries, [{ date: '2026-10-01', seconds: 2 }]);
+  assert.equal(h.requests[1].body.version, 1);
+});
+
+test('timestamped batches reject forged durations, overlaps, date-only and future timestamps', () => {
+  const now = new Date('2026-10-01T18:00:00Z');
+  const body = { version: 2, batchId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', entries: [{
+    date: '2026-10-01', seconds: 10,
+    intervals: [{ startedAt: '2026-10-01T15:16:50.000Z', endedAt: '2026-10-01T15:17:00.000Z' }],
+  }] };
+  assert.ok(activityService.parseActivityRequest(body, now));
+  for (const entry of [
+    { ...body.entries[0], seconds: 11 },
+    { ...body.entries[0], date: '2026-09-30' },
+    { ...body.entries[0], intervals: [{ startedAt: '2026-10-01', endedAt: '2026-10-01T15:17:00.000Z' }] },
+    { ...body.entries[0], intervals: [{ startedAt: { toString: null, valueOf: null }, endedAt: '2026-10-01T15:17:00.000Z' }] },
+    { ...body.entries[0], intervals: [{ startedAt: '2026-10-01T15:16:50.000Z', endedAt: [] }] },
+    { ...body.entries[0], intervals: [{ startedAt: '2026-10-01T18:05:00.000Z', endedAt: '2026-10-01T18:05:10.000Z' }] },
+    { ...body.entries[0], seconds: 20, intervals: [body.entries[0].intervals[0], body.entries[0].intervals[0]] },
+  ]) assert.equal(activityService.parseActivityRequest({ ...body, entries: [entry] }, now), null);
+});
+
+test('malformed cached intervals do not prevent collecting or delivering valid usage', async () => {
+  const storage = new MemoryStorage();
+  storage.setItem('sv:engaged-app-usage:v1', JSON.stringify({ version: 1, owner: '7', batches: [], buffers: {
+    'notes\n2026-10-01': { slug: 'notes', day: '2026-10-01', milliseconds: 2_000, intervals: [
+      null, { start: Number.MAX_SAFE_INTEGER, end: Number.MAX_SAFE_INTEGER + 1 },
+      { start: Date.parse('2026-10-01T15:00:00Z'), end: Date.parse('2026-10-01T15:00:02Z') },
+    ] },
+  } }));
+  const h = await collectorHarness({ startAt: Date.parse('2026-10-02T20:00:00Z'), storage });
+  await h.usage.flushPromise;
+  assert.equal(h.requests[0].body.entries[0].seconds, 2);
+  assert.deepEqual(h.requests[0].body.entries[0].intervals, [{
+    startedAt: '2026-10-01T15:00:00.000Z', endedAt: '2026-10-01T15:00:02.000Z',
+  }]);
+});

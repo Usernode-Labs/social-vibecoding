@@ -3,9 +3,11 @@
 // WP-E: the email that stands in for a push somebody cannot get.
 //
 // Two moments only: something they asked Homeroom bot for is ready to try
-// (`build_ready`), and the first of a day's news about the people their
-// invite link brought (`invite_activity`, services/invite-activity.js). Sent
-// only when ALL of these hold:
+// (`build_ready`; for a project's first version, its going live instead, the
+// moment its maker was promised: homeroom-bot-dm.js sendDm), and the first
+// of a day's news about the people their invite link brought
+// (`invite_activity`, services/invite-activity.js). Sent only when ALL of
+// these hold:
 //   - they have no phone that could take the push (no live registration,
 //     the same test schema.sql enqueue_mobile_push_deliveries makes). A
 //     phone with the category switched off is a choice, not a gap: no mail.
@@ -111,7 +113,7 @@ async function readyRow(pool, { userId, conversationId }) {
  */
 async function emailIfNoPush(pool, {
   userId, kind, appName = null, appSlug = null, line = null, conversationId = null, notWorking = false,
-  detail = null, threadRootId = null,
+  detail = null, threadRootId = null, messageId: rangFor = null,
 }) {
   try {
     if (!config || !KINDS.includes(kind) || !userId) return 'off';
@@ -134,7 +136,9 @@ async function emailIfNoPush(pool, {
       const said = detail || row?.detail || null;
       words = said ? copy.botEmailCopy(said) : null;
       root = root || copy.parseBotDetail(said)?.threadRootId || row?.thread_root_id || null;
-      messageId = row?.conversation_message_id || null;
+      // The message that rang, when the sender said which (a first
+      // version's live is not the newest build_ready row's message).
+      messageId = rangFor || row?.conversation_message_id || null;
     }
     const mail = require('./mail');
     void mail.send(config, {

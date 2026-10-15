@@ -73,8 +73,18 @@ const RENAMED_CODES = Object.freeze({
 // that simply stopped) could be the run itself taking the process down, so
 // those keep the original, tighter budget: MAX_UNEXPLAINED_RETRIES retries,
 // after which the run is a failure a person has to retry.
+//
+// The ceiling was six, and a burst of rollouts spent it: the retries wait
+// 30 seconds, then twice as long each time up to five minutes
+// (shots-gc.retryInterrupted), so six covered about twenty minutes of
+// restarts, and a proposal then ended on "Homeroom restarted while these
+// before & after shots were being taken. You can take them again." for no
+// reason but the restarts. Since only graceful shutdowns can reach it (an
+// unexplained interruption stops at three), it is now a backstop against a
+// loop rather than a budget: twenty-four retries, about two hours of
+// back-to-back rollouts.
 const INTERRUPTED_RETRY_TRIGGER = 'interrupted-retry';
-const MAX_INTERRUPTED_RETRIES = 6;
+const MAX_INTERRUPTED_RETRIES = 24;
 const MAX_UNEXPLAINED_RETRIES = 2;
 const SHUTDOWN_INTERRUPTION = 'shutdown';
 const SHUTDOWN_INTERRUPTED_REASON = 'Homeroom restarted while these before & after shots were being taken. You can take them again.';

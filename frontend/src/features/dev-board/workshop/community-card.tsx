@@ -105,6 +105,8 @@ export type HubFirstVersion = {
   /** Run five: its stage while it is built (homeroom-bot-progress.js
       firstVersionPhase), named as the App tab names it. */
   phase?: unknown;
+  /** Run six: how long it still has to go (services/first-version-eta.js). */
+  estimate?: unknown;
   /** Built and up for approval: ready to try. */
   ready: boolean;
   /** The description is the viewer's. */
@@ -123,6 +125,11 @@ export type HubFirstVersion = {
     bullets: string[];
     questions: Array<{ question: string; suggested: string | null }>;
   } | null;
+  /** 14 Oct 2026: its build stopped, nothing live yet (line 'stopped'). */
+  stopped?: boolean;
+  /** For its maker alone: where Homeroom bot said it stopped, with Try
+      again under it (routes/apps.js stoppedThread). */
+  thread?: { conversationId: number | null; threadRootId: number | null; messageId: number | null } | null;
 };
 
 /** One channel of a project (#4417): #general, or one of its topics. */

@@ -9,8 +9,8 @@
 // build agent's last phrase, "Adding the ballot bar", stayed up for 36
 // minutes. Now the server names the stage (homeroom-bot-progress.js
 // firstVersionPhase: Drawing the screens, Writing the plan, Building it,
-// Built. Checking the screens…, Checking the screens · round n of m, Testing
-// it) with when it began, the line says it with the time so far ("7 min so
+// Built. Checking the screens…, Checking the screens, Testing it; the
+// review's round under the Checking step) with when it began, the line says it with the time so far ("7 min so
 // far"), and the App tab lists every step with its time
 // (firstVersionSteps, frontend/src/features/app-frame/first-version-steps.tsx).
 
@@ -79,15 +79,23 @@ test('the App tab\'s steps: done with the minutes they took, the one under way f
 test('the line says the stage and the time so far; zero says nothing', () => {
   const { phaseLine, soFarNote, phaseWords } = loadTsx('frontend/src/features/first-session/build-line.tsx');
   const now = Date.parse(T(9));
-  assert.deepEqual(phaseLine('building', { key: 'drawing', since: T(2) }, now), { words: 'Drawing the screens', note: '7 min so far' });
-  assert.deepEqual(phaseLine('building', { key: 'writing', since: T(8) }, now), { words: 'Writing the plan', note: '1 min so far' });
+  // Run seven (14 Oct 2026): the plan and the first look are made at Make
+  // it, so the spec's two stages say what it does, never "Drawing the
+  // screens" beside a drawn screen or "Writing the plan" under "Plan written".
+  assert.deepEqual(phaseLine('building', { key: 'drawing', since: T(2) }, now), { words: 'Working out the details', note: '7 min so far' });
+  assert.deepEqual(phaseLine('building', { key: 'writing', since: T(8) }, now), { words: 'Working out the details', note: '1 min so far' });
   assert.deepEqual(phaseLine('building', { key: 'building', since: T(9) }, now, 'Adding the ballot bar'), { words: 'Building it', note: 'Adding the ballot bar' });
   assert.deepEqual(phaseLine('building', { key: 'building', since: T(2) }, now, 'Adding the ballot bar'),
     { words: 'Building it', note: 'Adding the ballot bar · 7 min so far' });
   // The build's phrase goes once the build has landed (it stood for 36 minutes).
   assert.deepEqual(phaseLine('building', { key: 'built', since: T(8) }, now, 'Adding the ballot bar'), { words: 'Built. Checking the screens…', note: '1 min so far' });
+  // Runs eight and nine (14 Oct 2026): "Checking the screens · round 1 of 2
+  // · about …" ran past 390 px and lost its time. The line says no round.
   assert.deepEqual(phaseLine('building', { key: 'checking', since: T(5), round: 1, rounds: 2 }, now),
-    { words: 'Checking the screens · round 1 of 2', note: '4 min so far' });
+    { words: 'Checking the screens', note: '4 min so far' });
+  assert.deepEqual(phaseLine('building', { key: 'checking', since: T(5), round: 2, rounds: 2 }, now, null, 'about 9 min left'),
+    { words: 'Checking the screens', note: 'about 9 min left' });
+  assert.equal(phaseWords({ key: 'checking', since: null, round: 1, rounds: 2 }), 'Checking the screens');
   assert.deepEqual(phaseLine('building', { key: 'testing', since: T(5) }, now), { words: 'Testing it', note: '4 min so far' });
   // Only while the line says it is being built; an unknown stage says the line's own words.
   assert.deepEqual(phaseLine('ready', { key: 'testing', since: T(5) }, now), { words: null, note: null });
@@ -98,8 +106,16 @@ test('the line says the stage and the time so far; zero says nothing', () => {
   assert.equal(soFarNote(T(9), now), null, 'under a minute: nothing');
   assert.equal(soFarNote(null, now), null);
   assert.equal(phaseWords(null), null);
-  for (const id of ['onboarding:buildLine.phase.starting', 'onboarding:buildLine.phase.drawing', 'onboarding:buildLine.phase.writing', 'onboarding:buildLine.phase.built']) {
+  for (const id of ['onboarding:buildLine.phase.starting', 'onboarding:buildLine.phase.details', 'onboarding:buildLine.phase.built']) {
     assert.doesNotMatch(message(id), /queued|—/i, id);
+  }
+  const { PHASE_WORDS } = loadTsx('frontend/src/features/first-session/build-line.tsx');
+  assert.equal(PHASE_WORDS.drawing, 'onboarding:buildLine.phase.details');
+  assert.equal(PHASE_WORDS.writing, 'onboarding:buildLine.phase.details', 'one thing said for the spec');
+  const catalog = JSON.parse(read('frontend/locales/en/onboarding.json'));
+  assert.ok(catalog['buildLine.phase.details'].description.length > 60, 'a translator\'s description');
+  for (const gone of ['buildLine.phase.drawing', 'buildLine.phase.writing', 'buildLine.tile.phase.drawing', 'buildLine.tile.phase.writing']) {
+    assert.equal(catalog[gone], undefined, gone);
   }
   // BuildLine says the stage's words in place of its own.
   const { BuildLine } = loadTsx('frontend/src/features/first-session/build-line.tsx');
@@ -129,7 +145,7 @@ test('the App tab lists the steps in the house style: small caps over the plane\
   assert.equal(stepNote({ key: 'screens', state: 'done', minutes: 2 }, now), '2 min');
   assert.equal(stepNote({ key: 'check', state: 'now', since: T(20) }, now, { phase: { key: 'checking', round: 1, rounds: 2 } }), 'Round 1 of 2 · 5 min so far');
   assert.equal(stepNote({ key: 'build', state: 'now', since: T(20) }, now, { phase: { key: 'building' }, caption: 'Adding the ballot bar' }), 'Adding the ballot bar · 5 min so far');
-  assert.equal(stepNote({ key: 'build', state: 'now', since: T(20) }, now, { phase: { key: 'writing' } }), 'Writing the plan · 5 min so far');
+  assert.equal(stepNote({ key: 'build', state: 'now', since: T(20) }, now, { phase: { key: 'writing' } }), 'Working out the details · 5 min so far');
   assert.equal(stepNote({ key: 'test', state: 'next' }, now), null);
   assert.equal(renderToHtml(createElement(FirstVersionSteps, { steps: [] })), '');
 });
@@ -140,17 +156,19 @@ test('the server answers the stage and the steps, and the screens say them', () 
   const view = read('public/js/app-view.js');
   assert.match(view, /\.\.\.\(phase \? \{ phase \} : \{\}\),\s+\.\.\.\(steps \? \{ steps \} : \{\}\),/);
   const status = read('frontend/src/features/app-frame/app-status.tsx');
-  assert.match(status, /const named = phaseLine\(line, phase, now, listed \? null : note\);/);
-  assert.match(status, /\{steps \? <FirstVersionSteps steps=\{steps\} phase=\{view\.phase \|\| null\} caption=\{line === 'building' \? view\.buildNote \|\| null : null\} \/> : null\}/);
+  assert.match(status, /const named = phaseLine\(line, phase, now, listed \? null : caption, left\);/);
+  assert.match(status, /const caption = line === 'building' \? view\.buildNote \|\| null : null;/);
+  assert.match(status, /\{steps \? <FirstVersionSteps steps=\{steps\} phase=\{view\.phase \|\| null\} caption=\{caption\} estimate=\{estimate\} \/> : null\}/);
   assert.match(status, /if \(waiting \|\| steps\) \{/, 'the screen scrolls with the steps under the card');
   const made = read('frontend/src/features/first-session/made.tsx');
-  assert.match(made, /const named = phaseLine\(line, fv\?\.phase \|\| \(answered && line === 'building' \? \{ key: 'starting' \} : null\), now\);/);
+  assert.match(made, /const phase = fv\?\.phase \|\| \(answered && line === 'building' \? \{ key: 'starting' \} : null\);\s+const named = phaseLine\(line, phase, now, null, left\);/);
   // The stage's words come from one table (build-line-words.js), shared.
   const words = read('frontend/src/features/first-session/build-line-words.js');
   assert.match(words, /export const PHASE_WORDS = Object\.freeze\(\{/);
   assert.match(words, /export const STEP_WORDS = Object\.freeze\(\{/);
   // The line itself is unchanged: Live and the first look key on `building`.
-  assert.deepEqual(progress.BUILD_LINE_STATES, ['planning', 'plan', 'plan-member', 'question', 'building', 'testing', 'ready', 'live']);
+  // 14 Oct 2026: `stopped` is said apart, never for a stage (firstVersionStopped).
+  assert.deepEqual(progress.BUILD_LINE_STATES, ['planning', 'plan', 'plan-member', 'question', 'building', 'testing', 'ready', 'live', 'stopped']);
   for (const stage of ['planning', 'reviewing', 'build_queued']) assert.equal(progress.buildLineOf(stage), 'building', stage);
 });
 
@@ -166,8 +184,9 @@ test('run five, 5: the Home tile, the hub card and the App tab name the same sta
   const tile = (line, phase) => message(buildLineTileWordsOf(line, phase));
   assert.equal(tile('building', null), 'Building', 'no stage named: the line\'s own short word');
   assert.equal(tile('building', { key: 'starting', since: T(1) }), 'Starting');
-  assert.equal(tile('building', { key: 'drawing', since: T(1) }), 'Drawing');
-  assert.equal(tile('building', { key: 'writing', since: T(1) }), 'Writing plan');
+  // Run seven: the spec's two stages are "Planning", as the tile says while the plan is made.
+  assert.equal(tile('building', { key: 'drawing', since: T(1) }), 'Planning');
+  assert.equal(tile('building', { key: 'writing', since: T(1) }), 'Planning');
   assert.equal(tile('building', { key: 'building', since: T(1) }), 'Building');
   assert.equal(tile('building', { key: 'checking', since: T(1), round: 1, rounds: 2 }), 'Checking');
   assert.equal(tile('testing', null), 'Testing');
@@ -181,10 +200,50 @@ test('run five, 5: the Home tile, the hub card and the App tab name the same sta
   assert.match(route, /if \(line && phases && state\.phase\) phases\.set\(Number\(appId\), state\.phase\);/);
   assert.match(route, /phase: state\.phase \|\| null,/);
   const home = read('frontend/src/features/home/home.js');
-  assert.equal((home.match(/buildLineTileWordsOf\(buildLine, app\.first_version_phase\)/g) || []).length, 2, 'both tiles');
+  assert.equal((home.match(/buildLineTileWordsOf\(buildLine, buildPhase\)/g) || []).length, 2, 'both tiles');
+  // The stage is the list's, as the made screen says it (run six, tileStageOf).
+  assert.match(home, /return tileStageOf\(app\.slug, buildLineTileOf\(app\.first_version_line\), app\.first_version_phase\);/);
   const hub = read('frontend/src/features/dev-board/workshop/hub-cards.tsx');
-  assert.match(hub, /const named = phaseLine\(line, fv\.phase, now\);/);
+  assert.match(hub, /const named = phaseLine\(line, fv\.phase, now, null, left\);/);
   assert.match(hub, /lineWords=\{named\.words\}/);
   const { hubFirstVersion } = require('../src/routes/apps');
   assert.deepEqual(hubFirstVersion({ userId: 7, line: 'building', phase: { key: 'starting', since: T(1) } }, 7).phase, { key: 'starting', since: T(1) });
+});
+
+// Runs eight and nine (14 Oct 2026, iPhone Safari, 390 px): during review
+// the App tab's line and the hub card read "Checking the screens · round 1
+// of 2 · about …", cut off before the time. The line drops the round; the
+// round stays under the Checking step of the step list, where it fits, with
+// "taking a little longer than usual" once that step runs long.
+test('the review\'s line says no round; its step in the list does, and says when it runs long', () => {
+  const line = JSON.parse(read('frontend/locales/en/onboarding.json'))['buildLine.phase.checking'];
+  assert.equal(line.text, 'Checking the screens');
+  assert.doesNotMatch(line.text, /\{\{/, 'no round to fill in');
+  assert.equal(message('onboarding:buildLine.step.round', { round: 1, rounds: 2 }), 'Round 1 of 2');
+  const phase = { key: 'checking', since: T(20), round: 1, rounds: 2 };
+  const now = Date.parse(T(25));
+  // The hub card: the same line as the App tab, with the time left beside it.
+  const hub = loadTsx('frontend/src/features/dev-board/workshop/hub-cards.tsx');
+  const card = renderToHtml(createElement(hub.FirstVersionCard, {
+    slug: 'club-votes',
+    data: {
+      slug: 'club-votes', name: 'Club Votes', member_count: 1, is_member: true, is_creator: true, audience: 'solo',
+      audience_label: 'Just you', members: [], channel: null,
+      first_version: { step: 4, of: 7, line: 'building', phase, ready: false, mine: true, creator: 'ada', waits_on: null, conversation_id: 12, session_id: null },
+    },
+  }));
+  assert.match(card, /<span class="truncate">Checking the screens · \d+ min so far<\/span>/);
+  assert.doesNotMatch(card, /[Rr]ound \d/);
+  // The step list: "Round 1 of 2" under Checking the screens, and once the
+  // step has run past its usual end, that it is taking longer.
+  const { stepNote } = loadTsx('frontend/src/features/app-frame/first-version-steps.tsx');
+  const step = { key: 'check', state: 'now', since: T(20) };
+  assert.equal(stepNote(step, now, { phase }), 'Round 1 of 2 · 5 min so far');
+  const estimate = { step: 'check', stepEtaAt: T(30), etaAt: T(40) };
+  assert.equal(stepNote(step, now, { phase, estimate }), 'Round 1 of 2', 'the line has the time left');
+  assert.equal(stepNote(step, Date.parse(T(31)), { phase, estimate }), 'Round 1 of 2 · taking a little longer than usual');
+  assert.equal(stepNote(step, now, { phase: { ...phase, round: 2 } }), 'Round 2 of 2 · 5 min so far');
+  // The Home tile keeps its one short word.
+  const { buildLineTileWordsOf } = loadTsx('frontend/src/features/first-session/build-line.tsx');
+  assert.equal(message(buildLineTileWordsOf('building', phase)), 'Checking');
 });

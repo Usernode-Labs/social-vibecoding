@@ -19,6 +19,7 @@ import { issueRefHref } from './channels';
 import { ObjectCard } from './format';
 import { pageOf, type HomeroomLink } from './homeroom-links';
 import { linkCardAnswered, useLinkCards } from './link-cards';
+import { centreInScroller } from './stick-to-bottom';
 import type { SharedObjectCard } from './types';
 
 /** How long the found card's message stays lit: app.css `.messages-message-focus`. */
@@ -52,7 +53,10 @@ export function findRequestCard(from: Element, appSlug: string, n: number): HTML
 /** Bring a found card into view and light the message it hangs on. */
 export function revealCard(card: HTMLElement): void {
   const still = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  card.scrollIntoView?.({ behavior: still ? 'auto' : 'smooth', block: 'center' });
+  // #5050: the conversation's own scroller, never the screen around it.
+  const scroller = card.closest<HTMLElement>('.messages-thread-scroll');
+  if (scroller) centreInScroller(scroller, card, still ? 'auto' : 'smooth');
+  else card.scrollIntoView?.({ behavior: still ? 'auto' : 'smooth', block: 'nearest' });
   if (card.tabIndex >= 0) card.focus({ preventScroll: true });
   const lit = (card.closest('article') as HTMLElement | null) || card;
   lit.classList.remove('messages-message-focus');

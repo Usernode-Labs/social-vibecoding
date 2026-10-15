@@ -72,6 +72,8 @@ const topicAttrs = require('./topic-attributes');
 const issueProgress = require('./issue-progress');
 const { countedVotePredicateSql } = require('./pr-vote-revision');
 const { GOVERNANCE_KINDS } = require('./governance-kinds');
+const inflightWork = require('./inflight-work');
+const lifecycle = require('./lifecycle');
 const limits = require('./limits');
 const llm = require('./llm');
 const log = require('./logger');
@@ -1747,7 +1749,11 @@ async function loadApp(pool, { appId, appSlug }) {
 
 // A board change (ws.pushSessionUpdate / pushIssueUpdate). One timer per
 // app: a second change inside the quiet period joins the first. Returns
-// whether a reconcile is scheduled.
+// whether a reconcile is scheduled. Its timer is not a leader timer, so it
+// says itself what shutdown needs: none starts once shutdown has begun (the
+// hourly sweep or the next change redoes it), and one under way is held in
+// services/inflight-work.js for the drain. Untracked, one ran on after the
+// pool closed at each restart.
 const changeTimers = new Map();
 function noteBoardChange(pool, info) {
   if (!llm.isEnabled() || !pool || !info) return false;
@@ -1756,7 +1762,8 @@ function noteBoardChange(pool, info) {
   if (changeTimers.has(key)) return true;
   const timer = setTimeout(() => {
     changeTimers.delete(key);
-    runChange(pool, info).catch((err) => {
+    if (lifecycle.isShuttingDown()) return;
+    inflightWork.track('workshop-themes:change', () => runChange(pool, info)).catch((err) => {
       log.warn('workshop-themes', 'change reconcile failed', { key, message: err.message });
     });
   }, CHANGE_DEBOUNCE_MS);

@@ -72,8 +72,13 @@ export type TourStep = {
    * of Next. The hint presses that control too (./index.tsx pressTarget).
    */
   tap?: string;
-  /** Where the card goes: under the target or over it (auto), at the foot of the screen, or just above or below another element. */
-  place?: 'auto' | 'bottom' | { above: string } | { below: string };
+  /**
+   * Where the card goes: under the target or over it (auto), at the foot of
+   * the screen, just above or below another element, or clear of a surface
+   * whole (`{ clear }`: over it with a gap where a card fits, else under it;
+   * ./card-placement.ts clearOf).
+   */
+  place?: 'auto' | 'bottom' | { above: string } | { below: string } | { clear: string };
   /** Pressing the target lands on a list; open the next step's screen itself (the bot's chat, not the inbox). */
   opensNext?: boolean;
   /**
@@ -154,9 +159,13 @@ export const OPEN_APP = '[data-ws-community-open-app]';
  * (request #4225, reordered by #4390): the Homeroom mark at the top of the
  * app, which the reader taps, then the real menu it opens with its "Suggest
  * an improvement" button pointed at but not pressed, so no suggestion
- * starts. The copy is honest about what happens to a suggestion: Homeroom
- * bot does not always build it, and sometimes brings it to the group as a
- * request instead.
+ * starts.
+ *
+ * Newcomer run six (14 Oct 2026, iPhone 17 Safari): the menu's card stood
+ * over the top of the menu's sheet, its grabber, its rounded corners and
+ * the app's name a clipped sliver under the card. The card now stands
+ * clear of the whole menu, over it with a gap (`place: { clear }`), and
+ * says one short sentence: "Homeroom bot starts building it for you."
  */
 export const MENU_TEXT = 'onboarding:firstSession.tour.menu.text';
 export const SUGGEST_TEXT = 'onboarding:firstSession.tour.suggest.text';
@@ -178,6 +187,7 @@ function suggestSteps(): TourStep[] {
       target: '#improve-row-feedback',
       inMenu: true,
       ringed: true,
+      place: { clear: APP_MENU },
       title: translate('onboarding:firstSession.tour.suggest.title'),
       text: translate(SUGGEST_TEXT),
     },

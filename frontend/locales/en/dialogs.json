@@ -3410,5 +3410,61 @@
   "appSettings.access.open": {
     "text": "Who can see & change it",
     "description": "Button in App settings' Access section: opens the sheet that sets who can see the project and how its changes are approved."
+  },
+  "feedback.edit.button": {
+    "text": "Edit",
+    "description": "Button on a sent-feedback confirmation: correct this request during its five-minute edit window."
+  },
+  "feedback.edit.heading": {
+    "text": "Edit your request",
+    "description": "Heading of the editor for recently submitted feedback."
+  },
+  "feedback.edit.titleLabel": {
+    "text": "Title",
+    "description": "Label above the title field in the recently submitted feedback editor."
+  },
+  "feedback.edit.window_one": {
+    "text": "You can edit it for {{count}} more minute.",
+    "description": "Time remaining in the feedback edit window; {{count}} is the number of minutes, rounded up."
+  },
+  "feedback.edit.window_other": {
+    "text": "You can edit it for {{count}} more minutes.",
+    "description": "Time remaining in the feedback edit window; {{count}} is the number of minutes, rounded up."
+  },
+  "feedback.edit.save": {
+    "text": "Save changes",
+    "description": "Button: save corrections to a recently submitted request."
+  },
+  "feedback.edit.saving": {
+    "text": "Saving…",
+    "description": "Save button while a request correction is being sent."
+  },
+  "feedback.edit.saved": {
+    "text": "Changes saved.",
+    "description": "Notice on the feedback confirmation after correcting the same request."
+  },
+  "feedback.edit.savedToast": {
+    "text": "Changes saved",
+    "description": "Toast after correcting a request opened from Your feedback."
+  },
+  "feedback.edit.required": {
+    "text": "Fill in both the title and what should change.",
+    "description": "Validation message when a feedback correction has an empty title or description."
+  },
+  "feedback.edit.closed": {
+    "text": "The 5 minutes to edit this have passed. Send more feedback to add to it.",
+    "description": "Notice when the feedback edit window expires; the typed corrections remain available to copy."
+  },
+  "feedback.edit.failed": {
+    "text": "Your changes could not be saved. Check your connection and try again.",
+    "description": "Notice after a failed feedback correction; the person can retry and their words remain in the editor."
+  },
+  "feedback.edit.conflict": {
+    "text": "This request changed elsewhere. Close and reopen it from Your feedback before trying again. You can copy your corrections here.",
+    "description": "Notice when another save or automatic title update changed the request since this editor opened."
+  },
+  "feedback.edit.tooLong": {
+    "text": "The title or words are too long. Shorten them and try again.",
+    "description": "Notice when a feedback correction exceeds the field or full request length limit."
   }
 }

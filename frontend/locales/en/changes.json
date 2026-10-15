@@ -93,7 +93,15 @@
   },
   "firstVersion.opensWhenReady": {
     "text": "It opens here when it’s ready.",
-    "description": "Line under a new project's card on its App tab while the first version is being built. \"It\" is the app."
+    "description": "Line under a new project's card on its App tab while the first version is being built, for everyone but the person who started the project. \"It\" is the app."
+  },
+  "firstVersion.notifyWhenLive": {
+    "text": "We’ll notify you when it’s live",
+    "description": "Line beside a small check under a new project's card on its App tab, for the person who started the project, while its first version is being made: a promise that Homeroom will send them a notification once the app is live. \"It\" is the app; \"live\" means published and running for everyone."
+  },
+  "firstVersion.tryAgain": {
+    "text": "Try again",
+    "description": "Button under a new project's card on its App tab, for the person who started the project, when Homeroom bot's build of its first version stopped before the app went live: opens the build's conversation in their chat with Homeroom bot, where they can start it again."
   },
   "firstVersion.tryFromChat": {
     "text": "Try it from your chat.",

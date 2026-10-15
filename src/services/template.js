@@ -127,7 +127,7 @@ change follows it, and updates it when a request changes the look on purpose.
 
 The kit is in \`styles/tailwind-input.css\`: colour tokens with a light and
 a dark value (named in \`tailwind.config.js\`), and a few components
-(\`btn-primary\`, \`btn-secondary\`, \`field\`, \`list\` and \`list-row\`,
+(\`page-column\`, \`btn-primary\`, \`btn-secondary\`, \`field\`, \`list\`, \`list-row\`,
 \`card\`, \`section-label\`, \`skeleton\`, \`state-empty\`, \`state-error\`).
 Re-theme by changing the token values there, keeping every text pair at
 4.5:1 or more in both looks.
@@ -139,9 +139,11 @@ Re-theme by changing the token values there, keeping every text pair at
 - A field's label says what it is; its placeholder, if any, is an example
   that says so ("e.g. 5.0"), never a bare value that could pass for one
   already entered.
+- Each screen sits in \`page-column\`, one centred column on a wide window.
 - Every screen that loads data has honest loading, empty and error states.
   Never show the empty state while loading or after a failure; an error says
-  what failed, what still works, and offers Retry.
+  what failed, what still works, and offers Retry. Loading has the content's
+  own shape (its rows, with \`skeleton\` bars for their text).
 - Seed obviously fake staging demo data so the populated screen can be seen
   ("Staging mock data" in the platform conventions).
 - No cards in cards, no uppercase eyebrows, no emoji as icons.
@@ -216,6 +218,14 @@ const DESIGN_KIT_CSS = `
  * text-small (tailwind.config.js), nothing in between.
  */
 @layer components {
+  /* Each screen's content in one centred column, <main
+     class="page-column">. A phone fills it; a wider window keeps it a
+     readable column instead of stretching rows and buttons across the
+     window. The screen's own padding goes inside it. */
+  .page-column {
+    @apply mx-auto w-full max-w-2xl;
+  }
+
   /* Buttons: one primary per screen, the rest secondary. At least 44 px
      each way, so they are easy to tap. */
   .btn-primary,
@@ -260,7 +270,9 @@ const DESIGN_KIT_CSS = `
   }
 
   /* The states of anything that loads data. Show exactly one at a time:
-     - loading: .skeleton shapes where the data will be, never a blank;
+     - loading: the content's own shape, never a blank: the same list and
+       rows at their height, with .skeleton bars where their text goes, so
+       nothing moves when the data arrives;
      - empty, only when the load WORKED and found nothing: a title, one
        sentence and the action that fills it;
      - error, only when the load FAILED: what failed, what still works,
@@ -772,12 +784,19 @@ carries the app-specific notes and points at the platform rules.
 Once the real app exists, rewrite this README to describe it.
 `,
     },
+    // The package files are the starter's own, the same bytes in every app
+    // made from it: no slug or name of this app's goes into them (they
+    // carried both until October 2026). The image's `COPY package.json
+    // package-lock.json` and the `npm ci` after it are then the same steps
+    // for every copy of a starter, so a new app's first build is served
+    // them from the starter's shared layer cache instead of installing
+    // cold (services/kubernetes-buildkit.js, "The starter's shared
+    // cache"). Nothing reads either field: the app is named by dapp.json,
+    // its README, CLAUDE.md and its screen.
     {
       path: 'package.json',
       content: JSON.stringify({
         ...nodeAppPackage,
-        name: slug,
-        description: appName,
         ...(extraDeps ? { dependencies: sortedKeys({ ...nodeAppPackage.dependencies, ...extraDeps.ranges }) } : {}),
       }, null, 2),
     },
@@ -785,19 +804,14 @@ Once the real app exists, rewrite this README to describe it.
       path: 'package-lock.json',
       content: JSON.stringify({
         ...nodeAppLock,
-        name: slug,
         packages: extraDeps ? sortedKeys({
           ...nodeAppLock.packages,
           '': {
             ...nodeAppLock.packages[''],
-            name: slug,
             dependencies: sortedKeys({ ...nodeAppLock.packages[''].dependencies, ...extraDeps.ranges }),
           },
           ...extraDeps.packages,
-        }, '') : {
-          ...nodeAppLock.packages,
-          '': { ...nodeAppLock.packages[''], name: slug },
-        },
+        }, '') : nodeAppLock.packages,
       }, null, 2),
     },
     {
@@ -1519,6 +1533,9 @@ function escapeHtml(str) {
 module.exports = {
   getTemplateFiles,
   getConnectorScaffoldFiles,
+  // The Empty starter's design kit (its tokens and components), for the
+  // early first look's prompt (first-version-early-look.js).
+  DESIGN_KIT_CSS,
   getCanonicalRepoFile,
   canonicalRepoUrl,
   CANONICAL_REPO_PATH,

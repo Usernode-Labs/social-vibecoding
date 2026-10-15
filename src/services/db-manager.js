@@ -333,7 +333,10 @@ function targetExecutor(server = PRIMARY_SERVER) {
   return (dbName, sql, opts = {}) => execInTarget(dbName, sql, { ...opts, server });
 }
 
-function postgresEnv(dbName, server = PRIMARY_SERVER) {
+// `as` ({ user, password }) runs the child as a different role than the
+// administrator — the copy's own unprivileged owner role for the redaction
+// passes — keeping the server's address, TLS and the rest of the environment.
+function postgresEnv(dbName, server = PRIMARY_SERVER, as = null) {
   const admin = adminConnection(server);
   // For the preview server the URL is the whole connection. libpq also reads
   // its own environment, and some of it outranks what is set below: a
@@ -350,8 +353,8 @@ function postgresEnv(dbName, server = PRIMARY_SERVER) {
     ...inherited,
     PGHOST: admin.hostname,
     PGPORT: admin.port || '5432',
-    PGUSER: decodeURIComponent(admin.username || DB_USER),
-    PGPASSWORD: decodeURIComponent(admin.password || ''),
+    PGUSER: as && as.user ? as.user : decodeURIComponent(admin.username || DB_USER),
+    PGPASSWORD: as && as.password != null ? as.password : decodeURIComponent(admin.password || ''),
     PGDATABASE: dbName,
     // The preview server: plain, said outright (libpq's own default would
     // try TLS first and the other two clients would not).
@@ -1017,10 +1020,11 @@ async function cloneDatabaseDirect(sourceDb, targetDb, { server = PRIMARY_SERVER
   // uninterrupted and there is no exclusive-access race.
   //
   // The clone starts from template0 (pristine, never-connected, so it's
-  // always clonable) owned by the new role; pg_restore --no-owner then
-  // lands every object owned by the psql superuser, and the
-  // reassignUserObjectsTo(DB_USER → targetRole) pass below hands them to
-  // the clone role — exactly the end-state the TEMPLATE path produced.
+  // always clonable) owned by the new role; pg_restore --no-owner, running
+  // AS that role (see dumpRestore), lands every object owned by it directly
+  // — the same end-state the TEMPLATE path produced. The
+  // reassignUserObjectsTo passes below stay as the backstop for anything a
+  // restore could still have left with another owner.
   await inAdmin(`CREATE DATABASE ${targetDb} TEMPLATE template0 OWNER ${targetRole}`);
 
   // Don't dump data we are about to throw away. The scrub passes below
@@ -1035,7 +1039,15 @@ async function cloneDatabaseDirect(sourceDb, targetDb, { server = PRIMARY_SERVER
   // the ~80 MB that actually survives.
   const excludeData = await privateDataExclusions(sourceDb);
   const dumpStartedAt = Date.now();
-  await dumpRestore(sourceDb, targetDb, excludeData, { targetServer: server });
+  // The restore authenticates AS the clone's own role, so the app-defined
+  // code the data load evaluates — CHECK constraints validated after the
+  // COPY, generated columns computed on insert, row and event triggers —
+  // runs with that unprivileged role's rights, not the administrator's (see
+  // dumpRestore). The role was created with its password above and owns the
+  // fresh database.
+  await dumpRestore(sourceDb, targetDb, excludeData, {
+    targetServer: server, as: { user: targetRole, password },
+  });
   log.info('db-manager', 'Clone copy complete', {
     sourceDb, targetDb,
     excludedTables: excludeData.length,
@@ -1139,8 +1151,13 @@ async function cloneDatabaseDirect(sourceDb, targetDb, { server = PRIMARY_SERVER
   // container is strictly safer than spawning one that leaks. Tables
   // truncated in pass 1 are no-ops for pass 2 (UPDATE on empty), so
   // tagging both levels on the same table is harmless.
-  await truncatePrivateTables(targetDb, inTarget);
-  await scrubPrivateColumns(targetDb, inTarget);
+  // The two passes run AS the clone's own owner role, not the administrator
+  // (see redactPrivateData): app-defined code a TRUNCATE or UPDATE evaluates
+  // then runs with that unprivileged role's rights. The reassign above moved
+  // every object to it, so it owns these tables and can empty them.
+  const asOwner = (db, sql, opts = {}) =>
+    execInTarget(db, sql, { ...opts, server, as: { user: targetRole, password } });
+  await redactPrivateData(targetDb, asOwner);
 
   log.info('db-manager', 'Database cloned with new role', { sourceDb, targetDb, targetRole, server });
   return { password };
@@ -1248,22 +1265,54 @@ async function buildRedactedCopy(sourceDb, targetDb, ownerRole, { server = PRIMA
     throw new Error(`buildRedactedCopy: unsafe identifiers ${sourceDb}/${targetDb}/${ownerRole}`);
   }
   const inTarget = targetExecutor(server);
-  await adminExecutor(server)(`CREATE DATABASE ${targetDb} TEMPLATE template0 OWNER ${ownerRole}`);
+  const inAdmin = adminExecutor(server);
+  await inAdmin(`CREATE DATABASE ${targetDb} TEMPLATE template0 OWNER ${ownerRole}`);
 
-  const excludeData = await privateDataExclusions(sourceDb);
-  await dumpRestore(sourceDb, targetDb, excludeData, { targetServer: server });
-  const sourceRole = ownerRoleName(sourceDb);
-  if (SAFE_IDENT.test(sourceRole)) {
-    await reassignUserObjectsTo(targetDb, sourceRole, ownerRole, inTarget).catch((err) => {
-      log.warn('db-manager', 'template reassign from source-role failed', { targetDb, sourceRole, err: err.message });
+  // This role is NOLOGIN (a template / prepared-source role is shared and
+  // never logs in). Give it a login and a fresh password for everything that
+  // runs AS it — the data load (pg_restore authenticates as it, so the
+  // app-defined code the load evaluates runs without the platform's rights;
+  // see dumpRestore) and the redaction passes (see redactPrivateData) — and
+  // take both away again afterwards, on every path. A template or
+  // prepared-source role must never be left login-capable, nor with a
+  // password on it.
+  const redactionPassword = generatePassword();
+  await inAdmin(`ALTER ROLE ${ownerRole} LOGIN PASSWORD '${redactionPassword}'`);
+  const asOwner = (db, sql, opts = {}) =>
+    execInTarget(db, sql, { ...opts, server, as: { user: ownerRole, password: redactionPassword } });
+  let excludeData = null;
+  let buildErr = null;
+  try {
+    excludeData = await privateDataExclusions(sourceDb);
+    await dumpRestore(sourceDb, targetDb, excludeData, {
+      targetServer: server, as: { user: ownerRole, password: redactionPassword },
     });
+    const sourceRole = ownerRoleName(sourceDb);
+    if (SAFE_IDENT.test(sourceRole)) {
+      await reassignUserObjectsTo(targetDb, sourceRole, ownerRole, inTarget).catch((err) => {
+        log.warn('db-manager', 'template reassign from source-role failed', { targetDb, sourceRole, err: err.message });
+      });
+    }
+    await reassignUserObjectsTo(targetDb, adminUser(server), ownerRole, inTarget).catch((err) => {
+      if (serverKey(server) !== PRIMARY_SERVER) throw err;   // see cloneDatabaseDirect
+      log.warn('db-manager', 'template reassign from superuser failed', { targetDb, err: err.message });
+    });
+    await redactPrivateData(targetDb, asOwner);
+  } catch (err) {
+    buildErr = err;
   }
-  await reassignUserObjectsTo(targetDb, adminUser(server), ownerRole, inTarget).catch((err) => {
-    if (serverKey(server) !== PRIMARY_SERVER) throw err;   // see cloneDatabaseDirect
-    log.warn('db-manager', 'template reassign from superuser failed', { targetDb, err: err.message });
-  });
-  await truncatePrivateTables(targetDb, inTarget);
-  await scrubPrivateColumns(targetDb, inTarget);
+  try {
+    await inAdmin(`ALTER ROLE ${ownerRole} NOLOGIN PASSWORD NULL`);
+  } catch (err) {
+    if (buildErr) {
+      log.error('db-manager', 'Could not return the redaction role to NOLOGIN after a failed build', {
+        ownerRole, err: err.message,
+      });
+    } else {
+      buildErr = err;
+    }
+  }
+  if (buildErr) throw buildErr;
   return excludeData;
 }
 
@@ -1430,23 +1479,30 @@ async function cloneFromTemplate(templateDb, targetDb, {
     await admin(`REVOKE CONNECT ON DATABASE ${targetDb} FROM PUBLIC`);
     await admin(`GRANT ALL PRIVILEGES ON DATABASE ${targetDb} TO ${targetRole}`);
   }, { queryTimeoutMs, server });
-  // One connection for the whole ownership/redaction pass, including discovery.
-  // Never pool it: the caller may need to drop this database immediately on
-  // failure, and a later preview must not inherit an administrative session.
+  // Ownership moves to the clone's own role AS the administrator (only it can
+  // reassign objects the template role owns); a short-lived psql process, so
+  // no administrative session lingers afterwards.
+  onProgress?.('reassign_ownership');
+  try {
+    await reassignUserObjectsTo(targetDb, templateRole, targetRole, targetExecutor(server));
+  } catch (error) {
+    error.message = `Database clone reassign_ownership: ${error.message}`;
+    throw error;
+  }
+  // The redaction then runs over one connection AUTHENTICATED AS that clone
+  // role (see redactPrivateData): app-defined code a TRUNCATE or UPDATE
+  // evaluates runs with its unprivileged rights, never the administrator's.
+  // Never pooled: the caller may need to drop this database immediately on
+  // failure, and a later preview must not inherit this session.
   await withDatabaseConnection(targetDb, async (execute) => {
-    for (const [phase, run] of [
-      ['reassign_ownership', () => reassignUserObjectsTo(targetDb, templateRole, targetRole, execute)],
-      ['truncate_private', () => truncatePrivateTables(targetDb, execute)],
-      ['scrub_private', () => scrubPrivateColumns(targetDb, execute)],
-    ]) {
-      onProgress?.(phase);
-      try { await run(); }
-      catch (error) {
-        error.message = `Database clone ${phase}: ${error.message}`;
-        throw error;
+    try { await redactPrivateData(targetDb, execute, { onProgress }); }
+    catch (error) {
+      if (!/^Database clone /.test(String(error.message || ''))) {
+        error.message = `Database clone redact_private: ${error.message}`;
       }
+      throw error;
     }
-  }, { queryTimeoutMs, server });
+  }, { queryTimeoutMs, server, as: { user: targetRole, password } });
   onProgress?.('redaction_complete');
   log.info('db-manager', 'Database cloned from staging template', {
     templateDb, targetDb, targetRole, durationMs: Date.now() - startedAt,
@@ -1675,6 +1731,12 @@ BEGIN
   -- on the parent already transfers them. Filtering here keeps the
   -- DO block side-effect-clean instead of relying on per-statement
   -- error swallowing.
+  --
+  -- Every loop also skips an extension's own objects (deptype 'e'):
+  -- they stay with whoever created the extension. Handed to an app's
+  -- role, pg_stat_statements_reset() (the operator's extension, made by
+  -- the administrator) would let a preview's code wipe the query
+  -- statistics of every database on the server.
   FOR r IN
     SELECT n.nspname, c.relname, c.relkind
       FROM pg_class c
@@ -1687,7 +1749,7 @@ BEGIN
          SELECT 1 FROM pg_depend d
           WHERE d.objid = c.oid
             AND d.classid = 'pg_class'::regclass
-            AND d.deptype IN ('a','i')
+            AND d.deptype IN ('a','i','e')
        )
   LOOP
     EXECUTE format(
@@ -1713,6 +1775,10 @@ BEGIN
       JOIN pg_roles role  ON role.oid = p.proowner
      WHERE n.nspname NOT IN ('pg_catalog','information_schema','pg_toast')
        AND role.rolname = '${fromRole}'
+       AND NOT EXISTS (
+         SELECT 1 FROM pg_depend d
+          WHERE d.objid = p.oid AND d.classid = 'pg_proc'::regclass AND d.deptype = 'e'
+       )
   LOOP
     EXECUTE format(
       'ALTER FUNCTION %I.%I(%s) OWNER TO %I',
@@ -1735,6 +1801,10 @@ BEGIN
        AND NOT EXISTS (
          SELECT 1 FROM pg_class c WHERE c.reltype = t.oid
        )
+       AND NOT EXISTS (
+         SELECT 1 FROM pg_depend d
+          WHERE d.objid = t.oid AND d.classid = 'pg_type'::regclass AND d.deptype = 'e'
+       )
   LOOP
     EXECUTE format('ALTER TYPE %I.%I OWNER TO %I', r.nspname, r.typname, '${toRole}');
   END LOOP;
@@ -1749,6 +1819,10 @@ BEGIN
      WHERE n.nspname NOT LIKE 'pg_%'
        AND n.nspname NOT IN ('information_schema','public')
        AND role.rolname = '${fromRole}'
+       AND NOT EXISTS (
+         SELECT 1 FROM pg_depend d
+          WHERE d.objid = n.oid AND d.classid = 'pg_namespace'::regclass AND d.deptype = 'e'
+       )
   LOOP
     EXECUTE format('ALTER SCHEMA %I OWNER TO %I', r.nspname, '${toRole}');
   END LOOP;
@@ -1900,12 +1974,21 @@ async function assertPreviewServerReachable(server) {
 // connection within one clone phase. Other administration keeps its existing
 // one-shot behavior. SQL stays in autocommit: CREATE/DROP DATABASE cannot run
 // inside a transaction, and a failed redaction must not abort later attempts.
-async function withDatabaseConnection(dbName, fn, { queryTimeoutMs = 30_000, server = PRIMARY_SERVER } = {}) {
+async function withDatabaseConnection(dbName, fn, { queryTimeoutMs = 30_000, server = PRIMARY_SERVER, as = null } = {}) {
   if (!SAFE_IDENT.test(dbName)) throw new Error(`Unsafe connection database: ${dbName}`);
   const timeoutMs = Math.max(30_000, Math.min(120_000, Number(queryTimeoutMs) || 30_000));
   let url;
   try { url = adminConnection(server); } catch (err) { throw fromPreviewServer(err, server); }
   url.pathname = `/${dbName}`;
+  // `as` authenticates as a specific role (the copy's unprivileged owner, for
+  // the redaction passes) rather than the administrator. The role and
+  // password go in the authority; any administrative user/password left in
+  // the URL's query would otherwise override it (see connectionUrl).
+  if (as && as.user) {
+    url.username = as.user;
+    url.password = as.password || '';
+    for (const key of ['user', 'password']) if (url.searchParams.has(key)) url.searchParams.delete(key);
+  }
   const client = new Client({
     ...pgClientConfig(url, server),
     connectionTimeoutMillis: 30000,
@@ -1918,6 +2001,14 @@ async function withDatabaseConnection(dbName, fn, { queryTimeoutMs = 30_000, ser
   client.on('error', (err) => { lost = err; });
   try {
     try { await client.connect(); } catch (err) { throw previewConnectFailure(err, server); }
+    // The same pin execInTarget applies (see there): inside an app database,
+    // the session's search_path decides how the platform's SQL resolves
+    // unqualified names, and the app can steer it. Set at the session level,
+    // so a database- or role-level default the app set is overridden. The
+    // maintenance database keeps the platform's own default path.
+    if (dbName !== adminDatabase(server)) {
+      await client.query({ text: 'SET search_path = pg_catalog', rowMode: 'array' });
+    }
     return await fn(singleConnection(async (targetDb, sql, opts = {}) => {
       if (targetDb !== dbName) throw new Error('Clone connection database mismatch');
       if (lost) throw lost;
@@ -1996,9 +2087,26 @@ async function execInTarget(dbName, sql, opts = {}) {
   args.push('-c', sql);
 
   const timeoutMs = Math.max(30_000, Math.min(120_000, Number(opts.timeoutMs) || 30_000));
+  // Inside an app database the session's search_path decides how the
+  // platform's own SQL resolves unqualified names — obj_description,
+  // pg_relation_size, a `'pg_class'::regclass` constant — and the app
+  // controls what a session there can see: it may set database-level
+  // settings on its own database, app code running during the data load can
+  // set them on the copy too, and it can create same-named functions in
+  // public. With `search_path = public, pg_catalog` its shadow functions are
+  // found FIRST, so the platform's statements would call app code and the
+  // emptiness checks could be fooled by a fake that always answers 0. So
+  // every session the platform opens inside an app database pins the
+  // search_path to the built-in functions (pg_temp is still searched for
+  // temp relations, and never for functions): every name the platform's SQL
+  // reaches unqualified is catalog-qualified by nature, so this changes no
+  // answer, only who provides it. The maintenance database keeps the
+  // platform's own default path — its SQL names its own unqualified tables.
+  const env = postgresEnv(dbName, opts.server, opts.as);
+  if (dbName !== adminDatabase(opts.server)) env.PGOPTIONS = '-c search_path=pg_catalog';
   let ran;
   try {
-    ran = await execFileAsync('psql', args, { timeout: timeoutMs, env: postgresEnv(dbName, opts.server) });
+    ran = await execFileAsync('psql', args, { timeout: timeoutMs, env });
   } catch (err) {
     throw fromPreviewServer(psqlFailure(err, { sql, timeoutMs }), opts.server);
   }
@@ -2129,6 +2237,39 @@ SELECT n.nspname || '.' || c.relname
   return safe;
 }
 
+// The source's extensions that the copy's own role could not create: those
+// whose default version on the target server needs a superuser and is not
+// trusted. A trusted one (pg_trgm, pgcrypto) the role creates itself during
+// the restore and then owns. One the target server does not offer is left
+// to the restore, which fails naming it. Resolves [{ name, schema }].
+const SAFE_EXTENSION_NAME = /^[a-z0-9_][a-z0-9_-]*$/;
+async function extensionsOnlyAnAdminCanCreate(sourceDb, targetServer = PRIMARY_SERVER) {
+  // A name this cannot splice safely is left to the restore, like one the
+  // target does not offer.
+  const installed = String(await execInTarget(sourceDb,
+    "SELECT json_build_array(e.extname, n.nspname)::text FROM pg_extension e"
+    + " JOIN pg_namespace n ON n.oid = e.extnamespace WHERE e.extname <> 'plpgsql' ORDER BY 1",
+    { tuplesOnly: true })).split('\n').map((line) => line.trim()).filter(Boolean)
+    .map((line) => JSON.parse(line)).filter(([name]) => SAFE_EXTENSION_NAME.test(name));
+  if (installed.length === 0) return [];
+  const names = installed.map(([name]) => `'${name}'`).join(', ');
+  const adminOnly = new Set(String(await adminExecutor(targetServer)(
+    'SELECT v.name FROM pg_available_extension_versions v'
+    + ' JOIN pg_available_extensions a ON a.name = v.name AND a.default_version = v.version'
+    + ` WHERE v.name IN (${names}) AND v.superuser AND NOT v.trusted`,
+    { tuplesOnly: true })).split('\n').map((line) => line.trim()).filter(Boolean));
+  const found = installed.filter(([name]) => adminOnly.has(name));
+  // A fresh copy has only the public schema. An extension in another schema
+  // would need that schema before the restore creates it, so the copy is
+  // refused instead, saying why.
+  const elsewhere = found.filter(([, schema]) => schema !== 'public');
+  if (elsewhere.length > 0) {
+    throw new Error(`dumpRestore: ${elsewhere.map(([name, schema]) => `${name} (in schema ${schema})`).join(', ')}`
+      + ' can only be created by an administrator, and only in the public schema of a copy');
+  }
+  return found.map(([name, schema]) => ({ name, schema }));
+}
+
 // Logical copy of one database into another via a networked
 // pg_dump | pg_restore pipeline. cloneDatabase uses this instead of
 // CREATE DATABASE … TEMPLATE so the source can be copied while it is
@@ -2145,7 +2286,20 @@ SELECT n.nspname || '.' || c.relname
 // pg_dump must be at least as new as the server it reads and pg_restore
 // reads what that pg_dump wrote, so one client version serves both as long
 // as it is not older than either server.
-async function dumpRestore(sourceDb, targetDb, excludeData = [], { targetServer = PRIMARY_SERVER } = {}) {
+//
+// `as` ({ user, password }) authenticates the RESTORE as the copy's own
+// unprivileged owner role instead of the administrator. Loading the data
+// makes the server evaluate app-defined code — CHECK constraints validated
+// after the COPY, STORED generated columns computed on insert, and row and
+// event triggers fired by both — as the connected user, and that must not be
+// the platform administrator, for the same reason the redaction passes
+// authenticate as this role (see redactPrivateData). The copy's own role
+// owns the fresh database and every object the restore creates lands with
+// it (pg_restore --no-owner attributes everything to the connecting user),
+// so nothing needs the administrator's rights. pg_dump's emitted SQL is
+// schema-qualified by construction, so the unprivileged session cannot
+// redirect it; the dump side stays administrative and reads only.
+async function dumpRestore(sourceDb, targetDb, excludeData = [], { targetServer = PRIMARY_SERVER, as = null } = {}) {
   if (!SAFE_IDENT.test(sourceDb) || !SAFE_IDENT.test(targetDb)) {
     throw new Error(`dumpRestore: unsafe identifiers ${sourceDb}/${targetDb}`);
   }
@@ -2153,6 +2307,18 @@ async function dumpRestore(sourceDb, targetDb, excludeData = [], { targetServer 
     if (!SAFE_QUALIFIED_IDENT.test(qualified)) {
       throw new Error(`dumpRestore: unsafe exclude-table-data ${JSON.stringify(qualified)}`);
     }
+  }
+  if (as && (!as.user || !SAFE_IDENT.test(as.user) || as.password == null)) {
+    throw new Error('dumpRestore: the restore role needs a safe name and a password');
+  }
+  // An extension only a superuser may create (pg_stat_statements, which the
+  // database operator installs in every database) would stop the copy's own
+  // role at its CREATE EXTENSION. The administrator creates those first, in
+  // the copy while it is still empty, so no app-defined object exists yet
+  // for the extension's script to meet, and the dump leaves them out.
+  const adminExtensions = as ? await extensionsOnlyAnAdminCanCreate(sourceDb, targetServer) : [];
+  for (const { name, schema } of adminExtensions) {
+    await execInTarget(targetDb, `CREATE EXTENSION IF NOT EXISTS "${name}" WITH SCHEMA "${schema}"`, { server: targetServer });
   }
 
   // -Fc custom format piped straight into pg_restore (no temp file on
@@ -2174,6 +2340,7 @@ async function dumpRestore(sourceDb, targetDb, excludeData = [], { targetServer 
   const dumpArgs = [
     '-Fc',
     ...excludeData.map((qualified) => `--exclude-table-data=${qualified}`),
+    ...adminExtensions.map(({ name }) => `--exclude-extension=${name}`),
   ];
   const dump = spawn('pg_dump', dumpArgs, {
     env: postgresEnv(sourceDb), stdio: ['ignore', 'pipe', 'pipe'],
@@ -2181,11 +2348,23 @@ async function dumpRestore(sourceDb, targetDb, excludeData = [], { targetServer 
   // pg_restore does not infer "restore into a database" from PGDATABASE:
   // without -d/--dbname it expects -f and exits before reading stdin. Keep
   // the explicit target in argv as well as postgresEnv(targetDb), which
-  // provides the network credentials.
+  // provides the network credentials — the copy's own owner role when `as`
+  // says so, the administrator otherwise.
   const restore = spawn('pg_restore', pgRestoreArgs(targetDb), {
-    env: postgresEnv(targetDb, targetServer), stdio: ['pipe', 'ignore', 'pipe'],
+    env: postgresEnv(targetDb, targetServer, as), stdio: ['pipe', 'ignore', 'pipe'],
   });
   dump.stdout.pipe(restore.stdin);
+  // --exit-on-error stops pg_restore at its first failed statement while
+  // pg_dump may still be writing, and the pipe then fails with EPIPE. That
+  // is the restore's failure, reported by the exit codes below; unhandled,
+  // the stream's 'error' takes the whole process down. pg_dump, left with
+  // nobody reading, is stopped rather than left blocked until the timeout.
+  let pipeError = null;
+  restore.stdin.on('error', (err) => { pipeError = err; });
+  dump.stdout.on('error', (err) => { pipeError = err; });
+  restore.once('close', (code) => {
+    if (code !== 0 && dump.exitCode === null && dump.signalCode === null) dump.kill('SIGKILL');
+  });
   let dumpStderr = '';
   let restoreStderr = '';
   dump.stderr.on('data', (chunk) => { dumpStderr = (dumpStderr + chunk).slice(-64 * 1024); });
@@ -2213,6 +2392,9 @@ async function dumpRestore(sourceDb, targetDb, excludeData = [], { targetServer 
       stderr.slice(0, 2000)
     );
   }
+  if (pipeError) {
+    throw new Error(`dumpRestore ${sourceDb} → ${targetDb}: the pipe between pg_dump and pg_restore failed: ${pipeError.message}`);
+  }
 
   // pg_restore continues past per-object errors by default and prints a
   // tally at the end ("errors ignored on restore: N"). Treat any such
@@ -2239,20 +2421,330 @@ function pgRestoreArgs(targetDb) {
   return ['--exit-on-error', '--no-owner', '--no-privileges', '--dbname', targetDb];
 }
 
+// ── Shared staging:private emptiness logic ───────────────────────────────
+// The TRUNCATE pass (truncatePrivateTables) proves the private tables empty
+// right after emptying them; the re-check after the column pass
+// (verifyPrivateTablesEmpty) proves it again. Both use the SAME discovery
+// query and the SAME size-then-read proof, kept here once so the two cannot
+// drift. Only the TRUNCATE itself lives in the pass.
+const PRIVATE_TABLES_DISCOVERY_SQL = `
+WITH RECURSIVE private(name, rel) AS (
+  SELECT n.nspname || '.' || c.relname, c.oid
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+   WHERE obj_description(c.oid, 'pg_class') = 'staging:private'
+     AND c.relkind = 'r'
+     AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+), tree(name, rel) AS (
+  SELECT name, rel FROM private
+  UNION SELECT tree.name, i.inhrelid FROM pg_inherits i JOIN tree ON i.inhparent = tree.rel
+)
+SELECT name FROM private
+UNION ALL
+SELECT DISTINCT 'FOREIGN ' || json_build_array(tree.name, n.nspname || '.' || c.relname)::text
+  FROM tree
+  JOIN pg_class c ON c.oid = tree.rel
+  JOIN pg_namespace n ON n.oid = c.relnamespace
+ WHERE c.relkind = 'f'
+ ORDER BY 1`.trim();
+
+function refuseForeignCopy(targetDb, pairs) {
+  log.error('db-manager', 'staging:private table with a foreign-table descendant; copy refused', {
+    targetDb, foreign: pairs,
+  });
+  const err = new Error(
+    `Refusing to empty the staging:private tables in ${targetDb}: ` +
+    pairs.map(([parent, child]) => `${parent} has the foreign-table descendant ${child}`).join('; ') +
+    '. Its rows are on another server: they can neither be emptied from a copy safely nor shown to be empty.'
+  );
+  err.noFallback = true;
+  return err;
+}
+
+// Split the discovery answer into the [private table] names and the
+// [private, foreign] descendant pairs; an unreadable pair is still a foreign
+// descendant, shown as it came.
+function parsePrivateDiscovery(stdout) {
+  const lines = (stdout || '').split('\n').map((s) => s.trim()).filter(Boolean);
+  const foreignPair = (text) => {
+    try {
+      const pair = JSON.parse(text);
+      if (Array.isArray(pair) && pair.length === 2) return pair.map(String);
+    } catch { /* shown raw below */ }
+    return ['?', text];
+  };
+  const foreign = lines.filter((line) => line.startsWith('FOREIGN '))
+    .map((line) => foreignPair(line.slice('FOREIGN '.length)));
+  const qualifiedNames = lines.filter((line) => !line.startsWith('FOREIGN '));
+  return { foreign, qualifiedNames };
+}
+
+// Each statement as few parts as fit under the psql argument ceiling
+// (MAX_SCRUB_STATEMENT_BYTES): psql takes a statement as one command-line
+// argument, which Linux caps at 128 KiB (spawn E2BIG).
+function chunkedStatements(items, render, join, wrap) {
+  const statements = [];
+  let parts = [];
+  for (const item of items) {
+    const part = render(item);
+    if (parts.length > 0 && Buffer.byteLength(wrap(parts.concat(part).join(join))) > MAX_SCRUB_STATEMENT_BYTES) {
+      statements.push(wrap(parts.join(join)));
+      parts = [];
+    }
+    parts.push(part);
+  }
+  if (parts.length > 0) statements.push(wrap(parts.join(join)));
+  return statements;
+}
+
+// Names were validated by the caller, so they splice as text too.
+function privateSizeSqls(safe) {
+  return chunkedStatements(safe, (t) => `('${t}', '${t}'::regclass)`, ', ', (values) =>
+    `WITH RECURSIVE targets(name, rel) AS (VALUES ${values}), tree(name, rel) AS (SELECT name, rel FROM targets`
+    + ' UNION SELECT tree.name, i.inhrelid::regclass FROM pg_inherits i JOIN tree ON i.inhparent = tree.rel)'
+    + " SELECT DISTINCT json_build_array(tree.name, c.oid::bigint, c.relkind, n.nspname || '.' || c.relname)::text FROM tree"
+    + ' JOIN pg_class c ON c.oid = tree.rel JOIN pg_namespace n ON n.oid = c.relnamespace'
+    + ' LEFT JOIN pg_am am ON am.oid = c.relam'
+    + " WHERE c.relkind <> 'r' OR am.amname IS DISTINCT FROM 'heap'"
+    + ' OR pg_relation_size(tree.rel) IS DISTINCT FROM 0 ORDER BY 1');
+}
+
+// The staging:private tables (by name, in `safe`) that still hold a row:
+// proven by a zero-length heap file for the common case, and for any
+// "suspect" (pages present, a non-heap access method, a partitioned table) a
+// read with row_security off, so a refill hidden by row-level security raises
+// rather than passing. Throws (noFallback) on a foreign descendant surfaced
+// now or a line that cannot be read — the per-table TRUNCATE must not reach
+// either. `safe` is the validated list of private table names; `sizeSqls`
+// comes from privateSizeSqls(safe).
+async function listPrivateTablesHoldingRows(targetDb, safe, sizeSqls, execute) {
+  const unconfirmed = (err) => new Error(
+    `Could not confirm the staging:private tables in ${targetDb} are empty: ${err.message}`);
+  const suspects = [];
+  const foreignNow = [];
+  for (const sql of sizeSqls) {
+    let out;
+    try {
+      out = await execute(targetDb, sql, { tuplesOnly: true });
+    } catch (err) { throw unconfirmed(err); }
+    for (const line of String(out || '').split('\n').map((l) => l.trim()).filter(Boolean)) {
+      let row = null;
+      try { row = JSON.parse(line); } catch { /* below */ }
+      const [name, oid, relkind, display] = Array.isArray(row) ? row : [];
+      // Classified before anything else is checked: a foreign table is
+      // refused whatever its name.
+      if (relkind === 'f') { foreignNow.push([String(name), String(display)]); continue; }
+      if (!Array.isArray(row) || row.length !== 4 || !safe.includes(name)
+          || !Number.isSafeInteger(oid) || oid <= 0 || typeof relkind !== 'string' || !/^[a-z]$/.test(relkind)) {
+        const err = unconfirmed(new Error(`a relation under a staging:private table cannot be checked: ${JSON.stringify(line)}`));
+        err.noFallback = true;
+        throw err;
+      }
+      suspects.push({ name, oid, display: String(display) });
+    }
+  }
+  if (foreignNow.length > 0) throw refuseForeignCopy(targetDb, foreignNow);
+  if (suspects.length === 0) return [];
+  // The marker is assembled by format(), so the statement's own text, which
+  // a psql failure echoes, never contains it.
+  const readSqls = chunkedStatements(suspects,
+    ({ name, oid }) => `EXECUTE format('SELECT EXISTS (SELECT 1 FROM ONLY %s)', ${oid}::oid::regclass) INTO present; `
+      + `IF present AND NOT '${name}' = ANY (found) THEN found := found || '${name}'::text; END IF; `,
+    '',
+    (body) => 'DO $staging_check$ DECLARE found text[] := \'{}\'; present boolean; BEGIN SET LOCAL row_security = off; '
+      + body
+      + "IF cardinality(found) > 0 THEN RAISE EXCEPTION '%', format('staging:private %s: %s;', 'rows remain in', array_to_string(found, ', ')); END IF; END $staging_check$");
+  const holding = new Set();
+  for (const sql of readSqls) {
+    try {
+      await execute(targetDb, sql);
+    } catch (err) {
+      const m = /staging:private rows remain in: ([a-z0-9_., ]+);/i.exec(String(err.message || ''));
+      const names = m ? m[1].split(', ').filter((n) => safe.includes(n)) : [];
+      if (names.length === 0) throw unconfirmed(err);
+      names.forEach((n) => holding.add(n));
+    }
+  }
+  return [...holding];
+}
+
+// ── Running the redaction without the platform's database rights ─────────
+//
+// The copy's redaction (the TRUNCATE and UPDATE passes) used to run over the
+// administrative connection. On the preview server that administrator is a
+// SUPERUSER, and a TRUNCATE or UPDATE makes the server evaluate app-defined
+// code attached to the table — triggers (statement- and row-level, and those
+// a CASCADE reaches), CHECK and domain functions, generated-column and index
+// expressions, RLS policy expressions, rules — AS THE SESSION USER. An app
+// author controls that code through the app's own schema, so it ran with the
+// administrator's rights over every app's preview copies.
+//
+// So the redaction now runs over a connection AUTHENTICATED AS the copy's own
+// owner role, which every path already creates as an ordinary LOGIN role with
+// a generated password and no attributes (not SUPERUSER, not CREATEROLE, not
+// CREATEDB) and no rights outside this one database. Authenticating as it is
+// the boundary: SET ROLE / SET SESSION AUTHORIZATION do not hold, because a
+// superuser session can RESET them; only the session's real identity cannot
+// be shed, and here it is the unprivileged role. If a private table FORCEs
+// row-level security, it then applies to the owner too, and the fail-closed
+// checks above refuse the copy rather than leak.
+//
+// Belt and braces, and to keep "every private table is empty in every copy
+// handed out" true even when a trigger would refill one: user triggers are
+// switched OFF on the affected tables for the duration and put back exactly
+// as they were, so the preview behaves as production does.
+
+// Switch user triggers off on every regular table the passes touch — each
+// staging:private table, its inheritance descendants, and each table with a
+// staging:private column — capturing each trigger's prior state so it can be
+// restored precisely (ENABLE loses ALWAYS/REPLICA). FK/RI internal triggers
+// are left alone, so CASCADE still works. Returns { restore }. `execute` is
+// the owner-authenticated runner, which owns these tables after the reassign
+// pass and so may disable their triggers.
+const REDACTION_TABLE_OIDS_SQL = `
+WITH RECURSIVE roots(rel) AS (
+  SELECT c.oid FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+   WHERE c.relkind = 'r' AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+     AND (obj_description(c.oid, 'pg_class') = 'staging:private'
+          OR EXISTS (SELECT 1 FROM pg_attribute a
+                      WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+                        AND col_description(a.attrelid, a.attnum) = 'staging:private'))
+), tree(rel) AS (
+  SELECT rel FROM roots
+  UNION SELECT i.inhrelid FROM pg_inherits i JOIN tree ON i.inhparent = tree.rel
+)
+SELECT DISTINCT c.oid::bigint FROM tree JOIN pg_class c ON c.oid = tree.rel
+ WHERE c.relkind = 'r' ORDER BY 1`.trim();
+
+async function captureAndDisableUserTriggers(targetDb, execute) {
+  let out;
+  try {
+    out = await execute(targetDb, REDACTION_TABLE_OIDS_SQL, { tuplesOnly: true });
+  } catch (err) {
+    throw new Error(`Could not list the tables to clean in ${targetDb}: ${err.message}`);
+  }
+  const oids = String(out || '').split('\n').map((s) => s.trim()).filter(Boolean)
+    .map(Number).filter((n) => Number.isSafeInteger(n) && n > 0);
+  if (oids.length === 0) return { restore: async () => {} };
+  const arr = `ARRAY[${oids.join(',')}]::oid[]`;
+  let stateOut;
+  try {
+    stateOut = await execute(targetDb,
+      `SELECT json_build_array(tgrelid::bigint, tgname, tgenabled)::text FROM pg_trigger`
+      + ` WHERE NOT tgisinternal AND tgenabled <> 'D' AND tgrelid = ANY(${arr}) ORDER BY tgrelid, tgname`,
+      { tuplesOnly: true });
+  } catch (err) {
+    throw new Error(`Could not read trigger state in ${targetDb}: ${err.message}`);
+  }
+  const prior = [];
+  for (const line of String(stateOut || '').split('\n').map((s) => s.trim()).filter(Boolean)) {
+    let row = null;
+    try { row = JSON.parse(line); } catch { /* below */ }
+    if (!Array.isArray(row) || row.length !== 3 || !Number.isSafeInteger(Number(row[0]))
+        || typeof row[1] !== 'string' || !/^[OAR]$/.test(String(row[2]))) {
+      throw new Error(`Unreadable trigger state in ${targetDb}: ${JSON.stringify(line)}`);
+    }
+    prior.push({ oid: Number(row[0]), name: String(row[1]), state: String(row[2]) });
+  }
+  // Switch every user trigger off, by oid, in one statement. format(%I)
+  // quotes each (arbitrary) trigger name; the table is named by oid::regclass.
+  await execute(targetDb,
+    `DO $sv_trig_off$ DECLARE r oid; BEGIN FOR r IN SELECT unnest(${arr}) LOOP`
+    + ` EXECUTE format('ALTER TABLE %s DISABLE TRIGGER USER', r::regclass); END LOOP; END $sv_trig_off$`);
+  const restore = async () => {
+    if (prior.length === 0) return;
+    // Put each trigger back to its exact prior state: ENABLE keeps O,
+    // ENABLE ALWAYS keeps A, ENABLE REPLICA keeps R. Names go through
+    // format(%I); the keyword is from the validated single letter.
+    const rows = chunkedStatements(prior,
+      (p) => `(${p.oid},'${p.name.replace(/'/g, "''")}','${p.state === 'A' ? 'ENABLE ALWAYS'
+        : p.state === 'R' ? 'ENABLE REPLICA' : 'ENABLE'}')`,
+      ', ',
+      (values) => `DO $sv_trig_on$ DECLARE r record; BEGIN FOR r IN SELECT * FROM (VALUES ${values})`
+        + ' AS v(rel, nm, kw) LOOP'
+        + " EXECUTE format('ALTER TABLE %s %s TRIGGER %I', r.rel::oid::regclass, r.kw, r.nm); END LOOP; END $sv_trig_on$");
+    for (const sql of rows) await execute(targetDb, sql);
+  };
+  return { restore };
+}
+
+// The whole redaction of a copy, over an owner-authenticated `execute`: user
+// triggers off, the two passes, the after-the-column-pass re-check, and the
+// triggers put back (always, even on failure — a copy or template must never
+// be left with its triggers disabled). `onProgress` names the two passes for
+// the clone-progress surface.
+async function redactPrivateData(targetDb, execute, { onProgress = null } = {}) {
+  const { restore } = await captureAndDisableUserTriggers(targetDb, execute);
+  let bodyErr = null;
+  try {
+    onProgress?.('truncate_private');
+    await truncatePrivateTables(targetDb, execute);
+    onProgress?.('scrub_private');
+    await scrubPrivateColumns(targetDb, execute);
+    // The column pass runs UPDATEs, which can fire a trigger that writes a
+    // private value into a private table (an audit row of the old value). The
+    // TRUNCATE pass proved the private tables empty; prove it again here,
+    // after the UPDATEs. With user triggers off above this is defence in
+    // depth, and it is one round trip when nothing refilled.
+    const refilled = await verifyPrivateTablesEmpty(targetDb, execute);
+    if (refilled.length > 0) {
+      const err = new Error(
+        `staging:private table(s) refilled during the column pass in ${targetDb}: ${refilled.join(', ')}`);
+      err.noFallback = true;
+      throw err;
+    }
+  } catch (err) {
+    bodyErr = err;
+  }
+  try {
+    await restore();
+  } catch (restoreErr) {
+    if (bodyErr) {
+      log.error('db-manager', 'Could not re-enable user triggers after a failed redaction', {
+        targetDb, err: restoreErr.message,
+      });
+    } else {
+      bodyErr = restoreErr;
+    }
+  }
+  if (bodyErr) throw bodyErr;
+}
+
+// The re-check after the column pass: re-discover the staging:private tables
+// (refusing a foreign descendant) and prove they still hold no row. Returns
+// the names that do (empty in the normal case); throws when emptiness cannot
+// be proven.
+async function verifyPrivateTablesEmpty(targetDb, execute) {
+  let stdout;
+  try {
+    stdout = await execute(targetDb, PRIVATE_TABLES_DISCOVERY_SQL, { tuplesOnly: true });
+  } catch (err) {
+    throw new Error(`Failed to re-check staging:private tables in ${targetDb}: ${err.message}`);
+  }
+  const { foreign, qualifiedNames } = parsePrivateDiscovery(stdout);
+  if (foreign.length > 0) throw refuseForeignCopy(targetDb, foreign);
+  const safe = qualifiedNames.filter((n) => SAFE_QUALIFIED_IDENT.test(n));
+  if (safe.length === 0) return [];
+  return listPrivateTablesHoldingRows(targetDb, safe, privateSizeSqls(safe), execute);
+}
+
 async function truncatePrivateTables(targetDb, execute = execInTarget) {
   // Discovery query. obj_description on pg_class returns the comment
   // attached via `COMMENT ON TABLE foo IS '...'`. relkind='r' filters
   // to ordinary tables (not views/indexes/sequences). We exclude
   // pg_catalog/information_schema defensively even though they
   // shouldn't have user comments.
-  const discoverySql = `
-SELECT n.nspname || '.' || c.relname
-  FROM pg_class c
-  JOIN pg_namespace n ON n.oid = c.relnamespace
- WHERE obj_description(c.oid, 'pg_class') = 'staging:private'
-   AND c.relkind = 'r'
-   AND n.nspname NOT IN ('pg_catalog', 'information_schema')
- ORDER BY 1`.trim();
+  //
+  // The same query also lists every foreign table among their inheritance
+  // descendants, as `FOREIGN ["<private table>", "<foreign table>"]`: JSON,
+  // so no name, however odd, breaks the line or hides the prefix.
+  // TRUNCATE without ONLY reaches those children,
+  // and for postgres_fdw it sends TRUNCATE to the remote server, which in a
+  // copy is the same server the live app's definition names. Nor can their
+  // emptiness be shown from here: another user mapping, or a policy on the
+  // remote side, may see rows ours does not. So a private table with a
+  // foreign descendant refuses the copy before any TRUNCATE is sent.
+  const discoverySql = PRIVATE_TABLES_DISCOVERY_SQL;
 
   let stdout;
   try {
@@ -2268,10 +2760,8 @@ SELECT n.nspname || '.' || c.relname
     );
   }
 
-  const qualifiedNames = (stdout || '')
-    .split('\n')
-    .map((s) => s.trim())
-    .filter(Boolean);
+  const { foreign, qualifiedNames } = parsePrivateDiscovery(stdout);
+  if (foreign.length > 0) throw refuseForeignCopy(targetDb, foreign);
 
   if (qualifiedNames.length === 0) {
     log.info('db-manager', 'No staging:private tables to truncate', { targetDb });
@@ -2282,12 +2772,12 @@ SELECT n.nspname || '.' || c.relname
     targetDb, count: qualifiedNames.length, tables: qualifiedNames,
   });
 
-  // Per-table failures are collected rather than short-circuiting so
-  // we don't leave half the private tables full because one failed.
-  // After the pass, if anything failed, throw — a partial truncate is
-  // still a leaky clone.
+  // Failures are collected rather than short-circuiting so we don't
+  // leave half the private tables full because one failed. After the
+  // pass, if anything failed, throw — a partial truncate is still a
+  // leaky clone.
   const failures = [];
-  const truncated = [];
+  const safe = [];
   for (const qualified of qualifiedNames) {
     if (!SAFE_QUALIFIED_IDENT.test(qualified)) {
       log.warn('db-manager', 'Refusing to TRUNCATE non-standard identifier', {
@@ -2296,14 +2786,132 @@ SELECT n.nspname || '.' || c.relname
       failures.push({ table: qualified, error: 'unsafe identifier' });
       continue;
     }
-    try {
-      await execute(targetDb, `TRUNCATE ${qualified} RESTART IDENTITY CASCADE`);
-      truncated.push(qualified);
-    } catch (err) {
-      log.error('db-manager', 'TRUNCATE failed', {
-        targetDb, table: qualified, err: err.message,
+    safe.push(qualified);
+  }
+
+  // All of them in ONE statement, so one round trip and one transaction.
+  // One statement per table (191 for the platform's own database) paid a
+  // network round trip per table — a psql process per table on the
+  // template build — and a WAL flush per table: a TRUNCATE drops relation
+  // files, and Postgres flushes WAL at the commit of any transaction that
+  // does, whatever synchronous_commit says. One statement also truncates
+  // each relation once, where the per-table form re-truncates whatever
+  // several tables' CASCADE reaches.
+  // Do NOT replace this with the per-table statements inside BEGIN/COMMIT:
+  // re-truncating a relation already truncated in the same transaction
+  // flushes WAL every time, which measured slower than autocommit.
+  //
+  // When the statement fails with an error from the server, it rolled back
+  // and every table is as it was; the fallback then runs one statement per
+  // table, in autocommit, to empty all that can be emptied and to name each
+  // table that cannot. A client-side timeout says nothing about the outcome:
+  // the statement may have committed or may still be running. On the one
+  // connection a clone uses, the runner then refuses every later statement,
+  // so the fallback and the check below fail and the pass throws (the
+  // caller may then try the direct copy). Through psql, the process is
+  // killed at its deadline but the server may still be working, and the
+  // fallback's statements can wait behind it.
+  //
+  // AFTER TRUNCATE triggers fire once the whole statement has emptied every
+  // table in it, so a trigger on one private table that writes into another
+  // would refill it after the fact. Hence the check: one query that names
+  // every private table still holding a row. Rows found after the single
+  // statement send the pass to the per-table form; rows found after that
+  // fail the pass, and the copy is not handed out.
+  //
+  // The check runs in two steps, so the usual case costs one query:
+  //   1. File sizes. For every private table and every inheritance child
+  //      (TRUNCATE without ONLY empties those too), a plain heap table whose
+  //      file is zero bytes long holds no row: TRUNCATE leaves a zero-length
+  //      file, and any row written afterwards takes a page. A size reads the
+  //      same for every role, so row-level security cannot hide anything
+  //      here. Every other relation is a suspect: a heap with pages, which
+  //      may hold only dead rows, and anything not a plain heap (another
+  //      access method, a partitioned table; a foreign table was refused
+  //      before any TRUNCATE), whose local file size says nothing about its
+  //      rows.
+  //   2. Only when there are suspects: their rows are read, in one DO block
+  //      with row_security off for that transaction. With it off, a read
+  //      that a policy would filter raises an error instead, so a refill
+  //      hidden by row-level security fails the check rather than passing
+  //      it, and so does a suspect that cannot be read (no privilege, a
+  //      relation gone). The block raises, naming the private
+  //      tables whose suspects hold rows; it returns nothing when none do.
+  // After the single statement, anything but proof of emptiness sends the
+  // pass table by table; after that pass, it fails the pass. Two findings
+  // never go to the per-table pass, whose TRUNCATE would reach whatever the
+  // check could not vouch for: a foreign table (a TRUNCATE trigger can create
+  // one after discovery), and a line of the check's answer that cannot be
+  // read. Both refuse the copy at once.
+  // Step 1 answers in JSON, one array per relation: the private table, the
+  // relation's oid, its relkind, and its name for messages. No catalog name
+  // is ever put into SQL: step 2 reads each relation by oid, through
+  // format('%s', oid::regclass), which quotes it.
+  //
+  // psql takes a statement as one argument, which Linux caps at 128 KiB
+  // (spawn E2BIG, before the database sees anything). The single statement
+  // is skipped above MAX_SCRUB_STATEMENT_BYTES, the same ceiling the column
+  // pass uses, and both check queries are split under it.
+  const truncated = [];
+  const perTable = async () => {
+    truncated.length = 0;
+    for (const qualified of safe) {
+      try {
+        await execute(targetDb, `TRUNCATE ${qualified} RESTART IDENTITY CASCADE`);
+        truncated.push(qualified);
+      } catch (err) {
+        log.error('db-manager', 'TRUNCATE failed', {
+          targetDb, table: qualified, err: err.message,
+        });
+        failures.push({ table: qualified, error: err.message });
+      }
+    }
+  };
+  const sizeSqls = privateSizeSqls(safe);
+  const stillHoldingRows = () => listPrivateTablesHoldingRows(targetDb, safe, sizeSqls, execute);
+  if (safe.length > 0) {
+    let batched = false;
+    const oneStatement = `TRUNCATE ${safe.join(', ')} RESTART IDENTITY CASCADE`;
+    if (Buffer.byteLength(oneStatement) > MAX_SCRUB_STATEMENT_BYTES) {
+      log.warn('db-manager', 'Too many staging:private tables for one statement; truncating table by table', {
+        targetDb, count: safe.length, bytes: Buffer.byteLength(oneStatement),
       });
-      failures.push({ table: qualified, error: err.message });
+    } else {
+      try {
+        await execute(targetDb, oneStatement);
+        batched = true;
+      } catch (batchErr) {
+        log.warn('db-manager', 'One-statement TRUNCATE failed; truncating table by table', {
+          targetDb, count: safe.length, err: batchErr.message,
+        });
+      }
+    }
+    let refilled = [];
+    if (batched) {
+      // Anything short of proof that every table is empty, an unreadable
+      // suspect included, sends the pass table by table, as before this
+      // check existed; after that pass the check has the last word.
+      try {
+        refilled = await stillHoldingRows();
+      } catch (err) {
+        if (err.noFallback) throw err;
+        refilled = [`(${err.message})`];
+      }
+      if (refilled.length === 0) truncated.push(...safe);
+      else {
+        log.warn('db-manager', 'Rows came back after the one-statement TRUNCATE, or could not be ruled out; truncating table by table', {
+          targetDb, tables: refilled,
+        });
+      }
+    }
+    if (!batched || refilled.length > 0) {
+      const failedBefore = failures.length;
+      await perTable();
+      if (failures.length === failedBefore) {
+        for (const table of await stillHoldingRows()) {
+          failures.push({ table, error: 'still holds rows after TRUNCATE' });
+        }
+      }
     }
   }
 
@@ -2323,13 +2931,17 @@ async function scrubPrivateColumns(targetDb, execute = execInTarget) {
   // obj_description. attnum > 0 filters out system columns; attisdropped
   // skips logically-removed columns that pg keeps as zombies. The
   // information_schema.columns join adds character_maximum_length so we
-  // can size the per-row placeholder to fit (e.g. VARCHAR(64)). Output is
-  // pipe-separated quadruples: <schema.table>|<column>|<not_null t/f>|<max_length or empty>.
+  // can size the per-row placeholder to fit (e.g. VARCHAR(64)).
+  // row_security_active says whether row-level security applies to this
+  // session's role on the table: then an UPDATE, and any check after it,
+  // would see only the rows a policy lets through. Output is pipe-separated:
+  // <schema.table>|<column>|<not_null t/f>|<max_length or empty>|<rls t/f>.
   const discoverySql = `
 SELECT n.nspname || '.' || c.relname,
        a.attname,
        a.attnotnull,
-       COALESCE(ic.character_maximum_length::text, '')
+       COALESCE(ic.character_maximum_length::text, ''),
+       row_security_active(c.oid)
   FROM pg_attribute a
   JOIN pg_class    c ON c.oid = a.attrelid
   JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -2361,13 +2973,13 @@ SELECT n.nspname || '.' || c.relname,
     .map((s) => s.trim())
     .filter(Boolean)
     .map((line) => {
-      // psql -At with the default field separator '|'. Four fields;
-      // the third is exactly 't' or 'f' from a bool column, the fourth
-      // is a character_maximum_length integer or '' when unbounded
+      // psql -At with the default field separator '|'. Five fields;
+      // the third and fifth are exactly 't' or 'f' from a bool column, the
+      // fourth is a character_maximum_length integer or '' when unbounded
       // (e.g. TEXT).
-      const [qualified, column, notNullRaw, maxLengthRaw] = line.split('|');
+      const [qualified, column, notNullRaw, maxLengthRaw, rlsRaw] = line.split('|');
       const maxLength = maxLengthRaw ? Number(maxLengthRaw) : null;
-      return { qualified, column, notNull: notNullRaw === 't', maxLength };
+      return { qualified, column, notNull: notNullRaw === 't', maxLength, rlsRaw };
     });
 
   if (targets.length === 0) {
@@ -2381,71 +2993,134 @@ SELECT n.nspname || '.' || c.relname,
     columns: targets.map((t) => `${t.qualified}.${t.column}`),
   });
 
+  // Every column is checked first; a column that fails a check is never put
+  // into SQL, and it still fails the pass after the others are scrubbed.
   const failures = [];
-  const scrubbed = [];
-  for (const { qualified, column, notNull, maxLength } of targets) {
+  const columns = [];
+  for (const { qualified, column, notNull, maxLength, rlsRaw } of targets) {
+    const target = `${qualified}.${column}`;
     if (!SAFE_QUALIFIED_IDENT.test(qualified) || !SAFE_IDENT.test(column)) {
       log.warn('db-manager', 'Refusing to UPDATE non-standard identifier', {
         targetDb, qualified, column,
       });
-      failures.push({ target: `${qualified}.${column}`, error: 'unsafe identifier' });
+      failures.push({ target, error: 'unsafe identifier' });
       continue;
     }
-    let value;
+    if (rlsRaw !== 'f') {
+      // Row-level security would hide rows from the UPDATE and from every
+      // check after it, so the column cannot be shown to be scrubbed. Fail
+      // closed (an unreadable flag too) and leave the column out of SQL.
+      log.error('db-manager', 'staging:private column is behind row-level security', {
+        targetDb, qualified, column, rls: rlsRaw,
+      });
+      failures.push({
+        target,
+        error: rlsRaw === 't'
+          ? 'row-level security applies to this role, so rows could be hidden from the scrub'
+          : `unreadable row-level security flag ${JSON.stringify(rlsRaw)}`,
+      });
+      continue;
+    }
     if (!notNull) {
-      value = 'NULL';
-    } else if (maxLength != null && (!Number.isInteger(maxLength) || maxLength < 1)) {
+      columns.push({ qualified, column, target, placeholder: null });
+      continue;
+    }
+    if (maxLength != null && (!Number.isInteger(maxLength) || maxLength < 1)) {
       // Unexpected metadata shape — fail closed rather than guess at a
       // placeholder that might not fit the column.
       log.error('db-manager', 'staging:private column has unusable max length', {
         targetDb, qualified, column, maxLength,
       });
-      failures.push({ target: `${qualified}.${column}`, error: `unusable max length ${maxLength}` });
+      failures.push({ target, error: `unusable max length ${maxLength}` });
       continue;
-    } else {
-      // A template is scrubbed when built and again on each clone. Its
-      // existing placeholders contain the rows' OLD ctids; a later UPDATE
-      // can assign one of those values to a different row and hit a UNIQUE
-      // constraint. Give every scrub a fresh namespace, check that it is
-      // absent from the source column, and append the row's current ctid.
-      // Do not truncate the ctid: that would make multiple rows equal.
-      const compact = maxLength != null
-        && maxLength < STAGING_REDACTED_SENTINEL.length + 16 + 1 + MAX_CTID_TEXT_LENGTH;
-      const marker = compact ? '~' : STAGING_REDACTED_SENTINEL;
-      const nonceBytes = compact ? 4 : 8;
-      if (maxLength != null && maxLength < marker.length + nonceBytes * 2 + 1 + MAX_CTID_TEXT_LENGTH) {
-        failures.push({ target: `${qualified}.${column}`, error: `max length ${maxLength} cannot hold unique redaction values` });
-        continue;
-      }
-      let prefix = null;
-      try {
-        for (let attempt = 0; attempt < 5; attempt += 1) {
-          const candidate = `${marker}${crypto.randomBytes(nonceBytes).toString('hex')}:`;
-          const occupied = await execute(targetDb,
-            `SELECT EXISTS (SELECT 1 FROM ${qualified} WHERE left(${column}::text, ${candidate.length}) = '${candidate}')`,
-            { tuplesOnly: true });
-          if (String(occupied).trim() !== 'f') continue;
-          prefix = candidate;
-          break;
-        }
-      } catch (err) {
-        failures.push({ target: `${qualified}.${column}`, error: err.message });
-        continue;
-      }
-      if (!prefix) {
-        failures.push({ target: `${qualified}.${column}`, error: 'could not reserve a unique redaction namespace' });
-        continue;
-      }
-      value = `'${prefix}' || ctid::text`;
     }
-    try {
-      await execute(targetDb, `UPDATE ${qualified} SET ${column} = ${value}`);
-      scrubbed.push(`${qualified}.${column}`);
-    } catch (err) {
-      log.error('db-manager', 'staging:private column UPDATE failed', {
-        targetDb, qualified, column, err: err.message,
+    // A template is scrubbed when built and again on each clone. Its
+    // existing placeholders contain the rows' OLD ctids; a later UPDATE
+    // can assign one of those values to a different row and hit a UNIQUE
+    // constraint. Give every scrub a fresh namespace, check that it is
+    // absent from the source column, and append the row's current ctid.
+    // Do not truncate the ctid: that would make multiple rows equal.
+    const compact = maxLength != null
+      && maxLength < STAGING_REDACTED_SENTINEL.length + 16 + 1 + MAX_CTID_TEXT_LENGTH;
+    const marker = compact ? '~' : STAGING_REDACTED_SENTINEL;
+    const nonceBytes = compact ? 4 : 8;
+    if (maxLength != null && maxLength < marker.length + nonceBytes * 2 + 1 + MAX_CTID_TEXT_LENGTH) {
+      failures.push({ target, error: `max length ${maxLength} cannot hold unique redaction values` });
+      continue;
+    }
+    columns.push({ qualified, column, target, placeholder: { marker, nonceBytes } });
+  }
+
+  let scrubbed = [];
+  if (columns.length > 0) {
+    // All of them in ONE statement first: one round trip instead of one or
+    // two per column. Through psql (template build, direct copy) that is
+    // one process instead of one per statement.
+    const oneStatement = scrubInOneStatementSql(columns.map((c) => ({
+      ...c, prefix: c.placeholder ? newRedactionPrefix(c.placeholder) : null,
+    })));
+    let batchError = null;
+    let tooLong = false;
+    if (Buffer.byteLength(oneStatement) > MAX_SCRUB_STATEMENT_BYTES) {
+      // Hundreds of columns: psql takes the statement as one argument, which
+      // Linux caps at 128 KiB, so it is never sent; column by column instead.
+      tooLong = true;
+      log.warn('db-manager', 'Too many staging:private columns for one statement; scrubbing column by column', {
+        targetDb, count: columns.length, bytes: Buffer.byteLength(oneStatement),
       });
-      failures.push({ target: `${qualified}.${column}`, error: err.message });
+    } else {
+      try {
+        await execute(targetDb, oneStatement);
+        scrubbed = columns.map((c) => c.target);
+      } catch (err) {
+        batchError = err;
+      }
+    }
+    if (batchError && !databaseAnsweredWithError(batchError)) {
+      // No answer, a lost connection, or psql stopped at its deadline: the
+      // statement may have committed, failed or still be running. Nothing
+      // more is sent, because the column-by-column pass could wait behind it
+      // or, on the clone's single connection, is refused anyway. The copy is
+      // not handed out.
+      log.error('db-manager', 'One-statement column scrub got no answer from the database', {
+        targetDb, count: columns.length, err: briefError(batchError),
+      });
+      throw new Error(
+        `Failed to scrub staging:private columns in ${targetDb}: no answer to the one-statement scrub of ` +
+        `${columns.length} column(s), so whether it changed anything is unknown; ` +
+        `the column-by-column pass was not tried: ${briefError(batchError)}`
+      );
+    }
+    if (batchError || tooLong) {
+      // The database refused the statement, so it rolled back and changed
+      // nothing (or it was never sent). Today's column-by-column pass then
+      // scrubs every column it can and names each one it cannot; a check
+      // afterwards names any column a trigger or rule left unscrubbed. Each
+      // statement commits on its own, so deferred triggers have run by then.
+      if (batchError) {
+        log.warn('db-manager', 'One-statement column scrub failed; scrubbing column by column', {
+          targetDb, count: columns.length, err: briefError(batchError),
+        });
+      }
+      const byColumn = await scrubColumnByColumn(targetDb, columns, execute);
+      failures.push(...byColumn.failures);
+      scrubbed = byColumn.scrubbed;
+      if (byColumn.failures.length === 0) {
+        const done = columns.filter((c) => scrubbed.includes(c.target))
+          .map((c) => ({ ...c, prefix: byColumn.prefixes.get(c.target) || null }));
+        try {
+          for (const { target, rowSecurity } of await columnsNotScrubbed(targetDb, done, execute)) {
+            failures.push({
+              target,
+              error: rowSecurity
+                ? 'row-level security applies to this role now, so rows could have been hidden from the scrub'
+                : 'still holds a value after its UPDATE',
+            });
+          }
+        } catch (err) {
+          failures.push({ target: 'the check after the column-by-column pass', error: err.message });
+        }
+      }
     }
   }
 
@@ -2457,6 +3132,178 @@ SELECT n.nspname || '.' || c.relname,
   }
 
   return { scrubbed };
+}
+
+// A fresh placeholder namespace: the marker, a random nonce, and ':'. The
+// row's ctid follows it, so every value in one scrub is distinct, and the
+// namespace is checked to be absent from the column before it is used.
+function newRedactionPrefix({ marker, nonceBytes }) {
+  return `${marker}${crypto.randomBytes(nonceBytes).toString('hex')}:`;
+}
+
+// What a column holds once scrubbed: NULL, or its placeholder namespace.
+// Names were validated and prefixes are [~_a-z0-9:], so both splice as text.
+// IS DISTINCT FROM NULL, not IS NOT NULL: for a composite value IS NOT NULL
+// asks whether every field is non-null, so ROW('secret', NULL) would pass.
+function unscrubbedRowSql({ column, prefix }) {
+  return prefix
+    ? `left(${column}::text, ${prefix.length}) IS DISTINCT FROM '${prefix}'`
+    : `${column} IS DISTINCT FROM NULL`;
+}
+
+// Above this the one statement is not sent, and the check after the
+// column-by-column pass is split into queries below it: psql receives a
+// statement as one command-line argument, and Linux refuses an argument over
+// 128 KiB (spawn E2BIG) before the database sees anything. About 400
+// columns fit.
+const MAX_SCRUB_STATEMENT_BYTES = 96 * 1024;
+
+// The whole column pass as one statement. A DO block runs as one statement,
+// so it commits or rolls back as a whole, and an error inside it reaches the
+// caller as the database's error. In order:
+//   1. each NOT NULL column's new namespace must be absent from the column;
+//   2. one UPDATE per table, setting all of that table's private columns;
+//   3. each column must now hold only NULL or its namespace.
+// Step 3 is there because one UPDATE per table is not the same as one per
+// column: a BEFORE UPDATE trigger or a rule sees every column change at once,
+// and could, for instance, copy an old private value into another private
+// column that a later per-column UPDATE would have cleared. Any of the three
+// raises, the block rolls back, and the caller scrubs column by column.
+// Two settings make step 3 see what will be committed:
+//   - SET CONSTRAINTS ALL IMMEDIATE: a DEFERRABLE INITIALLY DEFERRED
+//     constraint trigger would otherwise fire at commit, after step 3, and
+//     could write a private value back. Set first, so such triggers run at
+//     the end of each UPDATE, and again before step 3 in case one of them
+//     deferred anything again.
+//   - SET LOCAL row_security = off: a query that row-level security would
+//     filter raises instead of silently skipping rows. Discovery already
+//     refuses tables where it applies; this keeps the block fail-closed too.
+function scrubInOneStatementSql(columns) {
+  const reserve = columns.filter((c) => c.prefix).map((c) =>
+    `  IF EXISTS (SELECT 1 FROM ${c.qualified} WHERE left(${c.column}::text, ${c.prefix.length}) = '${c.prefix}') THEN\n` +
+    `    RAISE EXCEPTION 'staging:private scrub: placeholder namespace is taken in %', '${c.target}';\n` +
+    '  END IF;');
+  const tables = new Map();
+  for (const c of columns) {
+    if (!tables.has(c.qualified)) tables.set(c.qualified, []);
+    tables.get(c.qualified).push(`${c.column} = ${c.prefix ? `'${c.prefix}' || ctid::text` : 'NULL'}`);
+  }
+  const updates = [...tables].map(([qualified, sets]) => `  UPDATE ${qualified} SET ${sets.join(', ')};`);
+  const verify = columns.map((c) =>
+    `  IF EXISTS (SELECT 1 FROM ${c.qualified} WHERE ${unscrubbedRowSql(c)}) THEN\n` +
+    `    RAISE EXCEPTION 'staging:private scrub: % still holds a value after its UPDATE', '${c.target}';\n` +
+    '  END IF;');
+  return ['DO $staging_scrub$', 'BEGIN',
+    '  SET LOCAL row_security = off;', '  SET CONSTRAINTS ALL IMMEDIATE;',
+    ...reserve, ...updates,
+    '  SET CONSTRAINTS ALL IMMEDIATE;',
+    ...verify, 'END', '$staging_scrub$'].join('\n');
+}
+
+// The one statement is long (a few kB for the platform's own database), and
+// psql's failure repeats it in full. Log and report what the database said
+// (psql's stderr), or the start of the message.
+function briefError(err) {
+  const said = err && typeof err.stderr === 'string' ? err.stderr.trim() : '';
+  return (said || String(err && err.message || err)).slice(0, 500);
+}
+
+// True only when the database answered the statement with an ERROR: it ran,
+// failed and rolled back, so running the column-by-column pass next is safe.
+// node-postgres carries the server's severity and SQLSTATE; psql exits with
+// status 1 and prints the server's ERROR. A FATAL (the session ended), a
+// client-side timeout, a lost connection, psql stopped at its deadline or
+// exiting 2: none of those says what happened to the statement.
+function databaseAnsweredWithError(err) {
+  if (!err || typeof err !== 'object') return false;
+  if (typeof err.severity === 'string') {
+    return err.severity === 'ERROR' && /^[0-9A-Z]{5}$/.test(String(err.code || ''));
+  }
+  const stderr = typeof err.stderr === 'string' ? err.stderr : '';
+  return err.code === 1 && err.killed !== true && !err.signal && /(^|\n)ERROR: {2}/.test(stderr);
+}
+
+// Today's pass, one column at a time: reserve a namespace for a NOT NULL
+// column (one probe, up to five), then UPDATE it. Used only when the
+// one-statement scrub was refused by the database; it names each column it
+// cannot scrub and goes on with the others.
+async function scrubColumnByColumn(targetDb, columns, execute) {
+  const failures = [];
+  const scrubbed = [];
+  const prefixes = new Map();
+  for (const { qualified, column, target, placeholder } of columns) {
+    let value = 'NULL';
+    if (placeholder) {
+      let prefix = null;
+      try {
+        for (let attempt = 0; attempt < 5; attempt += 1) {
+          const candidate = newRedactionPrefix(placeholder);
+          const occupied = await execute(targetDb,
+            `SELECT EXISTS (SELECT 1 FROM ${qualified} WHERE left(${column}::text, ${candidate.length}) = '${candidate}')`,
+            { tuplesOnly: true });
+          if (String(occupied).trim() !== 'f') continue;
+          prefix = candidate;
+          break;
+        }
+      } catch (err) {
+        failures.push({ target, error: err.message });
+        continue;
+      }
+      if (!prefix) {
+        failures.push({ target, error: 'could not reserve a unique redaction namespace' });
+        continue;
+      }
+      prefixes.set(target, prefix);
+      value = `'${prefix}' || ctid::text`;
+    }
+    try {
+      await execute(targetDb, `UPDATE ${qualified} SET ${column} = ${value}`);
+      scrubbed.push(target);
+    } catch (err) {
+      log.error('db-manager', 'staging:private column UPDATE failed', {
+        targetDb, qualified, column, err: err.message,
+      });
+      failures.push({ target, error: err.message });
+    }
+  }
+  return { failures, scrubbed, prefixes };
+}
+
+// One query naming every column that still holds something other than NULL
+// or its placeholder namespace (step 3 of the one-statement scrub, for the
+// column-by-column pass). It also names any column whose table row-level
+// security now applies to: discovery's flag is from before the pass, and a
+// trigger fired by one of its UPDATEs can turn row-level security on, after
+// which this role's UPDATEs and this very check see only some rows. The
+// flag is read in the same query, so it is current when the pass ends. If the query itself fails, the caller counts that
+// as a failure: nothing is confirmed.
+async function columnsNotScrubbed(targetDb, columns, execute) {
+  // As few queries as fit under MAX_SCRUB_STATEMENT_BYTES (one for any
+  // ordinary schema).
+  const queries = [];
+  let parts = [];
+  let bytes = 0;
+  for (const c of columns) {
+    const rls = `row_security_active('${c.qualified}'::regclass)`;
+    const part = `SELECT '${c.target}', ${rls} WHERE ${rls} OR EXISTS (SELECT 1 FROM ${c.qualified} WHERE ${unscrubbedRowSql(c)})`;
+    if (parts.length > 0 && bytes + part.length + 11 > MAX_SCRUB_STATEMENT_BYTES) {
+      queries.push(parts.join(' UNION ALL '));
+      parts = [];
+      bytes = 0;
+    }
+    parts.push(part);
+    bytes += part.length + 11;
+  }
+  if (parts.length > 0) queries.push(parts.join(' UNION ALL '));
+  const found = [];
+  for (const sql of queries) {
+    const out = await execute(targetDb, sql, { tuplesOnly: true });
+    for (const line of String(out || '').split('\n').map((s) => s.trim()).filter(Boolean)) {
+      const [target, rowSecurity] = line.split('|');
+      found.push({ target, rowSecurity: rowSecurity === 't' });
+    }
+  }
+  return found;
 }
 
 // ─── Per-app database storage cap (#2253) ───────────────────────────────
@@ -2797,8 +3644,11 @@ module.exports = {
   roleExists,
   truncatePrivateTables,
   scrubPrivateColumns,
+  redactPrivateData,
+  verifyPrivateTablesEmpty,
   privateDataExclusions,
   pgRestoreArgs,
+  dumpRestore,
   // Staging templates.
   stagingTemplateDbName,
   stagingTemplatesEnabled,

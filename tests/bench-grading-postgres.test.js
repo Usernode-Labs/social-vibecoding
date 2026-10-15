@@ -151,6 +151,14 @@ test('benchmark grading against the full PostgreSQL schema and its routes', { ti
     assert.equal(q.status, 200);
     assert.deepEqual(q.body.items.map((i) => i.itemId).sort(), [right.item_token, built.item_token].sort());
     assert.ok(q.body.items.every((i) => Object.keys(i).sort().join() === 'itemId,kind,stage'), 'opaque ids and stages only');
+    // One run's items: every arm's, as opaque as the whole queue.
+    const mine = await call('GET', `/api/bot-bench/queue?runId=${run.id}`, { connector: true });
+    assert.equal(mine.status, 200);
+    assert.deepEqual(mine.body.items.map((i) => i.itemId).sort(), [right.item_token, built.item_token].sort());
+    assert.equal((await call('GET', `/api/bot-bench/queue?runId=${run.id + 1000}`, { connector: true })).body.total, 0, 'another run waits on nothing');
+    const bad = await call('GET', '/api/bot-bench/queue?runId=abc', { connector: true });
+    assert.equal(bad.status, 400);
+    assert.match(bad.body.error, /runId/);
   });
 
   await t.test('an item is blind: no trial id, no run, no model, model names masked in the candidate', async () => {

@@ -106,6 +106,36 @@ test('the page publishes what the header\'s button draws and how its tray opens'
   assert.match(WS, /const header = trayButton\(\);/, 'focus returns to the header\'s button first');
 });
 
+test('the header\'s places button asks #5168: the app view must be the screen on show', () => {
+  // A project page stays mounted behind the other tabs, and improveStore
+  // still names the app, so `mounted !== slug` alone passed on Discover,
+  // Home, Messages and Profile and the button drew there. The gate is the
+  // same one header-title.tsx's `inApp` reads.
+  const src = read(`${DIR}/place-bar.tsx`);
+  assert.match(src, /const \{ screen \} = useStoreState\(navStore\);/,
+    'the route\'s screen comes from navStore');
+  assert.match(src, /if \(!phone \|\| !slug \|\| mounted !== slug \|\| screen !== 'app-view'\) return null;/,
+    'and a non-app screen draws nothing');
+  // The fixtures bundle the same navStore the component reads, so the
+  // render below runs the new hook against the store the router publishes.
+  // The phone flag is effect-settled, so a static render cannot show the
+  // drawn button on either screen; what the render buys is that the gate
+  // does not throw on it, and that the initial store agrees on nothing
+  // drawn. The source assertions above are the guard.
+  ui.publishPlace('notes-ab12', 'workshop', 4, 3, true);
+  try {
+    assert.equal(ui.navStore.get().screen, null, 'INITIAL has no screen, like placeStore');
+    ui.navStore.set({ ...ui.navStore.get(), screen: 'browse-screen' });
+    assert.equal(renderToHtml(createElement(ui.HeaderPlace, { slug: 'notes-ab12', name: 'Notes' })), '',
+      'the place is mounted, the screen is not the app view: nothing draws');
+    ui.navStore.set({ ...ui.navStore.get(), screen: 'app-view' });
+    assert.equal(renderToHtml(createElement(ui.HeaderPlace, { slug: 'notes-ab12', name: 'Notes' })), '',
+      'the screen is the app view, but no width is settled yet: nothing draws');
+  } finally {
+    ui.clearPlace('notes-ab12');
+  }
+});
+
 test('the prerendered header emits none of the merged row, so hydration is safe', () => {
   // The phone flag and the mounted place are both settled after hydration,
   // so the server render — and the first client render — draw neither the
@@ -155,10 +185,17 @@ test('the header\'s merged controls are the bar\'s, sized to the header\'s row',
     'the name paints nowhere by default');
   assert.match(CSS, /@media \(max-width: 767\.98px\) \{[^@]*?#platform-header \.header-place-name \{\n    display: inline-block;/,
     'and only a phone shows it');
-  assert.match(CSS, /#platform-header \.header-place-name \{[^}]*align-self: flex-end;/,
-    'lowered to the chip\'s foot, a subscript beside the switcher');
-  assert.match(CSS, /#platform-header \.header-place-name \{[^}]*font-size: 11px; font-weight: 600; line-height: 1; color: #fff;/,
-    'small, the header subtitle\'s size, still in the header\'s white ink');
+  // Run six (14 Oct 2026): "Club Votes ⌄ Hub" read as a word slipped under
+  // the name's baseline. It is a small quiet tag now, centred on the row.
+  assert.match(CSS, /#platform-header \.header-place-name \{[^}]*align-self: center;/,
+    'centred on the title\'s line, beside the switcher');
+  assert.doesNotMatch(CSS, /#platform-header \.header-place-name \{[^}]*align-self: flex-end;/,
+    'no longer dropped to the chip\'s foot');
+  assert.match(CSS, /#platform-header \.header-place-name \{[^}]*padding: 2px 8px; border-radius: 999px;\s+background: var\(--brand-tint\); color: var\(--brand-ink\);\s+font-size: 12px; font-weight: 600; line-height: 16px;/,
+    'a pill in the header\'s own ink, small');
+  // On a project's page that ink is white on the community's tint, as the
+  // bell's and the back disc's are.
+  assert.match(CSS, /html\[data-community-tint\] body:has\(#app-view:not\(\.hidden\)\) #platform-header \{\n  --fake-glass-tint: var\(--community-tint\);\n  --brand-ink: #fff;\n  --brand-tint: rgba\(255, 255, 255, \.16\);/);
   // The dot's ring is the community tint it sits on, as the band's was.
   assert.match(CSS, /\.dev-ws-places-dot \{[^}]*box-shadow: 0 0 0 2px var\(--community-tint, #2a2e34\);/);
 });

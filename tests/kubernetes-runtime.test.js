@@ -580,6 +580,8 @@ test('worker runtime reconciles a retained PVC, Secret and warm Deployment', asy
   assert.equal(pvc.spec.storageClassName, 'openebs-lvm-retain');
   const deployment = written.find((item) => item.kind === 'Deployment').body;
   assert.equal(deployment.spec.strategy.type, 'Recreate');
+  // The pause container is PID 1 and reaps the zombies `sleep infinity` never would.
+  assert.equal(deployment.spec.template.spec.shareProcessNamespace, true);
   const workerContainer = deployment.spec.template.spec.containers[0];
   assert.deepEqual(workerContainer.startupProbe.exec.command, ['test', '-f', '/tmp/usernode-worker-ready']);
   assert.deepEqual(workerContainer.readinessProbe.exec.command, workerContainer.startupProbe.exec.command);
@@ -728,6 +730,7 @@ test('capture runtime uses a bounded Job and caps log retrieval', async () => {
   assert.equal(created.body.spec.activeDeadlineSeconds, 120);
   assert.equal(created.body.spec.ttlSecondsAfterFinished, 3600);
   assert.equal(created.body.spec.template.spec.automountServiceAccountToken, false);
+  assert.equal(created.body.spec.template.spec.shareProcessNamespace, true);
   assert.deepEqual(created.body.spec.template.spec.containers[0].resources, {
     requests: { cpu: '4', memory: '3Gi', 'ephemeral-storage': '1Gi' },
     // 6Gi: the pool is sixteen pages now (services/visuals.js CAPTURE_MEMORY
@@ -1087,6 +1090,7 @@ for (const failed of [false, true]) {
     }
     const pod = job.spec.template.spec;
     assert.equal(pod.automountServiceAccountToken, false);
+    assert.equal(pod.shareProcessNamespace, true);
     assert.equal(pod.securityContext.runAsUser, 1000);
     assert.equal(job.spec.backoffLimit, 0);
     assert.equal(job.spec.activeDeadlineSeconds, 60);

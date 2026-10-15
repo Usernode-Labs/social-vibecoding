@@ -140,7 +140,7 @@ export function SettingsScreen() {
           level-1 menu on a phone, the sidebar from md up — sits on the strip,
           and #settings-section-content rises on it with the section inside.
       */}
-      <div id="settings-root" className="max-w-5xl mx-auto p-4 w-full">
+      <div id="settings-root" className="max-w-5xl mx-auto p-4 md:pt-5 w-full">
         <div className="md:flex md:items-start md:gap-6">
           {/*
               Desktop sidebar menu. Below md there is no nav here at all:

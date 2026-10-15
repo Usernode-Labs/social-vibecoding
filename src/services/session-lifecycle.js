@@ -20,6 +20,19 @@ const github = require('./github');
 const branchNames = require('./branch-names');
 const externalAgentTasks = require('./external-agent-tasks');
 
+// 14 Oct 2026 (#5162's follow-up): whether a durable build holds the
+// session (services/build-runs.js holdsSession: its build is still under
+// way, wherever it runs, its turns and the time between them). Slot eviction
+// pauses a session without its asking, and pausing destroys its worker: a
+// build on a draining process can sit idle between turns longer than the
+// grace these use, so a held session is never their victim. A read that
+// fails answers false, and the eviction goes on as it did before.
+async function heldByDurableBuild(pool, sessionId, why) {
+  const held = await require('./build-runs').holdsSession(pool, sessionId);
+  if (held) log.info('session-lifecycle', 'Not pausing a session a durable build holds', { sessionId, why });
+  return held;
+}
+
 // Parse "owner/repo" out of a stored GitHub repo URL. Returns [owner,
 // repo] or [] when the URL is missing/unparseable.
 function ownerRepo(repoUrl) {
@@ -309,6 +322,7 @@ async function freeGlobalSlot({ pool, graceMs, excludeSessionId = null }) {
     // proposal staging has no worker exec, but it owns the same session and
     // must be allowed to finish just like a web coding turn.
     if (isSessionBusy(row.id)) continue;
+    if (await heldByDurableBuild(pool, row.id, 'pressure')) continue;
     const { paused } = await pauseSession({ pool, sessionId: row.id, reason: 'pressure' });
     if (paused) {
       log.info('session-lifecycle', 'Freed global slot under pressure', { sessionId: row.id });
@@ -347,6 +361,7 @@ async function freeUserSlot({ pool, userId, excludeSessionId = null, includeHead
   for (const row of rows) {
     const id = Number(row && row.id);
     if (!Number.isInteger(id) || id <= 0 || isSessionBusy(id)) continue;
+    if (await heldByDurableBuild(pool, id, 'lru')) continue;
     const { paused } = await pauseSession({ pool, sessionId: id, userId, reason: 'lru' });
     if (paused) {
       log.info('session-lifecycle', 'Freed a user slot', { userId, sessionId: id });
@@ -457,8 +472,10 @@ async function teardownStagingForSession({ pool, sessionId, reason = 'idle' }) {
 //   pool, sessionId
 //   userId  - optional owner scope (HTTP authz). Omit for system actions.
 //   reason  - 'manual' | 'stale-pr' | ... The Homeroom bot's own proposals
-//             (#11, WP3) close with 'withdrawn' (asked for in its DM) or
-//             'superseded' (another proposal for the same request covers it).
+//             (#11, WP3) close with 'withdrawn' (asked for in its DM),
+//             'superseded' (another proposal for the same request covers it)
+//             or 'request-closed' (every request it was built for closed
+//             another way: homeroom-bot-closed-requests.js).
 //   purgeCc - destroy the CC volume immediately (skip retention). Default
 //             false. The activeWorkers in-flight set (routes/sessions.js)
 //             is cleared by the HTTP handler, not here.
@@ -579,6 +596,8 @@ async function finalizeArchivedSession({
         ? `${session.owner_username} replaced ${session.pr_title ? label : 'this change'} with a new one.`
       : reason === 'superseded'
         ? `${label} was withdrawn: another change for the same request covers it.`
+      : reason === 'request-closed'
+        ? `${label} was withdrawn: the request it was built for is closed.`
       : reason === 'withdrawn'
         ? `${label} was withdrawn.`
       : userId != null && session.owner_username

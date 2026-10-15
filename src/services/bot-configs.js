@@ -129,7 +129,10 @@ const MAX_LABEL_CHARS = 80;
 //                   compacted 2 to 3 times each, about 3.3 minutes of a
 //                   15-minute build spent writing summaries and then reading
 //                   files again; the 120k was chosen when every old
-//                   screenshot was still re-sent on each request.
+//                   screenshot was still re-sent on each request. After run
+//                   196, GLM compacts at 200k on every turn, so for GLM the
+//                   tweak now changes nothing; it still raises every other
+//                   non-Anthropic model to 200k.
 const TWEAKS = Object.freeze(['one_look', 'starter_inline', 'lean_turns', 'one_go', 'lean_plan', 'roomy_context']);
 const MAX_NOTES_CHARS = 1000;
 // The side builds' own weekly spend, real dollars on the App bench lane's
@@ -1409,10 +1412,11 @@ function outcomesOf(rows) {
  * Whether a result is the platform's failure rather than its
  * configuration's, so it is left out of the build rate on both sides alike
  * and counted on its own: a side build the platform failed (infra_fail,
- * recorded skipped: finishSideTrial), and a live build a restart failed
- * (finished by restart recovery and not built: homeroom-bot.js
- * completeRecoveredLive says "(finished after a restart)", or the platform
- * restarted in the middle of each try). Pure.
+ * recorded skipped: finishSideTrial), and a live build restarts failed (the
+ * records restart recovery wrote before builds were durable say "(finished
+ * after a restart)" or that the platform restarted in the middle of each try;
+ * a durable build that restarts kept taking says the platform restarted
+ * while it was building: homeroom-bot.js recordLostLiveBuild). Pure.
  */
 function platformFailureOf(r) {
   if (!r || r.built === true) return false;

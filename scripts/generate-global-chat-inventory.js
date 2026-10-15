@@ -90,6 +90,10 @@ const PATH_EXEMPTIONS = [
 // response would be both misleading and unsafe.
 const REVIEWED_ROUTE_EXEMPTIONS = [
   {
+    matches: (route) => route.source === 'src/routes/dictation.js',
+    reason: 'audio upload transport after a deliberate microphone action; the browser inserts editable text before a person sends it',
+  },
+  {
     matches: (route) => route.source === 'src/routes/apps.js'
       && route.method === 'POST' && route.path === '/api/apps/:slug/openings',
     reason: 'browser navigation telemetry, emitted by the Classic shell rather than an interactive control',

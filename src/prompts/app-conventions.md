@@ -552,8 +552,10 @@ Seed rules:
   `ON CONFLICT DO NOTHING`.
 - **Obviously fake.** Give seeded rows a consistent "Staging demo …"
   prefix so they can't be mistaken for real user content. (A first
-  version's `?demo=1` demo is labelled once instead: see "A first
-  version's populated demo" below.)
+  version's `?demo=1` demo, and any rows it seeds on boot, are
+  labelled once instead, on an element marked
+  `data-usernode-demo-note`: see "A first version's populated demo"
+  below.)
 - **Small.** A handful of rows — just enough for the testing steps.
   (A project's first version is the one exception: see "A first
   version's populated demo" below.)
@@ -578,12 +580,18 @@ seed rules change. Every later change keeps the rules above.
   screen and a half of the main screen at phone width (390×844), not
   a handful.
 - **Labelled once, not on every row.** The screen says "Staging demo"
-  once, plainly and visibly: a banner or a line at the top of the
-  screen, or the name of the list or collection the rows belong to.
+  once, plainly and visibly: a banner or a line of its own at the top
+  of the screen (never the app's name, nor in place of its tagline),
+  or the name of the list or collection the rows belong to.
   Each row needs no label of its own (a "Staging demo" pill or prefix
   on every row only clutters the screen), and this replaces the
   "Staging demo …" prefix above for these rows. The rows themselves
   stay obviously made up: no real people and no real private data.
+  The element that carries the label gets the attribute
+  `data-usernode-demo-note`: the banner or the line itself, or, in a
+  list's name, a `<span data-usernode-demo-note>` around the label's
+  own words, so the name stays. Homeroom hides that element where it
+  shows the app with its sample data under a label of its own.
 - **The viewer's own data too.** What the app keeps for a person
   (their items, choices, progress, saved things) is shown as the
   viewer's: a demo where only made-up people have done anything shows
@@ -3536,6 +3544,11 @@ locally inside the worker the same way a staging container does:
   `INLOOP_DATABASE_URL` for exactly this. Typical launch:
   `usernode-run-inloop node server.js &`
   (or this app's declared `dapp.json` entrypoint).
+- **Stop only what you started**, by its own PID (`$!` right after the
+  launch) or its job (`kill %1`). Never signal PID 1 (`kill 1`), every
+  process (`kill -1`), or every process a `/proc` walk finds: PID 1 is
+  the worker's init, and stopping it restarts the worker and ends your
+  turn.
 - The launch command supplies the manifest's committed `staging_default` /
   `default` values, as staging does. If a required value has no committed
   fallback, it reports the missing key and stops. Never copy a production

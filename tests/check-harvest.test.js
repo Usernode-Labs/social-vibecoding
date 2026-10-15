@@ -472,6 +472,77 @@ test('a capture Job that failed with nothing to salvage records an error verdict
   assert.deepEqual(evidence, [{ id: 42, head: 'abc123', trigger: 'checks-harvested' }]);
   assert.deepEqual(pool.deleted, ['run-1']);
   assert.deepEqual(releasedJobs, [{ sessionId: 42, previewRunId: 'run-1' }], 'an error verdict is settled too');
+  // A Job that wrote nothing, its process dead under it, says nothing about
+  // the proposal: the platform's fault, so the error lane keeps retrying it
+  // past the six retries a proposal's own errors get.
+  assert.equal(stores[0].result.platformFault, true);
+  const streak = { consecutive_check_failures: 7, check_error_platform: true, first_check_failure_at: new Date().toISOString() };
+  assert.equal(stagingRecovery.errorWithinAutoRetries(streak), true);
+  assert.equal(stagingRecovery.errorWithinAutoRetries({ ...streak, check_error_platform: false }), false);
+});
+
+test('a capture Job still running past its deadline is the platform\'s fault too', async (t) => {
+  quietBroadcast(t);
+  const pool = makePool({ orphans: [orphanRow()], session: sessionRow() });
+  const stores = [];
+  stub(t, kubernetes, {
+    findCheckJobs: async () => ({ capture: { name: 'sv-capture-s42-x', state: 'running' }, unitSuite: null }),
+    collectCheckJob: async () => ({ state: 'timeout', stdout: 'SHOT {"path":"/"}\n', stderr: '', exitCode: null, timedOut: true, partial: true, partialReason: 'deadline' }),
+  });
+  stub(t, visuals, {
+    settleCaptureRun: async () => assert.fail('nothing to settle from'),
+    storeChecks: async (_pool, _id, _sha, result, detail) => { stores.push({ result, detail }); return true; },
+    storeCaptureOutcome: async () => true,
+    scheduleShots: () => {},
+  });
+  const [result] = await (await harvest.sweep(config, { reason: 'tick', pool })).done;
+  assert.deepEqual([result.outcome, result.state], ['settled', 'error']);
+  assert.deepEqual(stores.map((s) => [s.result.state, s.result.platformFault]), [['error', true]]);
+  assert.match(stores[0].detail, /past its deadline/);
+});
+
+// The graduation lookup decides whether the unit suite blocks merges. When
+// it failed, the harvest read "not graduated" and settled: a missing suite
+// was passed over and a red one read as advisory, the shape of the 13 Oct
+// incidents below. It waits for the next sweep instead.
+test('a graduation lookup that fails leaves the run for the next sweep: nothing stored, nothing re-driven', async (t) => {
+  quietBroadcast(t);
+  let lookupDown = true;
+  const pool = makePool({
+    orphans: [orphanRow()], session: sessionRow(),
+    answer: (sql) => {
+      if (/SELECT check_key FROM app_check_history/.test(sql) && lookupDown) throw new Error('connection reset');
+      return graduatedUnit(sql);
+    },
+  });
+  const settled = [];
+  const redrives = [];
+  stub(t, kubernetes, {
+    findCheckJobs: async () => ({ capture: { name: 'sv-capture-s42-x', state: 'succeeded' }, unitSuite: null }),
+    collectCheckJob: async () => capturePassed,
+  });
+  stub(t, visuals, {
+    settleCaptureRun: async (_c, _p, run) => { settled.push(run); return { traceStatus: 'passing', result: { state: 'passing' } }; },
+    storeChecks: async () => assert.fail('nothing is stored while graduation is unknown'),
+    scheduleShots: () => {},
+  });
+  stub(t, stagingRecovery, { recheckSessionChecks: async (args) => { redrives.push(args.reason); } });
+
+  const [first] = await (await harvest.sweep(config, { reason: 'boot', pool })).done;
+  assert.deepEqual([first.outcome, first.why], ['deferred', 'graduation lookup failed']);
+  assert.deepEqual(settled, [], 'not settled as if the suite were advisory');
+  assert.deepEqual(redrives, [], 'nor started over: its Jobs are still there to read');
+  assert.deepEqual(pool.deleted, [], 'the manifest stays, for the next sweep');
+  assert.deepEqual(releasedJobs, [], 'and so do its Jobs');
+  assert.equal(visuals.hasInFlightCapture(42), false, 'the seat is given back');
+
+  // The next sweep reads graduation: the suite blocks merges and its Jobs
+  // are gone, so only a fresh run can judge the head.
+  lookupDown = false;
+  const [second] = await (await harvest.sweep(config, { reason: 'tick', pool })).done;
+  assert.deepEqual([second.outcome, second.why], ['redriven', 'unit-suite Job not found']);
+  assert.deepEqual(settled, []);
+  assert.deepEqual(redrives, ['orphaned-run']);
 });
 
 // 13 Oct 2026: a release deleted #4996's finished red suite and stopped
@@ -1066,8 +1137,8 @@ test('captureForSession records a manifest before its Jobs exist and clears it o
   const launch = src.indexOf('kubernetes.runCaptureJob(');
   assert.ok(provisional > 0 && full > provisional && launch > full,
     'provisional manifest, then the full one, then the Job launch — in that order');
-  assert.match(src, /finally \{[\s\S]{0,1200}if \(harvestable\) await checkRuns\.finish\(operation\?\.cleanupPool \|\| pool, runId\);/,
-    'the manifest is cleared in the run\'s finally');
+  assert.match(src, /finally \{[\s\S]{0,1400}if \(harvestable && \(!workflow \|\| settledRun\)\) await checkRuns\.finish\(operation\?\.cleanupPool \|\| pool, runId\);/,
+    'the manifest is cleared in the run\'s finally (a preview machine\'s run keeps it unless it settled: its retry collects it)');
   assert.match(src, /previewRunId: runId/, 'the Jobs carry the manifest\'s run id, which is how the harvester finds them');
 });
 

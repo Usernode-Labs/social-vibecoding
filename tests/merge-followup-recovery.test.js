@@ -112,3 +112,17 @@ test('self-hosted delivery belongs to release watch, while its main check is rec
   assert.equal(calls.rebuild.length, 0);
   assert.equal(calls.check.length, 1);
 });
+
+// A commit whose image was refused for running as root (deploy-failure.js)
+// cannot be delivered by trying again; a newer commit on main is delivered.
+test('a merge whose image was refused for running as root is not delivered again; a newer main is', async () => {
+  const refused = { stage: 'healthcheck', kind: 'root_image', sha: SHA, reason: 'runs as root', at: '2026-10-15T08:21:42Z' };
+  const held = fixture({ ...BASE, last_failure: refused });
+  await (await recovery.recover({}, held.opts)).done;
+  assert.equal(held.calls.rebuild.length, 0);
+
+  const moved = fixture({ ...BASE, last_failure: refused }, { head: NEWER });
+  await (await recovery.recover({}, moved.opts)).done;
+  assert.equal(moved.calls.rebuild.length, 1);
+  assert.equal(moved.calls.rebuild[0].options.reuseRunningRevision, NEWER);
+});

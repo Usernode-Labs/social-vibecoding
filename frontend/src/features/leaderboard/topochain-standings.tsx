@@ -106,7 +106,7 @@ type DrillView = {
       canonicalSuccessRate: string | null;
     } | null;
   };
-  activities: Triple & { items: { label: string; points: string; at: string | null }[] | null };
+  activities: Triple & { items: { label: string; points: string; at: string | null; precision?: 'day' | 'instant' | null }[] | null };
   epoch: Triple & {
     rows: { epoch: string; wonSlots: string; produced: string; successRate: string }[] | null;
   };
@@ -447,7 +447,7 @@ function Activities({ view }: { view: DrillView['activities'] }): ReactNode {
   return (
     <ul className="space-y-1">
       {view.items.map((a, i) => (
-        <ActivityRow key={i} text={a.label} points={`+${a.points}`} at={a.at} />
+        <ActivityRow key={i} text={a.label} points={`+${a.points}`} at={a.at} precision={a.precision} />
       ))}
     </ul>
   );

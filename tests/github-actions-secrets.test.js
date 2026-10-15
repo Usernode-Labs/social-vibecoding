@@ -177,7 +177,7 @@ function extractPlatformSecretsView() {
   const start = appsJs.indexOf('function platformSecretsView(');
   assert.notStrictEqual(start, -1, 'platformSecretsView not found');
   // Its body ends at the next top-level declaration.
-  const end = appsJs.indexOf('\n// If app creation hasn\'t reached', start);
+  const end = appsJs.indexOf('\n// A creator\'s retries of a failed creation', start);
   assert.notStrictEqual(end, -1, 'end of platformSecretsView not found');
   const src = appsJs.slice(start, end);
   const groupConst = "const GITHUB_ACTIONS_GROUP = 'GitHub Actions secrets (platform repo)';\n";
@@ -305,7 +305,7 @@ test('the fetch is admin-only and never blocks the panel', () => {
 test('the staging mock is gated on USERNODE_ENV and covers the annotation path', () => {
   const mock = appsJs.slice(
     appsJs.indexOf('function stagingMockActionsSecrets('),
-    appsJs.indexOf('// If app creation hasn\'t reached')
+    appsJs.indexOf('// A creator\'s retries of a failed creation')
   );
   assert.match(mock, /if \(!IS_STAGING\) return null;/, 'strictly a no-op outside staging');
   assert.match(mock, /STAGING_DEMO_GH_DEPLOY_KEY/);

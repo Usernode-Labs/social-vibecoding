@@ -41,6 +41,23 @@ test('an earlier year keeps its year', () => {
   assert.match(when.text, /2025/);
 });
 
+test('explicit occurrence precision shows genuine noon and midnight times in the viewer timezone', () => {
+  for (const iso of ['2026-10-02T12:00:00.000Z', '2026-10-02T00:00:00.000Z']) {
+    const time = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' }).format(new Date(iso));
+    const when = mod.activityWhen(iso, { now: NOW, precision: 'instant' });
+    assert.ok(when.text.endsWith(` · ${time}`));
+    const html = renderToHtml(createElement(mod.ActivityRow, {
+      text: 'Tried Chess', points: '+10', at: iso, precision: 'instant',
+    }));
+    assert.match(html, / · /);
+  }
+});
+
+test('explicit old day precision is honored without guessing from the timestamp hour', () => {
+  const when = mod.activityWhen('2026-10-02T00:00:00.000Z', { now: NOW, precision: 'day' });
+  assert.doesNotMatch(when.text, / · /);
+});
+
 test('a date-only credit (pinned to noon UTC by the scorer) shows no time', () => {
   const d = new Date('2026-10-02T12:00:00.000Z');
   const day = new Intl.DateTimeFormat(undefined, { timeZone: 'UTC', weekday: 'short', month: 'short', day: 'numeric' }).format(d);

@@ -14,6 +14,8 @@ const log = require('../services/logger');
 const suites = require('../services/bench/suites');
 const catalog = require('../services/bench/catalog');
 const lane = require('../services/bench/lane');
+// The lane runs on the leader; its state reaches the others (docs/plans/web-and-conductor.md).
+const leaderStatus = require('../services/leader-status');
 const runner = require('../services/bench/runner');
 const grading = require('../services/bench/grading');
 const { benchGradingLimiter, benchRunLimiter } = require('../middleware/rate-limits');
@@ -62,7 +64,7 @@ function homeroomBenchRoutes(config) {
               (SELECT COUNT(*)::int FROM bench_runs) AS runs,
               (SELECT COUNT(*)::int FROM bench_runs WHERE status IN ('queued', 'running')) AS open_runs`,
     );
-    return { suites: c.suites, runs: c.runs, openRuns: c.open_runs, lane: lane.laneStatus(), hiddenChecks: runner.HIDDEN_CHECKS_GAP };
+    return { suites: c.suites, runs: c.runs, openRuns: c.open_runs, lane: await leaderStatus.readOr('bench-lane', pool, lane.laneStatus), hiddenChecks: runner.HIDDEN_CHECKS_GAP };
   }));
 
   // ── Suites and tasks (#3654 B) ──────────────────────────────────────
@@ -243,7 +245,7 @@ function homeroomBenchRoutes(config) {
 
   router.get('/api/admin/homeroom-bot/bench/runs', handler('List bench runs', async () => ({
     runs: await lane.listRuns(pool),
-    lane: lane.laneStatus(),
+    lane: await leaderStatus.readOr('bench-lane', pool, lane.laneStatus),
     defaults: { capUsd: lane.DEFAULT_CAP_USD, repeats: lane.DEFAULT_REPEATS, maxConcurrency: lane.MAX_CONCURRENCY },
     // What the launcher starts from: Core v1 with the candidate models
     // (services/bench/lane.js launcherDefaults).
@@ -341,9 +343,15 @@ function homeroomBenchRoutes(config) {
   // person's.
   const graderOf = (req) => (req.cliAuthenticated ? 'opus' : 'human');
 
+  // `runId` narrows a grade queue to one run's items: every arm's, as
+  // opaque and as shuffled as the whole queue, so a run can be judged on
+  // its own as soon as it ends.
   router.get('/api/bot-bench/queue', requireAdminWrite, handler('Bench grading queue', async (req) => {
     const kind = req.query?.kind === 'label' ? 'label' : 'grade';
-    return grading.queue(pool, { kind, limit: Number(req.query?.limit) || 20 });
+    const raw = req.query?.runId;
+    if (raw != null && raw !== '' && !/^[1-9]\d{0,9}$/.test(String(raw))) return { ok: false, status: 400, error: 'runId is a run\'s number' };
+    const runId = raw != null && raw !== '' ? Number(raw) : null;
+    return grading.queue(pool, { kind, limit: Number(req.query?.limit) || 20, runId });
   }));
 
   // `images=1` (the connector's get_bench_item) puts a taste item's

@@ -39,6 +39,7 @@ const log = require('./logger');
 const { getPool } = require('../db/pool');
 const caddy = require('./caddy');
 const events = require('./events');
+const leaderTimers = require('./leader-timers');
 
 const TXT_PREFIX = '_homeroom';
 const TXT_VALUE_PREFIX = 'homeroom-verify=';
@@ -518,7 +519,6 @@ async function resolveAppHost(pool, rawHost) {
 
 // ── The sweep ───────────────────────────────────────────────────────────
 
-let intervalHandle = null;
 let sweepInFlight = false;
 let lastSweepAt = null;
 let lastError = null;
@@ -549,14 +549,13 @@ async function sweep(config, { now = Date.now() } = {}) {
 }
 
 function start(config) {
-  if (intervalHandle) return;
-  setTimeout(() => { sweep(config); }, 20 * 1000).unref?.();
-  intervalHandle = setInterval(() => { sweep(config); }, SWEEP_INTERVAL_MS);
-  intervalHandle.unref?.();
+  // A leader timer (services/leader-timers.js): no sweep starts once
+  // shutdown has begun, and one under way is given the drain to finish.
+  leaderTimers.every('app-domains', () => sweep(config), SWEEP_INTERVAL_MS, { firstDelayMs: 20 * 1000 });
 }
 
 function stop() {
-  if (intervalHandle) { clearInterval(intervalHandle); intervalHandle = null; }
+  leaderTimers.clear('app-domains');
 }
 
 function getStatus() {

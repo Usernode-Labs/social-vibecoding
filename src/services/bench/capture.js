@@ -355,14 +355,13 @@ async function runDetached({
   worker, containerName = null, sessionId = null, appId, timeoutMs = CAPTURE_TIMEOUT_MS,
   prior = null, onStarted = null, ensure = null,
   pollMs = DETACHED_POLL_MS, now = Date.now, sleep = (ms) => new Promise((r) => { setTimeout(r, ms); }),
-  // Once the platform is shutting down, the step is left running where it
-  // is, unread, for the next leader to harvest: this never resolves.
-  isStopping = () => require('../lifecycle').isShuttingDown(),
+  // The build's durable fence (services/durable-steps.js): once the build is
+  // no longer this process's, the step is left running where it is, unread,
+  // for the build's next owner to harvest, and the stop is thrown.
+  fence = null,
 }) {
   const holdIfStopping = async () => {
-    let stopping = false;
-    try { stopping = !!isStopping(); } catch { stopping = false; }
-    if (stopping) await new Promise(() => {});
+    if (typeof fence === 'function') fence();
   };
   let where = containerName;
   let id = null;
@@ -384,7 +383,12 @@ async function runDetached({
     id = crypto.randomBytes(8).toString('hex');
     startedAt = now();
     if (onStarted) {
-      try { await onStarted({ id, startedAt: new Date(startedAt).toISOString() }); } catch { /* a record never stops the step */ }
+      try {
+        await onStarted({ id, startedAt: new Date(startedAt).toISOString() });
+      } catch (err) {
+        // A record never stops the step, but a stop does.
+        require('../durable-steps').rethrowStop(err, 'detached capture');
+      }
     }
     await worker.startDetachedCapture(where, {
       id, source: script(), env: { INLOOP_PORT: CAPTURE_PORT, INLOOP_DATABASE_URL, BENCH_APP_ID: Number(appId) || 1 },
@@ -440,6 +444,7 @@ async function captureTrial({
       });
     }
   } catch (err) {
+    require('../durable-steps').rethrowStop(err, 'capture');
     return { ok: false, error: `the screenshot step did not run: ${String(err.message || err).slice(0, 300)}` };
   }
   const output = parseOutput(stdout);

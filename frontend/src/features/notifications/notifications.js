@@ -2374,6 +2374,12 @@ function plainMarkdown(value) {
     .replace(/\s+/g, ' ')
     .trim();
 }
+// The Homeroom bot's account (services/conversations.js HOMEROOM_BOT_USERNAME): a
+// synthetic account nobody else can hold.
+function isBotUsername(username) {
+  return String(username || '').toLowerCase() === 'homeroom_bot';
+}
+
 // The row's words for one of the bot's notifications: { label, subject, meta },
 // or null when the detail is not the bot's. Its answer is what it wrote,
 // under its name.
@@ -2555,6 +2561,9 @@ function rowView(n) {
         conversationId: n.conversationId != null ? Number(n.conversationId) : null,
         appLine: bot.meta || t('notifications:row.source.messages'),
         botMoment: true,
+        // Run six: the row wears the bot's own face (the sheet's AvatarChip),
+        // never a letter tile of its handle.
+        bot: true,
         ...headline(bot.label, bot.subject),
       };
     }
@@ -2562,6 +2571,9 @@ function rowView(n) {
       ...base,
       wrap: true,
       icon: icons[n.kind],
+      // A build moment always comes from the bot; so does anything its
+      // account sent, a moment without its detail included.
+      ...(BUILD_KIND_MOMENTS[n.kind] || isBotUsername(n.sourceUsername) ? { bot: true } : {}),
       by: n.sourceUsername || null,
       // What the sheet's Messages tab filters on. Carried as a flag rather
       // than re-deriving it there from `kind`: CONVERSATION_NOTIF_KINDS lives
@@ -2846,9 +2858,13 @@ function rowView(n) {
   // The good-news row. `detail === 'forced'` is an admin override rather than
   // a vote that carried, and the label says which: to the person who wrote
   // the change those are the same event with very different meanings.
+  // #5064: until production runs it (`sessionStatus` 'merging', read live
+  // off the change as a "ready to try" row is), it says Going live.
   if (n.kind === 'pr_merged') {
+    const going = n.sessionStatus === 'merging';
     const head = headline(
-      n.detail === 'forced' ? t('notifications:row.merged.forced') : t('notifications:row.merged.live'),
+      n.detail === 'forced' ? t('notifications:row.merged.forced')
+        : (going ? t('notifications:row.merged.goingLive') : t('notifications:row.merged.live')),
       prLabel || n.sessionTitle || t('notifications:row.merged.yourChange'),
     );
     // #1688: on a merge the vote carried, `detail` names who backed and
@@ -2856,7 +2872,7 @@ function rowView(n) {
     const credits = n.detail && n.detail !== 'forced' ? String(n.detail) : '';
     return {
       ...base,
-      icon: '\u{1F389}',
+      icon: going ? '\u{1F680}' : '\u{1F389}',
       label: head.label,
       segments: credits ? [...head.segments, { t: 'text', v: credits }] : head.segments,
     };
@@ -2866,14 +2882,16 @@ function rowView(n) {
   // the author's "Live" row above: the same tile, a small grey first line
   // naming the kind, the change's title in bold below it. No button of its
   // own; the row itself opens the change (proposalKinds).
+  // #5064: "going live" until production runs it, as the author's row.
   if (n.kind === 'voted_change_merged') {
+    const going = n.sessionStatus === 'merging';
     const head = headline(
-      t('notifications:row.votedMerged.label'),
+      going ? t('notifications:row.votedMerged.goingLive') : t('notifications:row.votedMerged.label'),
       prLabel || n.sessionTitle || t('notifications:row.votedMerged.aChange'),
     );
     return {
       ...base,
-      icon: '\u{1F389}',
+      icon: going ? '\u{1F680}' : '\u{1F389}',
       ...head,
     };
   }

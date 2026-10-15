@@ -3,6 +3,13 @@
  * three things the signed-out story (../auth/story.tsx) says groups make.
  * They live here so the two screens say the same three things.
  *
+ * Evan, 15 October 2026: the grid stays two by two, the front three
+ * (FRONT_KEYS: a tier list, a game, an organizer) and "Something else…",
+ * which opens a sheet with Your own idea and the rest (MORE): a poll, find a
+ * time, a sign-up sheet and a group challenge. Those four are ready-made
+ * apps too. The organizer's potluck moved to the sign-up sheet, where it is
+ * still the potluck planner.
+ *
  * Evan, 8 October 2026: the three examples (a running club's tracker, a
  * movie night's poll, a weekend's planner) became sentences to finish. Each
  * one is something a group needs more than once, and each is filled in with
@@ -23,8 +30,8 @@
  * Everything a person reads here is a message id, read with `t` when it is
  * shown, so the words follow the language on screen.
  *
- * READY-MADE. Every choice that needs no typing (the tier list's four, the
- * organizer's five) names a `template`: one of Homeroom's ready-made apps
+ * READY-MADE. Every choice that needs no typing (all but the game's) names
+ * a `template`: one of Homeroom's ready-made apps
  * (services/app-templates.js), which Make it makes instead of asking
  * Homeroom bot to build a first version, so the project is usable as soon
  * as it runs. Its `emoji` is that app's icon. Your own words, and every
@@ -120,6 +127,21 @@ export const TEMPLATES: readonly Template[] = [
     note: 'onboarding:firstSession.template.tier.note',
   },
   {
+    key: 'poll',
+    emoji: '🗳️',
+    title: 'onboarding:firstSession.template.poll.title',
+    namePlaceholder: 'onboarding:firstSession.template.poll.namePlaceholder',
+    line: 'onboarding:firstSession.template.poll.line',
+    short: 'onboarding:firstSession.template.poll.short',
+    choices: [
+      { key: 'dinner', label: 'onboarding:firstSession.template.poll.dinner.label', sentence: 'onboarding:firstSession.template.poll.dinner.sentence', name: 'onboarding:firstSession.template.poll.dinner.name', description: 'onboarding:firstSession.template.poll.dinner.description', template: 'poll-dinner' },
+      { key: 'spending', label: 'onboarding:firstSession.template.poll.spending.label', sentence: 'onboarding:firstSession.template.poll.spending.sentence', name: 'onboarding:firstSession.template.poll.spending.name', description: 'onboarding:firstSession.template.poll.spending.description', template: 'poll-spending' },
+      { key: 'movies', label: 'onboarding:firstSession.template.poll.movies.label', sentence: 'onboarding:firstSession.template.poll.movies.sentence', name: 'onboarding:firstSession.template.poll.movies.name', description: 'onboarding:firstSession.template.poll.movies.description', template: 'poll-movies' },
+    ],
+    own: { sentence: 'onboarding:firstSession.template.poll.own.sentence', example: 'onboarding:firstSession.template.poll.own.example', name: '', description: 'onboarding:firstSession.template.poll.own.description' },
+    note: 'onboarding:firstSession.template.poll.note',
+  },
+  {
     key: 'game',
     emoji: '🎮',
     title: 'onboarding:firstSession.template.game.title',
@@ -147,13 +169,75 @@ export const TEMPLATES: readonly Template[] = [
       { key: 'groceries', label: 'onboarding:firstSession.template.organizer.groceries.label', sentence: 'onboarding:firstSession.template.organizer.groceries.sentence', name: 'onboarding:firstSession.template.organizer.groceries.name', description: 'onboarding:firstSession.template.organizer.groceries.description', template: 'grocery-list', emoji: '🛒' },
       { key: 'chores', label: 'onboarding:firstSession.template.organizer.chores.label', sentence: 'onboarding:firstSession.template.organizer.chores.sentence', name: 'onboarding:firstSession.template.organizer.chores.name', description: 'onboarding:firstSession.template.organizer.chores.description', template: 'chore-list', emoji: '🧹' },
       { key: 'library', label: 'onboarding:firstSession.template.organizer.library.label', sentence: 'onboarding:firstSession.template.organizer.library.sentence', name: 'onboarding:firstSession.template.organizer.library.name', description: 'onboarding:firstSession.template.organizer.library.description', template: 'lending-library', emoji: '📚' },
-      { key: 'potlucks', label: 'onboarding:firstSession.template.organizer.potlucks.label', sentence: 'onboarding:firstSession.template.organizer.potlucks.sentence', name: 'onboarding:firstSession.template.organizer.potlucks.name', description: 'onboarding:firstSession.template.organizer.potlucks.description', template: 'potluck-planner', emoji: '🍲' },
       { key: 'study', label: 'onboarding:firstSession.template.organizer.study.label', sentence: 'onboarding:firstSession.template.organizer.study.sentence', name: 'onboarding:firstSession.template.organizer.study.name', description: 'onboarding:firstSession.template.organizer.study.description', template: 'study-timer', emoji: '⏱️' },
     ],
     own: { sentence: 'onboarding:firstSession.template.organizer.own.sentence', example: 'onboarding:firstSession.template.organizer.own.example', name: 'onboarding:firstSession.template.organizer.own.name', description: 'onboarding:firstSession.template.organizer.own.description' },
     note: 'onboarding:firstSession.template.organizer.note',
   },
+  {
+    key: 'findtime',
+    emoji: '📅',
+    title: 'onboarding:firstSession.template.findtime.title',
+    namePlaceholder: 'onboarding:firstSession.template.findtime.namePlaceholder',
+    line: 'onboarding:firstSession.template.findtime.line',
+    short: 'onboarding:firstSession.template.findtime.short',
+    choices: [
+      { key: 'bookclub', label: 'onboarding:firstSession.template.findtime.bookclub.label', sentence: 'onboarding:firstSession.template.findtime.bookclub.sentence', name: 'onboarding:firstSession.template.findtime.bookclub.name', description: 'onboarding:firstSession.template.findtime.bookclub.description', template: 'find-a-time-book-club' },
+      { key: 'gamenight', label: 'onboarding:firstSession.template.findtime.gamenight.label', sentence: 'onboarding:firstSession.template.findtime.gamenight.sentence', name: 'onboarding:firstSession.template.findtime.gamenight.name', description: 'onboarding:firstSession.template.findtime.gamenight.description', template: 'find-a-time-game-night' },
+      { key: 'trip', label: 'onboarding:firstSession.template.findtime.trip.label', sentence: 'onboarding:firstSession.template.findtime.trip.sentence', name: 'onboarding:firstSession.template.findtime.trip.name', description: 'onboarding:firstSession.template.findtime.trip.description', template: 'find-a-time-trip' },
+    ],
+    own: { sentence: 'onboarding:firstSession.template.findtime.own.sentence', example: 'onboarding:firstSession.template.findtime.own.example', name: 'onboarding:firstSession.template.findtime.own.name', description: 'onboarding:firstSession.template.findtime.own.description' },
+    note: 'onboarding:firstSession.template.findtime.note',
+  },
+  {
+    key: 'signup',
+    emoji: '✋',
+    title: 'onboarding:firstSession.template.signup.title',
+    namePlaceholder: 'onboarding:firstSession.template.signup.namePlaceholder',
+    line: 'onboarding:firstSession.template.signup.line',
+    short: 'onboarding:firstSession.template.signup.short',
+    choices: [
+      { key: 'potluck', label: 'onboarding:firstSession.template.signup.potluck.label', sentence: 'onboarding:firstSession.template.signup.potluck.sentence', name: 'onboarding:firstSession.template.signup.potluck.name', description: 'onboarding:firstSession.template.signup.potluck.description', template: 'potluck-planner', emoji: '🍲' },
+      { key: 'shifts', label: 'onboarding:firstSession.template.signup.shifts.label', sentence: 'onboarding:firstSession.template.signup.shifts.sentence', name: 'onboarding:firstSession.template.signup.shifts.name', description: 'onboarding:firstSession.template.signup.shifts.description', template: 'signup-shifts' },
+      { key: 'rsvp', label: 'onboarding:firstSession.template.signup.rsvp.label', sentence: 'onboarding:firstSession.template.signup.rsvp.sentence', name: 'onboarding:firstSession.template.signup.rsvp.name', description: 'onboarding:firstSession.template.signup.rsvp.description', template: 'signup-rsvp', emoji: '🙋' },
+    ],
+    own: { sentence: 'onboarding:firstSession.template.signup.own.sentence', example: 'onboarding:firstSession.template.signup.own.example', name: 'onboarding:firstSession.template.signup.own.name', description: 'onboarding:firstSession.template.signup.own.description' },
+    note: 'onboarding:firstSession.template.signup.note',
+  },
+  {
+    key: 'challenge',
+    emoji: '🏃',
+    title: 'onboarding:firstSession.template.challenge.title',
+    namePlaceholder: 'onboarding:firstSession.template.challenge.namePlaceholder',
+    line: 'onboarding:firstSession.template.challenge.line',
+    short: 'onboarding:firstSession.template.challenge.short',
+    choices: [
+      { key: 'miles', label: 'onboarding:firstSession.template.challenge.miles.label', sentence: 'onboarding:firstSession.template.challenge.miles.sentence', name: 'onboarding:firstSession.template.challenge.miles.name', description: 'onboarding:firstSession.template.challenge.miles.description', template: 'challenge-miles' },
+      { key: 'steps', label: 'onboarding:firstSession.template.challenge.steps.label', sentence: 'onboarding:firstSession.template.challenge.steps.sentence', name: 'onboarding:firstSession.template.challenge.steps.name', description: 'onboarding:firstSession.template.challenge.steps.description', template: 'challenge-steps' },
+      { key: 'books', label: 'onboarding:firstSession.template.challenge.books.label', sentence: 'onboarding:firstSession.template.challenge.books.sentence', name: 'onboarding:firstSession.template.challenge.books.name', description: 'onboarding:firstSession.template.challenge.books.description', template: 'challenge-books' },
+    ],
+    own: { sentence: 'onboarding:firstSession.template.challenge.own.sentence', example: 'onboarding:firstSession.template.challenge.own.example', name: 'onboarding:firstSession.template.challenge.own.name', description: 'onboarding:firstSession.template.challenge.own.description' },
+    note: 'onboarding:firstSession.template.challenge.note',
+  },
 ];
+
+/**
+ * THE FRONT THREE (Evan, 15 Oct 2026). The make screen's grid stays two by
+ * two: these three, in this order, then "Something else…", which opens a
+ * sheet with Your own idea and every other starting point (MORE, in the
+ * catalog's order). The signed-out story names the same three. It is one
+ * list so that a test of what shows first changes this and nothing else.
+ */
+export const FRONT_KEYS: readonly string[] = ['tier', 'game', 'organizer'];
+
+export const FRONT: readonly Template[] = FRONT_KEYS.map((key) => {
+  const t = TEMPLATES.find((x) => x.key === key);
+  if (!t) throw new Error(`No starting point called ${key}`);
+  return t;
+});
+
+/** Every other starting point, behind "Something else…". */
+export const MORE: readonly Template[] = TEMPLATES.filter((t) => !FRONT_KEYS.includes(t.key));
 
 /** The choice a tap on the template's tile picks: its first, or Your own for a game. */
 export function firstChoice(t: Template): string {

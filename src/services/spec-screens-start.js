@@ -68,6 +68,23 @@ const TAILWIND_LINK_RE = /<link\b[^>]*\bhref\s*=\s*["']\/tailwind\.css["'][^>]*>
 // over twice SCREEN_CHAR_BUDGET, 40,000; this is twice that again).
 const MAX_SCREEN_CHARS = 80 * 1000;
 const MAX_FILE_CHARS = 400 * 1000;
+// App bench run 193 (14 Oct 2026): a screen is drawn at phone width, and on a
+// desktop window its rows, fields and buttons stretched across the whole
+// window, the reviewer's most common round-1 finding (8 of 15 reviewed first
+// versions) and the blind judge's on every brief. The screens' stylesheet
+// opens with this, so each screen stays one centred column; the drawing's own
+// rules come after it and win where they set the same thing.
+const SCREEN_COLUMN_CSS = [
+  '/* Each screen is one centred column: the phone width it was drawn at grows',
+  '   to a readable column on a wider window, never rows and buttons stretched',
+  '   across the window. Remove this only for an app that fills the window by',
+  '   design, such as a map. */',
+  '[data-spec-screen] {',
+  '  width: 100%;',
+  '  max-width: 42rem;',
+  '  margin-inline: auto;',
+  '}',
+].join('\n');
 // The design kit's colour tokens (template.js DESIGN_KIT_CSS).
 const KIT_TOKENS = Object.freeze([
   'ground', 'surface', 'raised', 'fg', 'muted', 'line', 'accent', 'on-accent', 'danger', 'on-danger', 'focus',
@@ -399,6 +416,8 @@ function mapScreens({ specHtml, files }) {
     '   if any, its <template data-spec-screen="2">). Colours are the design kit\'s',
     '   tokens, rgb(var(--accent)), so they follow the light and the dark look. */',
     '',
+    SCREEN_COLUMN_CSS,
+    '',
     placed[0].css,
   ];
   for (const p of placed.slice(1)) {
@@ -570,6 +589,7 @@ module.exports = {
   INDEX_PATH,
   INPUT_CSS_PATH,
   SCREENS_CSS_PATH,
+  SCREEN_COLUMN_CSS,
   COMMIT_MESSAGE,
   enabled,
   screensOf,

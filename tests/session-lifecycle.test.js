@@ -324,6 +324,8 @@ test('archiveSession: sweeper archive announces the actor-less form', async () =
 test('#11 (WP3): the Homeroom bot withdrawing its own proposal says so, never that it went quiet', async () => {
   for (const [reason, said] of [
     ['superseded', '“Watering reminders” was withdrawn: another change for the same request covers it.'],
+    // Its requests closed another way: a person's change, a vote, GitHub.
+    ['request-closed', '“Watering reminders” was withdrawn: the request it was built for is closed.'],
     ['withdrawn', '“Watering reminders” was withdrawn.'],
   ]) {
     const { subject, spies, restore } = loadWithStubs();
@@ -637,5 +639,69 @@ test('archiveSession: an owned imported PR closes through the same lifecycle', a
     const transition = pool.calls.find((c) => /SET status = 'archived'/.test(c.sql));
     assert.match(transition.sql, /user_id = \$2/);
     assert.deepEqual(transition.params, [17, 3]);
+  } finally { restore(); }
+});
+
+// 14 Oct 2026 (#5162's follow-up): a durable build holds its session for its
+// whole run (services/build-runs.js holdsSession), its turns and the time
+// between them, wherever the build runs: a build on a draining process can
+// sit idle between turns past either grace. Slot eviction never pauses such
+// a session (pausing destroys its worker), still pauses the others, and a
+// read that fails leaves it as it was before.
+const HELD_SQL = /FROM wf_instances w/;
+
+function slotPool({ candidates, held = new Set(), holdsFail = false }) {
+  return makePool([
+    [HELD_SQL, (params) => {
+      if (holdsFail) throw new Error('connection reset');
+      return [{ held: held.has(Number(params[0])) }];
+    }],
+    [/SELECT id FROM chat_sessions/, candidates.map((id) => ({ id }))],
+    [/SET status = 'paused'\s+WHERE/, (params) => [{ id: params[0] }]],
+    [/SELECT cs\.\*/, (params) => [{ id: params[0], app_slug: 'widget' }]],
+  ]);
+}
+
+const pausedIn = (pool) => pool.calls.filter((c) => /SET status = 'paused'/.test(c.sql)).map((c) => c.params[0]);
+const askedIn = (pool) => pool.calls.filter((c) => HELD_SQL.test(c.sql)).map((c) => c.params[0]);
+
+test('freeGlobalSlot never pauses a session a durable build holds, and pauses the next one', async () => {
+  const { subject, spies, restore } = loadWithStubs();
+  try {
+    const pool = slotPool({ candidates: [7, 8], held: new Set([7]) });
+    assert.deepEqual(await subject.freeGlobalSlot({ pool, graceMs: 1000 }), { freed: true, sessionId: 8 });
+    assert.deepEqual(pausedIn(pool), [8]);
+    assert.deepEqual(spies.destroyWorker, ['usernode-worker-8'], 'the held build\'s worker is not touched');
+    assert.deepEqual(askedIn(pool), [7, 8], 'asked of each session it would pause, in its order');
+    // Only held ones: nothing is freed.
+    const all = slotPool({ candidates: [7], held: new Set([7]) });
+    assert.deepEqual(await subject.freeGlobalSlot({ pool: all, graceMs: 1000 }), { freed: false });
+    assert.deepEqual(pausedIn(all), []);
+    // A busy one is skipped before it is asked about.
+    spies.busySessionIds.add(8);
+    const busy = slotPool({ candidates: [8, 9] });
+    await subject.freeGlobalSlot({ pool: busy, graceMs: 1000 });
+    assert.deepEqual(askedIn(busy), [9]);
+  } finally { restore(); }
+});
+
+test('freeUserSlot never pauses a session a durable build holds, and pauses the next one', async () => {
+  const { subject, restore } = loadWithStubs();
+  try {
+    const pool = slotPool({ candidates: [7, 8], held: new Set([7]) });
+    assert.deepEqual(await subject.freeUserSlot({ pool, userId: 3 }), { freed: true, sessionId: 8 });
+    assert.deepEqual(pausedIn(pool), [8]);
+    const all = slotPool({ candidates: [7], held: new Set([7]) });
+    assert.deepEqual(await subject.freeUserSlot({ pool: all, userId: 3 }), { freed: false });
+  } finally { restore(); }
+});
+
+test('slot eviction: when whether a build holds the session cannot be read, it pauses as before', async () => {
+  const { subject, restore } = loadWithStubs();
+  try {
+    const global = slotPool({ candidates: [7, 8], held: new Set([7]), holdsFail: true });
+    assert.deepEqual(await subject.freeGlobalSlot({ pool: global, graceMs: 1000 }), { freed: true, sessionId: 7 });
+    const user = slotPool({ candidates: [7, 8], held: new Set([7]), holdsFail: true });
+    assert.deepEqual(await subject.freeUserSlot({ pool: user, userId: 3 }), { freed: true, sessionId: 7 });
   } finally { restore(); }
 });

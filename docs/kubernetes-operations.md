@@ -112,10 +112,12 @@ Nothing in that chain tells open browser tabs about the new build either; the
 Pod being replaced does. The rolling update terminates the old Pod only after
 the new one has been Ready for `minReadySeconds`, and the `preStop` sleep has
 taken it out of the Service before `SIGTERM` arrives. On `SIGTERM`, `server.js`
-`cleanup()` closes the listener, then reads the Deployment's target revision
-through `services/deploy-status.js` and, if it is another build, pushes
+`cleanup()` reads the Deployment's target revision through
+`services/deploy-status.js` and, if it is another build, pushes
 `platform_version` to every open `/ws/events` socket
-(`ws.pushPlatformVersion`). Every events handshake carries the same message
+(`ws.pushPlatformVersion`), then closes the sockets so the tabs reconnect to
+the new Pod. The replaced Pod then finishes the work it started before it
+exits: see "Releases let work finish" below. Every events handshake carries the same message
 with the build the socket landed on. A tab prefetches the announced build into
 its service-worker cache and turns the Settings version row into the reload
 button (`handlePlatformVersion` in `public/js/app.js`); it never reloads
@@ -136,6 +138,56 @@ See the [platform chart](../deploy/helm/social-vibecoding-platform/README.md)
 for configuration and the `infra/prototype/bare-metal-platform` runbooks for
 cluster foundation and database operations. Read the installed image and Argo
 revision when comparing source behavior with a live failure.
+
+## Releases let work finish
+
+A platform Pod a release replaces keeps finishing the work it started rather
+than cutting it (`docs/plans/draining-releases.md`), once another platform
+process that records what it holds is serving (it waits up to a minute for
+one; without one, as after a rollback to a release from before this, it cuts
+over as it always did). On `SIGTERM` it:
+
+1. refuses anything new and marks its row in `platform_processes` `draining`;
+2. stops its leader work (the bot's loops, the bench lane, the eval runner,
+   every sweeper and timer), quiesces the workflow runtime (no slot, timer or
+   claim; its running work goes on) and resigns the leader lock, so the new
+   Pod is promoted within a poll;
+3. announces the new build to its tabs and closes their sockets;
+4. keeps its listener open (a shots worker calls the Pod that runs its run by
+   `POD_IP`) and waits until it holds nothing (`process_holds`), has no
+   registered background work, no running workflow work and no request still
+   answering;
+5. then does what shutdown always did: closes the listener, ends the Mayor's
+   turns still running, stops the workflow runtime (its work items are given
+   up to the next claim), marks what is left interrupted, hands back checks
+   runs, deletes its row and exits.
+
+It waits at most `platform.drainMinutes` (`PLATFORM_DRAIN_TIMEOUT_MS`), and
+ends early when `platform.drainingMax` (`PLATFORM_DRAINING_MAX`) newer Pods are
+draining too. The log says what it is still finishing every minute
+(`Still finishing work before exiting`), and how it ended: `Finished this
+process's work`, or `Drain deadline passed` / `Newer processes are draining
+too`, with what it handed over. What it hands over is adopted by the leader's
+`orphan-turn-sweep` and `orphan-headless-sweep` within a minute or two, and by
+the existing heartbeat sweeps for checks, shots runs, local-agent turns, the
+Mayor's turns, app creation and owed redeploys.
+
+The live processes and what each holds:
+
+```sql
+SELECT p.id, p.release, p.state, p.drain_deadline_at, h.kind, h.ref
+  FROM platform_processes p LEFT JOIN process_holds h ON h.process_id = p.id
+ WHERE p.heartbeat_at > NOW() - interval '45 seconds'
+ ORDER BY p.started_at, h.kind, h.ref;
+```
+
+A schema change has to stay compatible with the code of the release before it
+for as long as such a Pod drains, not only for the seconds of the overlap: the
+migration Job applies the new schema while it still runs. A node drain
+(`kubectl drain`) waits for a platform Pod's drain as well; pass
+`--grace-period` to cut it short. Each draining Pod keeps its database pools
+open until it exits, so with `drainingMax` 2 up to three Pods' pools are open
+at once.
 
 ## Shared app and preview TLS
 
@@ -671,6 +723,86 @@ An ordinary rolling change, safe in both directions.
 - **New merges** take the old tail again.
 - **Merges the machine already accepted** still finish: the runtime keeps running while
   they have work left, and stops on a later boot once nothing is left.
+
+## Workflow app-delivery machine
+
+`platform.workflowAppDeliveryEnabled` (default `false`) becomes `WF_APP_DELIVERY_ENABLED`.
+It needs `platform.workflowMergeFollowupsEnabled`: without it the machine does not run,
+the boot logs why, and Admin → Workflows lists the flag under "Needs a person". When it
+runs, every production deploy of an app is a request to the app-delivery machine, run one
+at a time per app, and the version pill's "deploying" is `apps.deploy_state`, read by every
+Pod. `docs/workflows.md` explains the machine.
+
+### Activation and rollback
+
+An ordinary rolling change, safe in both directions.
+
+1. **Set the value** in the platform's values in the infra repository, once merge
+   follow-ups is on. Argo CD rolls the Deployment.
+2. **During the rollout overlap.** An old Pod still deploys the old way. The cross-process
+   build lock keeps its deploy and the machine's from running on one app at once.
+3. **Verify.**
+   - **The new Pod's log.** `Workflow runtime started` lists `app-delivery`.
+   - **Admin → Workflows.** The next deploy appears as `app-delivery / app:<id>`,
+     `deploying`, then `idle`, and its problems panel is empty.
+   - **The version pill** spins during the deploy after a page reload, too.
+
+**Rollback.** Set the value back to `false`. Callers deploy themselves again. Requests the
+machine already accepted still run: the runtime keeps running while it has a deploy or a
+request left, and stops on a later boot once nothing is left. A retry of a merge's
+delivery or of a secret change's redeploy is then the machine's own deploy again.
+
+Rolling the **release** back (to code from before this machine) is different: the
+merge-followups and governance-proposal instances this release wrote are version 3, and
+older code leaves an instance a newer version wrote alone. With those flags on, such an
+instance waits until the release comes back.
+
+## Workflow preview machine
+
+`platform.workflowPreviewsEnabled` (default `false`) becomes `WF_PREVIEWS_ENABLED`. When
+it is on, every source of a preview or a checks run asks the preview machine, which builds,
+checks and retires previews as durable work, and records who is working on a session.
+The stuck-checks sweep, the harvest, the by-name reap and the orphan-database sweep leave
+the sessions it holds alone. It needs no other workflow flag. `docs/workflows.md` explains
+the machine.
+
+**On the cluster.** A preview keeps its per-session Deployment, Service and Ingress
+(`sv-preview-<appId>-s<sessionId>`). Each attempt has its own env Secret
+(`<name>-env-a<n>`) and database (one per claim of its build, should a build be claimed
+again after a crash), and the Deployment carries the annotation
+`social.usernode.io/preview-attempt`: the newest attempt that wrote it and which claim of
+its build, as `n.k` (a bare `n` is claim 0). The attempt's Secret carries the same
+annotation, so an older claim never writes its database back into it. A failed rollout
+restores the template that served, so the older revision keeps serving. Each platform
+process also holds one more database connection, for its presence lock.
+
+### Activation and rollback
+
+1. **Set the value** in the platform's values in the infra repository. Argo CD rolls the
+   Deployments.
+2. **While the replaced Pods drain.** A Pod the release replaced finishes the previews it
+   was building the old way, for up to `platform.drainMinutes`. Once a new Pod has recorded
+   the flag, the ownership trigger logs such writes in `wf_ownership_violations` (`log`
+   mode in production).
+   - **Where the work runs.** The machine's builds and checks runs are its work items,
+     which only the leader runs: with the web and conductor split, the conductor Pod.
+     Each build clones the proposal into that Pod's `/tmp` and follows its rollout there,
+     so size `platform.conductor.resources` for the previews built at once.
+3. **Verify.**
+   - **The new Pod's log.** `Workflow runtime started` lists `preview`.
+   - **Admin → Workflows.** The next revision appears as `preview / session:<id>`, goes
+     through `preparing` and `checking`, and settles; the problems panel is empty.
+   - **The cluster.** `kubectl -n social-apps get secrets` shows `-env-a<n>` Secrets, only
+     for attempts that serve or are being prepared.
+
+**Rollback.** Set the value back to `false`. The next boot hands every session the machine
+holds back to the old paths (`Detach`): its work is cancelled, what it built stays (its
+databases follow the old naming, so the orphan sweep collects them once unlinked), and the
+old paths own the sessions again. Turning it on again later adopts each session from its
+row. The old paths delete a preview's `-env` Secret only: a held session's `-env-a<n>`
+Secrets stay until the machine retires the preview again, or are deleted by hand: list
+them with `kubectl -n social-apps get secrets -l social.usernode.io/session-id=<id>` and
+delete only the `-env-a<n>` ones (the `-env` Secret is the old paths' preview's).
 
 ## Read-only inventory and logs
 

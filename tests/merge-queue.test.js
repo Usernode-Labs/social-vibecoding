@@ -435,6 +435,37 @@ test('an approved conflict gets a resolution turn, then the new head is measured
   } finally { teardown(); }
 });
 
+test('a conflict on a proposal the preview machine holds is repaired without the old lifecycle (WF_PREVIEWS_ENABLED)', async () => {
+  // The lifecycle's row stopped following the machine's revisions: asked,
+  // it refuses every head it did not record. The machine's own run of the
+  // old head is cancelled by the new revision the sync pushes.
+  const superseded = [];
+  const pass = async (held) => {
+    const run = setup({ candidates: [conflicting(1, 2)] });
+    stub('src/services/preview-workflow.js', { held: async () => held });
+    stub('src/services/preview-lifecycle.js', {
+      async supersede(config, id) {
+        superseded.push(id);
+        throw new Error('Preview revision changed during cancellation');
+      },
+    });
+    try {
+      await run.queue.enqueue({}, 7);
+      return run.events;
+    } finally {
+      unstub('src/services/preview-workflow.js');
+      unstub('src/services/preview-lifecycle.js');
+      teardown();
+    }
+  };
+  const held = await pass(true);
+  assert.deepEqual([held.syncs, held.merges, superseded], [[1], [1], []],
+    'the held proposal gets its resolution turn, and nothing asks the old lifecycle about it');
+  const legacy = await pass(false);
+  assert.deepEqual([legacy.syncs, superseded], [[], [1]],
+    'one the machine does not hold is still superseded the old way, and a refusal keeps a worker off it');
+});
+
 test('the conflict lane holds while the direct lane has work in flight', async () => {
   // A resolution made against a main that is about to move is a resolution
   // made twice. The run's finalizer re-kicks the queue when it reports.
@@ -769,5 +800,35 @@ test('no GitHub mergeability polling happens anywhere in a pass', async () => {
     assert.equal(typeof github.getOctokit, 'undefined',
       'the stub exposes no octokit, so any polling attempt would throw');
     await queue.enqueue({}, 7);
+  } finally { teardown(); }
+});
+
+// LAST in the file: lifecycle's shutdown flag never resets in a process.
+//
+// Most triggers answer their request and never await the pass they set off
+// (a vote, a verdict), so before the in-flight registry the shutdown drain
+// could not see a merge under way and exited from under it. A pass is held
+// there now (src/services/inflight-work.js) until it ends, and the re-kick
+// it would run next is dropped once shutdown has begun: the next leader's
+// boot reconcile drains every app with open proposals.
+test('a pass is held where the shutdown drain waits for it, and no re-kick starts once shutdown has begun', async () => {
+  const inflight = require('../src/services/inflight-work');
+  const lifecycle = require('../src/services/lifecycle');
+  const { queue, events } = setup({ candidates: [candidate(1, 2)] });
+  const votes = require('../src/routes/votes'); // the stub setup installed
+  const merge = votes.checkAndMerge;
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  votes.checkAndMerge = async (...args) => { await gate; return merge(...args); };
+  try {
+    const pass = queue.enqueue({}, 7);
+    assert.deepEqual(inflight.snapshot().map((e) => e.name), ['merge-queue'], 'held while it runs');
+    queue.enqueue({}, 7); // a trigger mid-pass: flags a re-kick
+    lifecycle.setShuttingDown();
+    release();
+    await pass;
+    await new Promise((r) => setTimeout(r, 20));
+    assert.deepEqual(events.merges, [1], 'the pass under way finished; no second pass was started');
+    assert.equal(inflight.size(), 0);
   } finally { teardown(); }
 });

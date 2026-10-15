@@ -104,6 +104,10 @@ test('the prompt: the description, its creator, its real people, a game starter 
     /light and a dark look/, /Sample names, dates and numbers are placeholders/, /no em dashes/]) {
     assert.match(fvPlan.PLAN_SYSTEM, rule);
   }
+  // App bench run 196 (Club Votes): a plan narrower than the description's
+  // own examples, kept by the spec, failed 8 of 15 blind-graded builds.
+  const flatPlan = fvPlan.PLAN_SYSTEM.replace(/\s+/g, ' ');
+  assert.match(flatPlan, /Kept to its core, never narrower than its words: it can do each example the description gives\. Where people choose or decide something \("which day", "which film"\), plan the options they pick between, written by whoever asks; plain yes or no only where the description asks for that\./);
   assert.deepEqual(fvPlan.PLAN_SCHEMA.required, ['plan', 'choices', 'build_note', 'assumptions']);
 });
 
@@ -173,7 +177,9 @@ test('started once, only for a first version the bot builds, and never without a
   const route = read('src/routes/apps.js');
   assert.match(route, /homeroomBotDm\.startFirstVersion\(pool, config, \{\s+app: appRow, user: req\.user, brief: req\.body\.brief,[\s\S]*?earlyPlan: MAKE_ORIGINS\.has\(req\.body\.from\),/);
   assert.match(read('src/services/homeroom-bot-dm.js'),
-    /if \(bot && earlyPlan\) await require\('\.\/first-version-plan'\)\.startEarlyPlan\(pool, \{ app, user, brief: text \}\);/);
+    // And, since newcomer run six, the server's config and the bot, for the
+    // early first look drawn from the plan (tests/first-version-early-look.test.js).
+    /if \(bot && earlyPlan\) await require\('\.\/first-version-plan'\)\.startEarlyPlan\(pool, \{ app, user, brief: text, config, bot \}\);/);
 });
 
 test('a plan\'s state: pending until written (a stopped process\'s reads failed), decided once answered or when it asks nothing', () => {
@@ -222,8 +228,9 @@ test('the bot builds from the plan at Make it with no triage turn, and goes ahea
   assert.match(src, /if \(acted === PLAN_ACTED\.waiting \|\| acted === PLAN_ACTED\.unsent\) \{\s+const went = await goAheadIfDecided/);
   const dm = read('src/services/homeroom-bot-dm.js');
   assert.match(dm, /\.\.\.\(quiet \? \{ moment: null \} : \{\}\),/);
-  // Through its card when it has one: the same decision Build it makes.
-  assert.match(dm, /if \(action\) return decidePlanTap\(pool, \{ user: \{ id: userId \}, action, choice: 'build', answers: picks, deps \}\);/);
+  // Through its card when it has one: the same decision Build it makes,
+  // but with the plan's bullets never shown to its maker (run seven).
+  assert.match(dm, /if \(action\) return decidePlanTap\(pool, \{ user: \{ id: userId \}, action, choice: 'build', answers: picks, deps, planShown: false \}\);/);
   // And Build it in the chat notes the plan decided, for the steps.
   assert.match(dm, /await require\('\.\/first-version-plan'\)\.noteDecided\(pool, \{\s+appId: went\.appId, issueNumber: went\.issueNumber, answers: went\.chosen\.map\(\(c\) => c\.answer\),/);
 });
@@ -289,15 +296,16 @@ test('the made screen: the questions in place of the invite line until answered,
   assert.match(src, /const res = await fetch\(answersUrl\(made\.slug\), \{\s+method: 'POST',/);
   assert.match(src, /const line: BuildLineState \| null = answered && \(served === 'planning' \|\| served === 'plan'\) \? 'building'\s+: asked && served === 'plan' \? 'planning' : served;/);
   // Read as often as the setup while the plan is still being written.
-  assert.match(src, /const t = window\.setInterval\(read, settingUp \|\| planComing \? READY_POLL_MS : 10000\);/);
+  assert.match(src, /const t = window\.setInterval\(read, settingUp \|\| planComing \? READY_POLL_MS : lookWaits \? FIRST_LOOK_POLL_MS : 10000\);/);
   const { MadeScreen } = loadTsx(MADE);
   const html = renderToHtml(createElement(MadeScreen, {
     made: { slug: 'club-votes', name: 'Club Votes', emoji: '🗳️', description: null, example: null, conversationId: 12 },
     me: 'evan', onContinue() {}, onOpenChat() {},
   }));
   assert.doesNotMatch(html, /data-first-session-questions/, 'nothing asked before a plan is read');
-  // Run five: before the first read, no invite buttons to skip the questions with.
-  assert.match(html, /<p role="status" data-first-session-checking=""[^>]*>Checking whether Homeroom bot needs to ask you anything first\.<\/p>/);
+  // Run five: before the first read, no invite buttons to skip the questions
+  // with. Run six: one spinner over the line, and nothing else under way.
+  assert.match(html, /<div role="status" data-first-session-checking=""[^>]*><svg[^>]*animate-spin[^>]*>[\s\S]*?<\/svg><p>Checking whether Homeroom bot needs to ask you anything first\.<\/p><\/div>/);
   assert.doesNotMatch(html, />Share invite<\/button>/);
   assert.doesNotMatch(html, /Invite people later/);
 });

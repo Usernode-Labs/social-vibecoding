@@ -207,8 +207,10 @@ test('a build that did not finish says why in plain words, and that a reply here
     'I couldn\'t finish building this: something went wrong while I was working on it. Reply here and I\'ll try again.');
   assert.equal(said(''),
     'I couldn\'t finish building this: something went wrong while I was working on it. Reply here and I\'ll try again.');
+  // 14 Oct 2026 (newcomer run eight): a first version is named, and points
+  // at the Try again under the message (tests/first-version-stopped.test.js).
   assert.equal(said('the build ran past its time limit', { firstVersion: true }),
-    'I couldn\'t finish building the first version: it took longer than I\'m allowed. Reply here and I\'ll try again.');
+    'I couldn\'t finish building Page Turners: it took longer than I\'m allowed. Tap Try again and I\'ll start over.');
   for (const reason of ['the build ran past its time limit (finished after a restart)', 'the build turn failed (exit 1)',
     'the change was built but could not be proposed: x', 'the platform restarted in the middle of each of its last 3 tries at building this']) {
     const text = said(reason);
@@ -529,7 +531,8 @@ test('the short description is suggested for everyone making a project, and ever
   // fork.
   assert.match(create, /\} else \{\s*try \{\s*await homeroomBotDm\.noteProjectMade\(pool, \{\s*app: appRow, user: req\.user, origin: repoUrlNormalized \? 'import' : 'blank',/);
   const fork = routes.slice(routes.indexOf("router.post('/api/apps/:slug/fork'"), routes.indexOf("router.get('/api/apps/:slug'"));
-  assert.match(fork, /noteProjectMade\(pool, \{ app: appRow, user: req\.user, origin: 'fork' \}\)[\s\S]{0,200}\}\s*forkApp\(config, appRow, sourceApp\)/);
+  // Recorded before the copy is started (under its owner, services/app-creation-owner.js).
+  assert.match(fork, /noteProjectMade\(pool, \{ app: appRow, user: req\.user, origin: 'fork' \}\)[\s\S]{0,400}appCreationOwner\.drive\(pool, appRow, \{[\s\S]{0,80}provision: \(\) => forkApp\(config, appRow, sourceApp\)/);
   // Every project is live, so nothing reads who made which any more; what
   // was made without a description is recorded only for somebody the bot
   // works for, and an import's record is what holds its backlog back.
@@ -541,9 +544,10 @@ test('the short description is suggested for everyone making a project, and ever
   // The bot's wake is only for a first version it builds.
   assert.match(src, /if \(botBuilds\) settingsModule\(\)\.noteIssueActivity\(/);
   assert.match(src, /if \(final && botBuilds\) \{/, 'no DM about a request the bot never took on');
-  // A sweep the bot's mode does not gate, on the leader.
+  // A sweep the bot's mode does not gate, on the leader (a leader timer:
+  // services/leader-timers.js unrefs it and stops it at shutdown).
   const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
-  assert.match(server, /\.sweepFirstVersions\(getPool\(config\), config\)[\s\S]{0,240}setInterval\(runFirstRequestSweep, 5 \* 60 \* 1000\)\.unref\(\);/);
+  assert.match(server, /\.sweepFirstVersions\(getPool\(config\), config\)[\s\S]{0,240}leaderTimers\.every\('first-request-sweep', runFirstRequestSweep, 5 \* 60 \* 1000\);/);
   const schema = fs.readFileSync(path.join(__dirname, '..', 'src', 'db', 'schema.sql'), 'utf8');
   assert.match(schema, /ALTER TABLE homeroom_bot_first_versions ADD COLUMN IF NOT EXISTS bot_builds BOOLEAN NOT NULL DEFAULT TRUE;/);
 });

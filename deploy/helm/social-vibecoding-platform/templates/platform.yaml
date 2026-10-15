@@ -6,11 +6,23 @@ metadata:
   labels:
     {{- include "social-vibecoding-platform.labels" . | nindent 4 }}
     app.kubernetes.io/component: platform
+  annotations:
+    # After the Deployments (wave 0) are healthy: a selector that starts to
+    # require serves-requests (the conductor switched on, the release that
+    # first labels the serving Pods) is applied only once the Pods carrying
+    # it are rolled out and Ready, never while only the old ones serve.
+    argocd.argoproj.io/sync-wave: "1"
 spec:
   type: ClusterIP
   selector:
     {{- include "social-vibecoding-platform.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: platform
+    {{- if .Values.platform.conductor.enabled }}
+    # The conductor's Pods share the platform's identity (its network
+    # policies, its PodDisruptionBudget) but take no requests: only the Pods
+    # that serve them carry this label (docs/plans/web-and-conductor.md).
+    social.usernode.io/serves-requests: "true"
+    {{- end }}
   ports:
     - {name: http, port: 3000, targetPort: http, protocol: TCP}
 ---
@@ -38,7 +50,50 @@ spec:
     matchLabels:
       {{- include "social-vibecoding-platform.selectorLabels" . | nindent 6 }}
       app.kubernetes.io/component: platform
-  template:
+  template:{{ include "social-vibecoding-platform.platformPod" (merge (dict "processRole" (ternary "web" "" .Values.platform.conductor.enabled)) .) }}
+{{- if .Values.platform.conductor.enabled }}
+---
+# The conductor (docs/plans/web-and-conductor.md): the same image and Pod as
+# above, run as PROCESS_ROLE=conductor. It stands for leader and runs the
+# leader's work; the Pods above serve people's requests and never lead. Its
+# Pods carry the platform's component label, so every network policy and the
+# PodDisruptionBudget that admit the platform admit it; its own selector adds
+# process-role, and the Service above leaves it out. A release replaces it as
+# it replaces them: the new one first, then the old one finishes its work
+# (docs/plans/draining-releases.md).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "social-vibecoding-platform.fullname" . }}-conductor
+  labels:
+    {{- include "social-vibecoding-platform.labels" . | nindent 4 }}
+    app.kubernetes.io/component: platform
+    social.usernode.io/process-role: conductor
+spec:
+  replicas: {{ .Values.platform.conductor.replicas }}
+  revisionHistoryLimit: 5
+  minReadySeconds: 10
+  progressDeadlineSeconds: 600
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      {{- include "social-vibecoding-platform.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: platform
+      social.usernode.io/process-role: conductor
+  template:{{ include "social-vibecoding-platform.platformPod" (merge (dict "processRole" "conductor") .) }}
+{{- end }}
+{{- end }}
+
+{{- /*
+The platform's Pod, for the Deployment above and the conductor's. Called with
+the chart's context plus processRole: "" (all: serves and stands for leader),
+"web" or "conductor".
+*/}}
+{{- define "social-vibecoding-platform.platformPod" }}
     metadata:
       annotations:
         checksum/secrets: {{ toYaml .Values.secrets | sha256sum }}
@@ -46,10 +101,28 @@ spec:
       labels:
         {{- include "social-vibecoding-platform.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: platform
+        social.usernode.io/process-role: {{ .processRole | default "all" | quote }}
+        {{- if ne .processRole "conductor" }}
+        social.usernode.io/serves-requests: "true"
+        {{- end }}
     spec:
       serviceAccountName: social-platform-runtime
       automountServiceAccountToken: true
-      terminationGracePeriodSeconds: 90
+      {{- with include "social-vibecoding-platform.databasePrimaryAffinity" . }}
+      {{- . | nindent 6 }}
+      {{- end }}
+      # A Pod a release replaced keeps finishing the work it started for up
+      # to platform.drainMinutes, then hands the rest over and exits
+      # (docs/plans/draining-releases.md). The 60 seconds on top are the
+      # preStop sleep and the bounded steps after the drain.
+      terminationGracePeriodSeconds: {{ add (mul (int .Values.platform.drainMinutes) 60) 60 }}
+      # The pause container is PID 1 and reaps zombies, as `--init` does on
+      # Docker (src/services/docker.js). Node as PID 1 never reaped the
+      # orphaned `git` processes it spawns: the conductor held 824 zombies
+      # after 14 minutes and the platform reached 61,783 PIDs (Oct 2026),
+      # all counted against the kubelet's per-Pod PID limit. SIGTERM still
+      # reaches Node, whose handler starts the drain.
+      shareProcessNamespace: true
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
@@ -79,6 +152,10 @@ spec:
             - name: PLATFORM_DEPLOYMENT
               value: {{ include "social-vibecoding-platform.fullname" . | quote }}
             - {name: NODE_ENV, value: production}
+            {{- with .processRole }}
+            # web or conductor (src/services/process-role.js); unset is all.
+            - {name: PROCESS_ROLE, value: {{ . | quote }}}
+            {{- end }}
             {{- with .Values.platform.nodeOptions }}
             - {name: NODE_OPTIONS, value: {{ . | quote }}}
             {{- end }}
@@ -88,6 +165,8 @@ spec:
             - {name: SHOTS_ENABLED, value: {{ .Values.platform.shotsEnabled | quote }}}
             - {name: WF_GOVERNANCE_ENABLED, value: {{ .Values.platform.workflowGovernanceEnabled | quote }}}
             - {name: WF_MERGE_FOLLOWUPS_ENABLED, value: {{ .Values.platform.workflowMergeFollowupsEnabled | quote }}}
+            - {name: WF_APP_DELIVERY_ENABLED, value: {{ .Values.platform.workflowAppDeliveryEnabled | quote }}}
+            - {name: WF_PREVIEWS_ENABLED, value: {{ .Values.platform.workflowPreviewsEnabled | quote }}}
             - {name: WORKER_RUNTIME, value: kubernetes}
             - {name: CAPTURE_RUNTIME, value: kubernetes}
             {{- $previewCluster := "" }}
@@ -113,6 +192,10 @@ spec:
             # HTTP, but only the Postgres advisory-lock leader runs singleton
             # recovery, sweepers and reconcilers.
             - {name: PLATFORM_LEADER_LOCK, value: "1"}
+            # How long a replaced Pod finishes its work, and how many may at
+            # once (docs/plans/draining-releases.md).
+            - {name: PLATFORM_DRAIN_TIMEOUT_MS, value: {{ mul (int .Values.platform.drainMinutes) 60000 | quote }}}
+            - {name: PLATFORM_DRAINING_MAX, value: {{ int .Values.platform.drainingMax | quote }}}
             - {name: GIT_SHA, value: {{ .Values.release.sourceRevision | quote }}}
             - {name: USERNODE_DOMAIN, value: {{ .Values.config.domain | quote }}}
             - {name: USERNODE_APPS_DOMAIN, value: {{ default .Values.config.domain .Values.config.appsDomain | quote }}}
@@ -167,11 +250,15 @@ spec:
           lifecycle:
             preStop: {exec: {command: ["sh", "-c", "sleep 5"]}}
           resources:
+            {{- if and (eq .processRole "conductor") .Values.platform.conductor.resources }}
+            {{- toYaml .Values.platform.conductor.resources | nindent 12 }}
+            {{- else }}
             {{- toYaml .Values.platform.resources | nindent 12 }}
+            {{- end }}
           volumeMounts:
             - {name: tmp, mountPath: /tmp}
       volumes:
         - name: tmp
           emptyDir:
             sizeLimit: {{ .Values.platform.tmpSizeLimit | quote }}
-{{- end }}
+{{- end -}}

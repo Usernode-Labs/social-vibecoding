@@ -10,9 +10,8 @@
 //
 // These pin, without a database: queueWait's reasons and their order; the
 // one-statement snapshot and what it derives from it; the connector's shape;
-// the console's words; the move offers' record and summary; the
-// configuration comparison leaving platform failures out on both sides; and
-// the interruption incident's words for a kept plan.
+// the console's words; the move offers' record and summary; and the
+// configuration comparison leaving platform failures out on both sides.
 //
 // Run with: node --test tests/homeroom-bot-queue-waits.test.js
 
@@ -100,7 +99,7 @@ test('queueSnapshot: the counts and the rows listed come from one statement, and
 
   // The snapshot reads the rules liveCandidates applies, from the same constants.
   const src = read('src/services/homeroom-bot.js');
-  assert.match(src, /const queue = await queueSnapshot\(pool, settings, \{ botId: botRow\?\.id \?\? null \}\);/);
+  assert.match(src, /const queue = await queueSnapshot\(pool, settings, \{ botId: botRow\?\.id \?\? null, memory \}\);/);
   assert.match(src, /queue: \{ \.\.\.queue, buildsWaiting: builds\.waiting \},/);
   assert.doesNotMatch(src, /SELECT COUNT\(\*\)::int AS depth FROM homeroom_bot_queue/, 'no second count of another set');
   const snap = src.slice(src.indexOf('const QUEUE_SNAPSHOT_SQL'), src.indexOf('async function queueSnapshot'));
@@ -297,10 +296,4 @@ test('configuration comparison: the platform\'s failures are left out of the bui
   assert.match(src, /platformFailures,/);
   const tsx = read('frontend/src/features/admin/admin-bot-configs.tsx');
   assert.match(tsx, /platform failure\$\{s\.platformFailures === 1 \? '' : 's'\}, left out/);
-});
-
-test('an interruption whose plan was kept says it resumed from it', () => {
-  const src = read('src/services/homeroom-bot.js');
-  assert.match(src, /await noteIncident\('resumed', plan\.lost \? what : 'resumed from its saved plan'\);/);
-  assert.match(src, /const noteIncident = \(outcome, why = what\) => incidents\(\)\.record\(pool, \{/);
 });

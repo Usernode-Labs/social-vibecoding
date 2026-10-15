@@ -382,7 +382,6 @@ async function startRequestAdapter({ baseUrl, apiKey, model, maxOutputTokens,
         inputItems: Array.isArray(body.input) ? body.input.length : null,
         httpStatus: response.status,
         requestId: safeRequestId(response.headers.get('x-request-id') || response.headers.get('x-openrouter-request-id')),
-        ...(shortlistFallback ? { shortlistFallback: true } : {}),
       };
       const retryAfter = response.headers.get('retry-after');
       if (retryAfter && /^\d+$/.test(retryAfter) && Number.isSafeInteger(Number(retryAfter))) {
@@ -419,7 +418,12 @@ async function startRequestAdapter({ baseUrl, apiKey, model, maxOutputTokens,
         onRequest({ ...diagnostic });
       };
       if (response.status === 402) Object.assign(diagnostic, await getKeyAllowance());
-      onRequest(diagnostic);
+      // Whether the request left its shortlist is said on its first line
+      // only, the one every request writes: a refusal reported again with
+      // its host (recordError) is the same request, and the platform counts
+      // the lines that say so per turn (run seven, 14 Oct 2026; in step with
+      // the Claude Code listener's provider_request_result).
+      onRequest(shortlistFallback ? { ...diagnostic, shortlistFallback: true } : diagnostic);
       const responseHeaders = {};
       const responseConnectionHeaders = new Set(String(response.headers.get('connection') || '').toLowerCase().split(',').map(s => s.trim()));
       for (const [name, value] of response.headers) {

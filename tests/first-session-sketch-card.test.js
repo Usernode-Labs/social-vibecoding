@@ -78,6 +78,7 @@ test('the build line: the same words everywhere, a spinner that turns, one blue 
     testing: 'Testing it',
     ready: 'Ready to try',
     live: 'Live',
+    stopped: 'Stopped',
   });
   // The server's states (homeroom-bot-progress.js), every one with words.
   const { BUILD_LINE_STATES } = require('../src/services/homeroom-bot-progress');
@@ -103,6 +104,15 @@ test('the build line: the same words everywhere, a spinner that turns, one blue 
     assert.doesNotMatch(html, /animate-spin|--accent/);
   }
   assert.match(draw('plan'), />Your plan is ready to review<\/span>/);
+  // 14 Oct 2026 (newcomer run eight): a build that stopped turns nothing.
+  // A still dot in the attention colour, its word quiet, and no check.
+  const stopped = draw('stopped');
+  assert.match(stopped, /<span role="status" data-build-line="stopped" class="[^"]*text-zinc-500/);
+  assert.match(stopped, /rounded-full bg-\[color:var\(--state-attention\)\]/);
+  assert.doesNotMatch(stopped, /animate-spin|--accent|M5 13l4 4L19 7/);
+  assert.match(stopped, />Stopped<\/span>/);
+  assert.equal(lineMod.buildLineStopped('stopped'), true);
+  assert.equal(lineMod.buildLineStopped('building'), false);
   // Not the dot that only fades (app.css .status-dot.creating, which stands
   // still in the Homeroom app on iPhone).
   assert.doesNotMatch(LINE_SRC, /className="[^"]*status-dot/);
@@ -127,6 +137,7 @@ test('the same lines on a Home tile, in short words that fit its one line; blue 
     testing: 'Testing',
     ready: 'Ready to try',
     live: 'Live',
+    stopped: 'Stopped',
   });
   // A word for every state the server sends, in its order.
   assert.deepEqual(Object.keys(lineMod.BUILD_LINE_TILE_WORDS), Object.keys(lineMod.BUILD_LINE_WORDS));
@@ -138,7 +149,11 @@ test('the same lines on a Home tile, in short words that fit its one line; blue 
   for (const state of ['planning', 'plan-member', 'building', 'testing', 'ready', 'live']) {
     assert.equal(lineMod.buildLineTileClass(state), 'app-card-status line-clamp-1 text-zinc-500 dark:text-zinc-400', state);
   }
-  // One caption line and the two-line name fill the tile's 38px (app.css
+  // 14 Oct 2026: a build that stopped is something wrong, in the colour of
+  // the tile's "Awaiting secrets".
+  assert.equal(lineMod.buildLineTileClass('stopped'), 'app-card-status line-clamp-1 text-[color:var(--state-attention)]');
+  assert.equal(lineMod.buildLineTileOf('stopped'), 'stopped');
+  // One caption line and the two-line name fill the tile's 40px (app.css
   // --home-cell-h), so the name no longer gives up a line.
   assert.equal(lineMod.BUILD_LINE_TILE_CARD, undefined);
   assert.equal(lineMod.buildLineTileOf('plan'), 'plan');
@@ -237,18 +252,23 @@ test('the small size, for a row: the tile on its colour, the name, and the line 
 test('the made screen draws the thumbnail with its line, its emoji is the screen\'s icon, and nothing is framed', () => {
   const made = read(`${DIR}/made.tsx`);
   assert.match(made, /import \{ SketchCard, showsCard, useSketch \} from '\.\/sketch-card';/);
-  assert.match(made, /\{card \? \(\n\s+<SketchCard made=\{made\} sketch=\{sketch\} line=\{line\} note=\{note\} lineWords=\{named\.words\} lineNote=\{named\.note\} \/>/);
+  // Run six: the line only when nothing else on the screen says where it is (ownLine).
+  assert.match(made, /\{card \? \(\n\s+<SketchCard made=\{made\} sketch=\{sketch\} line=\{ownLine \? line : null\} note=\{note\} lineWords=\{named\.words\} lineNote=\{named\.note\} \/>/);
   assert.match(made, /const tile = sketch\.card\?\.emoji \|\| made\.emoji \|\| made\.name\.slice\(0, 1\);/);
   assert.match(made, /made=\{sketch\.card \? \{ \.\.\.made, emoji: sketch\.card\.emoji \} : made\}/, 'the invite sheet shows it too');
   // (The plain card of a project with no sketch, such as an import, keeps its
   // status dot; the thumbnail never draws one.)
   assert.doesNotMatch(made, /<iframe|sketch\.html|sketchCaption|Step \$\{/);
   assert.doesNotMatch(SRC, /status-dot/);
-  // Rendered with nothing read yet: the card being sketched, Homeroom bot planning it.
+  // Rendered with nothing read yet: the card being sketched, and no line
+  // under it while the screen checks for questions (run six: one thing at a
+  // time, the checking line). From Create, past the questions, the line is
+  // the hub's to say next and stays under the card (first-session-started).
   const { MadeScreen } = loadTsx(`${DIR}/made.tsx`);
   const html = renderToHtml(createElement(MadeScreen, { made: MADE, me: 'Maya', onContinue() {}, onOpenChat() {} }));
   assert.match(html, /data-featured-card="sketching"/);
-  assert.match(html, /data-build-line="planning"/);
+  assert.doesNotMatch(html, /data-build-line=/);
+  assert.match(html, /data-first-session-checking=""/);
   // The poll asks past the service worker's cache.
   assert.match(SRC, /fetch\(`\/api\/apps\/\$\{encodeURIComponent\(slug\)\}\/sketch`, \{ credentials: 'same-origin', cache: 'no-store' \}\)/);
 });

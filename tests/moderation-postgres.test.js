@@ -34,14 +34,28 @@ test('moderation enforces scope, retains evidence, serializes decisions and reve
     const msg = (await pool.query("INSERT INTO conversation_messages (conversation_id,sender_id,content) VALUES ($1,$2,'Original private evidence') RETURNING id",[conv.id,bob.id])).rows[0];
     await pool.query(`INSERT INTO conversation_message_attachments (id,conversation_id,message_id,user_id,kind,filename,content_type,size_bytes,data) VALUES ('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',$1,$2,$3,'text','proof.txt','text/plain',5,$4)`,[conv.id,msg.id,bob.id,Buffer.from('proof')]);
     const input = { targetType:'conversation_message',target:msg.id,reason:'harassment',detail:'Please review' };
-    await assert.rejects(moderation.submitReport(pool,null,input),{status:401});
-    await assert.rejects(moderation.submitReport(pool,outsider,input),{status:404});
-    await assert.rejects(moderation.submitReport(pool,bob,input),{status:404});
-    await assert.rejects(moderation.submitReport(pool,alice,{...input,reason:'other',detail:''}),{status:400});
-    await assert.rejects(moderation.submitReport(pool,alice,{...input,detail:'x'.repeat(1001)}),{status:400});
-    const reports = await Promise.all([moderation.submitReport(pool,alice,input),moderation.submitReport(pool,alice,input)]);
+    // #5072: every newly inserted report row mails the compliance inbox,
+    // through a spy here (the stub stands in for the mailer, the real
+    // transaction runs). Refused reports mail nothing.
+    const mailCalls = [];
+    const mailOpts = { config: { complianceEmail: 'compliance@example.test' },
+      sendMail: (cfg, mail) => { mailCalls.push({ cfg, ...mail }); } };
+    await assert.rejects(moderation.submitReport(pool,null,input,mailOpts),{status:401});
+    await assert.rejects(moderation.submitReport(pool,outsider,input,mailOpts),{status:404});
+    await assert.rejects(moderation.submitReport(pool,bob,input,mailOpts),{status:404});
+    await assert.rejects(moderation.submitReport(pool,alice,{...input,reason:'other',detail:''},mailOpts),{status:400});
+    await assert.rejects(moderation.submitReport(pool,alice,{...input,detail:'x'.repeat(1001)},mailOpts),{status:400});
+    assert.equal(mailCalls.length,0,'no mail for a refused report');
+    const reports = await Promise.all([moderation.submitReport(pool,alice,input,mailOpts),moderation.submitReport(pool,alice,input,mailOpts)]);
     assert.equal(reports[0].id,reports[1].id,'concurrent retries produce one receipt');
     assert.equal(reports.filter(r=>r.duplicate).length,1);
+    assert.equal(mailCalls.length,1,'one mail for one inserted report, none for the duplicate');
+    assert.equal(mailCalls[0].cfg.complianceEmail,'compliance@example.test');
+    assert.equal(mailCalls[0].kind,'content_report');
+    assert.equal(mailCalls[0].to,'compliance@example.test');
+    assert.equal(mailCalls[0].detail,'Please review');
+    assert.ok(mailCalls[0].url.endsWith(`/#admin/reports/${mailCalls[0].caseId}`),'the mail links the case in the admin console');
+    assert.equal(reports.some(r=>r.mailPayload),false,'the mail payload never reaches the client receipt');
     assert.ok(reports.every(r=>r.blockUserId===bob.id && r.blockUsername===bob.username),'message receipts identify the author for optional blocking');
     let c = (await pool.query("SELECT * FROM moderation_cases WHERE target_type = 'conversation_message'")).rows[0];
     const act = async (action, extra={}) => {
@@ -65,8 +79,9 @@ test('moderation enforces scope, retains evidence, serializes decisions and reve
     assert.ok((await pool.query('SELECT moderation_hidden_at FROM conversation_messages WHERE id = $1',[msg.id])).rows[0].moderation_hidden_at,'closing does not reverse action');
     await assert.rejects(act('resolve'),{status:409});
     await act('restore_message');
-    const newReport = await moderation.submitReport(pool,alice,input);
+    const newReport = await moderation.submitReport(pool,alice,input,mailOpts);
     assert.notEqual(newReport.id,reports[0].id,'new report after closure opens another review cycle');
+    assert.equal(mailCalls.length,2,'a report that reopens a case is a new row and mails again');
     c = (await pool.query('SELECT * FROM moderation_cases WHERE id = $1',[c.id])).rows[0];
     assert.equal(c.status,'new'); assert.equal(c.cycle,2);
 
@@ -119,10 +134,16 @@ test('moderation enforces scope, retains evidence, serializes decisions and reve
     assert.equal((await pool.query('SELECT evidence FROM moderation_reports WHERE case_id = $1',[c.id])).rows[0].evidence,null);
     assert.equal((await get(`/api/admin/moderation/${c.id}/files/${fileId}`)).status,404);
 
-    const appReceipt = await moderation.submitReport(pool,alice,{targetType:'app',target:'reported-app',reason:'scam'});
+    const appReceipt = await moderation.submitReport(pool,alice,{targetType:'app',target:'reported-app',reason:'scam'},mailOpts);
     assert.equal(appReceipt.blockUserId,null,'reporting an app does not offer to block its creator');
-    const duplicateAppReceipt = await moderation.submitReport(pool,alice,{targetType:'app',target:'reported-app',reason:'scam'});
+    const duplicateAppReceipt = await moderation.submitReport(pool,alice,{targetType:'app',target:'reported-app',reason:'scam'},mailOpts);
     assert.equal(duplicateAppReceipt.id,appReceipt.id);
+    assert.equal(mailCalls.length,3,'the app report mailed once, its duplicate did not');
+    // A mail failure is logged, never surfaced: the receipt still comes back.
+    // A fresh target, because this conversation's message was deleted above.
+    const failApp = (await pool.query(`INSERT INTO apps (name,slug,created_by,view_visibility) VALUES ('Mail failure app','mail-failure-app',$1,'public') RETURNING id`,[bob.id])).rows[0];
+    const failing = await moderation.submitReport(pool,alice,{targetType:'app',target:'mail-failure-app',reason:'spam'},{ config: { complianceEmail: 'compliance@example.test' }, sendMail: () => { throw new Error('provider down'); } });
+    assert.equal(failing.received,true,'a mail failure does not fail the report');
     assert.equal(duplicateAppReceipt.blockUserId,null,'duplicate app reports use the same receipt contract');
     c=(await pool.query("SELECT * FROM moderation_cases WHERE target_type = 'app'")).rows[0];
     detail = await (await get(`/api/admin/moderation/${c.id}`)).json();

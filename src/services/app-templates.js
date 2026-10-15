@@ -11,13 +11,17 @@
  * READY-MADE APPS (Evan, 8 October 2026). The four general starters of the
  * old create dialog (social productivity, multimedia social, a 2D game, a 3D
  * game) were deleted with it. What came back are apps finished enough that
- * a project made from one needs nothing built: the nine choices on "What
- * do you want to make?" that need no typing
+ * a project made from one needs nothing built: the choices on "What do
+ * you want to make?" that need no typing
  * (frontend/src/features/first-session/examples.ts, each choice's
  * `template`). A tier list of restaurants, hikes, cities or games is one
  * app with its category filled in at creation; a grocery list, a chore
  * list, a lending library, a potluck planner and a study timer are one app
- * each. They are
+ * each. Evan, 15 October 2026, added four more, each one app with what it
+ * is for filled in: a group poll (where to eat, what to spend on, what to
+ * watch), find a time (a book club, game night, a trip), a sign-up sheet
+ * (volunteer shifts, or who's coming) and a monthly group challenge
+ * (miles, steps, books). They are
  * `ready`: POST /api/apps starts no Homeroom bot build for them
  * (routes/apps.js), so the project is usable as soon as it is running.
  * Words of the maker's own, and every game, still go to Homeroom bot.
@@ -105,6 +109,114 @@ function tierList(id, { plural, one, example, title }) {
   });
 }
 
+/**
+ * One group poll board per topic (Evan, 15 October 2026: "Poll the group"
+ * on the make screen): the same app (app-templates/group-poll), with what
+ * it decides filled in. `about` finishes "Polls about …", and the two
+ * examples are its fields' placeholders.
+ */
+function groupPoll(id, { title, about, question, option }) {
+  return Object.freeze({
+    id,
+    dir: 'group-poll',
+    ready: true,
+    title,
+    summary: `The group's polls about ${about}: anyone adds options, everyone votes, and each poll closes with a winner.`,
+    icon: '🗳️',
+    fill: Object.freeze({ POLL_ABOUT: about, QUESTION_EXAMPLE: question, OPTION_EXAMPLE: option }),
+    features: Object.freeze([
+      '**Ask the group**: anyone starts a poll with a question, a few options and when it closes (or when they close it).',
+      '**Anyone adds options**: the group suggests more while the poll is open; the same option is not added twice.',
+      '**Tick any, or pick one**: everyone ticks every option they would be happy with (most ticks wins), or a poll asks for one pick each. Secret votes show the totals, not who voted for what.',
+      '**Decided**: a closed poll keeps its winner, so the group can see what it chose before.',
+    ]),
+    tables: '`polls`, `poll_options` and `poll_votes`',
+    tests: Object.freeze([
+      {
+        id: 'poll.open',
+        name: 'An open poll shows its options and their votes',
+        path: '/',
+        expectSelector: '#open-polls [data-poll] [data-option] [data-votes]',
+        visual: true,
+        impact: IMPACT,
+      },
+      { name: 'A new poll can be started', path: '/', expectSelector: '#start-poll' },
+      { name: 'Decided polls show what won', path: '/', expectSelector: '#decided [data-poll] [data-winner]' },
+    ]),
+  });
+}
+
+/**
+ * One find-a-time app per occasion: the same app (app-templates/find-a-time),
+ * with what the times are for filled in. `forWhat` finishes "Find a time
+ * for …", and `example` is the new plan's name placeholder.
+ */
+function findATime(id, { title, forWhat, example }) {
+  return Object.freeze({
+    id,
+    dir: 'find-a-time',
+    ready: true,
+    title,
+    summary: `Find a time for ${forWhat}: suggest a few times, everyone marks when they are free, and the best time rises to the top.`,
+    icon: '📅',
+    fill: Object.freeze({ FOR_WHAT: forWhat, PLAN_EXAMPLE: example }),
+    features: Object.freeze([
+      '**Suggest some times**: whoever starts a plan suggests two to eight, each a day and a time or a whole day, and anyone can suggest another while it is open.',
+      '**Free, if needed, or can\'t**: everyone marks each time with one tap and can change it any time. The grid shows who is free when, and who in the project has not answered yet.',
+      '**The best time rises**: the time the most people can make is named at the top, and whoever started the plan sets it, which closes the plan. Once its time has passed, a plan moves to Past.',
+    ]),
+    tables: '`time_plans`, `time_slots` and `time_marks`',
+    tests: Object.freeze([
+      {
+        id: 'times.grid',
+        name: 'The grid shows who is free when',
+        path: '/',
+        expectSelector: '#plans [data-plan] [data-slot] [data-mark]',
+        visual: true,
+        impact: IMPACT,
+      },
+      { name: 'The best time so far is named', path: '/', expectSelector: '#plans [data-plan] [data-best]' },
+      { name: 'A new plan can be started', path: '/', expectSelector: '#new-plan' },
+    ]),
+  });
+}
+
+/**
+ * One monthly group challenge per thing it counts: the same app
+ * (app-templates/group-challenge), with the unit, an example amount and
+ * the group's default monthly goal filled in. `decimals` says whether an
+ * amount may have them (miles may; steps and books may not).
+ */
+function groupChallenge(id, { title, plural, one, example, goal, decimals }) {
+  return Object.freeze({
+    id,
+    dir: 'group-challenge',
+    ready: true,
+    title,
+    summary: `A monthly challenge: who logs the most ${plural}, and how close the whole group gets to its goal together.`,
+    icon: '🏃',
+    fill: Object.freeze({ UNIT_PLURAL: plural, UNIT_ONE: one, AMOUNT_EXAMPLE: example, DEFAULT_GOAL: String(goal), DECIMALS: decimals ? 'yes' : 'no' }),
+    features: Object.freeze([
+      `**Log as you go**: anyone in the project adds the ${plural} they did, today or another day this month, with a note if they like, and can take their own back.`,
+      '**A leaderboard and a group goal**: who has the most this month, how far everyone has got together, and where the group finishes at this pace. Anyone can change this month\'s goal; the next month starts with the usual one.',
+      '**A fresh start every month**: "this month" is the calendar month where each person is. When a month ends its results stay, with a card to share on the next month\'s first days, and every past month can be looked at again.',
+    ]),
+    tables: '`challenge_entries` and `challenge_goals`',
+    tests: Object.freeze([
+      {
+        id: 'challenge.board',
+        name: 'The leaderboard and the group goal show',
+        path: '/',
+        expectSelector: '#leaderboard [data-person] [data-total]',
+        visual: true,
+        impact: IMPACT,
+      },
+      { name: 'An amount can be logged', path: '/', expectSelector: '#log-form input[name="amount"]' },
+      { name: 'The group goal shows how far along it is', path: '/', expectSelector: '#goal[data-progress]' },
+    ]),
+  });
+}
+
 // A game starter's checks look at its screen, its rules and the room.
 const GAME_IMPACT = Object.freeze(['public/**', 'api.js', 'game/**']);
 
@@ -144,6 +256,9 @@ const TEMPLATES = Object.freeze([
   tierList('tier-list-hikes', { plural: 'hikes', one: 'hike', example: 'e.g. the lake loop', title: 'Hiking tier list' }),
   tierList('tier-list-cities', { plural: 'cities', one: 'city', example: 'e.g. Lisbon', title: 'City tier list' }),
   tierList('tier-list-games', { plural: 'games', one: 'game', example: 'e.g. chess', title: 'Game tier list' }),
+  groupPoll('poll-dinner', { title: 'Dinner poll', about: 'where we eat', question: 'e.g. Where should we eat Friday?', option: 'e.g. the taco place on Main' }),
+  groupPoll('poll-spending', { title: 'Spending poll', about: 'what we spend on', question: 'e.g. What should we do with the extra $300?', option: 'e.g. new chairs for the lobby' }),
+  groupPoll('poll-movies', { title: 'Movie night poll', about: 'what we watch', question: 'e.g. What are we watching Friday?', option: 'e.g. Arrival' }),
   Object.freeze({
     id: 'grocery-list',
     ready: true,
@@ -217,31 +332,6 @@ const TEMPLATES = Object.freeze([
     ]),
   }),
   Object.freeze({
-    id: 'potluck-planner',
-    ready: true,
-    title: 'Potluck planner',
-    summary: 'Potlucks with a date and a place, who is bringing what by course (so the table is not six salads), and a chat for each one.',
-    icon: '🍲',
-    features: Object.freeze([
-      '**Plan a potluck**: a name, a date, a time and a place.',
-      '**Who\'s bringing what**: say what you will bring and which course it is. Each course lists what is coming, and the courses nobody has taken yet are named.',
-      '**Talk about it**: react to a dish, comment on it ("is it vegetarian?"), and chat with everyone coming.',
-    ]),
-    tables: '`potlucks`, `potluck_dishes`, `potluck_reactions`, `potluck_comments` and `potluck_messages`',
-    tests: Object.freeze([
-      {
-        id: 'potluck.next',
-        name: 'The next potluck shows who is bringing what',
-        path: '/',
-        expectSelector: '#potlucks [data-potluck] [data-course] [data-dish]',
-        visual: true,
-        impact: IMPACT,
-      },
-      { name: 'A potluck can be planned', path: '/', expectSelector: '#plan-form input[name="title"]' },
-      { name: 'Each potluck has its chat', path: '/', expectSelector: '#potlucks [data-potluck] [data-chat] [data-message]' },
-    ]),
-  }),
-  Object.freeze({
     id: 'study-timer',
     ready: true,
     title: 'Study timer',
@@ -266,6 +356,94 @@ const TEMPLATES = Object.freeze([
       { name: 'Today’s count of finished sessions loads', path: '/', expectSelector: '#today[data-loaded]' },
     ]),
   }),
+  findATime('find-a-time-book-club', { title: 'Book club times', forWhat: 'our book club', example: 'e.g. November book club' }),
+  findATime('find-a-time-game-night', { title: 'Game night times', forWhat: 'game night', example: 'e.g. Game night this month' }),
+  findATime('find-a-time-trip', { title: 'Trip dates', forWhat: 'our trip', example: 'e.g. Lake weekend' }),
+  Object.freeze({
+    id: 'potluck-planner',
+    ready: true,
+    title: 'Potluck planner',
+    summary: 'Potlucks with a date and a place, who is bringing what by course (so the table is not six salads), and a chat for each one.',
+    icon: '🍲',
+    features: Object.freeze([
+      '**Plan a potluck**: a name, a date, a time and a place.',
+      '**Who\'s bringing what**: say what you will bring and which course it is. Each course lists what is coming, and the courses nobody has taken yet are named.',
+      '**Talk about it**: react to a dish, comment on it ("is it vegetarian?"), and chat with everyone coming.',
+    ]),
+    tables: '`potlucks`, `potluck_dishes`, `potluck_reactions`, `potluck_comments` and `potluck_messages`',
+    tests: Object.freeze([
+      {
+        id: 'potluck.next',
+        name: 'The next potluck shows who is bringing what',
+        path: '/',
+        expectSelector: '#potlucks [data-potluck] [data-course] [data-dish]',
+        visual: true,
+        impact: IMPACT,
+      },
+      { name: 'A potluck can be planned', path: '/', expectSelector: '#plan-form input[name="title"]' },
+      { name: 'Each potluck has its chat', path: '/', expectSelector: '#potlucks [data-potluck] [data-chat] [data-message]' },
+    ]),
+  }),
+  // One app (app-templates/signup-sheet) with two ways to answer, set when
+  // the project is made (`SHEET_MODE`): slots with a size that people take
+  // (volunteer shifts), or one question everyone answers (who's coming).
+  // A potluck keeps the potluck planner above.
+  Object.freeze({
+    id: 'signup-shifts',
+    dir: 'signup-sheet',
+    ready: true,
+    title: 'Volunteer sign-up sheet',
+    summary: 'A sign-up sheet for each event: the slots that need people, how many each takes, and who is on which.',
+    icon: '✋',
+    fill: Object.freeze({ SHEET_MODE: 'slots', EVENT_EXAMPLE: 'e.g. Park cleanup', SLOT_EXAMPLE: 'e.g. Morning shift, 9 to 11' }),
+    features: Object.freeze([
+      '**A sheet for each event**: a name, a day and a place, and the slots that need people.',
+      '**Slots with a size**: tap Sign up to take one; a full slot closes, and you can leave a slot you took.',
+      '**What is still needed**: each slot shows who is on it and how many spots are open.',
+    ]),
+    tables: '`signup_events`, `signup_slots` and `signup_entries`',
+    tests: Object.freeze([
+      {
+        id: 'signup.slots',
+        name: 'The sheet shows its slots and who took them',
+        path: '/',
+        expectSelector: '#events [data-event] [data-slot] [data-taken]',
+        visual: true,
+        impact: IMPACT,
+      },
+      { name: 'A new sign-up sheet can be made', path: '/', expectSelector: '#new-event' },
+    ]),
+  }),
+  Object.freeze({
+    id: 'signup-rsvp',
+    dir: 'signup-sheet',
+    ready: true,
+    title: 'Who\'s coming',
+    summary: 'An event everyone answers: going, maybe or can\'t, with a note, and the headcount at the top.',
+    icon: '🙋',
+    fill: Object.freeze({ SHEET_MODE: 'rsvp', EVENT_EXAMPLE: 'e.g. Game night at Jo\'s', SLOT_EXAMPLE: 'e.g. Morning shift, 9 to 11' }),
+    features: Object.freeze([
+      '**An event to answer**: a name, a day and a place.',
+      '**Going, maybe or can\'t**: one tap each, with a note if you like ("+1", "bringing snacks").',
+      '**The headcount**: how many are going, who might come, and who has not said yet.',
+    ]),
+    tables: '`signup_events`, `signup_slots` and `signup_entries`',
+    tests: Object.freeze([
+      {
+        id: 'signup.rsvp',
+        name: 'The event shows who is coming',
+        path: '/',
+        expectSelector: '#events [data-event] [data-headcount]',
+        visual: true,
+        impact: IMPACT,
+      },
+      { name: 'You can say whether you are coming', path: '/', expectSelector: '#events [data-event] [data-answer="going"]' },
+      { name: 'A new event can be made', path: '/', expectSelector: '#new-event' },
+    ]),
+  }),
+  groupChallenge('challenge-miles', { title: 'Miles challenge', plural: 'miles', one: 'mile', example: 'e.g. 3.1', goal: 200, decimals: true }),
+  groupChallenge('challenge-steps', { title: 'Steps challenge', plural: 'steps', one: 'step', example: 'e.g. 8000', goal: 1000000, decimals: false }),
+  groupChallenge('challenge-books', { title: 'Reading challenge', plural: 'books', one: 'book', example: 'e.g. 1', goal: 20, decimals: false }),
   gameStarter({
     id: 'game-board',
     title: 'Board game starter',

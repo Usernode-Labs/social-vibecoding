@@ -107,7 +107,7 @@ test('the run\'s own record is never the sentence anybody reads', () => {
   const announce = src.slice(src.indexOf('async function announceBuilt('), src.indexOf('async function actOnVerdict('));
   assert.match(announce, /await recordLiveBuild\(pool, runId, built/);
   assert.match(announce, /log\.warn\('homeroom-bot', 'Live build did not become a proposal', \{[\s\S]*?error: built\.error/);
-  assert.match(announce, /say\('build_failed', live\.buildFailedText\(built\.error\), \{ dm: \{ reason: built\.error \} \}\)/);
+  assert.match(announce, /say\('build_failed', live\.buildFailedText\(built\.error, \{ firstVersion \}\), \{ dm: \{ reason: built\.error \} \}\)/);
   assert.match(read('frontend/src/features/admin/admin-homeroom-bot.tsx'), /Live build did not become a proposal: \$\{why\}\./);
 });
 
@@ -158,4 +158,102 @@ test('no failure surface says "pick it up" any more', () => {
     const code = read(rel).split('\n').filter((l) => !/^\s*(\/\/|\*)/.test(l)).join('\n');
     assert.doesNotMatch(code, /A person (?:can|could) pick it up/, rel);
   }
+});
+
+// 14 Oct 2026 (newcomer run eight, Club Votes, iPhone Safari): a first
+// version was built and its proposal refused (a release was under way), so
+// the build ended "built but could not be proposed". Its maker read "I built
+// the first version, but I couldn't put it up for approval." under a Try
+// again, and a push that said "couldn't put it up for a vote". A first
+// version goes live without a vote (D1), so every stop of one says what is
+// true without approval, a proposal or a vote; a later change keeps its words.
+// 15 Oct 2026: one built and only not proposed is finished by Try again
+// (homeroom-bot.js finishBuiltFirstVersion), so it says it finishes it, and
+// its request says where Try again is: a reply there would start it over.
+// Every other cause still starts over.
+const FINISH = 'Whoever asked for it can tap Try again in their chat with Homeroom bot, and it will finish it.';
+const FIRST_CAUSES = [
+  ['the change was built but could not be proposed: Server is restarting',
+    'I built Book Club but couldn\'t put it live yet. Tap Try again and I\'ll finish it.',
+    'Homeroom bot built this but couldn\'t put it live yet.', FINISH],
+  ['the build ran past its time limit (finished after a restart)',
+    'I couldn\'t finish building Book Club: it took longer than I\'m allowed. Tap Try again and I\'ll start over.',
+    'Homeroom bot couldn\'t finish building this: the build took longer than it\'s allowed.'],
+  ['the platform restarted in the middle of each of its last 2 tries at building this',
+    'I couldn\'t finish building Book Club: Homeroom restarted while I was working on it, 2 times in a row. Tap Try again and I\'ll start over.',
+    'Homeroom bot couldn\'t finish building this: Homeroom restarted in the middle of the build, 2 times in a row.'],
+  ['the build produced no change to propose',
+    'I couldn\'t finish building Book Club: I ended up with no changes to show you. Tap Try again and I\'ll start over.',
+    'Homeroom bot couldn\'t finish building this: it ended up with no changes to show.'],
+  ['the build could not start (worker pool exhausted)',
+    'I couldn\'t get started on building Book Club. Tap Try again and I\'ll start over.',
+    'Homeroom bot couldn\'t get started on building this.'],
+  ['the build turn failed (exit 1)',
+    'I couldn\'t finish building Book Club: something went wrong while I was working on it. Tap Try again and I\'ll start over.',
+    'Homeroom bot couldn\'t finish building this: something went wrong during the build.'],
+];
+// (Its project is not called Club Votes here: the name would match.)
+const APPROVAL = /approv|propos|vote/i;
+
+test('a first version that stopped is said without approval, a proposal or a vote, in every place', async () => {
+  const words = require('../src/services/homeroom-bot-words');
+  const notifyCopy = require('../src/services/homeroom-bot-notify-copy');
+  const context = { appName: 'Book Club', issueNumber: 1, issueTitle: 'First version of Book Club', firstVersion: true };
+  for (const [reason, toThem, onRequest, ending = RETRY] of FIRST_CAUSES) {
+    // Its maker's chat, in the request's thread and in the main chat.
+    assert.equal(dm.dmText('build_failed', { reason }, { ...context, threaded: true }), toThem, reason);
+    assert.equal(dm.dmText('build_failed', { reason }, context), `**Book Club**, its first version\n\n${toThem}`, reason);
+    // The request (and its GitHub comment), and its Homeroom copy.
+    const posted = live.buildFailedText(reason, { firstVersion: true });
+    assert.equal(posted, `${onRequest} ${ending}`, reason);
+    for (const text of [toThem, posted, words.firstPerson(posted)]) {
+      assert.doesNotMatch(text, APPROVAL, `${reason}: ${text}`);
+      assert.doesNotMatch(text, DASH);
+    }
+  }
+  assert.equal(words.firstPerson(live.buildFailedText(FIRST_CAUSES[0][0], { firstVersion: true })),
+    'I built this but couldn\'t put it live yet. Whoever asked for it can tap Try again in their chat with me, and I\'ll finish it.');
+  // Without a name, it is the first version.
+  assert.equal(dm.dmText('build_failed', { reason: FIRST_CAUSES[0][0] }, { ...context, appName: '', threaded: true }),
+    'I built the first version but couldn\'t put it live yet. Tap Try again and I\'ll finish it.');
+
+  // The push and the bell row of that message.
+  const pool = { async query() { return { rows: [] }; } };
+  const metadata = { kind: 'build_failed', appName: 'Book Club', firstVersion: true, said: 'build_not_proposed' };
+  const copy = notifyCopy.botMomentCopy(await dm.notificationDetail(pool, dm.momentOf(metadata), metadata));
+  assert.deepEqual([copy.title, copy.body, copy.bellLabel, copy.bellSubject],
+    ['Book Club', 'Stopped: I built your first version but couldn\'t put it live yet. Tap Try again and I\'ll finish it.', 'Stopped', 'Book Club first version']);
+  assert.doesNotMatch(copy.body, APPROVAL);
+  // Every stop's push for a first version.
+  for (const said of notifyCopy.SAID_BY_MOMENT.stopped) {
+    const body = notifyCopy.botMomentCopy(`hrbot2:${JSON.stringify({ m: 'stopped', s: said, a: 'Book Club', f: 1 })}`).body;
+    if (said === 'checks' || said === 'needs_look' || said === 'update_failed') continue;
+    assert.doesNotMatch(body, APPROVAL, `${said}: ${body}`);
+  }
+
+  // Its card in the chat: "Stopped · I built it but couldn't put it live yet".
+  const { message } = require('./lib/platform-i18n');
+  assert.equal(message('messages:bot.state.line.stop.unproposedFirst'), 'I built it but couldn’t put it live yet');
+  const card = read('frontend/src/features/messages/bot-activity.tsx');
+  assert.match(card, /if \(card\.outcome === 'build_failed' && card\.stopCause === 'unproposed' && firstVersion\) \{\s*return translate\('messages:bot\.state\.line\.stop\.unproposedFirst'\);/);
+  assert.match(card, /cardStateLine\(card, at\.getTime\(\), meta\.appName \|\| meta\.appSlug \|\| '', \{ firstVersion: meta\.firstVersion === true \}\)/);
+
+  // Said so from every place a first version's build ends: its build and
+  // the build a restart could not start.
+  const src = read('src/services/homeroom-bot.js');
+  assert.match(src, /announceBuilt\(\{\s*pool, ws, app, bot, issueNumber, runId, built, say, domain: deps\.domain, firstVersion,\s*\}\)/);
+  assert.match(src, /firstVersion: !!requester\?\.firstVersion,\s*built: \{ ok: false, error: `the build could not start/);
+});
+
+test('a later change that stopped keeps its words', async () => {
+  const context = { appName: 'Book Club', issueNumber: 4, issueTitle: 'Dark mode', firstVersion: false, threaded: true };
+  assert.equal(dm.dmText('build_failed', { reason: FIRST_CAUSES[0][0] }, context),
+    'I built this, but I couldn\'t put it up for approval. Reply here and I\'ll try again.');
+  assert.equal(live.buildFailedText(FIRST_CAUSES[0][0]), `Homeroom bot built this, but couldn't put it up for approval. ${RETRY}`);
+  const notifyCopy = require('../src/services/homeroom-bot-notify-copy');
+  assert.equal(notifyCopy.botMomentCopy(`hrbot2:${JSON.stringify({ m: 'stopped', s: 'build_not_proposed', a: 'Book Club', t: 'Dark mode' })}`).body,
+    'Stopped: I built it but couldn\'t put it up for a vote. Tap Try again.');
+  // An update that did not happen has nothing to put up, first version or not.
+  assert.equal(dm.updateFailedWords(FIRST_CAUSES[0][0], 'the first version'),
+    'I couldn\'t update the first version: something went wrong while I was working on it.');
 });

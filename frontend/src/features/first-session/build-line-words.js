@@ -18,6 +18,12 @@
 //   testing      Testing it                           step 5
 //   ready        Ready to try                         step 6
 //   live         Live                                 step 7
+//   stopped      Stopped                              its build stopped, nothing live yet
+//
+// `stopped` (14 Oct 2026, newcomer run eight, Club Votes): the build was
+// done and could not be proposed, and the App tab, the hub and the tile had
+// no line to say, so the App tab showed the starter template running. Now
+// they say Stopped (services/homeroom-bot-progress.js firstVersionStopped).
 
 export const BUILD_LINE_WORDS = Object.freeze({
   planning: 'onboarding:buildLine.planning',
@@ -28,6 +34,7 @@ export const BUILD_LINE_WORDS = Object.freeze({
   testing: 'onboarding:buildLine.testing',
   ready: 'onboarding:buildLine.ready',
   live: 'onboarding:buildLine.live',
+  stopped: 'onboarding:buildLine.stopped',
 });
 
 /** The line in an answer (`first_version_line`), or null for none or one this shell does not know. */
@@ -39,7 +46,7 @@ export function buildLineTileOf(value) {
 /**
  * A Home tile's caption for the line, short enough for its one 11px line
  * (`.app-card-status`): Planning, Plan ready, Question, Building, Testing,
- * Ready to try, Live. Run four (13 Oct 2026): the build line's own words
+ * Ready to try, Live, Stopped. Run four (13 Oct 2026): the build line's own words
  * ran to two lines and were cut off on a phone ("Homeroom bot is...",
  * "Your plan is ready to..."), so the tile says a short set, and the screens
  * with room (the thumbnail, the hub card) keep the whole phrases above.
@@ -54,16 +61,22 @@ export const BUILD_LINE_TILE_WORDS = Object.freeze({
   testing: 'onboarding:buildLine.tile.testing',
   ready: 'onboarding:buildLine.tile.ready',
   live: 'onboarding:buildLine.tile.live',
+  stopped: 'onboarding:buildLine.tile.stopped',
 });
 
 /**
  * The caption's class (in place of the red "Spinning up..."): blue when the
- * line waits on the reader, else quiet. One line, so the project's name
+ * line waits on the reader (its plan, or a question), else quiet grey, every
+ * stage under way included (run six: blue is for something to act on, and a
+ * build going on by itself asks nothing). One line, so the project's name
  * keeps its two (app.css, the --home-cell-h derivation: a two-line name and
- * one caption line fill the tile's 38px), and a longer translation ends in
- * an ellipsis rather than painting over the tile below.
+ * one caption line fill the tile's 40px), and a longer translation ends in
+ * an ellipsis rather than painting over the tile below. A build that
+ * stopped (14 Oct 2026) is something wrong, so it is in the attention colour
+ * a tile's "Awaiting secrets" is.
  */
 export function buildLineTileClass(state) {
+  if (state === 'stopped') return 'app-card-status line-clamp-1 text-[color:var(--state-attention)]';
   return state === 'plan' || state === 'question'
     ? 'app-card-status line-clamp-1 font-semibold text-[color:var(--accent)]'
     : 'app-card-status line-clamp-1 text-zinc-500 dark:text-zinc-400';
@@ -74,20 +87,33 @@ export function buildLineTileClass(state) {
  * build named for what is happening (`first_version.phase`,
  * services/homeroom-bot-progress.js firstVersionPhase), said in place of
  * "Building it" while the line is `building`, with how long that stage has
- * run ("Drawing the screens · 2 min so far"). In English:
+ * run ("Building it · 2 min so far"). In English:
  *
  *   starting   Starting the build
- *   drawing    Drawing the screens
- *   writing    Writing the plan
+ *   drawing    Working out the details
+ *   writing    Working out the details
  *   building   Building it
  *   built      Built. Checking the screens…
- *   checking   Checking the screens · round 1 of 2
+ *   checking   Checking the screens
  *   testing    Testing it
+ *
+ * Run seven (14 Oct 2026, iPhone Safari, Club Votes): the plan and the
+ * first look are both made at Make it now, so while the spec ran the line
+ * said "Drawing the screens" beside a screen already drawn, then "Writing
+ * the plan" under a "Plan written" step already ticked. The spec's two
+ * phases say one thing, "Working out the details", which is what it is
+ * doing, and the Home tile says "Planning" for both.
+ *
+ * Runs eight and nine (14 Oct 2026, iPhone Safari): "Checking the screens ·
+ * round 1 of 2 · about 9 min left" was cut off at 390 px, and the time was
+ * what went. The line says "Checking the screens" and the time; the round
+ * is said where there is room for it, under the Checking step in the App
+ * tab's step list ("Round 1 of 2", ../app-frame/first-version-steps.tsx).
  */
 export const PHASE_WORDS = Object.freeze({
   starting: 'onboarding:buildLine.phase.starting',
-  drawing: 'onboarding:buildLine.phase.drawing',
-  writing: 'onboarding:buildLine.phase.writing',
+  drawing: 'onboarding:buildLine.phase.details',
+  writing: 'onboarding:buildLine.phase.details',
   building: 'onboarding:buildLine.building',
   built: 'onboarding:buildLine.phase.built',
   checking: 'onboarding:buildLine.phase.checking',
@@ -98,12 +124,13 @@ export const PHASE_WORDS = Object.freeze({
  * Run five (13 Oct 2026): the Home tile says the phase too, in its short
  * word, so the tile, the hub card and the App tab name the same moment
  * (the tile said "Building" while the App tab said "Drawing the screens").
- * Message ids, one per PHASE_WORDS key.
+ * Message ids, one per PHASE_WORDS key. Run seven: the spec's two phases
+ * are "Planning", the word the tile says while the plan is made.
  */
 export const PHASE_TILE_WORDS = Object.freeze({
   starting: 'onboarding:buildLine.tile.phase.starting',
-  drawing: 'onboarding:buildLine.tile.phase.drawing',
-  writing: 'onboarding:buildLine.tile.phase.writing',
+  drawing: 'onboarding:buildLine.tile.planning',
+  writing: 'onboarding:buildLine.tile.planning',
   building: 'onboarding:buildLine.tile.building',
   built: 'onboarding:buildLine.tile.phase.checking',
   checking: 'onboarding:buildLine.tile.phase.checking',
@@ -120,6 +147,59 @@ export function phaseKeyOf(line, value) {
 export function buildLineTileWordsOf(line, phase) {
   const key = phaseKeyOf(line, phase);
   return key ? PHASE_TILE_WORDS[key] : BUILD_LINE_TILE_WORDS[line];
+}
+
+/*
+ * STARTED HERE (newcomer run six, 14 Oct 2026, iPhone 17 Safari). The made
+ * screen's Submit starts the build, and that screen says so at once
+ * ("Starting the build", ./made.tsx: answered, the line is `building`).
+ * The tour's first card then stood over the project's Home tile, which said
+ * "Plan ready", in blue, as if the plan still waited on them: its words came
+ * from the list Home had read before Submit (GET /api/apps
+ * `first_version_line`), until Home read it again a minute later and it
+ * said "Drawing".
+ *
+ * So a Submit that went through is noted here, on this page
+ * (noteBuildStarted), and the tile says what the made screen says from that
+ * moment: a line still read as `plan` or `planning` is the build starting,
+ * its first stage, quiet grey. The note lasts until the list names a later
+ * line (the server has caught up), and at most STARTED_HOLD_MS. Kept on
+ * `globalThis`, as ./tour-running.ts is, so a chunk that bundles its own
+ * copy of this module reads the same notes.
+ */
+export const STARTED_HOLD_MS = 10 * 60 * 1000;
+
+/** Its first stage, as the server names it before the build is picked up. */
+export const STARTING_PHASE = Object.freeze({ key: 'starting', since: null, round: null, rounds: null });
+
+const STARTED_KEY = '__usernodeFirstVersionStartedHere';
+
+function startedNotes() {
+  const g = globalThis;
+  if (!(g[STARTED_KEY] instanceof Map)) g[STARTED_KEY] = new Map();
+  return g[STARTED_KEY];
+}
+
+/** The made screen's Submit went through for `slug`: its build starts now. */
+export function noteBuildStarted(slug, now = Date.now()) {
+  if (typeof slug === 'string' && slug) startedNotes().set(slug, now);
+}
+
+/**
+ * A Home tile's first version as the made screen would say it: { line,
+ * phase }, the list's own, or, for a project whose Submit went through on
+ * this page while the list still reads a plan, `building` from its first
+ * stage. A line past the plan ends the note. Pure but for that.
+ */
+export function tileStageOf(slug, line, phase, now = Date.now()) {
+  const notes = startedNotes();
+  const at = notes.get(slug);
+  if (at === undefined) return { line, phase };
+  if ((line !== 'plan' && line !== 'planning') || !(now - at <= STARTED_HOLD_MS)) {
+    notes.delete(slug);
+    return { line, phase };
+  }
+  return { line: 'building', phase: STARTING_PHASE };
 }
 
 /**

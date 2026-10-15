@@ -93,7 +93,10 @@ function platformFault(error, { now = Date.now() } = {}) {
 // the shots agent another turn before a state transition refuses it.
 const stopRequested = new Set();
 const DIFF_CONTEXT_CHARS = 8_000;
-const inFlight = new Map();
+// `${sessionId}:${headSha}` -> the run's promise. Each is this process's
+// hold on the session's shots (services/processes.js): another platform
+// process sees the run (inFlightRunFor) and a draining one finishes it.
+const inFlight = require('./processes').heldMap('shots', (key) => String(key).split(':')[0]);
 const inFlightRunIds = new Map();
 const liveHeartbeats = new Map();
 const HEARTBEAT_INTERVAL_MS = 30_000;
@@ -302,7 +305,10 @@ async function loadSession(pool, sessionId) {
   return rows[0];
 }
 
-async function resolveRevisionContext(session, explicitHead = null, githubService = github) {
+// `baseSha` pins the before revision instead of resolving it: a shots eval's
+// trial (shots-eval-runner.js) shoots the revisions its proposal's own run
+// shot.
+async function resolveRevisionContext(session, explicitHead = null, githubService = github, { baseSha: explicitBase = null } = {}) {
   const headSha = headForSession(session, explicitHead);
   if (!headSha) {
     throw new ShotsOrchestrationError(
@@ -311,7 +317,7 @@ async function resolveRevisionContext(session, explicitHead = null, githubServic
     );
   }
   const { owner, repo } = environment.repoParts(session.repo_url);
-  let baseSha = exactSha(session.handoff_base_sha);
+  let baseSha = exactSha(explicitBase) || exactSha(session.handoff_base_sha);
   let comparison = null;
   if (!baseSha) {
     const repository = await githubService.getRepoHead(owner, repo);
@@ -1218,6 +1224,9 @@ async function executeRun(config, options, injected = {}) {
     shotsStarter: injected.shotsStarter || shotsStarter,
     worker: injected.worker || worker,
     waitForSessionIdle: injected.waitForSessionIdle || waitForSessionIdle,
+    // A shots eval's trial is not its proposal's shots, so it tells nobody
+    // watching the proposal (shots-eval-runner.js passes a no-op).
+    notifyShots: injected.notifyShots || notifyShots,
   };
   const { pool, revision, onProgress = null } = options;
   let run = options.run;
@@ -1303,7 +1312,7 @@ async function executeRun(config, options, injected = {}) {
         'stale_shots_operation', 'This run is no longer available to build.'
       );
     }
-    notifyShots(session, app, 'provisioning');
+    deps.notifyShots(session, app, 'provisioning');
     pair = await deps.environment.preparePair(config, { pool, run, session, app, onProgress });
     failurePhase = 'exploration_reset';
     stage(failurePhase);
@@ -1339,7 +1348,7 @@ async function executeRun(config, options, injected = {}) {
       headImageDigest: pair.sides.head.imageDigest,
     });
     addTiming(metrics, 'provisioning', provisioningStartedAt);
-    notifyShots(session, app, 'exploring');
+    deps.notifyShots(session, app, 'exploring');
     stage('exploring');
 
     // Each side's tile on Homeroom's home screen, from its own dapp.json. A
@@ -1601,7 +1610,7 @@ async function executeRun(config, options, injected = {}) {
         planHash: summary.manifestHash, runs: 1, stories: summary.verdict.stories,
       }),
     });
-    notifyShots(session, app, 'reviewing');
+    deps.notifyShots(session, app, 'reviewing');
     const artifactPersistStartedAt = Date.now();
     failurePhase = 'store_artifacts';
     stage(failurePhase);
@@ -1643,7 +1652,7 @@ async function executeRun(config, options, injected = {}) {
       runId: run.id,
       trace: logFinalTrace,
     });
-    notifyShots(session, app, 'verified');
+    deps.notifyShots(session, app, 'verified');
     progress('Before/after shots are ready.');
     return deps.state.getForSession(pool, session.id, { headSha: run.head_sha });
   } catch (error) {
@@ -1688,7 +1697,7 @@ async function executeRun(config, options, injected = {}) {
       failureTrace
     );
     if (failed && session && app) {
-      notifyShots(session, app, 'failed', { failureCode: errorCode(error) });
+      deps.notifyShots(session, app, 'failed', { failureCode: errorCode(error) });
     }
     // The final model answer is for the proposal owner and app managers only;
     // do not copy its potentially app-derived text into the general log ring.
@@ -1900,10 +1909,15 @@ function inFlightRunSnapshot() {
 
 // The running shots run on a change, whatever its head, or null. Settles
 // (never rejects) when the run ends.
+// A run another platform process holds settles when its hold goes.
 function inFlightRunFor(sessionId) {
   const prefix = `${Number(sessionId)}:`;
   for (const [key, promise] of inFlight) {
     if (key.startsWith(prefix)) return promise.then(() => {}, () => {});
+  }
+  const processes = require('./processes');
+  if (processes.heldElsewhere('shots', Number(sessionId))) {
+    return processes.whenReleasedElsewhere('shots', Number(sessionId));
   }
   return null;
 }
@@ -1936,24 +1950,53 @@ async function stopForSession(pool, sessionId, injected = {}) {
     }
     throw error;
   }
-  if (inFlight.has(`${Number(sessionId)}:${run.head_sha}`)) stopRequested.add(run.id);
-  if (workerApi.getActiveTurnMode(sessionId) === 'shots') {
-    await workerApi.stopTurn(sessionId).catch((error) => {
-      log.warn('shots', 'Could not stop the shots agent', { sessionId, runId: run.id, error: error.message });
-    });
+  await stopHere({ sessionId, runId: run.id, headSha: run.head_sha }, workerApi);
+  // A run another platform process executes (one finishing its work after a
+  // release, say): it does the same there, told over the bus.
+  if (!inFlight.has(`${Number(sessionId)}:${run.head_sha}`) && require('./processes').heldElsewhere('shots', Number(sessionId))) {
+    require('./ws-bus').publish('shots_stop', null, { sessionId: Number(sessionId), runId: run.id, headSha: run.head_sha });
   }
   log.info('shots', 'Before/after shots stopped', { sessionId, runId: run.id, from: run.state });
   notifyShots(session, publicSessionAndApp(session).app, 'failed', { failureCode: 'shots_stopped' });
   return { stopped: true, runId: run.id };
 }
 
+// What a stop does to the run in this process: its runner hands the shots
+// agent no further turn, and the agent's turn ends. Only for a run this
+// process executes; never a coding turn.
+async function stopHere({ sessionId, runId, headSha }, workerApi = worker) {
+  let acted = false;
+  if (inFlight.has(`${Number(sessionId)}:${headSha}`)) { stopRequested.add(runId); acted = true; }
+  if (workerApi.getActiveTurnMode(sessionId) === 'shots') {
+    acted = true;
+    await workerApi.stopTurn(sessionId).catch((error) => {
+      log.warn('shots', 'Could not stop the shots agent', { sessionId, runId, error: error.message });
+    });
+  }
+  return acted;
+}
+
+// The bus's `shots_stop` (services/ws.js): another process stopped a run this
+// one executes. The run is already failed in the database.
+function receiveStop(payload) {
+  const sessionId = Number(payload?.sessionId);
+  const runId = payload?.runId;
+  if (!Number.isInteger(sessionId) || runId == null || typeof payload?.headSha !== 'string') return Promise.resolve(false);
+  return stopHere({ sessionId, runId, headSha: payload.headSha }).then((stopped) => {
+    if (stopped) log.info('shots', 'Stopped a before/after shots run another process was asked to stop', { sessionId, runId });
+    return stopped;
+  });
+}
+
 module.exports = {
+  receiveStop,
   ShotsOrchestrationError,
   exactSha,
   headForSession,
   intentForSession,
   uiFileHeuristic,
   loadSession,
+  publicSessionAndApp,
   resolveRevisionContext,
   declaredCheckSummary,
   INSTALL_STRIP,

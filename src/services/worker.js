@@ -11,7 +11,6 @@ const models = require('./models');
 const inLoopBrowser = require('./in-loop-browser');
 const registry = require('../agents/registry');
 const turnLifecycle = require('./turn-lifecycle');
-const botDrain = require('./homeroom-bot-drain');
 const branchNames = require('./branch-names');
 const llmTelemetry = require('./llm-telemetry');
 const liveAgentSpend = require('./live-agent-spend');
@@ -1347,10 +1346,12 @@ function codingProviderCount(value, maximum) {
 }
 // What one model request came to, as the Claude Code listener reports it
 // (worker/claude-openrouter-request.js, provider_request_result): kept as
-// the turn's routed provider for its ledger row, and, when it failed, said
-// on the progress line and logged with the ids that find it in OpenRouter's
-// own log. Nothing here is the request's content: the listener sends a
-// status, ids, a provider name and an error's type and clipped message.
+// the turn's routed provider for its ledger row (with every other host the
+// turn used, and whether the request left the shortlist), and, when it
+// failed, said on the progress line and logged with the ids that find it in
+// OpenRouter's own log. Nothing here is the request's content: the listener
+// sends a status, ids, a provider name and an error's type and clipped
+// message.
 const SAFE_PROVIDER_ID = /^[a-zA-Z0-9._:-]{1,160}$/;
 const SAFE_PROVIDER_NAME = /^[a-zA-Z0-9 ._:/()-]{1,80}$/;
 const SAFE_PROVIDER_ERROR_TYPE = /^[a-z0-9_.-]{1,64}$/i;
@@ -1367,10 +1368,18 @@ function observeCodingProviderResult(event, ordinal, onProgress, state) {
     state.routedProvider = providerName;
     // Every provider the turn's requests went to, in order, not only the
     // last: whether a build that quits early follows a provider is read
-    // from this (homeroom-bot-live.js turnFacts). A few names at most.
+    // from this (homeroom-bot-live.js turnFacts). A few names at most, first
+    // seen first; since run seven (14 Oct 2026) the turn's ledger row keeps
+    // them all (agent_turns.metadata.routed_providers), not only the last.
     const seen = Array.isArray(state.routedProviders) ? state.routedProviders : (state.routedProviders = []);
     if (!seen.includes(providerName) && seen.length < 8) seen.push(providerName);
   }
+  // How many of the turn's requests the shortlist refused and the listener
+  // sent again to every host (run seven, 14 Oct 2026: slow hosts still
+  // served builds, and nothing said how often a build left the shortlist).
+  // Zero once any request is seen, so "none" reads apart from "not known";
+  // the turn's ledger row keeps it (agent_turns.metadata.shortlist_fallbacks).
+  state.shortlistFallbacks = (state.shortlistFallbacks || 0) + (event.shortlistFallback === true ? 1 : 0);
   noteCodingProviderUsage(event.usage, state);
   noteCodingProviderImages(event.images, state);
   noteCodingProviderToolOutput(event.toolOutput, state);
@@ -2682,7 +2691,47 @@ async function finishTurn(sessionId, { journal = null, turnId = null } = {}) {
 //   - adoptWarmWorker() → server restart picked up an existing warm
 //                         container; register it so the next exec
 //                         doesn't try to re-bootstrap on top.
-const _warmRegistry = new Map();
+// docs/plans/draining-releases.md: a turn this process is executing holds
+// its session (services/processes.js) for as long as `inFlight` is set,
+// whatever started it (a person's turn, a sync, the shots agent, an eval
+// trial, a bot build): the cross-process twin of isInFlight, so another
+// process's leader never adopts or tears it down, and another process's
+// proxy reads its mode (remoteTurn). Taken on the flag's rise, given back on
+// its fall or when the entry goes.
+const _inFlightHolds = new Map(); // sessionId -> release
+function _inFlightHold(sessionId, inFlight) {
+  if (inFlight && !_inFlightHolds.has(sessionId)) {
+    try { _inFlightHolds.set(sessionId, require('./processes').hold('session', Number(sessionId))); } catch { /* no ref */ }
+  } else if (!inFlight && _inFlightHolds.has(sessionId)) {
+    const release = _inFlightHolds.get(sessionId);
+    _inFlightHolds.delete(sessionId);
+    release();
+  }
+}
+// And while it is registered at all, its worker is warm here: a marker
+// (services/processes.js 'warm', which no drain waits for) so another
+// process neither reports the worker as an orphan, nor adopts it, nor
+// evicts it from under this one (docs/plans/web-and-conductor.md).
+const _warmHolds = new Map(); // sessionId -> release
+function _warmHold(sessionId, warm) {
+  if (warm && !_warmHolds.has(sessionId)) {
+    try { _warmHolds.set(sessionId, require('./processes').hold('warm', Number(sessionId))); } catch { /* no ref */ }
+  } else if (!warm && _warmHolds.has(sessionId)) {
+    const release = _warmHolds.get(sessionId);
+    _warmHolds.delete(sessionId);
+    release();
+  }
+}
+class WarmRegistry extends Map {
+  set(sessionId, value) { _warmHold(sessionId, true); return super.set(sessionId, value); }
+  delete(sessionId) { _inFlightHold(sessionId, false); _warmHold(sessionId, false); return super.delete(sessionId); }
+  clear() {
+    for (const id of [..._inFlightHolds.keys()]) _inFlightHold(id, false);
+    for (const id of [..._warmHolds.keys()]) _warmHold(id, false);
+    super.clear();
+  }
+}
+const _warmRegistry = new WarmRegistry();
 
 function _registryGet(sessionId) {
   return _warmRegistry.get(sessionId) || null;
@@ -2699,6 +2748,7 @@ function _registryUpsert(sessionId, patch) {
   };
   const next = { ...prev, ...patch };
   _warmRegistry.set(sessionId, next);
+  _inFlightHold(sessionId, !!next.inFlight);
   // #1038: the inner docker-exec window is one of the two signals
   // isSessionBusy() ORs together, so a change here can flip a session's
   // working state for every client. Only the actual transition notifies —
@@ -2750,6 +2800,12 @@ function warmRegistrySnapshot() {
 
 // Register a warm container that already exists (either spawned by us
 // earlier in this process, or adopted from a previous server run).
+// Drop this process's record of a session's worker and leave the worker
+// as it is: another process keeps it warm too (server.js idle eviction).
+function forgetWorker(sessionId) {
+  return _warmRegistry.delete(sessionId);
+}
+
 function adoptWarmWorker(sessionId, containerName = null) {
   _registryUpsert(sessionId, {
     containerName: containerName || workerContainerName(sessionId),
@@ -3232,12 +3288,12 @@ async function ensureWorker(sessionId, {
     const labels = kubernetesWorkers
       ? { 'usernode.proxy': runtime.contractVersion }
       : await docker.getContainerLabels(containerName);
+    const storageStale = kubernetesWorkers && runtime.storageMode !== (temporary ? 'temporary' : 'persistent');
     const staleReason = labels['usernode.proxy'] !== WORKER_BOOTSTRAP_ENV_VERSION
       ? 'runtime-contract'
       : (kubernetesWorkers && runtime.imageRef !== workerConfig.kubernetes.workerImage
         ? 'worker-image'
-        : (kubernetesWorkers && runtime.storageMode !== (temporary ? 'temporary' : 'persistent')
-          ? 'storage-mode' : null));
+        : (storageStale ? 'storage-mode' : null));
     if (staleReason) {
       // A recovered/in-flight turn owns this worker until it settles. Normal
       // dispatch serialization means this is defensive, but keep the image
@@ -3251,6 +3307,31 @@ async function ensureWorker(sessionId, {
         log.info('worker', 'Deferring stale warm worker replacement until turn completion', {
           containerName, staleReason,
         });
+        return containerName;
+      }
+      // A durable build (services/build-runs.js) holds its session for its
+      // whole run, not only while a turn runs: between its build turn and a
+      // review's fix, a capture or its proposal no turn is in flight, and the
+      // check above let a new image take its worker. 14 Oct 2026: a
+      // newcomer's first version (bot run 2027, carried into a newer release
+      // by a restart) lost its worker that way just before its review's fix
+      // turn: the Pod was recreated with its scratch workspace, the fix
+      // turn's resume failed, and the build stopped. A newer image alone is
+      // not a reason to take a run's worker: the contract is the same
+      // (checked first), so the image it has still serves this host. It is
+      // replaced at the first ensure after the run ends. Not a contract
+      // change, which an older worker cannot serve (its turns would fail
+      // anyway), nor storage: those are replaced as before.
+      if (staleReason === 'worker-image' && !storageStale
+          && await require('./build-runs').holdsSession(_getPoolSafe(), sessionId)) {
+        log.info('worker', 'Keeping a durable build\'s worker on its image until the build ends', {
+          containerName, sessionId, staleReason,
+          currentImage: runtime?.imageRef || null,
+          expectedImage: workerConfig?.kubernetes.workerImage || null,
+        });
+        if (!existing) {
+          _registryUpsert(sessionId, { containerName, lastUsedMs: Date.now(), inFlight: false });
+        }
         return containerName;
       }
       log.info('worker', kubernetesWorkers
@@ -3403,8 +3484,11 @@ async function execInWorker(sessionId, {
   leanTurns = false,
   // A first version's build under its configuration's `roomy_context`
   // tweak: Claude Code compacts its conversation at a larger window
-  // (claude-openrouter-request.js ROOMY_AUTO_COMPACT_TOKEN_LIMIT).
-  // ROOMY_CONTEXT=1, for a first version's build that Claude Code runs.
+  // (claude-openrouter-request.js ROOMY_AUTO_COMPACT_TOKEN_LIMIT): 200k
+  // for any model. GLM already compacts at 200k on every turn, so for GLM
+  // it changes nothing; it still raises every other non-Anthropic model
+  // from 120k. ROOMY_CONTEXT=1, for a first version's build that Claude
+  // Code runs.
   roomyContext = false,
   shotsRunId = null,
   shotsOrigins = null,
@@ -3456,6 +3540,13 @@ async function execInWorker(sessionId, {
   // "Post-agent TAIL" note above. Default false — the sync path and any
   // future tail-less caller keep the original clear-on-exit behaviour.
   holdTurnRecord = false,
+  // Called with the turn record's identity ({ turnId, journal, turnUuid,
+  // mode }) once it is saved and before the turn is dispatched, so a caller
+  // that keeps its own steps (services/durable-turn.js) knows which record is
+  // its turn's should a restart come next. A throw (the caller's work is no
+  // longer this process's) dispatches nothing and leaves the record for the
+  // next owner, who finds it never dispatched.
+  onTurnRecord = null,
   // Kept as a compatibility option for older call sites. Persistence is now
   // required for every dispatch, not only recovered retries.
   requireActiveTurnPersistence = false,
@@ -3878,7 +3969,25 @@ async function execInWorker(sessionId, {
     turnByokCents: registryBefore.turnByokCents,
     turnByokSwitched: registryBefore.turnByokSwitched,
     unpushed: registryBefore.unpushed ?? null,
+    // A turn this process was already running keeps running.
+    inFlight: !!registryBefore.inFlight,
   } : null;
+  // Undo this call's claim on the registry when it dispatches nothing. Only
+  // while the claim is still this call's: a dispatch that started alongside
+  // it may have claimed the session since, and its claim is not ours to undo.
+  // Why: session 8599's sync-on-resume lost the session to a build turn and
+  // wrote `inFlight: false` over it here, so the idle sweep saw the running
+  // turn's worker as idle and evicted it five minutes later, mid-turn.
+  const releaseRegistryClaim = () => {
+    const current = _registryGet(sessionId);
+    if (!current?.inFlight || String(current.activeTurnId) !== String(durableTurnId)) return;
+    _registryUpsert(sessionId, {
+      ...(replacedRegistryFields || {
+        activeTurnMode: null, journal: null, activeTurnId: null, inFlight: false,
+      }),
+      lastUsedMs: Date.now(),
+    });
+  };
   _registryUpsert(sessionId, {
     inFlight: true, activeTurnMode: mode, journal, activeTurnId: durableTurnId,
     turnByokCents: 0, turnByokSwitched: false,
@@ -3924,12 +4033,7 @@ async function execInWorker(sessionId, {
     // Put back what this call replaced: this dispatch never ran, so the
     // turn that owns the session (or the last one's remembered state) keeps
     // its in-memory record.
-    _registryUpsert(sessionId, {
-      ...(replacedRegistryFields || {
-        activeTurnMode: null, journal: null, activeTurnId: null,
-      }),
-      inFlight: false, lastUsedMs: Date.now(),
-    });
+    releaseRegistryClaim();
     await revokeHomeroomReadGrant(sessionId, homeroomGrant);
     // This turn's own prompt files are not used by anyone else (#4575).
     if (promptPaths.prompt !== TURN_PROMPT_PATH) {
@@ -3948,6 +4052,18 @@ async function execInWorker(sessionId, {
     err.persistCode = activeTurnPersist.code;
     err.sessionBusy = activeTurnPersist.code === 'session_busy';
     throw err;
+  }
+
+  if (typeof onTurnRecord === 'function') {
+    try {
+      await onTurnRecord({ turnId: durableTurnId, journal, turnUuid: turnUuid || null, mode });
+    } catch (err) {
+      // Nothing was dispatched: this process's registry goes back as it was,
+      // and the record stays for whoever owns the turn next.
+      releaseRegistryClaim();
+      await revokeHomeroomReadGrant(sessionId, homeroomGrant);
+      throw err;
+    }
   }
 
   // Visible to the `finally` below, which stamps the tail's seed
@@ -3987,10 +4103,6 @@ async function execInWorker(sessionId, {
     }).catch((err) => log.warn('worker', 'Failed to mark turn executing; durable dispatch remains recoverable', {
       sessionId, turnId: durableTurnId, err: err.message,
     }));
-    // The turn's record is saved and its process runs: a Homeroom bot
-    // pipeline that opened it is parked at a point restart recovery adopts
-    // (homeroom-bot-drain.js), so shutdown need not wait for it.
-    botDrain.noteTurnDispatched(sessionId, { mode });
     // onChild is legacy: there is no host-side child that owns the turn
     // anymore. Stop semantics live in stopTurn() (in-container pkill).
     if (typeof onChild === 'function') {
@@ -4073,17 +4185,6 @@ async function execInWorker(sessionId, {
     } catch (err) {
       consumeError = err;
     }
-    // A Homeroom bot pipeline's turn that ends once shutdown has begun goes
-    // no further: its record and journal stay as they are (this never
-    // returns, so the `finally` below never clears them) and the next
-    // leader adopts the finished turn, rather than this process starting a
-    // step it cannot finish (homeroom-bot-drain.js).
-    if (botDrain.holdAfterTurn()) {
-      log.info('worker', 'Shutting down: a Homeroom bot turn ended; left for the next leader', {
-        sessionId, turnId: durableTurnId, mode,
-      });
-      await new Promise(() => {});
-    }
     if (consumeError) {
       // What the turn did before the journal could not be read on, for the
       // ledger (sessions.js reads err.turnResult): its usage, its telemetry
@@ -4108,7 +4209,6 @@ async function execInWorker(sessionId, {
     }
     return finalizeHarnessResult(state);
   } finally {
-    if (providerDispatched) botDrain.noteTurnEnded(sessionId, { mode });
     // The agent process is done with the platform once its journal has
     // ended: the tail (PR, staging, the wrap-up) never uses this token.
     await revokeHomeroomReadGrant(sessionId, homeroomGrant);
@@ -4164,6 +4264,42 @@ function getActiveTurnMode(sessionId) {
   return (meta && meta.inFlight) ? (meta.activeTurnMode || null) : null;
 }
 
+// docs/plans/draining-releases.md: a turn another platform process runs (one
+// finishing its work after a release, or the one that replaced it) still
+// calls back through whichever process the Service picks. What the proxy
+// must know about it (its mode, its id) comes from its durable record, cached
+// for REMOTE_TURN_TTL_MS: the proxy asks on every model call. Null for a turn
+// this process runs, and for a session no live process holds.
+const REMOTE_TURN_TTL_MS = 5000;
+const _remoteTurns = new Map(); // sessionId -> { at, turn: { mode, turnId } | null }
+
+async function remoteTurn(sessionId) {
+  const sid = Number(sessionId);
+  const meta = _warmRegistry.get(sid);
+  if (meta && meta.inFlight) return null;
+  const processes = require('./processes');
+  if (!processes.heldElsewhere('session', sid) && !processes.heldElsewhere('shots', sid)) return null;
+  const cached = _remoteTurns.get(sid);
+  if (cached && Date.now() - cached.at < REMOTE_TURN_TTL_MS) return cached.turn;
+  const pool = _getPoolSafe();
+  if (!pool) return null;
+  let turn = null;
+  try {
+    const record = await turnLifecycle.loadActiveTurn(pool, sid);
+    turn = record ? { mode: record.mode || null, turnId: record.turnId || null } : null;
+  } catch { turn = null; }
+  if (_remoteTurns.size > 500) _remoteTurns.clear();
+  _remoteTurns.set(sid, { at: Date.now(), turn });
+  return turn;
+}
+
+// The mode of the turn in flight on a session, whichever process runs it.
+async function turnModeFor(sessionId) {
+  const mode = getActiveTurnMode(sessionId);
+  if (mode) return mode;
+  return (await remoteTurn(sessionId))?.mode || null;
+}
+
 // ──────────────────────────────────────────────────────────────────────
 // #664: per-turn BYOK spillover accounting
 // ──────────────────────────────────────────────────────────────────────
@@ -4183,6 +4319,17 @@ function noteTurnByokSpend(sessionId, cents) {
   const sid = Number(sessionId);
   if (!(cents > 0)) return;
   const meta = _warmRegistry.get(sid);
+  // A turn another process runs: the durable mirror here, and that process's
+  // tally for its settlement told over the bus (receiveTurnByok).
+  if (!(meta && meta.inFlight) && require('./processes').heldElsewhere('session', sid)) {
+    void remoteTurn(sid).then(async (turn) => {
+      if (!turn?.turnId) return;
+      const pool = _getPoolSafe();
+      if (pool) await turnLifecycle.incrementByokCents(pool, { sessionId: sid, turnId: turn.turnId, cents });
+      require('./ws-bus').publish('turn_byok', null, { sessionId: sid, turnId: turn.turnId, cents });
+    }).catch((err) => log.warn('worker', 'Failed to record byok spend for a turn elsewhere', { sessionId: sid, err: err.message }));
+    return;
+  }
   _registryUpsert(sid, { turnByokCents: ((meta && meta.turnByokCents) || 0) + cents });
   const pool = _getPoolSafe();
   const activeTurnId = meta?.activeTurnId || null;
@@ -4212,8 +4359,33 @@ function getTurnByokCents(sessionId) {
 function markTurnByokSwitched(sessionId) {
   const sid = Number(sessionId);
   const meta = _warmRegistry.get(sid);
+  // A turn another process runs: no registry entry is made for it here; once
+  // per session per REMOTE_SWITCH_MS stands in for once per turn.
+  if (!(meta && meta.inFlight) && require('./processes').heldElsewhere('session', sid)) {
+    const at = _remoteByokSwitched.get(sid);
+    if (at && Date.now() - at < REMOTE_SWITCH_MS) return false;
+    if (_remoteByokSwitched.size > 500) _remoteByokSwitched.clear();
+    _remoteByokSwitched.set(sid, Date.now());
+    return true;
+  }
   if (meta && meta.turnByokSwitched) return false;
   _registryUpsert(sid, { turnByokSwitched: true });
+  return true;
+}
+const REMOTE_SWITCH_MS = 10 * 60 * 1000;
+const _remoteByokSwitched = new Map(); // sessionId -> when
+
+// The bus's `turn_byok` (services/ws.js): another process's proxy paid a call
+// of the turn this process runs with the owner's key, and recorded it
+// durably. Added to this process's tally for the turn-end settlement only
+// when it is still the same turn.
+function receiveTurnByok(payload) {
+  const sid = Number(payload?.sessionId);
+  const cents = Number(payload?.cents);
+  if (!Number.isInteger(sid) || !(cents > 0)) return false;
+  const meta = _warmRegistry.get(sid);
+  if (!meta || !meta.inFlight || !meta.activeTurnId || String(meta.activeTurnId) !== String(payload.turnId)) return false;
+  _registryUpsert(sid, { turnByokCents: (meta.turnByokCents || 0) + cents });
   return true;
 }
 
@@ -4670,15 +4842,27 @@ async function resumeTurnFromJournal(sessionId, {
   attemptNumber = 1,
   billingByok = false,
   providerWasDispatched = false,
+  // The per-turn state execInWorker keeps only in the warm registry, put
+  // back from the durable record: active_turn.mode, the session's branch,
+  // and a stop requested before the restart (active_turn.stopRequestedAt,
+  // as epoch ms). Without the mode an adopted sync turn's remaining model
+  // calls bill the owner instead of the system budget (the proxy reads
+  // getActiveTurnMode); without the branch a commit the turn could not
+  // push is not rescued before eviction deletes the checkout.
+  mode = null,
+  branchName = null,
+  stopRequestedAt = null,
 } = {}) {
   if (!journal) throw new Error('resumeTurnFromJournal: journal path required');
   const meta = _registryGet(sessionId);
   const containerName = meta?.containerName || workerRuntimeName(sessionId);
+  const turnMode = mode || meta?.activeTurnMode || null;
   // #664: seed the per-turn BYOK counters from the persisted active_turn
   // record (callers pass active_turn.byokCents) so post-restart switched
   // calls accumulate on top instead of restarting from zero, and the
   // one-time switch notice doesn't re-fire for an already-switched turn.
   const seedCents = Number(byokCentsSoFar) > 0 ? Number(byokCentsSoFar) : 0;
+  const durableStopMs = Number(stopRequestedAt) > 0 ? Number(stopRequestedAt) : null;
   _registryUpsert(sessionId, {
     inFlight: true, adopted: true,
     // Recovered proxy calls must keep mirroring BYOK spillover onto the
@@ -4686,10 +4870,21 @@ async function resumeTurnFromJournal(sessionId, {
     // every cent observed after the first recovery.
     activeTurnId: turnId || null,
     turnByokCents: seedCents, turnByokSwitched: seedCents > 0,
+    // What execInWorker's dispatch upsert records, so the adopted turn is
+    // the same turn to every reader: the proxy's sync check, stopTurn's
+    // journal, and the liveness watchdog's stop cadence.
+    activeTurnMode: turnMode,
+    journal,
+    ...(durableStopMs && !meta?.stopRequestedAt ? { stopRequestedAt: durableStopMs } : {}),
   });
+  // A stop that was asked for before the restart is applied now: the
+  // process that recorded it may have died before its kill landed, and the
+  // recovered turn is closed as stopped either way (server.js). Not awaited:
+  // the kill appends the exit marker this replay then reads.
+  if (durableStopMs) Promise.resolve().then(() => stopTurn(sessionId)).catch(() => {});
   const state = newWatchState();
   state.turnId = turnId || null;
-  state.liveSpendEnabled = agentBackend === 'claude_code' && meta?.activeTurnMode !== 'sync';
+  state.liveSpendEnabled = agentBackend === 'claude_code' && turnMode !== 'sync';
   workerProgress.setSpend(sessionId, null);
   state.hostSessionId = sessionId;
   state.hostContainerName = containerName;
@@ -4758,7 +4953,14 @@ async function resumeTurnFromJournal(sessionId, {
         correlationId: telemetryCorrelationId || String(turnId),
       });
     }
-    _registryUpsert(sessionId, { inFlight: false, lastUsedMs: Date.now() });
+    // execInWorker's teardown, for the adopted turn: the turn is over, and
+    // what a finished build committed but could not push is remembered so
+    // the tail's heal, or failing that evictWorker, pushes it before the
+    // workspace goes. A pending stop survives, as it does there (#937).
+    _registryUpsert(sessionId, {
+      inFlight: false, lastUsedMs: Date.now(), activeTurnMode: null, journal: null,
+      unpushed: unpushedCommit(turnMode, state, branchName),
+    });
   }
 }
 
@@ -5794,9 +5996,13 @@ module.exports = {
   BENCH_CAPTURE_SCRIPT_PATH,
   warmRegistrySnapshot,
   adoptWarmWorker,
+  forgetWorker,
   isInFlight,
   isWorkerExecuting,
   getActiveTurnMode,
+  turnModeFor,
+  remoteTurn,
+  receiveTurnByok,
   // #664: per-turn BYOK spillover accounting (worker Anthropic proxy +
   // turn-end settlement)
   noteTurnByokSpend,
