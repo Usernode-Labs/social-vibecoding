@@ -498,8 +498,12 @@ const REPLACING_RECHECK_REASONS = new Set(['testing-update', 'shots-update']);
 // With WF_PREVIEWS_ENABLED on, the paths below hand their request to the
 // preview machine (services/preview-workflow.js). The reasons that are an
 // observation of a runtime that is gone: for a session the machine holds,
-// those report PreviewLost and the machine rebuilds what served.
-const OBSERVED_REASONS = new Set(['startup', 'heal']);
+// those report PreviewLost and the machine rebuilds what served. A Preview
+// click is one: the route rebuilds only once it found the runtime missing or
+// stale (routes/sessions.js inspectPreview). Asked as a plain "ensure", the
+// machine would answer that it already serves that head, and the reviewer's
+// loader would wait for a preview nothing builds.
+const OBSERVED_REASONS = new Set(['startup', 'heal', 'preview-click']);
 const workflow = () => require('./preview-workflow');
 
 // Rebuild the staging preview for a single session that has a branch +
@@ -732,8 +736,8 @@ async function rebuildSessionStaging({ config, pool, session, reason, headSha = 
     }
   }
 
-  // The machine builds, checks and announces it (a Preview click asks for
-  // the preview itself, so a head it already serves is not rebuilt).
+  // The machine builds, checks and announces it (a Preview click on a
+  // session whose machine serves nothing yet asks for the preview itself).
   if (handOff) {
     if (reason === 'preview-click') {
       await workflow().request({ pool, session, head: commitHash, reason: 'ensure' });
