@@ -1669,12 +1669,34 @@ function documentOf(url) {
 // a line on another stream could land inside one when Kubernetes merges them.
 //   __USERNODE_DIAG__ kind=<kind> <base64 JSON>
 // The platform's frame readers skip any line they do not know.
-function emitDiag(kind, data) {
-  if (_diagCount >= MAX_DIAG_FRAMES) return false;
-  _diagCount += 1;
+// `uncapped` is for the one summary a run writes at its end (checks-timing),
+// which must neither be crowded out by nor crowd out the frames above.
+function emitDiag(kind, data, { uncapped = false } = {}) {
+  if (!uncapped) {
+    if (_diagCount >= MAX_DIAG_FRAMES) return false;
+    _diagCount += 1;
+  }
   const json = JSON.stringify(data || {});
   _sink(`__USERNODE_DIAG__ kind=${kind} ${Buffer.from(json, 'utf8').toString('base64')}\n`);
   return true;
+}
+
+// Nearest-rank percentile over a numeric array (ms), 0 for none.
+function percentile(values, p) {
+  const xs = values.filter((v) => Number.isFinite(v)).sort((a, b) => a - b);
+  if (!xs.length) return 0;
+  return Math.round(xs[Math.min(xs.length - 1, Math.max(0, Math.ceil((p / 100) * xs.length) - 1))]);
+}
+
+function timingSummary(values) {
+  const xs = values.filter((v) => Number.isFinite(v));
+  return {
+    n: xs.length,
+    p50: percentile(xs, 50),
+    p90: percentile(xs, 90),
+    max: percentile(xs, 100),
+    mean: xs.length ? Math.round(xs.reduce((a, b) => a + b, 0) / xs.length) : 0,
+  };
 }
 
 // #47: run the declared tests for ONE route against the staging build.
@@ -1717,6 +1739,9 @@ async function runTestGroup(browser, group, opts) {
   const tests = Array.isArray(group) ? group : [group];
   const cohorts = cohortsOf(tests);
   const lead = tests[0];
+  // When the caller asks: how long the cold load took, from opening the
+  // context to the first settle (the checks-timing summary in runTests).
+  const startedAt = Date.now();
   const quietMs = Number.isFinite(o.settleQuietMs) ? o.settleQuietMs : SETTLE_QUIET_MS;
   const maxMs = Number.isFinite(o.settleMaxMs) ? o.settleMaxMs : SETTLE_MAX_MS;
   const assertMax = Number.isFinite(o.assertMaxMs) ? o.assertMaxMs : ASSERT_MAX_MS;
@@ -1899,6 +1924,7 @@ async function runTestGroup(browser, group, opts) {
             return await startOver('subresource');
           }
         }
+        if (o.timing) o.timing.loadMs = Date.now() - startedAt;
       } else {
         await consoleSink.settle();
         cohortFrom = consoleErrors.length;
@@ -2138,10 +2164,18 @@ async function runTests(browser, tests, opts) {
     env,
   };
   const startedAt = now();
+  const wallStartedAt = Date.now();
   let ran = 0;
   let hitDeadline = false;
+  // Wall-clock milliseconds per group (and per cold load), for the summary
+  // the run writes at its end.
+  const groupTimes = [];
+  const retryTimes = [];
+  const loadTimes = [];
 
   const runOne = async (group, { counts = true } = {}) => {
+    const groupStartedAt = Date.now();
+    const timing = {};
     const cohortCount = cohortsOf(group).length;
     const groupBudgetMs = perTestMs
       + navBudgetMs
@@ -2157,6 +2191,8 @@ async function runTests(browser, tests, opts) {
       // The group's own ceiling, so a rolling assert window can never
       // outlive the budget this race enforces (see ASSERT_REPORT_RESERVE_MS).
       const groupOpts = { ...settleOpts, groupDeadlineAt: now() + groupBudgetMs };
+      // Where the group writes how long its cold load took.
+      groupOpts.timing = timing;
       outcome = await Promise.race([
         Promise.resolve()
           .then(() => runTestGroup(browser, group, groupOpts))
@@ -2184,6 +2220,8 @@ async function runTests(browser, tests, opts) {
       }
     }
     if (counts) ran += group.length;
+    (counts ? groupTimes : retryTimes).push(Date.now() - groupStartedAt);
+    if (counts && Number.isFinite(timing.loadMs)) loadTimes.push(timing.loadMs);
   };
 
   // Every group straight through the pool — with per-group contexts there
@@ -2267,6 +2305,18 @@ async function runTests(browser, tests, opts) {
       .every((indices) => indices.some((index) => _testStatus.get(index) === 'pass'));
     if (!allRecovered) break;
   }
+
+  // How long this run's groups took, in one line the platform logs
+  // (visuals.js parseDiagnostics). Wall clock, not CPU: it is what a check
+  // run waits on. No verdict reads it. Nothing in it names a URL.
+  emitDiag('checks-timing', {
+    shard: shard ? `${shard.index}/${shard.count}` : null,
+    lanes: Math.min(concurrency, groups.length),
+    wallMs: Date.now() - wallStartedAt,
+    groups: timingSummary(groupTimes),
+    loads: timingSummary(loadTimes),
+    retries: timingSummary(retryTimes),
+  }, { uncapped: true });
 
   // `ran` and `expected` still count DECLARED checks only. A retry is a
   // second opinion on a check the suite already ran, not another check, and
@@ -2373,4 +2423,4 @@ if (require.main === module) {
 // file whose BEHAVIOUR (how many navigations it makes, whether it starts a
 // recording) is the thing under test, and it takes its page from the browser
 // it is handed, so a fake browser exercises it without Chromium.
-module.exports = { testShard, groupCost, heaviestFirst, shardGroups, resolveTestViewport, RETRY_INDEX_BASE, RETRY_SHARD_STRIDE, networkSnapshot, documentOf, stylesheetProblem, makeStylesheetWatch, pageShowsSomethingInPage, readRenderHealth, parseCookie, resolveTargets, resolveDeviceScaleFactor, parseTargetViewport, parseCompanion, parseReady, waitForScenarioReady, mediaEnabled, resolveTests, captureTarget, runTests, runTestGroup, groupTestsByUrl, groupTestsByDocument, groupTests, cohortsOf, hashGroupCap, waitForQuiet, makeActivityClock, makeConsoleErrorSink, settleQuietMs, settleMaxMs, assertMaxMs, poolSize, testTimeoutMs, testsDeadlineMs, setFrameSink, CHROMIUM_LAUNCH_ARGS };
+module.exports = { timingSummary, testShard, groupCost, heaviestFirst, shardGroups, resolveTestViewport, RETRY_INDEX_BASE, RETRY_SHARD_STRIDE, networkSnapshot, documentOf, stylesheetProblem, makeStylesheetWatch, pageShowsSomethingInPage, readRenderHealth, parseCookie, resolveTargets, resolveDeviceScaleFactor, parseTargetViewport, parseCompanion, parseReady, waitForScenarioReady, mediaEnabled, resolveTests, captureTarget, runTests, runTestGroup, groupTestsByUrl, groupTestsByDocument, groupTests, cohortsOf, hashGroupCap, waitForQuiet, makeActivityClock, makeConsoleErrorSink, settleQuietMs, settleMaxMs, assertMaxMs, poolSize, testTimeoutMs, testsDeadlineMs, setFrameSink, CHROMIUM_LAUNCH_ARGS };

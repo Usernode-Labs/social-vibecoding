@@ -78,17 +78,45 @@ function createShellReleaseCache({ manifest, storage, fetcher, worker, cryptoApi
     if (expected && value.revision !== expected) throw new Error('Shell build mismatch');
     return value;
   }
+  // The release's own bytes, or null: a failed answer, or bytes that do not
+  // hash to the manifest's entry.
+  async function verified(response, entry) {
+    if (!response.ok || response.redirected) return null;
+    return await sha256(await response.clone().arrayBuffer()) === entry.hash ? response : null;
+  }
   async function asset(entry, release) {
     const cache = await storage.open(CONTENT);
     const key = assetKey(entry);
     const hit = await cache.match(key);
     if (hit) return hit;
-    const response = await fetchFresh(scopedPath(entry, release));
-    if (!response.ok || response.redirected) throw new Error('Shell asset unavailable');
+    const url = scopedPath(entry, release);
+    // The HTTP cache first: on a first visit the page has just downloaded
+    // these exact files, and asking again with 'reload' downloaded the whole
+    // shell twice. A copy the HTTP cache holds from another build cannot get
+    // in: every download is hashed against the manifest (js and css also sit
+    // under the build's own /b/<sha>/ URL), and one that does not match is
+    // fetched once more past the cache, which then decides as before.
     // Only downloaded assets are hashed. A normal cached load does no
     // hashing and no revalidation; identical bytes survive backend updates.
-    if (await sha256(await response.clone().arrayBuffer()) !== entry.hash) {
-      throw new Error('Shell asset belongs to another release');
+    let response = null;
+    const signal = AbortSignal.timeout(20000);
+    try {
+      response = await verified(await fetcher(url, { redirect: 'error', signal }), entry);
+    } catch (err) {
+      // A rejection is an unusable first answer like any other: a redirect
+      // the HTTP cache kept rejects under redirect: 'error', and the reload
+      // below gets past it. Only a timeout is not retried, so a slow network
+      // still costs one 20s wait, not two. Offline costs one more immediate
+      // rejection. The timeout is read off the signal, not the error: a body
+      // that stalls after its headers rejects its read with an AbortError in
+      // some Chromium versions, while the signal's reason is the timeout.
+      if ((err && err.name === 'TimeoutError')
+        || (signal.aborted && signal.reason && signal.reason.name === 'TimeoutError')) throw err;
+    }
+    if (!response) {
+      response = await fetchFresh(url);
+      if (!response.ok || response.redirected) throw new Error('Shell asset unavailable');
+      if (!await verified(response, entry)) throw new Error('Shell asset belongs to another release');
     }
     await cache.put(key, response.clone());
     return response;
