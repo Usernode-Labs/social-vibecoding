@@ -553,6 +553,23 @@ test('an extension only a superuser can create is made by the administrator, on 
     const exts = new Set((await clone.query('SELECT extname FROM pg_extension')).rows.map((r) => r.extname));
     assert.ok(exts.has('pg_stat_statements'), `${db}: the administrator's extension is in the copy`);
     assert.ok(exts.has('pg_trgm'), `${db}: the trusted extension is in the copy`);
+    // Its objects stay the administrator's: owning pg_stat_statements_reset()
+    // would let the preview's code wipe the statistics of the whole server.
+    const role = `${db}_owner`;
+    const members = (await clone.query(
+      `SELECT d.classid::regclass::text AS kind, d.objid,
+              COALESCE(pg_get_userbyid(p.proowner), pg_get_userbyid(c.relowner)) AS owner,
+              p.proname, CASE WHEN p.oid IS NULL THEN NULL ELSE has_function_privilege($1, p.oid, 'EXECUTE') END AS can_run
+         FROM pg_depend d JOIN pg_extension e ON e.oid = d.refobjid AND d.refclassid = 'pg_extension'::regclass
+         LEFT JOIN pg_proc p ON d.classid = 'pg_proc'::regclass AND p.oid = d.objid
+         LEFT JOIN pg_class c ON d.classid = 'pg_class'::regclass AND c.oid = d.objid
+        WHERE e.extname = 'pg_stat_statements' AND d.deptype = 'e'`, [role])).rows;
+    assert.ok(members.some((m) => m.proname === 'pg_stat_statements_reset'), `${db}: the extension's members were found`);
+    for (const m of members.filter((x) => x.owner)) {
+      assert.notEqual(m.owner, role, `${db}: the copy's role owns the extension's ${m.kind} ${m.proname || m.objid}`);
+    }
+    assert.equal(members.find((m) => m.proname === 'pg_stat_statements_reset').can_run, false,
+      `${db}: the copy's role can run pg_stat_statements_reset()`);
     // The rest was still loaded, and redacted, as the copy's own role.
     await assertRedacted(clone, db);
     await clone.end();

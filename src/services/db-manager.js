@@ -1731,6 +1731,12 @@ BEGIN
   -- on the parent already transfers them. Filtering here keeps the
   -- DO block side-effect-clean instead of relying on per-statement
   -- error swallowing.
+  --
+  -- Every loop also skips an extension's own objects (deptype 'e'):
+  -- they stay with whoever created the extension. Handed to an app's
+  -- role, pg_stat_statements_reset() (the operator's extension, made by
+  -- the administrator) would let a preview's code wipe the query
+  -- statistics of every database on the server.
   FOR r IN
     SELECT n.nspname, c.relname, c.relkind
       FROM pg_class c
@@ -1743,7 +1749,7 @@ BEGIN
          SELECT 1 FROM pg_depend d
           WHERE d.objid = c.oid
             AND d.classid = 'pg_class'::regclass
-            AND d.deptype IN ('a','i')
+            AND d.deptype IN ('a','i','e')
        )
   LOOP
     EXECUTE format(
@@ -1769,6 +1775,10 @@ BEGIN
       JOIN pg_roles role  ON role.oid = p.proowner
      WHERE n.nspname NOT IN ('pg_catalog','information_schema','pg_toast')
        AND role.rolname = '${fromRole}'
+       AND NOT EXISTS (
+         SELECT 1 FROM pg_depend d
+          WHERE d.objid = p.oid AND d.classid = 'pg_proc'::regclass AND d.deptype = 'e'
+       )
   LOOP
     EXECUTE format(
       'ALTER FUNCTION %I.%I(%s) OWNER TO %I',
@@ -1791,6 +1801,10 @@ BEGIN
        AND NOT EXISTS (
          SELECT 1 FROM pg_class c WHERE c.reltype = t.oid
        )
+       AND NOT EXISTS (
+         SELECT 1 FROM pg_depend d
+          WHERE d.objid = t.oid AND d.classid = 'pg_type'::regclass AND d.deptype = 'e'
+       )
   LOOP
     EXECUTE format('ALTER TYPE %I.%I OWNER TO %I', r.nspname, r.typname, '${toRole}');
   END LOOP;
@@ -1805,6 +1819,10 @@ BEGIN
      WHERE n.nspname NOT LIKE 'pg_%'
        AND n.nspname NOT IN ('information_schema','public')
        AND role.rolname = '${fromRole}'
+       AND NOT EXISTS (
+         SELECT 1 FROM pg_depend d
+          WHERE d.objid = n.oid AND d.classid = 'pg_namespace'::regclass AND d.deptype = 'e'
+       )
   LOOP
     EXECUTE format('ALTER SCHEMA %I OWNER TO %I', r.nspname, '${toRole}');
   END LOOP;
