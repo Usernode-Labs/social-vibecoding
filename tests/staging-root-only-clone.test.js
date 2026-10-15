@@ -97,7 +97,9 @@ function loadStaging({ git = () => '', cloneUrl = null, stored = {}, onBuild = (
     },
   });
   stub(ids.appLlmEnv, { platformApiBaseUrl: () => 'http://usernode:3000/api/app-platform' });
-  stub(ids.pool, { getPool: () => ({ query: async () => ({ rows: [] }) }) });
+  // A Docker attempt's deploy holds a per-session lock on its own connection.
+  const client = { query: async () => ({ rows: [] }), release() {} };
+  stub(ids.pool, { getPool: () => ({ query: async () => ({ rows: [] }), connect: async () => client }) });
   stub(ids.caddy, {
     stagingHostname: (slug, u) => `${slug}--${u}.example.test`,
     warmCert: async () => ({ ok: true, code: 200 }),
@@ -118,6 +120,7 @@ function loadStaging({ git = () => '', cloneUrl = null, stored = {}, onBuild = (
     },
     buildImage: async (sourceDir, image, args) => built(sourceDir, args.GIT_SHA, DOCKER),
     runContainer: async () => 'cid123',
+    inspectContainer: async () => null,
     waitForHealthy: async () => {},
     stopAndRemove: async () => {},
     getHostPort: async () => null,
@@ -138,6 +141,7 @@ function loadStaging({ git = () => '', cloneUrl = null, stored = {}, onBuild = (
     stagingDbName: (slug, u, hash) => `app_${slug}_staging_${u}_${String(hash).substring(0, 6)}`,
     cloneDatabase: async () => ({ password: 'pw' }),
     connectionUrl: () => 'postgres://x',
+    databaseExists: async () => false,
   });
 
   // Reload the dispatcher so it picks up the docker and kubernetes stubs.
@@ -154,8 +158,16 @@ function loadStaging({ git = () => '', cloneUrl = null, stored = {}, onBuild = (
   return { subject, applicationRuntime, calls, find, builds, manifests, restore };
 }
 
+// The preview machine's build of one attempt (staging.prepareAttempt, as
+// src/workflow/preview/services.ts calls it): attempt 1, its first claim,
+// into its own database and its own checkout.
+const checkoutOf = (id) => `/tmp/usernode-preview-${id}-a1-c1`;
+const prepare = (subject, config, sess, app, head) => subject.prepareAttempt(config, sess, app, head, {
+  n: 1, claim: 1, dbName: `app_widget_staging_s${sess.id}_aaaaaa`, servingN: null, checkpoint: async () => {},
+});
+
 // The commands with the checkout directory taken out, so two lanes compare.
-const shape = (calls) => calls.map((argv) => argv.filter((a) => !String(a).startsWith('/tmp/usernode-staging-')).join(' '));
+const shape = (calls) => calls.map((argv) => argv.filter((a) => !String(a).startsWith('/tmp/usernode-preview-')).join(' '));
 
 const SHA = 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef';
 const OTHER = 'c0ffeec0ffeec0ffeec0ffeec0ffeec0ffeec0ff';
@@ -180,14 +192,14 @@ test('the dispatcher says which lane needs the whole tree', () => {
 test('Kubernetes, a native session: the clone carries the listing and the root files, no submodules', async () => {
   const { subject, find, calls, builds, restore } = loadStaging({ git: refs({ HEAD: SHA }) });
   try {
-    await subject.buildAndDeployStaging(
+    await prepare(subject, 
       KUBERNETES, { id: 7078101, branch_name: 'dev/native-work', staging_container_id: null }, APP, 'latest');
     assert.deepEqual(shape(find('clone')), [
       'clone --depth 1 --filter=blob:none --sparse --branch dev/native-work https://x/clone.git',
     ]);
     assert.deepEqual(shape(calls).slice(1), ['-C rev-parse HEAD'], "'latest' pins nothing: the clone, then which commit it is");
     assert.equal(builds.length, 1);
-    assert.equal(builds[0].sourceDir, '/tmp/usernode-staging-7078101', 'the build is still handed the directory');
+    assert.equal(builds[0].sourceDir, checkoutOf(7078101), 'the build is still handed the directory');
     assert.equal(builds[0].revision, SHA, 'and builds the commit the clone resolved');
   } finally { restore(); }
 });
@@ -195,7 +207,7 @@ test('Kubernetes, a native session: the clone carries the listing and the root f
 test('Docker: the same session runs exactly the commands it ran before', async () => {
   const { subject, calls, restore } = loadStaging({ git: refs({ HEAD: SHA }) });
   try {
-    await subject.buildAndDeployStaging(
+    await prepare(subject, 
       DOCKER, { id: 7078102, branch_name: 'dev/native-work', staging_container_id: null }, APP, 'latest');
     assert.deepEqual(shape(calls), [
       'clone --depth 1 --recurse-submodules --shallow-submodules --branch dev/native-work https://x/clone.git',
@@ -207,7 +219,7 @@ test('Docker: the same session runs exactly the commands it ran before', async (
 test('Docker: a pinned commit is still detached at, then its submodules synced', async () => {
   const { subject, calls, restore } = loadStaging({ git: refs({ HEAD: SHA }) });
   try {
-    await subject.buildAndDeployStaging(
+    await prepare(subject, 
       DOCKER, { id: 7078103, branch_name: 'dev/pinned', pr_number: null, staging_container_id: null }, APP, SHA);
     assert.deepEqual(shape(calls), [
       'clone --depth 1 --recurse-submodules --shallow-submodules --branch dev/pinned https://x/clone.git',
@@ -221,7 +233,7 @@ test('Docker: a pinned commit is still detached at, then its submodules synced',
 test('Kubernetes with a Dockerfile candidate below the root keeps the whole tree', async () => {
   const { subject, find, restore } = loadStaging({ git: refs({ HEAD: SHA }) });
   try {
-    await subject.buildAndDeployStaging(
+    await prepare(subject, 
       { ...KUBERNETES, kubernetes: { buildkitDockerfiles: ['deploy/Dockerfile'] } },
       { id: 7078104, branch_name: 'dev/native-work', staging_container_id: null }, APP, 'latest');
     assert.deepEqual(shape(find('clone')), [
@@ -235,7 +247,7 @@ test('Kubernetes with a Dockerfile candidate below the root keeps the whole tree
 test('Kubernetes, pinned to the branch tip: detached at once, nothing fetched', async () => {
   const { subject, calls, restore } = loadStaging({ git: refs({ HEAD: SHA }) });
   try {
-    await subject.buildAndDeployStaging(
+    await prepare(subject, 
       KUBERNETES, { id: 7078105, branch_name: 'dev/pinned', pr_number: null, staging_container_id: null }, APP, SHA);
     assert.deepEqual(shape(calls), [
       'clone --depth 1 --filter=blob:none --sparse --branch dev/pinned https://x/clone.git',
@@ -250,7 +262,7 @@ test('Kubernetes, pinned behind the branch tip: fetched shallowly before anythin
   // The clone landed on a newer tip; the pinned commit arrives by the fetch.
   const { subject, calls, restore } = loadStaging({ git: refs({ HEAD: OTHER, FETCH_HEAD: SHA }) });
   try {
-    await subject.buildAndDeployStaging(
+    await prepare(subject, 
       KUBERNETES, { id: 7078106, branch_name: 'dev/pinned', pr_number: null, staging_container_id: null }, APP, SHA);
     assert.deepEqual(shape(calls), [
       'clone --depth 1 --filter=blob:none --sparse --branch dev/pinned https://x/clone.git',
@@ -266,7 +278,7 @@ test('Kubernetes, pinned behind the branch tip: fetched shallowly before anythin
 test('Kubernetes, an imported pull request: the default branch, then refs/pull/<N>/head', async () => {
   const { subject, calls, restore } = loadStaging({ git: refs({ FETCH_HEAD: SHA }) });
   try {
-    await subject.buildAndDeployStaging(
+    await prepare(subject, 
       KUBERNETES,
       { id: 7078107, branch_name: 'contributor/feature', pr_number: 9401, source: 'imported', staging_container_id: null },
       APP, SHA);
@@ -290,7 +302,7 @@ test('Kubernetes, a pull request that has moved on: its head is not detached at,
     },
   });
   try {
-    await subject.buildAndDeployStaging(
+    await prepare(subject, 
       KUBERNETES,
       { id: 7078108, branch_name: 'contributor/feature', pr_number: 9401, source: 'imported', staging_container_id: null },
       APP, SHA);
@@ -315,7 +327,7 @@ test('Kubernetes, a pinned commit that cannot be produced fails the build', asyn
   });
   try {
     await assert.rejects(
-      () => subject.buildAndDeployStaging(
+      () => prepare(subject, 
         KUBERNETES, { id: 7078109, branch_name: 'dev/pinned', pr_number: 9401, staging_container_id: null }, APP, SHA),
       /failed/i);
     assert.equal(find('fetch').length, 2, 'both the pull request ref and the bare commit were tried');
@@ -420,7 +432,7 @@ function inspect(found) {
 }
 
 const session = (id, over = {}) => ({ id, branch_name: 'dev/work', pr_number: null, staging_container_id: null, ...over });
-const cleanup = (t, id) => t.after(() => fs.rmSync(`/tmp/usernode-staging-${id}`, { recursive: true, force: true }));
+const cleanup = (t, id) => t.after(() => fs.rmSync(checkoutOf(id), { recursive: true, force: true }));
 
 test('real git: the Kubernetes build is handed the root of the commit and nothing under it', async (t) => {
   const origin = makeOrigin(t);
@@ -428,7 +440,7 @@ test('real git: the Kubernetes build is handed the root of the commit and nothin
   const { subject, manifests, restore } = loadStaging({ cloneUrl: origin.url, stored: { API_KEY: 'k' }, onBuild: inspect(found) });
   cleanup(t, 7078201);
   try {
-    const result = await subject.buildAndDeployStaging(KUBERNETES, session(7078201), APP, 'latest');
+    const result = await prepare(subject, KUBERNETES, session(7078201), APP, 'latest');
     assert.equal(found.length, 1);
     assert.deepEqual(found[0].entries, ['Dockerfile', 'dapp.json', 'package.json'], 'no src/, no docs/');
     assert.equal(found[0].head, origin.c2, 'at the branch tip');
@@ -438,7 +450,7 @@ test('real git: the Kubernetes build is handed the root of the commit and nothin
     assert.equal(found[0].runsBuild, true, 'and so is the build script kpack runs');
     assert.equal(found[0].runsEnsureShell, false);
     assert.equal(manifests[0].name, 'Two', 'the manifest read is the tip\'s');
-    assert.equal(fs.existsSync('/tmp/usernode-staging-7078201'), false, 'the directory is removed once the build is back');
+    assert.equal(fs.existsSync(checkoutOf(7078201)), false, 'the directory is removed once the build is back');
   } finally { restore(); }
 });
 
@@ -450,7 +462,7 @@ test('real git: both lanes read the same manifest and build the same commit', as
     const { subject, manifests, restore } = loadStaging({ cloneUrl: origin.url, stored: { API_KEY: 'k' }, onBuild: inspect(found) });
     cleanup(t, id);
     try {
-      await subject.buildAndDeployStaging(config, session(id), APP, 'latest');
+      await prepare(subject, config, session(id), APP, 'latest');
       seen[lane] = { manifest: manifests[0], ...found[0] };
     } finally { restore(); }
   }
@@ -467,7 +479,7 @@ test('real git: a commit behind the branch tip is fetched alone, not with its hi
   const { subject, find, calls, manifests, restore } = loadStaging({ cloneUrl: origin.url, stored: { API_KEY: 'k' }, onBuild: inspect(found) });
   cleanup(t, 7078204);
   try {
-    await subject.buildAndDeployStaging(KUBERNETES, session(7078204), APP, origin.c1);
+    await prepare(subject, KUBERNETES, session(7078204), APP, origin.c1);
     assert.equal(found[0].head, origin.c1, 'detached at exactly the pinned commit');
     assert.equal(found[0].revision, origin.c1);
     assert.equal(manifests[0].name, 'One', 'and the manifest is that commit\'s, not the tip\'s');
@@ -485,7 +497,7 @@ test('real git: an imported pull request builds its head through refs/pull', asy
   const { subject, manifests, restore } = loadStaging({ cloneUrl: origin.url, stored: { API_KEY: 'k' }, onBuild: inspect(found) });
   cleanup(t, 7078205);
   try {
-    await subject.buildAndDeployStaging(
+    await prepare(subject, 
       KUBERNETES, session(7078205, { branch_name: 'contributor/feature', pr_number: 7, source: 'imported' }), APP, origin.c3);
     assert.equal(found[0].head, origin.c3);
     assert.equal(manifests[0].name, 'Three');
@@ -500,7 +512,7 @@ test('real git: a pull request that has moved on still builds the reviewed commi
   cleanup(t, 7078206);
   try {
     // refs/pull/8/head is at the commit AFTER the one that was reviewed.
-    await subject.buildAndDeployStaging(
+    await prepare(subject, 
       KUBERNETES, session(7078206, { branch_name: 'contributor/feature', pr_number: 8, source: 'imported' }), APP, origin.c3);
     assert.equal(found[0].head, origin.c3, 'not the pull request\'s newer head');
     assert.equal(manifests[0].name, 'Three');
@@ -515,7 +527,7 @@ test('real git: a root file that links into a subdirectory is still read', async
   const { subject, manifests, restore } = loadStaging({ cloneUrl: origin.url, stored: { API_KEY: 'k' }, onBuild: inspect(found) });
   cleanup(t, 7078207);
   try {
-    await subject.buildAndDeployStaging(KUBERNETES, session(7078207, { branch_name: 'dev/linked' }), APP, 'latest');
+    await prepare(subject, KUBERNETES, session(7078207, { branch_name: 'dev/linked' }), APP, 'latest');
     assert.equal(manifests[0].name, 'Linked', 'not "no manifest"');
     assert.deepEqual(manifests[0].secrets.map((s) => s.key), ['API_KEY'], 'so its required secrets are still checked');
     assert.ok(found[0].entries.includes('config'), 'the tree was given its files');
@@ -530,7 +542,7 @@ test('real git: a root file that links into a submodule is still read', async (t
     const { subject, manifests, builds, restore } = loadStaging({ cloneUrl: origin.url, stored });
     try {
       let err = null;
-      await subject.buildAndDeployStaging(config, session(id, { branch_name: branch }), APP, commit).catch((e) => { err = e; });
+      await prepare(subject, config, session(id, { branch_name: branch }), APP, commit).catch((e) => { err = e; });
       return { err, manifests, builds };
     } finally { restore(); }
   };
@@ -577,7 +589,7 @@ test('real git: the failures are still failures, on the root-only clone', async 
     const { subject, builds, restore } = loadStaging({ cloneUrl: origin.url, stored });
     try {
       let err = null;
-      await subject.buildAndDeployStaging(KUBERNETES, sess, APP, commit).catch((e) => { err = e; });
+      await prepare(subject, KUBERNETES, sess, APP, commit).catch((e) => { err = e; });
       return { err, builds };
     } finally { restore(); }
   };

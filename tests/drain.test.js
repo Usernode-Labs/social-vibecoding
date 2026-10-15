@@ -65,14 +65,14 @@ test('how many processes may drain at once comes from PLATFORM_DRAINING_MAX', ()
 
 test('a held Map holds each key until it is deleted, whatever is set under it meanwhile', () => {
   processes._reset();
-  const m = processes.heldMap('capture');
+  const m = processes.heldMap('shots');
   m.set('7', { a: 1 });
   m.set('7', { a: 2 });
-  assert.equal(processes.heldHere('capture', 7), true);
+  assert.equal(processes.heldHere('shots', 7), true);
   assert.equal(processes.localCount(), 1);
   assert.equal(m.delete('8'), false);
   assert.equal(m.delete('7'), true);
-  assert.equal(processes.heldHere('capture', 7), false);
+  assert.equal(processes.heldHere('shots', 7), false);
   m.set('9', {}); m.set('10', {});
   m.clear();
   assert.equal(processes.localCount(), 0, 'clear releases every key');

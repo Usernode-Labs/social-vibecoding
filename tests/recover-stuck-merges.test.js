@@ -370,11 +370,11 @@ test('owed follow-ups are resumed without GitHub, and a demoted claim owes none'
 
 test('the boot resumes the issue-close watches after the heal, leaving out what it followed up', () => {
   const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'server.js'), 'utf8');
-  const boot = src.indexOf("checkHarvest.sweep(config, { reason: 'boot' })");
-  const heal = src.indexOf('.then(() => recoverStuckMerges(config))', boot);
+  // The leader's boot chain starts with the heal.
+  const heal = src.indexOf('\n  recoverStuckMerges(config)\n    .then((reconciled) => {');
   const resume = src.indexOf('resumeIssueCloseWatches(config, { skip: reconciled?.followedUp })', heal);
   const next = src.indexOf('.then(() => reconcileEligibleMerges(config))', heal);
-  assert.ok(boot > 0 && heal > boot && resume > heal && next > resume, 'chained after the heal, before the merge reconcile');
+  assert.ok(heal > 0 && resume > heal && next > resume, 'chained after the heal, before the merge reconcile');
   const gate = src.indexOf('if (config.wfMergeFollowupsEnabled) return;', heal);
   assert.ok(gate > heal && gate < resume, 'and only with the merge-followups machine off');
   assert.equal(src.match(/(?<!function )resumeIssueCloseWatches\(config/g).length, 1, 'and nowhere beside it');

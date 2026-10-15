@@ -301,15 +301,14 @@ test('stopping a local scout uses the same cooperative signal as a build', () =>
 
 test('the handoff pipeline is shared, not forked', () => {
   // Extracting it is the reason a local turn gets the same staging build and
-  // proposal checks as an MCP handoff. If either caller grows its own copy,
-  // the two flows drift.
+  // proposal checks as an MCP handoff: both hand the commit to the preview
+  // machine through it. If either caller grows its own copy, the two flows
+  // drift.
   for (const fn of [
     'serializeHandoffSubmission',
     'hasInFlightHandoffPipeline',
     'beginHandoffPipeline',
     'startHandoffPipeline',
-    'discardHandoffStaging',
-    'runStaging',
   ]) {
     assert.match(pipeline, new RegExp(`\\b${fn}\\b`), `pipeline must export ${fn}`);
   }

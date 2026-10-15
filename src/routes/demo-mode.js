@@ -17,7 +17,6 @@ const appManifest = require('../services/app-manifest');
 const governanceService = require('../services/governance');
 const prImportSync = require('../services/pr-import-sync');
 const summaryFreshness = require('../services/summary-freshness');
-const sessionLifecycle = require('../services/session-lifecycle');
 const externalAgentPatch = require('../services/external-agent-patch');
 const { reviewedHeadForSession } = require('../services/pr-vote-revision');
 const { drainGuard } = require('../services/lifecycle');
@@ -817,9 +816,26 @@ function demoModeRoutes(config) {
       const githubUp = !!(repo && github.isEnabled());
 
       const sessions = await partnerSessions(app, partner);
+      // For good, before the rows go, and first: the preview machine stops a
+      // build still going and retires what serves (an idle retirement would
+      // wait for the build). Each request must have retired it before any
+      // row is deleted: a preview the machine does not hold yet is adopted
+      // from its row when the request is applied, and one still pending,
+      // refused or faulted would leave its resources behind. Otherwise the
+      // reset stops here, with nothing changed, and can be asked again.
+      const previewWorkflow = require('../services/preview-workflow');
       for (const s of sessions) {
-        await sessionLifecycle.teardownStagingForSession({ pool, sessionId: s.id, reason: 'demo-reset' })
-          .catch((err) => log.warn('demo-mode', 'Preview teardown failed', { sessionId: s.id, err: err.message }));
+        const out = await previewWorkflow.retire({
+          session: { id: s.id, app_id: app.id }, reason: 'demo-reset', terminal: true, waitMs: 30_000,
+        }).catch((err) => ({ retired: false, reason: err.message }));
+        if (!out.retired) {
+          log.warn('demo-mode', 'Preview not retired; reset stopped before deleting anything', {
+            sessionId: s.id, reason: out.reason || out.status || null,
+          });
+          return res.status(409).json({ error: 'A preview is still being retired. Reset again in a minute.', reason: 'preview_retiring' });
+        }
+      }
+      for (const s of sessions) {
         if (githubUp && s.pr_number && s.status !== 'merged') {
           await github.closePR(repo.owner, repo.repo, s.pr_number)
             .catch((err) => log.warn('demo-mode', 'Closing the PR failed', { pr: s.pr_number, err: err.message }));

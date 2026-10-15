@@ -5,7 +5,8 @@
 //     bumpHead advancing the head, mergePR success + exact-sha 409 refusal.
 //   - pr-import-sync in mock mode: an unchanged head no-ops; after a simulated
 //     push (bumpHead) the head-change path fires — tally cleared, re-review
-//     note posted, checks recorded 'skipped' (no real build in mock mode).
+//     note posted, and the preview machine handed a 'skipped' verdict (no
+//     real build in mock mode).
 //
 // Run with: node --test tests/pr-import-mock-github.test.js
 
@@ -13,7 +14,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 // Fake the modules pr-import-sync pulls lazily (the worker unit env lacks
-// their transitive deps: ws→'ws', visuals→'jsonwebtoken', etc.). github-mock
+// their transitive deps: ws→'ws', the preview machine's platform, etc.). github-mock
 // and github are left REAL — the mock is the system under test, and github
 // only supplies the HeadMovedError sentinel.
 function fakeModule(relPath, exports) {
@@ -28,21 +29,16 @@ const fakeWs = fakeModule('../src/services/ws', {
   pushSessionUpdate: () => {},
   broadcastGlobal: () => {},
 });
-const fakeVisuals = fakeModule('../src/services/visuals', {
-  setChecksPending: async () => {},
-  notifyChecksPending: () => {},
-  storeChecksSkipped: async () => {},
-  captureForSession: async () => {},
-});
-fakeModule('../src/services/staging', {
-  buildAndDeployStaging: async () => ({ containerId: 'c', stagingUrl: 'u', hostname: 'h' }),
-  verifyStagingEdge: async () => {},
+// The preview machine, as pr-import-sync hands it a head: in mock mode the
+// gate-passing 'skipped' verdict, never a build.
+const fakeWorkflow = fakeModule('../src/services/preview-workflow', {
+  revision: async () => { throw new Error('mock mode must not ask for a build'); },
+  skipped: async () => true,
 });
 fakeModule('../src/services/sync-main', {
   persistBehindMain: async () => {},
   persistConflictState: async () => {},
 });
-fakeModule('../src/services/staging-recovery', { recordStagingBootFailure: async () => {} });
 
 const githubMock = require('../src/services/github-mock');
 const prImportSync = require('../src/services/pr-import-sync');
@@ -173,13 +169,13 @@ test('pr-import-sync (mock): a simulated push resets the tally + records skipped
     const newHead = githubMock.bumpHead(PR);
 
     const sysMessages = [];
-    let skippedSha = null;
+    const skipped = [];
     const origSend = fakeWs.sendSystemMessage;
-    const origSkip = fakeVisuals.storeChecksSkipped;
+    const origSkip = fakeWorkflow.skipped;
     fakeWs.sendSystemMessage = async (_pool, _appId, content, _t, _m, thread) => {
       sysMessages.push({ content, thread });
     };
-    fakeVisuals.storeChecksSkipped = async (_pool, _sid, sha) => { skippedSha = sha; };
+    fakeWorkflow.skipped = async ({ head, reason }) => { skipped.push({ head, reason }); return true; };
     try {
       const pool = recordingPool();
       const res = await prImportSync.syncImportedProposal({ config: {}, pool, session });
@@ -198,10 +194,12 @@ test('pr-import-sync (mock): a simulated push resets the tally + records skipped
       assert.deepEqual(sysMessages[0].thread, { type: 'session', ref: 55 });
 
       // Mock mode records a gate-passing 'skipped' verdict — no real build.
-      assert.equal(skippedSha, newHead, 'checks re-recorded as skipped against the new head');
+      assert.equal(skipped.length, 1);
+      assert.equal(skipped[0].head, newHead, 'checks re-recorded as skipped against the new head');
+      assert.match(skipped[0].reason, /mock GitHub preview/i);
     } finally {
       fakeWs.sendSystemMessage = origSend;
-      fakeVisuals.storeChecksSkipped = origSkip;
+      fakeWorkflow.skipped = origSkip;
     }
   });
 });

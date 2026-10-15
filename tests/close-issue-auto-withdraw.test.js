@@ -1,8 +1,9 @@
 // Tests for the auto-resolve of close_issue governance proposals whose
 // target issue was closed by other means:
 //   1. resolveSupersededCloseProposals (src/routes/issues.js) — the shared
-//      resolver: race-safe flip, audit payload, cause wording, WS push,
-//      and its no-GitHub/no-bounty guarantees.
+//      resolver hands each closed number to the governance machine
+//      (platform.ts targetsClosed), which supersedes the proposals; what the
+//      machine does is pinned by tests/workflow-governance-postgres.test.js.
 //   2. The issue-close-watcher hook — observed closes (and gone/skipped
 //      numbers) trigger the resolver when a pool is provided; without one
 //      the watcher behaves exactly as before.
@@ -45,161 +46,59 @@ function makePool(handlers) {
 
 // ── Part 1: the shared resolver ───────────────────────────────────────────
 
-// Load routes/issues with ws + github stubbed; returns the resolver plus
-// spies. github is fully spied so "never writes to GitHub" is assertable.
-function loadResolver(pool) {
-  const ids = {
-    pool: require.resolve('../src/db/pool'),
-    ws: require.resolve('../src/services/ws'),
-    github: require.resolve('../src/services/github'),
-    subject: require.resolve('../src/routes/issues'),
-  };
+// Load routes/issues with the workflow module stubbed: `targetsClosed`
+// answers with `answer`, or throws it when it is an Error.
+function loadResolver(answer) {
+  const ids = { workflow: require.resolve('../src/workflow/platform.ts'), subject: require.resolve('../src/routes/issues') };
   const orig = {};
   for (const [k, id] of Object.entries(ids)) orig[k] = require.cache[id];
-
-  const spies = { systemMessages: [], issueUpdates: [], ghCalls: [] };
-  stub(ids.pool, { getPool: () => pool }, orig.pool);
-  const realWs = orig.ws ? orig.ws.exports : require('../src/services/ws');
-  stub(ids.ws, {
-    ...realWs,
-    sendSystemMessage: async (...args) => { spies.systemMessages.push(args); },
-    pushIssueUpdate: (data) => { spies.issueUpdates.push(data); },
-    pushAppUpdate: () => {},
-  }, orig.ws);
-  stub(ids.github, new Proxy({}, {
-    get: (_t, prop) => {
-      if (prop === 'isEnabled') return () => false;
-      if (prop === 'safeMention') return (s) => s;
-      return (...args) => { spies.ghCalls.push({ type: String(prop), args }); };
+  const calls = [];
+  stub(ids.workflow, {
+    async targetsClosed(appId, numbers, cause) {
+      calls.push({ appId, numbers, cause });
+      if (answer instanceof Error) throw answer;
+      return answer;
     },
-  }), orig.github);
-
+  }, orig.workflow);
   delete require.cache[ids.subject];
   const subject = require('../src/routes/issues');
-
   const restore = () => {
     for (const [k, id] of Object.entries(ids)) {
       if (orig[k]) require.cache[id] = orig[k]; else delete require.cache[id];
     }
     delete require.cache[ids.subject];
   };
-  return { subject, spies, restore };
+  return { subject, calls, restore };
 }
 
-const ROW = (over) => ({
-  id: 61, app_id: 9,
-  payload: { issueNumber: 42, issueTitle: 'Dark mode resets', reason: 'dup' },
-  ...over,
-});
-
-test('resolver: flips matching open proposals with a pr-merge audit trail and messages', async () => {
-  const pool = makePool([
-    [/kind = 'close_issue' AND status = 'open'/, [ROW()]],
-    [/UPDATE issues SET status = 'closed', payload = \$2/, [{ id: 61 }]],
-  ]);
-  const { subject, spies, restore } = loadResolver(pool);
+test('resolver: hands the valid numbers and the cause to the governance machine', async () => {
+  const { subject, calls, restore } = loadResolver([61]);
   try {
-    const r = await subject.resolveSupersededCloseProposals(pool, {
-      appId: 9, appSlug: 'cool-app', numbers: [42],
-      cause: { kind: 'pr-merge', prNumber: 431 },
+    const out = await subject.resolveSupersededCloseProposals(null, {
+      appId: 9, numbers: [42, '43', 0, -1, 'x'], cause: { kind: 'pr-merge', prNumber: 7 },
     });
-    assert.deepEqual(r.resolved, [61]);
-
-    const sel = pool.issued(/kind = 'close_issue' AND status = 'open'/);
-    assert.deepEqual(sel.params, [9, [42]], 'scoped to app + numbers');
-
-    const upd = pool.issued(/UPDATE issues SET status = 'closed', payload = \$2/);
-    assert.match(upd.sql, /WHERE id = \$1 AND status = 'open'/, 'race-safe guarded flip');
-    const audit = JSON.parse(upd.params[1]);
-    assert.equal(audit.supersededBy, 'pr-merge:#431');
-    assert.ok(audit.supersededAt);
-    assert.equal(audit.issueNumber, 42, 'original payload preserved');
-
-    // The governance thread only (a channel carries no activity); the
-    // pr-merge wording names the PR.
-    assert.equal(spies.systemMessages.length, 1);
-    assert.match(spies.systemMessages[0][2], /Close proposal for issue #42 resolved automatically: PR #431 closed the issue/);
-    assert.deepEqual(spies.systemMessages[0][5], { type: 'governance', ref: 61 });
-
-    // Same event the withdraw path emits — clients drop the card.
-    assert.equal(spies.issueUpdates.length, 1);
-    assert.deepEqual(spies.issueUpdates[0], {
-      action: 'closed', appSlug: 'cool-app', appId: 9, issueId: 61,
-    });
-
-    // Never writes to GitHub, never touches bounties.
-    assert.equal(spies.ghCalls.length, 0);
-    assert.ok(!pool.issued(/issue_bounties/));
+    assert.deepEqual(out, { resolved: [61] });
+    assert.deepEqual(calls, [{ appId: 9, numbers: [42, 43], cause: { kind: 'pr-merge', prNumber: 7 } }]);
   } finally { restore(); }
 });
 
-test('resolver: github-close cause wording has no PR number', async () => {
-  const pool = makePool([
-    [/kind = 'close_issue' AND status = 'open'/, [ROW()]],
-    [/UPDATE issues SET status = 'closed', payload = \$2/, [{ id: 61 }]],
-  ]);
-  const { subject, spies, restore } = loadResolver(pool);
+test('resolver: a close on GitHub is the default cause; empty inputs reach nothing', async () => {
+  const { subject, calls, restore } = loadResolver([]);
   try {
-    await subject.resolveSupersededCloseProposals(pool, {
-      appId: 9, appSlug: 'cool-app', numbers: [42], cause: { kind: 'github-close' },
-    });
-    assert.match(spies.systemMessages[0][2], /resolved automatically: the issue was closed on GitHub/);
-    const audit = JSON.parse(pool.issued(/UPDATE issues SET status = 'closed'/).params[1]);
-    assert.equal(audit.supersededBy, 'github-close');
-  } finally { restore(); }
-});
-
-test('resolver: a lost race (row no longer open) produces no messages and no push', async () => {
-  const pool = makePool([
-    [/kind = 'close_issue' AND status = 'open'/, [ROW()]],
-    [/UPDATE issues SET status = 'closed', payload = \$2/, []], // vote-apply won
-  ]);
-  const { subject, spies, restore } = loadResolver(pool);
-  try {
-    const r = await subject.resolveSupersededCloseProposals(pool, {
-      appId: 9, numbers: [42], cause: { kind: 'github-close' },
-    });
-    assert.deepEqual(r.resolved, []);
-    assert.equal(spies.systemMessages.length, 0);
-    assert.equal(spies.issueUpdates.length, 0);
-  } finally { restore(); }
-});
-
-test('resolver: no-ops on empty/invalid inputs and non-matching numbers', async () => {
-  const pool = makePool([
-    [/kind = 'close_issue' AND status = 'open'/, []],
-  ]);
-  const { subject, spies, restore } = loadResolver(pool);
-  try {
-    // Missing appId / empty or junk numbers → no queries at all.
-    for (const args of [
-      { numbers: [42] },
-      { appId: 9, numbers: [] },
-      { appId: 9, numbers: ['junk', -1, 0] },
-    ]) {
-      const r = await subject.resolveSupersededCloseProposals(pool, args);
-      assert.deepEqual(r.resolved, []);
+    await subject.resolveSupersededCloseProposals(null, { appId: 9, numbers: [42] });
+    assert.deepEqual(calls[0].cause, { kind: 'github-close' });
+    for (const args of [{}, { appId: 9, numbers: [] }, { appId: null, numbers: [42] }, { appId: 9, numbers: ['x'] }]) {
+      assert.deepEqual(await subject.resolveSupersededCloseProposals(null, args), { resolved: [] });
     }
-    assert.equal(pool.calls.length, 0);
-
-    // Valid input but nothing matches → select only, no flip, no noise.
-    const r = await subject.resolveSupersededCloseProposals(pool, {
-      appId: 9, numbers: [99], cause: { kind: 'github-close' },
-    });
-    assert.deepEqual(r.resolved, []);
-    assert.ok(!pool.issued(/UPDATE issues/));
-    assert.equal(spies.systemMessages.length, 0);
+    assert.equal(calls.length, 1, 'nothing else reached the machine');
   } finally { restore(); }
 });
 
-test('resolver: a throwing pool is swallowed (best-effort contract)', async () => {
-  const pool = { async query() { throw new Error('db down'); } };
-  const { subject, restore } = loadResolver(pool);
+test('resolver: a failure is logged, unless the caller retries on it (strict)', async () => {
+  const { subject, restore } = loadResolver(new Error('runtime down'));
   try {
-    const r = await subject.resolveSupersededCloseProposals(pool, {
-      appId: 9, numbers: [42], cause: { kind: 'github-close' },
-    });
-    assert.deepEqual(r.resolved, []);
+    assert.deepEqual(await subject.resolveSupersededCloseProposals(null, { appId: 9, numbers: [42] }), { resolved: [] });
+    await assert.rejects(subject.resolveSupersededCloseProposals(null, { appId: 9, numbers: [42], strict: true }), /runtime down/);
   } finally { restore(); }
 });
 

@@ -1611,9 +1611,8 @@ function shapeProposal(session, origin, viewerId = null) {
     pendingWrite: {
       buildInFlight: (() => {
         try {
-          // With WF_PREVIEWS_ENABLED on, the preview machine's phase says it.
-          return !!require('./staging').hasInFlightBuild(session.id)
-            || (require('./preview-workflow').enabled() && session.check_state === 'pending' && session.check_phase === 'building');
+          // The preview machine's phase says it.
+          return session.check_state === 'pending' && session.check_phase === 'building';
         } catch { return null; }
       })(),
     },
@@ -3655,7 +3654,7 @@ function registerTools(server, ctx) {
   // The request page's "Propose to close" button, reached from a connector.
   // It files a kind='close_issue' governance proposal: the request stays open
   // until the app's group votes it through, and then the platform closes the
-  // GitHub issue itself (routes/issues.js maybeApplyCloseIssueProposal). So
+  // GitHub issue itself (the governance machine, src/workflow/governance-proposal/). So
   // the tool decides nothing, the same as create_request — it asks the group.
   //
   // The kind is a literal here, never read from input, for the reason

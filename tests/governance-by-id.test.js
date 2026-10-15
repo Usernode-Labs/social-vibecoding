@@ -129,7 +129,7 @@ function loadIssues({ row = null, gatedApp = { id: 1, slug: 'demo' }, staging = 
     sendSystemMessage() {}, pushAppUpdate() {}, pushIssueUpdate() {}, broadcast() {},
   });
   stub(ids.activeUsers, { getActiveUserStats: async () => ({ active: 3, majority: 2 }) });
-  stub(ids.adminApproval, { isAppLocked: async () => false, hasAdminUpVote: async () => false });
+  stub(ids.adminApproval, { isAppLocked: async () => false });
   stub(ids.appManifest, {});
   stub(ids.appSecrets, {});
   stub(ids.platformEnv, {});

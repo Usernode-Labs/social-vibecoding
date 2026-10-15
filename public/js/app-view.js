@@ -19058,8 +19058,9 @@ const AppView = {
   GOV_APPLY_SLOW_MS: 12000,
   GOV_APPLY_STALLED_MS: 60000,
   // How long past a merge window's end the DERIVED state still reads as
-  // "actively closing". The governance-apply ticker runs every ~60s, so a
-  // healthy apply lands well inside this; past it something is wrong
+  // "actively closing". The governance machine applies at the window's end
+  // (a timer, with a backstop every ten minutes), so a healthy apply lands
+  // well inside this; past it something is wrong
   // (GitHub unreachable) and the calmer "will retry automatically" copy is
   // the honest one.
   GOV_APPLY_DERIVED_GRACE_MS: 120000,
@@ -23876,8 +23877,8 @@ const AppView = {
   // CSS (:has() over the radios), so the card still needs no script.
   //
   // A screen is { viewport, afterHtml, beforeHtml, afterChip, beforeChip,
-  // notesHtml, zoomable }. Three options the card leaves off, so its markup
-  // is what it always was:
+  // notesHtml, zoomable, stacked }. Three options the card leaves off, so
+  // its markup is what it always was:
   //   sideBySide — a third side option: before and after at once, in the
   //                same fixed stage.
   //   autoSide   — start side by side when the viewer has room for that
@@ -24040,7 +24041,7 @@ const AppView = {
         : '';
       return `<figure class="shots-view" data-shots-screen="${attr(screen.viewport)}" data-shots-viewport="${attr(screen.viewport)}">
         <div class="shots-bar">${barLead}<span class="shots-seg shots-seg-side" aria-hidden="true"><label for="${sideId('before')}" class="shots-seg-btn shots-seg-before">${PlatformI18n.htmlText('changes:shots.viewer.before')}</label><label for="${sideId('after')}" class="shots-seg-btn shots-seg-after">${PlatformI18n.htmlText('changes:shots.viewer.after')}</label>${both}</span>${sizeSwitch}${zoomSwitch}${stepping ? stepper(screenIndex) : ''}</div>
-        <div class="shots-stage">
+        <div class="shots-stage"${screen.stacked ? ' data-shots-stack="1"' : ''}>
           ${screen.afterHtml || ''}
           ${screen.beforeHtml || ''}
           <label for="${sideId('before')}" class="shots-flip-to shots-flip-to-before" title="${PlatformI18n.htmlText('changes:shots.viewer.clickBefore')}" aria-hidden="true"></label><label for="${sideId('after')}" class="shots-flip-to shots-flip-to-after" title="${PlatformI18n.htmlText('changes:shots.viewer.clickAfter')}" aria-hidden="true"></label>
@@ -24209,6 +24210,55 @@ const AppView = {
       return w > 0 && h > 0 ? `${Math.round(w)} / ${Math.round(h)}` : (narrow ? '390 / 844' : '16 / 10');
     };
     const sizeName = AppView._shotsSizeName;
+    // #5063: the change page's side-by-side view crops both sides to the
+    // screen's declared changes (the numbered outlines, with a margin), so
+    // a small change reads large. A crop wider than it is tall stacks the
+    // two sides, before above after, instead of beside each other. The crop
+    // is CSS over the existing stills: no new image. The proposal card has
+    // no side-by-side view, and an HTML spec's screens crop themselves.
+    const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
+    const cropOf = (screen) => {
+      const width = Number(screen.width);
+      const hBefore = Number(screen.heightBefore);
+      const hAfter = Number(screen.heightAfter);
+      if (!(width > 0 && hBefore > 0 && hAfter > 0)) return null;
+      const unionOf = (which) => {
+        const rects = (Array.isArray(screen.regions) ? screen.regions : [])
+          .filter((region) => region && numberOf(region.story) > 0)
+          .map((region) => {
+            const box = which === 'base' ? region.b : region.a;
+            const mark = which === 'base' ? region.bMark : region.aMark;
+            if (Array.isArray(box)) return box;
+            if (Array.isArray(mark)) return [mark[0], mark[1], mark[2], 0];
+            return null;
+          })
+          .filter((box) => Array.isArray(box) && box.length === 4);
+        if (!rects.length) return null;
+        return rects.reduce((u, box) => [
+          Math.min(u[0], box[0]), Math.min(u[1], box[1]),
+          Math.max(u[0] + u[2], box[0] + box[2]) - Math.min(u[0], box[0]),
+          Math.max(u[1] + u[3], box[1] + box[3]) - Math.min(u[1], box[1]),
+        ]);
+      };
+      // A side whose region sits on the other side only (an added row) reads
+      // the same part of its own still.
+      const uBefore = unionOf('base') || unionOf('head');
+      const uAfter = unionOf('head') || unionOf('base');
+      if (!uBefore || !uAfter) return null;
+      const height = Math.min(hBefore, hAfter);
+      // 24px of margin each way; never below half the screen's width or a
+      // fifth of it tall, so a tiny change still shows its surroundings.
+      const cw = clamp(Math.round(Math.max(uBefore[2], uAfter[2]) + 48), Math.round(width / 2), width);
+      const ch = clamp(Math.round(Math.max(uBefore[3], uAfter[3]) + 48), Math.round(width / 5), height);
+      // A crop that would cover most of the screen shows no more than the
+      // whole screen does: keep today's whole-screen layout.
+      if (cw * ch >= 0.8 * width * height) return null;
+      const at = (u, h) => ({
+        x: clamp(Math.round(u[0] + u[2] / 2 - cw / 2), 0, width - cw),
+        y: clamp(Math.round(u[1] + u[3] / 2 - ch / 2), 0, h - ch),
+      });
+      return { cw, ch, stacked: cw > ch, before: at(uBefore, hBefore), after: at(uAfter, hAfter) };
+    };
 
     // The switches are radios before the screens and labels on each screen,
     // so the viewer needs no script: the side is one pair for every screen,
@@ -24280,11 +24330,21 @@ const AppView = {
       const narrow = Number(screen.width) > 0 ? Number(screen.width) < 600 : /phone|mobile/i.test(screen.viewport);
       const described = onScreen.map((claim) => claim.claim || '').join(' ');
       const drawn = { base: outlines(screen, 'base'), head: outlines(screen, 'head') };
+      // The crop applies only while both sides show at once, and only on the
+      // change page's card: a Before or After pick keeps the whole screen, a
+      // new app's first version has no before to crop, and the proposal card
+      // has no side-by-side view.
+      const crop = thread && !afterOnly && before && after ? cropOf(screen) : null;
       const side = (which, artifact, altId) => {
         const cls = which === 'base' ? 'shots-flip-before' : 'shots-flip-after';
         if (!artifact) return `<span class="shots-flip-side ${cls} shots-flip-missing">${PlatformI18n.htmlText(which === 'base' && afterOnly ? 'changes:shots.screen.nothingBefore' : 'changes:shots.screen.noShot')}</span>`;
         const shape = shapeOf(artifact, screen.width, which === 'base' ? screen.heightBefore : screen.heightAfter, narrow);
-        return `<span class="shots-flip-side ${cls}" style="--shots-shape:${shape}"><img src="${attr(shotsUrl(artifact.url))}" alt="${attr(PlatformI18n.t(altId, { changes: described }))}" loading="lazy">${drawn[which]}</span>`;
+        const inner = `<img src="${attr(shotsUrl(artifact.url))}" alt="${attr(PlatformI18n.t(altId, { changes: described }))}" loading="lazy">${drawn[which]}`;
+        if (!crop) return `<span class="shots-flip-side ${cls}" style="--shots-shape:${shape}">${inner}</span>`;
+        const at = which === 'base' ? crop.before : crop.after;
+        const pct = (value, total) => `${(value / total * 100).toFixed(3)}%`;
+        const style = `--shots-shape:${shape};--shots-crop-shape:${crop.cw} / ${crop.ch};--shots-crop-x:${pct(-at.x, crop.cw)};--shots-crop-y:${pct(-at.y, crop.ch)};--shots-crop-w:${pct(screen.width, crop.cw)};--shots-crop-h:${pct(which === 'base' ? screen.heightBefore : screen.heightAfter, crop.ch)}`;
+        return `<span class="shots-flip-side ${cls}" data-shots-crop="1" style="${style}"><span class="shots-crop">${inner}</span></span>`;
       };
       const changes = onScreen.map((claim) => {
         const n = numberOf(claim.id);
@@ -24309,6 +24369,7 @@ const AppView = {
         beforeHtml: side('base', before, absent ? 'changes:shots.screen.altBeforeAbsent' : 'changes:shots.screen.altBefore'),
         afterChip: PlatformI18n.t('changes:shots.viewer.chipAfter'),
         beforeChip: absent ? PlatformI18n.t('changes:shots.viewer.chipBeforeAbsent') : PlatformI18n.t('changes:shots.viewer.chipBefore'),
+        stacked: !!crop && crop.stacked,
         notesHtml: `${changes ? `<ol class="shots-changes">${changes}</ol>` : ''}${keys ? `<div class="shots-keys">${keys}</div>` : ''}${thread ? '' : `<div class="shots-view-meta">${meta}</div>`}`,
       };
     });
