@@ -1071,6 +1071,14 @@
     "text": "Import from a GitHub repo",
     "description": "Link under the Make it button, when the screen was opened from the Create button: switches to a form that brings in an existing app from a GitHub repository instead of describing a new one. GitHub is a name."
   },
+  "firstSession.make.speed.instant": {
+    "text": "<0>Instant</0> · ready to use in about a minute",
+    "description": "One line above \"Who can change it\" on the \"What do you want to make?\" screen, after a lightning icon, while Make it would create one of Homeroom's ready-made apps (a starting idea's choice that needs no typing): nothing has to be built, so the project can be used about a minute after Make it is pressed. <0>…</0> is bold. Keep it short: it must fit on one line of a phone screen."
+  },
+  "firstSession.make.speed.custom": {
+    "text": "<0>Custom</0> · Homeroom bot builds it in 20 to 30 min",
+    "description": "One line above \"Who can change it\" on the \"What do you want to make?\" screen, after a sparkle icon, while Make it would ask Homeroom bot to build the first version from the member's own description (their own words, a game, or a starting idea finished in their own words). \"it\" is the project; \"min\" is short for minutes. <0>…</0> is bold. Keep it short: it must fit on one line of a phone screen."
+  },
   "firstSession.make.rule.line": {
     "text": "Who can change it: <0>{{preset}}</0>",
     "description": "One line under the description and name fields on the \"What do you want to make?\" screen, before the project exists: the approval rule it will be made with. <0>…</0> is bold. {{preset}} is the rule's name, such as \"You or the group\" or \"Two yeses\"."
