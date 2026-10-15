@@ -150,7 +150,7 @@ test('#4525: an offer to open a vote on closing a request, decided by its tap', 
   await setting('homeroom_bot_mode', 'shadow');
   const settings = await homeroomBot.readSettings(pool);
   const opened = await conversations.ensureAdmittedDirect(pool, bot.id, ada.id);
-  const workflow = { governsKind: () => false, async fileProposal() {} };
+  const workflow = { async fileProposal() {} };
 
   // A request on Ear Trainer, open on GitHub.
   async function request(n, { title = `Tone ${n}`, state = 'open', pullRequest = false } = {}) {

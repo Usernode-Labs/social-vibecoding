@@ -513,6 +513,29 @@ test('invite links against a real PostgreSQL', async (t) => {
       assert.equal((await links()).some((l) => l.id === old.link.id), false, 'an old ended link is not listed');
     });
 
+    await t.test('15 Oct 2026: the hub\'s summary and the list\'s "Invite link out" read the live links as listInvites does', async () => {
+      const arena = await app('arena');
+      const { links } = await invites.listInvites(pool, { app: arena, user: ADA });
+      const live = links.filter((l) => l.status === 'live');
+      assert.ok(live.length > 0 && links.length > live.length, 'live links and ended ones both');
+      const summary = await invites.inviteSummary(pool, { app: arena, user: ADA });
+      assert.deepEqual(summary, invites.summarizeLinks(links), 'the same links, summed');
+      assert.equal(summary.links, live.length);
+      assert.equal(summary.joined, live.reduce((n, l) => n + l.joined, 0));
+      assert.equal(summary.waiting, live.reduce((n, l) => n + l.waiting, 0));
+      const ends = live.map((l) => l.expiresAt).filter(Boolean).map(Date.parse);
+      assert.equal(summary.expires_at, ends.length ? new Date(Math.min(...ends)).toISOString() : null, 'the soonest end');
+      assert.equal(await invites.inviteSummary(pool, { app: arena, user: null }), null, 'nobody signed in: none');
+      // The Communities list's read: one query for many projects, the
+      // viewer's own live links and who joined through them.
+      const out = await invites.linksOutFor(pool, [arena.id, 999999], ADA.id);
+      const mine = live.filter((l) => l.mine);
+      assert.deepEqual(out.get(arena.id), { links: mine.length, joined: mine.reduce((n, l) => n + l.joined, 0) });
+      assert.equal(out.has(999999), false, 'no links, no entry');
+      assert.equal((await invites.linksOutFor(pool, [arena.id], 999)).size, 0, 'somebody with no links of their own');
+      assert.equal((await invites.linksOutFor(pool, [], ADA.id)).size, 0);
+    });
+
     await t.test('WP-D: a project with no shot yet shows the card of its idea through a live link, and only then', async () => {
       const arena = await app('arena');
       const made = await invites.createInvite(pool, { app: arena, user: ADA, days: 0, maxUses: 0 });

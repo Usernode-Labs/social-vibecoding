@@ -1643,9 +1643,13 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // plus one check that a name opens the profile page. Four routes with
   // nothing already declared on them to fold into, inside the 880 ceiling.
   //
+  // 735 → 736: +1 (#5072): the Moderation deep link opens the linked case
+  // already selected (#admin/reports/1, the staging fixture's fake report),
+  // a route no other check reaches.
+  //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 735);
+  checkCap.assertPinned(DAPP.tests.length, 736);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

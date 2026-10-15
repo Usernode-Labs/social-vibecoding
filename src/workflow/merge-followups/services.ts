@@ -121,12 +121,11 @@ export function mergeFollowupsServices({ config, pool }: Deps): Record<string, W
     // A change busy with an operation that keeps no durable record while it
     // runs (a sync with main or a dispatch starting its worker, a hand-off's
     // commit upload, a local agent run, a push not yet reconciled into its
-    // head) is left out too. With the preview machine on (`durableWork`,
-    // recorded when the merge was), the machine's guard reads those
-    // operations from its record, in whichever process runs it. Without it,
-    // as [main] did: isSessionBusy, which knows only this process's
-    // operations (with one replica, every operation but those of the other
-    // Pod during a rollout's overlap).
+    // head) is left out too. The preview machine records those operations
+    // (`durableWork`, on every merge since its old paths went), and the
+    // guard reads them from its record, in whichever process runs it. An
+    // item from before that (no `durableWork`) asks isSessionBusy, which
+    // knows only this process's operations.
     [WORK.find]: {
       maxAttempts: 6,
       backoffMs: backoff,

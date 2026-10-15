@@ -573,10 +573,6 @@ export interface MachineDeps {
   // Whether a merge asks app-delivery for its deploy (its flag in this
   // process). Recorded on the instance when it merges.
   delivery?: () => boolean;
-  // Whether who works on a session is recorded durably (the preview
-  // machine's flag in this process): the carry search then leaves it to the
-  // guard's durable reads, instead of this process's memory.
-  previews?: () => boolean;
 }
 
 export function mergeFollowups(deps: MachineDeps): Machine<MFState, Facts> {
@@ -629,7 +625,7 @@ export function mergeFollowups(deps: MachineDeps): Machine<MFState, Facts> {
             : !f.session || !f.app ? reject('no_session')
               : f.session.status === 'merged' ? reject('already_merged')
                 : !['promoted', 'merging'].includes(f.session.status) ? reject('not_merging') : ok()),
-          to: (s, e, f, ctx) => merged(e, f, ctx, viaDelivery(), !!deps.previews?.()),
+          to: (s, e, f, ctx) => merged(e, f, ctx, viaDelivery(), true),
         },
         Included: {
           guard: (s, e, f, ctx) => {

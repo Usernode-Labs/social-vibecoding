@@ -87,6 +87,21 @@ test('both templates carry a one-click unsubscribe and say why they came', () =>
   });
   assert.equal(joined.subject, '@sam joined Run Club through your invite');
   assert.ok(joined.headers['List-Unsubscribe']);
+  // #5068: the welcome hero. The pill is the first anchor (tracking index 0
+  // is the payload url), "Stop these emails" sits under it, and the
+  // project's name is the eyebrow.
+  const anchorsIn = (html) => Array.from(
+    html.matchAll(/<a\s+href="([^"]*)"([^>]*)>([\s\S]*?)<\/a>/g),
+    (m) => ({ href: m[1], attrs: m[2], text: m[3] }));
+  const [cta, stop] = anchorsIn(ready.html);
+  assert.equal(cta.href, 'https://x/#messages/12');
+  assert.equal(cta.text, 'Open it');
+  assert.match(cta.attrs, /border-radius:999px/, 'the pill, not the small square button');
+  // The href is an attribute value, so its & is escaped in the markup.
+  assert.equal(stop.href, unsubscribeUrl.replace(/&/g, '&amp;'));
+  assert.equal(stop.text, 'Stop these emails');
+  assert.match(ready.html, />Run Club</, 'the project name is the eyebrow');
+  assert.match(ready.html, /letter-spacing:0\.8px[^>]*>Run Club</, 'uppercase eyebrow style');
   // Every other kind's message is unchanged: no headers key at all.
   assert.equal('headers' in templates.buildMessage('otp', { code: '123456' }), false);
 });

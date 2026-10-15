@@ -271,33 +271,17 @@
     "text": "Nothing on the board yet. Press <0>⋯</0> to suggest an improvement or import a PR; to make one yourself, use Build it now there.",
     "description": "Note on a project's Hub when the project has no requests or proposals. <0>⋯</0> is the Hub's own More button, shown as its three-dot sign. \"Suggest an improvement\", \"Import a PR\" (a GitHub pull request) and \"Build it now\" are rows of that menu."
   },
-  "boardEmpty.press.hub.collab.short": {
-    "text": "Nothing on the board yet. Press <0>⋯</0> to suggest an improvement or import a PR.",
-    "description": "Note on a project's Hub when the project has no requests or proposals and a button to start the first change is already shown above. <0>⋯</0> is the Hub's own More button, shown as its three-dot sign. \"Suggest an improvement\" and \"Import a PR\" (a GitHub pull request) are rows of that menu."
-  },
   "boardEmpty.press.hub.plain.full": {
     "text": "Nothing on the board yet. Press <0>⋯</0> to suggest an improvement; to make one yourself, use Build it now there.",
     "description": "Note on a project's Hub when the project has no requests or proposals. <0>⋯</0> is the Hub's own More button, shown as its three-dot sign. \"Suggest an improvement\" and \"Build it now\" are rows of that menu."
-  },
-  "boardEmpty.press.hub.plain.short": {
-    "text": "Nothing on the board yet. Press <0>⋯</0> to suggest an improvement.",
-    "description": "Note on a project's Hub when the project has no requests or proposals and a button to start the first change is already shown above. <0>⋯</0> is the Hub's own More button, shown as its three-dot sign. \"Suggest an improvement\" is a row of that menu."
   },
   "boardEmpty.press.away.collab.full": {
     "text": "Nothing on the board yet. Press <0>⋯</0> on the hub to suggest an improvement or import a PR; to make one yourself, use Build it now there.",
     "description": "Note on a project's All items page when the project has no requests or proposals. <0>⋯</0> is the More button on the project's Hub, shown as its three-dot sign. \"Suggest an improvement\", \"Import a PR\" (a GitHub pull request) and \"Build it now\" are rows of that menu."
   },
-  "boardEmpty.press.away.collab.short": {
-    "text": "Nothing on the board yet. Press <0>⋯</0> on the hub to suggest an improvement or import a PR.",
-    "description": "Note shown away from a project's Hub when the project has no requests or proposals and a button to start the first change is already on screen. <0>⋯</0> is the More button on the project's Hub, shown as its three-dot sign. \"Suggest an improvement\" and \"Import a PR\" (a GitHub pull request) are rows of that menu."
-  },
   "boardEmpty.press.away.plain.full": {
     "text": "Nothing on the board yet. Press <0>⋯</0> on the hub to suggest an improvement; to make one yourself, use Build it now there.",
     "description": "Note on a project's All items page when the project has no requests or proposals. <0>⋯</0> is the More button on the project's Hub, shown as its three-dot sign. \"Suggest an improvement\" and \"Build it now\" are rows of that menu."
-  },
-  "boardEmpty.press.away.plain.short": {
-    "text": "Nothing on the board yet. Press <0>⋯</0> on the hub to suggest an improvement.",
-    "description": "Note shown away from a project's Hub when the project has no requests or proposals and a button to start the first change is already on screen. <0>⋯</0> is the More button on the project's Hub, shown as its three-dot sign. \"Suggest an improvement\" is a row of that menu."
   },
   "hub.startHere.title": {
     "text": "Start working on this app",
@@ -322,6 +306,10 @@
   "hub.startHere.bot.button": {
     "text": "Tell Homeroom bot what to change",
     "description": "Button on the card at the top of a project's Hub when nothing is open and nothing has ever been merged: opens the person's chat with Homeroom bot (the assistant's name; keep it as it is) with this project attached, ready for them to type what they want changed. \"Change\" is a verb."
+  },
+  "hub.card.close": {
+    "text": "Close this card",
+    "description": "Accessible name and tooltip of the small close (✕) button at the top right of two cards on a project's hub: \"Share it\" and \"What do you want to change?\". Closing one hides it on that project for good; what it offered stays elsewhere on the page."
   },
   "workshop.allItems.title": {
     "text": "All items",
@@ -1383,9 +1371,9 @@
     "text": "{{shown}} new",
     "description": "Small badge in the head of the Discussion card: how many messages in the project's channel are unread. {{shown}} is that number as displayed, capped as 99+; the plural form follows the real count."
   },
-  "hub.channel.sayHi": {
-    "text": "Say hi to {{project}}",
-    "description": "Button on the Discussion card of a project's Hub when nobody has written in the project's channel yet: opens the Discussion tab to write the first message. {{project}} is the project's name."
+  "hub.channel.empty": {
+    "text": "No messages yet.",
+    "description": "Second line of the Discussion row in the \"For you\" card on a project's hub, when nobody has said anything in the project's channel yet. The row opens the channel."
   },
   "hub.firstVersion.review": {
     "text": "Review the plan",
@@ -1483,14 +1471,6 @@
     "text": "No work in progress.",
     "description": "Shown on the Your work card of a project's Hub when this person has nothing under way in the project."
   },
-  "hub.work.emptyBot": {
-    "text": "Nothing in progress. To change something, tell Homeroom bot.",
-    "description": "Shown on the Your work card of a project's Hub when the person is alone in the project, has nothing under way, and Homeroom bot builds changes for them there. \"Homeroom bot\" is the assistant's name and stays as it is."
-  },
-  "hub.work.emptyMenu": {
-    "text": "Nothing in progress. Press <0>⋯</0> to suggest an improvement.",
-    "description": "Shown on the Your work card of a project's Hub when the person is alone in the project and has nothing under way. The ⋯ in <0></0> is the three-dot menu button on the same page, shown in the accent colour; keep the symbol."
-  },
   "hub.people.active_one": {
     "text": "{{count}} active this week",
     "description": "Top of a project's Hub, beside the faces of the people active there: how many people took part in the project in the last seven days (talked in its channel, started a change or voted)."
@@ -1574,6 +1554,14 @@
   "hub.recent.going": {
     "text": "Going live now",
     "description": "Line under a change's title in Recently live on a project's Hub, for a change that has merged and is still on its way to the live app, when there is no maker to name."
+  },
+  "hub.recent.own.today": {
+    "text": "Live since today",
+    "description": "Under the app's own name on the one card in the \"Recently live\" section of a project's hub, shown before any change to the app has gone live: the app itself went live today. The card opens the app."
+  },
+  "hub.recent.own.since": {
+    "text": "Live since {{date}}",
+    "description": "Under the app's own name on the one card in the \"Recently live\" section of a project's hub, shown before any change to the app has gone live: the day the app went live. {{date}} is a day in words, for example \"October 12\" or \"October 12, 2025\". The card opens the app."
   },
   "communityCard.rule.you": {
     "text": "A change goes live when you approve it.",
@@ -1851,18 +1839,6 @@
     "text": "That did not go through. Try again.",
     "description": "Error shown when proposing to make a project public or private failed and the server gave no reason of its own: as a toast after the confirm dialog, or under the question in the Make it public popup."
   },
-  "communityCard.week.privateCommunity": {
-    "text": "Private community",
-    "description": "Audience name shown in bold beside the faces at the top of a project's Hub in its first week, when the project is still just its maker's but an invite link has been sent out. One of the three audience names."
-  },
-  "communityCard.week.people_one": {
-    "text": "{{count}} person",
-    "description": "Small line under the audience name at the top of a project's Hub in its first week: how many people are in the community."
-  },
-  "communityCard.week.people_other": {
-    "text": "{{count}} people",
-    "description": "Small line under the audience name at the top of a project's Hub in its first week: how many people are in the community."
-  },
   "communityCard.people.members_one": {
     "text": "{{count}} member",
     "description": "Line beside the members' faces at the top of a project's Hub, when the audience's name is not known: how many members the community has."
@@ -1914,6 +1890,38 @@
   "communityCard.share.makePublic": {
     "text": "Make it public",
     "description": "Button on the \"Share it\" card: opens a small popup asking whether to propose making the project a public community. \"It\" is the project."
+  },
+  "communityCard.share.sent_one": {
+    "text": "Invite link sent",
+    "description": "Starts the one line on the \"Share it\" card of a project that is just the person's own, once they have made an invite link for it that still works. Followed by who has joined and how long the link has left, for example \"Invite link sent · nobody has joined yet · 7 days left\"."
+  },
+  "communityCard.share.sent_other": {
+    "text": "{{count}} invite links sent",
+    "description": "Starts the one line on the \"Share it\" card of a project that is just the person's own, when more than one invite link for it still works. Followed by who has joined and how long the soonest link has left, for example \"2 invite links sent · 1 joined · 3 days left\"."
+  },
+  "communityCard.share.nobodyJoined": {
+    "text": "nobody has joined yet",
+    "description": "Part of the one line on the \"Share it\" card, after \"Invite link sent\": nobody has joined the project through the invite link yet. Lower case because it follows a separator in the middle of the line."
+  },
+  "communityCard.share.joined_one": {
+    "text": "{{count}} joined",
+    "description": "Part of the one line on the \"Share it\" card, after \"Invite link sent\": how many people have joined the project through the invite link."
+  },
+  "communityCard.share.joined_other": {
+    "text": "{{count}} joined",
+    "description": "Part of the one line on the \"Share it\" card, after \"Invite link sent\": how many people have joined the project through the invite link."
+  },
+  "communityCard.share.daysLeft_one": {
+    "text": "{{count}} day left",
+    "description": "Ends the one line on the \"Share it\" card: how many days the invite link still works, rounded. Lower case because it follows a separator in the middle of the line."
+  },
+  "communityCard.share.daysLeft_other": {
+    "text": "{{count}} days left",
+    "description": "Ends the one line on the \"Share it\" card: how many days the invite link still works, rounded. Lower case because it follows a separator in the middle of the line."
+  },
+  "communityCard.share.expiresToday": {
+    "text": "expires today",
+    "description": "Ends the one line on the \"Share it\" card when the invite link stops working in less than a day. Lower case because it follows a separator in the middle of the line."
   },
   "communityCard.inviteCard.note": {
     "text": "“{{note}}”",

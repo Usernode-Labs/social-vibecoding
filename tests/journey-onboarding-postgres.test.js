@@ -130,8 +130,12 @@ test('the made screen and the maker\'s tour: people per step, each card, and whe
 test('first versions: each stage reached and its time, how each ended, and its maker when it went live', { timeout: 120000 }, async (t) => {
   const db = await freshDatabase(t);
   if (!db) return;
-  const { pool, user, app, event } = db;
+  const { pool, app, event } = db;
   const now = new Date('2026-10-15T12:00:00Z');
+  // Accounts made before `now`: journey.person reads only an account that
+  // existed at `now`, and the server's clock passed this fixed `now` at
+  // noon UTC on 2026-10-15.
+  const user = (username) => db.user(username, { created_at: '2026-10-01T00:00:00Z' });
   const week = journey.parseWeek('2026-10-12', new Date('2026-10-20T00:00:00Z'));
   const firstVersion = (appId, userId, brief, issue = 1) => pool.query(
     "INSERT INTO homeroom_bot_first_versions (app_id, user_id, brief, status, issue_number) VALUES ($1, $2, $3, 'filed', $4)",

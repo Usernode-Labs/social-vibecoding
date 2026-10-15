@@ -101,18 +101,34 @@ import { SpeakButton } from '../dictation/speak-button';
  * own and each starter ("a board game where") still waits for the rest.
  * The name follows the choice ("Hiking Tier List") until they type one.
  *
+ * SOMETHING ELSE (Evan, 15 Oct 2026): still two by two, but the tiles are
+ * the front three (./examples.ts FRONT: a tier list, a game and an
+ * organizer, one config list) and "Something else…". That tile opens a sheet
+ * (./more-sheet.tsx) with Your own idea first and then the rest (MORE: a
+ * poll, find a time, a sign-up sheet and a group challenge). A pick
+ * there takes the fourth tile over, with a chevron that opens the sheet
+ * again; Your own idea takes it too, picked there or by writing in the box.
+ *
  * A template is a starting point, not a choice that sticks: "Write it
  * yourself" turns the sentence into the plain box, and words of their own
  * there let go of the template (Your own idea is marked instead, and Make
  * it no longer sends the template's description). The name stays theirs to
  * keep or change.
+ *
+ * INSTANT OR CUSTOM (Evan, 15 Oct 2026): one line above Who can change it
+ * says what Make it will do, and follows each pick and keystroke
+ * (`makeSpeed`). A choice that makes a ready-made app is Instant, ready in
+ * about a minute; anything Homeroom bot builds (their own words, Write it
+ * yourself, a game, Your own…) is Custom, 20 to 30 minutes. Before anything
+ * is picked or typed there is no line: Make it would only ask for the answer.
  */
 
 import { type KeyboardEvent as ReactKeyboardEvent, useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 import { Button } from '@/components/ui/button';
 import { Chip } from '@/components/ui/chip';
-import { PencilSquareIcon, XIcon } from '@/components/ui/icons';
+import { BoltIcon, ChevronDownIcon, PencilSquareIcon, SparklesIcon, XIcon } from '@/components/ui/icons';
 import { Wordmark } from '@/components/ui/wordmark';
 
 import { RichMessage, useMessages } from '../../lib/i18n/react';
@@ -125,8 +141,9 @@ import { MakeRuleLine } from '../who-decides/make-rule';
 import { DEFAULT_PRESET, type PresetKey } from '../who-decides/model';
 import { AppAllowance, useAppAllowance } from '../dialogs/app-allowance';
 import { deviceTimeZone, postCreateApp } from '../dialogs/post-create-app';
-import { descriptionOf, firstChoice, OWN, readyMadeOf, sentence, starterOf, suggestedName, TEMPLATES, type Template } from './examples';
+import { descriptionOf, firstChoice, FRONT, MORE, OWN, readyMadeOf, sentence, starterOf, suggestedName, type Template } from './examples';
 import { ImportForm, type RepoManifest } from './import-repo';
+import { MoreSheet } from './more-sheet';
 import { TierChart } from './tier-chart';
 
 export { deviceTimeZone };
@@ -153,6 +170,12 @@ export type Made = {
   imported?: boolean;
   /** One of Homeroom's ready-made apps (examples.ts `readyMadeOf`): nothing is built, it is ready once it runs. */
   readyMade?: boolean;
+  /**
+   * A ready-made app's example picture, its main screen with sample entries
+   * (POST /api/apps `exampleScreen`, services/app-templates.js): the made
+   * screen's card shows it as the App side, tagged as an example.
+   */
+  exampleScreen?: string | null;
 };
 
 const FIELD = 'px-4 pt-3 pb-2 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800';
@@ -205,6 +228,35 @@ const TILE_OFF = 'shadow-[inset_0_0_0_1px_var(--app-sheet-line)]';
 
 /** The tile that is the plain description box. */
 export const OWN_IDEA = 'idea';
+/** The fourth tile while nothing from "Something else…" holds it. */
+export const MORE_TILE = 'more';
+
+/**
+ * INSTANT OR CUSTOM: what Make it will do with what is on screen now.
+ * `instant` while it would make a ready-made app, which is Make it's own
+ * test (`readyMadeOf` while the sentence is still the template's, not
+ * written out); `custom` while Homeroom bot would build it; null while
+ * nothing is picked or typed, when Make it would only ask for the answer.
+ * Pure.
+ */
+export type MakeSpeed = 'instant' | 'custom' | null;
+export function makeSpeed(
+  picked: Template | typeof OWN_IDEA | null,
+  choice: string,
+  written: string | null,
+  brief: string,
+): MakeSpeed {
+  const template = picked && picked !== OWN_IDEA ? picked : null;
+  if (template && written === null && readyMadeOf(template, choice)) return 'instant';
+  if (!picked && !brief.trim()) return null;
+  return 'custom';
+}
+
+/** The line for each, a message id: its first word is bold (`<0>…</0>`). */
+export const SPEED_LINE = {
+  instant: 'onboarding:firstSession.make.speed.instant',
+  custom: 'onboarding:firstSession.make.speed.custom',
+} as const;
 
 export type Missing = 'blank' | 'brief' | 'name' | null;
 
@@ -301,6 +353,8 @@ export function MakeScreen({
   // Who can change it (#4666): You or the group, unless Change picked another.
   // Sent only when it is another, as the project's own governance block.
   const [rule, setRule] = useState<PresetKey>(DEFAULT_PRESET);
+  // "Something else…" (./more-sheet.tsx), while it is up.
+  const [sheetOpen, setSheetOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [dictating, setDictating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -388,11 +442,16 @@ export function MakeScreen({
   }, [onClose]);
 
   const template = picked && picked !== OWN_IDEA ? picked : null;
+  // The fourth tile: a pick from "Something else…" (Your own idea, or one of
+  // MORE) takes it over and opens the sheet again; until then it is the way in.
+  const fourth: Template | typeof OWN_IDEA | null = picked === OWN_IDEA ? OWN_IDEA : template && MORE.includes(template) ? template : null;
   // The sentence is drawn until it is written out as plain text.
   const templated = !!template && written === null;
   const said = template ? sentence(template, choice, words) : null;
   // What Make it sends as the description: the sentence, or the plain box.
   const text = templated && said ? said.text : brief;
+  // INSTANT OR CUSTOM: the line above Who can change it.
+  const speed = makeSpeed(picked, choice, written, brief);
   // After the tap that drew it, the field for their words (or the plain box).
   const focusSoon = (field: () => HTMLElement | null) => {
     setTimeout(() => field()?.focus({ preventScroll: true }), 0);
@@ -488,7 +547,7 @@ export function MakeScreen({
         ...(timeZone ? { timeZone } : {}),
       });
       const data = (reply.ok ? reply.data : {}) as {
-        app?: { slug?: string; name?: string }; homeroomBot?: { conversationId?: unknown };
+        app?: { slug?: string; name?: string }; homeroomBot?: { conversationId?: unknown }; exampleScreen?: unknown;
       };
       if (!reply.ok || !data.app?.slug) {
         setError(reply.ok ? translate('onboarding:firstSession.make.error.notMade') : reply.error);
@@ -502,6 +561,7 @@ export function MakeScreen({
         example,
         conversationId: Number(data.homeroomBot?.conversationId) || null,
         ...(ready ? { readyMade: true } : {}),
+        ...(ready && typeof data.exampleScreen === 'string' && data.exampleScreen ? { exampleScreen: data.exampleScreen } : {}),
       });
     } finally {
       makingRef.current = false;
@@ -600,7 +660,7 @@ export function MakeScreen({
           </div>
           <p className="mt-6 pb-2 text-[13px] text-zinc-500 dark:text-zinc-400">{t('onboarding:firstSession.make.startFromIdea')}</p>
           <div className="grid grid-cols-2 gap-2" role="group" aria-label={t('onboarding:firstSession.make.ideasLabel')}>
-            {TEMPLATES.map((example) => {
+            {FRONT.map((example) => {
               const on = picked === example;
               return (
                 <button
@@ -616,15 +676,30 @@ export function MakeScreen({
                 </button>
               );
             })}
+            {/* SOMETHING ELSE (Evan, 15 Oct 2026): the fourth tile opens the
+                sheet with Your own idea and the rest (./more-sheet.tsx). A
+                pick there takes the tile over, chevron and all, so the grid
+                always shows what is chosen and one tap opens the list again.
+                Its glyph is four of what is behind it. */}
             <button
               type="button"
-              aria-pressed={picked === OWN_IDEA}
-              data-first-session-example={OWN_IDEA}
-              onClick={pickIdea}
-              className={`${TILE} ${picked === OWN_IDEA ? TILE_ON : TILE_OFF}`}
+              aria-pressed={!!fourth}
+              aria-haspopup="dialog"
+              data-first-session-example={fourth ? (fourth === OWN_IDEA ? OWN_IDEA : fourth.key) : MORE_TILE}
+              onClick={() => setSheetOpen(true)}
+              className={`${TILE} ${fourth ? TILE_ON : TILE_OFF}`}
             >
-              <span className="app-icon-tile flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-2xl" aria-hidden="true">💡</span>
-              <span className="text-[15px] font-[650] leading-tight">{t('onboarding:firstSession.make.ownIdea')}</span>
+              <span className="app-icon-tile flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-2xl" aria-hidden="true">
+                {fourth === OWN_IDEA ? '💡' : fourth ? (fourth.chart ? <TierChart /> : fourth.emoji) : (
+                  <span className="grid grid-cols-2 gap-0.5 text-[14px] leading-4">
+                    {MORE.slice(0, 4).map((m) => <span key={m.key}>{m.emoji}</span>)}
+                  </span>
+                )}
+              </span>
+              <span className="min-w-0 flex-1 text-[15px] font-[650] leading-tight">
+                {fourth === OWN_IDEA ? t('onboarding:firstSession.make.ownIdea') : fourth ? t(fourth.short) : t('onboarding:firstSession.make.somethingElse')}
+              </span>
+              {fourth ? <ChevronDownIcon className="h-4 w-4 shrink-0 text-zinc-500 dark:text-zinc-400" aria-hidden="true" /> : null}
             </button>
           </div>
           <div data-make-brief="" className="mt-4 overflow-hidden rounded-2xl bg-white shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900">
@@ -769,6 +844,20 @@ export function MakeScreen({
               {missing === 'name' ? <p id="first-session-name-hint" role="alert" className={NEEDED}>{needed}</p> : null}
             </div>
           </div>
+          {/* INSTANT OR CUSTOM: one line, drawn as the rule line under it is
+              (its inks, icon size and inset), a step larger, with no colour
+              of its own. It is one line from 390px wide; narrower, it wraps
+              without leaving one word on its own. */}
+          {speed ? (
+            <p data-make-speed={speed} className="mt-3 flex items-center gap-2 px-1 text-[14px] leading-[1.4] text-zinc-600 dark:text-zinc-300">
+              {speed === 'instant'
+                ? <BoltIcon className="h-4 w-4 shrink-0 text-zinc-500 dark:text-zinc-400" aria-hidden="true" />
+                : <SparklesIcon className="h-4 w-4 shrink-0 text-zinc-500 dark:text-zinc-400" aria-hidden="true" />}
+              <span className="min-w-0 text-pretty">
+                <RichMessage id={SPEED_LINE[speed]} components={[<b className="font-semibold text-zinc-900 dark:text-zinc-100" />]} />
+              </span>
+            </p>
+          ) : null}
           <MakeRuleLine preset={rule} onPick={setRule} who={who} />
           {allowance}
           {error ? <p role="alert" className="mt-3 text-[14px] text-red-700 dark:text-red-400">{error}</p> : null}
@@ -814,6 +903,17 @@ export function MakeScreen({
         </form>
         )}
       </div>
+      {sheetOpen && typeof document !== 'undefined'
+        ? createPortal(
+          <MoreSheet
+            picked={fourth}
+            onPick={(next) => { setSheetOpen(false); pickTemplate(next); }}
+            onPickIdea={() => { setSheetOpen(false); pickIdea(); }}
+            onClose={() => setSheetOpen(false)}
+          />,
+          document.body,
+        )
+        : null}
     </div>
   );
 }

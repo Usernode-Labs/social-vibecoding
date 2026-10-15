@@ -1,10 +1,11 @@
-// The workflow runtime inside the platform process: created at boot when a
-// workflow flag is on, with its own small pool so pipeline slots and the
-// outcome listener never take request connections. Every process appends,
-// waits and runs pipeline slots (so a Pod that is not the leader, during a
-// rollout, still decides its own votes at once); timers, services and the
-// boot backfill run on the leader, and on a staging preview (which never
-// stands for election) so a preview with the flag on still decides.
+// The workflow runtime inside the platform process: created at boot in
+// every process (a failed start ends it: server.js), with its own small pool
+// so pipeline slots and the outcome listener never take request
+// connections. Every process appends, waits and runs pipeline slots (so a
+// Pod that is not the leader, during a rollout, still decides its own votes
+// at once); timers, services and the boot backfill run on the leader, and
+// on a staging preview (which never stands for election) so a preview still
+// decides.
 
 import { createRequire } from 'node:module';
 import { randomUUID } from 'node:crypto';
@@ -28,8 +29,9 @@ const pg = createRequire(import.meta.url)('pg');
 
 let runtime: Runtime | null = null;
 let kernelPool: Pool & { end(): Promise<void> } | null = null;
-// The machines this process registered, each only under its own flag
-// (merge-followups also while it has work left to finish with its flag off).
+// The machines this process registered: governance always (its old paths
+// are deleted), the others each under its own flag (merge-followups also
+// while it has work left to finish with its flag off).
 let machine: ReturnType<typeof governanceProposal> | null = null;
 let merges: ReturnType<typeof mergeFollowups> | null = null;
 let mergesAdmitted = false;
@@ -39,14 +41,14 @@ const builds = botBuild();
 let deliveries: ReturnType<typeof appDelivery> | null = null;
 let deliveriesAdmitted = false;
 let previews: ReturnType<typeof preview> | null = null;
-let previewsAdmitted = false;
 let log: Logger | null = null;
 
 // What the ownership triggers read, synced on every boot:
 // - ownership_mode: 'raise' (tests, staging, local) or 'log' (production,
 //   until no legacy writer is left);
-// - enabled:<machine>: the machine's guard. A boot with its flag on sets
-//   it. In 'log' mode (production) a boot with its flag off leaves it: the
+// - enabled:<machine>: the machine's guard. Every boot sets it for a
+//   machine with no flag (ALWAYS_ON), and a boot with its flag on for the
+//   others. In 'log' mode (production) a boot with its flag off leaves it: the
 //   flag is per process and the guard is the cluster's, and an old Pod still
 //   running (a rollout, a rollback, a restart of a Pod from before) must not
 //   switch it off under the Pods that run the machine. It goes when an admin
@@ -70,10 +72,8 @@ async function setSetting(pool: Pool, key: string, value: string | null): Promis
 // off, the legacy merge tail deploys and marks a change live in one call,
 // and nothing else may deploy beside the machine.
 const FLAGS = new Map<string, { flag: string; on: (config: any) => boolean }>([
-  [MACHINE, { flag: 'WF_GOVERNANCE_ENABLED', on: (c) => !!c.wfGovernanceEnabled }],
   [MERGE, { flag: 'WF_MERGE_FOLLOWUPS_ENABLED', on: (c) => !!c.wfMergeFollowupsEnabled }],
   [DELIVERY, { flag: 'WF_APP_DELIVERY_ENABLED', on: (c) => !!c.wfAppDeliveryEnabled && !!c.wfMergeFollowupsEnabled }],
-  [PREVIEW, { flag: 'WF_PREVIEWS_ENABLED', on: (c) => !!c.wfPreviewsEnabled }],
 ]);
 
 // Why a flag that is set does not run its machine here, for the boot log
@@ -85,9 +85,14 @@ export function flagBlocked(name: string, config: any): string | null {
   return null;
 }
 
+// Machines with no flag: their old paths are deleted, so their guard is on
+// in every process, and an admin cannot turn it off.
+const ALWAYS_ON = new Set([MACHINE, PREVIEW]);
+
 export async function syncSettings(pool: Pool, config: any): Promise<void> {
   const logMode = config.wfOwnershipMode === 'log';
   await setSetting(pool, 'ownership_mode', logMode ? 'log' : null);
+  for (const name of ALWAYS_ON) await setSetting(pool, `enabled:${name}`, '1');
   for (const [name, f] of FLAGS) {
     if (f.on(config)) { await setSetting(pool, `enabled:${name}`, '1'); continue; }
     // In 'raise' mode (development, staging previews, tests: one process,
@@ -118,6 +123,7 @@ export async function guards(pool: Pool, config: any): Promise<{ machine: string
 // (here at least: a process whose flag is on would set it again at its
 // next boot, and runs the machine meanwhile).
 export async function turnGuardOff(pool: Pool, config: any, name: string, admin: { id: number }): Promise<void> {
+  if (ALWAYS_ON.has(name)) throw new AdminActionError(409, `${name} has no flag: it is the only path for what it decides`);
   const f = FLAGS.get(name);
   if (!f) throw new AdminActionError(400, `${name} is not a workflow machine`);
   if (f.on(config)) throw new AdminActionError(409, `${f.flag} is on in this process: turn the flag off first`);
@@ -147,16 +153,6 @@ async function deliveriesUnfinished(pool: Pool): Promise<boolean> {
          OR EXISTS (SELECT 1 FROM wf_instances WHERE machine = $1 AND state = 'deploying') AS unfinished`,
     [DELIVERY]);
   return !!rows[0]?.unfinished;
-}
-
-// Sessions the preview machine still holds (not handed back, not retired):
-// with its flag off, a boot hands each back to [main]'s paths (Detach).
-async function previewsHeld(pool: Pool): Promise<boolean> {
-  const { rows } = await pool.query(
-    `SELECT EXISTS (SELECT 1 FROM wf_instances WHERE machine = $1 AND state NOT IN ('detached', 'retired'))
-         OR EXISTS (SELECT 1 FROM wf_work WHERE machine = $1 AND status IN ('queued', 'running', 'reported')) AS held`,
-    [PREVIEW]);
-  return !!rows[0]?.held;
 }
 
 // The build this process booted with, recorded on the platform's own row
@@ -203,8 +199,6 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
   const deliveryOn = FLAGS.get(DELIVERY)!.on(config);
   const withMerges = !!config.wfMergeFollowupsEnabled || await mergesUnfinished(appPool).catch(() => false);
   const withDeliveries = deliveryOn || await deliveriesUnfinished(appPool).catch(() => false);
-  const previewsOn = !!config.wfPreviewsEnabled;
-  const withPreviews = previewsOn || await previewsHeld(appPool).catch(() => false);
   // The runtime always starts: bot builds have no other path. The other
   // machines still come and go with their flags.
   const workflowPool = new pg.Pool({
@@ -222,14 +216,11 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
   // (a request is recorded on the instance that made it, so one decided on
   // the work path stays there).
   const delivery = () => deliveriesAdmitted;
-  if (config.wfGovernanceEnabled) {
-    machine = governanceProposal({ dataKey: config.dataEncryptionKey, notifiers: governanceNotifiers(deps), delivery });
-    machines.push(machine);
-    services = { ...services, ...governanceServices(deps) };
-  }
+  machine = governanceProposal({ dataKey: config.dataEncryptionKey, notifiers: governanceNotifiers(deps), delivery });
+  machines.push(machine);
+  services = { ...services, ...governanceServices(deps) };
   if (withMerges) {
-    merges = mergeFollowups({ dataKey: config.dataEncryptionKey, notifiers: mergeFollowupsNotifiers(deps), delivery,
-      previews: () => previewsAdmitted });
+    merges = mergeFollowups({ dataKey: config.dataEncryptionKey, notifiers: mergeFollowupsNotifiers(deps), delivery });
     mergesAdmitted = !!config.wfMergeFollowupsEnabled;
     machines.push(merges);
     services = { ...services, ...mergeFollowupsServices(deps) };
@@ -242,22 +233,19 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
     machines.push(deliveries);
     services = { ...services, ...appDeliveryServices(deps) };
   }
-  if (withPreviews) {
-    // A cancelled prepare learns it at its next checkpoint or lease renewal;
-    // its attempt is retired, and a retirement runs, a lease and more later
-    // (and never while it serves: services.ts).
-    previews = preview({ maxRetries: config.checkMaxAutoRetries ?? 6, retireAfterMs: PREPARE_LEASE_MS + 30000 });
-    previewsAdmitted = previewsOn;
-    machines.push(previews);
-    services = { ...services, ...previewServices(deps) };
-  }
+  // A cancelled prepare learns it at its next checkpoint or lease renewal;
+  // its attempt is retired, and a retirement runs, a lease and more later
+  // (and never while it serves: services.ts).
+  previews = preview({ maxRetries: config.checkMaxAutoRetries ?? 6, retireAfterMs: PREPARE_LEASE_MS + 30000 });
+  machines.push(previews);
+  services = { ...services, ...previewServices(deps) };
   const started = createRuntime({
     pool: kernelPool!, machines, services, slots: config.wfSlots, log: log!, publish: publishPushes,
   });
   try {
     await started.start({ slots: true });
   } catch (err) {
-    // Half started is not started: the routes must keep using the legacy paths.
+    // Half started is not started: the caller (server.js) exits the process.
     await started.stop().catch(() => {});
     await kernelPool!.end().catch(() => {});
     kernelPool = null;
@@ -267,7 +255,6 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
     deliveries = null;
     deliveriesAdmitted = false;
     previews = null;
-    previewsAdmitted = false;
     throw err;
   }
   runtime = started;
@@ -295,8 +282,6 @@ export async function releaseServing(pool: Pool): Promise<void> {
 export async function startWorkflowLoops(): Promise<void> {
   if (!runtime) return;
   await runtime.start({ loops: true });
-  if (previews && !previewsAdmitted) await detachPreviews();
-  if (!machine) return;
   const { rows } = await kernelPool!.query(
     `SELECT i.id, i.app_id FROM issues i
       WHERE i.status = 'open' AND i.kind = ANY($1::text[])
@@ -304,6 +289,29 @@ export async function startWorkflowLoops(): Promise<void> {
     [[...GOVERNANCE_KINDS], MACHINE]);
   for (const r of rows) await file(r.id, r.app_id, { kind: 'system', name: 'backfill' });
   if (rows.length) log!.info('workflow', 'Enrolled open governance proposals', { count: rows.length });
+  await retryPlatformFaults();
+}
+
+// A release is when a fix to the platform's own fault (a check Job refused
+// or lost, the preview database server down) most often arrives: every
+// preview whose last error was the platform's, within the day it keeps
+// retrying, is retried now instead of at its scheduled retry up to 30
+// minutes on. Once per release (the request key names the build).
+async function retryPlatformFaults(): Promise<void> {
+  if (!previews) return;
+  const { rows } = await kernelPool!.query(
+    `SELECT key, app_id FROM wf_instances
+      WHERE machine = $1
+        AND (state = 'failed' OR (state = 'settled' AND data->>'verdict' = 'error'))
+        AND (data->>'platformFault')::boolean
+        AND (data->>'firstFailureAt')::timestamptz > now() - interval '1 day'`, [PREVIEW]);
+  const release = String(process.env.GIT_SHA || 'dev').slice(0, 40);
+  for (const r of rows) {
+    await runtime!.append(previews, r.key, { type: 'RetryDue', payload: {} },
+      { requestKey: `release-retry:${release}:${r.key}`, source: { kind: 'system', name: 'release-retry' }, appId: r.app_id ?? undefined })
+      .catch((err: Error) => log!.warn('workflow', 'Could not retry a platform fault at boot', { key: r.key, message: err.message }));
+  }
+  if (rows.length) log!.info('workflow', 'Platform faults retried at boot', { count: rows.length });
 }
 
 // The process stops leading but finishes its running work
@@ -327,7 +335,6 @@ export async function stopWorkflow(): Promise<void> {
   deliveries = null;
   deliveriesAdmitted = false;
   previews = null;
-  previewsAdmitted = false;
   await r?.stop();
   await kernelPool?.end();
   kernelPool = null;
@@ -335,12 +342,11 @@ export async function stopWorkflow(): Promise<void> {
 
 // ── Governance proposals, for the routes ────────────────────────────────
 
-export function governanceEnabled(): boolean {
-  return runtime !== null && machine !== null;
-}
-
-export function governsKind(kind: string): boolean {
-  return governanceEnabled() && GOVERNANCE_KINDS.has(kind);
+// The runtime this process decides with. A route reached before it started,
+// or after it stopped, answers an error rather than deciding without it.
+function running(): Runtime {
+  if (!runtime || !machine) throw new Error('The workflow runtime is not running in this process');
+  return runtime;
 }
 
 // Whether the runtime runs in this process (the admin console's reads say so).
@@ -351,7 +357,7 @@ export function workflowRunning(): boolean {
 type Source = { kind: 'route' | 'system' | 'admin'; name?: string };
 
 async function file(issueId: number, appId: number, source: Source = { kind: 'route' }) {
-  return runtime!.append(machine!, issueKey(issueId), { type: 'Filed', payload: { issueId } },
+  return running().append(machine!, issueKey(issueId), { type: 'Filed', payload: { issueId } },
     { requestKey: `file:${issueId}`, source, appId });
 }
 
@@ -368,7 +374,7 @@ export async function fileProposal(issueId: number, appId: number): Promise<void
 // has covered.
 async function appendFiled(issue: { id: number; app_id: number; status?: string }, event: { type: string; payload: unknown },
   o: { requestKey: string; source: Source; actor: string }): Promise<EventOutcome> {
-  const send = () => runtime!.appendAndWait(machine!, issueKey(issue.id), event, { ...o, appId: issue.app_id });
+  const send = () => running().appendAndWait(machine!, issueKey(issue.id), event, { ...o, appId: issue.app_id });
   const outcome = await send();
   if (outcome.status !== 'rejected' || outcome.reason !== 'no_instance' || issue.status !== 'open') return outcome;
   await file(issue.id, issue.app_id);
@@ -453,6 +459,7 @@ export async function adminApplyProposal(
 // A close proposal's target was closed elsewhere (a merged PR's `Closes #N`,
 // the issue-close watcher): tell each open proposal for those numbers.
 export async function targetsClosed(appId: number, numbers: number[], cause: { kind: string; prNumber?: number }): Promise<number[]> {
+  running();
   const { rows } = await kernelPool!.query(
     `SELECT id, (payload->>'issueNumber')::int AS n FROM issues
       WHERE app_id = $1 AND kind = 'close_issue' AND status = 'open'
@@ -460,7 +467,7 @@ export async function targetsClosed(appId: number, numbers: number[], cause: { k
   for (const r of rows) {
     // Filing an enrolled row is a no-op (a replay, or `already_filed`).
     await file(r.id, appId, { kind: 'system', name: 'target-closed' });
-    await runtime!.append(machine!, issueKey(r.id), { type: 'TargetClosed', payload: { issueNumber: r.n, cause } },
+    await running().append(machine!, issueKey(r.id), { type: 'TargetClosed', payload: { issueNumber: r.n, cause } },
       { requestKey: `target:${r.n}:${cause.kind}:${cause.prNumber ?? ''}`, source: { kind: 'system', name: 'target-closed' }, appId });
   }
   return rows.map((r: { id: number }) => r.id);
@@ -588,25 +595,24 @@ export async function requestDeploy(appId: number, reason: string): Promise<numb
 
 // ── Previews and required checks ────────────────────────────────────────
 
-// Whether a proposal's preview and checks are asked of the preview machine
-// rather than built here. Off with the flag, even while the machine hands
-// back the sessions it held.
+// Whether the preview machine runs in this process: in every process once
+// its runtime has started (a failed start ends the process: server.js).
 export function previewsEnabled(): boolean {
-  return runtime !== null && previews !== null && previewsAdmitted;
+  return runtime !== null && previews !== null;
 }
 
 // The preview machine's instance of a session, as the sources and readers
 // need it: its state and data, or null.
-export async function previewInstance(sessionId: number): Promise<{ state: string; data: any } | null> {
+export async function previewInstance(sessionId: number): Promise<{ state: string; data: any; deadline_at: Date | null } | null> {
   if (!kernelPool) return null;
   const { rows: [r] } = await kernelPool.query(
-    'SELECT state, data FROM wf_instances WHERE machine = $1 AND key = $2', [PREVIEW, previewKey(sessionId)]);
-  return r ? { state: r.state, data: r.data } : null;
+    'SELECT state, data, deadline_at FROM wf_instances WHERE machine = $1 AND key = $2', [PREVIEW, previewKey(sessionId)]);
+  return r ? { state: r.state, data: r.data, deadline_at: r.deadline_at ?? null } : null;
 }
 
-// The machine holds the session (not handed back, not retired).
+// The machine holds the session (not retired, nor handed back before its
+// old paths were deleted).
 export async function previewHeld(sessionId: number): Promise<boolean> {
-  if (!previewsEnabled()) return false;
   const i = await previewInstance(sessionId);
   return !!i && i.state !== 'detached' && i.state !== 'retired';
 }
@@ -652,7 +658,7 @@ export async function checksSkipped(sessionId: number, appId: number, head: stri
 }
 
 export async function checksCleared(sessionId: number, appId: number, reason: string): Promise<EventOutcome> {
-  return runtime!.appendAndWait(previews!, previewKey(sessionId), { type: 'ChecksCleared', payload: { reason } },
+  return runtime!.appendAndWait(previews!, previewKey(sessionId), { type: 'ChecksCleared', payload: { reason, sessionId } },
     { requestKey: `cleared:${reason}:${randomUUID()}`, source: { kind: 'route', name: reason }, appId, waitMs: 2000 });
 }
 
@@ -666,22 +672,21 @@ export async function previewLost(sessionId: number, appId: number, attempt: num
     { requestKey: await versioned(sessionId, `lost:${attempt}`), source: sys('preview-lost'), appId });
 }
 
-// Retire a session's preview. Answers null when the machine does not hold
-// the session (the caller retires it on [main]'s path), else the outcome:
-// a non-terminal retirement is refused while someone works on the session,
-// while it is under review, or while it builds or checks.
-export async function retirePreview(sessionId: number, appId: number, reason: string, terminal: boolean): Promise<EventOutcome | null> {
-  if (!await previewHeld(sessionId)) return null;
-  return runtime!.appendAndWait(previews!, previewKey(sessionId), { type: 'RetireRequested', payload: { reason, terminal } },
-    { requestKey: await versioned(sessionId, `retire:${reason}`), source: sys(reason), appId, waitMs: 2000 });
+// Retire a session's preview (one the machine does not hold yet is adopted
+// from its row first). A non-terminal retirement is refused while someone
+// works on the session, while it is under review, or while it builds or
+// checks.
+export async function retirePreview(sessionId: number, appId: number, reason: string, terminal: boolean,
+  waitMs = 2000): Promise<EventOutcome> {
+  return runtime!.appendAndWait(previews!, previewKey(sessionId), { type: 'RetireRequested', payload: { reason, terminal, sessionId } },
+    { requestKey: await versioned(sessionId, `retire:${reason}`), source: sys(reason), appId, waitMs });
 }
 
 // Who is working on a session: an old flow's operation starts or ends
-// (services/active-workers.js). Recorded only with the flag on; the start
-// is waited for, so a reader in another process sees it before the work
-// goes on.
+// (services/active-workers.js). The start is waited for, so a reader in
+// another process sees it before the work goes on.
 export async function operationStarted(o: { sessionId: number; id: string; kind: string; holder: string }): Promise<void> {
-  if (!previewsEnabled()) return;
+  if (!previewsEnabled()) return;   // no runtime: a script or a test
   const { rows: [s] } = await kernelPool!.query('SELECT app_id FROM chat_sessions WHERE id = $1', [o.sessionId]);
   await runtime!.appendAndWait(previews!, previewKey(o.sessionId), { type: 'OperationStarted', payload: o },
     { requestKey: `op:${o.id}:start`, source: sys('operation'), appId: s?.app_id ?? null, waitMs: 2000 });
@@ -690,20 +695,6 @@ export async function operationEnded(o: { sessionId: number; id: string }): Prom
   if (!previewsEnabled()) return;
   await runtime!.append(previews!, previewKey(o.sessionId), { type: 'OperationEnded', payload: { id: o.id } },
     { requestKey: `op:${o.id}:end`, source: sys('operation') });
-}
-
-// The flag is off here: hand every session the machine holds back to
-// [main]'s paths. Its work is cancelled; what it built is left in place
-// under names [main]'s reapers know.
-async function detachPreviews(): Promise<void> {
-  const boot = randomUUID();
-  const { rows } = await kernelPool!.query(
-    `SELECT key, app_id FROM wf_instances WHERE machine = $1 AND state NOT IN ('detached', 'retired')`, [PREVIEW]);
-  for (const r of rows) {
-    await runtime!.append(previews!, r.key, { type: 'Detach', payload: {} },
-      { requestKey: `detach:${boot}`, source: sys('flag-off'), appId: r.app_id });
-  }
-  if (rows.length) log!.info('workflow', 'Handed previews back to the legacy paths (WF_PREVIEWS_ENABLED is off)', { count: rows.length });
 }
 
 // ── The admin console ───────────────────────────────────────────────────

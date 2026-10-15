@@ -120,9 +120,22 @@ test('Try again finishes a first version that was built, through a real tap', { 
 
   // GitHub, the promote route and the model, as the tap reaches them.
   const heads = new Map();
+  // A one-shot hold a subtest can arm (#5211): while one is armed, the first
+  // tap to read the branch on GitHub waits there, and the promote route
+  // releases it once its UPDATE has returned, before it answers. That holds
+  // the tap whose snapshot was taken before the other tap claimed the run,
+  // so its own checks then meet the proposal the other tap made. Disarmed in
+  // the subtest's finally, so no later case waits.
+  const branchHold = { armed: null, taken: null };
   const github = {
     isEnabled: () => true,
     async getBranchSha(owner, repo, branch) {
+      const hold = branchHold.armed;
+      if (hold) {
+        branchHold.armed = null;
+        branchHold.taken = hold;
+        await hold.wait;
+      }
       if (!heads.has(branch)) throw Object.assign(new Error('Not Found'), { status: 404 });
       return heads.get(branch);
     },
@@ -146,9 +159,17 @@ test('Try again finishes a first version that was built, through a real tap', { 
         `UPDATE chat_sessions SET status = 'promoted', pr_number = $2, promoted_at = NOW()
           WHERE id = $1 AND status IN ('active', 'paused') RETURNING id`,
         [id, 100 + id],
-      ).then(({ rows }) => (rows.length
-        ? res.status(200).json({ ok: true, prNumber: 100 + id })
-        : res.status(404).json({ error: 'Active session not found' })));
+      ).then(({ rows }) => {
+        // The hold is released here, once the session is up and before this
+        // answers: the held tap goes on with the proposal on the session.
+        if (branchHold.taken) {
+          branchHold.taken.release();
+          branchHold.taken = null;
+        }
+        return rows.length
+          ? res.status(200).json({ ok: true, prNumber: 100 + id })
+          : res.status(404).json({ error: 'Active session not found' });
+      });
     },
   };
   let modelTurns = 0;
@@ -270,6 +291,39 @@ test('Try again finishes a first version that was built, through a real tap', { 
     assert.equal(lines.filter((l) => l.startsWith('Finishing it now.')).length, 1);
     assert.equal(lines.filter((l) => l.startsWith('I\'m already finishing it.')).length, 1);
     assert.equal((await runRow(built.runId)).proposal_session_id, built.sessionId);
+  });
+
+  await t.test('a tap that read it before another tap proposed it is told it is already finishing', async () => {
+    await clear();
+    const built = await stopped();
+    // The losing ordering (#5211), forced: the first tap to read the branch
+    // waits there while the other claims the run and puts its proposal up.
+    // Released by the promote route, it goes on through its own checks,
+    // which meet that proposal and used to read it as a reason to start the
+    // request over; they look once more at the claim instead, and answer
+    // already.
+    const hold = {};
+    hold.wait = new Promise((resolve) => { hold.release = resolve; });
+    branchHold.armed = hold;
+    try {
+      const proposedBefore = promotes.length;
+      const turns = modelTurns;
+      await Promise.all([tap(built), tap(built)]);
+      assert.equal(promotes.length, proposedBefore + 1, 'proposed once');
+      assert.equal(modelTurns, turns, 'decided without the model');
+      const lines = (await botSaid(built.said.messageId)).map((l) => l.content);
+      assert.equal(lines.filter((l) => l.startsWith('Finishing it now.')).length, 1);
+      assert.equal(lines.filter((l) => l.startsWith('I\'m already finishing it.')).length, 1);
+      const run = await runRow(built.runId);
+      assert.equal(run.proposal_session_id, built.sessionId, 'the run\'s proposal');
+      assert.equal(run.build_finish.outcome, 'proposed');
+    } finally {
+      branchHold.armed = null;
+      if (branchHold.taken) {
+        branchHold.taken.release();
+        branchHold.taken = null;
+      }
+    }
   });
 
   await t.test('what cannot be finished goes to the model, which starts it over', async (tt) => {

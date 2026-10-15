@@ -67,7 +67,6 @@ const MIN_CAP_USD = 0.5;
 const MAX_CAP_USD = 1000;
 const MAX_LIVE_PREVIEWS = 4;
 const PREVIEW_HOURS = 24;
-const PREVIEW_STUCK_MINUTES = 45;
 const PREVIEW_SWEEP_MS = 10 * 60 * 1000;
 const HOST_WAIT_MS = 90 * 1000;
 const LABEL_RE = /^[a-z0-9][a-z0-9._-]{0,39}$/;
@@ -526,14 +525,27 @@ function codeLinks(row) {
   };
 }
 
+// A preview's status as the preview machine has it (a preview-only instance
+// for its session, src/workflow/preview/): 'building' becomes 'live' once the
+// machine serves the build's commit, and 'failed' once its build failed. The
+// lane's sweep writes the same onto the row (sweepPreviews).
+const PREVIEW_COLUMNS = `bp.id, bp.trial_id, bp.session_id, bp.expires_at, bp.created_at,
+            CASE WHEN bp.status = 'building' AND w.state = 'settled' AND w.data->'serving'->>'head' = tr.build_sha THEN 'live'
+                 WHEN bp.status = 'building' AND w.state = 'failed' THEN 'failed'
+                 ELSE bp.status END AS status,
+            COALESCE(bp.error, CASE WHEN bp.status = 'building' AND w.state = 'failed' THEN w.data->>'failure' END) AS error,
+            cs.staging_url, a.slug AS app_slug`;
+const PREVIEW_JOINS = `JOIN bench_trials tr ON tr.id = bp.trial_id
+       LEFT JOIN chat_sessions cs ON cs.id = bp.session_id
+       LEFT JOIN apps a ON a.id = cs.app_id
+       LEFT JOIN wf_instances w ON w.machine = 'preview' AND w.key = 'session:' || bp.session_id`;
+
 async function previewsFor(pool, trialIds) {
   if (!trialIds.length) return new Map();
   const { rows } = await pool.query(
-    `SELECT DISTINCT ON (bp.trial_id) bp.id, bp.trial_id, bp.session_id, bp.status, bp.error, bp.expires_at, bp.created_at,
-            cs.staging_url, a.slug AS app_slug
+    `SELECT DISTINCT ON (bp.trial_id) ${PREVIEW_COLUMNS}
        FROM bench_previews bp
-       LEFT JOIN chat_sessions cs ON cs.id = bp.session_id
-       LEFT JOIN apps a ON a.id = cs.app_id
+       ${PREVIEW_JOINS}
       WHERE bp.trial_id = ANY($1::int[])
       ORDER BY bp.trial_id, bp.id DESC`,
     [trialIds],
@@ -1267,11 +1279,12 @@ async function trialDetail(pool, trialId, { images = false } = {}) {
 
 /**
  * Put a studio build (a trial's or a reference's) up as a preview for a
- * day: a session on the host app at the build's commit, built by the
- * platform's own preview path (services/staging.js), whose database is a
- * clone of the host app's own, empty one. At most MAX_LIVE_PREVIEWS at once.
- * The admin who asks is made a member of the host app, so the preview opens
- * for them. Resolves the preview at once; it builds in the background.
+ * day: a session on the host app at the build's commit, built by the preview
+ * machine as a preview with no checks (src/workflow/preview/, reason
+ * 'preview'), whose database is a clone of the host app's own, empty one. At
+ * most MAX_LIVE_PREVIEWS at once. The admin who asks is made a member of the
+ * host app, so the preview opens for them. Resolves the preview at once; the
+ * machine builds it.
  */
 async function deployPreview(pool, config, { trialId, user, deps = {} } = {}) {
   const { rows: [t] } = await pool.query(
@@ -1288,13 +1301,13 @@ async function deployPreview(pool, config, { trialId, user, deps = {} } = {}) {
   if (t.status !== 'ok' || !t.build_sha || !t.build_branch) return httpError(409, 'That trial has no build to preview');
   if (t.branch_deleted_at) return httpError(409, 'Its branch is gone: a build is kept seven days unless it was kept');
   const { rows: [open] } = await pool.query(
-    `SELECT bp.*, cs.staging_url, a.slug AS app_slug FROM bench_previews bp
-       LEFT JOIN chat_sessions cs ON cs.id = bp.session_id LEFT JOIN apps a ON a.id = cs.app_id
+    `SELECT ${PREVIEW_COLUMNS} FROM bench_previews bp
+       ${PREVIEW_JOINS}
       WHERE bp.trial_id = $1 AND bp.status IN ('building', 'live') AND bp.expires_at > NOW()
       ORDER BY bp.id DESC LIMIT 1`,
     [t.id],
   );
-  if (open) return { ok: true, preview: previewOut(open), reused: true };
+  if (open && open.status !== 'failed') return { ok: true, preview: previewOut(open), reused: true };
   const { rows: [{ n }] } = await pool.query(
     "SELECT COUNT(*)::int AS n FROM bench_previews WHERE status IN ('building', 'live') AND expires_at > NOW()",
   );
@@ -1319,24 +1332,28 @@ async function deployPreview(pool, config, { trialId, user, deps = {} } = {}) {
      VALUES ($1, $2, $3, NOW() + make_interval(hours => $4)) RETURNING *`,
     [t.id, session.id, user?.id || null, PREVIEW_HOURS],
   );
-  const staging = deps.staging || require('../staging');
-  const app = { id: t.app_id, slug: t.slug, name: t.name, repo_url: t.repo_url, self_hosted: t.self_hosted };
-  Promise.resolve()
-    .then(() => staging.buildAndDeployStaging(config, { ...session, app_slug: t.slug }, app, t.build_sha))
-    .then(() => pool.query("UPDATE bench_previews SET status = 'live' WHERE id = $1 AND status = 'building'", [preview.id]))
-    .catch((err) => pool.query(
-      "UPDATE bench_previews SET status = 'failed', error = $2 WHERE id = $1 AND status = 'building'",
-      [preview.id, String(err && err.message || 'failed').slice(0, 500)],
-    ).catch(() => {}));
+  const previews = deps.previewWorkflow || require('../preview-workflow');
+  const asked = await previews.request({
+    pool, session: { ...session, app_slug: t.slug }, head: t.build_sha, reason: 'preview', actor: user?.id ? `user:${user.id}` : null,
+  }).catch((err) => ({ status: 'rejected', reason: err.message }));
+  if (asked.status === 'rejected') {
+    const { rows: [failed] } = await pool.query(
+      "UPDATE bench_previews SET status = 'failed', error = $2 WHERE id = $1 AND status = 'building' RETURNING *",
+      [preview.id, `the preview could not be started (${String(asked.reason || 'refused').slice(0, 200)})`],
+    );
+    log.warn('bench', 'Studio preview refused', { trialId: t.id, previewId: preview.id, sessionId: session.id, reason: asked.reason });
+    return { ok: true, preview: previewOut({ ...(failed || preview), app_slug: t.slug, staging_url: null }) };
+  }
   log.info('bench', 'Studio preview requested', { trialId: t.id, previewId: preview.id, sessionId: session.id });
   return { ok: true, preview: previewOut({ ...preview, app_slug: t.slug, staging_url: null }) };
 }
 
 /**
- * Previews over time (on the leader, from the lane's pass): a live one is
- * kept from the platform's idle collection until it is a day old, then
- * taken down and its session archived; one left building by a process that
- * is gone fails. Throttled; never throws.
+ * Previews over time (on the leader, from the lane's pass): a building one
+ * takes the preview machine's outcome (live once it serves the build, failed
+ * once its build failed); a live one is kept from the platform's idle
+ * collection until it is a day old, then taken down and its session
+ * archived. Throttled; never throws.
  */
 async function sweepPreviews(pool, deps = {}, now = Date.now()) {
   if (now - lastPreviewSweepAt < PREVIEW_SWEEP_MS && !deps.force) return 0;
@@ -1348,11 +1365,9 @@ async function sweepPreviews(pool, deps = {}, now = Date.now()) {
         WHERE id IN (SELECT session_id FROM bench_previews WHERE status IN ('building', 'live') AND expires_at > NOW())`,
     );
     await pool.query(
-      `UPDATE bench_previews bp SET status = 'failed', error = 'the preview stopped building (the platform restarted)'
-        FROM chat_sessions cs
-       WHERE cs.id = bp.session_id AND bp.status = 'building' AND cs.staging_url IS NULL
-         AND bp.created_at < NOW() - make_interval(mins => $1)`,
-      [PREVIEW_STUCK_MINUTES],
+      `UPDATE bench_previews bp SET status = m.status, error = m.error
+         FROM (SELECT ${PREVIEW_COLUMNS} FROM bench_previews bp ${PREVIEW_JOINS} WHERE bp.status = 'building') m
+        WHERE bp.id = m.id AND m.status IN ('live', 'failed')`,
     );
     const { rows } = await pool.query(
       `SELECT id, session_id FROM bench_previews

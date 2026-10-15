@@ -223,15 +223,14 @@ test('Kubernetes enables before & after shots by default with one explicit kill 
 test('Kubernetes passes the workflow flags through, off by default', () => {
   const platform = read('deploy/helm/social-vibecoding-platform/templates/platform.yaml');
   const values = read('deploy/helm/social-vibecoding-platform/values.yaml');
-  assert.match(values, /workflowGovernanceEnabled: false/);
-  assert.match(platform,
-    /name: WF_GOVERNANCE_ENABLED, value: \{\{ \.Values\.platform\.workflowGovernanceEnabled \| quote \}\}/);
+  // Governance has no flag: its old paths are deleted.
+  assert.doesNotMatch(platform, /WF_GOVERNANCE_ENABLED/);
   assert.match(values, /workflowMergeFollowupsEnabled: false/);
   assert.match(platform,
     /name: WF_MERGE_FOLLOWUPS_ENABLED, value: \{\{ \.Values\.platform\.workflowMergeFollowupsEnabled \| quote \}\}/);
-  assert.match(values, /workflowPreviewsEnabled: false/);
-  assert.match(platform,
-    /name: WF_PREVIEWS_ENABLED, value: \{\{ \.Values\.platform\.workflowPreviewsEnabled \| quote \}\}/);
+  // Previews have no flag either: the preview machine is the only path.
+  assert.doesNotMatch(platform, /WF_PREVIEWS_ENABLED|PREVIEW_LIFECYCLE_ENABLED/);
+  assert.doesNotMatch(values, /workflowPreviewsEnabled|previewLifecycleEnabled/);
 });
 
 test('Kubernetes workflow resolves all three images before publishing a release', () => {

@@ -763,4 +763,31 @@ export interface ReplyThreadState {
   loading: boolean;
   error: string | null;
   nextBefore: number | null;
+  /**
+   * #5219: when this thread hangs off a Homeroom bot request card, the
+   * request's public discussion on its request page, read alongside the DM
+   * replies; the pane merges the two by time. Null when the root is no bot
+   * card naming a request, the viewer cannot view that project, or the
+   * thread is loading.
+   */
+  discussion?: DiscussionState | null;
+}
+
+/** One message from the request's public discussion, shown in its bot-card thread (#5219). */
+export interface DiscussionMessage {
+  id: number;
+  source: 'discussion';
+  sender: ConversationUser;
+  content: string;
+  createdAt: string;
+  editedAt?: string | null;
+}
+
+/** #5219: a request's public discussion, as its bot-card thread carries it. */
+export interface DiscussionState {
+  appSlug: string;
+  issueNumber: number;
+  /** The discussion has older messages than the ones shown: they stay on the request page. */
+  more: boolean;
+  messages: DiscussionMessage[];
 }

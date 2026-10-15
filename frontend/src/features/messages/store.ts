@@ -2004,7 +2004,7 @@ export async function loadReplyThread(conversationId: number, rootId: number, fo
   publish({
     thread: same && current
       ? { ...current, loading: true, error: null }
-      : { conversationId, rootId, root: findRow(rootId) || null, messages: [], loading: true, error: null, nextBefore: null },
+      : { conversationId, rootId, root: findRow(rootId) || null, messages: [], loading: true, error: null, nextBefore: null, discussion: null },
   });
   try {
     // Forced: a re-read after a change, from the server (see loadThread).
@@ -2032,6 +2032,8 @@ export async function loadReplyThread(conversationId: number, rootId: number, fo
         conversationId, rootId, root: page.root || findRow(rootId) || null,
         messages: [...known.sort((a, b) => a.id - b.id), ...local],
         loading: false, error: null, nextBefore: page.nextBefore,
+        // #5219: the request's public discussion behind a bot-card thread, merged in by the pane.
+        discussion: page.discussion,
       },
     });
     const newest = known.reduce((top, item) => Math.max(top, item.id), 0);

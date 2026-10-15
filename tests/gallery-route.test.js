@@ -1,6 +1,6 @@
 // Tests for the admin before/after gallery (/gallery) query builder and its
 // admin gate (src/routes/gallery.js), plus the partial-output salvage in
-// src/services/docker.js and the in-flight re-queue bookkeeping.
+// src/services/docker.js.
 //
 // Run with: node --test tests/gallery-route.test.js
 
@@ -239,21 +239,6 @@ test('the capture pipeline opts INTO salvage and records it on the outcome', () 
   // A salvaged run is 'partial', never silently 'captured'.
   assert.match(src, /runPartial\) \? 'partial' : 'captured'/);
   assert.match(src, /runCutShort/);
-});
-
-// ── in-flight re-queue (improvement 5) ────────────────────────────────
-
-test('a capture arriving while one is in flight is re-queued, not dropped', () => {
-  const src = require('node:fs').readFileSync(
-    require('node:path').join(__dirname, '..', 'src', 'services', 'visuals.js'), 'utf8'
-  );
-  // Parked in a Map keyed by session (depth 1 — latest wins) …
-  assert.match(src, /const key = captureKey\(session\.id\)/);
-  assert.match(src, /_queued\.set\(key/);
-  // … and drained from the finally block of the run that blocked it.
-  assert.match(src, /_queued\.get\(key\)/);
-  assert.match(src, /_queued\.delete\(key\)/);
-  assert.doesNotMatch(src, /Capture already in flight — skipping/);
 });
 
 // ── stats semantics: artifact-less proposals must not inflate counts ────

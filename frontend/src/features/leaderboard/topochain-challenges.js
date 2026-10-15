@@ -1971,6 +1971,7 @@ const TopochainChallenges = {
           // Raw; ./activity-row.tsx formats it in the renderer (#3648),
           // since this module stays import-free.
           at: a.activity_at || null,
+          precision: a.activity_time_precision || null,
         }))
         : null,
     };

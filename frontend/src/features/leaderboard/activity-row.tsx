@@ -16,12 +16,9 @@ import { t as translate } from '../../lib/i18n/runtime';
  *   this year        Fri, Oct 2 · 04:32 PM
  *   an earlier year  Fri, Oct 2, 2025 · 04:32 PM
  *
- * Some credits have a day and no time. The challenge scorer reads a few
- * measures off `date` columns and pins each to NOON UTC (`dateToIso` in
- * src/services/topochain/challenge-scorer.js) so the credit stays inside its
- * own day everywhere. Printing that as "02:00 PM" in Berlin would be a time
- * nobody did anything at, so a noon-UTC instant shows its date alone, read
- * in UTC: that is the calendar day the column held.
+ * The API explicitly distinguishes old day-only records from precise
+ * occurrence times. A real noon or midnight action keeps its hour. The noon
+ * sentinel is only a fallback for responses from an older server.
  *
  * Kept out of ../topochain-challenges.js and ../topochain-leaderboard.js on
  * purpose: those view modules must stay import-free (tests evaluate them in a
@@ -36,6 +33,8 @@ export interface ActivityWhen {
   /** The instant, for `<time dateTime>`. */
   iso: string;
 }
+
+export type ActivityTimePrecision = 'day' | 'instant';
 
 const formatters = new Map<string, Intl.DateTimeFormat>();
 function format(date: Date, key: string, options: Intl.DateTimeFormatOptions): string {
@@ -55,13 +54,13 @@ export function isDateOnly(date: Date): boolean {
 
 export function activityWhen(
   value: string | null | undefined,
-  opts: { now?: Date } = {},
+  opts: { now?: Date; precision?: ActivityTimePrecision | null } = {},
 ): ActivityWhen | null {
   if (value == null || value === '') return null;
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return null;
   const now = opts.now || new Date(Date.now());
-  const dateOnly = isDateOnly(date);
+  const dateOnly = opts.precision ? opts.precision === 'day' : isDateOnly(date);
   // The date-only case reads the calendar day in UTC, so the year test does too.
   const year = dateOnly ? date.getUTCFullYear() : date.getFullYear();
   const zone: Intl.DateTimeFormatOptions = dateOnly ? { timeZone: 'UTC' } : {};
@@ -84,10 +83,12 @@ export function activityWhen(
  * a second, smaller line under the reason, so a long reason still wraps
  * beside the points rather than pushing them off the row.
  */
-export function ActivityRow({ text, points, at }: { text: string; points: string; at?: string | null }): ReactNode {
+export function ActivityRow({ text, points, at, precision }: {
+  text: string; points: string; at?: string | null; precision?: ActivityTimePrecision | null;
+}): ReactNode {
   // Subscribed: the date line's separator is read by activityWhen.
   useMessages('leaderboard');
-  const when = activityWhen(at);
+  const when = activityWhen(at, { precision });
   return (
     <li className="flex items-start justify-between gap-3 text-xs">
       <span className="min-w-0">

@@ -8,8 +8,9 @@
 // carried its heartbeat. listOrphans counts a row as an orphan only once its
 // heartbeat is CHECK_RUN_ORPHAN_MS old, so the boot sweep listed neither
 // 7014 nor 7015, and the stale sweep started both over. The old process now
-// hands its rows over on the way out (check-runs.release), and the stale
-// sweep asks the cluster first (check-harvest.runOnCluster).
+// hands its rows over on the way out (check-runs.release), which main-watch's
+// adoption of an interrupted run still reads; a preview checks run is the
+// preview machine's work item, collected by its retry.
 //
 // tests/check-harvest.test.js pins the SQL text against a fake pool. This
 // file runs it: the `stale` the query computes from an 'epoch' heartbeat,
@@ -142,7 +143,7 @@ test('the old leader\'s rows are orphans to the new leader the moment it hands t
   }
 });
 
-test('runOnCluster and stopSupersededRuns read the session\'s runs by commit, NULL included', async (t) => {
+test('stopSupersededRuns reads the session\'s runs by commit, NULL included', async (t) => {
   const conn = await connect();
   if (!conn) return t.skip('the pg driver is not installed in this environment');
   if (conn.error) return t.skip(`no postgres reachable at ${DSN}: ${conn.error}`);
@@ -155,29 +156,17 @@ test('runOnCluster and stopSupersededRuns read the session\'s runs by commit, NU
         await checkRuns.record(client, { runId: RUN_7014, sessionId: 7014, commitSha: 'abc123', manifest });
         await checkRuns.record(client, { runId: RUN_7015, sessionId: 7015, commitSha: null, manifest });
       });
-      const asked = [];
       let spared = null;
       stub(t, kubernetes, {
-        findCheckJobs: async (_cfg, { sessionId, previewRunId }) => {
-          asked.push([sessionId, previewRunId]);
-          return { capture: { name: 'c', state: 'running', finishedAt: null }, unitSuite: null };
-        },
         stopCheckJobs: async (_cfg, { spare }) => {
           spared = [RUN_7014_OLD_HEAD, RUN_7014, 'no-manifest'].filter((id) => spare(id));
           return [];
         },
       });
-
-      const run = await harvest.runOnCluster(config, client, { id: 7014, checks_commit_sha: 'abc123' });
-      assert.equal(run.runId, RUN_7014, 'the run for the commit the session is pending on');
-      assert.deepEqual(asked, [[7014, RUN_7014]], 'the older head\'s run is not asked about');
-
-      asked.length = 0;
-      const nullHead = await harvest.runOnCluster(config, client, { id: 7015, checks_commit_sha: null });
-      assert.equal(nullHead.runId, RUN_7015, 'a run recorded without a commit still matches a session without one');
-
       await harvest.stopSupersededRuns(config, client, { sessionId: 7014, runId: 'new-run', commitSha: 'abc123' });
       assert.deepEqual(spared, [RUN_7014], 'only the run for another commit (and none with no manifest) may be stopped');
+      assert.deepEqual([...await harvest.runsOfCommit(client, 7015, null)], [RUN_7015],
+        'a run recorded without a commit still matches a session without one');
     });
   } finally {
     await client.end();

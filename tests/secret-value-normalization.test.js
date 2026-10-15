@@ -206,15 +206,16 @@ test('secret_change normalizes the value before validating, encrypting or previe
 });
 
 test('creation is the boundary that covers the child-app apply branch', () => {
-  // The self-hosted branch of maybeApplySecretChangeProposal goes through
-  // platformEnv.setValue (which normalizes again), but the child-app branch
-  // writes app_secrets with RAW SQL and never touches appSecrets.setValue.
-  // So if creation did not normalize, nothing would.
-  const apply = block(issuesJs, /async function maybeApplySecretChangeProposal/);
+  // The self-hosted branch of the governance machine's applySecret goes
+  // through platformEnv's setValue (which normalizes again), but the child-app
+  // branch writes app_secrets with RAW SQL and never touches
+  // appSecrets.setValue. So if creation did not normalize, nothing would.
+  const machineTs = fs.readFileSync(path.join(root, 'src/workflow/governance-proposal/machine.ts'), 'utf8');
+  const apply = block(machineTs, /async function applySecret/);
   assert.match(apply, /INSERT INTO app_secrets/,
     'the child-app branch still writes raw SQL — pinned so a future refactor '
     + 'that routes it through the DAO makes someone re-read this test');
-  assert.match(apply, /platformEnv\.setValue\(client, issue\.app_id, key, plaintext/,
+  assert.match(apply, /setValue\(tx, w\.appId, key, plaintext/,
     'the self-hosted branch goes through the DAO');
   assert.doesNotMatch(apply, /normalizeValue/,
     'deliberately NOT normalized at apply: the plaintext here comes from a '

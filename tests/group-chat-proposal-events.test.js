@@ -185,7 +185,15 @@ test('a continuation line drops the avatar and the name, and keeps its time in t
   assert.doesNotMatch(html, /rounded-xl h-11 w-11/, 'no avatar');
   assert.doesNotMatch(html, /<span>alice<\/span>/, 'no name');
   assert.match(html, /<span class="gc-msg-gutter-time" title="[^"]+">[^<]+<\/span>/, 'the time where the avatar would be');
+  assert.match(html, /class="gc-msg-gutter w-11 /, 'the gutter span carries a stable class for surface overrides (#5165)');
   assert.match(html, /<p>again<\/p>/);
+});
+
+test('the topic thread matches a grouped row\'s gutter to its surface\'s avatar (#5165)', () => {
+  const css = read('public/css/app.css');
+  assert.match(css, /#dev-topic-thread \.gc-msg\[data-grouped\] > \.gc-msg-gutter \{ width: 26px; \}/, 'bubble mode: 26px, like its avatar');
+  assert.match(css, /#dev-topic-thread #gc-thread-messages\[data-language="chat"\] \.gc-msg\[data-grouped\] > \.gc-msg-gutter \{ width: 44px; \}/, 'chat language: keeps the 44px default');
+  assert.match(css, /#dev-topic-thread #gc-thread-messages:is\(\[data-language="request"\], \[data-language="change"\]\) \.gc-msg\[data-grouped\] > \.gc-msg-gutter \{ width: 36px; \}/, 'request and change discussions: 36px, like their avatar');
 });
 
 test('consecutive messages from one person group; a gap, another person or a quote breaks the run (#2783)', () => {

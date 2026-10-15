@@ -1752,19 +1752,25 @@ async function restartApplication(config, runtimeName) {
   return waitForDeployment(namespace, runtimeName, { generation: restarted?.metadata?.generation, uid: restarted?.metadata?.uid });
 }
 
-// `uid`: delete the Deployment only if it is still that one (a preview
-// attempt's own). `identity`: read every resource's UID first and delete
-// each with it as a precondition, plus the named `secrets` (the preview
-// machine's retirement, so a same-named successor keeps its resources).
+// The Deployment is deleted only if it is still the one read first (its UID,
+// or `uid` when given), and the call returns once its Pods are gone: a caller
+// that deploys the same name next (app heal, a shots environment) never races
+// a Deployment still terminating. (Production ran this way under the retired
+// PREVIEW_LIFECYCLE_ENABLED; it is the only way now.) `identity`: read every
+// resource's UID first and delete each with it as a precondition, plus the
+// named `secrets` (the preview machine's retirement, so a same-named
+// successor keeps its resources).
 async function deleteApplication(config, runtimeName, { uid: ownUid = null, identity = false, secrets = [] } = {}) {
   const namespace = config.kubernetes.appNamespace;
   const { apps, core, networking } = getClients();
   if (identity) return deleteByIdentity(config, runtimeName, secrets);
-  const coordinated = require('./preview-lifecycle').enabled(config);
+  // A read that fails for another reason (a quota refusal after a failed
+  // rollout) must not keep the resources it would free: delete without the
+  // precondition and the wait, as for a Deployment that is gone.
   let uid = ownUid;
-  if (coordinated && !uid) {
+  if (!uid) {
     try { uid = (await apps.readNamespacedDeployment({ name: runtimeName, namespace })).metadata.uid; }
-    catch (err) { if (!isNotFound(err)) throw err; }
+    catch { uid = null; }
   }
   const deletions = await Promise.allSettled([
     deleteIfPresent(networking, 'deleteNamespacedIngress', runtimeName, namespace),
@@ -1785,7 +1791,7 @@ async function deleteApplication(config, runtimeName, { uid: ownUid = null, iden
   ]);
   const failed = deletions.find(result => result.status === 'rejected');
   if (failed) throw failed.reason;
-  if (coordinated && uid) {
+  if (uid) {
     const deadline = Date.now() + 60000;
     for (;;) {
       let deployment;
@@ -1974,6 +1980,15 @@ async function ensureWorker(config, { sessionId, env, onProgress, temporary = fa
         spec: {
           serviceAccountName: cfg.workerServiceAccount,
           automountServiceAccountToken: false,
+          // The pause container becomes PID 1 and reaps zombies, as `--init`
+          // does on Docker (services/docker.js). worker-run.sh ends in `exec
+          // sleep infinity`, which never calls wait(), so every orphaned
+          // `git` of an agent's turn stayed a zombie: 900–1,700 PIDs per
+          // worker with about 20 live processes (Oct 2026), all of them
+          // counted against the kubelet's per-Pod PID limit. Not PID 1,
+          // `sleep` also ends on SIGTERM instead of holding the Pod for its
+          // whole grace period.
+          shareProcessNamespace: true,
           securityContext: nodePodSecurityContext(),
           containers: [{
             name: 'worker', image: cfg.workerImage, imagePullPolicy: 'IfNotPresent',
@@ -2525,9 +2540,9 @@ async function deleteRunCheckJobs(config, { sessionId, previewRunId }) {
 
 // A DELETE response only acknowledges termination. Keep preview ownership
 // until every consuming Pod has stopped, including Jobs orphaned by a crash.
-// `spare(runId)` keeps the Jobs of the runs it names (by preview-run-id):
-// the preview lifecycle spares a run of the revision it is about to leave
-// to the harvest (check-harvest.runToCollect).
+// `spare(runId)` keeps the Jobs of the runs it names (by preview-run-id).
+// An early unit suite (`sv-unit-early-…`) is never touched here: it goes
+// with its attempt (preview services retireAttempt).
 async function cancelPreviewChecks(config, sessionId, previewRunId = null, { spare = () => false } = {}) {
   const { batch, core } = getClients();
   const namespace = config.kubernetes.workerNamespace;
@@ -2699,7 +2714,7 @@ function checkPlacement(cfg, checkSelector) {
 }
 
 // `namePrefix` names a Job outside the preview's own check Jobs: an early
-// unit suite (services/early-unit-suite.js) is `sv-unit-early-…`, which
+// unit suite (preview services checks.unitEarly) is `sv-unit-early-…`, which
 // cancelPreviewChecks and stopCheckJobs leave alone. `nameSuffix` and
 // `shard` name and label one of a run's capture shards; `cpuRequest` is a
 // shard's smaller share of the scheduler (services/visuals.js
@@ -2773,6 +2788,9 @@ async function runCheckJob(config, {
     template: { metadata: { labels: { ...checkLabels } }, spec: {
       restartPolicy: 'Never', serviceAccountName: cfg.workerServiceAccount,
       automountServiceAccountToken: false, securityContext: nodePodSecurityContext(),
+      // A pause PID 1 reaps what the browser and the suite orphan, as on the
+      // worker (ensureWorker). The Job still ends with the check's own exit.
+      shareProcessNamespace: true,
       ...checkPlacement(cfg, checkSelector),
       containers: [container], ...(podVolumes.length ? { volumes: podVolumes } : {}),
     } },

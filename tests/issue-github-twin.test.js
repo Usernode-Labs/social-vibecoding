@@ -6,12 +6,10 @@
 // reserved for real issues. Regular issues keep their GitHub twin.
 //
 // The skipped twin leaves github_issue_number NULL on the issues row.
-// No apply-path test is needed for that: maybeApplySecretChangeProposal
-// guards its entire GitHub close/comment block on
-// `if (locked.github_issue_number)` (src/routes/issues.js), so a null
-// number means no GitHub call is ever attempted — the same path already
-// exercised whenever github.isEnabled() is false (local dev) or the app
-// has no repo_url.
+// No apply-path test is needed for that: the governance machine closes a
+// proposal's own twin only when it has one (`issue.githubIssueNumber`,
+// src/workflow/governance-proposal/machine.ts), so a null number means no
+// GitHub call is ever asked for.
 //
 // Run with: node --test tests/issue-github-twin.test.js
 

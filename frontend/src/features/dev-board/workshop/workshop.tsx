@@ -89,10 +89,11 @@ import { describe as describeCommunity, openSwitcher } from '../../workshop/comm
 import { registerLevel } from '../../workshop/tab-ladder';
 import { firstUnseenIndex, markNeedsSeen, needsRowKey, unseenNeeds, useNeedsSeen } from '../../workshop/needs-seen';
 import {
-  ApprovalLine, CommunityCard, ShareItCard, canLeave,
+  ApprovalLine, CommunityCard, HubCardClose, ShareItCard, canLeave,
   communityPending, leaveCommunity, useCommunity,
 } from './community-card';
-import { FirstLookCard, FirstVersionCard, ForYouCard, RecentlyLive, hubAlone, hubWorkEmpty, owesVote } from './hub-cards';
+import { FirstLookCard, FirstVersionCard, ForYouCard, RecentlyLive, hubAlone, owesVote } from './hub-cards';
+import { useHubDismissed } from './hub-dismissed';
 import { ProjectDiscussion } from './project-discussion';
 import {
   channelPlace, findChannel, isChannelPlace, isPlaceKey, placeHandle, placeHref, unreadTotal, type PlaceKey,
@@ -533,36 +534,34 @@ function aiFootnote(meta: DevWorkshopView['meta'], written: boolean): string {
  * read-only viewer, whose ⋯ holds Fork alone (`AppView.readOnly`, the flag
  * the ⋯'s writable rows are gated on).
  *
- * UNDER THE START-HERE BANNER it stops at the ⋯. On the hub an empty
- * board is nearly always an app nobody has started, and #2573's banner right
- * above the note carries its own Start a new change button, so sending the
- * reader to a menu for the same thing would be the note talking past the
- * screen it is on. All items has no banner, so there it says the whole
- * thing.
+ * NOT UNDER THE START-HERE BANNER (15 Oct 2026). On the hub an empty board
+ * is nearly always an app nobody has started, and #2573's banner says what
+ * to do about it, so the hub leaves the note out while the banner's state
+ * holds (it used to stop at the ⋯ there, and still said what the banner
+ * said). All items has no banner, so there it says the whole thing.
  */
-const EMPTY_PRESS: Record<'hub' | 'away', Record<'collab' | 'plain', Record<'full' | 'short', string>>> = {
+const EMPTY_PRESS: Record<'hub' | 'away', Record<'collab' | 'plain', string>> = {
   hub: {
-    collab: { full: 'project:boardEmpty.press.hub.collab.full', short: 'project:boardEmpty.press.hub.collab.short' },
-    plain: { full: 'project:boardEmpty.press.hub.plain.full', short: 'project:boardEmpty.press.hub.plain.short' },
+    collab: 'project:boardEmpty.press.hub.collab.full',
+    plain: 'project:boardEmpty.press.hub.plain.full',
   },
   away: {
-    collab: { full: 'project:boardEmpty.press.away.collab.full', short: 'project:boardEmpty.press.away.collab.short' },
-    plain: { full: 'project:boardEmpty.press.away.plain.full', short: 'project:boardEmpty.press.away.plain.short' },
+    collab: 'project:boardEmpty.press.away.collab.full',
+    plain: 'project:boardEmpty.press.away.plain.full',
   },
 };
 
-function EmptyNote({ filtered, loadFailed, underStartHere = false, onHub = false }: {
+function EmptyNote({ filtered, loadFailed, onHub = false }: {
   filtered: boolean;
   loadFailed: boolean;
-  underStartHere?: boolean;
   /** Drawn on the hub, under the hero whose ⋯ it names. */
   onHub?: boolean;
 }): ReactNode {
   const { readOnly, canCollaborate } = useDevActions();
   const t = useMessages('project');
-  // One whole sentence per case: where the ⋯ is, what it holds for this
-  // viewer, and whether "make one yourself" is said.
-  const press = EMPTY_PRESS[onHub ? 'hub' : 'away'][canCollaborate ? 'collab' : 'plain'][underStartHere ? 'short' : 'full'];
+  // One whole sentence per case: where the ⋯ is, and what it holds for
+  // this viewer.
+  const press = EMPTY_PRESS[onHub ? 'hub' : 'away'][canCollaborate ? 'collab' : 'plain'];
   const board = readOnly ? t('project:boardEmpty.readOnly') : (
     <RichMessage id={press} components={[<span className="font-medium text-violet-700 dark:text-violet-400" />]} />
   );
@@ -642,15 +641,25 @@ export function startHereBotReference(slug: string, name: string): StagedObject 
  * offered twice: it is the hub's ⋯, Build it now, the same
  * Improve.startSession(). Everyone else (the bot does not build here, or
  * not for them) keeps the card as it was, with Start a new change.
+ *
+ * ── Under Share it, with a ✕ (15 Oct 2026) ─────────────────────────────
+ *
+ * It follows Share it on the hub, and either can be closed for good on
+ * this project (./hub-dismissed.ts): the hero's ⋯ still has Suggest an
+ * improvement. The board's empty note no longer follows it: it said the
+ * same thing again, and offered to import a PR.
  */
 function StartHereBanner({ slug, name, bot }: { slug: string; name: string; bot: boolean }): ReactNode {
   const readOnly = useStoreState(improveStore).readOnly;
   const t = useMessages('project');
+  const [closed, close] = useHubDismissed(slug, 'start');
+  if (closed) return null;
   if (bot && !readOnly && slug) {
     return (
       <section className="dev-ws-strip" data-ws-start-here="bot">
         <div className="dev-ws-head">
           <span className="dev-ws-head-title">{t('project:hub.startHere.bot.title')}</span>
+          <HubCardClose card="start" onClose={close} />
         </div>
         <p className="dev-ws-strip-text">
           {t('project:hub.startHere.bot.text')}
@@ -671,6 +680,7 @@ function StartHereBanner({ slug, name, bot }: { slug: string; name: string; bot:
     <section className="dev-ws-strip" data-ws-start-here="">
       <div className="dev-ws-head">
         <span className="dev-ws-head-title">{t('project:hub.startHere.title')}</span>
+        <HubCardClose card="start" onClose={close} />
       </div>
       <p className="dev-ws-strip-text">
         {t('project:hub.startHere.text')}
@@ -2526,6 +2536,17 @@ export function NeedsFeed({ rows, models, slug, canPost, onDone, onHub, onSugges
   // when rows leave or arrive above it. `END_KEY` is the end card, the slot
   // after every row, and it is the seed when the route asked for it.
   const curKeyRef = useRef<string | null>(endOnOpen ? END_KEY : null);
+  // #5179: the advance a saved vote owes — the row's key, marked when the
+  // vote is saved and spent by the effect after the render that records it.
+  // A ref because the mark is set inside answer's promise callback and is
+  // read once, after the next render.
+  const advanceRef = useRef<string | null>(null);
+  // The sheet of the render in view, mirrored for the advance's guard:
+  // answer's promise callback closes over the `sheet` of the render that
+  // cast the vote, which is stale by the time the vote resolves, so a
+  // Comments, Ask or Vote sheet opened meanwhile is read here instead.
+  const sheetRef = useRef<SheetKind | null>(sheet);
+  useLayoutEffect(() => { sheetRef.current = sheet; });
   // Still owed the instant scroll to the end card (the effect below): true
   // until the scroller has a height to scroll by.
   const endScrollRef = useRef<boolean>(endOnOpen);
@@ -2911,6 +2932,10 @@ export function NeedsFeed({ rows, models, slug, canPost, onDone, onHub, onSugges
         });
         if (ok === true) {
           setAnswered((cur) => ({ ...cur, [key]: which }));
+          // #5179: the vote is IN, so the feed owes one move to the next
+          // row, spent by the effect on `answered` below. Set only here:
+          // a cancel, a refusal or a network failure moves nothing.
+          advanceRef.current = key;
           // #4794: the vote is IN. Tell the screen that owns this feed's
           // store copy, so it drops the row while the viewer is still here —
           // its bookkeeping must not be able to undo a saved vote.
@@ -2924,6 +2949,22 @@ export function NeedsFeed({ rows, models, slug, canPost, onDone, onHub, onSugges
         if (settled) settled();
       });
   };
+  // #5179: spend the advance a saved vote owed. After the render that
+  // records the vote, so the `go` this render refreshed into goRef reads
+  // the vote as answered — called straight from answer's promise, landOn's
+  // #3526 check would see the row as not yet answered and mark it seen as
+  // the feed moved off it. The move is the feed's own go(1): the chevron's
+  // smooth scroll, clamped to the end card on the last row. It does not
+  // pull the viewer: only when they are still on the row they voted on
+  // (a swipe or a press got there first, no move) and no sheet is up
+  // (Comments, Ask or Vote opened meanwhile, no move).
+  useEffect(() => {
+    const key = advanceRef.current;
+    if (!key) return;
+    advanceRef.current = null;
+    if (curKeyRef.current !== key || sheetRef.current !== null) return;
+    goRef.current(1);
+  }, [answered]);
   /**
    * The vote sheet's send (#3613): the switch's side with the line written
    * under it. A No needs its line, as on a card; a Yes may go without one,
@@ -3721,6 +3762,14 @@ const WIDE_QUERY = '(min-width: 700px)';
  * ../../nav/section-column.tsx) and the list keeps its room.
  */
 const SIDE_QUERY = '(min-width: 1180px)';
+
+/**
+ * (#5164) How often the hub's own places quietly re-read what waits on you
+ * and what went live, while one of them is showing (./workshop.tsx
+ * DevWorkshop's effect). The tick reads only what For you and Recently live
+ * draw from; returning to the browser tab reads the whole board.
+ */
+export const HUB_REFRESH_MS = 30_000;
 /**
  * #4417: from here the project's places are the section column beside the
  * strip (../../nav/section-column.tsx); under it, the tray behind the bar.
@@ -4251,6 +4300,32 @@ export function DevWorkshop(): ReactNode {
     tabSlug.current = v.slug;
     if (was && was !== v.slug) setTab(freshTab() || 'status');
   }, [v.slug]);
+  // (#5164) THE HUB'S QUIET REFRESH, while one of its own places is up
+  // (Hub, Needs you, the Workshop): every HUB_REFRESH_MS, and again the
+  // moment the browser tab comes back to the front — the moment a stale
+  // screen is most often noticed. The tick re-reads only what For you and
+  // Recently live draw from (AppView.refreshHubLive's parts), the return
+  // re-reads the whole board, so whatever the missed time moved catches up.
+  // Nothing runs while the tab is hidden or on another page (a channel, All
+  // items, the plan), and the effect cleans up after itself on every change.
+  useEffect(() => {
+    const isHubPlace = tab === 'status' || tab === 'needs' || tab === 'workshop';
+    if (!v.slug || !isHubPlace || typeof document === 'undefined') return undefined;
+    const tick = () => {
+      if (document.visibilityState !== 'visible') return;
+      if (!hostRef.current?.getClientRects().length) return;
+      callAppView('refreshHubLive');
+    };
+    const onReturn = () => {
+      if (document.visibilityState === 'visible') callAppView('refreshHubLive', { whole: true });
+    };
+    document.addEventListener('visibilitychange', onReturn);
+    const timer = window.setInterval(tick, HUB_REFRESH_MS);
+    return () => {
+      document.removeEventListener('visibilitychange', onReturn);
+      window.clearInterval(timer);
+    };
+  }, [v.slug, tab, hostRef]);
   // Which pane is under the tabs. Lives in a module-global store rather than
   // here, because app-view.js has to read it: `_rerenderWorkshop()` publishes
   // the kanban view model only when the stage pane is up. See
@@ -4508,8 +4583,8 @@ export function DevWorkshop(): ReactNode {
   const canPost = !!v.canPost;
   // #2573's start-here banner: nothing open and nothing ever shipped. (All
   // items' search no longer narrows the count, so it is not a condition:
-  // #2915.) Named once because the empty note under it reads it too — see
-  // EmptyNote.
+  // #2915.) Named once because the hub's empty note is left out while it
+  // is the state (15 Oct 2026): the banner says what the note said.
   //
   // NOT WHILE HOMEROOM BOT BUILDS ITS FIRST VERSION (the hub's First version
   // card). Before its description is filed as a request the board is empty
@@ -4518,18 +4593,22 @@ export function DevWorkshop(): ReactNode {
   // no-items note below.
   const building = !!(community && community.first_version);
   const startHere = !!(v.dashboard && v.dashboard.open === 0 && !v.dashboard.everShipped) && !building;
-  // A project nobody else is in (hubAlone): its hub leaves out the zeros a
-  // group's hub says (./hub-cards.tsx NothingToVote, hubWorkEmpty).
+  // A project nobody else is in (hubAlone): its hub leaves out the zero a
+  // group's hub says, "Nothing more to vote on." (./hub-cards.tsx
+  // NothingToVote). The hub is otherwise the same from a project's first
+  // day (15 Oct 2026): the first week's own layout is gone.
   const alone = hubAlone(community);
-  // #4045, decision D: a project's FIRST WEEK (made under seven days ago,
-  // never Homeroom's own), when its hub leaves out what is still empty: the
-  // vote line, an empty Your work, and on the hero the audience line
-  // (./community-card.tsx). The Discussion row stays, and asks for the first
-  // word while it is empty (./hub-cards.tsx ForYouCard).
-  const weekOne = !!(community && community.first_week);
-  const workEmpty = hubWorkEmpty({
-    alone, building, startHere, readOnly: !!actions.readOnly, bot: !!(v.mine && v.mine.bot), firstWeek: weekOne,
-  });
+  // RECENTLY LIVE IS NEVER EMPTY: before any change has gone live it is the
+  // app itself (./hub-cards.tsx RecentlyLive `own`), once the app is up and
+  // not while Homeroom bot still builds its first version. Not on
+  // Homeroom's own page, which has no App tab.
+  const firstLive = !community?.first_version || community.first_version.line === 'live';
+  const ownLive = !actions.selfHosted && community && community.live_since && firstLive ? {
+    name: (own && app.name) || community.name || slug,
+    iconUrl: own ? app.iconUrl : null,
+    iconEmoji: own ? app.iconEmoji : null,
+    since: community.live_since,
+  } : null;
 
   /* ── The place bar, the tray behind it, and on All items its back bar ──
      #4417: the four tabs are gone; the project's places are one list (Hub,
@@ -4767,17 +4846,21 @@ export function DevWorkshop(): ReactNode {
       {slug ? (
         <FirstVersionCard slug={slug} data={community} emoji={app.iconEmoji || null} onSeePlan={() => openTab('plan')} />
       ) : null}
-      {/* #2573: ABOVE the empty note, because the two answer different
-          questions on the same screen. The note says what the board holds;
-          this says what to do about an app nobody has started on, and the
-          product decision put it at the top of the page. See
-          StartHereBanner for the three conditions. */}
+      {/* ── Getting it going: Share it, then what to change (15 Oct 2026) ──
+          A project that is just yours has its Share it card first, how it
+          grows, then #2573's "What do you want to change?" for an app
+          nobody has started on. Each has a ✕ that closes it on this project
+          for good (./hub-dismissed.ts): Invite stays in the hero's row, and
+          Suggest an improvement in its ⋯. The board's empty note is left
+          out while the start-here state holds, closed or not: it said what
+          the banner says, and offered to import a PR. See StartHereBanner
+          for its conditions, and ./community-card.tsx ShareItCard. */}
+      {slug ? <ShareItCard slug={slug} name={app.name || undefined} /> : null}
       {startHere ? <StartHereBanner slug={slug} name={projectName} bot={!!(v.mine && v.mine.bot)} /> : null}
-      {v.emptyNote && !building ? (
+      {v.emptyNote && !building && !startHere ? (
         <EmptyNote
           filtered={!!v.emptyNote.filtered}
           loadFailed={v.emptyNote.loadFailed}
-          underStartHere={startHere}
           onHub
         />
       ) : null}
@@ -4786,24 +4869,23 @@ export function DevWorkshop(): ReactNode {
           One column at every width, each part under its small-caps label.
           FOR YOU is one card of doors: Needs you (the first vote you owe, a
           quiet line when none is, #3408), Your work (the first of yours and
-          how many) and the Discussion (its last line), each opening its
-          place. RECENTLY LIVE is the last three changes that went live, as
-          pictures, and its door is the Workshop, where what landed since
-          your last visit, your work in full and "live this week" are. No
-          numbers or charts about how the project performs: who is around
-          is the hero's faces and names. A project that is just yours keeps
-          its Share it card, which is how it grows. On a project nobody else
-          is in, the zeros are left out (`alone`, `workEmpty`). See
+          how many, or "No work in progress.") and the Discussion (its last
+          line, or "No messages yet."), each opening its place, the same
+          from a project's first day. RECENTLY LIVE is the last three
+          changes that went live, as pictures, and its door is the Workshop,
+          where what landed since your last visit, your work in full and
+          "live this week" are; before any has, it is the app itself
+          (`ownLive`). No numbers or charts about how the project performs:
+          who is around is the hero's faces and names. On a project nobody
+          else is in, the vote line's zero is left out (`alone`). See
           ./hub-cards.tsx. */}
       {slug ? (
         <ForYouCard
           slug={slug}
-          name={app.name || community?.name || slug}
           queue={v.queue}
           unclaimed={v.dashboard ? v.dashboard.unclaimed : 0}
           mine={v.mine}
-          workEmpty={workEmpty}
-          alone={alone || weekOne}
+          alone={alone}
           data={community}
           canPost={canPost}
           onNeeds={() => openTab('needs')}
@@ -4811,12 +4893,10 @@ export function DevWorkshop(): ReactNode {
           onDiscussion={() => openTab('discussion')}
         />
       ) : null}
-      {slug ? <ShareItCard slug={slug} name={app.name || undefined} /> : null}
-      {/* Run six: the maker's first look while it is built, under Share it,
-          with the way to watch it built on the App tab. See ./hub-cards.tsx
-          FirstLookCard. */}
+      {/* Run six: the maker's first look while it is built, with the way to
+          watch it built on the App tab. See ./hub-cards.tsx FirstLookCard. */}
       {slug ? <FirstLookCard slug={slug} data={community} /> : null}
-      {slug ? <RecentlyLive slug={slug} rows={v.recentLive} onAll={() => openTab('workshop')} /> : null}
+      {slug ? <RecentlyLive slug={slug} rows={v.recentLive} onAll={() => openTab('workshop')} own={ownLive} /> : null}
       {/* Start a new change was the hub's last line; it is the hero's ⋯
           now (../actions-row.tsx), as well as the Homeroom menu's. */}
       </>

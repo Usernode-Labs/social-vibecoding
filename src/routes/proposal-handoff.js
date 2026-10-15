@@ -8,9 +8,7 @@ const previewWorkflow = require('../services/preview-workflow');
 const communities = require('../services/communities');
 const github = require('../services/github');
 const githubBudget = require('../services/github-budget');
-const staging = require('../services/staging');
 const stagingRecovery = require('../services/staging-recovery');
-const visuals = require('../services/visuals');
 const sessionLifecycle = require('../services/session-lifecycle');
 const proposalUpdate = require('../services/proposal-update');
 const prMetadata = require('../services/pr-metadata');
@@ -65,8 +63,6 @@ const {
   hasInFlightHandoffPipeline,
   beginHandoffPipeline,
   startHandoffPipeline,
-  discardHandoffStaging,
-  runStaging,
 } = require('../services/handoff-pipeline');
 
 class ValidationError extends Error {}
@@ -621,13 +617,18 @@ function managedRevisionKind(session) {
   return null;
 }
 
+// What is running on the session: a turn or an operation (this process's
+// own record, and the other processes' holds), a hand-off being adopted, and
+// the preview machine's build or checks run, read off the phase it writes on
+// the row (every Pod sees it, and it survives a restart).
 function checkRuntime(session) {
   const sessionId = Number(session.id);
+  const pending = session.check_state === 'pending';
   const runtime = {
     session: isSessionBusy(sessionId),
     pipeline: hasInFlightHandoffPipeline(session.id),
-    build: staging.hasInFlightBuild(sessionId),
-    capture: visuals.hasInFlightCapture(session.id),
+    build: pending && session.check_phase === 'building',
+    capture: pending && ['testing', 'queued'].includes(session.check_phase),
   };
   runtime.inFlight = Object.values(runtime).some(Boolean);
   return runtime;
@@ -1428,10 +1429,9 @@ function proposalHandoffRoutes(config) {
         if (!(await appAccess.checkAppAccess(pool, accessRow(session), req.user, 'collab'))) {
           return res.status(404).json({ error: 'Active handoff session not found' });
         }
-        if (isSessionBusy(Number(session.id))
-            || hasInFlightHandoffPipeline(session.id)
-            || staging.hasInFlightBuild(Number(session.id))
-            || visuals.hasInFlightCapture(session.id)) {
+        // A build or checks run going needs no refusal: the upload's
+        // ChecksCleared, below, cancels it in the preview machine.
+        if (isSessionBusy(Number(session.id)) || hasInFlightHandoffPipeline(session.id)) {
           return res.status(409).json({
             error: 'session_busy',
             message: 'The shared proposal is currently changing. Retry when it finishes.',
@@ -1498,27 +1498,13 @@ function proposalHandoffRoutes(config) {
           const alreadyRecorded = session.handoff_uploaded_sha === uploaded.sha
             && session.handoff_local_commit_sha === input.localCommitSha;
           if (!alreadyRecorded) {
-            // A session the preview machine holds has its verdict cleared by
-            // the machine (ChecksCleared, below); $7 keeps those columns here.
-            const machineHeld = await previewWorkflow.held(session.id);
+            // The verdict no longer describes the branch: the preview
+            // machine clears it (ChecksCleared, below).
             const advanced = await pool.query(
               `UPDATE chat_sessions
                 SET handoff_uploaded_sha = $1, handoff_local_commit_sha = $5,
                     ${summaryFreshness.INVALIDATE_SQL},
                     handoff_upload_checked_sha = checks_commit_sha,
-                    check_state = CASE WHEN $7::boolean THEN check_state END,
-                    check_phase = CASE WHEN $7::boolean THEN check_phase END,
-                    check_error_detail = CASE WHEN $7::boolean THEN check_error_detail END,
-                    test_results = CASE WHEN $7::boolean THEN test_results ELSE '[]'::jsonb END,
-                    checks_checked_at = CASE WHEN $7::boolean THEN checks_checked_at END,
-                    consecutive_check_failures = CASE WHEN $7::boolean THEN consecutive_check_failures ELSE 0 END,
-                    first_check_failure_at = CASE WHEN $7::boolean THEN first_check_failure_at END,
-                    last_check_failure_at = CASE WHEN $7::boolean THEN last_check_failure_at END,
-                    check_next_retry_at = CASE WHEN $7::boolean THEN check_next_retry_at END,
-                    check_error_notified_at = CASE WHEN $7::boolean THEN check_error_notified_at END,
-                    capture_state = CASE WHEN $7::boolean THEN capture_state END,
-                    capture_detail = CASE WHEN $7::boolean THEN capture_detail END,
-                    captured_at = CASE WHEN $7::boolean THEN captured_at END,
                     last_activity_at = NOW()
               WHERE id = $2 AND status = $6 AND source = $3
                 AND (CASE
@@ -1530,12 +1516,12 @@ function proposalHandoffRoutes(config) {
                                      handoff_head_sha, handoff_base_sha)
                      END) IS NOT DISTINCT FROM $4`,
               [uploaded.sha, session.id, SOURCE, expectedParent, input.localCommitSha,
-                session.status, machineHeld]
+                session.status]
             );
             if (!advanced.rowCount) {
               return res.status(409).json({ error: 'session_state_changed' });
             }
-            if (machineHeld) await previewWorkflow.clear({ session, reason: 'upload' });
+            await previewWorkflow.clear({ session, reason: 'upload' });
           }
           if (revisionKind === 'session' && !session.pr_number) {
             try {
@@ -1639,9 +1625,9 @@ function proposalHandoffRoutes(config) {
             ...shotsResponse(shotsApplied, session),
           });
         }
+        // A build or checks run going for this head is the preview machine's:
+        // the revision below joins it, or a newer head cancels it.
         const localPipelineBusy = hasInFlightHandoffPipeline(session.id);
-        const stagingBusy = staging.hasInFlightBuild(Number(session.id));
-        const captureBusy = visuals.hasInFlightCapture(session.id);
         if (localPipelineBusy && currentCheckedHead(session) === input.headSha) {
           return res.status(202).json({
             ok: true,
@@ -1652,7 +1638,7 @@ function proposalHandoffRoutes(config) {
           });
         }
         if (!isSessionBusy(Number(session.id))
-            && !localPipelineBusy && !stagingBusy && !captureBusy
+            && !localPipelineBusy
             && currentCheckedHead(session) === input.headSha
             && publicSessionStatus(session).revisionState === 'ready') {
           // The head SHA is the build's idempotency key. A retry after the
@@ -1662,7 +1648,7 @@ function proposalHandoffRoutes(config) {
           // commit can be retried without manufacturing a no-op commit.
           return res.status(200).json(publicSessionStatus(session));
         }
-        if (isSessionBusy(Number(session.id)) || localPipelineBusy || stagingBusy || captureBusy) {
+        if (isSessionBusy(Number(session.id)) || localPipelineBusy) {
           return res.status(409).json({
             error: 'session_busy',
             message: 'The shared proposal is currently changing in another local or web turn. Retry when it finishes.',
@@ -1842,12 +1828,7 @@ function proposalHandoffRoutes(config) {
                     END,
                     handoff_uploaded_sha = $1,
                     handoff_upload_checked_sha = NULL,
-                    -- $8: the preview machine owns the verdict and the preview.
-                    check_state = CASE WHEN $8::boolean THEN check_state ELSE 'pending' END,
-                    checks_commit_sha = CASE WHEN $8::boolean THEN checks_commit_sha ELSE $1 END,
-                    check_error_detail = CASE WHEN $8::boolean THEN check_error_detail END,
-                    staging_container_id = CASE WHEN $8::boolean THEN staging_container_id END,
-                    staging_url = CASE WHEN $8::boolean THEN staging_url END,
+                    -- The verdict and the preview are the preview machine's.
                     last_activity_at = NOW()
               WHERE id = $2 AND status = $7 AND source = $3
                 AND handoff_uploaded_sha = $1
@@ -1856,7 +1837,7 @@ function proposalHandoffRoutes(config) {
                 AND handoff_upload_checked_sha IS NOT DISTINCT FROM $6`,
             [input.headSha, session.id, SOURCE, session.checks_commit_sha || null,
               session.handoff_head_sha || null, session.handoff_upload_checked_sha || null,
-              session.status, previewWorkflow.enabled()]
+              session.status]
           );
           // Manual archive/pause is intentionally allowed to abort work. If
           // it won while the GitHub checks above were in flight, keep the
@@ -1871,13 +1852,6 @@ function proposalHandoffRoutes(config) {
             visibleChanges: input.visibleChanges,
             headChanged: currentCheckedHead(session) !== input.headSha,
           });
-          if (!previewWorkflow.enabled()) {
-            const pending = await visuals.setChecksPending(pool, session.id, input.headSha, 'building', 'commit-push');
-            if (pending === false) {
-              return res.status(409).json({ error: 'session_state_changed' });
-            }
-            visuals.notifyChecksPending(session.id, input.headSha, 'building', 'commit-push');
-          }
 
           const freshSession = {
             ...session,
@@ -2002,12 +1976,6 @@ function proposalHandoffRoutes(config) {
       const checkedHead = currentCheckedHead(session);
       if (String(remoteHead).toLowerCase() !== checkedHead) {
         const detail = 'The proposal branch changed after checks. Rebuild the new head locally or from the web Dev session before promoting.';
-        if (!previewWorkflow.enabled()) await pool.query(
-          `UPDATE chat_sessions SET check_state = 'error', check_error_detail = $1
-            WHERE id = $2 AND status = $5 AND source = $3
-              AND COALESCE(checks_commit_sha, handoff_head_sha) IS NOT DISTINCT FROM $4`,
-          [detail, session.id, SOURCE, checkedHead, session.status]
-        ).catch(() => {});
         return res.status(409).json({ error: 'branch_head_changed', message: detail });
       }
       // The common promotion route will create/read the PR after this

@@ -24,7 +24,10 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { visualImpactMatches } = require('../src/services/visuals-glob');
+const {
+  visualImpactMatches, compileGlob,
+  _matchStepsForTests, _resetMatchStepsForTests,
+} = require('../src/services/visuals-glob');
 const visuals = require('../src/services/visuals');
 
 // ── The oracle ─────────────────────────────────────────────────────────
@@ -78,18 +81,33 @@ test('a pattern packed with ** answers immediately', () => {
 
 test('the pathological shape stays cheap as the candidate grows', () => {
   // The old cost was exponential in the stars and polynomial in the length.
-  // This asserts the surviving growth is mild: 4x the path for well under
-  // 20x the time.
+  // This asserts the surviving growth is mild, measured in the matcher's own
+  // work steps rather than milliseconds: both stopwatch readings here are
+  // sub-millisecond wall clock, and a GC pause, a JIT tier-up or a busy CI
+  // container stretched one enough to flake this test on an unchanged
+  // commit. The step count is the same on every run.
+  //
+  // 4x the path must cost at most 5x the steps, where even linear growth
+  // costs exactly 4x; a quadratic regression costs about 16x and
+  // backtracking far more. A fixed ceiling of 2 * atoms * (len + 1) also
+  // pins the O(atoms x len) promise in the module's own comments directly.
   const glob = `a${'**'.repeat(12)}b`;
-  const time = (n) => {
+  const atoms = compileGlob(glob).length;
+  const measure = (n) => {
     const candidate = `a${'a'.repeat(n)}c`;
-    const started = process.hrtime.bigint();
-    for (let i = 0; i < 20; i++) visualImpactMatches(glob, candidate);
-    return Number(process.hrtime.bigint() - started) / 1e6;
+    _resetMatchStepsForTests();
+    assert.equal(visualImpactMatches(glob, candidate), false,
+      'and it is still the RIGHT answer, not a bail-out');
+    return { len: candidate.length, steps: _matchStepsForTests() };
   };
-  const short = Math.max(time(64), 0.5);
-  const long = time(256);
-  assert.ok(long < short * 20, `64ch ${short.toFixed(1)}ms vs 256ch ${long.toFixed(1)}ms`);
+  const short = measure(64);
+  const long = measure(256);
+  assert.ok(long.steps <= short.steps * 5,
+    `64ch ${short.steps} steps vs 256ch ${long.steps} steps — growth is no longer mild`);
+  for (const { len, steps } of [short, long]) {
+    assert.ok(steps <= 2 * atoms * (len + 1),
+      `${len}-char candidate took ${steps} steps; the promised bound is O(atoms x len)`);
+  }
 });
 
 // ── 2. Equivalence with the old regex ──────────────────────────────────

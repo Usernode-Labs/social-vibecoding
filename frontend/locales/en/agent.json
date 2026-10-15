@@ -2123,6 +2123,14 @@
     "text": "Opening…",
     "description": "Note under an app's icon and name on the cover shown while the app is being opened."
   },
+  "appFrame.cover.failed.title": {
+    "text": "Couldn't open this app",
+    "description": "Title of the failed card that replaces the waiting state on the cover shown while an app opens, when the app could not be opened. A \"Try again\" button follows."
+  },
+  "appFrame.cover.failed.detail": {
+    "text": "It didn't finish loading. Check your connection and try again.",
+    "description": "Second line of the failed card on the cover shown while an app opens. A \"Try again\" button follows it."
+  },
   "appFrame.waiting.title": {
     "text": "While you wait",
     "description": "Small heading over the \"While you wait\" card a member sees on the App tab while a project's first version is not ready yet. The card lists things to do in the meantime."

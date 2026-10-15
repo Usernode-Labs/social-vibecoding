@@ -235,6 +235,38 @@ test('two taps at once: one claims it and proposes, the other is told it is unde
   assert.equal(r.calls.length, 0);
 });
 
+test('a claim another tap took while this tap was checking is answered already, never a start over', async () => {
+  // #5211: the losing ordering. This tap read the run before the other
+  // claimed it; while its own checks ran, the other tap claimed the run and
+  // put its proposal up, which this tap's whyNotBuild then reads as a skip.
+  // The refusal looks once more at the claim and answers already.
+  const base = fakePool();
+  let reads = 0;
+  const pool = {
+    state: base.state,
+    async query(sql, params) {
+      const text = String(sql);
+      if (/AS newest_run_id/.test(text)) {
+        reads += 1;
+        // The re-read a refusal makes: the claim the other tap took is on
+        // the run now, with its proposal up (its outcome).
+        if (reads > 1) base.state.run.build_finish = { at: 'now', by: ADA.id, session_id: 88, outcome: 'proposed' };
+      }
+      // From the first read on, whyNotBuild finds that proposal of the bot's.
+      if (reads >= 1 && /FROM chat_sessions/.test(text) && /is_headless = FALSE/.test(text)) {
+        return { rows: [{ id: 88 }] };
+      }
+      return base.query(sql, params);
+    },
+  };
+  const router = fakeRouter(pool);
+  const out = await finish(pool, { router });
+  assert.deepEqual([out.ok, out.why], [true, undefined]);
+  assert.equal(out.already, true);
+  assert.equal(router.calls.length, 0, 'nothing promoted again');
+  assert.equal(pool.state.writes.length, 0, 'nothing claimed or recorded again');
+});
+
 test('anything that makes it unsafe is not finished, so the tap goes on to the start over', async () => {
   const cases = [
     ['branch_gone', fakePool(), { github: fakeGithub({ throws: Object.assign(new Error('Not Found'), { status: 404 }) }) }],

@@ -886,13 +886,24 @@ async function cloneDatabase(sourceDb, targetDb, { viaTemplate = false } = {}) {
     // so the checks' platform-fault retries apply). That covers every
     // failure of a clone placed on the preview server, and any failure that
     // came from that server while the clone was placed on the main one.
-    if (err && typeof err === 'object' && (server === PREVIEW_SERVER || err.previewDatabaseServer)) {
+    // Except a copy refused for what the app's own data says (a private
+    // table with a foreign child, or refilled by its own code; row-level
+    // security on a private column; an extension the copy cannot make): no
+    // retry fixes those, and the author is the one to tell.
+    if (appCaused(err)) {
+      err.appCaused = true;
+    } else if (err && typeof err === 'object' && (server === PREVIEW_SERVER || err.previewDatabaseServer)) {
       err.infrastructure = true;
       err.previewDatabaseServerFault = true;
     }
     throw err;
   }
 }
+
+// A copy refused for what the app's own data or schema says, never for the
+// server: the redaction's fail-closed refusals (noFallback) and the ones
+// marked appCaused where they are thrown.
+const appCaused = (err) => !!(err && typeof err === 'object' && (err.noFallback || err.appCaused));
 
 async function cloneDatabaseOn(server, sourceDb, targetDb, { viaTemplate }) {
   await assertPreviewServerReachable(server);
@@ -1731,6 +1742,12 @@ BEGIN
   -- on the parent already transfers them. Filtering here keeps the
   -- DO block side-effect-clean instead of relying on per-statement
   -- error swallowing.
+  --
+  -- Every loop also skips an extension's own objects (deptype 'e'):
+  -- they stay with whoever created the extension. Handed to an app's
+  -- role, pg_stat_statements_reset() (the operator's extension, made by
+  -- the administrator) would let a preview's code wipe the query
+  -- statistics of every database on the server.
   FOR r IN
     SELECT n.nspname, c.relname, c.relkind
       FROM pg_class c
@@ -1743,7 +1760,7 @@ BEGIN
          SELECT 1 FROM pg_depend d
           WHERE d.objid = c.oid
             AND d.classid = 'pg_class'::regclass
-            AND d.deptype IN ('a','i')
+            AND d.deptype IN ('a','i','e')
        )
   LOOP
     EXECUTE format(
@@ -1769,6 +1786,10 @@ BEGIN
       JOIN pg_roles role  ON role.oid = p.proowner
      WHERE n.nspname NOT IN ('pg_catalog','information_schema','pg_toast')
        AND role.rolname = '${fromRole}'
+       AND NOT EXISTS (
+         SELECT 1 FROM pg_depend d
+          WHERE d.objid = p.oid AND d.classid = 'pg_proc'::regclass AND d.deptype = 'e'
+       )
   LOOP
     EXECUTE format(
       'ALTER FUNCTION %I.%I(%s) OWNER TO %I',
@@ -1791,6 +1812,10 @@ BEGIN
        AND NOT EXISTS (
          SELECT 1 FROM pg_class c WHERE c.reltype = t.oid
        )
+       AND NOT EXISTS (
+         SELECT 1 FROM pg_depend d
+          WHERE d.objid = t.oid AND d.classid = 'pg_type'::regclass AND d.deptype = 'e'
+       )
   LOOP
     EXECUTE format('ALTER TYPE %I.%I OWNER TO %I', r.nspname, r.typname, '${toRole}');
   END LOOP;
@@ -1805,6 +1830,10 @@ BEGIN
      WHERE n.nspname NOT LIKE 'pg_%'
        AND n.nspname NOT IN ('information_schema','public')
        AND role.rolname = '${fromRole}'
+       AND NOT EXISTS (
+         SELECT 1 FROM pg_depend d
+          WHERE d.objid = n.oid AND d.classid = 'pg_namespace'::regclass AND d.deptype = 'e'
+       )
   LOOP
     EXECUTE format('ALTER SCHEMA %I OWNER TO %I', r.nspname, '${toRole}');
   END LOOP;
@@ -2219,6 +2248,41 @@ SELECT n.nspname || '.' || c.relname
   return safe;
 }
 
+// The source's extensions that the copy's own role could not create: those
+// whose default version on the target server needs a superuser and is not
+// trusted. A trusted one (pg_trgm, pgcrypto) the role creates itself during
+// the restore and then owns. One the target server does not offer is left
+// to the restore, which fails naming it. Resolves [{ name, schema }].
+const SAFE_EXTENSION_NAME = /^[a-z0-9_][a-z0-9_-]*$/;
+async function extensionsOnlyAnAdminCanCreate(sourceDb, targetServer = PRIMARY_SERVER) {
+  // A name this cannot splice safely is left to the restore, like one the
+  // target does not offer.
+  const installed = String(await execInTarget(sourceDb,
+    "SELECT json_build_array(e.extname, n.nspname)::text FROM pg_extension e"
+    + " JOIN pg_namespace n ON n.oid = e.extnamespace WHERE e.extname <> 'plpgsql' ORDER BY 1",
+    { tuplesOnly: true })).split('\n').map((line) => line.trim()).filter(Boolean)
+    .map((line) => JSON.parse(line)).filter(([name]) => SAFE_EXTENSION_NAME.test(name));
+  if (installed.length === 0) return [];
+  const names = installed.map(([name]) => `'${name}'`).join(', ');
+  const adminOnly = new Set(String(await adminExecutor(targetServer)(
+    'SELECT v.name FROM pg_available_extension_versions v'
+    + ' JOIN pg_available_extensions a ON a.name = v.name AND a.default_version = v.version'
+    + ` WHERE v.name IN (${names}) AND v.superuser AND NOT v.trusted`,
+    { tuplesOnly: true })).split('\n').map((line) => line.trim()).filter(Boolean));
+  const found = installed.filter(([name]) => adminOnly.has(name));
+  // A fresh copy has only the public schema. An extension in another schema
+  // would need that schema before the restore creates it, so the copy is
+  // refused instead, saying why.
+  const elsewhere = found.filter(([, schema]) => schema !== 'public');
+  if (elsewhere.length > 0) {
+    const err = new Error(`dumpRestore: ${elsewhere.map(([name, schema]) => `${name} (in schema ${schema})`).join(', ')}`
+      + ' can only be created by an administrator, and only in the public schema of a copy');
+    err.appCaused = true;
+    throw err;
+  }
+  return found.map(([name, schema]) => ({ name, schema }));
+}
+
 // Logical copy of one database into another via a networked
 // pg_dump | pg_restore pipeline. cloneDatabase uses this instead of
 // CREATE DATABASE … TEMPLATE so the source can be copied while it is
@@ -2260,6 +2324,15 @@ async function dumpRestore(sourceDb, targetDb, excludeData = [], { targetServer 
   if (as && (!as.user || !SAFE_IDENT.test(as.user) || as.password == null)) {
     throw new Error('dumpRestore: the restore role needs a safe name and a password');
   }
+  // An extension only a superuser may create (pg_stat_statements, which the
+  // database operator installs in every database) would stop the copy's own
+  // role at its CREATE EXTENSION. The administrator creates those first, in
+  // the copy while it is still empty, so no app-defined object exists yet
+  // for the extension's script to meet, and the dump leaves them out.
+  const adminExtensions = as ? await extensionsOnlyAnAdminCanCreate(sourceDb, targetServer) : [];
+  for (const { name, schema } of adminExtensions) {
+    await execInTarget(targetDb, `CREATE EXTENSION IF NOT EXISTS "${name}" WITH SCHEMA "${schema}"`, { server: targetServer });
+  }
 
   // -Fc custom format piped straight into pg_restore (no temp file on
   // disk). --no-owner / --no-privileges: ownership and ACLs are
@@ -2280,6 +2353,7 @@ async function dumpRestore(sourceDb, targetDb, excludeData = [], { targetServer 
   const dumpArgs = [
     '-Fc',
     ...excludeData.map((qualified) => `--exclude-table-data=${qualified}`),
+    ...adminExtensions.map(({ name }) => `--exclude-extension=${name}`),
   ];
   const dump = spawn('pg_dump', dumpArgs, {
     env: postgresEnv(sourceDb), stdio: ['ignore', 'pipe', 'pipe'],
@@ -2293,6 +2367,17 @@ async function dumpRestore(sourceDb, targetDb, excludeData = [], { targetServer 
     env: postgresEnv(targetDb, targetServer, as), stdio: ['pipe', 'ignore', 'pipe'],
   });
   dump.stdout.pipe(restore.stdin);
+  // --exit-on-error stops pg_restore at its first failed statement while
+  // pg_dump may still be writing, and the pipe then fails with EPIPE. That
+  // is the restore's failure, reported by the exit codes below; unhandled,
+  // the stream's 'error' takes the whole process down. pg_dump, left with
+  // nobody reading, is stopped rather than left blocked until the timeout.
+  let pipeError = null;
+  restore.stdin.on('error', (err) => { pipeError = err; });
+  dump.stdout.on('error', (err) => { pipeError = err; });
+  restore.once('close', (code) => {
+    if (code !== 0 && dump.exitCode === null && dump.signalCode === null) dump.kill('SIGKILL');
+  });
   let dumpStderr = '';
   let restoreStderr = '';
   dump.stderr.on('data', (chunk) => { dumpStderr = (dumpStderr + chunk).slice(-64 * 1024); });
@@ -2319,6 +2404,9 @@ async function dumpRestore(sourceDb, targetDb, excludeData = [], { targetServer 
       `(pg_dump=${dumpResult.code ?? dumpResult.signal}, pg_restore=${restoreResult.code ?? restoreResult.signal}): ` +
       stderr.slice(0, 2000)
     );
+  }
+  if (pipeError) {
+    throw new Error(`dumpRestore ${sourceDb} → ${targetDb}: the pipe between pg_dump and pg_restore failed: ${pipeError.message}`);
   }
 
   // pg_restore continues past per-object errors by default and prints a
@@ -2928,7 +3016,7 @@ SELECT n.nspname || '.' || c.relname,
       log.warn('db-manager', 'Refusing to UPDATE non-standard identifier', {
         targetDb, qualified, column,
       });
-      failures.push({ target, error: 'unsafe identifier' });
+      failures.push({ target, error: 'unsafe identifier', schema: true });
       continue;
     }
     if (rlsRaw !== 'f') {
@@ -2943,6 +3031,7 @@ SELECT n.nspname || '.' || c.relname,
         error: rlsRaw === 't'
           ? 'row-level security applies to this role, so rows could be hidden from the scrub'
           : `unreadable row-level security flag ${JSON.stringify(rlsRaw)}`,
+        schema: true,
       });
       continue;
     }
@@ -2956,7 +3045,7 @@ SELECT n.nspname || '.' || c.relname,
       log.error('db-manager', 'staging:private column has unusable max length', {
         targetDb, qualified, column, maxLength,
       });
-      failures.push({ target, error: `unusable max length ${maxLength}` });
+      failures.push({ target, error: `unusable max length ${maxLength}`, schema: true });
       continue;
     }
     // A template is scrubbed when built and again on each clone. Its
@@ -3050,10 +3139,14 @@ SELECT n.nspname || '.' || c.relname,
   }
 
   if (failures.length > 0) {
-    throw new Error(
+    const err = new Error(
       `Failed to scrub ${failures.length} staging:private column(s) in ${targetDb}: ` +
       failures.map((f) => `${f.target} (${f.error})`).join('; ')
     );
+    // Every column refused for what the app's own schema says (row-level
+    // security, a name or a size the scrub cannot use): the app's to fix.
+    if (failures.every((f) => f.schema)) err.appCaused = true;
+    throw err;
   }
 
   return { scrubbed };
@@ -3573,6 +3666,7 @@ module.exports = {
   verifyPrivateTablesEmpty,
   privateDataExclusions,
   pgRestoreArgs,
+  dumpRestore,
   // Staging templates.
   stagingTemplateDbName,
   stagingTemplatesEnabled,

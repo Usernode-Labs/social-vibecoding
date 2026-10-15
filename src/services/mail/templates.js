@@ -17,8 +17,10 @@ const { PRODUCTION_ORIGIN } = require('../cli-auth-constants');
 const tracking = require('./tracking');
 
 // Minimal HTML escaping — these bodies interpolate an email address, a
-// six-digit code and platform-built URLs, never free user text, but
-// escaping is cheap and keeps that true if a payload field ever grows.
+// six-digit code and platform-built URLs, and, since content_report, free
+// reporter-written text; every interpolated field goes through this, so the
+// rule the comment once stated ("never free user text") is kept by the
+// call sites rather than by the payloads.
 function esc(s) {
   return String(s == null ? '' : s)
     .replace(/&/g, '&amp;')
@@ -150,6 +152,43 @@ const BUTTON_STYLE =
   + 'color:#ffffff;font-size:15px;font-weight:600;text-decoration:none';
 const button = (url, label) =>
   `<p><a href="${esc(url)}" style="${BUTTON_STYLE}">${esc(label)}</a></p>`;
+
+// The welcome hero's two pieces, shared with the plainer mails that now wear
+// the same treatment (#5068): the landing page's full-round pill and the one
+// centred cell the release mail drew for itself. Inline styles on a real
+// `<a>`: `<button>` does nothing in a mail client, `<style>` blocks are
+// stripped by Gmail's clipper and Outlook, and a `mso-` conditional table
+// would be scaffolding for a single control. Padding on the anchor is what
+// every client renders consistently.
+const PILL_STYLE =
+  `display:inline-block;padding:12px 28px;border-radius:999px;background:${BRAND_ACCENT};`
+  + 'color:#ffffff;font-size:16px;font-weight:650;text-decoration:none';
+const pill = (url, label) =>
+  `<p style="margin:20px 0 0"><a href="${esc(url)}" style="${PILL_STYLE}">${esc(label)}</a></p>`;
+
+// The hero (eyebrow, headline, line, pill) is one centred cell, like the
+// landing page's pitch block. Table scaffolding here is not the frame's
+// "table-free" rule broken: a cell's text-align:center is the one centreing
+// a plain block cannot carry in clients that ignore margins on paragraphs.
+const centered = (inner) =>
+  '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"'
+  + ' style="border-collapse:collapse"><tr><td style="text-align:center">'
+  + inner
+  + '</td></tr></table>';
+
+// The hero's type, as the release mail draws it and now the rest of the
+// plain family (#5068): a small uppercase eyebrow over a big weight-800
+// headline (the release mail's 28px for its one short sentence, 24px where
+// the news can run several sentences), and the grey line under it.
+const heroEyebrow = (text, top = 0) =>
+  `<p style="margin:${top}px 0 0;font-size:13px;font-weight:600;letter-spacing:0.8px;`
+  + `text-transform:uppercase;color:${NEUTRAL_SECONDARY_INK}">${esc(text)}</p>`;
+const heroHeadline = (text, size = 28, lineHeight = 32) =>
+  `<p style="margin:10px 0 0;font-size:${size}px;line-height:${lineHeight}px;font-weight:800;`
+  + `color:${NEUTRAL_INK}">${esc(text)}</p>`;
+const heroLine = (text) =>
+  `<p style="margin:10px 0 0;font-size:16px;line-height:22px;`
+  + `color:${NEUTRAL_SECONDARY_INK}">${esc(text)}</p>`;
 
 // A one-time code, set big enough to read at arm's length and to copy by
 // eye off a phone. Three mails carry one and all three render it this way;
@@ -362,27 +401,6 @@ const RELEASE_MOBILE = [
 const inlineLink = (url, label) =>
   `<a href="${esc(url)}" style="color:${BRAND_ACCENT}">${esc(label)}</a>`;
 
-// The landing page's primary pill, flattened to what a mail client renders:
-// inline styles on a real `<a>`, the full-round radius instead of the shared
-// BUTTON_STYLE's 8px. #1540's rule still holds — this is the mail's one
-// action, and nothing else here is styled as a button.
-const RELEASE_PILL_STYLE =
-  `display:inline-block;padding:12px 28px;border-radius:999px;background:${BRAND_ACCENT};`
-  + 'color:#ffffff;font-size:16px;font-weight:650;text-decoration:none';
-const releasePill = (url, label) =>
-  `<p style="margin:20px 0 0"><a href="${esc(url)}" style="${RELEASE_PILL_STYLE}">${esc(label)}</a></p>`;
-
-// The hero (illustration, eyebrow, headline, line, pill, code note) is one
-// centred cell, like the landing page's pitch block. Table scaffolding here
-// is not the frame's "table-free" rule broken: a cell's text-align:center is
-// the one centreing a plain block cannot carry in clients that ignore
-// margins on paragraphs, and this is the one template that needs it.
-const releaseCentered = (inner) =>
-  '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"'
-  + ' style="border-collapse:collapse"><tr><td style="text-align:center">'
-  + inner
-  + '</td></tr></table>';
-
 // One chip, as the landing rail draws it: a square card, no radius (the
 // corners are the chip's whole character on a page of round pills), a 1px
 // near-black hairline, the board's hard 2px/2px offset shadow, and a 34px
@@ -418,16 +436,13 @@ function waitlistReleased(payload) {
   if (note) text += `\n\n${note}`;
   text += '\n\n' + RELEASE_CAN_DO.map((c) => `- ${c.line}`).join('\n');
 
-  let html = releaseCentered(
+  let html = centered(
     `<img src="${ILLUSTRATION_URL}" width="272" height="204" alt=""`
       + ' style="display:block;margin:0 auto;border:0;max-width:100%;height:auto">'
-    + `<p style="margin:20px 0 0;font-size:13px;font-weight:600;letter-spacing:0.8px;`
-      + `text-transform:uppercase;color:${NEUTRAL_SECONDARY_INK}">You're in</p>`
-    + `<p style="margin:10px 0 0;font-size:28px;line-height:32px;font-weight:800;`
-      + `color:${NEUTRAL_INK}">${esc(RELEASE_HEADLINE)}</p>`
-    + (how ? `<p style="margin:10px 0 0;font-size:16px;line-height:22px;`
-      + `color:${NEUTRAL_SECONDARY_INK}">${esc(how)}</p>` : '')
-    + releasePill(url, action)
+    + heroEyebrow("You're in", 20)
+    + heroHeadline(RELEASE_HEADLINE)
+    + (how ? heroLine(how) : '')
+    + pill(url, action)
     + (note ? `<p style="margin:10px 0 0;font-size:13px;`
       + `color:${NEUTRAL_SECONDARY_INK}">${esc(note)}</p>` : '')
   )
@@ -502,17 +517,86 @@ function adminTest(payload) {
     + 'An administrator sent it to check that outbound email works. '
     + 'No action is needed.';
 
+  // #5068: the welcome hero's eyebrow and headline, and the four details as
+  // rows of one hairline box instead of a `<br>` run. Still deliberately
+  // carries NOTHING sensitive and nothing to act on: no link, no button.
+  const row = (label, value, first = false) =>
+    '<tr>'
+    + `<td style="font-size:14px;line-height:1.5;padding:6px 12px;color:${NEUTRAL_SECONDARY_INK}`
+    + (first ? '' : `;border-top:1px solid ${NEUTRAL_HAIRLINE}`) + `">${esc(label)}</td>`
+    + '<td style="font-size:14px;line-height:1.5;padding:6px 12px;text-align:right">'
+    + value + '</td></tr>';
+  const detail =
+    '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"'
+    + ` style="border-collapse:separate;margin:20px 0 0;border:1px solid ${NEUTRAL_HAIRLINE};`
+    + 'border-radius:12px"><tbody>'
+    + row('Provider', `<strong>${esc(provider)}</strong>`, true)
+    + row('Sent as', esc(from))
+    + row('Sent at', esc(sentAt))
+    + row('Reference', `<code>${esc(reference)}</code>`)
+    + '</tbody></table>';
+
   return {
     subject: 'Homeroom test email',
     text,
     html: (
-      p('This is a test email from the Homeroom platform admin console.')
-      + `<p>Provider: <strong>${esc(provider)}</strong><br>`
-      + `Sent as: ${esc(from)}<br>`
-      + `Sent at: ${esc(sentAt)}<br>`
-      + `Reference: <code>${esc(reference)}</code></p>`
-      + p('An administrator sent it to check that outbound email works. '
-        + 'No action is needed.')
+      centered(heroEyebrow('Test email')
+        + heroHeadline('This is a test email from the Homeroom platform admin console.', 24, 30))
+      + detail
+      + `<p style="margin:16px 0 0;text-align:center;font-size:13px;color:${NEUTRAL_SECONDARY_INK}">`
+      + 'An administrator sent it to check that outbound email works. No action is needed.</p>'
+    ),
+  };
+}
+
+// A new content report, to the platform's compliance inbox
+// (services/moderation.js submitReport). Unlike every kind above, the text
+// here IS free reporter-written text (the reason's optional detail), so every
+// field goes through esc() and the html detail keeps its line breaks. It does
+// NOT quote the reported message itself or carry evidence files: the link
+// opens the case in the admin console, where that copy stays behind the
+// admin sign-in. Type labels match the Moderation section's own words.
+const REPORT_TYPE_LABELS = {
+  app: 'App',
+  user: 'User',
+  app_message: 'App message',
+  conversation_message: 'Private message',
+};
+
+function contentReport(payload) {
+  const reason = String(payload.reason || 'unknown').replace(/_/g, ' ');
+  const targetLabel = String(payload.targetLabel || 'Unknown target').slice(0, 120);
+  const typeLabel = REPORT_TYPE_LABELS[payload.targetType] || 'Unknown';
+  const reporter = payload.reporter ? `@${payload.reporter}` : 'Unknown';
+  const caseId = payload.caseId != null ? payload.caseId : '?';
+  const reportId = payload.reportId != null ? payload.reportId : '?';
+  const detail = String(payload.detail || '').trim();
+  const shownDetail = detail || 'None given';
+  const url = payload.url || PRODUCTION_ORIGIN;
+
+  const text = 'A new report was submitted on Homeroom.\n\n'
+    + `Reason: ${reason}\n`
+    + `Reported: ${typeLabel} · ${targetLabel}\n`
+    + `Reporter: ${reporter}\n`
+    + `Case #${caseId} · Report #${reportId}\n\n`
+    + `Details from the reporter:\n${shownDetail}\n\n`
+    + `Open in Moderation: ${url}`;
+
+  return {
+    why: 'You are receiving this because this address is Homeroom\'s '
+      + 'compliance inbox for content reports.',
+    preheader: `New ${reason} report on ${targetLabel}`,
+    subject: `New report: ${reason} · ${targetLabel}`.slice(0, 200),
+    text,
+    html: (
+      p('A new report was submitted on Homeroom.')
+      + `<p>Reason: <strong>${esc(reason)}</strong><br>`
+      + `Reported: ${esc(typeLabel)} · ${esc(targetLabel)}<br>`
+      + `Reporter: ${esc(reporter)}<br>`
+      + `Case #${esc(String(caseId))} · Report #${esc(String(reportId))}</p>`
+      + p('Details from the reporter:')
+      + `<p style="white-space:pre-wrap">${esc(shownDetail)}</p>`
+      + button(url, 'Open in Moderation')
     ),
   };
 }
@@ -533,11 +617,18 @@ function projectInvite(payload) {
       + 'You will not hear from us again unless you join, or somebody invites you again.',
     subject: `${inviter} invited you to ${project} on Homeroom`,
     text: `${lead}\n\n${how}${url ? `\n\n${url}` : ''}\n\nIf you were not expecting this, you can ignore this email.`,
+    // #5068: the welcome hero, minus the eyebrow's sentence-splitting into
+    // headline and line. The text part keeps the whole first sentence.
     html: (
-      p(lead)
-      + p(how)
-      + (url ? button(url, 'Join the waitlist') : '')
-      + p('If you were not expecting this, you can ignore this email.')
+      centered(
+        heroEyebrow("You're invited")
+        + heroHeadline(`${inviter} invited you to ${project}.`, 24, 30)
+        + heroLine("It's a private community on Homeroom, where communities build the "
+          + 'apps they use together. ' + how)
+        + (url ? pill(url, 'Join the waitlist') : '')
+        + `<p style="margin:16px 0 0;font-size:13px;color:${NEUTRAL_SECONDARY_INK}">`
+          + 'If you were not expecting this, you can ignore this email.</p>'
+      )
     ),
   };
 }
@@ -547,7 +638,13 @@ function projectInvite(payload) {
 // ask for this one by doing something just now, so each says why it came,
 // carries a one-click unsubscribe (RFC 8058: `List-Unsubscribe` with
 // `List-Unsubscribe-Post`), and offers the same link in its words.
-function activityFrame({ subject, lead, url, label, unsubscribeUrl }) {
+// #5068: the activity mails wear the welcome hero now, without the release
+// mail's illustration. The lead is the headline (24px, not 28px: it can run
+// several sentences), the project's name is the eyebrow, and "Stop these
+// emails" sits small and grey under the pill. Everything else about the
+// send is untouched: the same words in the text part, the same preheader,
+// the same List-Unsubscribe headers.
+function activityFrame({ subject, lead, url, label, eyebrow = '', unsubscribeUrl }) {
   const off = unsubscribeUrl
     ? `To stop these emails: ${unsubscribeUrl}`
     : '';
@@ -557,10 +654,12 @@ function activityFrame({ subject, lead, url, label, unsubscribeUrl }) {
     preheader: lead,
     subject,
     text: `${lead}\n\n${label}: ${url}${off ? `\n\n${off}` : ''}`,
-    html: (
-      p(esc(lead))
-      + button(url, label)
-      + (unsubscribeUrl ? p(`<a href="${esc(unsubscribeUrl)}" style="color:${NEUTRAL_SECONDARY_INK}">Stop these emails</a>`) : '')
+    html: centered(
+      (eyebrow ? heroEyebrow(eyebrow) : '')
+      + heroHeadline(lead, 24, 30)
+      + pill(url, label)
+      + (unsubscribeUrl ? `<p style="margin:16px 0 0;font-size:13px">`
+        + `<a href="${esc(unsubscribeUrl)}" style="color:${NEUTRAL_SECONDARY_INK}">Stop these emails</a></p>` : '')
     ),
     headers: unsubscribeUrl ? {
       'List-Unsubscribe': `<${unsubscribeUrl}>`,
@@ -590,6 +689,7 @@ function buildReady(payload) {
     url: payload.url || PRODUCTION_ORIGIN,
     label: 'Open it',
     unsubscribeUrl: payload.unsubscribeUrl || null,
+    eyebrow: app,
   });
 }
 
@@ -603,6 +703,9 @@ function inviteActivity(payload) {
     url: payload.url || PRODUCTION_ORIGIN,
     label: `Open ${app}`,
     unsubscribeUrl: payload.unsubscribeUrl || null,
+    // The eyebrow is the project's name only when the sender gave one; the
+    // lowercase fallback reads fine in a sentence, not as a label.
+    eyebrow: payload.appName ? String(payload.appName).slice(0, 80) : '',
   });
 }
 
@@ -629,6 +732,7 @@ const TEMPLATES = {
   waitlist_released: waitlistReleased,
   password_reset: passwordReset,
   admin_test: adminTest,
+  content_report: contentReport,
   project_invite: projectInvite,
   build_ready: buildReady,
   invite_activity: inviteActivity,

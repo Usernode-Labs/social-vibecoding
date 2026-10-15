@@ -1,10 +1,10 @@
 'use strict';
 
 // A PRIVATE MEMBER in the shell (users.private_member_since): an invite link
-// lands them inside the group's app with no ✕, the mark menu's "Go to
-// Homeroom" is their way on, and its first use runs a nine-step tour of
-// their app, its hub and a Home that has Discover but no Challenges and no
-// New project, and has the waitlist card. The invite's Join that makes
+// lands them inside the group's app with no ✕ (and the tip under the
+// Homeroom mark), the mark menu's "Go to Homeroom" is their way on, and the
+// Home it opens runs the walk, its fourth card the waitlist card, on a Home
+// that has Discover but no Challenges and no New project. The invite's Join that makes
 // them asks for a name and a phone first (tests/phone-invite-join.test.js).
 // The server half is tests/private-member-postgres.test.js and
 // tests/community-invites-postgres.test.js.
@@ -21,50 +21,33 @@ const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 const APP = read('public/js/app.js');
 
-test('the private tour: the shared seven cards, three reworded for someone invited, ending on the waitlist card', () => {
-  const { privateSteps, invitedSteps } = loadTsx('frontend/src/features/first-session/tour-steps.ts');
-  const project = { slug: 'best-brunch', name: 'Best brunch spots' };
-  const steps = privateSteps(project);
-  assert.deepEqual(steps.map((s) => s.screen), ['home', 'app', 'app', 'app', 'app', 'home', 'hub', 'hub', 'home']);
-  assert.deepEqual(steps.map((s) => s.tap || null), ['Tap it', null, 'Tap the menu', null, 'Tap ✕', 'Tap Communities', null, null, null]);
+test('the private member\'s walk: the three cards every newcomer gets, then the waitlist card', () => {
+  const { homeWalkSteps } = loadTsx('frontend/src/features/first-session/tour-steps.ts');
+  const steps = homeWalkSteps({ slug: 'best-brunch', name: 'Best Brunch', privateMember: true });
+  assert.deepEqual(steps.map((s) => s.screen), ['home', 'home', 'home', 'home']);
   assert.deepEqual(steps.map((s) => s.target), [
     '#app-list .app-card[data-slug="best-brunch"]',
-    '#app-view',
-    '#platform-mark-btn',
-    '#improve-row-feedback',
-    '#back-btn',
-    '#platform-tab-workshop',
-    '#app-content',
     '#platform-tab-messages',
+    '#platform-tab-workshop',
     '#home-waitlist-card',
   ]);
-  // The owner-approved words (#4398): the maker's where they match, the app,
-  // Suggest and hub cards said to someone who was invited, and the bot card
-  // whose words the owner approved for #4397.
   assert.deepEqual(steps.map((s) => [s.title, s.text]), [
-    ['Best brunch spots is on your Home', 'Open it any time from here.'],
-    ['Best brunch spots opens here', 'You and everyone in its community use it, and make it better together.'],
-    ['Suggest an improvement', 'Every app has this menu. Tap it.'],
-    ['Suggest an improvement', 'Got an idea for Best brunch spots? Suggest it here. Homeroom bot builds it, or brings it to the group, and you can follow along.'],
-    ['✕ takes you back to Home', 'Open Best brunch spots again from Home any time.'],
-    ['You can find Best brunch spots here', 'Communities lists every community you\'re in.'],
-    ['The Best brunch spots hub', 'Talk with the group here, and vote on what changes.'],
-    ['Meet Homeroom bot', 'Tell it what Best brunch spots should do next, and it builds it for the group to try. It\'s always here in Messages.'],
-    ['Your own apps start here', 'Join the waitlist to get your spot.'],
+    ['Welcome to Homeroom', 'Best Brunch lives here, on Home.'],
+    ['Homeroom bot', 'It\'s in Messages. Ask it for a change.'],
+    ['Communities', 'Best Brunch\'s hub is here. Invite people and decide what changes.'],
+    ['Make your own apps', 'Join the waitlist to get your spot.'],
   ]);
-  // The first seven are the steps every tour of a project shares (the join
-  // tour's first seven), the same places and presses, with only the three
-  // reworded cards' text differing.
-  const shared = invitedSteps(project).slice(0, 7);
-  steps.slice(0, 7).forEach((s, i) => {
-    assert.deepEqual({ ...s, text: '' }, { ...shared[i], text: '' }, `step ${i + 1} is the shared one`);
-    if (![1, 3, 6].includes(i)) assert.equal(s.text, shared[i].text, `step ${i + 1} in the shared words`);
-  });
-  // The Suggest card is the one in the menu, pointed at and not pressed.
-  assert.equal(steps[3].inMenu, true);
-  // The bot and waitlist cards point at their place and lead on with Next.
-  assert.deepEqual(steps.map((s) => !!s.ringed), [false, false, false, true, false, false, false, true, true]);
-  assert.deepEqual(steps.map((s) => !!s.last), [false, false, false, false, false, false, false, false, true]);
+  // The group's app from a ready-made starter: its example on the bot card,
+  // and the waitlist card as it was.
+  const fromStarter = homeWalkSteps({ slug: 'best-brunch', name: 'Best Brunch', example: 'add a price range to each place', privateMember: true });
+  assert.equal(fromStarter[1].text, 'Ask it for changes, like “add a price range to each place”.');
+  assert.deepEqual(fromStarter[3], steps[3]);
+  // Each points at its place and leads on with Next; none is pressed.
+  assert.deepEqual(steps.map((s) => !!s.ringed), [true, true, true, true]);
+  assert.deepEqual(steps.map((s) => !!s.last), [false, false, false, true]);
+  assert.ok(steps.every((s) => !s.tap && !s.inMenu && !s.waitsFor));
+  // The first three are everybody's.
+  assert.deepEqual(steps.slice(0, 2), homeWalkSteps({ slug: 'best-brunch', name: 'Best Brunch' }).slice(0, 2));
   // No challenges or points.
   assert.doesNotMatch(JSON.stringify(steps), /challenge|points/i);
   // Every target is one the shell draws: the tabs are the bar's own ids, the
@@ -75,16 +58,20 @@ test('the private tour: the shared seven cards, three reworded for someone invit
   assert.match(read('frontend/src/features/home/waitlist-card.tsx'), /<section id="home-waitlist-card"/);
 });
 
-test('"Go to Homeroom" starts it once; a private member lands in the app instead of "You\'re in"', () => {
+test('a private member lands in the app with the tip, and "Go to Homeroom" opens the Home that runs the walk', () => {
   const src = read('frontend/src/features/first-session/index.tsx');
-  assert.match(src, /if \(mode\.path === 'private'\) return privateSteps\(project\);/);
+  // The walk's fourth card for a private member.
+  assert.match(src, /const \{ slug, name, example, privateMember \} = mode\.info;\s+return homeWalkSteps\(\{ slug, name, example, privateMember: !!privateMember \}\);/);
   const welcome = src.slice(src.indexOf('welcome(info: FirstSessionInfo): boolean {'), src.indexOf('goHome('));
-  assert.match(welcome, /if \(legacy\(\)\.App\?\.user\?\.privateMember\) \{[\s\S]*legacy\(\)\.App\?\.navigateToApp\?\.\(slug, 'app'\);[\s\S]*return true;/);
-  assert.ok(welcome.indexOf('privateMember') < welcome.indexOf("setMode({ kind: 'welcome', info })"), 'before "You\'re in"');
+  assert.match(welcome, /const privateMember = !!app\?\.user\?\.privateMember;/);
+  assert.match(welcome, /if \(privateMember \|\| info\.newAccount\) oweWalk\(uid, \{ slug, name, privateMember \}\);/);
+  assert.match(welcome, /const going = app\?\.navigateToApp\?\.\(slug, 'app'\);/);
+  // Go to Homeroom: noted first (the app has its ✕ from then on), then Home,
+  // where the walk runs: the app was their first visit.
   const goHome = src.slice(src.indexOf('goHome('), src.indexOf('holdWelcome(): boolean'));
-  assert.match(goHome, /const first = !app\?\._privateHomeVisited\?\.\(\);\s+app\?\._notePrivateHome\?\.\(\);\s+app\?\.navigateHome\?\.\(\);/);
-  assert.match(goHome, /if \(!first \|\| !info\?\.slug\) return;/, 'the tour runs the first time only');
-  assert.match(goHome, /path: 'private'/);
+  assert.match(goHome, /app\?\._notePrivateHome\?\.\(\);\s+app\?\.navigateHome\?\.\(\);/);
+  assert.match(goHome, /if \(uid != null\) \{ armWalk\(uid\); setOwing\(\(n\) => n \+ 1\); \}/);
+  assert.doesNotMatch(goHome, /path: 'private'/);
 });
 
 test('the app has no ✕ for a private member until they have gone to Homeroom, from either writer', () => {

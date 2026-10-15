@@ -4589,12 +4589,14 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
   opacity: 0.7;
 }
 
-/* THE TILE LABEL — iOS-homescreen sized (#951), one step up (#4934).
-   12px on a 14px line, TWO lines, ellipsised on overflow. It was 11px on
-   13px: legible on a white card, but people reading Home over the
-   wallpaper's washes (the dark one most of all) called it tiny. One pixel
-   of type and one of line height is what that costs: the two-line lane is
-   2px taller, and the --home-cell-h derivation below grows by the same 2px. The colour is inherited from the
+/* THE TILE LABEL — iOS-homescreen sized (#951).
+   11px on a 13px line, TWO lines, ellipsised on overflow. #4934 tried one
+   step up (12px on a 14px line) because over the wallpaper's washes the
+   label read tiny — but on a phone's four columns the bigger type cut most
+   names after a few letters (#5195), so it is back here. One pixel of type
+   and one of line height is what a step up would cost: the two-line lane
+   would be 2px taller, and the --home-cell-h derivation below would grow
+   by the same 2px. The colour is inherited from the
    body's text-zinc-900 / dark:text-zinc-100, which clears 13:1 on the
    cream ground and its washes and 10:1 on the darkest dark wash (the
    ember); the label sets no colour of its own so the Create tile's muted
@@ -4604,11 +4606,11 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    most real app names after ~12 characters; at this size and two lines a tile shows roughly
    three times as much of a long name.
 
-   The lane measures exactly two lines (28px, 2 x 14) as a MIN-height, not
+   The lane measures exactly two lines (26px, 2 x 13) as a MIN-height, not
    a fixed height: a one-line title and a two-line title still occupy the
    same box at the design size, so the caption below a tile — and the
-   tile's whole content height — does not shift per tile, and the 126px
-   budget in the --home-cell-h derivation holds. But the box now
+   tile's whole content height — does not shift per tile, and the 124px
+   budget in the --home-cell-h derivation is unchanged. But the box now
    GROWS when a device renders the font larger than the design size (#3661):
    Android's text scaling / font boosting inflates this label's font-size
    and line-height (~14px on ~17px lines) while rem-based lengths stay put,
@@ -4618,10 +4620,10 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    word. The grid's rows themselves stay fixed; only the label's own box
    is content-sized beyond its floor.
 
-   line-height is unitless (14px at the design size, 14/12) for the same
+   line-height is unitless (13px at the design size, 13/11) for the same
    reason: it tracks whatever font-size the device actually renders, so
    the two line boxes scale with the glyphs instead of staying 13px under
-   them (as 13/11 did before #4934).
+   them.
 
    -webkit-line-clamp is the only cross-browser way to ellipsise at a
    line COUNT (the standard `line-clamp` is listed alongside it for the
@@ -4636,9 +4638,9 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
   line-clamp: 2;
   overflow: hidden;
   width: 100%;
-  min-height: 1.75rem; /* 28px: exactly two lines at the design size */
-  font-size: 0.75rem; /* 12px */
-  line-height: 1.1667; /* 14px at the design size; unitless so it tracks the font */
+  min-height: 1.625rem; /* 26px — exactly two lines at the design size */
+  font-size: 0.6875rem; /* 11px */
+  line-height: 1.18; /* 13px at the design size; unitless so it tracks the font */
   font-weight: 500;
   text-align: center;
   overflow-wrap: anywhere;
@@ -4646,9 +4648,9 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
 }
 
 /* The status caption ("Spinning up…" / "Awaiting secrets" / "Error")
-   stays a step below it: 11px on a 12px line, no top margin, so the two
-   text lanes together are 28 + 12 = 40px (38px, the old 20 (title) +
-   16 (caption) + 2 (mt-0.5) budget, until #4934 grew the title lane). */
+   steps down with it: 11px on a 12px line, no top margin, so the two
+   text lanes together are 26 + 12 = 38px — the same as the old
+   20 (title) + 16 (caption) + 2 (mt-0.5) budget. */
 .app-card-status {
   font-size: 0.6875rem; /* 11px */
   line-height: 0.75rem; /* 12px */
@@ -4805,20 +4807,20 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
        p-3        0.75rem x 2  = 1.5rem
        w-14 h-14  3.5rem       = 3.5rem
        gap-1.5    0.375rem     = 0.375rem
-       title      2 x 14px     = 1.75rem   <- .app-card-title, two lines
+       title      2 x 13px     = 1.625rem  <- .app-card-title, two lines
        caption    12px line    = 0.75rem   <- .app-card-status, see below
                                 --------
-                                7.875rem  (126px)
+                                7.75rem   (124px)
 
      #951 shrank the label from one 14px/20px line to two 11px/13px lines
      and tightened the icon->label gap and the caption line to match, so
      the total is UNCHANGED and nothing derived from --home-cell-h moved.
      Both text lanes are fixed heights, so a one-line and a two-line title
      produce identical tiles.
-     #4934 then grew the label to 12px on 14px lines, which is the one
-     term that moved: 2px more per row, here and on the phone (the blank
-     row below is derived, so it follows by itself).
-     The phone variant is 118px: index.html tightens the tile to `p-2`
+     #4934 grew the label to 12px on 14px lines; #5195 brought it back,
+     because on a phone's four columns the bigger type cut most names
+     after a few letters.
+     The phone variant is 116px: index.html tightens the tile to `p-2`
      (0.5rem x 2), which is 8px less. Four 56px icons per row only read as a
      home screen at that density.
 
@@ -4830,9 +4832,9 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
      no room doesn't push the row taller — it paints over the tile below.
      Budgeting for it is what keeps an errored app legible instead of
      bleeding into its neighbour. */
-  --home-cell-h: 7.875rem; /* 126px: see the derivation above */
-  /* ONE EMPTY ROW on a phone (#975). Half a cell — 59px against the phone's
-     118px — so a row the viewer left empty keeps its place in the arrangement
+  --home-cell-h: 7.75rem; /* 124px — see the derivation above */
+  /* ONE EMPTY ROW on a phone (#975). Half a cell — 58px against the phone's
+     116px — so a row the viewer left empty keeps its place in the arrangement
      without reserving a whole tile to be empty. DERIVED from the cell rather
      than written out, so the two can never drift.
 
@@ -5596,8 +5598,8 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    lays out against a column count the CSS isn't rendering. */
 @media (max-width: 639.98px) {
   :root {
-    /* 118px: p-2 (16) + icon 56 + gap-1.5 (6) + title 28 + caption 12 */
-    --home-cell-h: 7.375rem;
+    /* 116px — p-2 (16) + icon 56 + gap-1.5 (6) + title 26 + caption 12 */
+    --home-cell-h: 7.25rem;
     /* --home-panel-max-h was redefined here as ONE CELL (#968), because a
        block was a grid item whose phone footprint was a single row and a
        238px cap in a 116px cell would have let an oversized system text size
@@ -5608,7 +5610,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
   }
   .home-grid-overlay { gap: 0.375rem; }
   /* The doubled class is deliberate. This rule is what makes the phone
-     cell 118px rather than 126px, but the card element carries Tailwind's
+     cell 116px rather than 124px, but the card element carries Tailwind's
      own `p-3`, and tailwind.css is linked AFTER app.css in index.html — so
      at equal specificity the utility won and this tightening never applied
      (the cell budget above said p-2 while tiles rendered at p-3, which is
@@ -5616,7 +5618,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
      is the same element, one specificity step up, so the intended phone
      padding lands without an !important or a #app-list scope that would
      miss the landing grid's tiles. It also buys the label 8px of extra
-     line width, which at 12px is roughly two more characters per line.
+     line width, which at 11px is roughly two more characters per line.
 
      NOT the Discover card. It carries `.app-card` only as the wiring contract
      with `_wireDiscoveryCards`; it is a tile of its own whose art block is
@@ -15841,6 +15843,21 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dark .shots-viewer:has(.shots-zoom-close:checked) .shots-seg-close,
 .dark .shots-viewer:has(.shots-zoom-whole:checked) .shots-seg-whole { background: #3a3a3c; color: #f5f5f7; }
 .shots-viewer:has(.shots-side-both:checked) .shots-change-n { background: linear-gradient(90deg, #dc2626 50%, #16a34a 50%); }
+/* #5063: side by side crops both sides to the screen's declared changes
+   (the numbered outlines with a margin around them), drawn with CSS over
+   the existing stills: no new image. Nothing here matches when only one
+   side shows, so Before and After keep the whole screen. The crop wrapper
+   keeps the shot's own shape, so the img fills it exactly and the offsets
+   move the wanted part into view. */
+.shots-crop { position: absolute; inset: 0; display: block; }
+.shots-viewer:has(.shots-side-both:checked) .shots-stage > .shots-flip-side[data-shots-crop] { overflow: hidden; aspect-ratio: var(--shots-crop-shape, 16 / 10); width: min(calc(50cqw - 6px), calc(100cqh * (var(--shots-crop-shape, 16 / 10)))); }
+.shots-viewer:has(.shots-side-both:checked) .shots-flip-side[data-shots-crop] > .shots-crop { inset: auto; left: var(--shots-crop-x, 0); top: var(--shots-crop-y, 0); width: var(--shots-crop-w, 100%); height: auto; aspect-ratio: var(--shots-shape, 16 / 10); }
+/* A crop wider than it is tall: before above after. */
+.shots-viewer:has(.shots-side-both:checked) .shots-stage[data-shots-stack] { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); column-gap: 0; row-gap: 12px; }
+.shots-viewer:has(.shots-side-both:checked) .shots-stage[data-shots-stack] > .shots-flip-side { overflow: hidden; aspect-ratio: var(--shots-crop-shape, 16 / 10); width: min(100cqw, calc((50cqh - 6px) * (var(--shots-crop-shape, 16 / 10)))); }
+.shots-viewer:has(.shots-side-both:checked) .shots-stage[data-shots-stack] > .shots-flip-after { grid-area: 2 / 1; }
+.shots-viewer:has(.shots-side-both:checked) .shots-stage[data-shots-stack] .shots-flip-chip-after { left: 10px; top: calc(50% + 16px); }
+.shots-viewer:has(.shots-side-both:checked) .shots-stage[data-shots-stack]::after { top: 50%; bottom: auto; left: 12px; right: 12px; width: auto; }
 .shots-viewer:has(.shots-zoom-pick:focus-visible) .shots-seg-zoom { outline: 2px solid var(--accent, #2563eb); outline-offset: 2px; }
 .shots-viewer:has(.shots-zoom-whole:checked) .shots-close-only,
 .shots-viewer:has(.shots-zoom-close:checked) .shots-whole-only { display: none; }
@@ -15867,6 +15884,14 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   .shots-viewer:has(.shots-side-auto:checked) .shots-view[data-shots-viewport="phone"] .shots-change-n { background: linear-gradient(90deg, #dc2626 50%, #16a34a 50%); }
   .shots-viewer:has(.shots-side-auto:checked) .shots-view[data-shots-viewport="phone"] .shots-seg-both { background: #fff; color: #1c1c1e; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.14); }
   .dark .shots-viewer:has(.shots-side-auto:checked) .shots-view[data-shots-viewport="phone"] .shots-seg-both { background: #3a3a3c; color: #f5f5f7; }
+  /* #5063: the change page's crop and stacked layout, as side by side has. */
+  .shots-viewer:has(.shots-side-auto:checked) .shots-view[data-shots-viewport="phone"] .shots-stage > .shots-flip-side[data-shots-crop] { overflow: hidden; aspect-ratio: var(--shots-crop-shape, 16 / 10); width: min(calc(50cqw - 6px), calc(100cqh * (var(--shots-crop-shape, 16 / 10)))); }
+  .shots-viewer:has(.shots-side-auto:checked) .shots-view[data-shots-viewport="phone"] .shots-flip-side[data-shots-crop] > .shots-crop { inset: auto; left: var(--shots-crop-x, 0); top: var(--shots-crop-y, 0); width: var(--shots-crop-w, 100%); height: auto; aspect-ratio: var(--shots-shape, 16 / 10); }
+  .shots-viewer:has(.shots-side-auto:checked) .shots-view[data-shots-viewport="phone"] .shots-stage[data-shots-stack] { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); column-gap: 0; row-gap: 12px; }
+  .shots-viewer:has(.shots-side-auto:checked) .shots-view[data-shots-viewport="phone"] .shots-stage[data-shots-stack] > .shots-flip-side { overflow: hidden; aspect-ratio: var(--shots-crop-shape, 16 / 10); width: min(100cqw, calc((50cqh - 6px) * (var(--shots-crop-shape, 16 / 10)))); }
+  .shots-viewer:has(.shots-side-auto:checked) .shots-view[data-shots-viewport="phone"] .shots-stage[data-shots-stack] > .shots-flip-after { grid-area: 2 / 1; }
+  .shots-viewer:has(.shots-side-auto:checked) .shots-view[data-shots-viewport="phone"] .shots-stage[data-shots-stack] .shots-flip-chip-after { left: 10px; top: calc(50% + 16px); }
+  .shots-viewer:has(.shots-side-auto:checked) .shots-view[data-shots-viewport="phone"] .shots-stage[data-shots-stack]::after { top: 50%; bottom: auto; left: 12px; right: 12px; width: auto; }
 }
 @container (min-width: 720px) {
   .shots-viewer:has(.shots-side-auto:checked) .shots-view[data-shots-viewport="desktop"] .shots-stage { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 12px; }
@@ -15877,6 +15902,14 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   .shots-viewer:has(.shots-side-auto:checked) .shots-view[data-shots-viewport="desktop"] .shots-change-n { background: linear-gradient(90deg, #dc2626 50%, #16a34a 50%); }
   .shots-viewer:has(.shots-side-auto:checked) .shots-view[data-shots-viewport="desktop"] .shots-seg-both { background: #fff; color: #1c1c1e; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.14); }
   .dark .shots-viewer:has(.shots-side-auto:checked) .shots-view[data-shots-viewport="desktop"] .shots-seg-both { background: #3a3a3c; color: #f5f5f7; }
+  /* #5063: the change page's crop and stacked layout, as side by side has. */
+  .shots-viewer:has(.shots-side-auto:checked) .shots-view[data-shots-viewport="desktop"] .shots-stage > .shots-flip-side[data-shots-crop] { overflow: hidden; aspect-ratio: var(--shots-crop-shape, 16 / 10); width: min(calc(50cqw - 6px), calc(100cqh * (var(--shots-crop-shape, 16 / 10)))); }
+  .shots-viewer:has(.shots-side-auto:checked) .shots-view[data-shots-viewport="desktop"] .shots-flip-side[data-shots-crop] > .shots-crop { inset: auto; left: var(--shots-crop-x, 0); top: var(--shots-crop-y, 0); width: var(--shots-crop-w, 100%); height: auto; aspect-ratio: var(--shots-shape, 16 / 10); }
+  .shots-viewer:has(.shots-side-auto:checked) .shots-view[data-shots-viewport="desktop"] .shots-stage[data-shots-stack] { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); column-gap: 0; row-gap: 12px; }
+  .shots-viewer:has(.shots-side-auto:checked) .shots-view[data-shots-viewport="desktop"] .shots-stage[data-shots-stack] > .shots-flip-side { overflow: hidden; aspect-ratio: var(--shots-crop-shape, 16 / 10); width: min(100cqw, calc((50cqh - 6px) * (var(--shots-crop-shape, 16 / 10)))); }
+  .shots-viewer:has(.shots-side-auto:checked) .shots-view[data-shots-viewport="desktop"] .shots-stage[data-shots-stack] > .shots-flip-after { grid-area: 2 / 1; }
+  .shots-viewer:has(.shots-side-auto:checked) .shots-view[data-shots-viewport="desktop"] .shots-stage[data-shots-stack] .shots-flip-chip-after { left: 10px; top: calc(50% + 16px); }
+  .shots-viewer:has(.shots-side-auto:checked) .shots-view[data-shots-viewport="desktop"] .shots-stage[data-shots-stack]::after { top: 50%; bottom: auto; left: 12px; right: 12px; width: auto; }
 }
 /* The spec's toolbar has a third switch, so its labels give way sooner. */
 @container (max-width: 560px) {
@@ -16274,6 +16307,9 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 #dev-topic-thread .gc-msg > .min-w-0 > .flex > .shrink-0 { font-size: 12.5px; }
 #dev-topic-thread .gc-msg > .min-w-0 > .leading-snug { font-size: 15px; }
 #dev-topic-thread .gc-msg > [aria-hidden="true"] { width: 26px; height: 26px; font-size: 11px; border-radius: 999px; margin-top: 6px; }
+/* (#5165) Grouped gutter follows the 26px bubble avatar, so a continuation bubble lines up under the first one. */
+#dev-topic-thread .gc-msg[data-grouped] > .gc-msg-gutter { width: 26px; }
+#dev-topic-thread #gc-thread-messages[data-language="chat"] .gc-msg[data-grouped] > .gc-msg-gutter { width: 44px; }
 #dev-topic-thread .gc-msg-system { padding: 2px 12px; font-size: 12px; }
 #dev-topic-thread .gc-msg-system-repeat { color: var(--text-faint); }
 @media (max-width: 639px) {
@@ -16582,6 +16618,10 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   border-radius: 12px;
   margin-top: 0;
 }
+/* (#5165) The grouped row's gutter span keeps Tailwind's w-11 (44px) while
+   this surface draws a 36px avatar, so every line after the first is indented
+   8px. Match the gutter to the avatar so the text lines up under it. */
+#dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg[data-grouped] > .gc-msg-gutter { width: 36px; }
 #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg-time { font-size: inherit; }
 #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) .gc-msg-content {
   font-size: 17px;
@@ -17965,6 +18005,18 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
   color: inherit; text-decoration: none; -webkit-tap-highlight-color: transparent;
 }
 .dev-ws-recent-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 12px; }
+/* The app's own card, before any change has gone live (RecentlyLive `own`):
+   a button that opens the app, its tile where a change's picture would be. */
+button.dev-ws-recent-card {
+  width: 100%; margin: 0; padding: 0; border: 0; background: none;
+  font: inherit; text-align: left; cursor: pointer;
+}
+.dev-ws-recent-app {
+  width: 52px; height: 52px; overflow: hidden; display: grid; place-items: center;
+  border-radius: 16px; font-size: 26px; font-weight: 700;
+}
+.dev-ws-recent-app > img { width: 100%; height: 100%; object-fit: cover; border-radius: 0; }
+.dev-ws-recent-app > span { font-size: inherit; line-height: 1; }
 .dev-ws-recent-pic {
   position: relative; display: grid; place-items: center; aspect-ratio: 16 / 10; overflow: hidden;
   border-radius: 12px; background: var(--bg-tertiary);
@@ -18102,8 +18154,23 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 /* ── Share it (community-card.tsx ShareItCard) ──────────────────────
    A project that is just yours: its two ways to grow, side by side. The
    "Open it up" question hangs from its button's LEFT here, since the
-   buttons lead the row and a popup opening leftward would leave the screen. */
+   buttons lead the row and a popup opening leftward would leave the screen.
+   Once a link is out, one muted line over the card's text says so, who
+   came in and how long it has left (inviteSentLine), at the rows' 13. */
+.dev-ws-share-sent { margin: 0; font-size: 13px; line-height: 18px; color: var(--text-muted); }
 .dev-ws-share-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+/* The ✕ that closes Share it, or "What do you want to change?", for good
+   (community-card.tsx HubCardClose): at the far end of the card's head,
+   muted, a circle that shows only when pressed or hovered. */
+.dev-ws-card-close {
+  margin: -6px -6px -6px auto; flex: none;
+  width: 30px; height: 30px; border-radius: 999px;
+  display: grid; place-items: center;
+  color: var(--text-muted); background: transparent;
+}
+.dev-ws-card-close:hover { background: var(--bg-tertiary); color: var(--text-primary); }
+.dev-ws-card-close:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.dev-ws-card-close svg { width: 16px; height: 16px; }
 .dev-ws-share .dev-ws-join-anchor { margin-left: 0; }
 .dev-ws-share .dev-ws-join-pop { left: -6px; right: auto; }
 .dev-ws-share .dev-ws-join-pop::before { left: 26px; right: auto; }
@@ -18739,9 +18806,9 @@ a.dev-ws-hero-pending {
    ⋯ is near the row's start (after Open app and Invite), and a menu opening
    leftward from there ran under the sidebar. */
 .dev-ws-hero #dev-plus-menu { left: 0; right: auto; }
-/* THE HUB'S HEAD (community-card.tsx, `.dev-ws-hero-summary`, out of a
-   project's first week): the tile and the name over who it is for, the
-   description, who is around, then what you can do. On a wide window the
+/* THE HUB'S HEAD (community-card.tsx, `.dev-ws-hero-summary`, on every
+   project from its first day): the tile and the name over who it is for,
+   the description, who is around, then what you can do. On a wide window the
    actions sit across from the name: the grid packs the row of actions into
    the hole beside the name (`dense`), whatever came before them, and
    everything else takes the full width in the order it is written. Its ⋯
@@ -19127,31 +19194,6 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
 .dev-ws-hero-row { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 32px; }
 .dev-ws-hero-row > .dev-ws-hero-actions { flex: 1 1 auto; min-width: 0; flex-wrap: wrap; }
 .dev-ws-hero-member { margin-left: auto; flex: none; display: flex; }
-/* #4045: in a project's first week the row leads with its people (the
-   canvas boards Hub and People): up to three faces, or your face between two
-   open seats, then "Private community" with its lock over "3 people", and
-   the actions at the far end. The words give way (an ellipsis) before the
-   buttons do, so it fits at 320px. */
-.dev-ws-hero-week-people { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 10px; }
-.dev-ws-hero-row > .dev-ws-hero-week-people + .dev-ws-hero-actions { flex: none; flex-wrap: nowrap; }
-.dev-ws-hero-week-who { min-width: 0; display: flex; flex-direction: column; }
-.dev-ws-hero-week-who .dev-ws-hero-audience {
-  display: flex; align-items: center; gap: 5px; min-width: 0;
-  font-size: 15px; line-height: 20px; vertical-align: baseline;
-}
-.dev-ws-hero-week-who .dev-ws-hero-audience svg { width: 13px; height: 13px; color: var(--text-primary); }
-.dev-ws-hero-week-who .dev-ws-hero-audience b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dev-ws-hero-week-count { font-size: 13px; line-height: 18px; color: var(--text-muted); white-space: nowrap; }
-/* Open seats around your face: a size up from the faces, overlapping, pale,
-   and not a control. */
-.dev-ws-hero-seats .dev-ws-hero-face { width: 28px; height: 28px; margin-right: -8px; }
-.dev-ws-hero-seats .dev-ws-hero-face:last-child { margin-right: 0; }
-.dev-ws-hero-seats .dev-ws-hero-face:nth-child(2) { z-index: 1; }
-.dev-ws-hero-seat { overflow: hidden; display: flex; align-items: flex-end; justify-content: center; }
-.dev-ws-hero-seat svg { display: block; width: 24px; height: 24px; margin-bottom: -4px; }
-.dark .dev-ws-hero-seat { opacity: .55; }
-/* The app's one line under the week's row. */
-.dev-ws-hero-row + .dev-ws-hero-desc { margin-top: -4px; }
 .dev-ws-open-app {
   display: inline-flex; align-items: center; gap: 6px; flex: none;
   height: 32px; padding: 0 14px;

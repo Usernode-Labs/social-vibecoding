@@ -101,6 +101,7 @@ async function migrate(config) {
   await seedStagingRestartEligibleMerge(pool, config);
   await seedStagingOtherUserProposal(pool, config);
   await seedStagingTopicScrollThreads(pool, config);
+  await seedStagingGroupedFollowOns(pool, config);
   await seedStagingArchiveProposalFixtures(pool, config);
   await seedStagingActiveSessions(pool, config);
   await seedStagingStartScreenSession(pool, config);
@@ -196,6 +197,7 @@ async function migrate(config) {
   await seedStagingAppCapApps(pool, config);
   await seedStagingSystemTokenUsage(pool);
   await seedStagingDashboardAdminSplit(pool);
+  await seedStagingModerationCase(pool);
   await seedStagingAnalyticsCharts(pool);
   await seedStagingTopicAttributes(pool, config);
   await seedStagingSubmittedFeatures(pool, config);
@@ -1871,6 +1873,47 @@ async function seedStagingAdminConsoleData(pool) {
   }
 }
 
+// A moderation case for the console's Moderation section (#5072). The
+// moderation tables are staging:private, so a preview clone starts with an
+// empty queue and the section's deep link (#admin/reports/<id>) has nothing
+// to open. Two obviously-fake people of their own, never the viewer, and a
+// report that says it is a staging fixture. Idempotent: the case keys on its
+// UNIQUE(target_type, target_id), the report on an existence check scoped to
+// the fake target. Strictly a no-op outside staging.
+async function seedStagingModerationCase(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    await pool.query(
+      `INSERT INTO users (id, username, password, profile_published)
+       VALUES (900320, 'staging-demo-reported', 'staging-demo-not-a-login', TRUE),
+              (900321, 'staging-demo-reporter', 'staging-demo-not-a-login', TRUE)
+       ON CONFLICT DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO moderation_cases (target_type, target_id, target_label, target_user_id, status)
+       VALUES ('user', 900320, '@staging-demo-reported', 900320, 'new')
+       ON CONFLICT (target_type, target_id) DO NOTHING`
+    );
+    const has = await pool.query(
+      `SELECT 1 FROM moderation_reports r JOIN moderation_cases c ON c.id = r.case_id
+        WHERE c.target_type = 'user' AND c.target_id = 900320 LIMIT 1`
+    );
+    if (!has.rowCount) {
+      await pool.query(
+        `INSERT INTO moderation_reports (case_id, cycle, reporter_user_id, reason, detail, evidence)
+         SELECT c.id, c.cycle, 900321, 'spam',
+                'Staging fixture: a fake report so the Moderation screens have a case to open.',
+                NULL
+           FROM moderation_cases c
+          WHERE c.target_type = 'user' AND c.target_id = 900320`
+      );
+    }
+    log.info('db', 'Staging moderation case seeded');
+  } catch (err) {
+    log.warn('db', 'Staging moderation case seeding failed', { message: err.message });
+  }
+}
+
 // Email-code sign-in fixtures (issue #1586). Verifying an email code now
 // branches on the account's credential state, and none of those states are
 // reachable in a staging preview by clicking: `mobile_otp_codes` is
@@ -3523,7 +3566,7 @@ async function seedStagingAgentSession(pool, config) {
   // Put back on every boot, as the card's expiry is.
   await pool.query(
     `UPDATE chat_sessions SET check_state = 'skipped', check_error_detail = $2, test_results = '[]'::jsonb
-      WHERE id = $1`,
+      WHERE id = $1 AND NOT wf_holds('preview', 'session:' || id)`,
     [STAGING_AGENT_CHANGE_ID, 'branch has no commits beyond main, so there is nothing to test']
   );
 
@@ -3772,7 +3815,7 @@ async function seedStagingAgentFailingChecks(pool, config) {
     `UPDATE chat_sessions
         SET check_state = 'failing', test_results = $2::jsonb, check_error_detail = NULL,
             checks_commit_sha = $3, checks_checked_at = NOW() - INTERVAL '1 minute'
-      WHERE id = $1`,
+      WHERE id = $1 AND NOT wf_holds('preview', 'session:' || id)`,
     [STAGING_AGENT_FAILING_CHANGE_ID, JSON.stringify(STAGING_AGENT_FAILING_RESULTS), 'f'.repeat(40)]
   );
   log.info('db', 'Staging failing-checks agent fixture seeded', {
@@ -7202,7 +7245,7 @@ async function seedStagingVisuals(pool) {
           SET capture_state = 'partial',
               capture_detail = $1::jsonb,
               captured_at = NOW()
-        WHERE id = $2 AND capture_state IS NULL`,
+        WHERE id = $2 AND capture_state IS NULL AND NOT wf_holds('preview', 'session:' || id)`,
       [JSON.stringify({
         media: true,
         pathDefaulted: false,
@@ -7493,6 +7536,18 @@ async function seedStagingShotsNoticed(pool) {
       passed: true, mode: 'shots', runs: 1,
       stories: [{ id: 'board-sort', status: 'ready', files: files.length }],
       notices,
+      // #5063: the card's side-by-side view crops to the declared changes,
+      // so the demo run carries where they differ: the accent bar the after
+      // image draws between the header and the rows.
+      screens: [['desktop', 1280, 800], ['phone', 390, 844]].map(([viewport, width, height]) => ({
+        viewport,
+        shot: 'board-sort',
+        stories: ['board-sort'],
+        width,
+        heightBefore: height,
+        heightAfter: height,
+        regions: [{ story: 'board-sort', b: [0, 96, width, 32], a: [0, 96, width, 32], bMark: null, aMark: null }],
+      })),
     };
     const planHash = crypto.createHash('sha256')
       .update(`staging-shots-noticed:${files.map((file) => file.sha256).join(':')}`).digest('hex');
@@ -10955,7 +11010,10 @@ async function seedStagingMyOpenPr(pool, config) {
               checks_base_behind_by = $7,
               freshness_checked_at = NOW() - INTERVAL '2 minutes',
               freshness_error = $8,
-              check_state = COALESCE($9, check_state),
+              -- The preview machine's once it holds the row (its guard refuses
+              -- a write from here).
+              check_state = CASE WHEN wf_holds('preview', 'session:' || id) THEN check_state
+                                 ELSE COALESCE($9, check_state) END,
               checks_checked_at = CASE WHEN $9 IS NULL THEN checks_checked_at
                                        ELSE NOW() - INTERVAL '10 minutes' END
         WHERE id = $1`,
@@ -11058,7 +11116,7 @@ async function seedStagingImportedPrProposal(pool, config) {
                 imported_pr_author = 'octo-contributor', check_state = 'passing',
                 checks_commit_sha = $2, checks_checked_at = NOW(),
                 test_results = $3::jsonb
-          WHERE id = $1`,
+          WHERE id = $1 AND NOT wf_holds('preview', 'session:' || id)`,
         [id1, headSha1, fixture1Results]
       );
     }
@@ -11117,7 +11175,7 @@ async function seedStagingImportedPrProposal(pool, config) {
                 imported_pr_author = 'octo-contributor', check_state = 'pending',
                 check_phase = 'testing',
                 checks_commit_sha = $2
-          WHERE id = $1`,
+          WHERE id = $1 AND NOT wf_holds('preview', 'session:' || id)`,
         [id2, headSha2]
       );
     }
@@ -11193,7 +11251,7 @@ async function seedStagingImportedPrProposal(pool, config) {
                 checks_commit_sha = $2, checks_checked_at = NOW(),
                 staging_url = NULL, staging_container_id = NULL,
                 promoted_at = NOW()
-          WHERE id = $1`,
+          WHERE id = $1 AND NOT wf_holds('preview', 'session:' || id)`,
         [id3, headSha3]
       );
     }
@@ -11343,7 +11401,7 @@ async function seedStagingChecksAdvisoryCard(pool, config) {
             SET check_state = $2, test_results = $3::jsonb,
                 checks_commit_sha = $4, checks_checked_at = NOW() - INTERVAL '6 minutes',
                 check_phase = NULL, check_error_detail = NULL
-          WHERE id = $1`,
+          WHERE id = $1 AND NOT wf_holds('preview', 'session:' || id)`,
         [have[0].id, checkState, JSON.stringify(results), sha]
       );
       return have[0].id;
@@ -11517,7 +11575,7 @@ async function seedStagingExternalAgentProposal(pool, config) {
                 pr_body = $5,
                 check_state = 'passing', checks_commit_sha = $3,
                 checks_checked_at = NOW()
-          WHERE id = $1`,
+          WHERE id = $1 AND NOT wf_holds('preview', 'session:' || id)`,
         [id, row.agent, row.headSha, forkOwner, row.body]
       );
     }
@@ -11867,6 +11925,47 @@ async function seedStagingTopicScrollThreads(pool, config) {
 
 // #5007: a change built for a request points its reply thread at that
 // request — "Conversation lives on #N" where "No replies yet" used to be,
+// #5165: the grouped-gutter fix shows only where ONE author posted two
+// messages in a row, and every thread fixture above hands each turn to a
+// different voice so every row draws a header. Two consecutive follow-on
+// messages from staging-demo-user at the tail of the mock issue's thread,
+// inside the seven-minute window so the second groups under the first and
+// its text lines up with the first message's. Idempotent on content, like
+// seedStagingTopicScrollThreads; strictly a no-op outside staging.
+async function seedStagingGroupedFollowOns(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1',
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) return;
+
+  const { rows: demoRows } = await pool.query(
+    'SELECT id FROM users WHERE username = $1', ['staging-demo-user']
+  );
+  const authorId = demoRows[0]?.id;
+  if (!authorId) return;
+
+  const bodies = [
+    '[Staging demo] grouped follow-on #1: The narrow-phone layout is the part I would keep as it is.',
+    '[Staging demo] grouped follow-on #2: And the dark-mode contrast holds up on my screen too.',
+  ];
+  await pool.query(
+    `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, created_at)
+     SELECT $1::int, $2::int, m.content, 'message', 'issue', 900001::int,
+            NOW() - (m.minutes_ago * INTERVAL '1 minute')
+       FROM jsonb_to_recordset($3::jsonb) AS m(content text, minutes_ago float8)
+      WHERE NOT EXISTS (
+        SELECT 1 FROM chat_messages existing
+         WHERE existing.app_id = $1 AND existing.content = m.content
+      )`,
+    [appId, authorId, JSON.stringify(bodies.map((content, i) => ({ content, minutes_ago: bodies.length - i - 0.5 })))]
+  );
+  log.info('db', 'Staging grouped follow-on messages seeded', { appId, threadRef: 900001 });
+}
+
 // "More of the conversation is on #N" above the count, and the closed
 // notes say the conversation is on the request. Every session fixture
 // above has linked_issues = {}, so a fresh staging copy has no state that

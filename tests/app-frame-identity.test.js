@@ -635,6 +635,47 @@ test('the #931 eager launch is adopted, not rebuilt, and its cover fades off the
   assert.equal(el.loads, 1, 'and a second render still keeps the frame');
 });
 
+test('#4813: a failed launch and its Try again keep the SAME element and add no mount', async () => {
+  const h = await makeHarness();
+  const { AppView, bridge, renderer } = h;
+
+  // A prewarmed token, so beginLaunch mounts and points the frame in one
+  // tick — the ordinary path a stalled app would sit in when it fails.
+  AppView._tokenFresh = { slug: SLUG, token: 'tok-1', at: Date.now() };
+  AppView.beginLaunch(SLUG, 'app');
+  const el = bridge.frame();
+  assert.ok(el);
+  const mounts = h.mounts();
+  const navs = h.navigations();
+
+  // The failure (what the 45s rung and a frame error both reach).
+  AppView._failLaunch();
+  assert.equal(bridge.hasCover(), true, 'the cover stays up');
+  assert.equal(renderer.cover.failed, true, 'marked failed in the store');
+  assert.equal(renderer.cover.spinner, false, 'no spinner under the failed card');
+  assert.equal(bridge.frame(), el, 'same element');
+  assert.equal(h.mounts(), mounts, 'failing is not a mount');
+  assert.equal(h.navigations(), navs, 'and not a navigation either');
+
+  // Try again: the same element, exactly one more document load on it.
+  const win = el.contentWindow;
+  assert.equal(AppView.retryLaunch(), true, 'the retry ran');
+  assert.equal(bridge.frame(), el, 'retry re-points the SAME element');
+  assert.equal(renderer.creates, 1, 'no element re-created');
+  assert.equal(h.mounts(), mounts, 'a retry is not a mount');
+  assert.equal(h.navigations(), navs + 1, 'and exactly one more navigation');
+  assert.notEqual(el.contentWindow, win, 'the retry navigated — a new document, as it should');
+  assert.equal(renderer.cover.failed, false, 'the failed card is gone');
+  assert.equal(renderer.cover.note, null, 'the cover is back to its own "Opening…"');
+
+  // A second failure and a second retry keep the property too.
+  AppView._failLaunch();
+  assert.equal(AppView.retryLaunch(), true, 'retry stays available after failing again');
+  assert.equal(bridge.frame(), el, 'still the same element');
+  assert.equal(h.mounts(), mounts, 'still no second mount');
+  assert.equal(h.navigations(), navs + 2, 'one more navigation, nothing else');
+});
+
 test('a DIFFERENT app is a different frame — slug is the key, and it is honoured', async () => {
   const h = await makeHarness();
   const { AppView, bridge, renderer } = h;
@@ -1376,7 +1417,8 @@ test('the bridge refuses to act on a frame it does not own', async () => {
   bridge.unmount();
   bridge.dropCover();
   bridge.coverNote('x');
-  bridge.coverSpinner(true); // none of these may throw
+  bridge.coverSpinner(true);
+  bridge.coverFailed(true); // none of these may throw
 });
 
 // ── 2. STRUCTURAL: what makes React keep the element ─────────────────────

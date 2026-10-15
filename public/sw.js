@@ -1545,9 +1545,18 @@ if (typeof module !== 'undefined' && module.exports) {
   // hold the new build, and shellFromCacheThisLoad keeps the assets consistent
   // with whichever document was served.
   //
-  // `cache: 'reload'` on every request, because the HTTP cache is the other
-  // copy of the old build and a prefetch that revalidated its way to a 304
-  // would report success having stored nothing new.
+  // A prefetch must never store an old build's bytes as the new one's. The
+  // generated release worker (sw-release.js, the path every hosted image
+  // takes) asks the HTTP cache first and is still safe: every asset it
+  // downloads is hashed against the new release's manifest, js and css live
+  // under the new build's /b/<sha>/ URL, and a copy that does not match is
+  // fetched again with `cache: 'reload'` before anything is stored. Its
+  // release.json is always fetched with 'reload'. The precacheShell fallback
+  // below (no generated release, so no hashes to check against) keeps
+  // `cache: 'reload'` on every request, because there the HTTP cache is the
+  // other copy of the old build
+  // and a prefetch that revalidated its way to a 304 would report success
+  // having stored nothing new.
   const shellPrefetches = new Map();
 
   // Resolves `{ ok, mismatch }`: `ok` when the whole build is in the cache,

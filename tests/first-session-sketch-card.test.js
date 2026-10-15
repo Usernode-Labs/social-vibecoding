@@ -153,7 +153,7 @@ test('the same lines on a Home tile, in short words that fit its one line; blue 
   // the tile's "Awaiting secrets".
   assert.equal(lineMod.buildLineTileClass('stopped'), 'app-card-status line-clamp-1 text-[color:var(--state-attention)]');
   assert.equal(lineMod.buildLineTileOf('stopped'), 'stopped');
-  // One caption line and the two-line name fill the tile's 40px (app.css
+  // One caption line and the two-line name fill the tile's 38px (app.css
   // --home-cell-h), so the name no longer gives up a line.
   assert.equal(lineMod.BUILD_LINE_TILE_CARD, undefined);
   assert.equal(lineMod.buildLineTileOf('plan'), 'plan');
@@ -253,7 +253,7 @@ test('the made screen draws the thumbnail with its line, its emoji is the screen
   const made = read(`${DIR}/made.tsx`);
   assert.match(made, /import \{ SketchCard, showsCard, useSketch \} from '\.\/sketch-card';/);
   // Run six: the line only when nothing else on the screen says where it is (ownLine).
-  assert.match(made, /\{card \? \(\n\s+<SketchCard made=\{made\} sketch=\{sketch\} line=\{ownLine \? line : null\} note=\{note\} lineWords=\{named\.words\} lineNote=\{named\.note\} \/>/);
+  assert.match(made, /\{card \? \(\n\s+<SketchCard made=\{made\} sketch=\{sketch\} line=\{ownLine \? line : null\} note=\{note\} lineWords=\{named\.words\} lineNote=\{named\.note\} band=\{appScreen\} bandClassName=\{APP_BAND\} bandCorner=\{viewSwitch\} \/>/);
   assert.match(made, /const tile = sketch\.card\?\.emoji \|\| made\.emoji \|\| made\.name\.slice\(0, 1\);/);
   assert.match(made, /made=\{sketch\.card \? \{ \.\.\.made, emoji: sketch\.card\.emoji \} : made\}/, 'the invite sheet shows it too');
   // (The plain card of a project with no sketch, such as an import, keeps its

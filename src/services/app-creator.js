@@ -372,7 +372,14 @@ async function createApp(config, appRow) {
     // finalizeDeploy() below. app-forker.js calls the exact same helper
     // after it has staged the fork's cloned repo + db, so the two paths
     // can't drift.
-    await finalizeDeploy(config, { appId, name, slug, tempDir, dbUrl, repoUrl, mainSha, timing });
+    // `starterTree`: what is about to be built is the starter exactly as
+    // this attempt generated and committed it, so its build may write the
+    // starter's shared layer cache (services/kubernetes-buildkit.js). A
+    // clone back (an import, an adopted repository) never says so.
+    await finalizeDeploy(config, {
+      appId, name, slug, tempDir, dbUrl, repoUrl, mainSha, timing,
+      template: appRow.template || null, starterTree: Boolean(seeded),
+    });
   } catch (err) {
     log.error('app-creator', 'App creation failed', { appId, slug, err: err.message });
     timing.settle('error');
@@ -421,6 +428,12 @@ function writeTree(dir, files) {
 // `timing` (optional; createApp passes its stopwatch, services/
 // app-creation-timing.js) is told each stage this reaches and how the
 // attempt ended. Without one, nothing is timed.
+//
+// `template` and `starterTree` (optional; createApp passes them): the
+// starter the app was made from (apps.template), and whether `tempDir` is
+// that starter exactly as just generated. The build reads the starter's
+// shared layer cache for the first and writes it only for the second. A
+// fork passes neither: it is somebody's app, not a starter.
 async function finalizeDeploy(config, options) {
   const timing = options.timing || creationTiming.IDLE;
   timing.start('lock');
@@ -430,7 +443,9 @@ async function finalizeDeploy(config, options) {
   });
 }
 
-async function finalizeDeployInner(config, { appId, name, slug, tempDir, dbUrl, repoUrl, mainSha, timing }) {
+async function finalizeDeployInner(config, {
+  appId, name, slug, tempDir, dbUrl, repoUrl, mainSha, timing, template = null, starterTree = false,
+}) {
   const pool = getPool(config);
   const containerName = `usernode-app-${slug}`;
   const imageName = `usernode-app-${slug}:latest`;
@@ -526,11 +541,12 @@ async function finalizeDeployInner(config, { appId, name, slug, tempDir, dbUrl, 
     let solveStartMs = null;
     timing.start('build');
     const build = await applicationRuntime.build(config, {
-      app: { id: appId, slug, repo_url: repoUrl },
+      app: { id: appId, slug, repo_url: repoUrl, template },
       revision: mainSha,
       environment: 'production',
       sourceDir: tempDir,
       dockerImage: imageName,
+      starterTree,
       onProgress: (image) => {
         if (solveStartMs == null && image?.phase === 'source' && /^building /.test(image.detail || '')) {
           solveStartMs = Date.now() - buildStartedAt;

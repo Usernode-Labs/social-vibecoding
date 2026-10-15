@@ -126,10 +126,15 @@ test('the made screen tells each moment where it happens, never changing what it
   assert.match(made, /onSent=\{\(how\) => setSentHow\(how\)\}/);
 
   const index = read(`${DIR}/index.tsx`);
-  assert.match(index, /noteMoment\(made\.slug, _skipped \? 'invite_later_tapped' : 'continue_tapped'\);/);
-  // The maker's tour after it, and only that one: never a screenshot state's.
-  assert.match(index, /setMode\(\{ kind: 'tour', info, path: 'maker', moments: true \}\);/);
-  assert.match(index, /<Tour info=\{mode\.info\} steps=\{steps\} onEnd=\{end\} start=\{mode\.start\} moments=\{!!mode\.moments\} \/>/);
+  assert.match(index, /noteMoment\(made\.slug, skipped \? 'invite_later_tapped' : 'continue_tapped'\);/);
+  // The maker's walk after it, and only that one: run now while the app is
+  // built, or on the first Home after the app (the walk owed with `maker`);
+  // never a screenshot state's, nor an invited person's.
+  assert.match(index, /setMode\(\{ kind: 'tour', info: \{ slug, name \}, path: 'walk', moments: true \}\);/);
+  assert.match(index, /oweWalk\(uid, \{ slug, name, maker: true \}\);/);
+  assert.match(index, /path: 'walk', moments: !!walk\.maker \}/);
+  assert.match(index, /if \(privateMember \|\| info\.newAccount\) oweWalk\(uid, \{ slug, name, privateMember \}\);/);
+  assert.match(index, /<Tour info=\{mode\.info\} steps=\{steps\} onEnd=\{end\} start=\{mode\.start\} moments=\{!!mode\.moments\} numbered=\{mode\.path === 'walk'\} \/>/);
   assert.doesNotMatch(index.slice(index.indexOf('async function openTourShot'), index.indexOf('const MAKE_FLAG')), /moments/);
   assert.match(index, /if \(momentsRef\.current\) noteMoment\(info\.slug, 'tour_started', \{ steps: steps\.length \}\);/);
   assert.match(index, /if \(momentsRef\.current\) noteMoment\(info\.slug, 'tour_step_shown', \{ step: index \+ 1, steps: steps\.length \}\);\s+\}, \[index\]\);/);

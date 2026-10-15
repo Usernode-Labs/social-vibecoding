@@ -77,7 +77,7 @@ function promotePool(session = sessionRow, { promotionMatches = true } = {}) {
   ]);
 }
 
-function loadVotesRouter({ getPRImpl, reopenImpl, markReadyImpl, pool, pipelineInFlight = false, activeCount = 1 } = {}) {
+function loadVotesRouter({ getPRImpl, reopenImpl, markReadyImpl, pool, activeCount = 1 } = {}) {
   const ids = {
     logger: require.resolve('../src/services/logger'),
     pool: require.resolve('../src/db/pool'),
@@ -92,9 +92,7 @@ function loadVotesRouter({ getPRImpl, reopenImpl, markReadyImpl, pool, pipelineI
     events: require.resolve('../src/services/events'),
     appAccess: require.resolve('../src/services/app-access'),
     topicAttrs: require.resolve('../src/services/topic-attributes'),
-    visuals: require.resolve('../src/services/visuals'),
-    prImportSync: require.resolve('../src/services/pr-import-sync'),
-    pipeline: require.resolve('../src/services/handoff-pipeline'),
+    previewWorkflow: require.resolve('../src/services/preview-workflow'),
     subject: require.resolve('../src/routes/votes'),
   };
   const orig = {};
@@ -104,10 +102,9 @@ function loadVotesRouter({ getPRImpl, reopenImpl, markReadyImpl, pool, pipelineI
   const reopenCalls = [];
   const systemMessages = [];
   const octokitRequests = [];
-  const pendingCalls = [];
-  const rerunCalls = [];
-  const stagingBuilds = [];
-  const captures = [];
+  // What the route hands the preview machine (services/preview-workflow.js):
+  // it builds and checks a revision; nothing here builds or stamps a verdict.
+  const revisionCalls = [];
 
   stub(ids.logger, { info() {}, warn() {}, error() {}, debug() {} });
   stub(ids.pool, { getPool: () => pool });
@@ -133,13 +130,8 @@ function loadVotesRouter({ getPRImpl, reopenImpl, markReadyImpl, pool, pipelineI
   stub(ids.staging, {
     rebuildProduction: async () => ({ ok: true }),
     teardownStaging: async () => {},
-    buildAndDeployStaging: async (_config, session, _app, sha) => {
-      stagingBuilds.push({ sessionId: session.id, sha });
-      return { containerId: 'c1', stagingUrl: 'https://stage.example', hostname: 'stage' };
-    },
     verifyStagingEdge: async () => {},
   });
-  stub(ids.pipeline, { hasInFlightHandoffPipeline: () => pipelineInFlight });
   stub(ids.docker, {});
   stub(ids.resolver, {
     checkAndResolveConflicts: async () => {},
@@ -165,18 +157,11 @@ function loadVotesRouter({ getPRImpl, reopenImpl, markReadyImpl, pool, pipelineI
   stub(ids.events, { record: () => {}, EVENT_TYPES: { PR_PROMOTED: 'pr_promoted', PR_MERGED: 'pr_merged' } });
   stub(ids.appAccess, { sessionCollabGuard: () => (_req, _res, next) => next() });
   stub(ids.topicAttrs, {});
-  stub(ids.visuals, {
-    setChecksPending: async (_pool, sessionId, sha) => {
-      pendingCalls.push({ sessionId, sha });
-      return true;
+  stub(ids.previewWorkflow, {
+    revision: async ({ session, head, source, trigger }) => {
+      revisionCalls.push({ sessionId: session.id, head, source, trigger });
     },
-    notifyChecksPending() {},
-    captureForSession: async (_config, session, _app, sha, _result, opts) => {
-      captures.push({ sessionId: session.id, sha, opts });
-    },
-  });
-  stub(ids.prImportSync, {
-    rerunChecksForNewHead: async (args) => { rerunCalls.push(args); },
+    recheck: async () => ({ status: 'accepted' }),
   });
 
   delete require.cache[ids.subject];
@@ -189,16 +174,16 @@ function loadVotesRouter({ getPRImpl, reopenImpl, markReadyImpl, pool, pipelineI
   };
   return {
     voteRoutes, getPRCalls, reopenCalls, systemMessages, octokitRequests,
-    pendingCalls, rerunCalls, stagingBuilds, captures, restore,
+    revisionCalls, restore,
   };
 }
 
 async function withServer({
   getPRImpl, reopenImpl, markReadyImpl, session, expectedHandoffHead, expectedHandoffStatus, promotionMatches,
-  pipelineInFlight, activeCount,
+  activeCount,
 } = {}, fn) {
   const pool = promotePool(session, { promotionMatches });
-  const ctx = loadVotesRouter({ getPRImpl, reopenImpl, markReadyImpl, pool, pipelineInFlight, activeCount });
+  const ctx = loadVotesRouter({ getPRImpl, reopenImpl, markReadyImpl, pool, activeCount });
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -232,7 +217,7 @@ test('paused promotion goes directly to review and duplicate submissions do not 
     const duplicate = await fetch(`${ctx.base}/api/sessions/7/promote`, { method: 'POST' });
     assert.equal(duplicate.status, 404);
     assert.equal(ctx.getPRCalls.length, 1);
-    assert.equal(ctx.rerunCalls.length, 0);
+    assert.equal(ctx.revisionCalls.length, 0, 'the head its preview describes needs no new revision');
   });
 });
 
@@ -277,35 +262,19 @@ test('a lifecycle change after native preflight requires a fresh submission', as
 });
 
 // #3173 / #3043: a managed change can now be submitted with its preview
-// gone (the idle sweep reclaimed it) or while its own run is still checking
-// it. The first must get its preview back and its checks re-run on the
-// reviewed commit; the second must not start a second build racing the run
-// that is already producing exactly that verdict.
+// gone (the idle sweep reclaimed it). It must get its preview back and its
+// checks re-run on the reviewed commit: the route hands that exact head to
+// the preview machine, which builds it (or joins a run of it already going).
 const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
 
-test('promote rebuilds a reclaimed preview and re-runs checks on the reviewed head', async () => {
+test('promote hands a reclaimed preview\'s reviewed head to the preview machine', async () => {
   await withServer({ session: { ...sessionRow, source: 'cli_handoff', status: 'paused',
     staging_url: null, check_state: 'passing' },
   expectedHandoffHead: HEAD, expectedHandoffStatus: 'paused' }, async (ctx) => {
     const response = await fetch(`${ctx.base}/api/sessions/7/promote`, { method: 'POST' });
     assert.equal(response.status, 200);
     await settle();
-    assert.deepEqual(ctx.stagingBuilds, [{ sessionId: 7, sha: HEAD }]);
-    assert.equal(ctx.captures.length, 1);
-    assert.equal(ctx.captures[0].sha, HEAD);
-    assert.equal(ctx.captures[0].opts.force, true, 'a fresh verdict, not the one the old preview earned');
-  });
-});
-
-test('promote leaves a running check of the reviewed head to finish on its own', async () => {
-  await withServer({ session: { ...sessionRow, source: 'cli_handoff', status: 'paused',
-    staging_url: null, check_state: 'pending' },
-  expectedHandoffHead: HEAD, expectedHandoffStatus: 'paused', pipelineInFlight: true }, async (ctx) => {
-    const response = await fetch(`${ctx.base}/api/sessions/7/promote`, { method: 'POST' });
-    assert.equal(response.status, 200);
-    await settle();
-    assert.deepEqual(ctx.stagingBuilds, [], 'no second build');
-    assert.equal(ctx.captures.length, 0);
+    assert.deepEqual(ctx.revisionCalls, [{ sessionId: 7, head: HEAD, source: 'promote', trigger: 'promote-kick' }]);
   });
 });
 
@@ -363,9 +332,8 @@ test('promote: a CLI handoff refuses a PR head that moved after its ready prefli
     assert.equal(body.error, 'branch_head_changed');
     assert.ok(!ctx.pool.issued(/SET status = 'promoted', promoted_at = NOW\(\)/),
       'the raced, unchecked PR revision never enters voting');
-    const invalidation = ctx.pool.queries.find((q) => /SET check_state = 'error'/.test(q.sql));
-    assert.ok(invalidation, 'the stale ready verdict is invalidated for status/UI callers');
-    assert.deepEqual(invalidation.params.slice(1), [7, HEAD, 'active']);
+    assert.ok(!ctx.pool.issued(/SET check_state/),
+      'the verdict is the preview machine\'s; the 409 is what tells the author');
   });
 });
 
@@ -429,7 +397,7 @@ test('promote: an active imported PR captures its head without publishing its dr
   });
 });
 
-test('promote: an imported head change is marked pending before voting opens', async () => {
+test('promote: an imported head change goes to the preview machine before voting opens', async () => {
   const imported = {
     ...sessionRow,
     source: 'imported',
@@ -442,10 +410,8 @@ test('promote: an imported head change is marked pending before voting opens', a
   }, async (ctx) => {
     const r = await fetch(`${ctx.base}/api/sessions/7/promote`, { method: 'POST' });
     assert.equal(r.status, 200);
-    assert.deepEqual(ctx.pendingCalls, [{ sessionId: imported.id, sha: HEAD }],
-      'the old green verdict is invalidated before the promote response');
-    assert.equal(ctx.rerunCalls.length, 1);
-    assert.equal(ctx.rerunCalls[0].newHead, HEAD);
+    assert.deepEqual(ctx.revisionCalls, [{ sessionId: imported.id, head: HEAD, source: 'imported', trigger: 'pr-import' }],
+      'the new head is handed off before the promote response; the machine re-pends its verdict');
   });
 });
 
