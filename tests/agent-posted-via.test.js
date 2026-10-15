@@ -180,6 +180,9 @@ function stub(id, exports) {
   require.cache[id] = { id, filename: id, loaded: true, exports, paths: [] };
 }
 
+// What the chat handler asked the mention fan-out to do (#5160).
+let mentionCalls = [];
+
 function loadWs() {
   const _origLoad = Module._load;
   Module._load = function (request, ...rest) {
@@ -201,7 +204,7 @@ function loadWs() {
   stub(ids.logger, { info() {}, warn() {}, error() {}, debug() {} });
   stub(ids.notifications, {
     createReplyNotification: async () => [],
-    createMentionNotifications: async () => [],
+    createMentionNotifications: async (_pool, args) => { mentionCalls.push(args); return []; },
   });
   stub(ids.events, { record() {}, EVENT_TYPES: {} });
   stub(ids.appAccess, { checkAppAccess: async () => true });
@@ -246,6 +249,36 @@ test('the chat handler persists posted_via and echoes it on the broadcast', asyn
     assert.equal(ins.params[6], expected, `posted_via param for ${String(postedVia)}`);
     assert.equal(result.message.postedVia, expected, 'the broadcast row carries the same value');
   }
+});
+
+// #5160: an @handle in a connector's post tags and notifies that person the
+// same way a typed one does. The route hands the post to this one handler,
+// and the mention fan-out runs on every chat row, whoever holds the pen; only
+// the bot's voice, the invite hello and the small-group ring skip an agent's.
+test('a connector post runs the same @mention fan-out as a typed message', async () => {
+  const { handleMessage } = loadWs();
+  for (const postedVia of ['agent', null]) {
+    mentionCalls = [];
+    const pool = makePool();
+    // The proposal thread exists on this app (ws.validateThread's read).
+    const base = pool.query.bind(pool);
+    pool.query = async (sql, params) => (/FROM chat_sessions WHERE id/.test(sql)
+      ? { rows: [{ '?column?': 1 }] } : base(sql, params));
+    const content = '@bruno, a question about the workflow engine.';
+    const client = { user: { id: 5, username: 'alice' }, appId: 7, postedVia };
+    const result = await handleMessage(pool, client, {
+      type: 'chat', content, thread: { type: 'session', ref: 50 },
+    });
+    assert.equal(result.ok, true);
+    assert.deepEqual(mentionCalls, [{ appId: 7, chatMessageId: 321, senderId: 5, content }],
+      `mentions resolved for postedVia=${String(postedVia)}`);
+  }
+});
+
+test('only an @handle tags someone: a bare name in the post resolves nobody', () => {
+  const { parseMentions } = require('../src/services/notifications');
+  assert.deepEqual(parseMentions('@Bruno, a question about the workflow engine'), ['bruno']);
+  assert.deepEqual(parseMentions('Bruno, a question about the workflow engine'), []);
 });
 
 // ── Rendering: the view model, the transcript row, the feed bubble ──────
