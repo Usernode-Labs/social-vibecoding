@@ -1637,9 +1637,13 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // 730 → 731: +1: the admin console's Apps & usage section (#admin/apps),
   // a route no other check reaches. 731 leaves 149 slots.
   //
+  // 731 → 732: +1 (#5072): the Moderation deep link opens the linked case
+  // already selected (#admin/reports/1, the staging fixture's fake report),
+  // a route no other check reaches. 732 leaves 148 slots.
+  //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 731);
+  checkCap.assertPinned(DAPP.tests.length, 732);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

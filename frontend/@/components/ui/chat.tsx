@@ -100,7 +100,7 @@ export function ChatMessageRow({
   if (grouped) {
     return (
       <div className={cn('flex gap-3 px-4 py-0.5', className)} data-grouped="" {...props}>
-        <span className="w-11 shrink-0 pt-0.5 text-right text-[0.6875rem] leading-5 text-zinc-500 dark:text-zinc-500">{gutter}</span>
+        <span className="gc-msg-gutter w-11 shrink-0 pt-0.5 text-right text-[0.6875rem] leading-5 text-zinc-500 dark:text-zinc-500">{gutter}</span>
         <div className="min-w-0 flex-1">
           <div className="text-[1.0625rem] leading-snug text-zinc-900 dark:text-zinc-100">{children}</div>
         </div>

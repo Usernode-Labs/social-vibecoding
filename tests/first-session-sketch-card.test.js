@@ -153,7 +153,7 @@ test('the same lines on a Home tile, in short words that fit its one line; blue 
   // the tile's "Awaiting secrets".
   assert.equal(lineMod.buildLineTileClass('stopped'), 'app-card-status line-clamp-1 text-[color:var(--state-attention)]');
   assert.equal(lineMod.buildLineTileOf('stopped'), 'stopped');
-  // One caption line and the two-line name fill the tile's 40px (app.css
+  // One caption line and the two-line name fill the tile's 38px (app.css
   // --home-cell-h), so the name no longer gives up a line.
   assert.equal(lineMod.BUILD_LINE_TILE_CARD, undefined);
   assert.equal(lineMod.buildLineTileOf('plan'), 'plan');

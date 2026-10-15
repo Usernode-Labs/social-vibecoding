@@ -21,7 +21,9 @@
 // mode=max`) under the app's own cache repository, which is the same
 // per-app boundary kpack's `cache.registry.tag` draws. It is uploaded only
 // when a build produced something a later build can reuse; see "The layer
-// cache upload" below. The daemon runs
+// cache upload" below. The one cache apps share is a ready-made starter's,
+// which only the platform's own build of that starter writes; see "The
+// starter's shared cache" below. The daemon runs
 // rootless (uid 1000 under RootlessKit, no capabilities) with seccomp and
 // AppArmor unconfined — what `unshare`/`mount` inside the user namespace
 // need — in a namespace of its own whose Pod Security level admits that;
@@ -85,6 +87,25 @@
 // builds and runs on others would upload on every source change.
 // BUILDKIT_CACHE_UPLOAD=always turns the decision off.
 //
+// The starter's shared cache. Every app made from one ready-made starter
+// (services/app-templates.js) gets the same package files
+// (services/template.js), so its image's dependency installs are the same
+// steps as every other copy's. Against its own cache alone, which a new
+// app does not have yet, each new app ran them cold, inside the build its
+// "Preparing it to run…" waits on. So a build of an app whose row names a
+// ready-made starter (apps.template) imports that starter's cache too,
+// `<cache prefix>/starter-<id>:buildkit-cache`, after its own. One build
+// writes it: the app's first, of the commit services/app-creator.js has
+// just made from the starter (`starterTree`). That build always uploads,
+// to the app's cache and the starter's in one run. Every other build only
+// reads it, so it holds what the starter itself builds and never one
+// app's changes. The build that writes it runs nothing an app controls:
+// the Dockerfile and the package files are the platform's, and a layer is
+// only ever served to a step whose inputs are the same.
+// A starter whose cache does not exist yet is what an app's own cache is
+// on its first build: BuildKit notes the missing ref and builds.
+// BUILDKIT_STARTER_CACHE=off goes back to per-app caches only.
+//
 // Availability. The lane is turned on in pieces — BUILD_ENGINE in the
 // platform's environment, the namespace/RBAC/Secret from the foundation
 // chart, the user-namespace sysctl on the nodes — and between any two of
@@ -106,6 +127,7 @@ const path = require('path');
 const stream = require('stream');
 const log = require('./logger');
 const { parseDockerBuildLine } = require('./docker');
+const appTemplates = require('./app-templates');
 
 // Loaded on first use, as in kubernetes.js: most processes that load this
 // file never patch a Job.
@@ -293,6 +315,17 @@ const BUILD_SCRIPT = [
   'git checkout-index -a -f --prefix=/workspace/src/',
   'cd /workspace',
   'rm -rf /workspace/repo',
+  // The starter's shared cache (see the header): read by both runs below
+  // when STARTER_CACHE_REF names one, written by the upload only when
+  // STARTER_CACHE_EXPORT=yes. Each is spliced in as `${x:+--flag "$x"}`,
+  // which is nothing at all when x is empty.
+  'starter_import=; starter_export=',
+  'if [ -n "${STARTER_CACHE_REF:-}" ]; then',
+  '  starter_import="type=registry,ref=$STARTER_CACHE_REF$REGISTRY_ATTRS"',
+  '  if [ "${STARTER_CACHE_EXPORT:-}" = yes ]; then',
+  '    starter_export="type=registry,ref=$STARTER_CACHE_REF,mode=max,image-manifest=true,oci-mediatypes=true$REGISTRY_ATTRS"',
+  '  fi',
+  'fi',
   'say "building $DOCKERFILE -> $IMAGE_TAG"',
   'buildctl-daemonless.sh build \\',
   '  --frontend dockerfile.v0 \\',
@@ -301,7 +334,7 @@ const BUILD_SCRIPT = [
   '  --opt "filename=$DOCKERFILE" \\',
   '  --opt "build-arg:GIT_SHA=$GIT_SHA" \\',
   '  --output "type=image,name=$IMAGE_TAG,push=true$REGISTRY_ATTRS" \\',
-  '  --import-cache "type=registry,ref=$CACHE_REF$REGISTRY_ATTRS" \\',
+  '  --import-cache "type=registry,ref=$CACHE_REF$REGISTRY_ATTRS" ${starter_import:+--import-cache "$starter_import"} \\',
   '  --progress plain \\',
   '  --trace /workspace/trace.json \\',
   '  --metadata-file /workspace/metadata.json',
@@ -333,9 +366,10 @@ const BUILD_SCRIPT = [
   `  if [ "$(printf '%s' "$ran $served" | wc -w)" -gt ${CACHE_MAX_STEPS} ]; then steps=unknown; fi`,
   'fi',
   // Upload when a step ran that is not known to run on every build (see
-  // settledCacheSteps), and whenever that cannot be told.
+  // settledCacheSteps), whenever that cannot be told, and always from the
+  // build that writes the starter's shared cache.
   'upload=no',
-  'if [ "${CACHE_UPLOAD:-auto}" = always ] || [ "$steps" != known ]; then',
+  'if [ "${CACHE_UPLOAD:-auto}" = always ] || [ "$steps" != known ] || [ -n "$starter_export" ]; then',
   '  upload=yes',
   'else',
   '  for token in $ran; do',
@@ -345,17 +379,18 @@ const BUILD_SCRIPT = [
   'cache=skipped',
   'if [ "$upload" = yes ]; then',
   '  say "uploading the layer cache"',
+  '  if [ -n "$starter_export" ]; then say "and the starter\'s shared cache, $STARTER_CACHE_REF"; fi',
   // The same solve over the Pod's now warm store, with nothing to output:
-  // no step runs again and the pushed image cannot change. The import
-  // stays because layers the cache served are still lazy references to it.
+  // no step runs again and the pushed image cannot change. The imports
+  // stay because layers a cache served are still lazy references to it.
   '  if timeout 300 buildctl-daemonless.sh build \\',
   '      --frontend dockerfile.v0 \\',
   '      --local context=/workspace/src \\',
   '      --local dockerfile=/workspace/src \\',
   '      --opt "filename=$DOCKERFILE" \\',
   '      --opt "build-arg:GIT_SHA=$GIT_SHA" \\',
-  '      --import-cache "type=registry,ref=$CACHE_REF$REGISTRY_ATTRS" \\',
-  '      --export-cache "type=registry,ref=$CACHE_REF,mode=max,image-manifest=true,oci-mediatypes=true$REGISTRY_ATTRS" \\',
+  '      --import-cache "type=registry,ref=$CACHE_REF$REGISTRY_ATTRS" ${starter_import:+--import-cache "$starter_import"} \\',
+  '      --export-cache "type=registry,ref=$CACHE_REF,mode=max,image-manifest=true,oci-mediatypes=true$REGISTRY_ATTRS" ${starter_export:+--export-cache "$starter_export"} \\',
   '      --progress plain > /workspace/cache-upload.log 2>&1; then',
   '    cache=done',
   '  else',
@@ -422,9 +457,24 @@ function recipeOf(cfg, dockerfile) {
   })).digest('hex').slice(0, 12);
 }
 
+// The shared layer cache of the ready-made starter the app was made from
+// (see "The starter's shared cache"), as `{ id, ref }`; null when it was
+// made from none, or BUILDKIT_STARTER_CACHE is off.
+function starterCache(cfg, runtime, app) {
+  if (cfg.buildkitStarterCache === false) return null;
+  const id = app?.template;
+  if (!appTemplates.isReadyMade(id)) return null;
+  const repository = `starter-${runtime.dnsName(id)}`;
+  // Beside the apps' own cache repositories, which are named by slug. A
+  // slug ends in a random suffix (app-manifest buildAppSlug), so none
+  // reads like this; an old one that did keeps its cache to itself.
+  if (repository === runtime.dnsName(app.slug)) return null;
+  return { id, ref: `${cfg.cacheRepositoryPrefix}/${repository}:buildkit-cache` };
+}
+
 function jobManifest(cfg, runtime, {
   app, revision, environment, sessionId, dockerfile, name, tag, cacheRef, recipe, inputSecretName,
-  settledSteps = [],
+  settledSteps = [], starterCacheRef = null, starterExport = false,
 }) {
   const jobLabels = {
     ...runtime.labels({ appId: app.id, sessionId, environment }),
@@ -445,6 +495,10 @@ function jobManifest(cfg, runtime, {
     // is in CACHE_SETTLED_STEPS. `always`: after every build.
     { name: 'CACHE_UPLOAD', value: cfg.buildkitCacheUpload || 'auto' },
     { name: 'CACHE_SETTLED_STEPS', value: settledSteps.join(' ') },
+    // The starter's shared cache: imported when named, and uploaded to
+    // with the app's own when STARTER_CACHE_EXPORT is `yes`.
+    { name: 'STARTER_CACHE_REF', value: starterCacheRef || '' },
+    { name: 'STARTER_CACHE_EXPORT', value: starterCacheRef && starterExport ? 'yes' : '' },
     // Rootless: Kubernetes has no `systempaths=unconfined`, and this is the
     // documented trade for it (examples/kubernetes/job.rootless.yaml). As
     // root the daemon can build its process sandbox, so it keeps it.
@@ -646,7 +700,14 @@ async function reusableJob(cfg, clients, { appId, revision, recipe }) {
 // line, exactly what services/docker.js reports for its BuildKit build, so
 // staging's per-step timing works unchanged. The Job's own `[buildkit] ...`
 // lines come through as `phase: 'source'` with no step counter.
-async function createBuild(config, { app, revision, environment, sessionId, sourceDir, onProgress = null }, runtime) {
+//
+// `app.template` names the starter the app was made from, if any, and
+// `starterTree` says the revision is that starter as the platform has just
+// generated it, which makes this the build that writes the starter's shared
+// cache (see the header). Only the caller that made the commit can say so.
+async function createBuild(config, {
+  app, revision, environment, sessionId, sourceDir, starterTree = false, onProgress = null,
+}, runtime) {
   if (!/^[a-f0-9]{40}$/i.test(revision || '')) {
     throw new Error('Kubernetes builds require a full 40-character Git commit SHA');
   }
@@ -687,10 +748,13 @@ async function createBuild(config, { app, revision, environment, sessionId, sour
       log.warn('kubernetes', 'BuildKit layer cache history lookup failed; this build uploads the cache', { appId: app.id, err: err.message });
     }
   }
+  const starter = starterCache(cfg, runtime, app);
+  const starterExport = Boolean(starter && starterTree);
   const inputSecretName = runtime.withSuffix(name, 'input');
   const cloneUrl = await runtime.getCloneUrl(repo.owner, repo.name);
   const body = jobManifest(cfg, runtime, {
     app, revision, environment, sessionId, dockerfile, name, tag, cacheRef, recipe, inputSecretName, settledSteps,
+    starterCacheRef: starter ? starter.ref : null, starterExport,
   });
   const namespace = cfg.buildkitNamespace;
   let created = null;
@@ -783,10 +847,13 @@ async function createBuild(config, { app, revision, environment, sessionId, sour
     }
     // `steps`: the slowest steps as BuildKit timed them (stepClock), for a
     // caller that records where a build went (services/app-creator.js).
+    // `starterCache`: which starter's shared cache it read, and whether it
+    // also wrote it (in the upload `cacheUpload` reports on).
     return {
       buildRef: `${namespace}/${name}`, imageRef, requestedTag: tag, phases: null, engine: ENGINE,
       steps: clock.slowest(SLOWEST_STEPS_KEPT), cachedSteps: clock.cached,
       cacheUpload: cache ? cache.upload : null,
+      starterCache: starter ? { starter: starter.id, export: starterExport } : null,
     };
   } catch (err) {
     await runtime.deleteIfPresent(batch, 'deleteNamespacedJob', name, namespace, { propagationPolicy: 'Background' })
@@ -1012,7 +1079,7 @@ module.exports = {
     BUILD_SCRIPT, PREFLIGHT_EXIT, UNAVAILABLE_MEMO_MS, jobManifest, recipeOf, progressFromLine, stepClock, digestFromPod, exitCodeFromPod,
     repoOwnerAndName, requireConfig,
     STEPS_AWK, CACHE_STEPS_ANNOTATION, CACHE_CHANCES, CACHE_CHANCE_WINDOW_MS, CACHE_MAX_STEPS,
-    cacheReport, cacheReportText, settledCacheSteps,
+    cacheReport, cacheReportText, settledCacheSteps, starterCache,
     resetUnavailable() { _unavailable = null; },
   },
 };

@@ -41,6 +41,7 @@
 'use strict';
 
 const { nativeWebSessionIsLive } = require('../../services/web-session-auth');
+const { activityTimePrecision } = require('../../services/topochain/activity-time');
 
 
 const {
@@ -300,7 +301,7 @@ async function fetchChallengeProgress(pool, userId, eventId) {
 // activity can outlive the challenge it points at).
 async function fetchBreakdownActivities(pool, userId, eventId) {
   const { rows } = await pool.query(
-    `SELECT ua.id, ua.challenge_id, ua.activity_type, ua.points, ua.description, ua.activity_at,
+    `SELECT ua.id, ua.challenge_id, ua.activity_type, ua.points, ua.description, ua.activity_at, ua.metadata,
             ct.kind AS activity_kind
        FROM user_activities ua
        JOIN challenges c ON c.id = ua.challenge_id
@@ -317,6 +318,7 @@ async function fetchBreakdownActivities(pool, userId, eventId) {
     points: num(r.points) ?? 0,
     description: r.description,
     activity_at: iso(r.activity_at),
+    activity_time_precision: activityTimePrecision(r),
   }));
 }
 
@@ -685,7 +687,7 @@ async function fetchChallengesForSeason(pool, seasonId) {
 // whole list, grouped in JS per challenge_id by the route below.
 async function fetchOwnChallengeActivities(pool, userId, challengeIds) {
   const { rows } = await pool.query(
-    `SELECT challenge_id, points, description, activity_at
+    `SELECT challenge_id, points, description, activity_at, metadata
        FROM user_activities
       WHERE user_id = $1 AND challenge_id = ANY($2::bigint[])
       ORDER BY activity_at DESC`,
@@ -1338,6 +1340,7 @@ function topochainMobileRoutes(config) {
         return buildMobileChallengeItem(r, {
           activities: list.map((a) => ({
             points: num(a.points) ?? 0, description: a.description, activity_at: iso(a.activity_at),
+            activity_time_precision: activityTimePrecision(a),
           })),
           // activities_total: this endpoint's own aggregate, summed from
           // the SAME rows `activities` carries (judgment call: mirrors

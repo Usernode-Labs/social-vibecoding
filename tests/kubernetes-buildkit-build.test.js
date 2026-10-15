@@ -170,6 +170,8 @@ test('the Job manifest: rootless daemon, per-app cache repository, source and id
   assert.equal(env.REGISTRY_ATTRS, '');
   assert.equal(env.CACHE_UPLOAD, 'auto');
   assert.equal(env.CACHE_SETTLED_STEPS, '', 'no history: whatever runs causes a cache upload');
+  assert.equal(env.STARTER_CACHE_REF, '', 'an app made from no starter has its own cache only');
+  assert.equal(env.STARTER_CACHE_EXPORT, '');
   assert.equal(env.BUILDKITD_FLAGS, '--oci-worker-no-process-sandbox');
   assert.equal(env.DOCKER_CONFIG, undefined, 'anonymous registry: no credential mount');
   assert.deepEqual(pod.volumes.map((v) => v.name).sort(), ['buildkitd', 'workspace']);
@@ -229,6 +231,11 @@ test('the build script: fetches by SHA, exports the tree without .git, never pri
   assert.match(upload, /--export-cache /);
   assert.match(upload, /--import-cache /, 'layers the cache served are lazy references to it');
   assert.doesNotMatch(upload, /--output|--metadata-file/, 'the pushed image cannot change after its digest is read');
+  // The starter's shared cache: read by both runs, written only by the upload.
+  assert.match(build, /\$\{starter_import:\+--import-cache "\$starter_import"\}/);
+  assert.match(upload, /\$\{starter_import:\+--import-cache "\$starter_import"\}/);
+  assert.doesNotMatch(build, /starter_export/);
+  assert.match(upload, /\$\{starter_export:\+--export-cache "\$starter_export"\}/);
   for (const flag of ['--frontend dockerfile.v0', '--local context=/workspace/src', '--local dockerfile=/workspace/src',
     '--opt "filename=$DOCKERFILE"', '--opt "build-arg:GIT_SHA=$GIT_SHA"']) {
     assert.ok(build.includes(flag) && upload.includes(flag), `both runs solve the same build (${flag})`);
@@ -390,6 +397,111 @@ test('createBuild: BUILDKIT_CACHE_UPLOAD=always asks for no history and uploads 
   await assert.rejects(buildkit.createBuild(config({ buildkitCacheUpload: 'never' }), {
     app, revision, environment: 'staging', sessionId: 42, sourceDir: sourceTree(['Dockerfile']),
   }, runtimeWith(clients)), /Unsupported BUILDKIT_CACHE_UPLOAD=never \(auto, always\)/);
+});
+
+// The starter's shared cache (src/services/kubernetes-buildkit.js, "The
+// starter's shared cache"): which apps read it, which build writes it, and
+// the switch that turns it off. What the script does with the two
+// variables is in tests/kubernetes-buildkit-cache-upload.test.js.
+const starterApp = { ...app, slug: 'groceries-3f9a1c', template: 'grocery-list' };
+const envOf = (state) => Object.fromEntries(state.jobs[0].spec.template.spec.containers[0].env.map((e) => [e.name, e.value]));
+
+test('starterCache: a ready-made starter\'s own repository beside the apps\' caches; nothing for any other app, or when it is off', () => {
+  const { starterCache } = buildkit._forTest;
+  const runtime = runtimeWith({});
+  const cfg = config().kubernetes;
+  assert.deepEqual(starterCache(cfg, runtime, starterApp),
+    { id: 'grocery-list', ref: 'registry.test/cache/starter-grocery-list:buildkit-cache' });
+  assert.deepEqual(starterCache(cfg, runtime, { ...app, template: 'tier-list-hikes' }),
+    { id: 'tier-list-hikes', ref: 'registry.test/cache/starter-tier-list-hikes:buildkit-cache' }, 'each tier list its own');
+  for (const template of [undefined, null, 'empty', 'game-board', 'game-2d', 'nope', '../../etc']) {
+    assert.equal(starterCache(cfg, runtime, { ...app, template }), null, `${template}: not a ready-made starter`);
+  }
+  assert.equal(starterCache(config({ buildkitStarterCache: false }).kubernetes, runtime, starterApp), null, 'BUILDKIT_STARTER_CACHE=off');
+  assert.ok(starterCache(config({ buildkitStarterCache: true }).kubernetes, runtime, starterApp));
+  assert.equal(starterCache(cfg, runtime, { ...starterApp, slug: 'starter-grocery-list' }), null,
+    'an app whose own cache would be the starter\'s keeps it to itself');
+});
+
+test('createBuild: a ready-made app\'s first build, of the starter as generated, reads and writes the starter\'s cache', async () => {
+  const { clients, state } = fakeCluster({ podMessage: `cache-upload=done\ncache-ran=aaaaaaaaaaaa\ncache-served=bbbbbbbbbbbb\n${digest('d')}` });
+  const result = await buildkit.createBuild(config(), {
+    app: starterApp, revision, environment: 'production', sourceDir: sourceTree(['Dockerfile']), starterTree: true,
+  }, runtimeWith(clients));
+  const env = envOf(state);
+  assert.equal(env.CACHE_REF, 'registry.test/cache/groceries-3f9a1c:buildkit-cache', 'the app\'s own cache, as before');
+  assert.equal(env.STARTER_CACHE_REF, 'registry.test/cache/starter-grocery-list:buildkit-cache');
+  assert.equal(env.STARTER_CACHE_EXPORT, 'yes');
+  assert.deepEqual(result.starterCache, { starter: 'grocery-list', export: true });
+  assert.equal(result.cacheUpload, 'done');
+});
+
+test('createBuild: every other build of a ready-made app only reads the starter\'s cache', async () => {
+  for (const params of [
+    { environment: 'staging', sessionId: 42 }, // a proposal's preview
+    { environment: 'production' }, // a merge, a redeploy, a create that cloned its repository back
+    { environment: 'production', starterTree: false },
+  ]) {
+    const { clients, state } = fakeCluster();
+    const result = await buildkit.createBuild(config(), {
+      app: starterApp, revision, sourceDir: sourceTree(['Dockerfile']), ...params,
+    }, runtimeWith(clients));
+    const env = envOf(state);
+    assert.equal(env.STARTER_CACHE_REF, 'registry.test/cache/starter-grocery-list:buildkit-cache', JSON.stringify(params));
+    assert.equal(env.STARTER_CACHE_EXPORT, '', JSON.stringify(params));
+    assert.deepEqual(result.starterCache, { starter: 'grocery-list', export: false });
+  }
+});
+
+test('createBuild: no starter, a starter that is not ready-made, or BUILDKIT_STARTER_CACHE=off is the per-app cache alone, as before', async () => {
+  for (const [label, cfg, buildApp] of [
+    ['no starter', config(), app],
+    ['the empty scaffold', config(), { ...app, template: 'empty' }],
+    ['a game starter', config(), { ...app, template: 'game-board' }],
+    ['switched off', config({ buildkitStarterCache: false }), starterApp],
+  ]) {
+    const { clients, state } = fakeCluster();
+    const result = await buildkit.createBuild(cfg, {
+      app: buildApp, revision, environment: 'production', sourceDir: sourceTree(['Dockerfile']), starterTree: true,
+    }, runtimeWith(clients));
+    const env = envOf(state);
+    assert.equal(env.STARTER_CACHE_REF, '', label);
+    assert.equal(env.STARTER_CACHE_EXPORT, '', `${label}: nothing to write either`);
+    assert.equal(result.starterCache, null, label);
+    assert.match(env.CACHE_REF, /:buildkit-cache$/, `${label}: its own cache stays`);
+  }
+});
+
+test('BUILDKIT_STARTER_CACHE: on unless it is set to off', () => {
+  const runtimeConfig = require('../src/config');
+  const { setPlatformKeys } = require('./platform-keys');
+  setPlatformKeys();
+  // As tests/data-key-rename.test.js boots it: load() needs these, and is chatty.
+  const loadWith = (value) => {
+    const env = {
+      DATABASE_URL: 'postgres://localhost/test', SESSION_SECRET: 'test-session-secret',
+      ADMIN_USERNAME: 'admin', ADMIN_PASSWORD: 'admin-pass', BUILDKIT_STARTER_CACHE: value,
+    };
+    const saved = {};
+    for (const [k, v] of Object.entries(env)) {
+      saved[k] = process.env[k];
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    const realLog = console.log;
+    console.log = () => {};
+    try {
+      return runtimeConfig.load().kubernetes.buildkitStarterCache;
+    } finally {
+      console.log = realLog;
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+  };
+  for (const value of [undefined, '', 'on', '1', 'true', 'yes']) assert.equal(loadWith(value), true, String(value));
+  for (const value of ['off', 'OFF', ' off ', '0', 'false']) assert.equal(loadWith(value), false, value);
 });
 
 test('createBuild: a finished build says where its time went, without a progress listener', async () => {

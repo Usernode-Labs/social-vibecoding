@@ -6845,6 +6845,15 @@ const AppView = {
     const via = agent ? PlatformI18n.t('changes:page.thread.via', { agent })
       : item.external_agent ? PlatformI18n.t('changes:page.thread.viaExternal')
         : (item.source === 'imported' ? PlatformI18n.t('changes:page.thread.viaGitHub') : null);
+    // Issue #5178: the header repeats the status pill the board card shows,
+    // beside "Change #N" — "✓ Live", "Going live…", or the vote's own words.
+    // A change still being built or closed has no pill worth repeating: its
+    // card pill would read as a bare tally, and the Votes card under the
+    // title already says where those stand. The card's own state wins, so
+    // the kind (proposal or gov) and majority stay the card's.
+    const statusState = ['active', 'paused', 'closed'].includes(item.status)
+      ? null
+      : ((card && card.pill && card.pill.state) || AppView.statusPillState(item, kind === 'gov' ? { kind: 'gov' } : {}) || null);
     return {
       number: n || null,
       category,
@@ -6853,6 +6862,7 @@ const AppView = {
       time: stamp.text,
       timeTitle: stamp.title,
       via,
+      status: statusState && statusState.label ? statusState : null,
       votes: AppView._changeVotesView(item, card),
       testing: AppView._changeTestingView(item),
       shots: AppView._changeShotsView(kind, item),
@@ -8961,6 +8971,28 @@ const AppView = {
     // A fresh run started first is the one the feed's own load then joins.
     if (opts) AppView._loadDevData(opts);
     return AppView._loadDevFeed();
+  },
+
+  // (#5164) The project hub's quiet refresh: the For you card (the votes
+  // owed) and Recently live, re-read while one of the hub's own places is
+  // showing. A timed tick and a return to the tab call it; a socket burst
+  // still goes through refreshDevData, and a tick landing beside one joins
+  // the same run (_loadDevData's in-flight join / queue).
+  //
+  // `whole` widens the read to the whole board (a return to the tab, where
+  // the missed time can have moved anything); a tick reads only the parts
+  // the hub's two cards draw from — the proposals' tallies and the merged
+  // list — so it stays light. Nothing here runs off the board or under a
+  // hidden tab, and a board that has not loaded whole once is not partly
+  // refreshed.
+  refreshHubLive({ whole = false } = {}) {
+    if (!AppView.appData || typeof App === 'undefined' || App.currentTab !== 'dev') return undefined;
+    if (App.currentSubTab !== 'forum') return undefined;
+    if (document.hidden) return undefined;
+    if (!AppView._devDataReady) return undefined;
+    App._announceRefreshIntent?.();
+    const parts = whole ? null : new Set(['promoted', 'merged']);
+    return AppView._loadDevFeed(parts ? { parts } : null);
   },
 
   // What a live burst moved, as board parts: a vote moves the proposals'

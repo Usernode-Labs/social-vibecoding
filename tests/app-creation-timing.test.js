@@ -217,6 +217,67 @@ test('the starter just committed is written out as the build tree, not cloned ba
   assert.equal(m.failedIn, undefined);
 });
 
+// The starter's shared layer cache (services/kubernetes-buildkit.js): the
+// build is told the starter the app was made from, and whether its tree is
+// that starter exactly as this attempt committed it. Only that build writes
+// the starter's cache.
+function recordBuilds(t) {
+  const runtime = require('../src/services/application-runtime');
+  const real = runtime.build;
+  const calls = [];
+  runtime.build = async (config, params) => { calls.push(params); return real(config, params); };
+  t.after(() => { runtime.build = real; });
+  return calls;
+}
+
+test('the build of the starter just committed is told so, with the starter the app was made from', async (t) => {
+  const slug = 'timed-starter-tree';
+  t.after(() => cleanup(slug));
+  const { appCreator, timed } = loadAppCreator({ templateFiles: STARTER });
+  const calls = recordBuilds(t);
+
+  await appCreator.createApp({}, appRow(slug, { template: 'grocery-list' }));
+
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].app, { id: 77, slug, repo_url: `https://github.com/usernode-bot/${slug}`, template: 'grocery-list' });
+  assert.equal(calls[0].starterTree, true);
+  assert.equal(timed()[0].metadata.starter, 'grocery-list');
+});
+
+test('a build of anything but the starter just committed is not the starter\'s tree', async (t) => {
+  for (const [label, githubStubs] of [
+    ['adopted', { createRepo: async (owner, s) => ({ html_url: `https://github.com/${owner}/${s}`, adopted: true }) }],
+    ['no sha', { pushFiles: async () => undefined }],
+  ]) {
+    const slug = `timed-not-tree-${label.replace(/\W/g, '')}`;
+    t.after(() => cleanup(slug));
+    const { appCreator } = loadAppCreator({ templateFiles: STARTER, githubStubs });
+    const calls = recordBuilds(t);
+    await appCreator.createApp({}, appRow(slug, { template: 'grocery-list' }));
+    assert.equal(calls.length, 1, label);
+    assert.equal(calls[0].app.template, 'grocery-list', `${label}: it still reads the starter's cache`);
+    assert.equal(calls[0].starterTree, false, `${label}: cloned back, so it does not write it`);
+  }
+  // An import has no starter at all.
+  const slug = 'timed-not-tree-import';
+  t.after(() => cleanup(slug));
+  const { appCreator } = loadAppCreator({ githubStubs: { getFileContent: async () => '{}' } });
+  const calls = recordBuilds(t);
+  await appCreator.createApp({}, appRow(slug, { repo_url: 'https://github.com/someone/thing' }));
+  assert.equal(calls[0].app.template, null);
+  assert.equal(calls[0].starterTree, false);
+  // Nor has a fork, which deploys through the same tail with neither.
+  const forkDir = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'timed-fork-'));
+  t.after(() => fs.rmSync(forkDir, { recursive: true, force: true }));
+  await appCreator.finalizeDeploy({}, {
+    appId: 9, name: 'Fork', slug: 'timed-fork-tree', tempDir: forkDir, dbUrl: 'postgres://x',
+    repoUrl: 'https://github.com/x/y', mainSha: null,
+  });
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].app.template, null);
+  assert.equal(calls[1].starterTree, false);
+});
+
 test('an adopted repository, or a push without a commit sha, is cloned as before', async (t) => {
   for (const [label, githubStubs] of [
     ['adopted', { createRepo: async (owner, s) => ({ html_url: `https://github.com/${owner}/${s}`, adopted: true }) }],
@@ -327,6 +388,18 @@ test('buildNote keeps the engine, reuse and the slowest steps or phases, bounded
   assert.equal(note.reused, undefined);
   assert.deepEqual(timingModule.buildNote({ engine: 'kpack', result: { reused: true, phases: [{ name: 'build', ms: 9000 }, { name: 'bad' }] } }),
     { engine: 'kpack', reused: true, phases: [{ name: 'build', ms: 9000 }] });
+});
+
+test('buildNote says what happened to the layer cache, and which starter\'s shared cache the build read or wrote', () => {
+  assert.deepEqual(timingModule.buildNote({
+    engine: 'buildkit',
+    result: { cachedSteps: 9, cacheUpload: 'done', starterCache: { starter: 'grocery-list', export: true } },
+  }), { engine: 'buildkit', cachedSteps: 9, cacheUpload: 'done', starterCache: { starter: 'grocery-list', export: true } });
+  assert.deepEqual(timingModule.buildNote({
+    engine: 'buildkit', result: { cacheUpload: 'skipped', starterCache: { starter: 'chore-list', export: false } },
+  }), { engine: 'buildkit', cacheUpload: 'skipped', starterCache: { starter: 'chore-list', export: false } });
+  assert.deepEqual(timingModule.buildNote({ engine: 'buildkit', result: { cacheUpload: null, starterCache: null } }), { engine: 'buildkit' },
+    'no starter, and a build that said nothing about its cache');
 });
 
 test('record writes the event and never throws', async () => {

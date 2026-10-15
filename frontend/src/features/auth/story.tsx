@@ -24,12 +24,13 @@
  * expired, whose Get started sends a code.
  */
 
-// The three examples are the make screen's own starting points (Evan, 8 Oct
-// 2026, #4354): the same three here and there, the tier list drawn as one.
+// The three examples are the make screen's front three (Evan, 8 Oct 2026,
+// #4354; examples.ts FRONT since 15 Oct): the same three here and there, the
+// tier list drawn as one.
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import { Message } from '../../lib/i18n/react';
-import { TEMPLATES } from '../first-session/examples';
+import { FRONT } from '../first-session/examples';
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { TierChart } from '../first-session/tier-chart';
 
@@ -53,7 +54,7 @@ export function fitStyle(fit: number) {
     row: fit >= 2 ? 'py-2' : 'py-2.5',
     foot: fit >= 2 ? 'pt-4' : 'pt-6',
     headline: fit >= 3 ? 'text-[23px] leading-[28px]' : 'text-[28px] leading-[33px]',
-    count: fit >= 4 ? 2 : TEMPLATES.length,
+    count: fit >= 4 ? 2 : FRONT.length,
   };
 }
 
@@ -183,7 +184,7 @@ export function Story({ primaryClass, welcomeEmail = null, onStart, onSignIn }: 
         <div className={`${s.examples} flex w-full max-w-sm md:max-w-md flex-col gap-2 text-left`}>
           <div className={`px-1 ${SMALL_CAPS}`}>{t('auth:story.examples')}</div>
           <ul className="w-full overflow-hidden rounded-[20px] bg-white dark:bg-zinc-900 shadow-[inset_0_0_0_1px_var(--app-sheet-line)]">
-            {TEMPLATES.slice(0, s.count).map((e) => (
+            {FRONT.slice(0, s.count).map((e) => (
               <li key={e.key} className={`flex items-center gap-3 px-3.5 ${s.row} [&+&]:shadow-[inset_0_1px_0_var(--app-sheet-line)]`}>
                 <span className="app-icon-tile flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-2xl" aria-hidden="true">{e.chart ? <TierChart /> : e.emoji}</span>
                 <span className="min-w-0 flex-1">
