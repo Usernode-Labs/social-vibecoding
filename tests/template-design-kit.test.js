@@ -16,9 +16,9 @@
 //      a card, a sentence-case section label, a 4-step type scale, and the
 //      loading, empty and error states.
 //   3. THE SCREEN uses only the kit: no hex, no stock palette, no stock
-//      size, none of the tells the benchmark's lint counts; and its
-//      leaderboard shows honest states (never "No presses yet" for a
-//      failure or while loading).
+//      size, none of the tells the benchmark's lint counts; and since
+//      #4047 it loads no data at all, so it ships no loading, empty or
+//      error state and no script of its own.
 //   4. CLAUDE.md has a "## Design" section the first build fills in.
 //
 // Only newly created repositories get this; existing apps keep what they
@@ -161,7 +161,11 @@ test('the component layer: 44 px controls, a list, a card, a label, and the thre
   const css = file(generate(), 'styles/tailwind-input.css');
   const c = componentsOf(css);
   assert.deepEqual(Object.keys(c).sort(), ['.btn-primary', '.btn-secondary', '.card', '.field', '.list', '.list-row',
-    '.section-label', '.skeleton', '.state-empty', '.state-error'].sort());
+    '.page-column', '.section-label', '.skeleton', '.state-empty', '.state-error'].sort());
+  // App bench run 193: desktop layouts stretched across the window, and
+  // loading states shaped unlike the rows they stood for.
+  assert.match(c['.page-column'], /^mx-auto w-full max-w-2xl$/, 'one centred column');
+  assert.match(css.replace(/\s+/g, ' '), /loading: the content's own shape, never a blank: the same list and rows at their height, with \.skeleton bars where their text goes, so nothing moves when the data arrives;/);
   for (const sel of ['.btn-primary', '.btn-secondary']) {
     assert.match(c[sel], /\bmin-h-11\b/, `${sel}: 44 px tall`);
     assert.match(c[sel], /\bmin-w-11\b/, `${sel}: and wide`);
@@ -200,10 +204,16 @@ test('the kit compiles: tokens in both looks, components only when used', (t) =>
   assert.match(out, /:root \{\s*--ground: 250 250 249;/);
   assert.match(out, /\.dark \{\s*--ground: 12 10 9;/);
   assert.match(out, /\.bg-ground \{\s*--tw-bg-opacity: 1;\s*background-color: rgb\(var\(--ground\) \/ var\(--tw-bg-opacity, 1\)\);/);
-  assert.match(out, /\.btn-primary,\s*\.btn-secondary \{[^}]*min-height: 2\.75rem;[^}]*min-width: 2\.75rem;/, '44 px each way');
-  assert.match(out, /\.state-error \{/);
   assert.match(out, /\.text-title \{\s*font-size: 1\.75rem;/);
-  assert.doesNotMatch(out, /\.field \{/, 'a component the screen does not use is not shipped');
+  // #4047: the starter screen shows the card alone, so the build ships only
+  // it; the rest of the kit stays in the input stylesheet (pinned above) and
+  // compiles when the real app's screens use those components.
+  assert.match(out, /\.card \{/);
+  for (const sel of ['.page-column', '.btn-primary', '.btn-secondary', '.field', '.list', '.list-row',
+    '.section-label', '.skeleton', '.state-empty', '.state-error']) {
+    assert.doesNotMatch(out, new RegExp(`${sel.replace(/\./g, '\\.')} \\{`),
+      `${sel} is unused, so it is not shipped`);
+  }
 });
 
 // ── 3. The screen ────────────────────────────────────────────────────────
@@ -233,68 +243,18 @@ test('the benchmark\'s tells lint finds nothing in a new app\'s source', () => {
   assert.equal(tells.hexColours.count, 0, JSON.stringify(tells.hexColours.values));
 });
 
-// The leaderboard's script, run against a stand-in for its DOM.
-function runLeaderboard(html, fetchImpl) {
-  const els = new Map();
-  const element = (id, hidden = false) => ({
-    id, hidden, textContent: '', className: '', children: [], listeners: {},
-    addEventListener(type, fn) { this.listeners[type] = fn; },
-    replaceChildren(...kids) { this.children = kids; },
-    append(...kids) { this.children.push(...kids); },
-  });
-  for (const [, id, rest] of html.matchAll(/<\w+ id="([\w-]+)"([^>]*)>/g)) els.set(id, element(id, /\bhidden\b/.test(rest)));
-  const script = html.slice(html.lastIndexOf('<script>') + '<script>'.length, html.lastIndexOf('</script>'));
-  const context = vm.createContext({
-    window: { location: { search: '?token=t' } },
-    document: {
-      getElementById: (id) => els.get(id) || null,
-      createElement: (tag) => ({ ...element(null), tag }),
-    },
-    URLSearchParams,
-    fetch: fetchImpl,
-    console,
-  });
-  vm.runInContext(script, context);
-  const shown = () => ['leaderboard-loading', 'leaderboard', 'leaderboard-empty', 'leaderboard-error'].filter((id) => !els.get(id).hidden);
-  return { els, shown };
-}
-const settle = () => new Promise((resolve) => setImmediate(resolve));
-const ok = (body) => Promise.resolve({ ok: true, status: 200, json: async () => body });
-
-test('the leaderboard shows honest states: loading, then the list, empty only when it is, error on failure', async () => {
+// The leaderboard's honest-states test (#3737) ran the demo script against
+// a stand-in DOM. #4047 removed the Press! demo and with it the screen's
+// only data load, so there is nothing left to run: the screen is static
+// markup. The state components stay in the kit's stylesheet (pinned above)
+// for the real app's first screens, and CLAUDE.md's design rules and the
+// platform conventions carry the honest-states requirement to them.
+test('the starter screen loads no data, so it ships no states and no script', () => {
   const html = file(generate(), 'public/index.html');
-  // Before anything answers: the skeleton, nothing else.
-  let pending;
-  let page = runLeaderboard(html, () => new Promise((resolve) => { pending = resolve; }));
-  assert.deepEqual(page.shown(), ['leaderboard-loading'], 'loading first, never a blank or an empty state');
-  pending({ ok: true, status: 200, json: async () => ({ leaderboard: [] }) });
-  await settle();
-  assert.deepEqual(page.shown(), ['leaderboard-empty'], 'empty once it loaded and found nothing');
-
-  // A failure is the error state, never "No presses yet".
-  for (const failing of [() => Promise.resolve({ ok: false, status: 500, json: async () => ({ error: 'Internal Server Error' }) }),
-    () => Promise.reject(new TypeError('Failed to fetch'))]) {
-    page = runLeaderboard(html, failing);
-    await settle();
-    assert.deepEqual(page.shown(), ['leaderboard-error']);
-  }
-  assert.match(html, /<div id="leaderboard-error"[\s\S]*?Couldn't load the leaderboard[\s\S]*?Pressing still works[\s\S]*?>Retry<\/button>/,
-    'what failed, what still works, and Retry');
-
-  // Retry: the skeleton again, then the data.
-  let calls = 0;
-  page = runLeaderboard(html, () => (calls++ === 0 ? Promise.reject(new Error('offline'))
-    : ok({ leaderboard: [{ username: '<img src=x onerror=alert(1)>', presses: '2' }] })));
-  await settle();
-  assert.deepEqual(page.shown(), ['leaderboard-error']);
-  page.els.get('leaderboard-retry').listeners.click();
-  assert.deepEqual(page.shown(), ['leaderboard-loading']);
-  await settle();
-  assert.deepEqual(page.shown(), ['leaderboard']);
-  const [row] = page.els.get('leaderboard').children;
-  assert.equal(row.children[0].textContent, '1. <img src=x onerror=alert(1)>', 'a name is text, never HTML');
-  assert.equal(page.els.get('count').textContent, '2 presses so far');
-  assert.doesNotMatch(html.slice(html.lastIndexOf('<script>')), /innerHTML/);
+  const body = html.slice(html.indexOf('<body'));
+  assert.doesNotMatch(body, /<script/, 'the body is static markup only; the head keeps the bridge, theme and forwarder scripts');
+  assert.doesNotMatch(body, /fetch\(|leaderboard|press-btn|Press!/, 'no demo endpoints, ids or fetching left');
+  assert.match(body, /usernode-starter-notice@1/, 'the sentinel block survives');
 });
 
 // ── 4. CLAUDE.md's design record ─────────────────────────────────────────
@@ -315,9 +275,12 @@ test('the starter\'s CLAUDE.md has a short "## Design" section the first build f
   // The rules.
   assert.match(flat, /never a raw hex value or a stock palette class/);
   assert.match(flat, /Tap targets are at least 44 px/);
-  assert.match(flat, /honest loading, empty and error states\. Never show the empty state while loading or after a failure; an error says what failed, what still works, and offers Retry\./);
+  assert.match(flat, /honest loading, empty and error states\. Never show the empty state while loading or after a failure; an error says what failed, what still works, and offers Retry\. Loading has the content's own shape \(its rows, with `skeleton` bars for their text\)\./);
+  assert.match(flat, /Each screen sits in `page-column`, one centred column on a wide window\./);
   assert.match(flat, /Seed obviously fake staging demo data so the populated screen can be seen \("Staging mock data" in the platform conventions\)\./);
   assert.match(flat, /No cards in cards, no uppercase eyebrows, no emoji as icons\./);
+  // Run five (13 Oct 2026, fix 7): a blank lavender square in the header.
+  assert.match(flat, /A header that shows the app's own mark shows the project's icon there \(the emoji in `dapp\.json`'s `icon` block\) or no mark at all: never an empty tile, and never `brand\/icon\.png`, which the app does not serve\./);
   assert.match(flat, /The kit is in `styles\/tailwind-input\.css`/);
   assert.ok(section.trim().split('\n').length <= 40, 'short: the long form belongs in a design skill');
   assert.doesNotMatch(section, /—/, 'no em dashes: the agent copies the voice it is given');
@@ -326,10 +289,16 @@ test('the starter\'s CLAUDE.md has a short "## Design" section the first build f
   assert.match(claude.replace(/\s+/g, ' '), /both looks \(the design kit's colour tokens carry both\), unless one fixed look is the point of this app, like a game's own scene; then say so under "## Design" below\./);
 });
 
-test('a starter other than Empty keeps its notes as they were', () => {
-  for (const id of appTemplates.TEMPLATE_IDS.filter((x) => x !== appTemplates.DEFAULT_TEMPLATE)) {
+test('a ready-made app is built on the kit too, and its notes say so', () => {
+  // Evan, 8 October 2026: the ready-made apps (services/app-templates.js)
+  // are drawn with the kit, so their notes carry the same "## Design"
+  // section, filled in by the first change that gives one a look of its own.
+  for (const id of appTemplates.READY_IDS) {
     const claude = file(generate(id), 'CLAUDE.md');
-    assert.doesNotMatch(claude, /\n## Design\n/, id);
-    assert.match(claude.replace(/\s+/g, ' '), /both looks \(Tailwind's `dark:` variants\), unless one fixed look is the point of this app, like a game's own scene; then say so under "App-specific conventions" below\./, id);
+    assert.match(claude, /\n## Design\n/, id);
+    const flat = claude.replace(/\s+/g, ' ');
+    assert.match(flat, /The screen is built from the design kit, which is not placeholder either: keep building with it, and fill in "## Design" below with the first change that gives this app a look of its own\./, id);
+    assert.match(flat, /both looks \(the design kit's colour tokens carry both\), unless one fixed look is the point of this app, like a game's own scene; then say so under "## Design" below\./, id);
+    assert.ok(claude.indexOf('## About Demo') < claude.indexOf('\n## Design\n'), `${id}: app-specific, after About`);
   }
 });

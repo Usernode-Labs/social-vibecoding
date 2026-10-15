@@ -43,9 +43,12 @@ test('the ten app categories are the ones that were agreed', () => {
   // first: a change you can approve is ready to try, on by default. A small
   // private group's "Every message in the discussion" sits beside the
   // replies (services/group-channel-notify.js).
+  // #4787 adds the voter's side of a merge: a change you voted on going
+  // live, its own switch beside "Votes on your proposals" because none of
+  // the others describes it, on by default.
   assert.deepEqual([...prefs.APP_CATEGORY_KEYS], [
     'changes_ready', 'new_proposals', 'new_issues', 'proposal_status', 'channel_messages',
-    'thread_replies', 'proposal_votes', 'revision_recheck', 'weekly_digest', 'app_health',
+    'thread_replies', 'proposal_votes', 'voted_changes_live', 'revision_recheck', 'weekly_digest', 'app_health',
   ]);
 });
 

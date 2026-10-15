@@ -108,6 +108,11 @@ test('a first version’s line is its project, and the maker’s hello stays bef
   assert.equal(botHead('**Todo List**\n\nx', { ...started, appName: 'Herbs' }), null, 'only the project its metadata names');
 });
 
+test('#4604: the hello after the tour names no project, so it draws no card', () => {
+  const meta = { kind: 'hello_tour', hello: dm.TOUR_HELLO, actions: dm.promptActions(dm.TOUR_PROMPTS), status: 'open' };
+  assert.equal(botHead(dm.TOUR_HELLO, meta), null, 'plain words, no head line');
+});
+
 test('a first version that went live with its Open button keeps the button and drops the line', () => {
   const live = { ...FIRST, kind: 'merged', actions: [{ id: 'open_app', label: 'Open Todo List', style: 'primary', type: 'open', target: '#app/todo-list-b91765/app' }] };
   const head = botHead('**Todo List**, its first version\n\nIt\'s live now. Open Todo List below to try it.', live);
@@ -157,17 +162,27 @@ test('the server’s own lines parse, in the messages the bot sends', () => {
   assert.equal(botHead(dm.dmText('question', { question: 'Which colour?' }, { ...context, issueNumber: 1, firstVersion: true }), FIRST).kind, 'project');
   // The weekly limit, Filed and already filed lead with the same line (homeroom-bot-mayor.js).
   const held = dm.overAllowanceText({ line: dm.requestLine(context), appName: 'Todo List' });
-  assert.equal(botHead(held, { ...META, kind: 'allowance' }).rest, 'You\'ve used this week\'s building time. I\'ll start it on Monday.');
+  // One request, one story (spec 3, Stream 1 item 5): the on-hold words.
+  assert.equal(botHead(held, { ...META, kind: 'allowance' }).rest, 'On hold until Monday: your building time for this week is used up.');
   const mayor = read('src/services/homeroom-bot-mayor.js');
   assert.match(mayor, /`\$\{line\}\\n\\nFiled\. \$\{builds/);
   assert.match(mayor, /requestLine\(\{ appName: name, issueNumber: n, issueTitle: action\.title \}\)\}\\n\\nI already filed that\./);
   // The offers' lines (homeroom-bot-mayor.js offer).
   assert.match(mayor, /`\*\*\$\{name\}\*\* · proposal: \$\{o\.title\}`/);
   assert.match(mayor, /`\*\*\$\{name\}\*\* · new request: \$\{o\.title\}`/);
-  // A maker's first project: the hello, then the project's line (homeroom-bot-dm.js startFirstVersion).
-  const source = read('src/services/homeroom-bot-dm.js');
-  assert.match(source, /\? `\$\{MAKER_HELLO\}\\n\\n\*\*\$\{name\}\*\*\\n\\nI'm setting up \$\{name\} now\./);
-  assert.match(source, /: `\*\*\$\{name\}\*\*\\n\\nThanks! I'm setting up \$\{name\} now\./);
+  // A maker's first project: the hello, then the project's line (homeroom-bot-dm.js
+  // firstVersionStartedText), with and without the made screen's plan.
+  const started = { kind: 'first_version_started', appSlug: 'todo-list-b91765', appName: 'Todo List' };
+  for (const earlyPlan of [true, false]) {
+    const greeted = dm.firstVersionStartedText({ name: 'Todo List', hello: true, earlyPlan });
+    const head = botHead(greeted, { ...started, hello: dm.MAKER_HELLO });
+    assert.equal(head.kind, 'project');
+    assert.equal(head.before, dm.MAKER_HELLO);
+    assert.match(head.rest, /^I'm setting up Todo List now\. /);
+    const again = botHead(dm.firstVersionStartedText({ name: 'Todo List', earlyPlan }), started);
+    assert.equal(again.kind, 'project');
+    assert.match(again.rest, /^Thanks! I'm setting up Todo List now\. /);
+  }
 });
 
 // ── 2. The card ─────────────────────────────────────────────────────────
@@ -189,10 +204,10 @@ test('the request card the message carries is the card, and nothing is fetched f
   assert.deepEqual(asked, [[]], 'no link asked for');
   assert.match(html, /^<div class="mb-1\.5 mt-1 max-w-\[480px\]" data-bot-head-card="request" data-bot-request-card="93"><a href="#app\/todo-list-b91765\/dev\/issues\/93" class="messages-object-card"/,
     'the card leads, linking the request');
-  assert.match(html, />Request</);
+  assert.match(html, />Request #93</, '#4212: the eyebrow names its number, as the bot\'s words do');
   assert.match(html, /Only close a category when its last item is checked/);
   assert.match(html, />Todo List</, 'its project alone');
-  assert.doesNotMatch(html, /closed|by usernode-bot|request #93|#93</,
+  assert.doesNotMatch(html, /closed|by usernode-bot|request #93|(?<!Request )#93</,
     'no status (a live request is GitHub\'s "closed", which read as turned down), no "by", and no line');
   assert.ok(html.indexOf('messages-object-card') < html.indexOf('messages-markdown'), 'then the words');
   assert.match(html, /<div class="messages-markdown gc-msg-content">I couldn't finish building this/);
@@ -243,6 +258,36 @@ test('a project’s card opens its App tab, and a first version gone live with i
     'the words alone: the button is its way in');
 });
 
+// Run four (13 Oct 2026): the card for the maker's new app read "◆". It
+// wears the app's own icon, the tray's as the strip and the news lines draw
+// it, else the emoji the message carries; with neither, the glyph.
+test('a project’s card wears the project’s own icon when it is known', () => {
+  let work = null;
+  const iconic = loadTsx(HEAD, {
+    stubs: {
+      './link-cards': { useLinkCards: () => [] },
+      './bot-work': { useBotWork: () => ({ work }) },
+    },
+  });
+  const drawn = (meta = FIRST) => renderToHtml(createElement(iconic.BotHeadWords, {
+    head: iconic.botHead('**Todo List**, its first version\n\nBuilding the first version now.', meta), objects: [],
+  }));
+  const job = (patch) => ({ appSlug: 'todo-list-b91765', appName: 'Todo List', iconUrl: null, iconEmoji: null, ...patch });
+  work = { needsYou: [], now: [job({ iconUrl: '/app-icons/a1b2c3' })], history: [] };
+  assert.match(drawn(), /<span class="messages-object-icon overflow-hidden" data-object-icon="image"><img src="\/app-icons\/a1b2c3" alt="" class="h-full w-full object-cover" loading="lazy" draggable="false"\/><\/span>/);
+  assert.doesNotMatch(drawn(), /◆/);
+  work = { needsYou: [], now: [], history: [job({ iconEmoji: '🗳️' })] };
+  assert.match(drawn(), /<span class="messages-object-icon text-\[22px\] leading-none" data-object-icon="emoji" aria-hidden="true">🗳️<\/span>/);
+  // Not in the tray: the emoji the message carries, else the glyph.
+  work = { needsYou: [], now: [job({ appSlug: 'elsewhere', iconUrl: '/app-icons/zz' })], history: [] };
+  assert.match(drawn({ ...FIRST, appEmoji: '📚' }), /data-object-icon="emoji" aria-hidden="true">📚</);
+  assert.match(drawn(), /<span class="messages-object-icon">◆<\/span>/);
+  // A request's card keeps its number sign, whatever the tray says.
+  work = { needsYou: [], now: [job({ iconUrl: '/app-icons/a1b2c3' })], history: [] };
+  const request = renderToHtml(createElement(iconic.BotHeadWords, { head: iconic.botHead(`${LINE}\n\n${WORDS}`, META), objects: [] }));
+  assert.match(request, /<span class="messages-object-icon">#<\/span>/);
+});
+
 test('an offer draws the change it carries in its line’s place, or the request it would file, not filed yet', () => {
   answer = null;
   const offer = { kind: 'confirm', appSlug: 'plant-pal', appName: 'Plant pal' };
@@ -290,21 +335,24 @@ test('the two-questions card leads with the request’s card too', () => {
   assert.match(plan, /\{head \? <BotHeadWords head=\{head\} objects=\{message\.objects\} \/>\s*: meta\.lead \? <MessageMarkdown content=\{meta\.lead\} appSlug=\{meta\.appSlug\} \/> : null\}/);
 });
 
-test('the staging preview’s declared check finds the card on the demo DM’s question, followed by its words', () => {
-  const check = JSON.parse(read('dapp.json')).tests.find((t) => /^#4097:/.test(t.name));
+test('the staging preview’s declared check finds the demo DM’s news as one row per request', () => {
+  // One request, one story: the request's card no longer leads a big card
+  // in the main chat; each request is one row (./bot-news-line.tsx), its
+  // earlier news folded into its newest, which counts the updates. The card
+  // still leads the message inside the request's thread. A finished request
+  // (the first version that went live) folds with the others beside it into
+  // one line, whose badges say how each ended.
+  const check = JSON.parse(read('dapp.json')).tests.find((t) => /^#4097/.test(t.name));
   assert.ok(check, 'declared');
   assert.equal(check.path, '/?demo=1#messages/910005');
-  assert.match(check.expectSelector, /\[data-bot-request-card="12"\]:has\(> \.messages-object-card \.messages-object-icon\) \+ \.messages-markdown$/);
+  assert.match(check.expectSelector, /:has\(\[data-bot-settled-badges\] \[data-bot-final=live\]\)/, 'a first version that went live is folded with the finished, said Live');
+  assert.match(check.expectSelector, /\[data-bot-news=question\] \[data-bot-news-state=needs\] \[data-bot-thread-link\]$/, 'the question still waiting counts its updates');
   assert.ok(check.expectSelector.length <= 256, 'within what the runner reads');
+  assert.equal(check.expectText, 'Ready for your yes', 'the change ready to try, where it stands now');
   // The fixture it reads (services/staging-messages.js ensureBotDmFixture):
-  // the question about request #12, which names no project slug.
+  // the change ready to try, a request of its own.
   const fixture = read('src/services/staging-messages.js');
-  const line = '**Staging demo app** · request #12: Staging demo, sort the list by date';
-  assert.ok(fixture.includes(`content: '${line}\\n\\n'`), 'the question opens with the request line');
-  const head = botHead(`${line}\n\nI have a question before I build this:\n\nShould the newest items show first, or the oldest?`,
-    { kind: 'question', appName: 'Staging demo app', issueNumber: 12, issueTitle: 'Staging demo, sort the list by date' });
-  assert.equal(head.title, check.expectText);
-  assert.equal(head.link, null);
+  assert.match(fixture, /kind: 'proposal', \.\.\.ready,/);
 });
 
 // ── Chat replies (homeroom-bot-mayor.js) ────────────────────────────────

@@ -2,7 +2,7 @@
 
 // The helper calls' model (src/services/llm.js helperMessage): GLM 5.3 Flash
 // through OpenRouter first, on the Homeroom bot's key, with a time limit per
-// helper, and Haiku 4.5 when GLM is late, fails or gives nothing usable.
+// helper, and Haiku 5.5 when GLM is late, fails or gives nothing usable.
 // Pins the request GLM is sent, the fallback, the cases that never reach GLM
 // (a BYOK key, HELPER_MODEL=haiku, no bot key, a picked model), a caller's
 // cancel, the cost the answer is billed at, the telemetry pair, and that
@@ -109,9 +109,11 @@ test('GLM late or failing: Haiku answers as attempt 2 of the same call', async (
   await withHelpers({ reply: late }, async ({ client, events }) => {
     const out = await llm.generateSessionTitle({ requests: ['Remind us to water the plants'] });
     assert.equal(out.title, 'From Haiku');
-    assert.equal(out.model, 'claude-haiku-4-5');
-    assert.equal(client.calls[0].model, 'claude-haiku-4-5');
-    assert.equal(client.calls[0].max_tokens, 64, 'Haiku is asked exactly as before');
+    assert.equal(out.model, 'claude-haiku-5-5');
+    assert.equal(client.calls[0].model, 'claude-haiku-5-5');
+    assert.equal(client.calls[0].max_tokens, 64, 'Haiku is asked for the same ceiling as before');
+    assert.deepEqual(client.calls[0].thinking, { type: 'disabled' },
+      'Haiku 5.5 thinks by default; off, so the 64 tokens are all answer');
     assert.equal(events.length, 2);
     const [glm, haiku] = events;
     assert.equal(glm.outcome, 'error');
@@ -123,7 +125,7 @@ test('GLM late or failing: Haiku answers as attempt 2 of the same call', async (
   // An answer with no usable tool call is not an answer.
   await withHelpers({ reply: null }, async ({ client, events }) => {
     const out = await llm.generateSessionTitle({ requests: ['x'] });
-    assert.equal(out.model, 'claude-haiku-4-5');
+    assert.equal(out.model, 'claude-haiku-5-5');
     assert.equal(client.calls.length, 1);
     assert.equal(events[0].outcome, 'error');
   });
@@ -136,12 +138,14 @@ test('never GLM: a BYOK key, HELPER_MODEL=haiku, no bot key, a named Claude mode
     const byok = await llm.helperMessage({
       helper: 'session_title', activeClient: client, params, schema: llm.SESSION_TITLE_SCHEMA, apiKey: 'sk-ant-own', defaults,
     });
-    assert.equal(byok.model, 'claude-haiku-4-5');
+    assert.equal(byok.model, 'claude-haiku-5-5');
     const named = await llm.helperMessage({
       helper: 'session_title', activeClient: client, params, schema: llm.SESSION_TITLE_SCHEMA, defaults, model: 'claude-sonnet-5-5',
     });
+    assert.deepEqual(client.calls[0].thinking, { type: 'disabled' }, 'BYOK Haiku is asked with thinking off too');
     assert.equal(named.model, 'claude-sonnet-5-5');
     assert.equal(client.calls[1].model, 'claude-sonnet-5-5');
+    assert.equal(client.calls[1].thinking, undefined, 'a named model is sent as written');
     assert.equal(openrouter.calls.length, 0);
 
     const prev = process.env.HELPER_MODEL;
@@ -149,7 +153,7 @@ test('never GLM: a BYOK key, HELPER_MODEL=haiku, no bot key, a named Claude mode
     try {
       assert.equal(llm.helperRoute(), 'haiku');
       const off = await llm.generateSessionTitle({ requests: ['x'] });
-      assert.equal(off.model, 'claude-haiku-4-5');
+      assert.equal(off.model, 'claude-haiku-5-5');
       assert.equal(openrouter.calls.length, 0);
     } finally {
       if (prev === undefined) delete process.env.HELPER_MODEL; else process.env.HELPER_MODEL = prev;
@@ -158,7 +162,7 @@ test('never GLM: a BYOK key, HELPER_MODEL=haiku, no bot key, a named Claude mode
   });
   await withHelpers({ reply: { title: 'GLM' }, key: null }, async ({ openrouter, events }) => {
     const out = await llm.generateSessionTitle({ requests: ['x'] });
-    assert.equal(out.model, 'claude-haiku-4-5');
+    assert.equal(out.model, 'claude-haiku-5-5');
     assert.equal(openrouter.calls.length, 0);
     assert.equal(events.length, 1);
     assert.equal(events[0].attempt_number, 1, 'nothing was sent to GLM, so Haiku is the first attempt');
@@ -220,8 +224,235 @@ test('structured helpers read GLM\'s answer with their existing parse', async ()
     assert.equal(openrouter.calls[0].timeoutMs, llm.HELPER_TIME_LIMIT_MS.app_sketch);
     await llm.generateAppSketch({ system: 's', user: 'u', maxTokens: 400 });
     assert.equal(openrouter.calls.length, 1);
-    assert.equal(client.calls[0].model, 'claude-haiku-4-5');
+    assert.equal(client.calls[0].model, 'claude-haiku-5-5');
   });
+});
+
+// Newcomer run five (13 Oct 2026): GLM answered the plan at Make it with a
+// tool call (325 tokens, outcome success), the plan's parse refused it, and
+// Haiku was never asked, because any JSON object counted as an answer.
+const fvPlan = require('../src/services/first-version-plan');
+const PLAN = Object.freeze({
+  plan: ['Make a poll in a few taps', 'Everyone votes once', 'See who won'],
+  choices: [{ question: 'Who can make a poll?', answers: ['Anyone in the club', 'Only you'] }],
+  build_note: 'One screen: the open polls, newest first. Its primary action is New poll.',
+  assumptions: ['Votes are anonymous'],
+});
+const askPlan = () => llm.generateFirstVersionPlan({
+  system: 's', user: 'u', schema: fvPlan.PLAN_SCHEMA, validate: fvPlan.usableAnswer, maxTokens: 2000,
+});
+
+test('the plan at Make it: each answer its parse refuses is asked again of Haiku, with the plan\'s schema as structured output', async () => {
+  const refused = {
+    'no plan': { ...PLAN, plan: undefined },
+    'an empty plan': { ...PLAN, plan: [] },
+    'blank plan lines': { ...PLAN, plan: ['', '  ', '- '] },
+    'a plan of objects': { ...PLAN, plan: [{ line: 'Make a poll' }, { line: 'Vote' }] },
+    'a plan as a number': { ...PLAN, plan: 3 },
+    'no build note': { ...PLAN, build_note: undefined },
+    'a blank build note': { ...PLAN, build_note: '   ' },
+    'a build note as an object': { ...PLAN, build_note: { screen: 'The open polls' } },
+    'a build note of blank lines': { ...PLAN, build_note: ['', ' '] },
+  };
+  for (const [shape, reply] of Object.entries(refused)) {
+    await withHelpers({ reply, haikuText: JSON.stringify(PLAN) }, async ({ openrouter, client, events }) => {
+      const out = await askPlan();
+      assert.equal(openrouter.calls.length, 1, shape);
+      assert.equal(client.calls.length, 1, `${shape}: Haiku is asked`);
+      assert.equal(out.model, 'claude-haiku-5-5', shape);
+      assert.equal(fvPlan.parsePlanReply(out.text).bullets.length, 3, shape);
+      assert.deepEqual(client.calls[0].output_config,
+        { format: { type: 'json_schema', schema: llm.structuredOutputSchema(fvPlan.PLAN_SCHEMA) } }, shape);
+      assert.equal(client.calls[0].max_tokens, 2000, shape);
+      // The GLM attempt reads as the error it was, not a success.
+      assert.deepEqual(events.map((e) => [e.provider, e.outcome, e.attempt_number]),
+        [['openrouter', 'error', 1], ['anthropic', 'success', 2]], shape);
+      assert.equal(events[0].component, 'first_version_plan');
+    });
+  }
+});
+
+test('the plan at Make it: a refused answer is logged by its shape, never its words', async () => {
+  const log = require('../src/services/logger');
+  const words = 'Polls for the Riverside running club';
+  await withHelpers({ reply: { ...PLAN, plan: words, build_note: [] }, haikuText: JSON.stringify(PLAN) }, async () => {
+    await askPlan();
+  });
+  const line = log.tail(20).find((e) => e.message === 'Helper model\'s answer was unusable; asking Haiku');
+  assert.ok(line, 'logged');
+  assert.equal(line.level, 'WARN');
+  assert.deepEqual(line.data, {
+    helper: 'first_version_plan',
+    shape: { plan: `string(${words.length})`, choices: 'array(1: object)', build_note: 'array(0)', assumptions: 'array(1: string)' },
+  });
+  assert.doesNotMatch(JSON.stringify(line.data), /Riverside/);
+});
+
+test('the plan at Make it: a good GLM answer, or one in a shape the parse forgives, is never asked again', async () => {
+  const forgiven = {
+    'as asked': PLAN,
+    'the plan as one string': { ...PLAN, plan: '- Make a poll in a few taps\n- Everyone votes once\n- See who won' },
+    'the build note as lines': { ...PLAN, build_note: ['One screen: the open polls, newest first.', 'Its primary action is New poll.'] },
+  };
+  for (const [shape, reply] of Object.entries(forgiven)) {
+    await withHelpers({ reply }, async ({ openrouter, client, events }) => {
+      const out = await askPlan();
+      assert.equal(client.calls.length, 0, `${shape}: no second call`);
+      assert.equal(out.model, 'z-ai/glm-5.3-flash', shape);
+      assert.deepEqual(fvPlan.parsePlanReply(out.text).bullets, ['Make a poll in a few taps', 'Everyone votes once', 'See who won'], shape);
+      // GLM's tool carries the schema with its bounds; OpenRouter does not hold it to them.
+      assert.deepEqual(openrouter.calls[0].tools[0].function.parameters, fvPlan.PLAN_SCHEMA, shape);
+      assert.equal(openrouter.calls[0].timeoutMs, llm.HELPER_TIME_LIMIT_MS.first_version_plan, shape);
+      assert.deepEqual(events.map((e) => [e.provider, e.outcome]), [['openrouter', 'success']], shape);
+    });
+  }
+});
+
+// The 13 Oct replay of the plan at Make it (30 calls, production's prompt,
+// schema and settings): usable answers took 268 to 705 output tokens; one
+// ran away to the 3,500 ceiling and failed after 19 s; one wrote 1,533
+// characters of its answer as text beside its tool call.
+const glmReply = (over) => () => ({
+  servedModel: 'z-ai/glm-5.3-flash',
+  provider: 'Together',
+  finishReason: 'tool_calls',
+  content: '',
+  toolCalls: [],
+  usage: { inputTokens: 900, outputTokens: 320, reasoningTokens: 40, costUsd: 0.0002 },
+  ...over,
+});
+const toolCall = (args) => [{ type: 'function', function: { name: 'answer', arguments: args } }];
+
+test('the plan at Make it: GLM may write about 1,000 tokens, so a runaway fails in seconds; other helpers keep theirs', async () => {
+  assert.equal(llm.HELPER_OUTPUT_LIMIT.first_version_plan, 1200);
+  await withHelpers({ reply: PLAN }, async ({ openrouter, client }) => {
+    await askPlan();
+    assert.equal(openrouter.calls[0].maxOutputTokens, 1200, 'was 2,000 + 1,500 = 3,500');
+    assert.equal(client.calls.length, 0);
+  });
+  await withHelpers({ reply: Object.assign(new Error('cut off'), { code: 'output_limit' }), haikuText: JSON.stringify(PLAN) }, async ({ client }) => {
+    const out = await askPlan();
+    assert.equal(out.model, 'claude-haiku-5-5', 'a runaway still goes to Haiku');
+    assert.equal(client.calls[0].max_tokens, 2000, 'Haiku keeps the plan\'s own ceiling');
+  });
+  await withHelpers({ reply: { title: 'x' } }, async ({ openrouter }) => {
+    await llm.generateSessionTitle({ requests: ['x'] });
+    assert.equal(openrouter.calls[0].maxOutputTokens, 64 + 1500, 'a helper with no limit of its own is as it was');
+  });
+});
+
+test('the plan at Make it: a near-empty tool call gives way to the plan written in the text', async () => {
+  const log = require('../src/services/logger');
+  const shapes = {
+    'an empty tool call': { toolCalls: toolCall('{}') },
+    'no tool call at all': { toolCalls: [] },
+    'a tool call that is not JSON': { toolCalls: toolCall('{"plan": [') },
+  };
+  for (const [shape, over] of Object.entries(shapes)) {
+    const reply = glmReply({ ...over, content: `Here is the plan.\n\`\`\`json\n${JSON.stringify(PLAN)}\n\`\`\`` });
+    await withHelpers({ reply }, async ({ client, events }) => {
+      const out = await askPlan();
+      assert.equal(client.calls.length, 0, `${shape}: no second call`);
+      assert.equal(out.model, 'z-ai/glm-5.3-flash', shape);
+      assert.deepEqual(JSON.parse(out.text), PLAN, shape);
+      assert.equal(events[0].outcome, 'success', shape);
+    });
+  }
+  const line = log.tail(20).find((e) => e.message === 'Helper model answered in its text, not its tool call');
+  assert.deepEqual(line.data, { helper: 'first_version_plan', toolShape: null }, 'the last case had no tool answer');
+  // The text is no better: Haiku, and the shape of what GLM did send.
+  const bad = glmReply({ toolCalls: toolCall('{}'), content: JSON.stringify({ ...PLAN, plan: [] }) });
+  await withHelpers({ reply: bad, haikuText: JSON.stringify(PLAN) }, async ({ client }) => {
+    const out = await askPlan();
+    assert.equal(client.calls.length, 1);
+    assert.equal(out.model, 'claude-haiku-5-5');
+  });
+  const refused = log.tail(20).find((e) => e.message === 'Helper model\'s answer was unusable; asking Haiku');
+  assert.deepEqual(refused.data, { helper: 'first_version_plan', shape: {} });
+});
+
+test('a helper with no validate never takes JSON from the text: nothing would check it', async () => {
+  const reply = glmReply({ toolCalls: [], content: '{"title":"From the text"}' });
+  await withHelpers({ reply, haikuText: '{"title":"From Haiku"}' }, async ({ client }) => {
+    const out = await llm.generateSessionTitle({ requests: ['x'] });
+    assert.equal(out.title, 'From Haiku');
+    assert.equal(client.calls.length, 1);
+  });
+  assert.deepEqual(llm.helperTextAnswer('no json'), null);
+  assert.deepEqual(llm.helperTextAnswer('a [1, 2] list'), null);
+  assert.deepEqual(llm.helperTextAnswer('so: {"a": 1} done'), { a: 1 });
+  assert.equal(llm.helperTextAnswer(null), null);
+});
+
+test('the routed host is recorded on each GLM attempt, answered or failed (run five\'s was unknown)', async () => {
+  await withHelpers({ reply: glmReply({ toolCalls: toolCall(JSON.stringify(PLAN)) }) }, async ({ events }) => {
+    await askPlan();
+    assert.equal(events[0].provider, 'openrouter');
+    assert.equal(events[0].served_provider, 'Together');
+  });
+  const failed = Object.assign(new Error('rate limited'), { code: 'rate_limited', provider: 'Modal' });
+  await withHelpers({ reply: failed, haikuText: JSON.stringify(PLAN) }, async ({ events }) => {
+    await askPlan();
+    assert.equal(events[0].served_provider, 'Modal');
+    assert.equal(Object.hasOwn(events[1], 'served_provider'), false, 'Haiku\'s attempt names no host');
+  });
+});
+
+test('a validate that throws refuses the answer; a helper with no validate takes any object, as before', async () => {
+  const params = { max_tokens: 64, messages: [{ role: 'user', content: 'x' }] };
+  const defaults = { backend: 'helper', component: 'session_title' };
+  await withHelpers({ reply: { title: 'GLM' } }, async ({ client }) => {
+    const thrown = await llm.helperMessage({
+      helper: 'session_title', activeClient: client, params, schema: llm.SESSION_TITLE_SCHEMA, defaults,
+      validate: () => { throw new Error('bad'); },
+    });
+    assert.equal(thrown.model, 'claude-haiku-5-5');
+    const taken = await llm.helperMessage({
+      helper: 'session_title', activeClient: client, params, schema: llm.SESSION_TITLE_SCHEMA, defaults,
+    });
+    assert.equal(taken.model, 'z-ai/glm-5.3-flash');
+    assert.deepEqual(taken.answer, { title: 'GLM' });
+    assert.equal(client.calls.length, 1);
+  });
+});
+
+test('structuredOutputSchema: the bounds Anthropic\'s structured output refuses come off, and nothing else', () => {
+  assert.deepEqual(llm.structuredOutputSchema(fvPlan.PLAN_SCHEMA), {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      plan: { type: 'array', items: { type: 'string' } },
+      choices: fvPlan.PLAN_SCHEMA.properties.choices,
+      build_note: { type: 'string' },
+      assumptions: { type: 'array', items: { type: 'string' } },
+    },
+    required: ['plan', 'choices', 'build_note', 'assumptions'],
+  });
+  const nested = llm.structuredOutputSchema({
+    type: 'object',
+    properties: {
+      minLength: { type: 'integer', minimum: 0, maximum: 9 },
+      list: { type: 'array', minItems: 1, maxItems: 4, items: { anyOf: [{ type: 'string', maxLength: 5 }, { type: 'null' }] } },
+    },
+  });
+  assert.deepEqual(nested, {
+    type: 'object',
+    properties: {
+      minLength: { type: 'integer' },
+      list: { type: 'array', minItems: 1, items: { anyOf: [{ type: 'string' }, { type: 'null' }] } },
+    },
+  });
+});
+
+test('answerShape: each key\'s type and length, an array\'s item types, no values', () => {
+  assert.deepEqual(llm.answerShape({ plan: 'abc', build_note: ['x', 1, 'y'], choices: [], n: null, o: { a: 1 }, b: true }), {
+    plan: 'string(3)', build_note: 'array(3: string, number)', choices: 'array(0)', n: 'null', o: 'object(1)', b: 'boolean',
+  });
+  const many = Object.fromEntries(Array.from({ length: 20 }, (_, i) => [`k${i}`, i]));
+  const shape = llm.answerShape(many);
+  assert.equal(Object.keys(shape).length, 17);
+  assert.equal(shape['…'], '4 more');
+  assert.deepEqual(llm.answerShape(null), { answer: 'null' });
 });
 
 test('the Workshop ask box: GLM\'s answer arrives whole; a picked model is asked as before', async () => {
@@ -247,6 +478,28 @@ test('the bill: OpenRouter\'s figure when it gave one, else the published GLM pr
   assert.equal(llm.estimateCostCents({ input_tokens: 1000, output_tokens: 1000 }, 'claude-haiku-4-5'), 0.6, 'Claude rates unchanged');
 });
 
+test('Haiku 5.5 is billed on its own two rate cards, chosen by prompt length', () => {
+  const near = (a, b) => assert.ok(Math.abs(a - b) < 1e-9, `${a} vs ${b}`);
+  // $0.10 / $0.50 per MTok up to 100K prompt tokens.
+  near(llm.estimateCostCents({ input_tokens: 100000, output_tokens: 0 }, 'claude-haiku-5-5'), 1);
+  near(llm.estimateCostCents({ input_tokens: 0, output_tokens: 1e6 }, 'claude-haiku-5-5'), 50);
+  near(llm.estimateCostCents({ input_tokens: 100000, output_tokens: 1000 }, 'claude-haiku-5-5'), 1 + 0.05);
+  // $0.50 / $2.50 above it, cached prompt tokens counted toward the length.
+  near(llm.estimateCostCents({ input_tokens: 100001, output_tokens: 1000 }, 'claude-haiku-5-5'), 5.00005 + 0.25);
+  near(llm.estimateCostCents({ input_tokens: 1000, cache_read_input_tokens: 150000, output_tokens: 1000 }, 'claude-haiku-5-5'), 0.05 + 0.25);
+});
+
+test('withHelperThinking: thinking off on the Haiku fallback only, and never over a caller\'s own setting', () => {
+  assert.equal(llm.HELPER_FALLBACK_MODEL, 'claude-haiku-5-5');
+  assert.deepEqual(llm.withHelperThinking({ model: 'claude-haiku-5-5', max_tokens: 60 }).thinking, { type: 'disabled' });
+  assert.equal(llm.withHelperThinking({ model: 'claude-sonnet-5-5' }).thinking, undefined);
+  const own = { type: 'adaptive' };
+  assert.equal(llm.withHelperThinking({ model: 'claude-haiku-5-5', thinking: own }).thinking, own);
+  // The BYOK key check asks for one token, so it must not think either.
+  assert.match(read('src/routes/auth.js'),
+    /model: 'claude-haiku-5-5',\s+max_tokens: 1,\s+thinking: \{ type: 'disabled' \},/);
+});
+
 test('every helper the switch names goes through the path, and telemetry knows each by name', () => {
   const src = read('src/services/llm.js');
   for (const helper of Object.keys(llm.HELPER_TIME_LIMIT_MS)) {
@@ -256,7 +509,7 @@ test('every helper the switch names goes through the path, and telemetry knows e
       assert.match(src, new RegExp(`helperMessage\\(\\{\\s+helper: '${helper}',`), `${helper} asks through helperMessage`);
     }
   }
-  assert.equal((src.match(/'claude-haiku-4-5'/g) || []).length, 1, 'Haiku is named once, as the fallback');
+  assert.equal((src.match(/'claude-haiku-5-5'/g) || []).length, 1, 'Haiku is named once, as the fallback');
   const components = read('src/services/llm-telemetry.js');
   for (const c of [...Object.keys(llm.HELPER_TIME_LIMIT_MS).filter((h) => h !== 'challenge_grade'), 'challenge_grade_feedback', 'challenge_grade_proposal']) {
     assert.ok(components.includes(`'${c}'`), `${c} is a telemetry component`);
@@ -265,7 +518,7 @@ test('every helper the switch names goes through the path, and telemetry knows e
   const manifest = JSON.parse(read('dapp.json'));
   const entry = manifest.platform_env.find((e) => e.key === 'HELPER_MODEL');
   assert.equal(entry.default, 'glm');
-  assert.match(entry.description, /haiku: Haiku 4\.5 only/);
+  assert.match(entry.description, /haiku: Haiku 5\.5 only/);
   assert.equal(require('../src/services/app-sketch').SKETCH_MODEL, llm.HELPER_MODEL);
   assert.equal(require('../src/services/topochain/challenge-grader').GRADE_MODEL, llm.HELPER_MODEL);
   assert.match(read('src/services/mayor/pills.js'), /qrWithTimeout\(\(signal\) => llm\.generateQuickReplies\(\{[\s\S]*?signal,/,

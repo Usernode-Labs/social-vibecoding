@@ -51,7 +51,7 @@ export const eventBarStore = createStore({
   /** Selectable events, in server order. Empty while `placeholder` stands. */
   options: [],
   /** `'Loading…'` / `'No events'`, or null once there is a real list. */
-  placeholder: 'Loading…',
+  placeholder: 'leaderboard:eventBar.loading',
   /** The picked `season_event_id`, or null before one resolves. */
   selectedId: null,
   /** See above — null renders an empty `#tc-ev-hero`. */

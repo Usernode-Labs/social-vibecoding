@@ -457,6 +457,7 @@ async function runMayorTurn(ctx, deps) {
       }
 
       releaseDispatchOperation = beginSessionOperation(session.id);
+      await releaseDispatchOperation.recorded;
       send('assistant_message_end', {});
 
       let attachmentsBlock = '';
@@ -1417,6 +1418,7 @@ async function runMayorTurn(ctx, deps) {
     // pass a point-in-time busy check and then mutate the branch while the
     // other is awaiting DB/GitHub work.
     releaseDispatchOperation = beginSessionOperation(session.id);
+    await releaseDispatchOperation.recorded;
 
     // Seal the phase-1 assistant bubble so the phase-2 wrap-up
     // lands in a fresh bubble below the CC status/progress events.
@@ -1814,7 +1816,7 @@ async function runMayorTurn(ctx, deps) {
       } else if (toolKind === 'scout') {
         // Spec/scout just planned something — make the build handoff
         // explicit so a finished spec doesn't read as a finished change.
-        mayorText2 = "_Spec updated: it's in the spec viewer. Tell me to build it whenever you're ready and I'll dispatch the coding agent._";
+        mayorText2 = "_Plan updated: it's in the plan viewer. Tell me to build it whenever you're ready and I'll dispatch the coding agent._";
       } else {
         mayorText2 = '_Done._';
       }

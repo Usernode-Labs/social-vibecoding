@@ -92,7 +92,7 @@ const ABOUT_SQL = `
       WHERE has_platform_access AND NOT is_synthetic) AS members,
     (SELECT COUNT(*)::int FROM chat_sessions cs
        JOIN apps a ON a.id = cs.app_id
-      WHERE cs.status = 'merged'
+      WHERE cs.status = 'merged' AND cs.live_at IS NOT NULL
         AND (a.self_hosted OR a.view_visibility = 'public')) AS merged,
     s.name, s.repo_url, s.main_sha, s.last_deploy_at,
     s.manifest_snapshot->>'description' AS description

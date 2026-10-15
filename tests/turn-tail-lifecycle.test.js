@@ -4,12 +4,13 @@
 // worker — was always restart-proof: its output goes to a journal file and
 // chat_sessions.active_turn points at it, so boot adoption replays it.
 //
-// The second half is the TAIL: heal the push, open/update the PR, build the
-// staging preview, capture visuals, post the agent's summary card, re-issue
-// the Mayor's wrap-up. That stretch is MINUTES long — a self-app preview
-// build spends ~4:45 just cloning the platform database — and it used to
-// run with active_turn already cleared, because execInWorker's `finally`
-// dropped the record the moment the journal was consumed.
+// The second half is the TAIL: heal the push, open/update the PR, hand the
+// staging preview to the preview machine, post the agent's summary card,
+// re-issue the Mayor's wrap-up. That stretch used to be MINUTES long — it
+// built the preview inline, and a self-app build spends ~4:45 just cloning
+// the platform database — and it ran with active_turn already cleared,
+// because execInWorker's `finally` dropped the record the moment the
+// journal was consumed.
 //
 // Production consequence (session 2954): an unrelated proposal merged to
 // main, the self-app deploy replaced the platform process mid-preview-build,
@@ -27,7 +28,8 @@
 //   3. Milestone stamps merge, never clobber, and can never resurrect a
 //      released record.
 //   4. finalizeRecoveredTurn honours those milestones, so a resumed tail
-//      doesn't re-post cards, re-fire events or rebuild a live preview.
+//      doesn't re-post cards or re-fire events, and a preview the machine
+//      already serves for the commit is announced as up, not as building.
 //
 // Run with: node --test tests/turn-tail-lifecycle.test.js
 
@@ -151,8 +153,11 @@ for (const alreadyCleared of [false, true]) {
     assert.equal(fx.execs.length, 0, 'Kubernetes cleanup must not invoke Docker');
     assert.equal(calls.length, 1);
     assert.equal(calls[0].runtime, 'sv-worker-s2954');
+    // #4575: the turn's own prompt files too, named by its id.
+    const own = fx.worker.turnPromptPaths('logical-1');
     assert.deepEqual(calls[0].command, ['rm', '-f', journal, ...(alreadyCleared ? [] : [
       fx.worker.TURN_PROMPT_PATH, fx.worker.TURN_SYSTEM_PROMPT_PATH, fx.worker.TURN_RESUME_FALLBACK_PROMPT_PATH,
+      own.prompt, own.system, own.resumeFallback,
     ])]);
     assert.equal(calls[0].options.timeoutMs, 5000);
     assert.equal(fx.getActiveTurn(), null);
@@ -436,8 +441,11 @@ test('build and scout keep one owner through their complete tail', () => {
 });
 
 test('every non-idempotent tail step stamps a milestone', () => {
+  // The preview is no longer one of them: the tail hands the commit to the
+  // preview machine, which answers a second hand-off of the same head with
+  // 'same_head' instead of building it again.
   for (const key of [
-    'prOpenedEventRecorded', 'stagingUrl', 'votesResetFor',
+    'prOpenedEventRecorded', 'votesResetFor',
     'completionRowPosted', 'wrapUpPosted',
   ]) {
     assert.match(SESSIONS_SRC, new RegExp(`noteTailMilestone\\([\\s\\S]{0,200}${key}`),
@@ -446,7 +454,7 @@ test('every non-idempotent tail step stamps a milestone', () => {
   const explicitLiveOwners = SESSIONS_SRC.match(
     /noteTailMilestone\([\s\S]{0,240}?\{ turnId: durableTurnId \}[\s\S]{0,20}?\);/g
   ) || [];
-  assert.equal(explicitLiveOwners.length, 4,
+  assert.equal(explicitLiveOwners.length, 3,
     'every live build-tail milestone carries the exact logical owner');
 });
 
@@ -531,7 +539,7 @@ test('restart cleanup retries derive their action from the durable phase', () =>
 });
 
 test('finalizeRecoveredTurn takes an alreadyDone map and defaults to empty', () => {
-  assert.match(SERVER_SRC, /startedAtMs, alreadyDone = null,\s*activeTurn = null,\s*\}\) \{/,
+  assert.match(SERVER_SRC, /startedAtMs, alreadyDone = null,\s*activeTurn = null,[\s\S]{0,300}?localAgentLabel = null,\s*\}\) \{/,
     'optional, so a genuine mid-exec recovery is unaffected');
   assert.match(SERVER_SRC,
     /const done = alreadyDone && typeof alreadyDone === 'object' \? alreadyDone : \{\};/);
@@ -548,27 +556,33 @@ test('a resumed tail does not duplicate the completion card or the PR event', ()
     /const prAnnounced = !!done\.prNumber \|\| !!done\.prOpenedEventRecorded;/);
   assert.match(SERVER_SRC, /wasNewPR && !prAnnounced/,
     '"PR #N created" is announced at most once');
-  assert.match(SERVER_SRC, /done\.votesResetFor !== result\.sha/,
+  assert.match(SERVER_SRC, /done\.votesResetFor === result\.sha\) return;/,
     'a vote reset the live tail already announced is not re-announced');
 });
 
-test('a resumed tail reuses a healthy preview instead of rebuilding for ~5 minutes', () => {
-  assert.match(SERVER_SRC, /if \(done\.stagingUrl\) \{/);
-  // Recorded is not enough — the container must still be alive. A dead one
-  // falls through to a real rebuild, which is the point of this path.
-  assert.match(SERVER_SRC, /stagingNeedsRebuild\(\{ \.\.\.session, \.\.\.live \}, \{ config \}\)/);
-  assert.match(SERVER_SRC, /if \(!reusedStaging\) emit\('status', \{ text: 'Building staging preview\.\.\.' \}\)/,
-    'no "building" line when nothing is being built');
-  // Reuse still publishes the Changes-ready outcome the interrupted tail
-  // owed the user, behind the same receipt as a newly built preview, and
-  // still re-runs checks (setChecksPending voided the verdict).
-  assert.match(SERVER_SRC,
-    /if \(reusedStaging\) \{[\s\S]{0,500}publishRecoveredStaging\(\{ outcome: 'success'/);
-  assert.match(SERVER_SRC,
-    /effectKey: turnEffects\.EFFECT_KEYS\.RECOVERED_STAGING_PUBLICATION/,
+test('a resumed tail hands its commit to the preview machine, and joins a preview it already serves', () => {
+  const start = SERVER_SRC.indexOf('async function finalizeRecoveredTurn(');
+  const body = SERVER_SRC.slice(start, SERVER_SRC.indexOf('\n}\n', start));
+  // The machine builds and checks the recovered commit: nothing here builds
+  // a preview or runs its checks in-process.
+  assert.match(body,
+    /require\('\.\/src\/services\/preview-workflow'\)\.revision\(\{\s*pool, session, head: result\.sha, source: 'turn', trigger: 'boot-reconcile',\s*\}\)\.catch\(/,
+    'the exact commit is handed over, and a failed hand-off is not fatal');
+  assert.doesNotMatch(body, /buildAndDeployStaging|captureForSession|stagingNeedsRebuild/);
+  // The live tail handed this commit over before it died and the machine
+  // has built it since: a 'building' card would be one nothing closes.
+  assert.match(body,
+    /handed\?\.status === 'rejected' && handed\.reason === 'same_head'[\s\S]{0,300}staging_commit_sha = \$2 AND staging_url IS NOT NULL/);
+  assert.match(body,
+    /if \(serves\) \{\s*await publishRecoveredStaging\(\{ outcome: 'success', stagingUrl: serves\.staging_url \}\);[\s\S]{0,200}\} else \{\s*await publishRecoveredStaging\(\{ outcome: 'building' \}\);/);
+  // Either card goes out behind the same receipt as the live tail's own
+  // (publishStagingOutcome in routes/sessions.js), so a wrap-up retry never
+  // publishes it twice.
+  assert.match(body, /\.publishStagingOutcome\(\{/,
     'staging cards are receipt-backed across recovery retries');
-  assert.match(SERVER_SRC,
-    /if \(reusedStaging\) \{[\s\S]{0,1400}visuals\.captureForSession/);
+  assert.match(SESSIONS_SRC,
+    /effectKey: turnEffects\.EFFECT_KEYS\.RECOVERED_STAGING_PUBLICATION/,
+    'one receipt key for the live and the recovered card');
 });
 
 test('resumeDetachedTurnInner threads the map through and skips a posted wrap-up', () => {

@@ -31,6 +31,7 @@ const { installAppCard } = require('./helpers/app-card');
 
 const { HOME_SRC, LAYOUT_SRC } = require('./helpers/home-modules');
 const { installGridStore } = require('./helpers/home-grid-store');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 function makeHome(user) {
   return makeHomeEnv(user).Home;
@@ -78,6 +79,8 @@ function fakeCtx(paints) {
 function makeHomeEnv(user) {
   const sandbox = {
     console,
+    // The build line's words are read from the catalog (#4053).
+    PlatformI18n: englishPlatformI18n(),
     App: { user },
     document: {
       getElementById: () => null,
@@ -120,6 +123,7 @@ function makeHomeEnv(user) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.createContext(sandbox);
   // home.js's iconTileFor / renderAppPillsHtml delegate to the shared card
   // builders (frontend/src/features/apps/app-card.js) since #1083 chunk F.
@@ -304,6 +308,26 @@ test('card: the tile carries no users badge and no status dot', () => {
   assert.match(Home.renderAppCard(baseApp({ status: 'creating' })), /Spinning up/);
   assert.match(Home.renderAppCard(baseApp({ status: 'awaiting_secrets' })), /Awaiting secrets/);
   assert.match(Home.renderAppCard(baseApp({ status: 'error' })), /Error/);
+  // #4053: a first version Homeroom bot is making says its build line
+  // instead, quiet, and blue only when it waits on the reader. Run four
+  // (13 Oct): in the tile's short words, on one line, so nothing is cut off.
+  assert.match(Home.renderAppCard(baseApp({ status: 'creating', first_version_line: 'planning' })),
+    /<p class="app-card-status line-clamp-1 text-zinc-500 dark:text-zinc-400" data-build-line="planning">Planning<\/p>/);
+  assert.match(Home.renderAppCard(baseApp({ first_version_line: 'plan' })),
+    /<p class="app-card-status line-clamp-1 font-semibold text-\[color:var\(--accent\)\]" data-build-line="plan">Plan ready<\/p>/);
+  // The name keeps its two lines: the caption needs only one.
+  assert.doesNotMatch(Home.renderAppCard(baseApp({ first_version_line: 'plan' })), /\[&_\.app-card-title\]/);
+  assert.match(Home.renderAppCard(baseApp({ status: 'error', first_version_line: 'planning' })), />Error</);
+  assert.equal(Home.appView(baseApp({ first_version_line: 'building', first_version_phase: { key: 'building', since: null } })).statusLabel, 'Building');
+  // Run five: the stage the App tab names, in its short word; before the spec turn, Starting.
+  // Run seven: the spec's stages are "Planning" (the plan and first look are made at Make it).
+  assert.equal(Home.appView(baseApp({ first_version_line: 'building', first_version_phase: { key: 'drawing', since: null } })).statusLabel, 'Planning');
+  assert.equal(Home.appView(baseApp({ first_version_line: 'building', first_version_phase: { key: 'starting', since: null } })).statusLabel, 'Starting');
+  assert.equal(Home.appView(baseApp({ first_version_line: 'building' })).statusLabel, 'Building');
+  assert.equal(Home.appView(baseApp({ first_version_line: 'question' })).statusLabel, 'Question');
+  assert.equal(Home.appView(baseApp({ first_version_line: 'ready' })).statusLabel, 'Ready to try');
+  assert.equal(Home.appView(baseApp({ first_version_line: 'building' })).buildLine, 'building');
+  assert.equal(Home.appView(baseApp()).buildLine, null);
 });
 
 test('card: no pills/chips of any kind on the card face', () => {
@@ -446,7 +470,7 @@ test('menu: plain user on a non-member app gets App details + the favorite toggl
   const items = Home.menuItemsFor(baseApp());
   assert.deepEqual(keys(items), ['app-details', 'github', 'favorite', 'notifications', 'report'],
     'nothing admin-gated leaks');
-  assert.equal(items[2].label, 'Add to Shortcuts');
+  assert.equal(items[2].label, 'Add to My apps');
 });
 
 // "View on GitHub" was a row in the hamburger drawer's reference footer,
@@ -469,7 +493,7 @@ test('menu: favorited app flips the label to Remove', () => {
   const Home = makeHome({ id: ME });
   const fav = Home.menuItemsFor(baseApp({ is_favorited: true }))
     .find((i) => i.key === 'favorite');
-  assert.equal(fav.label, 'Remove from Shortcuts');
+  assert.equal(fav.label, 'Remove from My apps');
 });
 
 test('menu: member apps get a WORKING Remove from Your apps item (#618)', () => {
@@ -482,7 +506,7 @@ test('menu: member apps get a WORKING Remove from Your apps item (#618)', () => 
     .find((i) => i.key === 'favorite');
   assert.ok(fav, 'favorite entry present on member apps');
   assert.equal(fav.disabled, undefined, 'active, not the old inert row');
-  assert.equal(fav.label, 'Remove from Shortcuts');
+  assert.equal(fav.label, 'Remove from My apps');
   assert.equal(typeof fav.run, 'function', 'action wired');
 });
 
@@ -490,7 +514,7 @@ test('menu: hidden member apps flip to Add to Your apps (#618)', () => {
   const Home = makeHome({ id: ME });
   const fav = Home.menuItemsFor(baseApp({ is_collaborator: true, your_apps_hidden: true }))
     .find((i) => i.key === 'favorite');
-  assert.equal(fav.label, 'Add to Shortcuts');
+  assert.equal(fav.label, 'Add to My apps');
   assert.equal(typeof fav.run, 'function');
 });
 
@@ -910,7 +934,7 @@ test('widget section: tiles in registry order, each with a remove button', () =>
   assert.doesNotMatch(empty, /widget-tile /);
   // The hint names "Your apps" as the drag source now: the home grid holds
   // that one section (every other app moved to the #apps browse screen).
-  assert.match(empty, /Drag a card from Shortcuts here/);
+  assert.match(empty, /Drag a card from My apps here/);
 });
 
 test('widget section: help icon toggles the add-widget instructions', () => {

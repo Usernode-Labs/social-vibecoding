@@ -178,6 +178,7 @@ test('invite links against a real PostgreSQL', async (t) => {
       );
       assert.equal(preview.project.slug, undefined, 'the address comes after joining');
       assert.equal(preview.building, false, 'no first version on its way: made, not being made');
+      assert.equal('buildLine' in preview, false, 'no build step on a signed-out preview (#4049, rule 5)');
     });
 
     await t.test('somebody with access joins on the spot, pinned like Join; following again spends nothing', async () => {
@@ -447,6 +448,94 @@ test('invite links against a real PostgreSQL', async (t) => {
       assert.equal((await invites.preview(pool, made.link.token)).reason, 'revoked', 'until it is turned off');
     });
 
+    await t.test('#4779: a link says who is still waiting on it, and one that ended stays listed for 30 days', async () => {
+      const arena = await app('arena');
+      const links = async () => (await invites.listInvites(pool, { app: arena, user: ADA })).links;
+      // A new link serializes like the list does, with nobody waiting on it yet.
+      const fresh = await invites.createInvite(pool, { app: arena, user: ADA, days: 7, maxUses: 25 });
+      assert.ok(fresh.ok);
+      assert.deepEqual({ waiting: fresh.link.waiting, joined: fresh.link.joined, status: fresh.link.status },
+        { waiting: 0, joined: 0, status: 'live' });
+      // Somebody without access follows it and is not let in yet (a queued
+      // redemption, as private membership leaves one waiting on nothing):
+      // the row counts them, and the person hal joined is the joined count.
+      // These people carry explicit ids well above every other subtest's, so
+      // this subtest leaves the id sequence as it found it (a later one
+      // inserts 31 and 32 by hand), and hal is its own joiner, not dee
+      // (#4780 below redeems with dee expecting to join on the spot).
+      const { rows: [{ id: queuedId }] } = await pool.query("INSERT INTO users (id, username) VALUES (101, 'noor') RETURNING id");
+      const { rows: [{ id: joinedId }] } = await pool.query(
+        "INSERT INTO users (id, username, has_platform_access) VALUES (102, 'hal', TRUE) RETURNING id");
+      await pool.query(
+        "INSERT INTO community_invite_redemptions (invite_id, user_id, status) VALUES ($1, $2, 'queued')",
+        [fresh.link.id, queuedId]);
+      await pool.query('UPDATE community_invites SET uses = 1 WHERE id = $1', [fresh.link.id]);
+      assert.equal((await invites.redeem(pool, { token: fresh.link.token, user: as(joinedId, 'hal', true) })).status, 'joined');
+      let listed = (await links()).find((l) => l.id === fresh.link.id);
+      assert.deepEqual({ waiting: listed.waiting, joined: listed.joined, status: listed.status },
+        { waiting: 1, joined: 1, status: 'live' }, 'the queued one waits, the joined one counts');
+      // An expired link made this week is still listed, after the live ones,
+      // with the people it queued still waiting on it (they are applied when
+      // they are let in).
+      const expired = await invites.createInvite(pool, { app: arena, user: ADA, days: 7, maxUses: 25 });
+      const { rows: [{ id: expQueued }] } = await pool.query("INSERT INTO users (id, username) VALUES (103, 'omar') RETURNING id");
+      await pool.query(
+        "INSERT INTO community_invite_redemptions (invite_id, user_id, status) VALUES ($1, $2, 'queued')",
+        [expired.link.id, expQueued]);
+      await pool.query("UPDATE community_invites SET expires_at = NOW() - INTERVAL '1 day', uses = 1 WHERE id = $1",
+        [expired.link.id]);
+      // A turned-off link keeps no waiting people: revoking cancels them.
+      const turnedOff = await invites.createInvite(pool, { app: arena, user: ADA, days: 7, maxUses: 25 });
+      const { rows: [{ id: offQueued }] } = await pool.query("INSERT INTO users (id, username) VALUES (104, 'peri') RETURNING id");
+      await pool.query(
+        "INSERT INTO community_invite_redemptions (invite_id, user_id, status) VALUES ($1, $2, 'queued')",
+        [turnedOff.link.id, offQueued]);
+      await pool.query('UPDATE community_invites SET uses = 1 WHERE id = $1', [turnedOff.link.id]);
+      await invites.revokeInvite(pool, { inviteId: turnedOff.link.id, user: ADA });
+      listed = await links();
+      const expiredRow = listed.find((l) => l.id === expired.link.id);
+      const offRow = listed.find((l) => l.id === turnedOff.link.id);
+      assert.deepEqual({ waiting: expiredRow.waiting, joined: expiredRow.joined, status: expiredRow.status },
+        { waiting: 1, joined: 0, status: 'expired' });
+      assert.deepEqual({ waiting: offRow.waiting, joined: offRow.joined, status: offRow.status },
+        { waiting: 0, joined: 0, status: 'revoked' });
+      // Live rows come first, ended ones after them.
+      const firstEnded = listed.findIndex((l) => l.status !== 'live');
+      assert.ok(firstEnded > 0, 'the list has live rows before the ended ones');
+      assert.equal(listed.slice(firstEnded).every((l) => l.status !== 'live'), true);
+      // A link that ended more than 30 days ago is not listed, whatever the
+      // pane's maker holds. The keep window runs from when it ended, each
+      // link by its own clock, so it is its end that must age out.
+      const old = await invites.createInvite(pool, { app: arena, user: ADA, days: 7, maxUses: 25 });
+      await pool.query(
+        "UPDATE community_invites SET created_at = NOW() - INTERVAL '32 days', expires_at = NOW() - INTERVAL '31 days' WHERE id = $1",
+        [old.link.id]);
+      assert.equal((await links()).some((l) => l.id === old.link.id), false, 'an old ended link is not listed');
+    });
+
+    await t.test('15 Oct 2026: the hub\'s summary and the list\'s "Invite link out" read the live links as listInvites does', async () => {
+      const arena = await app('arena');
+      const { links } = await invites.listInvites(pool, { app: arena, user: ADA });
+      const live = links.filter((l) => l.status === 'live');
+      assert.ok(live.length > 0 && links.length > live.length, 'live links and ended ones both');
+      const summary = await invites.inviteSummary(pool, { app: arena, user: ADA });
+      assert.deepEqual(summary, invites.summarizeLinks(links), 'the same links, summed');
+      assert.equal(summary.links, live.length);
+      assert.equal(summary.joined, live.reduce((n, l) => n + l.joined, 0));
+      assert.equal(summary.waiting, live.reduce((n, l) => n + l.waiting, 0));
+      const ends = live.map((l) => l.expiresAt).filter(Boolean).map(Date.parse);
+      assert.equal(summary.expires_at, ends.length ? new Date(Math.min(...ends)).toISOString() : null, 'the soonest end');
+      assert.equal(await invites.inviteSummary(pool, { app: arena, user: null }), null, 'nobody signed in: none');
+      // The Communities list's read: one query for many projects, the
+      // viewer's own live links and who joined through them.
+      const out = await invites.linksOutFor(pool, [arena.id, 999999], ADA.id);
+      const mine = live.filter((l) => l.mine);
+      assert.deepEqual(out.get(arena.id), { links: mine.length, joined: mine.reduce((n, l) => n + l.joined, 0) });
+      assert.equal(out.has(999999), false, 'no links, no entry');
+      assert.equal((await invites.linksOutFor(pool, [arena.id], 999)).size, 0, 'somebody with no links of their own');
+      assert.equal((await invites.linksOutFor(pool, [], ADA.id)).size, 0);
+    });
+
     await t.test('WP-D: a project with no shot yet shows the card of its idea through a live link, and only then', async () => {
       const arena = await app('arena');
       const made = await invites.createInvite(pool, { app: arena, user: ADA, days: 0, maxUses: 0 });
@@ -466,6 +555,55 @@ test('invite links against a real PostgreSQL', async (t) => {
       });
       await invites.revokeInvite(pool, { inviteId: made.link.id, user: ADA });
       assert.equal((await invites.preview(pool, made.link.token)).project, undefined, 'a dead link shows nothing');
+    });
+
+    await t.test('#4780: the list says who came in through each link, and keeps the ones that ended for 30 days', async () => {
+      const arena = await app('arena');
+      // One person with access (joined) and one still waiting to get in, on
+      // a fresh link: the counts read off the real redemptions. A redemption
+      // that waits is one the link could not grant at the time (a private
+      // member without the phone it needs, say): rin's is inserted as such,
+      // its use spent, the way an earlier link's would have left it.
+      await pool.query(`INSERT INTO users (id, username, has_platform_access) VALUES (31, 'pia', TRUE), (32, 'rin', FALSE)`);
+      const made = await invites.createInvite(pool, { app: arena, user: ADA, maxUses: 25 });
+      assert.equal((await invites.redeem(pool, { token: made.link.token, user: as(31, 'pia', true) })).status, 'joined');
+      await pool.query(
+        "INSERT INTO community_invite_redemptions (invite_id, user_id, status) VALUES ($1, 32, 'queued')", [made.link.id]);
+      await pool.query('UPDATE community_invites SET uses = 2 WHERE id = $1', [made.link.id]);
+      const listed = (await invites.listInvites(pool, { app: arena, user: ADA })).links.find((l) => l.id === made.link.id);
+      assert.deepEqual([listed.status, listed.joined, listed.waiting], ['live', 1, 1]);
+      // A cancelled redemption counts as neither joined nor waiting.
+      await pool.query(
+        "INSERT INTO community_invite_redemptions (invite_id, user_id, status) VALUES ($1, 5, 'cancelled')", [made.link.id]);
+      const withCancelled = (await invites.listInvites(pool, { app: arena, user: ADA })).links.find((l) => l.id === made.link.id);
+      assert.deepEqual([withCancelled.joined, withCancelled.waiting], [1, 1], 'cancelled counts as neither');
+
+      // Turned off: still listed, as revoked, with nobody waiting (its queued
+      // redemptions were cancelled with it).
+      await invites.revokeInvite(pool, { inviteId: made.link.id, user: ADA });
+      const off = (await invites.listInvites(pool, { app: arena, user: ADA })).links.find((l) => l.id === made.link.id);
+      assert.deepEqual([off.status, off.joined, off.waiting], ['revoked', 1, 0]);
+
+      // Expired, and past the keep window: gone from the list. Recent: kept.
+      const old = await invites.createInvite(pool, { app: arena, user: ADA });
+      await pool.query("UPDATE community_invites SET expires_at = NOW() - INTERVAL '31 days' WHERE id = $1", [old.link.id]);
+      let ids = (await invites.listInvites(pool, { app: arena, user: ADA })).links.map((l) => l.id);
+      assert.equal(ids.includes(old.link.id), false, 'an ended link from more than 30 days back is not listed');
+      await pool.query("UPDATE community_invites SET expires_at = NOW() - INTERVAL '1 day' WHERE id = $1", [old.link.id]);
+      const recent = (await invites.listInvites(pool, { app: arena, user: ADA })).links.find((l) => l.id === old.link.id);
+      assert.equal(recent.status, 'expired');
+
+      // Used up, ended within the window (its latest redemption is recent).
+      const full = await invites.createInvite(pool, { app: arena, user: ADA, maxUses: 1 });
+      assert.equal((await invites.redeem(pool, { token: full.link.token, user: as(4, 'dee', true) })).status, 'joined');
+      const spent = (await invites.listInvites(pool, { app: arena, user: ADA })).links.find((l) => l.id === full.link.id);
+      assert.deepEqual([spent.status, spent.joined, spent.waiting], ['used_up', 1, 0]);
+
+      // Live links sort before ended ones.
+      const fresh = (await invites.createInvite(pool, { app: arena, user: ADA })).link;
+      ids = (await invites.listInvites(pool, { app: arena, user: ADA })).links.map((l) => l.id);
+      assert.ok(ids.indexOf(fresh.id) < ids.indexOf(recent.id), 'live before ended');
+      assert.ok(ids.indexOf(fresh.id) < ids.indexOf(full.link.id), 'live before used up');
     });
 
     await t.test('WP-D: what joining means, said from the project\'s real rule', async () => {

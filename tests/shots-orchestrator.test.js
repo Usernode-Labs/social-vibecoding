@@ -162,7 +162,7 @@ function setup({ dispatch, storeArtifacts } = {}) {
   const order = [];
   const calls = {
     resets: 0, stored: 0, cleaned: 0, dispatches: 0, minted: 0,
-    stopClears: 0, workerReleased: 0, turnStops: [],
+    stopClears: 0, workerReleased: 0, turnStops: [], starterReads: 0,
   };
   let currentState = 'planned';
   let turnMode = null;
@@ -232,6 +232,10 @@ function setup({ dispatch, storeArtifacts } = {}) {
       },
     },
     shotsControl: controlPlane,
+    // An ordinary change: its before build is not the starter's placeholder.
+    shotsStarter: {
+      beforeIsStarter: async () => { calls.starterReads += 1; return false; },
+    },
     worker: {
       isInFlight: () => false,
       getActiveTurnMode: () => turnMode,
@@ -345,6 +349,8 @@ test('every declared change saved publishes the ready files, tears the builds do
   assert.deepEqual(dispatchOptions.origins, ORIGINS);
   assert.equal(dispatchOptions.recordClips, false, 'no declared change is motion');
   assert.equal(dispatchOptions.clipSize, null);
+  assert.equal(dispatchOptions.phoneClipSize, null);
+  assert.deepEqual(dispatchOptions.phonePersonas, [], 'no screen is a phone\'s');
   assert.equal(dispatchOptions.resumeThreadId, null);
   assert.equal('forceBackend' in dispatchOptions, false, 'there is one shots agent');
   assert.equal(dispatchOptions.platformAssets, true, 'a child app loads the platform\'s assets through the proxy');
@@ -490,6 +496,10 @@ test('nothing saved and a change skipped fails as incomplete with the skip reaso
   const failed = fixture.transitions.at(-1).patch;
   assert.equal(failed.failureCode, 'shots_capture_incomplete');
   assert.match(failed.failureReason, /Before never loads the members list/);
+  assert.deepEqual(failed.hardVerdict.stories, [{
+    id: 'invite-suggestions', status: 'skipped', reason: 'Before never loads the members list.',
+  }], 'kept, so whoever can supply the data a change lacked hears which change it was');
+  assert.equal(failed.hardVerdict.passed, false);
   assert.equal(failed.traceSummary.failure.phase, 'agent_exploration');
   assert.deepEqual(failed.traceSummary.control, { savedFiles: 0, skippedChanges: 1, notedChanges: 0, skippedAll: false });
   assert.equal(fixture.calls.stored, 0);
@@ -792,6 +802,9 @@ test('a view-public child app\'s guest token reaches only the agent dispatch, an
     tool: 'browser_guest',
     who: 'a visitor who is not signed in, whom this public app shows as a guest, as it does at its own address',
   });
+  assert.equal(brief.appRoles.heldByAnyBrowser, false,
+    'a child app\'s brief says no browser holds a role in it');
+  assert.match(brief.browsers.full_admin.who, /^a Homeroom administrator .*this app is not told that/);
   assert.doesNotMatch(JSON.stringify(brief), /guest\.jwt/, 'the brief carries no token');
   const trace = fixture.transitions.at(-1).patch.traceSummary;
   assert.doesNotMatch(JSON.stringify(fixture.transitions), /guest\.jwt/, 'no durable trace carries it');
@@ -821,6 +834,200 @@ test('Homeroom\'s own shots tell the guest lookup so, and the guest carries noth
   assert.deepEqual(lookup, { selfApp: true });
   assert.deepEqual(dispatchTokens, TOKENS, 'no guest token without one');
   assert.match(brief.browsers.guest.who, /^a visitor who is not signed in: Homeroom shows it its signed-out pages/);
+  assert.equal('appRoles' in brief, false, 'on Homeroom\'s own copies the administrators are its administrators');
+  assert.equal(brief.browsers.full_admin.who, 'a full administrator that exists only in these two throwaway copies');
+  assert.equal(fixture.calls.starterReads, 0, 'Homeroom itself never ships the starter');
+  assert.equal('afterOnly' in brief, false);
+});
+
+// A project's first version: its before build is the starter template's
+// placeholder (services/shots-starter.js). Every before shot of proposals
+// 7608, 7871 and 7610 was that placeholder, taken at the cost of half the
+// agent's turn. Now the run takes and publishes the after side only.
+test('a first version\'s run takes and publishes the after side only, and says so', async () => {
+  let brief = null;
+  let refused = null;
+  let stored = null;
+  let starterPair = null;
+  const fixture = setup({
+    storeArtifacts: async (_pool, _runId, artifacts) => { stored = artifacts; },
+    dispatch: async (options) => {
+      const control = controlFor(options);
+      brief = control.getContext();
+      try {
+        control.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'before' }, fixtures.png({ shade: 10 }));
+      } catch (error) { refused = error; }
+      control.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'after' }, fixtures.png({ shade: 200 }));
+      return { backend: 'claude_code', threadId: 'shots-thread' };
+    },
+  });
+  fixture.dependencies.shotsStarter.beforeIsStarter = async (pair) => { starterPair = pair; return true; };
+  const result = await execute(fixture);
+
+  assert.equal(result.state, 'verified');
+  assert.equal(starterPair, fixture.pair, 'read from the two checkouts the run built');
+  assert.deepEqual(brief.afterOnly, orchestrator.AFTER_ONLY);
+  assert.equal(brief.afterOnly.beforeIsStarter, true);
+  assert.match(brief.afterOnly.note, /starter template's placeholder screen/);
+  assert.match(brief.afterOnly.note, /do not open the before address, and save only after shots/);
+  assert.match(brief.afterOnly.note, /Do not call note_change to say the before side is a placeholder/);
+  assert.equal(brief.addresses.before, ORIGINS.base, 'the bridge still knows both addresses');
+  assert.equal(refused?.code, 'before_not_needed');
+
+  const verified = fixture.transitions.find((entry) => entry.next === 'verified').patch;
+  assert.deepEqual(verified.hardVerdict, {
+    passed: true, mode: shots.SHOTS_MODE, runs: 1,
+    stories: [{ id: 'invite-suggestions', status: 'ready', files: 1 }],
+    afterOnly: true,
+  }, 'nothing to compare, so no screens');
+  assert.equal(verified.traceSummary.afterOnly, true);
+  assert.deepEqual(stored.map(({ side, variant }) => `${side}:${variant}`), ['head:context']);
+});
+
+test('a first version that cannot be recognised is shot on both sides, as before', async () => {
+  let brief = null;
+  const fixture = setup({
+    dispatch: async (options) => {
+      const control = controlFor(options);
+      brief = control.getContext();
+      for (const story of control.intent.stories) saveStills(control, story.id);
+      return { backend: 'claude_code', threadId: 'shots-thread' };
+    },
+  });
+  fixture.dependencies.shotsStarter.beforeIsStarter = async () => { throw new Error('checkout gone'); };
+  const result = await execute(fixture);
+  assert.equal(result.state, 'verified');
+  assert.equal('afterOnly' in brief, false);
+  const verified = fixture.transitions.find((entry) => entry.next === 'verified').patch;
+  assert.equal('afterOnly' in verified.hardVerdict, false);
+  assert.ok(Array.isArray(verified.hardVerdict.screens));
+});
+
+// An app built on Homeroom is told who is signed in, never their role in
+// it, so no browser is its creator or one of its admins. Three runs on one
+// app's Creator Studio tried every browser before giving up (QuestVerse's PRs 7 to 9):
+// the brief says so up front, in fixed words, so the agent skips at once.
+test('a child app\'s brief says no browser holds a role in the app, and to skip an owner-only screen at once', () => {
+  const checkout = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-app-roles-'));
+  try {
+    fs.writeFileSync(path.join(checkout, 'dapp.json'), JSON.stringify({ tests: [] }));
+    const briefFor = (options) => orchestrator.shotsBrief({
+      run: { id: RUN_ID },
+      session: { pr_title: 'Seasonal theme picker' },
+      revision: {
+        baseSha: BASE, headSha: HEAD, files: ['public/app.js'], filesComplete: true,
+        diffSummary: { text: '', fileCount: 1, truncated: false },
+      },
+      pair: { sides: { base: {}, head: { checkout } } },
+      deployment: { origins: { base: 'http://base.internal', head: 'http://head.internal' } },
+      intent: contract.parseIntent(fixtures.intent()),
+      ...options,
+    });
+    const child = briefFor({ childApp: true });
+    assert.deepEqual(Object.keys(child.browsers).sort(), ['full_admin', 'guest', 'member', 'read_only_admin']);
+    assert.equal(child.browsers.member.who, 'an ordinary signed-in person with no role in this app');
+    for (const persona of ['read_only_admin', 'full_admin']) {
+      assert.match(child.browsers[persona].who,
+        /^a Homeroom administrator .*; this app is not told that, so it sees an ordinary signed-in person with no role in it$/);
+    }
+    assert.equal(child.browsers.full_admin.tool, 'browser_full_admin');
+    assert.equal(child.appRoles.heldByAnyBrowser, false);
+    assert.match(child.appRoles.note, /^No browser here is this app's creator, owner or one of its admins/);
+    assert.match(child.appRoles.note, /never their role in it/);
+    assert.match(child.appRoles.note, /never the app's own\s+people/);
+    assert.match(child.appRoles.note, /an allowlist of usernames or ids/);
+    assert.match(child.appRoles.note, /call skip_change for that change at once/);
+    assert.match(child.appRoles.note, /do not try the other browsers/);
+    assert.match(child.appRoles.note, /when hints\.setup says how to get it, do that first/);
+
+    const homeroom = briefFor({});
+    assert.equal('appRoles' in homeroom, false);
+    assert.equal(homeroom.browsers.member.who, 'an ordinary member');
+    assert.equal(homeroom.browsers.read_only_admin.who, 'an administrator with read-only rights');
+  } finally {
+    fs.rmSync(checkout, { recursive: true, force: true });
+  }
+});
+
+// PR 4777 (a ready-made Study timer, 2026-10-12): two of its three changes
+// were skipped because the shots member could not make a project. Now the
+// personas can, but no copy can set a project up, so Homeroom's brief says
+// what can be shot after Make it and to skip a change that needs a made
+// project running at once, never as the change failing.
+test('Homeroom\'s own brief says a project made on the copies never finishes setting up; a child app\'s says nothing', () => {
+  const checkout = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-make-project-'));
+  try {
+    fs.writeFileSync(path.join(checkout, 'dapp.json'), JSON.stringify({ tests: [] }));
+    const briefFor = (options) => orchestrator.shotsBrief({
+      run: { id: RUN_ID },
+      session: { pr_title: 'A ready-made Study timer' },
+      revision: {
+        baseSha: BASE, headSha: HEAD, files: ['src/services/app-templates.js'], filesComplete: true,
+        diffSummary: { text: '', fileCount: 1, truncated: false },
+      },
+      pair: { sides: { base: {}, head: { checkout } } },
+      deployment: { origins: { base: 'http://base.internal', head: 'http://head.internal' } },
+      intent: contract.parseIntent(fixtures.intent()),
+      ...options,
+    });
+    const own = briefFor({ selfApp: true });
+    assert.deepEqual(own.makeProject, orchestrator.MAKE_PROJECT);
+    assert.equal(own.makeProject.setupFinishes, false);
+    const { note } = own.makeProject;
+    assert.match(note, /^Make it on "What do you want to make\?" \(\/#create\) works on these copies for whoever has free app slots/);
+    assert.match(note, /availableFixtures says who/);
+    assert.match(note, /no rights to create its database, no image builder and no GitHub/);
+    assert.match(note, /"Setting it up didn’t finish" and "Setup stopped before it was running" with Try again, on both addresses alike/,
+      'in the words the screen uses, so the agent can wait for them');
+    assert.match(note, /A remix stops the same way too, and importing a GitHub repository is refused/);
+    assert.match(note, /not the change failing: never use outcome "failed" for it/);
+    assert.match(note, /can be shot once the setup has stopped on both addresses/);
+    assert.match(note, /call skip_change for it at once, saying these copies cannot set up\s+a new project/);
+    assert.match(note, /five projects an hour on each\s+address, its phone browser included/);
+    assert.doesNotMatch(note, /[—]/, 'no em dashes in model copy');
+
+    assert.equal('makeProject' in briefFor({ childApp: true }), false, 'a child app makes no projects');
+    assert.equal('makeProject' in briefFor({}), false);
+  } finally {
+    fs.rmSync(checkout, { recursive: true, force: true });
+  }
+});
+
+// PR 4626's notification for a reply in a topic's thread was skipped: "it
+// needs a second account to reply to my message, and I can't sign in as
+// another account" (2026-10-09). The other signed-in browsers are that
+// account, and the brief says so, in fixed words.
+test('the brief says another persona\'s browser can be the second account a change needs', () => {
+  const checkout = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-second-account-'));
+  try {
+    fs.writeFileSync(path.join(checkout, 'dapp.json'), JSON.stringify({ tests: [] }));
+    const briefFor = (options) => orchestrator.shotsBrief({
+      run: { id: RUN_ID },
+      session: { pr_title: 'Reply threads in topics' },
+      revision: {
+        baseSha: BASE, headSha: HEAD, files: ['public/js/group-chat.js'], filesComplete: true,
+        diffSummary: { text: '', fileCount: 1, truncated: false },
+      },
+      pair: { sides: { base: {}, head: { checkout } } },
+      deployment: { origins: { base: 'http://base.internal', head: 'http://head.internal' } },
+      intent: contract.parseIntent(fixtures.intent()),
+      ...options,
+    });
+    const own = briefFor({ selfApp: true });
+    assert.deepEqual(own.secondAccount.personas, ['member', 'read_only_admin', 'full_admin']);
+    assert.ok(own.secondAccount.personas.every((persona) => persona in own.browsers));
+    assert.match(own.secondAccount.note, /^The member, read_only_admin and full_admin browsers are three different signed-in accounts\./);
+    assert.match(own.secondAccount.note, /a reply to the member's message, a vote on\s+their change/);
+    assert.match(own.secondAccount.note, /take that step in another of these browsers, the same way on the before and the after address, then shoot in the browser screenBrowsers names/);
+    assert.match(own.secondAccount.note, /use full_admin when you can: it is a member of Homeroom's own project on these copies/);
+    assert.match(own.secondAccount.note, /The guest browser is not signed in, so it cannot be that account\.$/);
+    const child = briefFor({ childApp: true });
+    assert.match(child.secondAccount.note, /three different signed-in accounts/);
+    assert.doesNotMatch(child.secondAccount.note, /Homeroom's own project/, 'only Homeroom\'s copies make the full admin a member');
+    assert.doesNotMatch(JSON.stringify(own.secondAccount), /[—]/, 'no em dashes in model copy');
+  } finally {
+    fs.rmSync(checkout, { recursive: true, force: true });
+  }
 });
 
 test('slow paired environment provisioning does not consume the agent budget', async () => {
@@ -925,9 +1132,130 @@ test('the brief names the declared changes, both addresses and revisions, and no
     assert.doesNotMatch(JSON.stringify(brief),
       /secret\.jwt|fixture-session-secret|fixture-db-password|evidence_(?:base|head)_db|sha256:(?:base|head)/);
     assert.equal('previewAt' in brief, false, 'no declared moment, no previewAt');
+    assert.equal('phoneSignIn' in brief, false, 'no phone code for the pair, no phoneSignIn');
+    assert.deepEqual(brief.screenBrowsers, { 'invite-suggestions': { desktop: 'browser_member' } });
+    assert.ok(Object.values(brief.browsers).every((entry) => !('phoneTool' in entry)), 'no phone screen, no phone browser');
+    // The only files upload_file can choose, named and described, never a path.
+    assert.deepEqual(brief.sampleFiles.map((file) => [file.name, file.type]), [
+      ['landscape.png', 'image/png'], ['portrait.png', 'image/png'],
+      ['table.csv', 'text/csv'], ['document.pdf', 'application/pdf'],
+    ]);
+    assert.ok(brief.sampleFiles.every((file) => Object.keys(file).join() === 'name,type,about'));
+    assert.doesNotMatch(JSON.stringify(brief.sampleFiles), /\/usr\/local|shots-samples/);
   } finally {
     fs.rmSync(checkout, { recursive: true, force: true });
   }
+});
+
+test('Homeroom\'s own copies hand the agent the run\'s phone code in its brief, and nothing stored keeps it', async () => {
+  // The copies offer phone sign-in with the fictional test numbers and a
+  // code made for the run (shots-environment.js shotsPhoneSignInEnv). The
+  // agent needs the code to walk a Join sheet's phone step to its end; the
+  // proposal, the trace and the agent's worker env never get it.
+  const CODE = '482913';
+  let brief = null;
+  let dispatchTokens = null;
+  const fixture = setup({
+    dispatch: async (options) => {
+      dispatchTokens = options.authTokens;
+      const control = controlFor(options);
+      brief = control.getContext();
+      saveStills(control, 'invite-suggestions');
+      control.noteChange({
+        change: 'invite-suggestions',
+        note: 'Signed in with +1 415 555 0142 and 482 913; the username step is left out.',
+      });
+      control.skipChange({ change: 'invite-empty', reason: `The code ${CODE} worked but the empty state never showed.` });
+      return {
+        backend: 'claude_code',
+        result: { lastResultText: `Used code ${CODE} and 482-913 on both copies.`, exitCode: 0 },
+      };
+    },
+  });
+  fixture.run.intent = twoChangeIntent();
+  fixture.dependencies.environment.resetPair = async () => ({
+    origins: { ...ORIGINS }, ...provenance, phoneTestCode: CODE,
+  });
+  const result = await execute(fixture);
+  assert.equal(result.state, 'verified');
+  assert.equal(brief.phoneSignIn.code, CODE);
+  assert.equal(brief.phoneSignIn.textSent, false);
+  assert.match(brief.phoneSignIn.numbers, /\+1, any area code, then 555 0100 to 0199/);
+  assert.match(brief.phoneSignIn.use, /No text is sent/);
+  assert.match(brief.phoneSignIn.use, /only on the before and after addresses, never anywhere else/);
+  assert.match(brief.phoneSignIn.use, /Never write the code in a note or a skip reason/);
+  assert.deepEqual(dispatchTokens, TOKENS, 'the code is no sign-in token: the worker env never carries it');
+
+  assert.doesNotMatch(JSON.stringify(fixture.transitions), /482[ -]?913/, 'no durable record keeps the code');
+  const verified = fixture.transitions.at(-1).patch;
+  const stories = Object.fromEntries(verified.hardVerdict.stories.map((story) => [story.id, story]));
+  assert.equal(stories['invite-suggestions'].note,
+    'Signed in with +1 415 555 0142 and ****; the username step is left out.',
+    'what the proposal shows is masked, the test number kept');
+  assert.equal(stories['invite-empty'].reason, 'The code **** worked but the empty state never showed.');
+  assert.equal(verified.traceSummary.agentFinalResponses[0].excerpt, 'Used code **** and **** on both copies.');
+});
+
+test('a phone screen is shot in its persona\'s phone browser, and the run starts one only where needed', async () => {
+  // Below 768 px a screen is a phone's (visible-changes.phoneScreen): a
+  // tablet's 768 stays in the desktop browser.
+  const raw = fixtures.motionIntent();
+  const phone = { name: 'phone', width: 390, height: 844 };
+  const tablet = { name: 'tablet', width: 768, height: 1024 };
+  raw.stories[0] = { ...raw.stories[0], persona: 'read_only_admin', viewports: [raw.stories[0].viewports[0], phone] };
+  raw.stories[1] = { ...raw.stories[1], viewports: [tablet, { name: 'small', width: 360, height: 740 }] };
+  let brief = null;
+  let dispatchOptions = null;
+  const fixture = setup({
+    dispatch: async (options) => {
+      dispatchOptions = options;
+      brief = controlFor(options).getContext();
+      return { backend: 'claude_code', threadId: 'shots-thread' };
+    },
+  });
+  fixture.run.intent = contract.parseIntent(raw);
+  await assert.rejects(execute(fixture), { code: 'shots_capture_incomplete' });
+
+  assert.deepEqual(brief.screenBrowsers, {
+    'invite-suggestions': { desktop: 'browser_admin', phone: 'browser_admin_phone' },
+    'saved-toast': { tablet: 'browser_member', small: 'browser_member_phone' },
+  });
+  assert.equal(brief.browsers.read_only_admin.phoneTool, 'browser_admin_phone');
+  assert.equal(brief.browsers.member.phoneTool, 'browser_member_phone');
+  assert.equal('phoneTool' in brief.browsers.full_admin, false, 'no phone screen of its own, no phone browser');
+  assert.equal('phoneTool' in brief.browsers.guest, false);
+  assert.deepEqual(brief.declaredChanges, fixture.run.intent.stories, 'the declared changes are not rewritten');
+  // The worker starts exactly those phone browsers, and each kind records
+  // clips at its own motion screens' size.
+  assert.deepEqual(dispatchOptions.phonePersonas, ['member', 'read_only_admin']);
+  assert.equal(dispatchOptions.recordClips, true);
+  assert.equal(dispatchOptions.clipSize, '768x1024');
+  assert.equal(dispatchOptions.phoneClipSize, '360x740');
+});
+
+test('Homeroom\'s own copies tell the agent how to show the install strip, when a screen is a phone\'s', async () => {
+  // Every shots page opens with the strip dismissed (worker/shots-page-init.js);
+  // a change to the strip itself (4420, 4321) opens its start path with this flag.
+  const briefs = [];
+  for (const [selfAppSlug, phone] of [['demo', true], ['other-app', true], ['demo', false]]) {
+    const raw = fixtures.intent();
+    if (phone) raw.stories[0].viewports = [{ name: 'phone', width: 390, height: 844 }];
+    let brief = null;
+    const fixture = setup({
+      dispatch: async (options) => {
+        brief = controlFor(options).getContext();
+        return { backend: 'claude_code', threadId: 'shots-thread' };
+      },
+    });
+    fixture.run.intent = contract.parseIntent(raw);
+    await assert.rejects(execute(fixture, { selfAppSlug }), { code: 'shots_capture_incomplete' });
+    briefs.push(brief);
+  }
+  assert.deepEqual(briefs[0].installStrip, orchestrator.INSTALL_STRIP);
+  assert.match(briefs[0].installStrip.note, /dismissed on every page these browsers open/);
+  assert.match(briefs[0].installStrip.note, /on both addresses, in the phone browser/);
+  assert.equal('installStrip' in briefs[1], false, 'a child app\'s copies have no strip');
+  assert.equal('installStrip' in briefs[2], false, 'no phone screen, nothing would show it');
 });
 
 test('each side\'s home tile reaches the run: described in the brief, served from its own dapp.json', async (t) => {
@@ -1874,6 +2202,19 @@ test('the trace keeps whether a hosted app\'s page load carried the persona iden
   assert.equal(other.identityAttached, undefined, 'and only a page load carries it');
 });
 
+test('the trace keeps that a page load was sent on to its address with the display token, and nothing else of it', () => {
+  const metrics = orchestrator.newRunMetrics();
+  orchestrator.recordAgentDiagnostic(metrics, { kind: 'document_request', side: 'head',
+    identityAttached: false, identityRedirect: true });
+  orchestrator.recordAgentDiagnostic(metrics, { kind: 'document_request', side: 'base', identityRedirect: '/?token=x' });
+  orchestrator.recordAgentDiagnostic(metrics, { kind: 'tool_start', tool: 'get_brief', identityRedirect: true });
+  const [sent, junk, other] = orchestrator.traceSummary(metrics).agentActivity.events;
+  assert.equal(sent.identityRedirect, true);
+  assert.equal(sent.identityAttached, false);
+  assert.equal(junk.identityRedirect, undefined, 'only true is kept, never the address');
+  assert.equal(other.identityRedirect, undefined, 'and only a page load carries it');
+});
+
 test('the trace counts the shots proxy\'s refusals of a destination by reason only', () => {
   const metrics = orchestrator.newRunMetrics();
   for (const blockReason of ['private_address', 'port', 'dns']) {
@@ -2004,4 +2345,162 @@ test('the trace counts the proxy\'s refusals by reason and kind of host', () => 
   });
   assert.equal(agentActivity.events.at(-3).hostKind, undefined, 'an unknown kind of host is dropped');
   assert.doesNotMatch(JSON.stringify(agentActivity), /internal\.example|10\.0\.0\.5/);
+});
+
+// #4575: the shots run lost a race with the Homeroom bot's turn on the same
+// session. The run waited for an idle session once, before building its
+// copies, and the bot took the session while they built: the dispatch died
+// with "execInWorker: durable active turn could not be persisted".
+function sessionBusyError() {
+  return Object.assign(new Error('execInWorker: another turn already owns this session'), {
+    code: 'durable_turn_persist_failed', persistCode: 'session_busy', sessionBusy: true,
+  });
+}
+
+test('a dispatch that finds the proposal\'s agent busy waits for it and dispatches again', async () => {
+  const lines = [];
+  let idleWaits = 0;
+  const fixture = setup({
+    dispatch: async (options, attempt) => {
+      if (attempt === 1) throw sessionBusyError();
+      saveStills(controlFor(options), 'invite-suggestions');
+      return { backend: 'claude_code', threadId: 'thread-2' };
+    },
+  });
+  const realWait = orchestrator.waitForSessionIdle;
+  fixture.dependencies.waitForSessionIdle = async (...args) => {
+    idleWaits += 1;
+    return realWait(...args);
+  };
+  const result = await execute(fixture, {
+    maxAgentMs: 120_000, onProgress: (line) => lines.push(line),
+  });
+  assert.equal(result.state, 'verified');
+  assert.equal(fixture.calls.dispatches, 2);
+  // Once before the copies, and again right before each dispatch.
+  assert.equal(idleWaits, 3);
+  assert.ok(lines.some((line) => /agent was busy, so the shots didn’t start\. Trying again/.test(line)));
+  const trace = fixture.transitions.find((entry) => entry.next === 'reviewing').patch.traceSummary;
+  assert.equal(trace.agentBusyRetries, 1);
+  assert.deepEqual(trace.agentDispatches.map((entry) => entry.code || entry.outcome),
+    ['durable_turn_persist_failed', 'completed']);
+});
+
+test('the worker\'s in-flight refusal is waited out the same way', async () => {
+  const fixture = setup({
+    dispatch: async (options, attempt) => {
+      if (attempt === 1) {
+        throw Object.assign(new Error('execInWorker: a turn is already in flight for session 42'),
+          { code: 'TURN_IN_FLIGHT' });
+      }
+      saveStills(controlFor(options), 'invite-suggestions');
+      return { backend: 'claude_code', threadId: 'thread-2' };
+    },
+  });
+  const result = await execute(fixture, { maxAgentMs: 120_000 });
+  assert.equal(result.state, 'verified');
+  assert.equal(fixture.calls.dispatches, 2);
+});
+
+test('an agent that stays busy fails the run in plain words after two more tries', async () => {
+  const fixture = setup({ dispatch: async () => { throw sessionBusyError(); } });
+  await assert.rejects(execute(fixture, { maxAgentMs: 120_000 }), { code: 'durable_turn_persist_failed' });
+  assert.equal(fixture.calls.dispatches, 1 + orchestrator.MAX_AGENT_BUSY_RETRIES);
+  const failed = fixture.transitions.at(-1);
+  assert.equal(failed.next, 'failed');
+  assert.equal(failed.patch.failureCode, 'durable_turn_persist_failed');
+  assert.equal(failed.patch.failureReason,
+    'The proposal’s agent was busy with another turn, so the shots didn’t start. Take the shots again.');
+  assert.doesNotMatch(failed.patch.failureReason, /execInWorker|durable/);
+});
+
+test('a session the agent was busy on is not retried past the agent\'s budget', async () => {
+  const fixture = setup({ dispatch: async () => { throw sessionBusyError(); } });
+  // Less than a minute of agent budget: no time for another dispatch.
+  await assert.rejects(execute(fixture, { maxAgentMs: 30_000 }), { code: 'durable_turn_persist_failed' });
+  assert.equal(fixture.calls.dispatches, 1);
+});
+
+test('only a busy agent reads as retryable, never a failed one', () => {
+  assert.equal(orchestrator.agentBusyRetryable(sessionBusyError()), true);
+  assert.equal(orchestrator.agentBusyRetryable({ code: 'TURN_IN_FLIGHT' }), true);
+  assert.equal(orchestrator.agentBusyRetryable({ code: 'session_busy' }), true);
+  assert.equal(orchestrator.agentBusyRetryable({ code: 'durable_retry_persist_failed' }), true);
+  assert.equal(orchestrator.agentBusyRetryable({ code: 'shots_agent_failed' }), false);
+  assert.equal(orchestrator.agentBusyRetryable({ code: 'shots_agent_timeout' }), false);
+  assert.equal(orchestrator.agentBusyRetryable(null), false);
+});
+
+// ── A platform fault is recorded so the sweep can take the run again ──
+
+test('a failure on a platform step is recorded as one, and anything else is not', async () => {
+  const database = setup();
+  database.dependencies.environment.preparePair = async () => {
+    throw Object.assign(new Error('No answer from Postgres within 90 seconds, psql\'s time limit.'),
+      { shotsPlatformFault: 'database' });
+  };
+  await assert.rejects(execute(database), /No answer from Postgres/);
+  assert.deepEqual(database.transitions.at(-1).patch.traceSummary.platformFault, { kind: 'database' });
+
+  // The agent's process exited 1 and nothing recorded why: taken again once.
+  const exited = setup({
+    dispatch: async () => {
+      throw Object.assign(new Error('The shots agent stopped with an error before it finished.'),
+        { code: 'shots_agent_failed', shotsExitCode: 1, shotsExitCause: null });
+    },
+  });
+  await assert.rejects(execute(exited), { code: 'shots_agent_failed' });
+  assert.equal(exited.calls.dispatches, 1, 'no second dispatch inside the run for an exit with no cause');
+  assert.deepEqual(exited.transitions.at(-1).patch.traceSummary.platformFault, { kind: 'agent_exit' });
+
+  // A revision that does not build is the proposal's to fix.
+  const build = setup();
+  build.dependencies.environment.preparePair = async () => {
+    throw new Error('Image build failed: npm ci exited 1');
+  };
+  await assert.rejects(execute(build), /Image build failed/);
+  assert.equal(Object.hasOwn(build.transitions.at(-1).patch.traceSummary, 'platformFault'), false);
+
+  // So is a state the copies cannot reach.
+  const skipped = setup({
+    dispatch: async (options) => {
+      controlFor(options).skipChange({ change: 'invite-suggestions', reason: 'No such state here.' });
+      return { backend: 'claude_code', threadId: 'thread-1' };
+    },
+  });
+  await assert.rejects(execute(skipped), { code: 'shots_capture_incomplete' });
+  assert.equal(Object.hasOwn(skipped.transitions.at(-1).patch.traceSummary, 'platformFault'), false);
+});
+
+test('a platform fault is read off the error, and GitHub\'s limit waits for its reset', () => {
+  const now = Date.parse('2026-10-12T09:00:00Z');
+  const fault = (error) => orchestrator.platformFault(error, { now });
+  assert.deepEqual(fault({ shotsPlatformFault: 'database' }), { kind: 'database' });
+  assert.deepEqual(fault({ shotsPlatformFault: 'clone' }), { kind: 'clone' });
+  assert.deepEqual(fault({ code: 'shots_agent_failed', shotsExitCode: 1 }), { kind: 'agent_exit' });
+  assert.deepEqual(fault(new Error("clone failed: Cloning into '.'... | fatal: could not read Username")),
+    { kind: 'worker_bootstrap' });
+  assert.deepEqual(fault(new Error('warm-ready timeout for usernode-worker-42')), { kind: 'worker_bootstrap' });
+  // GitHub's hourly limit: once it has reset, with a minute to spare; within
+  // the hour when the reset is not known.
+  assert.deepEqual(fault({ code: 'github_rate_limited', retryAfterMs: 3 * 60_000 }),
+    { kind: 'github_rate_limited', retryAt: now + 4 * 60_000 });
+  assert.deepEqual(fault({ code: 'github_rate_limited' }),
+    { kind: 'github_rate_limited', retryAt: now + 15 * 60_000 });
+  assert.deepEqual(fault({ code: 'github_rate_limited', retryAfterMs: 5 * 3600_000 }),
+    { kind: 'github_rate_limited', retryAt: now + 65 * 60_000 }, 'never more than the hour and a little');
+
+  for (const error of [
+    null,
+    new Error('Image build failed'),
+    // The wrapper dying is structural; the worker does not retry it either.
+    new Error('warm wrapper exited before warm-ready (code=1)'),
+    { code: 'shots_capture_incomplete' },
+    { code: 'shots_change_failed' },
+    { code: 'shots_stopped' },
+    { code: 'visible_changes_conflict' },
+    { shotsPlatformFault: 'not_a_kind' },
+  ]) {
+    assert.equal(fault(error), null, String(error?.code || error?.message || error?.shotsPlatformFault || error));
+  }
 });

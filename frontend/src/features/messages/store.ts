@@ -1,11 +1,12 @@
 import { useSyncExternalStore } from 'react';
 
+import { t } from '../../lib/i18n/runtime';
 import { navStore } from '../nav/nav-store.js';
 import * as api from './api';
-import { WORK_CHANGED_EVENT, openAppTarget } from './bot-shared';
+import { WORK_CHANGED_EVENT, inMainStream, openAppTarget, threadsAllowed } from './bot-shared';
 import { channelDirectory, normalizeHandle, type ChannelRef } from './channels';
 import { platformHubServed, platformSlug, subscribePlatformSlug } from './channel-hub';
-import type { AppDiscussion, InboxFilter } from './inbox';
+import { savedInboxFilter, type AppDiscussion, type InboxFilter } from './inbox';
 import { markFor } from './unread-anchor';
 import type {
   ConversationDetail,
@@ -33,8 +34,17 @@ interface PendingSend {
   idempotencyKey: string;
 }
 
+/**
+ * A name on the typing line. The line shows each name once, as it always has:
+ * two people shown by the same word are one entry, and that word leaves when
+ * either of them stops (see `typingHolders`). `unnamed` says the word is only
+ * the stand-in for a member with no username; it is worked out from who is
+ * typing under the word now, so it leaves with that person.
+ */
+export interface Typist { name: string; unnamed: boolean }
+
 interface InternalState extends MessagesSnapshot {
-  typing: Record<number, string[]>;
+  typing: Record<number, Typist[]>;
 }
 
 type Listener = () => void;
@@ -65,8 +75,10 @@ let state: InternalState = {
   thread: null,
   nextAfter: null,
   listCollapsed: false,
+  listCrowded: false,
   showMoreChannels: false,
   unreadMark: null,
+  threadFocusId: null,
 };
 
 /*
@@ -109,6 +121,26 @@ const unsent = new Map<string, { conversationId: number; payload: PendingSend; a
 const sentKeys = new Map<number, string>();
 const typingSentAt = new Map<number, number>();
 const typingExpiry = new Map<string, number>();
+/**
+ * #4220: a "stopped typing" that waits for its message. The bot sends its
+ * message and then stops typing (services/homeroom-bot-dm.js whileTyping),
+ * but realtime carries ids only, so the message shows once the re-read it
+ * started publishes, and in the bot's DM that read is the slow one: the line
+ * went away and the conversation sat still before the answer came. So while
+ * a re-read for a new message is in flight in a conversation (`landing`, by
+ * how many), a stop there holds its name (`heldTyping`, by the typingExpiry
+ * key) until that read publishes, and never longer than TYPING_HOLD_MS.
+ */
+const landing = new Map<number, number>();
+const heldTyping = new Map<string, { conversationId: number; shown: string }>();
+/**
+ * Who is typing under each shown word: `conversationId:word` to user id to
+ * whether that person has no username. The word is the stand-in only while
+ * everybody typing under it is nameless; one real account makes it a name.
+ * Emptied when the word leaves the line, so nothing outlives the person.
+ */
+const typingHolders = new Map<string, Map<number, boolean>>();
+const TYPING_HOLD_MS = 5000;
 let pendingShare: SharedObjectReference | null | undefined;
 /**
  * A change the change page's Ask for changes put straight on the chat with
@@ -211,7 +243,7 @@ function currentUser(): { id: number; username: string; avatarUrl?: string | nul
   const user = typeof window !== 'undefined' ? window.App?.user : null;
   return {
     id: Number(user?.id) || 0,
-    username: typeof user?.username === 'string' ? user.username : 'You',
+    username: typeof user?.username === 'string' ? user.username : t('messages:store.you'),
     avatarUrl: typeof user?.avatarUrl === 'string' ? user.avatarUrl : null,
   };
 }
@@ -226,23 +258,23 @@ function isAwaitingAcceptance(error: unknown): boolean {
 
 function errorMessage(error: unknown, fallback: string): string {
   if (error instanceof api.MessagesApiError) {
-    if (isAwaitingAcceptance(error)) return 'They need to accept your message request before you can send more.';
-    if (error.status === 404) return 'This conversation is no longer available.';
-    if (error.status === 429) return 'You’re doing that too quickly. Try again in a moment.';
+    if (isAwaitingAcceptance(error)) return t('messages:store.error.awaitingAcceptance');
+    if (error.status === 404) return t('messages:store.error.gone');
+    if (error.status === 429) return t('messages:store.error.tooFast');
     return error.message || fallback;
   }
   return error instanceof Error && error.message ? error.message : fallback;
 }
 
 /**
- * Which of the four kinds the list is showing (#2718).
- *
- * Presentation, so it is not persisted and not in the route: a filter that
- * survives a reload is a filter somebody has to remember turning on, and the
- * one thing this screen must always be able to say is "here is everything".
+ * Which kind the list is showing (#2718), remembered per device since #4783:
+ * a daily voter coming back keeps their choice instead of landing on All.
+ * Still presentation, so not in the route, and a fresh device starts on All;
+ * an unknown saved value (`savedInboxFilter`) falls back to All too.
  */
 export function setFilter(next: InboxFilter): void {
   if (state.filter === next) return;
+  try { localStorage.setItem('usernode:messages-filter', next); } catch { /* storage unavailable */ }
   publish({ filter: next });
 }
 
@@ -425,7 +457,7 @@ export async function loadConversations(force = false): Promise<void> {
       loadingList: false,
       listLoaded: true,
       online: typeof navigator === 'undefined' ? true : navigator.onLine,
-      error: errorMessage(error, 'Couldn’t load your conversations.'),
+      error: errorMessage(error, t('messages:store.error.loadList')),
     });
     resolvePendingChannel();
   }
@@ -445,12 +477,14 @@ let focusLoaded: number | null = null;
  * The newest message of the conversation itself on screen — the read cursor's
  * position. Since the #2387 follow-up the main stream also carries its
  * threads' replies as lines, and a reply is no position in it: the server
- * reads a thread when handed one, and leaves the cursor where it was.
+ * reads a thread when handed one, and leaves the cursor where it was. One
+ * request, one story: a moment the chat with Homeroom bot also lists in its
+ * main stream (`alsoInChat`) is a position in it, as the server counts it.
  */
 function newestMainId(messages: ConversationMessage[]): number | null {
   for (let i = messages.length - 1; i >= 0; i -= 1) {
     const item = messages[i];
-    if (item.id > 0 && !item.threadRootId) return item.id;
+    if (item.id > 0 && inMainStream(item)) return item.id;
   }
   return null;
 }
@@ -470,7 +504,20 @@ function transcriptOrder(a: ConversationMessage, b: ConversationMessage): number
  */
 const leftConversations = new Set<number>();
 
-export async function loadThread(conversationId: number, force = false): Promise<void> {
+/**
+ * #4243: whether the browser says it is offline. Only a `false` counts: where
+ * the property is missing nothing says the network is gone.
+ */
+function browserOffline(): boolean {
+  return typeof navigator !== 'undefined' && navigator.onLine === false;
+}
+
+/**
+ * `offlineCopy` is the retry of an open whose read from the server failed
+ * (#4243): the one read that takes the service worker's offline copy while
+ * the browser says it is online.
+ */
+export async function loadThread(conversationId: number, force = false, offlineCopy = false): Promise<void> {
   if (!validId(conversationId)) return;
   if (leftConversations.has(conversationId)) {
     threadRequest += 1;
@@ -509,7 +556,14 @@ export async function loadThread(conversationId: number, force = false): Promise
   // service worker's offline copy (#3705, #3706; api.ts ReadOptions). That
   // copy was the page from before the change, and drawing it lost the very
   // message the event was about.
-  const read = { fresh: force };
+  // AN OPEN GOES TO THE SERVER TOO WHILE THE BROWSER IS ONLINE (#4243). Its
+  // offline copy is the last visit's transcript: on a read slower than the
+  // worker's second it was drawn, and the newest messages snapped in under
+  // the reader when the worker's correction came. The skeleton stays a beat
+  // longer instead. Offline, or once that read has failed, the open takes
+  // the copy (`offlineCopy`, from the catch below).
+  const fresh = force || (!offlineCopy && !browserOffline());
+  const read = { fresh };
   try {
     // Invitation metadata is deliberately readable before acceptance, but
     // retained history is not. Resolve membership first and never request
@@ -581,12 +635,19 @@ export async function loadThread(conversationId: number, force = false): Promise
     if (last && member && !page.nextAfter && unreadHold !== conversationId) readMainWhenThere(conversationId);
   } catch (error) {
     if (request !== threadRequest) return;
+    // An open that failed on the network or the server, not with an answer
+    // like a 404, reads again and takes the offline copy (#4243).
+    const answered = error instanceof api.MessagesApiError && error.status < 500;
+    if (fresh && !force && !answered) {
+      await loadThread(conversationId, false, true);
+      return;
+    }
     publish({
       // A failed open says so on its own, as it did before the inbox row
       // stood in: no header or composer for a conversation that did not load.
       ...(preserveVisibleThread ? {} : { active: null }),
       loadingThread: false,
-      threadError: errorMessage(error, 'Couldn’t load this conversation.'),
+      threadError: errorMessage(error, t('messages:store.error.loadThread')),
       // A 404 is an answer, not a failure: trying again reads the same one.
       threadGone: error instanceof api.MessagesApiError && error.status === 404 ? 'missing' : null,
     });
@@ -652,7 +713,8 @@ function newestServerId(rows: ConversationMessage[]): number {
 async function refreshActiveAfterMembershipChange(conversationId: number): Promise<void> {
   await loadThread(conversationId, true);
   if (state.route.conversationId !== conversationId) return;
-  if (state.threadError === 'This conversation is no longer available.') {
+  // The reload answered 404: read from state, not from the sentence shown.
+  if (state.threadGone === 'missing') {
     await finishDirectBlock(conversationId);
   }
 }
@@ -675,7 +737,7 @@ export async function loadNewer(): Promise<void> {
     const last = newestMainId(messages);
     if (!page.nextAfter && last && unreadHold !== conversationId) readMainWhenThere(conversationId);
   } catch (error) {
-    publish({ loadingOlder: false, threadError: errorMessage(error, 'Couldn’t load newer messages.') });
+    publish({ loadingOlder: false, threadError: errorMessage(error, t('messages:store.error.loadNewer')) });
   }
 }
 
@@ -687,13 +749,16 @@ export function jumpToPresent(): void {
   void loadThread(conversationId, true);
 }
 
-export async function loadOlder(): Promise<void> {
+// #5019: resolves `true` when a page was read (or there was nothing to read),
+// `false` only when the request failed — the caller offers the button back as
+// a manual retry on `false`.
+export async function loadOlder(): Promise<boolean> {
   const conversationId = state.route.conversationId;
-  if (!conversationId || !state.nextBefore || state.loadingOlder) return;
+  if (!conversationId || !state.nextBefore || state.loadingOlder) return true;
   publish({ loadingOlder: true });
   try {
     const page = await api.listMessages(conversationId, state.nextBefore);
-    if (state.route.conversationId !== conversationId) return;
+    if (state.route.conversationId !== conversationId) return true;
     const known = new Set(state.messages.map((message) => message.id));
     const older = page.messages.filter((message) => !known.has(message.id));
     publish({
@@ -701,8 +766,10 @@ export async function loadOlder(): Promise<void> {
       nextBefore: page.nextBefore,
       loadingOlder: false,
     });
+    return true;
   } catch (error) {
-    publish({ loadingOlder: false, threadError: errorMessage(error, 'Couldn’t load older messages.') });
+    publish({ loadingOlder: false, threadError: errorMessage(error, t('messages:store.error.loadOlder')) });
+    return false;
   }
 }
 
@@ -905,7 +972,7 @@ export async function loadDiscussion(slug: string): Promise<void> {
   } catch {
     if (state.route.appSlug !== want) { telemetry?.cancel?.(attemptId); return; }
     telemetry?.outcome?.(attemptId, 'failure', { errorCode });
-    publish({ discussionContext: null, discussionError: 'This discussion could not be opened.' });
+    publish({ discussionContext: null, discussionError: t('messages:store.error.discussion') });
   }
 }
 
@@ -983,14 +1050,18 @@ export function isOpen(): boolean {
 
 export function handleBack(): boolean {
   const onThread = !!state.route.conversationId || !!state.route.appSlug || !!state.route.agent;
-  if (!state.route.open || !onThread || !isMobile()) return false;
+  if (!state.route.open || !onThread || !listAside()) return false;
   // A CHANNEL is not a level of this list: it is its community's room, and
   // its way back is that community's hub, which the header's arrow names
   // (syncChrome). Declining leaves the press to follow it.
   if (!state.route.threadRootId && channelHub()) return false;
+  // #4229: wider than a phone a channel's reply thread sits beside it, and
+  // the arrow still names the hub.
+  if (!isMobile() && channelHub()) return false;
   // #2387: on a phone a reply thread is a level of its own over the
-  // conversation, so Back closes it first.
-  if (state.route.threadRootId) {
+  // conversation, so Back closes it first. Wider than a phone it sits beside
+  // its chat, and the arrow goes to the list (#4229).
+  if (state.route.threadRootId && isMobile()) {
     const parent = state.route.appSlug
       ? `#messages/app/${encodeURIComponent(state.route.appSlug)}`
       : `#messages/${state.route.conversationId}`;
@@ -1011,6 +1082,31 @@ export function handleBack(): boolean {
 export function isMobile(): boolean {
   try { return typeof window !== 'undefined' && !window.matchMedia('(min-width: 768px)').matches; }
   catch { return false; }
+}
+
+/**
+ * #4229: the narrowest strip an open conversation still reads well beside the
+ * list in: the list column (22rem and its 8px) plus the sheet's margins
+ * (8px and 12px) plus a 480px sheet, the width its cards are drawn at.
+ */
+export const LIST_BESIDE_MIN_WIDTH = 860;
+
+/**
+ * The strip's width, from the screen's ResizeObserver (#4229). It is the
+ * strip's own width rather than the window's, so folding the platform rail
+ * counts. A hidden screen measures 0 and changes nothing.
+ */
+export function measureLayout(width: number): void {
+  if (!(width > 0)) return;
+  const crowded = !isMobile() && width < LIST_BESIDE_MIN_WIDTH;
+  if (crowded === state.listCrowded) return;
+  publish({ listCrowded: crowded });
+  if (state.route.open) syncChrome();
+}
+
+/** One pane at a time: a phone, or a strip too narrow for both (#4229). */
+function listAside(): boolean {
+  return isMobile() || state.listCrowded;
 }
 
 /**
@@ -1062,7 +1158,7 @@ export function syncChrome(): void {
   if (hub && !(isMobile() && state.route.threadRootId)) {
     app.setBackIcon?.('arrow', hub);
     app.setHeaderTitle?.(state.route.appSlug
-      ? state.discussionContext?.name || 'Channel'
+      ? state.discussionContext?.name || t('messages:store.header.channel')
       : `#${chromeTitle(state.active)}`);
     return;
   }
@@ -1071,14 +1167,16 @@ export function syncChrome(): void {
   // where the list is still beside it. It used to be a route into #app-view,
   // which is why backing out of one landed wherever that screen's slot
   // pointed — the Workshop, when that is where the app had been opened from.
-  const thread = isMobile() && !!(state.route.conversationId || state.route.appSlug || state.route.agent);
+  // #4229: and on a strip too narrow for the list beside it, where the list
+  // has stepped aside just as it does on a phone.
+  const thread = listAside() && !!(state.route.conversationId || state.route.appSlug || state.route.agent);
   // #2387: a reply thread, on a phone, is a level over its conversation: the
   // chevron goes back to the conversation, and the bar says "Thread".
   if (isMobile() && state.route.threadRootId && (state.route.conversationId || state.route.appSlug)) {
     app.setBackIcon?.('arrow', state.route.appSlug
       ? `#messages/app/${encodeURIComponent(state.route.appSlug)}`
       : `#messages/${state.route.conversationId}`);
-    app.setHeaderTitle?.('Thread');
+    app.setHeaderTitle?.(t('messages:store.header.thread'));
     return;
   }
   // 'none' ON THE INBOX (#2718 review). This is a second writer over the
@@ -1089,9 +1187,9 @@ export function syncChrome(): void {
   app.setBackIcon?.(thread ? 'arrow' : 'none', thread ? '#messages' : undefined);
   app.setHeaderTitle?.(thread
     ? (state.route.appSlug
-      ? state.discussionContext?.name || 'Discussion'
-      : state.route.agent ? 'Messages' : chromeTitle(state.active))
-    : 'Messages');
+      ? state.discussionContext?.name || t('messages:store.header.discussion')
+      : state.route.agent ? t('messages:store.header.messages') : chromeTitle(state.active))
+    : t('messages:store.header.messages'));
 }
 
 /**
@@ -1101,11 +1199,11 @@ export function syncChrome(): void {
  * so it takes its requester's name instead, as its header and row do.
  */
 function chromeTitle(active: ConversationDetail | null): string {
-  if (!active) return 'Messages';
+  if (!active) return t('messages:store.header.messages');
   if (active.kind === 'direct' && active.membershipStatus === 'invited' && active.requester?.username) {
     return active.requester.username;
   }
-  return active.title || 'Messages';
+  return active.title || t('messages:store.header.messages');
 }
 
 /**
@@ -1165,7 +1263,7 @@ export async function openBot(reference?: StagedObject | null): Promise<void> {
   // (the change page knows both). Anything less is chosen in the Share item
   // dialog, as Share stages one (see share below).
   const attach = !!id && !!reference && stagedComplete(reference);
-  if (attach && id && reference) pendingAttach = { conversationId: id, object: reference, placeholder: ASK_FOR_CHANGES_PLACEHOLDER };
+  if (attach && id && reference) pendingAttach = { conversationId: id, object: reference, placeholder: t(ASK_FOR_CHANGES_PLACEHOLDER) };
   else if (reference) pendingShare = reference;
   const already = !!id && state.route.conversationId === id;
   open(id);
@@ -1176,7 +1274,7 @@ export async function openBot(reference?: StagedObject | null): Promise<void> {
 }
 
 /** What the composer's box asks once Ask for changes has attached a change. */
-export const ASK_FOR_CHANGES_PLACEHOLDER = 'What should change?';
+export const ASK_FOR_CHANGES_PLACEHOLDER = 'messages:store.askForChangesPlaceholder';
 
 /** Pure: whether a staged item names its project and itself, so it can be attached as it is. */
 export function stagedComplete(reference: SharedObjectReference): boolean {
@@ -1347,8 +1445,8 @@ export async function renameConversation(title: string): Promise<void> {
   const id = state.route.conversationId;
   if (!id) return;
   const next = title.trim().replace(/\s+/g, ' ');
-  if (!next) throw new Error('A group needs a name.');
-  if (next.length > 80) throw new Error('Group names can be up to 80 characters.');
+  if (!next) throw new Error(t('messages:store.error.groupNeedsName'));
+  if (next.length > 80) throw new Error(t('messages:store.error.groupNameTooLong'));
   if (next === state.active?.title) return;
   try {
     upsertConversation(await api.updateConversation(id, { title: next }));
@@ -1450,6 +1548,39 @@ export function setReply(scope: ComposerScope, message: ConversationMessage | nu
 }
 
 /**
+ * One request, one story: the request thread a bot message belongs to in the
+ * chat with Homeroom bot (a reply's root), or null: the main stream, and
+ * any chat that keeps no threads (bot-shared.ts threadsAllowed).
+ */
+function botThreadOf(message: ConversationMessage): number | null {
+  if (!message.sender.bot || !threadsAllowed(state.active) || state.active?.kind !== 'direct') return null;
+  return validId(message.threadRootId) ? message.threadRootId as number : null;
+}
+
+/**
+ * Quote a bot message in the composer and put the caret there, for an
+ * answer of one's own (Write my own, Change something, a `reply` button).
+ * A message in a request's thread is quoted in that thread's composer, the
+ * thread opened beside the chat first when it is not the one open.
+ */
+export function quoteInComposer(message: ConversationMessage, conversationId: number): void {
+  const rootId = conversationId === state.route.conversationId ? botThreadOf(message) : null;
+  setReply(scopeKey(conversationId, rootId), message);
+  if (rootId && state.route.threadRootId !== rootId) openThread(rootId);
+  if (typeof window === 'undefined') return;
+  // The thread's composer is drawn once its pane is: look for it a few frames.
+  const selector = rootId ? '.messages-reply-pane .messages-composer-input' : '.messages-composer-input';
+  let tries = 10;
+  const focus = () => {
+    const input = document.querySelector<HTMLTextAreaElement>(selector);
+    if (input) { input.focus({ preventScroll: true }); return; }
+    tries -= 1;
+    if (tries > 0) window.requestAnimationFrame(focus);
+  };
+  window.requestAnimationFrame(focus);
+}
+
+/**
  * #3624: answer the Homeroom bot's question with one of its suggested
  * answers. Sent as an ordinary message quoting the question, which is how
  * the server knows which request it answers; whatever the person had
@@ -1458,11 +1589,14 @@ export function setReply(scope: ComposerScope, message: ConversationMessage | nu
 export async function answerBotQuestion(question: ConversationMessage, answer: string): Promise<void> {
   const conversationId = state.route.conversationId;
   if (!conversationId || conversationId !== question.conversationId) return;
-  const scope = scopeKey(conversationId, null);
+  // One request, one story: the answer goes in the request's thread,
+  // whether it was tapped there or on the moment the main chat also shows.
+  const rootId = botThreadOf(question);
+  const scope = scopeKey(conversationId, rootId);
   const draft = draftFor(scope);
   const staged = replyFor(scope);
   replyTargets.set(scope, question);
-  const sending = send({ content: answer });
+  const sending = send({ content: answer, threadRootId: rootId, anyThread: true });
   if (draft) setDraft(scope, draft);
   if (staged && staged.id !== question.id) setReply(scope, staged);
   await sending;
@@ -1484,14 +1618,17 @@ export async function tapBotAction(message: ConversationMessage, action: Homeroo
   if (action.type === 'prompt') {
     const conversationId = state.route.conversationId;
     if (!conversationId || conversationId !== message.conversationId) return;
-    const scope = scopeKey(conversationId, null);
+    // In the chat with Homeroom bot, a button on a message in a request's
+    // thread says its words in that thread.
+    const rootId = botThreadOf(message);
+    const scope = scopeKey(conversationId, rootId);
     const staged = replyFor(scope);
     // A `quote` prompt replies to the message it sits on, so it is about what
     // that message is about; any other is sent on its own. Either way a
     // reply they had staged is theirs again after.
     if (action.quote) setReply(scope, message);
     else if (staged) setReply(scope, null);
-    const sending = send({ content: action.label });
+    const sending = send({ content: action.label, threadRootId: rootId, anyThread: true });
     if (action.quote || staged) setReply(scope, staged || null);
     await sending;
     return;
@@ -1506,10 +1643,19 @@ function idempotencyKey(): string {
   return `web-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 }
 
-export async function send(input: { content: string; attachmentIds?: string[]; object?: SharedObjectReference; attachments?: ConversationMessage['attachments']; threadRootId?: number | null }): Promise<void> {
+export async function send(input: {
+  content: string; attachmentIds?: string[]; object?: SharedObjectReference; attachments?: ConversationMessage['attachments']; threadRootId?: number | null;
+  /**
+   * Send into `threadRootId`'s thread even when it is not the one open: an
+   * answer tapped on a moment the chat with Homeroom bot also shows in its
+   * main stream goes in its request's thread (answerBotQuestion).
+   */
+  anyThread?: boolean;
+}): Promise<void> {
   const conversationId = state.route.conversationId;
   if (!conversationId) return;
-  const threadRootId = input.threadRootId && state.thread?.rootId === input.threadRootId ? input.threadRootId : null;
+  const open = !!input.threadRootId && state.thread?.rootId === input.threadRootId;
+  const threadRootId = input.threadRootId && (open || (input.anyThread && validId(input.threadRootId))) ? input.threadRootId : null;
   const scope = scopeKey(conversationId, threadRootId);
   const content = input.content.slice(0, 8000);
   const reply = replyFor(scope);
@@ -1536,8 +1682,11 @@ export async function send(input: { content: string; attachmentIds?: string[]; o
   unsent.set(pending.idempotencyKey, { conversationId, payload: pending, after: newestServerId(state.messages) });
   setDraft(scope, '');
   setReply(scope, null);
-  if (threadRootId && state.thread) {
+  if (threadRootId && open && state.thread) {
     publish({ thread: { ...state.thread, messages: [...state.thread.messages, optimistic], error: null } });
+  } else if (threadRootId) {
+    // Into a thread that is not open: drawn in that thread once it lands,
+    // and the row it answers says so meanwhile (its own pressed state).
   } else {
     publish({ messages: [...state.messages, optimistic], threadError: null });
     // Sending from a linked window part-way back (#2387) goes to the present,
@@ -1595,7 +1744,7 @@ async function deliver(conversationId: number, pending: PendingSend): Promise<vo
     publish({
       online: !offline,
       messages: state.messages.map((item) => item.clientKey === key ? { ...item, pending: false, failed: true } : item),
-      threadError: offline ? 'Message queued. It will retry when you reconnect.' : errorMessage(error, 'Your message wasn’t sent.'),
+      threadError: offline ? t('messages:store.error.queued') : errorMessage(error, t('messages:store.error.send')),
     });
   }
 }
@@ -1629,9 +1778,15 @@ async function deliverToThread(conversationId: number, pending: PendingSend): Pr
         thread: {
           ...thread,
           messages: thread.messages.map((item) => item.clientKey === key ? { ...item, pending: false, failed: true } : item),
-          error: errorMessage(error, 'Your reply wasn’t sent.'),
+          error: errorMessage(error, t('messages:store.error.sendReply')),
         },
       });
+    } else if (state.route.conversationId === conversationId) {
+      // Sent into a thread that is not open (send `anyThread`): it has no
+      // row of its own to fail on, so the conversation says it.
+      unsent.delete(key);
+      publish({ threadError: errorMessage(error, t('messages:store.error.sendReply')) });
+      throw error;
     }
   }
 }
@@ -1772,6 +1927,33 @@ export function threadAddress(conversationId: number, rootId: number): string {
   return `#messages/${conversationId}/thread/${rootId}`;
 }
 
+/**
+ * Open a request's thread at one of its messages (the strip's buttons, a
+ * news line in the chat with Homeroom bot): the thread pane scrolls to it
+ * and flashes it (`threadFocusId`). Without a root it opens the message
+ * itself, wherever it is, by its link.
+ */
+export function openThreadAt(rootId: number | null | undefined, focusId: number | null | undefined = null): void {
+  const conversationId = state.route.conversationId;
+  if (typeof window === 'undefined' || !conversationId) return;
+  if (!validId(rootId)) {
+    if (validId(focusId)) openAddress(messageAddress(conversationId, focusId));
+    return;
+  }
+  publish({ threadFocusId: validId(focusId) && focusId !== rootId ? focusId : null });
+  openThread(rootId);
+}
+
+/** The open conversation's main stream as loaded, for a request's story (./bot-request.ts storyRootIn). */
+export function loadedMessages(): readonly ConversationMessage[] {
+  return state.messages;
+}
+
+/** The thread pane has shown the message it was opened at. */
+export function clearThreadFocus(): void {
+  if (state.threadFocusId) publish({ threadFocusId: null });
+}
+
 /** Open the thread that hangs off a message of the open conversation. */
 export function openThread(rootId: number): void {
   const conversationId = state.route.conversationId;
@@ -1822,7 +2004,7 @@ export async function loadReplyThread(conversationId: number, rootId: number, fo
   publish({
     thread: same && current
       ? { ...current, loading: true, error: null }
-      : { conversationId, rootId, root: findRow(rootId) || null, messages: [], loading: true, error: null, nextBefore: null },
+      : { conversationId, rootId, root: findRow(rootId) || null, messages: [], loading: true, error: null, nextBefore: null, discussion: null },
   });
   try {
     // Forced: a re-read after a change, from the server (see loadThread).
@@ -1850,6 +2032,8 @@ export async function loadReplyThread(conversationId: number, rootId: number, fo
         conversationId, rootId, root: page.root || findRow(rootId) || null,
         messages: [...known.sort((a, b) => a.id - b.id), ...local],
         loading: false, error: null, nextBefore: page.nextBefore,
+        // #5219: the request's public discussion behind a bot-card thread, merged in by the pane.
+        discussion: page.discussion,
       },
     });
     const newest = known.reduce((top, item) => Math.max(top, item.id), 0);
@@ -1865,7 +2049,7 @@ export async function loadReplyThread(conversationId: number, rootId: number, fo
     if (request !== replyThreadRequest) return;
     const thread = state.thread;
     publish({
-      thread: thread ? { ...thread, loading: false, error: errorMessage(error, 'Couldn’t load this thread.') } : null,
+      thread: thread ? { ...thread, loading: false, error: errorMessage(error, t('messages:store.error.loadReplies')) } : null,
     });
   }
 }
@@ -1890,7 +2074,7 @@ export async function loadOlderReplies(): Promise<void> {
     });
   } catch (error) {
     const now = state.thread;
-    if (now) publish({ thread: { ...now, loading: false, error: errorMessage(error, 'Couldn’t load earlier replies.') } });
+    if (now) publish({ thread: { ...now, loading: false, error: errorMessage(error, t('messages:store.error.loadEarlierReplies')) } });
   }
 }
 
@@ -2090,7 +2274,17 @@ export function handleEvent(raw: ConversationEvent): void {
       // message the thread hangs off is the conversation's to draw.
       const rootId = api.strictId(event.threadRootId ?? event.thread_root_id);
       if (onScreen(conversationId)) {
-        void loadThread(conversationId, true);
+        const load = loadThread(conversationId, true);
+        if (event.type === 'conversation_message_created') {
+          landing.set(conversationId, (landing.get(conversationId) || 0) + 1);
+          const landed = () => {
+            const left = (landing.get(conversationId) || 1) - 1;
+            if (left > 0) { landing.set(conversationId, left); return; }
+            landing.delete(conversationId);
+            releaseHeldTyping(conversationId);
+          };
+          void load.then(landed, landed);
+        }
         if (rootId && state.thread?.rootId === rootId) void loadReplyThread(conversationId, rootId, true);
       }
       void loadConversations(true);
@@ -2139,27 +2333,52 @@ export function handleEvent(raw: ConversationEvent): void {
       const userId = api.strictId(event.userId ?? event.user_id);
       // The wire event carries no profile data. Resolve the active member
       // locally so a typing event cannot smuggle a stale/unauthorized name.
-      const username = state.active?.id === conversationId
-        ? state.active.members.find((member) => member.id === userId && member.status === 'member')?.username || ''
-        : '';
+      const typist = state.active?.id === conversationId
+        ? state.active.members.find((member) => member.id === userId && member.status === 'member') || null
+        : null;
+      const username = typist?.username || '';
       // B5: the bot types as its name, "Homeroom bot is typing…".
       const botPeer = state.active?.id === conversationId && state.active.peer?.bot && state.active.peer.id === userId
         ? state.active.peer.displayName || '' : '';
       if (!userId || userId === currentUser().id || !username) break;
-      const current = new Set(state.typing[conversationId] || []);
+      const current = state.typing[conversationId] || [];
       const expiryKey = `${conversationId}:${userId}`;
       const existingExpiry = typingExpiry.get(expiryKey);
       if (existingExpiry && typeof window !== 'undefined') window.clearTimeout(existingExpiry);
       typingExpiry.delete(expiryKey);
+      heldTyping.delete(expiryKey);
       const shown = botPeer || username;
-      if (event.typing === false) current.delete(shown); else current.add(shown);
-      publish({ typing: { ...state.typing, [conversationId]: [...current] } });
+      const isShown = current.some((entry) => entry.name === shown);
+      // #4220: a stop while the message it typed is still being read keeps
+      // the line until that read publishes (releaseHeldTyping), or the cap.
+      if (event.typing === false && landing.get(conversationId) && isShown && typeof window !== 'undefined') {
+        heldTyping.set(expiryKey, { conversationId, shown });
+        typingExpiry.set(expiryKey, window.setTimeout(() => {
+          typingExpiry.delete(expiryKey);
+          heldTyping.delete(expiryKey);
+          dropTyping(conversationId, shown);
+        }, TYPING_HOLD_MS));
+        break;
+      }
+      const holdersKey = `${conversationId}:${shown}`;
+      let next: Typist[];
+      if (event.typing === false) {
+        // The word leaves the line, and with it everybody typing under it.
+        typingHolders.delete(holdersKey);
+        next = current.filter((entry) => entry.name !== shown);
+      } else {
+        const holders = typingHolders.get(holdersKey) || new Map<number, boolean>();
+        holders.set(userId, !botPeer && !!typist?.unnamed);
+        typingHolders.set(holdersKey, holders);
+        // The stand-in only while every holder is nameless: a real account under the same word is named.
+        const entry: Typist = { name: shown, unnamed: [...holders.values()].every(Boolean) };
+        next = isShown ? current.map((each) => (each.name === shown ? entry : each)) : [...current, entry];
+      }
+      publish({ typing: { ...state.typing, [conversationId]: next } });
       if (event.typing !== false && typeof window !== 'undefined') {
         typingExpiry.set(expiryKey, window.setTimeout(() => {
           typingExpiry.delete(expiryKey);
-          const next = new Set(state.typing[conversationId] || []);
-          if (!next.delete(shown)) return;
-          publish({ typing: { ...state.typing, [conversationId]: [...next] } });
+          dropTyping(conversationId, shown);
         }, 6000));
       }
       break;
@@ -2167,7 +2386,28 @@ export function handleEvent(raw: ConversationEvent): void {
   }
 }
 
-export function typingUsers(conversationId: number): string[] {
+function dropTyping(conversationId: number, shown: string): void {
+  const now = state.typing[conversationId] || [];
+  const next = now.filter((entry) => entry.name !== shown);
+  if (next.length === now.length) return;
+  typingHolders.delete(`${conversationId}:${shown}`);
+  publish({ typing: { ...state.typing, [conversationId]: next } });
+}
+
+/** #4220: the message the held names were typing has been drawn. */
+function releaseHeldTyping(conversationId: number): void {
+  for (const [key, held] of [...heldTyping]) {
+    if (held.conversationId !== conversationId) continue;
+    heldTyping.delete(key);
+    const timer = typingExpiry.get(key);
+    if (timer && typeof window !== 'undefined') window.clearTimeout(timer);
+    typingExpiry.delete(key);
+    dropTyping(conversationId, held.shown);
+  }
+}
+
+/** The names on a conversation's typing line, in the order they came. */
+export function typingUsers(conversationId: number): Typist[] {
   return state.typing[conversationId] || [];
 }
 
@@ -2211,7 +2451,7 @@ export async function share(reference?: SharedObjectReference): Promise<void> {
  * is re-read so the conversation moves to the top.
  */
 export async function shareToConversation(conversationId: number, object: SharedObjectReference, note = ''): Promise<void> {
-  if (!validId(conversationId)) throw new Error('Choose a conversation.');
+  if (!validId(conversationId)) throw new Error(t('messages:store.error.chooseConversation'));
   const message = await api.sendMessage(conversationId, {
     content: note.trim().slice(0, 8000),
     object,
@@ -2271,6 +2511,7 @@ export const messagesController = {
   isOpen,
   handleBack,
   syncChrome,
+  measureLayout,
   handleEvent,
   refreshBlockedView: (userId: number, blocked: boolean) => { void refreshBlockedView(userId, blocked); },
   share,
@@ -2307,6 +2548,9 @@ export function initializeMessagesStore(): () => void {
   const onPresence = () => { notePresence(); };
   for (const type of PRESENCE_EVENTS) window.addEventListener(type, onPresence, presence);
   document.addEventListener('visibilitychange', onPresence);
+  // The header's title is written from here: say it again in the language on screen.
+  const onLanguage = () => { if (state.route.open) syncChrome(); };
+  document.addEventListener('homeroom:language-changed', onLanguage);
   // The store is always mounted, but the endpoint is session-gated. Seed the
   // conversation list as soon as an already-resolved user exists, or wait for
   // the shell's one-shot authenticated boot event on an anonymous document.
@@ -2319,19 +2563,23 @@ export function initializeMessagesStore(): () => void {
   else document.addEventListener('sv:authed', onAuthed, { once: true });
   if (window.App?.user) void loadAppDiscussions();
   // #2387 / #2967: the two layout preferences, read after mount so the first
-  // render matches the prerendered shell.
+  // render matches the prerendered shell. #4783: the chosen filter is the
+  // third, remembered the same way.
   let listCollapsed = false;
   let showMoreChannels = false;
+  let filter: InboxFilter = 'all';
   try {
     listCollapsed = localStorage.getItem('usernode:messages-list-collapsed') === '1';
     showMoreChannels = localStorage.getItem('usernode:messages-more-channels') === '1';
+    filter = savedInboxFilter(localStorage.getItem('usernode:messages-filter'));
   } catch { /* storage unavailable */ }
-  publish({ online: navigator.onLine, demo: browserDemo(), listCollapsed, showMoreChannels });
+  publish({ online: navigator.onLine, demo: browserDemo(), listCollapsed, showMoreChannels, filter });
   return () => {
     window.removeEventListener('online', onOnline);
     window.removeEventListener('offline', onOffline);
     for (const type of PRESENCE_EVENTS) window.removeEventListener(type, onPresence, presence);
     document.removeEventListener('visibilitychange', onPresence);
+    document.removeEventListener('homeroom:language-changed', onLanguage);
     document.removeEventListener('sv:authed', onAuthed);
   };
 }

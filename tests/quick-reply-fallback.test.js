@@ -253,7 +253,9 @@ test('no prompt surface lists a boilerplate pill triple verbatim', () => {
     // #1046: both the current spec triple and its pre-#1046 wording — the
     // prompt must not offer either as a run to copy, even though the
     // build pill alone IS a required literal now (see the next test).
+    ['Build the plan', 'Revise the plan', 'What will this change?'],
     ['Build the spec', 'Revise the spec', 'What will this change?'],
+    ['Build it', 'Revise the plan', 'What will this change?'],
     ['Build it', 'Revise the spec', 'What will this change?'],
     ['Propose it to the group', 'Make a tweak', 'What did it change?'],
     ["How's it going?", 'Stop this build'],
@@ -305,7 +307,7 @@ test('the rules require a whole-spec build pill, not a component name', () => {
   const defs = recoveryPills.QUICK_REPLY_RULES_TEXT;
   assert.match(defs, /POST-SPEC BUILD PILL/,
     'the rules carve the post-spec build pill out as its own clause');
-  assert.match(defs, /Build the spec/,
+  assert.match(defs, /Build the plan/,
     'the required literal is stated');
   assert.match(defs, /WHOLE spec/,
     'the clause says the pill refers to the whole spec');
@@ -315,7 +317,7 @@ test('the rules require a whole-spec build pill, not a component name', () => {
   assert.match(defs, /remaining 1-2 pills must still name something specific/,
     'the other pills still have to be specific to this spec');
   // ...and the whole-set ban must not read as a ban on the pill itself.
-  assert.match(defs, /"Build the spec" is meant to be sent verbatim/,
+  assert.match(defs, /"Build the plan" is meant to be sent verbatim/,
     'the set-level ban is reconciled with the required literal');
 });
 
@@ -331,17 +333,17 @@ test('the Mayor prompt\'s post-spec guidance says the whole spec', () => {
 test('a whole-spec build pill still passes only alongside specific pills', () => {
   const { isGenericPillSet } = recoveryPills;
   assert.equal(
-    isGenericPillSet(['Build the spec', 'Drop the crop step from the plan',
+    isGenericPillSet(['Build the plan', 'Drop the crop step from the plan',
       'What does this add to the database?']),
     false,
     'the intended shape — required literal plus two specific pills — is accepted');
   assert.equal(
-    isGenericPillSet(['Build the spec', 'Revise the spec', 'What will this change?']),
+    isGenericPillSet(['Build the plan', 'Revise the plan', 'What will this change?']),
     true,
     'an all-boilerplate set still escalates, the literal notwithstanding');
   // The near-variants must not be a loophole around that.
   assert.equal(
-    isGenericPillSet(['Build the whole spec', 'Build the spec as written']),
+    isGenericPillSet(['Build the whole plan', 'Build the plan as written']),
     true,
     'rephrasing the required literal does not make a set specific');
 });
@@ -594,9 +596,14 @@ test('staging seeds cover each fallback shape', () => {
     "fallback fixtures are seeded 'promoted' and 30 days old on purpose");
 });
 
-test('dapp.json checks the pill bar on the seeded fixture routes', () => {
-  // Fixed session ids (the route embeds one) are what make these routes
-  // stable across staging rebuilds.
+test('the classic pill bar is no longer a declared check (#3976)', () => {
+  // These fixtures' routes were checks-gated: the pill bar on each of
+  // 900801-900807. Classic sessions are read-only now and their composer,
+  // the pill bar with it, is put away, so a pill is never offered there and
+  // those checks were retired with the chat. The fixtures keep their fixed
+  // ids (the change page's checks still open 900801), and the derivation
+  // stays pinned by the unit tests above: it is the Mayor's, which agent
+  // sessions run too.
   const dapp = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'dapp.json'), 'utf8'));
   const MIGRATE_SRC = fs.readFileSync(
     path.join(__dirname, '..', 'src', 'db', 'migrate.js'),
@@ -604,14 +611,9 @@ test('dapp.json checks the pill bar on the seeded fixture routes', () => {
   );
   for (const id of [900801, 900802, 900803, 900805, 900806, 900807]) {
     assert.ok(MIGRATE_SRC.includes(`id: ${id},`), `fixture ${id} has a fixed id in the seed`);
-    const t = (dapp.tests || []).find((x) => x.path && x.path.includes(`/sessions/${id}`));
-    assert.ok(t, `dapp.json has a proposal check for session ${id}`);
-    assert.equal(t.expectSelector, '#dc-quick-replies.dc-quick-replies-active .dc-quick-pill',
-      `check ${id} asserts the pill bar actually rendered pills`);
+    assert.ok(!(dapp.tests || []).some((x) => x.path && x.path.includes(`/dev/sessions/${id}`)),
+      `no declared check loads classic session ${id}`);
   }
-  // #1001: the preamble fixture's check must assert the WRAP-UP's pill, not
-  // the preamble's — that is the supersession rule it exists to demonstrate.
-  const preambleCheck = (dapp.tests || []).find((x) => x.path && x.path.includes('/sessions/900807'));
-  assert.equal(preambleCheck.expectText, 'Preview the half-height rows',
-    'the newest pill-bearing row wins, so the wrap-up pill is what renders');
+  assert.ok(!(dapp.tests || []).some((x) => /#dc-quick-replies/.test(x.expectSelector || '')),
+    'no declared check drives the classic pill bar');
 });

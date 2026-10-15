@@ -1,3 +1,4 @@
+import type { ReleaseOutlook } from '../../lib/release-eta';
 import type { UnreadMark } from './unread-anchor';
 
 /**
@@ -11,6 +12,8 @@ export type MemberRole = 'owner' | 'member';
 export interface ConversationUser {
   id: number;
   username: string;
+  /** `username` is the stand-in for a person whose username did not come with the row. */
+  unnamed?: boolean;
   avatarUrl?: string | null;
   /** A platform account (the Homeroom bot), not a person (#3624). */
   bot?: boolean;
@@ -82,8 +85,39 @@ export interface HomeroomBotMeta {
    * follows the request now. This one is no longer drawn.
    */
   movedTo?: number;
+  /**
+   * #4392: the activity card Build it moved under a plan, drawn as the bot's
+   * thanks for answering: its words over the project's thumbnail row
+   * (./bot-thanks-card.tsx), the project's icon (`appEmoji`) as its tile.
+   */
+  thanks?: boolean;
+  appEmoji?: string;
   /** B7: once its person approved it, what happens next (services/homeroom-bot-dm.js goesLiveAfterYes). */
   goesLive?: HomeroomBotGoesLive;
+  /** Why its buttons were closed ("No longer needed", "A newer plan replaced this"), said in their place. */
+  closedWhy?: string;
+  /**
+   * One request, one story: the request's activity card (its thread's root)
+   * that this message was posted under. Set on every message in a request's
+   * thread, as the message's own `threadRootId` is.
+   */
+  threadRootId?: number;
+  /**
+   * Which of the four moments that ring this is (`needs_you`, `ready`,
+   * `stopped`, `on_hold`, `live`), `reply` for the bot's own replies, or
+   * absent for a quiet one; `said` is its variant (services/homeroom-bot-
+   * dm.js). The bell and the push word them; the chat draws the message.
+   */
+  moment?: string;
+  said?: string;
+  /** The request's title, as the request page has it; absent for a first version. */
+  requestTitle?: string;
+  /** Who a ready change waits on ("you and @ada"), as the push says it. */
+  waiting?: string;
+  /** An on-hold summary: how many of the person's requests are held. */
+  count?: number;
+  /** A moment in a request's thread the main chat also lists, under its "↳ in …" label. */
+  alsoInChat?: boolean;
 }
 
 export interface HomeroomBotReady {
@@ -131,6 +165,13 @@ export interface HomeroomBotPlanQuestion {
 export interface HomeroomBotPlan {
   bullets: string[];
   questions: HomeroomBotPlanQuestion[];
+  /**
+   * #4488: a complicated change on a project that already exists, checked
+   * with the person who asked for it before it is built. Its spec (with its
+   * before and after screens) is on the request, whose card goes under it.
+   */
+  complicated?: boolean;
+  spec?: { sessionId: number; version: number } | null;
 }
 
 /**
@@ -143,8 +184,11 @@ export interface HomeroomBotAction {
   id: string;
   label: string;
   style: 'primary' | 'secondary';
-  /** B7: `preview` opens a change's preview, `vote` casts the person's own Yes, `reply` quotes the card. */
-  type: 'server' | 'open' | 'prompt' | 'preview' | 'vote' | 'reply';
+  /**
+   * B7: `preview` opens a change's preview, `vote` casts the person's own Yes, `reply` quotes the card.
+   * #4231: `invite` opens the invite sheet for the message's project (`appSlug`), in place.
+   */
+  type: 'server' | 'open' | 'prompt' | 'preview' | 'vote' | 'reply' | 'invite';
   target?: string;
   sessionId?: number;
   epoch?: number;
@@ -186,17 +230,65 @@ export interface HomeroomBotJob {
   key: string;
   appSlug: string | null;
   appName: string;
+  /** `appName` is the stand-in for a project with neither a name nor a slug. */
+  appUnnamed?: boolean;
+  /** #4201: the app's own icon, `/app-icons/<id>`, else null. */
+  iconUrl: string | null;
+  /** #4201: the app's emoji icon, for an app with no image; else null. */
+  iconEmoji: string | null;
   issueNumber: number | null;
   title: string | null;
   firstVersion: boolean;
   href: string | null;
   links: HomeroomBotLinks;
   earlier: HomeroomBotRun[];
+  /**
+   * Going live (Now's `merging`, or an ending of `going_live`), on a merge
+   * of the platform's own app: when the platform's next release carries it
+   * (services/release-watch.js), which the tray words. Absent otherwise.
+   */
+  release?: ReleaseOutlook;
+  /**
+   * One request, one story (services/homeroom-bot-tray.js threadsOf): the
+   * request's card in the chat with the bot, the root of its thread.
+   */
+  cardId?: number;
+  /** Its newest message there still waiting on the person: what the strip's Needs you button opens. */
+  ask?: HomeroomBotAsk;
+  /** Its newest "ready to try" card there, and what that card's buttons do. */
+  ready?: HomeroomBotReadyRef;
+  /** A build that stopped: why (as an activity card's `stopCause`). */
+  stopCause?: HomeroomBotActivity['stopCause'];
+}
+
+/** The newest message about a request still waiting on its person (tray entry `ask`). */
+export interface HomeroomBotAsk {
+  messageId: number | null;
+  /** question, followup_ask, plan, person, blocked, empty, build_failed, checks, needs_look, first_version_failed. */
+  kind: string;
+  said?: string;
+  /** A question's own words. */
+  question?: string;
+}
+
+/** A request's newest "ready to try" card (tray entry `ready`). */
+export interface HomeroomBotReadyRef {
+  messageId: number | null;
+  sessionId: number | null;
+  epoch: number;
+  /** Its buttons are still open. */
+  open: boolean;
+  /** The person's yes would count: Approve is theirs to press. */
+  approve: boolean;
+  /** Who it waits on ("@ada"), when not on them. */
+  waiting: string | null;
 }
 
 /** What the bot is doing for them now: its step of the request's steps, what it is doing, since when. */
 export interface HomeroomBotCurrentJob extends HomeroomBotJob {
   phase: HomeroomBotPhase;
+  /** The progress stage it is at (reading, planning, building, on_hold…), when the server says. */
+  stage?: string | null;
   step: number | null;
   of: number | null;
   stepName: string | null;
@@ -232,7 +324,10 @@ export interface HomeroomBotWork {
  */
 export type HomeroomBotActivityOutcome =
   | 'question' | 'proposed' | 'live' | 'closed' | 'blocked' | 'build_failed'
-  | 'person' | 'empty' | 'failed' | 'held' | 'stopped' | 'answer' | 'revise';
+  | 'person' | 'empty' | 'failed' | 'held' | 'stopped' | 'answer' | 'revise'
+  // #4242 / #4227: built and being checked before it is offered, built and
+  // needing a person to look, and merged but not live yet.
+  | 'checking' | 'needs_look' | 'going_live';
 
 export interface HomeroomBotActivity {
   messageId: number;
@@ -251,10 +346,24 @@ export interface HomeroomBotActivity {
   of: number | null;
   stepName: string | null;
   doing: string | null;
+  /** While it is working, the stage it is at (services/homeroom-bot-progress.js stageOf). */
+  stage?: string | null;
   outcome: HomeroomBotActivityOutcome | null;
   endedAt: string | null;
   /** How long the step it is at usually takes, in minutes, when it takes a while. */
   typicalMinutes?: { from: number; to: number };
+  /** While it is working: who it waits on (`them`, the viewer; `the group`; `time`, on hold until Monday), when it waits (services/homeroom-bot-progress.js). */
+  waitingOn?: string;
+  /** A `build_failed` ending: why the build stopped. */
+  stopCause?: 'time' | 'restart' | 'restarts' | 'no_change' | 'unproposed' | 'no_start' | 'other';
+  /** A `held` ending: which of the bot's limits holds it back. */
+  heldBy?: 'proposals_per_app' | 'proposals_total' | 'questions_per_day';
+  /**
+   * `going_live`, on a merge of the platform's own app: when the platform's
+   * next release carries it (services/release-watch.js), which the card
+   * words (../../lib/release-eta.ts). Absent on any other change.
+   */
+  release?: ReleaseOutlook;
 }
 
 /**
@@ -278,6 +387,8 @@ export interface HomeroomBotReadyNow {
     more: number;
   };
   goesLive?: HomeroomBotGoesLive;
+  /** `going_live`, on a merge of the platform's own app: when its release comes (as HomeroomBotActivity's). */
+  release?: ReleaseOutlook;
 }
 
 /** One read of the bot DM's cards: its activity cards and its ready cards. */
@@ -341,11 +452,17 @@ export type ObjectCardType = SharedObjectType | 'hub' | 'discussion';
 export interface SharedObjectCard extends Omit<SharedObjectReference, 'type'> {
   type: ObjectCardType;
   available: boolean;
+  /** A change's pull request number, when it has one (#4367). */
+  prNumber?: number;
   title?: string | null;
   subtitle?: string | null;
   state?: string | null;
   author?: string | null;
   href?: string | null;
+  /** An app's or a community's own icon, `/app-icons/<id>`, when it has one: drawn in place of the glyph. */
+  iconUrl?: string | null;
+  /** An app's or a community's emoji icon, for one with no image. */
+  iconEmoji?: string | null;
 }
 
 export interface ConversationMessage {
@@ -422,6 +539,8 @@ export interface ConversationSummary {
   id: number;
   kind: ConversationKind;
   title: string;
+  /** `title` is the stand-in for a conversation nobody named and whose other member is not known. */
+  untitled?: boolean;
   avatarUrl?: string | null;
   members: ConversationMember[];
   memberCount: number;
@@ -611,6 +730,12 @@ export interface MessagesSnapshot {
   nextAfter: number | null;
   /** #2387: the list pane folded away on a desktop — single-panel mode. */
   listCollapsed: boolean;
+  /**
+   * #4229: the strip is wider than a phone but too narrow for an open
+   * conversation to keep a readable measure beside the list, so the list
+   * steps aside while one is open and the bar's back arrow returns to it.
+   */
+  listCrowded: boolean;
   /** #2967: the channels outside Your apps shown, under "Show more". */
   showMoreChannels: boolean;
   /**
@@ -621,6 +746,13 @@ export interface MessagesSnapshot {
    * nothing was unread. Optional so a fixture without it reads as null.
    */
   unreadMark?: UnreadMark | null;
+  /**
+   * The message a reply thread opens at (store.openThreadAt): the strip's
+   * Needs you button opens a request's thread at the question it asks.
+   * Scrolled to and flashed once by the thread pane, never by the
+   * conversation beside it. Optional so a fixture without it reads as null.
+   */
+  threadFocusId?: number | null;
 }
 
 export interface ReplyThreadState {
@@ -631,4 +763,31 @@ export interface ReplyThreadState {
   loading: boolean;
   error: string | null;
   nextBefore: number | null;
+  /**
+   * #5219: when this thread hangs off a Homeroom bot request card, the
+   * request's public discussion on its request page, read alongside the DM
+   * replies; the pane merges the two by time. Null when the root is no bot
+   * card naming a request, the viewer cannot view that project, or the
+   * thread is loading.
+   */
+  discussion?: DiscussionState | null;
+}
+
+/** One message from the request's public discussion, shown in its bot-card thread (#5219). */
+export interface DiscussionMessage {
+  id: number;
+  source: 'discussion';
+  sender: ConversationUser;
+  content: string;
+  createdAt: string;
+  editedAt?: string | null;
+}
+
+/** #5219: a request's public discussion, as its bot-card thread carries it. */
+export interface DiscussionState {
+  appSlug: string;
+  issueNumber: number;
+  /** The discussion has older messages than the ones shown: they stay on the request page. */
+  more: boolean;
+  messages: DiscussionMessage[];
 }

@@ -14,8 +14,12 @@ const CATEGORY_DEFINITIONS = Object.freeze([
     // reply to your message in all but name. #2386: a friend request and its
     // acceptance are one person reaching you directly — this category's
     // promise — so they join it rather than getting a switch of their own.
+    // #3952: being named with @ in a request somebody filed is a mention
+    // like a chat one, so it rides the same switch, beside it.
+    // #4535: a message in a request's discussion you posted in or filed is a
+    // reply in the same sense, so it rides it too, beside `thread_reply`.
     // Kept in lockstep with the seed in db/schema.sql.
-    kinds: Object.freeze(['mention', 'reply', 'thread_reply', 'friend_request', 'friend_accept']),
+    kinds: Object.freeze(['mention', 'issue_mention', 'reply', 'thread_reply', 'issue_thread_reply', 'friend_request', 'friend_accept']),
   }),
   Object.freeze({
     key: 'invitations',
@@ -32,7 +36,7 @@ const CATEGORY_DEFINITIONS = Object.freeze([
   Object.freeze({
     key: 'shared_work',
     label: 'Shared work',
-    description: 'Specs that someone privately shares with you.',
+    description: 'Plans that someone privately shares with you.',
     defaultEnabled: true,
     kinds: Object.freeze(['spec_shared']),
   }),
@@ -57,7 +61,7 @@ const CATEGORY_DEFINITIONS = Object.freeze([
   Object.freeze({
     key: 'proposal_alerts',
     label: 'Change alerts',
-    description: 'Changes needing attention, failed previews, new changes waiting for approval, and votes on yours or yours going live.',
+    description: 'Changes that need your attention or your vote, votes on yours, and changes you made or voted on going live.',
     defaultEnabled: true,
     // #1374 adds three: a vote on your proposal, your proposal merging, and
     // the daily "what needs your vote" summary. All three are proposal
@@ -67,11 +71,15 @@ const CATEGORY_DEFINITIONS = Object.freeze([
     // #1688 adds two more of the same kind: the re-confirm ask after a
     // proposal you backed gets a new version, and the weekly "this week"
     // card. Kept in lockstep with the seed in db/schema.sql.
+    // #4787: the change a person voted on going live is proposal lifecycle
+    // the same way, even though the per-app switch that gates the
+    // notification itself is its own voted_changes_live.
     kinds: Object.freeze([
       'stale_pr', 'check_failed', 'pr_proposed', 'proposal_vote', 'pr_merged', 'vote_digest',
       'revision_recheck', 'weekly_digest',
       // B7: a change you can approve is ready to try.
       'change_ready',
+      'voted_change_merged',
     ]),
   }),
   Object.freeze({
@@ -93,7 +101,10 @@ const CATEGORY_DEFINITIONS = Object.freeze([
     // only: the SERVER is nearing a cap that stops apps being created or
     // sessions starting (services/platform-limit-alerts.js). Only full
     // admins ever receive one, so nobody else's switch is affected.
-    kinds: Object.freeze(['issue_opened', 'app_health', 'platform_limit']),
+    // 'platform_incident' (#4296) is its sibling: errors that should not
+    // happen, as a daily digest or one kind past its hourly line
+    // (services/platform-incident-alerts.js), for the same admins.
+    kinds: Object.freeze(['issue_opened', 'app_health', 'platform_limit', 'platform_incident']),
   }),
   Object.freeze({
     key: 'lightweight_activity',
@@ -126,12 +137,14 @@ const CATEGORY_DEFINITIONS = Object.freeze([
   }),
   Object.freeze({
     // WP-E: what the Homeroom bot says about something you asked it for, at
-    // the four moments its messages ring (homeroom-bot-dm.js MOMENTS). They
-    // used to ride Messages, so turning Messages off silenced "it's ready to
-    // try" too. Its answers to what you wrote stay messages.
+    // the moments its messages ring (homeroom-bot-notify-copy.js MOMENT_KINDS:
+    // needs you, ready to try, stopped or on hold, live). They used to ride
+    // Messages, so turning Messages off silenced "it's ready to try" too. Its
+    // answers to what you wrote stay messages. The settings screen says the
+    // same words (frontend/locales/en/settings.json alerts.push.*).
     key: 'builds',
     label: 'Your builds',
-    description: 'When something you asked Homeroom bot for is ready to try, needs your answer, stops, or goes live.',
+    description: 'What Homeroom bot tells you about something you asked for: when it needs you, is ready to try, stops, or goes live.',
     defaultEnabled: true,
     kinds: Object.freeze(['build_ready', 'build_needs_you', 'build_stopped', 'build_live']),
   }),

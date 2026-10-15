@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  {{DEV_CONSOLE_FORWARDER}}
+  <title>{{APP_NAME}}</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎲</text></svg>">
+  <!-- This app's precompiled Tailwind (npm run build writes it on every
+       image build; tailwind.config.js says which files it scans), then the
+       game's own scene (public/scene.css). -->
+  <link rel="stylesheet" href="/tailwind.css">
+  <link rel="stylesheet" href="/scene.css">
+  <!-- The platform bridge, centrally hosted and loaded by RELATIVE path.
+       Never vendor it and never write a hostname in front of it. It is also
+       how the app answers the shell, so keep it even if no bridge API is
+       called. -->
+  <script src="/usernode-bridge/v1/bridge.js"></script>
+  <!-- Follow the viewer's Homeroom theme (the bridge reports it), with the
+       OS preference as the fallback outside Homeroom. The game's scene keeps
+       its own look in both; the kit's parts (the toast, an error) follow it. -->
+  <script>
+    (function () {
+      var media = window.matchMedia('(prefers-color-scheme: dark)');
+      function applyTheme() {
+        var theme = (window.usernode && window.usernode.theme) || (media.matches ? 'dark' : 'light');
+        document.documentElement.classList.toggle('dark', theme === 'dark');
+        document.documentElement.style.colorScheme = theme;
+      }
+      applyTheme();
+      window.addEventListener('usernode:theme-changed', applyTheme);
+      media.addEventListener('change', applyTheme);
+    })();
+  </script>
+</head>
+<body class="min-h-screen bg-ground text-fg">
+  <!-- The title screen: the game's name, its board on the table, and the
+       lobby. Everyone lands here, and a game starts from here. -->
+  <div id="title" class="scene fixed inset-0 overflow-y-auto">
+    <main class="mx-auto flex min-h-full max-w-md flex-col items-center gap-5 px-4 pb-10 pt-12">
+      <h1 class="title-name">{{APP_NAME}}</h1>
+      <p class="title-line">Roll the die, climb the ladders, mind the slides, and be the first to the finish.</p>
+      <svg id="title-board" class="title-board" aria-hidden="true"></svg>
+
+      <section id="lobby" class="pad flex flex-col gap-4" aria-live="polite">
+        <!-- Loading: shapes where the table will be. -->
+        <div id="loading" class="flex flex-col gap-4" aria-label="Loading">
+          <div class="skeleton h-6 w-40"></div>
+          <div class="flex gap-6">
+            <div class="skeleton h-12 w-12 rounded-full"></div>
+            <div class="skeleton h-12 w-12 rounded-full"></div>
+            <div class="skeleton h-12 w-12 rounded-full"></div>
+          </div>
+          <div class="skeleton h-12 w-full rounded-full"></div>
+        </div>
+
+        <!-- Error: only when the first load failed. -->
+        <div id="error" class="state-error" hidden>
+          <p class="pad-title">The game did not load</p>
+          <p class="pad-note">Nothing is lost. Check your connection and try again.</p>
+          <button id="retry" type="button" class="btn-quiet">Retry</button>
+        </div>
+
+        <div id="lobby-body" class="flex flex-col gap-4" hidden>
+          <div class="flex flex-col gap-1">
+            <h2 id="lobby-title" class="pad-title">Around the table</h2>
+            <p id="lobby-note" class="pad-note"></p>
+          </div>
+          <ul id="players" class="seats"></ul>
+          <!-- Empty: only when nobody has joined yet. -->
+          <div id="empty" class="state-empty py-2" hidden>
+            <p class="pad-title">Nobody has joined yet</p>
+            <p class="pad-note">Join, and start a game on your own or wait for the others.</p>
+          </div>
+          <div id="lobby-actions" class="flex flex-wrap gap-2">
+            <button id="join" type="button" class="btn-gold flex-1">Join the game</button>
+            <button id="start" type="button" class="btn-gold flex-1">Start the game</button>
+            <button id="watch" type="button" class="btn-gold flex-1" hidden>Watch the game</button>
+            <button id="resume" type="button" class="btn-gold flex-1" hidden>Back to the game</button>
+            <button id="new-game" type="button" class="btn-gold flex-1" hidden>New game</button>
+            <button id="leave" type="button" class="btn-quiet">Leave</button>
+          </div>
+        </div>
+      </section>
+
+      <section id="leaders-section" class="pad flex flex-col gap-1" hidden>
+        <h2 class="pad-title">Most wins</h2>
+        <ol id="leaders" class="ranks"></ol>
+      </section>
+    </main>
+  </div>
+
+  <!-- The game: the table fills the screen, with everyone's chip along the
+       top and the dice tray along the bottom. -->
+  <div id="stage" class="scene fixed inset-0 flex flex-col" hidden>
+    <header class="flex items-center gap-2 px-3 pt-3">
+      <button id="to-title" type="button" class="btn-disc" aria-label="Back to the title screen">&lsaquo;</button>
+      <ol id="turn-order" class="flex min-w-0 flex-1 gap-2 overflow-x-auto px-1 py-1.5" aria-label="Turn order"></ol>
+    </header>
+    <div class="relative min-h-0 flex-1 px-2 py-3">
+      <svg id="board" class="board-svg" role="img" aria-label="The board"></svg>
+    </div>
+    <footer id="turn" class="tray">
+      <div id="die" class="die" role="img" aria-label="The die">
+        <span class="pip"></span><span class="pip"></span><span class="pip"></span>
+        <span class="pip"></span><span class="pip"></span><span class="pip"></span>
+        <span class="pip"></span><span class="pip"></span><span class="pip"></span>
+      </div>
+      <div class="min-w-0 flex-1" aria-live="polite">
+        <p id="turn-line" class="tray-line"></p>
+        <p id="turn-note" class="tray-note"></p>
+      </div>
+      <button id="roll" type="button" class="btn-gold" hidden>Roll</button>
+    </footer>
+
+    <!-- The end of a game: who won, and everyone's place. -->
+    <div id="over" class="veil" hidden>
+      <div class="pad flex max-w-sm flex-col gap-3" role="dialog" aria-labelledby="over-line">
+        <p class="trophy" aria-hidden="true">🏆</p>
+        <p id="over-line" class="pad-title text-center"></p>
+        <ol id="standings" class="ranks"></ol>
+        <div class="flex flex-wrap gap-2 pt-1">
+          <button id="again" type="button" class="btn-gold flex-1">Play again</button>
+          <button id="over-title" type="button" class="btn-quiet">Title screen</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Only when the live connection is lost. -->
+  <p id="connection" class="fixed left-1/2 top-3 z-40 -translate-x-1/2 rounded-full bg-fg px-3 py-1 text-small text-ground" role="status" hidden></p>
+
+  <div id="toast" class="pointer-events-none fixed inset-x-0 bottom-28 z-50 flex justify-center px-4" role="status" aria-live="polite" hidden>
+    <p id="toast-text" class="rounded-lg bg-fg px-4 py-2 text-small text-ground shadow-lg"></p>
+  </div>
+
+  <script src="/game/room.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

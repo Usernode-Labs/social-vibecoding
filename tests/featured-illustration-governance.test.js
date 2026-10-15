@@ -2,21 +2,14 @@
 //
 // A featured-illustration change is a proposal now, modelled on the rename
 // card: it applies when the vote passes under the app's gate, and an admin
-// can force-apply it. This suite pins the apply half and the surfaces that
-// have to know the kind:
+// can force-apply it. The governance machine applies it (published, kept
+// or removed: tests/workflow-governance-postgres.test.js). This suite pins
+// the surfaces that have to know the kind:
 //
-//   * maybeApplyFeaturedIllustrationProposal (src/routes/issues.js): below
-//     the gate leaves the row open and writes nothing; a passing vote moves
-//     the pending bytes into app_illustrations under the SAME ids, writes the
-//     proposed record onto the app, closes the issue with an audit payload
-//     and announces it; a removal clears both; a locked app waits for an
-//     admin up;
-//   * POST /api/issues/:id/admin-apply accepts the kind and applies with the
-//     gate bypassed, naming the admin;
-//   * the two governance sweepers in server.js and the kind lists in
-//     issues.js / shared-objects.js carry the kind, so a window-elapsed
-//     proposal is applied by the ticker rather than falling through to the
-//     secret-change path, and the card resolves by id and as a share;
+//   * POST /api/issues/:id/admin-apply accepts the kind and hands an
+//     admin's force to the governance machine;
+//   * the kind lists in issues.js / shared-objects.js / governance-kinds
+//     carry the kind, so the card resolves by id and as a share;
 //   * the board card renders the proposed image beside the current one, as
 //     an <img> with alt text and never a link, and offers the admin the same
 //     force-apply row the other kinds get.
@@ -57,7 +50,7 @@ function makePool(handlers) {
 
 const APP = { id: 9, slug: 'cool-app', name: 'Cool App', repo_url: 'https://github.com/acme/cool-app' };
 
-function loadIssues(pool, { active = 2, locked = false, adminUp = true } = {}) {
+function loadIssues(pool, { active = 2, locked = false } = {}) {
   const realActiveUsers = require('../src/services/active-users');
   const ids = {
     pool: require.resolve('../src/db/pool'),
@@ -67,11 +60,12 @@ function loadIssues(pool, { active = 2, locked = false, adminUp = true } = {}) {
     activeUsers: require.resolve('../src/services/active-users'),
     adminApproval: require.resolve('../src/services/admin-approval'),
     proposals: require.resolve('../src/services/illustration-proposals'),
+    workflow: require.resolve('../src/workflow/platform.ts'),
     subject: require.resolve('../src/routes/issues'),
   };
   const orig = {};
   for (const [k, id] of Object.entries(ids)) orig[k] = require.cache[id];
-  const spies = { systemMessages: [], issueUpdates: [], appUpdates: [] };
+  const spies = { systemMessages: [], issueUpdates: [], appUpdates: [], adminApplied: [] };
   const stub = (id, exports) => {
     require.cache[id] = { id, filename: id, loaded: true, exports, paths: [] };
   };
@@ -97,7 +91,14 @@ function loadIssues(pool, { active = 2, locked = false, adminUp = true } = {}) {
     ...realActiveUsers,
     getActiveUserStats: async () => ({ active, majority: Math.floor(active / 2) + 1 }),
   });
-  stub(ids.adminApproval, { isAppLocked: async () => locked, hasAdminUpVote: async () => adminUp });
+  stub(ids.adminApproval, { isAppLocked: async () => locked });
+  stub(ids.workflow, {
+    async fileProposal() {},
+    async adminApplyProposal(issue, user) {
+      spies.adminApplied.push([issue.id, user.username]);
+      return { status: 200, body: { ok: true, applied: { applied: true }, secretChanged: null } };
+    },
+  });
   // The service reads ws at require time, so it is reloaded under the stub.
   delete require.cache[ids.proposals];
   delete require.cache[ids.subject];
@@ -147,197 +148,35 @@ const PROPOSAL = (over) => ({
   ...over,
 });
 
-const PENDING_ROW = {
-  issue_id: 71, app_id: 9,
-  id: NEW_ID, content_type: 'image/png', data: Buffer.from('new-light'),
-  dark_id: NEW_DARK_ID, dark_content_type: 'image/webp', dark_data: Buffer.from('new-dark'),
-};
-const CURRENT_ROW = {
-  app_id: 9, id: OLD_ID, content_type: 'image/jpeg', data: Buffer.from('old-light'),
-  dark_id: null, dark_content_type: null, dark_data: null,
-};
-
-function applyPool({ up = 2, down = 0, lockedRow, pending = PENDING_ROW, current = CURRENT_ROW } = {}) {
-  return makePool([
-    [/SELECT i\.\*, a\.slug AS app_slug/, [lockedRow]],
-    [/vote = 'up'/, [{ cnt: String(up) }]],
-    [/vote = 'down'/, [{ cnt: String(down) }]],
-    [/SELECT \* FROM issues WHERE id = \$1 FOR UPDATE/, [lockedRow]],
-    [/SELECT id, slug, name FROM apps WHERE id = \$1 FOR UPDATE/, [{ id: APP.id, slug: APP.slug, name: APP.name }]],
-    [/SELECT \* FROM app_illustration_proposals WHERE issue_id/, pending ? [pending] : []],
-    [/SELECT \* FROM app_illustrations WHERE app_id/, current ? [current] : []],
-  ]);
-}
-
-// ── Vote apply ────────────────────────────────────────────────────────────
-
-test('apply: below the gate leaves the proposal open and writes nothing', async () => {
-  const proposal = PROPOSAL({ created_at: new Date().toISOString() });
-  const pool = applyPool({ up: 0, lockedRow: proposal });
-  const { subject, spies, restore } = loadIssues(pool, { active: 20 });
-  try {
-    const r = await subject.maybeApplyFeaturedIllustrationProposal(pool, proposal);
-    assert.equal(r.applied, false);
-    assert.ok(!pool.issued(/BEGIN/), 'no transaction opened');
-    assert.ok(!pool.issued(/UPDATE apps/));
-    assert.ok(!pool.issued(/INSERT INTO app_illustrations/));
-    assert.equal(spies.systemMessages.length, 0);
-    assert.equal(spies.appUpdates.length, 0);
-  } finally { restore(); }
-});
-
-test('apply: a passing vote publishes the proposed record under the ids the card previewed', async () => {
-  const proposal = PROPOSAL();
-  const pool = applyPool({ up: 2, down: 0, lockedRow: proposal });
-  const { subject, spies, restore } = loadIssues(pool, { active: 2 });
-  try {
-    const r = await subject.maybeApplyFeaturedIllustrationProposal(pool, proposal);
-    assert.equal(r.applied, true);
-    assert.deepEqual(r.illustration, PROPOSED);
-
-    // Inside one transaction: the issue row locked, the pending bytes moved
-    // into app_illustrations under the SAME ids (so the preview url the card
-    // rendered keeps resolving), the record written, the issue closed.
-    const sql = pool.calls.map((c) => c.sql);
-    const at = (re) => sql.findIndex((s) => re.test(s));
-    assert.ok(at(/BEGIN/) < at(/FOR UPDATE/), 'lock inside the txn');
-    const upsert = pool.issued(/INSERT INTO app_illustrations/);
-    assert.ok(upsert, 'illustration row upserted');
-    assert.deepEqual(upsert.params.slice(0, 4), [9, NEW_ID, 'image/png', Buffer.from('new-light')]);
-    assert.deepEqual(upsert.params.slice(4), [NEW_DARK_ID, 'image/webp', Buffer.from('new-dark')]);
-    const write = pool.issued(/UPDATE apps SET featured_illustration = \$2::jsonb/);
-    assert.ok(write, 'the app record is written');
-    assert.deepEqual(write.params, [9, JSON.stringify(PROPOSED)]);
-    assert.ok(pool.issued(/DELETE FROM app_illustration_proposals WHERE issue_id/), 'the pending row is retired');
-    const upd = pool.issued(/UPDATE issues SET status = 'closed', payload = \$1/);
-    assert.ok(upd, 'proposal closed');
-    const audit = JSON.parse(upd.params[0]);
-    assert.equal(audit.appliedBy, 'group-vote');
-    assert.ok(audit.appliedAt);
-    assert.equal(audit.upCount, 2);
-    assert.deepEqual(audit.proposed, PROPOSED, 'original payload preserved');
-    assert.ok(at(/UPDATE issues SET status = 'closed'/) < at(/COMMIT/), 'closed before commit');
-
-    // Announced in the proposal's own thread (a channel carries no
-    // activity); every open client is told the app changed so its caches
-    // patch themselves.
-    assert.equal(spies.systemMessages.length, 1);
-    assert.match(spies.systemMessages[0][2], /Featured illustration changed by group vote \(2\/2\)/);
-    assert.deepEqual(spies.systemMessages[0][5], { type: 'governance', ref: 71 });
-    assert.deepEqual(spies.appUpdates, [{ action: 'illustration_changed', appId: 9, slug: 'cool-app', illustration: PROPOSED }]);
-    assert.deepEqual(spies.issueUpdates, [{ action: 'closed', appSlug: 'cool-app', appId: 9, issueId: 71 }]);
-  } finally { restore(); }
-});
-
-test('apply: a kept image is read from the app\'s current row; a missing one fails closed', async () => {
-  // A reframe: the proposal names the current url and carries no bytes.
-  const reframed = { ...CURRENT, zoom: 2 };
-  const proposal = PROPOSAL({ payload: { proposed: reframed, current: CURRENT, remove: false } });
-  let pool = applyPool({ lockedRow: proposal, pending: null });
-  let loaded = loadIssues(pool, { active: 2 });
-  try {
-    const r = await loaded.subject.maybeApplyFeaturedIllustrationProposal(pool, proposal);
-    assert.equal(r.applied, true);
-    const upsert = pool.issued(/INSERT INTO app_illustrations/);
-    assert.deepEqual(upsert.params.slice(0, 4), [9, OLD_ID, 'image/jpeg', Buffer.from('old-light')]);
-    assert.deepEqual(pool.issued(/UPDATE apps SET featured_illustration/).params[1], JSON.stringify(reframed));
-  } finally { loaded.restore(); }
-  // The bytes behind the proposed url are gone: roll back, leave it open.
-  pool = applyPool({ lockedRow: PROPOSAL(), pending: null });
-  loaded = loadIssues(pool, { active: 2 });
-  try {
-    const r = await loaded.subject.maybeApplyFeaturedIllustrationProposal(pool, PROPOSAL());
-    assert.equal(r.applied, false);
-    assert.match(r.error, /no longer available/);
-    assert.ok(pool.issued(/ROLLBACK/));
-    assert.ok(!pool.issued(/UPDATE apps/));
-    assert.ok(!pool.issued(/UPDATE issues SET status = 'closed'/));
-  } finally { loaded.restore(); }
-});
-
-test('apply: a removal clears the illustration and its bytes', async () => {
-  const proposal = PROPOSAL({ title: 'Remove the featured illustration', payload: { proposed: null, current: CURRENT, remove: true } });
-  const pool = applyPool({ lockedRow: proposal, pending: null });
-  const { subject, spies, restore } = loadIssues(pool, { active: 2 });
-  try {
-    const r = await subject.maybeApplyFeaturedIllustrationProposal(pool, proposal);
-    assert.equal(r.applied, true);
-    assert.equal(r.illustration, null);
-    assert.ok(pool.issued(/DELETE FROM app_illustrations WHERE app_id/));
-    assert.ok(pool.issued(/UPDATE apps SET featured_illustration = NULL/));
-    assert.ok(!pool.issued(/INSERT INTO app_illustrations/));
-    assert.match(spies.systemMessages[0][2], /Featured illustration removed by group vote/);
-    assert.deepEqual(spies.appUpdates[0], { action: 'illustration_changed', appId: 9, slug: 'cool-app', illustration: null });
-  } finally { restore(); }
-});
-
-test('apply: a locked app waits for an admin up, like the rename path', async () => {
-  const proposal = PROPOSAL();
-  const pool = applyPool({ lockedRow: proposal });
-  const { subject, restore } = loadIssues(pool, { active: 2, locked: true, adminUp: false });
-  try {
-    const r = await subject.maybeApplyFeaturedIllustrationProposal(pool, proposal);
-    assert.equal(r.applied, false);
-    assert.equal(r.awaitingAdmin, true);
-    assert.ok(!pool.issued(/BEGIN/));
-  } finally { restore(); }
-});
-
-test('vote route: an up-vote on the kind runs the apply and reports it as illustrationChanged', async () => {
-  const proposal = PROPOSAL();
-  const pool = applyPool({ lockedRow: proposal });
-  const { router, restore } = loadIssues(pool, { active: 2 });
-  try {
-    const handler = routeHandler(router, '/api/issues/:id/vote');
-    const res = mockRes();
-    await handler({ params: { id: '71' }, user: { id: 5, username: 'voter' }, body: { vote: 'up' } }, res);
-    assert.equal(res.statusCode, 200);
-    assert.equal(res.body.ok, true);
-    assert.equal(res.body.illustrationChanged.applied, true);
-    assert.equal(res.body.secretChanged, null);
-    assert.ok(pool.issued(/INSERT INTO issue_votes/));
-  } finally { restore(); }
-});
 
 // ── Admin force-apply ─────────────────────────────────────────────────────
 
-test('admin-apply: accepts the kind with the gate bypassed and names the admin; non-admin 403', async () => {
-  const proposal = PROPOSAL({ created_at: new Date().toISOString() });
-  const pool = applyPool({ up: 0, lockedRow: proposal });
-  const { router, spies, restore } = loadIssues(pool, { active: 20, locked: true, adminUp: false });
+test('admin-apply: accepts the kind and hands an admin\'s force to the machine; non-admin 403', async () => {
+  const pool = makePool([[/SELECT i\.\*, a\.slug AS app_slug/, [PROPOSAL({ created_at: new Date().toISOString() })]]]);
+  const { router, spies, restore } = loadIssues(pool, { active: 20, locked: true });
   try {
     const handler = routeHandler(router, '/api/issues/:id/admin-apply');
     const denied = mockRes();
     await handler({ params: { id: '71' }, user: { id: 5, username: 'someone', canAdminWrite: false } }, denied);
     assert.equal(denied.statusCode, 403);
-    assert.ok(!pool.issued(/UPDATE apps/));
+    assert.deepEqual(spies.adminApplied, []);
 
     const res = mockRes();
-    await handler({ params: { id: '71' }, user: { id: 1, username: 'root', canAdminWrite: true } }, res);
+    await handler({ params: { id: '71' }, user: { id: 1, username: 'root', canAdminWrite: true }, get: () => undefined }, res);
     assert.equal(res.statusCode, 200, JSON.stringify(res.body));
-    assert.equal(res.body.ok, true);
-    assert.equal(res.body.applied.applied, true);
-    assert.equal(res.body.secretChanged, null, 'the BC alias stays null for this kind');
-    // Gate and lock bypassed: no votes, a locked app, and it still landed.
-    assert.ok(pool.issued(/UPDATE apps SET featured_illustration = \$2::jsonb/));
-    const audit = JSON.parse(pool.issued(/UPDATE issues SET status = 'closed', payload = \$1/).params[0]);
-    assert.equal(audit.appliedBy, 'admin:root');
-    assert.match(spies.systemMessages[0][2], /by admin override \(root\)/);
+    assert.deepEqual(spies.adminApplied, [[71, 'root']]);
+    assert.ok(!pool.issued(/UPDATE /), 'the route writes nothing itself');
   } finally { restore(); }
 });
 
 // ── Wiring: every surface that enumerates the governance kinds ───────────
 
-test('the sweepers, the by-id read and the share resolver carry the kind', () => {
-  const server = read('server.js');
-  assert.equal((server.match(/i\.kind IN \('rename', 'secret_change', 'close_issue', 'maintenance_campaign',\s*'featured_illustration'\)/g) || []).length, 2,
-    'both governance sweeps select the kind');
-  assert.equal((server.match(/issue\.kind === 'featured_illustration'\)\s*\{\s*(?:result = )?await issuesModule\.maybeApplyFeaturedIllustrationProposal\(pool, issue\)/g) || []).length, 2,
-    'both sweeps dispatch to its own apply rather than the secret-change default');
+test('the governance kinds, the by-id read and the share resolver carry the kind', () => {
+  assert.ok(require('../src/services/governance-kinds').GOVERNANCE_KINDS.includes('featured_illustration'),
+    'the governance machine decides it');
   const issues = read('src/routes/issues.js');
   assert.match(issues, /AND i\.kind IN \('secret_change', 'rename', 'close_issue', 'maintenance_campaign',\s*'featured_illustration'\)\s*LIMIT 1/,
     'GET /api/apps/:slug/governance/:id resolves the kind');
-  assert.match(issues, /module\.exports = \{[^}]*maybeApplyFeaturedIllustrationProposal,/, 'exported for the sweepers');
   const shared = read('src/services/shared-objects.js');
   assert.equal((shared.match(/'maintenance_campaign',\s*'featured_illustration'\)/g) || []).length, 2);
   // The generic create route does not accept it: the bytes travel with the
@@ -387,6 +226,7 @@ function makeAppView({ user = { id: 1, username: 'me' } } = {}) {
     location: { search: '', hash: '', href: 'http://localhost/' }, URLSearchParams,
   };
   sandbox.window = sandbox; sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(`${APP_VIEW_SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;

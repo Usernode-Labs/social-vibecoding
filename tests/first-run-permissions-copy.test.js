@@ -17,6 +17,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { message } = require('./lib/platform-i18n');
 
 const root = path.join(__dirname, '..');
 const nativeChromeSource = fs.readFileSync(
@@ -100,6 +101,7 @@ async function showFirstRunSheet(permissions) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(nativeChromeSource, sandbox);
   await sandbox.NativeChrome.maybeShowFirstRunPermissions();
@@ -146,13 +148,25 @@ test('Android first-run sheet keeps the exact-alarm + battery copy', async () =>
 test('settings device-permissions section is platform-accurate', () => {
   assert.ok(!settingsJs.includes('Alarm permissions'),
     'settings.js must not label the iOS row "Alarm permissions"');
-  assert.match(settingsJs, /isAndroid \? 'Exact alarms' : 'Notifications'/,
+  // The wording lives in the catalog now, so the same ban is read there too.
+  const settingsCatalog = fs.readFileSync(
+    path.join(__dirname, '..', 'frontend', 'locales', 'en', 'settings.json'), 'utf8');
+  assert.ok(!settingsCatalog.includes('Alarm permissions'),
+    'nor may the Settings catalog hold "Alarm permissions"');
+  assert.match(settingsJs,
+    /isAndroid \? tr\('settings:usernode\.permissions\.exactAlarms'\) : tr\('settings:usernode\.permissions\.notifications'\)/,
     'the row label switches to Notifications on iOS');
+  assert.equal(message('settings:usernode.permissions.exactAlarms'), 'Exact alarms');
+  assert.equal(message('settings:usernode.permissions.notifications'), 'Notifications');
   // The section description must be platform-gated too: the
   // block-production pitch is Android-only, iOS explains notifications.
-  const desc = /isAndroid\s*\n?\s*\? 'Block production needs the app to wake your device at exact slot times\.'\s*\n?\s*: '[^']*[Nn]otif[^']*'/;
+  const desc = /isAndroid\s*\n?\s*\? tr\('settings:usernode\.permissions\.descriptionAndroid'\)\s*\n?\s*: tr\('settings:usernode\.permissions\.descriptionIos'\)/;
   assert.match(settingsJs, desc,
     'the section description is gated on isAndroid');
+  assert.equal(message('settings:usernode.permissions.descriptionAndroid'),
+    'Block production needs the app to wake your device at exact slot times.');
+  assert.match(message('settings:usernode.permissions.descriptionIos'), /^[^']*[Nn]otif[^']*$/,
+    'and the iOS half explains notifications');
 });
 
 test('native-chrome.js carries no "Alarm permissions" wording anywhere', () => {

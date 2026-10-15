@@ -60,7 +60,7 @@ test('an agent RUN that fails is a failure too, not a green tick', () => {
   for (const failing of [
     'Scout error: ${result.fatalError',
     'Scout error: ${(ccText',
-    "'Scout finished but produced no spec text.'",
+    "'Scout finished but produced no plan text.'",
     'Worker error: ${result.fatalError',
     '${executionAgentName} error: ${(ccText',
   ]) {
@@ -73,16 +73,16 @@ test('an agent RUN that fails is a failure too, not a green tick', () => {
 });
 
 test('…but an OUTCOME that is merely not a success is left alone', () => {
-  // Three neighbours of those six set the same `isError` flag and must NOT
-  // become failure cards:
+  // Neighbours of those six set the same `isError` flag and must NOT become
+  // failure cards:
   //   * "No changes were made by X" is an outcome, and the no_changes card
   //     already says so without claiming the turn broke;
-  //   * a stop is not a failure — the user asked for it;
-  //   * a staging-build failure carries changesReady and keeps its
-  //     Changes-ready card, because the commit exists and is proposable.
+  //   * a stop is not a failure — the user asked for it.
+  // (A staging-build failure is no longer the turn's to report: the turn
+  // hands the commit to the preview machine, whose failed prepare writes
+  // its own card.)
   for (const notAFailure of [
     'No changes were made by ${executionAgentName}',
-    'Staging build failed.',
   ]) {
     const at = SESSIONS.indexOf(notAFailure);
     assert.ok(at > 0, `${notAFailure} must still be produced`);
@@ -178,10 +178,12 @@ test('the failure row is a documented member of the row union', () => {
   ]) assert.match(STORE, new RegExp(field));
 });
 
-test('a declared check guards it in a browser', () => {
+test('the failure row is no longer a declared check: it is the classic chat\'s (#3976)', () => {
+  // It was guarded on the classic transcript fixture (990412). Classic
+  // sessions are read-only now and that chat's checks were retired with it;
+  // an agent session draws a failed turn as its own note with Retry
+  // (agent-session/transcript.ts), not this row. The unit tests above still
+  // pin the row for as long as the classic transcript renders it.
   const dapp = JSON.parse(read('dapp.json'));
-  const check = dapp.tests.find((t) => (t.expectSelector || '').includes('.dc-failure'));
-  assert.ok(check, 'the failure row must be guarded on a real route');
-  assert.match(check.path, /sessions\/990412/, 'on the transcript fixture');
-  assert.match(check.expectText, /^This turn failed:/);
+  assert.ok(!dapp.tests.some((t) => (t.expectSelector || '').includes('.dc-failure')));
 });

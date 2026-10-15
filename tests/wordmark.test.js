@@ -132,3 +132,26 @@ test('the primitive is a pure function of its props, with no ink of its own', ()
     'size travels in className at the call site (28px, 24px, 20px), so there is '
     + 'no variant table to keep as complete literals');
 });
+
+// #4382: the logotype is black, and white in dark mode, wherever it is drawn.
+// The --brand-ink periwinkle is the header's own controls' ink (the app chip,
+// the bell, the back disc), never the logo's. A call site either sets no ink
+// (the platform header's, which inherits the bar's) or exactly this pair.
+test('every call site inks the logotype black (white in dark mode), never the brand blue', () => {
+  const files = fs.readdirSync(path.join(ROOT, 'frontend/src'), { recursive: true })
+    .filter((f) => /\.tsx$/.test(f)).map((f) => path.join('frontend/src', f))
+    .filter((f) => read(f).includes('<Wordmark'));
+  let sites = 0;
+  for (const file of files) {
+    for (const [tag] of read(file).matchAll(/<Wordmark\b[^>]*\/>/g)) {
+      sites += 1;
+      assert.doesNotMatch(tag, /brand-/, `${file}: ${tag} — the logo is black, not the header's brand ink`);
+      const ink = tag.match(/\b(?:dark:)?text-(?!\[0)(?:zinc|white|black|\[color)[^\s"]*/g) || [];
+      if (ink.length) {
+        assert.deepEqual(ink, ['text-zinc-950', 'dark:text-white'],
+          `${file}: ${tag} — a logotype with its own ink takes text-zinc-950 dark:text-white`);
+      }
+    }
+  }
+  assert.ok(sites >= 7, `found ${sites} <Wordmark/> call sites; the scan lost them`);
+});

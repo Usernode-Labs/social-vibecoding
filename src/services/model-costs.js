@@ -9,7 +9,8 @@ const models = require('./models');
 //
 //   the ESTIMATE  a forward-looking figure the picker shows before you
 //                 spend anything. It is per-token pricing multiplied by a
-//                 typical change's token profile, and it is labelled an
+//                 typical change's token profile, its cached input priced
+//                 at the model's cache rates, and it is labelled an
 //                 estimate everywhere it appears. An admin can override it
 //                 by hand from the Model costs console.
 //   the OBSERVED  what changes on that model actually cost, aggregated
@@ -39,15 +40,40 @@ const OVERRIDES_KEY = 'model_cost_estimate_overrides';
 // diff and a summary. 2.5M input / 120k output is the order of magnitude a
 // single-session change has been running at: dozens of tool round-trips,
 // each re-sending the context, is what makes the input figure that large.
+//
+// HOW MUCH OF THAT INPUT IS CACHED: nearly all of it. What a round-trip
+// re-sends is the prefix the provider already holds, which it serves from
+// its prompt cache and bills as a cache READ, at a fraction of the prompt
+// rate (a fifth on GLM 5.3 Flash, a twentieth on Opus 5.5). Measured: App
+// bench run 7's GLM 5.3 Flash builds ran 97-98% cache reads (10.69M input
+// of which 10.41M cached, with 60.1K output; 8.37M / 8.13M / 57.5K). The
+// constant counts 95% of the input as cache reads, below what was measured
+// on purpose, so that an estimate that errs, errs high. It counts the other
+// 5% as cache WRITES: a model that bills writes (Anthropic's, at 1.25x the
+// prompt rate) charges more for one than for ordinary input, and a model
+// that does not is priced at its prompt rate for it, so the remainder is
+// priced at the dearest rate an input token can carry either way.
+//
+// The shares are counted the way agent_turns counts them: inputTokens is
+// every prompt token, and cachedInputTokens and cacheWriteInputTokens are
+// parts of it, never added to it.
+//
 // It is one documented constant on purpose: an estimate that nobody can
 // point at the origin of is not an estimate, it is a guess with a decimal
 // point.
 //
-// At the prices in this file that profile puts a change at about $0.30 on
-// GLM 5.3 Flash, $0.21 on DeepSeek v4.1 Flash, $6.20 on Sonnet 5.5, $12.40 on
-// Opus 5.5 and $31.00 on Fable 5.1.
+// At the prices in this file that profile puts a change at about $0.15 on
+// GLM 5.3 Flash, $0.21 on DeepSeek v4.1 Flash, $1.99 on Sonnet 5.5, $3.50 on
+// Opus 5.5 and $8.16 on Fable 5.1. Priced as if nothing were cached, the
+// same profile read $0.44, $0.27, $6.20, $12.40 and $31.00: about three to
+// four times as much on GLM and on the Anthropic models, whose cache reads
+// are cheapest against their prompt rate.
+const DOCUMENTED_CACHE_SHARES = Object.freeze({ read: 0.95, write: 0.05 });
 const TYPICAL_CHANGE = Object.freeze({
   inputTokens: 2_500_000,
+  // 95% of the input, and the other 5% (DOCUMENTED_CACHE_SHARES).
+  cachedInputTokens: 2_375_000,
+  cacheWriteInputTokens: 125_000,
   outputTokens: 120_000,
   source: 'documented_constant',
 });
@@ -72,27 +98,54 @@ const OPENROUTER_NOTES = Object.freeze({
 // Published per-MTok pricing for the models the platform curates, used when
 // no live catalogue entry is to hand (the picker has one; the admin console
 // does not, because it has no user's key to fetch a catalogue with).
-// Anthropic's come from services/models.js and services/llm.js, which agree:
+//
+// Every figure is OpenRouter's catalog (GET https://openrouter.ai/api/v1/models,
+// read 2026-10-07): `prompt`, `completion`, `input_cache_read` and
+// `input_cache_write`, per million tokens, under the same names the catalog
+// sanitizer gives them (agent-models.js sanitizeModel). A cache price is left
+// out where the catalog lists none (GLM 5.3 Flash and DeepSeek v4.1 Flash bill
+// no cache writes), and the estimate prices that share at the prompt rate.
+// The Anthropic rows are the catalog's `anthropic/` entries for the same
+// models (Opus 5.5 is anthropic/claude-opus-5.5 there); their prompt and
+// completion prices agree with services/models.js and services/llm.js:
 // Sonnet 5.5 $2/$10, Opus 5.5 $4/$20, Fable $10/$50 per MTok in/out.
 const ANTHROPIC_PRICING = Object.freeze({
-  'claude-sonnet-5-5': { inputPricePerMillion: 2, outputPricePerMillion: 10 },
-  'claude-opus-5-5': { inputPricePerMillion: 4, outputPricePerMillion: 20 },
-  'claude-fable-5-1': { inputPricePerMillion: 10, outputPricePerMillion: 50 },
+  'claude-sonnet-5-5': {
+    inputPricePerMillion: 2, outputPricePerMillion: 10,
+    cacheReadPricePerMillion: 0.2, cacheWritePricePerMillion: 2.5,
+  },
+  'claude-opus-5-5': {
+    inputPricePerMillion: 4, outputPricePerMillion: 20,
+    cacheReadPricePerMillion: 0.2, cacheWritePricePerMillion: 5,
+  },
+  'claude-fable-5-1': {
+    inputPricePerMillion: 10, outputPricePerMillion: 50,
+    cacheReadPricePerMillion: 0.25, cacheWritePricePerMillion: 12.5,
+  },
 });
 
 // #2818: models the picker no longer offers, priced so a row of recorded
 // history on one (the admin console's observed columns) still shows what
 // it was estimated at. Not curated: nothing here is offered or noted.
 // #3579: Sonnet 5 joined when Sonnet 5.5 replaced it, at its own (equal)
-// published $2/$10.
+// published $2/$10. The catalog still lists both, with the cache prices
+// below.
 const RETIRED_PRICING = Object.freeze({
-  'claude-opus-5': { inputPricePerMillion: 5, outputPricePerMillion: 25 },
-  'claude-sonnet-5': { inputPricePerMillion: 2, outputPricePerMillion: 10 },
+  // One line each: tests/models-allowlist.test.js reads a line naming a
+  // retired id as allowed only when it is one of these pricing rows.
+  'claude-opus-5': { inputPricePerMillion: 5, outputPricePerMillion: 25, cacheReadPricePerMillion: 0.5, cacheWritePricePerMillion: 6.25 },
+  'claude-sonnet-5': { inputPricePerMillion: 2, outputPricePerMillion: 10, cacheReadPricePerMillion: 0.2, cacheWritePricePerMillion: 2.5 },
 });
 
+// 2026-10-07: GLM 5.3 Flash was $0.10 / $0.40 here, and DeepSeek v4.1 Flash
+// $0.07 / $0.28; the catalog had moved on from both.
 const OPENROUTER_PRICING = Object.freeze({
-  'z-ai/glm-5.3-flash': { inputPricePerMillion: 0.1, outputPricePerMillion: 0.4 },
-  'deepseek/deepseek-v4.1-flash': { inputPricePerMillion: 0.07, outputPricePerMillion: 0.28 },
+  'z-ai/glm-5.3-flash': {
+    inputPricePerMillion: 0.15, outputPricePerMillion: 0.5, cacheReadPricePerMillion: 0.03,
+  },
+  'deepseek/deepseek-v4.1-flash': {
+    inputPricePerMillion: 0.05, outputPricePerMillion: 1.2, cacheReadPricePerMillion: 0.024,
+  },
 });
 
 /** A model id as the platform records it, stripped of a transport prefix. */
@@ -114,17 +167,66 @@ function noteFor(modelId) {
   return anthropic?.changeSize?.short || '';
 }
 
+/** A cache price as the turn ledger reads one: a finite price >= 0, else null. */
+function cachePrice(value) {
+  if (value == null || value === '') return null;
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+/**
+ * The cache-read and cache-write parts of `inputTokens` at these shares of
+ * it (fractions), as token counts. A write share never claims input the
+ * read share already has. Pure.
+ */
+function cacheSplit(inputTokens, shares = DOCUMENTED_CACHE_SHARES) {
+  const input = Math.max(Number(inputTokens) || 0, 0);
+  const fraction = (n) => Math.min(Math.max(Number(n) || 0, 0), 1);
+  const read = fraction(shares?.read);
+  const write = Math.min(fraction(shares?.write), 1 - read);
+  const cachedInputTokens = Math.round(input * read);
+  const cacheWriteInputTokens = Math.min(Math.round(input * write), input - cachedInputTokens);
+  return { cachedInputTokens, cacheWriteInputTokens };
+}
+
+/**
+ * Dollars for a token profile at these per-MTok prices, or null when the
+ * prompt or completion price is missing. The same arithmetic as the turn
+ * ledger's (agent-turn.js estimateRequestedModelCost), so a forecast and
+ * the record it is later read against price a token alike: inputTokens is
+ * every prompt token; its cache-read and cache-write parts are each priced
+ * at the model's own cache rate where it has one and at the prompt rate
+ * where it does not; neither part can claim more input than there is, so
+ * the uncached remainder is never negative. A profile with no cache parts,
+ * or prices with no cache rates, gives exactly the prompt-rate figure.
+ * Pure.
+ */
+function tokenCostUsd(pricing, profile) {
+  if (pricing?.inputPricePerMillion == null || pricing?.outputPricePerMillion == null) return null;
+  const inP = Number(pricing.inputPricePerMillion);
+  const outP = Number(pricing.outputPricePerMillion);
+  if (!Number.isFinite(inP) || !Number.isFinite(outP)) return null;
+  const readP = cachePrice(pricing.cacheReadPricePerMillion);
+  const writeP = cachePrice(pricing.cacheWritePricePerMillion);
+  const input = Math.max(Number(profile?.inputTokens) || 0, 0);
+  const output = Math.max(Number(profile?.outputTokens) || 0, 0);
+  const partOf = (tokens, room) => Math.min(Math.max(Number(tokens) || 0, 0), Math.max(room, 0));
+  const reads = readP == null ? 0 : partOf(profile?.cachedInputTokens, input);
+  const writes = writeP == null ? 0 : partOf(profile?.cacheWriteInputTokens, input - reads);
+  let perMillion = (input - reads - writes) * inP + output * outP;
+  if (reads > 0) perMillion += reads * readP;
+  if (writes > 0) perMillion += writes * writeP;
+  return perMillion / 1_000_000;
+}
+
 /**
  * Cents for one typical change at these per-MTok prices. Null when either
- * price is missing — a model whose price nobody published gets no estimate
+ * price is missing: a model whose price nobody published gets no estimate
  * rather than a fabricated one.
  */
 function estimateCents(pricing, profile = TYPICAL_CHANGE) {
-  const input = Number(pricing?.inputPricePerMillion);
-  const output = Number(pricing?.outputPricePerMillion);
-  if (!Number.isFinite(input) || !Number.isFinite(output)) return null;
-  const dollars = (Number(profile.inputTokens) / 1_000_000) * input
-    + (Number(profile.outputTokens) / 1_000_000) * output;
+  const dollars = tokenCostUsd(pricing, profile);
+  if (dollars == null) return null;
   return Math.round(dollars * 100 * 100) / 100;
 }
 
@@ -150,6 +252,20 @@ function curatedModelIds() {
 // sessions — a mean here is dominated by the one session somebody left
 // running. Below MIN_SESSIONS the answer is noise, so the documented
 // constant stands instead and says so.
+//
+// input_tokens is EVERY prompt token of a turn, its cache reads
+// (cached_input_tokens) and cache writes (cache_write_input_tokens)
+// included: Codex reports the total that way, and a Claude Code turn's
+// three counts are added up to it before they are recorded
+// (agent-turn.js usageTotalFromResult). So input is input_tokens alone. It
+// used to be input_tokens plus both cache counts, which counted a cached
+// token twice and put a typical change at nearly twice the input it had.
+//
+// The cached parts are measured too, as each change's share of its own
+// input, and the median of those shares is applied to the median input:
+// a share is what decides how much of the input is billed at a cache
+// rate, and a median of shares is not pulled about by the one long
+// session the way a ratio of sums would be.
 const MIN_SESSIONS_FOR_PROFILE = 20;
 
 async function typicalChange(pool, { days = OBSERVED_DAYS } = {}) {
@@ -157,7 +273,9 @@ async function typicalChange(pool, { days = OBSERVED_DAYS } = {}) {
     const { rows } = await pool.query(
       `WITH per_change AS (
          SELECT session_id,
-                SUM(input_tokens + cached_input_tokens + cache_write_input_tokens) AS input_tokens,
+                SUM(input_tokens) AS input_tokens,
+                SUM(cached_input_tokens) AS cached_input_tokens,
+                SUM(cache_write_input_tokens) AS cache_write_input_tokens,
                 SUM(output_tokens) AS output_tokens
            FROM agent_turns
           WHERE started_at >= NOW() - ($1 || ' days')::interval
@@ -166,7 +284,13 @@ async function typicalChange(pool, { days = OBSERVED_DAYS } = {}) {
        )
        SELECT COUNT(*) AS changes,
               PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY input_tokens) AS input_tokens,
-              PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY output_tokens) AS output_tokens
+              PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY output_tokens) AS output_tokens,
+              PERCENTILE_CONT(0.5) WITHIN GROUP (
+                ORDER BY LEAST(cached_input_tokens::float8 / NULLIF(input_tokens, 0)::float8, 1)
+              ) AS cache_read_share,
+              PERCENTILE_CONT(0.5) WITHIN GROUP (
+                ORDER BY LEAST(cache_write_input_tokens::float8 / NULLIF(input_tokens, 0)::float8, 1)
+              ) AS cache_write_share
          FROM per_change`,
       [String(days)],
     );
@@ -175,7 +299,13 @@ async function typicalChange(pool, { days = OBSERVED_DAYS } = {}) {
     const inputTokens = Math.round(Number(row?.input_tokens || 0));
     const outputTokens = Math.round(Number(row?.output_tokens || 0));
     if (changes >= MIN_SESSIONS_FOR_PROFILE && inputTokens > 0 && outputTokens > 0) {
-      return { inputTokens, outputTokens, source: 'recorded_usage', changes };
+      // A share nobody recorded is no share: those tokens are priced at the
+      // prompt rate, which is the dearer reading.
+      const split = cacheSplit(inputTokens, {
+        read: Number(row?.cache_read_share) || 0,
+        write: Number(row?.cache_write_share) || 0,
+      });
+      return { inputTokens, ...split, outputTokens, source: 'recorded_usage', changes };
     }
     return { ...TYPICAL_CHANGE, changes };
   } catch (err) {
@@ -406,6 +536,17 @@ async function writeOverride(pool, { modelId, cents, actorId }) {
 
 // ── The two payloads ────────────────────────────────────────────────────
 
+/** A token profile as both payloads state it. */
+function profileView(profile) {
+  return {
+    inputTokens: profile.inputTokens,
+    cachedInputTokens: profile.cachedInputTokens ?? 0,
+    cacheWriteInputTokens: profile.cacheWriteInputTokens ?? 0,
+    outputTokens: profile.outputTokens,
+    source: profile.source,
+  };
+}
+
 /**
  * What the model picker needs: one note and one estimate per model it can
  * offer, plus the token profile so the client can derive an estimate for a
@@ -432,11 +573,10 @@ async function pickerPayload(pool) {
     out[id] = { note: noteFor(id), estimateCents: cents, estimateSource: 'override' };
   }
   return {
-    typicalChange: {
-      inputTokens: profile.inputTokens,
-      outputTokens: profile.outputTokens,
-      source: profile.source,
-    },
+    // The cached parts ride along so the client prices the cached share of
+    // a model it derives an estimate for at that model's cache rates, the
+    // way estimateCents does here.
+    typicalChange: profileView(profile),
     models: out,
   };
 }
@@ -477,12 +617,7 @@ async function adminPayload(pool, { days = OBSERVED_DAYS } = {}) {
     || a.modelId.localeCompare(b.modelId));
   return {
     days,
-    typicalChange: {
-      inputTokens: profile.inputTokens,
-      outputTokens: profile.outputTokens,
-      source: profile.source,
-      changes: profile.changes ?? 0,
-    },
+    typicalChange: { ...profileView(profile), changes: profile.changes ?? 0 },
     // #2592: the console says which changes it is counting, because
     // "observed over the last 30 days" alone would read as all of them.
     observedSince: since ? since.toISOString() : null,
@@ -494,10 +629,13 @@ async function adminPayload(pool, { days = OBSERVED_DAYS } = {}) {
 module.exports = {
   OVERRIDES_KEY,
   OBSERVED_DAYS,
+  DOCUMENTED_CACHE_SHARES,
   TYPICAL_CHANGE,
   MIN_SESSIONS_FOR_PROFILE,
   normalizeModelId,
   noteFor,
+  cacheSplit,
+  tokenCostUsd,
   estimateCents,
   publishedPricing,
   curatedModelIds,

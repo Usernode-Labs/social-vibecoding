@@ -1,3 +1,5 @@
+import { useAutoGrow } from '../../lib/use-auto-grow';
+import { SpeakButton } from '../dictation/speak-button';
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 
 import {
@@ -8,6 +10,7 @@ import {
   XIcon,
 } from '@/components/ui/icons';
 
+import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { JumpToLatest } from '../messages/jump-to-latest';
 import { GlobalChatResultBlock } from './renderers';
@@ -40,6 +43,7 @@ function dollars(value: string | number | null | undefined) {
 }
 
 function BudgetLabel() {
+  const t = useMessages('chat');
   const snapshot = useGlobalChatState();
   const usage = snapshot.bootstrap?.usage;
   if (!usage) return null;
@@ -47,13 +51,16 @@ function BudgetLabel() {
   const cap = dollars(usage.capUsd);
   const remaining = dollars(snapshot.overallAllowance?.remainingUsd);
   return (
-    <span className="global-chat-budget" title="Global Chat spend this month and overall OpenRouter allowance">
-      Chat {spent}{cap ? ` / ${cap}` : ''}{remaining ? ` · ${remaining} left` : ''}
+    <span className="global-chat-budget" title={t('chat:global.budget.title')}>
+      {cap
+        ? (remaining ? t('chat:global.budget.spentCapLeft', { spent, cap, remaining }) : t('chat:global.budget.spentCap', { spent, cap }))
+        : (remaining ? t('chat:global.budget.spentLeft', { spent, remaining }) : t('chat:global.budget.spent', { spent }))}
     </span>
   );
 }
 
 function TurnProgress({ progress }: { progress: GlobalChatProgress }) {
+  const t = useMessages('chat');
   const [clock, setClock] = useState(Date.now());
   useEffect(() => {
     const timer = window.setInterval(() => setClock(Date.now()), 1000);
@@ -62,18 +69,18 @@ function TurnProgress({ progress }: { progress: GlobalChatProgress }) {
   const elapsedMs = Math.max(progress.elapsedMs, clock - progress.startedAt);
   const seconds = Math.max(0, Math.floor(elapsedMs / 1000));
   return (
-    <section className="global-chat-progress" aria-label="Global Chat progress">
+    <section className="global-chat-progress" aria-label={t('chat:global.progress.label')}>
       <div className="global-chat-progress-current">
         <SpinnerArcIcon className="w-4 h-4 animate-spin" aria-hidden="true" />
         <span>{progress.message}</span>
-        <time>{seconds}s</time>
+        <time>{t('chat:global.progress.elapsed', { count: seconds })}</time>
       </div>
       <details>
-        <summary>Activity</summary>
+        <summary>{t('chat:global.progress.activity')}</summary>
         <div className="global-chat-progress-details">
-          {progress.model ? <p>Model: {progress.model}</p> : null}
-          {progress.reasoningEffort ? <p>Reasoning: {progress.reasoningEffort} effort</p> : null}
-          {progress.attempt && progress.attempt > 1 ? <p>Attempt: {progress.attempt}</p> : null}
+          {progress.model ? <p>{t('chat:global.progress.model', { model: progress.model })}</p> : null}
+          {progress.reasoningEffort ? <p>{t('chat:global.progress.reasoning', { effort: progress.reasoningEffort })}</p> : null}
+          {progress.attempt && progress.attempt > 1 ? <p>{t('chat:global.progress.attempt', { number: progress.attempt })}</p> : null}
           {progress.steps.length ? (
             <ol>
               {progress.steps.map((step, index) => (
@@ -108,6 +115,7 @@ function Suggestions({
   latest: boolean;
   context?: string;
 }) {
+  const t = useMessages('chat');
   const [related, setRelated] = useState<GlobalChatSuggestion | null>(null);
   const holdTimer = useRef<number | null>(null);
   const held = useRef(false);
@@ -140,14 +148,14 @@ function Suggestions({
 
   if (!suggestions.length && !latest) return null;
   return (
-    <div className="global-chat-suggestions" aria-label="Suggested next steps">
+    <div className="global-chat-suggestions" aria-label={t('chat:global.suggestions.label')}>
       {suggestions.map((suggestion) => (
         <button
           key={suggestion.id}
           type="button"
           aria-haspopup={suggestion.relatedSuggestions?.length ? 'menu' : undefined}
           aria-expanded={related?.id === suggestion.id || undefined}
-          title={suggestion.relatedSuggestions?.length ? 'Hold for related options' : undefined}
+          title={suggestion.relatedSuggestions?.length ? t('chat:global.suggestions.holdTitle') : undefined}
           onPointerDown={(event) => {
             if (event.button === 0) beginHold(suggestion);
           }}
@@ -178,14 +186,14 @@ function Suggestions({
           className="global-chat-more-suggestions"
           onClick={() => void requestMoreSuggestions(context)}
         >
-          More suggestions
+          {t('chat:global.suggestions.more')}
         </button>
       ) : null}
       {related?.relatedSuggestions?.length ? (
         <div
           className="global-chat-related-suggestions"
           role="menu"
-          aria-label={`More options for ${related.label}`}
+          aria-label={t('chat:global.suggestions.relatedLabel', { suggestion: related.label })}
         >
           {related.relatedSuggestions.map((suggestion) => (
             <button
@@ -210,6 +218,7 @@ function AssistantTurn({
   message: GlobalChatMessage;
   latest: boolean;
 }) {
+  const t = useMessages('chat');
   const snapshot = useGlobalChatState();
   const presentation = message.payload?.presentation as GlobalChatPresentation | undefined;
   const itemSelection = presentation?.itemSelection as GlobalChatItemSelection | undefined;
@@ -222,7 +231,7 @@ function AssistantTurn({
         return result ? (
           <GlobalChatResultBlock key={id} result={result} itemSelection={itemSelection} />
         ) : (
-          <div key={id} className="global-chat-result-loading" aria-label="Loading result">
+          <div key={id} className="global-chat-result-loading" aria-label={t('chat:global.result.loading')}>
             <SpinnerArcIcon className="w-4 h-4 animate-spin" aria-hidden="true" />
           </div>
         );
@@ -239,10 +248,11 @@ function AssistantTurn({
 }
 
 function FirstUse({ presentation }: { presentation: GlobalChatPresentation }) {
+  const t = useMessages('chat');
   return (
     <section className="global-chat-first-use">
       <h3>{presentation.message}</h3>
-      <p className="global-chat-suggestion-hint">Hold an option for related suggestions.</p>
+      <p className="global-chat-suggestion-hint">{t('chat:global.suggestions.holdHint')}</p>
       <Suggestions
         suggestions={presentation.suggestions}
         latest
@@ -253,15 +263,18 @@ function FirstUse({ presentation }: { presentation: GlobalChatPresentation }) {
 }
 
 function Composer({ id }: { id: string }) {
+  const t = useMessages('chat');
   const snapshot = useGlobalChatState();
   const [value, setValue] = useState('');
+  const [dictating, setDictating] = useState(false);
   const textarea = useRef<HTMLTextAreaElement | null>(null);
   const sending = snapshot.phase === 'sending';
+  useAutoGrow(textarea, value);
 
   function submit(event?: FormEvent) {
     event?.preventDefault();
     const prompt = value.trim();
-    if (!prompt || sending) return;
+    if (!prompt || sending || dictating) return;
     setValue('');
     if (textarea.current) textarea.current.style.height = '';
     void sendGlobalChatMessage(prompt);
@@ -284,8 +297,8 @@ function Composer({ id }: { id: string }) {
         maxLength={12_000}
         value={value}
         disabled={!snapshot.bootstrap?.available || snapshot.phase === 'loading'}
-        placeholder={snapshot.bootstrap?.available ? 'Ask Homeroom…' : 'OpenRouter is required'}
-        aria-label="Message Global Chat"
+        placeholder={snapshot.bootstrap?.available ? t('chat:global.composer.placeholder') : t('chat:global.composer.placeholderUnavailable')}
+        aria-label={t('chat:global.composer.label')}
         onChange={(event) => {
           setValue(event.target.value);
           event.currentTarget.style.height = 'auto';
@@ -298,12 +311,13 @@ function Composer({ id }: { id: string }) {
           }
         }}
       />
+      <SpeakButton scope={`global:${snapshot.bootstrap?.thread?.id || id}`} getText={() => textarea.current?.value || ''} onText={setValue} maxLength={12000} onBusyChange={setDictating} disabled={!snapshot.bootstrap?.available || snapshot.phase === 'loading'} />
       <button
         type={sending ? 'button' : 'submit'}
         className="global-chat-send"
-        disabled={!sending && !value.trim()}
-        aria-label={sending ? 'Stop response' : 'Send message'}
-        title={sending ? 'Stop' : 'Send'}
+        disabled={!sending && (dictating || !value.trim())}
+        aria-label={sending ? t('chat:global.composer.stopLabel') : t('chat:global.composer.sendLabel')}
+        title={sending ? t('chat:global.composer.stop') : t('chat:global.composer.send')}
         // The field keeps focus through the press, so the keyboard and the
         // composer stay where the tap landed (lib/keyboard-open.ts).
         onMouseDown={(event) => event.preventDefault()}
@@ -316,17 +330,18 @@ function Composer({ id }: { id: string }) {
 }
 
 function Unavailable() {
+  const t = useMessages('chat');
   const snapshot = useGlobalChatState();
   const disabled = snapshot.bootstrap?.unavailableReason === 'global_chat_disabled';
   return (
     <section className="global-chat-unavailable">
-      <h3>{disabled ? 'Enable Global Chat to start' : 'Free-form chat needs OpenRouter'}</h3>
+      <h3>{disabled ? t('chat:global.unavailable.disabledTitle') : t('chat:global.unavailable.noModelTitle')}</h3>
       <p>{disabled
-        ? 'Global Chat is an optional experimental feature.'
-        : 'The direct options below still work without it.'}</p>
+        ? t('chat:global.unavailable.disabledBody')
+        : t('chat:global.unavailable.noModelBody')}</p>
       <div className="global-chat-suggestions">
-        <button type="button" onClick={() => closeGlobalChat(disabled ? '#settings/global-chat' : '#settings/openrouter')}>Open Settings</button>
-        <button type="button" onClick={() => closeGlobalChat()}>Use Classic</button>
+        <button type="button" onClick={() => closeGlobalChat(disabled ? '#settings/global-chat' : '#settings/openrouter')}>{t('chat:global.unavailable.openSettings')}</button>
+        <button type="button" onClick={() => closeGlobalChat()}>{t('chat:global.unavailable.useClassic')}</button>
       </div>
     </section>
   );
@@ -343,6 +358,7 @@ function Unavailable() {
  * full-width toggle, which every discussion pane carries in that place.
  */
 export function GlobalChatPanel({ embedded = false, headerAction = null }: { embedded?: boolean; headerAction?: ReactNode }) {
+  const t = useMessages('chat');
   const snapshot = useGlobalChatState();
   const scroll = useRef<HTMLDivElement | null>(null);
   const assistantIds = useMemo(() => snapshot.messages
@@ -359,8 +375,8 @@ export function GlobalChatPanel({ embedded = false, headerAction = null }: { emb
     <div className={embedded ? 'global-chat-shell global-chat-embedded' : 'global-chat-shell dc-lift dc-lift-strip'}>
       <header className="global-chat-toolbar">
         <div className="min-w-0">
-          <h2>Chat <span>(experimental)</span></h2>
-          <p>Saved in Messages.</p>
+          <h2><RichMessage id="chat:global.toolbar.title" components={[<span />]} /></h2>
+          <p>{t('chat:global.toolbar.saved')}</p>
         </div>
         <BudgetLabel />
         {embedded ? null : (
@@ -368,11 +384,11 @@ export function GlobalChatPanel({ embedded = false, headerAction = null }: { emb
             type="button"
             className="global-chat-new"
             onClick={() => closeGlobalChat()}
-            aria-label="Close chat"
-            title="Close chat"
+            aria-label={t('chat:global.toolbar.closeChat')}
+            title={t('chat:global.toolbar.closeChat')}
           >
             <XIcon className="w-4 h-4" aria-hidden="true" />
-            <span>Close</span>
+            <span>{t('chat:global.toolbar.close')}</span>
           </button>
         )}
         <button
@@ -380,11 +396,11 @@ export function GlobalChatPanel({ embedded = false, headerAction = null }: { emb
           className="global-chat-new"
           disabled={snapshot.phase === 'sending'}
           onClick={() => void startNewGlobalChat()}
-          aria-label="Start a new chat"
-          title="New chat"
+          aria-label={t('chat:global.toolbar.startNew')}
+          title={t('chat:global.toolbar.newChat')}
         >
           <PlusIcon className="w-4 h-4" aria-hidden="true" />
-          <span>New</span>
+          <span>{t('chat:global.toolbar.new')}</span>
         </button>
         {headerAction}
       </header>
@@ -397,11 +413,11 @@ export function GlobalChatPanel({ embedded = false, headerAction = null }: { emb
       <div ref={scroll} className="global-chat-transcript" aria-live="polite">
         {snapshot.hasMoreHistory ? (
           <button type="button" className="global-chat-history" onClick={() => void loadOlderGlobalChatMessages()}>
-            Earlier messages
+            {t('chat:global.history.earlier')}
           </button>
         ) : null}
         {snapshot.phase === 'booting' || (snapshot.phase === 'loading' && !snapshot.messages.length) ? (
-          <div className="global-chat-loading"><SpinnerArcIcon className="w-5 h-5 animate-spin" aria-hidden="true" /> Loading…</div>
+          <div className="global-chat-loading"><SpinnerArcIcon className="w-5 h-5 animate-spin" aria-hidden="true" />{` ${t('core:common.loading')}`}</div>
         ) : null}
         {snapshot.bootstrap && !snapshot.bootstrap.available ? <Unavailable /> : null}
         {snapshot.bootstrap && !snapshot.messages.length && snapshot.phase !== 'loading' ? (
@@ -422,7 +438,7 @@ export function GlobalChatPanel({ embedded = false, headerAction = null }: { emb
         {snapshot.error ? (
           <div className="global-chat-error" role="alert">
             <span>{snapshot.error}</span>
-            <button type="button" onClick={() => void retryLastGlobalChatRequest()}><ArrowPathIcon className="w-4 h-4" aria-hidden="true" /> Retry</button>
+            <button type="button" onClick={() => void retryLastGlobalChatRequest()}><ArrowPathIcon className="w-4 h-4" aria-hidden="true" />{` ${t('core:common.retry')}`}</button>
           </div>
         ) : null}
       </div>
@@ -438,6 +454,7 @@ export function GlobalChatPanel({ embedded = false, headerAction = null }: { emb
 }
 
 export function GlobalChatScreen() {
+  const t = useMessages('chat');
   const snapshot = useGlobalChatState();
   const screenRef = useRef<HTMLElement | null>(null);
   useVisibilityHiddenClass(screenRef, 'global-chat-screen', false);
@@ -462,7 +479,7 @@ export function GlobalChatScreen() {
       ref={screenRef}
       id="global-chat-screen"
       className="hidden flex flex-1 min-h-0 overflow-hidden"
-      aria-label="Chat (experimental)"
+      aria-label={t('chat:global.screen.label')}
     >
       {snapshot.host === 'messages' ? null : <GlobalChatPanel />}
     </main>

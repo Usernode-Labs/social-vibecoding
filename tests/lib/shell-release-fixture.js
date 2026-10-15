@@ -58,6 +58,24 @@ function memoryCaches() {
 function harness(initial, caches = memoryCaches()) {
   let serving = initial;
   const requests = [];
+  // Every fetch with the cache mode it asked for, and what a browser HTTP
+  // cache holds: a request that does not say 'reload' (or 'no-store') is
+  // answered from it, as the browser would, and never reaches `requests`.
+  const fetches = [];
+  const httpCache = new Map();
+  // A request (not 'reload') for one of these paths rejects with the given
+  // error, as fetch does for a redirect the HTTP cache kept under
+  // redirect: 'error', or for a timeout.
+  const rejectFromCache = new Map();
+  // The worker's AbortSignal.timeout, made controllable: a request (not
+  // 'reload') for one of these paths gets its headers, then its signal times
+  // out and its body read rejects with an AbortError, as a body that stalls
+  // past the timeout does in some Chromium versions.
+  const stallBody = new Set();
+  const timers = new WeakMap();
+  const WorkerAbortSignal = {
+    timeout: () => { const c = new AbortController(); timers.set(c.signal, c); return c.signal; },
+  };
   const clients = [];
   let failedPath = null;
   let offline = false;
@@ -68,8 +86,22 @@ function harness(initial, caches = memoryCaches()) {
   const locks = { request: (_name, action) => {
     const run = lockTail.then(action); lockTail = run.catch(() => {}); return run;
   } };
-  const fetcher = async request => {
+  const fetcher = async (request, init = {}) => {
     const url = new URL(typeof request === 'string' ? request : request.url, ORIGIN);
+    const mode = init.cache || 'default';
+    fetches.push({ path: url.pathname, cache: mode });
+    if (rejectFromCache.has(url.pathname) && mode !== 'reload' && mode !== 'no-store') {
+      throw rejectFromCache.get(url.pathname);
+    }
+    if (stallBody.has(url.pathname) && mode !== 'reload' && mode !== 'no-store') {
+      timers.get(init.signal)?.abort(new DOMException('signal timed out', 'TimeoutError'));
+      const read = () => Promise.reject(new DOMException('The operation was aborted.', 'AbortError'));
+      const stalled = { ok: true, status: 200, redirected: false, arrayBuffer: read, clone: () => stalled };
+      return stalled;
+    }
+    if (httpCache.has(url.pathname) && mode !== 'reload' && mode !== 'no-store') {
+      return new Response(httpCache.get(url.pathname), { headers: { 'x-platform-build': serving.revision } });
+    }
     requests.push(url.pathname);
     if (offline) throw new Error('offline');
     if (latencyMs) await new Promise(resolve => setTimeout(resolve, latencyMs));
@@ -90,7 +122,7 @@ function harness(initial, caches = memoryCaches()) {
         skipWaiting: async () => { lifecycle.push('skipWaiting'); },
         clients: { matchAll: async () => clients, claim: async () => { lifecycle.push('claim'); } },
       },
-      caches, fetch: fetcher, URL, Headers, Request, Response, AbortSignal,
+      caches, fetch: fetcher, URL, Headers, Request, Response, AbortSignal: WorkerAbortSignal,
       setTimeout, clearTimeout,
     });
     async function dispatch(name, extra = {}) {
@@ -117,7 +149,7 @@ function harness(initial, caches = memoryCaches()) {
     };
   }
   return {
-    caches, requests, clients, worker,
+    caches, requests, fetches, httpCache, rejectFromCache, stallBody, clients, worker,
     serve: next => { serving = next; },
     fail: pathname => { failedPath = pathname; },
     offline: value => { offline = value; },

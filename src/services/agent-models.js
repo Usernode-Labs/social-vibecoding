@@ -226,6 +226,24 @@ function sanitizeModel(m, compatibility, { recommended = false } = {}) {
     configurable: false,
     writable: false,
   });
+  // What a prompt-cache read and a cache write cost, per million tokens, from
+  // OpenRouter's `input_cache_read` / `input_cache_write` (per token, like
+  // `prompt`), or null where the catalog lists none. A coding turn's prompt
+  // is mostly cache reads, which Anthropic models bill at a tenth of the
+  // prompt rate, so the coding turn's pricing snapshot (agent-turn.js)
+  // carries these. Non-enumerable likewise.
+  Object.defineProperty(sanitized, 'cacheReadPricePerMillion', {
+    value: pricePerMillion(pricing.input_cache_read),
+    enumerable: false,
+    configurable: false,
+    writable: false,
+  });
+  Object.defineProperty(sanitized, 'cacheWritePricePerMillion', {
+    value: pricePerMillion(pricing.input_cache_write),
+    enumerable: false,
+    configurable: false,
+    writable: false,
+  });
   return sanitized;
 }
 

@@ -50,6 +50,24 @@
 // and every run with a change adds it. Keep it to fast guards: the ones
 // marked today take about five seconds together.
 //
+// ── The files a suite reaches only through a chain ──────────────────────
+//
+// A suite can depend on a file it never names and that nothing it requires
+// imports directly. The Mayor turn golden pins, by sha, the Mayor's system
+// prompt and the coding agent's, and both are built from the markdown in
+// src/prompts/: the suite requires routes/sessions.js, which requires
+// services/mayor/prompt.js, which requires services/prompts.js, which reads
+// the file. The importer mapping stops one level up and a .md file imports
+// nothing, so a paragraph added to app-conventions.md ran fifteen suites and
+// not the golden it broke (#4267). Such a suite names what it depends on in
+// a line of its own, at the start of a line:
+//
+//   // test:changed: when <path> [<path> ...] (<why>)
+//
+// A path covers that file, or every file under that directory, and a change
+// to any of them selects the suite. Declare the directory a module reads
+// from rather than today's files in it, so a new file is covered too.
+//
 // The command is the `test` script from package.json with the selected
 // files in place of its glob, so the two cannot drift: same preload, same
 // flags, same timeout.
@@ -233,21 +251,41 @@ function importersOf(changed, sourceFiles, readSource) {
   return result;
 }
 
-// The mapping: which suites each changed file (and each importer) selects.
+// The paths a suite declares it depends on (see the header), repo-relative
+// and without a trailing slash: `// test:changed: when src/prompts/ (why)`.
+const WHEN_MARKER = /^\/\/ test:changed: when ([^(\n]*)/gm;
+function declaredPaths(text) {
+  const out = [];
+  for (const m of String(text).matchAll(WHEN_MARKER)) {
+    for (const p of splitList(m[1])) out.push(path.posix.normalize(p).replace(/\/+$/, ''));
+  }
+  return out;
+}
+
+// A declared path covers that file and everything under it.
+function covers(declared, file) {
+  return file === declared || file.startsWith(`${declared}/`);
+}
+
+// The mapping: which suites each changed file (and each importer) selects,
+// by name or by a suite's declaration; `declared` lists the latter.
 function selectSuites(changed, suiteTexts, importers = new Map()) {
   const bySuite = new Map();
   const byFile = new Map();
+  const declarations = new Map([...suiteTexts].map(([suite, text]) => [suite, declaredPaths(text)]));
   const consider = [...changed.map((f) => [f, null]), ...[...importers].map(([f, via]) => [f, via])];
   for (const [file, via] of consider) {
     const hits = [];
+    const declared = [];
     if (isSuite(file) && suiteTexts.has(file)) hits.push(file);
     else {
       const patterns = namePatterns(file);
       for (const [suite, text] of suiteTexts) {
         if (patterns.some((re) => re.test(text))) hits.push(suite);
+        else if (declarations.get(suite).some((p) => covers(p, file))) { hits.push(suite); declared.push(suite); }
       }
     }
-    byFile.set(file, { suites: hits, via });
+    byFile.set(file, { suites: hits, via, declared });
     for (const suite of hits) {
       if (!bySuite.has(suite)) bySuite.set(suite, []);
       bySuite.get(suite).push(file);
@@ -300,13 +338,14 @@ function main(argv = process.argv.slice(2)) {
   const importers = importersOf(changed, sourceFiles, (f) => { try { return fs.readFileSync(path.join(ROOT, f), 'utf8'); } catch { return ''; } });
   const selection = selectSuites(changed, suiteTexts, importers);
 
+  const count = ({ suites: hits, declared }) => `${hits.length} suite${hits.length === 1 ? '' : 's'}`
+    + (declared.length ? ` (incl. ${declared.join(', ')}, which declare${declared.length === 1 ? 's' : ''} it)` : '');
   for (const file of changed) {
-    const { suites: hits } = selection.byFile.get(file);
-    process.stdout.write(`  ${file} → ${hits.length} suite${hits.length === 1 ? '' : 's'}\n`);
+    process.stdout.write(`  ${file} → ${count(selection.byFile.get(file))}\n`);
   }
-  for (const [file, { suites: hits, via }] of selection.byFile) {
-    if (!via) continue;
-    process.stdout.write(`  ${file} → ${hits.length} suite${hits.length === 1 ? '' : 's'} (imports ${via.join(', ')})\n`);
+  for (const [file, entry] of selection.byFile) {
+    if (!entry.via) continue;
+    process.stdout.write(`  ${file} → ${count(entry)} (imports ${entry.via.join(', ')})\n`);
   }
   if (selection.unmatched.length) {
     process.stdout.write('  No suite names these files. If one of them is shared code, run `npm test`;\n'
@@ -332,7 +371,7 @@ function main(argv = process.argv.slice(2)) {
 }
 
 module.exports = {
-  parseArgs, namePatterns, selectSuites, alwaysSuites, importersOf, importedPaths, testCommand, changedFiles, resolveBase, main,
+  parseArgs, namePatterns, selectSuites, alwaysSuites, declaredPaths, importersOf, importedPaths, testCommand, changedFiles, resolveBase, main,
   SUITE_GLOB, IMPORT_ROOTS, DEFAULT_BASES,
 };
 

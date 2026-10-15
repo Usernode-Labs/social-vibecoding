@@ -4,10 +4,21 @@
  * A private member's waitlist card (services/member-waitlist.js):
  *
  *   GET  /api/me/waitlist          where they stand
- *   POST /api/me/waitlist/join     { email } or { phone }: joins with the
- *                                  account's own address/number, or sends a
- *                                  code to another
- *   POST /api/me/waitlist/verify   { email|phone, code }: confirms it and joins
+  // One tap, nothing asked (#4223): joins with the account's verified phone.
+  router.post('/api/me/waitlist/join-phone', drainGuard,
+    sameOriginBrowserOnly, waiting, async (req, res) => {
+      try {
+        const result = await memberWaitlist.joinWithPhone(pool, {
+          userId: req.user.id,
+          ip: req.ip || null,
+        });
+        return res.json({ ok: true, ...result });
+      } catch (err) {
+        return fail(res, err, 'Joining the waitlist');
+      }
+    });
+
+  router.post('/api/me/waitlist/verify', drainGuard, otpVerifyLimiter, phoneVerifyLimiter,
  *
  * Signed in only. Anybody may ask where they stand; joining from here is for
  * an account that is not let in yet, which today is a private member (an
@@ -88,6 +99,20 @@ function memberWaitlistRoutes(config) {
                 .catch((err) => log.warn('member-waitlist', 'Code mail failed', { message: err.message }));
             },
           });
+        return res.json({ ok: true, ...result });
+      } catch (err) {
+        return fail(res, err, 'Joining the waitlist');
+      }
+    });
+
+  // One tap, nothing asked (#4223): joins with the account's verified phone.
+  router.post('/api/me/waitlist/join-phone', drainGuard,
+    sameOriginBrowserOnly, waiting, async (req, res) => {
+      try {
+        const result = await memberWaitlist.joinWithPhone(pool, {
+          userId: req.user.id,
+          ip: req.ip || null,
+        });
         return res.json({ ok: true, ...result });
       } catch (err) {
         return fail(res, err, 'Joining the waitlist');

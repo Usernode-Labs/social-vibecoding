@@ -14,6 +14,7 @@ function fixture(userId = 7) {
     dispatchEvent: (event) => events.push(event),
   };
   c.window = c;
+  c.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(c);
   vm.runInContext(fs.readFileSync('public/js/app-view.js', 'utf8') + '\nglobalThis.av = AppView;', c);
   const av = c.av;

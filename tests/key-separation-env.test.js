@@ -496,7 +496,6 @@ const BUILDERS = [
   'src/services/app-creator.js',
   'src/services/staging.js',
   'src/services/app-respawn.js',
-  'src/routes/sessions.js',
   'src/services/worker.js',
   'src/services/in-loop-browser.js',
 ];
@@ -513,12 +512,14 @@ test('no container-env builder mentions a host-only platform key in code', () =>
   }
 });
 
-test('all five app-container env builders go through the shared helper', () => {
-  // Drift between the five builders is the historical failure mode this
-  // helper exists to prevent; if one stops using it, the leak checks
-  // above stop covering that builder's identity env.
+test('all four app-container env builders go through the shared helper', () => {
+  // Drift between the builders is the historical failure mode this helper
+  // exists to prevent; if one stops using it, the leak checks above stop
+  // covering that builder's identity env. (routes/sessions.js was a fifth
+  // until its inline Docker staging build went: every preview is the
+  // preview machine's now, built through staging.js.)
   //
-  // #851 moved ONE of the six spreads behind a second helper: staging.js's
+  // #851 moved ONE of the spreads behind a second helper: staging.js's
   // preview path now spreads staging-env.platformStagingEnv, which spreads
   // appIdentityEnv itself (so the same env can be fingerprinted into a
   // container label). staging.js therefore has one direct spread left — the
@@ -528,7 +529,6 @@ test('all five app-container env builders go through the shared helper', () => {
     'src/services/staging.js': 1,
     'src/services/staging-env.js': 1,
     'src/services/app-respawn.js': 1,
-    'src/routes/sessions.js': 1,
   };
   for (const [rel, count] of Object.entries(expected)) {
     const code = stripComments(read(rel));

@@ -259,3 +259,34 @@ test('an event row still opens no reaction bar on long-press', () => {
   assert.equal(GC._pressActive, false, 'no press armed on an event row');
   assert.equal(opened, 0);
 });
+
+// #4029: a tap on an @mention staged a reply to the row it sat in, which the
+// reporter read as a message window opening. A person's mention is a link to
+// their page now, and Homeroom bot's stays text; neither is a tap-to-quote.
+function addMention(row, tag, name) {
+  const mention = makeEl(tag, ['gc-mention']);
+  if (tag === 'a') mention.dataset.mention = name;
+  mention.textContent = `@${name}`;
+  row.querySelector('.gc-msg-content').appendChild(mention);
+  return mention;
+}
+
+test('a tap on a person\'s @mention link does NOT stage a reply', () => {
+  const { container, calls, click } = setup(GroupChat);
+  const row = makeMsgRow(container, 300);
+  click(addMention(row, 'a', 'ada'));
+  assert.equal(calls.length, 0, 'the link opens the person page; no reply is staged');
+  assert.equal(GroupChat.replyDraft, null);
+});
+
+test('a tap on Homeroom bot\'s @mention (text, not a link) does NOT stage a reply', () => {
+  const { container, calls, click } = setup(GroupChat);
+  const row = makeMsgRow(container, 301);
+  click(addMention(row, 'span', 'Homeroom bot'));
+  assert.equal(calls.length, 0, 'a mention is never a tap-to-quote');
+  assert.equal(GroupChat.replyDraft, null);
+  // The rest of the same row still quotes.
+  click(row.querySelector('.gc-msg-content'));
+  assert.equal(calls.length, 1, 'a tap elsewhere on the row still stages a reply');
+  assert.equal(GroupChat.replyDraft.refMsgId, 301);
+});

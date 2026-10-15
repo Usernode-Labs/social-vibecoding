@@ -69,6 +69,8 @@ test('active-user analytics count recorded human participation once per UTC day'
     issueVote: await user('issue-vote'),
     kudos: await user('kudos'),
     favorite: await user('favorite'),
+    filer: await user('request-filer'),
+    requester: await user('bot-requester'),
     boundary: await user('previous-day-boundary'),
     noise: await user('generated-noise'),
     inactive: await user('passive-only'),
@@ -152,9 +154,9 @@ test('active-user analytics count recorded human participation once per UTC day'
   );
 
   const { rows: issueRows } = await pool.query(
-    `INSERT INTO issues (app_id, title, created_by)
-     VALUES ($1, 'Activity fixture issue', $2) RETURNING id`,
-    [appId, actors.inactive]
+    `INSERT INTO issues (app_id, github_issue_number, title, created_by)
+     VALUES ($1, 502, 'Activity fixture issue', $2) RETURNING id`,
+    [appId, actors.filer]
   );
   await pool.query(
     `INSERT INTO events (user_id, app_id, session_id, event_type, metadata)
@@ -257,6 +259,71 @@ test('active-user analytics count recorded human participation once per UTC day'
     [appId, actors.noise]
   );
 
+  // #3970: the Homeroom bot is a synthetic account. People ask it for
+  // changes in a direct message; it files the request and builds the change
+  // in a session of its own. The person's message counts as their activity;
+  // nothing the bot does makes the bot a user. Each change it builds is
+  // credited to the person who asked (homeroom_bot_requesters), else to
+  // whoever filed the request.
+  const bot = (await pool.query(
+    `INSERT INTO users (username, password, is_synthetic, created_at)
+     VALUES ('activity_homeroom_bot', 'fixture', TRUE, CURRENT_DATE - INTERVAL '14 days')
+     RETURNING id`
+  )).rows[0].id;
+  const { rows: botDmRows } = await pool.query(
+    `INSERT INTO conversations (kind, title, created_by)
+     VALUES ('direct', NULL, $1) RETURNING id`,
+    [actors.requester]
+  );
+  await pool.query(
+    `INSERT INTO conversation_messages (conversation_id, sender_id, content, msg_type)
+     VALUES ($1, $2, 'please add a dark mode', 'message'),
+            ($1, $3, 'On it: I filed it as a request.', 'message')`,
+    [botDmRows[0].id, actors.requester, bot]
+  );
+  await pool.query(
+    `INSERT INTO issues (app_id, github_issue_number, title, created_by)
+     VALUES ($1, 501, 'Dark mode', $2), ($1, 503, 'Admin ask', $2)`,
+    [appId, bot]
+  );
+  await pool.query(
+    `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id)
+     VALUES ($1, 501, $2), ($1, 503, $3)`,
+    [appId, actors.requester, actors.fullAdmin]
+  );
+  const botSession = async (issue, status) => (await pool.query(
+    `INSERT INTO chat_sessions
+       (app_id, user_id, branch_name, created_from_issue_number, status, promoted_at, merged_at)
+     VALUES ($1, $2, $3, $4, $5::varchar, NOW(),
+             CASE WHEN $5::varchar = 'merged' THEN NOW() END)
+     RETURNING id`,
+    [appId, bot, `activity-bot-${issue}`, issue, status]
+  )).rows[0].id;
+  const requestedBuild = await botSession(501, 'merged');
+  await botSession(502, 'promoted'); // no requester row: the filer's
+  await botSession(503, 'merged'); // an admin's ask
+  await pool.query(
+    `INSERT INTO chat_session_messages (session_id, role, content)
+     VALUES ($1, 'user', 'bot-written build brief')`,
+    [requestedBuild]
+  );
+  // Power users: the requester used projects three times this week, and the
+  // bot promoted their change three times. Each promotion is a "proposal
+  // made" for the requester, so they are a power user; the bot is not.
+  await pool.query(
+    `INSERT INTO events (user_id, app_id, session_id, event_type, metadata)
+     SELECT $1::int, $2::int, NULL::int, 'dapp_active_day', '{}'::jsonb FROM generate_series(1, 3)
+     UNION ALL
+     SELECT $3::int, $2::int, $4::int, 'pr_promoted', '{}'::jsonb FROM generate_series(1, 3)`,
+    [actors.requester, appId, bot, requestedBuild]
+  );
+  // The bot's own LLM spend stays in the spend totals, but it is not a user
+  // in the per-user spend buckets.
+  await pool.query(
+    `INSERT INTO llm_usage (user_id, date, total_cost_cents) VALUES ($1, CURRENT_DATE, 500)`,
+    [bot]
+  );
+
   // Mount the actual route against this disposable database.
   require('../src/db/pool').getPool = () => pool;
   delete require.cache[require.resolve('../src/routes/dashboard')];
@@ -284,28 +351,68 @@ test('active-user analytics count recorded human participation once per UTC day'
   const yesterday = (await pool.query(
     "SELECT to_char((CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date - 1, 'YYYY-MM-DD') AS day"
   )).rows[0].day;
-  assert.equal(general.daily.find((row) => row.day === today).dau, 12,
-    'each human-only surface counts, while duplicates and generated rows do not');
+  assert.equal(general.daily.find((row) => row.day === today).dau, 14,
+    'each human-only surface counts (filing a request and messaging the bot too), '
+    + 'while duplicates, generated rows and the bot itself do not');
   assert.equal(general.daily.find((row) => row.day === yesterday).dau, 1,
     'the message one second before midnight belongs to the previous UTC day');
 
   const withAdmins = await get('/api/admin/analytics/general-users?includeAdmins=true');
-  assert.equal(withAdmins.daily.find((row) => row.day === today).dau, 14,
+  assert.equal(withAdmins.daily.find((row) => row.day === today).dau, 16,
     'full and view-only admins enter together only when requested');
 
   const overview = await get('/api/admin/analytics/overview');
-  assert.equal(overview.wau, 13);
-  assert.equal(overview.mau, 13);
+  assert.equal(overview.wau, 15);
+  assert.equal(overview.mau, 15);
+  assert.equal(overview.users.total, 17, 'the synthetic bot is not a user');
+  assert.deepEqual(overview.prs, { promoted: 1, promoted_all_time: 2, merged: 1 },
+    'bot builds count for their requester or filer; the admin\'s ask stays out');
+  assert.equal(overview.llmSpendTodayCents, 500, 'the bot\'s spend is still spend');
   const overviewWithAdmins = await get('/api/admin/analytics/overview?includeAdmins=true');
-  assert.equal(overviewWithAdmins.wau, 15);
-  assert.equal(overviewWithAdmins.mau, 15);
+  assert.equal(overviewWithAdmins.wau, 17);
+  assert.equal(overviewWithAdmins.mau, 17);
+  assert.equal(overviewWithAdmins.users.total, 19);
+  assert.deepEqual(overviewWithAdmins.prs, { promoted: 1, promoted_all_time: 3, merged: 2 });
+
+  const name = (key) => `activity_${Object.keys(actors).indexOf(key) + 1}_`;
+  const top = await get('/api/admin/analytics/top-users');
+  assert.ok(!top.users.some((row) => row.name === 'activity_homeroom_bot'),
+    'the bot is not a builder');
+  const requesterRow = top.users.find((row) => row.name.startsWith(name('requester')));
+  assert.ok(requesterRow, 'the person who asked the bot is a builder');
+  assert.equal(requesterRow.sessions, 1);
+  assert.equal(requesterRow.merged, 1);
+  const filerRow = top.users.find((row) => row.name.startsWith(name('filer')));
+  assert.equal(filerRow && filerRow.promoted, 1, 'with no requester, the filer is credited');
+  assert.ok(!top.users.some((row) => row.is_admin));
+  const topWithAdmins = await get('/api/admin/analytics/top-users?includeAdmins=true');
+  assert.equal(topWithAdmins.users.find((row) => row.is_admin)?.merged, 1);
+
+  const sum = (rows, key) => rows.reduce((n, row) => n + Number(row[key]), 0);
+  const growth = await get('/api/admin/analytics/growth');
+  assert.equal(sum(growth.weeks, 'promoted_prs'), 2);
+  assert.equal(sum(growth.weeks, 'merged_prs'), 1);
+  assert.equal(sum(growth.weeks, 'new_users'), 17, 'the bot is not a new user');
+  const growthWithAdmins = await get('/api/admin/analytics/growth?includeAdmins=true');
+  assert.equal(sum(growthWithAdmins.weeks, 'merged_prs_admin'), 1);
+
+  const power = await get('/api/admin/analytics/power-users');
+  // Power users still bucket by the session's calendar day; its last point
+  // is today there.
+  assert.equal(power.wau[power.wau.length - 1].count, 1,
+    'proposals the bot made for someone count as theirs');
+
+  const spend = await get('/api/admin/analytics/spend');
+  assert.equal(sum(spend.days, 'platform_cents'), 500);
+  const distribution = await get('/api/admin/analytics/spend-distribution');
+  assert.equal(sum(distribution.days, 'b1'), 0, 'the bot is not a user in the spend buckets');
 
   const retention = await get('/api/admin/analytics/retention');
   assert.equal(retention.cohorts.reduce((sum, cohort) => sum
-    + Object.values(cohort.offsets).reduce((n, value) => n + Number(value), 0), 0), 13,
+    + Object.values(cohort.offsets).reduce((n, value) => n + Number(value), 0), 0), 15,
   'retention uses the same de-duplicated human-action surface');
   const retentionWithAdmins = await get('/api/admin/analytics/retention?includeAdmins=true');
   assert.equal(retentionWithAdmins.cohorts.reduce((sum, cohort) => sum
-    + Object.values(cohort.offsets).reduce((n, value) => n + Number(value), 0), 0), 15,
+    + Object.values(cohort.offsets).reduce((n, value) => n + Number(value), 0), 0), 17,
   'retention applies the same full and view-only admin inclusion switch');
 });

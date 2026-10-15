@@ -41,6 +41,7 @@
 // numbers below are the iPhone 17 Pro's 874pt screen with a 336pt keyboard.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const { loadTsx } = require('./lib/render-tsx');
@@ -559,7 +560,6 @@ const SENDS = [
   ['frontend/src/features/agent-session/index.tsx', 'variant="pillDanger" ink="dangerTint" size="icon"'],
   ['frontend/src/features/agent-session/index.tsx', 'data-agent-session-draft-send'],
   ['frontend/src/features/agent-session/propose-confirm.tsx', 'data-agent-session-propose-confirm'],
-  ['frontend/src/features/dev-board/workshop/hub-cards.tsx', 'className="dev-ws-hub-compose-send"'],
   ['frontend/src/features/dev-board/workshop/workshop.tsx', 'className="dc-send-btn dc-circle-send dev-ws-ask-send"'],
   ['frontend/src/features/dev-board/card/feed-thread.tsx', 'className="dev-feed-send shrink-0'],
   ['frontend/src/features/dev-board/card/dev-card.tsx', 'className={`dev-vote-reason-send dev-vote-reason-send-${side}`}'],
@@ -585,8 +585,9 @@ test('the dev session\'s Send keeps focus in every state it wears', () => {
 });
 
 test('a press on Send still closes the suggestion lists, as the blur did', () => {
-  assert.match(openingTag('frontend/src/features/dev-board/workshop/hub-cards.tsx', 'className="dev-ws-hub-compose-send"'),
-    /onMouseDown=\{\(event\) => \{ event\.preventDefault\(\); mention\.close\(\); \}\}/);
+  // The hub's own composer went with its channel card: the hub's Discussion
+  // row opens the Discussion place, whose composer is the group chat's.
+  assert.doesNotMatch(read('frontend/src/features/dev-board/workshop/hub-cards.tsx'), /dev-ws-hub-compose-send/);
   assert.match(openingTag('frontend/src/features/dev-board/card/feed-thread.tsx', 'className="dev-feed-send shrink-0'),
     /onMouseDown=\{\(event\) => \{ event\.preventDefault\(\); mention\.close\(\); refs\.close\(\); \}\}/);
 });
@@ -597,11 +598,21 @@ test('every button labelled Send in the shell keeps focus (a new composer is cau
     if (d.isDirectory()) return rel.endsWith('/admin') ? [] : walk(rel);
     return /\.(tsx|jsx)$/.test(d.name) ? [rel] : [];
   });
+  assert.equal(message('messages:composer.send'), 'Send message');
+  assert.equal(message('project:feedThread.reply.send'), 'Send reply');
   let seen = 0;
   for (const file of walk('frontend/src')) {
     const src = read(file);
-    for (let at = src.indexOf('aria-label="Send'); at >= 0; at = src.indexOf('aria-label="Send', at + 1)) {
-      const tag = openingTagAt(src, at, file);
+    // A Send is labelled in the source, or by a catalog entry whose English
+    // starts with "Send" (aria-label={t('chat:group.composer.send')}).
+    const labelled = /aria-label=(?:"Send|\{t\('([a-z]+:[A-Za-z0-9.]+)'\)\})/g;
+    for (let found = labelled.exec(src); found; found = labelled.exec(src)) {
+      if (found[1]) {
+        let english = '';
+        try { english = message(found[1]); } catch { /* an id from another reader */ }
+        if (!english.startsWith('Send')) continue;
+      }
+      const tag = openingTagAt(src, found.index, file);
       seen += 1;
       // The dev session's Send carries it in the shared props pinned above.
       assert.ok(KEEPS_FOCUS.test(tag) || /\{\.\.\.common\}/.test(tag), `${file}: ${tag.slice(0, 80)}`);

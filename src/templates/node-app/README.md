@@ -2,8 +2,11 @@
 
 These are source inputs for `getTemplateFiles`, not this repository's runtime
 dependencies. The generator copies the package and lockfile into each new
-app, replacing only the root package name and description. Existing apps and
-forks are not migrated or rewritten.
+app as they are, root name and description included, so every app made from
+one starter has the same two files and its image build is served their
+`npm ci` layers from the starter's shared cache
+(`services/kubernetes-buildkit.js`). Existing apps and forks are not
+migrated or rewritten.
 
 Docker and Paketo use the same `npm run build` entrypoint; Tailwind 3.4.17 is
 a locked development dependency. Docker installs it only in the CSS build
@@ -27,3 +30,11 @@ SV's Kubernetes adapter selects `ensure:shell` before `build` to preserve the
 platform self-app's prerender/CSS ordering. The infra-owned compatibility
 buildpack covers legacy apps whose compilation only exists in a Dockerfile.
 It does not make arbitrary Dockerfiles executable by kpack.
+
+`extra-packages.json` holds the few packages a starter may add on top of
+these (services/app-templates.js, an entry's `dependencies`): each one's
+range and its lockfile entries, made the same way (`npm install <name>
+--package-lock-only --ignore-scripts` in a copy of this directory). Today
+that is `ws`, for the game starters' live connection. getTemplateFiles adds
+them to that app's package.json and lockfile only (the same pair for every
+app of that starter); every other app's pair is untouched.

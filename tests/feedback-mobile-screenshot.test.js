@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { loadTsx } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const root = path.join(__dirname, '..');
 const read = (file) => fs.readFileSync(path.join(root, file), 'utf8');
@@ -11,7 +12,9 @@ const dialog = read('frontend/src/features/dialogs/feedback.tsx');
 
 test('feedback offers native capture and a Photos fallback', () => {
   assert.match(dialog, /id="feedback-screenshot-picker-btn"/);
-  assert.match(dialog, /Choose from Photos/);
+  // #4127: the Photos fallback is the popover's "Photo" row under the paperclip.
+  assert.match(dialog, /role="menuitem"[\s\S]*?<PhotoIcon aria-hidden="true" \/>\s*\{t\('dialogs:feedback\.attach\.photo'\)\}\s*</);
+  assert.equal(message('dialogs:feedback.attach.photo'), 'Photo');
   assert.match(dialog, /id="feedback-screenshot-input"/);
   assert.match(dialog, /accept="image\/png,image\/jpeg"/);
   assert.match(controller, /capabilities\.includes\('captureScreenshot'\)/);
@@ -20,14 +23,16 @@ test('feedback offers native capture and a Photos fallback', () => {
 });
 
 test('all image sources converge on the existing attachment path', () => {
-  assert.match(controller, /const attachScreenshotBlob = async \(blob\) =>/);
+  // #4482: comment mode's hand-over passes the page's pin beside its picture.
+  assert.match(controller, /const attachScreenshotBlob = async \(blob, pins = null\) =>/);
   assert.equal(
     (controller.match(/await attachScreenshotBlob\(blob\)/g) || []).length,
     2,
     'capture and picker should share preview, upload, and offline handling'
   );
   assert.match(controller, /ScreenshotSelect/);
-  assert.match(controller, /Saved with your feedback/);
+  assert.match(controller, /shot\.stateEl\.textContent = t\('dialogs:feedback\.screenshot\.savedOffline'\)/);
+  assert.match(message('dialogs:feedback.screenshot.savedOffline'), /^Saved with your feedback/);
 });
 
 test('mobile screenshot controls keep 48px tap targets', () => {
@@ -128,7 +133,9 @@ test('choosing an image or resetting the row gives up the unanswered share', () 
 
 test('a long wait says what to do, and the line goes once the browser answers', () => {
   assert.match(controller, /const CAPTURE_WAIT_HINT_MS = 10 \* 1000;/);
-  assert.match(controller, /Still waiting for your browser to share the screen\. If you already chose what to share and nothing happened, restart the browser, or choose an image instead\. Your feedback is safe\./);
+  assert.match(controller, /t\('dialogs:feedback\.capture\.waiting'\)/);
+  assert.equal(message('dialogs:feedback.capture.waiting'),
+    'Still waiting for your browser to share the screen. If you already chose what to share and nothing happened, restart the browser, or choose an image instead. Your feedback is safe.');
   const round = controller.slice(
     controller.indexOf('const runCapture = async'),
     controller.indexOf("screenshotBtn.addEventListener('click'"),
@@ -141,7 +148,8 @@ test('a long wait says what to do, and the line goes once the browser answers', 
 
 test('a share far smaller than the page is named, not reported as a locate failure', () => {
   assert.match(controller, /err\.code === 'wrong_surface'/);
-  assert.match(controller, /That was a small window, not this page\./);
+  assert.match(controller, /t\('dialogs:feedback\.capture\.smallWindow'\)/);
+  assert.match(message('dialogs:feedback.capture.smallWindow'), /^That was a small window, not this page\./);
 });
 
 test('every capture failure says the feedback itself is safe', () => {
@@ -152,11 +160,17 @@ test('every capture failure says the feedback itself is safe', () => {
   );
   const notices = round.match(/showFeedbackNotice\([^;]*\);/g) || [];
   assert.ok(notices.length >= 5, `every capture failure branch should be found: ${notices.length}`);
-  for (const notice of notices) {
-    assert.match(notice, /your feedback is safe/i, `capture notice should reassure: ${notice}`);
+  // Each notice names its message; the catalog holds the words.
+  const said = notices.map((notice) => {
+    const id = /showFeedbackNotice\(t\('(dialogs:feedback\.[\w.]+)'\)/.exec(notice);
+    assert.ok(id, `capture notice reads a catalog message: ${notice}`);
+    return message(id[1]);
+  });
+  for (const text of said) {
+    assert.match(text, /your feedback is safe/i, `capture notice should reassure: ${text}`);
   }
   // And one of them says it in the exact words dapp.json's check looks for.
-  assert.ok(round.includes('your feedback is safe'),
+  assert.ok(said.some((text) => text.includes('your feedback is safe')),
     'the native-failure branch carries the lowercase phrase /?shot=feedback-capture-failed asserts');
 });
 

@@ -124,9 +124,40 @@ function buildMayorMessages(history, attachmentsByMessageId = new Map()) {
   return messages;
 }
 
+// Pills written as text (#4125). Some OpenRouter models (GLM 5.3 among them)
+// sometimes write the suggest_replies call into the reply itself instead of
+// calling the tool:
+//   ...on Game Corner. <suggest_replies> ["Start it", "How is the vote going?"] </suggest_replies>
+// and the person saw the raw tag. Cut every such block (and a suggest_answers
+// one, whose chips cannot be recovered from text) out of the reply, and hand
+// back the replies a suggest_replies block named so the caller can show them
+// as the pills they were meant to be. An unclosed block at the end of the
+// reply is cut too. `replies` is the raw array (the caller sanitizes it, as
+// it does a real tool call's input), or null when there was none to read.
+const TEXTUAL_PILLS_RE = /<(suggest_replies|suggest_answers)>([\s\S]*?)(?:<\/\1>|$)/gi;
+
+function takeTextualReplies(text) {
+  if (typeof text !== 'string' || !/<suggest_(?:replies|answers)>/i.test(text)) {
+    return { text: typeof text === 'string' ? text : '', replies: null };
+  }
+  let replies = null;
+  const cleaned = text.replace(TEXTUAL_PILLS_RE, (whole, name, body) => {
+    if (!replies && name.toLowerCase() === 'suggest_replies') {
+      try {
+        const parsed = JSON.parse(body.trim());
+        const list = Array.isArray(parsed) ? parsed : (parsed && Array.isArray(parsed.replies) ? parsed.replies : null);
+        if (list && list.length) replies = list;
+      } catch { /* not JSON: the block is still cut, with no pills */ }
+    }
+    return '';
+  });
+  return { text: cleaned.replace(/[ \t]+\n/g, '\n').trim(), replies };
+}
+
 module.exports = {
   CODING_AGENT_COMPLETED_MARKER,
   COMPLETION_MARKER_RE,
   stripFakeCompletionMarker,
+  takeTextualReplies,
   buildMayorMessages,
 };

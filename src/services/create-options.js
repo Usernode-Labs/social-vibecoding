@@ -38,6 +38,11 @@
  *
  * ── Who approves ───────────────────────────────────────────────────────
  *
+ * #4666: every new project starts on You or the group (the creator's yes, or
+ * the group's time-&-majority vote; services/governance-rules.js), unless the
+ * body says otherwise. The invite sheet says so, and its Change link proposes
+ * another preset once the project is made.
+ *
  * `governance` is dapp.json's own block, in dapp.json's own shape
  * (services/app-manifest.js readGovernance), because that is where it is
  * written: the new repository's dapp.json carries it, so the rule is
@@ -89,6 +94,7 @@
  */
 
 const appTemplates = require('./app-templates');
+const governanceRules = require('./governance-rules');
 
 const AUDIENCES = new Set(['solo', 'invited', 'open']);
 const VISIBILITIES = new Set(['public', 'private']);
@@ -157,8 +163,17 @@ function parseInviteEmails(raw) {
  * (absent) is the default rule: anyone approves, time and majority.
  */
 function parseGovernance(raw) {
-  if (raw == null) return { governance: null };
+  // #4666: no rule asked for is the default preset.
+  if (raw == null) return { governance: governanceRules.parseRulesBlock({ preset: governanceRules.DEFAULT_PRESET }) };
   if (typeof raw !== 'object' || Array.isArray(raw)) return { error: 'governance must be an object' };
+  // `preset`, or `groups` + `rules`: the rules value, strictly.
+  try {
+    const rules = governanceRules.parseRulesBlock(raw);
+    if (rules) return { governance: rules };
+  } catch (err) {
+    if (err instanceof governanceRules.RulesError) return { error: err.message };
+    throw err;
+  }
   const approvers = raw.approvers == null ? 'anyone' : raw.approvers;
   if (approvers !== 'anyone' && approvers !== 'invited') {
     return { error: 'governance.approvers must be "anyone" or "invited"' };
@@ -252,6 +267,8 @@ function parseCreateOptions(body = {}, { imported = false } = {}) {
  */
 function governanceBlock(governance) {
   if (!governance) return null;
+  // #4666: a rules value is written as dapp.json writes it.
+  if (Array.isArray(governance.rules)) return governanceRules.blockFor(governance);
   const { approverPolicy = 'anyone', approvalsRequired = null } = governance;
   if (approverPolicy === 'anyone' && approvalsRequired == null) return null;
   return {

@@ -3,13 +3,15 @@
 // How much memory the shots worker is using, sampled through a shots turn.
 //
 // A shots agent that dies mid-run leaves no exit marker, and the platform can
-// tell only that its process is gone. Several Chromium browsers and the agent
-// share the worker's memory limit, so the turn reports, every few seconds:
-// the container's use, limit and lifetime peak, its out-of-memory kill count,
-// and how the resident memory splits between the browsers, the agent, the
-// browser tool servers, the shots proxy and everything else. The last sample
-// before a death says whether memory ran out, and the kill count rising
-// during the turn says the kernel killed something for it.
+// tell only that its process is gone. Several Chromium browsers (one per
+// persona the agent uses, and a phone browser beside it for a persona with a
+// phone screen) and the agent share the worker's memory limit, so the turn
+// reports, every few seconds: the container's use, limit and lifetime peak,
+// its out-of-memory kill count, and how the resident memory splits between
+// the browsers, the agent, the browser tool servers, the shots proxy and
+// everything else. The last sample before a death says whether memory ran
+// out, and the kill count rising during the turn says the kernel killed
+// something for it.
 //
 // Numbers and fixed class names only: never a command line, a path or a page.
 // The shots proxy runs for the whole turn and carries this sampler rather

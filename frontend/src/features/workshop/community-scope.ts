@@ -36,7 +36,7 @@
  * ── The switcher ───────────────────────────────────────────────────────
  *
  * "Your communities": All communities first, then each community you are in,
- * then "Join or start a community". It opens from the community's name and ⌄
+ * then "Join a community" and "Start a community". It opens from the community's name and ⌄
  * in the coloured header, from the header's "Communities ⌄" on the
  * Communities list, and from the phone's tab held down (#3701; pressed while
  * it is lit, the tab goes up a level instead, ./tab-ladder.ts).
@@ -281,7 +281,8 @@ export function loadCommunities(force = false): Promise<void> {
   loading = (async () => {
     try {
       const [appsRes, countsRes] = await Promise.all([
-        fetch(`/api/apps${q}`, { credentials: 'same-origin' }),
+        // Joined rows only (#5023), the ones kept below.
+        fetch(`/api/apps?scope=joined${q.replace('?', '&')}`, { credentials: 'same-origin' }),
         fetch(`/api/workshop/counts${q}`, { credentials: 'same-origin' }).catch(() => null),
       ]);
       if (!appsRes.ok) return;

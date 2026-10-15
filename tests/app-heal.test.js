@@ -26,6 +26,7 @@ const ids = {
   ws: require.resolve('../src/services/ws'),
   pool: require.resolve('../src/db/pool'),
   appHeal: require.resolve('../src/services/app-heal'),
+  platform: require.resolve('../src/workflow/platform.ts'),
 };
 
 // Mutable behavior knobs each test tweaks; the stubs close over `fx`.
@@ -44,6 +45,10 @@ function freshFixtures() {
     respawnCalls: [],
     respawnResult: 'respawned-id',
     deploying: false,
+    // The app-delivery machine's flag, and what was asked of it.
+    delivery: false,
+    requested: [],
+    appDeleted: false,
     queries: [],
     poolRows: [],
     githubEnabled: true,
@@ -65,6 +70,7 @@ const fakePool = {
   async query(sql, params = []) {
     fx.queries.push({ sql, params });
     if (/SELECT \* FROM apps/.test(sql)) return { rows: fx.poolRows };
+    if (/SELECT 1 FROM apps WHERE id/.test(sql)) return { rows: fx.appDeleted ? [] : [{}] };
     return { rows: [] };
   },
 };
@@ -101,7 +107,12 @@ stub(ids.respawn, {
   },
 });
 stub(ids.deployStatus, {
-  read: () => (fx.deploying ? { deploying: true } : null),
+  // A deploy in this process (the map), or one app delivery runs (the row).
+  read: (slug, row) => (fx.deploying || row?.deploy_state === 'deploying' ? { deploying: true } : null),
+});
+stub(ids.platform, {
+  deliveryEnabled: () => fx.delivery,
+  requestDeploy: async (appId, reason) => { fx.requested.push([appId, reason]); return 1; },
 });
 stub(ids.github, {
   isEnabled: () => fx.githubEnabled,
@@ -195,6 +206,34 @@ for (const scenario of ['respawn', 'rebuild', 'restart-fallback', 'probe-running
   });
 }
 
+// 14 Oct 2026: shutdown began while a heal waited on a rollout that could
+// never finish (the app's container cannot start). The drain waited 40 s for
+// it, and then it escalated to a rebuild mid-shutdown. Shutdown ends the wait
+// and the heal, and the next leader's sweep heals the app again.
+test('a Kubernetes heal stops waiting on the rollout when shutdown begins, and never escalates to a rebuild then', async (t) => {
+  const kube = require('../src/services/kubernetes');
+  const lifecycle = require('../src/services/lifecycle');
+  t.mock.method(kube, 'getApplicationStatus', async () => 'created');
+  let begin;
+  const begins = new Promise((resolve) => { begin = resolve; });
+  let shutting = false;
+  t.mock.method(lifecycle, 'whenShuttingDown', () => begins);
+  t.mock.method(lifecycle, 'isShuttingDown', () => shutting);
+  t.mock.method(kube, 'restartApplication', () => new Promise(() => {}));
+  const healing = appHeal.checkAndHealOne({ ...config, appRuntime: 'kubernetes' }, fakePool, app());
+  await new Promise((r) => setImmediate(r));
+  shutting = true;
+  begin();
+  assert.equal((await healing).status, 'shutting_down');
+  assert.deepEqual(fx.rebuildCalls, [], 'no rebuild started during shutdown');
+
+  // A restart that failed outright during shutdown is not escalated either.
+  appHeal._resetForTests();
+  t.mock.method(kube, 'restartApplication', async () => { throw new Error('replacement failed'); });
+  assert.equal((await appHeal.checkAndHealOne({ ...config, appRuntime: 'kubernetes' }, fakePool, app())).status, 'shutting_down');
+  assert.deepEqual(fx.rebuildCalls, []);
+});
+
 test('failed Kubernetes recovery retains cooldown and does not persist success', async (t) => {
   t.mock.method(require('../src/services/kubernetes'), 'getApplicationStatus', async () => 'not_found');
   fx.rebuildError = new Error('build failed');
@@ -202,6 +241,46 @@ test('failed Kubernetes recovery retains cooldown and does not persist success',
   assert.equal((await appHeal.checkAndHealOne(cfg, fakePool, app())).status, 'heal_failed');
   assert.equal((await appHeal.checkAndHealOne(cfg, fakePool, app())).status, 'cooldown');
   assert.equal(fx.queries.some(q => /UPDATE apps SET container_id/.test(q.sql)), false);
+});
+
+// 2026-10-05, flat-4b-chores-e98ecd: a test account was retired, the teardown
+// removed the Deployment and spent 30 seconds dropping the database, and the
+// sweep saw a running app with no runtime and rebuilt it. The row was deleted
+// under the rebuild, and the Deployment crash-looped for a week.
+test('an app being taken down is not healed', async (t) => {
+  const kube = require('../src/services/kubernetes');
+  const teardown = require('../src/services/app-teardown');
+  t.mock.method(kube, 'getApplicationStatus', async () => 'not_found');
+  t.mock.method(teardown, 'isTearingDown', (slug) => slug === 'puzzle-chain');
+  const result = await appHeal.checkAndHealOne({ ...config, appRuntime: 'kubernetes' }, fakePool, app());
+  assert.equal(result.status, 'deleting');
+  assert.deepEqual(fx.rebuildCalls, []);
+  assert.deepEqual(fx.respawnCalls, []);
+});
+
+for (const outcome of ['rebuilt', 'heal_failed']) {
+  test(`an app deleted during a recovery keeps no runtime (${outcome})`, async (t) => {
+    const kube = require('../src/services/kubernetes');
+    t.mock.method(kube, 'getApplicationStatus', async () => 'not_found');
+    const removed = [];
+    t.mock.method(kube, 'deleteApplication', async (cfg, name) => { removed.push(name); });
+    const buildsRemoved = [];
+    t.mock.method(kube, 'deleteBuilds', async (cfg, appId) => { buildsRemoved.push(appId); });
+    fx.appDeleted = true;
+    if (outcome === 'heal_failed') fx.rebuildError = new Error('Timed out waiting for Deployment');
+    const result = await appHeal.checkAndHealOne({ ...config, appRuntime: 'kubernetes' }, fakePool, app());
+    assert.equal(result.status, outcome);
+    assert.deepEqual(removed, ['sv-app-1-puzzle-chain']);
+    assert.deepEqual(buildsRemoved, [1]);
+  });
+}
+
+test('a recovery leaves the runtime of an app that still exists', async (t) => {
+  const kube = require('../src/services/kubernetes');
+  t.mock.method(kube, 'getApplicationStatus', async () => 'not_found');
+  t.mock.method(kube, 'deleteApplication', () => assert.fail('runtime removed'));
+  const result = await appHeal.checkAndHealOne({ ...config, appRuntime: 'kubernetes' }, fakePool, app());
+  assert.equal(result.status, 'rebuilt');
 });
 
 test('running container is healthy — nothing touched', async () => {
@@ -232,6 +311,25 @@ test('missing container rebuilds from repo and persists container_id + main_sha'
   assert.ok(update, 'expected an apps UPDATE');
   assert.equal(update.params[0], 'rebuilt-id');
   assert.equal(update.params[1], 'abc1234def');
+});
+
+test('with app delivery on, a rebuild is asked of it, and the cooldown stays until its outcome', async () => {
+  fx.delivery = true;
+  fx.containerStatus = 'not_found';
+  const r = await appHeal.checkAndHealOne(config, fakePool, app());
+  assert.equal(r.status, 'deploy_requested');
+  assert.deepEqual(fx.requested, [[1, 'heal']]);
+  assert.equal(fx.rebuildCalls.length, 0, 'no deploy of its own');
+  assert.ok(!fx.queries.some((q) => /UPDATE apps SET container_id/.test(q.sql)), 'the machine writes the result');
+  const again = await appHeal.checkAndHealOne(config, fakePool, app());
+  assert.equal(again.status, 'cooldown', 'a failed deploy is not asked for again every tick');
+});
+
+test('an app app delivery is deploying, in any process, is left alone', async () => {
+  fx.containerStatus = 'not_found';
+  const r = await appHeal.checkAndHealOne(config, fakePool, app({ deploy_state: 'deploying' }));
+  assert.equal(r.status, 'deploying');
+  assert.equal(fx.rebuildCalls.length + fx.startCalls.length, 0);
 });
 
 test('failed in-place start escalates to the rebuild path', async () => {
@@ -461,4 +559,27 @@ test('repo provisioning is skipped when GitHub is disabled', async () => {
   const r = await appHeal.checkAndHealOne(config, fakePool, app({ repo_url: null }));
   assert.equal(r.status, 'healthy');
   assert.equal(fx.repoCreateCalls.length, 0);
+});
+
+// The Deployment's template is an image refused for running as root, and the
+// previous ReplicaSet keeps serving (Goalio, 17 Sep to 15 Oct 2026): a restart
+// rolls out the same refusal and a rebuild of the same commit makes the same
+// image, so the heal waits for a commit that changes the Dockerfile.
+test('an app whose newer commit was refused for running as root is not restarted or rebuilt', async (t) => {
+  const kube = require('../src/services/kubernetes');
+  t.mock.method(kube, 'getApplicationStatus', async () => 'restarting');
+  let restarts = 0;
+  t.mock.method(kube, 'restartApplication', async () => { restarts += 1; });
+  const refused = { stage: 'healthcheck', kind: 'root_image', sha: 'newsha', reason: 'runs as root' };
+  const result = await appHeal.checkAndHealOne({ ...config, appRuntime: 'kubernetes' }, fakePool, app({ last_failure: refused }));
+  assert.equal(result.status, 'waits_for_new_commit');
+  assert.equal(restarts, 0);
+  assert.deepEqual(fx.rebuildCalls, []);
+
+  // A record of the commit that is live is stale, not a reason to stop healing.
+  appHeal._resetForTests();
+  const stale = await appHeal.checkAndHealOne({ ...config, appRuntime: 'kubernetes' }, fakePool,
+    app({ last_failure: { ...refused, sha: 'oldsha' } }));
+  assert.notEqual(stale.status, 'waits_for_new_commit');
+  assert.equal(restarts, 1);
 });

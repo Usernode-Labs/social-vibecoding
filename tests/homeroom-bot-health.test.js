@@ -148,7 +148,7 @@ test('the panel says each figure, flags only what is past its line, and lists th
 
 test('the Overview tab shows it under the bot\'s card, and the declared check selects on it', () => {
   const tsx = read('frontend/src/features/admin/admin-homeroom-bot.tsx');
-  assert.match(tsx, /<RolloutHealth health=\{payload\?\.health\} failures=\{payload\?\.dmChat\?\.recentFailures\} \/>/);
+  assert.match(tsx, /<RolloutHealth health=\{payload\?\.health\} failures=\{payload\?\.dmChat\?\.recentFailures\} incidents=\{payload\?\.incidents\} \/>/);
   assert.ok(tsx.indexOf('id="admin-homeroom-bot-cadence"') < tsx.indexOf('<RolloutHealth'));
   assert.ok(tsx.indexOf('<RolloutHealth') < tsx.indexOf('Working on now'));
   const check = require('../dapp.json').tests.find((c) => c.path === '/#admin/homeroom-bot' && /rollout health/.test(c.name));

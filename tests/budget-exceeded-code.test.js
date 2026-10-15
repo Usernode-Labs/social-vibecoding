@@ -12,6 +12,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -46,7 +47,10 @@ test('dev-chat branches the 429 handler on the budget_exceeded code', () => {
   const src = read('frontend/src/features/dev-chat/dev-chat.js');
   assert.match(src, /data\.code === 'budget_exceeded'/,
     'the chat send path distinguishes budget exhaustion from throttling');
-  assert.match(src, /free AI credits/,
+  // The words are in the catalog now; the banner the budget branch raises reads them by id.
+  assert.match(src, /PlatformI18n\.t\('devchat:banner\.credits\.out\.leadWeekly'\)/,
+    'the budget branch names the actual problem');
+  assert.match(message('devchat:banner.credits.out.leadWeekly'), /free AI credits/,
     'the budget branch names the actual problem');
 });
 

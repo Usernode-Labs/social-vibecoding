@@ -18,6 +18,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 const { renderComponent } = require('./lib/render-tsx');
 
 const SRC = fs.readFileSync(
@@ -76,6 +77,7 @@ function makeDevChat({ hasApiKey = false } = {}) {
       publishAttachStrip: () => {},
     },
   };
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.createContext(sandbox);
   // credit-options.js owns the banner's CTA row (and the same routes the
   // in-chat card and the Generate-proposal modal render). index.html loads

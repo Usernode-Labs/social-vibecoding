@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 
 import { FaceSmileIcon } from '@/components/ui/icons';
 
+import { useMessages } from '../../lib/i18n/react';
 import type { MenuItem } from './action-bar';
 import { emojiName } from './emoji-data';
 import { EmojiPicker } from './emoji-picker';
@@ -44,6 +45,7 @@ export function MessageActionSheet({
   /** The message, a line of it, so the sheet says what it acts on. */
   preview?: { who: string; text: string } | null;
 }) {
+  const t = useMessages('messages');
   const [picking, setPicking] = useState(false);
   const sheet = useRef<HTMLDivElement>(null);
   useEffect(() => { if (!open) setPicking(false); }, [open]);
@@ -57,15 +59,15 @@ export function MessageActionSheet({
   if (!open || typeof document === 'undefined') return null;
   return createPortal(
     <div className="msgx-sheet-layer">
-      <button type="button" className="msgx-sheet-scrim" aria-label="Close" onClick={onClose} />
-      <div ref={sheet} className="msgx-sheet platform-safe-sheet" role="dialog" aria-label="Message actions" tabIndex={-1}>
+      <button type="button" className="msgx-sheet-scrim" aria-label={t('messages:actions.sheet.close')} onClick={onClose} />
+      <div ref={sheet} className="msgx-sheet platform-safe-sheet" role="dialog" aria-label={t('messages:actions.toolbar')} tabIndex={-1}>
         <span className="msgx-sheet-grabber" aria-hidden="true" />
         {picking && onPick ? (
           <EmojiPicker placement="inline" autoFocus={false} onPick={(emoji) => { onClose(); onPick(emoji); }} onClose={() => setPicking(false)} />
         ) : (
           <>
             {preview ? (
-              <p className="msgx-sheet-preview"><strong>@{preview.who}</strong> {preview.text || 'Attachment'}</p>
+              <p className="msgx-sheet-preview"><strong>@{preview.who}</strong> {preview.text || t('messages:actions.sheet.previewAttachment')}</p>
             ) : null}
             {onReact ? (
               <div className="msgx-sheet-reactions">
@@ -77,7 +79,7 @@ export function MessageActionSheet({
                       type="button"
                       className={`msgx-sheet-emoji ${on ? 'msgx-sheet-emoji-on' : ''}`}
                       aria-pressed={on}
-                      aria-label={on ? `Remove your ${emojiName(emoji)} reaction` : `React with ${emojiName(emoji)}`}
+                      aria-label={on ? t('messages:actions.removeReaction', { emoji: emojiName(emoji) }) : t('messages:actions.reactWith', { emoji: emojiName(emoji) })}
                       onClick={() => { onClose(); onReact(emoji); }}
                     >
                       {emoji}
@@ -85,13 +87,13 @@ export function MessageActionSheet({
                   );
                 })}
                 {onPick ? (
-                  <button type="button" className="msgx-sheet-emoji" aria-label="Add reaction" onClick={() => setPicking(true)}>
+                  <button type="button" className="msgx-sheet-emoji" aria-label={t('messages:actions.addReaction')} onClick={() => setPicking(true)}>
                     <FaceSmileIcon className="w-6 h-6" strokeWidth="1.6" aria-hidden="true" />
                   </button>
                 ) : null}
               </div>
             ) : null}
-            <div className="msgx-sheet-list" role="menu" aria-label="Message actions">
+            <div className="msgx-sheet-list" role="menu" aria-label={t('messages:actions.toolbar')}>
               {items.map((item) => (
                 <button
                   key={item.key}

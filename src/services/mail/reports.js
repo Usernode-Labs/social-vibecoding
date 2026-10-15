@@ -3,7 +3,17 @@ const events = require('./events');
 
 // Counts are unique messages, grouped by send day (UTC) and kind, not
 // HTTP requests. Repeated pixel fetches and scanners cannot inflate a rate.
-async function readReports(pool) {
+//
+// Delivered, bounced and complained arrive only through Resend's webhook,
+// which matches only mail the `http` transport sent (events.ingestResend).
+// Gmail has no delivery webhook, so on any other transport, or without the
+// webhook secret, those three counts can only ever be 0: the report says
+// so (`deliveryEvents: false`) and the card leaves them out.
+function deliveryEventsAvailable(provider, env = process.env) {
+  return provider === 'http' && !!env.PLATFORM_MAIL_RESEND_WEBHOOK_SECRET;
+}
+
+async function readReports(pool, { provider = null } = {}) {
   const [cohorts, recent] = await Promise.all([
     pool.query(
       `WITH per_delivery AS (
@@ -45,6 +55,7 @@ async function readReports(pool) {
       for (const metric of metrics) group[metric] += Number(row[metric]) || 0;
     }
   }
-  return { byKind: [...byKind.values()], byDay: [...byDay.values()], recentEvents: recent.rows, retentionDays: 30, trackingEnabled: !!require('./tracking').secret() };
+  return { byKind: [...byKind.values()], byDay: [...byDay.values()], recentEvents: recent.rows, retentionDays: 30, trackingEnabled: !!require('./tracking').secret(),
+    deliveryEvents: deliveryEventsAvailable(provider) };
 }
-module.exports = { readReports };
+module.exports = { readReports, deliveryEventsAvailable };

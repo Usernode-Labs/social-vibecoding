@@ -1,61 +1,50 @@
 /**
  * The project hub's own cards. The hub is the first of the project page's
- * four tabs (Hub, Discussion, Needs you, Workshop: ./project-band.tsx), and
- * it answers "what is new, what is owed, what are people saying, what is
- * mine" itself. Under the hero (./community-card.tsx), in the order agreed
- * in #852:
+ * places (Hub, Needs you, Workshop, then #general and its topics:
+ * ./project-places.tsx, #4417), and it is the project's summary for the
+ * people in it. Under the hero (./community-card.tsx: what it is, who it is
+ * for and who is around this week), top to bottom:
  *
- *   the since-your-last-visit summary (./since-summary-card.tsx), NEEDS YOU
- *   when a vote is owed, the DISCUSSION's last two messages, YOUR WORK when
- *   you have some, and Start a new change.
+ *   FOR YOU, one card of doors, a row each, each opening its place: Needs
+ *   you (the first vote you owe "and 3 more", "4 to vote"), Your work (the
+ *   first of yours in flight, "1 in progress", or "No work in progress.")
+ *   and the Discussion (#general and its last line, or "No messages yet.").
+ *   ForYouCard.
+ *   RECENTLY LIVE, the last three changes that went live, each as its after
+ *   shot, its title, and who made it and when; before any has, the app
+ *   itself and since when it has been live. RecentlyLive.
+ *
+ * What landed since your last visit and your work in full are the Workshop
+ * place's; how a change gets in is its Approval rules card. The hub points
+ * at them rather than drawing them twice.
  *
  * A project Homeroom bot is still building gets its FIRST VERSION card
  * first, right under the hero: where the build stands, and the way to the
- * bot's chat when the bot waits on its maker (FirstVersionCard below).
+ * bot's chat when the bot waits on its maker (FirstVersionCard below). Its
+ * maker also gets the FIRST LOOK at it, after For you, once Homeroom bot
+ * has drawn it (FirstLookCard).
  *
- * ── A project nobody else is in ────────────────────────────────────────
+ * ── One hub from the first day ─────────────────────────────────────────
  *
  * Evan, 5 Oct 2026, on a brand-new project of his own: "The initial hub if
  * no one has joined is really sad." It read "Just you", "Nothing more to
  * vote on." and "Your work · No work in progress." Nobody else can put a
- * vote up there, so the vote line says nothing (`alone` in NothingToVote),
- * and an empty Your work leaves the hub while something else on it already
- * says what is next (hubWorkEmpty). A project with people in it keeps both
- * as they were.
+ * vote up there, so on a project nobody else is in the vote line says
+ * nothing (`alone` in NothingToVote). For a while an empty Your work and
+ * the Discussion left a new project's hub too, and a ready-made app's hub
+ * then looked nothing like an older project's (15 Oct 2026). So For you is
+ * the same card from the first day: Your work and the Discussion always,
+ * each saying so when it is empty, and Needs you only when something needs
+ * you.
  *
- * Your work is the first two of your items with the rest a press away IN
- * PLACE, because a list you came to the hub to glance at should not send
- * you to another page to see its third row. Needs you and the discussion
- * open their tabs; the Workshop door went with the Workshop becoming a tab.
+ * ── The channel lives on the page ──────────────────────────────────────
  *
- * Members & activity was the third card. It is the hero's now (#3268,
- * ./community-card.tsx HeroPeople and HeroActivity): who is here and how
- * lively it has been are part of what the project IS, so they are read
- * where the page starts rather than three cards down.
- *
- * ── The channel lives here now ─────────────────────────────────────────
- *
- * A project's channel was a row in Messages (#2718 review) and a one-line
- * door on this page. Messages is people and agents now, and the channel is
- * the community's own room, its Discussion, so the hub shows its last two
- * messages and the way to the Discussion tab (./project-discussion.tsx),
- * where the room is whole. The room itself is the same one it always was,
- * at the same address —
- * `#messages/app/<slug>`, or #general for Homeroom's own hub, whose channel
- * #general became — and it opens under the Communities tab with its chevron
- * back to this hub (public/js/app.js, features/messages/store.ts).
- *
- * A viewer who may not talk here (a view-public, collab-private app) gets no
- * card, for the reason the hero's old row gave: no door that refuses them.
- *
- * THE COMPOSER POSTS FROM HERE, on the card in full (Homeroom's Discussion
- * tab: #general has no pane to mount there); the hub's preview has none. Its
- * foot is a real box, not a link dressed
- * as one: what is typed goes to the room's own write route (`post_url`: the
- * app chat's REST path, or #general's conversation), which keeps every rule
- * it keeps anywhere else. A non-member's send is refused `join_required`,
- * and the platform's fetch wrapper (lib/join-required.ts) asks Join at the
- * hero and sends it again, so nothing here handles membership by hand.
+ * A project's channel was a row in Messages (#2718 review). Messages is
+ * people and agents now, and the channel is the community's own room, its
+ * Discussion (./project-discussion.tsx), so the hub's door to it says the
+ * last thing said there, a project that is just yours too. A viewer who may
+ * not talk here (a view-public, collab-private app) gets no row: no door
+ * that refuses them.
  *
  * ── Island rules ───────────────────────────────────────────────────────
  *
@@ -64,309 +53,127 @@
  * useCommunity) and draw nothing until it has answered.
  */
 
-import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
-import { ArrowUpIcon, ChevronDownIcon, ChevronRightIcon } from '@/components/ui/icons';
-import { ProgressRing } from '@/components/ui/progress-ring';
+import { SectionHeader, ListRow } from '@/components/ui/grouped-list';
+import { IconTile } from '@/components/ui/icon-tile';
+import { BallotIcon, BoardIcon, ChatIcon, CheckIcon, ChevronRightIcon, ClockIcon } from '@/components/ui/icons';
+import { RichMessage, useMessages } from '../../../lib/i18n/react';
+import { t as translate } from '../../../lib/i18n/runtime';
 import { agoStamp } from '../../../lib/timestamp';
-import { swatchFor } from '../../messages/format';
+import { changeHref } from '../../../lib/change-href';
+import { type BuildLineState, buildLineOf, phaseLine, useNow } from '../../first-session/build-line';
+import { useTourRunning } from '../../first-session/tour-running';
+import { DrawnLook, isDrawnLook, ownSrc, useLookSwap } from '../../first-session/drawn-look';
+import { firstLookSrc } from '../../first-session/first-look';
+import { countsDown, estimateOf, leftNote } from '../../app-frame/first-version-eta';
+import { AppIconContent, appIconKind } from '../../apps/app-card-view';
+import { madeAppUrl } from '../../first-session/made';
+import { ThumbRow } from '../../first-session/sketch-card';
 import { open as openConversation, openBot } from '../../messages/store';
-import { CardRowView } from '../card/fold';
-import { FeedMentionMenu, mentionSuggestionsPath, useMentionTypeahead } from '../card/mention-typeahead';
-import type { DevWorkshopView, ListRow } from '../card/model';
+import type { DevWorkshopView, ListRow as BoardRow } from '../card/model';
 import { isNeedsSeen, needsRowKey, useNeedsSeen } from '../../workshop/needs-seen';
 import { reloadCommunity, type CommunityPayload, type HubFirstVersion } from './community-card';
-
-const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
-
-function Avatar({ name }: { name: string }) {
-  return (
-    <span className="dev-ws-hub-avatar" style={{ background: swatchFor(name) }} aria-hidden="true">
-      {(name || '?').charAt(0).toUpperCase()}
-    </span>
-  );
-}
-
-/** How many of the discussion's newest messages the hub's preview shows. */
-export const HUB_DISCUSSION_LINES = 2;
-
-/**
- * Unread messages the preview does not show: the newest are the ones it
- * shows, so they are the unread ones first.
- */
-export function moreUnread(unread: number, shown: number): number {
-  return Math.max(0, (Number(unread) || 0) - Math.max(0, shown));
-}
-
-/**
- * The discussion: its newest messages, how many are new, and the way in.
- *
- * TWO SIZES, one look. On the hub it is a PREVIEW (`compact`): the last two
- * messages and no composer, with how many more are unread above them (since
- * you last opened the discussion), and Open is the page's own Discussion tab
- * (`onOpen`). In full, on Homeroom's Discussion tab (#general has no pane to
- * mount there, ./project-discussion.tsx), it is the newest few with the
- * composer at its foot and Open going to the room itself.
- */
-export function ChannelCard({ slug, name, data, compact = false, onOpen }: {
-  slug: string;
-  name: string;
-  data: CommunityPayload | null;
-  compact?: boolean;
-  /** Where the preview's Open (and its unread line) goes: the Discussion tab. */
-  onOpen?: () => void;
-}): ReactNode {
-  const channel = data?.channel;
-  if (!data || !channel) return null;
-  const href = channel.href || `#messages/app/${encodeURIComponent(slug)}`;
-  const all = channel.recent || [];
-  const recent = compact ? all.slice(-HUB_DISCUSSION_LINES) : all;
-  const unread = Number(channel.unread_count) || 0;
-  const more = compact ? moreUnread(unread, recent.length) : 0;
-  const toTab = compact && !!onOpen;
-  return (
-    <section
-      className={compact ? 'dev-ws-strip dev-ws-hub-channel dev-ws-hub-channel-preview' : 'dev-ws-strip dev-ws-hub-channel'}
-      data-ws-channel={compact ? 'preview' : ''}
-      data-ws-channel-handle={channel.handle || undefined}
-    >
-      <div className="dev-ws-head">
-        <span className="dev-ws-head-title">Discussion</span>
-        {channel.handle ? <span className="dev-ws-hub-handle">#{channel.handle}</span> : null}
-        <span className="dev-ws-hub-head-end">
-          {unread > 0 && !compact ? (
-            <span className="dev-ws-hub-new" data-ws-channel-unread={String(unread)}>
-              {unread > 99 ? '99+' : unread} new
-            </span>
-          ) : null}
-          {toTab ? (
-            <button type="button" className="dev-ws-hub-open un-touch-target" data-ws-channel-open="" onClick={onOpen}>
-              Open
-              <ChevronRightIcon className="w-3.5 h-3.5" aria-hidden="true" />
-            </button>
-          ) : (
-            <a href={href} className="dev-ws-hub-open un-touch-target" data-ws-channel-open="">
-              Open
-              <ChevronRightIcon className="w-3.5 h-3.5" aria-hidden="true" />
-            </a>
-          )}
-        </span>
-      </div>
-      {more > 0 ? (
-        <button
-          type="button"
-          className="dev-ws-hub-more-unread un-touch-target"
-          data-ws-channel-more-unread={String(more)}
-          onClick={onOpen}
-        >
-          {`${more > 99 ? '99+' : more} more unread ${more === 1 ? 'message' : 'messages'}`}
-        </button>
-      ) : null}
-      {recent.length ? (
-        <ol className="dev-ws-hub-msgs" data-ws-channel-recent="">
-          {recent.map((m) => {
-            const when = m.created_at ? agoStamp(m.created_at) : null;
-            const who = m.by || name;
-            return (
-              <li key={m.id} className="dev-ws-hub-msg">
-                <Avatar name={who} />
-                <span className="min-w-0 flex-1">
-                  <span className="dev-ws-hub-msg-head">
-                    <span className="dev-ws-hub-msg-by">{m.by ? `@${m.by}` : name}</span>
-                    {when ? <time dateTime={m.created_at} title={when.title}>{when.text}</time> : null}
-                  </span>
-                  <span className="dev-ws-hub-msg-text">{m.content}</span>
-                </span>
-              </li>
-            );
-          })}
-        </ol>
-      ) : (
-        <p className="dev-ws-week-note" data-ws-channel-empty="">Nobody has said anything here yet.</p>
-      )}
-      {channel.post_url && !compact ? (
-        <HubComposer slug={slug} url={channel.post_url} placeholder={`Message ${channel.handle ? `#${channel.handle}` : name}…`} />
-      ) : null}
-    </section>
-  );
-}
-
-/** The #general conversation a hub composer posts to, or null for an app's own chat. */
-export function conversationIdFromPostUrl(url: string): number | null {
-  const m = /^\/api\/conversations\/([1-9]\d*)\/messages$/.exec(url);
-  return m ? Number(m[1]) : null;
-}
-
-/**
- * The channel card's foot: one line, sent where the room's own composer
- * sends it. A sent message clears the box and re-reads the hub, so it shows
- * up among the last few above; a refusal keeps the draft and says why.
- *
- * #3361: `@` offers people here as it does in the room itself, asked for by
- * the prefix being typed. An app's channel asks the app's list
- * (GET /api/apps/:slug/mention-suggestions?q=, which the room's own composer
- * reads whole), so a member of a large community is found by name; #general,
- * on Homeroom's own hub, asks its conversation (GET /api/conversations/:id/
- * mention-candidates), whose people are everybody and whose usernames may
- * carry hyphens (wide tokens). Either answers only a viewer who may read
- * that room.
- */
-function HubComposer({ slug, url, placeholder }: { slug: string; url: string; placeholder: string }) {
-  const [text, setText] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-  const inputRef = useRef<HTMLInputElement>(null);
-  const conversationId = conversationIdFromPostUrl(url);
-  const lookup = useCallback(async (query: string): Promise<string[]> => {
-    const q = encodeURIComponent(query);
-    const res = await fetch(conversationId
-      ? `/api/conversations/${conversationId}/mention-candidates?q=${q}&limit=8`
-      : `${mentionSuggestionsPath(slug)}?q=${q}`);
-    // Rate-limited: a failure, so this prefix is not remembered as empty.
-    if (res.status === 429) throw new Error('rate_limited');
-    if (!res.ok) return [];
-    const data = await res.json().catch(() => null);
-    return Array.isArray(data?.users) ? data.users.map((u: any) => String((u && u.username) || '')).filter(Boolean) : [];
-  }, [conversationId, slug]);
-  const mention = useMentionTypeahead({
-    slug, inputRef, value: text, onChange: setText, lookup, wideTokens: !!conversationId,
-  });
-  const send = async (e: FormEvent) => {
-    e.preventDefault();
-    const content = text.trim();
-    if (!content || busy) return;
-    setBusy(true);
-    setError('');
-    try {
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content }),
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        // Asked and answered Not now: the question was the answer.
-        if (body && body.code === 'join_required') return;
-        throw new Error((body && body.error) || 'That did not send. Try again.');
-      }
-      setText('');
-      await reloadCommunity(slug);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'That did not send. Try again.');
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <form className="dev-ws-hub-compose" data-ws-channel-compose="" onSubmit={(e) => { void send(e); }}>
-      <input
-        ref={inputRef}
-        type="text"
-        className="dev-ws-hub-compose-input"
-        data-ws-channel-input=""
-        aria-label={placeholder.replace(/…$/, '')}
-        placeholder={placeholder}
-        maxLength={4000}
-        value={text}
-        disabled={busy}
-        onChange={(e) => { setText(e.target.value); if (error) setError(''); mention.sync(); }}
-        onSelect={mention.sync}
-        onFocus={mention.warm}
-        onBlur={mention.close}
-        onCompositionStart={mention.onCompositionStart}
-        onCompositionEnd={mention.onCompositionEnd}
-        // An open list owns the arrows, Enter, Tab and Escape, so Enter
-        // picks the person instead of sending "@be".
-        onKeyDown={(e) => { if (!e.nativeEvent.isComposing) mention.onKeyDown(e); }}
-      />
-      <button
-        type="submit"
-        className="dev-ws-hub-compose-send"
-        data-ws-channel-send=""
-        aria-label="Send"
-        disabled={busy || !text.trim()}
-        // The field keeps focus through the press, so the keyboard and the
-        // composer stay where the tap landed (lib/keyboard-open.ts). The
-        // press still closes the people list, as the blur did.
-        onMouseDown={(event) => { event.preventDefault(); mention.close(); }}
-      >
-        <ArrowUpIcon className="w-4 h-4" aria-hidden="true" />
-      </button>
-      {error ? <p className="dev-ws-hub-compose-error" role="alert" data-ws-channel-error="">{error}</p> : null}
-      <FeedMentionMenu
-        items={mention.items}
-        active={mention.active}
-        below={mention.below}
-        menuRef={mention.menuRef}
-        onPick={mention.accept}
-      />
-    </form>
-  );
-}
 
 /** How often the hub reads the project again while its first version is being built. */
 export const FIRST_VERSION_POLL_MS = 15000;
 
 /**
- * "Step 4 of 7: Build it". The name is the server's (`step_name`, from
- * homeroom-bot-dm.js firstVersionState for this viewer), so the hub says
- * exactly what the made screen and the App tab say, and follows them when
- * a step is renamed.
+ * #4053: the build line, the server's for this viewer (`line`, from
+ * homeroom-bot-dm.js firstVersionState), so the hub says exactly what the
+ * made screen and the App tab say: "Building it", never "Step 4 of 7: Build
+ * it", which read as an instruction to the person looking at it. Step
+ * numbers stay in Homeroom bot's chat.
  */
-export function firstVersionStep(fv: HubFirstVersion): string {
-  if (!fv.step || !fv.of) return fv.ready ? 'Ready to try' : 'Being built';
-  return `Step ${fv.step} of ${fv.of}${fv.step_name ? `: ${fv.step_name}` : ''}`;
+export function firstVersionLine(fv: HubFirstVersion): BuildLineState {
+  return buildLineOf(fv.line) || (fv.ready ? 'ready' : 'planning');
 }
 
 /**
- * The line under the step: what happens next, for whoever reads it. Its
- * maker is told what it waits on from them, or that the bot will message
- * them when it is ready or has a question (the made screen's words);
- * anybody else, whose description it is.
+ * The one thing the card offers, for whoever reads it (#4045), or null:
  *
- * NO BUILD TIME. Evan, 5 Oct 2026: no average build time for a first
- * version. It plans first and waits on its maker's answer, so an ordinary
- * request's typical build was a promise it did not keep.
+ *   review    its plan waits for their Build it      the person who started it
+ *   answer    Homeroom bot asked them a question     the person who started it
+ *   see       its plan waits, read only (#4074)      a member who did not start it
+ *   try       built and up for approval              everyone
+ *   open      live, in the project's first week      everyone
+ *   retry     its build stopped, nothing live yet    the person who started it
+ *
+ * A card with a button hides its build line (the owner, 6 Oct 2026): "Your
+ * plan is ready to review" over "Review the plan" said one thing twice, so
+ * the button says it and the app's own line sits under its name. See the
+ * plan is a quiet link beside the line, not a button, so "Planning it"
+ * stays. Try again (14 Oct 2026, newcomer run eight) keeps the line: it
+ * says Stopped, which the button does not, and opens the build's thread in
+ * its maker's chat with Homeroom bot, where the bot's own Try again is.
  */
-export function firstVersionNote(fv: HubFirstVersion): string {
-  if (fv.ready) return 'Version one is ready to try.';
-  if (fv.waits_on === 'plan') return 'Homeroom bot has a plan for you.';
-  if (fv.waits_on === 'question') return 'Homeroom bot has a question for you.';
-  if (fv.mine) return 'Homeroom bot will message you when it’s ready to try, or if it has any questions.';
-  return fv.creator
-    ? `Homeroom bot is building it from @${fv.creator}’s description.`
-    : 'Homeroom bot is building it from its description.';
+export type FirstVersionAction = 'review' | 'answer' | 'see' | 'try' | 'open' | 'retry';
+
+export function firstVersionAction(fv: HubFirstVersion): FirstVersionAction | null {
+  const line = firstVersionLine(fv);
+  if (line === 'live') return 'open';
+  if (line === 'stopped') return fv.mine ? 'retry' : null;
+  if (fv.ready) return fv.session_id ? 'try' : null;
+  if (fv.waits_on === 'plan') return 'review';
+  if (fv.waits_on === 'question') return 'answer';
+  if (fv.plan && fv.plan.bullets && fv.plan.bullets.length) return 'see';
+  return null;
 }
 
-/** Which of the card's states this is, for its `data-ws-first-version`. */
-export function firstVersionKind(fv: HubFirstVersion): 'ready' | 'plan' | 'question' | 'building' {
-  if (fv.ready) return 'ready';
-  return fv.waits_on || 'building';
-}
+/** The button's words by action: message ids, read when the card renders. */
+const ACTION_WORDS: Record<Exclude<FirstVersionAction, 'see'>, string> = {
+  review: 'project:hub.firstVersion.review',
+  answer: 'project:hub.firstVersion.answer',
+  try: 'project:hub.firstVersion.tryIt',
+  open: 'project:hub.firstVersion.openApp',
+  retry: 'project:hub.firstVersion.tryAgain',
+};
 
 /**
- * FIRST VERSION: where Homeroom bot's build of the project stands, while it
- * builds it from the description it was made with. The same steps the made
- * screen and the App tab say ("Step 4 of 7: Build it",
- * services/homeroom-bot-progress.js), read from the hub's own record
- * (GET /api/apps/:slug/community `first_version`), with the step as the
- * ring the bot's activity cards lead with.
+ * FIRST VERSION (#4045): the project's thumbnail drawn small, its icon on
+ * its colour and its name (../../first-session/sketch-card.tsx ThumbRow),
+ * with ONE more line and at most one thing to do (firstVersionAction). With
+ * nothing to tap, the line is the build line the made screen and the App
+ * tab draw ("Building it", ../../first-session/build-line.tsx), the
+ * server's for this viewer (GET /api/apps/:slug/community `first_version`).
+ * With a button, the button says where it is and the card has no line: the
+ * project's own description sits once, under the hub's people row (the
+ * owner, 8 Oct 2026).
  *
- * When the bot waits on its maker (its plan, for their Build it, or a
- * question), the card says so and "Go to chat" opens their chat with it,
- * where the plan is decided. Ready to try, "See the change" opens the change,
- * where it is tried and approved. Nothing for a project the bot is not
- * building, or once its first version is live.
+ *   Review the plan, Answer the question   open the maker's chat with
+ *                                          Homeroom bot, where it is answered
+ *   See the plan                           the plan, read only (./plan-page.tsx)
+ *   Try it                                 the version to try, as its message
+ *                                          in the chat opens it
+ *   Open app                               the app, once it is live
+ *
+ * No "First version" heading, no step count and no note under it: the
+ * thumbnail is what it is, and one line says where it is. Nothing for a
+ * project the bot is not building, or once its first version is live and
+ * the project's first week is over.
+ *
+ * While the first-session tour runs (../../first-session/tour-running.ts)
+ * there is no Review the plan: the card shows the build line, "Homeroom bot
+ * is working on it": the tour asks for nothing but its own cards (requests
+ * #4391, #4393), and its last card, here on the hub, is Open app. After the
+ * tour, it is as above.
  *
  * No event marks each step, so while the card is on screen the record is
  * read again every FIRST_VERSION_POLL_MS, as the App tab and the made screen
  * read theirs (AppView._recheckFirstVersion, made.tsx).
  */
-export function FirstVersionCard({ slug, data }: { slug: string; data: CommunityPayload | null }): ReactNode {
+export function FirstVersionCard({ slug, data, emoji = null, onSeePlan }: {
+  slug: string;
+  data: CommunityPayload | null;
+  /** The project's icon, as the page already knows it (improveStore). */
+  emoji?: string | null;
+  /** Opens the plan, read only (./workshop.tsx's 'plan' page). */
+  onSeePlan?: () => void;
+}): ReactNode {
   const fv = data?.first_version || null;
   const ref = useRef<HTMLElement | null>(null);
-  const building = !!fv;
+  const building = !!fv && fv.line !== 'live';
   useEffect(() => {
     if (!building || !slug) return undefined;
     const timer = window.setInterval(() => {
@@ -376,144 +183,204 @@ export function FirstVersionCard({ slug, data }: { slug: string; data: Community
     }, FIRST_VERSION_POLL_MS);
     return () => window.clearInterval(timer);
   }, [building, slug]);
+  // While the first-session tour runs (../../first-session/tour-running.ts),
+  // no Review the plan here, only the build line saying the bot is on it.
+  const touring = useTourRunning();
+  const t = useMessages('project');
+  const now = useNow();
   if (!fv) return null;
-  const step = firstVersionStep(fv);
-  const stepped = !!(fv.step && fv.of);
-  const chat = () => {
-    if (fv.conversation_id) openConversation(fv.conversation_id);
-    else void openBot();
+  const asked = firstVersionAction(fv);
+  const held = touring && asked === 'review';
+  const line: BuildLineState = held ? 'working' : firstVersionLine(fv);
+  const action = held ? null : asked;
+  // Run five: the stage by its own name while it is built, as the App tab
+  // and the Home tile name it ("Starting the build", "Working out the details").
+  // Run six: the time left, as the App tab says it, when there is an estimate.
+  const left = countsDown(line) ? leftNote(estimateOf(fv.estimate), now) : null;
+  const named = phaseLine(line, fv.phase, now, null, left);
+  const press = () => {
+    if (action === 'review' || action === 'answer') {
+      if (fv.conversation_id) openConversation(fv.conversation_id);
+      else void openBot();
+    } else if (action === 'try' && fv.session_id) {
+      (window as any).AppView?.tryFirstVersion?.(slug, fv.session_id);
+    } else if (action === 'open') {
+      (window as any).App?.openAppTab?.(slug, 'app');
+    } else if (action === 'retry') {
+      // The App tab's own opener for it (AppView.openFirstVersionThread).
+      const thread = fv.thread || null;
+      (window as any).AppView?.openFirstVersionThread?.(slug, thread?.conversationId ?? fv.conversation_id ?? null,
+        thread?.threadRootId ?? null, thread?.messageId ?? null);
+    }
   };
+  const button = action && action !== 'see';
+  // Try again keeps the line that says it stopped.
+  const lineShown = !button || action === 'retry';
   return (
-    <section ref={ref} className="dev-ws-strip dev-ws-hub-first" data-ws-first-version={firstVersionKind(fv)}>
+    <section ref={ref} className="dev-ws-strip dev-ws-hub-first" data-ws-first-version={line}>
       <div className="dev-ws-hub-first-row">
-        {stepped ? (
-          <ProgressRing
-            pct={Math.round(((fv.step || 0) / (fv.of || 1)) * 100)}
-            label={`${fv.step}/${fv.of}`}
-            title={step}
-            aria-hidden="true"
-          />
+        <ThumbRow
+          name={data?.name || slug}
+          colorKey={slug}
+          emoji={emoji}
+          line={lineShown ? line : null}
+          lineWords={named.words}
+          lineNote={named.note}
+        />
+        {action === 'see' ? (
+          <button
+            type="button"
+            className="dev-ws-hub-first-see un-touch-target"
+            data-ws-first-version-plan=""
+            onClick={onSeePlan}
+          >
+            {t('project:hub.firstVersion.seePlan')}
+          </button>
         ) : null}
-        <span className="dev-ws-hub-door-text">
-          <span className="dev-ws-head">
-            <span className="dev-ws-head-title">First version</span>
-          </span>
-          <span className="dev-ws-hub-needs-first">
-            <span className="dev-ws-hub-needs-title" data-ws-first-version-step="">{step}</span>
-            <span className="dev-ws-hub-needs-sub" data-ws-first-version-note="">{firstVersionNote(fv)}</span>
-          </span>
-        </span>
       </div>
-      {fv.waits_on ? (
-        <Button
-          type="button"
-          variant="pillAccent"
-          size="sm"
-          ink="solid"
-          className="self-start"
-          data-ws-first-version-chat=""
-          onClick={chat}
-        >
-          Go to chat
-        </Button>
-      ) : fv.ready && fv.session_id ? (
-        <a
-          href={`#app/${encodeURIComponent(slug)}/dev/proposals/${fv.session_id}`}
-          className="dev-ws-hub-open un-touch-target self-start"
-          data-ws-first-version-change=""
-        >
-          See the change
-          <ChevronRightIcon className="w-3.5 h-3.5" aria-hidden="true" />
-        </a>
+      {button && action ? (
+        action === 'open' ? (
+          <button type="button" className="dev-ws-open-app dev-ws-hub-first-open" data-ws-first-version-action="open" onClick={press}>
+            {t(ACTION_WORDS.open)}
+          </button>
+        ) : (
+          <Button
+            type="button"
+            layout="full"
+            variant="pillAccent"
+            size="pill"
+            ink="solid"
+            data-ws-first-version-action={action}
+            onClick={press}
+          >
+            {t(ACTION_WORDS[action])}
+          </Button>
+        )
       ) : null}
     </section>
   );
 }
 
+/* ── First look ──────────────────────────────────────────────────────── */
+
 /**
- * A reel, drawn small: a phone-shaped card with its progress segments, a
- * second card peeking out behind it. Needs you is a feed of one decision
- * per screen, so its door previews that shape rather than an icon.
- * Decoration only; the row's words are its name.
+ * Whether the hub offers its maker the first look (FirstLookCard): their
+ * own first version, being built or tested, not ready to try and not live.
+ * Its words ("Drawn from your answers") are the maker's alone, and once it
+ * is ready to try, the First version card above has Try it. Pure.
  */
-export function ReelThumb(): ReactNode {
-  return (
-    <span className="dev-ws-reel" aria-hidden="true">
-      <span className="dev-ws-reel-back" />
-      <span className="dev-ws-reel-front">
-        <span className="dev-ws-reel-bars"><span /><span /><span /></span>
-        <span className="dev-ws-reel-line" />
-        <span className="dev-ws-reel-pic" />
-        <span className="dev-ws-reel-line dev-ws-reel-line-short" />
-      </span>
-    </span>
-  );
+export function hubShowsFirstLook(fv: HubFirstVersion | null | undefined): boolean {
+  return !!fv && fv.mine && !fv.ready && (fv.line === 'building' || fv.line === 'testing');
+}
+
+/** The first look alone, never the real screens: its words say it was drawn from the plan. */
+const FIRST_LOOK_ONLY: readonly string[] = ['first_look'];
+
+/**
+ * FIRST LOOK (newcomer run six, 14 Oct 2026). After the tour's Done the
+ * maker landed on the hub: "Building it", the Share it card, then empty
+ * space down to the Resume bar. The first look, the picture of the app's
+ * main screen Homeroom bot drew from the plan (services/first-version-
+ * screens.js), was only on the App tab and on the tour's last card. While
+ * their first version is built and that picture is there, it is a card
+ * after For you (under Share it until 15 Oct 2026, when Share it moved up
+ * the hub): the picture small and phone-shaped, "FIRST LOOK", "Here's
+ * what you're making", one line, and "Watch Homeroom bot build it", which
+ * opens the App tab, where the live picture of the build is.
+ *
+ * The picture is read as the tour's last card reads it (../../first-session/
+ * first-look.tsx: GET /api/apps/:slug `first_version.screens`, the first look
+ * alone here), asked again every FIRST_VERSION_POLL_MS while it is not
+ * there, and once it is, not again. Nothing to share: inviting is the Share
+ * it card's, and an invite is to the community, not to a picture of its app.
+ * Gone once it is ready to try or live (hubShowsFirstLook), and held back
+ * while the first-session tour runs (../../first-session/tour-running.ts),
+ * whose own last card is this picture.
+ *
+ * 15 Oct 2026 (newcomer run nine): until the picture is saved, its drawn
+ * screen (../../first-session/drawn-look.tsx), asked again until the
+ * picture is there and swapped for it once it is in.
+ */
+export function FirstLookCard({ slug, data }: { slug: string; data: CommunityPayload | null }): ReactNode {
+  const touring = useTourRunning();
+  const wanted = hubShowsFirstLook(data?.first_version);
+  const [src, setSrc] = useState<string | null>(null);
+  // A picture that would not load is asked for again, as one not there yet.
+  const [broken, setBroken] = useState<string | null>(null);
+  useEffect(() => {
+    if (!wanted || !slug || (src && src !== broken && !isDrawnLook(src))) return undefined;
+    let live = true;
+    const read = () => fetch(madeAppUrl(slug), { credentials: 'same-origin', cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((body) => {
+        const found = firstLookSrc(body, slug, FIRST_LOOK_ONLY);
+        if (live && found && found !== broken) setSrc(found);
+      })
+      .catch(() => {});
+    read();
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') read();
+    }, FIRST_VERSION_POLL_MS);
+    return () => { live = false; window.clearInterval(timer); };
+  }, [wanted, slug, src, broken]);
+  const shown = useLookSwap(src && src !== broken ? src : null, ownSrc);
+  if (!wanted || touring || !shown) return null;
+  return <FirstLookView slug={slug} name={data?.name || slug} src={shown} onBroken={() => setBroken(shown)} />;
 }
 
 /**
- * What is waiting on you: the votes you owe, the first of them and how many
- * more, opening the queue itself — one decision per screen, as it always
- * was. The queue also carries requests nobody has claimed, which are the
- * group's to pick up rather than yours to answer, so they are not counted
- * here: a card that said 14 where two votes were owed read as a backlog
- * with your name on it.
- *
- * A DOOR to the Needs you tab, and only while a vote is owed (#3408): with
- * none, the lander draws NothingToVote instead, one quiet line rather than
- * a card.
- *
- * #3526: THE COUNT IS WHAT YOU HAVE NOT SEEN. A vote swiped past in the feed
- * unanswered is left out of it, as the band's tab count leaves it out
- * (../../workshop/needs-seen.ts), and the first title is the first vote you
- * have not seen. The door stays while any vote is owed, seen or not: the
- * skipped ones are still there to vote on, and with nothing new it says how
- * many of those there are instead of a number to act on.
+ * "Watch Homeroom bot build it": the project's App tab, where the live
+ * picture of the build is (features/app-frame/app-status.tsx), as the First
+ * version card's Open app goes there.
  */
-export function NeedsCard({ queue, slug, canPost, onOpen }: {
-  queue: DevWorkshopView['queue'];
-  /** Whose votes these are, for the ones passed over. */
-  slug?: string;
-  canPost: boolean;
-  onOpen: () => void;
+export function watchBuild(slug: string): void {
+  (window as any).App?.openAppTab?.(slug, 'app');
+}
+
+/** The first look card once its picture is there (FirstLookCard). */
+export function FirstLookView({ slug, name, src, onBroken }: {
+  slug: string;
+  name: string;
+  /** The first look's own URL (../../first-session/first-look.tsx firstLookSrc), or its drawn screen's. */
+  src: string;
+  /** The picture would not load: the card asks for it again. */
+  onBroken?: () => void;
 }): ReactNode {
-  useNeedsSeen();
-  const votes = queue.filter((row) => row.kind === 'vote');
-  const fresh = votes.filter((row) => !isNeedsSeen(slug, needsRowKey(row)));
-  const skipped = votes.length - fresh.length;
-  const first = fresh.find((row) => row.t === 'card') || null;
-  const count = fresh.length;
-  const title = first && first.t === 'card' ? first.card.title.text || first.card.title.title : '';
+  const t = useMessages('project');
+  const alt = t('project:hub.firstLook.alt', { app: name });
   return (
-    <section className="dev-ws-strip dev-ws-hub-needs" data-ws-hub-needs="" data-ws-hub-needs-votes={String(count)}>
-      <button type="button" className="dev-ws-hub-row dev-ws-hub-door" onClick={onOpen} data-ws-hub-needs-open="">
-        <ReelThumb />
-        <span className="dev-ws-hub-door-text">
-          <span className="dev-ws-head">
-            <span className="dev-ws-head-title">Needs you</span>
-            {count ? <span className="dev-ws-head-n">{count} to vote</span> : null}
-          </span>
-          {count && title ? (
-            <span className="dev-ws-hub-needs-first">
-              <span className="dev-ws-hub-needs-title">{title}</span>
-              <span className="dev-ws-hub-needs-sub">
-                {first && first.who ? `from @${first.who}` : ''}
-                {first && first.who && count > 1 ? ' · ' : ''}
-                {count > 1 ? `and ${count - 1} more` : ''}
-              </span>
-            </span>
-          ) : skipped ? (
-            <span className="dev-ws-hub-needs-first">
-              <span className="dev-ws-hub-needs-sub" data-ws-hub-needs-skipped="">
-                {`${plural(skipped, 'vote', 'votes')} you skipped ${skipped === 1 ? 'is' : 'are'} still open`}
-              </span>
-            </span>
-          ) : null}
-        </span>
-        <ChevronRightIcon className="dev-ws-hub-chev" aria-hidden="true" />
-      </button>
-      {count && !canPost ? (
-        <p className="dev-ws-hub-needs-join" data-ws-hub-needs-join="">Join to vote on these.</p>
-      ) : null}
+    <section className="dev-ws-strip dev-ws-first-look" data-ws-first-look="">
+      {isDrawnLook(src) ? (
+        // Its drawn screen, at the picture's size, until the picture is saved.
+        <div className="dev-ws-first-look-shot relative overflow-hidden">
+          <DrawnLook src={src} label={alt} width={64} />
+        </div>
+      ) : (
+        <img
+          src={src}
+          alt={alt}
+          width={64}
+          height={138}
+          draggable={false}
+          onError={onBroken}
+          className="dev-ws-first-look-shot"
+        />
+      )}
+      <div className="dev-ws-first-look-body">
+        <p className="dev-ws-first-look-kicker">{t('project:hub.firstLook.kicker')}</p>
+        <p className="dev-ws-head-title">{t('project:hub.firstLook.title')}</p>
+        <p className="dev-ws-strip-text">{t('project:hub.firstLook.text')}</p>
+        <Button
+          type="button"
+          variant="pillNeutral"
+          size="sm"
+          ink="neutral"
+          data-ws-first-look-watch=""
+          onClick={() => watchBuild(slug)}
+        >
+          {t('project:hub.firstLook.watch')}
+        </Button>
+      </div>
     </section>
   );
 }
@@ -525,29 +392,38 @@ export const owesVote = (queue: DevWorkshopView['queue']): boolean => queue.some
 /**
  * NO VOTE OWED (#3408): in the Needs you card's place, one quiet line that
  * says so, instead of a card whose whole content was that nothing waits.
- * Requests nobody has picked up are still the Needs you page's rows, so when
- * there are some the line names them, and that phrase is the way in.
+ * When requests nobody has picked up are open (`unclaimed`, the view
+ * model's `dashboard.unclaimed`) the line names them, and that phrase is the
+ * way to them: the Workshop, where the work is (Needs you is votes alone).
  *
  * ON A PROJECT NOBODY ELSE IS IN (`alone`) there is nobody to put a vote up,
  * so "Nothing more to vote on." is a zero, and a zero says nothing: the line
  * is not drawn, or it is the requests alone when there are some.
  */
-export function NothingToVote({ queue, onOpen, alone = false }: {
-  queue: DevWorkshopView['queue'];
+export function NothingToVote({ unclaimed, onOpen, alone = false }: {
+  /** Open requests nobody has picked up. */
+  unclaimed: number;
   onOpen: () => void;
-  /** Nobody but one person is in the project (hubAlone). */
+  /** Nobody but one person is in the project (hubAlone): nobody else
+      can put a vote up, so the zero says nothing. */
   alone?: boolean;
 }): ReactNode {
-  const claims = queue.filter((row) => row.kind !== 'vote').length;
+  const t = useMessages('project');
+  const claims = Math.max(0, Number(unclaimed) || 0);
   if (alone && !claims) return null;
   return (
     <p className="dev-ws-week-note" data-ws-hub-needs-none="">
-      {alone ? null : claims ? 'Nothing more to vote on · ' : 'Nothing more to vote on.'}
-      {claims ? (
-        <button type="button" className="dev-ws-link un-touch-target" onClick={onOpen} data-ws-hub-needs-requests="">
-          {`${plural(claims, 'request', 'requests')} nobody has picked up`}
-        </button>
-      ) : null}
+      {!claims ? t('project:hub.needs.none') : (
+        // One message either way: alone, the requests are the whole line;
+        // otherwise they follow "Nothing more to vote on", inside the same sentence.
+        <RichMessage
+          id={alone ? 'project:hub.needs.requestsAlone' : 'project:hub.needs.noneButRequests'}
+          values={{ count: claims }}
+          components={[
+            <button type="button" className="dev-ws-link un-touch-target" onClick={onOpen} data-ws-hub-needs-requests="" />,
+          ]}
+        />
+      )}
     </p>
   );
 }
@@ -561,135 +437,369 @@ export function hubAlone(data: Pick<CommunityPayload, 'audience' | 'member_count
   return !!data && (data.audience === 'solo' || (Number(data.member_count) || 0) <= 1);
 }
 
-/**
- * What the hub's Your work says with nothing in progress, or null when it
- * leaves the hub.
- *
- *   'plain'  "No work in progress." (#3489): a project with people in it,
- *            where the place your work appears stays put
- *   null     a project nobody else is in, while something else on the hub
- *            already says what is next: its first version being built, the
- *            start-here banner, or nothing a read-only viewer can start
- *   'bot'    nobody else is in it and Homeroom bot builds here for you: to
- *            change something, tell it (`mine.bot`, AppView._botDoor)
- *   'menu'   nobody else is in it: the ⋯ is where a change is asked for
- */
-export type WorkEmpty = 'plain' | 'bot' | 'menu' | null;
+/* ── For you ─────────────────────────────────────────────────────────── */
 
-export function hubWorkEmpty({ alone, building, startHere, readOnly, bot }: {
-  alone: boolean;
-  building: boolean;
-  startHere: boolean;
-  readOnly: boolean;
-  bot: boolean;
-}): WorkEmpty {
-  if (!alone) return 'plain';
-  if (building || startHere || readOnly) return null;
-  return bot ? 'bot' : 'menu';
-}
+/** A row's label over its card: SectionHeader, set for the hub's column. */
+const HUB_HEAD = 'px-1 pb-0 pt-2';
 
-/** How many of your items the hub shows before "Show N more". */
-export const HUB_WORK_FIRST = 2;
+/** The Needs you tile while a vote is owed: the accent, which asks for you. */
+const OWED_TILE = 'bg-violet-50 text-violet-700 dark:bg-violet-500/15 dark:text-violet-300';
 
 /**
- * YOUR WORK, on the hub. The first two of your items as the board's own
- * folded rows (they open in place, as they do on the Workshop page), and the
- * rest under "Show N more" right below them, which unfolds the list where it
- * is and folds it again as "Show less". Newest activity first, the order the
- * Workshop page lists them in.
+ * NEEDS YOU, as the card's first row: the first vote you owe and how many
+ * more ("Builder login…, and 3 more"), "4 to vote", opening the queue — one
+ * decision per screen, as it always was. The queue also carries requests
+ * nobody has claimed, which are the group's to pick up rather than yours to
+ * answer, so they are not counted here.
  *
- * WITH NOTHING IN PROGRESS it stays, and says so (#3489): it used to leave
- * the hub, so the place your work appears moved with your workload. The
- * page draws it for a signed-in viewer only (`mine.viewer`), as the Workshop
- * page's strip is.
- *
- * On a project nobody else is in, "No work in progress." under its own
- * heading was the saddest block on a new project's hub. There it says how to
- * change something instead (`empty`, hubWorkEmpty), or the page leaves it
- * out while something else on the hub already says what is next.
+ * #3526: THE COUNT IS WHAT YOU HAVE NOT SEEN. A vote swiped past in the feed
+ * unanswered is left out of it, as the band's count leaves it out
+ * (../../workshop/needs-seen.ts), and the first title is the first vote you
+ * have not seen. The row stays while any vote is owed, seen or not: with
+ * nothing new it says how many skipped ones are still open instead.
  */
-export function YourWorkCard({ rows, slug, canPost, openKey, onToggleRow, all, onAll, empty = 'plain' }: {
-  rows: ListRow[];
+function NeedsRow({ queue, slug, canPost, onOpen }: {
+  queue: DevWorkshopView['queue'];
   slug: string;
   canPost: boolean;
-  openKey: string | null;
-  onToggleRow: (key: string) => void;
-  /** Whether every row is out. The page holds it, so the rows it reveals
-      are wired by the page's fillers like any other (see workshop.tsx). */
-  all: boolean;
-  onAll: () => void;
-  /** What it says with nothing in progress (hubWorkEmpty). */
-  empty?: WorkEmpty;
+  onOpen: () => void;
 }): ReactNode {
-  const cards = rows.filter((row): row is Extract<ListRow, { t: 'card' }> => row.t === 'card');
-  if (!cards.length) {
-    if (!empty) return null;
-    return (
-      <section className="dev-ws-strip dev-ws-hub-work" data-ws-mine-card="">
-        <div className="dev-ws-head">
-          <span className="dev-ws-head-title">Your work</span>
-        </div>
-        {empty === 'bot' ? (
-          <>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400" data-ws-mine-empty="bot">
-              Nothing in progress. To change something, tell Homeroom bot.
-            </p>
-            <Button
-              type="button"
-              variant="pillNeutral"
-              size="sm"
-              ink="neutral"
-              className="self-start"
-              data-ws-mine-bot=""
-              onClick={() => { void openBot(); }}
-            >
-              Go to chat
-            </Button>
-          </>
-        ) : empty === 'menu' ? (
-          <p className="text-xs text-zinc-500 dark:text-zinc-400" data-ws-mine-empty="menu">
-            {'Nothing in progress. Press '}
-            <span className="font-medium text-violet-700 dark:text-violet-400">⋯</span>
-            {' to suggest an improvement.'}
-          </p>
-        ) : (
-          <p className="text-xs text-zinc-500 dark:text-zinc-400" data-ws-mine-empty="">No work in progress.</p>
-        )}
-      </section>
-    );
-  }
-  const rest = cards.length - HUB_WORK_FIRST;
-  const shown = all ? cards : cards.slice(0, HUB_WORK_FIRST);
+  const t = useMessages('project');
+  useNeedsSeen();
+  const votes = queue.filter((row) => row.kind === 'vote');
+  const fresh = votes.filter((row) => !isNeedsSeen(slug, needsRowKey(row)));
+  const skipped = votes.length - fresh.length;
+  const first = fresh.find((row) => row.t === 'card') || null;
+  const count = fresh.length;
+  const title = first && first.t === 'card' ? first.card.title.text || first.card.title.title : '';
+  const sub = count && title ? (
+    <span data-ws-hub-needs-first="">
+      {count > 1 ? t('project:hub.forYou.needs.firstAndMore', { title, count: count - 1 }) : title}
+    </span>
+  ) : !count && skipped ? (
+    <span data-ws-hub-needs-skipped="">{t('project:hub.needs.skipped', { count: skipped })}</span>
+  ) : undefined;
   return (
-    <section className="dev-ws-strip dev-ws-hub-work" data-ws-mine-card="">
-      <div className="dev-ws-head">
-        <span className="dev-ws-head-title">Your work</span>
-        <span className="dev-ws-head-n">{cards.length}</span>
-      </div>
-      <div className="dev-ws-lane" data-ws-lane="mine-hub">
-        {shown.map((row) => (
-          <CardRowView
-            key={row.key}
-            row={row}
-            slug={slug}
-            canPost={canPost}
-            open={openKey === row.key}
-            onToggle={() => onToggleRow(row.key)}
-          />
-        ))}
-      </div>
-      {rest > 0 ? (
-        <button
-          type="button"
-          className="dev-ws-reveal dev-ws-hub-work-more touch-target-32"
-          data-ws-mine-more=""
-          aria-expanded={all}
-          onClick={onAll}
-        >
-          <ChevronDownIcon className="dev-ws-reveal-chev" aria-hidden="true" />
-          {all ? 'Show less' : `Show ${rest} more`}
-        </button>
+    <div className="dev-ws-foryou-item" data-ws-hub-needs="" data-ws-hub-needs-votes={String(count)}>
+      <ListRow
+        as="button"
+        inset="none"
+        className="dev-ws-foryou-row"
+        data-ws-hub-needs-open=""
+        onClick={onOpen}
+        leading={<IconTile size="xs" className={count ? OWED_TILE : undefined}><BallotIcon aria-hidden="true" /></IconTile>}
+        title={t('project:hub.needs.title')}
+        subtitle={sub}
+        trailing={count ? <span className="dev-ws-foryou-pill">{t('project:hub.needs.toVote', { count })}</span> : undefined}
+      />
+      {count && !canPost ? (
+        <p className="dev-ws-hub-needs-join" data-ws-hub-needs-join="">{t('project:hub.needs.joinToVote')}</p>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * YOUR WORK, as the card's second row: the first of your items in flight
+ * (newest activity first, the Workshop's order) and how many there are,
+ * opening the Workshop, where they are listed in full. With nothing in
+ * progress it says so (#3489), "No work in progress.", on every project
+ * from its first day (15 Oct 2026). No row for a visitor, who has no work
+ * to have none of.
+ */
+function WorkRow({ mine, onOpen }: {
+  mine: DevWorkshopView['mine'] | null | undefined;
+  onOpen: () => void;
+}): ReactNode {
+  const t = useMessages('project');
+  const cards = (mine?.rows || []).filter((row): row is Extract<BoardRow, { t: 'card' }> => row.t === 'card');
+  if (!cards.length && !mine?.viewer) return null;
+  const first = cards[0] || null;
+  const sub = first ? (
+    <span
+      data-ws-mine-first={first.key}
+      // The viewer's own session (#1887): `?shot=mine-session` leads with one.
+      data-ws-mine-session={first.card.attrs && first.card.attrs['data-session-chip'] ? '' : undefined}
+    >
+      {first.card.title.text || first.card.title.title}
+    </span>
+  ) : (
+    <span data-ws-mine-empty="">{t('project:hub.work.empty')}</span>
+  );
+  return (
+    <ListRow
+      as="button"
+      inset="none"
+      className="dev-ws-foryou-row"
+      data-ws-mine-card=""
+      data-ws-mine-open="workshop"
+      onClick={onOpen}
+      leading={<IconTile size="xs"><BoardIcon aria-hidden="true" /></IconTile>}
+      title={t('project:hub.work.title')}
+      subtitle={sub}
+      trailing={cards.length ? (
+        <span className="dev-ws-foryou-count">{t('project:hub.forYou.work.inProgress', { count: cards.length })}</span>
+      ) : undefined}
+    />
+  );
+}
+
+/**
+ * THE DISCUSSION, as the card's last row: the channel's name and the last
+ * thing said in it, "@kempis: enjoy the weekend guys · 4h ago", opening the
+ * Discussion place (./project-discussion.tsx), where the room is whole. How
+ * much there is new since you last read it is its one pill. With nothing
+ * said yet, "No messages yet." On a project that is just yours too (15 Oct
+ * 2026): the room is there from the first day, for the people an invite
+ * brings. No row without a channel this viewer may talk in.
+ */
+function DiscussionRow({ data, onOpen }: {
+  data: CommunityPayload | null;
+  onOpen: () => void;
+}): ReactNode {
+  const t = useMessages('project');
+  const channel = data?.channel;
+  if (!data || !channel) return null;
+  // The newest line with words in it: a message that is only a picture or a
+  // file has none to quote, so it is named by who sent it.
+  const recent = (channel.recent || []).map((m) => ({ content: m.content, by: m.by, at: m.created_at }));
+  if (!recent.length && channel.last_at) recent.push({ content: channel.last_message || '', by: channel.last_by, at: channel.last_at });
+  const words = (m: { content: string | null }) => String(m.content || '').replace(/\s+/g, ' ').trim();
+  const last = [...recent].reverse().find((m) => words(m)) || recent[recent.length - 1] || null;
+  const unread = Number(channel.unread_count) || 0;
+  const line = last ? words(last) : '';
+  const ago = last && last.at ? agoStamp(last.at).text : '';
+  const sub = last ? (
+    <span data-ws-channel-last="">
+      {line && last.by ? t('project:hub.forYou.discussion.lastBy', { username: last.by, message: line, ago })
+        : line ? t('project:hub.forYou.discussion.last', { message: line, ago })
+          : last.by ? t('project:hub.forYou.discussion.postedBy', { username: last.by, ago })
+            : t('project:hub.forYou.discussion.posted', { ago })}
+    </span>
+  ) : (
+    <span data-ws-channel-empty="">{t('project:hub.channel.empty')}</span>
+  );
+  return (
+    <ListRow
+      as="button"
+      inset="none"
+      className="dev-ws-foryou-row"
+      data-ws-channel="preview"
+      data-ws-channel-open=""
+      data-ws-channel-handle={channel.handle || undefined}
+      onClick={onOpen}
+      leading={<IconTile size="xs"><ChatIcon aria-hidden="true" /></IconTile>}
+      title={(
+        <RichMessage
+          id="project:hub.forYou.discussion.title"
+          values={{ handle: channel.handle || 'general' }}
+          components={[<span className="dev-ws-foryou-handle" />]}
+        />
+      )}
+      subtitle={sub}
+      trailing={unread > 0 ? (
+        <span className="dev-ws-foryou-pill" data-ws-channel-unread={String(unread)}>
+          {t('project:hub.channel.unread', { count: unread, shown: unread > 99 ? '99+' : String(unread) })}
+        </span>
+      ) : undefined}
+    />
+  );
+}
+
+/**
+ * FOR YOU: what on this project is the viewer's, one card of doors under its
+ * label — Needs you, Your work, the Discussion — each row a door to its
+ * place, at most one pill on it, 15 over 13. The same card from a project's
+ * first day (15 Oct 2026): Your work and the Discussion are always there,
+ * saying so when they are empty, and Needs you only when a vote waits on
+ * you. With no vote owed, Needs you is the quiet line that says so
+ * (NothingToVote, #3408), or nothing on a project nobody else is in.
+ * Nothing at all when no row has anything to say.
+ */
+export function ForYouCard({
+  slug, queue, unclaimed, mine, alone, data, canPost, onNeeds, onWork, onDiscussion,
+}: {
+  slug: string;
+  queue: DevWorkshopView['queue'];
+  /** Open requests nobody has picked up (the view model's
+      `dashboard.unclaimed`): Needs you is votes alone, so with no vote
+      owed its quiet line names them and opens the Workshop. */
+  unclaimed: number;
+  mine: DevWorkshopView['mine'] | null | undefined;
+  /** Nobody else is in it (hubAlone): no zeros. */
+  alone: boolean;
+  data: CommunityPayload | null;
+  canPost: boolean;
+  onNeeds: () => void;
+  onWork: () => void;
+  onDiscussion: () => void;
+}): ReactNode {
+  const t = useMessages('project');
+  const headId = useId();
+  const owes = owesVote(queue);
+  const claims = Math.max(0, Number(unclaimed) || 0);
+  const needs = owes || !alone || claims > 0;
+  const cards = (mine?.rows || []).some((row) => row.t === 'card');
+  const work = cards || !!mine?.viewer;
+  const talk = !!(data && data.channel);
+  if (!needs && !work && !talk) return null;
+  return (
+    <section className="dev-ws-hub-section" data-ws-hub-for-you="" aria-labelledby={headId}>
+      <SectionHeader id={headId} className={HUB_HEAD}>{t('project:hub.forYou.title')}</SectionHeader>
+      <div className="dev-ws-strip dev-ws-foryou">
+        {owes
+          ? <NeedsRow queue={queue} slug={slug} canPost={canPost} onOpen={onNeeds} />
+          : <NothingToVote unclaimed={claims} onOpen={onWork} alone={alone} />}
+        <WorkRow mine={mine} onOpen={onWork} />
+        <DiscussionRow data={data} onOpen={onDiscussion} />
+      </div>
     </section>
   );
 }
+
+/* ── Recently live ───────────────────────────────────────────────────── */
+
+/** How many of the newest changes Recently live draws. */
+export const RECENT_LIVE_SHOWN = 3;
+
+/**
+ * The app itself, for Recently live while none of its changes has gone live
+ * yet: its tile and name (the page's own record of it, the hero's), and
+ * since when it has been live (GET /api/apps/:slug/community `live_since`).
+ */
+export interface RecentOwn {
+  name: string;
+  iconUrl?: string | null;
+  iconEmoji?: string | null;
+  since: string | null | undefined;
+}
+
+const DAY_FORMATS = new Map<string, Intl.DateTimeFormat>();
+function dayWords(date: Date, withYear: boolean): string {
+  const key = withYear ? 'year' : 'day';
+  let format = DAY_FORMATS.get(key);
+  if (!format) {
+    format = new Intl.DateTimeFormat(undefined, withYear
+      ? { year: 'numeric', month: 'long', day: 'numeric' }
+      : { month: 'long', day: 'numeric' });
+    DAY_FORMATS.set(key, format);
+  }
+  return format.format(date);
+}
+
+/**
+ * "Live since today", or "Live since October 12" (the year too when it is
+ * not this one): the app's own card on Recently live. The day is the
+ * reader's. '' without a date. Pure; `now` is the reader's clock.
+ */
+export function liveSinceLine(value: string | null | undefined, now: number = Date.now()): string {
+  const at = value ? new Date(value) : null;
+  if (!at || Number.isNaN(at.getTime())) return '';
+  const today = new Date(now);
+  const sameDay = at.getFullYear() === today.getFullYear() && at.getMonth() === today.getMonth()
+    && at.getDate() === today.getDate();
+  if (sameDay || at.getTime() > now) return translate('project:hub.recent.own.today');
+  return translate('project:hub.recent.own.since', { date: dayWords(at, at.getFullYear() !== today.getFullYear()) });
+}
+
+/** The app's own card opens the app, as the First version card's Open app does. */
+function openApp(slug: string): void {
+  (window as any).App?.openAppTab?.(slug, 'app');
+}
+
+/**
+ * RECENTLY LIVE: the last three changes that went live, newest first
+ * (AppView._workshopRecentLive), each a door to its page: its after shot
+ * when the checks took one (else a plain tile), its title, and who made it
+ * and when it went live — "Homeroom bot · 1h ago" — or that it is going
+ * live now. The label's door, "All in Workshop", opens the Workshop, where
+ * what landed is listed week by week. Three across on a wide window; on a
+ * phone a row that scrolls sideways.
+ *
+ * NEVER EMPTY (15 Oct 2026). Before any change has gone live, the section
+ * is one card for the app itself (`own`): its tile and name, "Live since
+ * today" or "Live since October 12", opening the app. A new project's hub
+ * then ends the way an older one's does, on what is live. Nothing without
+ * that either: an app that has never run (`since` null), or one whose first
+ * version Homeroom bot is still building (the page leaves `own` out), is
+ * not live yet.
+ */
+export function RecentlyLive({ slug, rows, onAll, own = null }: {
+  slug: string;
+  rows: DevWorkshopView['recentLive'];
+  onAll: () => void;
+  /** The app itself, drawn while `rows` is empty. */
+  own?: RecentOwn | null;
+}): ReactNode {
+  const t = useMessages('project');
+  const headId = useId();
+  const list = (rows || []).slice(0, RECENT_LIVE_SHOWN);
+  const self = !list.length && own && own.since ? liveSinceLine(own.since) : '';
+  if (!slug || (!list.length && !self)) return null;
+  const app = own ? { slug, name: own.name, icon_url: own.iconUrl || null, icon_emoji: own.iconEmoji || null } : null;
+  return (
+    <section className="dev-ws-hub-section" data-ws-hub-recent="" aria-labelledby={headId}>
+      <div className="dev-ws-hub-sechead">
+        <SectionHeader id={headId} className={HUB_HEAD}>{t('project:hub.recent.title')}</SectionHeader>
+        {/* The door to what landed: nothing has yet, while the app's own card shows. */}
+        {list.length ? (
+          <button type="button" className="dev-ws-hub-open un-touch-target" data-ws-recent-all="" onClick={onAll}>
+            {t('project:hub.recent.all')}
+            <ChevronRightIcon className="w-3.5 h-3.5" aria-hidden="true" />
+          </button>
+        ) : null}
+      </div>
+      <div className="dev-ws-strip dev-ws-recent">
+        <ul className="dev-ws-recent-list">
+          {self && own && app ? (
+            <li className="dev-ws-recent-item">
+              <button type="button" className="dev-ws-recent-card" data-ws-recent-own="" onClick={() => openApp(slug)}>
+                <span className="dev-ws-recent-pic" data-ws-recent-pic="app" aria-hidden="true">
+                  <span className="app-icon-tile dev-ws-recent-app" data-icon={appIconKind(app)}>
+                    <AppIconContent app={app} />
+                  </span>
+                </span>
+                <span className="dev-ws-recent-title">{own.name}</span>
+                <span className="dev-ws-recent-meta" data-ws-recent-since="">{self}</span>
+              </button>
+            </li>
+          ) : null}
+          {list.map((r) => {
+            const ago = r.at ? agoStamp(r.at) : null;
+            const meta = r.going
+              ? (r.who ? t('project:hub.recent.byGoing', { who: r.who }) : t('project:hub.recent.going'))
+              : r.who && ago && ago.text ? t('project:hub.recent.byAgo', { who: r.who, ago: ago.text })
+                : r.who || (ago ? ago.text : '');
+            return (
+              <li key={r.key} className="dev-ws-recent-item">
+                <a
+                  className="dev-ws-recent-card"
+                  href={changeHref(slug, r.sessionId, r.prNumber)}
+                  data-ws-recent-item={r.key}
+                  data-ws-recent-going={r.going ? '' : undefined}
+                >
+                  <span className="dev-ws-recent-pic" data-ws-recent-pic={r.picture ? 'shot' : 'plain'} aria-hidden="true">
+                    {r.picture ? (
+                      <img src={r.picture} alt="" loading="lazy" draggable={false} />
+                    ) : r.going ? (
+                      <ClockIcon className="dev-ws-recent-glyph" aria-hidden="true" />
+                    ) : (
+                      <CheckIcon className="dev-ws-recent-glyph" aria-hidden="true" />
+                    )}
+                  </span>
+                  <span className="dev-ws-recent-title">{r.title}</span>
+                  {meta ? (
+                    <span className={r.going ? 'dev-ws-recent-meta dev-ws-recent-going' : 'dev-ws-recent-meta'} title={ago ? ago.title : undefined}>
+                      {meta}
+                    </span>
+                  ) : null}
+                </a>
+              </li>
+            );
+          })}
+        </ul>
+      </div>
+    </section>
+  );
+}
+

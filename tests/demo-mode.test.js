@@ -121,6 +121,13 @@ stubModule('../src/services/staging', {
     return { containerId: 'cid', sha: 'b'.repeat(40) };
   },
 });
+// The app-delivery workflow machine: its flag in this process, and what was
+// asked of it.
+const delivery = { on: false, requested: [] };
+stubModule('../src/workflow/platform.ts', {
+  deliveryEnabled: () => delivery.on,
+  requestDeploy: async (appId, reason) => { delivery.requested.push([appId, reason]); return 1; },
+});
 stubModule('../src/services/ws', {
   sendSystemMessage: async (...args) => { record('sendSystemMessage')(...args); },
   pushSessionUpdate: record('pushSessionUpdate'),
@@ -143,10 +150,16 @@ stubModule('../src/services/external-agent-patch', {
   MAX_PATCH_BYTES: 256 * 1024,
   applyPatch: async (...args) => { record('applyPatch')(...args); return state.patchResult; },
 });
-stubModule('../src/services/session-lifecycle', {
-  teardownStagingForSession: async (...args) => {
-    record('teardownStagingForSession')(...args);
-    return { torn: true };
+// The preview machine's adapter: a reset retires each of the partner's
+// previews through it. Each call notes whether the rows were already
+// deleted, because a retirement asked for after the delete has no row left
+// to adopt. `previews.retired` is what the machine answers.
+const previews = { retired: true };
+stubModule('../src/services/preview-workflow', {
+  retire: async (...args) => {
+    record('retirePreview')(...args, { rowsDeleted: queriesLike('DELETE FROM chat_sessions').length > 0 });
+    return previews.retired ? { taken: true, retired: true, status: 'accepted', reason: null }
+      : { taken: true, retired: false, status: 'pending', reason: null };
   },
 });
 stubModule('../src/routes/votes', {
@@ -740,7 +753,12 @@ test('reset takes the partner\'s proposals down, puts main back, and rebuilds', 
   assert.deepEqual(r.body.main, { from: 'z'.repeat(40), to: 'b'.repeat(40), moved: true });
   assert.equal(r.body.redeploy, 'started');
 
-  assert.deepEqual(calls.teardownStagingForSession.map((c) => c[0].sessionId), [9, 10]);
+  // For good, before the rows go: an idle retirement would wait for a build
+  // still going, and the delete would leave it running.
+  assert.deepEqual(calls.retirePreview.map(([args, seen]) => [args, seen.rowsDeleted]), [
+    [{ session: { id: 9, app_id: 1 }, reason: 'demo-reset', terminal: true, waitMs: 30000 }, false],
+    [{ session: { id: 10, app_id: 1 }, reason: 'demo-reset', terminal: true, waitMs: 30000 }, false],
+  ]);
   assert.deepEqual(calls.closePR.map((c) => c[2]), [43], 'the open PR is closed; the merged one is history');
   const [del] = queriesLike('DELETE FROM chat_sessions');
   assert.deepEqual(del.params[0], [9, 10]);
@@ -749,6 +767,49 @@ test('reset takes the partner\'s proposals down, puts main back, and rebuilds', 
   await settle();
   assert.equal(calls.rebuildProduction[0][1].slug, 'demo-app');
   assert.equal(queriesLike('INSERT INTO app_activity').length, 1, 'standing refreshed for the next take');
+});
+
+test('a preview the machine has not retired yet stops the reset before anything changes', async () => {
+  state.sessions.push({ id: 12, app_id: 1, user_id: 50, status: 'promoted', pr_number: 45 });
+  previews.retired = false;
+  try {
+    const r = await post('/api/apps/demo-app/demo/reset', {});
+    assert.equal(r.status, 409);
+    assert.equal(r.body.reason, 'preview_retiring');
+    assert.equal(queriesLike('DELETE FROM chat_sessions').length, 0, 'no row is deleted: the machine still adopts from it');
+    assert.equal((calls.closePR || []).length, 0, 'no PR is closed');
+    assert.equal((calls.forceBranchToSha || []).length, 0, 'main is left where it is');
+    assert.ok(state.sessions.some((s) => s.id === 12));
+  } finally {
+    previews.retired = true;
+    state.sessions = state.sessions.filter((s) => s.id !== 12);
+  }
+});
+
+test('with app delivery on, the reset asks it for the deploy', async () => {
+  delivery.on = true;
+  delivery.requested.length = 0;
+  try {
+    const r = await post('/api/apps/demo-app/demo/reset', {});
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.redeploy, 'started');
+    assert.deepEqual(delivery.requested, [[1, 'demo_reset']]);
+    await settle();
+    assert.equal(calls.rebuildProduction, undefined, 'no deploy of its own');
+  } finally { delivery.on = false; }
+});
+
+test('a deploy request that cannot be recorded does not turn a done reset into an error', async () => {
+  delivery.on = true;
+  const real = require.cache[require.resolve('../src/workflow/platform.ts')].exports.requestDeploy;
+  require.cache[require.resolve('../src/workflow/platform.ts')].exports.requestDeploy = async () => { throw new Error('database down'); };
+  try {
+    const r = await post('/api/apps/demo-app/demo/reset', {});
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+  } finally {
+    delivery.on = false;
+    require.cache[require.resolve('../src/workflow/platform.ts')].exports.requestDeploy = real;
+  }
 });
 
 test('when nothing merged, main is already at the base and nothing rebuilds', async () => {

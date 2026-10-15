@@ -194,12 +194,27 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
   // count glyphs are the same pair the app's own Workshop tab uses, which is
   // the point: the number on a row and the pane it counts wear one mark.
   const expected = [
-    // ── The create dialog's rework took four paths OUT of this list ──
+    // ── The create dialog is retired ───────────────────────────────────
+    //
+    // Its "A private community" row drew LockIcon in the static document;
+    // the lock still draws behind state (the signed-out landing, the hub's
+    // ⋯ menu, a community's card), so it is on this list again.
+    'M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z',
+    // ── The create dialog's rework took four paths OUT of this list, ──
+    // ── and the make screen's More options put them back ─────────────
     //
     // "What are you making?" became rows like "Who is it for?", each with
     // its glyph, and the dialog prerenders every step: AppWindowIcon (two
-    // paths) on App, NewspaperIcon on Document and PlayIcon on Video are now
-    // in the static document.
+    // paths) on App, NewspaperIcon on Document and PlayIcon on Video were in
+    // the static document. The step went when the dialog became the make
+    // screen's More options (tests/create-front-door.test.js), which asks
+    // what you are making itself; AppWindowIcon and PlayIcon still draw
+    // behind state (the board, an agent chat, the Needs-you rail), and
+    // NewspaperIcon nowhere.
+    'M4 6a1 1 0 011-1h14a1 1 0 011 1v12a1 1 0 01-1 1H5a1 1 0 01-1-1V6z',
+    'M4 9.5h16',
+    'M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z',
+    'M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 010 1.972l-11.54 6.347a1.125 1.125 0 01-1.667-.986V5.653z',
     // ── #2718 moved paths across this line, in both directions ───────
     //
     // OUT OF IT, because the navigation change draws them unconditionally:
@@ -225,16 +240,31 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // cog is in the cold document again.
     'M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z',
     'M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z',
-    // LockOpenIcon: Getting started's done card, "7 challenges unlocked"
-    // (2026-10-01), which shows only once the list is finished.
-    'M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zM8 11V7a4 4 0 017.75-1.4',
+    // GlobeIcon (#4405): the hub's Custom domain row, drawn only for
+    // whoever manages the project.
+    'M12 21a9 9 0 100-18 9 9 0 000 18zm0 0c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3M3.6 9h16.8M3.6 15h16.8',
+    // LockOpenIcon left this list, and the module, with the Getting started
+    // card's done state, its one user (#4635).
     // LockIcon and UserGroupIcon LEFT this list with communities, stage 3:
     // the create dialog's first step (who it is for) draws them on its
     // "A group" and "A community" rows, and the dialog prerenders every step.
     'M12 20h9',
+    // DownloadIcon (#4055): the image viewer's Download and a message's
+    // "Download image", both drawn only after a tap.
+    'M12 3v12m0 0l-4-4m4 4l4-4M5 13v7h14v-7',
     'M12 3v12m0-12l-4 4m4-4l4 4M5 13v7h14v-7',
+    // ArrowsMoveIcon (#4514): the comment bar's drag handle, drawn only in
+    // comment mode.
+    'M12 3v18M3 12h18M9 6l3-3 3 3M9 18l3 3 3-3M6 9l-3 3 3 3M18 9l3 3-3 3',
     'M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z',
     'M12 3v8.25m0 0l-3-3m3 3l3-3',
+    // PhonePlusIcon (#4399): the mark menu's "Add Homeroom to your home
+    // screen", drawn only after mount for a private member on a phone.
+    'M8 2.5h8a2 2 0 012 2v15a2 2 0 01-2 2H8a2 2 0 01-2-2v-15a2 2 0 012-2z',
+    'M12 9v6M9 12h6',
+    // PersonSilhouetteIcon: the waiting seats in the made screen's people row,
+    // which renders only once the first session opens it.
+    'M12 4.4a4.6 4.6 0 100 9.2 4.6 4.6 0 100-9.2zM2.5 24c.9-5.2 4.6-8.4 9.5-8.4s8.6 3.2 9.5 8.4z',
     // THE PLUS, added by #2718's review. Two surfaces drew it in a cold
     // document and both are gone: the Workshop screen's own + button, and
     // Create New in the app chip's menu. The Workshop's plus went because
@@ -264,7 +294,8 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     'M2.25 13.5h3.86a2.25 2.25 0 012.012 1.244l.256.512a2.25 2.25 0 002.013 1.244h3.218a2.25 2.25 0 002.013-1.244l.256-.512a2.25 2.25 0 012.013-1.244h3.859',
     'M21 12a2.25 2.25 0 00-2.25-2.25H15a3 3 0 11-6 0H5.25A2.25 2.25 0 003 12m18 0v6a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 18v-6m18 0V9M3 12V9m18 0a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 9m18 0V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 6v3',
     'M21.4 11.6l-8.5 8.5a6 6 0 01-8.5-8.5l9-9a4 4 0 015.7 5.7l-9 9a2 2 0 01-2.8-2.8l8.4-8.4',
-    'M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48',
+    // PaperclipIcon left this list with #4127: Send feedback's attachment
+    // row draws it on the paperclip button in the prerendered dialog.
     'M22 2 11 13',
     'M22 2 15 22l-4-9-9-4z',
     'M3 6h18',
@@ -283,9 +314,11 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // once the router says the Communities screen is up), so nothing
     // prerenders the grid again.
     'M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z',
-    // DescriptionIcon: the Needs-you rail's Description, client-rendered
-    // with the rest of that rail.
-    'M4 6h16M4 12h16M4 18h10',
+    // DescriptionIcon LEFT this list with comment mode (#4289 follow-up):
+    // the Suggest an improvement form's Detailed / Comment switch draws it,
+    // and the form prerenders (the switch hidden until the device turns it
+    // on), so it is in the cold document. The Needs-you rail still draws it
+    // behind state too.
     'M4 6h16M4 12h16M4 18h16',
     'M4.5 12.75l6 6 9-13.5',
     'M5 13l4 4L19 7',
@@ -366,6 +399,24 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     'M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z',
     'M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z',
     'M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z',
+    // #4666: You or the group's bolt and Make your own's sliders, drawn in
+    // the Who can see & change it sheet and the invite sheet's presets, both
+    // of which render only once opened.
+    'M13 3 5 13.5h6l-1 7.5 8-10.5h-6l1-7.5Z',
+    'M4 7h9M17 7h3M4 17h3M11 17h9',
+    'M13 7a2 2 0 104 0 2 2 0 00-4 0zM7 17a2 2 0 104 0 2 2 0 00-4 0z',
+    // #4916: the board's filter strip draws as icons, the sliders above for
+    // Filters and these person glyphs for Assigned to you and Created by
+    // you, and All items' grouping tabs draw the tag (category) and the
+    // board (stage). The strip mounts once a project's board has loaded,
+    // and All items is a page of its own, so all of them render behind state.
+    'M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2',
+    'M5 7a4 4 0 108 0 4 4 0 10-8 0z',
+    'M16 11l2 2 4-4',
+    'M11.5 15H7a4 4 0 00-4 4v2',
+    'M6 7a4 4 0 108 0 4 4 0 10-8 0z',
+    'M21.38 16.63a2.12 2.12 0 00-3-3l-4.01 4a2 2 0 00-.51.86l-.84 2.87a.5.5 0 00.62.62l2.87-.84a2 2 0 00.86-.51z',
+    'M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z',
   ];
   assert.deepEqual(absent.sort(), expected.sort());
 });

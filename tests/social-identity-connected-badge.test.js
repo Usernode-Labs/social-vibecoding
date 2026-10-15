@@ -18,6 +18,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const SETTINGS = fs.readFileSync(
@@ -32,7 +33,8 @@ function badgeFor(link) {
   // Evaluated rather than re-implemented, so this test cannot drift from it.
   const expr = SETTINGS.slice(at + 'badge: '.length, SETTINGS.indexOf('\n        state,', at));
   // eslint-disable-next-line no-new-func
-  return Function('link', `return (${expr.trim().replace(/,$/, '')});`)(link);
+  // The expression reads its words through settings.js's `tr`: the real English catalog.
+  return Function('link', 'tr', `return (${expr.trim().replace(/,$/, '')});`)(link, englishPlatformI18n().t);
 }
 
 test('a linked account is badged Connected', () => {

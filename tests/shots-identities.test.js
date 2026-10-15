@@ -139,3 +139,63 @@ test('persona warnings name guest changes guests cannot see and signed-out claim
   assert.deepEqual(await warn([]), []);
   assert.deepEqual(await identities.personaWarnings(pool, app, null), []);
 });
+
+// An app built on Homeroom is told who is signed in, never their role in it
+// (platform-jwt.js signAppIdentityToken), so no shots browser is its creator
+// or one of its admins. Three runs on one app's Creator Studio were refused
+// for every persona (QuestVerse's PRs 7 to 9). Said when the change is
+// declared.
+test('persona warnings say no shots browser is a child app\'s creator or admin', async (t) => {
+  const appAccess = require('../src/services/app-access');
+  const saved = { EDGE_JWT_SECRET: process.env.EDGE_JWT_SECRET, APP_HOST_SIGNIN: process.env.APP_HOST_SIGNIN };
+  t.after(() => {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+    appAccess.invalidateAllVisibility();
+  });
+  process.env.EDGE_JWT_SECRET = 'e'.repeat(64);
+  delete process.env.APP_HOST_SIGNIN;
+  const pool = { async query() { return { rows: [{ id: 42, view_visibility: 'public', moderation_suspended_at: null }] }; } };
+  const app = { id: 42, slug: 'questverse' };
+  const story = (id, persona, claim, intent = {}) => ({
+    id, persona, claim,
+    intent: { startPath: '/', steps: ['Open it'], checkpoint: 'It shows', focus: 'The screen', ...intent },
+  });
+  const warn = async (stories, options) => {
+    appAccess.invalidateAllVisibility();
+    return identities.personaWarnings(pool, app, { stories }, options);
+  };
+
+  const admins = await warn([
+    story('theme-picker', 'full_admin', 'A seasonal theme picker in the studio.'),
+    story('music', 'read_only_admin', 'A background music uploader.'),
+  ]);
+  assert.equal(admins.length, 1);
+  assert.match(admins[0], /^theme-picker, music are declared for an administrator persona/);
+  assert.match(admins[0], /Homeroom administrators, which this app is not told/);
+  assert.match(admins[0], /no shots browser is its creator or one of its admins/);
+  assert.match(admins[0], /particular accounts \(its creator, a list of usernames or ids\)\s+cannot be shot/);
+  assert.match(admins[0], /say how in hints\.setup; otherwise declare what a member sees/);
+
+  const studio = await warn([
+    story('prelude', 'member', 'The Creator Studio gains a prelude story editor.'),
+    story('admin-path', 'member', 'A new tab appears.', { startPath: '/#/admin' }),
+    story('board', 'member', 'The board shows a new column.'),
+  ]);
+  assert.equal(studio.length, 1, 'a member change on an ordinary screen draws nothing');
+  assert.match(studio[0], /^prelude, admin-path describe a screen for this app's creator, owner or admins/);
+  assert.match(studio[0], /Homeroom tells an app who is signed in, never their role in it/);
+
+  assert.deepEqual(await warn([story('group-owner', 'member', 'The group owner sees a Rename button.', {
+    hints: { setup: 'Create a group from + first; its creator is its owner' },
+  })]), [], 'a role the app grants in its own UI is reached through hints.setup');
+  assert.deepEqual(await warn([story('banner', 'guest', 'Admins are named in the guest banner.')]), [],
+    'a guest holds no role anywhere, and a public app shows it its guest view');
+
+  // Homeroom's own copies: the administrator personas are its administrators.
+  assert.deepEqual(await warn([
+    story('merge-panel', 'full_admin', 'The admin console shows a merge panel.'),
+    story('creator-row', 'member', 'The project creator is named on the hub.'),
+  ], { selfApp: true }), []);
+});

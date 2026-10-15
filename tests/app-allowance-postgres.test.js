@@ -60,7 +60,9 @@ test('app allowances: migration, create/fork, requests and admin review', async 
       CREATE TABLE apps (id SERIAL PRIMARY KEY, name TEXT, slug TEXT, repo_url TEXT,
         created_by INTEGER REFERENCES users(id), status VARCHAR(32),
         collab_visibility VARCHAR(16) DEFAULT 'public', view_visibility VARCHAR(16) DEFAULT 'public',
-        self_hosted BOOLEAN DEFAULT FALSE, forked_from JSONB);
+        self_hosted BOOLEAN DEFAULT FALSE, forked_from JSONB,
+        -- #4666: a new project's approval rule (You or the group) is written on create.
+        governance_rules JSONB);
       CREATE TABLE user_app_blocks (user_id INTEGER, app_id INTEGER, PRIMARY KEY (user_id, app_id));
       CREATE TABLE app_collaborators (app_id INTEGER, user_id INTEGER, status TEXT,
         accepted_at TIMESTAMPTZ, PRIMARY KEY(app_id, user_id));

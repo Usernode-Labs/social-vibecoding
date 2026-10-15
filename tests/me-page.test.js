@@ -14,6 +14,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -162,14 +163,17 @@ test('Me sits in the Workshop tab\'s frame, and its labels on the rows\' edge (#
 test('every part of the older Profile has a home', () => {
   // points, rank, breakdown, token → the Challenges tab's standing card
   const standing = read('frontend/src/features/leaderboard/your-standing.tsx');
-  assert.match(standing, /Points by event/);
-  assert.match(standing, /Token allocation/);
+  assert.match(standing, /\{t\('leaderboard:standing\.byEvent'\)\}/);
+  assert.equal(message('leaderboard:standing.byEvent'), 'Points by event');
+  assert.match(standing, /\{t\('leaderboard:standing\.token\.label'\)\}/);
+  assert.equal(message('leaderboard:standing.token.label'), 'Token allocation');
   assert.match(read('frontend/src/features/leaderboard/challenges-pane.tsx'), /<YourStanding \/>/);
   // public-profile publishing → the Edit profile sheet
   const sheet = read('frontend/src/features/profile/profile-edit-sheet.tsx');
   assert.match(sheet, /id="public-profile-controls"/);
   assert.match(sheet, /Profile\._setPublished\(!published\)/);
-  assert.match(sheet, /Copy public link/);
+  assert.match(sheet, /\{t\('profile:edit\.public\.copy'\)\}/);
+  assert.equal(message('profile:edit.public.copy'), 'Copy public link');
   // Admin & moderation, node / wallet / staking → Settings; Log out already there
   const rows = read('frontend/src/features/settings/account-rows.tsx');
   for (const needle of ['id="settings-row-admin"', '<NodePillRow />', '<WalletRow />', '<StakingRow />']) {

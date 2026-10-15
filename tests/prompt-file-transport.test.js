@@ -28,6 +28,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
+const { RUNNER_TEST_ENV } = require('./lib/runner-env');
 
 const docker = require('../src/services/docker');
 const kubernetes = require('../src/services/kubernetes');
@@ -127,7 +128,8 @@ test('hosted Claude references system build guidance while local and Codex share
   assert.equal(local.browserGuidance, IN_LOOP_BROWSER_GUIDANCE);
   assert.equal(
     crypto.createHash('sha256').update(localText).digest('hex'),
-    'df23834071c27331c2cdb3d4638688d52df79667ff239a5c9d4eceb8121799e8',
+    // App bench run 191: the in-loop launch signs an app in and prints its link.
+    '6a3e61f32987026d4c3173c23f4680ced7d2b9e92a365418e16b241265d27c63',
     'the non-system-prompt backends retain their exact reviewed guidance',
   );
   assert.match(localText, /falls back to the home page and records that\n\s+default/);
@@ -389,22 +391,24 @@ test('execInWorker writes the prompt file before the detached dispatch and never
   // No `PROMPT: <value>` env entry anywhere — the env carries only the
   // short constant path.
   assert.doesNotMatch(src, /PROMPT:\s*prompt/);
-  assert.match(src, /PROMPT_FILE:\s*TURN_PROMPT_PATH/);
+  // #4575: the turn's own files, named by its id (turnPromptPaths).
+  assert.match(src, /const promptPaths = turnPromptPaths\(durableTurnId\);/);
+  assert.match(src, /PROMPT_FILE:\s*promptPaths\.prompt/);
   assert.match(src, /RESUME_FALLBACK_PROMPT_FILE:\s*resumeFallbackPrompt/);
-  assert.match(src, /SYSTEM_PROMPT_FILE:\s*systemPrompt \? TURN_SYSTEM_PROMPT_PATH : ''/);
+  assert.match(src, /SYSTEM_PROMPT_FILE:\s*systemPrompt \? promptPaths\.system : ''/);
 
   // Ordering: the file write happens before the `docker exec -d`
   // dispatch inside execInWorker.
-  const writeIdx = src.indexOf('await writeTurnPrompt(sessionId, prompt)');
+  const writeIdx = src.indexOf('await writeTurnPrompt(sessionId, prompt, promptPaths.prompt)');
   const dispatchIdx = src.indexOf("'exec', '-d',");
   assert.ok(writeIdx !== -1, 'execInWorker awaits writeTurnPrompt');
   assert.ok(dispatchIdx !== -1, 'detached dispatch present');
   assert.ok(writeIdx < dispatchIdx, 'prompt file is written before the dispatch args are built');
-  const writeSystemIdx = src.indexOf('await writeTurnSystemPrompt(sessionId, systemPrompt)');
+  const writeSystemIdx = src.indexOf('await writeTurnSystemPrompt(sessionId, systemPrompt, promptPaths.system)');
   assert.ok(writeSystemIdx !== -1 && writeSystemIdx < dispatchIdx,
     'required system context is written before detached dispatch');
   const writeFallbackIdx = src.indexOf(
-    'await writeTurnResumeFallbackPrompt(sessionId, resumeFallbackPrompt)',
+    'await writeTurnResumeFallbackPrompt(sessionId, resumeFallbackPrompt, promptPaths.resumeFallback)',
   );
   assert.ok(writeFallbackIdx !== -1 && writeFallbackIdx < dispatchIdx,
     'the complete fresh fallback is written before detached dispatch');
@@ -513,7 +517,7 @@ exit 0
       BRANCH: 'test',
       SESSION_ID: '1',
       WORKER_JWT: 'test-worker-jwt',
-      PLATFORM_URL: 'http://platform',
+      ...RUNNER_TEST_ENV, PLATFORM_URL: 'http://platform',
       WORKSPACE_DIR: workspace,
     },
   });
@@ -556,7 +560,7 @@ exit 0
     BRANCH: 'test',
     SESSION_ID: '1',
     WORKER_JWT: 'test-worker-jwt',
-    PLATFORM_URL: 'http://platform',
+    ...RUNNER_TEST_ENV, PLATFORM_URL: 'http://platform',
     WORKSPACE_DIR: workspace,
   };
   const omitted = spawnSync('sh', [path.join(__dirname, '..', 'worker', 'run-cc.sh')], {

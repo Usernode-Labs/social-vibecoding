@@ -70,7 +70,11 @@ Ordered by how badly an agent working offline gets each one wrong.
    preview, and never a signal your own logic reads ("has this user
    done X?"). Every check runs against staging, so seeding that
    fabricates the answer makes that code path untestable by the gate
-   and different for real users.
+   and different for real users. A project's first version is the one
+   exception, on `?demo=1` only: see "A first version's populated demo".
+   The shots' fixture accounts are not whoever opened the preview: a
+   state new in a change is seeded in that change, for them or for fake
+   people, as "Who the before & after shots see" says.
 4. **Tables are public by default; mark the sensitive ones private.**
    `COMMENT ON TABLE foo IS 'staging:private'` copies the schema to
    staging without the rows. Use it for auth material, direct messages,
@@ -547,8 +551,14 @@ Seed rules:
   re-run on each boot — use an existence check or
   `ON CONFLICT DO NOTHING`.
 - **Obviously fake.** Give seeded rows a consistent "Staging demo …"
-  prefix so they can't be mistaken for real user content.
+  prefix so they can't be mistaken for real user content. (A first
+  version's `?demo=1` demo, and any rows it seeds on boot, are
+  labelled once instead, on an element marked
+  `data-usernode-demo-note`: see "A first version's populated demo"
+  below.)
 - **Small.** A handful of rows — just enough for the testing steps.
+  (A project's first version is the one exception: see "A first
+  version's populated demo" below.)
 - **Never reference real users.** Use fake usernames/IDs
   (e.g. `staging-demo-user`), never rows cloned from prod.
 - **Strictly a no-op outside staging.** The whole block is gated on
@@ -557,6 +567,62 @@ Seed rules:
 Tie-in with testing instructions: the testing steps you emit must
 reference the seeded entities by name ("Open the thread 'Staging demo
 thread' and …"), so a tester knows exactly what they should be seeing.
+
+### A first version's populated demo
+
+A project's **first version** (the build that replaces the starter's
+placeholder screen) is first seen as its staging preview opened with
+`?demo=1`, and that screen should show the app in use, from the
+viewer's own seat. For that build only, and on `?demo=1` only, four
+seed rules change. Every later change keeps the rules above.
+
+- **Enough to look lived in.** Varied, realistic rows filling about a
+  screen and a half of the main screen at phone width (390×844), not
+  a handful.
+- **Labelled once, not on every row.** The screen says "Staging demo"
+  once, plainly and visibly: a banner or a line of its own at the top
+  of the screen (never the app's name, nor in place of its tagline),
+  or the name of the list or collection the rows belong to.
+  Each row needs no label of its own (a "Staging demo" pill or prefix
+  on every row only clutters the screen), and this replaces the
+  "Staging demo …" prefix above for these rows. The rows themselves
+  stay obviously made up: no real people and no real private data.
+  The element that carries the label gets the attribute
+  `data-usernode-demo-note`: the banner or the line itself, or, in a
+  list's name, a `<span data-usernode-demo-note>` around the label's
+  own words, so the name stays. Homeroom hides that element where it
+  shows the app with its sample data under a label of its own.
+- **The viewer's own data too.** What the app keeps for a person
+  (their items, choices, progress, saved things) is shown as the
+  viewer's: a demo where only made-up people have done anything shows
+  the viewer an empty "mine". Either add the viewer's demo rows to the
+  `?demo=1` responses without storing them, or write them for the
+  viewing account on its first `?demo=1` request, once (fixed ids,
+  `ON CONFLICT DO NOTHING`, so a reload changes nothing and what the
+  viewer did to them stays). The viewing account is whoever opened the
+  preview, a reviewer or a test account, and the rows land only in
+  staging's own database: that is not cloning production rows, so
+  "Never reference real users" still holds. Other people in the demo
+  are still fake identities.
+- **Every control the real screen has.** The populated demo is the
+  app, not a read-only tour: the actions a person has on that screen
+  (add, edit, refresh, mark done, reorder, delete) are there and work
+  on the demo rows. A "view only" demo that hides them is not a
+  populated screen.
+
+What does not change: nothing is written outside staging, nothing is
+written by a route without `?demo=1` (the page passes `demo=1` on to
+its own API calls), boot-time seeding stays with fake identities, and
+the plain route keeps its test of the production-shaped answer. The
+viewer's demo rows must never be what makes a check of the form "has
+this user done X" pass (see the next section): keep such checks off
+demo rows, or add the rows to the responses rather than storing them.
+The same goes for a check of the plain route's empty state: a proposal's
+checks run at the same time, signed in as one account, on one staging
+database, so once the `?demo=1` check has stored that account's rows the
+plain route shows them too. Add the viewer's rows to the `?demo=1`
+responses without storing them, or store them marked as demo and leave
+those out of every response without `?demo=1`.
 
 ### Seeded data must not fabricate a signal your logic reads
 
@@ -586,7 +652,11 @@ app's own logic. Three habits keep them apart:
   reference real users" seed rule above, and it is the one that bites
   hardest — the visitor is the account every code path checks against,
   so attributing seeded rows to them is handing the preview a
-  credential production won't have.
+  credential production won't have. (A first version's `?demo=1` demo
+  may give the viewer rows of their own, within the limits of "A first
+  version's populated demo" above; nothing else may.) The before & after
+  shots' fixture accounts are not the visitor: "Who the before & after
+  shots see" below says what a seed may give them.
 - **Request-time seeding only behind `?demo=1`.** Never seed from a
   route the app serves normally. A `GET /api/lists` that writes demo
   rows as a side effect leaves no way to ask the app what production
@@ -659,9 +729,26 @@ Two related notes on `path:` form:
 ### Who the before & after shots see
 
 The shots agent signs in as the persona each declared change names, on
-throwaway copies of the app. Three things it cannot do by itself, which
+throwaway copies of the app. Five things it cannot do by itself, which
 account for most changes that end up with no shots:
 
+- **It finds only the data the copies hold.** Each copy is a fresh
+  staging copy that runs its own revision's `IS_STAGING` seed. When the
+  state a change shows is not there, add an idempotent, obviously fake
+  seed for it in the same proposal: the seed reaches the after copy,
+  which is the side a state new in this proposal needs. Seed rows for
+  fake people and for the shots' own accounts, by username
+  (`usernode-capture` is the member; `usernode-capture-admin` and
+  `usernode-shots-full-admin` are the two administrators). That is not
+  "seeding the visitor" (see "Never seed the visitor" above): a fixture
+  account is one named account, not whoever opens the preview. The rest
+  of that rule holds: never seed a signal your code reads to decide
+  something, so a seed never answers the question the change's own code
+  asks ("may this person invite?", "has this user done X?"). A reply
+  from an AI feature is seeded as the stored reply, never asked for: the
+  copies have no model key. A seed cannot help a change to a state that
+  already existed, which both copies need: put the steps that make it in
+  `hints.setup`, or seed it first, in its own proposal.
 - **It has no role in your app.** `member` is an ordinary signed-in member:
   not your app's manager or owner, with no linked wallet and nothing it
   made. When a change shows only to someone with a role, put the real
@@ -670,6 +757,23 @@ account for most changes that end up with no shots:
   whoever opens the preview in seed data (see "Never seed the visitor"
   above). If no in-app path reaches it, declare what a member does see and
   say in the claim what the shots will leave out.
+- **No persona is your app's creator or one of its admins.** Homeroom tells
+  your app who is signed in, never their role in it: `req.user` has no
+  creator or admin field, and no platform call answers "is this the
+  owner?". `read_only_admin` and `full_admin` are Homeroom's own
+  administrators, which your app is not told; it sees them as ordinary
+  signed-in people (only on Homeroom's own proposals are they its
+  administrators). So a screen your code keeps for particular accounts (a
+  username or id written into it, an allowlist, "private to this account")
+  refuses every shots browser, and its changes are skipped. It refuses every
+  other voter who opens the preview too. Do not hard-code people into a
+  screen the project works on: gate it on something a signed-in person can
+  reach through the app's own UI (whoever creates a story edits it) and name
+  that way in `hints.setup`. When a screen must stay with particular people,
+  declare what a member sees and say in the claim what the shots leave out.
+  The response to `declare_visible_changes` warns when a change is declared
+  for an administrator persona, or names a creator, owner or admin screen
+  with no `hints.setup`.
 - **It cannot sign out.** A change that signed-out visitors see is declared
   with persona `guest`. A private app shows a guest only what it shows a
   signed-out visitor outside Homeroom, usually a sign-in page, so declare a
@@ -1187,6 +1291,9 @@ Rules:
 - If both `emoji` and `image` are declared, the image wins; the emoji
   is the fallback should the image file fail validation (missing,
   oversized, wrong format).
+- **Inside the app.** A header that shows the app's own mark shows
+  this icon (its emoji) or no mark at all: never an empty tile.
+  `brand/icon.png` is not served, so the app cannot load it.
 - **Changing the icon is just a PR that edits this block** (and, for
   an image, commits the file). The change takes effect when the PR is
   voted in, merged, and redeployed — not before. Don't mutate the
@@ -2292,10 +2399,10 @@ localize their UI should treat it as the **default** instead of building
 their own detection from `navigator.language` (which reflects the device,
 not the user's Homeroom-level choice). It reaches apps two ways:
 
-**Expect `null` for nearly every user (SV #1556).** The setting is still
-stored and still delivered on both paths below, but the platform shell is
-English-only, so its Settings picker is hidden pending platform i18n and is
-offered only to the few users who had already chosen a language. So make
+**Expect `null` for nearly every user.** The setting is stored and
+delivered on both paths below, but Homeroom's own screens are English only
+for now, so its Settings picker offers just "Auto" (`null`) and English, plus
+whatever language a user had already chosen when it listed more. So make
 device-language fallback the PRIMARY path and the platform tag an override
 when present. Do not build a feature that only works once the user sets a
 platform locale, and do not tell users to go and set one.
@@ -2858,6 +2965,22 @@ Loading `native.js` sets `html.un-ios` / `html.un-android` /
   the kit owns the inset now. Apps may consume `var(--un-kb-inset,
   0px)` for their own fixed bottom bars. No-op on desktop or where
   `visualViewport` is absent.
+- **Tap outside a field closes the keyboard (automatic).** On a phone,
+  with a text field focused, a tap (one finger, no scroll or drag, not a
+  long press) on anything that is not a field or a control blurs the
+  field, so the keyboard goes down. iOS does not do this by itself, and
+  the Homeroom app has no Done button above its keys, so this is how
+  people put the keyboard away; Chrome on Android already behaved this
+  way. The tap is never prevented and still does whatever it did. Taps on
+  inputs, textareas, selects, editable regions, buttons, links, labels,
+  `summary`, iframes, ARIA widget roles (`button`, `option`, `listbox`,
+  `menuitem`, `tab`, `switch` and the like), `.un-pressable`, and the
+  list a field names in `aria-controls` keep the keyboard up. Mark
+  anything else that must keep it (a custom picker made of plain divs)
+  with `data-keep-keyboard`; it covers everything inside. An app that
+  closes the keyboard its own way turns this off with
+  `data-un-keyboard-dismiss="off"` on `<html>` or `<body>`. No-op on
+  desktop.
 - **Keyboard avoidance for fixed-shell content scrollers.**
   `unNative.attachKeyboardAvoidance(scrollEl, { topEl?, margin? = 8,
   fields? })` — the same keyboard physics for the APP's main content
@@ -3232,8 +3355,9 @@ feature):
 ## Starter-template notice — meant to be deleted
 
 Freshly scaffolded apps ship `public/index.html` as a template welcome
-screen — a "Starter template" hero and a "What's already working" card —
-wrapped in sentinel comments:
+screen — a "Starter template" hero with the app's thumbnail tile (the
+icon the app wears on Home) and the plain-English note on how the app is
+being built (ask Homeroom bot) — wrapped in sentinel comments:
 
 - opens with `<!-- usernode-starter-notice@1 … -->`
 - closes with `<!-- /usernode-starter-notice@1 -->`
@@ -3242,14 +3366,16 @@ Unlike the dev-console forwarder block above, this one is **meant to be
 deleted**: the whole screen is placeholder content, not product intent.
 When the user asks for their first real feature, replace the template
 screen rather than building alongside it — remove the sentinel block
-(both comments and everything between them), remove or repurpose the
-"Try the example" card and its demo endpoints (`/api/press`,
-`/api/leaderboard`, the `presses` table) as appropriate, and rewrite the
-scaffolded `README.md` to describe the actual app. Keep the dev-console
-forwarder `<script>` when rewriting the HTML, and the bridge `<script>`
-with the theme `<script>` right after it: the first real version keeps the
-template's light and dark looks and follows the viewer's Homeroom theme
-(see "New apps: a light and a dark look, following the platform").
+(both comments and everything between them), and rewrite the scaffolded
+`README.md` to describe the actual app. Apps created before October 2026
+still carry the older screen, which also had a "What's already working"
+list and a "Try the example" demo: remove that card and its demo
+endpoints (`/api/press`, `/api/leaderboard`, the `presses` table) there
+too. Keep the dev-console forwarder `<script>` when rewriting the HTML,
+and the bridge `<script>` with the theme `<script>` right after it: the
+first real version keeps the template's light and dark looks and follows
+the viewer's Homeroom theme (see "New apps: a light and a dark look,
+following the platform").
 
 ## Platform-level problems & missing capabilities: escalate, don't file workarounds
 
@@ -3402,7 +3528,8 @@ committing.
 Use it before declaring a `ui` or `motion` change for before/after shots.
 A declared change must describe a checkpoint you actually reached in the
 local app, including the state the shots agent will need to reach it
-again (put that in `hints.setup`). For backend-only,
+again (put that in `hints.setup`, or seed it as "Who the before & after
+shots see" says). For backend-only,
 refactor, or docs work, rendering may tell you nothing and the browser is
 optional. Chromium only launches on the first browser tool call. Scout and
 sync turns have no browser at all.
@@ -3417,6 +3544,11 @@ locally inside the worker the same way a staging container does:
   `INLOOP_DATABASE_URL` for exactly this. Typical launch:
   `usernode-run-inloop node server.js &`
   (or this app's declared `dapp.json` entrypoint).
+- **Stop only what you started**, by its own PID (`$!` right after the
+  launch) or its job (`kill %1`). Never signal PID 1 (`kill 1`), every
+  process (`kill -1`), or every process a `/proc` walk finds: PID 1 is
+  the worker's init, and stopping it restarts the worker and ends your
+  turn.
 - The launch command supplies the manifest's committed `staging_default` /
   `default` values, as staging does. If a required value has no committed
   fallback, it reports the missing key and stops. Never copy a production
@@ -3445,9 +3577,14 @@ locally inside the worker the same way a staging container does:
   to `/tailwind.css` shipped a blank production page for days. Only once
   the page itself is sound, suspect missing seed data — the local DB starts
   empty. Check the app's existing staging fixtures or
-  `?demo=1` route first. A sign-in screen means this browser is signed out;
-  use an existing documented fake staging account through the normal UI if
-  possible. Do not change auth code or seed passwords solely for this check.
+  `?demo=1` route first. For an app that verifies the platform's identity
+  token, the launch signs it in as Homeroom does: it prints a link that opens
+  the app signed in, and `usernode-run-inloop --link <route>` prints one for
+  any route (`usernode-run-checks` signs its checks in the same way). A page
+  opened without it is signed out. For an app with a sign-in of its own, a
+  sign-in screen means this browser is signed out; use an existing documented
+  fake staging account through the normal UI if possible. Do not change auth
+  code, mint a token or seed passwords solely for this check.
 - Keep it tight (a couple of launch→check→fix cycles, a minute or two).
   **If the app won't boot** — no local Postgres, a missing required
   secret, a crash on start — report the blocker. You can still finish

@@ -214,20 +214,28 @@ test('includeAdmins gates the SQL: NOT-IN admin filter present when off, dropped
 });
 
 test('test accounts are left out of the analytics whatever the admin box says', async () => {
-  const testsOut = /IS NULL OR [\w.]+ NOT IN \(SELECT id FROM users WHERE test_account_created_at IS NOT NULL\)/;
+  const testsOut = /IS NULL OR [\w.]+ NOT IN \(SELECT id FROM users WHERE test_account_created_at IS NOT NULL( OR is_synthetic)?\)/;
+  // #3970: synthetic accounts (the Homeroom bot) are no one's use either.
+  // Only spend keeps them: the bot's own LLM spend is still platform spend.
+  const botOut = /NOT IN \(SELECT id FROM users WHERE test_account_created_at IS NOT NULL OR is_synthetic\)/;
   for (const flag of ['false', 'true']) {
     lastQueries = [];
     await get(`/api/admin/analytics/growth?includeAdmins=${flag}`);
     const sql = lastQueries.find((s) => /new_users_admin/.test(s));
     assert.match(sql, testsOut, `growth with includeAdmins=${flag}`);
+    assert.match(sql, botOut, `growth leaves the bot out with includeAdmins=${flag}`);
     lastQueries = [];
     await get(`/api/admin/analytics/overview?includeAdmins=${flag}`);
     assert.ok(lastQueries.length >= 6 && lastQueries.every((q) => testsOut.test(q)),
       `every overview counter with includeAdmins=${flag}`);
+    assert.ok(lastQueries.filter((q) => !/FROM llm_usage/.test(q)).every((q) => botOut.test(q)),
+      `every overview counter but spend leaves the bot out with includeAdmins=${flag}`);
   }
   const funnels = read('src/services/analytics-funnels.js');
   assert.equal((funnels.match(/AND u\.test_account_created_at IS NULL/g) || []).length, 2,
     'both funnels\' cohorts leave test accounts out');
+  assert.equal((funnels.match(/AND NOT u\.is_synthetic/g) || []).length, 2,
+    'both funnels\' cohorts leave the bot out');
 });
 
 // ── 2. Source guards — route SQL companions ──────────────────────────────

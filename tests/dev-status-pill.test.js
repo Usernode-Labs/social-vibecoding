@@ -74,6 +74,7 @@ function makeAppView(opts) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(`${MERGE_STATUS_SRC}\n${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
@@ -313,7 +314,8 @@ test('checks in flight are a neutral, spinning tag — they outrank nothing now'
   const pending = PR({ check_state: 'pending' });
   const running = AppView.statusTagSpecs(pending, {}).find((t) => t.key === 'tag-checks-running');
   assert.ok(running);
-  assert.equal(running.label, 'Checks running…');
+  assert.equal(running.label, 'Checks', '#4628: one word for the whole run');
+  assert.ok(running.progress && running.progress.indeterminate, 'the bar pulses before the total is known');
   assert.match(running.cls, /zinc/, 'nobody has to act, so neutral');
   assert.ok(running.spinner, 'in flight, so it spins');
   assert.ok(!/Checks/.test(AppView.statusPillState(pending).label), 'the bar is the vote');
@@ -323,6 +325,7 @@ test('checks in flight are a neutral, spinning tag — they outrank nothing now'
   const starting = AppView.statusTagSpecs(fresh, {}).find((t) => t.key === 'tag-checks-running');
   assert.ok(starting);
   assert.equal(starting.label, 'Checks starting…');
+  assert.ok(starting.progress && starting.progress.indeterminate, 'the busy bar covers the build too');
   assert.ok(starting.spinner);
 });
 
@@ -478,6 +481,35 @@ test('tier 5 — needs your vote absorbs the pulsing "Vote" badge', () => {
   assert.ok(s.fill);
 });
 
+// Club Votes, 12 to 13 Oct 2026 (D1): a project's first version is not put
+// to a vote, so nothing on its card asks for one: no "Vote", no "Waiting for
+// your approval", no Yes or No.
+test('D1: a first version\'s pill says no vote is needed, and its card offers none', () => {
+  const AppView = makeAppView();
+  const first = PR({ first_version: true, check_state: 'pending', votes_required: 0 });
+  const s = AppView.statusPillState(first);
+  assert.equal(s.key, 'no_vote');
+  assert.equal(s.label, 'No vote needed');
+  assert.equal(s.title, 'A project’s first version goes live without a vote once testing passes.');
+  assert.equal(s.tone, 'ok');
+  assert.ok(!s.dot, 'nothing pulses for a vote');
+  assert.match(pillHtml(AppView, first), /No vote needed/);
+  assert.equal(AppView._cardVoteButtonSpecs(first).length, 0, 'no Yes, no No');
+  assert.equal(AppView._waitingWords(first), 'Goes live without a vote');
+  assert.equal(AppView._yesPutsItLive(first), false);
+  // Just you: a later change is still the maker's to approve; the first is not.
+  AppView.appData = { slug: 'x', audience: 'solo', can_collaborate: true };
+  assert.equal(AppView._approveSolo(first), false);
+  const later = PR({ check_state: 'passing', votes_required: 1 });
+  assert.equal(AppView._approveSolo(later), true);
+  assert.equal(AppView._waitingWords(later), 'Waiting for your approval');
+  assert.equal(AppView.statusPillState(later).key, 'needs_vote');
+  assert.equal(AppView._cardVoteButtonSpecs(later).length, 2);
+  // Its tags still say what is wrong: a failing check is not hidden by it.
+  const failing = PR({ first_version: true, check_state: 'failing', test_results: [{ name: 'a', status: 'fail' }] });
+  assert.ok(AppView.statusTagSpecs(failing, {}).some((t) => /Checks failing/.test(t.label)));
+});
+
 test('tier 5 is skipped for a read-only viewer (they cannot vote)', () => {
   const AppView = makeAppView({ readOnly: true });
   const s = AppView.statusPillState(PR({ check_state: 'passing', yes_count: 2, votes_required: 5 }));
@@ -506,6 +538,57 @@ test('tier 6 — the plain tally, and the at-least-N approvals variant', () => {
   }));
   assert.equal(approvals.label, '2 of 3 approvals');
   assert.ok(approvals.fill, 'clock-free, but still a progress pill');
+});
+
+// #3826 — the member floor's wait gets words on the card, not a bare count.
+// The tally reads full, so "3 / 3" in the pass tone read as a mistake and
+// the lock glyph alone never said why it was not going live.
+test('tier 6 — the member floor wait says so in words, not a bare count (#3826)', () => {
+  const AppView = makeAppView();
+  const s = AppView.statusPillState(PR({
+    check_state: 'passing', my_vote: 'yes', yes_count: 3, votes_required: 3,
+    requires_explicit_approval: true, explicit_approval_reason: 'visibility',
+    needs_other_member_yes: true, other_member_yes_count: 0,
+  }));
+  assert.equal(s.tier, 6);
+  assert.equal(s.key, 'needs_member');
+  assert.equal(s.label, 'Needs another member’s Yes · 3/3');
+  assert.equal(s.tone, 'attention');
+  assert.equal(s.title, 'Changes to who can see this app need a Yes from another member.');
+  assert.ok(s.lock, 'the lock glyph still rides along');
+  // Once the floor is met it is a plain pass again — no words left over.
+  const met = AppView.statusPillState(PR({
+    check_state: 'passing', my_vote: 'yes', yes_count: 3, votes_required: 3,
+    requires_explicit_approval: true, explicit_approval_reason: 'visibility',
+    needs_other_member_yes: true, other_member_yes_count: 1,
+  }));
+  assert.equal(met.key, 'tally');
+  assert.equal(met.tone, 'ok');
+});
+
+test('tier 5 — when the viewer is the member it waits on, the pill says so (#3826)', () => {
+  const AppView = makeAppView();
+  const s = AppView.statusPillState(PR({
+    check_state: 'passing', my_vote: null, yes_count: 3, votes_required: 3,
+    requires_explicit_approval: true, explicit_approval_reason: 'visibility',
+    needs_other_member_yes: true, other_member_yes_count: 0,
+  }));
+  assert.equal(s.tier, 5);
+  assert.equal(s.key, 'needs_vote');
+  assert.equal(s.label, 'Needs your Yes · 3/3');
+  assert.equal(s.tone, 'progress');
+  assert.ok(s.dot);
+  assert.match(s.title, /none is from another member yet/);
+  // An invited-approver app's non-approver vote is advisory, so the pill
+  // keeps the plain vote label and only states the floor is unmet.
+  const invited = AppView.statusPillState(PR({
+    check_state: 'passing', my_vote: null, yes_count: 3, votes_required: 3,
+    approval_policy: 'invited', requires_explicit_approval: true,
+    explicit_approval_reason: 'visibility', needs_other_member_yes: true,
+    other_member_yes_count: 0,
+  }));
+  assert.equal(invited.label, 'Vote · 3/3');
+  assert.equal(invited.title, 'It has the Yes votes it needs, but a Yes from another member is still missing.');
 });
 
 // ── Modifiers folded into the pill ──────────────────────────────────────
@@ -855,6 +938,7 @@ function stagingRows() {
   }
   const ctx = { module: {}, console, connectionExhaustionMessage: () => '', ROLLOUT_RETRY_DETAIL: '' };
   ctx.globalThis = ctx;
+  ctx.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(ctx);
   vm.runInContext(`${src.slice(start, end)}\n;globalThis.__rows = stagingMockProposals;`, ctx);
   // What /promoted actually serves: every row passes through readIntegration

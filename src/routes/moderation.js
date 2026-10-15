@@ -30,27 +30,27 @@ function moderationRoutes(config, { pool = getPool(config) } = {}) {
     }
   };
   router.post('/api/reports', conversationReportLimiter, run(async (req, res) => {
-    res.status(202).json(await svc.submitReport(pool, req.user, req.body));
+    res.status(202).json(await svc.submitReport(pool, req.user, req.body, { config }));
   }));
   // Old clients use the same service/queue; do not leave two moderation systems.
   router.post('/api/conversations/:id/messages/:messageId/report', conversationReportLimiter, run(async (req, res) => {
     const { rows } = await pool.query('SELECT id FROM conversation_messages WHERE id = $1 AND conversation_id = $2', [svc.id(req.params.messageId), svc.id(req.params.id)]);
     if (!rows.length) throw new svc.ModerationError(404, 'Target unavailable');
-    const result = await svc.submitReport(pool, req.user, { ...req.body, targetType: 'conversation_message', target: req.params.messageId });
+    const result = await svc.submitReport(pool, req.user, { ...req.body, targetType: 'conversation_message', target: req.params.messageId }, { config });
     res.status(202).json({ ok: true, ...result });
   }));
   router.post(['/api/profiles/:username/report', '/api/users/:username/report'], conversationReportLimiter, run(async (req, res) => {
-    const result = await svc.submitReport(pool, req.user, { ...req.body, targetType: 'user', target: req.params.username });
+    const result = await svc.submitReport(pool, req.user, { ...req.body, targetType: 'user', target: req.params.username }, { config });
     res.status(202).json({ ok: true, ...result });
   }));
   router.post('/api/apps/:slug/report', conversationReportLimiter, run(async (req,res) => {
-    const result = await svc.submitReport(pool,req.user,{ ...req.body,targetType:'app',target:req.params.slug });
+    const result = await svc.submitReport(pool,req.user,{ ...req.body,targetType:'app',target:req.params.slug },{ config });
     res.status(202).json({ ok:true,...result });
   }));
   router.post('/api/apps/:slug/messages/:id/report', conversationReportLimiter, run(async (req,res) => {
     const { rows } = await pool.query('SELECT m.id FROM chat_messages m JOIN apps a ON a.id = m.app_id WHERE m.id = $1 AND a.slug = $2', [svc.id(req.params.id),req.params.slug]);
     if (!rows.length) throw new svc.ModerationError(404,'Target unavailable');
-    const result = await svc.submitReport(pool,req.user,{ ...req.body,targetType:'app_message',target:req.params.id });
+    const result = await svc.submitReport(pool,req.user,{ ...req.body,targetType:'app_message',target:req.params.id },{ config });
     res.status(202).json({ ok:true,...result });
   }));
   // Compatibility for older admin clients: their decisions go through the

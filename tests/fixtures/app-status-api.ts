@@ -4,5 +4,6 @@
  * ./dev-card-api.ts for why that matters.
  */
 
-export { AppStatus, AppStatusView_ } from '../../frontend/src/features/app-frame/app-status';
+export { AppStatus, AppStatusView_, heldForTour } from '../../frontend/src/features/app-frame/app-status';
 export { appStatusStore } from '../../frontend/src/features/app-frame/app-status-store.js';
+export { setTourRunning } from '../../frontend/src/features/first-session/tour-running';

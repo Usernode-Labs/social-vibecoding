@@ -8,7 +8,7 @@
 //
 //   1. Send closed the sheet with nothing said. Now the sheet stays up and
 //      says where the invite went, or, in its own words, why it did not.
-//   2. Share invite opened again on "Come try it with me!", not alex's own
+//   2. Share invite opened again on "I'm making this for us. Join and tell me what it needs.", not alex's own
 //      note. Now the note is kept per project on the device (else read back
 //      from alex's own newest link), and the invite carries it.
 //   4. mo's invite read "invited you to build", with no note and no
@@ -24,6 +24,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
@@ -61,38 +62,45 @@ const MADE_PROPS = {
 // invite by username is still sent from the project's Members dialog
 // (features/dialogs/members-controller.js), and accepted as below.
 
-test('1. the made screen\'s sheet is Share link alone; a username is invited from Members', () => {
+test('1. the made screen\'s sheet is a link alone; a username is invited from Members', () => {
   const made = loadTsx(MADE);
   assert.equal(made.sentLine, undefined);
   assert.equal(made.inviteError, undefined);
   const src = read(MADE);
   assert.doesNotMatch(src, /Invite by username|@username|\/invites`/);
-  assert.match(src, /await postNote\(\);\s+onSent\(\);/);
-  assert.match(src, /onSent=\{\(\) => \{ setSent\(true\); setInviting\(false\); \}\}/);
+  assert.match(src, /await postNote\(how\);\s+onSent\(how\);/);
+  // #4196: the made screen is told how it went; the sheet stays open (Done closes it).
+  assert.match(src, /onSent=\{\(how\) => setSentHow\(how\)\}/);
   assert.match(src, /role="status" data-first-session-invite-status=""/);
   assert.match(read('frontend/src/features/dialogs/members-controller.js'), /\/invites`/);
   withStorage({}, () => {
     const html = renderToHtml(createElement(made.InviteSheet, MADE_PROPS));
-    assert.match(html, />Share link</);
+    // Copy link, with Share link beside it where there is a share sheet
+    // (#4180, tests/first-session-copy-link.test.js); none here.
+    assert.match(html, /data-first-session-invite-action="copy"[^>]*>Copy link</);
     assert.doesNotMatch(html, /username/i);
   });
 });
 
-test('1. what they\'ll get: "is making" while its first version is not live', () => {
+test('1. the invite as they will see it: "alex invited you to Page Turners" (#4042), made or still being made', () => {
   const made = loadTsx(MADE);
-  assert.equal(made.makerLine('alex_t1005', 'Page Turners', true), 'alex_t1005 is making Page Turners');
-  assert.equal(made.makerLine('alex_t1005', 'Page Turners', false), 'alex_t1005 made Page Turners');
+  assert.equal(made.makerLine, undefined, 'no "is making" / "made": the thumbnail\'s build line says where it is');
+  assert.equal(made.inviteLine('alex_t1005', 'Page Turners'), 'alex_t1005 invited you to Page Turners');
+  assert.equal(made.inviteLine('', 'Page Turners'), 'You\'re invited to Page Turners');
   withStorage({}, () => {
-    assert.match(renderToHtml(createElement(made.InviteSheet, MADE_PROPS)), /data-first-session-invite-maker="" class="[^"]*">alex_t1005 is making Page Turners</,
-      'being made unless told otherwise');
-    assert.match(renderToHtml(createElement(made.InviteSheet, { ...MADE_PROPS, making: false })), />alex_t1005 made Page Turners</);
+    const html = renderToHtml(createElement(made.InviteSheet, MADE_PROPS));
+    assert.match(html, /data-first-session-invite-line="" class="[^"]*">alex_t1005 invited you to Page Turners</);
+    assert.match(html, /<h2 id="first-session-invite-title"[^>]*>Invite people to Page Turners<\/h2>/);
+    assert.doesNotMatch(html, /is making|A link to see it/);
   });
   const src = read(MADE);
   // The shared link's title says the same.
-  assert.match(src, /const title = makerLine\(me, made\.name, making\);/);
+  assert.match(src, /const title = inviteLine\(me, made\.name\);/);
   // Live once a first version that was on its way is read as gone.
   assert.match(src, /if \(app\.firstVersion && !app\.firstVersion\.ready\) setBuilding\(true\);/);
-  assert.match(src, /const making = !\(building && !fv\);/);
+  // A setup that stopped is not live either (tests/create-front-door.test.js).
+  // An import, or a ready-made app, is live once it runs (it has no first version).
+  assert.match(src, /const making = imported \|\| readyMade \? appStatus !== 'running' : \(!!stalled \|\| !\(building && !fv\)\);/);
 });
 
 // ── 2. The note is remembered ───────────────────────────────────────────
@@ -101,14 +109,14 @@ test('2. the sheet opens on the maker\'s last note for that project', () => {
   const { InviteSheet, noteKey, openingNote, linkNote } = loadTsx(MADE);
   assert.equal(noteKey('page-turners'), 'usernode:first-session:note:page-turners');
   withStorage({}, () => {
-    assert.equal(openingNote('page-turners', null), 'Come try it with me!', 'nothing kept: the default');
+    assert.equal(openingNote('page-turners', null), 'I\'m making this for us. Join and tell me what it needs.', 'nothing kept: the default');
     assert.equal(openingNote('page-turners', 'Pick our next book!'), 'Pick our next book!', 'an example\'s own note');
     const html = renderToHtml(createElement(InviteSheet, MADE_PROPS));
-    assert.match(html, /<textarea[^>]*>Come try it with me!<\/textarea>/);
+    assert.match(html, /<textarea[^>]*>I&#x27;m making this for us\. Join and tell me what it needs\.<\/textarea>/);
   });
   withStorage({ 'usernode:first-session:note:page-turners': 'Fridays at mine, bring a book' }, () => {
     assert.equal(openingNote('page-turners', 'Pick our next book!'), 'Fridays at mine, bring a book');
-    assert.equal(openingNote('another-project', null), 'Come try it with me!', 'per project');
+    assert.equal(openingNote('another-project', null), 'I\'m making this for us. Join and tell me what it needs.', 'per project');
     const html = renderToHtml(createElement(InviteSheet, MADE_PROPS));
     assert.match(html, /<textarea[^>]*>Fridays at mine, bring a book<\/textarea>/);
   });
@@ -147,7 +155,7 @@ function loadNotifications({ welcome } = {}) {
       calls.push(['fetch', String(url)]);
       return { ok: true, json: async () => sandbox.acceptBody };
     },
-    PlatformUI: { isTouch: () => false, toast() {} },
+    PlatformUI: { isTouch: () => false, toast: (msg) => calls.push(['toast', String(msg)]) },
     App: { user: { id: 3 }, _isScreenVisible: () => false },
     HomePanels: { ensureLoaded: (opts) => calls.push(['homePanels', !!(opts && opts.force)]) },
     UsernodeReact: {
@@ -159,6 +167,7 @@ function loadNotifications({ welcome } = {}) {
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
   sandbox.agoStamp = agoStamp;
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.runInContext(NOTIF_SRC, sandbox);
   const N = sandbox.Notifications;
   N._renderBadge = () => {};
@@ -183,11 +192,18 @@ test('4. a group\'s invite is to join it, with the maker\'s note and how many ar
   ];
   N._renderInvites();
   const [join, build, approver] = JSON.parse(JSON.stringify(state.invites));
-  assert.deepEqual([join.who, join.verb, join.appName, join.note, join.members],
-    ['@alex_t1005', 'invited you to join', 'Page Turners', 'Come read with us!', '2 people are in it']);
-  assert.deepEqual([build.verb, build.note, build.members], ['invited you to build', '', '1 person is in it'],
+  // The sentence is one catalog message, chosen by what is asked; the row
+  // carries its id with the two names as its parameters.
+  assert.deepEqual([join.who, join.line, join.inviter, join.appName, join.note, join.members],
+    ['@alex_t1005', 'notifications:invite.line.join', 'alex_t1005', 'Page Turners', 'Come read with us!', '2 people are in it']);
+  assert.deepEqual([build.line, build.note, build.members], ['notifications:invite.line.build', '', '1 person is in it'],
     'a project anyone can use but only its invited people build');
-  assert.deepEqual([approver.verb, approver.note, approver.members], ['asked you to help approve changes to', '', '']);
+  assert.deepEqual([approver.line, approver.note, approver.members], ['notifications:invite.line.approve', '', '']);
+  const names = { username: 'alex_t1005', project: 'Page Turners' };
+  assert.equal(message('notifications:invite.line.join', names), '<0>@alex_t1005</0> invited you to join <1>Page Turners</1>');
+  assert.equal(message('notifications:invite.line.build', names), '<0>@alex_t1005</0> invited you to build <1>Page Turners</1>');
+  assert.equal(message('notifications:invite.line.approve', names),
+    '<0>@alex_t1005</0> asked you to help approve changes to <1>Page Turners</1>');
 
   // The history row under Today says the same.
   const row = (detail) => N._rowView({ id: 9, kind: 'collab_invite', detail, readAt: null, createdAt: PENDING.createdAt,
@@ -245,10 +261,72 @@ test('5. without a welcome, or once it has been shown, Accept opens the chat as 
     await N._acceptInvite(1, 'page-turners', 'collab');
     assert.deepEqual(calls.filter((c) => c[0] === 'discussion'), [['discussion', 'page-turners']], label);
   }
-  // An approver invite never asks for it.
+  // An approver invite never asks for it, and #4740 keeps it silent: its
+  // Accept answers on the screen it opens, not in a toast.
   const { N, calls, sandbox } = loadNotifications({ welcome: () => true });
   sandbox.acceptBody = { ok: true, appSlug: 'arena', welcome: { slug: 'arena', name: 'Arena' } };
   await N._acceptInvite(3, 'arena', 'approver');
   assert.ok(!calls.some((c) => c[0] === 'welcome'));
+  assert.ok(!calls.some((c) => c[0] === 'toast'), 'an approver accept toasts nothing');
   assert.deepEqual(calls.filter((c) => c[0] === 'discussion'), [['discussion', 'arena']]);
+});
+
+test('4. an invite to a project the viewer is already in says so under the sentence', () => {
+  const { N } = loadNotifications();
+  let state = null;
+  N._store = { set: (patch) => { state = patch; } };
+  // #4740: they joined through the Join button (or a link) while the build
+  // invite was still waiting, so the headcount they are part of is replaced.
+  N.invites = [{ ...PENDING, inCommunity: true }];
+  N._renderInvites();
+  const [already] = JSON.parse(JSON.stringify(state.invites));
+  assert.equal(already.members, "You're already in it");
+
+  // It still renders through the existing members span, so the list draws it.
+  const list = loadTsx('frontend/src/features/notifications/notifications-list.tsx', {
+    stubs: {
+      './notifications-store.js': {
+        notificationsStore: { get: () => ({ saved: null, invites: [already], touch: false }), subscribe: () => () => {} },
+      },
+    },
+  });
+  const html = renderToHtml(createElement(list.NotificationsPinnedSections, {}));
+  assert.match(html, /<span data-invite-members="">You&#x27;re already in it · <\/span>/);
+  // A row without the flag keeps the headcount, as before.
+  N.invites = [PENDING];
+  N._renderInvites();
+  const [plain] = JSON.parse(JSON.stringify(state.invites));
+  assert.equal(plain.members, '2 people are in it');
+});
+
+test('5. an accept that opens no welcome says what the tap did (#4740)', async () => {
+  // The reported case: the viewer is already in the project, so Accept lands
+  // them on the #general channel they were reading and used to say nothing.
+  const { N, calls, sandbox } = loadNotifications({ welcome: () => false });
+  sandbox.acceptBody = { ok: true, appSlug: 'page-turners' };
+  N.invites = [PENDING];
+  await N._acceptInvite(1, 'page-turners', 'collab');
+  assert.deepEqual(calls.filter((c) => c[0] === 'toast'),
+    [['toast', 'You can now build Page Turners']]);
+  assert.deepEqual(calls.filter((c) => c[0] === 'discussion'), [['discussion', 'page-turners']],
+    'the chat still opens after the message');
+
+  // The row's own name is used, read before it leaves the list.
+  const { N: N2, calls: calls2, sandbox: sandbox2 } = loadNotifications({ welcome: () => false });
+  sandbox2.acceptBody = { ok: true, appSlug: 'open-library' };
+  N2.invites = [{ ...PENDING, appId: 2, appSlug: 'open-library', appName: '' }];
+  await N2._acceptInvite(2, 'open-library', 'collab');
+  assert.deepEqual(calls2.filter((c) => c[0] === 'toast'),
+    [['toast', 'You can now build this project']], 'no name: the unnamed message');
+});
+
+test('5. an accept that opens the welcome is confirmed by it, not by a toast', async () => {
+  const { N, calls, sandbox } = loadNotifications({ welcome: () => true });
+  sandbox.acceptBody = {
+    ok: true, appSlug: 'page-turners',
+    welcome: { slug: 'page-turners', name: 'Page Turners', inviterName: 'alex_t1005' },
+  };
+  N.invites = [PENDING];
+  await N._acceptInvite(1, 'page-turners', 'collab');
+  assert.ok(!calls.some((c) => c[0] === 'toast'), '"You\'re in" is the confirmation');
 });

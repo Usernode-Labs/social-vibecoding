@@ -110,9 +110,10 @@ test('permalinks, catch-up and the read cursor answer mock ids from the mock', (
   assert.equal(stagingMockStreamPage(7, { around: 42 }), null, 'a real id runs the real read');
 
   assert.equal(stagingMockUnreadCount(7, 9902004, 'read'), 0);
-  // From this morning's row on: it, the next human row, and the agent's —
-  // the conflict notices have no author and are never unread.
-  assert.equal(stagingMockUnreadCount(7, DEMO_THREAD_ROOT_ID, 'unread'), 3);
+  // From this morning's row on: it, the next human row, the agent's and
+  // Homeroom bot's first-version line (#4238) — the conflict notices have
+  // no author and are never unread.
+  assert.equal(stagingMockUnreadCount(7, DEMO_THREAD_ROOT_ID, 'unread'), 4);
   assert.equal(stagingMockUnreadCount(7, 42, 'unread'), null);
 });
 

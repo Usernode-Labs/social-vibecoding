@@ -10,6 +10,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -153,8 +154,9 @@ test('the paths: the page is a shell document; following from the waiting room i
     "router.get('/api/invite-links/queued',",
     "router.get('/invite/:token', invitePreviewLimiter,",
   ]) assert.ok(src.includes(route), route);
-  // Only a live link leaves its token for sign-in to follow.
-  assert.match(src, /if \(preview\.live\) \{\s*invites\.setInviteCookie\(req, res, token\);/);
+  // Only a live link leaves its token for sign-in to follow (never staging's
+  // demo link, tests/staging-demo-invite.test.js).
+  assert.match(src, /if \(preview\.live && !demo\) \{\s*invites\.setInviteCookie\(req, res, token\);/);
 });
 
 test('signing UP from an invite page follows the link server-side; signing IN is asked first', () => {
@@ -167,12 +169,28 @@ test('signing UP from an invite page follows the link server-side; signing IN is
   // one line sits between the redeem and the branch, and nothing else may.
   // An existing account follows it only when the sign-in is the Join its page
   // asked for (the sheet sends followInvite); the cookie alone never does.
-  assert.match(auth, /const consented = verified\.created \|\| req\.body\?\.followInvite === true;\s+const invite = consented\s+\? await communityInvites\.redeemCarried\(pool, req, res, verified\.userId, \{\s+requirePhone: phoneAuth\.offered\(config\),\s+\}\)\s+: \(communityInvites\.clearInviteCookie\(res\), null\);\s+(?:\/\/[^\n]*\n\s*)*if \(invite && invite\.status === 'joined'\) await challengeScorer\.scoreOnJoin\(pool, config\);\s+if \(verified\.next === 'signed-in'\)/);
+  // Otherwise the carried copy is only dropped (dropCarried), which since
+  // #4272 also counts the sign-in for the admin Journey's invite funnel as
+  // one the link brought; it still follows nothing.
+  // The code's route and the release link's (#4594) share that answer
+  // (answerProvenEmail): only the code's passes the sheet's followInvite on.
+  assert.match(auth, /return await answerProvenEmail\(req, res, verified, \{ followInvite: req\.body\?\.followInvite === true \}\);/);
+  assert.match(auth, /return await answerProvenEmail\(req, res, verified, \{ via: 'link', extra: \{ email: verified\.email \} \}\);/);
+  assert.match(auth, /const consented = verified\.created \|\| followInvite;\s+const invite = consented\s+\? await communityInvites\.redeemCarried\(pool, req, res, verified\.userId, \{\s+requirePhone: phoneAuth\.offered\(config\),\s+\}\)\s+: await communityInvites\.dropCarried\(pool, req, res, verified\.userId\);\s+(?:\/\/[^\n]*\n\s*)*if \(invite && invite\.status === 'joined'\) await challengeScorer\.scoreOnJoin\(pool, config\);\s+if \(verified\.next === 'signed-in'\)/);
   assert.match(read('frontend/src/features/auth/sign-in-sheet.tsx'), /body: JSON\.stringify\(\{ email, code, \.\.\.\(followInvite \? \{ followInvite: true \} : \{\}\) \}\)/);
   const login = auth.slice(auth.indexOf("log.info('auth', 'Login successful'"), auth.indexOf("log.info('auth', 'Login successful'") + 900);
-  assert.match(login, /communityInvites\.clearInviteCookie\(res\);/, 'a password sign-in drops the carried copy');
+  assert.match(login, /await communityInvites\.dropCarried\(pool, req, res, user\.id\);/, 'a password sign-in drops the carried copy');
   assert.doesNotMatch(login, /redeemCarried/);
+  for (const file of ['src/routes/phone-auth.js', 'src/routes/sign-in-providers.js']) {
+    assert.match(read(file), /: await communityInvites\.dropCarried\(pool, req, res, result\.userId\);/, `${file} drops it the same way`);
+  }
   const src = read('src/services/community-invites.js');
+  // Dropping it follows nothing: it clears the cookie and records the
+  // sign-in, and never reaches redeem().
+  const drop = src.slice(src.indexOf('async function dropCarried'), src.indexOf('module.exports'));
+  assert.match(drop, /clearInviteCookie\(res\);/);
+  assert.match(drop, /noteInviteSignedIn\(pool, \{ token, userId, carried: true \}\)/);
+  assert.doesNotMatch(drop, /redeem\(/);
   assert.match(src, /httpOnly: true,\s+sameSite: 'lax',/);
   // It never throws into a sign-in.
   assert.match(src, /log\.warn\('invites', 'Following a carried invite link failed'/);
@@ -183,7 +201,9 @@ test('the shell: signed out it is the landing, remembered for after sign-in; sig
   assert.match(app, /const inviteToken = rawHash \? null : App\._inviteTokenFromPath\(location\.pathname\);/);
   assert.match(app, /AuthScreens\.rememberDeepLink\(location\.pathname\);\s+AuthScreens\.show\('landing'\);/);
   assert.match(app, /if \(App\.user\.hasPlatformAccess !== false\) \{\s+App\._followInvite\(inviteToken\);/);
-  assert.match(app, /confirmLabel: 'Join',\s+cancelLabel: 'Not now',/);
+  assert.match(app, /confirmLabel: PlatformI18n\.t\('shell:invite\.confirm\.join'\),\s+cancelLabel: PlatformI18n\.t\('shell:invite\.confirm\.notNow'\),/);
+  assert.equal(message('shell:invite.confirm.join'), 'Join');
+  assert.equal(message('shell:invite.confirm.notNow'), 'Not now');
   const screens = read('public/js/auth-screens.js');
   assert.match(screens, /if \(\/\^\\\/invite\\\/\[A-Za-z0-9_-\]\{22\}\$\/\.test\(value\)\) return value;/, 'a deep link back to it');
   assert.match(screens, /if \(invite\) AuthScreens\._waitingInvite = invite\[1\];/, 'kept for the waiting room');
@@ -192,7 +212,7 @@ test('the shell: signed out it is the landing, remembered for after sign-in; sig
   assert.match(waiting, /fetch\('\/api\/invite-links\/queued'/);
 });
 
-test('the words: the landing card, the invite pane', () => {
+test('the words: the landing card, the invite pane', async () => {
   const card = loadTsx('frontend/src/features/auth/invite-card.tsx');
   assert.equal(card.inviteTokenFrom('/invite/YigKXxtTzBB_TFZVTkjEtg'), 'YigKXxtTzBB_TFZVTkjEtg');
   assert.equal(card.inviteTokenFrom('/invite/nope'), null);
@@ -200,55 +220,112 @@ test('the words: the landing card, the invite pane', () => {
     '@ada invited you to join Tiers.');
   assert.equal(card.membersLine(1), '1 person is in it.');
   assert.equal(card.membersLine(0), '');
-  // "Made for you": the gift when the sender made it, the invitation when not.
-  // A community and its one project share a name, so the gift names the
-  // project ("made Flat 4B Chores", not "made this for Flat 4B Chores"); only
-  // a community named apart from its project is what it was made for.
-  const made = { live: true, reason: null, project: { name: 'Flat 4B Chores', iconEmoji: '🧹', iconUrl: null },
-    inviter: 'jordan_t1004', inviterName: 'jordan_t1004', inviterMadeIt: true, memberCount: 4 };
-  assert.equal(card.madeLine(made), 'jordan_t1004 made Flat 4B Chores');
-  assert.equal(card.madeLine({ ...made, communityName: 'Flat 4B Chores' }), 'jordan_t1004 made Flat 4B Chores');
-  assert.equal(card.madeLine({ ...made, communityName: ' flat 4b chores ' }), 'jordan_t1004 made Flat 4B Chores');
-  assert.equal(card.madeLine({ ...made, communityName: null }), 'jordan_t1004 made Flat 4B Chores');
-  const forGroup = { ...made, project: { name: 'Run Tracker', iconEmoji: '🏃', iconUrl: null },
-    inviter: 'maya', inviterName: 'Maya', communityName: 'Sunday Run Club' };
-  assert.equal(card.madeForName(forGroup), 'Sunday Run Club');
-  assert.equal(card.madeLine(forGroup), 'Maya made this for Sunday Run Club');
-  assert.equal(card.madeForName(made), null);
-  assert.equal(card.underLine(made), 'and invited you to join · 4 people are in it');
-  assert.equal(card.underLine({ ...made, memberCount: 1 }), 'and invited you to join · 1 person is in it');
-  assert.equal(card.underLine({ ...made, memberCount: 0 }), 'and invited you to join');
-  assert.equal(card.madeLine({ ...made, inviterMadeIt: false }), '@jordan_t1004 invited you to join Flat 4B Chores.');
-  assert.equal(card.madeLine({ ...forGroup, inviterMadeIt: false }), '@maya invited you to join Run Tracker.');
-  assert.equal(card.underLine({ ...made, inviterMadeIt: false, memberCount: 1 }), '1 person is in it.');
-  // While its first version is on its way nothing is made yet (Evan, 5
-  // October 2026): "is making", in both of the gift's forms.
-  assert.equal(card.madeLine({ ...made, building: true }), 'jordan_t1004 is making Flat 4B Chores');
-  assert.equal(card.madeLine({ ...forGroup, building: true }), 'Maya is making this for Sunday Run Club');
-  assert.equal(card.madeLine({ ...made, building: true, inviterMadeIt: false }), '@jordan_t1004 invited you to join Flat 4B Chores.');
-  assert.equal(card.underLine({ ...made, building: true }), 'and invited you to join · 4 people are in it');
+  // #4203: the page leads with the invitation, not the making, in one line
+  // under the project's name: who invited you (display name, else @handle),
+  // then how many are in it.
+  const evan = { live: true, reason: null, project: { name: 'Supply Line', iconEmoji: '📦', iconUrl: null },
+    inviter: 'evan', inviterName: 'Evan', inviterMadeIt: true, memberCount: 26 };
+  assert.equal(card.inviteLine(evan), 'Evan invited you to Supply Line · 26 people are in it');
+  assert.equal(card.inviteLine({ ...evan, inviterMadeIt: false }), 'Evan invited you to Supply Line · 26 people are in it');
+  assert.equal(card.inviteLine({ ...evan, building: true }), 'Evan invited you to Supply Line · 26 people are in it');
+  // No display name: preview() sends the handle as inviterName, and the page
+  // names the handle as a handle.
+  assert.equal(card.inviteLine({ ...evan, inviterName: 'evan' }), '@evan invited you to Supply Line · 26 people are in it');
+  assert.equal(card.inviteLine({ ...evan, inviterName: null }), '@evan invited you to Supply Line · 26 people are in it');
+  assert.equal(card.inviteLine({ ...evan, inviter: null, inviterName: null }), "You're invited to Supply Line · 26 people are in it");
+  // The count: one person, and zero (or none sent) says nothing.
+  assert.equal(card.inviteLine({ ...evan, memberCount: 1 }), 'Evan invited you to Supply Line · 1 person is in it');
+  assert.equal(card.inviteLine({ ...evan, memberCount: 0 }), 'Evan invited you to Supply Line');
+  assert.equal(card.inviteLine({ ...evan, memberCount: undefined }), 'Evan invited you to Supply Line');
+  // #4394: inside the project's own card the name is just above, so the
+  // invitation does not repeat it.
+  assert.equal(card.invitedYouLine(evan), 'Evan invited you · 26 people are in it');
+  assert.equal(card.invitedYouLine({ ...evan, inviter: null, inviterName: null }), "You're invited · 26 people are in it");
+  assert.equal(card.invitedYouLine({ ...evan, memberCount: 0 }), 'Evan invited you');
+  assert.equal(card.invitedYouLine({ ...evan, inviter: null, inviterName: null, memberCount: 0 }), "You're invited");
+  assert.equal(card.membersPhrase(2), '2 people are in it');
+  assert.equal(card.inviterLabel({ inviter: 'evan', inviterName: 'Evan' }), 'Evan');
+  assert.equal(card.inviterLabel({ inviter: 'evan', inviterName: 'evan' }), '@evan');
+  assert.equal(card.inviterLabel({}), '');
+  // The signed-out page does not say who will see the join (owner, 8 October).
+  assert.equal(card.seenLine, undefined);
+  assert.equal(card.HOMEROOM_LINE, 'auth:invite.homeroomLine');
+  assert.equal(message(card.HOMEROOM_LINE), 'On Homeroom, people using an app build and improve it together.');
+  // The making line is gone: the hero says who invited you, not who made it.
+  const src = read('frontend/src/features/auth/invite-card.tsx');
+  assert.doesNotMatch(src, /and invited you to join|export function madeLine|export function underLine/);
 
   const pane = loadTsx('frontend/src/features/app-context/invite-pane.tsx');
   const now = Date.parse('2026-09-27T12:00:00Z');
   const fresh = { expiresAt: '2026-10-04T12:00:00Z', maxUses: 25, uses: 0 };
-  assert.equal(pane.linkSentence(fresh, 'member', now), 'Anyone with this link can join. It expires in 7 days and works for 25 people.');
-  assert.equal(pane.linkSentence({ ...fresh, uses: 24 }, 'collaborator', now),
-    'Anyone with this link can join and build with you. It expires in 7 days and works for 1 more person.');
   assert.equal(pane.linkDetail({ ...fresh, uses: 3 }, now), '3 of 25 used · 7 days left');
-  // WP-D: a link with no end date, or for anyone, says so.
+  // WP-D: a link with no end date, or for anyone, says so. A link for anyone
+  // no longer counts its joiners on this line: that is the row's second line.
   const forever = { expiresAt: null, maxUses: null, uses: 0 };
-  assert.equal(pane.linkSentence(forever, 'member', now), 'Anyone with this link can join. It works until you turn it off.');
-  assert.equal(pane.linkSentence({ ...forever, maxUses: 25 }, 'member', now), 'Anyone with this link can join. It has no end date and works for 25 people.');
-  assert.equal(pane.linkSentence({ ...fresh, maxUses: null }, 'member', now), 'Anyone with this link can join. It expires in 7 days.');
-  assert.equal(pane.linkDetail({ ...forever, uses: 4 }, now), '4 joined · no end date');
-  assert.equal(pane.linkDetail({ ...fresh, maxUses: null, uses: 2 }, now), '2 joined · 7 days left');
+  assert.equal(pane.linkDetail({ ...forever, uses: 4 }, now), 'for anyone · no end date');
+  assert.equal(pane.linkDetail({ ...fresh, maxUses: null, uses: 2 }, now), 'for anyone · 7 days left');
+  // A link that has ended says why, in place of how long it had left.
+  assert.equal(pane.linkDetail({ ...fresh, uses: 3, status: 'expired' }, now), '3 of 25 used · expired');
+  assert.equal(pane.linkDetail({ ...fresh, maxUses: 1, uses: 1, status: 'used_up' }, now), '1 of 1 used · all used');
+  assert.equal(pane.linkDetail({ ...fresh, uses: 3, status: 'revoked' }, now), '3 of 25 used · turned off');
+  // The second line: who came in through the link.
+  assert.equal(pane.statusLine({ joined: 2, waiting: 1 }), '2 joined · 1 waiting');
+  assert.equal(pane.statusLine({ joined: 0, waiting: 1 }), '1 waiting');
+  assert.equal(pane.statusLine({ joined: 3, waiting: 0 }), '3 joined');
+  assert.equal(pane.statusLine({ joined: 0, waiting: 0 }), 'No one has joined yet');
   const paneSrc = read('frontend/src/features/app-context/invite-pane.tsx');
   assert.match(paneSrc, /const DAY_CHOICES = \[1, 7, 30, NO_LIMIT\];/);
-  assert.match(paneSrc, /'Until you turn it off'/);
-  assert.match(paneSrc, /'Anyone with the link'/);
-  assert.match(paneSrc, /\{state\.joiningRule\}/);
-  assert.equal(pane.newcomerLine(), 'Someone new to Homeroom joins straight away and goes right into this project.');
-  assert.doesNotMatch(pane.newcomerLine.toString(), /skip/, 'no skips past the waitlist to count');
+  assert.match(paneSrc, /t\('agent:appContext\.invite\.option\.untilOff'\)/);
+  assert.equal(message('agent:appContext.invite.option.untilOff'), 'Until you turn it off');
+  assert.match(paneSrc, /t\('agent:appContext\.invite\.option\.anyone'\)/);
+  assert.equal(message('agent:appContext.invite.option.anyone'), 'Anyone with the link');
+  // #4599 (evan): no explanatory lines under the link. Its row of Your links
+  // says how long and how many; Change sits beside that heading.
+  assert.equal(pane.linkSentence, undefined);
+  assert.equal(pane.newcomerLine, undefined);
+  assert.doesNotMatch(paneSrc, /joiningRule|app-invite-sentence|appContext\.invite\.(?:sentence|fact|newcomer)\b|Someone new to Homeroom|Change how long or how many/);
+  const inviteTexts = Object.entries(JSON.parse(read('frontend/locales/en/agent.json')))
+    .filter(([key]) => key.startsWith('appContext.invite.')).map(([, entry]) => entry.text).join('\n');
+  assert.doesNotMatch(inviteTexts, /Someone new to Homeroom|Change how long or how many|Anyone with this link can join/);
+  assert.match(paneSrc, /id="app-invite-change-open"[^\n]*\n\s*\{t\('agent:appContext\.invite\.change'\)\}\n/);
+  assert.equal(message('agent:appContext.invite.change'), 'Change');
+
+  // #4780: an ended row is greyed, carries its status, keeps its counts, and
+  // has no Turn off (it is already off); a live row keeps its own. The pane
+  // is rendered the way tests/invite-sheet-once.test.js does: the fetch
+  // stubbed, the read prepared, then the pane's first render from it.
+  const paneApi = loadTsx('tests/fixtures/invite-pane-api.ts');
+  const liveRow = {
+    id: 9, token: 'a'.repeat(22), path: '/invite/' + 'a'.repeat(22), maxUses: 25, uses: 3,
+    expiresAt: '2026-10-04T12:00:00Z', createdAt: '2026-10-05T12:00:00Z', createdBy: null,
+    mine: true, note: null, status: 'live', joined: 2, waiting: 1,
+  };
+  const endedRow = { ...liveRow, id: 8, token: 'b'.repeat(22), path: '/invite/' + 'b'.repeat(22), status: 'expired', joined: 1, waiting: 0 };
+  const rowsState = {
+    links: [liveRow, endedRow], manages: false, canCreate: true, grant: 'member',
+    defaults: { days: 7, maxUses: 25 }, limits: { minDays: 1, maxDays: 30, minUses: 1, maxUses: 100 },
+  };
+  const rowsFetch = async () => ({ ok: true, json: async () => rowsState });
+  const realFetch = global.fetch;
+  global.fetch = rowsFetch;
+  let rowsHtml;
+  try {
+    // The answer stays settled: the pane takes it on its first render, as
+    // tests/invite-sheet-once.test.js does.
+    await paneApi.prepareInvite('notes-ab12');
+    rowsHtml = renderToHtml(createElement(paneApi.InvitePane, { slug: 'notes-ab12', label: 'Notes' }));
+  } finally {
+    global.fetch = realFetch;
+    paneApi.forgetPreparedInvite();
+  }
+  const liveRowHtml = rowsHtml.match(/<div[^>]*data-invite-link="9"[^>]*>[\s\S]*?<\/div>/)?.[0] || '';
+  const endedRowHtml = rowsHtml.match(/<div[^>]*data-invite-link="8"[^>]*>[\s\S]*?<\/div>/)?.[0] || '';
+  assert.ok(liveRowHtml && endedRowHtml, 'both rows rendered');
+  assert.match(endedRowHtml, /data-invite-status="expired"/);
+  assert.match(liveRowHtml, /data-invite-status="live"/);
+  assert.doesNotMatch(endedRowHtml, /Turn off/, 'an ended row is already off');
+  assert.match(liveRowHtml, /Turn off/);
+  assert.match(endedRowHtml, /1 joined/, 'its counts stay on the row');
 
   // #3362: the menu's "Invite to community" row is gone; the pane opens from
   // the hub's Invite (and a just-yours project's Share it card), beside the
@@ -260,7 +337,7 @@ test('the words: the landing card, the invite pane', () => {
   assert.match(hubCard, /export function openInviteLinks\(\): void \{[\s\S]*?void ctx\.openInvite\?\.\(\);/);
   assert.match(hubCard, /data-ws-community-invite=""[\s\S]{0,120}onClick=\{openInviteLinks\}/);
   assert.match(hubCard, /data-ws-share-invite=""[\s\S]{0,60}onClick=\{openInviteLinks\}/);
-  assert.match(sheet, /view === 'invite' \? \(\s+<InvitePane slug=\{slug \|\| null\} label=\{appLabel\} \/>/);
+  assert.match(sheet, /view === 'invite' \? \(\s+<InvitePane slug=\{slug \|\| null\} label=\{appLabel\} unnamed=\{!appName\} \/>/);
   assert.match(read('frontend/src/features/app-context/app-context-controller.js'), /showInvite\(\) \{\s+appContextStore\.set\(\{ view: 'invite' \}\);/);
 });
 
@@ -320,7 +397,10 @@ test(`the preview reads like the page: who made it, their note, the project's pi
   assert.match(routes.previewTags({ ...live, building: true, project: { ...live.project, name: 'Run Tracker' }, communityName: 'Sunday Run Club' }, null),
     /og:title" content="Maya is making this for Sunday Run Club"/);
   // The signed-in confirm says the same.
-  assert.match(read('public/js/app.js'), /\? `\$\{standing\.inviterName\} \$\{standing\.building \? 'is making' : 'made'\} it and invited you\.`/);
+  // Each wording is a whole message of its own (shell.json).
+  assert.match(read('public/js/app.js'), /\? \(standing\.building\s+\? PlatformI18n\.t\('shell:invite\.from\.isMaking', \{ inviter: standing\.inviterName \}\)\s+: PlatformI18n\.t\('shell:invite\.from\.made', \{ inviter: standing\.inviterName \}\)\)/);
+  assert.equal(message('shell:invite.from.isMaking', { inviter: 'Maya' }), 'Maya is making it and invited you.');
+  assert.equal(message('shell:invite.from.made', { inviter: 'Maya' }), 'Maya made it and invited you.');
 });
 
 test('the picture is served only through a live link, and only an after-shot of a merged change', () => {
@@ -338,8 +418,11 @@ test('the picture is served only through a live link, and only an after-shot of 
   assert.match(src, /if \(picture\.kind === 'sketch'\) return \{ kind: 'sketch', url: null, darkUrl: null, card: picture\.card \};/);
   const card = read('frontend/src/features/auth/invite-card.tsx');
   assert.doesNotMatch(card, /<iframe/);
-  // "Being made" while its first version is on its way (`building`), no pill otherwise.
-  assert.match(card, /<FeaturedCard name=\{project\.name\} colorKey=\{project\.name\} emoji=\{card\.emoji\} card=\{card\} stage=\{building \? 'making' : 'plain'\} \/>/);
+  // #4053: the thumbnail, without a build line: the invite knows that its
+  // first version is on its way (`building`), not its step. #4394: it is the
+  // hero, wearing the project's own icon.
+  assert.match(card, /<FeaturedCard\s+name=\{project\.name\}\s+colorKey=\{project\.name\}\s+emoji=\{project\.iconEmoji \|\| \(project\.iconUrl \? null : sketch\.emoji\)\}\s+iconUrl=\{project\.iconUrl\}\s+card=\{sketch\}/);
+  assert.doesNotMatch(card, /line=\{/);
   assert.match(card, /<Picture project=\{project\} building=\{!!preview\.building\} \/>/);
 });
 
@@ -355,8 +438,9 @@ test(`a live link's landing is "Made for you"; the pitch stays in the document, 
     "hiddenLast(pitchHidden, 'px-4 flex grow flex-col text-center')",
   ]) assert.ok(landing.includes(hidden), hidden);
   const card = read('frontend/src/features/auth/invite-card.tsx');
-  assert.match(card, /<section data-landing-invite="live"/);
+  assert.match(card, /<section\s+data-landing-invite="live"/);
   assert.match(card, /data-landing-invite-picture=\{picture\.kind\}/);
   assert.match(card, /data-landing-invite-note=""/);
-  assert.match(card, /\{`Join \$\{project\.name\}`\}/);
+  assert.match(card, /\{t\('auth:invite\.join', \{ project: project\.name \}\)\}/);
+  assert.equal(message('auth:invite.join', { project: 'Game Corner' }), 'Join Game Corner');
 });

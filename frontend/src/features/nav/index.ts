@@ -12,8 +12,8 @@ export { ParkedStrip } from './parked-strip';
 export { SkipToNavigation } from './skip-link';
 export { navStore, tabForScreen, TAB_FOR_SCREEN } from './nav-store.js';
 export { parkedStore, readParked, setParked, PARKED_KEY } from './parked-store.js';
-export { RecentsList } from './recents-list';
-export { buildRecents, RECENTS_LIMIT } from './recents';
+export { StripApps, STRIP_APPS } from './strip-apps';
+export { SectionColumn } from './section-column';
 export {
   recentAppsStore, readRecentApps, rememberRecentApp, RECENT_APPS_KEY,
 } from './recent-apps-store.js';

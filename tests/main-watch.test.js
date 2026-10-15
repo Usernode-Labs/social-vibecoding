@@ -49,6 +49,7 @@ require.cache[require.resolve('../src/services/merge-queue')] = {
 
 const unitSuite = require('../src/services/unit-suite');
 const mainWatch = require('../src/services/main-watch');
+const checkRuns = require('../src/services/check-runs');
 
 const SHA = 'c'.repeat(40);
 const OLD = 'd'.repeat(40);
@@ -179,6 +180,67 @@ test('classify: only a verdict ABOUT the code can pause merges', () => {
   assert.equal(mainWatch.classify(fail('Suite setup failed: npm ci exited 1')).state, 'error');
   assert.equal(mainWatch.classify(fail('Suite run exceeded 20 minutes')).state, 'error');
   assert.deepEqual(mainWatch.classify(pass).detail, { summary: pass.row.summary });
+});
+
+test('classify (#4265): a suite that counted failures is failing, even when its log lost the setup line', () => {
+  // PR #4217's log: the summary survived, the setup sentinel and every
+  // `not ok` line did not, and the Job's own failure rode along.
+  const tail = '# tests 21748\n# suites 0\n# pass 21713\n# fail 18\n# cancelled 0\n# skipped 17\n# todo 0';
+  assert.equal(mainWatch.classify(fail(unitSuite.failureDetail(tail, 'BackoffLimitExceeded: Error'))).state, 'failing');
+  // With no test reported, it is still a run that could not happen.
+  assert.equal(mainWatch.classify(fail(unitSuite.failureDetail('npm error code E404', 'BackoffLimitExceeded: Error'))).state, 'error');
+});
+
+test('classify: a suite that never ran is an error, whatever its reason now says', async (t) => {
+  // The rows unit-suite.js writes when the suite never reached `npm test`
+  // (notRunOutcome): their reason no longer starts "Suite setup failed", so
+  // the row's own mark is what keeps them from pausing merges.
+  const empty = await unitSuite.outcomeFromLog({ pool: null, appId: 12, sessionId: 'main-12', succeeded: false, stdout: '', stderr: 'BackoffLimitExceeded: Error', graduated: true });
+  assert.equal(empty.row.couldNotRun, true);
+  assert.doesNotMatch(empty.row.failureReason, /^Suite setup failed/);
+  assert.equal(mainWatch.classify(empty).state, 'error');
+
+  const github = require('../src/services/github');
+  const kubernetes = require('../src/services/kubernetes');
+  const history = require('../src/services/check-history');
+  t.mock.method(github, 'isEnabled', () => true);
+  t.mock.method(github, 'getFileContent', async () => '{"scripts":{"test":"node --test"}}');
+  t.mock.method(github, 'getCloneUrl', async () => 'https://example.test/repo');
+  t.mock.method(history, 'loadGraduated', async () => new Set());
+  t.mock.method(kubernetes, 'runUnitSuiteJob', async () => {
+    throw Object.assign(new Error('jobs.batch "sv-unit-suite-smain-12-x" is forbidden: exceeded quota: social-workers, requested: count/jobs.batch=1'),
+      { code: 403, checkJobNotCreated: true });
+  });
+  const refused = await unitSuite.maybeRunUnitSuite({
+    config: { workerRuntime: 'kubernetes' }, pool: null, appId: 12, sessionId: 'main-12',
+    repoOwner: 'org', repoName: 'demo', ref: SHA,
+  });
+  assert.match(refused.row.failureReason, /^The unit suite could not start: the cluster's job quota was full\. \| /);
+  assert.equal(mainWatch.classify(refused).state, 'error', 'a refused Job says nothing about main');
+  // An install that failed on main's own package files is that commit's
+  // failing row, but main-watch has never paused merges for a suite that
+  // could not get going, and still does not.
+  const lockfile = await unitSuite.outcomeFromLog({
+    pool: null, appId: 12, sessionId: 'main-12', succeeded: false, graduated: true, stderr: 'BackoffLimitExceeded: Error',
+    stdout: [`${unitSuite.ROOT_SENTINEL}=/tmp/w`, unitSuite.CLONED_SENTINEL, 'npm error code ETARGET'].join('\n'),
+  });
+  assert.equal(lockfile.row.setupFailed, true);
+  assert.equal(mainWatch.classify(lockfile).state, 'error');
+  // A red suite is still red.
+  assert.equal(mainWatch.classify(fail(TAP_RED)).state, 'failing');
+});
+
+test('afterMerge: a suite that never ran records error, is not re-run to confirm, and pauses nothing', async () => {
+  const notRun = await unitSuite.outcomeFromLog({ pool: null, appId: 12, sessionId: 'main-12', succeeded: false, stdout: '', stderr: 'BackoffLimitExceeded: Error', graduated: true });
+  const pool = fakePool();
+  const suite = stubSuite(async () => notRun);
+  try {
+    const out = await run(pool);
+    assert.equal(out.state, 'error');
+    assert.equal(suite.calls.length, 1, 'only a red is asked again');
+    assert.deepEqual(pool.writes().map(([state, , clear, set]) => [state, clear, set]), [['error', false, false]]);
+    assert.match(out.detail.failureReason, /^The unit suite stopped before any test ran: /);
+  } finally { suite.restore(); }
 });
 
 // ── afterMerge ───────────────────────────────────────────────────────────
@@ -371,14 +433,16 @@ test('afterMerge: nothing runs without a repo, a sha, or the switch on', async (
 
 test('the pause write is the same CASE for every verdict, keyed on the sha it is about', () => {
   // Pinned as source: green clears, red/confirming sets unless an admin
-  // already resumed THIS sha, anything else leaves the column alone. The
+  // already resumed THIS sha, anything else leaves the column alone. A red
+  // of known flakes alone (detail.flakesOnly) is green for the pause. The
   // fake pool cannot evaluate SQL, so the shape is what stands in for it.
   const fs = require('node:fs');
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'main-watch.js'), 'utf8');
   const write = src.slice(src.indexOf('async function writeState'), src.indexOf('async function afterMerge'));
   assert.match(write, /main_check_paused_sha = CASE\s+WHEN \$5::boolean THEN NULL\s+WHEN \$6::boolean AND lower\(coalesce\(main_check_resumed_sha, ''\)\) <> lower\(\$2::text\) THEN \$2::text\s+ELSE main_check_paused_sha\s+END/);
   assert.match(write, /WHERE id = \$1 AND main_check_sha = \$2::text/);
-  assert.match(write, /state === 'passing', state === 'failing' \|\| state === 'confirming'/);
+  assert.match(write, /const quiet = !!detail && Array\.isArray\(detail\.flakesOnly\) && detail\.flakesOnly\.length > 0;/);
+  assert.match(write, /state === 'passing' \|\| quiet, \(state === 'failing' \|\| state === 'confirming'\) && !quiet/);
 });
 
 // ── resume ───────────────────────────────────────────────────────────────
@@ -436,7 +500,7 @@ function sweepPool(rows, { claim } = {}) {
     calls: inner.calls,
     writes: inner.writes,
     async query(sql, params) {
-      if (/FROM apps\s+WHERE main_check_state IN \('running', 'confirming'\)/.test(sql)) {
+      if (/FROM apps\b/.test(sql) && /main_check_state IN \('running', 'confirming'\)/.test(sql)) {
         inner.calls.push({ sql, params });
         return { rows, rowCount: rows.length };
       }
@@ -457,12 +521,12 @@ test('resumeInterrupted: an interrupted confirmation resumes at the re-run, with
   const suite = scripted(pass);
   try {
     const out = await mainWatch.resumeInterrupted(config, { pool, olderThanMs: 1000 });
-    assert.deepEqual(out.resumed, [{ appId: 12, sha: SHA, was: 'confirming' }]);
+    assert.deepEqual(out.resumed, [{ appId: 12, sha: SHA, was: 'confirming', adopting: false }]);
     await out.done;
     // Only the rows a live run could not still be stamping.
     const sel = pool.calls.find((c) => /main_check_state IN \('running', 'confirming'\)/.test(c.sql));
     assert.match(sel.sql, /main_check_at < NOW\(\) - \(\$1::int \* interval '1 millisecond'\)/);
-    assert.deepEqual(sel.params, [1000]);
+    assert.deepEqual(sel.params, [1000, checkRuns.ORPHAN_MS]);
     assert.equal(suite.calls.length, 1, 'ONE run: the confirmation, not the first run again');
     assert.equal(suite.calls[0].ref, SHA);
     assert.equal(suite.calls[0].sessionId, 'main-12');
@@ -502,12 +566,197 @@ test('resumeInterrupted: an interrupted first run runs the suite again for that 
   const suite = scripted(pass);
   try {
     const out = await mainWatch.resumeInterrupted(config, { pool, olderThanMs: 1000 });
-    assert.deepEqual(out.resumed, [{ appId: 12, sha: SHA, was: 'running' }]);
+    assert.deepEqual(out.resumed, [{ appId: 12, sha: SHA, was: 'running', adopting: false }]);
     await out.done;
     assert.equal(suite.calls.length, 1);
     assert.deepEqual(pool.writes().map(([state]) => state), ['passing']);
     assert.equal(posted.length, 0, 'green after nothing: nobody is told');
   } finally { suite.restore(); }
+});
+
+// 12 Oct 2026: a release restarted the platform while main was confirming a
+// red, and main stayed held until the run was 12 minutes stale and ran from
+// the start. The run's Jobs were still on the cluster. Now a run whose queue
+// row has stopped being heartbeated is taken over at once, and its Jobs read.
+const kubernetes = require('../src/services/kubernetes');
+const DEAD = { dead_run_id: '0f0e0d0c-0b0a-4908-8706-050403020100', dead_owner: 'platform-old-pod', dead_admitted_at: new Date() };
+const KUBE = { workerRuntime: 'kubernetes', kubernetes: { workerNamespace: 'workers' } };
+
+function adoptStubs({ jobs = [{ name: 'sv-unit-suite-smain-12-0f0e0d0c', state: 'running' }], result = { state: 'succeeded' }, outcome = pass } = {}) {
+  const real = {
+    find: kubernetes.findCheckJobs, collect: kubernetes.collectCheckJob,
+    del: kubernetes.deleteSettledCheckJobs, read: unitSuite.outcomeFromLog,
+  };
+  const seen = { find: [], collect: [], deleted: [], read: [] };
+  kubernetes.findCheckJobs = async (cfg, args) => {
+    seen.find.push(args);
+    return { unitSuites: jobs, unitSuite: jobs[0] || null, unitShards: 1, captures: [], capture: null };
+  };
+  kubernetes.collectCheckJob = async (cfg, args) => { seen.collect.push(args); return { stdout: '', stderr: '', exitCode: 0, timedOut: false, ...result }; };
+  kubernetes.deleteSettledCheckJobs = async (cfg, args) => { seen.deleted.push(args); return 1; };
+  unitSuite.outcomeFromLog = async (args) => { seen.read.push(args); return outcome; };
+  return {
+    seen,
+    restore() {
+      kubernetes.findCheckJobs = real.find; kubernetes.collectCheckJob = real.collect;
+      kubernetes.deleteSettledCheckJobs = real.del; unitSuite.outcomeFromLog = real.read;
+    },
+  };
+}
+
+// The sweep's pool, also answering the queue row's take-over: claimed
+// unless `claimed` is false.
+function adoptPool(row, { claimed = true } = {}) {
+  const pool = sweepPool([row]);
+  const query = pool.query;
+  pool.query = async (sql, params) => {
+    if (/UPDATE check_runs SET owner = \$2, heartbeat_at = NOW\(\)/.test(sql)) {
+      pool.calls.push({ sql, params });
+      return { rows: [], rowCount: claimed ? 1 : 0 };
+    }
+    return query(sql, params);
+  };
+  return pool;
+}
+
+test('resumeInterrupted: a run whose process died is taken over at once, and its Jobs read rather than run again', async () => {
+  const pool = adoptPool({ ...INTERRUPTED_CONFIRMING, ...DEAD });
+  const stubs = adoptStubs();
+  const suite = scripted();
+  try {
+    const out = await mainWatch.resumeInterrupted(KUBE, { pool });
+    assert.deepEqual(out.resumed, [{ appId: 12, sha: SHA, was: 'confirming', adopting: true }]);
+    await out.done;
+    const sel = pool.calls.find((c) => /main_check_state IN \('running', 'confirming'\)/.test(c.sql));
+    assert.match(sel.sql, /OR dead\.run_id IS NOT NULL/, 'a dead queue row is enough; no 12-minute wait');
+    assert.equal(suite.calls.length, 0, 'no new run: the confirming run\'s own Jobs are read');
+    assert.deepEqual(stubs.seen.find, [{ sessionId: 'main-12', previewRunId: DEAD.dead_run_id }]);
+    assert.equal(stubs.seen.collect.length, 1);
+    assert.equal(stubs.seen.read[0].sessionId, 'main-12');
+    const claim = pool.calls.find((c) => /UPDATE check_runs SET owner = \$2/.test(c.sql));
+    assert.deepEqual([claim.params[0], claim.params[2]], [DEAD.dead_run_id, 'platform-old-pod'], 'claimed from the owner it was seen with');
+    assert.ok(pool.calls.some((c) => /DELETE FROM check_runs WHERE run_id = \$1/.test(c.sql) && c.params[0] === DEAD.dead_run_id),
+      'its queue row is cleared');
+    assert.deepEqual(stubs.seen.deleted, [{ sessionId: 'main-12', previewRunId: DEAD.dead_run_id }], 'and its read-out Jobs deleted');
+    assert.deepEqual(pool.writes().map(([state]) => state), ['confirming', 'passing']);
+  } finally { suite.restore(); stubs.restore(); }
+});
+
+test('resumeInterrupted: a dead run that left no Jobs, or one another process took first, does not stand in the way', async () => {
+  let pool = adoptPool({ ...INTERRUPTED_CONFIRMING, ...DEAD });
+  let stubs = adoptStubs({ jobs: [] });
+  let suite = scripted(pass);
+  try {
+    await (await mainWatch.resumeInterrupted(KUBE, { pool })).done;
+    assert.equal(suite.calls.length, 1, 'no Jobs to read: the confirmation runs again');
+  } finally { suite.restore(); stubs.restore(); }
+
+  pool = adoptPool({ ...INTERRUPTED_CONFIRMING, ...DEAD }, { claimed: false });
+  stubs = adoptStubs();
+  suite = scripted(pass);
+  try {
+    await (await mainWatch.resumeInterrupted(KUBE, { pool })).done;
+    assert.equal(suite.calls.length, 0);
+    assert.equal(stubs.seen.find.length, 0, 'the process that took it reads it');
+    assert.deepEqual(pool.writes().map(([state]) => state), ['confirming'], 'and stores the verdict');
+  } finally { suite.restore(); stubs.restore(); }
+
+  // A row still waiting for its slot had no Jobs: it is re-driven, as before.
+  pool = adoptPool({ ...INTERRUPTED_CONFIRMING, ...DEAD, dead_admitted_at: null });
+  stubs = adoptStubs();
+  suite = scripted(pass);
+  try {
+    const out = await mainWatch.resumeInterrupted(KUBE, { pool });
+    assert.equal(out.resumed[0].adopting, false);
+    await out.done;
+    assert.equal(stubs.seen.find.length, 0);
+    assert.equal(suite.calls.length, 1);
+  } finally { suite.restore(); stubs.restore(); }
+});
+
+// Two adopters of one dead run at once (a boot sweep and the timer, or two
+// processes in a rollout's overlap): the queue row's claim is a compare-and-
+// set, and the one that lost it used to clear the row anyway, in its
+// `finally`. That deleted the row the winner heartbeats and freed its checks
+// slot while its Jobs still ran. The row here is one in-memory check_runs row
+// that the claim, the delete and the heartbeat really act on.
+function contestedPool(row) {
+  const pool = sweepPool([row], { claim: { was_state: 'running', was_sha: SHA, was_paused_sha: null } });
+  const query = pool.query;
+  const queueRow = { run_id: DEAD.dead_run_id, owner: DEAD.dead_owner, present: true };
+  pool.queueRow = queueRow;
+  pool.query = async (sql, params) => {
+    if (/UPDATE check_runs SET owner = \$2, heartbeat_at = NOW\(\)/.test(sql)) {
+      pool.calls.push({ sql, params });
+      const won = queueRow.present && params[0] === queueRow.run_id && queueRow.owner === params[2];
+      if (won) queueRow.owner = params[1];
+      return { rows: [], rowCount: won ? 1 : 0 };
+    }
+    if (/DELETE FROM check_runs WHERE run_id = \$1/.test(sql)) {
+      pool.calls.push({ sql, params });
+      const hit = queueRow.present && params[0] === queueRow.run_id;
+      if (hit) queueRow.present = false;
+      return { rows: [], rowCount: hit ? 1 : 0 };
+    }
+    return query(sql, params);
+  };
+  return pool;
+}
+
+test('resumeInterrupted: of two adopters of one dead run, only the one that claimed it clears its queue row', async () => {
+  const pool = contestedPool({
+    ...INTERRUPTED_CONFIRMING, ...DEAD, main_check_state: 'running',
+    main_check_detail: { prNumber: 41, sessionId: 3 },
+  });
+  const stubs = adoptStubs();
+  // The winner's Job is still running: its read waits until it ends.
+  let endJob;
+  const jobEnded = new Promise((resolve) => { endJob = resolve; });
+  const collect = kubernetes.collectCheckJob;
+  kubernetes.collectCheckJob = async (cfg, args) => { await jobEnded; return collect(cfg, args); };
+  const suite = scripted(pass);
+  try {
+    const [first, second] = await Promise.all([
+      mainWatch.resumeInterrupted(KUBE, { pool }),
+      mainWatch.resumeInterrupted(KUBE, { pool }),
+    ]);
+    assert.equal(first.resumed[0].adopting, true);
+    assert.equal(second.resumed[0].adopting, true);
+    // Both have tried the claim; the loser has gone, the winner is reading.
+    for (let i = 0; i < 50 && stubs.seen.collect.length === 0; i++) await new Promise((r) => setImmediate(r));
+    const claims = pool.calls.filter((c) => /UPDATE check_runs SET owner = \$2/.test(c.sql));
+    assert.equal(claims.length, 2, 'both asked for the row');
+    assert.equal(stubs.seen.find.length, 1, 'only the winner looks for the Jobs');
+    assert.equal(pool.queueRow.present, true, 'the loser left the row the winner holds');
+    assert.ok(!pool.calls.some((c) => /DELETE FROM check_runs/.test(c.sql)), 'nothing has cleared it yet');
+
+    endJob();
+    await Promise.all([first.done, second.done]);
+    const deletes = pool.calls.filter((c) => /DELETE FROM check_runs WHERE run_id = \$1/.test(c.sql));
+    assert.equal(deletes.length, 1, 'cleared once, by the winner, after its read');
+    assert.equal(pool.queueRow.present, false);
+    assert.equal(suite.calls.length, 0, 'nobody ran the suite again');
+    assert.deepEqual(pool.writes().map(([state]) => state), ['passing'], 'one verdict, the winner\'s');
+  } finally {
+    kubernetes.collectCheckJob = collect;
+    suite.restore(); stubs.restore();
+  }
+});
+
+test('a main run labels its Jobs with its queue row, so a successor can find them', () => {
+  const src = require('node:fs').readFileSync(path.join(__dirname, '..', 'src/services/main-watch.js'), 'utf8');
+  assert.match(src, /\.\.\.\(slot\.runId \? \{ previewRunId: slot\.runId \} : \{\}\)/);
+  // The names a UUID run id gives an app's split suite, at the longest app
+  // ids: each Job and each input Secret its own, within the 63-character
+  // limit (the 10 Oct 2026 outage was shards sharing one Secret).
+  const runId = 'ffffffff-ffff-4fff-bfff-ffffffffffff';
+  const run = kubernetes.checkJobRunName('unit-suite', 'main-99999', runId);
+  const names = [run, ...['u2', 'u3'].map((sfx) => kubernetes.withSuffix(run, sfx))];
+  const secrets = [kubernetes.withSuffix(run, 'input'), ...['u2', 'u3'].map((sfx) => kubernetes.withSuffix(run, `${sfx}-input`))];
+  for (const n of [...names, ...secrets]) assert.ok(n.length <= 63, n);
+  assert.equal(new Set(names.map((n) => n.slice(0, 63))).size, 3);
+  assert.equal(new Set(secrets).size, 3);
+  assert.ok(names.every((n) => n.startsWith('sv-unit-suite-smain-99999-')), 'found by findCheckJobs\' name prefix');
 });
 
 test('resumeInterrupted: nothing interrupted, nothing runs; the switch off, no query', async () => {
@@ -522,7 +771,7 @@ test('resumeInterrupted: nothing interrupted, nothing runs; the switch off, no q
     // else in the cluster is stamped within it.
     assert.equal(mainWatch.staleMs(), unitSuite.UNIT_SUITE_TIMEOUT_MS + 120000);
     const sel = pool.calls.find((c) => /main_check_state IN \('running', 'confirming'\)/.test(c.sql));
-    assert.deepEqual(sel.params, [mainWatch.staleMs()]);
+    assert.deepEqual(sel.params, [mainWatch.staleMs(), checkRuns.ORPHAN_MS]);
 
     process.env.MAIN_WATCH_ENABLED = '0';
     const off = await mainWatch.resumeInterrupted(config, { pool });
@@ -542,7 +791,7 @@ test('the leader re-drives at boot and on a timer', () => {
   const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
   const lead = server.slice(server.indexOf('async function becomeLeader()'));
   assert.match(lead, /\.then\(\(\) => mainWatch\.resumeInterrupted\(config\)\)/, 'in the boot recovery chain');
-  assert.match(lead, /checkHarvest\.start\(config\);\s*mainWatch\.start\(config\);/, 'beside the harvest ticker');
+  assert.match(lead, /\.catch\(\(err\) => \{[\s\S]{0,200}?\}\);\s*mainWatch\.start\(config\);/, 'right after the boot recovery chain');
   const stop = mainWatch.start(config, { intervalMs: 60 * 60 * 1000 });
   assert.equal(typeof stop, 'function');
   stop();
@@ -564,9 +813,10 @@ test('the schema carries the pause column and the backfill for the derived pause
   const fs = require('node:fs');
   const schema = fs.readFileSync(path.join(__dirname, '..', 'src', 'db', 'schema.sql'), 'utf8');
   assert.match(schema, /ALTER TABLE apps ADD COLUMN IF NOT EXISTS main_check_paused_sha VARCHAR\(40\);/);
-  // Idempotent: red, not resumed for that red, and not yet carrying the
+  // Idempotent: red, not resumed for that red, not a red of known flakes
+  // alone (which pauses nothing on purpose), and not yet carrying the
   // column. Runs at every boot without moving anything twice.
-  assert.match(schema, /UPDATE apps\s+SET main_check_paused_sha = main_check_sha\s+WHERE main_check_state = 'failing'\s+AND main_check_sha IS NOT NULL\s+AND main_check_paused_sha IS NULL\s+AND lower\(coalesce\(main_check_resumed_sha, ''\)\) <> lower\(main_check_sha\);/);
+  assert.match(schema, /UPDATE apps\s+SET main_check_paused_sha = main_check_sha\s+WHERE main_check_state = 'failing'\s+AND main_check_sha IS NOT NULL\s+AND main_check_paused_sha IS NULL\s+AND lower\(coalesce\(main_check_resumed_sha, ''\)\) <> lower\(main_check_sha\)\s+AND \(main_check_detail -> 'flakesOnly'\) IS NULL;/);
   // The API serializes the column with its siblings.
   const access = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'app-access.js'), 'utf8');
   assert.match(access, /'main_check_resumed_sha', 'main_check_paused_sha',/);

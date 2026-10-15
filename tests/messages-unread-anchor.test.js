@@ -34,6 +34,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
@@ -341,6 +342,52 @@ test('the hook: a tap on the banner goes back to the line; a link opening offers
   assert.equal(linked.render(use2).view.banner, false, 'opened at a linked message: the line, and no banner');
 });
 
+test('run six: a tap on the banner always moves toward the new messages', () => {
+  const { bannerTarget, BANNER_STILL_PX } = loadTsx(MODULE);
+  assert.equal(BANNER_STILL_PX, 24);
+  const box = { lineTop: 1500, scrollHeight: 4000, clientHeight: 600 };
+  // Up in what was read: back to the line, placed as the opening places it.
+  assert.deepEqual(bannerTarget({ ...box, scrollTop: 400 }), { top: 1436, to: 'line' });
+  // Read on a little, the line still in view: back up to it.
+  assert.deepEqual(bannerTarget({ ...box, scrollTop: 1600 }), { top: 1436, to: 'line' });
+  // At the line already (where the opening put it): a glide there would not
+  // move, so on to the latest, where the new messages end.
+  assert.deepEqual(bannerTarget({ ...box, scrollTop: 1436 }), { top: 3400, to: 'latest' });
+  assert.deepEqual(bannerTarget({ ...box, scrollTop: 1436 + BANNER_STILL_PX - 1 }), { top: 3400, to: 'latest' });
+  assert.deepEqual(bannerTarget({ ...box, scrollTop: 1436 + BANNER_STILL_PX }), { top: 1436, to: 'line' });
+  // A line near the end is placed no further than the bottom.
+  assert.deepEqual(bannerTarget({ lineTop: 3900, scrollHeight: 4000, clientHeight: 600, scrollTop: 0 }), { top: 3400, to: 'line' });
+});
+
+test('the hook: a tap on the banner where the opening left the reader goes on to the latest, and the banner goes', (t) => {
+  const tick = withFrames(t);
+  const r = fakeReact();
+  const { useUnreadAffordances } = loadTsx(MODULE, { stubs: { react: r.React } });
+  const el = fakeScroller({ scrollHeight: 4000, clientHeight: 600, scrollTop: 1436 });
+  const line = { current: fakeLine(el, 1500) };
+  const rows = [row(1), row(2), row(3)];
+  const use = () => useUnreadAffordances({ current: el }, line, { conversation: 9, markKey: '9:2', lineAt: 3, rows });
+  r.render(use);
+  let out = r.render(use);
+  assert.equal(out.view.banner, true, 'opened at the line: "2 new messages" is up');
+  out.toLine();
+  assert.deepEqual(el.scrolledTo.at(-1), { top: 3400, behavior: 'smooth' },
+    'the transcript moves: to the latest, not "to the line" it already shows (run six)');
+  el.scroll();
+  tick();
+  out = r.render(use);
+  assert.deepEqual(out.view, { banner: false, jump: false, arrived: 0 }, 'the banner is done, and at the bottom nothing floats');
+
+  // With no line drawn any more, a tap still goes to where what is new ends.
+  const bare = fakeScroller({ scrollHeight: 4000, clientHeight: 600, scrollTop: 100 });
+  const r2 = fakeReact();
+  const mod = loadTsx(MODULE, { stubs: { react: r2.React } });
+  const use2 = () => mod.useUnreadAffordances({ current: bare }, { current: null }, { conversation: 9, markKey: '9:2', lineAt: null, rows });
+  r2.render(use2);
+  r2.render(use2).toLine();
+  assert.deepEqual(bare.scrolledTo.at(-1), { top: 4000, behavior: 'smooth' });
+});
+
 test('the hook: nothing at all over a conversation at its bottom with nothing new', (t) => {
   withFrames(t);
   const r = fakeReact();
@@ -443,6 +490,14 @@ test('the "New" line, the banner and the jump button, as drawn', () => {
   assert.match(jump({ shown: true, dot: true }), /bg-violet-600 ring-2/);
   assert.match(jump({ shown: false }), /inert=""/);
   assert.match(jump({ shown: false }), /pointer-events-none translate-y-2 scale-90 opacity-0/);
+
+  // Run six: the banner is centred over the top; Jump to latest sits at the
+  // right edge of the foot, low, as iMessage puts it, not over the middle of
+  // a message's words.
+  const overlay = (edge) => renderToHtml(createElement(chat.TranscriptOverlay, { edge }));
+  assert.equal(overlay('top'), '<div class="relative z-10 h-0 shrink-0" data-transcript-overlay="top"><div class="pointer-events-none absolute inset-x-0 flex top-2 justify-center px-4"></div></div>');
+  assert.equal(overlay('foot'), '<div class="relative z-10 h-0 shrink-0" data-transcript-overlay="foot"><div class="pointer-events-none absolute inset-x-0 flex bottom-2 justify-end px-3"></div></div>');
+  assert.doesNotMatch(overlay('foot'), /justify-center/);
 
   // On the compositor: opacity and transform only, no delay, no size change.
   for (const html of [banner(true), jump({ shown: true })]) {
@@ -607,11 +662,14 @@ test('the conversation opens at the line, draws it once, and measures after its 
   assert.match(THREAD, /if \(lineAt !== null && snap\.messages\[index \+ hidden\]\.id >= lineAt\) drawLine\(\);/);
   // The banner only with a mark (nothing for none); the button always there, hidden at the bottom.
   assert.match(THREAD, /\{mark \? \(\s*<TranscriptOverlay edge="top">\s*<NewMessagesBanner shown=\{unread\.banner\} onClick=\{toLine\}>\{newMessagesLabel\(mark\.count\)\}<\/NewMessagesBanner>\s*<\/TranscriptOverlay>\s*\) : null\}/);
-  assert.match(THREAD, /<JumpToLatestButton shown=\{unread\.jump\} dot=\{unread\.arrived > 0\} aria-label=\{jumpLabel\(unread\.arrived\)\} title="Jump to latest" onClick=\{jumpToLatest\} \/>/);
+  assert.equal(message('messages:thread.jumpToLatest'), 'Jump to latest');
+  assert.match(THREAD, /<JumpToLatestButton shown=\{unread\.jump\} dot=\{unread\.arrived > 0\} aria-label=\{jumpLabel\(unread\.arrived\)\} title=\{t\('messages:thread\.jumpToLatest'\)\} onClick=\{jumpToLatest\} \/>/);
   // Both boxes sit beside the scroller, which keeps its class string.
   assert.match(THREAD, /<\/TranscriptOverlay>\s*\) : null\}\s*\{\/\*[\s\S]*?\*\/\}\s*<div ref=\{scroller\} className="messages-thread-scroll platform-safe-scroll" aria-live="polite">/);
-  assert.match(THREAD, /<TranscriptOverlay edge="foot">\s*<JumpToLatestButton shown=\{unread\.jump\}[^\n]*\/>\s*<\/TranscriptOverlay>\s*<div className="messages-typing"/,
-    'the button hangs between the scroller and the typing line, over the transcript\'s foot');
+  // Run six: at the right edge (the overlay's foot), hung just above the
+  // composer, below the typing line, never over a message's words mid-transcript.
+  assert.match(THREAD, /<div className="messages-typing" aria-live="polite">\{typingLine\(t, typing\)\}<\/div>\s*\{\/\*[\s\S]*?\*\/\}\s*<TranscriptOverlay edge="foot">\s*<JumpToLatestButton shown=\{unread\.jump\}[^\n]*\/>\s*<\/TranscriptOverlay>\s*<MessageComposer \/>/,
+    'the button hangs between the typing line and the composer');
   // A linked window's latest is not drawn: the button goes to the present.
   assert.match(THREAD, /if \(snap\.nextAfter\) \{ pinned\.current = true; jumpToPresent\(\); return; \}\s*toLatest\(\);/);
 });
@@ -667,9 +725,20 @@ test('the hook, watching content: a topic opened at its card shows the way down 
 });
 
 test('Jump to latest alone: hidden until the reader is up the transcript, and a sibling of the scroller', () => {
-  const html = renderToHtml(createElement(loadTsx('frontend/src/features/messages/jump-to-latest.tsx').JumpToLatest, { scroller: { current: null } }));
-  assert.match(html, /^<div class="relative z-10 h-0 shrink-0" data-transcript-overlay="foot"><div class="pointer-events-none absolute inset-x-0 flex justify-center px-4 bottom-3"><button type="button" inert="" data-jump-latest=""/);
+  const mod = loadTsx('frontend/src/features/messages/jump-to-latest.tsx');
+  const html = renderToHtml(createElement(mod.JumpToLatest, { scroller: { current: null } }));
+  assert.match(html, /^<div class="relative z-10 h-0 shrink-0" data-transcript-overlay="foot"><div class="pointer-events-none absolute inset-x-0 flex bottom-2 justify-end px-3"><button type="button" inert="" data-jump-latest=""/,
+    'run six: at the right edge, low, just above the composer');
   assert.match(html, /aria-label="Jump to latest" title="Jump to latest"/);
+
+  // #4553: docked, the button sits in its own strip instead of the overlay —
+  // hidden with the page's full height back when there is nothing to jump to.
+  const docked = renderToHtml(createElement(mod.JumpToLatest, { scroller: { current: null }, docked: true }));
+  assert.match(docked, /^<div data-transcript-strip="foot" class="hidden"><button type="button" inert="" data-jump-latest=""/);
+  assert.doesNotMatch(docked, /data-transcript-overlay/);
+  // Shown, the strip puts it at the right edge too, the one place it has.
+  const SOURCE = read('frontend/src/features/messages/jump-to-latest.tsx');
+  assert.match(SOURCE, /className=\{view\.jump \? 'flex shrink-0 justify-end px-3 py-1' : 'hidden'\}/);
 
   assert.match(THREAD, /<\/div>\s*<JumpToLatest scroller=\{scroller\} \/>\s*<MessageComposer threadRootId=\{rootId\} \/>/, 'a reply thread beside a conversation');
 });
@@ -688,11 +757,22 @@ test('the group chat\'s channel and threads get it beside their scrollers, at th
 
   const shell = loadTsx('frontend/src/features/group-chat/thread-shell.tsx');
   assert.equal(shell.THREAD_FOLLOW_PX, 80);
-  assert.match(GROUP, /scroll\.scrollHeight - scroll\.scrollTop - scroll\.clientHeight < 80/, 'a thread follows within 80px');
+  assert.match(GROUP, /THREAD_FOLLOW_PX: 80,/, 'a thread follows within 80px');
+  assert.match(GROUP, /scroll\.scrollHeight - scroll\.scrollTop - scroll\.clientHeight < GroupChat\.THREAD_FOLLOW_PX/);
   const props = { withHeader: true, readOnly: false, notice: '', placeholder: 'Reply', maxLength: 4000 };
   const fill = renderComponent('frontend/src/features/group-chat/thread-shell.tsx', 'ThreadShell', { ...props, fill: true });
-  assert.match(fill, /<div id="gc-thread-messages" class="py-2 space-y-0\.5"><\/div><\/div><div class="relative z-10 h-0 shrink-0" data-transcript-overlay="foot">/,
-    'after the thread\'s scroller, which holds the card and the messages');
+  // #4553: the button docks in its own strip after the scroller, so it never
+  // covers the topic card (or, on a change's page, the Votes and Testing
+  // cards and their buttons).
+  assert.match(fill, /<div id="gc-thread-messages" class="py-2 space-y-0\.5"><\/div><\/div><div data-transcript-strip="foot" class="hidden"><button type="button" inert="" data-jump-latest=""/,
+    'after the thread\'s scroller, docked in its own strip between it and the composer');
+  assert.doesNotMatch(fill, /data-transcript-overlay/, 'nothing floats over the topic thread');
+  for (const kind of ['change', 'request']) {
+    const page = renderComponent('frontend/src/features/group-chat/thread-shell.tsx', 'ThreadShell', { ...props, fill: true, [kind]: true });
+    assert.match(page, /<div data-transcript-strip="foot" class="hidden"><button type="button" inert="" data-jump-latest=""/,
+      `a ${kind}'s page docks the button the same way`);
+    assert.doesNotMatch(page, /data-transcript-overlay/, `nothing floats over a ${kind}'s cards`);
+  }
   const boxed = renderComponent('frontend/src/features/group-chat/thread-shell.tsx', 'ThreadShell', { ...props, fill: false });
   assert.doesNotMatch(boxed, /data-jump-latest/, 'the boxed layout is a small inline box: no floating control');
 });

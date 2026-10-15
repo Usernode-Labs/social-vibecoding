@@ -150,6 +150,11 @@ function topicAttributeRoutes(config) {
             error: `This app already has the maximum of ${attrs.MAX_CUSTOM_CATEGORIES_PER_APP} categories in use. Retire one by moving its cards elsewhere.`,
           });
         }
+        // #4417: an archived topic is closed. Its name is not a new
+        // category either: dapp.json owns that key.
+        if (err.message === attrs.TOPIC_CLOSED_ERROR) {
+          return res.status(400).json({ error: 'That topic is archived. Choose a live topic or another category.', code: 'topic_closed' });
+        }
         throw err;
       }
       if (field === 'category') {

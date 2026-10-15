@@ -2,6 +2,7 @@
 
 const crypto = require('crypto');
 const { ALLOWED_KINDS } = require('./mobile-push-preferences');
+const notifyCopy = require('./homeroom-bot-notify-copy');
 
 const MAX_TTL_MS = 24 * 60 * 60 * 1000;
 const RECIPIENT_CONTEXT = 'usernode-social-push-recipient-v1';
@@ -66,52 +67,37 @@ function plainMarkdown(value) {
     .replace(/^[ \t]{0,3}(?:#{1,6}[ \t]+|>[ \t]?)/gm, '');
 }
 
-// B4: the Homeroom bot's four moments, and its answer to what somebody just
-// wrote to it, as notifications.detail carries them ("hrbot:<moment>:<app>",
-// services/homeroom-bot-dm.js notificationDetail). Said in a few words, from
-// "Homeroom bot", instead of "@homeroom_bot replied to you" over the start of
-// its message. The bell words the same moments the same way
-// (frontend/src/features/notifications/notifications.js botMomentLine), and
+// B4 / "one story": the Homeroom bot's moments, and its answer to what
+// somebody just wrote to it, as notifications.detail carries them
+// (homeroom-bot-dm.js notificationDetail). The words are
+// homeroom-bot-notify-copy.js's: the request and its project over what
+// happened, instead of "@homeroom_bot replied to you" over the start of its
+// message. The bell words the same detail
+// (frontend/src/features/notifications/notifications.js), and
 // tests/homeroom-bot-notify.test.js holds the two together.
-const BOT_DETAIL_RE = /^hrbot:([a-z_]{1,20}):(.*)$/;
 function botMomentCopy(detail, message) {
-  const m = BOT_DETAIL_RE.exec(typeof detail === 'string' ? detail : '');
-  if (!m) return null;
-  const app = cleanText(m[2]);
-  const words = {
-    question: app ? `${app}: I have a question` : 'I have a question',
-    ready: app ? `${app} is ready to try` : 'Your change is ready to try',
-    ready_group: app ? `Your change to ${app} is ready to try` : 'Your change is ready to try',
-    ready_broken: app ? `${app} is built, but not everything works yet` : 'Your change is built, but not everything works yet',
-    stopped: app ? `${app}: your change stopped. I said why in our chat` : 'Your change stopped. I said why in our chat',
-    // 5 Oct 2026: what the DM it opens ends with (homeroom-bot-dm.js dmText
-    // 'build_failed'), whose why is there. A reply starts it again; "A person
-    // can pick it up" was a dead end for the person it was for.
-    stopped_build: app ? `${app}: I couldn't finish building it. Reply and I'll try again` : 'I couldn\'t finish building it. Reply and I\'ll try again',
-    stopped_blocked: app ? `${app}: I can't build it as written. Tell me more` : 'I can\'t build it as written. Tell me more',
-    stopped_person: app ? `${app}: this needs a person to decide` : 'This needs a person to decide',
-    stopped_empty: app ? `${app}: I couldn't find anything to build. Tell me more` : 'I couldn\'t find anything to build. Tell me more',
-    stopped_first: app ? `${app}: I couldn't start building it. You can still post a request` : 'I couldn\'t start building it',
-    stopped_preview: app ? `${app}: the preview didn't start. I'm trying again` : 'The preview didn\'t start. I\'m trying again',
-    held: app ? `${app}: I'll start it on Monday` : 'I\'ve paused until Monday',
-    live: app ? `Your change to ${app} is live` : 'Your change is live',
-    live_first: app ? `${app} is live` : 'Your project is live',
-    live_soon: app ? `Your change to ${app} is going live` : 'Your change is going live',
-    live_first_soon: app ? `${app} is going live` : 'Your project is going live',
-    reply: message,
-  }[m[1]];
-  return words ? { title: 'Homeroom bot', body: words } : null;
+  const copy = notifyCopy.botMomentCopy(detail, message);
+  if (!copy || !copy.body) return null;
+  return { title: copy.title, body: copy.body };
 }
 
 // WP-E: the bot's build moments as their own kinds ("Your builds"). Worded
 // by the moment the detail names, like its messages above; these are what a
 // row without one says.
 const BUILD_FALLBACK = Object.freeze({
-  build_ready: 'Your change is ready to try',
-  build_needs_you: 'I have a question',
-  build_stopped: 'Your change stopped. I said why in our chat',
-  build_live: 'Your change is live',
+  build_ready: 'Ready to try. Try it, and approve it if you\'re happy.',
+  build_needs_you: 'I need your answer before I go on.',
+  build_stopped: 'Stopped. I said why in our chat.',
+  build_live: 'It\'s live.',
 });
+
+// "One story": a change named the way every ping names it, "{change title}
+// · {project}". '' without a title.
+function changeTitle(label, app) {
+  if (!label) return '';
+  const title = truncate(label, TITLE_EMBED_MAX);
+  return app ? `${title} · ${app}` : title;
+}
 
 function truncate(value, max) {
   if (value.length <= max) return value;
@@ -119,9 +105,9 @@ function truncate(value, max) {
 }
 
 const AUTO_SOLVE_BODIES = Object.freeze({
-  spec: 'Spec ready. Review it in the app',
+  spec: 'Plan ready. Review it in the app',
   code: "Code ready. Review and promote when you're happy",
-  spec_code: "Spec and code ready. Review and promote when you're happy",
+  spec_code: "Plan and code ready. Review and promote when you're happy",
 });
 
 function daysSince(value, now) {
@@ -142,6 +128,39 @@ function minutesSince(value, now) {
 // Parsed here rather than required from there: that module reaches the
 // database helpers, and copy assembly stays dependency-free.
 const PLATFORM_LIMIT_DETAIL_RE = /^(apps|sessions|github|github_app)_(warn|full):(\d{1,7}):(\d{1,7})$/;
+
+// services/platform-incident-alerts.js tokens (#4296), parsed here for the
+// same reason: "digest:<total>:<kind>=<n>,..." or "hour:<kind>:<n>".
+const INCIDENT_DIGEST_RE = /^digest:(\d{1,5}):((?:[a-z][a-z0-9_]{0,23}=\d{1,5})(?:,[a-z][a-z0-9_]{0,23}=\d{1,5})*)?$/;
+const INCIDENT_HOUR_RE = /^hour:([a-z][a-z0-9_]{0,23}):(\d{1,5})$/;
+
+function incidentKindLabel(kind) {
+  return String(kind).replace(/_/g, ' ');
+}
+
+function platformIncidentCopy(detail) {
+  const hour = INCIDENT_HOUR_RE.exec(detail);
+  if (hour) {
+    const [, kind, n] = hour;
+    return {
+      title: 'Unexpected events piling up',
+      body: `${n} ${incidentKindLabel(kind)} in the last hour. Admin \u2192 Unexpected events has each one`,
+    };
+  }
+  const digest = INCIDENT_DIGEST_RE.exec(detail);
+  if (!digest) {
+    return { title: 'Unexpected events', body: 'Open Admin \u2192 Unexpected events to see what happened' };
+  }
+  const total = Number(digest[1]);
+  const parts = digest[2] ? digest[2].split(',').map((p) => p.split('=')) : [];
+  const listed = parts.reduce((sum, [, n]) => sum + Number(n), 0);
+  const kinds = parts.map(([kind, n]) => `${incidentKindLabel(kind)} ${n}`);
+  if (total > listed) kinds.push(`other ${total - listed}`);
+  return {
+    title: `${total} unexpected event${total === 1 ? '' : 's'} yesterday`,
+    body: kinds.length ? kinds.join(', ') : 'Open Admin \u2192 Unexpected events to see what happened',
+  };
+}
 
 function platformLimitCopy(detail) {
   const m = PLATFORM_LIMIT_DETAIL_RE.exec(detail);
@@ -264,6 +283,14 @@ function buildCopy(kind, context, now) {
           ? `@${actor} mentioned you in ${quotedTitle}` : `@${actor} mentioned you`),
         body: message,
       };
+    // #3952: named with @ in a request somebody filed. `detail` is its number.
+    case 'issue_mention': {
+      const issue = /^\d+$/.test(detail) ? ` #${detail}` : '';
+      return actor && {
+        title: withApp(`@${actor} mentioned you in request${issue}`),
+        body: 'Open the request to see what they wrote',
+      };
+    }
     case 'reply':
       return actor && {
         title: withApp(quotedTitle
@@ -277,6 +304,16 @@ function buildCopy(kind, context, now) {
         title: withApp(`@${actor} replied in a thread`),
         body: message,
       };
+    // #4535: somebody posted in a request's discussion you filed or posted
+    // in. `detail` is the request's number, so the title says which one;
+    // without it, "a request". The reply itself is the body.
+    case 'issue_thread_reply': {
+      const issue = /^\d+$/.test(detail) ? `request #${detail}` : 'a request';
+      return actor && {
+        title: withApp(`@${actor} replied on ${issue}`),
+        body: message,
+      };
+    }
     // A person's message in a small private group's discussion
     // (services/group-channel-notify.js). Only a fresh row rings, so this is
     // nearly always the one message; `detail` counts the messages folded in
@@ -361,9 +398,9 @@ function buildCopy(kind, context, now) {
     case 'spec_shared':
       return {
         title: withApp(actor
-          ? (quotedTitle ? `@${actor} shared ${quotedTitle} with you` : `@${actor} shared a spec with you`)
-          : 'A spec was shared with you'),
-        body: detail ? `Spec v${detail}. Take a look and leave feedback` : 'Take a look and leave feedback',
+          ? (quotedTitle ? `@${actor} shared ${quotedTitle} with you` : `@${actor} shared a plan with you`)
+          : 'A plan was shared with you'),
+        body: detail ? `Plan v${detail}. Take a look and leave feedback` : 'Take a look and leave feedback',
       };
     case 'session_done':
       return {
@@ -400,11 +437,13 @@ function buildCopy(kind, context, now) {
         body: AUTO_SOLVE_BODIES[detail] || '',
       };
     }
-    // B7: "Ben's change to Supper Club is ready to try", with its title under it.
+    // B7 / "one story": the change and its project over who asked for it
+    // and what to do ("Water reminders · Plant Pal" over "@ben's change is
+    // ready to try. Try it and vote.").
     case 'change_ready':
       return {
-        title: `${actor ? `@${actor}'s change` : 'A change'}${app ? ` to ${app}` : ''} is ready to try`,
-        body: label ? truncate(label, TITLE_EMBED_MAX) : 'Try it, and approve it if you\'re happy with it',
+        title: changeTitle(label, app) || 'A change is ready to try',
+        body: `${actor ? `@${actor}'s change` : 'This change'} is ready to try. Try it and vote.`,
       };
     case 'pr_proposed':
       return actor && {
@@ -456,16 +495,38 @@ function buildCopy(kind, context, now) {
             : `The vote carried. ${outcome}`,
       };
     }
-    // #1688: the author pushed a new version of a proposal this person had
+    // #1688: the author pushed a new version of a change this person had
     // backed. Their yes no longer counts until they look again; the row in
-    // the app carries the one tap that keeps it.
-    case 'revision_recheck':
+    // the app carries the one tap that keeps it. "One story": it says who
+    // the update was for (`detail` is "epoch:<n>[:<asker>]", the asker
+    // "@name" or "you", notifications.createRevisionRecheckNotifications),
+    // never "after your feedback" when it was somebody else's.
+    case 'revision_recheck': {
+      const subject = changeTitle(label, app);
+      const asker = /^epoch:\d+:(you|@[A-Za-z0-9_.-]{1,40})$/.exec(detail || '');
+      const who = actor ? `@${actor}` : 'Someone';
+      const bot = context.sourceIsSynthetic === true;
+      const after = asker
+        ? ` after ${asker[1]} asked for a change`
+        : (bot ? ' after a request for changes' : '');
       return {
-        title: withApp(quotedTitle ? `Still good? ${quotedTitle} was updated` : 'Still good? A change you backed was updated'),
-        body: actor
-          ? `@${actor} pushed an update after your feedback. One tap keeps your yes`
-          : 'A new version was pushed after your feedback. One tap keeps your yes',
+        title: subject ? `Still good? ${subject}` : 'Still good? A change you backed was updated',
+        body: `${who} updated it${after}. One tap keeps your yes.`,
       };
+    }
+    // #4787: the change this person voted on went live. #2897's split, as
+    // pr_merged above: a child app's merge is live when the row arrives; the
+    // platform's own is released a few minutes after. `detail` is 'yes' when
+    // their vote was yes (createVotedChangeMergedNotifications).
+    case 'voted_change_merged': {
+      const voted = detail === 'yes' ? 'You voted yes.' : 'You voted on it.';
+      return {
+        title: changeTitle(label, app) || (context.appSelfHosted === true ? 'A change you voted on was approved' : 'A change you voted on is live'),
+        body: context.appSelfHosted === true
+          ? `Approved. It will be live in a few minutes. ${voted}`
+          : `It's live. ${voted}`,
+      };
+    }
     // #1688: the Friday card. `detail` is "<merged>:<open>" — how many
     // changes went live this week and how many proposals are waiting.
     case 'weekly_digest': {
@@ -584,6 +645,10 @@ function buildCopy(kind, context, now) {
     // cap, the level and the figures, so the push can say how close it is.
     case 'platform_limit':
       return platformLimitCopy(detail);
+    // #4296: errors that should not happen, a daily digest or one kind past
+    // its hourly line (services/platform-incident-alerts.js). Full admins.
+    case 'platform_incident':
+      return platformIncidentCopy(detail);
     default:
       return null;
   }

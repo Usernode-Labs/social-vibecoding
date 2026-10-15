@@ -212,9 +212,25 @@ test('non-string and over-long bodies are rejected before GitHub', async () => {
       body: JSON.stringify({ body: null }),
     });
     assert.equal(res.status, 400);
-    res = await patchBody(server, 12, 'x'.repeat(10001));
+    // #4194: GitHub's own limit, not the 10,000 it was.
+    res = await patchBody(server, 12, 'x'.repeat(65537));
     assert.equal(res.status, 400);
+    assert.match((await res.json()).error, /max 65536 chars/);
     assert.equal(patchCalls.length, 0);
+  } finally {
+    server.close();
+  }
+});
+
+test('#4194: a body as long as GitHub allows is saved whole', async () => {
+  const server = await startServer();
+  try {
+    const next = `**Source:** usernode user (tester)\n\n${'y'.repeat(65536 - 36)}`;
+    assert.equal(next.length, 65536);
+    const res = await patchBody(server, 12, next);
+    assert.equal(res.status, 200);
+    assert.equal(patchCalls.length, 1);
+    assert.equal(patchCalls[0].body, next);
   } finally {
     server.close();
   }

@@ -41,6 +41,8 @@ import type { MouseEvent } from 'react';
 
 import { ChevronLeftIcon } from '@/components/ui/icons';
 
+import { useMessages } from '../../lib/i18n/react';
+
 /**
  * One complete literal: Tailwind's extractor is a regex over source text, so a
  * class name that is assembled at runtime is a class name that never gets
@@ -59,13 +61,14 @@ export interface AuthBackButtonProps {
 }
 
 export function AuthBackButton({ href, onClick }: AuthBackButtonProps) {
+  const t = useMessages();
   return (
     <a
       href={href}
       data-auth-back=""
       className={AUTH_BACK_CLASS}
       style={AUTH_BACK_STYLE}
-      aria-label="Back"
+      aria-label={t('core:common.back')}
       onClick={onClick}
     >
       <ChevronLeftIcon className="w-6 h-6" aria-hidden="true" />

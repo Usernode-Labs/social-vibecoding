@@ -389,6 +389,51 @@ test('development continuation validates the owned session then queues its pinne
   assert.equal(result.classicPath, '#app/demo/dev/sessions/44');
 });
 
+test('development continuation refuses an older session instead of handing off a turn (#4268)', async () => {
+  // #3976 made a classic session read-only: POST /chat answers it with
+  // `classic_session_read_only`. Handing the browser that turn could only
+  // end there, so the capability answers with the same refusal itself.
+  const turnRoute = inventory.routes.find((item) => (
+    item.method === 'POST' && item.path === '/api/sessions/:id/chat'
+  ));
+  const registry = new CapabilityRegistry(classicCapabilityDefinitions());
+  const definition = registry.get(turnRoute.capabilityId);
+  assert.match(definition.summary, /Older sessions are read-only/,
+    'the model is told not to offer it for one');
+  const detail = (session) => context({
+    classicApi: {
+      route: () => ({}),
+      async invoke() {
+        return {
+          ok: true, status: 200,
+          authoritativeResult: { session },
+          modelResult: { ok: true, status: 200, data: {} },
+        };
+      },
+    },
+  });
+  const classicSessions = require('../src/services/classic-sessions');
+
+  const refused = await registry.execute(turnRoute.capabilityId, {
+    sessionId: '45', task: 'Keep going.',
+  }, detail({ id: 45, app_slug: 'demo', status: 'active', classic_read_only: true }));
+  assert.equal(refused.authoritativeResult.ok, false);
+  assert.equal(refused.authoritativeResult.status, 409);
+  assert.deepEqual(refused.authoritativeResult.data, classicSessions.refusal(),
+    'the message the session\'s own route refuses with');
+  assert.equal(Object.hasOwn(refused.authoritativeResult.data, 'action'), false,
+    'and no turn is handed to the browser');
+  assert.equal(refused.modelResult.ok, false);
+  assert.equal(refused.modelResult.data.code, 'classic_session_read_only');
+  assert.equal(refused.classicPath, '#app/demo/dev/sessions/45', 'reading it stays open');
+
+  // A CLI hand-off still continues in its dev chat on the web.
+  const handoff = await registry.execute(turnRoute.capabilityId, {
+    sessionId: '46', task: 'Fix the failing check.',
+  }, detail({ id: 46, app_slug: 'demo', status: 'active', source: 'cli_handoff', classic_read_only: false }));
+  assert.equal(handoff.authoritativeResult.data.action.transport, 'development_handoff');
+});
+
 test('generic mutation confirmations show bounded details without secret values', () => {
   const route = inventory.routes.find((item) => (
     item.status === 'mapped' && item.confirmation === 'required'

@@ -2,8 +2,8 @@
 
 import { AdminUI } from './admin-console.js';
 
-// Rollout health (#admin/homeroom-bot, Overview): before the bot is on for
-// everyone, whether it is working, over the last week. The numbers and
+// Rollout health (#admin/homeroom-bot, Overview): whether the bot is
+// working, over the last week. The numbers and
 // which of them are past their line come from the dashboard's payload
 // (services/homeroom-bot-health.js); this file only says them. A figure
 // with too little behind it says so instead of passing a verdict, and only
@@ -122,6 +122,58 @@ export function healthRows(h: RolloutHealthData, now: number = Date.now()): Heal
   ];
 }
 
+// #4210: an error that should not happen, as the payload's incidents list
+// them (services/platform-incidents.js): build_interrupted, and a red check
+// that is not its change's doing (checks_not_change).
+export interface Incident {
+  at: string;
+  kind: string;
+  app: string | null;
+  runId: number | null;
+  issueNumber: number | null;
+  why: string | null;
+  outcome: string | null;
+}
+
+export interface Incidents {
+  days: number;
+  total: number;
+  items: Incident[];
+}
+
+export const INCIDENT_KIND: Record<string, string> = {
+  build_interrupted: 'Build interrupted',
+  checks_not_change: 'Red check not caused by its change',
+};
+
+export const INCIDENT_OUTCOME: Record<string, string> = {
+  resumed: 'carried on from its plan',
+  requeued: 'started over from the request',
+  failed: 'stopped: too many in a row',
+  // A first version's review a restart cut short (homeroom-bot.js
+  // noteReviewIncident): what was proposed.
+  fix_kept: 'review fix booted, proposed',
+  fix_rolled_back: 'review fix rolled back, proposed',
+  proposed_as_it_stood: 'proposed as it stood',
+  review_carried_on: 'review carried on where it was cut',
+  not_open: 'request no longer open',
+};
+
+/** One incident as a line: when, what, where, why, what became of it. Pure. */
+export function incidentLine(i: Incident): string {
+  const at = new Date(i.at);
+  const when = Number.isNaN(at.getTime()) ? '' : at.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  const where = i.app ? `${i.app}${i.issueNumber != null ? ` #${i.issueNumber}` : ''}` : '';
+  return [
+    when,
+    INCIDENT_KIND[i.kind] || i.kind,
+    where,
+    i.runId != null ? `run ${i.runId}` : '',
+    i.why || '',
+    i.outcome ? (INCIDENT_OUTCOME[i.outcome] || i.outcome) : '',
+  ].filter(Boolean).join(' · ');
+}
+
 /** One failed DM answer as a line: when, who, why, what answered. Pure. */
 export function failureLine(f: ChatFailure): string {
   const at = new Date(f.at);
@@ -135,10 +187,14 @@ export function failureLine(f: ChatFailure): string {
   ].filter(Boolean).join(' · ');
 }
 
-export function RolloutHealth({ health, failures }: { health?: RolloutHealthData | null; failures?: ChatFailure[] }) {
+export function RolloutHealth({ health, failures, incidents }: {
+  health?: RolloutHealthData | null; failures?: ChatFailure[]; incidents?: Incidents | null;
+}) {
   const rows = health ? healthRows(health) : [];
   const flagged = rows.filter((r) => r.watch).length;
   const list = failures || [];
+  const unexpected = incidents?.items || [];
+  const unexpectedTotal = incidents?.total || 0;
   return (
     <div className={`${AdminUI.card} p-4`} id="admin-homeroom-bot-rollout">
       <div className={AdminUI.cardHeader}>
@@ -173,6 +229,22 @@ export function RolloutHealth({ health, failures }: { health?: RolloutHealthData
             {list.map((f, i) => <li key={`${f.at}-${i}`} className="break-words">{failureLine(f)}</li>)}
           </ul>
         ) : null}
+      </details>
+      <details className="mt-2" id="admin-homeroom-bot-unexpected" data-count={unexpectedTotal}>
+        <summary className={`${AdminUI.muted} cursor-pointer`}>
+          {unexpectedTotal
+            ? `Unexpected events in the last ${incidents?.days ?? 7} days (${unexpectedTotal}${unexpectedTotal > unexpected.length ? `, the latest ${unexpected.length}` : ''})`
+            : `No unexpected events in the last ${incidents?.days ?? 7} days`}
+        </summary>
+        {unexpected.length ? (
+          <ul className="text-sm space-y-1 mt-2" id="admin-homeroom-bot-unexpected-list">
+            {unexpected.map((i, n) => <li key={`${i.at}-${n}`} className="break-words" data-kind={i.kind}>{incidentLine(i)}</li>)}
+          </ul>
+        ) : null}
+        {/* #4296: the whole log, every kind, with filters and daily counts. */}
+        <a className={`${AdminUI.btn.link} text-sm inline-block mt-2`} href="#admin/incidents" id="admin-homeroom-bot-unexpected-all">
+          All unexpected events
+        </a>
       </details>
     </div>
   );

@@ -19,6 +19,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { PasswordInput } from '@/components/ui/password-input';
 
+import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { useMountedOnReveal } from '../../lib/mount-on-reveal';
 import { returnKeyHandler } from '../../lib/return-to-next';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
@@ -28,16 +29,14 @@ import { SessionConfirmationNotice, useSessionConfirmation } from './session-con
 import {
   AUTH_SCREEN_IDS,
   blockedOffline,
+  offlineSignInText,
   fetchSessionMint,
   HANDLE_FIELD,
   hiddenLast,
   NativeLoginPreparationError,
   type NativeLoginFailureDetails,
-  PASSWORD_RULE,
   sessionMintFailureMessage,
   useAuthScreensPatch,
-  USERNAME_PUBLIC_NOTE,
-  USERNAME_RULE,
 } from './shared';
 
 /**
@@ -68,6 +67,7 @@ type RegisterField = 'username' | 'password';
 export function RegisterScreen() {
   const rootRef = useRef<HTMLElement>(null);
   useVisibilityHiddenClass(rootRef, AUTH_SCREEN_IDS.register, false);
+  const t = useMessages('auth');
   // The screen's interior mounts on its first reveal, not in the prerender —
   // see lib/mount-on-reveal.ts. AuthScreens.show() asks for it (through
   // window.UsernodeReact.mount) before it wires or reveals the screen, so the
@@ -125,7 +125,7 @@ export function RegisterScreen() {
           (data.field === 'username' ? username : password).current?.focus();
           return;
         }
-        setError(data.error || 'Registration failed');
+        setError(data.error || t('auth:register.failed'));
         return;
       }
       await finishLogin();
@@ -133,7 +133,7 @@ export function RegisterScreen() {
       setError(sessionMintFailureMessage(error));
       setDetails(error instanceof NativeLoginPreparationError ? error.details : null);
     }
-  }, [clearConfirmation, finishLogin]);
+  }, [clearConfirmation, finishLogin, t]);
 
   const live = useRef({ registerOnShow });
   live.current = { registerOnShow };
@@ -151,7 +151,7 @@ export function RegisterScreen() {
     const onOfflineChange = (e: Event) => {
       const detail = (e as CustomEvent<{ offline?: boolean }>).detail;
       if (!detail || detail.offline !== false) return;
-      setError((current) => (current && /offline/i.test(current) ? null : current));
+      setError((current) => (current && (current === offlineSignInText() || /offline/i.test(current)) ? null : current));
     };
     window.addEventListener('usernode:offline-change', onOfflineChange);
     return () => window.removeEventListener('usernode:offline-change', onOfflineChange);
@@ -172,10 +172,10 @@ export function RegisterScreen() {
             Homeroom
           </h1>
           <p className="text-[15px] text-zinc-500 dark:text-zinc-400 text-center mb-2 italic">
-            A place where users own and build apps together
+            {t('auth:register.tagline')}
           </p>
           <p className="text-[15px] text-zinc-500 dark:text-zinc-400 text-center mb-8">
-            Create your account
+            {t('auth:register.lead')}
           </p>
           {/* Return walks code, username, password, then registers (#3907). */}
           <form id="register-form" className="space-y-4" onSubmit={onSubmit} onKeyDown={returnKeyHandler()}>
@@ -183,7 +183,7 @@ export function RegisterScreen() {
             <div className={AUTH_CARD}>
             <div className={AUTH_ROW}>
               <label htmlFor="reg-code" className={AUTH_LABEL}>
-                Activation Code
+                {t('auth:register.codeLabel')}
               </label>
               <Input
                 ref={code}
@@ -195,7 +195,7 @@ export function RegisterScreen() {
                 enterKeyHint="next"
                 {...AUTHFIELD}
                 className="font-mono"
-                placeholder="enter activation code"
+                placeholder={t('auth:register.codePlaceholder')}
               />
             </div>
             <div className={AUTH_ROW}>
@@ -203,7 +203,7 @@ export function RegisterScreen() {
                 htmlFor="reg-username"
                 className={AUTH_LABEL}
               >
-                Username
+                {t('auth:register.usernameLabel')}
               </label>
               <Input
                 ref={username}
@@ -219,7 +219,7 @@ export function RegisterScreen() {
                 aria-invalid={fieldError?.field === 'username' ? true : undefined}
                 onInput={() => setFieldError((f) => (f?.field === 'username' ? null : f))}
                 {...AUTHFIELD}
-                placeholder="choose a username"
+                placeholder={t('auth:register.usernamePlaceholder')}
               />
               {/*
                 #3575: who sees the name, said next to the field where it is
@@ -228,13 +228,13 @@ export function RegisterScreen() {
                 stays put while the person fixes the name.
               */}
               <p id="reg-username-public" className={FIELD_HINT}>
-                {USERNAME_PUBLIC_NOTE}
+                {t('auth:register.usernamePublic')}
               </p>
               <p
                 id="reg-username-hint"
                 className={fieldError?.field === 'username' ? FIELD_HINT_ERROR : FIELD_HINT}
               >
-                {fieldError?.field === 'username' ? fieldError.message : USERNAME_RULE}
+                {fieldError?.field === 'username' ? fieldError.message : t('auth:register.usernameRule')}
               </p>
             </div>
             <div className={AUTH_ROW}>
@@ -242,7 +242,7 @@ export function RegisterScreen() {
                 htmlFor="reg-password"
                 className={AUTH_LABEL}
               >
-                Password
+                {t('auth:register.passwordLabel')}
               </label>
               <PasswordInput
                 ref={password}
@@ -255,13 +255,13 @@ export function RegisterScreen() {
                 aria-invalid={fieldError?.field === 'password' ? true : undefined}
                 onInput={() => setFieldError((f) => (f?.field === 'password' ? null : f))}
                 {...AUTHFIELD}
-                placeholder="choose a password"
+                placeholder={t('auth:register.passwordPlaceholder')}
               />
               <p
                 id="reg-password-hint"
                 className={fieldError?.field === 'password' ? FIELD_HINT_ERROR : FIELD_HINT}
               >
-                {fieldError?.field === 'password' ? fieldError.message : PASSWORD_RULE}
+                {fieldError?.field === 'password' ? fieldError.message : t('auth:register.passwordRule')}
               </p>
             </div>
             </div>
@@ -270,13 +270,12 @@ export function RegisterScreen() {
               <NativeLoginDetailsLink details={details} />
             </div>
             <Button type="submit" layout="full" variant="pillAccent" size="pillLg" ink="solidLate">
-              Register
+              {t('auth:register.submit')}
             </Button>
           </form>
           <p className="mt-3">
             <a href="#login" className={PILL_LINK}>
-              {'Already have an account? '}
-              <span className="ml-1 text-violet-700 dark:text-violet-400">Sign in</span>
+              <RichMessage id="auth:register.haveAccount" components={[<span className="ml-1 text-violet-700 dark:text-violet-400" />]} />
             </a>
           </p>
         </div>

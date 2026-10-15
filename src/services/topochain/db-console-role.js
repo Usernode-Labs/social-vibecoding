@@ -84,6 +84,9 @@ const ROLE = 'topochain_console_ro';
 
 let _available = false;
 let _unavailableReason = 'topochain console role not initialized';
+// When this process last read the leader's record (loadShared).
+let _sharedReadAt = 0;
+const SHARED_TTL_MS = 30 * 1000;
 
 function quoteIdent(name) {
   return `"${name}"`;
@@ -91,7 +94,7 @@ function quoteIdent(name) {
 
 // Pure-ish (only reads, never writes): turns the live console scope into
 // the GRANT statements the role needs. The scope comes from
-// `db-console-scope.js`, which asks information_schema for the actual
+// `db-console-scope.js`, which asks the system catalog for the actual
 // tables and columns (rather than hardcoding either) so a table or column
 // added by a future migration becomes selectable automatically on the
 // NEXT boot's grant refresh, while the deny lists are still consulted for
@@ -192,6 +195,51 @@ async function ensureConsoleRole(config) {
     _unavailableReason = `topochain console role bootstrap failed: ${err.message}`;
     log.warn('topochain-console', 'Role bootstrap failed — console disabled', { err: err.message });
   }
+  await recordBootstrap(config);
+}
+
+// Whether the setup succeeded, for the processes that never run it (a web
+// process never leads, docs/plans/web-and-conductor.md): platform_db_roles,
+// beside the prod-debug role's. This role has no password, so no secret is
+// written. Never throws.
+async function recordBootstrap(config) {
+  try {
+    await getPool(config).query(
+      `INSERT INTO platform_db_roles (role, ok, reason, secret_enc, release, ensured_at)
+       VALUES ($1, $2, $3, NULL, $4, NOW())
+       ON CONFLICT (role) DO UPDATE SET ok = EXCLUDED.ok, reason = EXCLUDED.reason,
+         secret_enc = NULL, release = EXCLUDED.release, ensured_at = NOW()`,
+      [ROLE, _available, _available ? null : _unavailableReason, process.env.GIT_SHA || null]);
+  } catch (err) {
+    log.warn('topochain-console', 'Could not record the role for the other processes', { err: err.message });
+  }
+}
+
+// A process that did not set the role up takes the leader's word for it:
+// the role exists with this release's grants or the previous one's, which
+// the leader replaces at its election (REVOKE, then GRANT: never wider than
+// either). Read at most every SHARED_TTL_MS; it also primes the table-name
+// cache the validator reads, as the setup does. Never throws.
+async function loadShared(pool) {
+  if (_available || Date.now() - _sharedReadAt < SHARED_TTL_MS) return;
+  _sharedReadAt = Date.now();
+  try {
+    const { rows: [row] } = await pool.query(
+      'SELECT ok, reason FROM platform_db_roles WHERE role = $1', [ROLE]);
+    if (!row) {
+      _unavailableReason = 'topochain console role not set up by the leader yet';
+      return;
+    }
+    if (!row.ok) {
+      _unavailableReason = row.reason || 'topochain console role bootstrap failed on the leader';
+      return;
+    }
+    await loadConsoleScope(pool);
+    _available = true;
+    _unavailableReason = null;
+  } catch (err) {
+    log.warn('topochain-console', 'Could not read the leader\'s record of the role', { err: err.message });
+  }
 }
 
 function isAvailable() {
@@ -207,11 +255,13 @@ function unavailableReason() {
 function _resetForTests() {
   _available = false;
   _unavailableReason = 'topochain console role not initialized';
+  _sharedReadAt = 0;
 }
 
 module.exports = {
   ROLE,
   ensureConsoleRole,
+  loadShared,
   isAvailable,
   unavailableReason,
   buildGrantStatements,

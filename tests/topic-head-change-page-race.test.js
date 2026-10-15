@@ -16,8 +16,8 @@
 // blank. The checks runner hits it because it moves between routes by hash
 // (a change page's cohort, then the issue's); a cold load never does.
 //
-// The head paint now skips a head that belongs to a change page when the
-// topic is not one; the topic sub-view paints the head itself after the swap.
+// The head paint skipped a head that belonged to a change page when the
+// topic was not one, until #4455 made a change's page a thread as well.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -69,45 +69,35 @@ function harness() {
   return { AppView, els, calls };
 }
 
-// A #gc-thread-head that sits inside `inside` ('.dev-change-overview' for the
-// change page's, '.dev-thread' for the thread panel's slot).
-function head(inside) {
+// A #gc-thread-head inside the thread panel's shell.
+function head() {
   return {
-    closest: (selector) => (selector === inside ? {} : null),
+    closest: (selector) => (selector === '.dev-thread' || selector === '.dev-request' ? {} : null),
     querySelector: () => null,
     querySelectorAll: () => [],
   };
 }
 
-for (const kind of ['issue', 'gov']) {
-  test(`a ${kind} topic never paints into the change page's head still on screen`, () => {
+// #4455 retired the race at its root: a change's page is a thread too, so
+// `#gc-thread-head` is ONE kind of node again, the thread panel's slot, and
+// every topic's head is mounted into it per paint. There is no second
+// TopicHead for an issue's paint to land in, and so no guard to keep.
+for (const kind of ['issue', 'gov', 'proposal', 'session']) {
+  test(`a ${kind} topic paints into the thread panel's slot`, () => {
     const { AppView, els, calls } = harness();
     AppView._devTopic = { kind, id: 900008 };
-    AppView._findTopicItem = () => ({ id: 900008, number: 900008, state: 'open', status: 'open' });
-    els['gc-thread-head'] = head('.dev-change-overview');
-    AppView._renderTopicHead();
-    assert.equal(calls.mount.length, 0, 'no portal mounted over React\'s own TopicHead');
-    assert.equal(calls.publish.length, 0, 'and nothing published into it');
-  });
-
-  test(`a ${kind} topic still paints into the thread panel's slot`, () => {
-    const { AppView, els, calls } = harness();
-    AppView._devTopic = { kind, id: 900008 };
-    AppView._findTopicItem = () => ({ id: 900008, number: 900008, state: 'open', status: 'open' });
-    els['gc-thread-head'] = head('.dev-thread');
+    AppView._findTopicItem = () => ({ id: 900008, number: 900008, state: 'open', status: kind === 'session' ? 'active' : 'promoted' });
+    els['gc-thread-head'] = head();
     AppView._renderTopicHead();
     assert.deepEqual(calls.mount, [els['gc-thread-head']]);
     assert.equal(calls.publish.length, 1);
   });
 }
 
-test('the guard is the change page\'s own head only, and tolerates a host without closest()', () => {
+test('the change page\'s own head and its guard are gone (#4455)', () => {
   const src = SRC.slice(SRC.indexOf('  _renderTopicHead() {'));
-  assert.match(src, /if \(!changePage && head\.closest && head\.closest\('\.dev-change-overview'\)\) return;/);
-  const { AppView, els, calls } = harness();
-  AppView._devTopic = { kind: 'issue', id: 900008 };
-  AppView._findTopicItem = () => ({ id: 900008, number: 900008, state: 'open' });
-  els['gc-thread-head'] = { querySelector: () => null, querySelectorAll: () => [] };
-  AppView._renderTopicHead();
-  assert.equal(calls.mount.length, 1, 'older harnesses and hosts keep painting');
+  assert.doesNotMatch(SRC, /dev-change-overview|mountChangePage/);
+  assert.match(src, /react\.mountTopicHead\(head\);/);
+  const mount = fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-board', 'mount.ts'), 'utf8');
+  assert.doesNotMatch(mount, /mountChangePage|dev-change-overview/);
 });

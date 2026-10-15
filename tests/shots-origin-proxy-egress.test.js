@@ -20,7 +20,7 @@ const path = require('node:path');
 const http = require('node:http');
 const net = require('node:net');
 const { spawn } = require('node:child_process');
-const { closedPromise, waitForReady, stopProxy } = require('./lib/shots-proxy');
+const { closedPromise, waitForReady, stopProxy, startOnFreePorts } = require('./lib/shots-proxy');
 
 const PUBLIC = '93.184.215.14';
 const FAKE_DNS = {
@@ -35,12 +35,6 @@ async function listen(handler) {
   const server = http.createServer(handler);
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   return { server, port: server.address().port, origin: `http://127.0.0.1:${server.address().port}` };
-}
-
-async function freePort() {
-  const { server, port } = await listen(() => {});
-  await new Promise((resolve) => server.close(resolve));
-  return port;
 }
 
 async function network(t) {
@@ -59,15 +53,15 @@ async function network(t) {
   return { outside, pair, outsidePort: outsideServer.port, base: pairServer.origin };
 }
 
-async function startProxy(t, net_, { platformAssets = '1', memorySampleMs = null } = {}) {
+function startProxy(t, net_, options) {
+  return startOnFreePorts((ports) => startProxyOn(t, net_, ports, options));
+}
+
+async function startProxyOn(t, net_, ports, { platformAssets = '1', memorySampleMs = null } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-proxy-egress-'));
   const ready = path.join(dir, 'proxy.ready');
   const notes = path.join(dir, 'notes.jsonl');
   fs.writeFileSync(notes, '');
-  const ports = {
-    member: await freePort(), read_only_admin: await freePort(), full_admin: await freePort(),
-    guest: await freePort(),
-  };
   const proxy = spawn(process.execPath, [
     '--require', path.join(__dirname, 'lib', 'shots-proxy-fake-network.js'),
     path.join(__dirname, '..', 'worker', 'shots-origin-proxy.js'),

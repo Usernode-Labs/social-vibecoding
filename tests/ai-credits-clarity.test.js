@@ -18,9 +18,14 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+
+// The scripts under test read their text from the language runtime's
+// global; give them the real English one.
+globalThis.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 const { renderComponent } = require('./lib/render-tsx');
 
 const root = path.join(__dirname, '..');
@@ -118,10 +123,17 @@ test('locked credits render an unlock meter and lead with the identity action', 
     { key: 'locked', text: 'verify account · unlock $10/day' },
   ]);
   assert.equal(CO.meterTone(state), 'amber');
-  assert.match(CO.lead(state), /Connect GitHub or X.*\$10\/day/);
+  // #4378: the card says they are out, and asks them to verify for more.
+  assert.equal(CO.lead({ ...state, capWindow: 'weekly' }), "You're out of this week's free AI credits.");
   const options = CO.options({ verificationRequired: true });
-  assert.equal(options[0].id, 'social-identity');
-  assert.equal(options[0].hash, '#settings/connectors');
+  assert.equal(options[0].id, 'verify-account');
+  assert.equal(options[0].cta, 'Verify my account');
+  assert.equal(options[0].hash, '#settings/linked-accounts');
+  const card = CO.cardHtml({ verificationRequired: true, capWindow: 'weekly', error: 'server words' });
+  assert.match(card, /<div class="dc-credits-card-lead">You&#39;re out of this week&#39;s free AI credits\.<\/div><div class="dc-credits-card-detail" data-credits-verify-line="1">Verify your account to get more: add your phone number, or link GitHub and X\.<\/div>/);
+  assert.match(card, /data-credits-verify-line="1">[^<]*<\/div><div class="dc-credits-verify"><button type="button" class="dc-pr-btn dc-credits-go" data-credits-verify="1" data-credits-hash="#settings\/linked-accounts">Verify my account<\/button>/);
+  assert.equal((card.match(/Verify my account/g) || []).length, 1, 'once, not again as a row of the list');
+  assert.doesNotMatch(card, /server words/, 'the verify line says it in place of the refusal');
 });
 
 test('the meter states what is left, in words a builder can act on', () => {
@@ -229,6 +241,7 @@ function makeDevChat({ hasApiKey = false, search = '' } = {}) {
       publishAttachStrip: () => {},
     },
   };
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(fs.readFileSync(path.join(root, 'public/js/build-venues.js'), 'utf8'), sandbox);
   vm.runInContext(fs.readFileSync(path.join(root, 'public/js/credit-options.js'), 'utf8'), sandbox);
@@ -357,8 +370,11 @@ test('the drawer row renders the remainder and shares the reset wording', () => 
     fs.readFileSync(path.join(root, 'frontend/src/features/header/ai-budget.tsx'), 'utf8'),
     /'data-credits-remaining': '1'/,
   );
-  assert.match(AI_CREDIT_SRC, /money\(remaining\) \+ ' left'/, 'rendered, not tooltip-only');
-  assert.match(AI_CREDIT_SRC, /CO\.resetSentence\(state\)/,
+  assert.match(AI_CREDIT_SRC, /runs\('wallet:credit\.meter\.left', amounts, \['dim', leftTone\]\)/,
+    'rendered, not tooltip-only');
+  assert.match(AI_CREDIT_SRC, /remaining: money\(remaining\)/);
+  assert.equal(message('wallet:credit.meter.left', { remaining: '$19.00' }), '<0>· </0><1>$19.00 left</1>');
+  assert.match(AI_CREDIT_SRC, /CO\.resetSentence\(state, undefined, \{ withUtc: true \}\)/,
     'one wording for the boundary, shared with the dev chat');
   assert.ok(!/Resets at midnight UTC/.test(AI_CREDIT_SRC),
     'no second, hand-written copy of the reset sentence');
@@ -369,18 +385,18 @@ test('the drawer row renders the remainder and shares the reset wording', () => 
 
 // ── The checks that keep it visible ─────────────────────────────────────
 
-test('dapp.json points at the credits indicator and the warning', () => {
+test('dapp.json points at the credits indicator', () => {
   const named = DAPP.tests.filter((t) => /#593/.test(t.name));
-  assert.ok(named.length >= 4, `#593 checks present (found ${named.length})`);
-  const shot = named.filter((t) => /shot=credits-low/.test(t.path));
-  assert.ok(shot.length >= 2, 'the screenshot-state deep link is checked, not just added');
   assert.ok(named.some((t) => /data-credits-remaining/.test(t.expectSelector || '')),
     'the visible remainder has a check — the drawer row\'s, since #1353 took '
       + 'the composer meter\'s copy of the figure out');
-  assert.ok(named.some((t) => /dc-credits-low-banner/.test(t.expectSelector || '')),
-    'so does the low-balance warning');
-  assert.ok(named.some((t) => /dc-credits-banner \[data-credits-reset\]/.test(t.expectSelector || '')),
-    'and the exhausted banner’s reset statement');
+  // #3976: the dev chat's low-balance warning and the exhausted banner's
+  // reset statement were checked on classic sessions (?shot=credits-low,
+  // /dev/sessions/9904xx). Classic sessions are read-only now and their
+  // banners stand down, so those checks were retired with the chat; the
+  // unit assertions in this file still pin both banners.
+  assert.ok(!DAPP.tests.some((t) => /dc-credits-(low-)?banner/.test(t.expectSelector || '')),
+    'no declared check drives a banner a read-only session no longer shows');
 });
 
 test('?shot=credits-exhausted reaches the refusal state (#1348)', () => {

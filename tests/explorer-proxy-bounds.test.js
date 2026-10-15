@@ -84,12 +84,13 @@ test.before(async () => {
 
 test.after(() => { upstream?.close(); });
 
-function buildApp() {
+function buildApp(overrides = {}) {
   const app = express();
   // Mounted BEFORE any body parser, exactly as server.js does it.
   app.use(explorerProxyRoutes({
     explorerUpstream: `127.0.0.1:${upstreamPort}`,
     explorerUpstreamBase: '/api',
+    ...overrides,
   }));
   return app;
 }
@@ -338,13 +339,23 @@ test('the upstream response stream has an error handler', () => {
 
 test('a hanging upstream does not hang the caller forever', async () => {
   upstreamMode = 'hang';
-  const server = await listen(buildApp());
+  // A short idle timeout override (a config option that exists for tests)
+  // keeps this test under a second instead of waiting out the 10s production
+  // value. The old wall-clock bound (Date.now() across a 10s window) flaked
+  // once on main: a wall-clock jump during the wait made the assertion fail
+  // even though the 502 arrived on time. performance.now() is monotonic, so
+  // a jump cannot fake a late answer, and the bound below is still generous
+  // for a 250ms timeout.
+  const server = await listen(buildApp({ upstreamIdleTimeoutMs: 250 }));
   try {
     // The idle timeout is the one that fires here (no bytes at all), and it
     // must produce a controlled answer rather than an unhandled throw.
-    const started = Date.now();
+    const started = performance.now();
     const res = await call(server, '/explorer-api/active_chain');
     assert.equal(res.status, 502, 'a dead upstream is a 502, not a hang');
-    assert.ok(Date.now() - started < UPSTREAM_IDLE_TIMEOUT_MS + 5000);
+    // Bound against the PRODUCTION constant: generous for a 250ms timeout,
+    // and it still proves the call ended by timing out rather than waiting
+    // on the default.
+    assert.ok(performance.now() - started < UPSTREAM_IDLE_TIMEOUT_MS);
   } finally { server.close(); }
 });

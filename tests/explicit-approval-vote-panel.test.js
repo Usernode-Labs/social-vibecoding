@@ -45,6 +45,7 @@ function makeAppView(opts = {}) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(`${MERGE_STATUS_SRC}\n${APP_VIEW_SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
@@ -204,6 +205,7 @@ test('_votingHelpText: an unflagged row is completely unchanged', () => {
 test('MergeStatus.lifecycle: a flagged in-vote row keeps its state + gains the flag', () => {
   const sandbox = { console };
   sandbox.window = sandbox; sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(`${MERGE_STATUS_SRC};globalThis.__MS = MergeStatus;`, sandbox);
   const MS = sandbox.__MS;
@@ -337,6 +339,7 @@ const serverCopy = require('../src/services/explicit-approval');
 test('the browser copy says exactly what the server says, for every reason', () => {
   const sandbox = { console };
   sandbox.window = sandbox; sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(`${MERGE_STATUS_SRC};globalThis.__MS = MergeStatus;`, sandbox);
   const MS = sandbox.__MS;
@@ -379,12 +382,18 @@ test('statusPillState: votes in but no other member yet is not a green pass', ()
     check_state: 'passing', requires_explicit_approval: true, explicit_approval_reason: 'governance',
     needs_other_member_yes: true, other_member_yes_count: 0,
   };
+  // #3826: the wait gets words, not a bare count. The tally reads full, so
+  // "1 / 1" in the pass tone read as a mistake; the pill now says what it
+  // waits for, in the amber the conversation tier wears, with the reason
+  // as its tooltip.
   const waiting = AppView.statusPillState(row);
-  assert.equal(waiting.label, '1 / 1');
-  assert.equal(waiting.tone, 'progress');
+  assert.equal(waiting.key, 'needs_member');
+  assert.equal(waiting.label, 'Needs another member’s Yes · 1/1');
+  assert.equal(waiting.tone, 'attention');
   assert.equal(waiting.title, 'Changes to how changes are approved need a Yes from another member.');
   const passed = AppView.statusPillState({ ...row, yes_count: 2, votes_required: 2, other_member_yes_count: 1 });
   assert.equal(passed.tone, 'ok');
+  assert.equal(passed.key, 'tally');
 });
 
 test('voteCountPill: the chip tooltip names the reason', () => {
@@ -441,6 +450,7 @@ test('the requirement row: "A Yes from another member", with the reason as its l
 test('MergeStatus.lifecycle: votes in, no other member yet, is its own state', () => {
   const sandbox = { console };
   sandbox.window = sandbox; sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(`${MERGE_STATUS_SRC};globalThis.__MS = MergeStatus;`, sandbox);
   const MS = sandbox.__MS;

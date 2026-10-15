@@ -1,12 +1,15 @@
 import { Button } from '@/components/ui/button';
 import { SectionHeading, StatusLine } from '@/components/ui/field';
 import { PasswordInput } from '@/components/ui/password-input';
+import { useMessages } from '../../../lib/i18n/react';
 
 import { pressButton, returnKeyHandler } from '../../../lib/return-to-next';
 
 /**
  * Change password (issue #282). Default form calls POST /api/me/password
- * (current password required). In the Homeroom native app with a linked
+ * (current password required, except for an account with none yet, #4595:
+ * settings.js hides that row when /api/auth/me says hasPassword is false,
+ * and shows "Add a password" over the section and on its button, #4891). In the Homeroom native app with a linked
  * wallet, a "Don't have a password? Create one" link switches to the
  * wallet-backed creation mode (cp-wallet-mode shown, current password hidden),
  * which signs a wallet-check challenge and calls POST
@@ -23,11 +26,26 @@ function submitShown(): void {
 }
 
 export function PasswordSection() {
+  const t = useMessages('settings');
   return (
     <div data-settings-section="password" className="hidden">
       <div id="change-password-section" onKeyDown={returnKeyHandler({ submit: submitShown })}>
-        <SectionHeading title="Change password">
-          Set a new password for web login. If an admin gave you a temporary password, enter it as your current password here.
+        {/*
+            #4891: an account with no password (it signs in with an emailed
+            code) is offered "Add a password", the words the sign-up step
+            sends it here with. Both wordings are rendered once, here and on
+            the button; settings.js shows the one that fits
+            (`_setChangePasswordMode`), as it does the current-password row.
+        */}
+        <SectionHeading
+          title={(
+            <>
+              <span id="cp-title-change">{t('settings:password.title')}</span>
+              <span id="cp-title-add" className="hidden">{t('settings:password.titleAdd')}</span>
+            </>
+          )}
+        >
+          {t('settings:password.intro')}
         </SectionHeading>
         {/* One card, the three fields as its rows. */}
         <div className="rounded-2xl bg-white dark:bg-zinc-900 overflow-hidden">
@@ -36,7 +54,7 @@ export function PasswordSection() {
               id="cp-current"
               autoComplete="current-password"
               enterKeyHint="next"
-              placeholder="Current password"
+              placeholder={t('settings:password.currentPlaceholder')}
               box="card"
               ring="bare"
               hint="dim"
@@ -47,7 +65,7 @@ export function PasswordSection() {
               id="cp-new"
               autoComplete="new-password"
               enterKeyHint="next"
-              placeholder="New password (at least 8 characters)"
+              placeholder={t('settings:password.newPlaceholder')}
               box="card"
               ring="bare"
               hint="dim"
@@ -58,7 +76,7 @@ export function PasswordSection() {
               id="cp-confirm"
               autoComplete="new-password"
               enterKeyHint="done"
-              placeholder="Confirm new password"
+              placeholder={t('settings:password.confirmPlaceholder')}
               box="card"
               ring="bare"
               hint="dim"
@@ -67,11 +85,12 @@ export function PasswordSection() {
         </div>
         {/* Default (password) submit */}
         <Button id="cp-save" layout="stacked" variant="pillAccent" size="pillLg" className="mt-3">
-          Change password
+          <span id="cp-save-change">{t('settings:password.submit')}</span>
+          <span id="cp-save-add" className="hidden">{t('settings:password.submitAdd')}</span>
         </Button>
         {/* Wallet (signature) submit — shown only in wallet mode */}
         <Button id="cp-wallet-save" layout="hiddenStacked" variant="pillAccent" size="pillLg">
-          Sign &amp; change password
+          {t('settings:password.submitWithWallet')}
         </Button>
         {/*
             Mode switches. cp-wallet-mode is itself hidden unless the user
@@ -79,12 +98,12 @@ export function PasswordSection() {
         */}
         <p id="cp-wallet-mode" className="hidden text-xs text-center mt-2">
           <a id="cp-use-wallet" href="#" className="text-violet-700 hover:text-violet-400 dark:text-violet-400">
-            Don’t have a password? Create one
+            {t('settings:password.useWallet')}
           </a>
         </p>
         <p id="cp-password-mode" className="hidden text-xs text-center mt-2">
           <a id="cp-use-password" href="#" className="text-violet-700 hover:text-violet-400 dark:text-violet-400">
-            Use current password instead
+            {t('settings:password.usePassword')}
           </a>
         </p>
         <StatusLine id="cp-status" />

@@ -18,8 +18,9 @@ export function agentActivity(session: { busy?: boolean; doneUnseen?: boolean } 
   return null;
 }
 
-/** What a screen reader hears, and the tooltip. */
+/** What a screen reader hears, and the tooltip: message ids, read with `t`
+ *  when the mark is drawn. */
 export const ACTIVITY_LABEL: Record<Exclude<AgentActivity, null>, string> = {
-  working: 'Working',
-  done: 'Finished',
+  working: 'agent:activity.working',
+  done: 'agent:activity.finished',
 };

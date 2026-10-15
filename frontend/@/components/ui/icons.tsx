@@ -52,6 +52,18 @@ import * as React from 'react';
  * enumerate them.
  */
 
+// Heroicons v2 outline microphone, verbatim and on the shell glyphs' grid and
+// stroke: the capsule, the cradle under it, the stem and its base in one path.
+// #5070 shipped a copy whose `m-12 0` began the cradle's left half as a new
+// subpath, so its `Z` closed to the wrong point and the stem and base drew on
+// the left, a hook rather than a microphone. Its name stays in double quotes:
+// tests/shell-icon-set.test.js reads every single-quoted string that starts
+// with M as path data.
+export const MicrophoneIcon = stroked(
+  "MicrophoneIcon",
+  'M12 18.75a6 6 0 0 0 6-6v-1.5m-6 7.5a6 6 0 0 1-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 0 1-3-3V4.5a3 3 0 1 1 6 0v8.25a3 3 0 0 1-3 3Z',
+);
+
 export type IconProps = Omit<
   React.SVGProps<SVGSVGElement>,
   'children' | 'viewBox' | 'fill' | 'stroke' | 'd'
@@ -217,6 +229,18 @@ export const UserIcon = stroked(
   'M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z',
 );
 
+/**
+ * A soft person silhouette, solid: a head and shoulders that run off the
+ * bottom edge, so a round frame crops them. The waiting seats in the
+ * community's people row (first-session/people-row.tsx) draw it in a tint,
+ * and the hub's open seats draw it pale in a circle (community-card.tsx
+ * WeekPeople).
+ */
+export const PersonSilhouetteIcon = filled(
+  'PersonSilhouetteIcon',
+  'M12 4.4a4.6 4.6 0 100 9.2 4.6 4.6 0 100-9.2zM2.5 24c.9-5.2 4.6-8.4 9.5-8.4s8.6 3.2 9.5 8.4z',
+);
+
 export const WalletIcon = stroked(
   'WalletIcon',
   'M21 12a2.25 2.25 0 00-2.25-2.25H15a3 3 0 11-6 0H5.25A2.25 2.25 0 003 12m18 0v6a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 18v-6m18 0V9M3 12V9m18 0a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 9m18 0V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 6v3',
@@ -341,12 +365,8 @@ export const LockIcon = stroked(
   'M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z',
 );
 
-// LockIcon with its shackle swung open: something that was locked is not
-// any more (Getting started's "6 challenges unlocked").
-export const LockOpenIcon = stroked(
-  'LockOpenIcon',
-  'M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zM8 11V7a4 4 0 017.75-1.4',
-);
+// LockOpenIcon (its shackle swung open) went with the Getting started card's
+// done state, its one user (#4635).
 
 export const KeyIcon = stroked(
   'KeyIcon',
@@ -406,6 +426,33 @@ export const HandRaisedIcon = stroked(
   'HandRaisedIcon',
   'M10.05 4.575a1.575 1.575 0 10-3.15 0v3m3.15-3v-1.5a1.575 1.575 0 013.15 0v1.5m-3.15 0l.075 5.925m3.075.75V4.575m0 0a1.575 1.575 0 013.15 0V15M6.9 7.575a1.575 1.575 0 10-3.15 0v8.175a6.75 6.75 0 006.75 6.75h2.018a5.25 5.25 0 003.712-1.537l1.732-1.732a5.25 5.25 0 001.538-3.712l.003-2.024a.668.668 0 01.198-.471 1.575 1.575 0 10-2.228-2.228 3.818 3.818 0 00-1.12 2.687M6.9 7.575V12m6.27 4.318A4.49 4.49 0 0116.35 15m.002 0h-.002',
 );
+// #4666: the approval presets' own glyphs. A bolt for You or the group (you
+// ship on your own), sliders for Make your own.
+export const BoltIcon = stroked('BoltIcon', 'M13 3 5 13.5h6l-1 7.5 8-10.5h-6l1-7.5Z');
+export const AdjustmentsIcon = stroked('AdjustmentsIcon', [
+  'M4 7h9M17 7h3M4 17h3M11 17h9',
+  'M13 7a2 2 0 104 0 2 2 0 00-4 0zM7 17a2 2 0 104 0 2 2 0 00-4 0z',
+]);
+// #4916: All items' "By category" tab, beside BoardIcon for "By stage".
+// Heroicons v1 outline tag, the set this file draws from.
+export const TagIcon = stroked(
+  'TagIcon',
+  'M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z',
+);
+// #4916: the board's two "mine" toggles, drawn as a person with a mark:
+// a check for Assigned to you, a pen for Created by you. New glyphs, so not
+// transcribed from older markup: lucide's user-check and user-pen, on the
+// same 24 grid at the same 2px stroke as UserIcon.
+export const UserCheckIcon = stroked('UserCheckIcon', [
+  'M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2',
+  'M5 7a4 4 0 108 0 4 4 0 10-8 0z',
+  'M16 11l2 2 4-4',
+]);
+export const UserPenIcon = stroked('UserPenIcon', [
+  'M11.5 15H7a4 4 0 00-4 4v2',
+  'M6 7a4 4 0 108 0 4 4 0 10-8 0z',
+  'M21.38 16.63a2.12 2.12 0 00-3-3l-4.01 4a2 2 0 00-.51.86l-.84 2.87a.5.5 0 00.62.62l2.87-.84a2 2 0 00.86-.51z',
+]);
 export const SparklesIcon = stroked(
   'SparklesIcon',
   'M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456zM16.894 20.567L16.5 21.75l-.394-1.183a2.25 2.25 0 00-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 001.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 001.423 1.423l1.183.394-1.183.394a2.25 2.25 0 00-1.423 1.423z',
@@ -434,6 +481,12 @@ export const PaperClipIcon = stroked(
 export const ArrowUpTrayIcon = stroked(
   'ArrowUpTrayIcon',
   'M12 3v12m0-12l-4 4m4-4l4 4M5 13v7h14v-7',
+);
+
+/** Download a file onto the device: the arrow into the tray (#4055). */
+export const DownloadIcon = stroked(
+  'DownloadIcon',
+  'M12 3v12m0 0l-4-4m4 4l4-4M5 13v7h14v-7',
 );
 
 export const SendIcon = stroked(
@@ -506,6 +559,14 @@ export const ArrowsPointingOutIcon = stroked('ArrowsPointingOutIcon', 'M15 3h6v6
 export const ArrowsPointingInIcon = stroked('ArrowsPointingInIcon', 'M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7');
 
 /**
+ * FOUR ARROWS out from the centre (✥) — a handle that moves what it is on.
+ *
+ * The comment bar's grip wears it beside a move cursor, so "drag me" reads at
+ * a glance where the ⋮ it replaced read as a menu.
+ */
+export const ArrowsMoveIcon = stroked('ArrowsMoveIcon', 'M12 3v18M3 12h18M9 6l3-3 3 3M9 18l3 3 3-3M6 9l-3 3 3 3M18 9l3 3-3 3');
+
+/**
  * A NEWSPAPER — the Activity row and screen.
  *
  * The Figma board names this slot `lucide/newspaper`, and the glyph is right:
@@ -550,6 +611,17 @@ export const CogIcon = stroked('CogIcon', [
   'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z',
   'M15 12a3 3 0 11-6 0 3 3 0 016 0z',
 ]);
+
+/**
+ * A globe, for a project's custom domain (#4405): the Settings & rules row
+ * that opens the Custom domain dialog. Renders behind state (the row shows
+ * only to whoever manages the project), so it is on the expected-absent list
+ * in tests/shell-icon-set.test.js.
+ */
+export const GlobeIcon = stroked(
+  'GlobeIcon',
+  'M12 21a9 9 0 100-18 9 9 0 000 18zm0 0c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3M3.6 9h16.8M3.6 15h16.8',
+);
 
 export const SunIcon = stroked(
   'SunIcon',
@@ -849,6 +921,15 @@ export const HeartIcon = stroked(
   'HeartIcon',
   'M21 8.25c0-2.485-2.099-4.5-4.688-4.5-1.935 0-3.597 1.126-4.312 2.733-.715-1.607-2.377-2.733-4.313-2.733C5.1 3.75 3 5.765 3 8.25c0 7.22 9 12 9 12s9-4.78 9-12Z',
 );
+
+/**
+ * A phone with a plus on its screen: "Add Homeroom to your home screen", the
+ * mark menu's row for a private member who has not been Home yet (#4399).
+ */
+export const PhonePlusIcon = stroked('PhonePlusIcon', [
+  'M8 2.5h8a2 2 0 012 2v15a2 2 0 01-2 2H8a2 2 0 01-2-2v-15a2 2 0 012-2z',
+  'M12 9v6M9 12h6',
+]);
 
 /** Food & drink, a category of the emoji picker: a cup with steam. */
 export const CupIcon = stroked('CupIcon', [

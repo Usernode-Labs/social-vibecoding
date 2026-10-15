@@ -59,7 +59,19 @@ test('the words people gave the bot stay out of staging and prod-debug', () => {
   assert.match(schema, /COMMENT ON COLUMN homeroom_bot_requesters\.asked_text IS 'staging:private';/);
   assert.match(schema, /COMMENT ON COLUMN homeroom_bot_runs\.plan_change IS 'staging:private';/);
   assert.deepEqual(DENIED_COLUMNS.homeroom_bot_requesters, ['asked_text']);
-  assert.deepEqual(DENIED_COLUMNS.homeroom_bot_runs, ['plan_change']);
+  // And a first version's review, whose issues quote a private project's
+  // screens (services/bot-review.js), beside it; and what a build agent said
+  // when it changed nothing (homeroom-bot-live.js buildNudgePrompt), which
+  // can quote a private project's code; and why a first version's first try
+  // failed (homeroom-bot.js claimAutoRetry), which can quote the same; and
+  // where a build was between its steps, kept by builds from before builds
+  // were durable until they are asked for again (homeroom-bot.js
+  // requeueLegacyBuilds), which keeps its build agent's last message.
+  assert.deepEqual(DENIED_COLUMNS.homeroom_bot_runs, ['plan_change', 'review', 'build_no_change', 'build_retry', 'build_checkpoint']);
+  assert.match(schema, /COMMENT ON COLUMN homeroom_bot_runs\.build_checkpoint IS 'staging:private';/);
+  assert.match(schema, /COMMENT ON COLUMN homeroom_bot_runs\.build_retry IS 'staging:private';/);
+  assert.match(schema, /COMMENT ON COLUMN homeroom_bot_runs\.review IS 'staging:private';/);
+  assert.match(schema, /COMMENT ON COLUMN homeroom_bot_runs\.build_no_change IS 'staging:private';/);
   // Deleting an account clears them before the purge takes the rows that
   // find them (tests/account-deletion-postgres.test.js runs it).
   const del = read('src/services/account-deletion.js');

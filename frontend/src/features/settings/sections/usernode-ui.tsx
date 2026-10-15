@@ -23,6 +23,7 @@
 import { useCallback, useState, type ReactNode } from 'react';
 
 import { SectionHeading } from '@/components/ui/field';
+import { useMessages } from '../../../lib/i18n/react';
 import type { UnAction, UnNote, UnStatusRow, UnToggle } from './usernode-store';
 
 function settings(): any {
@@ -99,7 +100,8 @@ const ROW_BASE = 'flex items-center gap-2 mt-1 text-sm w-full text-left';
 const ROW_TAP = ' rounded-md -mx-1 px-1 py-1 transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-800';
 
 export function UnRow({ row }: { row: UnStatusRow }): ReactNode {
-  const { busy, run } = useAction('Action failed');
+  const t = useMessages('settings');
+  const { busy, run } = useAction(t('settings:usernode.actionFailed'));
   const dot = `w-2 h-2 rounded-full shrink-0 ${row.ok ? 'bg-emerald-500' : 'bg-amber-500'}`;
   const ink = row.ok
     ? 'ml-auto text-xs text-emerald-700 dark:text-emerald-400'
@@ -122,7 +124,7 @@ export function UnRow({ row }: { row: UnStatusRow }): ReactNode {
   return (
     <button
       id={row.id} type="button" className={ROW_BASE + ROW_TAP} disabled={busy}
-      aria-label={row.hint ? `${row.label}: ${row.hint}` : undefined}
+      aria-label={row.actionName || undefined}
       onClick={() => run(row.action as string)}
     >{inner}</button>
   );
@@ -135,7 +137,8 @@ const BTN_TONE = {
 } as const;
 
 export function UnBtn({ btn }: { btn: UnAction }): ReactNode {
-  const { busy, run } = useAction('Action failed');
+  const t = useMessages('settings');
+  const { busy, run } = useAction(t('settings:usernode.actionFailed'));
   return (
     <button
       id={btn.id} type="button"
@@ -147,10 +150,11 @@ export function UnBtn({ btn }: { btn: UnAction }): ReactNode {
 }
 
 export function UnSwitch({ toggle }: { toggle: UnToggle }): ReactNode {
+  const t = useMessages('settings');
   // `checked` follows the MODEL, and a failed setter simply never publishes a
   // new one — so the revert the old handler did by hand (`input.checked =
   // !e.target.checked`) is what not-publishing already means.
-  const { busy, run } = useAction('Could not save the setting');
+  const { busy, run } = useAction(t('settings:usernode.settingSaveFailed'));
   return (
     <label className="flex items-center gap-2 cursor-pointer select-none mt-2">
       <input

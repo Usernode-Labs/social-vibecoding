@@ -85,6 +85,8 @@ export interface PermissionConsentModalView {
 
 export interface LlmConsentModalView {
   appName: string;
+  /** `appName` is the "This app" stand-in: the title uses its unnamed wording. */
+  appUnnamed?: boolean;
   /** The app's own one-line reason, in quotes. */
   purpose: string | null;
   /** The sentence under the title; the BYOK-only branch reads differently. */

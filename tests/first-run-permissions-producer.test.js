@@ -134,6 +134,7 @@ function load({ permissions, wallet, staking, bpRequested = true, stored = {},
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(nativeChromeSource, sandbox);
   return { NativeChrome: sandbox.NativeChrome, sheets, dismissed, calls, stored };

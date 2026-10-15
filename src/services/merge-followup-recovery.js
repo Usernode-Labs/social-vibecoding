@@ -10,7 +10,9 @@ const staging = require('./staging');
 const mainWatch = require('./main-watch');
 const mergeLock = require('./merge-finalization-lock');
 const githubBudget = require('./github-budget');
+const deployFailure = require('./deploy-failure');
 const { getPool } = require('../db/pool');
+const leaderTimers = require('./leader-timers');
 
 // main's tip through the drift poller's conditional read: this sweep runs
 // every four minutes over every app with a merged proposal, and an unchanged
@@ -91,6 +93,10 @@ async function recover(config, {
       // The self-hosted app is released by the host/cluster deployer and its
       // release watch. A child app with an older recorded SHA needs delivery.
       if (row.self_hosted || row.main_sha === sha) continue;
+      // This commit's image was refused for running as root: delivering it
+      // again cannot go differently, and the row already says why. A commit
+      // that changes the Dockerfile is a new sha and goes ahead.
+      if (deployFailure.waitsForNewCommit(row.last_failure, sha)) continue;
       try {
         const result = await rebuild(config, row, { reuseRunningRevision: sha });
         const saved = await pool.query(
@@ -115,17 +121,18 @@ async function recover(config, {
   return { scanned: rows.length, delivered, checks, held, done: Promise.all(runs) };
 }
 
+// A leader timer (services/leader-timers.js): a follow-up delivers a merge to
+// production, so none starts once shutdown has begun, and a sweep under way
+// is drained. Returns the stop function.
 function start(config, { intervalMs = 4 * 60 * 1000 } = {}) {
   let running = false;
-  const timer = setInterval(() => {
-    if (running) return;
+  return leaderTimers.every('merge-followups', () => {
+    if (running) return undefined;
     running = true;
-    recover(config).catch((err) => {
+    return recover(config).catch((err) => {
       log.warn('merge-recovery', 'Follow-up sweep failed', { err: err.message });
     }).finally(() => { running = false; });
   }, intervalMs);
-  timer.unref?.();
-  return () => clearInterval(timer);
 }
 
 module.exports = { recover, start };

@@ -29,6 +29,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 const read = (...p) => fs.readFileSync(path.join(__dirname, '..', ...p), 'utf8');
 const DEV_CHAT_SRC = read('frontend', 'src', 'features', 'dev-chat', 'dev-chat.js');
@@ -88,6 +89,7 @@ function makeDevChat(over = {}) {
       publishSessionHeader: (state) => published.push({ mounted: false, state }),
     },
   };
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(
     `${VENUES_SRC}\n${MERGE_STATUS_SRC}\n${DEV_CHAT_SRC}\n;globalThis.__DevChat = DevChat;`,
@@ -182,39 +184,9 @@ test('mid-turn the venue is visibly and accessibly locked', () => {
     'the dropdown caret does not contradict the locked state');
 });
 
-test('#2607: an unsent change gets the same button, and only that', () => {
-  // The strip's other three facts are still absent on a change that has no
-  // row — no PR, no lifecycle pill, no ⋯ of owner-scoped calls — but the
-  // venue is a CHOICE rather than a report, and it is the screen where the
-  // choice is still open. So the dropdown paints, from the same spec and in
-  // the same position the real row's does, and the declared check reads it
-  // as the same direct child.
-  const { view } = makeDevChat();
-  const state = view({ pending: true, id: null, app_slug: 'recipe-box', status: 'active' });
-  const html = headerHtml(state);
-
-  assert.match(html, /<button[^>]*id="dc-venue-select"[^>]*data-venue-change="1"/);
-  assert.match(html, /data-venue-current="usernode-claude"/);
-  assert.match(html, /class="dc-venue-name">Homeroom · Claude</);
-  assert.match(html, /class="dc-venue-caret"[^>]*>▾</);
-  assert.doesNotMatch(html, /data-venue-busy|Thinking…/, 'nothing is running on an unsent change');
-  assert.match(html, /New change/, 'and the caption slot still says only that');
-  assert.doesNotMatch(html, /id="dc-session-actions"/,
-    'Pause / Archive / Free worker still have nothing to act on');
-  assert.doesNotMatch(html, /id="dc-pr-header-link"/, 'and there is no pull request to link');
-
-  // Same direct-child contract the check at every width reads.
-  const { tokenize } = require('./helpers/html-tokens');
-  let depth = 0;
-  const children = [];
-  for (const token of tokenize(html)) {
-    if (token.kind === 'open') {
-      if (depth === 0) children.push(Object.fromEntries(token.attrs.map((a) => [a.name, a.value])));
-      if (!token.selfClosing) depth++;
-    } else if (token.kind === 'close') depth--;
-  }
-  assert.equal(children.filter((c) => c.id === 'dc-venue-select').length, 1);
-});
+// #2607 pinned the unsent classic change's strip here (the venue button and
+// nothing else). #4268 deleted that change; tests/dev-new-change.test.js
+// pins that it is gone.
 
 test('the busy screenshot route paints the same locked venue without faking a live turn', () => {
   const { DevChat, sandbox, view } = makeDevChat();
@@ -317,6 +289,21 @@ test('an in-vote session carries its tally, and its advisory surplus separately'
   }).life);
   assert.match(html, /ms-pill/);
   assert.match(html, / · 1\/3/, 'the header has no vote pill of its own, so the tally rides in the label');
+});
+
+test('the advisory chip\'s tooltip is a devchat catalog message, counted', () => {
+  const { message } = require('./lib/platform-i18n');
+  const { view } = makeDevChat();
+  const html = pillHtml(view({
+    ...SESSION, status: 'promoted', check_state: 'passing',
+    yes_count: 3, no_count: 0, majority: 3,
+    qualified_yes_count: 1, approval_policy: 'invited', approvals_required: 3,
+  }).life);
+  assert.match(html, /class="ms-advisory" title="2 advisory votes from non-approvers, so they don’t count toward merging">\+2</);
+  assert.equal(message('devchat:header.advisoryVotes', { count: 1 }),
+    '1 advisory vote from a non-approver, so it doesn’t count toward merging');
+  assert.match(HEADER_TSX, /t\('devchat:header\.advisoryVotes', \{ count: advisory \}\)/);
+  assert.doesNotMatch(HEADER_TSX, /advisory vote\$\{/, 'no English assembled in the component');
 });
 
 test('the strip hosts no lifecycle pill — the header chip does', () => {

@@ -86,12 +86,15 @@ import { useRef, useState, type MouseEvent, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
 
 import { GroupedList, ListRow, SectionHeader } from '@/components/ui/grouped-list';
+import { IconTile } from '@/components/ui/icon-tile';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import {
-  BallotIcon, ChevronLeftIcon, HandRaisedIcon, LockIcon, SpeechCheckIcon, UserGroupIcon, UserIcon,
+  BallotIcon, ChevronLeftIcon, HandRaisedIcon, LockIcon, PlusIcon, SearchIcon, SpeechCheckIcon, UserGroupIcon, UserIcon,
 } from '@/components/ui/icons';
 import { AppIconContent, AppIconLink, appIconKind } from '../apps/app-card-view';
 import { AppsLoadError } from '../apps/load-error';
+import { useMessages } from '../../lib/i18n/react';
+import { listText, t as translate } from '../../lib/i18n/runtime';
 import { agoStamp } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
@@ -134,6 +137,9 @@ type WorkshopRow = {
   owed?: string[];
   /** Every vote owed, the ones swiped past too (`unseenRow` sets it). */
   owedCount?: number;
+  /** The viewer has an invite link out for it and nobody has joined yet
+      (GET /api/apps `invite_link_out`, routes/apps.js inviteLinkOut). */
+  invite_link_out?: boolean;
 };
 
 function SectionGlyph({ audience }: { audience: Audience }) {
@@ -167,19 +173,25 @@ function demoQuery(): string {
  *     The order of the section already says which moved last.
  *   Just you                   → when it last moved ("2h ago"). There is one
  *     member, and it is you.
+ *
+ * AN INVITE OUT (15 Oct 2026): a project the viewer has sent an invite link
+ * for, that nobody has joined yet, says "Invite link out" in that fact's
+ * place: it is what is going on with it. It stays in its section: a link
+ * out does not make Just you a private community, somebody joining does.
  */
 export function rowSubtitle(row: WorkshopRow, now = Date.now()): string {
+  if (row.invite_link_out) return translate('communities:row.inviteOut');
   if (row.audience !== 'solo') {
     const members = Number(row.member_count) || 0;
-    return members > 0 ? `${members} ${members === 1 ? 'member' : 'members'}` : '';
+    return members > 0 ? translate('communities:row.members', { count: members }) : '';
   }
   const t = row.last_active_at ? Date.parse(row.last_active_at) : NaN;
   if (Number.isNaN(t)) return '';
   const mins = Math.max(0, Math.round((now - t) / 60000));
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins}m ago`;
-  if (mins < 60 * 24) return `${Math.round(mins / 60)}h ago`;
-  return `${Math.round(mins / (60 * 24))}d ago`;
+  if (mins < 1) return translate('communities:row.active.justNow');
+  if (mins < 60) return translate('communities:row.active.minutes', { count: mins });
+  if (mins < 60 * 24) return translate('communities:row.active.hours', { count: Math.round(mins / 60) });
+  return translate('communities:row.active.days', { count: Math.round(mins / (60 * 24)) });
 }
 
 /** Join a counts map onto the app rows. A slug with no entry is two zeroes. */
@@ -230,8 +242,8 @@ export function tabFromQuery(search: string): TabKey | null {
  */
 export function needsApps(rows: WorkshopRow[], seenToo = false): string {
   const names = rows.filter((row) => ((seenToo ? row.owedCount : row.needs) || 0) > 0).map((row) => row.name || row.slug);
-  if (names.length <= 3) return names.join(', ');
-  return `${names.slice(0, 3).join(', ')} and ${names.length - 3} more`;
+  if (names.length <= 3) return listText(names);
+  return translate('communities:needsYou.projectsMore', { projects: listText(names.slice(0, 3)), count: names.length - 3 });
 }
 
 /**
@@ -251,20 +263,21 @@ export function needsApps(rows: WorkshopRow[], seenToo = false): string {
  * is the accent colour; everything else stays grey.
  */
 export function StatusLine({ working, needs }: { working: number; needs: number }) {
+  const t = useMessages('communities');
   return (
     <>
       <span
         data-workshop-working={String(working)}
         className={working > 0 ? 'text-zinc-700 dark:text-zinc-300' : 'hidden'}
       >
-        {working} in progress
+        {t('communities:row.inProgress', { count: working })}
       </span>
       <span
         data-workshop-needs={String(needs)}
         className={needs > 0 ? 'font-semibold text-violet-700 dark:text-violet-300' : 'hidden'}
       >
         {working > 0 ? <span className="font-normal text-zinc-500 dark:text-zinc-400" aria-hidden="true"> · </span> : null}
-        {needs} to vote
+        {t('communities:row.toVote', { count: needs })}
       </span>
     </>
   );
@@ -298,6 +311,8 @@ export function StatusLine({ working, needs }: { working: number; needs: number 
  * app.css owns that face, and a call site must not repaint it.
  */
 function AppRow({ row }: { row: WorkshopRow }) {
+  // Subscribed: the row's fact (rowSubtitle) is read in the language on screen.
+  const t = useMessages('communities');
   const fact = rowSubtitle(row);
   const busy = row.working > 0 || row.needs > 0;
   // THE CHANNEL'S UNREAD, on the row that opens it. A project's channel
@@ -334,7 +349,7 @@ function AppRow({ row }: { row: WorkshopRow }) {
       )}
       title={row.name || row.slug}
       trailing={unread > 0 ? (
-        <span className="messages-unread" data-workshop-unread={String(unread)} aria-label={`${unread} unread in the channel`}>
+        <span className="messages-unread" data-workshop-unread={String(unread)} aria-label={t('communities:row.unread', { count: unread })}>
           {unread > 99 ? '99+' : unread}
         </span>
       ) : null}
@@ -363,8 +378,9 @@ function AppRow({ row }: { row: WorkshopRow }) {
  * discloses nothing yet is the one part of the shape worth NOT reproducing.
  */
 function RowSkeletons(): ReactNode {
+  const t = useMessages('communities');
   return (
-    <SkeletonGroup label="Loading your apps">
+    <SkeletonGroup label={t('communities:list.loading')}>
       {[0, 1, 2, 3].map((i) => (
         <ListRow
           key={i}
@@ -396,7 +412,15 @@ function RowSkeletons(): ReactNode {
  * `button`, not an anchor, because it navigates nowhere — which also keeps it
  * out of `a[data-workshop-app]:first-of-type` for good.
  */
-function Section({ audience, label, rows }: { audience: Audience; label: string; rows: WorkshopRow[] }) {
+function Section({ audience, label, count, rows }: {
+  audience: Audience;
+  /** The section's heading and its count's accessible name, as message ids. */
+  label: string;
+  count: string;
+  rows: WorkshopRow[];
+}) {
+  // Subscribed: the heading and the fold row (sectionFold) follow the language.
+  const t = useMessages('communities');
   // How many rows are out. Each press of "Show N more" adds SECTION_STEP;
   // once every row is out the same row folds the section back to three.
   const [limit, setLimit] = useState(SECTION_LIMIT);
@@ -408,8 +432,8 @@ function Section({ audience, label, rows }: { audience: Audience; label: string;
     <section data-workshop-section={audience} aria-labelledby={headingId}>
       <SectionHeader id={headingId} className="flex items-center gap-1.5">
         <SectionGlyph audience={audience} />
-        <span>{label}</span>
-        <span className="ml-auto tabular-nums" aria-label={`${rows.length} in ${label}`}>{rows.length}</span>
+        <span>{t(label)}</span>
+        <span className="ml-auto tabular-nums" aria-label={t(count, { count: rows.length })}>{rows.length}</span>
       </SectionHeader>
       <GroupedList tone="plane">
         {shown.map((row) => <AppRow key={row.slug} row={row} />)}
@@ -431,6 +455,7 @@ function Section({ audience, label, rows }: { audience: Audience; label: string;
 }
 
 export function WorkshopScreen() {
+  const t = useMessages('communities');
   const screenRef = useRef<HTMLElement | null>(null);
   const state = useStoreState(workshopStore) as {
     open: boolean; rows: WorkshopRow[] | null; error: boolean;
@@ -519,7 +544,7 @@ export function WorkshopScreen() {
               nothing, so the row is not drawn over a quiet day. */}
           {totals && totals.owed > 0 ? (
             <section data-workshop-needs-door="" aria-labelledby="workshop-needs-heading">
-              <SectionHeader id="workshop-needs-heading">Needs you</SectionHeader>
+              <SectionHeader id="workshop-needs-heading">{t('communities:needsYou.heading')}</SectionHeader>
               <GroupedList tone="plane">
                 <ListRow
                   as="button"
@@ -531,12 +556,12 @@ export function WorkshopScreen() {
                     </span>
                   )}
                   title={totals.needs > 0
-                    ? `${totals.needs} ${totals.needs === 1 ? 'vote' : 'votes'} waiting on you`
-                    : `${totals.owed} ${totals.owed === 1 ? 'vote' : 'votes'} you skipped`}
+                    ? t('communities:needsYou.waiting', { count: totals.needs })
+                    : t('communities:needsYou.skipped', { count: totals.owed })}
                   subtitle={needsApps(rows || [], !totals.needs)}
                   // "Review" is the row's affordance; a chevron beside it
                   // would say the same thing twice.
-                  trailing={<span className="text-sm font-semibold text-violet-700 dark:text-violet-300">Review</span>}
+                  trailing={<span className="text-sm font-semibold text-violet-700 dark:text-violet-300">{t('communities:needsYou.review')}</span>}
                   chevron={false}
                 />
               </GroupedList>
@@ -580,8 +605,8 @@ export function WorkshopScreen() {
                 <ListRow
                   as="a"
                   href="#apps"
-                  title="You haven’t joined anything yet"
-                  subtitle="Browse the directory to find a project to join."
+                  title={t('communities:list.empty.title')}
+                  subtitle={t('communities:list.empty.subtitle')}
                   subtitleClassName="whitespace-normal"
                 />
               </GroupedList>
@@ -590,7 +615,7 @@ export function WorkshopScreen() {
               ? (
                 <GroupedList tone="plane">
                   <AppsLoadError
-                    title="Couldn't load your communities"
+                    title={t('communities:list.loadError')}
                     onRetry={() => { void workshopController.reload(); }}
                   />
                 </GroupedList>
@@ -598,9 +623,36 @@ export function WorkshopScreen() {
               : rows === null
                 ? <GroupedList tone="plane"><RowSkeletons /></GroupedList>
                 : (sections || []).map((section) => (
-                  <Section key={section.key} audience={section.key} label={section.label} rows={section.rows} />
+                  <Section key={section.key} audience={section.key} label={section.label} count={section.count} rows={section.rows} />
                 ))}
           </div>
+          {/* #3543: JOIN OR START, under the list, where Your communities has
+              them. Drawn once the list has loaded (so never in the prerender,
+              and never under a skeleton or a load error). Join is left out
+              while the empty card above already says it. Outside
+              #workshop-list, whose direct children are the sections. */}
+          {rows !== null && !state.error ? (
+            <GroupedList tone="plane" className="mt-6">
+              {empty ? null : (
+                <ListRow
+                  as="a"
+                  href="#apps"
+                  data-workshop-join=""
+                  leading={<IconTile size="sm" tint="neutral"><SearchIcon aria-hidden="true" /></IconTile>}
+                  title={t('communities:list.join.title')}
+                  subtitle={t('communities:list.join.subtitle')}
+                />
+              )}
+              <ListRow
+                as="button"
+                data-workshop-start=""
+                onClick={() => { (window as any).App?.showCreateModal?.(); }}
+                leading={<IconTile size="sm" tint="neutral"><PlusIcon aria-hidden="true" /></IconTile>}
+                title={t('communities:list.start.title')}
+                subtitle={t('communities:list.start.subtitle')}
+              />
+            </GroupedList>
+          ) : null}
         </div>
         {state.tab === 'needs' ? (
           <div data-workshop-pane="needs">
@@ -612,15 +664,15 @@ export function WorkshopScreen() {
                   type="button"
                   className="dev-ws-page-back un-touch-target"
                   data-workshop-needs-back=""
-                  aria-label="Back to Communities"
-                  title="Back to Communities"
+                  aria-label={t('communities:needsYou.back')}
+                  title={t('communities:needsYou.back')}
                   onClick={() => workshopController.setTab('status')}
                 >
                   <ChevronLeftIcon className="dev-ws-page-back-glyph" aria-hidden="true" />
                 </button>
                 <div className="dev-ws-pagehead-text">
-                  <span className="dev-ws-pagehead-over">Communities</span>
-                  <h2 className="dev-ws-pagehead-title">Needs you</h2>
+                  <span className="dev-ws-pagehead-over">{t('communities:needsYou.over')}</span>
+                  <h2 className="dev-ws-pagehead-title">{t('communities:needsYou.title')}</h2>
                 </div>
               </div>
             </div>
@@ -628,13 +680,96 @@ export function WorkshopScreen() {
                 across your projects, one per screen, newest first, drawn by
                 a project's own Needs you feed (#3488). See ./needs-reel.tsx. */}
             {state.error ? null : (
-              <NeedsReel items={state.feed} error={state.feedError} capped={state.feedCapped} onDone={() => workshopController.setTab('status')} />
+              <NeedsReel
+                items={state.feed}
+                error={state.feedError}
+                capped={state.feedCapped}
+                onDone={() => workshopController.setTab('status')}
+                onAnswered={(id, epoch) => workshopController.answered(id, epoch)}
+              />
             )}
           </div>
         ) : null}
       </div>
     </main>
   );
+}
+
+/**
+ * The votes cast in a Needs you feed this visit, by `proposal:<id>@<epoch>`
+ * (`proposal:<id>` when the row carried no epoch). The store's feed is a copy
+ * read BEFORE the vote: once the reel unmounts its "Voted yes" state goes
+ * with it, and a remount would redraw the answered card as still owed — the
+ * report this answers. The set takes the voted items out of every read that
+ * hands the feed its rows, so a read issued before the vote and landing after
+ * it cannot bring one back. A NEWER epoch passes: the card changed under the
+ * vote and asks again. `close()` clears the set — a fresh visit starts from
+ * what the server says.
+ */
+const answeredVotes = new Set<string>();
+
+function answeredVoteKey(id: number, epoch: number | null): string {
+  return `proposal:${id}@${epoch == null ? '' : epoch}`;
+}
+
+/** Whether this feed item is a vote answered here, at its own epoch. */
+function voteAnswered(item: NeedsFeedItem): boolean {
+  if (item.kind !== 'proposal') return false;
+  for (const key of answeredVotes) {
+    const at = key.indexOf('@');
+    if (Number(key.slice('proposal:'.length, at)) !== item.id) continue;
+    const raw = key.slice(at + 1);
+    const epoch = raw === '' ? null : Number(raw);
+    if (item.epoch == null || epoch == null || item.epoch === epoch) return true;
+  }
+  return false;
+}
+
+/** The feed's rows, less the votes answered here. */
+function stripAnswered(items: NeedsFeedItem[]): NeedsFeedItem[] {
+  return answeredVotes.size ? items.filter((item) => !voteAnswered(item)) : items;
+}
+
+/** How often the open screen quietly re-reads what waits on you (#5164). */
+export const WORKSHOP_REFRESH_MS = 30_000;
+
+/**
+ * The quiet refresh behind #5164: while the screen is showing, the counts
+ * and the Needs you feed are read again every WORKSHOP_REFRESH_MS, and once
+ * more the moment the browser tab comes back to the front — the moment
+ * people most often notice the lag and reach for a page reload.
+ *
+ * A module-level watch rather than an effect, because the screen's roots
+ * outlive React's mounts the way the controller does: `open()` starts it and
+ * `close()` stops it, so nothing runs while the screen is hidden and
+ * re-entering never stacks a second timer. The interval skips its tick while
+ * the tab is hidden; the listener answers the return instead. Guarded on
+ * `document` because the tests run in node with only `window` faked.
+ */
+let watchTimer: number | null = null;
+let watchVisibility: (() => void) | null = null;
+
+function startWatch() {
+  if (typeof document === 'undefined') return;
+  stopWatch();
+  watchTimer = window.setInterval(() => {
+    if (document.visibilityState === 'visible') void workshopController.refreshNeeds();
+  }, WORKSHOP_REFRESH_MS);
+  watchVisibility = () => {
+    if (document.visibilityState === 'visible') void workshopController.refreshNeeds();
+  };
+  document.addEventListener('visibilitychange', watchVisibility);
+}
+
+function stopWatch() {
+  if (watchTimer !== null) {
+    window.clearInterval(watchTimer);
+    watchTimer = null;
+  }
+  if (watchVisibility) {
+    document.removeEventListener('visibilitychange', watchVisibility);
+    watchVisibility = null;
+  }
 }
 
 /**
@@ -658,10 +793,14 @@ export const workshopController = {
     let asked: TabKey | null = null;
     try { asked = tabFromQuery(location.search); } catch { asked = null; }
     workshopStore.set(asked ? { open: true, tab: asked } : { open: true });
+    // #5164: the quiet refresh runs for as long as the screen is showing.
+    startWatch();
     return workshopController.reload();
   },
   close() {
     workshopStore.set({ open: false });
+    answeredVotes.clear();
+    stopWatch();
   },
   isOpen() {
     return workshopStore.get().open;
@@ -669,6 +808,73 @@ export const workshopController = {
   /** Show one of the two tabs. */
   setTab(tab: TabKey) {
     workshopStore.set({ tab: tab === 'needs' ? 'needs' : 'status' });
+    // Re-entering the list or the feed quietly reloads what waits (#4794):
+    // the reads behind both were answered when the screen was entered, and a
+    // vote cast in the feed has moved them since. Not while the screen is
+    // closed — the notifications path calls setTab('needs') and then routes,
+    // and open() reloads anyway.
+    if (workshopStore.get().open) void workshopController.refreshNeeds();
+  },
+  /**
+   * A vote cast in the Needs you feed, taken down at once (#4794): the item
+   * leaves the store's feed, so leaving the feed and coming back cannot draw
+   * it as still owed, and every read until the screen closes skips it too.
+   */
+  answered(id: number, epoch: number | null) {
+    answeredVotes.add(answeredVoteKey(id, epoch));
+    const feed = workshopStore.get().feed;
+    if (feed) workshopStore.set({ feed: stripAnswered(feed) });
+  },
+  /**
+   * The quiet reload behind a tab switch: the counts and the Needs you feed
+   * again, nothing else. What is on screen stays until the answers land, and
+   * a failed read leaves its half untouched — no skeleton, no error card, no
+   * `rows: null`. Like reload(), a read that lands after the viewer left the
+   * screen publishes nothing.
+   */
+  async refreshNeeds() {
+    if (!workshopStore.get().open) return;
+    const demo = demoQuery();
+    try {
+      // `no-cache` (the #4177 spelling): a quiet read asks for the CURRENT
+      // answer. The worker's boot lane would answer it from the saved copy,
+      // which is one reason a page reload looked fresher than this screen.
+      const [countsRes, feedRes] = await Promise.all([
+        fetch(`/api/workshop/counts${demo}`, { cache: 'no-cache' }).catch(() => null),
+        fetch(`/api/workshop/needs-feed${demo}`, { cache: 'no-cache' }).catch(() => null),
+      ]);
+      if (!workshopStore.get().open) return;
+      const state = workshopStore.get();
+      const patch: {
+        rows?: WorkshopRow[];
+        feed?: NeedsFeedItem[];
+        feedError?: boolean;
+        feedCapped?: boolean;
+      } = {};
+      if (countsRes && countsRes.ok && state.rows) {
+        const data = await countsRes.json().catch(() => null);
+        if (data && data.counts && typeof data.counts === 'object') {
+          // The rows' app halves stand; the counts answer them again, so the
+          // owed lists of the read they came from go with them.
+          patch.rows = joinCounts(
+            state.rows.map(({ owed, ...rest }) => rest),
+            data.counts,
+          );
+        }
+      }
+      if (feedRes && feedRes.ok) {
+        const data = await feedRes.json().catch(() => null);
+        if (data && Array.isArray(data.items)) {
+          const feed = stripAnswered(data.items as NeedsFeedItem[]);
+          patch.feed = feed;
+          patch.feedError = false;
+          patch.feedCapped = Number(data.max) > 0 && feed.length >= Number(data.max);
+        }
+      }
+      if (patch.rows || patch.feed) workshopStore.set(patch);
+    } catch {
+      // Offline is a state, not a crash: the screen keeps what it had.
+    }
   },
   async reload() {
     const demo = demoQuery();
@@ -679,7 +885,9 @@ export const workshopController = {
     let feedCapped = false;
     try {
       const [appsRes, countsRes, feedRes] = await Promise.all([
-        fetch(`/api/apps${demo}`),
+        // Only the communities you are in (#5023): the list below keeps
+        // nothing else, so the rest of the catalog was payload for nothing.
+        fetch(`/api/apps?scope=joined${demo.replace('?', '&')}`),
         fetch(`/api/workshop/counts${demo}`).catch(() => null),
         fetch(`/api/workshop/needs-feed${demo}`).catch(() => null),
       ]);
@@ -699,11 +907,13 @@ export const workshopController = {
         if (data && data.counts && typeof data.counts === 'object') counts = data.counts;
       }
       // The Needs you feed is optional like the counts: losing it costs the
-      // feed its cards (it says so), never the screen.
+      // feed its cards (it says so), never the screen. A read issued before a
+      // vote in the feed and landing after it runs through the answered set
+      // with refreshNeeds()'s, so it cannot bring the card back.
       if (feedRes && feedRes.ok) {
         const data = await feedRes.json().catch(() => null);
         if (data && Array.isArray(data.items)) {
-          feed = data.items as NeedsFeedItem[];
+          feed = stripAnswered(data.items as NeedsFeedItem[]);
           feedCapped = Number(data.max) > 0 && feed.length >= Number(data.max);
         }
       }

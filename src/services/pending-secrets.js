@@ -323,6 +323,10 @@ async function applyForSession(config, pool, sessionId) {
   return { applied };
 }
 
+// The merge-time apply inside the merge-followups machine's transaction:
+// src/workflow/rules/pending-secret-apply.ts.
+const { applyInTransaction } = require('../workflow/rules/pending-secret-apply.ts');
+
 /** Withdrawn / rejected proposal: the held value stops existing. */
 async function discardForSession(pool, sessionId) {
   const { rowCount } = await pool.query(
@@ -344,6 +348,7 @@ module.exports = {
   keysForSession,
   rawValuesForSession,
   applyForSession,
+  applyInTransaction,
   discardForSession,
   normalizeDeclaration,
   normalizeValue,

@@ -21,7 +21,10 @@
 const graders = require('./graders');
 const stats = require('./stats');
 
-const SLICE_KEYS = Object.freeze(['verdict', 'repo_size', 'request_type', 'difficulty', 'app_slug', 'known_outcome', 'answer_source']);
+// `template`: the starter a first-version task's first commit came from
+// (services/bench/taste.js tagsFor), so with and without a game starter
+// read side by side.
+const SLICE_KEYS = Object.freeze(['verdict', 'repo_size', 'request_type', 'difficulty', 'app_slug', 'known_outcome', 'answer_source', 'template']);
 // A first version (#3737) is built `repeats` times, so pass^k reads how
 // reliably each brief comes out well, as the research behind it asks.
 const REPEATED_STAGES = Object.freeze(['triage', 'dm', 'followup', 'checks_fix', 'first_version']);

@@ -136,7 +136,7 @@ test('a mention on a claimed request is answered, a second one is the go-ahead, 
     assert.equal((await refresh()).queued, 0);
     assert.deepEqual(await posts(), [holds.LEAVING_KIND]);
     assert.match(messages[0].content,
-      new RegExp(`^@${evan.username} ${chin.username} claimed this request 3 days ago, so Homeroom bot is leaving it to them\\. If you still want Homeroom bot to build it, mention it here again and it will go ahead\\.$`));
+      new RegExp(`^@${evan.username} ${chin.username} claimed this request 3 days ago, so I'm leaving it to them\\. If you still want me to build it, mention me here again and I'll go ahead\\.$`));
     assert.deepEqual(messages[0].thread, { type: 'issue', ref: 75 });
     await refresh();
     assert.deepEqual(await posts(), [holds.LEAVING_KIND], 'one answer per mention');
@@ -152,7 +152,7 @@ test('a mention on a claimed request is answered, a second one is the go-ahead, 
     assert.deepEqual(await queued(), [{ issue_number: 75, reason: 'changed' }]);
     assert.deepEqual(await posts(), [holds.LEAVING_KIND, holds.GOING_KIND]);
     assert.match(messages[1].content,
-      new RegExp(`^@${chin.username} ${evan.username} asked Homeroom bot to build this anyway, so it is taking it up now\\.`));
+      new RegExp(`^@${chin.username} ${evan.username} asked me to build this anyway, so I'm taking it up now\\.`));
     // It lasts: the next refresh keeps it queued and says nothing more.
     await refresh();
     assert.deepEqual(await queued(), [{ issue_number: 75, reason: 'changed' }]);

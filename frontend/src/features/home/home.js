@@ -23,10 +23,12 @@
 // The `HomeLayout` and `window.HomePanels` reads throughout stay as they are:
 // both are published by sibling modules the island imports BEFORE this one, and
 // every read happens at call time, long after the bundle has evaluated.
+import { t as message, htmlText } from '../../lib/i18n/runtime';
 import { AppCard } from '../apps/app-card.js';
 import { gridStore } from './grid-store';
 import { chromeStore } from './chrome-store';
 import { detectInstallHost } from '../mobile-install/environment';
+import { buildLineTileClass, buildLineTileOf, buildLineTileWordsOf, tileStageOf } from '../first-session/build-line-words.js';
 
 // Which discovery cards and add badges already carry their listeners.
 // `_wireDiscoveryCards` runs again whenever a lane's tiles change identity,
@@ -88,6 +90,12 @@ const Home = {
   _loadQueued: null,
 
   load() {
+    // Edit mode (#4669) does not survive a reload of the catalog. The router
+    // calls load() on every visit to Home, so leaving the screen and coming
+    // back starts clean; a WS-triggered refresh ends it too, which is the
+    // honest reading of "the shelf changed under you". A failure inside
+    // toggleAdded also lands here, ending edit mode with the revert.
+    Home._editing = false;
     if (Home._loadInFlight) {
       if (!Home._loadQueued) {
         const rerun = () => { Home._loadQueued = null; return Home.load(); };
@@ -194,9 +202,10 @@ const Home = {
           gridStore.set({
             ready: true, view: 'grid', rowTemplate: '', items: [],
             resultsHeading: null, emptyQuery: null, create: null,
+            // load() has already cleared edit mode; the merge would keep it.
+            editing: false,
             notice: {
-              text: "You're offline. Apps you've opened before will appear here once this "
-                + 'device has loaded them.',
+              text: message('home:grid.notice.offline'),
               tone: 'muted',
             },
           });
@@ -209,9 +218,11 @@ const Home = {
         // No Create tile beside a load notice: the notice is the grid's whole
         // answer (offline, or the error card and its Retry) until apps load.
         resultsHeading: null, emptyQuery: null, create: null,
+        // load() has already cleared edit mode; the merge would keep it.
+        editing: false,
         // #1899: the grid draws this as the shared error card
         // (features/apps/load-error.tsx) with a Retry that re-runs load().
-        notice: { text: "Couldn't load your apps", tone: 'error' },
+        notice: { text: message('home:grid.notice.loadFailed'), tone: 'error' },
       });
     }
   },
@@ -229,6 +240,80 @@ const Home = {
   // value and a legitimate loaded result for an account with no apps.
   _appsLoaded: false,
   _query: '',
+
+  // ── Edit mode (#4669) ──────────────────────────────────────────────
+  //
+  // Long-pressing a tile of your own puts My apps into edit mode, like a
+  // phone's home screen: the tiles wiggle, each one grows a remove button,
+  // and the trailing tile becomes "Add apps". The menu the hold opens is
+  // unchanged — edit mode rides along with it. Pure UI state, per visit:
+  // load() clears it, so it is never remembered between visits, and nothing
+  // here writes a preference.
+  _editing: false,
+
+  // The one setter. Render is the same call every other path funnels through,
+  // so the wiggle, the remove buttons and the "Done" link all arrive in one
+  // paint. While a drag is live render() must not run (grid-store.ts's
+  // header): the flag goes down and `_rerenderPending` takes the flush, which
+  // onSettle already drains — so on touch, where the lift happens mid-gesture,
+  // the wiggle starts when the finger comes up.
+  //
+  // The paint is also held back while the hold's own menu is up. The mouse
+  // hold opens the card menu and THEN starts edit mode; a synchronous render
+  // here would expand the grid (edit mode shows every tile), re-run the
+  // placement effect whose deps include items.length, and the detach that
+  // cleanup calls is closeCardMenu — killing the menu the same press opened.
+  // The paint waits for the menu's dismiss instead, so the popover finishes
+  // its life anchored to the tile that opened it.
+  setEditing(on) {
+    const next = !!on;
+    if (Home._editing === next) return;
+    Home._editing = next;
+    if (Home._dragActive) {
+      Home._rerenderPending = true;
+      return;
+    }
+    if (Home._menu) {
+      Home._menu.then(() => {
+        if (Home._dragActive) { Home._rerenderPending = true; return; }
+        Home.render();
+      });
+      return;
+    }
+    Home.render();
+  },
+
+  // The remove button's action. It is the tile menu's own "Remove from My
+  // apps" by another door: _menuToggleFavorite(app, false) unfavourites a
+  // pinned app and, for a collaborator, hides the member pin — exactly the
+  // two branches the menu's item passes (line ~3679). The toast and the
+  // "Leave … too?" prompt for members come from toggleAdded unchanged.
+  _editRemove(slug) {
+    const app = (Home._apps || []).find((a) => a && a.slug === slug);
+    if (!app) return;
+    return Home._menuToggleFavorite(app, false);
+  },
+
+  // Escape ends edit mode. Wired once, lazily, from render() like the search
+  // bar — the listener reads the flag at event time, so it costs nothing
+  // while edit mode is off.
+  _editExitWired: false,
+  _wireEditExit() {
+    if (Home._editExitWired) return;
+    if (typeof document === 'undefined'
+      || typeof document.addEventListener !== 'function') return;
+    Home._editExitWired = true;
+    document.addEventListener('keydown', (e) => {
+      if (!e || e.key !== 'Escape' || !Home._editing) return;
+      // A presented sheet or modal owns the keyboard: the Add-apps sheet
+      // sits above edit mode, and Escape must not end the state behind it.
+      // The kit's own Escape path works off its modal stack, which a sheet
+      // is not on, so read the presented surfaces directly.
+      if (document.querySelector('.un-sheet, .un-backdrop')) return;
+      Home.setEditing(false);
+    });
+  },
+
 
   // Slugs the Discover rails keep showing even though they now count as
   // "yours" (#1567). Adding an app from a rail repaints "Your apps"
@@ -268,6 +353,26 @@ const Home = {
   // propose and vote, and it is what the Workshop lists.
   isJoined(app) {
     return !!(app && app.is_member);
+  },
+
+  // The Discover card's fallback facts line — "12 users · Updated 3d ago" —
+  // for an app whose manifest declares no description. The same pair the
+  // directory's rows draw (browse.js metaLine's recommended variant), so the
+  // two surfaces say the same thing about the same app in the same words:
+  // who is using it and how recently it changed. Pure: no fetch, no state,
+  // and a null from formatRelativeTime drops that half rather than printing
+  // "Updated —".
+  discoverMetaLine(app) {
+    if (!app) return null;
+    const users = message('discover:row.meta.users', {
+      count: parseInt(app.active_users || 0, 10) || 0,
+    });
+    const when = formatRelativeTime(app.last_deploy_at || app.created_at);
+    const facts = [users, when ? message('discover:row.meta.updated', { when }) : null]
+      .filter(Boolean);
+    if (!facts.length) return null;
+    return facts.reduce((first, second) =>
+      message('discover:row.meta.pair', { first, second }));
   },
 
   // Split the full list into { yours, rest }. Personal ordering
@@ -321,17 +426,41 @@ const Home = {
     return list;
   },
 
+  // The one form both matchers compare in: NFC, so a typed "Café" (é as one
+  // code point) meets a stored one written as e + combining accent, then
+  // trimmed and lower-cased. No locale-specific folding.
+  searchKey(value) {
+    return String(value || '').normalize('NFC').trim().toLowerCase();
+  },
+
   // Case-insensitive substring match on name and slug. An empty /
   // whitespace-only query matches everything (the default view).
   matchesQuery(app, query) {
-    const q = String(query || '').trim().toLowerCase();
+    const q = Home.searchKey(query);
     if (!q) return true;
-    return String(app?.name || '').toLowerCase().includes(q)
-      || String(app?.slug || '').toLowerCase().includes(q);
+    return Home.searchKey(app?.name).includes(q)
+      || Home.searchKey(app?.slug).includes(q);
   },
 
+  // True when the query IS the app's name or slug (trimmed, any case), not
+  // merely inside it. An empty query is nobody's exact match.
+  isExactMatch(app, query) {
+    const q = Home.searchKey(query);
+    if (!q) return false;
+    return Home.searchKey(app?.name) === q || Home.searchKey(app?.slug) === q;
+  },
+
+  // The matches, in input order, except that an exact match leads (#4793):
+  // typing an app's full name should find it first, not below three apps
+  // that merely contain it. The split is stable, so several exact matches
+  // keep their order among themselves and the rest keep theirs. Discover's
+  // search (Browse.visibleApps) runs through here too, so both fields rank
+  // the same way.
   filterApps(apps, query) {
-    return (apps || []).filter((a) => Home.matchesQuery(a, query));
+    const matches = (apps || []).filter((a) => Home.matchesQuery(a, query));
+    const exact = matches.filter((a) => Home.isExactMatch(a, query));
+    if (!exact.length) return matches;
+    return exact.concat(matches.filter((a) => !Home.isExactMatch(a, query)));
   },
 
   // How many admin-featured tiles the "Featured apps" row shows.
@@ -405,36 +534,37 @@ const Home = {
   // ceiling on one lane, not a second lane's own budget.
   POPULAR_LIMIT: 6,
 
-  // The popular half of the rail (#949): what everyone else is actually
-  // using, appended after the curated cards. Derived from the SAME
-  // /api/apps payload the grid already holds — `active_users` rides along
-  // with every row (see the au join in src/routes/apps.js), so this costs
-  // no query.
+  // The popular half of the rail: the public communities the viewer has
+  // NOT joined, appended after the curated cards. Derived from the SAME
+  // /api/apps payload the grid already holds — `member_count`, `audience`
+  // and `is_member` ride along with every row (see the serializer in
+  // src/routes/apps.js), so this costs no query.
   //
-  // The ranking mirrors Browse.sortApps' 'users' order exactly (most users
-  // first, ties keeping the server's own order via a stable sort), so the
-  // widget and the Browse directory can't disagree about what is popular.
-  // (#1383 gave the directory five orders and made 'recommended' its default
-  // — this lane still tracks the users one, which is the question the word
-  // "Popular" asks.) parseInt because the count arrives as a STRING — it is a
-  // Postgres bigint and, unlike open_prs, the serializer doesn't coerce it.
+  // Popularity is the member count, most first, with `active_users` as the
+  // tie-break; after that the server's own order holds (the sort is stable).
+  // parseInt because a count arrives as a STRING when it comes straight off
+  // a Postgres bigint.
   //
-  // Only currently reviewed working apps with icons qualify. Also exclude:
+  // Only public communities (`audience === 'open'`) qualify, and only
+  // currently reviewed working ones with icons. Also exclude:
   //   * `featured` — the curated half of the same lane already offers those.
   //     The renderer dedupes by slug anyway, since one lane is where a
   //     double-listing would show as the same card twice.
-  //   * isYours — the whole point is apps you don't have yet.
-  // And a floor of one active user: an app nobody uses is not "popular",
-  // and padding the lane out with zero-user rows would misrepresent it.
+  //   * isJoined / isYours — the whole point is communities you haven't
+  //     joined. isYours stays in the exclusion too: a Home shortcut is not
+  //     membership, but adding one already joins you, so offering it again
+  //     is noise either way. `_discoverKeep` still holds a card just added
+  //     with + in place for the visit (#1567).
   // Pure — unit-tested in tests/home-find-more.test.js.
   popularApps(apps) {
     if (Home._shotDiscoverEmpty()) return [];
     const users = (a) => (parseInt(a && a.active_users, 10) || 0);
+    const members = (a) => (parseInt(a && a.member_count, 10) || 0);
     return (apps || [])
-      .filter((a) => a && !a.featured && Home.isDiscoveryReady(a)
-        && users(a) >= 1
-        && (!Home.isYours(a) || Home._discoverKeep.has(a.slug)))
-      .sort((x, y) => users(y) - users(x))
+      .filter((a) => a && !a.featured && a.audience === 'open'
+        && Home.isDiscoveryReady(a)
+        && ((!Home.isJoined(a) && !Home.isYours(a)) || Home._discoverKeep.has(a.slug)))
+      .sort((x, y) => (members(y) - members(x)) || (users(y) - users(x)))
       .slice(0, Home.POPULAR_LIMIT);
   },
 
@@ -478,13 +608,14 @@ const Home = {
   // it was also the ceiling, so a tall desktop window drew two rows of tiles,
   // a "Show all" button, and then a lot of nothing before the next section.
   //
-  // The rule now: the launcher may fill the first two-thirds of the screen,
-  // and never less than the two-row contract. The bottom third is what keeps
-  // the section under the grid visible without scrolling, which is the whole
-  // point of capping the launcher at all — so the cap is stated as the thing
-  // it is protecting rather than as a row count that only happened to protect
-  // it at one viewport.
-  APPS_VIEWPORT_FRACTION: 2 / 3,
+  // The rule now: the launcher may fill the first half of the screen, and
+  // never less than the two-row contract. Discover moved up beside it
+  // (#4937) — the section under the grid is the rail of community cards now,
+  // and the bottom half is what keeps it peeking without scrolling, which is
+  // the whole point of capping the launcher at all — so the cap is stated as
+  // the thing it is protecting rather than as a row count that only happened
+  // to protect it at one viewport.
+  APPS_VIEWPORT_FRACTION: 1 / 2,
 
   // The row count that fraction buys, measured rather than assumed.
   //
@@ -671,11 +802,44 @@ const Home = {
     // widget list and would have persisted a repair that erased the viewer's
     // Challenges/Discover/Create cells. Nothing on the canvas depends on a
     // second endpoint any more, so a repair is always safe to keep.
+    //
+    // Only a repair that changes what the server would STORE is written.
+    // With more apps than the canvas has cells, repair() parks the rest on
+    // the overflow row and reports `changed` on every call; toWire() drops
+    // that row, the server keeps the same cells, its answer resets
+    // _layouts, and the next render repaired and wrote again: three PUTs
+    // every few seconds for as long as the home screen was open, each one
+    // queued on the server's per-user lock, until the browser's connections
+    // were all waiting on them.
     if (changed && Array.isArray(stored) && stored.length) {
       Home._layouts[String(cols)] = layout;
-      Home._persistLayout(cols, layout);
+      const wire = (l) => JSON.stringify(HomeLayout.toWire(l));
+      if (wire(layout) !== wire(stored)) Home._persistLayout(cols, layout);
     }
     return layout;
+  },
+
+  // THE DESKTOP STRIP'S PINNED PART (#4935): the apps in the layout's top
+  // row, in reading order, as display data the strip can draw without
+  // fetching anything. "Pinned" is the top row of My apps on purpose — the
+  // part people arrange and can see, favourites and own apps alike. Holes
+  // are skipped, and so is anything that is not on My apps (which covers the
+  // demo tiles: they are never favourites, so isYours drops them). Pure.
+  topRowApps(layout) {
+    const items = HomeLayout.canvasItems(layout || [])
+      .filter((it) => it && it.type === 'app' && it.row === 0);
+    const out = [];
+    for (const item of items) {
+      const app = (Home._apps || []).find((a) => a && a.slug === item.slug && Home.isYours(a));
+      if (!app) continue;
+      out.push({
+        slug: app.slug,
+        name: app.name || app.slug,
+        iconUrl: app.icon_url || null,
+        iconEmoji: app.icon_emoji || null,
+      });
+    }
+    return out;
   },
 
   // One fetch per TTL, shared by concurrent callers — Home.load() runs from
@@ -737,7 +901,7 @@ const Home = {
       }
       return true;
     } catch (err) {
-      PlatformUI.toast('Couldn’t save your home screen layout.');
+      PlatformUI.toast(message('home:layout.saveFailed'));
       await Home._ensureLayoutLoaded({ force: true });
       Home.render();
       return false;
@@ -755,8 +919,14 @@ const Home = {
     const apps = Home._apps || [];
     Home._wireSearch();
     Home._wireRowBudget();
+    Home._wireEditExit();
 
     const query = (Home._query || '').trim();
+    // EDIT MODE (#4669) is a grid-view state only: a search is a transient
+    // list of matches, not the shelf, so nothing there wiggles or offers a
+    // remove button. The flag itself is cleared by the search input's own
+    // listener (see _wireSearch) the moment it is given a value.
+    const editing = !!Home._editing && !query;
     // Home is "Your apps" only now — every other app lives on the
     // #apps browse screen (public/js/browse.js), so the old All Apps
     // section and its drag-to-add gesture are gone.
@@ -788,7 +958,7 @@ const Home = {
       if (!matches.length) {
         emptyQuery = query;
       } else {
-        resultsHeading = `${matches.length} result${matches.length === 1 ? '' : 's'}`;
+        resultsHeading = message('home:search.results', { count: matches.length });
         items = matches.map((a) => ({ kind: 'card', placement: null, app: Home.appView(a) }));
       }
     } else {
@@ -798,6 +968,20 @@ const Home = {
       // order in this array.
       const cols = Home.currentCols();
       const layout = Home.currentLayout(cols);
+      // THE STRIP'S PINNED PART (#4935): every grid paint names the top row
+      // to the nav bridge, so the desktop strip leads with the same apps in
+      // the same order. Home is the one writer. A search render is a
+      // transient list of matches, not the shelf, so it publishes nothing —
+      // and neither do the offline and error states below. The bridge is
+      // optional (a vm test, a page before the nav island mounts): a missing
+      // or throwing one must not take the grid render down with it.
+      if (Home._appsLoaded) {
+        try {
+          window.UsernodeReact?.nav?.setPinnedApps?.(Home.topRowApps(layout));
+        } catch {
+          // The strip following Home is a convenience, never a dependency.
+        }
+      }
       // AS MANY ROWS AS THE FIRST TWO-THIRDS OF THE SCREEN HOLDS, AND NEVER
       // FEWER THAN TWO (HomeLayout.DEFAULT_ROWS). The cap is on what is SHOWN,
       // never on what a viewer may have or where they may put it: the canvas
@@ -832,7 +1016,7 @@ const Home = {
         const landed = canvas.find((it) => it && it.slug === Home._revealSlug);
         if (landed && landed.row > rowBound) Home._appsExpanded = true;
       }
-      const hiddenRows = !Home._appsExpanded
+      const hiddenRows = !editing && !Home._appsExpanded
         && canvas.some((it) => it.row > rowBound);
       const shown = hiddenRows
         ? canvas.filter((it) => it.row <= rowBound)
@@ -843,7 +1027,7 @@ const Home = {
       // the hidden rows instead, and the expander appears for it even when
       // every app already fits: a launcher of exactly eight apps shows two
       // rows and "Show all 8 apps", and the tile ends the expanded grid.
-      const createHidden = !Home._appsExpanded
+      const createHidden = !editing && !Home._appsExpanded
         && HomeLayout.createTileCollapsed(shown, cols, rowBound);
       const collapsed = hiddenRows || createHidden;
       const overflow = collapsed ? [] : HomeLayout.overflowItems(layout);
@@ -874,23 +1058,34 @@ const Home = {
       // not in the layout, so it is never dragged, stored or displaced; a drop
       // onto its cell lands in an empty cell and the next paint moves it on.
       // It FLOWS instead (no placement) when there is no cell to follow: an
-      // empty launcher, where it comes after the "No apps added yet" note, and
+      // empty launcher, where it is all the grid shows, and
       // overflow tiles, which have no cell of their own either.
+      //
+      // A collapsed grid the tile would add a row to (createHidden above)
+      // holds it back with the hidden rows — but it is not DROPPED there
+      // (#4757): heldBack marks it, and "Show all N apps" draws a compact
+      // New project entry on its own line (apps-more.tsx), so creating stays
+      // one tap away without expanding and without a new tile row. Exactly
+      // one of tile and compact entry is on screen: the grid draws its tile
+      // only when not held back (app-grid.tsx).
       //
       // Present for EVERY account: `canCreate` decides its treatment, never
       // its presence — the locked tile opens the dialog that prints the quota.
-      // The one place it is not drawn is a collapsed grid it would add a row
-      // to (createHidden above): there it is behind "Show all N apps", one
-      // tap away, like the apps past the fold.
       const placed = items.filter((it) => it.placement).map((it) => it.placement);
       const flows = !placed.length || items.some((it) => !it.placement);
-      create = createHidden ? null : {
+      create = {
         enabled: canCreate,
-        hint: Home.CREATE_DISABLED_HINT,
-        placement: flows ? null : { ...HomeLayout.trailingCell(placed, cols), w: 1, h: 1 },
+        hint: message(Home.CREATE_DISABLED_HINT),
+        heldBack: createHidden,
+        placement: createHidden || flows
+          ? null
+          : { ...HomeLayout.trailingCell(placed, cols), w: 1, h: 1 },
       };
       // A private member makes no apps until they are let in off the
-      // waitlist (their Home's waitlist card says so), so no tile at all.
+      // waitlist (their Home's waitlist card says so), so no tile at all —
+      // in edit mode too (#4669): the mode's own entry, "Add apps", is the
+      // button beside the heading, not this tile, so the trailing tile keeps
+      // exactly the presence it has at rest.
       if (App.user?.privateMember) create = null;
     }
 
@@ -903,7 +1098,7 @@ const Home = {
     // desktop and the search view get — app.css's grid-auto-rows is then the
     // only row sizing, exactly as before. Written BEFORE the innerHTML so the
     // first layout of the new children already has its tracks.
-    gridStore.set({ ready: true, view, rowTemplate, items, resultsHeading, emptyQuery, notice: null, create });
+    gridStore.set({ ready: true, view, rowTemplate, items, resultsHeading, emptyQuery, notice: null, create, editing });
     // ...and, in the same push, the two hosts outside it: "Show all N apps"
     // and the iOS widget-editing strip. The strip renders ABOVE the grid, in
     // its own section, because a full-width flow item cannot coexist with the
@@ -967,8 +1162,10 @@ const Home = {
 
     // Every leg bails WITHOUT stamping. A half-finished round trip must not
     // read as a passing one, and the check's selector is the final stamp.
+    // The corner control is a pill now, and the state it acts on is
+    // data-join: "join" for a card the viewer has neither joined nor added.
     const badge = await until(() => document.querySelector(
-      '#home-discover-section .app-card:not([data-demo]) .card-add-btn[data-added="false"]',
+      '#home-discover-section .app-card:not([data-demo]) .card-add-btn[data-join="join"]',
     ), 8000);
     if (!badge) return;
     const slug = badge.dataset.slug;
@@ -984,18 +1181,15 @@ const Home = {
     if (!tile) return;
     document.body.dataset.shotAdd = 'added';
 
-    // The card stayed put in the rail (that is _discoverKeep) with its badge
-    // ticked, so the same finger can undo it.
+    // The card stayed put in the rail (that is _discoverKeep) with its pill
+    // now saying "Joined", so the same finger can undo it. A click would open
+    // the leave confirm — a person's path — so the undo here is the call the
+    // confirm's own accept makes, quiet, as befits the fixture's finger.
     const ticked = await until(() => document.querySelector(
-      `#home-discover-section .card-add-btn[data-slug="${slug}"][data-added="true"]`,
+      `#home-discover-section .card-add-btn[data-slug="${slug}"][data-join="joined"]`,
     ), 8000);
     if (!ticked) return;
-    // The unpin below is the fixture's, not a person's: no "Leave too?" for
-    // it (see _offerLeaveAfterUnpin). Left set for the rest of this page
-    // load, which is the shot's: the offer runs after the unpin's request
-    // lands, which can be after `gone` below has already been seen.
-    Home._quietLeaveOffer = true;
-    ticked.click();
+    Home.setMembership(slug, false, undefined, { confirmed: true });
 
     const gone = await until(
       () => !document.querySelector(`#app-list .app-card[data-slug="${slug}"]`),
@@ -1016,10 +1210,18 @@ const Home = {
     // The status DOT and the active-users badge are gone from the tile face —
     // a launcher icon should read as an app, not a dashboard row. Every
     // non-running status still says so in words.
-    const statusLabel = isRunning ? ''
-      : app.status === 'creating' ? 'Spinning up...'
-      : isAwaiting ? 'Awaiting secrets'
-      : 'Error';
+    // #4053 (owner, 7 Oct 2026): a project whose first version Homeroom bot
+    // is making says where it is in the build line, from the time it is set
+    // up until it is live (Home.tileBuildLine), not "Spinning up...". In the
+    // tile's short words (run four, 13 Oct: the whole phrases were cut off),
+    // and while it is built, its stage's (`first_version_phase`, run five:
+    // the tile said "Building" while the App tab said "Drawing the screens").
+    const { line: buildLine, phase: buildPhase } = Home.tileBuildStage(app);
+    const statusLabel = buildLine ? message(buildLineTileWordsOf(buildLine, buildPhase))
+      : isRunning ? ''
+      : app.status === 'creating' ? message('home:grid.tile.status.creating')
+      : isAwaiting ? message('home:grid.tile.status.awaitingSecrets')
+      : message('home:grid.tile.status.error');
     // Retry is the errored card's primary recovery action, gated to
     // creator-or-full-admin (view-only admins excluded, issue #311).
     const showRetry = isError
@@ -1028,6 +1230,7 @@ const Home = {
     // creator / collaborators / admins, so it is simply absent for outsiders.
     const forkName = app.forked_from && typeof app.forked_from === 'object'
       ? (app.forked_from.name || '<deleted>') : null;
+    const forkDeleted = !!forkName && !app.forked_from.name;
     return {
       slug: app.slug,
       name: String(app.name || ''),
@@ -1036,6 +1239,7 @@ const Home = {
       locked: !!app.locked,
       demo: !!app.demo,
       statusLabel,
+      buildLine,
       isAwaiting,
       isError,
       // Awaiting-secrets cards stay clickable so the viewer can open the app
@@ -1045,11 +1249,34 @@ const Home = {
       failureReason: isError && app.last_failure_reason ? String(app.last_failure_reason) : null,
       showRetry,
       forkName,
+      forkDeleted,
       // The tile's audience mark (communities, stage 4): GET /api/apps
       // derives it per row, and anything it does not say reads as a
       // public community, which draws no mark.
       audience: app.audience === 'invited' || app.audience === 'solo' ? app.audience : 'open',
     };
+  },
+
+  /**
+   * #4053: the build line a tile shows (frontend/src/features/first-session/
+   * build-line-words.js), from the list's `first_version_line` (GET /api/apps:
+   * the line homeroom-bot-dm.js firstVersionState says for this viewer), or
+   * null. An app that failed to set up says that instead: Error and Retry.
+   */
+  tileBuildLine(app) {
+    return Home.tileBuildStage(app).line;
+  },
+
+  /**
+   * The tile's first version, { line, phase }: the list's line and its
+   * stage (`first_version_phase`), as the made screen says them from the
+   * moment its Submit went through (run six, build-line-words.js
+   * tileStageOf: "Starting", grey, never the list's "Plan ready" from before
+   * Submit). `line` is null for none.
+   */
+  tileBuildStage(app) {
+    if (!app || app.status === 'error') return { line: null, phase: null };
+    return tileStageOf(app.slug, buildLineTileOf(app.first_version_line), app.first_version_phase);
   },
 
   // One placed item -> its view-model entry. The string version spliced
@@ -1111,6 +1338,12 @@ const Home = {
         if (Home._cardPointerType === 'touch') {
           Home._contextLift = { item, origin: null };
           Home.openCardMenu(item.dataset.slug, item);
+          // EDIT MODE (#4669). The recognizer's itemSelector is
+          // `.app-card[data-yours]:not([data-demo])`, so the hold that reaches
+          // here is already on a tile of the viewer's own. The flag goes down
+          // while `_dragActive` holds and setEditing defers the paint to the
+          // settle flush — the wiggle starts when the finger comes up.
+          Home.setEditing(true);
         } else {
           Home.closeCardMenu();
           Home._showGridOverlay(listEl, cols, item);
@@ -1947,6 +2180,9 @@ const Home = {
       // Typing pins the bar open — a re-render must never scroll the
       // field the user is typing into off the top of the screen.
       Home._searchReveal.pin();
+      // EDIT MODE (#4669): a value in the field ends it, so arranging the
+      // shelf and searching never happen at once.
+      if (Home._editing && input.value) Home._editing = false;
       clearTimeout(Home._searchDebounce);
       Home._searchDebounce = setTimeout(apply, 100);
     });
@@ -2047,7 +2283,26 @@ const Home = {
       btn.addEventListener('pointerdown', stopDrag);
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
-        Home.toggleAdded(btn.dataset.slug, btn.dataset.added !== 'true', onChange);
+        // The pill is one control with three jobs, stamped by data-join: a
+        // real join (which also pins the card to My apps), the quiet "Joined"
+        // that taps through to the leave confirm, and a plain pin for a
+        // member whose community is not on Home yet. data-added is still
+        // stamped for the existing readers (the shot state and the checks).
+        const slug = btn.dataset.slug;
+        const join = btn.dataset.join;
+        if (!slug || !join) return;
+        if (join === 'join') {
+          // A join repaints the rail (setMembership's optimistic flip ends in
+          // Home.render), and popularApps drops joined apps from Discover —
+          // so the card has to be kept the way an add keeps it, or it
+          // vanishes the moment the join lands.
+          Home._discoverKeep.add(slug);
+          Home.setMembership(slug, true, onChange);
+        } else if (join === 'joined') {
+          Home.setMembership(slug, false, onChange);
+        } else {
+          Home.toggleAdded(slug, true, onChange);
+        }
       });
     });
     listEl.querySelectorAll('.card-menu-btn').forEach((btn) => {
@@ -2123,11 +2378,14 @@ const Home = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ favorited: desired }),
       });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || `HTTP ${res.status}`);
-      }
-      PlatformUI.toast(desired ? 'Added to Shortcuts' : 'Removed from Shortcuts');
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      PlatformUI.toast(desired ? message('home:myApps.added') : message('home:myApps.removed'));
+      // #4600: a pin that JOINED (the server says so: `joined`, after it has
+      // counted "Join a community") is a join, and says so as setMembership
+      // does, so Home's Challenges block reads again now rather than on its
+      // next refresh.
+      if (desired && data && data.joined === true) Home._announceMembership(slug, true);
       if (!desired) await Home._offerLeaveAfterUnpin(app);
     } catch (err) {
       app.is_favorited = prev.is_favorited;
@@ -2137,7 +2395,7 @@ const Home = {
       // renders, and a stale slug would expand the grid for an app that is
       // not there.
       Home._revealSlug = null;
-      PlatformUI.toast(`Update failed: ${err.message}`);
+      PlatformUI.toast(message('home:myApps.updateFailed', { reason: err.message }));
       await Home.load();
       if (typeof onChange === 'function') onChange();
     }
@@ -2157,12 +2415,12 @@ const Home = {
     const confirmModal = typeof window !== 'undefined' ? window.ConfirmModal : null;
     const name = app.name || app.slug;
     const ok = await confirmModal?.show?.({
-      title: `Leave ${name} too?`,
+      title: message('home:leave.afterUnpin.title', { community: name }),
       message: app.view_visibility === 'private'
-        ? 'It’s off your Home screen. Leaving also ends your access until someone invites you back.'
-        : 'It’s off your Home screen. You can stay a member, or leave and stop proposing and voting on its changes.',
-      confirmLabel: 'Leave',
-      cancelLabel: 'Stay a member',
+        ? message('home:leave.afterUnpin.private')
+        : message('home:leave.afterUnpin.public'),
+      confirmLabel: message('home:leave.afterUnpin.confirm'),
+      cancelLabel: message('home:leave.afterUnpin.stay'),
       danger: true,
     });
     if (!ok) return false;
@@ -2207,11 +2465,11 @@ const Home = {
       // silent leave is the one outcome this step exists to prevent.
       const confirmModal = typeof window !== 'undefined' ? window.ConfirmModal : null;
       const ok = await confirmModal?.show?.({
-        title: `Leave ${name}?`,
+        title: message('home:leave.confirm.title', { community: name }),
         message: privateApp
-          ? 'You will lose access to it until someone invites you back.'
-          : 'You won’t be able to propose or vote on its changes until you join again.',
-        confirmLabel: 'Leave',
+          ? message('home:leave.confirm.private')
+          : message('home:leave.confirm.public'),
+        confirmLabel: message('home:leave.confirm.button'),
         danger: true,
       });
       if (!ok) return false;
@@ -2246,7 +2504,7 @@ const Home = {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
       if (app && Number.isFinite(Number(data.member_count))) app.member_count = Number(data.member_count);
-      PlatformUI.toast(desired ? `Joined ${name}` : `Left ${name}`);
+      PlatformUI.toast(desired ? message('home:membership.joined', { community: name }) : message('home:membership.left', { community: name }));
       Home._announceMembership(slug, desired);
       if (!app) {
         await Home.load();
@@ -2256,7 +2514,9 @@ const Home = {
     } catch (err) {
       if (app && prev) Object.assign(app, prev);
       Home._revealSlug = null;
-      PlatformUI.toast(`Couldn’t ${desired ? 'join' : 'leave'}: ${err.message}`);
+      PlatformUI.toast(desired
+        ? message('home:membership.joinFailed', { reason: err.message })
+        : message('home:membership.leaveFailed', { reason: err.message }));
       await Home.load();
       if (typeof onChange === 'function') onChange();
       return false;
@@ -2288,15 +2548,14 @@ const Home = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ favorited: desired }),
       });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || `HTTP ${res.status}`);
-      }
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
       if (desired) Home._revealSlug = slug;
-      PlatformUI.toast(desired ? 'Added to Shortcuts' : 'Removed from Shortcuts');
+      PlatformUI.toast(desired ? message('home:myApps.added') : message('home:myApps.removed'));
+      if (desired && data && data.joined === true) Home._announceMembership(slug, true);
     } catch (err) {
       Home._revealSlug = null;
-      PlatformUI.toast(`Update failed: ${err.message}`);
+      PlatformUI.toast(message('home:myApps.updateFailed', { reason: err.message }));
     }
     await Home.load();
     if (typeof onChange === 'function') onChange();
@@ -2348,7 +2607,7 @@ const Home = {
   // message. Mirrors the status enum in main-drift-poller.js.
   reportCheckResult(data) {
     if (!data || !data.status) {
-      PlatformUI.toast('Check finished (no details returned).');
+      PlatformUI.toast(message('home:check.noDetails'));
       return;
     }
     switch (data.status) {
@@ -2362,38 +2621,49 @@ const Home = {
         // but most operators reach for the home-card ⟳ first.
         if (data.slug) {
           PlatformUI.confirm({
-            title: 'Latest commit is already running',
-            message: 'Force a rebuild anyway? (Useful if env vars or platform code changed.)',
-            confirmLabel: 'Rebuild',
+            title: message('home:check.noDrift.title'),
+            message: message('home:check.noDrift.message'),
+            confirmLabel: message('home:check.noDrift.confirm'),
           }).then((ok) => {
             if (!ok) return;
             fetch(`/api/apps/${data.slug}/redeploy`, { method: 'POST' })
               .then((r) => r.ok ? r.json() : r.json().then((j) => Promise.reject(new Error(j.error || `HTTP ${r.status}`))))
-              .then(() => PlatformUI.toast('Rebuild started. Watch the version pill.'))
-              .catch((err) => PlatformUI.toast(`Rebuild kickoff failed: ${err.message}`));
+              .then(() => PlatformUI.toast(message('home:check.rebuild.started')))
+              .catch((err) => PlatformUI.toast(message('home:check.rebuild.failed', { reason: err.message })));
           });
         }
         return;
       case 'redeployed':
-        PlatformUI.toast(`Redeployed to ${(data.to || '').slice(0, 7)}.`);
+        PlatformUI.toast(message('home:check.redeployed', { sha: (data.to || '').slice(0, 7) }));
         return;
       case 'in_flight':
-        PlatformUI.toast('A redeploy is already in progress for this app.');
+        PlatformUI.toast(message('home:check.inFlight'));
+        return;
+      case 'deploy_requested':
+        PlatformUI.toast(message('home:check.deployRequested', { sha: (data.to || '').slice(0, 7) }));
         return;
       case 'first_seen':
-        PlatformUI.toast(`Recorded current SHA (${(data.sha || '').slice(0, 7)}). Future drift will trigger a redeploy.`);
+        PlatformUI.toast(message('home:check.firstSeen', { sha: (data.sha || '').slice(0, 7) }));
         return;
       case 'fetch_failed':
-        PlatformUI.toast(`Couldn't reach GitHub: ${data.error || 'unknown error'}`);
+        PlatformUI.toast(data.error
+          ? message('home:check.fetchFailed', { reason: data.error })
+          : message('home:check.fetchFailedUnknown'));
         return;
       case 'invalid_repo':
-        PlatformUI.toast('This app has an invalid repo URL.');
+        PlatformUI.toast(message('home:check.invalidRepo'));
         return;
       case 'rebuild_failed':
-        PlatformUI.toast(`Drift detected (${(data.from || '').slice(0, 7)} → ${(data.attempted || '').slice(0, 7)}) but redeploy failed: ${data.error || 'unknown error'}`);
+        PlatformUI.toast(data.error
+          ? message('home:check.rebuildFailed', {
+            from: (data.from || '').slice(0, 7), to: (data.attempted || '').slice(0, 7), reason: data.error,
+          })
+          : message('home:check.rebuildFailedUnknown', {
+            from: (data.from || '').slice(0, 7), to: (data.attempted || '').slice(0, 7),
+          }));
         return;
       default:
-        PlatformUI.toast(`Check finished: ${data.status}`);
+        PlatformUI.toast(message('home:check.finished', { status: data.status }));
     }
   },
 
@@ -2443,10 +2713,12 @@ const Home = {
     // Every non-running status still says so in words on the tile — see
     // statusLabel / warningHtml below — so "Spinning up…", "Awaiting
     // secrets" and "Error" are unaffected.
-    const statusLabel = app.status === 'running' ? ''
-      : app.status === 'creating' ? 'Spinning up...'
-      : isAwaiting ? 'Awaiting secrets'
-      : 'Error';
+    const { line: buildLine, phase: buildPhase } = Home.tileBuildStage(app);
+    const statusLabel = buildLine ? htmlText(buildLineTileWordsOf(buildLine, buildPhase))
+      : app.status === 'running' ? ''
+      : app.status === 'creating' ? htmlText('home:grid.tile.status.creating')
+      : isAwaiting ? htmlText('home:grid.tile.status.awaitingSecrets')
+      : htmlText('home:grid.tile.status.error');
     const isError = app.status === 'error';
     const isRunning = app.status === 'running';
     // The active-users badge is gone from the tile face too. The count is
@@ -2482,8 +2754,12 @@ const Home = {
     const failureTip = isError && app.last_failure_reason
       ? ` title="${escapeHtml(String(app.last_failure_reason)).replace(/"/g, '&quot;')}"`
       : '';
+    // #4053: a first version's build line is quiet (blue when it asks), not
+    // the status colours below.
     const warningHtml = statusLabel
-      ? `<p class="app-card-status ${isAwaiting ? 'text-[color:var(--state-attention)]' : 'text-[color:var(--state-blocked)]'}"${failureTip}>${statusLabel}</p>`
+      ? (buildLine
+        ? `<p class="${buildLineTileClass(buildLine)}" data-build-line="${buildLine}">${statusLabel}</p>`
+        : `<p class="app-card-status ${isAwaiting ? 'text-[color:var(--state-attention)]' : 'text-[color:var(--state-blocked)]'}"${failureTip}>${statusLabel}</p>`)
       : '';
 
     const isLocked = !!app.locked;
@@ -2498,9 +2774,11 @@ const Home = {
           ? 'bg-emerald-500 border-emerald-500 text-white'
           : 'bg-white dark:bg-zinc-800 border-zinc-200 dark:border-zinc-600 text-violet-700 dark:text-violet-400 hover:border-violet-400'
       }" data-slug="${app.slug}" data-added="${isAdded}" title="${
-        isAdded ? 'Added. Tap to remove from Shortcuts' : 'Add to Shortcuts'
+        isAdded ? htmlText('home:discover.card.addedTip') : htmlText('home:discover.card.addTip')
       }" aria-label="${
-        isAdded ? `Remove ${escapeHtml(app.name)} from Shortcuts` : `Add ${escapeHtml(app.name)} to Shortcuts`
+        isAdded
+          ? htmlText('home:discover.card.removeNamed', { app: String(app.name || '') })
+          : htmlText('home:discover.card.addNamed', { app: String(app.name || '') })
       }" aria-pressed="${isAdded}">${
         isAdded
           ? '<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>'
@@ -2509,7 +2787,7 @@ const Home = {
     // Discovery keeps its explicit menu beside the add badge. Launcher
     // tiles use long press / right click instead (#1616).
     const hamburgerHtml = (corner) => `
-      <button class="card-menu-btn absolute -top-1.5 ${corner} w-6 h-6 flex items-center justify-center rounded-full bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-600 shadow-sm text-zinc-500 dark:text-zinc-300 hover:text-zinc-700 dark:hover:text-zinc-100 hover:border-zinc-300 dark:hover:border-zinc-500 transition-colors" data-slug="${app.slug}" title="App actions" aria-label="App actions" aria-haspopup="menu"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg></button>`;
+      <button class="card-menu-btn absolute -top-1.5 ${corner} w-6 h-6 flex items-center justify-center rounded-full bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-600 shadow-sm text-zinc-500 dark:text-zinc-300 hover:text-zinc-700 dark:hover:text-zinc-100 hover:border-zinc-300 dark:hover:border-zinc-500 transition-colors" data-slug="${app.slug}" title="${htmlText('home:grid.tile.actions')}" aria-label="${htmlText('home:grid.tile.actions')}" aria-haspopup="menu"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg></button>`;
     // Discovery grids show BOTH: the add/remove badge as the primary
     // affordance, plus the same "…" menu the home cards have, so an app
     // you haven't added still offers Fork / build log / admin actions
@@ -2525,7 +2803,7 @@ const Home = {
     // not a corner button the icon covered on phones. Same classes as
     // app-grid.tsx's RETRY_BTN; a Retry tile greys only its icon.
     const retryHtml = showRetry
-      ? `<button type="button" class="retry-btn relative inline-flex items-center rounded-full bg-violet-600 hover:bg-violet-500 px-1.5 text-[11px] leading-3 font-semibold text-white cursor-pointer transition-colors before:absolute before:-inset-x-1.5 before:-inset-y-2 before:content-[''] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-1" data-slug="${app.slug}" aria-label="Retry ${escapeHtml(String(app.name || '')).replace(/"/g, '&quot;')}">Retry</button>`
+      ? `<button type="button" class="retry-btn relative inline-flex items-center rounded-full bg-violet-600 hover:bg-violet-500 px-1.5 text-[11px] leading-3 font-semibold text-white cursor-pointer transition-colors before:absolute before:-inset-x-1.5 before:-inset-y-2 before:content-[''] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-1" data-slug="${app.slug}" aria-label="${htmlText('home:grid.tile.retryNamed', { app: String(app.name || '') })}">${htmlText('core:common.retry')}</button>`
       : '';
 
     // Fork lineage tag: a small amber ⑂ badge on the icon's bottom-left
@@ -2535,8 +2813,9 @@ const Home = {
     // in the tooltip. `forked_from` is null for non-forks.
     const forkName = app.forked_from && typeof app.forked_from === 'object'
       ? (app.forked_from.name || '<deleted>') : null;
+    const forkDeleted = !!forkName && !app.forked_from.name;
     const forkTagHtml = forkName
-      ? `<span class="fork-tag absolute -bottom-1 -left-1 w-5 h-5 flex items-center justify-center rounded-full bg-amber-500 text-white text-xs font-bold shadow-sm" title="Remixed from ${escapeHtml(forkName)}" aria-label="Remixed from ${escapeHtml(forkName)}">⑂</span>`
+      ? `<span class="fork-tag absolute -bottom-1 -left-1 w-5 h-5 flex items-center justify-center rounded-full bg-amber-500 text-white text-xs font-bold shadow-sm" title="${(forkDeleted ? htmlText('home:grid.tile.remixedFromDeleted', { open: '<', close: '>' }) : htmlText('home:grid.tile.remixedFrom', { app: forkName }))}" aria-label="${(forkDeleted ? htmlText('home:grid.tile.remixedFromDeleted', { open: '<', close: '>' }) : htmlText('home:grid.tile.remixedFrom', { app: forkName }))}">⑂</span>`
       : '';
 
     const icon = Home.iconTileFor(app);
@@ -2690,7 +2969,7 @@ const Home = {
     try {
       await window.usernode.removeHomeScreenShortcut(id);
     } catch (err) {
-      PlatformUI.toast(`Remove from widget failed: ${(err && err.message) || err}`);
+      PlatformUI.toast(message('home:widget.removeFailed', { reason: String((err && err.message) || err) }));
       await Home._refreshWidgetItems();
       Home.render();
     }
@@ -2706,7 +2985,7 @@ const Home = {
     try {
       await window.usernode.reorderHomeScreenShortcuts(ids);
     } catch (err) {
-      PlatformUI.toast(`Widget reorder failed: ${(err && err.message) || err}`);
+      PlatformUI.toast(message('home:widget.reorderFailed', { reason: String((err && err.message) || err) }));
       await Home._refreshWidgetItems();
       Home.render();
     }
@@ -3387,17 +3666,19 @@ const Home = {
   },
   // Last-pass telemetry, for the Settings → "Widget icons" row. Kept
   // here rather than derived there: by the time someone opens Settings
-  // the interesting pass has long finished.
+  // the interesting pass has long finished. The outcome is recorded as
+  // `{ kind, sent, refused }`, not as text: Settings says it, together with
+  // the time, as one whole message (settings:usernode.widgetIcons.lastCheck.*).
   _lastHealAt: 0,
   _lastHealOutcome: null,
   async _healWidgetIconsPass() {
     if (Home._shortcutSupport?.mechanism !== 'widget') {
-      Home._lastHealOutcome = 'skipped, not the widget mechanism';
+      Home._lastHealOutcome = { kind: 'skippedMechanism' };
       return;
     }
     const bridge = window.usernode;
     if (!bridge || typeof bridge.addHomeScreenShortcut !== 'function') {
-      Home._lastHealOutcome = 'skipped, no shortcut bridge';
+      Home._lastHealOutcome = { kind: 'skippedBridge' };
       return;
     }
     // Resolve the dual-icon capability BEFORE building any marker or
@@ -3468,8 +3749,10 @@ const Home = {
       } catch (_) { /* private mode — retried next load, sends deduped by `tried` */ }
     }
     Home._lastHealOutcome = (sent || failed)
-      ? `sent ${sent}${failed ? `, ${failed} refused` : ''}`
-      : 'nothing to send';
+      ? (failed
+        ? { kind: 'sentRefused', sent, refused: failed }
+        : { kind: 'sent', sent })
+      : { kind: 'nothing' };
     if (healed) {
       try {
         const resp = await bridge.getHomeScreenShortcuts();
@@ -3596,8 +3879,8 @@ const Home = {
     if (!app.demo && app.slug) {
       items.push({
         key: 'app-details',
-        label: 'App details',
-        title: 'Version, status and everything you can do with this app',
+        label: message('home:menu.details.label'),
+        title: message('home:menu.details.tip'),
         run: () => {
           window.Browse?.noteDetailOrigin?.('home');
           location.hash = `#apps/${encodeURIComponent(app.slug)}`;
@@ -3616,8 +3899,8 @@ const Home = {
     if (app.repo_url) {
       items.push({
         key: 'github',
-        label: 'View on GitHub',
-        title: 'Open this app’s repository',
+        label: message('home:menu.github.label'),
+        title: message('home:menu.github.tip'),
         // `noopener` explicitly: the target document must not get a handle on
         // this window, and repo_url is app-supplied.
         run: () => window.open(app.repo_url, '_blank', 'noopener'),
@@ -3626,16 +3909,16 @@ const Home = {
     if (app.is_collaborator) {
       items.push({
         key: 'favorite',
-        label: app.your_apps_hidden ? 'Add to Shortcuts' : 'Remove from Shortcuts',
+        label: app.your_apps_hidden ? message('home:menu.myApps.add') : message('home:menu.myApps.remove'),
         title: app.your_apps_hidden
-          ? 'Show this app in Shortcuts again. You keep your builder access either way.'
-          : 'Hide this app from Shortcuts. It stays live and you keep your builder access.',
+          ? message('home:menu.myApps.showAgainTip')
+          : message('home:menu.myApps.hideTip'),
         run: () => Home._menuToggleFavorite(app, !!app.your_apps_hidden),
       });
     } else {
       items.push({
         key: 'favorite',
-        label: app.is_favorited ? 'Remove from Shortcuts' : 'Add to Shortcuts',
+        label: app.is_favorited ? message('home:menu.myApps.remove') : message('home:menu.myApps.add'),
         run: () => Home._menuToggleFavorite(app, !app.is_favorited),
       });
     }
@@ -3652,8 +3935,8 @@ const Home = {
     // beside it.
     items.push({
       key: 'notifications',
-      label: 'Notifications',
-      title: 'Choose what this app can notify you about, here and on your phone.',
+      label: message('home:menu.notifications.label'),
+      title: message('home:menu.notifications.tip'),
       run: () => window.UsernodeReact?.dialogs?.appNotifications?.open({ slug: app.slug }),
     });
     // Native homescreen shortcut — only when the page runs inside a
@@ -3679,13 +3962,13 @@ const Home = {
         // by default) management section — reorder or remove from there.
         items.push({
           key: 'add-to-homescreen',
-          label: 'Edit in Homeroom widget',
+          label: message('home:menu.widget.edit'),
           run: () => Home._revealWidgetSection(),
         });
       } else {
         items.push({
           key: 'add-to-homescreen',
-          label: isWidget ? 'Add to Homeroom widget' : 'Add to phone home screen',
+          label: isWidget ? message('home:menu.widget.add') : message('home:menu.phoneHome.add'),
           run: () => Home._menuAddShortcut(app),
         });
       }
@@ -3708,8 +3991,8 @@ const Home = {
     if (installHost !== 'none') {
       items.push({
         key: 'install',
-        label: 'Add to Home Screen',
-        title: 'Put this app on your phone’s home screen with its own icon',
+        label: message('home:menu.install.label'),
+        title: message('home:menu.install.tip'),
         run: () => {
           const href = `/app/${encodeURIComponent(app.slug)}/install`;
           if (installHost === 'standalone') {
@@ -3732,7 +4015,7 @@ const Home = {
       });
     }
     if (isError && (user.canAdminWrite || user.id === app.created_by)) {
-      items.push({ key: 'retry', label: 'Retry', run: () => Home._menuRetry(app) });
+      items.push({ key: 'retry', label: message('home:menu.retry'), run: () => Home._menuRetry(app) });
     }
     // #416: "View build log" for involved users — on errored apps, and
     // on running apps whose last recorded failure post-dates the last
@@ -3746,8 +4029,8 @@ const Home = {
     if (canSeeBuildLog && (isError || rebuildFailed)) {
       items.push({
         key: 'build-log',
-        label: 'View build log',
-        title: app.last_failure_reason || 'See why the last build/deploy failed',
+        label: message('home:menu.buildLog.label'),
+        title: app.last_failure_reason || message('home:menu.buildLog.tip'),
         run: () => window.BuildLog && BuildLog.open(app.slug),
       });
     }
@@ -3757,7 +4040,7 @@ const Home = {
       // menu vanishing with zero feedback.
       items.push({
         key: 'check-updates',
-        label: 'Check for updates',
+        label: message('home:menu.checkUpdates.label'),
         keepOpen: true,
         run: (itemEl) => Home._menuCheckUpdates(app, itemEl),
       });
@@ -3772,19 +4055,19 @@ const Home = {
     if (!app.self_hosted && typeof AppView !== 'undefined' && AppView.promptFork) {
       items.push({
         key: 'fork',
-        label: 'Remix',
-        sub: 'Make your own copy',
-        title: 'Make your own copy',
+        label: message('home:menu.remix.label'),
+        sub: message('home:menu.remix.sub'),
+        title: message('home:menu.remix.sub'),
         run: () => AppView.promptFork({ slug: app.slug, name: app.name }),
       });
     }
     if (user.canAdminWrite) {
       items.push({
         key: 'lock',
-        label: app.locked ? 'Unlock app' : 'Lock app',
+        label: app.locked ? message('home:menu.lock.unlock') : message('home:menu.lock.lock'),
         title: app.locked
-          ? 'App locked: merges also need an admin yes vote. Click to unlock.'
-          : 'Lock this app. An admin yes vote will also be required to merge changes.',
+          ? message('home:menu.lock.unlockTip')
+          : message('home:menu.lock.lockTip'),
         run: () => Home._menuToggleLock(app),
       });
     }
@@ -3795,10 +4078,10 @@ const Home = {
     // (delete_block 'shared' is only ever handed to them) keeps the entry,
     // because the dialog is also where the deletion refusal is explained.
     if (user.canAdminWrite || app.can_manage || app.can_delete || app.delete_block === 'shared') {
-      items.push({ key: 'app-settings', label: 'App settings', run: () => window.UsernodeReact?.dialogs?.appSettings?.open({ slug: app.slug }) });
+      items.push({ key: 'app-settings', label: message('home:menu.settings'), run: () => window.UsernodeReact?.dialogs?.appSettings?.open({ slug: app.slug }) });
     }
     if (App.user && app.slug && app.can_report === true) items.push({
-      key: 'report', label: 'Report app',
+      key: 'report', label: message('home:menu.report'),
       run: () => window.UsernodeReact?.dialogs?.report?.open({ targetType: 'app', target: app.slug, label: app.name || app.slug }),
     });
     return items;
@@ -3836,7 +4119,7 @@ const Home = {
       <div class="card-menu-title">${escapeHtml(app.name || app.slug)}</div>
       <div class="card-menu-slug">${escapeHtml(app.slug)}</div>
       <div class="card-menu-version">${pillHtml}</div>
-      ${updatedRel ? `<div class="card-menu-updated">Updated ${escapeHtml(updatedRel)}</div>` : ''}
+      ${updatedRel ? `<div class="card-menu-updated">${htmlText('home:menu.updated', { when: updatedRel })}</div>` : ''}
       ${pillsHtml ? `<div class="card-menu-pills">${pillsHtml}</div>` : ''}`;
   },
 
@@ -4342,7 +4625,7 @@ const Home = {
       return true;
     } catch (err) {
       const msg = String((err && err.message) || err);
-      if (!/denied/i.test(msg)) PlatformUI.toast(`Add to home screen failed: ${msg}`);
+      if (!/denied/i.test(msg)) PlatformUI.toast(message('home:menu.phoneHome.addFailed', { reason: msg }));
       return false;
     }
   },
@@ -4372,18 +4655,18 @@ const Home = {
   async _menuCheckUpdates(app, itemEl) {
     if (itemEl) {
       itemEl.disabled = true;
-      itemEl.textContent = 'Checking…';
+      itemEl.textContent = message('home:menu.checkUpdates.checking');
     }
     try {
       const res = await fetch(`/api/apps/${app.slug}/check-updates`, { method: 'POST' });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        PlatformUI.toast(data.error || `Check failed (HTTP ${res.status})`);
+        PlatformUI.toast(data.error || message('home:menu.checkUpdates.failedHttp', { status: res.status }));
       } else {
         Home.reportCheckResult(data);
       }
     } catch (err) {
-      PlatformUI.toast(`Check failed: ${err.message}`);
+      PlatformUI.toast(message('home:menu.checkUpdates.failed', { reason: err.message }));
     } finally {
       Home.closeCardMenu();
       await Home.load();
@@ -4400,12 +4683,12 @@ const Home = {
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        PlatformUI.toast(data.error || `Lock toggle failed (HTTP ${res.status})`);
+        PlatformUI.toast(data.error || message('home:menu.lock.failedHttp', { status: res.status }));
         return;
       }
       Home.updateAppCardLock(app.slug, nextLocked);
     } catch (err) {
-      PlatformUI.toast(`Lock toggle failed: ${err.message}`);
+      PlatformUI.toast(message('home:menu.lock.failed', { reason: err.message }));
     }
   },
 
@@ -5055,7 +5338,10 @@ const Home = {
       cleanup();
       if ((e.pointerType !== 'touch' && e.pointerType !== 'pen' && e.pointerType !== 'mouse')
           || e.button !== 0 || e.isPrimary === false) return;
-      if (e.target.closest('.card-menu-btn') || e.target.closest('.retry-btn')) return;
+      if (e.target.closest('.card-menu-btn') || e.target.closest('.retry-btn')
+        // #4669: a press on the edit-mode remove button is not a hold on the
+        // tile — it removes the app, and must never arm the 400ms menu timer.
+        || e.target.closest('.app-card-remove')) return;
       // Placed touch tiles share the kit's lift/drag sequence above. Pen,
       // mouse and search/demo tiles have no touch placement recognizer to do
       // the hold.
@@ -5074,6 +5360,13 @@ const Home = {
         Home._suppressClick = true;
         opened = true;
         Home.openCardMenu(card.dataset.slug, card);
+        // EDIT MODE (#4669): the same hold starts it, for mouse and pen (touch
+        // enters through the kit recognizer's onLift above). Search results,
+        // demo tiles and Discover cards carry no data-yours, and a hold on
+        // them is a menu and nothing else, exactly as before.
+        if (card.hasAttribute('data-yours') && !card.hasAttribute('data-demo')) {
+          Home.setEditing(true);
+        }
       }, 400);
       cleanup = () => {
         if (timer) { clearTimeout(timer); timer = null; }
@@ -5134,7 +5427,7 @@ const Home = {
   // is on every home screen regardless of quota, so this string is what the
   // locked tile announces in its tooltip and label. The dialog it opens
   // carries the exact used-of-limit numbers.
-  CREATE_DISABLED_HINT: 'View your app allowance or request more slots.',
+  CREATE_DISABLED_HINT: 'home:create.disabledHint',
 
   // `wireCreateButtons()` lived here: `document.querySelectorAll('.home-create-btn')`,
   // each button cloneNode'd and swapped for a fresh copy so a re-paint could
@@ -5203,6 +5496,14 @@ const Home = {
 // Node, where there is no window.
 if (typeof window !== 'undefined') window.Home = Home;
 
+// The grid's view model holds text (a tile's status, the results heading),
+// so a language change rebuilds it from the apps already loaded.
+if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+  document.addEventListener('homeroom:language-changed', () => {
+    if (Home._apps.length) Home.render();
+  });
+}
+
 // escapeHtml and formatRelativeTime used to be AMBIENT here: as a classic
 // script's top-level function declarations they were `window.escapeHtml` /
 // `window.formatRelativeTime`, and home.js was the LAST tag to declare either,
@@ -5243,12 +5544,12 @@ function formatRelativeTime(input) {
   const t = new Date(input);
   if (Number.isNaN(t.getTime())) return null;
   const seconds = Math.floor((Date.now() - t.getTime()) / 1000);
-  if (seconds < 60) return 'just now';
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
-  if (seconds < 86400 * 30) return `${Math.floor(seconds / 86400)}d ago`;
-  if (seconds < 86400 * 365) return `${Math.floor(seconds / (86400 * 30))}mo ago`;
-  return `${Math.floor(seconds / (86400 * 365))}y ago`;
+  if (seconds < 60) return message('home:time.justNow');
+  if (seconds < 3600) return message('home:time.minutesAgo', { count: Math.floor(seconds / 60) });
+  if (seconds < 86400) return message('home:time.hoursAgo', { count: Math.floor(seconds / 3600) });
+  if (seconds < 86400 * 30) return message('home:time.daysAgo', { count: Math.floor(seconds / 86400) });
+  if (seconds < 86400 * 365) return message('home:time.monthsAgo', { count: Math.floor(seconds / (86400 * 30)) });
+  return message('home:time.yearsAgo', { count: Math.floor(seconds / (86400 * 365)) });
 }
 
 // Back online: refill a grid that could only show the offline note. Guarded

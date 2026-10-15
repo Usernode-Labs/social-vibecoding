@@ -16,6 +16,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -53,7 +54,8 @@ test('recovery screen builds an email form that posts to the request endpoint', 
 
 test('the request result copy is anti-enumeration (same message either way)', () => {
   const tsx = read(LOGIN_TSX);
-  assert.match(tsx, /If that address matches an account/i,
+  assert.match(tsx, /const SENT_MSG =\n\s*'auth:login\.emailReset\.sent';/);
+  assert.match(message('auth:login.emailReset.sent'), /If that address matches an account/i,
     'success copy must not confirm the account exists');
 });
 
@@ -66,9 +68,12 @@ test('the admin fallback is separated and its copy is spaced correctly (#1158)',
   // JSX drops a line-ending space, so the separators before the inline
   // elements must live inside string expressions — the shipped copy rendered
   // "atemporary" / "fromSettings" without them.
-  assert.match(tsx, /\{'Ask a Homeroom platform admin to issue you a '\}/,
+  // The sentence is one catalog message now, so the separators live in it.
+  assert.match(tsx, /<RichMessage id="auth:login\.recovery\.askAdmin" components=\{\[/);
+  const askAdmin = message('auth:login.recovery.askAdmin');
+  assert.match(askAdmin, /Ask a Homeroom platform admin to issue you a <0>temporary password<\/0>/,
     'explicit space before the "temporary password" span');
-  assert.match(tsx, /\{"\. Once you're back in, set a password you choose from "\}/,
+  assert.match(askAdmin, /<\/0>\. Once you're back in, set a password you choose from <1>Settings → Change password<\/1>\.$/,
     'explicit space before the Settings → Change password link');
 });
 
@@ -107,9 +112,11 @@ test('the stale "no email on file" claim is rewritten once the email path exists
   // The frozen markup's lead still carries the pre-email copy; the screen
   // must swap it so the admin path reads as the fallback, not the rule.
   assert.match(tsx, /recovery-admin/, 'admin fallback block is still used');
-  assert.match(tsx, /If you did not confirm your email account, you will not receive the reset email\./,
+  assert.match(tsx, /'auth:login\.recovery\.unconfirmedWarning'/);
+  assert.match(tsx, /'auth:login\.recovery\.askSupport'/);
+  assert.match(message('auth:login.recovery.unconfirmedWarning'), /If you did not confirm your email account, you will not receive the reset email\./,
     'fallback copy explains the unconfirmed-email gap (#2969)');
-  assert.match(tsx, /ask Homeroom support team to issue you a temporary password \(support@usernodelabs\.org\)\./,
+  assert.match(message('auth:login.recovery.askSupport'), /ask Homeroom support team to issue you a temporary password \(support@usernodelabs\.org\)\./,
     'fallback copy points to support instead of a platform admin (#2969)');
   assert.match(tsx, /ADMIN_LEAD_WITH_EMAIL/,
     'the swap is tied to the same flag that mounts the email form');
@@ -158,8 +165,10 @@ test('the login destination carries a durable accessible success notice', () => 
   assert.match(tsx, /id="login-reset-success"[\s\S]{0,160}?role="status"[\s\S]{0,160}?aria-live="polite"/);
   assert.match(tsx, /className=\{hiddenLast\(!passwordResetComplete, SENT_BOX\)\}/,
     'success uses the established green auth treatment, not the error red');
-  assert.match(tsx, /Password changed/);
-  assert.match(tsx, /signed out everywhere/);
+  assert.match(tsx, /\{t\(RESET_COMPLETE_TITLE\)\}[\s\S]{0,80}?\{t\(RESET_COMPLETE_MSG\)\}/);
+  assert.match(tsx, /const RESET_COMPLETE_TITLE = 'auth:login\.resetDone\.title';/);
+  assert.match(message('auth:login.resetDone.title'), /Password changed/);
+  assert.match(message('auth:login.resetDone.body'), /signed out everywhere/);
   assert.match(tsx, /const showLoginBaseView = useCallback\(\(\) => \{[\s\S]{0,120}?setPasswordResetComplete\(false\)/,
     'an ordinary later visit does not retain the one-time result');
 });
@@ -178,8 +187,9 @@ test('the completed state is directly checkable without consuming a reset token'
 
 test('a refused token gets the generic expired-link message with a way back', () => {
   const tsx = read(LOGIN_TSX);
-  assert.match(tsx, /invalid or has expired/i);
-  assert.match(tsx, /request a new/i, 'points the user back at requesting a fresh link');
+  assert.match(tsx, /const EXPIRED_MSG =\n\s*'auth:login\.reset\.expired';/);
+  assert.match(message('auth:login.reset.expired'), /invalid or has expired/i);
+  assert.match(message('auth:login.reset.expired'), /request a new/i, 'points the user back at requesting a fresh link');
 });
 
 // ─── frozen-markup contract ────────────────────────────────────────

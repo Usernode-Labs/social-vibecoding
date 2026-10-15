@@ -30,7 +30,7 @@ function entries(rows: ReadonlyArray<readonly [string, string, string]>): EmojiE
 export const EMOJI_CATEGORIES: readonly EmojiCategory[] = [
   {
     id: 'smileys',
-    label: 'Smileys',
+    label: 'messages:emoji.category.smileys',
     emoji: entries([
       ['😀', 'grinning face', 'grinning face'],
       ['😁', 'grinning face with smiling eyes', 'grinning face with smiling eyes'],
@@ -112,7 +112,7 @@ export const EMOJI_CATEGORIES: readonly EmojiCategory[] = [
   },
   {
     id: 'people',
-    label: 'People & hands',
+    label: 'messages:emoji.category.people',
     emoji: entries([
       ['👍', 'thumbs up', 'thumbs up sign thumbs up +1 yes like agree'],
       ['👎', 'thumbs down', 'thumbs down sign thumbs down -1 no dislike'],
@@ -158,7 +158,7 @@ export const EMOJI_CATEGORIES: readonly EmojiCategory[] = [
   },
   {
     id: 'hearts',
-    label: 'Hearts',
+    label: 'messages:emoji.category.hearts',
     emoji: entries([
       ['❤️', 'red heart', 'heavy black heart red heart love'],
       ['🧡', 'orange heart', 'orange heart'],
@@ -184,7 +184,7 @@ export const EMOJI_CATEGORIES: readonly EmojiCategory[] = [
   },
   {
     id: 'nature',
-    label: 'Animals & nature',
+    label: 'messages:emoji.category.nature',
     emoji: entries([
       ['🐶', 'dog face', 'dog face'],
       ['🐱', 'cat face', 'cat face'],
@@ -240,7 +240,7 @@ export const EMOJI_CATEGORIES: readonly EmojiCategory[] = [
   },
   {
     id: 'food',
-    label: 'Food & drink',
+    label: 'messages:emoji.category.food',
     emoji: entries([
       ['🍎', 'red apple', 'red apple'],
       ['🍌', 'banana', 'banana'],
@@ -290,7 +290,7 @@ export const EMOJI_CATEGORIES: readonly EmojiCategory[] = [
   },
   {
     id: 'activities',
-    label: 'Activities',
+    label: 'messages:emoji.category.activities',
     emoji: entries([
       ['⚽', 'soccer ball', 'soccer ball'],
       ['🏀', 'basketball and hoop', 'basketball and hoop'],
@@ -336,7 +336,7 @@ export const EMOJI_CATEGORIES: readonly EmojiCategory[] = [
   },
   {
     id: 'objects',
-    label: 'Travel & objects',
+    label: 'messages:emoji.category.objects',
     emoji: entries([
       ['🚀', 'rocket', 'rocket rocket ship launch'],
       ['✈️', 'airplane', 'airplane'],
@@ -400,7 +400,7 @@ export const EMOJI_CATEGORIES: readonly EmojiCategory[] = [
   },
   {
     id: 'symbols',
-    label: 'Symbols',
+    label: 'messages:emoji.category.symbols',
     emoji: entries([
       ['✅', 'check mark', 'white heavy check mark check done yes ok'],
       ['☑️', 'ballot box with check', 'ballot box with check'],

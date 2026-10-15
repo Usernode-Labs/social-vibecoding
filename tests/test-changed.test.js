@@ -5,8 +5,10 @@
 //
 // Suites here read their sources BY PATH, in four spellings, so a changed
 // file selects the suites whose text names it in any of them; a module's
-// importers (one level, under frontend/ and src/) are mapped too; and the
-// command is the `test` script with the selected files in place of its
+// importers (one level, under frontend/ and src/) are mapped too; a suite
+// that reaches a file only through a longer chain names it with its own
+// `test:changed: when` line (the Mayor golden and src/prompts/, #4267); and
+// the command is the `test` script with the selected files in place of its
 // glob, so the preload, the flags and the timeout cannot drift. The `test`
 // script itself carries the per-test timeout that turns a hang into a
 // failure, and package.json exposes the script the work order names.
@@ -209,4 +211,61 @@ test('a suite marked "test:changed: always" runs on every change; the marker mus
   assert.match(out, new RegExp(`^  \\+ ${marked.length} tree-wide guard suites, run on every change:$`, 'm'));
   assert.match(out, /^    tests\/shell-icon-set\.test\.js$/m);
   assert.match(out, new RegExp(`^Running ${marked.length} of \\d+ suites:`, 'm'), 'an unnamed change still runs the guards');
+});
+
+// ── The files a suite reaches only through a chain ─────────────────────
+
+test('a "test:changed: when" line declares paths: several per line, a trailing slash dropped, only at the start of a line', () => {
+  assert.deepEqual(tc.declaredPaths([
+    "// test:changed: when src/templates/ (the pages built from them)",
+    "// test:changed: when ./docs/a.md, docs/b.md",
+    "'use strict';",
+    "const note = 'see // test:changed: when src/elsewhere/';",
+  ].join('\n')), ['src/templates', 'docs/a.md', 'docs/b.md']);
+  assert.deepEqual(tc.declaredPaths("// test:changed: always (every feature file)"), []);
+});
+
+test('a declared directory selects its suite for any file under it, and nothing beside it', () => {
+  const texts = new Map([
+    ['tests/golden.test.js', "// test:changed: when src/templates/ (why)\nrequire('../src/routes/pages');"],
+    ['tests/one-file.test.js', "// test:changed: when docs/a.md (why)"],
+    ['tests/names-it.test.js', "// test:changed: when src/templates/ (why)\nread('src/templates/home.md');"],
+  ]);
+  const sel = tc.selectSuites(['src/templates/home.md', 'src/templates/deep/footer.md', 'src/templates-old/legacy.md', 'docs/a.md', 'docs/a.mdx'], texts);
+  assert.deepEqual(sel.byFile.get('src/templates/home.md').suites, ['tests/golden.test.js', 'tests/names-it.test.js']);
+  assert.deepEqual(sel.byFile.get('src/templates/home.md').declared, ['tests/golden.test.js'],
+    'a suite that also names the file is selected by name; the declaration is only how the rest were found');
+  assert.deepEqual(sel.byFile.get('src/templates/deep/footer.md').declared, ['tests/golden.test.js', 'tests/names-it.test.js']);
+  assert.deepEqual(sel.byFile.get('docs/a.md').suites, ['tests/one-file.test.js']);
+  assert.deepEqual(sel.unmatched, ['src/templates-old/legacy.md', 'docs/a.mdx'], 'a shared prefix is not the file or the directory');
+  assert.deepEqual(sel.suites, ['tests/golden.test.js', 'tests/names-it.test.js', 'tests/one-file.test.js']);
+});
+
+test('the Mayor golden runs when any prompt changes, and every declared path exists', () => {
+  const texts = new Map(fs.readdirSync(path.join(root, 'tests'))
+    .filter((f) => f.endsWith('.test.js'))
+    .map((f) => [`tests/${f}`, fs.readFileSync(path.join(root, 'tests', f), 'utf8')]));
+  const golden = 'tests/mayor-turn-golden.test.js';
+  // routes/sessions.js -> services/mayor/prompt.js -> services/prompts.js
+  // reads the file: three requires deep, past the importer mapping.
+  assert.deepEqual(tc.declaredPaths(texts.get(golden)), ['src/prompts']);
+  for (const [suite, text] of texts) {
+    for (const declared of tc.declaredPaths(text)) {
+      assert.ok(fs.existsSync(path.join(root, declared)), `${suite} declares ${declared}, which does not exist: a moved file leaves it unselected`);
+    }
+  }
+
+  // Each prompt file by its real path, read from the directory: a literal
+  // name here would make THIS suite name it, and run on every prompt edit.
+  const prompts = fs.readdirSync(path.join(root, 'src', 'prompts')).filter((f) => f.endsWith('.md')).map((f) => `src/prompts/${f}`);
+  assert.ok(prompts.length >= 2);
+  const sel = tc.selectSuites(prompts, texts);
+  for (const file of prompts) assert.ok(sel.byFile.get(file).suites.includes(golden), `${file} selects the golden`);
+
+  // The listing says which suites a declaration brought in.
+  const declared = prompts.find((file) => sel.byFile.get(file).declared.includes(golden));
+  assert.ok(declared, 'the golden names no prompt file, so its declaration is what selects it');
+  const out = execFileSync(process.execPath, ['scripts/test-changed.js', '--list', '--files', declared], { cwd: root, encoding: 'utf8' });
+  assert.match(out, new RegExp(`^  ${declared.replace(/[.]/g, '\\.')} → \\d+ suites \\(incl\\. .*${golden.replace(/[.]/g, '\\.')}.*, which declares? it\\)$`, 'm'));
+  assert.match(out, /^Running \d+ of \d+ suites:\n  node .* tests\/mayor-turn-golden\.test\.js/m);
 });

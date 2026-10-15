@@ -18,6 +18,8 @@ import type {
   HomeroomBotReadyNow,
   HomeroomBotWork,
   MessageAttachment,
+  DiscussionMessage,
+  DiscussionState,
   MessageReaction,
   MessageThreadSummary,
   SharedObjectCard,
@@ -25,7 +27,9 @@ import type {
   ThreadRootRef,
   UserSearchResult,
 } from './types';
+import { t } from '../../lib/i18n/runtime';
 import { countOf } from './approval-words';
+import { releaseOf } from '../../lib/release-eta';
 import type { HomeroomLink } from './homeroom-links';
 import { botRowPreview, plainText } from './plain-text';
 
@@ -91,9 +95,12 @@ function pick(source: JsonRecord, ...keys: string[]): unknown {
 
 export function normalizeUser(input: unknown): ConversationUser {
   const row = record(input);
+  const username = pick(row, 'username', 'name');
   return {
     id: strictId(pick(row, 'id', 'userId', 'user_id')) || 0,
-    username: text(pick(row, 'username', 'name'), 'unknown'),
+    username: typeof username === 'string' ? username : t('messages:api.unknownUser'),
+    // No username came with the row: `username` is a stand-in, never a name in a sentence.
+    ...(typeof username === 'string' ? {} : { unnamed: true }),
     avatarUrl: text(pick(row, 'avatarUrl', 'avatar_url')) || null,
     // #3624: a platform account (the Homeroom bot). Named here, or dropped.
     ...(pick(row, 'bot') === true ? { bot: true } : {}),
@@ -107,7 +114,8 @@ const BOT_QUESTION_STATES = new Set(['open', 'answered', 'closed']);
 // HomeroomBotAction). An unknown one is dropped, never drawn as a dead button.
 // B7: a change's ready card adds three: its preview (Try it), the person's
 // own Yes (Approve) and a reply quoting the card (Change something).
-const BOT_ACTION_TYPES = new Set(['server', 'open', 'prompt', 'preview', 'vote', 'reply']);
+// #4231: and `invite`, under a new project's first version going live.
+const BOT_ACTION_TYPES = new Set(['server', 'open', 'prompt', 'preview', 'vote', 'reply', 'invite']);
 const MAX_BOT_ACTIONS = 3;
 
 /** B3: a bot message's buttons, as types.ts HomeroomBotAction: at most three, one primary. */
@@ -254,6 +262,17 @@ export function normalizeBotMeta(input: unknown): { homeroomBot: HomeroomBotMeta
       // B6: a card Build it moved under its plan.
       ...(strictId(pick(bot, 'movedTo')) ? { movedTo: strictId(pick(bot, 'movedTo'))! } : {}),
       ...(goesLive ? { goesLive } : {}),
+      // Why its buttons were closed, said in their place.
+      ...(text(pick(bot, 'closedWhy')) ? { closedWhy: text(pick(bot, 'closedWhy')).slice(0, 120) } : {}),
+      // One request, one story: the thread it is in, the moment it rings
+      // as, and the names its label and its push use.
+      ...(strictId(pick(bot, 'threadRootId')) ? { threadRootId: strictId(pick(bot, 'threadRootId'))! } : {}),
+      moment: optional('moment'),
+      said: optional('said'),
+      requestTitle: optional('requestTitle'),
+      waiting: optional('waiting'),
+      ...(countOf(pick(bot, 'count')) !== null ? { count: countOf(pick(bot, 'count'))! } : {}),
+      ...(pick(bot, 'alsoInChat') === true ? { alsoInChat: true } : {}),
     },
   };
 }
@@ -312,6 +331,7 @@ function normalizeObject(input: unknown): SharedObjectCard {
     appSlug: text(pick(ref, 'appSlug', 'app_slug')) || undefined,
     issueNumber: strictId(pick(ref, 'issueNumber', 'issue_number')) || undefined,
     sessionId: strictId(pick(ref, 'sessionId', 'session_id')) || undefined,
+    prNumber: strictId(pick(ref, 'prNumber', 'pr_number')) || undefined,
     proposalId: strictId(pick(ref, 'proposalId', 'proposal_id', 'governanceId', 'governance_id')) || undefined,
     version: strictId(pick(ref, 'version', 'specVersion', 'spec_version')) || undefined,
     available: pick(row, 'available') !== false && !bool(pick(row, 'unavailable')),
@@ -320,6 +340,9 @@ function normalizeObject(input: unknown): SharedObjectCard {
     state: text(pick(row, 'state', 'status')) || null,
     author: text(pick(row, 'author', 'username')) || null,
     href: text(pick(row, 'href', 'url', 'webPath', 'web_path')) || null,
+    // An app's or a community's own icon (services/shared-objects.js appIcon).
+    iconUrl: appIconUrl(pick(row, 'iconUrl')),
+    iconEmoji: text(pick(row, 'iconEmoji')) || null,
   };
 }
 
@@ -355,7 +378,7 @@ export function normalizeThreadRoot(input: unknown): ThreadRootRef | null {
   if (!id) return null;
   return {
     id,
-    senderUsername: text(pick(row, 'senderUsername', 'sender_username', 'username')) || 'Deleted user',
+    senderUsername: text(pick(row, 'senderUsername', 'sender_username', 'username')) || t('messages:api.deletedUser'),
     content: text(pick(row, 'content')),
     deleted: pick(row, 'deleted') === true,
   };
@@ -414,9 +437,13 @@ export function normalizeConversation(input: unknown): ConversationDetail {
   const membershipStatus = text(pick(row, 'membershipStatus', 'membership_status', 'myStatus', 'my_status', 'status'));
   const latestRaw = pick(row, 'latestMessage', 'latest_message', 'lastMessage', 'last_message');
   const latestMessage = latestRaw ? normalizeMessage(latestRaw, id) : null;
-  const title = text(pick(row, 'title', 'name'))
+  // What it is called: its own title, or in a direct conversation the other
+  // person. With neither, `title` is a stand-in to show where a name would be,
+  // and `untitled` tells a sentence to use its own wording, not that word.
+  const named = text(pick(row, 'title', 'name'))
     || (kind === 'direct' ? peer?.username || members.find((member) => member.status === 'member')?.username : '')
-    || 'Conversation';
+    || '';
+  const title = named || t('messages:api.conversationTitle');
   const canSendValue = pick(row, 'canSend', 'can_send');
   const homeroomBot = kind === 'direct' && pick(row, 'homeroomBot') === true;
   const summary = plainText(text(pick(row, 'latestSummary', 'latest_summary', 'preview')) || latestMessage?.content || '');
@@ -424,6 +451,7 @@ export function normalizeConversation(input: unknown): ConversationDetail {
     id,
     kind,
     title,
+    untitled: !named,
     avatarUrl: text(pick(row, 'avatarUrl', 'avatar_url')) || peer?.avatarUrl || null,
     members,
     memberCount: Number(pick(row, 'memberCount', 'member_count')) || members.filter((member) => member.status === 'member').length,
@@ -470,8 +498,13 @@ function demoQuery(path: string): string {
  * bot's DM is where it showed, because its page is the slowest to answer.
  *
  * `cache: 'no-store'` is the worker's existing "leave this to the network"
- * signal: its fetch handler returns before classifying such a request. A
- * first open keeps the ordinary read, and with it the offline copy.
+ * signal: its fetch handler returns before classifying such a request.
+ *
+ * Opening a conversation reads fresh too while the browser is online
+ * (#4243): its offline copy was the last visit's transcript, drawn for a
+ * moment before the newest messages snapped in. The open takes the ordinary
+ * read, and with it the offline copy, only when the browser is offline or
+ * the fresh read failed (store.ts loadThread).
  */
 export interface ReadOptions {
   fresh?: boolean;
@@ -492,7 +525,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   try { data = await response.json(); } catch { data = null; }
   if (!response.ok) {
     const body = record(data);
-    throw new MessagesApiError(response.status, text(pick(body, 'error', 'message'), `Request failed (${response.status})`));
+    throw new MessagesApiError(response.status, text(pick(body, 'error', 'message'), t('messages:api.requestFailed', { status: response.status })));
   }
   return data as T;
 }
@@ -607,20 +640,54 @@ export async function listMessagesAfter(id: number, after: number): Promise<{ me
   };
 }
 
+/** #5219: one discussion message the thread pane draws beside the DM replies. */
+function normalizeDiscussionMessage(input: unknown): DiscussionMessage | null {
+  const row = record(input);
+  const id = strictId(pick(row, 'id', 'message_id'));
+  if (!id) return null;
+  return {
+    id,
+    source: 'discussion',
+    sender: normalizeUser(record(pick(row, 'sender'))),
+    content: text(pick(row, 'content')),
+    createdAt: dateText(pick(row, 'createdAt', 'created_at')),
+    ...(text(pick(row, 'editedAt', 'edited_at')) ? { editedAt: text(pick(row, 'editedAt', 'edited_at')) } : {}),
+  };
+}
+
+/** #5219: a request's public discussion riding its bot-card thread, or null. */
+function normalizeDiscussion(input: unknown): DiscussionState | null {
+  const row = record(input);
+  const appSlug = text(pick(row, 'appSlug', 'app_slug'));
+  const issueNumber = strictId(pick(row, 'issueNumber', 'issue_number'));
+  if (!appSlug || !issueNumber) return null;
+  return {
+    appSlug,
+    issueNumber,
+    more: pick(row, 'more') === true,
+    messages: array(pick(row, 'messages')).map(normalizeDiscussionMessage).filter((m): m is DiscussionMessage => !!m),
+  };
+}
+
 /** A thread: the message it hangs off, and its replies oldest first (#2387). */
 export async function listThread(id: number, rootId: number, before?: number | null, options?: ReadOptions): Promise<{
   root: ConversationMessage | null;
   messages: ConversationMessage[];
   nextBefore: number | null;
+  discussion: DiscussionState | null;
 }> {
   const params = new URLSearchParams({ limit: '50' });
   if (before) params.set('before', String(before));
   const data = record(await request<unknown>(`/api/conversations/${id}/threads/${rootId}?${params}`, readInit(options)));
   const root = pick(data, 'root');
+  const discussion = pick(data, 'discussion') === undefined || pick(data, 'discussion') === null
+    ? null
+    : normalizeDiscussion(pick(data, 'discussion'));
   return {
     root: root ? normalizeMessage(root, id) : null,
     messages: array(pick(data, 'messages', 'items')).map((message) => normalizeMessage(message, id)),
     nextBefore: strictId(pick(data, 'nextBefore', 'next_before')),
+    discussion,
   };
 }
 
@@ -665,7 +732,7 @@ export async function uploadAttachment(conversationId: number, file: File): Prom
   });
   let data: unknown = null;
   try { data = await response.json(); } catch { data = null; }
-  if (!response.ok) throw new MessagesApiError(response.status, text(pick(record(data), 'error', 'message'), `Upload failed (${response.status})`));
+  if (!response.ok) throw new MessagesApiError(response.status, text(pick(record(data), 'error', 'message'), t('messages:api.uploadFailed', { status: response.status })));
   return normalizeAttachment(pick(record(data), 'attachment') ?? data, conversationId);
 }
 
@@ -700,7 +767,7 @@ export async function listAppItems(slug: string, type: 'issue' | 'proposal' | 'g
     const row = record(item);
     return {
       id: strictId(pick(row, 'number', 'id')) || 0,
-      title: text(pick(row, 'title', 'pr_title', 'session_title'), 'Untitled'),
+      title: text(pick(row, 'title', 'pr_title', 'session_title'), t('messages:api.untitledItem')),
       status: text(pick(row, 'status')) || undefined,
     };
   }).filter((item) => item.id);
@@ -712,12 +779,13 @@ export async function listAppItems(slug: string, type: 'issue' | 'proposal' | 'g
  * unavailable one for a page they cannot see. Only the parsed page goes up
  * (./homeroom-links.ts), never the link itself.
  */
-export async function resolveLinkCards(links: ReadonlyArray<Pick<HomeroomLink, 'type' | 'appSlug' | 'issueNumber' | 'sessionId' | 'proposalId'>>): Promise<SharedObjectCard[]> {
+export async function resolveLinkCards(links: ReadonlyArray<Pick<HomeroomLink, 'type' | 'appSlug' | 'issueNumber' | 'sessionId' | 'proposalId'> & { prNumber?: number }>): Promise<SharedObjectCard[]> {
   const refs = links.map((link) => ({
     type: link.type,
     app_slug: link.appSlug,
     ...(link.issueNumber ? { issue_number: link.issueNumber } : {}),
     ...(link.sessionId ? { session_id: link.sessionId } : {}),
+    ...(link.prNumber ? { pr_number: link.prNumber } : {}),
     ...(link.proposalId ? { proposal_id: link.proposalId } : {}),
   }));
   const data = record(await request<unknown>('/api/link-cards', { method: 'POST', body: JSON.stringify({ refs }) }));
@@ -787,13 +855,13 @@ export async function approveChange(sessionId: number, epoch: number | null): Pr
       body: JSON.stringify(epoch === null ? { vote: 'yes' } : { vote: 'yes', expectedEpoch: epoch }),
     });
   } catch {
-    return { ok: false, stale: false, epoch: null, error: 'Couldn’t reach Homeroom. Try again.' };
+    return { ok: false, stale: false, epoch: null, error: t('messages:api.approve.unreachable') };
   }
   const data = record(await response.json().catch(() => ({})));
   if (response.ok) return { ok: true, stale: false, epoch, error: null, goesLive: normalizeGoesLive(pick(data, 'goesLive')) };
   const stale = response.status === 409 && pick(data, 'headChanged') === true;
   const next = Number.isInteger(pick(data, 'approvalEpoch')) ? Number(pick(data, 'approvalEpoch')) : null;
-  return { ok: false, stale, epoch: next, error: stale ? null : (text(pick(data, 'message')) || text(pick(data, 'error')) || 'Couldn’t approve it just now.') };
+  return { ok: false, stale, epoch: next, error: stale ? null : (text(pick(data, 'message')) || text(pick(data, 'error')) || t('messages:api.approve.failed')) };
 }
 
 export async function decideBotAction(actionId: number, choice: string, answers?: string[]): Promise<{ label: string | null }> {
@@ -802,6 +870,28 @@ export async function decideBotAction(actionId: number, choice: string, answers?
     method: 'POST', body: JSON.stringify(answers ? { choice, answers } : { choice }),
   }));
   return { label: text(pick(data, 'label')) || null };
+}
+
+/**
+ * Run six: whether the signed-in person is told when their first version of
+ * `slug` is ready and live (on from Make it), and turning it on or off.
+ * Null when it is not their first version.
+ */
+export async function getFirstVersionNotify(slug: string): Promise<boolean | null> {
+  try {
+    const data = record(await request<unknown>(`/api/conversations/homeroom-bot/first-versions/${encodeURIComponent(slug)}/notify`));
+    return bool(pick(data, 'on'), true);
+  } catch (err) {
+    if (err instanceof MessagesApiError && err.status === 404) return null;
+    throw err;
+  }
+}
+
+export async function setFirstVersionNotify(slug: string, on: boolean): Promise<boolean> {
+  const data = record(await request<unknown>(`/api/conversations/homeroom-bot/first-versions/${encodeURIComponent(slug)}/notify`, {
+    method: 'PUT', body: JSON.stringify({ on }),
+  }));
+  return bool(pick(data, 'on'), on);
 }
 
 /** B8: the signed-in person's chat with Homeroom bot, made the first time. */
@@ -825,12 +915,19 @@ export async function listBlocks(): Promise<ConversationUser[]> {
 const ACTIVITY_OUTCOMES = new Set<HomeroomBotActivityOutcome>([
   'question', 'proposed', 'live', 'closed', 'blocked', 'build_failed',
   'person', 'empty', 'failed', 'held', 'stopped', 'answer', 'revise',
+  'checking', 'needs_look', 'going_live',
 ]);
 
 /** An in-app address (`#app/…`), or null: a card's link never leaves the shell. */
 function inAppHref(value: unknown): string | null {
   const href = text(value);
   return href.startsWith('#app/') ? href : null;
+}
+
+/** #4201: an app's icon as the platform serves it (`/app-icons/<id>`), or null. */
+function appIconUrl(value: unknown): string | null {
+  const src = text(value);
+  return /^\/app-icons\/[\w-]+$/.test(src) ? src : null;
 }
 
 const BOT_PHASES = new Set<HomeroomBotPhase>([
@@ -849,10 +946,15 @@ function normalizeBotJob(row: JsonRecord): HomeroomBotJob {
   const appSlug = text(pick(row, 'appSlug')) || null;
   const issueNumber = strictId(pick(row, 'issueNumber'));
   const firstVersion = pick(row, 'firstVersion') === true;
+  const named = text(pick(row, 'appName')) || appSlug;
   return {
     key: text(pick(row, 'key')) || `${appSlug || ''}#${issueNumber || 'first'}`,
     appSlug,
-    appName: text(pick(row, 'appName')) || appSlug || 'A project',
+    appName: named || t('messages:bot.job.unnamedProject'),
+    // A slug is the project's own address and names it; only the stand-in is unnamed.
+    appUnnamed: !named,
+    iconUrl: appIconUrl(pick(row, 'iconUrl')),
+    iconEmoji: text(pick(row, 'iconEmoji')) || null,
     issueNumber,
     title: text(pick(row, 'title')) || null,
     firstVersion,
@@ -871,6 +973,50 @@ function normalizeBotJob(row: JsonRecord): HomeroomBotJob {
         at: text(pick(run, 'at')) || null,
       };
     }).filter((run) => run.id),
+    ...threadFieldsOf(row),
+  };
+}
+
+const ASK_KINDS = new Set([
+  'question', 'followup_ask', 'plan', 'person', 'blocked', 'empty', 'build_failed', 'checks', 'needs_look', 'first_version_failed',
+]);
+const JOB_STOP_CAUSES = new Set(['time', 'restart', 'restarts', 'no_change', 'unproposed', 'no_start', 'other']);
+
+/**
+ * One request, one story: where a tray entry's request is in the chat with
+ * the bot (services/homeroom-bot-tray.js threadsOf), field by field: its
+ * card (`cardId`), its newest message waiting on the person (`ask`, a known
+ * kind only) and its newest ready card (`ready`).
+ */
+function threadFieldsOf(row: JsonRecord): Pick<HomeroomBotJob, 'cardId' | 'ask' | 'ready' | 'stopCause'> {
+  const cardId = strictId(pick(row, 'cardId'));
+  const askRow = pick(row, 'ask');
+  const ask = askRow && typeof askRow === 'object' ? record(askRow) : null;
+  const askKind = ask ? text(pick(ask, 'kind')) : '';
+  const readyRow = pick(row, 'ready');
+  const ready = readyRow && typeof readyRow === 'object' ? record(readyRow) : null;
+  const stopCause = text(pick(row, 'stopCause'));
+  return {
+    ...(cardId ? { cardId } : {}),
+    ...(ask && ASK_KINDS.has(askKind) ? {
+      ask: {
+        messageId: strictId(pick(ask, 'messageId')),
+        kind: askKind,
+        ...(text(pick(ask, 'said')) ? { said: text(pick(ask, 'said')).slice(0, 40) } : {}),
+        ...(text(pick(ask, 'question')) ? { question: text(pick(ask, 'question')).slice(0, 300) } : {}),
+      },
+    } : {}),
+    ...(ready ? {
+      ready: {
+        messageId: strictId(pick(ready, 'messageId')),
+        sessionId: strictId(pick(ready, 'sessionId')),
+        epoch: Number.isInteger(pick(ready, 'epoch')) ? Number(pick(ready, 'epoch')) : 0,
+        open: pick(ready, 'open') === true,
+        approve: pick(ready, 'approve') === true,
+        waiting: text(pick(ready, 'waiting')).slice(0, 120) || null,
+      },
+    } : {}),
+    ...(JOB_STOP_CAUSES.has(stopCause) ? { stopCause: stopCause as HomeroomBotJob['stopCause'] } : {}),
   };
 }
 
@@ -881,8 +1027,10 @@ function normalizeBotPastJob(entry: unknown): HomeroomBotPastJob | null {
   const known = ACTIVITY_OUTCOMES.has(outcome);
   const doing = text(pick(row, 'doing')) || null;
   if (!known && !doing && !outcome) return null;
+  const release = outcome === 'going_live' ? releaseOf(pick(row, 'release')) : null;
   return {
     ...normalizeBotJob(row),
+    ...(release ? { release } : {}),
     id: strictId(pick(row, 'id')) || 0,
     outcome: known ? outcome : (outcome ? 'failed' : null),
     doing,
@@ -898,9 +1046,13 @@ export function normalizeBotWork(input: unknown): HomeroomBotWork {
     const step = strictId(pick(row, 'step'));
     const of = strictId(pick(row, 'of'));
     const whole = !!step && !!of && step <= of && of <= 12;
+    // A merge of Homeroom itself going live: when its release comes.
+    const release = phase === 'merging' ? releaseOf(pick(row, 'release')) : null;
     return {
       ...normalizeBotJob(row),
+      ...(release ? { release } : {}),
       phase: BOT_PHASES.has(phase) ? phase : 'looking',
+      ...(/^[a-z_]{1,40}$/.test(text(pick(row, 'stage'))) ? { stage: text(pick(row, 'stage')) } : {}),
       step: whole ? step : null,
       of: whole ? of : null,
       stepName: whole ? text(pick(row, 'stepName')) || null : null,
@@ -930,6 +1082,9 @@ export async function getHomeroomBotWork(options?: ReadOptions): Promise<Homeroo
  * "N of M"; an unknown state or outcome reads as a piece of work that
  * stopped, never as one still going.
  */
+const STOP_CAUSES = new Set(['time', 'restart', 'restarts', 'no_change', 'unproposed', 'no_start', 'other']);
+const HELD_BY = new Set(['proposals_per_app', 'proposals_total', 'questions_per_day']);
+
 export function normalizeBotActivity(input: unknown): HomeroomBotActivity[] {
   return array(pick(record(input), 'cards')).map((entry): HomeroomBotActivity | null => {
     const row = record(entry);
@@ -946,6 +1101,8 @@ export function normalizeBotActivity(input: unknown): HomeroomBotActivity[] {
     const to = strictId(pick(typical, 'to'));
     const workedFrom = text(pick(row, 'workedFrom'));
     const waitedFor = text(pick(row, 'waitedFor'));
+    // A merge of Homeroom itself going live: when its release comes.
+    const release = !working && outcome === 'going_live' ? releaseOf(pick(row, 'release')) : null;
     return {
       messageId,
       state: working ? 'working' : 'done',
@@ -962,6 +1119,16 @@ export function normalizeBotActivity(input: unknown): HomeroomBotActivity[] {
       endedAt: working ? null : text(pick(row, 'endedAt')) || null,
       // Whole minutes, the shorter first, and under two hours.
       ...(working && from && to && from <= to && to <= 120 ? { typicalMinutes: { from, to } } : {}),
+      // Who the work waits on while it waits (`them`: the viewer), so the card can say it needs them.
+      ...(working && text(pick(row, 'waitingOn')) ? { waitingOn: text(pick(row, 'waitingOn')).slice(0, 40) } : {}),
+      // The stage it is at while it works (`on_hold`: until Monday), a short word.
+      ...(working && /^[a-z_]{1,40}$/.test(text(pick(row, 'stage'))) ? { stage: text(pick(row, 'stage')) } : {}),
+      // Why a build stopped, and which limit holds a request back: known words only.
+      ...(!working && outcome === 'build_failed' && STOP_CAUSES.has(text(pick(row, 'stopCause')))
+        ? { stopCause: text(pick(row, 'stopCause')) as HomeroomBotActivity['stopCause'] } : {}),
+      ...(!working && outcome === 'held' && HELD_BY.has(text(pick(row, 'heldBy')))
+        ? { heldBy: text(pick(row, 'heldBy')) as HomeroomBotActivity['heldBy'] } : {}),
+      ...(release ? { release } : {}),
     };
   }).filter((card): card is HomeroomBotActivity => !!card);
 }
@@ -985,6 +1152,8 @@ export function normalizeBotReadyNow(input: unknown): HomeroomBotReadyNow[] {
     const missing = approval ? countOf(pick(approval, 'missing')) : null;
     const needed = approval ? countOf(pick(approval, 'needed')) : null;
     const goesLive = normalizeGoesLive(pick(row, 'goesLive'));
+    // A merge of Homeroom itself going live: when its release comes.
+    const release = state === 'going_live' ? releaseOf(pick(row, 'release')) : null;
     return {
       messageId,
       state,
@@ -1001,6 +1170,7 @@ export function normalizeBotReadyNow(input: unknown): HomeroomBotReadyNow[] {
         },
       } : {}),
       ...(state === 'open' && goesLive ? { goesLive } : {}),
+      ...(release ? { release } : {}),
     };
   }).filter((entry): entry is HomeroomBotReadyNow => !!entry);
 }

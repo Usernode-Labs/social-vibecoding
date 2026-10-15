@@ -178,6 +178,66 @@ function nameKitShell(adoption: KitAdoption | null): void {
   }
 }
 
+/** How long the sheet's slide-up runs (app.css's `[data-dialog-sheet]` rule). */
+export const SHEET_TRANSITION_MS = 200;
+
+/**
+ * The keyboard handling's own phone test (lib/keyboard-open.ts `PHONE_QUERY`),
+ * inlined rather than imported: importing that module would run its keyboard
+ * tracker on load, and a dialog presenting has no business starting it (a
+ * second set of listeners in the app, and the dialogs' own tests mount with a
+ * bare document).
+ */
+const PHONE_QUERY = '(max-width: 767px) and (pointer: coarse)';
+
+/** Whether this screen presents sheets: the keyboard's own phone test. */
+function isPhoneViewport(): boolean {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
+  try { return !!window.matchMedia(PHONE_QUERY).matches; } catch { return false; }
+}
+
+/** The card of a sheet-mode root: the first element inside the backdrop. */
+function sheetCard(root: HTMLElement): HTMLElement | null {
+  const backdrop = root.querySelector('[data-modal-backdrop]');
+  return ((backdrop && backdrop.firstElementChild) || root.firstElementChild) as HTMLElement | null;
+}
+
+/**
+ * Present the card as a bottom sheet: the attributes app.css keys on, the
+ * accessible name the kit shell would have carried (nameKitShell's rule), and
+ * the slide-up a frame after the reveal. No kit is involved, so nothing is
+ * lifted and nothing has to be restored — the card never leaves its root.
+ */
+function presentSheet(root: HTMLElement, stillOwns: () => boolean): void {
+  const card = sheetCard(root);
+  if (!card) return;
+  root.dataset.dialogSheet = '';
+  card.setAttribute('role', 'dialog');
+  card.setAttribute('aria-modal', 'true');
+  const heading = typeof card.querySelector === 'function'
+    ? card.querySelector('h1, h2, h3') as HTMLElement | null
+    : null;
+  if (heading?.id) card.setAttribute('aria-labelledby', heading.id);
+  else {
+    const text = (heading?.textContent || '').replace(/\s+/g, ' ').trim();
+    if (text) card.setAttribute('aria-label', text);
+  }
+  const raf = typeof requestAnimationFrame === 'function'
+    ? requestAnimationFrame
+    : (fn: () => void) => setTimeout(fn, 16);
+  raf(() => { if (stillOwns()) root.dataset.dialogSheetShown = ''; });
+}
+
+/** Take the sheet presentation off again: the card goes back to bare markup. */
+function unnameSheet(root: HTMLElement): void {
+  const card = sheetCard(root);
+  if (!card) return;
+  card.removeAttribute('role');
+  card.removeAttribute('aria-modal');
+  card.removeAttribute('aria-labelledby');
+  card.removeAttribute('aria-label');
+}
+
 export interface StaticModalOptions {
   /**
    * Called when the KIT dismissed the modal on its own — backdrop tap or
@@ -213,6 +273,23 @@ export interface StaticModalOptions {
    * still opens the dialog, through React, with the kit lift applied.
    */
   onExternalToggle?: (open: boolean) => void;
+  /**
+   * On a phone, present the card as a bottom sheet instead of lifting it
+   * into the kit's centred modal (`app.css`'s `[data-dialog-sheet]` rules).
+   *
+   * The kit's own sheet is not usable for a form: `.un-sheet` takes every
+   * vertical drag as a drag of the sheet, so the card could not scroll its
+   * fields (profile-edit-sheet.tsx explains it). So the sheet here is the
+   * card itself, left in its root, bottom-anchored by CSS, and slid up by
+   * two runtime attributes written a frame apart. `app.css` sizes it against
+   * the keyboard's band (`.platform-kb-sheet`'s arithmetic), and
+   * `useKeyboardSurface` on the card does the rest of the keyboard work.
+   *
+   * Only the feedback dialog sets it. Escaped on any screen where
+   * `PHONE_QUERY` does not match, so a narrow desktop window keeps the
+   * centred modal it has always had.
+   */
+  phoneSheet?: boolean;
 }
 
 /**
@@ -234,6 +311,10 @@ export function useStaticModal(
   options: StaticModalOptions = {},
 ): void {
   const adoptionRef = useRef<KitAdoption | null>(null);
+  // Whether the presentation on screen is the phone sheet rather than the
+  // kit lift — decided at open, kept for the close, so a matchMedia flip
+  // mid-dialog cannot change how it leaves.
+  const sheetRef = useRef(false);
   // Bumped on EVERY open/close transition, so each presentation can recognise
   // its own teardown and ignore one that arrived after it was replaced — see
   // `present`'s note on `stillOwns`.
@@ -288,39 +369,70 @@ export function useStaticModal(
         // outgoing presentation, so its late callback lands as a no-op.
         const generation = (generationRef.current += 1);
         const stillOwns = () => generationRef.current === generation;
-        adoptionRef.current = present(root, dismissFromKit, stillOwns);
-        nameKitShell(adoptionRef.current);
+        if (opts.current.phoneSheet && isPhoneViewport()) {
+          sheetRef.current = true;
+          presentSheet(root, stillOwns);
+        }
+        if (!sheetRef.current) {
+          adoptionRef.current = present(root, dismissFromKit, stillOwns);
+          nameKitShell(adoptionRef.current);
+        }
       }
     } else {
-      const adoption = adoptionRef.current;
-      adoptionRef.current = null;
-      if (adoption) {
-        // THE CARD RIDES THE EXIT, and the order here is the whole reason it
-        // does. This used to restore() before dismiss(), on the reasoning
-        // recorded on KitAdoption.restore — that a caller closing the surface
-        // wants its node back before the kit animates an empty shell. The
-        // visible result was the trade in reverse: the dialog's contents
-        // vanished on the spot, and what played the 260ms exit was the kit's
-        // shell collapsed to its own padding — a small blank rounded box
-        // fading out where the dialog had been. That is the close flicker.
-        //
-        // So only dismiss() here. The kit removes the card at the END of its
-        // animation and calls onDismiss, which is what runs undo() and puts
-        // the node home (see adoptKitSurface). Holding the adoption in
-        // pendingExitRef keeps that callback's `stillOwns` generation valid
-        // until it lands — which is why the generation bump moved into the
-        // open branch above, where a reopen is what should retire it.
-        pendingExitRef.current = adoption;
-        adoption.dismiss();
-      } else if (everOpenRef.current) {
-        // No kit: nothing animates, so the surface is already gone. Gated on
-        // having been open, or the mount pass would report an exit for a
-        // dialog that has never been presented — see everOpenRef above.
-        opts.current.onExited?.();
+      if (sheetRef.current) {
+        // THE PHONE SHEET SLIDES OUT. The card never left this root, so the
+        // hide waits for the slide-down app.css plays once `-shown` goes
+        // (cut short under reduced motion) — then teardown runs. A reopen
+        // inside the wait retires it through the generation bump in the open
+        // branch above, exactly as a kit exit is retired. Its own branch,
+        // rather than a flag through the kit path below: the no-kit exit
+        // there is gated on everOpenRef alone (tests/dialog-behaviour.test.js
+        // pins that gate), and a sheet must never take it — its exit is the
+        // slide-down, not the close tick.
+        sheetRef.current = false;
+        const generation = (generationRef.current += 1);
+        const stillOwns = () => generationRef.current === generation;
+        delete root.dataset.dialogSheetShown;
+        const reduced = typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+          && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        setTimeout(() => {
+          if (!stillOwns()) return;
+          root.classList.add('hidden');
+          delete root.dataset.dialogSheet;
+          unnameSheet(root);
+          opts.current.onExited?.();
+        }, reduced ? 0 : SHEET_TRANSITION_MS);
+      } else {
+        const adoption = adoptionRef.current;
+        adoptionRef.current = null;
+        if (adoption) {
+          // THE CARD RIDES THE EXIT, and the order here is the whole reason it
+          // does. This used to restore() before dismiss(), on the reasoning
+          // recorded on KitAdoption.restore — that a caller closing the surface
+          // wants its node back before the kit animates an empty shell. The
+          // visible result was the trade in reverse: the dialog's contents
+          // vanished on the spot, and what played the 260ms exit was the kit's
+          // shell collapsed to its own padding — a small blank rounded box
+          // fading out where the dialog had been. That is the close flicker.
+          //
+          // So only dismiss() here. The kit removes the card at the END of its
+          // animation and calls onDismiss, which is what runs undo() and puts
+          // the node home (see adoptKitSurface). Holding the adoption in
+          // pendingExitRef keeps that callback's `stillOwns` generation valid
+          // until it lands — which is why the generation bump moved into the
+          // open branch above, where a reopen is what should retire it.
+          pendingExitRef.current = adoption;
+          adoption.dismiss();
+        } else if (everOpenRef.current) {
+          // No kit: nothing animates, so the surface is already gone. Gated on
+          // having been open, or the mount pass would report an exit for a
+          // dialog that has never been presented — see everOpenRef above.
+          opts.current.onExited?.();
+        }
+        // Safe to hide immediately either way: the card is not in this root
+        // while it is adopted, it is in the kit's shell.
+        if (!root.classList.contains('hidden')) root.classList.add('hidden');
       }
-      // Safe to hide immediately either way: the card is not in this root
-      // while it is adopted, it is in the kit's shell.
-      if (!root.classList.contains('hidden')) root.classList.add('hidden');
     }
   }, [rootRef, open, dismissFromKit]);
 

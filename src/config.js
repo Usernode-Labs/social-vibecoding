@@ -115,6 +115,39 @@ function mask(val) {
   return val.slice(0, 4) + '...' + val.slice(-4);
 }
 
+// PHONE_TEST_CODE (services/firebase-phone-auth.js, "TEST NUMBERS"): the six
+// digits the fictional +1 … 555 01xx numbers sign in with, for walking a
+// newcomer's first run on a local stack. '' when unset, malformed, or in
+// production, where it would let anybody verify a number they do not hold.
+// `refused` says why it is off, for the boot line.
+function phoneTestCodeFrom(env) {
+  const raw = typeof env.PHONE_TEST_CODE === 'string' ? env.PHONE_TEST_CODE.trim() : '';
+  if (!raw) return { code: '', refused: null };
+  if (env.NODE_ENV === 'production' || env.USERNODE_ENV === 'production') {
+    return { code: '', refused: 'production' };
+  }
+  if (!/^[0-9]{6}$/.test(raw)) return { code: '', refused: 'not six digits' };
+  return { code: raw, refused: null };
+}
+
+// SHOTS_PHONE_TEST_CODE: the same six digits, for the before & after shots
+// copies of Homeroom itself and nothing else. Those copies run the platform
+// image, whose NODE_ENV is 'production', so PHONE_TEST_CODE is refused there
+// and a change to the Join sheet's phone step had nothing to shoot. The
+// deployed platform hands each pair a fresh random code
+// (services/shots-environment.js shotsPhoneSignInEnv) and runs it as
+// USERNODE_ENV=staging. Honoured ONLY where USERNODE_ENV is exactly
+// 'staging': never in production, and app-manifest.js reserves the name, so
+// no dapp.json puts it on an ordinary staging preview either.
+function shotsPhoneTestCodeFrom(env) {
+  const raw = typeof env.SHOTS_PHONE_TEST_CODE === 'string' ? env.SHOTS_PHONE_TEST_CODE.trim() : '';
+  if (!raw) return { code: '', refused: null };
+  if (env.USERNODE_ENV === 'production') return { code: '', refused: 'production' };
+  if (env.USERNODE_ENV !== 'staging') return { code: '', refused: 'not a shots copy' };
+  if (!/^[0-9]{6}$/.test(raw)) return { code: '', refused: 'not six digits' };
+  return { code: raw, refused: null };
+}
+
 function canonicalCliOrigin(value, { allowLoopbackHttp = false } = {}) {
   if (typeof value !== 'string' || !value) return null;
   try {
@@ -181,6 +214,37 @@ function canonicalNativeSessionV2Network(value) {
   } catch {
     return null;
   }
+}
+
+// Per-model overrides of the hosts an OpenRouter coding turn may use (run
+// four, 13 Oct 2026). The default shortlists live with the worker's request
+// listeners (worker/*-openrouter-request.js PROVIDER_ROUTING_BY_MODEL: GLM 5.3
+// Flash on relace, fireworks, parasail, together and baseten); this replaces
+// one model's for every turn the platform dispatches, through the turn's
+// AGENT_PROVIDER_SHORTLIST. OPENROUTER_PROVIDER_SHORTLISTS is a JSON object of
+// model slug to a list of OpenRouter provider slugs, or "none" to send that
+// model's turns to every host by OpenRouter's own weighting, for example
+// {"z-ai/glm-5.3-flash":["fireworks","together"]}. Unset, or anything that is
+// not such an object, is no override.
+const PROVIDER_SLUG_RE = /^[a-z0-9][a-z0-9._-]{0,40}(?:\/[a-z0-9._-]{1,40})?$/;
+const MODEL_SLUG_RE = /^[a-z0-9~][a-z0-9._:/-]{0,120}$/i;
+function openRouterProviderShortlists(value) {
+  if (typeof value !== 'string' || !value.trim()) return {};
+  let parsed;
+  try { parsed = JSON.parse(value); } catch {
+    console.log('[config] [warn] OPENROUTER_PROVIDER_SHORTLISTS is not JSON; ignored');
+    return {};
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+  const out = {};
+  for (const [model, list] of Object.entries(parsed)) {
+    if (!MODEL_SLUG_RE.test(model)) continue;
+    if (list === 'none') { out[model] = 'none'; continue; }
+    if (!Array.isArray(list)) continue;
+    const slugs = [...new Set(list.map((s) => String(s).trim().toLowerCase()).filter((s) => PROVIDER_SLUG_RE.test(s)))].slice(0, 16);
+    if (slugs.length) out[model] = slugs.join(',');
+  }
+  return out;
 }
 
 function load() {
@@ -403,6 +467,10 @@ function load() {
       return configured.split(',').map((s) => s.trim()).filter(Boolean);
     })(),
     openrouterApiBase,
+    dictationModel: process.env.DICTATION_MODEL || 'openai/whisper-large-v3-turbo',
+    // Per-model host shortlists for coding turns (openRouterProviderShortlists
+    // above): { model: 'slug,slug' | 'none' }, empty for the listeners' own.
+    openrouterProviderShortlists: openRouterProviderShortlists(process.env.OPENROUTER_PROVIDER_SHORTLISTS),
     openrouterAllowInsecureBase: String(process.env.OPENROUTER_ALLOW_INSECURE_BASE || 'false') === 'true',
     openrouterOrigin: process.env.OPENROUTER_ORIGIN || 'https://usernode.dev',
     // Management credentials stay in the platform process only. They create
@@ -606,6 +674,11 @@ function load() {
       appGate: (process.env.APP_GATE || 'off').trim().toLowerCase() === 'on' ? 'on' : 'off',
       workerImage: process.env.KUBERNETES_WORKER_IMAGE || '',
       captureImage: process.env.KUBERNETES_CAPTURE_IMAGE || '',
+      // The dedicated node pool check Jobs prefer, as the pool nodes' label
+      // `key=value` (for example `usernodelabs.org/node-pool=cpu-heavy`).
+      // Empty spreads checks over every node (services/kubernetes.js,
+      // checkPlacement).
+      checkNodePool: (process.env.CHECK_NODE_POOL || '').trim(),
       workerStorageClass: process.env.WORKER_STORAGE_CLASS || '',
       workerStorageSize: process.env.WORKER_STORAGE_SIZE || '5Gi',
       // Which builder produces app images (see services/kubernetes-buildkit.js
@@ -640,6 +713,16 @@ function load() {
         .split(',').map((name) => name.trim()).filter(Boolean),
       buildkitSuccessRetentionHours: Number(process.env.BUILDKIT_SUCCESS_RETENTION_HOURS
         || process.env.KPACK_SUCCESS_RETENTION_HOURS || '48'),
+      // `auto` (default): a build uploads the registry layer cache only when
+      // it rebuilt something a later build can reuse. `always`: after every
+      // build, as before the choice existed.
+      buildkitCacheUpload: process.env.BUILDKIT_CACHE_UPLOAD || 'auto',
+      // `on` (default): an app made from a ready-made starter also imports
+      // that starter's shared layer cache, and the app's first build, the
+      // starter as created, uploads to it. `off` (or 0/false): every app
+      // has its own cache only, as before.
+      buildkitStarterCache: !['off', '0', 'false'].includes(
+        String(process.env.BUILDKIT_STARTER_CACHE || 'on').trim().toLowerCase()),
     },
     // Postgres connection pool size (pg `Pool.max`). pg's built-in default
     // is 10, which can bottleneck under many concurrent SSE turns + staging
@@ -713,16 +796,33 @@ function load() {
     // The Workshop theme sweep (services/workshop-themes.js): re-checks every
     // app opened in the last week, re-drafting themes at most daily.
     workshopSweepIntervalMs: parseInt(process.env.WORKSHOP_THEMES_SWEEP_INTERVAL_MS || String(60 * 60 * 1000), 10),
-    // #1010: how often the FAST governance-apply ticker runs. The hourly
-    // sweeper above also applies window-elapsed governance proposals, but an
-    // hour of dead air after a close proposal's countdown reaches zero is
-    // exactly the "did my vote do anything?" confusion this ticker removes —
-    // and it is what makes the client's derived "Closing issue…" spinner
-    // honest rather than a promise nothing keeps. Deliberately gate-first and
-    // DB-only (no GitHub traffic for rows that aren't ready), and on its own
-    // knob so it can't be silently disabled along with the stale-PR sweeper.
-    // Default 60s; set to 0 to disable (the hourly catch-all still runs).
-    governanceApplyTickMs: parseInt(process.env.GOVERNANCE_APPLY_TICK_MS || String(60 * 1000), 10),
+    // With WF_MERGE_FOLLOWUPS_ENABLED on, a merge hands what follows it
+    // (delivery, preview teardown, included changes, closing requests, the
+    // announcements) to the merge-followups machine, and a change reads
+    // live only once production runs it. Off by default.
+    wfMergeFollowupsEnabled: ['1', 'true'].includes(process.env.WF_MERGE_FOLLOWUPS_ENABLED),
+    // With WF_APP_DELIVERY_ENABLED on (and WF_MERGE_FOLLOWUPS_ENABLED, which
+    // it needs), every production deploy of an app is asked of the
+    // app-delivery machine: one at a time per app, recorded, and the
+    // "deploying" state is durable. Off by default.
+    wfAppDeliveryEnabled: ['1', 'true'].includes(process.env.WF_APP_DELIVERY_ENABLED),
+    // How many 'error' verdicts in a row the checks' error lane re-runs on
+    // its own (staging-recovery.checkMaxAutoRetries, CHECK_MAX_AUTO_RETRIES).
+    checkMaxAutoRetries: (() => {
+      const n = Number.parseInt(process.env.CHECK_MAX_AUTO_RETRIES || '6', 10);
+      return Number.isFinite(n) ? n : 6;
+    })(),
+    // Its own pool, so pipeline slots and the outcome listener never take
+    // request connections, and how many slots each process runs. A staging
+    // preview shares one Postgres server with the fleet: one slot, and a
+    // pool of two (the outcome listener and one working connection).
+    wfPoolMax: parseInt(process.env.WF_POOL_MAX || (IS_STAGING() ? '2' : '6'), 10),
+    wfSlots: parseInt(process.env.WF_SLOTS || (IS_STAGING() ? '1' : '4'), 10),
+    // What a write to a machine-owned column outside the pipeline does:
+    // 'raise' everywhere but production, where it is logged to
+    // wf_ownership_violations until no legacy writer is left.
+    wfOwnershipMode: process.env.WF_OWNERSHIP_MODE
+      || ((process.env.NODE_ENV === 'production' && !IS_STAGING()) ? 'log' : 'raise'),
     // Demand-driven global-cap eviction. When a new session is needed but
     // the platform is at maxGlobalSessions, we pause the globally least-
     // recently-active session that has been idle longer than this grace
@@ -835,6 +935,9 @@ function load() {
     // endpoint answering 404 not_offered, exactly as before this existed.
     firebasePhoneAuthEnabled: process.env.FIREBASE_PHONE_AUTH_ENABLED === 'true',
     firebaseWebApiKey: process.env.FIREBASE_WEB_API_KEY || '',
+    // Test numbers (phoneTestCodeFrom above, or shotsPhoneTestCodeFrom on a
+    // before & after shots copy). Never set in production.
+    phoneTestCode: phoneTestCodeFrom(process.env).code || shotsPhoneTestCodeFrom(process.env).code,
     // Platform outbound mail (login codes, waitlist confirmations,
     // waitlist release notices). src/services/mail/select.js picks the
     // transport once, here, from platform_env: Gmail API, a generic HTTP
@@ -880,6 +983,10 @@ function load() {
         smsMaxPerHour: Number(process.env.PLATFORM_SMS_MAX_PER_HOUR) || 0,
       };
     })(),
+    // Where new content reports are mailed (services/moderation.js
+    // submitReport). Optional, like every mail key: the platform's own
+    // compliance inbox is the default.
+    complianceEmail: (process.env.PLATFORM_COMPLIANCE_EMAIL || '').trim() || 'compliance@usernodelabs.org',
   };
 
   for (const [name, value] of [
@@ -989,6 +1096,19 @@ function load() {
   console.log(`  FIREBASE_PROJECT_ID=${config.firebaseProjectId || '(not set)'}`);
   console.log(`  FIREBASE_SERVICE_ACCOUNT=${config.firebaseServiceAccountJsonB64 ? '(set)' : '(not set)'}`);
   console.log(`  FIREBASE_PHONE_AUTH=${config.firebasePhoneAuthEnabled ? 'enabled' : 'disabled'}${config.firebaseWebApiKey ? '' : ' (no web API key — phone endpoints answer 404 not_offered)'}`);
+  const phoneTest = phoneTestCodeFrom(process.env);
+  if (phoneTest.code) {
+    console.log('  PHONE_TEST_CODE=(set) — +1 … 555 0100–0199 sign in with it as test accounts; no text is sent');
+  } else if (phoneTest.refused) {
+    console.error(`  PHONE_TEST_CODE=(refused: ${phoneTest.refused}) — test numbers are off`);
+  }
+  // "(set)", never the code: the run's code lives in its brief only.
+  const shotsPhoneTest = shotsPhoneTestCodeFrom(process.env);
+  if (shotsPhoneTest.code && !phoneTest.code) {
+    console.log('  SHOTS_PHONE_TEST_CODE=(set) — a before & after shots copy: +1 … 555 0100–0199 sign in with the run\'s code; no text is sent');
+  } else if (shotsPhoneTest.refused) {
+    console.error(`  SHOTS_PHONE_TEST_CODE=(refused: ${shotsPhoneTest.refused}) — test numbers are off`);
+  }
   console.log(`  PLATFORM_MAIL=${config.mailTransport
     ? `${config.mailProvider}${config.mailStagingLogOnly ? ' (staging — rendered to the log, never delivered)' : ''} from=${config.mailFrom}`
     : '(no provider configured — OTP login codes and waitlist confirmations are NOT delivered)'}`);
@@ -1049,6 +1169,9 @@ module.exports = {
   runsClusterMaintenance,
   canonicalCliOrigin,
   canonicalOpenRouterApiBase,
+  openRouterProviderShortlists,
   canonicalNativeSessionV2Network,
   isLoopbackOrigin,
+  phoneTestCodeFrom,
+  shotsPhoneTestCodeFrom,
 };

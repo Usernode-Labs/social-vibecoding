@@ -99,11 +99,12 @@ test('the run\'s own record is never the sentence anybody reads', () => {
   assert.match(failed, /say\('followup_failed', followup\.revisionFailedText\(\{ why, canRevise \}\), postedAt, \{\s*dm: \{ reason: why, canRevise, sessionId: session\.id, link: proposalUrl \},/);
 });
 
-test('in the DM: what happened, and Ask for changes on the change to try again', () => {
+// One story (contract 2.3): the chat's words say Change something, not Ask for changes.
+test('in the DM: what happened, and Change something on the change to try again', () => {
   assert.equal(
     dm.dmText('followup_failed', { reason: 'the turn produced no change', sessionId: 5001 }, CONTEXT),
     `${LINE}\n\nI couldn't update your change: I ended up with no changes to show you. It's as it was. `
-      + 'To try again, open it below and tap Ask for changes.',
+      + 'To try again, tap Change something on it below.',
   );
   // Its card is the change (cardsFor), the one "below" means.
   assert.deepEqual(dm.cardsFor('followup_failed', { sessionId: 5001 }, { id: 3 }, 4), [{ type: 'proposal', appId: 3, sessionId: 5001 }]);
@@ -111,12 +112,12 @@ test('in the DM: what happened, and Ask for changes on the change to try again',
   assert.equal(
     dm.dmText('followup_failed', { reason: 'x', link: 'https://app.onhomeroom.com/#app/climb/dev/proposals/5001' }, CONTEXT).split('\n\n')[1],
     'I couldn\'t update your change: something went wrong while I was working on it. It\'s as it was. '
-      + 'To try again, open it and tap Ask for changes: https://app.onhomeroom.com/#app/climb/dev/proposals/5001',
+      + 'To try again, open it and tap Change something: https://app.onhomeroom.com/#app/climb/dev/proposals/5001',
   );
   assert.equal(
     dm.dmText('followup_failed', { reason: 'x' }, CONTEXT).split('\n\n')[1],
     'I couldn\'t update your change: something went wrong while I was working on it. It\'s as it was. '
-      + 'To try again, open it on Climbing Crew and tap Ask for changes.',
+      + 'To try again, open it on Climbing Crew and tap Change something.',
   );
   // A first version is the first version.
   assert.match(dm.dmText('followup_failed', { reason: 'x', sessionId: 5001 }, { ...CONTEXT, firstVersion: true }),
@@ -136,11 +137,13 @@ test('the DM rings as a stop, in the stop\'s own words', async () => {
   const pool = { async query() { return { rows: [] }; } };
   const metadata = { kind: 'followup_failed', appName: 'Climbing Crew' };
   const detail = await dm.notificationDetail(pool, dm.momentOf(metadata), metadata);
-  assert.equal(detail, 'hrbot:stopped:Climbing Crew');
+  // "One story": an update that did not happen is its own stop.
+  const parsed = require('../src/services/homeroom-bot-notify-copy').parseBotDetail(detail);
+  assert.deepEqual([parsed.moment, parsed.said, parsed.appName], ['stopped', 'update_failed', 'Climbing Crew']);
   const copy = policy.buildNotificationCopy('build_stopped', {
     sourceUsername: 'homeroom_bot', sourceIsSynthetic: true, detail, messageContent: 'x',
   });
-  assert.deepEqual(copy, { title: 'Homeroom bot', body: 'Climbing Crew: your change stopped. I said why in our chat' });
+  assert.deepEqual(copy, { title: 'Climbing Crew', body: 'Stopped: I couldn\'t update it. It\'s as it was.' });
 });
 
 test('"Reply here (or on the GitHub issue)" is true: a reply there is read by the next follow-up', () => {
@@ -167,7 +170,8 @@ test('"Reply here (or on the GitHub issue)" is true: a reply there is read by th
 test('"Ask for changes" is true: it posts on the change and puts its follow-up first', () => {
   // On a change the bot built, the change page leads with it ...
   const view = read('public/js/app-view.js');
-  assert.match(view, /key: 'ask-bot', cls: 'gc-vote-btn', label: 'Ask for changes',/);
+  assert.match(view, /label: PlatformI18n\.t\('changes:page\.menu\.askForChanges'\), icon: 'generate',/);
+  assert.equal(require('./lib/platform-i18n').message('changes:page.menu.askForChanges'), 'Ask for changes');
   // ... which opens the bot's chat with the change attached, and a message
   // carrying it is sent to the change, not to the model to guess at.
   const dmSrc = read('src/services/homeroom-bot-dm.js');

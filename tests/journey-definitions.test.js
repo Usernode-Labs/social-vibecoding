@@ -114,13 +114,25 @@ test('next steps count moves and people, keep Left and Other, and flag dead ends
   assert.deepEqual(starts[0], { screen: 'home', visits: 6, people: 3 });
 });
 
-test('the real-person rule leaves out admins, bots, test accounts, restricted, deleted, service and left-out accounts', () => {
+test('the real-person rule leaves out admins, bots, test accounts, restricted, deleted, service, left-out accounts and team addresses', () => {
   const sql = journey.REAL_PERSON_SQL;
   for (const part of [
     'u.is_admin IS NOT TRUE', 'u.is_synthetic IS NOT TRUE', 'u.test_account_created_at IS NULL',
     'u.participation_restricted_at IS NULL',
     'u.anonymised_at IS NULL', 'NOT (LOWER(u.username) LIKE ANY($3::text[]))', 'NOT (u.id = ANY($4::int[]))',
+    `AND NOT (u.email IS NOT NULL AND (LOWER(split_part(u.email, '@', 2)) IN (${journey.TEAM_DOMAINS_SQL})`,
+    `IN (${journey.TEAM_ADDRESSES_SQL})`,
   ]) assert.ok(sql.includes(part), part);
+  // A team address: the team's domains, or a +tag of an admin's or a
+  // left-out account's address, read once per query (uncorrelated).
+  assert.deepEqual(journey.TEAM_DOMAINS, ['onhomeroom.com', 'usernodelabs.org', 'usernodelabs.com']);
+  assert.equal(journey.TEAM_DOMAINS_SQL, journey.TEAM_DOMAINS.map((d) => `'${d}'`).join(', '),
+    'the SQL list is the same three domains');
+  const team = journey.TEAM_ADDRESSES_SQL;
+  assert.ok(team.includes("regexp_replace(t.email, '\\+[^@]*@', '@')"), 'the +tag is dropped before comparing');
+  assert.ok(sql.includes("regexp_replace(u.email, '\\+[^@]*@', '@')"), 'on both sides');
+  assert.ok(team.includes('t.is_admin OR t.id = ANY($4::int[])'), 'admins and the left-out list name the team');
+  assert.doesNotMatch(team, /\bu\./, 'the team subquery does not reach back into the outer row');
   assert.equal(journey.REAL_VOTER_SQL, sql.replace(/\bu\./g, 'uy.'),
     'the yes-voters of a change are held to exactly the same rule');
   // B9: 'homeroom' joined the reserved prefixes with the bot's @mention.
@@ -129,6 +141,58 @@ test('the real-person rule leaves out admins, bots, test accounts, restricted, d
   const usernames = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'usernames.js'), 'utf8');
   assert.match(usernames, /const RESERVED_PREFIXES = \['usernode', 'staging', 'homeroom'\];/);
   assert.deepEqual(journey.notRecorded('no record'), { recorded: false, reason: 'no record' });
+});
+
+test('the admit mail\'s engagement: a followed link is an open, and an untracked mail is a gap', () => {
+  const base = { mail_status: 'sent', mail_tracked: true, mail_opened_at: null, mail_clicked_at: null };
+  assert.deepEqual(journey.mailEngagement({ ...base, mail_clicked_at: '2026-10-07T11:36:00Z' }),
+    { tracked: true, opened: true, clicked: true, note: 'clicked the link' });
+  assert.deepEqual(journey.mailEngagement({ ...base, mail_opened_at: '2026-10-07T11:35:00Z' }),
+    { tracked: true, opened: true, clicked: false, note: 'opened' });
+  assert.deepEqual(journey.mailEngagement(base), { tracked: true, opened: false, clicked: false, note: 'no open seen' });
+  assert.deepEqual(journey.mailEngagement({ ...base, mail_tracked: null }),
+    { tracked: false, opened: false, clicked: false, note: 'not tracked' });
+  assert.equal(journey.mailEngagement({ mail_status: null, mail_tracked: null }).note, null, 'no mail, no note');
+});
+
+test('the mail followed: its one-time link or a code, whichever came first, and a spent link is a click', () => {
+  assert.deepEqual(journey.followedMail({ mail_link_at: '2026-10-07T11:40:00Z', code_asked_at: '2026-10-07T12:00:00Z' }),
+    { done: true, at: new Date('2026-10-07T11:40:00Z'), note: 'its sign-in link' });
+  assert.deepEqual(journey.followedMail({ mail_link_at: null, code_asked_at: '2026-10-07T12:00:00Z' }),
+    { done: true, at: new Date('2026-10-07T12:00:00Z'), note: 'a sign-in code' });
+  assert.deepEqual(journey.followedMail({}, { expired: true }),
+    { done: false, stuck: 'Admitted, never followed the mail', expired: true });
+  // Click tracking leaves the one-time link out, so its spend is the click,
+  // tracked mail or not.
+  assert.deepEqual(journey.mailEngagement({ mail_status: 'sent', mail_tracked: null, mail_link_at: '2026-10-07T11:40:00Z' }),
+    { tracked: true, opened: true, clicked: true, note: 'clicked the link' });
+});
+
+test('what a maker asked for is one line, cut short', () => {
+  assert.equal(journey.askedText('  Track   the\npantry  '), 'Track the pantry');
+  assert.equal(journey.askedText(''), null);
+  assert.equal(journey.askedText(null), null);
+  const long = journey.askedText('x'.repeat(journey.ASKED_MAX + 50));
+  assert.equal(long.length, journey.ASKED_MAX);
+  assert.ok(long.endsWith('\u2026'));
+});
+
+test('a first version: live, failed, waiting on its maker, stalled or still building, and not recorded before stages were', () => {
+  const now = new Date('2026-10-15T12:00:00Z');
+  const made = '2026-10-15T09:00:00Z';
+  const of = (stages, extra = {}) => journey.firstVersionOf({ bot_builds: true, created_at: made, stages, ...extra }, now,
+    { stagesFrom: '2026-10-13T00:00:00Z' });
+  const at = (minutes) => new Date(Date.parse(made) + minutes * 60000).toISOString();
+  assert.equal(journey.firstVersionOf({ bot_builds: false, created_at: made }, now), null, 'nothing for the bot to build');
+  const live = of({ plan_written: at(1), picked_up: at(3), live: at(20) }, { near_live: true, back_at: at(25) });
+  assert.deepEqual([live.outcome, live.last, live.nearLive, live.backSeconds], ['live', 'live', true, 300]);
+  assert.equal(of({ plan_written: at(1), picked_up: at(3) }, { run_failed: true }).outcome, 'failed');
+  assert.equal(of({ plan_written: at(1) }, { filing: 'failed' }).outcome, 'failed');
+  assert.equal(of({ plan_written: at(1) }).outcome, 'waiting', 'a plan written waits on its maker');
+  assert.equal(of({ plan_written: at(1), picked_up: at(3) }).outcome, 'stalled', `nothing for ${journey.STALL_MINUTES} min`);
+  assert.equal(of({ plan_written: at(170), picked_up: at(175) }).outcome, 'building');
+  assert.deepEqual(journey.firstVersionOf({ bot_builds: true, created_at: '2026-10-01T09:00:00Z', stages: null }, now,
+    { stagesFrom: '2026-10-13T00:00:00Z' }), { recorded: false, outcome: null, last: null, stages: {}, nearLive: null, backSeconds: null });
 });
 
 test('first-mile steps: expired mail proof reads unknown, and nothing counts past an unfinished account', () => {
@@ -145,11 +209,20 @@ test('first-mile steps: expired mail proof reads unknown, and nothing counts pas
   const started = journey.firstMileSteps({
     released_at: '2026-11-14T09:00:00Z', mail_status: 'sent', mail_at: '2026-11-14T09:00:01Z',
     code_asked_at: '2026-11-14T10:00:00Z', user_id: 10, password_set: false, has_platform_access: true,
-    needs_username_choice: false, needs_communities_choice: false,
+    needs_username_choice: true, needs_communities_choice: false,
   }, now);
   assert.equal(started.stuckAt, 'account');
   assert.equal(started.furthest, 'code_asked', 'the row\'s defaults do not carry a started account past it');
   assert.deepEqual(started.steps.slice(4).map((s) => s.state), ['not_yet', 'not_yet', 'not_yet', 'not_yet', 'not_yet']);
+  // #4595: the password is optional. An account that skipped it and chose
+  // its username has finished its account step.
+  const skipped = journey.firstMileSteps({
+    released_at: '2026-11-14T09:00:00Z', mail_status: 'sent', mail_at: '2026-11-14T09:00:01Z',
+    code_asked_at: null, user_id: 11, password_set: false, account_at: '2026-11-14T10:00:00Z',
+    has_platform_access: true, access_at: '2026-11-14T10:00:00Z', needs_username_choice: false,
+    needs_communities_choice: true,
+  }, now);
+  assert.equal(skipped.steps[3].state, 'done', 'signup counts as finished without a password');
 });
 
 test('a change the Homeroom bot built is credited to the person who asked for it', () => {
@@ -175,6 +248,21 @@ test('a change the Homeroom bot built is credited to the person who asked for it
   assert.equal(stages.split(journey.CHANGE_PERSON_SQL).length - 1, 5,
     'Activate (a change), Belong (a yes, kudos or a comment on somebody else\'s change) and Use');
   assert.doesNotMatch(stages, /<> cs\.user_id/);
+});
+
+test('the admin analytics dashboard and funnels credit a change by the same rule as Journey', () => {
+  // #3970: one definition, so a bot-built change counts for the same person
+  // on every admin surface.
+  const shared = require('../src/services/change-person').CHANGE_PERSON_SQL;
+  assert.equal(journey.CHANGE_PERSON_SQL, shared);
+  const { PROPOSAL_FUNNEL_SQL } = require('../src/services/analytics-funnels');
+  assert.ok(PROPOSAL_FUNNEL_SQL.includes(shared), 'the dev-session funnels credit bot builds');
+  const fs = require('node:fs');
+  const route = fs.readFileSync(require.resolve('../src/routes/dashboard'), 'utf8');
+  assert.match(route, /CROSS JOIN LATERAL \(SELECT \$\{changePerson\.CHANGE_PERSON_SQL\} AS user_id\) cp/);
+  assert.doesNotMatch(route, /JOIN chat_sessions cs ON cs\.user_id = u\.id/,
+    'no dashboard reading credits a change to the session account directly');
+  assert.doesNotMatch(route, /users \w+ ON \w+\.id = cs\.user_id/);
 });
 
 test('creation path: people once each, the shortest time, and an absent record before recording is not a no', () => {
@@ -204,6 +292,45 @@ test('creation path: people once each, the shortest time, and an absent record b
   assert.equal(steps.preview.of, 0);
   assert.deepEqual(journey.creationSteps([]).map((s) => s.reached), [0, 0, 0, 0, 0], 'nobody made anything: zeros are true');
   assert.deepEqual(journey.CREATION_TARGETS, { running: 300, first_version: 120, change_live: 600 });
+});
+
+// #4895: where the time to running went, from each project's first timed
+// creation that ran (an `app_creation_timed` event).
+test('creation timing: known fields only, per project, medians over projects made from a starter', () => {
+  const record = (totalMs, stages, extra = {}) => ({ outcome: 'running', kind: 'new_repo', totalMs, stages, ...extra });
+  const a = journey.creationTiming(record(45000, { database: 800, repository: 4000, build: 28000, rollout: 9000, bogus: 5, deploy: -1 }, {
+    starter: 'tier-list-restaurants',
+    build: { engine: 'buildkit', steps: [{ name: 'exporting cache to registry', ms: 8000 }, { name: 'x' }, { name: 'a', ms: 1 }, { name: 'b', ms: 1 }] },
+    pod: { scheduleMs: 1000, startMs: 5000, readyMs: 3000 },
+  }));
+  assert.deepEqual(a, {
+    kind: 'new_repo', totalMs: 45000,
+    stages: { database: 800, repository: 4000, build: 28000, rollout: 9000 },
+    build: { engine: 'buildkit', steps: [{ name: 'exporting cache to registry', ms: 8000 }, { name: 'a', ms: 1 }, { name: 'b', ms: 1 }] },
+    pod: { scheduleMs: 1000, startMs: 5000, readyMs: 3000 },
+  }, 'stages in pipeline order, unknown or negative ones dropped, at most three build steps');
+  assert.equal(journey.creationTiming(null), null);
+  assert.deepEqual(journey.creationTiming({ kind: 'existing_repo', stages: {}, pod: { scheduleMs: 1 } }),
+    { kind: 'existing_repo', totalMs: null, stages: {} }, 'a partial Pod timeline is left out');
+  const b = journey.creationTiming(record(55000, { database: 1200, repository: 5000, build: 38000, rollout: 7000 }));
+  const imported = journey.creationTiming({ ...record(200000, { build: 180000 }), kind: 'existing_repo' });
+  const summary = journey.creationTimingSummary([{ timing: a }, { timing: b }, { timing: imported }, { timing: null }]);
+  assert.deepEqual(summary, {
+    of: 2, totalMs: 50000,
+    stages: [
+      { key: 'database', medianMs: 1000 }, { key: 'repository', medianMs: 4500 },
+      { key: 'build', medianMs: 33000 }, { key: 'rollout', medianMs: 8000 },
+    ],
+    pod: { scheduleMs: 1000, startMs: 5000, readyMs: 3000 },
+  }, 'an import builds what it imported, so it is left out');
+  assert.deepEqual(journey.creationTimingSummary([]), { of: 0, totalMs: null, stages: [], pod: null });
+  const projected = journey.creationProject({
+    app_id: 1, slug: 'p', name: 'P', user_id: 1, username: 'u', created_at: '2026-10-12T15:32:00Z',
+    running_at: null, first_version_at: null, preview_at: null, change_live_at: null, timing: record(1000, { build: 900 }),
+  }, { running: null, preview: null, change_live: null });
+  assert.deepEqual(projected.timing, { kind: 'new_repo', totalMs: 1000, stages: { build: 900 } });
+  assert.match(journey.CREATION_PATH_SQL, /e\.event_type = 'app_creation_timed' AND e\.metadata->>'outcome' = 'running'/);
+  assert.match(journey.CREATION_PATH_SQL, /ORDER BY e\.app_id, e\.created_at, e\.id/, 'the first attempt that ran');
 });
 
 test('pairs: both active is the aha, and inside the 7 days a no is still open', () => {

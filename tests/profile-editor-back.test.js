@@ -12,6 +12,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -53,7 +54,8 @@ test('only a dismissal keeps the draft; Cancel and Save are decisions', () => {
   // The kit's backdrop / Escape keeps it, as Back does…
   assert.match(SHEET, /if \(!adoption\) return;\s*adoption = null;\s*Profile\._dismissSheet\(\{ keepDraft: true \}\);/);
   // …Cancel does not.
-  assert.match(SHEET, /onClick=\{\(\) => Profile\._dismissSheet\(\)\}\s*>\s*Cancel/);
+  assert.match(SHEET, /onClick=\{\(\) => Profile\._dismissSheet\(\)\}\s*>\s*\{t\('core:common\.cancel'\)\}/);
+  assert.equal(message('core:common.cancel'), 'Cancel');
   // A kept draft belongs to the account that typed it.
   assert.match(PROFILE, /return draft && username && draft\.username === username \? draft : null;/);
 });

@@ -229,17 +229,25 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
       assert.equal(got.body.is_member, false);
       assert.equal(got.body.audience_label, 'Public community');
       assert.deepEqual(got.body.members.map((m) => m.username), [owner.username]);
-      assert.deepEqual(got.body.approval, { policy: 'anyone', approvals_required: null, electorate: 1, required: 1 });
+      // #4666: the rule by name too (an app on the two columns' default rule is
+      // Group vote), and its creator, for the line said from the reader's side.
+      assert.deepEqual(got.body.approval, {
+        policy: 'anyone', approvals_required: null, electorate: 1, required: 1,
+        mode: 'columns', preset: 'group_vote', rules: null, groups: [],
+        creator: { id: owner.id, username: owner.username, display_name: null },
+      });
+      assert.deepEqual(got.body.visibility, { build: 'public', view: 'public' });
       assert.deepEqual(got.body.channel, {
         last_message: null, last_at: null, last_by: null, unread_count: 0,
         recent: [], href: `#messages/app/${a.slug}`, handle: null,
         post_url: `/api/apps/${a.slug}/messages`,
       }, 'a collab-public app: its channel is offered, with its last few messages, its address and where the hub posts');
-      const { daily, ...counts } = got.body.activity;
+      const { daily, active_people: activePeople, ...counts } = got.body.activity;
       assert.deepEqual(counts, { active_week: 0, shipped_month: 0 },
-        'and Members & activity\'s two numbers');
+        'and the hub\'s two numbers');
       assert.equal(daily.length, 14, 'and its fourteen days');
       assert.ok(daily.every((d) => d.n === 0 && /^\d{4}-\d{2}-\d{2}$/.test(d.day)));
+      assert.deepEqual(activePeople, [], 'and nobody to name');
       assert.equal(got.body.can_manage, false, 'a viewer cannot propose who it is for');
       assert.equal(got.body.audience_change, null);
 
@@ -444,7 +452,13 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
       `INSERT INTO chat_sessions (app_id, user_id, status, merged_at) VALUES ($1, $2, 'merged', NOW()) RETURNING id`,
       [other.id, owner.id]);
     await pool.query(`INSERT INTO pr_votes (session_id, user_id, vote) VALUES ($1, $2, 'yes')`, [s[0].id, boss.id]);
-    const { daily, ...counts } = await communities.activitySummary(pool, other.id);
+    // A synthetic account taking part is neither counted nor named.
+    const { rows: [bot] } = await pool.query(
+      `INSERT INTO users (username, password, is_synthetic) VALUES ('busy_bot', 'x', TRUE) RETURNING id`);
+    const { rows: [beep] } = await pool.query(
+      `INSERT INTO chat_messages (app_id, user_id, content) VALUES ($1, $2, 'beep') RETURNING id`, [other.id, bot.id]);
+    const { daily, active_people: activePeople, ...counts } = await communities.activitySummary(pool, other.id);
+    await pool.query('DELETE FROM chat_messages WHERE id = $1', [beep.id]);
     assert.deepEqual(counts, { active_week: 3, shipped_month: 1 });
     // The trend: fourteen days, oldest first, today last, each the number of
     // different people who said something, started a change or voted.
@@ -453,6 +467,12 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
     assert.equal(daily[13].n, 3, 'today: the member who talked, the owner who started, the admin who voted');
     const { rows: [{ today }] } = await pool.query(`SELECT to_char(CURRENT_DATE, 'YYYY-MM-DD') AS today`);
     assert.equal(daily[13].day, today);
+    // WHO, BY NAME (the hub's faces row): the same three people, the most
+    // recently active first (the admin's vote came last, the member's
+    // messages first), never the bot, with nothing but their names.
+    assert.deepEqual(activePeople.map((p) => p.username), [boss.username, owner.username, member.username]);
+    assert.deepEqual(Object.keys(activePeople[0]).sort(), ['display_name', 'id', 'username']);
+    assert.equal(activePeople[0].id, boss.id);
 
     // A CHANNEL IS WHAT PEOPLE SAID. A platform line with no thread — a
     // proposal put up for a vote, a merge — is written nowhere: not the
@@ -559,6 +579,37 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
     await communities.leave(pool, swap, me.id);
     const after = overview.shapeNeedsFeed((await pool.query(overview.NEEDS_FEED_SQL, [me.id, false, false, 60])).rows);
     assert.deepEqual(after.map((f) => f.title), ['Older change']);
+  });
+
+  await t.test('#4270: the feed marks a Just-you change whose Yes is the one it needs `approve`', async () => {
+    const overview = require('../src/routes/workshop-overview');
+    const me = await user();
+    const bot = await user();
+    const mine = await app({ createdBy: me.id, view: 'private', collab: 'private' });
+    const strict = await app({ createdBy: me.id, view: 'private', collab: 'private' });
+    const group = await app({ createdBy: bot.id });
+    for (const a of [mine, strict, group]) await communities.join(pool, a, me.id);
+    // A private project is seen by the people building it, its maker first.
+    for (const a of [mine, strict]) await collaborate(a.id, me.id);
+    // A rule asking for two Yes votes keeps the vote, as on the card.
+    await pool.query('UPDATE apps SET approvals_required = 2 WHERE id = $1', [strict.id]);
+    const promote = async (a, title, ago) => (await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status, pr_title, last_activity_at)
+       VALUES ($1, $2, 'promoted', $3, NOW() - $4::interval) RETURNING id`,
+      [a.id, bot.id, title, ago])).rows[0].id;
+    await promote(mine, 'Sunday reminder', '1 hour');
+    await promote(strict, 'Two to say yes', '2 hours');
+    await promote(group, 'Group change', '3 hours');
+    const read = async () => overview.shapeNeedsFeed(await overview.withVotesRequired(pool,
+      (await pool.query(overview.NEEDS_FEED_SQL, [me.id, false, false, overview.NEEDS_FEED_MAX])).rows));
+    const feed = await read();
+    assert.deepEqual(feed.map((f) => [f.title, f.approve === true]), [
+      ['Sunday reminder', true], ['Two to say yes', false], ['Group change', false],
+    ]);
+    assert.ok(!('approve' in feed[2]), 'a group\'s item carries no flag at all');
+    // Once somebody else is in it, it is a group's: the vote is a vote.
+    await communities.join(pool, mine, bot.id);
+    assert.equal((await read()).find((f) => f.title === 'Sunday reminder').approve, undefined);
   });
 
   await t.test('an app suspended by moderation leaves the Messages and Workshop lists, admins included', async () => {

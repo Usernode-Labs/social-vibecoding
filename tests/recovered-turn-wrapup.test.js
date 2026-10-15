@@ -365,7 +365,7 @@ test('a recovered turn with no current payer closes without a provider call', as
 
 test('the static fallback matches the outcome it is closing', async () => {
   const spec = await run({ chat: new Error('nope') }, { outcome: 'spec', fallbackPillKind: 'spec_done' });
-  assert.match(spec.pool.inserts[0].content, /Spec updated/);
+  assert.match(spec.pool.inserts[0].content, /Plan updated/);
   assert.deepEqual(spec.pool.inserts[0].metadata.quickReplies,
     recoveryPills.buildRecoveryQuickReplies('spec_done'));
 

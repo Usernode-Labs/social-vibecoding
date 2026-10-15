@@ -100,6 +100,7 @@ function loadAppView() {
     location: { search: '', hash: '' }, URLSearchParams,
   };
   sandbox.window = sandbox; sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(
     `${read('public/js/merge-status.js')}\n${read('public/js/session-transcript.js')}\n`
@@ -138,4 +139,29 @@ test('the full row merged over a list row is not counted twice', () => {
   const v = AppView._checksVerdictView(merged);
   assert.equal(v.passCount, 40);
   assert.equal(v.summary, AppView._checksVerdictView(ROW).summary);
+});
+
+test('#3978: a list row drops the excerpts, the item row keeps them', () => {
+  // An excerpt is read where the change is being judged — the item page and
+  // the connector — never on a board card. The strip below is shallow and
+  // per-row: the stored row keeps its excerpts untouched.
+  const unitRow = {
+    index: -3, name: 'Repo unit suite (npm test) passes', path: 'package.json', status: 'fail',
+    failureReason: 'tests/a.test.js (1): t1 | # fail 1',
+    failureDetails: [{ file: 'tests/a.test.js', test: 't1', excerpt: "error: 'boom'" }],
+    failureDetailsTruncated: false,
+  };
+  const row = { id: 11, check_state: 'failing', test_results: [...RESULTS, unitRow] };
+  const listed = forListing({ query: { results: 'failing' } }, [row])[0].test_results
+    .find((r) => r.index === -3);
+  assert.equal(listed.failureDetails, undefined, 'the list projection drops the excerpts');
+  assert.equal(listed.failureDetailsTruncated, undefined);
+  assert.match(listed.failureReason, /tests\/a\.test\.js \(1\): t1/, 'the grouped reason survives');
+  assert.deepEqual(row.test_results[row.test_results.length - 1].failureDetails,
+    [{ file: 'tests/a.test.js', test: 't1', excerpt: "error: 'boom'" }],
+    'the stored row is untouched');
+  // forItem reads through failingResultsOnly, which deliberately keeps them:
+  // the item page's verdict fold renders them.
+  const item = failingResultsOnly(row).test_results.find((r) => r.index === -3);
+  assert.equal(item.failureDetails.length, 1);
 });

@@ -76,10 +76,10 @@ async function persistConflictState(pool, session, { state, files }) {
 
 // #252: in-flight sync registry. One entry per session while a
 // MODE=sync turn is running, holding the coarse phase the UI banner
-// shows. Process-local — same single-Node-process assumption as the
-// conflict-resolver's isResolving registry.
+// shows. Each entry is also this process's hold on the session's sync
+// (services/processes.js): another platform process sees it running.
 //   sessionId(Number) -> { phase, startedAt, promise }
-const _inFlightSyncs = new Map();
+const _inFlightSyncs = require('./processes').heldMap('sync');
 
 function repoOf(session) {
   const m = (session?.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
@@ -111,9 +111,13 @@ function repoOf(session) {
 
 // Read by GET /api/sessions/:id/status for reload recovery and the
 // client's poll fallback. Null when nothing is syncing.
+// A sync another process runs is known to be running, not where it is.
 function getSyncState(sessionId) {
   const entry = _inFlightSyncs.get(Number(sessionId));
-  return entry ? { phase: entry.phase, startedAt: entry.startedAt } : null;
+  if (entry) return { phase: entry.phase, startedAt: entry.startedAt };
+  let elsewhere = false;
+  try { elsewhere = require('./processes').heldElsewhere('sync', Number(sessionId)); } catch { /* none */ }
+  return elsewhere ? { phase: 'starting', startedAt: null } : null;
 }
 
 // Map the worker's __USERNODE_PHASE__ markers (forwarded by
@@ -167,7 +171,9 @@ async function runSyncMain(config, pool, sessionId, opts = {}) {
   const releaseOperation = beginSessionOperation(key);
   const entry = { phase: 'starting', startedAt: Date.now(), promise: null };
   _inFlightSyncs.set(key, entry);
-  entry.promise = runSyncMainInner(config, pool, sessionId, opts, entry)
+  // Recorded where another process sees it (active-workers.js) before the
+  // sync starts its worker.
+  entry.promise = releaseOperation.recorded.then(() => runSyncMainInner(config, pool, sessionId, opts, entry))
     .finally(() => {
       if (_inFlightSyncs.get(key) === entry) _inFlightSyncs.delete(key);
       releaseOperation();
@@ -314,7 +320,7 @@ async function runSyncMainInner(config, pool, sessionId, { sessionRow, trigger, 
         onProgress,
     });
 
-    activeWorkers.add(session.id);
+    await activeWorkers.enter(session.id);
     // #937: a sync turn is a NEW turn, so it owns the pending-stop
     // boundary the same way a chat turn does. Without this, a stop
     // requested against an earlier chat turn would still be pending in the

@@ -39,6 +39,7 @@
 
 import { memo, useEffect, useRef, type ReactNode } from 'react';
 
+import { useMessages } from '../../lib/i18n/react';
 import { useHiddenClass, useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
 import { appActivity } from './app-activity.js';
@@ -46,7 +47,14 @@ import { APP_FRAME_SANDBOX, PENDING_FRAME_SANDBOX } from './app-frame-policy.js'
 import { navStore } from '../nav/nav-store.js';
 import { appFrameRefs, appFrameStore } from './app-frame-store.js';
 import { publishAppTone } from './app-tone.js';
-import { StarterBar } from './starter-bar';
+import { AppsLoadError } from '../apps/load-error';
+
+// #4813: the failed card's Try again, through the same feature-detected
+// seam app-status.tsx uses — AppView may be absent (the render harness).
+function retryLaunch(): void {
+  const av = typeof window !== 'undefined' ? (window as any).AppView : null;
+  if (av && typeof av.retryLaunch === 'function') av.retryLaunch();
+}
 
 function LaunchCover({
   iconKind,
@@ -54,20 +62,23 @@ function LaunchCover({
   name,
   note,
   spinner,
+  failed,
   out,
 }: {
   iconKind: string;
   iconHtml: string;
   name: string;
-  note: string;
+  note: string | null;
   spinner: boolean;
+  failed: boolean;
   out: boolean;
 }): ReactNode {
+  const t = useMessages('agent');
   return (
     <div
       id="app-launch-cover"
       className={out ? 'app-launch-cover app-launch-cover--out' : 'app-launch-cover'}
-      aria-hidden="true"
+      aria-hidden={failed ? undefined : 'true'}
     >
       {/*
           The icon tile's inner markup comes from `Home.iconTileFor` — the same
@@ -82,16 +93,29 @@ function LaunchCover({
       >
       </div>
       <p className="app-launch-cover-name">{name}</p>
-      <p className="app-launch-cover-note" id="app-launch-cover-note">{note}</p>
-      <div
-        className={
-          spinner
-            ? 'dc-status-spinner-arc app-launch-cover-spinner'
-            : 'dc-status-spinner-arc app-launch-cover-spinner hidden'
-        }
-        id="app-launch-cover-spinner"
-      >
-      </div>
+      {failed ? (
+        // #4813: the launch failed — the same error card Home and Discover
+        // draw for a failed list load, with this launch's own words, and a
+        // Try again that re-points the same frame through AppView.
+        <AppsLoadError
+          title={t('agent:appFrame.cover.failed.title')}
+          detail={t('agent:appFrame.cover.failed.detail')}
+          onRetry={retryLaunch}
+        />
+      ) : (
+        <>
+          <p className="app-launch-cover-note" id="app-launch-cover-note">{note == null ? t('agent:appFrame.cover.opening') : note}</p>
+          <div
+            className={
+              spinner
+                ? 'dc-status-spinner-arc app-launch-cover-spinner'
+                : 'dc-status-spinner-arc app-launch-cover-spinner hidden'
+            }
+            id="app-launch-cover-spinner"
+          >
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -177,6 +201,7 @@ const AppFrame = memo(function AppFrame({ slug }: { slug: string }): ReactNode {
           name={cover.name}
           note={cover.note}
           spinner={cover.spinner}
+          failed={cover.failed}
           out={cover.out}
         />
       ) : null}
@@ -237,21 +262,13 @@ export function AppFrameHost(): ReactNode {
     publishAppTone(document, state, window, false, screen);
   }, [state.slug, state.active, state.background, screen]);
 
-  // A column, for the bar over a starter (./starter-bar.tsx, #15): rendered
-  // unconditionally and FIRST, so the launch host is always the second child
-  // and a bar appearing is an insert before it, never a move. Without a bar
-  // the launch host's `h-full` is the whole host, as before; with one it
-  // shrinks by the bar's height (its own overflow is hidden, so it has no
-  // content minimum). `hidden` still wins over `flex` while the frame is
-  // parked: the same pair #app-view carries.
   return (
     <div
       id="app-frame-host"
       ref={hostRef}
-      className="hidden flex-1 flex flex-col"
+      className="hidden flex-1"
       style={{ minHeight: '0', overflow: 'hidden' }}
     >
-      <StarterBar />
       <div className="app-launch-host w-full h-full">
         {liveFrames(state).map((slug) => <AppFrame key={slug} slug={slug} />)}
       </div>

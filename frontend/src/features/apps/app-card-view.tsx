@@ -19,6 +19,7 @@ import type { KeyboardEvent, MouseEvent, ReactNode } from 'react';
 
 import { Glyph } from '@/components/ui/icons';
 
+import { useMessages } from '../../lib/i18n/react';
 import {
   appPillsFor,
   iconViewFor,
@@ -102,10 +103,11 @@ export function AppIconLink({
   id?: string;
   'data-icon'?: string;
 }): ReactNode {
+  const t = useMessages('discover');
   if (!slug) {
     return <span id={id} data-icon={dataIcon} className={className} aria-hidden="true">{children}</span>;
   }
-  const label = `Open ${name || slug}`;
+  const label = t('discover:card.openApp', { app: name || slug });
   const cls = `${className || ''} app-icon-link cursor-pointer`;
   if (nested) {
     return (
@@ -159,6 +161,8 @@ export function AppPills({ app, limit }: {
    */
   limit?: number;
 }): ReactNode {
+  // Subscribed: appPillsFor reads the pills' words as it is called.
+  useMessages('discover');
   const all = appPillsFor(app) as {
     chips: Array<{ cls: string; label: string; tip: string }>;
     vis: { icon: 'lock' | 'mail'; label: string; tip: string } | null;

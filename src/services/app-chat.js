@@ -22,8 +22,13 @@
 // the root's chat_messages.id. A root is a general-stream row of the same app
 // (thread_type IS NULL) that a person wrote — an ordinary message or a shared
 // spec card — which is also what makes nesting impossible: a reply has a
-// thread_type, so it can never be a root. A reply never appears in the
-// general stream for the same reason every topic thread's messages don't.
+// thread_type 'message', so it can never be a root. A reply never appears in
+// the general stream for the same reason every topic thread's messages don't.
+//
+// #4417: or a message in one of the project's topic channels (thread_type
+// 'category'): a topic is a channel like #general, so a conversation in it
+// can branch into a thread the same way. Its replies are drawn in that
+// channel's stream, never in the general one.
 //
 // ── The read cursor ────────────────────────────────────────────────────
 //
@@ -35,6 +40,10 @@
 // notices), not deleted, not by somebody the reader blocked.
 
 const MESSAGE_THREAD = 'message';
+// #4417: a topic's channel: thread_type 'category', thread_ref = its
+// app_category_registry row's id (origin 'topic'). Its own stream, with its
+// own read cursor (app_category_chat_reads) and its own reply threads.
+const CATEGORY_THREAD = 'category';
 const THREAD_ROOT_MSG_TYPES = Object.freeze(['message', 'spec_share']);
 const MAX_PARTICIPANTS = 3;
 // A thread's summary is recomputed per viewer who blocked one of its
@@ -102,7 +111,7 @@ async function findThreadRoot(db, appId, rootId, viewerId = null) {
        FROM chat_messages root
        LEFT JOIN users u ON u.id = root.user_id
       WHERE root.id = $1 AND root.app_id = $2
-        AND root.thread_type IS NULL
+        AND (root.thread_type IS NULL OR root.thread_type = 'category')
         AND root.msg_type IN ('message', 'spec_share')
         AND ($3::int IS NULL OR NOT EXISTS (
           SELECT 1 FROM user_blocks blocked
@@ -447,8 +456,136 @@ async function ensureReadCursors(db, userId, appIds) {
   );
 }
 
+// ── #4417: a topic channel's read cursor ──────────────────────────────
+//
+// app_category_chat_reads, one level down from app_chat_reads: the same
+// definition of unread (the channel's own stream, above the cursor, written
+// by another PERSON, not deleted, not by somebody the reader blocked), per
+// topic channel. No cursor is no unread, and ensureCategoryReadCursors
+// creates the missing ones at each channel's newest message, so a topic
+// starts at zero rather than at everything ever said in it.
+
+/** Unread per topic channel of `appId` for `userId`: Map<categoryId, n>. */
+async function categoryUnreadCounts(db, appId, userId, categoryIds) {
+  const ids = [...new Set((categoryIds || []).map(positiveInt).filter(Boolean))];
+  const out = new Map();
+  if (!ids.length || !appId || !userId) return out;
+  const { rows } = await db.query(
+    `SELECT rc.category_id, COUNT(m.id)::int AS unread_count
+       FROM app_category_chat_reads rc
+       JOIN chat_messages m
+         ON m.app_id = rc.app_id AND m.thread_type = 'category' AND m.thread_ref = rc.category_id
+        AND m.id > rc.last_read_id
+        AND m.deleted_at IS NULL
+        AND m.user_id IS NOT NULL AND m.user_id <> $2
+        AND NOT EXISTS (
+          SELECT 1 FROM user_blocks blocked
+           WHERE blocked.blocker_id = $2 AND blocked.blocked_user_id = m.user_id
+        )
+      WHERE rc.app_id = $1 AND rc.user_id = $2 AND rc.category_id = ANY($3::int[])
+      GROUP BY rc.category_id`,
+    [appId, userId, ids]
+  );
+  for (const r of rows) out.set(Number(r.category_id), Number(r.unread_count) || 0);
+  return out;
+}
+
+/** One topic channel's unread count for one reader. */
+async function categoryUnreadCount(db, appId, categoryId, userId) {
+  const counts = await categoryUnreadCounts(db, appId, userId, [categoryId]);
+  return counts.get(Number(categoryId)) || 0;
+}
+
+/**
+ * Create the reader's missing cursors for `categoryIds` (topic rows of
+ * `appId`) at each channel's newest message. Existing cursors are untouched.
+ */
+async function ensureCategoryReadCursors(db, appId, userId, categoryIds) {
+  const ids = [...new Set((categoryIds || []).map(positiveInt).filter(Boolean))];
+  if (!ids.length || !appId || !userId) return;
+  await db.query(
+    `INSERT INTO app_category_chat_reads (app_id, category_id, user_id, last_read_id)
+     SELECT r.app_id, r.id, $2,
+            COALESCE((SELECT MAX(m.id) FROM chat_messages m
+                       WHERE m.app_id = r.app_id AND m.thread_type = 'category' AND m.thread_ref = r.id), 0)
+       FROM app_category_registry r
+      WHERE r.app_id = $1 AND r.origin = 'topic' AND r.id = ANY($3::int[])
+     ON CONFLICT (app_id, category_id, user_id) DO NOTHING`,
+    [appId, userId, ids]
+  );
+}
+
+/** Where this reader stands in one topic channel, or null with no cursor. */
+async function categoryReadPosition(db, appId, categoryId, userId) {
+  if (!appId || !userId || !positiveInt(categoryId)) return null;
+  const { rows } = await db.query(
+    `SELECT last_read_id FROM app_category_chat_reads
+      WHERE app_id = $1 AND category_id = $2 AND user_id = $3`,
+    [appId, categoryId, userId]
+  );
+  if (!rows.length) return null;
+  return {
+    lastReadMessageId: Number(rows[0].last_read_id) || 0,
+    unreadCount: await categoryUnreadCount(db, appId, categoryId, userId),
+  };
+}
+
+/**
+ * Move a topic channel's cursor forward to `messageId` (never back), or —
+ * `unread` — back to just before it (never forward). The message must be in
+ * that channel's own stream. { ok, unread_count } or { ok: false, code }.
+ */
+async function moveCategoryCursor(db, { appId, categoryId, userId, messageId, unread = false }) {
+  const id = positiveInt(messageId);
+  const cat = positiveInt(categoryId);
+  if (!id || !cat) return { ok: false, code: 'not_found' };
+  const { rows } = unread
+    ? await db.query(
+      `INSERT INTO app_category_chat_reads (app_id, category_id, user_id, last_read_id)
+       SELECT $1, $2, $3, target.id - 1
+         FROM chat_messages target
+        WHERE target.id = $4 AND target.app_id = $1
+          AND target.thread_type = 'category' AND target.thread_ref = $2
+       ON CONFLICT (app_id, category_id, user_id) DO UPDATE
+         SET last_read_id = LEAST(app_category_chat_reads.last_read_id, EXCLUDED.last_read_id),
+             updated_at = NOW()
+       RETURNING last_read_id`,
+      [appId, cat, userId, id]
+    )
+    : await db.query(
+      `INSERT INTO app_category_chat_reads (app_id, category_id, user_id, last_read_id)
+       SELECT $1, $2, $3, target.id
+         FROM chat_messages target
+        WHERE target.id = $4 AND target.app_id = $1
+          AND target.thread_type = 'category' AND target.thread_ref = $2
+       ON CONFLICT (app_id, category_id, user_id) DO UPDATE
+         SET last_read_id = GREATEST(app_category_chat_reads.last_read_id, EXCLUDED.last_read_id),
+             updated_at = NOW()
+       RETURNING last_read_id`,
+      [appId, cat, userId, id]
+    );
+  if (!rows.length) return { ok: false, code: 'not_found' };
+  return { ok: true, unread_count: await categoryUnreadCount(db, appId, cat, userId) };
+}
+
+/** A person posted `messageId` in a topic channel: they have read to it. */
+async function advanceCategoryCursor(db, appId, categoryId, userId, messageId) {
+  const id = positiveInt(messageId);
+  const cat = positiveInt(categoryId);
+  if (!id || !cat || !appId || !userId) return;
+  await db.query(
+    `INSERT INTO app_category_chat_reads (app_id, category_id, user_id, last_read_id)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (app_id, category_id, user_id) DO UPDATE
+       SET last_read_id = GREATEST(app_category_chat_reads.last_read_id, EXCLUDED.last_read_id),
+           updated_at = NOW()`,
+    [appId, cat, userId, id]
+  );
+}
+
 module.exports = {
   MESSAGE_THREAD,
+  CATEGORY_THREAD,
   THREAD_ROOT_MSG_TYPES,
   MAX_PARTICIPANTS,
   positiveInt,
@@ -465,4 +602,10 @@ module.exports = {
   markUnread,
   advanceReadCursor,
   ensureReadCursors,
+  categoryUnreadCounts,
+  categoryUnreadCount,
+  ensureCategoryReadCursors,
+  categoryReadPosition,
+  moveCategoryCursor,
+  advanceCategoryCursor,
 };

@@ -21,6 +21,12 @@ const PUBLIC_PATHS = [
   // Email-code signup uses an HttpOnly continuation and creates the ordinary
   // web session only after password setup; all three steps are pre-login.
   '/api/auth/otp/',
+  // The waitlist release mail one-time sign-in link (#4594,
+  // services/release-links.js) stands in for that code and is pre-login by
+  // the same definition: the page that spends it is signed out, and the link
+  // is the only credential. Missing here, every signed-out visitor got 401
+  // and the sign-in sheet fell back to emailing a code.
+  '/api/auth/release-link',
   '/api/auth/wallet-check',
   '/api/auth/wallet-verify',
   // Self-service wallet password reset is pre-login by definition — the
@@ -68,6 +74,9 @@ const PUBLIC_PATHS = [
   // and the service-worker precache fills with redirects. Static JS only, no
   // data access.
   '/shell/',
+  // Language packs for the shell itself (scripts/language-packs.js): static
+  // UI text, needed on the sign-in screens too. No data access.
+  '/locales/',
   // Build-scoped shell assets (/b/<build sha>/js/app.js and so on): the same
   // files as /js/, /css/, /vendor/ and /shell/ above, addressed per build so
   // a deploy can serve them immutable (src/services/static-cache.js). Public

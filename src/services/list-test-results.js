@@ -38,10 +38,33 @@ function failingResultsOnly(row) {
   return { ...row, test_results: kept, test_results_omitted: omitted };
 }
 
+// #3978: a failing unit-suite row carries its per-test excerpts (up to
+// ~20 KB). The item's own row keeps them — the verdict's "Why it failed"
+// fold and the connector read them there — but a LIST payload is counted
+// and named only, so a board of failing proposals does not grow by every
+// excerpt again. Stripped here, in the list projection, not inside
+// failingResultsOnly: forItem reuses that to shed passing rows and must
+// keep the failing ones intact.
+const DETAIL_FIELDS = ['failureDetails', 'failureDetailsTruncated'];
+function withoutFailureDetails(row) {
+  if (!row || typeof row !== 'object' || !Array.isArray(row.test_results)) return row;
+  if (!row.test_results.some((r) => r && (r.failureDetails || r.failureDetailsTruncated))) return row;
+  return {
+    ...row,
+    test_results: row.test_results.map((r) => {
+      if (!r || !(r.failureDetails || r.failureDetailsTruncated)) return r;
+      const copy = { ...r };
+      delete copy.failureDetails;
+      delete copy.failureDetailsTruncated;
+      return copy;
+    }),
+  };
+}
+
 // The rows as this request asked for them.
 function forListing(req, rows) {
   if (!wantsFailingResults(req) || !Array.isArray(rows)) return rows;
-  return rows.map(failingResultsOnly);
+  return rows.map((row) => withoutFailureDetails(failingResultsOnly(row)));
 }
 
 // One item's row as this request asked for it. A row with only a few passing
@@ -57,6 +80,7 @@ function forItem(req, row) {
 module.exports = {
   wantsFailingResults,
   failingResultsOnly,
+  withoutFailureDetails,
   forListing,
   forItem,
   ITEM_PASSES_LISTED,

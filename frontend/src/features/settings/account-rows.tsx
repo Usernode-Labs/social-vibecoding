@@ -43,6 +43,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 
 import { GroupedList, SectionHeader } from '@/components/ui/grouped-list';
 import { ChevronRightIcon } from '@/components/ui/icons';
+import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibility } from '../../lib/visibility-store';
 import { NodePillRow } from '../header/node-pill-row';
@@ -69,6 +70,7 @@ const ADMIN_ROW = 'flex w-full items-center gap-4 px-4 min-h-[44px] py-2 text-[1
   + 'md:hover:bg-zinc-100 md:dark:hover:bg-zinc-800';
 
 export function SettingsAccountRows(): ReactNode {
+  const t = useMessages('settings');
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
   // A CAPABILITY, published rather than fetched: App.renderAdminButton in
@@ -97,8 +99,8 @@ export function SettingsAccountRows(): ReactNode {
   return (
     <div id="settings-account-rows" className={isAdmin || native ? 'mb-6 space-y-5' : undefined}>
       {isAdmin ? (
-        <section aria-label="Admin">
-          <SectionHeader className={HEADING}>Admin</SectionHeader>
+        <section aria-label={t('settings:accountRows.admin.heading')}>
+          <SectionHeader className={HEADING}>{t('settings:accountRows.admin.heading')}</SectionHeader>
           <div className={ADMIN_CARD}>
             {/*
                 A real anchor, like every row that navigates: #admin is a hash
@@ -107,14 +109,14 @@ export function SettingsAccountRows(): ReactNode {
                 safe here for the reason above: none of this is prerendered.
             */}
             <a id="settings-row-admin" href="#admin" className={ADMIN_ROW}>
-              <span className="min-w-0 flex-1 truncate">Admin &amp; moderation</span>
+              <span className="min-w-0 flex-1 truncate">{t('settings:accountRows.admin.console')}</span>
               <ChevronRightIcon className="h-5 w-5 shrink-0 text-zinc-300 dark:text-zinc-600 md:hidden" aria-hidden="true" />
             </a>
           </div>
         </section>
       ) : null}
-      <section aria-label="Wallet and node">
-        {native ? <SectionHeader className={HEADING}>Wallet &amp; node</SectionHeader> : null}
+      <section aria-label={t('settings:accountRows.native.name')}>
+        {native ? <SectionHeader className={HEADING}>{t('settings:accountRows.native.heading')}</SectionHeader> : null}
         <GroupedList className="mx-0">
           <NodePillRow />
           <WalletRow />

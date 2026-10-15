@@ -164,7 +164,7 @@ test('estimateRunProgress uses the helper model, GLM first and Haiku behind it',
   assert.match(fnBody, /helperMessage\(\{\s+helper: 'progress_estimate',/, 'estimator must go through the helper path');
   assert.match(fnBody, /schema: ESTIMATE_SCHEMA,/, 'with its schema as GLM\'s answer shape');
   const llm = require('../src/services/llm');
-  assert.equal(llm.HELPER_FALLBACK_MODEL, 'claude-haiku-4-5', 'and Haiku when GLM does not answer');
+  assert.equal(llm.HELPER_FALLBACK_MODEL, 'claude-haiku-5-5', 'and Haiku when GLM does not answer');
 });
 
 test('dev-chat handles cc_estimate in both event switches', () => {
@@ -407,19 +407,16 @@ test('#906: staging seeds estimator-OFF runs at both side-slot states', () => {
   assert.match(fnBody, /role: 'assistant'/,
     'each fixture run needs an assistant reply or the unanswered sweep breaks it');
 
-  // The fixture rows are only useful if the routes are checks-gated.
+  // #3976: these routes were checks-gated until classic sessions became
+  // read-only. The cohort note belongs to the classic dev chat's running
+  // run (an agent session's run card carries no estimate or cohort), so its
+  // two checks were retired with that chat; the fixture stays for the
+  // preview until the classic dev chat itself is removed.
   const tests = require('../dapp.json').tests || [];
   for (const id of [900810, 900811]) {
-    const t = tests.find((x) => x.path.includes(`/sessions/${id}`));
-    assert.ok(t, `dapp.json must declare a test for the ${id} fixture route`);
-    assert.equal(t.expectSelector, '.dc-cc-attached-summary .dc-cc-cohort',
-      `${id}: the test must assert the side slot actually renders`);
+    assert.ok(!tests.some((x) => x.path.includes(`/sessions/${id}`)),
+      `${id}: the classic cohort route is no longer a declared check`);
   }
-  assert.match(
-    tests.find((x) => x.path.includes('/sessions/900811')).expectText,
-    /some runs go 30 min\+/,
-    'the long-run route must assert the cohort note is still there'
-  );
 });
 
 test('#906: /status reports the cohort fixtures as busy in staging only', () => {

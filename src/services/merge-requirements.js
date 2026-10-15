@@ -554,12 +554,23 @@ function provisional(session) {
   // chose not to start yet: the head conflicts with main, and the verdict
   // runs once it merges cleanly. Nobody has to act, and nothing is running.
   const deferred = check === 'pending' && s.check_phase === 'deferred';
-  // A red run that overlapped a platform rollout is an 'error' the platform
-  // runs again on its own (visuals.js settleCaptureRun), so nobody has to act.
+  // A built preview whose run waits for a checks slot (services/checks-
+  // queue.js): in progress, and started by the queue, not by anyone here.
+  const queued = check === 'pending' && s.check_phase === 'queued';
+  // A red run that overlapped a platform rollout was stored as an 'error'
+  // the platform runs again on its own (#3828). Nothing writes that now;
+  // rows stored before still run again, so nobody has to act on them.
   const rolloutRetry = check === 'error'
     && s.check_error_detail === require('./staging-recovery').ROLLOUT_RETRY_DETAIL;
+  // An 'error' because the repo unit suite could not run (its Job was
+  // refused, its setup stopped before any test): the preview was fine.
+  const unitNotRun = check === 'error' && !!require('./unit-suite-row').notRunError(s);
+  // An 'error' that is the platform's fault (a check Job refused, or a test
+  // Pod that never started) and that the error lane still runs again on its
+  // own: nobody has to act on it (platformRetry).
+  const platformRetry = check === 'error' && platformFaultWillRetry(s);
   const checkState = (check === 'passing' || check === 'skipped') ? 'done'
-    : rolloutRetry ? 'active'
+    : (rolloutRetry || platformRetry) ? 'active'
       : (check === 'failing' || check === 'error') ? 'blocked'
         : check === 'pending' ? 'active' : 'pending';
   out.push({
@@ -569,9 +580,12 @@ function provisional(session) {
     state: checkState,
     detail: check === 'failing' ? { note: 'some checks are failing' }
       : rolloutRetry ? { note: 'they ran while Homeroom was updating and will run again' }
-        : check === 'error' ? { note: 'the staging preview could not start, so the tests could not run' }
-          : deferred ? { note: 'waiting for the head to merge cleanly; the preview is built, the tests run then' }
-            : check === 'pending' ? { note: 'still running' } : null,
+        : platformRetry ? { note: PLATFORM_RETRY_NOTE }
+        : unitNotRun ? { note: 'the unit suite could not run, so there is no verdict yet' }
+          : check === 'error' ? { note: 'the staging preview could not start, so the tests could not run' }
+            : deferred ? { note: 'waiting for the head to merge cleanly; the preview is built, the tests run then' }
+              : queued ? { note: 'waiting for a checks slot; they start on their own' }
+                : check === 'pending' ? { note: 'still running' } : null,
   });
 
   if (s.shotsEnforced || s.shots_enforced) {
@@ -667,10 +681,43 @@ function readRequirements(session) {
   }
   return {
     measuredAt: s.merge_requirements_at ? new Date(s.merge_requirements_at).toISOString() : null,
-    gates: withLiveExplicit(withLiveApprovals(withLiveMainPause(describe(record), s), s), s),
+    gates: withLivePlatformRetry(withLiveExplicit(withLiveApprovals(withLiveMainPause(describe(record), s), s), s), s),
     evaluated: true,
     provisional: false,
   };
+}
+
+// A checks 'error' that is the platform's fault (check_error_platform: a
+// check Job refused, or a test Pod that never started its container) runs
+// again on its own while the error lane still covers it
+// (staging-recovery.errorWithinAutoRetries: up to a day from the streak's
+// first failure). Needs the row's check_error_platform,
+// consecutive_check_failures and first_check_failure_at; a row without
+// them is not read as one.
+const PLATFORM_RETRY_NOTE = 'the checks could not start, so they will run again';
+function platformFaultWillRetry(s) {
+  if (!s || s.check_state !== 'error' || s.check_error_platform !== true) return false;
+  return require('./staging-recovery').errorWithinAutoRetries(s);
+}
+
+// The record says what checkAndMerge saw when it ran; a platform fault
+// stored since, or one whose retries have since run out, is the row's
+// news. While the row says the error lane will run the checks again, the
+// step is in progress for nobody; once it no longer does, a step the record
+// left in progress for that reason is blocked on the author again.
+function withLivePlatformRetry(gates, s) {
+  if (!s || s.check_state !== 'error' || s.check_error_platform !== true) return gates;
+  const idx = Array.isArray(gates) ? gates.findIndex((g) => g && g.key === 'checks') : -1;
+  if (idx < 0 || !gates[idx]) return gates;
+  const retry = platformFaultWillRetry(s);
+  const entry = gates[idx];
+  if (retry && entry.state === 'active') return gates;
+  if (!retry && entry.state !== 'active') return gates;
+  return gates.map((g, i) => (i === idx
+    ? retry
+      ? { ...g, state: 'active', detail: { ...(g.detail || {}), checkState: 'error', note: PLATFORM_RETRY_NOTE } }
+      : { ...g, state: 'blocked', detail: { ...(g.detail || {}), checkState: 'error', note: 'the checks could not start' } }
+    : g));
 }
 
 // A record says what one checkAndMerge run did. The main-health step is the

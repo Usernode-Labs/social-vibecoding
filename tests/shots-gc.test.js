@@ -126,13 +126,77 @@ test('a rollout-interrupted run is retried on its current head, a bounded number
   assert.match(sql, /LEAST\(\$5::bigint, \$1::bigint \* POWER\(2, n\.interrupted_retries\)::bigint\)/);
   assert.deepEqual(params.slice(2),
     [gc.MAX_INTERRUPTED_RETRIES, gc.MAX_UNEXPLAINED_RETRIES, gc.MAX_RETRY_DELAY_MS]);
-  assert.equal(gc.MAX_INTERRUPTED_RETRIES, 6);
+  assert.equal(gc.MAX_INTERRUPTED_RETRIES, 24, 'a backstop only rollouts reach, not a budget a burst of them spends');
   assert.equal(gc.MAX_UNEXPLAINED_RETRIES, 2, 'a crash keeps the original budget');
 
   const disabled = await gc.retryInterrupted({ shots: { execute: false } }, {
     query: async () => { throw new Error('must not query while shots is disabled'); },
   });
   assert.deepEqual(disabled, { examined: 0, scheduled: 0 });
+});
+
+test('a run a platform step failed is taken again once on its current head', async () => {
+  const head = 'a'.repeat(40);
+  const newer = 'b'.repeat(40);
+  const queries = [];
+  const pool = { query: async (sql, params) => {
+    queries.push({ sql: String(sql), params });
+    return { rows: [
+      { run_id: '1'.repeat(32), head_sha: head, fault: 'database', id: 42, source: 'imported',
+        imported_pr_head_sha: head, checks_commit_sha: head },
+      // A newer commit owns this proposal; its own checks start shots.
+      { run_id: '2'.repeat(32), head_sha: head, fault: 'agent_exit', id: 43, source: 'imported',
+        imported_pr_head_sha: newer, checks_commit_sha: newer },
+      // Someone else took them again first: the rerun is refused and skipped.
+      { run_id: '3'.repeat(32), head_sha: head, fault: 'clone', id: 44, source: 'native',
+        reviewed_head_sha: head, checks_commit_sha: head },
+    ] };
+  } };
+  const reruns = [];
+  const schedules = [];
+  const result = await gc.retryPlatformFaults({ shots: { execute: true } }, pool, {
+    isShuttingDown: () => false,
+    stateService: {
+      rerunSameHead: async (_pool, runId, options) => {
+        reruns.push({ runId, trigger: options.trigger });
+        if (runId === '3'.repeat(32)) {
+          throw Object.assign(new Error('owner changed'), { code: 'stale_shots_operation' });
+        }
+        return { id: '9'.repeat(32), head_sha: head, state: 'planned' };
+      },
+    },
+    schedule: async (_config, options) => { schedules.push(options); return { scheduled: true }; },
+  });
+  assert.deepEqual(result, { examined: 3, scheduled: 1 });
+  assert.deepEqual(reruns, [
+    { runId: '1'.repeat(32), trigger: 'platform-retry' },
+    { runId: '3'.repeat(32), trigger: 'platform-retry' },
+  ]);
+  assert.deepEqual(schedules.map(({ sessionId, headSha, trigger }) => ({ sessionId, headSha, trigger })),
+    [{ sessionId: 42, headSha: head, trigger: 'platform-retry' }]);
+  const { sql, params } = queries[0];
+  assert.match(sql, /r\.state = 'failed'/);
+  assert.match(sql, /r\.trace_summary->'platformFault'->>'kind' = ANY\(\$3::text\[\]\)/);
+  assert.match(sql, /JOIN shot_runs r ON r\.id = cs\.shots_run_id/);
+  assert.match(sql, /cs\.status NOT IN \('merged', 'archived'\)/);
+  assert.match(sql, /retry\.trigger = 'platform-retry'\)::int AS platform_retries/);
+  assert.match(sql, /n\.platform_retries < \$4/);
+  // GitHub's hourly limit waits for the reset its failure recorded.
+  assert.match(sql, /jsonb_typeof\(r\.trace_summary->'platformFault'->'retryAt'\) = 'number'/);
+  assert.match(sql, /<= EXTRACT\(EPOCH FROM NOW\(\)\) \* 1000/);
+  assert.deepEqual(params, [60_000, 10,
+    ['database', 'clone', 'worker_bootstrap', 'github_rate_limited', 'agent_exit'], 1]);
+  assert.equal(gc.MAX_PLATFORM_RETRIES, 1, 'once: a second failure stays failed');
+
+  const disabled = await gc.retryPlatformFaults({ shots: { execute: false } }, {
+    query: async () => { throw new Error('must not query while shots is disabled'); },
+  });
+  assert.deepEqual(disabled, { examined: 0, scheduled: 0 });
+
+  // Looked for on the interrupted retry's own 30-second tick.
+  const server = require('node:fs').readFileSync(require('node:path').join(__dirname, '../server.js'), 'utf8');
+  const tick = server.slice(server.indexOf('const retryInterruptedShots = '), server.indexOf('setInterval(retryInterruptedShots'));
+  assert.match(tick, /shotsGc\.retryPlatformFaults\(config, getPool\(config\)\)/);
 });
 
 test('recovery releases an abandoned current run while preserving longer grace for pre-heartbeat builds', async () => {
@@ -288,15 +352,17 @@ test('cleanup of an interrupted run also removes what the previous release named
   }
 });
 
-test('a draining process neither retries interrupted runs nor recovers unstarted ones', async () => {
+test('a draining process neither retries interrupted or faulted runs nor recovers unstarted ones', async () => {
   const pool = { query: async () => { throw new Error('must not query while shutting down'); } };
   const schedule = async () => { throw new Error('must not schedule while shutting down'); };
   const config = { shots: { execute: true } };
   assert.deepEqual(await gc.retryInterrupted(config, pool, { isShuttingDown: () => true, schedule }),
     { examined: 0, scheduled: 0 });
+  assert.deepEqual(await gc.retryPlatformFaults(config, pool, { isShuttingDown: () => true, schedule }),
+    { examined: 0, scheduled: 0 });
   assert.deepEqual(await gc.recoverUnstarted(config, pool, { isShuttingDown: () => true, schedule }),
     { examined: 0, scheduled: 0 });
   // The default reads the process-wide flag the shutdown handler sets.
   const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '../src/services/shots-gc.js'), 'utf8');
-  assert.equal((src.match(/isShuttingDown = lifecycle\.isShuttingDown/g) || []).length, 2);
+  assert.equal((src.match(/isShuttingDown = lifecycle\.isShuttingDown/g) || []).length, 3);
 });

@@ -220,11 +220,12 @@ test('the taste eval against the full PostgreSQL schema and its routes', { timeo
 
   await t.test('screenshots are rows of their own, linked to the trial; the trial keeps the numbers', async () => {
     const { rows } = await pool.query('SELECT trial_id, shot_id, look, state, bytes, width, height FROM bench_trial_artifacts WHERE trial_id = $1 ORDER BY shot_id', [fv.id]);
-    assert.equal(rows.length, 16);
+    assert.equal(rows.length, 19, 'sixteen and the result state\'s three');
+    assert.deepEqual(rows.filter((r) => r.state === 'result').map((r) => r.shot_id), ['desktop-light-result', 'phone-dark-result', 'phone-light-result']);
     assert.ok(rows.every((r) => r.bytes > 0 && [390, 1280].includes(r.width)));
     const { rows: [tr] } = await pool.query('SELECT capture, deterministic FROM bench_trials WHERE id = $1', [fv.id]);
     assert.equal(tr.capture.booted, true);
-    assert.equal(tr.capture.shots.length, 16);
+    assert.equal(tr.capture.shots.length, 19);
     assert.ok(tr.capture.shots.every((s) => /^[0-9a-f]{32}$/.test(s.artifactId) && !('data' in s) && !('png' in s)));
     assert.equal(tr.deterministic.needsJudge, true);
     const img = await call('GET', `/api/admin/homeroom-bot/bench/artifacts/${tr.capture.shots[0].artifactId}`, { who: 'viewer', raw: true });
@@ -245,6 +246,7 @@ test('the taste eval against the full PostgreSQL schema and its routes', { timeo
       // eslint-disable-next-line no-await-in-loop
       const r = await call('GET', `/api/bot-bench/items/${tr.item_token}?images=1`, { connector: true });
       assert.equal(r.status, 200);
+      assert.equal(r.body.item.itemId, tr.item_token, 'the item carries its trial\'s opaque token, and only that');
       items[tr.id] = r.body.item;
     }
     for (const item of Object.values(items)) {
@@ -261,7 +263,9 @@ test('the taste eval against the full PostgreSQL schema and its routes', { timeo
       assert.ok(item.candidate.identicalScreens.length > 0, 'a state identical to the populated screen is named, not shown twice');
       assert.equal(item.signals.automaticChecks.tapTargetsUnder44px.small, 1);
       // Blind: no model, no arm, no trial, no commit, no install step.
-      const text = JSON.stringify({ ...item, images: undefined });
+      // The itemId is a random base64url token, checked above; by chance it can spell "glm", so it sits out this search.
+      const { images: _images, itemId: _itemId, ...shown } = item;
+      const text = JSON.stringify(shown);
       assert.doesNotMatch(text, /glm|z-ai|first_version|"capture"|before|c{40}|"trialId"|"runId"|"model"|install/i);
       assert.ok(!('trialId' in item) && !('runId' in item) && !('model' in item) && !('id' in item));
     }
@@ -314,7 +318,12 @@ test('the taste eval against the full PostgreSQL schema and its routes', { timeo
     const { rows: [n] } = await pool.query(
       'SELECT COUNT(*)::int AS n FROM bench_trial_artifacts a JOIN bench_trials t ON t.id = a.trial_id WHERE t.run_id = $1', [demo.TASTE_RUN_ID],
     );
-    assert.equal(n.n, 32);
+    assert.equal(n.n, 38);
+    // Its result screens differ from the populated ones, so the spot check
+    // shows the phone's third, captioned with the control it tapped.
+    const { rows: [fvDemo] } = await pool.query("SELECT capture FROM bench_trials WHERE run_id = $1 AND capture->'primaryAction' IS NOT NULL ORDER BY id LIMIT 1", [demo.TASTE_RUN_ID]);
+    assert.equal(capture.pickShots(fvDemo.capture).chosen[2].caption, 'Phone 390×844, light look, after tapping "Plan the week" (the screen\'s primary action)');
+    assert.equal(fvDemo.capture.primaryAction.length, 3);
     const r = await report.runReport(pool, demo.TASTE_RUN_ID);
     assert.deepEqual(r.rows.map((x) => x.stage).sort(), ['capture', 'first_version']);
     assert.ok(demo.TASTE_RUN_ID < demo.RUN_ID, 'the console still opens on the core demo run');

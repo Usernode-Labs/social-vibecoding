@@ -164,6 +164,10 @@ test('Preview lists and actions share persisted identities, with private viewer 
     const message = transcript.body.messages[0];
     assert.equal(message.content, 'I attached the launch checklist.');
     assert.equal(message.attachments.length, 2);
+    // #4055: a picture the viewer sent, beside ada's, so Download shows on both.
+    const own = transcript.body.messages.find(row => row.content === 'How the launch card looks on my phone.');
+    assert.equal(own?.sender.id, viewers[0].id);
+    assert.deepEqual(own.attachments.map(a => a.contentType), ['image/png']);
     assert.ok(transcript.body.messages.some(row => row.deleted), 'the deleted-message sample is stored too');
     const thread = await api('/api/conversations/910004/threads/9100404?demo=1');
     assert.equal(thread.status, 200, JSON.stringify(thread.body));

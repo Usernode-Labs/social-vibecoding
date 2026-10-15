@@ -68,6 +68,8 @@ const log = require('./logger');
 const appAccess = require('./app-access');
 const progressSvc = require('./homeroom-bot-progress');
 const activitySvc = require('./homeroom-bot-activity');
+const { changeHref } = require('./change-destination');
+const { firstVersionSql } = require('./first-version-rule');
 
 // The most requests History lists.
 const HISTORY_LIMIT = 30;
@@ -88,6 +90,7 @@ const PHASE_OF_STAGE = Object.freeze({
   starting: 'building',
   planning: 'building',
   building: 'building',
+  reviewing: 'building',
   proposing: 'building',
   followup_queued: 'follow_up_queued',
   fix_queued: 'follow_up_queued',
@@ -103,6 +106,9 @@ const PROPOSAL_PHASES = new Set(['follow_up_queued', 'following_up', 'merging'])
 const OUTCOMES = activitySvc.OUTCOMES;
 // The endings that wait on the person: the cards' "Needs you".
 const NEEDS_YOU = new Set(['question', 'blocked', 'empty']);
+// #5009: the endings that wait on the person whatever they were waiting
+// for, so that a closed request can leave Needs you under all of them.
+const WAITS_ON_PERSON = new Set([...NEEDS_YOU, 'person', 'build_failed', 'failed']);
 // #8 (WP3): what a History entry says when none of its runs has come to
 // anything yet (the bot is switched off, or a build has gone quiet), in
 // place of an ending it has not had.
@@ -123,8 +129,9 @@ function issueHref(slug, issueNumber) {
   return `#app/${encodeURIComponent(slug)}/dev/issues/${Number(issueNumber)}`;
 }
 
-function proposalHref(slug, sessionId) {
-  return `#app/${encodeURIComponent(slug)}/dev/proposals/${Number(sessionId)}`;
+// #4367: by its pull request's number once it has one.
+function proposalHref(slug, sessionId, prNumber = null) {
+  return changeHref(slug, sessionId, prNumber);
 }
 
 function projectHref(slug) {
@@ -143,11 +150,11 @@ function keyOf(slug, issueNumber) {
 }
 
 /** Pure: where an entry's links go: its request, its proposal, or (with no request) its project. */
-function linksFor(slug, issueNumber, proposalId) {
+function linksFor(slug, issueNumber, proposalId, prNumber = null) {
   const request = Number(issueNumber) ? issueHref(slug, issueNumber) : null;
   return {
     request,
-    proposal: proposalId ? proposalHref(slug, proposalId) : null,
+    proposal: proposalId ? proposalHref(slug, proposalId, prNumber) : null,
     project: request ? null : projectHref(slug),
   };
 }
@@ -207,8 +214,13 @@ function outcomeOf(row) {
     case 'ready':
       if (row.proposal_session_id) {
         if (row.proposal_status === 'merged') return 'live';
+        // #4227: merged, not running in production yet (pastRuns).
+        if (row.proposal_status === 'merging') return 'going_live';
         if (CLOSED_PROPOSAL.has(row.proposal_status)) return 'closed';
-        return 'proposed';
+        // D1: a project's first version goes live without a vote once its
+        // checks pass: it is being tested until it merges, never waiting
+        // for anyone's approval.
+        return row.first_version_change === true ? 'checking' : 'proposed';
       }
       if (row.build_ok === true) return 'proposed';
       if (row.build_ok === false) {
@@ -227,14 +239,14 @@ function outcomeOf(row) {
 /** Pure: when what a run came to happened: a proposal's own moments, else the run. */
 function atOf(row, outcome) {
   if (outcome === 'live') return iso(row.merged_at) || iso(row.proposal_at) || iso(row.created_at);
-  if (outcome === 'proposed' || outcome === 'closed') return iso(row.proposal_at) || iso(row.created_at);
+  if (outcome === 'proposed' || outcome === 'checking' || outcome === 'going_live' || outcome === 'closed') return iso(row.proposal_at) || iso(row.created_at);
   return iso(row.created_at);
 }
 
 /** Pure: where a run opens. Its proposal once people can open it, else its request. */
 function hrefOf(row) {
   if (row.proposal_session_id && OPENABLE_PROPOSAL.has(row.proposal_status)) {
-    return proposalHref(row.slug, row.proposal_session_id);
+    return proposalHref(row.slug, row.proposal_session_id, row.proposal_pr_number);
   }
   return row.issue_number ? issueHref(row.slug, row.issue_number) : projectHref(row.slug);
 }
@@ -294,7 +306,7 @@ function leadOf(runs) {
     if (!since) return live;
   }
   if (outcomeOf(newest)) return newest;
-  return settled.find((row) => outcomeOf(row) === 'proposed') || newest;
+  return settled.find((row) => ['proposed', 'going_live'].includes(outcomeOf(row))) || newest;
 }
 
 /**
@@ -312,13 +324,25 @@ function entryOfRuns(runs) {
     && (withProposal.proposal_status === 'merged' || CLOSED_PROPOSAL.has(withProposal.proposal_status))) {
     lead = withProposal;
   }
-  const outcome = outcomeOf(lead);
+  let outcome = outcomeOf(lead);
+  // #4539, widened by #5009: the request itself was closed while its newest
+  // run still waited on its person (a plan waiting for Build it, a question
+  // still open, a look that found nothing to build, a build it cannot do as
+  // written, a decision it asked for, one that failed): the work stopped,
+  // which is History's news, not Needs you. Its earlier runs keep their own
+  // words (runOf).
+  const requestClosed = newest.request_closed === true;
+  if (requestClosed
+    && (WAITS_ON_PERSON.has(outcome) || (!outcome && lead.awaiting_go_at))) {
+    outcome = 'stopped';
+  }
   // The newest run, still going, is not one of its earlier runs either.
   const going = outcomeOf(newest) ? null : newest;
   const proposalRow = withProposal && OPENABLE_PROPOSAL.has(withProposal.proposal_status) ? withProposal : null;
   const firstVersion = !!newest.first_version;
   const issueNumber = Number(newest.issue_number) || null;
-  const links = linksFor(newest.slug, issueNumber, proposalRow ? proposalRow.proposal_session_id : null);
+  const links = linksFor(newest.slug, issueNumber, proposalRow ? proposalRow.proposal_session_id : null,
+    proposalRow ? proposalRow.proposal_pr_number : null);
   return {
     key: keyOf(newest.slug, issueNumber),
     id: Number(lead.id),
@@ -330,6 +354,10 @@ function entryOfRuns(runs) {
     outcome,
     doing: outcome ? null : NOT_FINISHED,
     at: atOf(lead, outcome),
+    // #5009: its request row is closed, so nothing here waits on the person
+    // however its chat reads. The strip leaves Needs you on this alone, and
+    // its old ask (still open in the DM) must not put it back.
+    ...(requestClosed ? { requestClosed: true } : {}),
     ...(proposalRow ? { proposalId: Number(proposalRow.proposal_session_id) } : {}),
     href: links.proposal || links.request || links.project,
     links,
@@ -374,10 +402,19 @@ const newestFirst = (a, b) => (Date.parse(b.at || 0) || 0) - (Date.parse(a.at ||
  * Pure: the tray's three groups, from progressFor's entries (empty while
  * the bot is off) and the person's live runs, newest first. Each request
  * appears once: in Now while the bot has it in hand, else in Needs you
- * while it waits on them, else in History.
+ * while it waits on them, else in History. Work the bot has taken back up
+ * never reaches Needs you (#5009), even past Now's limit or on hold.
  */
 function arrange(entries, rows) {
   const groups = groupRuns(rows);
+  // #5009: every request the bot has taken back up — a newer run under way
+  // or queued, or one held until later (on hold until Monday) — is its work,
+  // not a question for the person, even when it falls past Now's limit.
+  const inHand = new Set();
+  for (const item of entries) {
+    if (!item.project) continue;
+    if (progressSvc.inFlight(item) || item.stage === 'on_hold') inHand.add(keyOf(item.project, item.number));
+  }
   const items = entries.filter((item) => progressSvc.inFlight(item));
   const busy = items.filter((item) => item.busyNow);
   const now = [...busy, ...items.filter((item) => !item.busyNow)]
@@ -393,7 +430,7 @@ function arrange(entries, rows) {
   for (const item of entries) {
     if (item.waitingOn !== 'them' || !item.project) continue;
     const key = keyOf(item.project, item.number);
-    if (placed.has(key)) continue;
+    if (placed.has(key) || inHand.has(key)) continue;
     needsYou.push(needsYouOfProgress(item, groups.get(key)));
     placed.add(key);
   }
@@ -401,7 +438,14 @@ function arrange(entries, rows) {
   for (const [key, runs] of groups) {
     if (placed.has(key)) continue;
     const entry = entryOfRuns(runs);
-    (NEEDS_YOU.has(entry.outcome) ? needsYou : history).push(entry);
+    if (inHand.has(key)) {
+      // The bot is on it again; Needs you is not waiting on them, whatever
+      // its last run asked.
+      entry.inHand = true;
+      history.push(entry);
+    } else {
+      (NEEDS_YOU.has(entry.outcome) ? needsYou : history).push(entry);
+    }
   }
   return { now, needsYou: needsYou.sort(newestFirst), history: history.sort(newestFirst).slice(0, HISTORY_LIMIT) };
 }
@@ -433,11 +477,22 @@ async function currentJobs(pool, { userId, settings, deps = {} }) {
 async function pastRuns(pool, { userId, limit = RUN_LIMIT }) {
   const { rows } = await pool.query(
     `SELECT r.id, r.issue_number, r.verdict, r.build_ok, r.build_error, r.cap_suppressed,
-            r.proposal_session_id, r.created_at,
+            r.proposal_session_id, cs.pr_number AS proposal_pr_number, r.created_at,
+            r.awaiting_go_at,
+            -- #4539: the request's own state, newest row by id (issues is not
+            -- unique on (app_id, github_issue_number), so a join could
+            -- duplicate rows). Null reads as not closed.
+            (SELECT ri.status = 'closed' FROM issues ri
+              WHERE ri.app_id = r.app_id AND ri.github_issue_number = r.issue_number
+              ORDER BY ri.id DESC LIMIT 1) AS request_closed,
             (r.plan IS NOT NULL AND r.plan->'chosen' IS NULL AND r.build_ok IS FALSE
               AND r.build_session_id IS NULL AND r.proposal_session_id IS NULL) AS plan_only,
-            cs.status AS proposal_status, COALESCE(cs.promoted_at, cs.created_at) AS proposal_at, cs.merged_at,
-            a.slug, a.name, q.issue_title, q.first_version
+            -- Merged but not live yet (live_at) reads as merging: going live.
+            CASE WHEN cs.status = 'merged' AND cs.live_at IS NULL THEN 'merging' ELSE cs.status END AS proposal_status,
+            COALESCE(cs.promoted_at, cs.created_at) AS proposal_at, cs.live_at AS merged_at,
+            a.slug, a.name, q.issue_title, q.first_version,
+            -- D1: the project's first version, which merges without a vote.
+            CASE WHEN cs.id IS NOT NULL THEN ${firstVersionSql('cs')} ELSE FALSE END AS first_version_change
        FROM homeroom_bot_requesters q
        JOIN homeroom_bot_runs r ON r.app_id = q.app_id AND r.issue_number = q.issue_number
        JOIN apps a ON a.id = r.app_id
@@ -450,27 +505,49 @@ async function pastRuns(pool, { userId, limit = RUN_LIMIT }) {
   return rows;
 }
 
-/** The slugs among `items`' this person can still view. */
+/** Pure: an app's icon as a tray entry carries it (#4201): its image, else its emoji. */
+function iconOf(app) {
+  return {
+    iconUrl: app && app.icon_image_id ? `/app-icons/${app.icon_image_id}` : null,
+    iconEmoji: (app && app.icon_emoji) || null,
+  };
+}
+
+/**
+ * Pure: every entry of `work` with its app's icon (#4201), from `icons`
+ * (slug to iconOf). An app with none, or none known, carries nulls.
+ */
+function withIcons(work, icons = new Map()) {
+  const dress = (job) => ({ ...job, ...(icons.get(job.appSlug) || iconOf(null)) });
+  return { now: work.now.map(dress), needsYou: work.needsYou.map(dress), history: work.history.map(dress) };
+}
+
+/**
+ * The slugs among `items`' this person can still view, each with its app's
+ * icon (iconOf), so the tray draws an app it shows by its own icon.
+ */
 async function viewableSlugs(pool, user, items) {
   const slugs = [...new Set(items.map((item) => item.appSlug).filter(Boolean))];
-  if (!slugs.length) return new Set();
-  // The columns checkAppAccess reads (app-access.js ACCESS_COLUMNS), written
-  // out so the query stays static SQL.
+  if (!slugs.length) return new Map();
+  // The columns checkAppAccess reads (app-access.js ACCESS_COLUMNS), and the
+  // icon's, written out so the query stays static SQL.
   const { rows } = await pool.query(
-    `SELECT id, slug, created_by, self_hosted, collab_visibility, view_visibility, moderation_suspended_at
+    `SELECT id, slug, created_by, self_hosted, collab_visibility, view_visibility, moderation_suspended_at,
+            icon_image_id, icon_emoji
        FROM apps WHERE slug = ANY($1::text[])`,
     [slugs],
   );
-  const allowed = new Set();
+  const allowed = new Map();
   for (const app of rows) {
-    if (await appAccess.checkAppAccess(pool, app, user, 'view')) allowed.add(app.slug);
+    if (await appAccess.checkAppAccess(pool, app, user, 'view')) allowed.set(app.slug, iconOf(app));
   }
   return allowed;
 }
 
 /**
  * Everything the tray shows for `user`, the signed-in person:
- * { now, needsYou, history }. Never anybody else's: see the note at the top.
+ * { now, needsYou, history }, every entry with its app's icon (withIcons).
+ * Never anybody else's: see the note at the top.
  */
 async function workFor(pool, { user, settings = null, deps = {} }) {
   const userId = Number(user?.id);
@@ -486,10 +563,154 @@ async function workFor(pool, { user, settings = null, deps = {} }) {
     ...entries.map((item) => ({ appSlug: item.project })),
     ...rows.map((row) => ({ appSlug: row.slug })),
   ]);
-  return arrange(
-    entries.filter((item) => allowed.has(item.project)),
-    rows.filter((row) => allowed.has(row.slug)),
-  );
+  const shown = entries.filter((item) => allowed.has(item.project));
+  const work = withIcons(arrange(shown, rows.filter((row) => allowed.has(row.slug))), allowed);
+  await withReleases(pool, work, shown);
+  await withThreads(pool, userId, work);
+  return settleAnswered(work);
+}
+
+/**
+ * Pure (#4974): a needs-you entry whose ask the person has already answered —
+ * a reply on the request's discussion settled it (its row says answered_at)
+ * and no newer one is open — moves to history, newest first, until the bot's
+ * next look says what it made of the reply. Entries that never asked for
+ * them stay put.
+ */
+function settleAnswered(work) {
+  const needsYou = [];
+  const answered = [];
+  for (const job of work.needsYou) {
+    (NEEDS_YOU.has(job.outcome) && job.answered && !job.ask ? answered : needsYou).push(job);
+  }
+  if (!answered.length) return work;
+  return {
+    ...work,
+    needsYou,
+    history: [...answered, ...work.history].sort(newestFirst).slice(0, HISTORY_LIMIT),
+  };
+}
+
+// The kinds of the bot's messages about a request that wait on the person
+// while their buttons are open: what the strip's Needs you row acts on.
+const ASK_KINDS = new Set([
+  'question', 'followup_ask', 'plan', 'person', 'blocked', 'empty', 'build_failed', 'checks', 'needs_look', 'first_version_failed',
+]);
+
+/**
+ * Pure (one story): what an entry's request has in its person's chat with
+ * the bot, from that chat's records (newest first): `cardId`, the request's
+ * card, the root of its thread; `ask`, its newest message still waiting on
+ * them (a question, a plan, a stop with its button), with the question's
+ * words; `ready`, its newest "ready to try" card, with what its buttons do.
+ * The strip above the chat draws its rows from these (messages/bot-strip.tsx).
+ */
+function threadsOf(rows) {
+  const byKey = new Map();
+  for (const row of rows) {
+    const key = keyOf(row.slug, row.issue_number);
+    if (!byKey.has(key)) byKey.set(key, {});
+    const found = byKey.get(key);
+    const meta = row.meta && typeof row.meta === 'object' ? row.meta : {};
+    const id = Number(row.message_id);
+    if (row.kind === 'activity') {
+      if (!found.cardId && !row.thread_root_id) found.cardId = id;
+    } else if (row.kind === 'proposal') {
+      if (!found.ready) {
+        const actions = Array.isArray(meta.actions) ? meta.actions : [];
+        found.ready = {
+          messageId: id,
+          sessionId: Number(meta.sessionId) || null,
+          epoch: Number(meta.epoch) || 0,
+          open: meta.status === 'open',
+          approve: meta.status === 'open' && actions.some((a) => a && a.id === 'approve'),
+          waiting: typeof meta.waiting === 'string' ? meta.waiting
+            : (Array.isArray(meta.ready?.waitingOn) && meta.ready.waitingOn.length
+              ? meta.ready.waitingOn.map((name) => `@${String(name).replace(/^@/, '')}`).join(', ') : null),
+        };
+      }
+    } else if (ASK_KINDS.has(row.kind)) {
+      // #4974: whether the newest thing that asked for them has been answered
+      // already — a reply on the request's discussion settled it (its row
+      // says answered_at), or an answer came from the DM itself.
+      if (found.answered === undefined) found.answered = !!row.answered_at;
+      if (!found.ask && (meta.status === 'open' || row.question_status === 'open')) {
+        found.ask = {
+          messageId: id,
+          kind: row.kind,
+          ...(meta.said ? { said: String(meta.said) } : {}),
+          ...(typeof meta.question === 'string' && meta.question ? { question: meta.question.slice(0, 300) } : {}),
+        };
+      }
+    }
+  }
+  return byKey;
+}
+
+/**
+ * One story: every entry of `work` with where its request is in this
+ * person's chat with the bot (threadsOf). One read of their own records;
+ * a read that fails leaves the entries as they were.
+ */
+async function withThreads(pool, userId, work) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT d.message_id, d.kind, d.issue_number, d.question_status, d.answered_at, a.slug,
+              m.thread_root_id, m.metadata->'homeroomBot' AS meta
+         FROM homeroom_bot_dm_messages d
+         JOIN apps a ON a.id = d.app_id
+         JOIN conversation_messages m ON m.id = d.message_id AND m.deleted_at IS NULL
+        WHERE d.user_id = $1
+        ORDER BY d.message_id DESC
+        LIMIT 400`,
+      [userId],
+    );
+    const found = threadsOf(rows);
+    for (const job of [...work.now, ...work.needsYou, ...work.history]) {
+      const mine = found.get(job.key);
+      if (!mine) continue;
+      if (job.requestClosed === true || job.inHand === true) {
+        // #5009: its request row is closed, or the bot has taken the work
+        // back up, so it is not waiting on the person — its old ask (still
+        // open in the chat) must not put it back in Needs you. The rest of
+        // its story (the card to open, whether it was answered) stays.
+        const { ask, ...rest } = mine;
+        Object.assign(job, rest);
+      } else {
+        Object.assign(job, mine);
+      }
+    }
+  } catch (err) {
+    log.warn('homeroom-bot-tray', 'Could not read the requests\' threads', { userId, err: err.message });
+  }
+}
+
+/**
+ * A change of the bot's merged into the platform's own app and not live yet
+ * waits for the platform's next release (services/release-watch.js), and
+ * its entry says when (`release`, which bot-work.tsx words): an entry of Now
+ * going live (its progress entry names the proposal), and one of History or
+ * Needs you whose news is that it is going live. Any other change is left
+ * out of the answer, and its entry says "going live" as it did. One read,
+ * only when an entry is going live.
+ */
+async function withReleases(pool, work, entries) {
+  const going = new Map();
+  const proposalOf = new Map(entries
+    .filter((item) => item.stage === 'merging' && Number(item.proposal?.proposal))
+    .map((item) => [keyOf(item.project, item.number), Number(item.proposal.proposal)]));
+  for (const job of work.now) {
+    if (job.phase === 'merging' && proposalOf.has(job.key)) going.set(job, proposalOf.get(job.key));
+  }
+  for (const job of [...work.needsYou, ...work.history]) {
+    if (job.outcome === 'going_live' && job.proposalId) going.set(job, job.proposalId);
+  }
+  if (!going.size) return;
+  const releases = await require('./release-watch').releasesFor(pool, [...going.values()]);
+  for (const [job, sessionId] of going) {
+    const release = releases.get(sessionId);
+    if (release) job.release = release;
+  }
 }
 
 /**
@@ -511,55 +732,97 @@ function noteWorkChanged(userId, deps = {}) {
 
 /**
  * The staging demo's tray (`?demo=1`, beside the bot DM fixture in
- * staging-messages.js): one request being built (the step its activity card
- * in the fixture shows), one whose plan was begun before it had a card (the
- * card opening the DM gives it), a change asked for on one of its proposals waiting
- * its turn (#3734), a question waiting on the viewer, and a few things done
- * before, one of them a request the bot came back to. A staging copy never
- * runs the bot, so without it the tray could not be seen there. Times are
+ * staging-messages.js), drawn as the strip above the chat: one request that
+ * needs the viewer (#18, its question open in its thread), two ready to try
+ * (one waiting for their yes, one for @ada's), two in progress (one being
+ * built, one being planned, the second the card opening the DM gives it),
+ * and one done today (a first version gone live). A staging copy never runs
+ * the bot, so without it the strip could not be seen there. Times are
  * relative to `now` so it always reads fresh. No project stands behind it
  * (as behind the fixture's own messages), so it links nowhere: `href` and
- * every link are null and the tray draws tiles without links.
+ * every link are null. `ids` are the fixture's messages (demoWorkFor), so a
+ * row opens its thread and its buttons act on its own message; without
+ * them the rows still draw. Its app has an emoji for an icon.
  */
-function demoWork(now = Date.now()) {
+function demoWork(now = Date.now(), ids = {}) {
   const ago = (minutes) => new Date(now - minutes * 60 * 1000).toISOString();
-  const app = { appSlug: null, appName: 'Staging demo app' };
+  const app = { appSlug: null, appName: 'Staging demo app', iconUrl: null, iconEmoji: '🧪' };
   const nowhere = { href: null, links: { request: null, proposal: null, project: null } };
   const request = (issueNumber, title) => ({ key: `demo#${issueNumber}`, ...app, issueNumber, title, firstVersion: false });
+  const card = (id) => (id ? { cardId: id } : {});
   return {
     now: [{
       ...request(14, 'Staging demo, show a total under the list'),
-      phase: 'building', stage: 'building', step: 3, of: 6, stepName: 'Build it', doing: 'building it',
-      since: ago(4), ...nowhere, earlier: [],
+      phase: 'building', stage: 'building', step: 3, of: 6, stepName: 'Building', doing: 'building it',
+      since: ago(4), ...nowhere, earlier: [], ...card(ids.working),
     }, {
       // Begun before it had a card in the DM: opening the demo DM gives it
       // one (staging-messages.js ensureDemoUnderWayCard).
       ...request(15, 'Staging demo, add a search box'),
-      phase: 'building', stage: 'planning', step: 2, of: 6, stepName: 'Write a plan', doing: 'writing the plan for the build',
-      since: ago(7), ...nowhere, earlier: [],
-    }, {
-      ...request(9, 'Staging demo, show item counts'),
-      phase: 'follow_up_queued', stage: 'followup_queued', step: 5, of: 6, stepName: 'Approval',
-      doing: 'waiting in the queue (number 1) to follow up on the newest replies on the change',
-      since: ago(1), ...nowhere, earlier: [{ id: 2, outcome: 'proposed', at: ago(60 * 26) }],
+      phase: 'building', stage: 'planning', step: 2, of: 6, stepName: 'Planning', doing: 'writing the plan for the build',
+      since: ago(7), ...nowhere, earlier: [], ...card(ids.underWay),
     }],
     needsYou: [{
-      ...request(12, 'Staging demo, sort the list by date'),
-      id: 4, outcome: 'question', doing: null, at: ago(35), ...nowhere, earlier: [],
+      ...request(18, 'Staging demo, a weekly dinner rota'),
+      id: 4, outcome: 'question', doing: null, at: ago(3), ...nowhere, earlier: [], ...card(ids.story),
+      ask: {
+        messageId: ids.storyQuestion || null, kind: 'question', said: 'question',
+        question: 'Which night should the rota start on?',
+      },
     }],
     history: [{
-      ...request(6, 'Staging demo, add a dark theme'),
-      id: 3, outcome: 'answer', doing: null, at: ago(60 * 20), ...nowhere,
-      earlier: [{ id: 5, outcome: 'revise', at: ago(60 * 21) }, { id: 6, outcome: 'proposed', at: ago(60 * 30) }],
+      ...request(11, 'Staging demo, grey out finished items'),
+      id: 7, outcome: 'proposed', doing: null, at: ago(20), ...nowhere, earlier: [],
+      ready: { messageId: ids.ready || null, sessionId: 990901, epoch: 0, open: true, approve: true, waiting: null },
     }, {
-      key: 'demo#first', ...app, issueNumber: 1, title: null, firstVersion: true,
-      id: 1, outcome: 'live', doing: null, at: ago(60 * 24 * 3), ...nowhere, earlier: [],
+      key: 'demo#first', ...app, appName: 'Staging demo plants', issueNumber: 1, title: null, firstVersion: true,
+      id: 1, outcome: 'live', doing: null, at: ago(50), ...nowhere, earlier: [],
+    }, {
+      ...request(9, 'Staging demo, show item counts'),
+      id: 2, outcome: 'proposed', doing: null, at: ago(60 * 2), ...nowhere, ...card(ids.done),
+      earlier: [{ id: 5, outcome: 'revise', at: ago(60 * 3) }],
+      ready: { messageId: null, sessionId: null, epoch: 0, open: true, approve: false, waiting: '@ada' },
     }],
   };
 }
 
+// The fixture's messages the demo strip's rows point at, by the keys
+// staging-messages.js sends them with.
+const DEMO_MESSAGE_KEYS = Object.freeze({
+  story: 'staging-hrbot-activity-thread',
+  storyQuestion: 'staging-hrbot-story-question',
+  ready: 'staging-hrbot-ready',
+  working: 'staging-hrbot-activity-working',
+  underWay: 'staging-hrbot-activity-under-way',
+  done: 'staging-hrbot-activity-done',
+});
+
+/** The demo strip for `user`'s own fixture (demoWork, with its message ids). Never throws. */
+async function demoWorkFor(pool, user, now = Date.now()) {
+  const ids = {};
+  try {
+    if (user?.id) {
+      const { rows } = await pool.query(
+        `SELECT m.id, m.idempotency_key FROM conversation_messages m
+           JOIN users b ON b.id = m.sender_id AND b.username = 'homeroom_bot' AND b.is_synthetic = TRUE
+           JOIN conversation_members cm ON cm.conversation_id = m.conversation_id AND cm.user_id = $1 AND cm.status = 'member'
+          WHERE m.idempotency_key = ANY($2::text[])`,
+        [user.id, Object.values(DEMO_MESSAGE_KEYS)],
+      );
+      for (const [name, key] of Object.entries(DEMO_MESSAGE_KEYS)) {
+        const row = rows.find((r) => r.idempotency_key === key);
+        if (row) ids[name] = Number(row.id);
+      }
+    }
+  } catch (err) {
+    log.warn('homeroom-bot-tray', 'Could not read the demo strip\'s messages', { err: err.message });
+  }
+  return demoWork(now, ids);
+}
+
 module.exports = {
-  workFor, currentJobs, pastRuns, arrange, noteWorkChanged, demoWork,
+  workFor, currentJobs, pastRuns, arrange, noteWorkChanged, demoWork, demoWorkFor, iconOf, withIcons, threadsOf, ASK_KINDS,
   jobOfProgress, needsYouOfProgress, entryOfRuns, leadOf, outcomeOf, hrefOf, keyOf, planOnly,
   OUTCOMES, NEEDS_YOU, PHASES, PHASE_OF_STAGE, HISTORY_LIMIT, NOW_LIMIT, NOT_FINISHED,
+  settleAnswered,
 };

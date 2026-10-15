@@ -18,6 +18,7 @@
 import { type ReactNode } from 'react';
 
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
+import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { historyStore, historyView } from './history.js';
 
@@ -41,8 +42,9 @@ const CARD = 'rounded-2xl bg-white dark:bg-zinc-900 p-4';
 const HINT = 'py-8 text-center text-sm text-zinc-500 dark:text-zinc-400';
 
 function Loading(): ReactNode {
+  const t = useMessages('leaderboard');
   return (
-    <SkeletonGroup label="Loading past seasons" className="space-y-3">
+    <SkeletonGroup label={t('leaderboard:history.loading')} className="space-y-3">
       {Array.from({ length: 2 }, (_, i) => (
         <div key={i} className={CARD}>
           <div className="flex items-center justify-between gap-3">
@@ -64,6 +66,7 @@ function Loading(): ReactNode {
 }
 
 function SeasonCard({ season }: { season: SeasonView }): ReactNode {
+  const t = useMessages('leaderboard');
   return (
     <article className={CARD} data-history-season={season.key}>
       <div className="flex items-baseline justify-between gap-3">
@@ -86,7 +89,7 @@ function SeasonCard({ season }: { season: SeasonView }): ReactNode {
         <span className="min-w-0" data-history-result="">{season.line}</span>
       </p>
       {season.events.length ? (
-        <ul className="mt-3 flex flex-wrap gap-1.5" aria-label="Event winners">
+        <ul className="mt-3 flex flex-wrap gap-1.5" aria-label={t('leaderboard:history.eventWinners')}>
           {season.events.map((ev) => (
             <li
               key={ev.key}
@@ -103,6 +106,8 @@ function SeasonCard({ season }: { season: SeasonView }): ReactNode {
 }
 
 export function HistoryPane(): ReactNode {
+  // Subscribed before the view is built: its lines are read as it is.
+  useMessages('leaderboard');
   const view = historyView(useStoreState(historyStore)) as View;
   if (view.kind === 'none') return null;
   if (view.kind === 'loading') return <Loading />;

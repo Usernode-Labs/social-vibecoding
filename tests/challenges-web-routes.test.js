@@ -10,7 +10,8 @@
 //
 //   1. Session-gated: no/expired session cookie -> 401, never anonymous
 //      data (the old proxy trusted a client-claimed participant_id; the
-//      in-process routes must not).
+//      in-process routes must not). A session lookup that THROWS is a
+//      500, never a 401 (#4808).
 //   2. /me/* identity comes from the session row — a client-supplied
 //      participant_id query param is ignored.
 //   3. The old proxy's allowlist contract survives: off-list paths and
@@ -67,6 +68,8 @@ function makeMockPool() {
 
     // optionalSessionAuth's session-cookie resolution.
     if (sql.includes('FROM sessions s JOIN users u')) {
+      // A pool timeout / DB error mid-lookup (#4808).
+      if (params[0] === 'lookup-throws') throw new Error('timeout exceeded when trying to connect');
       const s = SESSIONS[params[0]];
       if (!s) return { rows: [] };
       return {
@@ -172,6 +175,20 @@ test('expired session is refused with 401', async () => {
       headers: sessionCookie('expired-session'),
     });
     assert.equal(res.status, 401);
+  });
+});
+
+test('a session lookup that throws is a 500, not a 401 (#4808)', async () => {
+  // optionalSessionAuth swallows the error for the public reads; a route
+  // that requires the session must not turn it into "signed out", or the
+  // Profile screen tells a signed-in person to sign in.
+  await withServer(async (base) => {
+    for (const p of ['/challenges-api/me/ranking', '/challenges-api/seasons']) {
+      const res = await fetch(`${base}${p}`, { headers: sessionCookie('lookup-throws') });
+      assert.equal(res.status, 500, p);
+      const body = await res.json();
+      assert.equal(body.success, false, p);
+    }
   });
 });
 

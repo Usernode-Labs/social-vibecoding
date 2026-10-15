@@ -98,6 +98,29 @@ test('a clip is saved only for a motion change, and a refused file saves nothing
   assert.equal(run.saved.size, 1);
 });
 
+// A project's first version: the before address is the starter template's
+// placeholder (services/shots-starter.js), so the run takes the after side
+// only, and a before shot is refused while the agent can still move on.
+test('a first version\'s run refuses a before shot and is ready with the after side alone', () => {
+  const run = control({ intent: fixtures.intent(), afterOnly: true });
+  assert.throws(() => run.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'before' },
+    sideShot('before')), (error) => {
+    assert.equal(error.code, 'before_not_needed');
+    assert.equal(error.status, 400);
+    assert.match(error.message, /starter template's placeholder/);
+    assert.match(error.message, /takes after shots only/);
+    return true;
+  });
+  assert.equal(run.saved.size, 0, 'nothing from the before side is kept');
+  assert.equal(run.lastToolFailure.operation, 'save-shot');
+  run.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'after' }, sideShot('after'));
+  assert.deepEqual(statuses(run), [['invite-suggestions', 'ready']]);
+  assert.equal(run.summary().verdict.afterOnly, true);
+  // An ordinary run takes both sides, as before.
+  assert.equal(control({ intent: fixtures.intent() }).saveShot(
+    { change: 'invite-suggestions', screen: 'desktop', side: 'before' }, sideShot('before')).side, 'before');
+});
+
 test('progress reports each change as missing, ready or skipped', () => {
   const run = control();
   const initial = run.progress();
@@ -235,6 +258,157 @@ test('a note on what a change\'s shots leave out is kept with the ready change',
 
   run.skipChange({ reason: 'Nothing else loads.' });
   assert.throws(() => run.noteChange({ change: 'invite-suggestions', note: 'Too late.' }),
+    { code: 'shots_turn_finished', status: 409 });
+});
+
+test('the brief\'s phone sign-in code never reaches a note or a skip reason', () => {
+  // Homeroom's own copies hand the agent the run's code (the brief's
+  // phoneSignIn); a note or a reason is shown on the proposal.
+  const context = { addresses: { before: 'http://base.test', after: 'http://head.test' },
+    phoneSignIn: { code: '048213' } };
+  const run = control({ intent: threeChanges(), context });
+  assert.equal(run.getContext().phoneSignIn.code, '048213', 'the agent reads it in its brief');
+  shootBothSides(run, 'invite-suggestions');
+  run.noteChange({ change: 'invite-suggestions', note: 'Typed 048213 for +1 415 555 0142; the next step is left out.' });
+  run.skipChange({ change: 'member-count', reason: 'Code 048 213 and 048-213 both went to a blank page.' });
+  run.skipChange({ reason: 'Everything else needs 048213.' });
+  const stories = run.summary().stories;
+  assert.equal(stories.find((story) => story.id === 'invite-suggestions').note,
+    'Typed **** for +1 415 555 0142; the next step is left out.');
+  assert.equal(stories.find((story) => story.id === 'member-count').reason,
+    'Code **** and **** both went to a blank page.');
+  assert.doesNotMatch(JSON.stringify(stories), /048[ -]?213/);
+
+  // Only that code, standing on its own.
+  const { maskPhoneTestCode } = controlPlane;
+  assert.equal(maskPhoneTestCode('ids 10482130 and 0482131 stay', '048213'), 'ids 10482130 and 0482131 stay');
+  assert.equal(maskPhoneTestCode('code 048213.', '048213'), 'code ****.');
+  assert.equal(maskPhoneTestCode('code 048213', null), 'code 048213', 'no code for the run, nothing to mask');
+  assert.equal(maskPhoneTestCode('code 048213', 'abc'), 'code 048213');
+});
+
+test('a problem noticed on the after build is kept with the run, capped, and changes no result', () => {
+  const run = control({ intent: threeChanges() });
+  shootBothSides(run, 'invite-suggestions');
+  const before = run.summary();
+  const first = run.noteProblem({
+    change: 'invite-suggestions', screen: 'desktop', problem: '  The table is cut off at the right edge. ',
+    alsoBefore: false, shot: 'screen',
+  });
+  assert.deepEqual(first, { noticed: 'invite-suggestions', screen: 'desktop', alsoBefore: false, notices: 1, remaining: 4 });
+  // The same problem at the same place again updates it rather than adding one.
+  const again = run.noteProblem({
+    change: 'invite-suggestions', screen: 'desktop', problem: 'the table is cut off at the right edge.', alsoBefore: true,
+  });
+  assert.equal(again.notices, 1);
+  assert.deepEqual(run.notices, [{
+    text: 'the table is cut off at the right edge.', change: 'invite-suggestions', screen: 'desktop',
+    shot: null, alsoBefore: true,
+  }]);
+  // A change that is not ready can still be where a problem shows.
+  run.noteProblem({ change: 'member-count', screen: 'desktop', problem: 'An error banner is on screen.' });
+
+  const summary = run.summary();
+  assert.deepEqual(summary.stories, before.stories, 'notices never change a change\'s status or note');
+  assert.equal(summary.verdict.passed, before.verdict.passed);
+  assert.deepEqual(summary.verdict.notices.map((entry) => [entry.change, entry.alsoBefore]),
+    [['invite-suggestions', true], ['member-count', 'unknown']]);
+  assert.doesNotMatch(JSON.stringify(run.progress()), /cut off|error banner/,
+    'the brief\'s progress reports the changes, not the notices');
+
+  // Five at most: the sixth is refused, and the agent is told why.
+  for (const text of ['One.', 'Two.', 'Three.']) {
+    run.noteProblem({ change: 'invite-suggestions', screen: 'desktop', problem: text });
+  }
+  assert.equal(run.notices.length, 5);
+  assert.throws(() => run.noteProblem({ change: 'invite-suggestions', screen: 'desktop', problem: 'Six.' }),
+    { code: 'too_many_notices', status: 409 });
+  assert.equal(run.lastToolFailure.operation, 'note-problem');
+  // Updating one already noted still works at the cap.
+  assert.equal(run.noteProblem({ change: 'invite-suggestions', screen: 'desktop', problem: 'One.', alsoBefore: true }).notices, 5);
+
+  assert.throws(() => run.noteProblem({ change: 'invite-suggestions', screen: 'tablet', problem: 'x' }),
+    { code: 'unknown_screen', status: 400 });
+  assert.throws(() => run.noteProblem({ change: 'nobody', screen: 'desktop', problem: 'x' }), { code: 'unknown_change' });
+  assert.throws(() => run.noteProblem({ change: 'invite-suggestions', screen: 'desktop', problem: '' }),
+    { code: 'problem_required' });
+
+  run.skipChange({ reason: 'Nothing else loads.' });
+  assert.throws(() => run.noteProblem({ change: 'invite-suggestions', screen: 'desktop', problem: 'Too late.' }),
+    { code: 'shots_turn_finished', status: 409 });
+});
+
+// Every problem noted in the proposals merged 2026-10-09 to 10-12 said
+// "unknown", though the agent shoots the before side of every screen.
+test('a problem noted without saying whether the before build has it asks the agent to look', () => {
+  const run = control({ intent: threeChanges() });
+  run.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'after' }, sideShot('after'));
+  const early = run.noteProblem({ change: 'invite-suggestions', screen: 'desktop', problem: 'The table is cut off.' });
+  assert.equal(early.alsoBefore, 'unknown');
+  assert.match(early.hint, /^Once you have shot the before side of this screen, look at it and note this problem again with alsoBefore true or false/);
+
+  run.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'before' }, sideShot('before'));
+  const later = run.noteProblem({ change: 'invite-suggestions', screen: 'desktop', problem: 'The table is cut off.', alsoBefore: 'unknown' });
+  assert.match(later.hint, /^You saved the before shot of this screen: look at it and note this problem again/);
+  assert.match(later.hint, /Noting the same problem at the same place updates it\.$/);
+
+  const said = run.noteProblem({ change: 'invite-suggestions', screen: 'desktop', problem: 'The table is cut off.', alsoBefore: false });
+  assert.equal(Object.hasOwn(said, 'hint'), false, 'a notice that says true or false is not asked again');
+  assert.deepEqual(run.notices.map((entry) => entry.alsoBefore), [false], 'noting it again updated the one notice');
+});
+
+// control_request and upload_file record what they are about to do to both
+// builds before they do it; it goes on the change's result, whatever its
+// status, so the card can say so beside the shots.
+test('what the agent did to both builds is kept with its change, once each, and only in a fixed shape', () => {
+  const run = control({ intent: threeChanges() });
+  shootBothSides(run, 'invite-suggestions');
+  const before = run.summary();
+  assert.deepEqual(run.noteCondition({ change: 'invite-suggestions', kind: 'request_held', request: '/api/items?page=1' }),
+    { recorded: 'invite-suggestions', conditions: 1 });
+  // The same again is recorded once.
+  assert.equal(run.noteCondition({ change: 'invite-suggestions', kind: 'request_held', request: '/api/items?page=1' }).conditions, 1);
+  run.noteCondition({ change: 'invite-suggestions', kind: 'sample_file', files: ['landscape.png', 'table.csv'] });
+  run.noteCondition({ change: 'member-count', kind: 'request_failed', request: '/api/members' });
+
+  const summary = run.summary();
+  const ready = summary.stories.find((story) => story.id === 'invite-suggestions');
+  assert.equal(ready.status, 'ready');
+  assert.deepEqual(ready.conditions, [
+    { kind: 'request_held', request: '/api/items?page=1' },
+    { kind: 'sample_file', files: ['landscape.png', 'table.csv'] },
+  ]);
+  // A change that is not ready keeps its conditions too; one with none has no key.
+  assert.deepEqual(summary.stories.find((story) => story.id === 'member-count').conditions,
+    [{ kind: 'request_failed', request: '/api/members' }]);
+  assert.equal('conditions' in summary.stories.find((story) => story.id === 'saved-toast'), false);
+  assert.equal(summary.manifestHash, before.manifestHash, 'the published files are the same files');
+  assert.deepEqual(summary.verdict.stories, summary.stories);
+
+  for (const [raw, code] of [
+    [{ change: 'nobody', kind: 'request_held', request: '/api/items' }, 'unknown_change'],
+    [{ change: 'invite-suggestions', kind: 'evaluate', request: '/api/items' }, 'invalid_condition'],
+    [{ change: 'invite-suggestions', kind: 'request_held', request: '/lists' }, 'invalid_condition'],
+    [{ change: 'invite-suggestions', kind: 'request_held', request: '/api/items/*' }, 'invalid_condition'],
+    [{ change: 'invite-suggestions', kind: 'request_held', request: 'https://evil.example/api/items' }, 'invalid_condition'],
+    [{ change: 'invite-suggestions', kind: 'request_failed', request: '/api/items?token=abc' }, 'invalid_condition'],
+    [{ change: 'invite-suggestions', kind: 'sample_file', files: [] }, 'invalid_condition'],
+    [{ change: 'invite-suggestions', kind: 'sample_file', files: ['/etc/passwd'] }, 'invalid_condition'],
+    [{ change: 'invite-suggestions', kind: 'sample_file', files: ['table.csv', 'table.csv'] }, 'invalid_condition'],
+  ]) {
+    assert.throws(() => run.noteCondition(raw), { code, status: 400 }, JSON.stringify(raw));
+  }
+  assert.equal(run.lastToolFailure.operation, 'note-condition');
+  // Four a change at most.
+  run.noteCondition({ change: 'invite-suggestions', kind: 'request_failed', request: '/api/items?page=1' });
+  run.noteCondition({ change: 'invite-suggestions', kind: 'sample_file', files: ['portrait.png'] });
+  assert.throws(() => run.noteCondition({ change: 'invite-suggestions', kind: 'request_held', request: '/api/other' }),
+    { code: 'too_many_conditions', status: 409 });
+  // What it already holds is still recorded once, at the cap.
+  assert.equal(run.noteCondition({ change: 'invite-suggestions', kind: 'sample_file', files: ['portrait.png'] }).conditions, 4);
+
+  run.skipChange({ reason: 'Nothing else loads.' });
+  assert.throws(() => run.noteCondition({ change: 'member-count', kind: 'request_held', request: '/api/members' }),
     { code: 'shots_turn_finished', status: 409 });
 });
 

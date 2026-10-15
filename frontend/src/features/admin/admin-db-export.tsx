@@ -241,7 +241,7 @@ function DbExportSection() {
           <li>every activation code, used and unused</li>
           <li>every app&apos;s database password, LLM proxy token and file-storage token</li>
           <li>the encrypted blobs for users&apos; own Anthropic API keys and every app&apos;s stored secrets</li>
-          <li>every chat message, spec, dev-session transcript, uploaded attachment and screenshot</li>
+          <li>every chat message, plan, dev-session transcript, uploaded attachment and screenshot</li>
           <li>all analytics, votes, kudos, bounties and moderation history</li>
         </ul>
         <p className="text-sm text-red-800 dark:text-red-200 mt-3">

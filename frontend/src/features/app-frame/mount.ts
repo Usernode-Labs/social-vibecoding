@@ -26,7 +26,7 @@
 import { createElement } from 'react';
 import { flushSync } from 'react-dom';
 
-import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
+import { legacyPortalNode, mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
 import { navStore } from '../nav/nav-store.js';
 import { appActivity } from './app-activity.js';
 import { appFrameBridge } from './app-frame-bridge.js';
@@ -34,7 +34,7 @@ import { appFrameStore } from './app-frame-store.js';
 import { publishAppTone } from './app-tone.js';
 import { AppStatus, type AppStatusView } from './app-status';
 import { appStatusStore } from './app-status-store.js';
-import { starterStore } from './starter-store.js';
+import { syncBuildActivity, syncBuildActivityRecord } from './build-activity';
 
 // `beginLaunch` does `frame.mount(…)` and then immediately `frame.frame()`, to
 // assign `src` and arm the reveal ladder in the same tick as the tap. Without a
@@ -64,6 +64,21 @@ export const appStatusBridge = {
     unmountLegacyPortal(host);
   },
   /**
+   * N6: a new view for the placeholder already on `host`, re-rendered in
+   * place: nothing under it is unmounted, so a first version's card keeps
+   * its Live (AppView._repaintFirstVersion, on every 10 s recheck). False,
+   * and nothing done, unless this placeholder is still what `host` shows:
+   * its portal live there and a view published (`clear` and `unmount` drop
+   * it whenever something else takes the host over).
+   */
+  update(host: Element | null, view: AppStatusView): boolean {
+    if (!host || !host.isConnected || !appStatusStore.get().view) return false;
+    const shown = legacyPortalNode(host) as { type?: unknown } | null;
+    if (!shown || shown.type !== AppStatus) return false;
+    appStatusStore.set({ view });
+    return true;
+  },
+  /**
    * Forget the published placeholder without touching portals.
    * `_teardownDevRoots` drops every portal in one sweep — including this
    * one — so the host is already gone by the time anything else claims
@@ -75,17 +90,6 @@ export const appStatusBridge = {
   },
 };
 
-/**
- * #15: whose starter is framed while its first version is on its way, for
- * the bar over it (./starter-bar.tsx). AppView._publishStarter sets it on
- * every App tab render; '' is none.
- */
-export const appStarterBridge = {
-  set(slug: string | null | undefined): void {
-    starterStore.set({ slug: slug || '' });
-  },
-};
-
 export { appFrameBridge };
 
 if (typeof window !== 'undefined') {
@@ -94,7 +98,10 @@ if (typeof window !== 'undefined') {
   bridge.appActivity = appActivity;
   bridge.appFrame = appFrameBridge;
   bridge.appStatus = appStatusBridge;
-  bridge.appStarter = appStarterBridge;
+  // Run six: the maker's Live Activity for their first version
+  // (./build-activity.ts). AppView hands it every app record the server
+  // answered (_noteAppRecordRead); the made screen imports it directly.
+  bridge.buildActivity = { sync: syncBuildActivity, syncRecord: syncBuildActivityRecord };
 
   // The phone wallet relay in the shared bridge (public/usernode-bridge.js)
   // forwards a frame's calls only when this names the frame as one of the

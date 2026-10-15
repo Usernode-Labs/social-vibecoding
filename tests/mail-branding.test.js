@@ -56,7 +56,9 @@ test('every kind is framed, and framed exactly once', () => {
       ? /someone on Homeroom invited this address to a project\. You will not hear from us again unless you join, or somebody invites you again\./
       : activity
         ? /there was news on Homeroom for you and no phone to send it to\. Turn these emails off with the link above\./
-        : /activity on your account or your place on the waitlist/,
+        : kind === 'content_report'
+          ? /this address is Homeroom's compliance inbox for content reports\./
+          : /activity on your account or your place on the waitlist/,
     `${kind}: says why it arrived`);
     if (kind === 'project_invite') assert.doesNotMatch(html, /mail you asked for/, 'an invite was not asked for');
   }
@@ -105,11 +107,17 @@ test('the logo is same-origin, not a third party, and there is still no <style>/
   for (const kind of templates.KINDS) {
     const { html } = templates.buildMessage(kind, PAYLOAD);
     const imgTags = html.match(/<img\b[^>]*>/gi) || [];
-    assert.equal(imgTags.length, 1, `${kind}: exactly one image, the logo`);
+    // #4570: the release welcome also draws the landing page's people
+    // illustration, hosted on the same /brand/ tier. Every other kind still
+    // carries exactly the logo.
+    const expected = kind === 'waitlist_released' ? 2 : 1;
+    assert.equal(imgTags.length, expected, `${kind}: exactly ${expected} image(s) from /brand/`);
     assert.match(imgTags[0], /src="https:\/\/[^"/]+\/brand\/homeroom-logotype-black\.png"/,
       `${kind}: the logo is same-origin, absolute, and never a third-party host`);
-    assert.doesNotMatch(imgTags[0], /src="(?!https:\/\/[^"/]+\/brand\/)/,
-      `${kind}: no other image host sneaks in`);
+    for (const tag of imgTags) {
+      assert.doesNotMatch(tag, /src="(?!https:\/\/[^"/]+\/brand\/)/,
+        `${kind}: no other image host sneaks in`);
+    }
     assert.doesNotMatch(html, /<style\b/i, `${kind}: no style block`);
     assert.doesNotMatch(html, /\sclass=/i, `${kind}: no classes`);
   }
@@ -131,4 +139,33 @@ test('the footer promises nothing the platform does not do', () => {
   const { html } = templates.buildMessage('otp', PAYLOAD);
   assert.doesNotMatch(html, /unsubscribe/i);
   assert.doesNotMatch(html, /preferences/i);
+});
+
+test('the activity, invite and test mails wear the welcome hero (#5068)', () => {
+  // The same treatment #4570 gave the release mail, from the same helpers:
+  // a centred cell, an uppercase eyebrow over a big headline, and the
+  // full-round pill where there is an action.
+  for (const kind of ['build_ready', 'invite_activity', 'project_invite', 'admin_test']) {
+    const { html } = templates.buildMessage(kind, PAYLOAD);
+    assert.match(html, /text-align:center/, `${kind}: the hero is centred`);
+    assert.match(html, /font-weight:800/, `${kind}: a large headline`);
+    // build_ready's payload names no project, so its eyebrow is the "Your
+    // project" fallback; invite_activity names none here at all, and its
+    // eyebrow is tested below with one supplied.
+    if (kind !== 'invite_activity') {
+      assert.match(html, /letter-spacing:0\.8px/, `${kind}: an uppercase eyebrow`);
+    }
+    if (kind === 'admin_test') {
+      assert.doesNotMatch(html, /<a /, 'the test mail still carries no link');
+    } else {
+      assert.match(html, /border-radius:999px/, `${kind}: the round pill`);
+    }
+  }
+  // The rest of the family keeps the small square button and no pill.
+  for (const kind of ['otp', 'account_email', 'waitlist_joined', 'waitlist_code']) {
+    const { html } = templates.buildMessage(kind, PAYLOAD);
+    assert.doesNotMatch(html, /border-radius:999px/, `${kind}: no pill here`);
+  }
+  const { html: reset } = templates.buildMessage('password_reset', PAYLOAD);
+  assert.doesNotMatch(reset, /border-radius:999px/, 'password_reset: no pill here');
 });

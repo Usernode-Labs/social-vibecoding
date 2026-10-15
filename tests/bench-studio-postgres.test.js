@@ -283,33 +283,49 @@ test('the App bench studio against the full PostgreSQL schema', { timeout: 12000
     assert.equal(refused.status, 409);
     assert.match(refused.error, /never an app's real data/);
 
+    // The preview machine stood in for: it records the request, and the test
+    // then writes what the machine would (its instance, the row's receipt).
     const deploys = [];
     const benchUser = (await pool.query("INSERT INTO users (username, password, is_synthetic) VALUES ('bench_stub', 'x', TRUE) RETURNING id")).rows[0];
     const previewDeps = {
       user: benchUser,
-      staging: {
-        async buildAndDeployStaging(_config, session, app, sha) {
-          deploys.push({ sessionId: session.id, app: app.slug, sha });
-          await pool.query('UPDATE chat_sessions SET staging_url = $2 WHERE id = $1', [session.id, `https://staging.example/${session.id}`]);
+      previewWorkflow: {
+        async request({ session, head, reason, actor }) {
+          deploys.push({ sessionId: session.id, app: session.app_slug, sha: head, reason, actor });
+          return { status: 'accepted' };
         },
       },
+    };
+    const machine = async (sessionId, state, data) => {
+      const c = await pool.connect();
+      try {
+        await c.query("BEGIN; SET LOCAL app.wf_writer = 'transition'");
+        await c.query(
+          `INSERT INTO wf_instances (machine, key, state, data, machine_version) VALUES ('preview', $1, $2, $3, 2)
+           ON CONFLICT (machine, key) DO UPDATE SET state = EXCLUDED.state, data = EXCLUDED.data`,
+          [`session:${sessionId}`, state, JSON.stringify(data)]);
+        await c.query('COMMIT');
+      } finally { c.release(); }
     };
     const up = await studio.deployPreview(pool, {}, { trialId: refTrial, user: { id: evan.id }, deps: previewDeps });
     assert.equal(up.ok, true, up.error);
     assert.equal(up.preview.status, 'building');
-    for (let i = 0; i < 50 && !deploys.length; i += 1) {
-      // eslint-disable-next-line no-await-in-loop
-      await new Promise((r) => { setTimeout(r, 20); });
-    }
-    await new Promise((r) => { setTimeout(r, 50); });
-    assert.equal(deploys[0].sha, SHA('b'));
+    assert.deepEqual([deploys[0].sha, deploys[0].reason, deploys[0].actor], [SHA('b'), 'preview', `user:${evan.id}`],
+      'a preview with no checks, of the build\'s commit, asked by the admin');
     const host = await studio.hostRow(pool);
     assert.equal(deploys[0].app, host.slug, 'on the host app, whose database is its own empty one');
+    let building = (await studio.watchRun(pool, run.id)).trials.find((x) => x.trialId === refTrial).preview;
+    assert.equal(building.status, 'building', 'until the machine serves it');
+    await machine(deploys[0].sessionId, 'settled', { previewOnly: true, serving: { head: SHA('b') } });
+    await pool.query('UPDATE chat_sessions SET staging_url = $2 WHERE id = $1', [deploys[0].sessionId, `https://staging.example/${deploys[0].sessionId}`]);
     const { rows: [member] } = await pool.query('SELECT status FROM app_collaborators WHERE app_id = $1 AND user_id = $2', [host.id, evan.id]);
     assert.equal(member.status, 'member', 'the admin who asked can open it');
     const live = (await studio.watchRun(pool, run.id)).trials.find((x) => x.trialId === refTrial).preview;
     assert.equal(live.status, 'live');
     assert.match(live.url, /^https:\/\/staging\.example\//);
+    await studio.sweepPreviews(pool, { force: true });
+    const { rows: [stored] } = await pool.query('SELECT status FROM bench_previews WHERE trial_id = $1', [refTrial]);
+    assert.equal(stored.status, 'live', 'the sweep writes the machine\'s outcome onto the row');
     const reused = await studio.deployPreview(pool, {}, { trialId: refTrial, user: { id: evan.id }, deps: previewDeps });
     assert.equal(reused.reused, true, 'one preview a build at a time');
 

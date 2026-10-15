@@ -89,15 +89,26 @@ test('the shots demo states keep a block of ids nothing else uses', () => {
 
 test('the shots demo states build on staging seeds that still exist', () => {
   // The challenge states join the topochain fixture season and event and
-  // credit its one open challenge; the friend request comes from a #general
-  // demo account; the member's remix was copied from the fork-lineage
-  // fixture's public source app. A seed that moves these leaves the states
-  // out of every run, so move them here too.
+  // credit its one open challenge; the standings state names three of its
+  // players and records activities on two of its challenges; the friend
+  // request comes from a #general demo account; the member's remix was
+  // copied from the fork-lineage fixture's public source app; the change
+  // waiting for approval addresses the mock request nothing else marks. A
+  // seed that moves these leaves the states out of every run, so move them
+  // here too.
   const migrate = read('src/db/migrate.js');
   assert.match(migrate, /const SEASON_ID = 900500;/);
-  assert.match(migrate, /const EVENT_SEASON_ID = 900501;/);
+  assert.match(migrate, /const EVENT_SEASON_ID = 900501; +\/\/ season_events [^\n]*type 'season'/);
   assert.match(migrate, /\(900507, \$2, 900502, 'Share the season announcement',[\s\S]{0,200}?TRUE, 3, FALSE, FALSE/,
     'challenge 900507 is enabled and open');
+  assert.match(migrate, /\(900505, \$2, 900500, 'Report a reproducible bug',/, 'challenge 900505 is on the season event');
+  assert.match(migrate, /\(900506, \$2, 900501, 'Send your first testnet transaction',/,
+    'challenge 900506 is on the season event');
+  for (const n of [2, 5, 6]) assert.match(migrate, new RegExp(`'staging-demo-topochain-participant-${n}'`));
+  const issues = read('src/routes/issues.js');
+  assert.match(issues, /mk\(900017, '\[Mock\] Issue with an open proposal against it',/);
+  assert.doesNotMatch(issues.slice(issues.indexOf('const mockInProgress')), /\[900017, \{/,
+    'no synthetic work state on #900017');
   assert.match(migrate, /'staging-demo-general-lin'/);
   assert.match(migrate, /SELECT 'Staging demo forkable app', 'staging-demo-forkable', 'running', 'public', id/,
     'the remix\'s original is a running public app');
@@ -106,4 +117,6 @@ test('the shots demo states build on staging seeds that still exist', () => {
   assert.match(states, /const FIXTURE_EVENT_ID = 900501;/);
   assert.match(states, /const FIXTURE_EVENT_CHALLENGE_ID = 900507;/);
   assert.match(states, /const FIXTURE_FORK_SOURCE_SLUG = 'staging-demo-forkable';/);
+  assert.match(states, /const FIXTURE_REQUEST_NUMBER = 900017;/);
+  assert.match(states, /\['staging-demo-topochain-participant-6', 'shots_fixture_ada'/);
 });

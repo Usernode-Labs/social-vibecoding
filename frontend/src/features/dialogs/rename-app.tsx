@@ -33,10 +33,12 @@ import { Button } from '@/components/ui/button';
 import { DialogCard, DialogRoot } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 
+import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { useHiddenClass } from '../../lib/legacy-dom';
 import { useDialog } from './use-dialog';
 
 export function RenameAppDialog() {
+  const t = useMessages('dialogs');
   const inputRef = useRef<HTMLInputElement>(null);
   const errorRef = useRef<HTMLDivElement>(null);
   const [currentName, setCurrentName] = useState('');
@@ -71,9 +73,9 @@ export function RenameAppDialog() {
     const next = (inputRef.current?.value || '').trim();
     const current = (appData.name as string) || '';
 
-    if (!next || next.length < 3) return setError('Name must be at least 3 characters');
-    if (next.length > 64) return setError('Name must be 64 characters or fewer');
-    if (next === current) return setError('New app name must differ from the current one');
+    if (!next || next.length < 3) return setError(t('dialogs:rename.error.tooShort'));
+    if (next.length > 64) return setError(t('dialogs:rename.error.tooLong'));
+    if (next === current) return setError(t('dialogs:rename.error.same'));
 
     setBusy(true);
     try {
@@ -88,13 +90,13 @@ export function RenameAppDialog() {
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        setError(data.error || 'Failed to open rename PR');
+        setError(data.error || t('dialogs:rename.error.failed'));
         return;
       }
       dialog.close();
       (appView?.refreshDevData as ((reason: string) => void) | undefined)?.('vote');
     } catch {
-      setError('Network error while opening rename PR');
+      setError(t('dialogs:rename.error.network'));
     } finally {
       setBusy(false);
     }
@@ -108,13 +110,14 @@ export function RenameAppDialog() {
     >
       <DialogCard size="sm">
         <h2 className="text-lg font-bold mb-1">
-          Rename app
+          {t('dialogs:rename.title')}
         </h2>
         <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-4">
-          Current app name:
-          <span id="rename-current" className="font-mono text-zinc-500 dark:text-zinc-400">
-            {currentName}
-          </span>
+          <RichMessage
+            id="dialogs:rename.current"
+            values={{ name: currentName }}
+            components={[<span id="rename-current" className="font-mono text-zinc-500 dark:text-zinc-400" />]}
+          />
         </p>
         <form id="rename-form" className="space-y-4" onSubmit={submit}>
           <div>
@@ -122,7 +125,7 @@ export function RenameAppDialog() {
               htmlFor="rename-input"
               className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1"
             >
-              New app name
+              {t('dialogs:rename.newName')}
             </label>
             <Input
               id="rename-input"
@@ -135,14 +138,10 @@ export function RenameAppDialog() {
               box="dialog"
               hint="muted"
               ring="seamless"
-              placeholder="a better name"
+              placeholder={t('dialogs:rename.placeholder')}
             />
             <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
-              3–64 characters. This is the app's display name, and the URL won't change. Opens a PR that edits
-              <span className="font-mono">
-                dapp.json
-              </span>
-              ; the rename applies once the PR is voted in and merged.
+              <RichMessage id="dialogs:rename.hint" components={[<span className="font-mono" />]} />
             </p>
           </div>
           <div id="rename-error" ref={errorRef} className="text-red-700 dark:text-red-400 text-sm hidden">
@@ -155,7 +154,7 @@ export function RenameAppDialog() {
               className="flex-1 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-4 py-2 text-sm font-medium text-zinc-900 dark:text-zinc-100 transition-colors"
               onClick={() => dialog.close()}
             >
-              Cancel
+              {t('core:common.cancel')}
             </button>
             <Button
               type="submit"
@@ -163,7 +162,7 @@ export function RenameAppDialog() {
               layout="flex"
               disabled={busy}
             >
-              {busy ? 'Opening PR...' : 'Open PR'}
+              {busy ? t('dialogs:rename.submitting') : t('dialogs:rename.submit')}
             </Button>
           </div>
         </form>

@@ -11,7 +11,7 @@
 //     on for real: reading it, building it (its queue row long gone), a
 //     follow-up on its proposal waiting its turn (#3734), a request waiting
 //     in the queue; and a project of theirs still being set up for its
-//     first version. Shadow triage is not work for anybody.
+//     first version. An app the bot is paused on is not work for anybody.
 //   - NEEDS YOU and HISTORY are the bot's live runs on their requests, one
 //     entry per request with its other runs folded in, newest news first,
 //     each with what came of it and where it opens (the proposal once people
@@ -124,12 +124,11 @@ test('the Homeroom bot DM\'s activity tray reads one person\'s work, through the
   const samsApp = await project('sam-shop', sam);
   // Private, and ada is not (or no longer) a collaborator there.
   const hidden = await project('hidden-lab', sam, { visibility: 'private' });
-  // Not on the live list: the bot only triages it in the background.
+  // Paused: the bot leaves it alone. Every other app is live (liveScope).
   const shadowApp = await project('shadow-app', ada);
   const ear = await project('ear-trainer', ada);
   await setting('homeroom_bot_mode', 'shadow');
-  await setting('homeroom_bot_dm_users', JSON.stringify([ada.username, sam.username]));
-  await setting('homeroom_bot_live_apps', JSON.stringify(['seed-swap', 'note-board', 'sam-shop', 'hidden-lab']));
+  await setting('homeroom_bot_paused_apps', JSON.stringify(['shadow-app']));
 
   await pool.query(
     `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title) VALUES
@@ -138,7 +137,7 @@ test('the Homeroom bot DM\'s activity tray reads one person\'s work, through the
     [seeds.id, notes.id, samsApp.id, ada.id, sam.id, hidden.id],
   );
   // An issue ada filed on Homeroom that the loop has not recorded yet, and
-  // one on the app it only triages in the background.
+  // one on the app the bot is paused on.
   await pool.query(
     `INSERT INTO issues (app_id, github_issue_number, title, created_by) VALUES
        ($1, 7, 'Export as CSV', $3), ($2, 1, 'Shadow request', $3)`,
@@ -183,7 +182,7 @@ test('the Homeroom bot DM\'s activity tray reads one person\'s work, through the
     const by = new Map(work.now.map((job) => [key(job), job]));
     const sort = by.get('seed-swap#3');
     assert.equal(sort.phase, 'looking');
-    assert.deepEqual([sort.step, sort.of, sort.stepName], [1, 6, 'Read the request'], 'the step its activity card draws');
+    assert.deepEqual([sort.step, sort.of, sort.stepName], [1, 6, 'Reading'], 'the step its activity card draws');
     assert.equal(sort.title, 'Sort by date');
     assert.equal(sort.href, '#app/seed-swap/dev/issues/3');
     assert.ok(sort.since, 'and since when');
@@ -271,6 +270,16 @@ test('the Homeroom bot DM\'s activity tray reads one person\'s work, through the
     assert.equal(pin.links.request, '#app/note-board/dev/issues/5');
     assert.ok(Date.parse(pin.at) > Date.parse(dark.at));
 
+    // D1: had it been the project's first version, it merges without a
+    // vote: being tested until then, never waiting for approval.
+    await pool.query(
+      `INSERT INTO homeroom_bot_first_versions (app_id, user_id, brief, status, issue_number, filed_at)
+       VALUES ($1, $2, 'Notes to pin', 'filed', 5, NOW())`,
+      [notes.id, ada.id],
+    );
+    assert.equal((await tray.workFor(pool, { user: asAda })).history[0].outcome, 'checking');
+    await pool.query('DELETE FROM homeroom_bot_first_versions WHERE app_id = $1', [notes.id]);
+
     // The bot came back to it: still one entry, its build folded in as an earlier run.
     const { rows: [answer] } = await pool.query(
       `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, created_at)
@@ -297,12 +306,120 @@ test('the Homeroom bot DM\'s activity tray reads one person\'s work, through the
     await pool.query('DELETE FROM homeroom_bot_runs WHERE id = $1', [answer.id]);
   });
 
+  // #4539: a request closed while its plan still waited for its person's
+  // Build it leaves Needs you and reads stopped in History. The plan is not
+  // retired, so the same read open says Needs you: it is the request's own
+  // closed state both queries (progress and past runs) now carry.
+  await t.test('#4539: a request closed while its plan waited for Build it stops, and does not wait any more', async () => {
+    const progressSvc = require('../src/services/homeroom-bot-progress');
+    await pool.query(
+      `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title) VALUES ($1, 6, $2, 'Sticky filters')`,
+      [notes.id, ada.id],
+    );
+    await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, awaiting_go_at, created_at)
+       VALUES ($1, 6, 'live', 'ready', NOW() - INTERVAL '49 minutes', NOW() - INTERVAL '50 minutes')`,
+      [notes.id],
+    );
+    await pool.query(
+      `INSERT INTO issues (app_id, github_issue_number, title, created_by) VALUES ($1, 6, 'Sticky filters', $2)`,
+      [notes.id, ada.id],
+    );
+    const waiting = await tray.workFor(pool, { user: asAda });
+    assert.deepEqual(waiting.needsYou.map(key), ['note-board#6', 'seed-swap#4'],
+      'open, its plan waits on her, newest first');
+    assert.ok(!waiting.history.some((job) => key(job) === 'note-board#6'), 'and it is nowhere else');
+
+    await pool.query(`UPDATE issues SET status = 'closed' WHERE app_id = $1 AND github_issue_number = 6`, [notes.id]);
+    const stopped = await tray.workFor(pool, { user: asAda });
+    assert.ok(!stopped.needsYou.some((job) => key(job) === 'note-board#6'), 'a closed request needs nobody');
+    const tile = stopped.history.find((job) => key(job) === 'note-board#6');
+    assert.equal(tile.outcome, 'stopped', 'and History says the work stopped');
+    assert.equal(tile.doing, null);
+    assert.equal(tile.href, '#app/note-board/dev/issues/6');
+
+    // The bot's own progress answer says the same: nothing in progress, and
+    // what came of it names the closure.
+    const settings = await homeroomBot.readSettings(pool);
+    const progress = await progressSvc.progressFor(pool, { userId: ada.id, settings, deps: { domain: null } });
+    assert.ok(!progress.rightNow.some((item) => item.project === 'note-board' && item.number === 6),
+      'not in progress any more');
+    assert.ok(progress.finishedLately.some((item) => item.number === 6 && item.outcome === 'not built: the request was closed'),
+      'and the outcome names the closure');
+
+    // Leaving it as the later tests find it.
+    await pool.query('DELETE FROM homeroom_bot_runs WHERE app_id = $1 AND issue_number = 6', [notes.id]);
+    await pool.query('DELETE FROM homeroom_bot_requesters WHERE app_id = $1 AND issue_number = 6', [notes.id]);
+    await pool.query('DELETE FROM issues WHERE app_id = $1 AND github_issue_number = 6', [notes.id]);
+  });
+
+  // #5009: the same read, for a look that found nothing to build. Closed, it
+  // leaves Needs you even while its chat still holds the open ask, which is
+  // what the strip reads besides the outcome; nothing is retired, so
+  // reopening brings it back with its ask.
+  await t.test('#5009: a closed request leaves Needs you even while its chat still asks', async () => {
+    await pool.query(
+      `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title) VALUES ($1, 8, $2, 'Tag colours')`,
+      [notes.id, ada.id],
+    );
+    await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, created_at)
+       VALUES ($1, 8, 'live', 'empty', NOW() - INTERVAL '40 minutes')`,
+      [notes.id],
+    );
+    await pool.query(
+      `INSERT INTO issues (app_id, github_issue_number, title, created_by) VALUES ($1, 8, 'Tag colours', $2)`,
+      [notes.id, ada.id],
+    );
+    const conversation = (await pool.query(
+      `INSERT INTO conversations (kind, created_by) VALUES ('direct', $1) RETURNING id`,
+      [bot.id],
+    )).rows[0].id;
+    const message = (await pool.query(
+      `INSERT INTO conversation_messages (conversation_id, sender_id, content) VALUES ($1, $2, 'Nothing to build yet') RETURNING id`,
+      [conversation, bot.id],
+    )).rows[0].id;
+    await pool.query(
+      `INSERT INTO homeroom_bot_dm_messages (message_id, user_id, conversation_id, app_id, issue_number, kind, question_status)
+       VALUES ($1, $2, $3, $4, 8, 'empty', 'open')`,
+      [message, ada.id, conversation, notes.id],
+    );
+
+    const open = await tray.workFor(pool, { user: asAda });
+    assert.deepEqual(open.needsYou.map(key), ['note-board#8', 'seed-swap#4'],
+      'open, its empty look waits on her, newest first');
+    assert.equal(open.needsYou[0].ask.kind, 'empty', 'with the chat\'s ask for the strip');
+
+    await pool.query(`UPDATE issues SET status = 'closed' WHERE app_id = $1 AND github_issue_number = 8`, [notes.id]);
+    const closed = await tray.workFor(pool, { user: asAda });
+    assert.ok(!closed.needsYou.some((job) => key(job) === 'note-board#8'),
+      'closed: it needs nobody, ask and all');
+    const tile = closed.history.find((job) => key(job) === 'note-board#8');
+    assert.equal(tile.outcome, 'stopped', 'and History says the work stopped');
+    assert.equal(tile.ask, undefined, 'its old ask does not put it back');
+    assert.equal(tile.answered, false, 'the rest of its story stays');
+
+    // Reopened, it waits again: nothing was deleted.
+    await pool.query(`UPDATE issues SET status = 'open' WHERE app_id = $1 AND github_issue_number = 8`, [notes.id]);
+    const again = await tray.workFor(pool, { user: asAda });
+    assert.ok(again.needsYou.some((job) => key(job) === 'note-board#8'), 'reopened, it waits on her again');
+    assert.equal(again.needsYou.find((job) => key(job) === 'note-board#8').ask.kind, 'empty');
+
+    // Leaving it as the later tests find it.
+    await pool.query('DELETE FROM homeroom_bot_dm_messages WHERE app_id = $1 AND issue_number = 8', [notes.id]);
+    await pool.query('DELETE FROM conversation_messages WHERE id = $1', [message]);
+    await pool.query('DELETE FROM conversations WHERE id = $1', [conversation]);
+    await pool.query('DELETE FROM homeroom_bot_runs WHERE app_id = $1 AND issue_number = 8', [notes.id]);
+    await pool.query('DELETE FROM homeroom_bot_requesters WHERE app_id = $1 AND issue_number = 8', [notes.id]);
+    await pool.query('DELETE FROM issues WHERE app_id = $1 AND github_issue_number = 8', [notes.id]);
+  });
+
   await t.test('never anybody else\'s, and never an app they cannot view', async () => {
     const ours = await tray.workFor(pool, { user: asAda });
     const all = [...ours.now, ...ours.needsYou, ...ours.history].map((job) => job.appSlug);
     assert.ok(!all.includes('sam-shop'), 'sam\'s work is not ada\'s');
     assert.ok(!all.includes('hidden-lab'), 'a private app she cannot view is left out');
-    assert.ok(!all.includes('shadow-app'), 'background triage is not work for her');
+    assert.ok(!all.includes('shadow-app'), 'an app the bot is paused on is not work for her');
 
     const sams = await tray.workFor(pool, { user: asSam });
     assert.deepEqual(sams.now.map(key), ['sam-shop#9'],
@@ -386,6 +503,8 @@ test('the Homeroom bot DM\'s activity tray reads one person\'s work, through the
     assert.equal(tray.noteWorkChanged(null), 0, 'an issue nobody on Homeroom filed tells nobody');
     assert.equal(tray.noteWorkChanged('x'), 0);
     const settings = await homeroomBot.readSettings(pool);
-    assert.ok(settings.liveApps.includes('seed-swap'));
+    const live = require('../src/services/homeroom-bot-live');
+    assert.ok(live.isLiveFor(settings, { slug: 'seed-swap' }), 'every app is live');
+    assert.equal(live.isLiveFor(settings, { slug: 'shadow-app' }), false, 'but a paused one');
   });
 });

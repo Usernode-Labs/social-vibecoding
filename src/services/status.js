@@ -10,7 +10,7 @@ const workerSvc = require('./worker');
 const applicationRuntime = require('./application-runtime');
 const runtimeStatus = require('./runtime-status');
 const activeWorkers = require('./active-workers');
-const stagingSvc = require('./staging');
+const checksQueue = require('./checks-queue');
 
 const WORKER_PREFIX = 'usernode-worker-';
 const APP_PREFIX = 'usernode-app-';
@@ -57,7 +57,7 @@ async function gatherFull(config) {
   const pool = getPool(config);
   const isAdmin = true; // Always build the full payload; redact at serve time.
 
-  const [appsQ, sessionsQ, llmQ, sessionCountsQ, runtimeQ] = await Promise.all([
+  const [appsQ, sessionsQ, llmQ, sessionCountsQ, runtimeQ, checksQueueSnapshot] = await Promise.all([
     pool.query(
       `SELECT a.id, a.name, a.slug, a.repo_url, a.container_id, a.status, a.created_at,
               a.image_ref, a.build_ref, a.runtime_kind, a.runtime_name, a.self_hosted,
@@ -75,6 +75,7 @@ async function gatherFull(config) {
               cs.session_title, cs.staging_container_id, cs.staging_url, cs.status, cs.created_at,
               cs.active_turn IS NOT NULL AS has_active_turn, cs.last_activity_at,
               cs.staging_image_ref, cs.staging_build_ref, cs.staging_runtime_kind, cs.staging_runtime_name,
+              (cs.check_state = 'pending' AND cs.check_phase = 'building') AS building,
               u.username, u.id AS user_id, a.slug AS app_slug
        FROM chat_sessions cs
        LEFT JOIN users u ON cs.user_id = u.id
@@ -104,6 +105,10 @@ async function gatherFull(config) {
        FROM chat_sessions`
     ),
     runtimeStatus.snapshot(config),
+    // The checks queue: who holds the CHECKS_MAX_CONCURRENT_RUNS slots, who
+    // waits, and how the last day's slots went. Null when it could not be
+    // read; it never costs the rest of the payload.
+    checksQueue.snapshot(pool).catch(() => null),
   ]);
 
   const apps = appsQ.rows;
@@ -167,6 +172,13 @@ async function gatherFull(config) {
       if (warm.bootstrapping) workerMode = 'bootstrapping';
       else if (warm.inFlight) workerMode = 'in-flight';
       else workerMode = 'warm-idle';
+    } else if (sessionId != null) {
+      // Another live process's worker (a web process's, or the conductor's:
+      // docs/plans/web-and-conductor.md), not an orphan: what it holds says
+      // what it is doing (services/processes.js).
+      const processes = require('./processes');
+      if (processes.heldElsewhere('session', sessionId)) workerMode = 'in-flight';
+      else if (processes.heldElsewhere('warm', sessionId)) workerMode = 'warm-idle';
     }
     const idleMs = warm && !warm.inFlight ? Date.now() - warm.lastUsedMs : null;
     return {
@@ -318,7 +330,7 @@ async function gatherFull(config) {
       (s.pr_number || s.staging_build_ref || s.staging_runtime_name || s.staging_container_id) &&
       !s.has_active_turn &&
       !activeWorkers.isSessionBusy(s.id) &&
-      !stagingSvc.hasInFlightBuild(s.id) &&
+      !s.building &&
       Date.now() - new Date(s.last_activity_at || s.created_at).getTime() > MISSING_PREVIEW_THRESHOLD_MS
     )
     .map((s) => ({
@@ -472,6 +484,7 @@ async function gatherFull(config) {
     capacity,
     host,
     db: dbPool,
+    checksQueue: checksQueueSnapshot,
     apps: appTree,
     workers,
     stuckSessions,
@@ -506,9 +519,12 @@ function redact(full, { isAdmin }) {
     const { lastProgress, lastProgressAt, model, ...rest } = w;
     return rest;
   };
-  // Drop host RAM/load + pg pool internals (operational signal we only
-  // want admins to see) along with the existing admin-only blocks.
-  const { llmUsage, events, summary, limits, apps, workers, host, db, capacity, ...rest } = full;
+  // Drop host RAM/load + pg pool internals and the checks queue (operational
+  // signal we only want admins to see; the queue names sessions and pull
+  // requests) along with the existing admin-only blocks.
+  const {
+    llmUsage, events, summary, limits, apps, workers, host, db, capacity, checksQueue: _queue, ...rest
+  } = full;
   const {
     globalSpendCents, globalSpendCap,
     hostMemUsedPct, hostLoadAvg1, dbPoolWaiting,

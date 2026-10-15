@@ -17,8 +17,10 @@ const { PRODUCTION_ORIGIN } = require('../cli-auth-constants');
 const tracking = require('./tracking');
 
 // Minimal HTML escaping — these bodies interpolate an email address, a
-// six-digit code and platform-built URLs, never free user text, but
-// escaping is cheap and keeps that true if a payload field ever grows.
+// six-digit code and platform-built URLs, and, since content_report, free
+// reporter-written text; every interpolated field goes through this, so the
+// rule the comment once stated ("never free user text") is kept by the
+// call sites rather than by the payloads.
 function esc(s) {
   return String(s == null ? '' : s)
     .replace(/&/g, '&amp;')
@@ -150,6 +152,43 @@ const BUTTON_STYLE =
   + 'color:#ffffff;font-size:15px;font-weight:600;text-decoration:none';
 const button = (url, label) =>
   `<p><a href="${esc(url)}" style="${BUTTON_STYLE}">${esc(label)}</a></p>`;
+
+// The welcome hero's two pieces, shared with the plainer mails that now wear
+// the same treatment (#5068): the landing page's full-round pill and the one
+// centred cell the release mail drew for itself. Inline styles on a real
+// `<a>`: `<button>` does nothing in a mail client, `<style>` blocks are
+// stripped by Gmail's clipper and Outlook, and a `mso-` conditional table
+// would be scaffolding for a single control. Padding on the anchor is what
+// every client renders consistently.
+const PILL_STYLE =
+  `display:inline-block;padding:12px 28px;border-radius:999px;background:${BRAND_ACCENT};`
+  + 'color:#ffffff;font-size:16px;font-weight:650;text-decoration:none';
+const pill = (url, label) =>
+  `<p style="margin:20px 0 0"><a href="${esc(url)}" style="${PILL_STYLE}">${esc(label)}</a></p>`;
+
+// The hero (eyebrow, headline, line, pill) is one centred cell, like the
+// landing page's pitch block. Table scaffolding here is not the frame's
+// "table-free" rule broken: a cell's text-align:center is the one centreing
+// a plain block cannot carry in clients that ignore margins on paragraphs.
+const centered = (inner) =>
+  '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"'
+  + ' style="border-collapse:collapse"><tr><td style="text-align:center">'
+  + inner
+  + '</td></tr></table>';
+
+// The hero's type, as the release mail draws it and now the rest of the
+// plain family (#5068): a small uppercase eyebrow over a big weight-800
+// headline (the release mail's 28px for its one short sentence, 24px where
+// the news can run several sentences), and the grey line under it.
+const heroEyebrow = (text, top = 0) =>
+  `<p style="margin:${top}px 0 0;font-size:13px;font-weight:600;letter-spacing:0.8px;`
+  + `text-transform:uppercase;color:${NEUTRAL_SECONDARY_INK}">${esc(text)}</p>`;
+const heroHeadline = (text, size = 28, lineHeight = 32) =>
+  `<p style="margin:10px 0 0;font-size:${size}px;line-height:${lineHeight}px;font-weight:800;`
+  + `color:${NEUTRAL_INK}">${esc(text)}</p>`;
+const heroLine = (text) =>
+  `<p style="margin:10px 0 0;font-size:16px;line-height:22px;`
+  + `color:${NEUTRAL_SECONDARY_INK}">${esc(text)}</p>`;
 
 // A one-time code, set big enough to read at arm's length and to copy by
 // eye off a phone. Three mails carry one and all three render it this way;
@@ -305,57 +344,77 @@ function waitlistCode(payload) {
   return { subject: 'Your Homeroom waitlist confirmation code', text, html };
 }
 
-// Waitlist release, the "you're in" welcome (copy from the Early Testing
-// Acceptance doc's wider email). The no-account link carries the released
+// Waitlist release, the "you're in" welcome. #4570 restyled it after the
+// signed-out landing page (frontend/src/features/auth/landing.tsx) and cut it
+// to its one job: get the person in now that their spot is open. A
+// no-account link without a one-time sign-in carries only the released
 // address, and opening it asks for a sign-in code straight away, so say so:
 // the recipient should be expecting a second email rather than hunting for a
 // button. The 10-minute figure must match OTP_TTL_MS in
 // src/services/email-signup.js.
-const RELEASE_CODE_NOTE = 'Opening the link emails you a 6-digit code to sign in with. '
-  + 'The code expires in 10 minutes, and you can ask for a new one at any time.';
+//
+// A link WITH the one-time sign-in (#4594, services/release-links.js) gets no
+// note: the button signs them in, and the screen its fallback opens says
+// itself that a code was sent. The link is bound to the released address and
+// the fallback fills it in, so the mail does not ask them to remember which
+// address they joined with either.
+const RELEASE_CODE_NOTE = 'Opening it emails you a 6-digit code to sign in with. '
+  + 'The code expires in 10 minutes.';
 
-const RELEASE_HEADLINE = 'Make and share small apps with friends and groups.';
+const RELEASE_HEADLINE = 'Make and share apps with groups and friends.';
+
+// The landing page's people illustration, the same file that screen draws at
+// /brand/people.png. An absolute URL for the same reason the logo's is: a
+// mail client has no page context to resolve a relative one against. Empty
+// `alt` because it is decorative — the headline under it carries the meaning,
+// and a client that blocks images shows a blank gap, not a broken layout.
+const ILLUSTRATION_URL = `${PRODUCTION_ORIGIN}/brand/people.png`;
+
+// The three "once you're inside" points as landing-page chips. The colours are
+// the MID stops of frontend/src/features/auth/landing.tsx's `CHIPS`
+// gradients — one solid fill per chip rather than the gradient itself,
+// because mail clients do not draw `radial-gradient` reliably.
 const RELEASE_CAN_DO = [
-  'Make an app for you, your friends or your group.',
-  'Use and improve apps with others.',
-  'Suggest, preview, and vote on changes.',
-  'Complete a few early challenges along the way.',
+  { line: 'Make an app for your group', color: '#3484fc' },
+  { line: 'Use and improve apps together', color: '#8bd669' },
+  { line: 'Suggest, preview and vote on changes', color: '#fc5750' },
 ];
 
-// Install steps per platform, each with the one step that is a link. The
-// links are the published store listings (services/mobile-store-links.js), so a
-// platform whose listing is cleared drops out instead of pointing nowhere.
+// Install notes per platform, one line each with the one step that is a
+// link. The links are the published store listings
+// (services/mobile-store-links.js), so a platform whose listing is cleared
+// drops out instead of pointing nowhere.
 const RELEASE_MOBILE = [
   {
     os: 'ios',
     name: 'iPhone',
-    steps: (a) => [
-      'Download TestFlight from the App Store.',
-      `${a('Open the Homeroom invite')}.`,
-      'Install Homeroom and sign in with your waitlist email.',
-    ],
+    line: (a) => `Install TestFlight, then ${a('open the Homeroom invite')}.`,
   },
   {
     os: 'android',
     name: 'Android',
-    steps: (a) => [
+    line: (a) =>
       `${a('Open the Homeroom testing link')} while signed into Google Play with your waitlist email.`,
-      'Join the test and install Homeroom.',
-      'Sign in with your waitlist email.',
-    ],
   },
 ];
 
 const inlineLink = (url, label) =>
   `<a href="${esc(url)}" style="color:${BRAND_ACCENT}">${esc(label)}</a>`;
-const bulletList = (items) =>
-  '<ul style="margin:0 0 16px;padding-left:20px">'
-  + items.map((i) => `<li>${i}</li>`).join('')
-  + '</ul>';
-const numberedList = (items) =>
-  '<ol style="margin:0 0 16px;padding-left:20px">'
-  + items.map((i) => `<li>${i}</li>`).join('')
-  + '</ol>';
+
+// One chip, as the landing rail draws it: a square card, no radius (the
+// corners are the chip's whole character on a page of round pills), a 1px
+// near-black hairline, the board's hard 2px/2px offset shadow, and a 34px
+// solid colour block flush into its left edge. Its own table because a
+// floating row needs one, and `border-collapse:separate` so the hairline
+// draws around the card rather than collapsing away.
+const releaseChip = ({ line, color }, top = 0) =>
+  '<table role="presentation" cellpadding="0" cellspacing="0" border="0"'
+  + ` style="border-collapse:separate;margin:${top}px 0 8px;border:1px solid #0b0b0c;`
+  + 'box-shadow:2px 2px 4px rgba(161,152,152,0.25)">'
+  + '<tr>'
+  + `<td width="34" height="34" bgcolor="${color}" style="width:34px;height:34px;background:${color}">&nbsp;</td>`
+  + `<td style="font-size:15px;line-height:1.4;padding:0 12px 0 8px;color:${NEUTRAL_INK}">${esc(line)}</td>`
+  + '</tr></table>';
 
 function waitlistReleased(payload) {
   const url = payload.url;
@@ -363,40 +422,43 @@ function waitlistReleased(payload) {
   const mobile = payload.mobile || {};
   const platforms = RELEASE_MOBILE.filter((m) => mobile[m.os]);
 
-  const youreIn = hasAccount
-    ? "Thanks for your interest in Homeroom. You're in, and your account now has platform access."
-    : "Thanks for your interest in Homeroom. You're in.";
+  const action = hasAccount ? 'Sign in' : 'Create my account';
   const how = hasAccount
-    ? 'Sign in with your waitlist email to get started.'
-    : 'Create your account with this email address, the one you used for the waitlist.';
+    ? 'Your account now has access. Sign in with your waitlist email.'
+    : null;
+  // #1548: a no-account link with no one-time sign-in sends a code the
+  // moment it is opened, so say so. Somebody who is not told to expect a
+  // SECOND email goes hunting for a button that is not there.
+  const note = !hasAccount && !payload.signInLink ? RELEASE_CODE_NOTE : null;
 
-  let text = `${RELEASE_HEADLINE}\n\n${youreIn}\n\n${how}\n${url}`;
-  if (!hasAccount) text += `\n\n${RELEASE_CODE_NOTE}`;
-  text += "\n\nOnce you're inside you can:\n"
-    + RELEASE_CAN_DO.map((i) => `- ${i}`).join('\n');
+  // The text part has no button, so it names the action over the link.
+  let text = `You're in.\n${RELEASE_HEADLINE}\n\n${how || `${action}:`}\n${url}`;
+  if (note) text += `\n\n${note}`;
+  text += '\n\n' + RELEASE_CAN_DO.map((c) => `- ${c.line}`).join('\n');
 
-  let html = p(`<strong style="font-size:18px">${esc(RELEASE_HEADLINE)}</strong>`)
-    + p(esc(youreIn))
-    // #1540: the mail's one action is a button rather than a URL printed
-    // mid-paragraph.
-    + button(url, hasAccount ? 'Sign in' : 'Create my account')
-    + p(esc(how))
-    // #1548: the no-account link sends a code the moment it is opened, so
-    // say so here. Somebody who is not told to expect a SECOND email goes
-    // hunting for a button that is not there.
-    + (hasAccount ? '' : p(esc(RELEASE_CODE_NOTE)))
-    + p("<strong>Once you're inside you can:</strong>")
-    + bulletList(RELEASE_CAN_DO.map(esc));
+  let html = centered(
+    `<img src="${ILLUSTRATION_URL}" width="272" height="204" alt=""`
+      + ' style="display:block;margin:0 auto;border:0;max-width:100%;height:auto">'
+    + heroEyebrow("You're in", 20)
+    + heroHeadline(RELEASE_HEADLINE)
+    + (how ? heroLine(how) : '')
+    + pill(url, action)
+    + (note ? `<p style="margin:10px 0 0;font-size:13px;`
+      + `color:${NEUTRAL_SECONDARY_INK}">${esc(note)}</p>` : '')
+  )
+    + RELEASE_CAN_DO.map((c, i) => releaseChip(c, i === 0 ? 24 : 0)).join('');
 
   if (platforms.length) {
-    text += '\n\nWant to test Homeroom on mobile?';
-    html += p('<strong>Want to test Homeroom on mobile?</strong>');
+    text += '\n\nTry it on mobile';
+    html += `<p style="margin:24px 0 8px;font-size:12px;font-weight:700;`
+      + `letter-spacing:0.06em;text-transform:uppercase;`
+      + `color:${NEUTRAL_SECONDARY_INK}">Try it on mobile</p>`;
     for (const m of platforms) {
       const link = mobile[m.os];
-      const textSteps = m.steps((label) => `${label} (${link})`);
-      text += `\n\n${m.name}\n` + textSteps.map((st, i) => `${i + 1}. ${st}`).join('\n');
-      html += p(`<strong>${esc(m.name)}</strong>`)
-        + numberedList(m.steps((label) => inlineLink(link, label)));
+      text += `\n${m.name}: ${m.line((label) => `${label} (${link})`)}`;
+      html += `<p style="margin:0 0 8px"><strong>${esc(m.name)}</strong>: `
+        + m.line((label) => inlineLink(link, label))
+        + '</p>';
     }
   }
 
@@ -405,7 +467,7 @@ function waitlistReleased(payload) {
 
   return {
     subject: "You're in. Welcome to Homeroom",
-    preheader: "Make and share small apps with friends and groups. Here's how to get started.",
+    preheader: "Make and share apps with groups and friends. Here's how to get started.",
     text,
     html,
   };
@@ -455,17 +517,86 @@ function adminTest(payload) {
     + 'An administrator sent it to check that outbound email works. '
     + 'No action is needed.';
 
+  // #5068: the welcome hero's eyebrow and headline, and the four details as
+  // rows of one hairline box instead of a `<br>` run. Still deliberately
+  // carries NOTHING sensitive and nothing to act on: no link, no button.
+  const row = (label, value, first = false) =>
+    '<tr>'
+    + `<td style="font-size:14px;line-height:1.5;padding:6px 12px;color:${NEUTRAL_SECONDARY_INK}`
+    + (first ? '' : `;border-top:1px solid ${NEUTRAL_HAIRLINE}`) + `">${esc(label)}</td>`
+    + '<td style="font-size:14px;line-height:1.5;padding:6px 12px;text-align:right">'
+    + value + '</td></tr>';
+  const detail =
+    '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"'
+    + ` style="border-collapse:separate;margin:20px 0 0;border:1px solid ${NEUTRAL_HAIRLINE};`
+    + 'border-radius:12px"><tbody>'
+    + row('Provider', `<strong>${esc(provider)}</strong>`, true)
+    + row('Sent as', esc(from))
+    + row('Sent at', esc(sentAt))
+    + row('Reference', `<code>${esc(reference)}</code>`)
+    + '</tbody></table>';
+
   return {
     subject: 'Homeroom test email',
     text,
     html: (
-      p('This is a test email from the Homeroom platform admin console.')
-      + `<p>Provider: <strong>${esc(provider)}</strong><br>`
-      + `Sent as: ${esc(from)}<br>`
-      + `Sent at: ${esc(sentAt)}<br>`
-      + `Reference: <code>${esc(reference)}</code></p>`
-      + p('An administrator sent it to check that outbound email works. '
-        + 'No action is needed.')
+      centered(heroEyebrow('Test email')
+        + heroHeadline('This is a test email from the Homeroom platform admin console.', 24, 30))
+      + detail
+      + `<p style="margin:16px 0 0;text-align:center;font-size:13px;color:${NEUTRAL_SECONDARY_INK}">`
+      + 'An administrator sent it to check that outbound email works. No action is needed.</p>'
+    ),
+  };
+}
+
+// A new content report, to the platform's compliance inbox
+// (services/moderation.js submitReport). Unlike every kind above, the text
+// here IS free reporter-written text (the reason's optional detail), so every
+// field goes through esc() and the html detail keeps its line breaks. It does
+// NOT quote the reported message itself or carry evidence files: the link
+// opens the case in the admin console, where that copy stays behind the
+// admin sign-in. Type labels match the Moderation section's own words.
+const REPORT_TYPE_LABELS = {
+  app: 'App',
+  user: 'User',
+  app_message: 'App message',
+  conversation_message: 'Private message',
+};
+
+function contentReport(payload) {
+  const reason = String(payload.reason || 'unknown').replace(/_/g, ' ');
+  const targetLabel = String(payload.targetLabel || 'Unknown target').slice(0, 120);
+  const typeLabel = REPORT_TYPE_LABELS[payload.targetType] || 'Unknown';
+  const reporter = payload.reporter ? `@${payload.reporter}` : 'Unknown';
+  const caseId = payload.caseId != null ? payload.caseId : '?';
+  const reportId = payload.reportId != null ? payload.reportId : '?';
+  const detail = String(payload.detail || '').trim();
+  const shownDetail = detail || 'None given';
+  const url = payload.url || PRODUCTION_ORIGIN;
+
+  const text = 'A new report was submitted on Homeroom.\n\n'
+    + `Reason: ${reason}\n`
+    + `Reported: ${typeLabel} · ${targetLabel}\n`
+    + `Reporter: ${reporter}\n`
+    + `Case #${caseId} · Report #${reportId}\n\n`
+    + `Details from the reporter:\n${shownDetail}\n\n`
+    + `Open in Moderation: ${url}`;
+
+  return {
+    why: 'You are receiving this because this address is Homeroom\'s '
+      + 'compliance inbox for content reports.',
+    preheader: `New ${reason} report on ${targetLabel}`,
+    subject: `New report: ${reason} · ${targetLabel}`.slice(0, 200),
+    text,
+    html: (
+      p('A new report was submitted on Homeroom.')
+      + `<p>Reason: <strong>${esc(reason)}</strong><br>`
+      + `Reported: ${esc(typeLabel)} · ${esc(targetLabel)}<br>`
+      + `Reporter: ${esc(reporter)}<br>`
+      + `Case #${esc(String(caseId))} · Report #${esc(String(reportId))}</p>`
+      + p('Details from the reporter:')
+      + `<p style="white-space:pre-wrap">${esc(shownDetail)}</p>`
+      + button(url, 'Open in Moderation')
     ),
   };
 }
@@ -486,11 +617,18 @@ function projectInvite(payload) {
       + 'You will not hear from us again unless you join, or somebody invites you again.',
     subject: `${inviter} invited you to ${project} on Homeroom`,
     text: `${lead}\n\n${how}${url ? `\n\n${url}` : ''}\n\nIf you were not expecting this, you can ignore this email.`,
+    // #5068: the welcome hero, minus the eyebrow's sentence-splitting into
+    // headline and line. The text part keeps the whole first sentence.
     html: (
-      p(lead)
-      + p(how)
-      + (url ? button(url, 'Join the waitlist') : '')
-      + p('If you were not expecting this, you can ignore this email.')
+      centered(
+        heroEyebrow("You're invited")
+        + heroHeadline(`${inviter} invited you to ${project}.`, 24, 30)
+        + heroLine("It's a private community on Homeroom, where communities build the "
+          + 'apps they use together. ' + how)
+        + (url ? pill(url, 'Join the waitlist') : '')
+        + `<p style="margin:16px 0 0;font-size:13px;color:${NEUTRAL_SECONDARY_INK}">`
+          + 'If you were not expecting this, you can ignore this email.</p>'
+      )
     ),
   };
 }
@@ -500,7 +638,13 @@ function projectInvite(payload) {
 // ask for this one by doing something just now, so each says why it came,
 // carries a one-click unsubscribe (RFC 8058: `List-Unsubscribe` with
 // `List-Unsubscribe-Post`), and offers the same link in its words.
-function activityFrame({ subject, lead, url, label, unsubscribeUrl }) {
+// #5068: the activity mails wear the welcome hero now, without the release
+// mail's illustration. The lead is the headline (24px, not 28px: it can run
+// several sentences), the project's name is the eyebrow, and "Stop these
+// emails" sits small and grey under the pill. Everything else about the
+// send is untouched: the same words in the text part, the same preheader,
+// the same List-Unsubscribe headers.
+function activityFrame({ subject, lead, url, label, eyebrow = '', unsubscribeUrl }) {
   const off = unsubscribeUrl
     ? `To stop these emails: ${unsubscribeUrl}`
     : '';
@@ -510,10 +654,12 @@ function activityFrame({ subject, lead, url, label, unsubscribeUrl }) {
     preheader: lead,
     subject,
     text: `${lead}\n\n${label}: ${url}${off ? `\n\n${off}` : ''}`,
-    html: (
-      p(esc(lead))
-      + button(url, label)
-      + (unsubscribeUrl ? p(`<a href="${esc(unsubscribeUrl)}" style="color:${NEUTRAL_SECONDARY_INK}">Stop these emails</a>`) : '')
+    html: centered(
+      (eyebrow ? heroEyebrow(eyebrow) : '')
+      + heroHeadline(lead, 24, 30)
+      + pill(url, label)
+      + (unsubscribeUrl ? `<p style="margin:16px 0 0;font-size:13px">`
+        + `<a href="${esc(unsubscribeUrl)}" style="color:${NEUTRAL_SECONDARY_INK}">Stop these emails</a></p>` : '')
     ),
     headers: unsubscribeUrl ? {
       'List-Unsubscribe': `<${unsubscribeUrl}>`,
@@ -522,25 +668,28 @@ function activityFrame({ subject, lead, url, label, unsubscribeUrl }) {
   };
 }
 
-// Something somebody asked Homeroom bot for is ready to try.
+// Something somebody asked Homeroom bot for is ready to try. "One story":
+// worded as its push is (homeroom-bot-notify-copy.js botEmailCopy): the
+// request and its project with the body's first sentence ("Dark mode · Plant
+// Pal: Ready to try"), over the push's body. A sender that did not hand the
+// words over gets the same shape from the project's name.
 function buildReady(payload) {
   const app = String(payload.appName || 'Your project').slice(0, 80);
-  // Built, but its before & after shots showed part of it failing.
-  if (payload.notWorking) {
-    return activityFrame({
-      subject: `${app} is built, but not everything works yet`,
-      lead: `Homeroom bot built what you asked for in ${app}, but not everything works yet. Open it to see what.`,
-      url: payload.url || PRODUCTION_ORIGIN,
-      label: 'Open it',
-      unsubscribeUrl: payload.unsubscribeUrl || null,
-    });
-  }
+  const lead = typeof payload.lead === 'string' && payload.lead.trim()
+    ? payload.lead.trim().slice(0, 300)
+    : (payload.notWorking
+      ? 'Built, but something isn\'t working yet. Try it to see.'
+      : 'Ready to try. Try it, and approve it if you\'re happy.');
+  const subject = typeof payload.subject === 'string' && payload.subject.trim()
+    ? payload.subject.trim().slice(0, 200)
+    : `${app}: ${payload.notWorking ? 'Built, but something isn\'t working yet' : 'Ready to try'}`;
   return activityFrame({
-    subject: `${app} is ready to try`,
-    lead: `Homeroom bot built what you asked for in ${app}, and it's ready to try.`,
+    subject,
+    lead,
     url: payload.url || PRODUCTION_ORIGIN,
     label: 'Open it',
     unsubscribeUrl: payload.unsubscribeUrl || null,
+    eyebrow: app,
   });
 }
 
@@ -554,6 +703,9 @@ function inviteActivity(payload) {
     url: payload.url || PRODUCTION_ORIGIN,
     label: `Open ${app}`,
     unsubscribeUrl: payload.unsubscribeUrl || null,
+    // The eyebrow is the project's name only when the sender gave one; the
+    // lowercase fallback reads fine in a sentence, not as a label.
+    eyebrow: payload.appName ? String(payload.appName).slice(0, 80) : '',
   });
 }
 
@@ -580,6 +732,7 @@ const TEMPLATES = {
   waitlist_released: waitlistReleased,
   password_reset: passwordReset,
   admin_test: adminTest,
+  content_report: contentReport,
   project_invite: projectInvite,
   build_ready: buildReady,
   invite_activity: inviteActivity,

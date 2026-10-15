@@ -1,6 +1,7 @@
 // Tests for maintenance campaigns (#853's generalization):
 // - the `maintenance_campaign` governance kind in src/routes/issues.js
-//   (creation validation, vote-apply helper, admin force-apply gating),
+//   (creation validation, admin force-apply gating; the governance machine
+//   applies it: tests/workflow-governance-postgres.test.js),
 // - the campaign engine in src/services/fleet-maintenance.js (per-app
 //   AI tool loop, sequential fan-out, merge-green drain, retry),
 // - the dashboard API gating in src/routes/campaigns.js.
@@ -59,12 +60,13 @@ function loadIssues(pool, { gh = {}, active = 2, app = SELF_APP, gate = {}, runC
     adminApproval: require.resolve('../src/services/admin-approval'),
     governance: require.resolve('../src/services/governance'),
     fleet: require.resolve('../src/services/fleet-maintenance'),
+    workflow: require.resolve('../src/workflow/platform.ts'),
     subject: require.resolve('../src/routes/issues'),
   };
   const orig = {};
   for (const [k, id] of Object.entries(ids)) orig[k] = require.cache[id];
 
-  const spies = { systemMessages: [], issueUpdates: [], ghCalls: [], campaignRuns: [] };
+  const spies = { systemMessages: [], issueUpdates: [], ghCalls: [], campaignRuns: [], adminApplied: [] };
   const stub = (id, exports) => {
     require.cache[id] = { id, filename: id, loaded: true, exports, paths: [] };
   };
@@ -100,9 +102,15 @@ function loadIssues(pool, { gh = {}, active = 2, app = SELF_APP, gate = {}, runC
     ...realActiveUsers,
     getActiveUserStats: async () => ({ active, majority: Math.floor(active / 2) + 1 }),
   });
-  stub(ids.adminApproval, { isAppLocked: async () => false, hasAdminUpVote: async () => true });
-  // The apply helper resolves the vote through governedGate; script it
-  // directly (the gate's own math has its own suite).
+  stub(ids.adminApproval, { isAppLocked: async () => false });
+  stub(ids.workflow, {
+    async fileProposal() {},
+    async adminApplyProposal(issue, user) {
+      spies.adminApplied.push([issue.id, user.username]);
+      return { status: 200, body: { ok: true, applied: { applied: true, campaignId: 34 }, secretChanged: null } };
+    },
+  });
+  // Any read of the gate is scripted directly (its math has its own suite).
   const realGovernance = orig.governance ? orig.governance.exports : require('../src/services/governance');
   stub(ids.governance, {
     ...realGovernance,
@@ -263,120 +271,32 @@ test('create: rejected without full admin (403) and without instructions (400)',
   } finally { restore(); }
 });
 
-// ── Vote apply (maybeApplyMaintenanceCampaignProposal) ───────────────────
-
-function applyPool({ lockedRow } = {}) {
-  return makePool([
-    [/SELECT \* FROM issues WHERE id = \$1 FOR UPDATE/, [lockedRow]],
-    [/INSERT INTO maintenance_campaigns/, [{ id: 33 }]],
-    [/UPDATE issues SET status = 'closed'/, []],
-  ]);
-}
-
-test('apply: passing gate creates the campaign row, closes the issue, starts the engine', async () => {
-  const proposal = CAMPAIGN_PROPOSAL();
-  const pool = applyPool({ lockedRow: proposal });
-  const { subject, spies, restore } = loadIssues(pool);
-  try {
-    const r = await subject.maybeApplyMaintenanceCampaignProposal(
-      { databaseUrl: 'postgres://test' }, pool, proposal
-    );
-    assert.equal(r.applied, true);
-    assert.equal(r.campaignId, 33);
-
-    const camp = pool.issued(/INSERT INTO maintenance_campaigns/);
-    assert.ok(camp, 'campaign row inserted');
-    assert.equal(camp.params[0], 71, 'linked to the proposal');
-    assert.equal(camp.params[1], 'Switch JWT verification to RS256', 'raw payload title');
-    assert.match(camp.params[2], /USERNODE_JWT_PUBLIC_KEY/);
-    assert.equal(camp.params[3], null, 'no target filter → whole fleet');
-
-    const upd = pool.issued(/UPDATE issues SET status = 'closed'/);
-    const audit = JSON.parse(upd.params[1]);
-    assert.equal(audit.campaignId, 33);
-    assert.equal(audit.appliedBy, 'vote');
-
-    // Engine kicked with the new campaign id.
-    assert.equal(spies.campaignRuns.length, 1);
-    assert.equal(spies.campaignRuns[0][2], 33);
-
-    // The governance thread only; a channel carries no activity.
-    assert.equal(spies.systemMessages.length, 1);
-    assert.match(spies.systemMessages[0][2], /approved by group vote/);
-  } finally { restore(); }
-});
-
-test('apply: below the gate leaves the proposal open (no campaign, no engine)', async () => {
-  const proposal = CAMPAIGN_PROPOSAL({ created_at: new Date().toISOString() });
-  const pool = applyPool({ lockedRow: proposal });
-  const { subject, spies, restore } = loadIssues(pool, {
-    gate: { mergeable: false, thresholdMet: false, qualifiedYes: 1, required: 5 },
-  });
-  try {
-    const r = await subject.maybeApplyMaintenanceCampaignProposal(
-      { databaseUrl: 'postgres://test' }, pool, proposal
-    );
-    assert.equal(r.applied, false);
-    assert.equal(r.required, 5);
-    assert.ok(!pool.issued(/INSERT INTO maintenance_campaigns/));
-    assert.equal(spies.campaignRuns.length, 0);
-  } finally { restore(); }
-});
-
-test('apply: already-closed row is a harmless no-op (race with a parallel apply)', async () => {
-  const proposal = CAMPAIGN_PROPOSAL();
-  const pool = applyPool({ lockedRow: { ...proposal, status: 'closed' } });
-  const { subject, spies, restore } = loadIssues(pool);
-  try {
-    const r = await subject.maybeApplyMaintenanceCampaignProposal(
-      { databaseUrl: 'postgres://test' }, pool, proposal
-    );
-    assert.equal(r.applied, false);
-    assert.ok(!pool.issued(/INSERT INTO maintenance_campaigns/));
-    assert.equal(spies.campaignRuns.length, 0);
-  } finally { restore(); }
-});
-
 // ── Admin force-apply route ───────────────────────────────────────────────
 
-test('admin-apply: full admin forces a campaign; view-only admin 403', async () => {
+test('admin-apply: a full admin\'s force goes to the machine; a view-only admin is refused', async () => {
   const proposal = CAMPAIGN_PROPOSAL({ created_at: new Date().toISOString() });
-  const pool = makePool([
-    [/SELECT i\.\*, a\.slug AS app_slug/, [proposal]],
-    [/SELECT \* FROM issues WHERE id = \$1 FOR UPDATE/, [proposal]],
-    [/INSERT INTO maintenance_campaigns/, [{ id: 34 }]],
-    [/UPDATE issues SET status = 'closed'/, []],
-  ]);
-  const { router, spies, restore } = loadIssues(pool, {
-    // Zero-vote gate: force must bypass it entirely.
-    gate: { mergeable: false, qualifiedYes: 0, required: 5, thresholdMet: false },
-  });
+  const pool = makePool([[/SELECT i\.\*, a\.slug AS app_slug/, [proposal]]]);
+  const { router, spies, restore } = loadIssues(pool);
   try {
     const handler = routeHandler(router, '/api/issues/:id/admin-apply');
-
     const denied = mockRes();
     await handler({
       params: { id: '71' },
       user: { id: 8, username: 'watcher', isAdmin: true, canAdminWrite: false },
     }, denied);
     assert.equal(denied.statusCode, 403, 'view-only admin blocked for this kind');
-    assert.ok(!pool.issued(/INSERT INTO maintenance_campaigns/));
+    assert.deepEqual(spies.adminApplied, []);
 
     const res = mockRes();
     await handler({
       params: { id: '71' },
       user: { id: 2, username: 'boss', isAdmin: true, canAdminWrite: true },
+      get: () => undefined,
     }, res);
     assert.equal(res.statusCode, 200);
-    assert.equal(res.body.ok, true);
-    assert.equal(res.body.applied.applied, true, 'force applied with zero votes');
     assert.equal(res.body.applied.campaignId, 34);
-    assert.equal(res.body.secretChanged, null, 'BC alias null for campaigns');
-
-    const upd = pool.issued(/UPDATE issues SET status = 'closed'/);
-    const audit = JSON.parse(upd.params[1]);
-    assert.equal(audit.appliedBy, 'admin:boss');
-    assert.equal(spies.campaignRuns.length, 1);
+    assert.deepEqual(spies.adminApplied, [[71, 'boss']]);
+    assert.ok(!pool.issued(/INSERT INTO maintenance_campaigns/), 'the route writes nothing itself');
   } finally { restore(); }
 });
 
@@ -703,7 +623,10 @@ test('runCampaign: fans out sequentially — one PR opened, one skipped, campaig
   ];
   let pick = 0;
   const pool = makePool([
-    [/SELECT \* FROM maintenance_campaigns WHERE id = \$1/, [CAMPAIGN]],
+    // The lease on the campaign row: taken, then renewed between apps.
+    [/SET runner_id = \$2, lease_until/, [CAMPAIGN]],
+    [/SET lease_until = NOW\(\) \+ make_interval/, [{ id: 5 }]],
+    [/FOR SHARE/, [{ '?column?': 1 }]],   // the fence: the lease is still this driver's
     [/SELECT id FROM users WHERE username = \$1/, [{ id: 99 }]],
     [/state = 'pending'\s+ORDER BY mca\.id\s+LIMIT 1/, () => pendingPicks[pick++] || []],
     [/INSERT INTO chat_sessions/, [{ id: 501 }]],
@@ -746,12 +669,14 @@ test('runCampaign: fans out sequentially — one PR opened, one skipped, campaig
     assert.match(sess.sql, /'maintenance'/, 'session row marked source=maintenance');
     assert.equal(sess.params[1], 99, 'attributed to the platform user');
 
+    // Written by the driver that claimed the row, and only by it.
     const prOpen = pool.issued(/SET state = 'pr_open'/);
-    assert.deepEqual(prOpen.params, [101, 501]);
+    assert.deepEqual(prOpen.params.slice(0, 2), [101, 501]);
+    assert.match(prOpen.sql, /AND runner_id = \$3 AND state = 'running'/);
 
     // App 2 skipped with the model's reason.
     const skipped = pool.issued(/SET state = 'skipped'/);
-    assert.deepEqual(skipped.params, [102, 'No JWT here.']);
+    assert.deepEqual(skipped.params.slice(0, 2), [102, 'No JWT here.']);
 
     // Campaign closed out + completion note in the platform chat.
     assert.ok(pool.issued(/SET status = 'done'/), 'campaign marked done');
@@ -773,7 +698,10 @@ test('runCampaign: an app failure is recorded and the loop continues', async () 
   ];
   let pick = 0;
   const pool = makePool([
-    [/SELECT \* FROM maintenance_campaigns WHERE id = \$1/, [CAMPAIGN]],
+    // The lease on the campaign row: taken, then renewed between apps.
+    [/SET runner_id = \$2, lease_until/, [CAMPAIGN]],
+    [/SET lease_until = NOW\(\) \+ make_interval/, [{ id: 5 }]],
+    [/FOR SHARE/, [{ '?column?': 1 }]],   // the fence: the lease is still this driver's
     [/SELECT id FROM users WHERE username = \$1/, [{ id: 99 }]],
     [/state = 'pending'\s+ORDER BY mca\.id\s+LIMIT 1/, () => pendingPicks[pick++] || []],
     [/SELECT state, COUNT\(\*\)::int AS n/, [{ state: 'failed', n: 1 }, { state: 'skipped', n: 1 }]],
@@ -796,6 +724,64 @@ test('runCampaign: an app failure is recorded and the loop continues', async () 
     assert.equal(skipped.params[0], 102, 'second app still processed');
     assert.ok(pool.issued(/SET status = 'done'/));
   } finally { restore(); }
+});
+
+// The pull request is the step a campaign must never take twice. It is
+// opened only with the lease renewed just then, and never by a process on
+// its way out (its pool may close before the row records the PR): the row
+// stays 'running' and the next driver runs the app again.
+async function runToThePr({ renewals, shuttingDown = () => false }) {
+  let renewed = 0;
+  const pool = makePool([
+    [/SET runner_id = \$2, lease_until/, [CAMPAIGN]],
+    [/SET lease_until = NOW\(\) \+ make_interval/, () => {
+      const answer = renewals[renewed++];
+      if (answer instanceof Error) throw answer;
+      return answer ? [{ id: 5 }] : [];
+    }],
+    [/FOR SHARE/, [{ '?column?': 1 }]],
+    [/SELECT id FROM users WHERE username = \$1/, [{ id: 99 }]],
+    [/state = 'pending'\s+ORDER BY mca\.id\s+LIMIT 1/, [{ row_id: 101, app_id: 9, slug: 'cool-app', name: 'Cool App', repo_url: CHILD_APP.repo_url }]],
+    [/INSERT INTO chat_sessions/, [{ id: 501 }]],
+  ]);
+  const lifecycleId = require.resolve('../src/services/lifecycle');
+  const savedLifecycle = require.cache[lifecycleId];
+  require.cache[lifecycleId] = { id: lifecycleId, filename: lifecycleId, loaded: true, paths: [],
+    exports: { ...require('../src/services/lifecycle'), isShuttingDown: shuttingDown } };
+  const { subject, spies, restore } = loadFleet({
+    files: { 'server.js': 'const s = process.env.JWT_SECRET;\n' },
+    llmScript: [
+      { toolUses: [{ id: 't1', name: 'edit_file', input: { path: 'server.js', old_string: 'JWT_SECRET', new_string: 'USERNODE_JWT_PUBLIC_KEY' } }] },
+      { toolUses: [{ id: 't2', name: 'finish', input: { summary: 'Swapped the variable.' } }] },
+    ],
+  });
+  try {
+    const out = await subject.runCampaign({ databaseUrl: 'postgres://test' }, pool, 5);
+    return { out, pool, prs: spies.ghCalls.filter((c) => c.type === 'createPR') };
+  } finally {
+    restore();
+    if (savedLifecycle) require.cache[lifecycleId] = savedLifecycle; else delete require.cache[lifecycleId];
+  }
+}
+
+test('runCampaign: a PR is opened only with the lease renewed just then', async () => {
+  const held = await runToThePr({ renewals: [true, true] });
+  assert.equal(held.prs.length, 1, 'renewed at the loop and before the PR: opened');
+  const lost = await runToThePr({ renewals: [true, false] });
+  assert.deepEqual([lost.out, lost.prs.length], [{ ran: true, paused: 'lease_lost' }, 0], 'another driver holds it: no PR');
+  assert.ok(!lost.pool.issued(/SET state = 'pr_open'/));
+  const unsure = await runToThePr({ renewals: [true, new Error('connection terminated')] });
+  assert.deepEqual([unsure.out, unsure.prs.length], [{ ran: true, paused: 'lease_lost' }, 0], 'a renewal that failed is not proof it is still held');
+});
+
+test('runCampaign: a process shutting down opens no PR, and leaves the app for the next driver', async () => {
+  // Asked at the loop's start (1) and before each of the model's two calls
+  // (2, 3): not yet. Asked before the PR (4): shutting down.
+  let asked = 0;
+  const out = await runToThePr({ renewals: [true, true], shuttingDown: () => ++asked > 3 });
+  assert.equal(out.prs.length, 0);
+  assert.deepEqual(out.out, { ran: true, paused: 'shutting_down' });
+  assert.ok(!out.pool.issued(/SET state = 'pr_open'|SET state = 'failed'/), 'the row is left running, for the next driver');
 });
 
 // ── mergeGreen + retry ────────────────────────────────────────────────────

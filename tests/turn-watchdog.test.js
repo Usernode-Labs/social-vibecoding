@@ -17,6 +17,10 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+
+// The scripts under test read their text from the language runtime's
+// global; give them the real English one.
+globalThis.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -194,7 +198,7 @@ test('server.js sweepers use the shared busy predicate, not bare isInFlight', ()
 
 test('server.js recovery flow registers in activeWorkers and bumps last_activity_at', () => {
   assert.ok(
-    /activeWorkersSvc\.activeWorkers\.add\(sessionId\)/.test(serverSrc),
+    /activeWorkersSvc\.activeWorkers\.enter\(sessionId\)/.test(serverSrc),
     'resumeDetachedTurn must add the session to activeWorkers'
   );
   assert.ok(

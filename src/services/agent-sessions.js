@@ -168,6 +168,8 @@ function shapeFailingChecks(row) {
   };
 }
 
+// A merged change that is not live yet (chat_sessions.live_at) comes out of
+// the queries above as 'merging': the drawer and pills say "Going live".
 function shapeChangeRow(row) {
   if (!row || row.change_id == null) return null;
   return {
@@ -201,6 +203,24 @@ function shapeChangeRow(row) {
       }
       : null,
   };
+}
+
+// A merged change of the platform's own app that is not live yet reads
+// 'merging' here, as one still being merged does (shapeChangeRow). What it
+// waits for is the platform's next release, and when that comes
+// (services/release-watch.js) is set on it as `release`, which the
+// conversation's pill, its changes drawer and the inbox's row say in words
+// ("Merged; goes live in the next release (about 8 minutes)"). A change
+// still being merged, or a child app's, has none. One read, only when one
+// of `changes` is a Homeroom change going live.
+async function withReleases(pool, changes) {
+  const waiting = changes.filter((change) => change && change.status === 'merging' && change.appSelfHosted);
+  if (!waiting.length) return;
+  const releases = await require('./release-watch').releasesFor(pool, waiting.map((change) => change.id));
+  for (const change of waiting) {
+    const release = releases.get(Number(change.id));
+    if (release) change.release = release;
+  }
 }
 
 function shapeSession(row) {
@@ -281,7 +301,7 @@ async function listAgentSessions(pool, { userId, status = 'open', limit = 20, be
             fa.slug AS focus_app_slug, fa.name AS focus_app_name,
             fa.self_hosted AS focus_app_self_hosted, fa.icon_emoji AS focus_app_icon_emoji,
             fa.icon_image_id AS focus_app_icon_id,
-            c.id AS change_id, c.status AS change_status, c.pr_number AS change_pr_number,
+            c.id AS change_id, CASE WHEN c.status = 'merged' AND c.live_at IS NULL THEN 'merging' ELSE c.status END AS change_status, c.pr_number AS change_pr_number,
             COALESCE(c.pr_title, c.session_title) AS change_title,
             c.staging_url AS change_staging_url, c.check_state AS change_check_state,
             CASE WHEN c.check_state = 'skipped' THEN c.check_error_detail END AS change_check_skip_reason,
@@ -301,6 +321,7 @@ async function listAgentSessions(pool, { userId, status = 'open', limit = 20, be
     [userId, status, cursor, bounded + 1, TURN_LEASE_STALE_SECONDS]
   );
   const page = rows.slice(0, bounded).map(shapeSession);
+  await withReleases(pool, page.map((session) => session.activeChange));
   return {
     sessions: page,
     nextBefore: rows.length > bounded ? page[page.length - 1].lastActivityAt : null,
@@ -311,7 +332,7 @@ async function listAgentSessions(pool, { userId, status = 'open', limit = 20, be
 /**
  * Whether `userId` has ever had an agent session, archived ones included:
  * whether they have built something themselves with a coding agent. The
- * Homeroom menu's Agent chats section (Build it yourself and their
+ * Homeroom menu's Agent chats section (Build it now and their
  * sessions) is shown only then, so a first-time user's menu stays short
  * (first-session run-through, 5 Oct 2026; ../../frontend/src/features/
  * app-context/app-context-sheet.tsx). A list page with a session in it
@@ -340,7 +361,7 @@ async function getAgentSession(pool, { userId, id }) {
             fa.slug AS focus_app_slug, fa.name AS focus_app_name,
             fa.self_hosted AS focus_app_self_hosted, fa.icon_emoji AS focus_app_icon_emoji,
             fa.icon_image_id AS focus_app_icon_id,
-            c.id AS change_id, c.status AS change_status, c.pr_number AS change_pr_number,
+            c.id AS change_id, CASE WHEN c.status = 'merged' AND c.live_at IS NULL THEN 'merging' ELSE c.status END AS change_status, c.pr_number AS change_pr_number,
             COALESCE(c.pr_title, c.session_title) AS change_title,
             c.staging_url AS change_staging_url, c.check_state AS change_check_state,
             CASE WHEN c.check_state = 'skipped' THEN c.check_error_detail END AS change_check_skip_reason,
@@ -361,7 +382,7 @@ async function getAgentSession(pool, { userId, id }) {
   // Every change this conversation has started, newest first: the active one,
   // the parked ones the user can switch back to, and the closed ones.
   const { rows: changes } = await pool.query(
-    `SELECT c.id AS change_id, c.status AS change_status, c.pr_number AS change_pr_number,
+    `SELECT c.id AS change_id, CASE WHEN c.status = 'merged' AND c.live_at IS NULL THEN 'merging' ELSE c.status END AS change_status, c.pr_number AS change_pr_number,
             COALESCE(c.pr_title, c.session_title) AS change_title,
             c.staging_url AS change_staging_url, c.check_state AS change_check_state,
             CASE WHEN c.check_state = 'skipped' THEN c.check_error_detail END AS change_check_skip_reason,
@@ -374,6 +395,7 @@ async function getAgentSession(pool, { userId, id }) {
     [sessionId, userId]
   );
   session.changes = changes.map(shapeChangeRow);
+  await withReleases(pool, [session.activeChange, ...session.changes]);
   return session;
 }
 
@@ -689,16 +711,9 @@ async function readState(pool, { userId, id, version = null, rev = null }) {
 }
 
 // A row that belongs to the conversation itself rather than to any one
-// change: a change starting, a change closing. `session_id` is NULL on
-// purpose, so a change's own transcript slice stays exactly what it wrote.
-async function appendConversationEvent(pool, { agentSessionId, content, event, metadata = {} }) {
-  await pool.query(
-    `INSERT INTO chat_session_messages (session_id, agent_session_id, role, content, metadata)
-     VALUES (NULL, $1, 'system', $2, $3::jsonb)`,
-    [agentSessionId, content, JSON.stringify({ ...metadata, agentSessionEvent: event })]
-  );
-  await pool.query('UPDATE agent_sessions SET last_activity_at = NOW() WHERE id = $1', [agentSessionId]);
-}
+// change (src/workflow/rules/agent-notes.ts).
+const agentNotes = require('../workflow/rules/agent-notes.ts');
+const { appendConversationEvent, closedSentence } = agentNotes;
 
 // ── Changes ────────────────────────────────────────────────────────────
 
@@ -771,18 +786,6 @@ async function linkChange(pool, { agentSessionId, userId, change }) {
   return true;
 }
 
-// The sentence the conversation gets when one of its changes closes.
-function closedSentence({ prNumber, outcome }) {
-  const ref = prNumber ? `PR #${prNumber}` : 'The change';
-  switch (outcome) {
-    case 'merged': return `${ref} merged. It is part of the app now.`;
-    case 'rejected': return `${ref} was set aside by the group's vote.`;
-    case 'withdrawn': return `${ref} was withdrawn.`;
-    case 'replaced': return `${ref} was replaced by a newer proposal.`;
-    default: return `${ref} was closed.`;
-  }
-}
-
 // How an archive reason reads to the person whose conversation it was.
 function outcomeForArchiveReason(reason) {
   if (reason === 'auto-rejected') return 'rejected';
@@ -793,39 +796,11 @@ function outcomeForArchiveReason(reason) {
 
 // Called when a change closes, from the merge path and the archive path.
 // Posts a note to the parent conversation and, if the change was the active
-// one, clears it so the next dispatch has to name a change. Best-effort and
-// never throws: a merge or an archive must not fail over a conversation note.
-//
-// `change` is the row the caller already holds. A classic session carries
-// `agent_session_id: null`, and returns here without a query; a row that did
-// not select the column (undefined) is looked up.
+// one, clears it (src/workflow/rules/agent-notes.ts). Best-effort and never
+// throws: a merge or an archive must not fail over a conversation note.
 async function noteChangeClosed(pool, { change, outcome }) {
-  if (!change || change.agent_session_id === null) return false;
   try {
-    let agentSessionId = change.agent_session_id;
-    let prNumber = change.pr_number || null;
-    if (agentSessionId === undefined) {
-      const { rows } = await pool.query(
-        `SELECT agent_session_id, pr_number FROM chat_sessions
-          WHERE id = $1 AND agent_session_id IS NOT NULL`,
-        [change.id]
-      );
-      agentSessionId = rows.length ? rows[0].agent_session_id : null;
-      prNumber = prNumber || (rows.length ? rows[0].pr_number : null);
-    }
-    if (!positiveInt(Number(agentSessionId))) return false;
-    await pool.query(
-      `UPDATE agent_sessions SET active_change_id = NULL
-        WHERE id = $1 AND active_change_id = $2`,
-      [agentSessionId, change.id]
-    );
-    await appendConversationEvent(pool, {
-      agentSessionId,
-      content: closedSentence({ prNumber, outcome }),
-      event: 'change_closed',
-      metadata: { changeId: change.id, outcome },
-    });
-    return true;
+    return await agentNotes.changeClosed(pool, { change, outcome });
   } catch (err) {
     log.warn('agent-sessions', 'Could not note a closed change', {
       changeId: change && change.id, outcome, err: err.message,

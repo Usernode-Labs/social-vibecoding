@@ -61,6 +61,7 @@
 
 import type { ComponentType } from 'react';
 
+import { useMessages } from '../../lib/i18n/react';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useMountedOnReveal } from '../../lib/mount-on-reveal';
 import { useStoreState } from '../../lib/use-store-state';
@@ -85,6 +86,10 @@ interface SettingsChunkState {
 }
 
 export function SettingsScreen() {
+  // Subscribed for the two texts this chassis renders itself. A new language
+  // patches those text nodes only; the footer React must not rebuild stays
+  // the node it was, wherever settings.js has moved it.
+  const t = useMessages('settings');
   // The sixteen panes mount on the screen's FIRST REVEAL, not in the
   // prerender (see lib/mount-on-reveal.ts). They were 437 of the document's
   // 1,485 elements, parsed, styled and hydrated on every load for a screen
@@ -135,7 +140,7 @@ export function SettingsScreen() {
           level-1 menu on a phone, the sidebar from md up — sits on the strip,
           and #settings-section-content rises on it with the section inside.
       */}
-      <div id="settings-root" className="max-w-5xl mx-auto p-4 w-full">
+      <div id="settings-root" className="max-w-5xl mx-auto p-4 md:pt-5 w-full">
         <div className="md:flex md:items-start md:gap-6">
           {/*
               Desktop sidebar menu. Below md there is no nav here at all:
@@ -152,15 +157,17 @@ export function SettingsScreen() {
                 survives the trip. "Sign out", not "Log out" (5 Oct 2026):
                 the way in says Sign in everywhere, and a search for "Sign
                 out" found nothing. The id keeps its old name, which the
-                declared checks select on.
+                declared checks select on. While a sign-out runs, settings.js
+                disables it and it reads "Signing out…" (#3915): the disabled
+                styling is what tells a phone user the tap landed.
             */}
             <div id="settings-footer" className="mt-6 pt-2">
               <SettingsAccountRows />
               <button
                 id="settings-logout"
-                className="w-full rounded-full bg-red-500/10 px-4 py-2.5 text-[17px] font-semibold text-red-700 dark:text-red-400 hover:bg-red-500/15 transition-colors"
+                className="w-full rounded-full bg-red-500/10 px-4 py-2.5 text-[17px] font-semibold text-red-700 dark:text-red-400 hover:bg-red-500/15 transition-colors disabled:opacity-60 disabled:cursor-default disabled:hover:bg-red-500/10"
               >
-                Sign out
+                {t('settings:screen.signOut')}
               </button>
             </div>
           </div>
@@ -180,7 +187,7 @@ export function SettingsScreen() {
               {mounted && Sections ? <Sections /> : null}
               {mounted && !Sections && failed ? (
                 <p className="text-sm text-zinc-500 dark:text-zinc-400 p-4">
-                  Settings could not be loaded. Check your connection and try again.
+                  {t('settings:screen.loadFailed')}
                 </p>
               ) : null}
             </div>

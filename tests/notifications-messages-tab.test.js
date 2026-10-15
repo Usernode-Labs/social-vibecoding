@@ -25,6 +25,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -164,7 +165,10 @@ test('the tab count sums collapsed rows, so it agrees with the bell', () => {
     'a collapsed row stands for `count` notifications; counting rows would say 1 where the '
     + 'badge says 4',
   );
-  assert.match(SHEET_SRC, /\{unreadCount \? `Unread \(\$\{unreadCount\}\)` : 'Unread'\}/);
+  assert.match(SHEET_SRC, /\{unreadCount \? t\('notifications:sheet\.tab\.unreadCount', \{ count: unreadCount \}\) : t\('notifications:sheet\.tab\.unread'\)\}/);
+  assert.equal(message('notifications:sheet.tab.unreadCount', { count: 4 }), 'Unread (4)');
+  assert.equal(message('notifications:sheet.tab.unreadCount', { count: 1 }), 'Unread (1)');
+  assert.equal(message('notifications:sheet.tab.unread'), 'Unread');
 });
 
 test('the Messages tab carries the way out to the full Messages screen', () => {

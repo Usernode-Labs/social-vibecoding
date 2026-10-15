@@ -126,7 +126,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
   async function user(prefix, { synthetic = false } = {}) {
     const { rows } = await pool.query(
       `INSERT INTO users (username, password, has_platform_access, is_synthetic)
-       VALUES ($1, 'x', TRUE, $2) RETURNING id, username`,
+       VALUES ($1, 'x', TRUE, $2) RETURNING id, username, has_platform_access AS "hasPlatformAccess"`,
       [synthetic ? prefix : `${prefix}_${++seq}`, synthetic],
     );
     return rows[0];
@@ -158,9 +158,9 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
   const seeds = await project('seed-swap', ada);
   const notes = await project('note-board', ada);
   const samsApp = await project('sam-shop', sam);
+  // The bot is on, for everyone with platform access, on every app but a
+  // paused one.
   await setting('homeroom_bot_mode', 'shadow');
-  await setting('homeroom_bot_dm_users', JSON.stringify([ada.username, sam.username]));
-  await setting('homeroom_bot_live_apps', JSON.stringify(['seed-swap', 'note-board', 'sam-shop']));
   const opened = await conversations.ensureAdmittedDirect(pool, bot.id, ada.id);
   const settings = await homeroomBot.readSettings(pool);
 
@@ -242,8 +242,8 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     );
     assert.ok(!rows.some((r) => /content|text|reply/.test(r.column_name)), 'no column holds what was said');
     const s = await homeroomBot.readSettings(pool);
-    assert.equal(s.liveAtOnce, 6);
-    assert.equal(s.perPerson, 2);
+    assert.equal(s.liveAtOnce, 12);
+    assert.equal(s.perPerson, 3);
     assert.equal(s.dmChat, true);
   });
 
@@ -296,9 +296,9 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     assert.equal(later.requests.find((r) => r.number === 3 && r.project === 'seed-swap').status, 'step 3 of 6: building it');
 
     // A project the bot is not on: it says so, rather than seeming idle.
-    const off = await mayor.myWork(pool, { userId: ada.id, settings: { ...settings, liveApps: ['seed-swap'] } });
+    const off = await mayor.myWork(pool, { userId: ada.id, settings: { ...settings, pausedApps: ['note-board'] } });
     assert.equal(off.requests.find((r) => r.project === 'note-board').botBuildsHere, false);
-    const projects = await mayor.myProjects(pool, { user: ada, settings: { ...settings, liveApps: ['seed-swap'] } });
+    const projects = await mayor.myProjects(pool, { user: ada, settings: { ...settings, pausedApps: ['note-board'] } });
     assert.deepEqual(projects.projects.map((p) => `${p.project}:${p.botBuildsHere}`).sort(), ['note-board:false', 'seed-swap:true']);
   });
 
@@ -667,16 +667,17 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     const n = ack.metadata.homeroomBot.issueNumber;
     assert.ok(n > 0);
 
-    // Its news later on, from the bot's work on it, quotes where it started.
-    // #3767: while its card is the newest thing about it, "I'm building
-    // this now" is the card's to show, and is not sent again; the post is
-    // told it reached her, so it does not tag her instead.
+    // One story: "I'm building it now" is a quiet line in the request's
+    // thread, under its card; the post is told it reached her, so it does
+    // not tag her instead.
     const building = await dm.relayIssuePost({ pool, app: notes, issueNumber: n, kind: 'spec', postId: 37071, bot, dm: { building: true } });
-    assert.equal(building.card, true);
-    assert.equal(building.messageId, ack.id);
+    assert.equal(building.quiet, true, 'quiet: no bell, no push');
+    const line = await read(building);
+    assert.equal(line.threadRootId, ack.id, 'in the request\'s thread');
+    assert.equal(line.metadata.homeroomBot.kind, 'step');
     assert.equal(await dm.untaggedRequester(pool, { appId: notes.id, issueNumber: n, bot, told: building }), ada.username);
     const held = await dm.noteOverAllowance(pool, {
-      settings: { ...settings, userWeeklyCents: 100 }, requester: { userId: ada.id, username: ada.username }, app: notes, issueNumber: n, bot,
+      settings: { ...settings, userWeeklyCents: 100 }, requester: { userId: ada.id, username: ada.username, hasPlatformAccess: true }, app: notes, issueNumber: n, bot,
     });
     assert.equal((await read(held)).reply.id, ask.id);
     const { rows: [built] } = await pool.query(
@@ -700,25 +701,19 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
       },
       sleep: async () => {},
     };
+    // One story: every change's requester hears it is live, in the request's
+    // thread and the main chat, with its Open button; the app is asked
+    // whether it answers first.
     const live = await dm.noteProposalMerged(pool, { id: built.id }, { config: {}, sha: 'a'.repeat(40), deps: healthy });
-    const liveMessage = await read(live);
-    // B7: a change to a project is "your change".
-    assert.equal(liveMessage.content, `**Note board** · request #${n}: Tags\n\nYour change is live now. Open Note board below to try it.`);
+    const liveMsg = await read(live);
+    assert.equal(liveMsg.content, 'It\'s live. Open Note board to see it.');
+    assert.equal(liveMsg.threadRootId, ack.id);
+    assert.deepEqual([liveMsg.metadata.homeroomBot.moment, liveMsg.metadata.homeroomBot.said, liveMsg.metadata.homeroomBot.alsoInChat], ['live', 'live', true]);
     assert.deepEqual(probed, ['app-note-board']);
-    assert.equal(liveMessage.reply.id, ask.id);
-    assert.equal(liveMessage.metadata.homeroomBot.link, '#app/note-board');
-    const { rows: liveCards } = await pool.query(
-      'SELECT object_type, object_ref FROM conversation_message_objects WHERE message_id = $1 ORDER BY position', [live.messageId],
-    );
-    assert.deepEqual(liveCards.map((o) => `${o.object_type}:${o.object_ref}`), [`code_proposal:${built.id}`],
-      'its proposal; the app opens from the button');
-    assert.deepEqual(liveMessage.metadata.homeroomBot.actions, [
-      { id: 'open_app', label: 'Open Note board', style: 'primary', type: 'open', target: '#app/note-board/app' },
-    ]);
 
     // A request filed anywhere else started nowhere here; one whose start
     // she deleted is still told, without the quote.
-    const elsewhere = await dm.relayIssuePost({ pool, app: seeds, issueNumber: 3, kind: 'spec', postId: 37072, bot, dm: { building: true } });
+    const elsewhere = await dm.relayIssuePost({ pool, app: seeds, issueNumber: 3, kind: 'empty', postId: 37072, bot, dm: { reason: 'Nothing named.' } });
     assert.equal((await read(elsewhere)).reply, null);
     await conversations.deleteMessage(pool, ada, opened.conversationId, ask.id);
     // B4: "it's built" is said once it is ready to try.
@@ -755,7 +750,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     const by = new Map(first.rightNow.map((e) => [`${e.project}#${e.number}`, e]));
     const building = by.get('seed-swap#3');
     assert.equal(building.stage, 'building');
-    assert.deepEqual([building.step, building.of, building.stepName], [3, 6, 'Build it']);
+    assert.deepEqual([building.step, building.of, building.stepName], [3, 6, 'Building']);
     assert.equal(building.stepTimeLimitMinutes, 20, 'a build is stopped at its clock: the most it can take');
     // #19 (WP3): and how long a build usually takes, never past that clock.
     assert.deepEqual(building.typicalMinutes, { from: 10, to: 20 });
@@ -767,12 +762,10 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     });
     // Her answer to its question (passed on above) put it first in the queue.
     assert.equal(by.get('seed-swap#4').stage, 'queued');
-    // #3771: what it waits for, in words: Seed swap builds #3 first.
-    assert.equal(by.get('seed-swap#4').doing, 'waiting its turn: Seed swap is building request #3 first (one request per project at a time)');
-    assert.deepEqual(
-      { reason: by.get('seed-swap#4').waitingFor.reason, number: by.get('seed-swap#4').waitingFor.number },
-      { reason: 'project_busy', number: 3 },
-    );
+    // #3771: what it waits for, in words. Seed swap is building #3, but a
+    // build runs on a session of its own and holds no read up: #4 is next.
+    assert.equal(by.get('seed-swap#4').doing, 'next in line for a free builder');
+    assert.deepEqual(by.get('seed-swap#4').waitingFor, { reason: 'queue', ahead: 0 });
     assert.equal(by.get('seed-swap#4').busyNow, false);
     assert.equal(by.get('note-board#5').waitingOn, 'the group');
     assert.equal(by.get('note-board#5').proposal.votesNeeded > 0, true, 'and how many votes it needs');
@@ -831,7 +824,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
         const ear = lastToolResult(req, 'progress').rightNow.find((e) => e.project === 'ear-trainer');
         assert.deepEqual(
           { step: ear.step, of: ear.of, stepName: ear.stepName, doing: ear.doing, minutesSoFar: ear.minutesSoFar, busyNow: ear.busyNow },
-          { step: 1, of: 7, stepName: 'Set up the project', doing: 'setting up the project: part 2 of 4, making its code repository', minutesSoFar: 2, busyNow: true },
+          { step: 1, of: 7, stepName: 'Setting up', doing: 'setting up the project: part 2 of 4, making its code repository', minutesSoFar: 2, busyNow: true },
         );
         assert.equal(ear.links.project, 'https://app.test/#app/ear-trainer');
         return [['reply', {
@@ -1394,11 +1387,11 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     assert.match(capped.error, new RegExp(`^You have already changed this proposal ${followup.MAX_REVISIONS} times, as many as you may on your own, so you cannot change it again\\. Nothing was sent or queued\\.`));
     await pool.query('DELETE FROM homeroom_bot_runs WHERE id = ANY($1::int[])', [revisions.map((r) => r.id)]);
 
-    // A project the bot is not working on, or has paused: nobody would pick it up.
-    const off = await ask({ settings: { ...settings, liveApps: ['seed-swap'] } });
+    // The bot switched off, or the project paused: nobody would pick it up.
+    const off = await ask({ settings: { ...settings, mode: 'off' } });
     assert.match(off.error, /^You are not working on Note board right now, so nobody would pick the change up\. Nothing was sent\.$/);
     const paused = await ask({ settings: { ...settings, pausedApps: ['note-board'] } });
-    assert.match(paused.error, /^You are not working on Note board right now/);
+    assert.match(paused.error, /^You are not working on Note board right now, so nobody would pick the change up\. Nothing was sent\.$/);
 
     // Approved, or closed: there is nothing to change any more.
     await pool.query(`UPDATE chat_sessions SET status = 'merging' WHERE id = $1`, [proposal.id]);
@@ -1542,7 +1535,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     // Already built and up for a vote: changed with revise_proposal instead.
     assert.match((await mayor.startRequest(pool, ctx(), { project: 'note-board', number: 5 })).error, /its proposal is up for the group's vote\. To change it, use revise_proposal/);
     // Not a project it builds on.
-    assert.match((await mayor.startRequest(pool, ctx({ settings: { ...settings, liveApps: ['seed-swap'] } }), { project: 'note-board', number: 6 })).error,
+    assert.match((await mayor.startRequest(pool, ctx({ settings: { ...settings, pausedApps: ['note-board'] } }), { project: 'note-board', number: 6 })).error,
       /^You do not build on Note board/);
     assert.match((await mayor.startRequest(pool, ctx(), { project: 'note-board', number: 999 })).error, /^Note board has no request #999\./);
     assert.match((await mayor.startRequest(pool, ctx({ started: 'x' }), { project: 'note-board', number: 6 })).error, /^One start per turn\.$/);
@@ -1625,7 +1618,9 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     );
     await pool.query('INSERT INTO homeroom_bot_queue (app_id, issue_number, priority, started_at) VALUES ($1, 77, 1, NOW())', [side.id]);
     await pool.query(`INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict) VALUES ($1, 77, 'shadow', 'person')`, [side.id]);
-    const work = await mayor.myWork(pool, { userId: ada.id, settings, deps: { domain: 'app.test' } });
+    // Every app but a paused one is live: the side project is paused, so
+    // its queue is the background lane's.
+    const work = await mayor.myWork(pool, { userId: ada.id, settings: { ...settings, pausedApps: ['side-project'] }, deps: { domain: 'app.test' } });
     assert.ok(!work.requests.some((r) => r.project === 'side-project'), 'a request only ever read in the background is not hers to hear about');
     await pool.query('DELETE FROM homeroom_bot_queue WHERE app_id = $1', [side.id]);
   });
@@ -1696,7 +1691,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     assert.deepEqual(archives, [{ sessionId: duplicate, reason: 'superseded', userId: null }]);
     assert.equal(await statusOf(duplicate), 'archived');
     assert.deepEqual(systemMessages.map((m) => [m.appId, m.thread]), [[plant.id, { type: 'issue', ref: 1 }]]);
-    assert.match(systemMessages[0].content, /^Homeroom bot withdrew its proposal "Watering reminders again" \(PR #\d+\) for this request: it repeated PR #\d+, which was already approved\.$/);
+    assert.match(systemMessages[0].content, /^“Watering reminders again” was withdrawn: it repeated (?:“[^”]+”|another change for this request), which was already approved\.$/);
     // Its reply said it, and that was true: sent as written, with the request.
     const message = await read(sent);
     assert.equal(message.content, 'I withdrew the duplicate proposal; the approved one is the one that went live.');
@@ -1745,7 +1740,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     assert.equal(ack.metadata.homeroomBot.kind, 'withdrawn');
     assert.deepEqual(archives, [{ sessionId: photos, reason: 'withdrawn', userId: null }]);
     assert.equal(await statusOf(photos), 'archived');
-    assert.match(systemMessages.at(-1).content, /^Homeroom bot withdrew its proposal "Plant photos" \(PR #\d+\) for this request, at ada_\d+'s request\.$/);
+    assert.match(systemMessages.at(-1).content, /^“Plant photos” was withdrawn at ada_\d+'s request\.$/);
     assert.equal((await read(offered)).metadata.homeroomBot.answer, 'Withdraw it');
     const again = await say('Withdraw it', { reply_to_id: offered.messageId });
     assert.equal((await read(await mayor.decideOffer(pool, CONFIG, { bot, user: ada, settings, message: again, deps: { sessionLifecycle } }))).content,

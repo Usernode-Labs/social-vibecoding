@@ -20,6 +20,19 @@ const github = require('./github');
 const branchNames = require('./branch-names');
 const externalAgentTasks = require('./external-agent-tasks');
 
+// 14 Oct 2026 (#5162's follow-up): whether a durable build holds the
+// session (services/build-runs.js holdsSession: its build is still under
+// way, wherever it runs, its turns and the time between them). Slot eviction
+// pauses a session without its asking, and pausing destroys its worker: a
+// build on a draining process can sit idle between turns longer than the
+// grace these use, so a held session is never their victim. A read that
+// fails answers false, and the eviction goes on as it did before.
+async function heldByDurableBuild(pool, sessionId, why) {
+  const held = await require('./build-runs').holdsSession(pool, sessionId);
+  if (held) log.info('session-lifecycle', 'Not pausing a session a durable build holds', { sessionId, why });
+  return held;
+}
+
 // Parse "owner/repo" out of a stored GitHub repo URL. Returns [owner,
 // repo] or [] when the URL is missing/unparseable.
 function ownerRepo(repoUrl) {
@@ -309,6 +322,7 @@ async function freeGlobalSlot({ pool, graceMs, excludeSessionId = null }) {
     // proposal staging has no worker exec, but it owns the same session and
     // must be allowed to finish just like a web coding turn.
     if (isSessionBusy(row.id)) continue;
+    if (await heldByDurableBuild(pool, row.id, 'pressure')) continue;
     const { paused } = await pauseSession({ pool, sessionId: row.id, reason: 'pressure' });
     if (paused) {
       log.info('session-lifecycle', 'Freed global slot under pressure', { sessionId: row.id });
@@ -347,6 +361,7 @@ async function freeUserSlot({ pool, userId, excludeSessionId = null, includeHead
   for (const row of rows) {
     const id = Number(row && row.id);
     if (!Number.isInteger(id) || id <= 0 || isSessionBusy(id)) continue;
+    if (await heldByDurableBuild(pool, id, 'lru')) continue;
     const { paused } = await pauseSession({ pool, sessionId: id, userId, reason: 'lru' });
     if (paused) {
       log.info('session-lifecycle', 'Freed a user slot', { userId, sessionId: id });
@@ -359,6 +374,49 @@ async function freeUserSlot({ pool, userId, excludeSessionId = null, includeHead
 // The one thing a user is told when their slots cannot be freed: every other
 // session of theirs is in the middle of a turn.
 const USER_SLOTS_BUSY = 'Your other sessions are all busy finishing turns. Try again in a moment.';
+
+// What anybody is told when the platform-wide cap is full and nothing idle
+// could be paused to make room.
+const PLATFORM_AT_CAPACITY = 'Platform is at capacity right now. Try again in a few minutes.';
+
+/**
+ * Somebody was turned away by a session cap: `cap` 'global' (the
+ * platform-wide one) or 'user' (their own), `path` where they asked. One
+ * event each (events.SESSION_CAPACITY_REFUSED), which the infra topic's
+ * "Turned away at a session cap" figure counts: the admins' alert samples
+ * the count every few minutes, so it shows how often a cap was full, not
+ * how many people met it. Fire-and-forget, never throws.
+ */
+function recordCapacityRefusal(pool, { cap, path, userId = null, appId = null } = {}) {
+  const events = require('./events');
+  log.info('session-lifecycle', 'Turned away at a session cap', { cap, path, userId });
+  return events.record(pool, {
+    type: events.EVENT_TYPES.SESSION_CAPACITY_REFUSED, userId, appId, metadata: { cap, path },
+  });
+}
+
+/**
+ * The platform-wide gate every start, resume and reopen passes: under
+ * config.maxGlobalSessions (session-caps.countGlobalSessions), or at it with
+ * an idle session paused to make room (freeGlobalSlot). `discount` is a slot
+ * the request gives back (a replaced session). Answers { ok } and, when not,
+ * records the refusal; the caller answers 429 with PLATFORM_AT_CAPACITY.
+ */
+async function claimGlobalSlot({
+  pool, config, path, userId = null, appId = null, excludeSessionId = null, discount = 0,
+}) {
+  const { countGlobalSessions } = require('./session-caps');
+  const cap = config && config.maxGlobalSessions != null ? Number(config.maxGlobalSessions) : 100;
+  if ((await countGlobalSessions(pool)) - discount < cap) return { ok: true };
+  // Through the exports, as the routes called it before this gate existed,
+  // so a test's stand-in applies here too.
+  const { freed } = await module.exports.freeGlobalSlot({
+    pool, graceMs: config && config.sessionPressureGraceMs, excludeSessionId,
+  });
+  if (freed) return { ok: true };
+  await recordCapacityRefusal(pool, { cap: 'global', path, userId, appId });
+  return { ok: false };
+}
 
 // Tear down a session's staging preview (container + cloned DB + Caddy
 // route) WITHOUT changing the session's status. This is the staging GC
@@ -414,8 +472,10 @@ async function teardownStagingForSession({ pool, sessionId, reason = 'idle' }) {
 //   pool, sessionId
 //   userId  - optional owner scope (HTTP authz). Omit for system actions.
 //   reason  - 'manual' | 'stale-pr' | ... The Homeroom bot's own proposals
-//             (#11, WP3) close with 'withdrawn' (asked for in its DM) or
-//             'superseded' (another proposal for the same request covers it).
+//             (#11, WP3) close with 'withdrawn' (asked for in its DM),
+//             'superseded' (another proposal for the same request covers it)
+//             or 'request-closed' (every request it was built for closed
+//             another way: homeroom-bot-closed-requests.js).
 //   purgeCc - destroy the CC volume immediately (skip retention). Default
 //             false. The activeWorkers in-flight set (routes/sessions.js)
 //             is cleared by the HTTP handler, not here.
@@ -496,11 +556,14 @@ async function finalizeArchivedSession({
     });
   }
 
-  if (session?.staging_runtime_name || session?.staging_container_id) {
-    // Same contract as teardownStagingForSession above (#851): the chokepoint
-    // nulls the columns itself once removal is CONFIRMED, and a leak keeps
-    // them so the sweeper can retry. The archive itself proceeds regardless —
-    // closing the PR and changing status must not hinge on docker.
+  // A preview the machine is still building has no columns yet, and is
+  // retired all the same: the archive is what stops it.
+  const previewHeld = session ? await require('./preview-workflow').held(session.id).catch(() => false) : false;
+  if (session?.staging_runtime_name || session?.staging_container_id || previewHeld) {
+    // Same contract as teardownStagingForSession above (#851): the preview
+    // machine retires it (the session is archived by now, so for good), and
+    // the columns go once it has. The archive itself proceeds regardless —
+    // closing the PR and changing status must not hinge on the cluster.
     const result = await staging.teardownStaging(session, { slug: appSlug })
       .catch((err) => {
         log.warn('session-lifecycle', 'Staging teardown threw on archive', { sessionId, err: err.message });
@@ -526,22 +589,23 @@ async function finalizeArchivedSession({
     // outcome: the close is best-effort and the PR leaves the vote
     // panel either way. Own catch so a chat failure never fails the
     // archive itself.
-    const label = session.pr_title
-      ? `PR #${session.pr_number}: ${session.pr_title}`
-      : `PR #${session.pr_number}`;
+    // Named by its title, in Homeroom's words: a change, never "PR #n".
+    const label = session.pr_title ? `“${session.pr_title}”` : 'This change';
     // Rejection (auto-takedown) gets its own line so the lifecycle feed reads
     // correctly: the group voted it down rather than it just going quiet.
     const content = reason === 'auto-rejected'
-      ? `${label} was set aside for now (more No than Yes, and not enough support to carry it)`
+      ? `${label} was set aside for now (more No than Yes, and not enough support to carry it).`
       : reason === 'proposal-replaced' && userId != null && session.owner_username
-        ? `${session.owner_username} replaced ${label} with a new proposal`
+        ? `${session.owner_username} replaced ${session.pr_title ? label : 'this change'} with a new one.`
       : reason === 'superseded'
-        ? `${label} was withdrawn: another proposal for the same request covers it`
+        ? `${label} was withdrawn: another change for the same request covers it.`
+      : reason === 'request-closed'
+        ? `${label} was withdrawn: the request it was built for is closed.`
       : reason === 'withdrawn'
-        ? `${label} was withdrawn`
+        ? `${label} was withdrawn.`
       : userId != null && session.owner_username
-        ? `${session.owner_username} withdrew ${label}`
-        : `${label} went quiet and was set aside. It can always come back as a new proposal`;
+        ? `${session.owner_username} withdrew ${session.pr_title ? label : 'this change'}.`
+        : `${label} went quiet and was set aside. It can always come back as a new change.`;
     try {
       const { sendSystemMessage } = require('./ws');
       await sendSystemMessage(pool, session.app_id, content, 'system', null, { type: 'session', ref: session.id });
@@ -725,18 +789,22 @@ async function purgeArchivedCc({ pool, sessionId }) {
 //   sessionId - numeric session id
 //   username  - optional; the branch's owner segment. Defaults to the
 //               session owner's stored username.
+//   label     - optional; words for what the session is about (#3229), the
+//               first turn's deterministic title. Defaults to the session's
+//               stored title, so a titled session (the bot's builds, a
+//               dispatch backstop) is still named after its change.
 //
 // Returns { branchName, created }. Throws with `code` set when the session
 // is gone ('no_session') or GitHub refused the ref ('branch_create_failed',
 // carrying a userMessage safe to show in chat).
-async function ensureSessionBranch({ pool, sessionId, username = null }) {
+async function ensureSessionBranch({ pool, sessionId, username = null, label = null }) {
   const client = await pool.connect();
   let open = false;
   try {
     await client.query('BEGIN');
     open = true;
     const { rows } = await client.query(
-      `SELECT cs.id, cs.branch_name, cs.user_id, u.username, a.repo_url
+      `SELECT cs.id, cs.branch_name, cs.user_id, cs.session_title, u.username, a.repo_url
          FROM chat_sessions cs
          JOIN apps a ON a.id = cs.app_id
          LEFT JOIN users u ON u.id = cs.user_id
@@ -758,7 +826,9 @@ async function ensureSessionBranch({ pool, sessionId, username = null }) {
       return { branchName: row.branch_name, created: false };
     }
 
-    const branchName = branchNames.devBranchName(username || row.username || `u${row.user_id}`);
+    const branchName = branchNames.devBranchName(
+      username || row.username || `u${row.user_id}`, Date.now(), label || row.session_title || null,
+    );
     const [owner, repo] = ownerRepo(row.repo_url);
     if (github.isEnabled() && owner && repo) {
       try {
@@ -798,6 +868,9 @@ module.exports = {
   freeGlobalSlot,
   freeUserSlot,
   USER_SLOTS_BUSY,
+  PLATFORM_AT_CAPACITY,
+  recordCapacityRefusal,
+  claimGlobalSlot,
   teardownStagingForSession,
   archiveSession,
   finalizeArchivedSession,

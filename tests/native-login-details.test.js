@@ -1,5 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
@@ -28,6 +29,7 @@ vm.runInNewContext(compiled, {
     if (specifier === 'react/jsx-runtime') return jsx;
     if (specifier === '@/components/ui/button' ||
         specifier === '@/components/ui/dialog') return {};
+    if (specifier === '../../lib/i18n/react') return { useMessages: () => englishPlatformI18n().t };
     throw new Error(`Unexpected import: ${specifier}`);
   },
 });

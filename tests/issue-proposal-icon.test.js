@@ -55,6 +55,8 @@ test('_devCardIcon supports the pulse and title opts', () => {
   // attribute the builder concatenated.
   assert.match(src, /pulse: \(opts && opts\.pulse\) \? true : undefined/);
   assert.match(src, /title: \(opts && opts\.title\) \|\| undefined/);
-  assert.match(CARD_TSX, /spec\.pulse \? ' animate-pulse' : ''/, 'and the chip animates');
+  // `motion-safe:`, a complete literal: the chip animates unless the reader
+  // has asked for less motion, like the card's other in-flight marks.
+  assert.match(CARD_TSX, /spec\.pulse \? ' motion-safe:animate-pulse' : ''/, 'and the chip animates');
   assert.match(CARD_TSX, /title=\{spec\.title\}/, 'and carries the tooltip');
 });

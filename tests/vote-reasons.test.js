@@ -11,6 +11,9 @@
 //      needs none and its line reads exactly as before; the same side with
 //      new words updates the row without a second announcement; a re-cast
 //      No that already has its line passes the gate;
+//   3b. #3977: a No's line on a change Homeroom bot built goes to the bot
+//      (homeroom-bot-dm.js handVoteLine), and the vote row then leaves the
+//      line out, so the discussion shows it once, as the voter's reply;
 //   4. the roster names each counted vote's line, and the people whose vote
 //      was on an earlier version of the proposal;
 //   5. the merge credits: who is named when a proposal lands, and how the
@@ -354,6 +357,107 @@ test('a re-cast No that already has its line passes the gate; a flip to No does 
   });
 });
 
+// ── 3b. A No's line, on Homeroom bot's change (#3977) ─────────────────
+
+// The route asks homeroom-bot-dm.js where a No's line goes (its gates are
+// tests/homeroom-bot-vote-line-postgres.test.js) and hands it over; here
+// that module is a stand-in that says where, and records each hand-off
+// with how many vote rows the thread had at that moment.
+async function withBotDm({ target = null, handed = { ok: true, queued: true } } = {}, fn) {
+  const id = require.resolve('../src/services/homeroom-bot-dm');
+  const { voteLineFor } = require(id);
+  const orig = require.cache[id];
+  const asked = [];
+  const hands = [];
+  let rowsSoFar = () => 0;
+  stub(id, {
+    noteApproved: async () => null,
+    noteVoted: async () => null,
+    voteLineFor,
+    voteLineTarget: async (_pool, args) => { asked.push(args.sessionId); return target; },
+    handVoteLine: async (_pool, args) => {
+      hands.push({ userId: args.user.id, line: args.line, target: args.target, rowsBefore: rowsSoFar() });
+      return handed;
+    },
+  });
+  try {
+    await fn({ asked, hands, watch: (ctx) => { rowsSoFar = () => ctx.systemMessages.length; } });
+  } finally {
+    if (orig) require.cache[id] = orig; else delete require.cache[id];
+  }
+}
+const BOT_TARGET = { app: { id: 5, slug: 'widget', name: 'Widget' }, sessionId: 7, issueNumber: 3 };
+
+test('#3977: a No\'s line on the bot\'s change goes to the bot first, and the vote row leaves it out', async () => {
+  await withBotDm({ target: BOT_TARGET }, async (bot) => {
+    await withServer({}, async (ctx) => {
+      bot.watch(ctx);
+      const r = await ctx.post({ vote: 'no', reason: '  Sort the list   by date ' });
+      assert.equal(r.status, 200);
+      assert.deepEqual(ctx.pool.inserted[0].params, [7, 3, 'no', HEAD, 'Sort the list by date'], 'the vote keeps its line');
+      assert.deepEqual(bot.asked, [7]);
+      assert.deepEqual(bot.hands, [{ userId: 3, line: 'Sort the list by date', target: BOT_TARGET, rowsBefore: 0 }],
+        'handed once, as the voter, before the vote row');
+      assert.equal(ctx.systemMessages.length, 1);
+      assert.equal(ctx.systemMessages[0].content, 'evan voted no on PR #26: Native iOS look',
+        'the line is the voter\'s reply just above, so the row does not repeat it');
+      assert.deepEqual(ctx.systemMessages[0].metadata, { vote: { sessionId: 7, prNumber: 26, reason: null } });
+      assert.deepEqual(ctx.prompts, [7], 'everything else a No does, as before');
+    });
+  });
+});
+
+test('#3977: when the bot cannot take the line, or the change is not its own, the row keeps it', async () => {
+  await withBotDm({ target: BOT_TARGET, handed: { ok: false, why: 'something went wrong on my side' } }, async (bot) => {
+    await withServer({}, async (ctx) => {
+      await ctx.post({ vote: 'no', reason: 'Sort the list by date' });
+      assert.equal(bot.hands.length, 1);
+      assert.equal(ctx.systemMessages[0].content, 'evan voted no: “Sort the list by date”');
+    });
+  });
+  await withBotDm({ target: null }, async (bot) => {
+    await withServer({}, async (ctx) => {
+      await ctx.post({ vote: 'no', reason: 'Sort the list by date' });
+      assert.deepEqual(bot.asked, [7], 'asked where it goes');
+      assert.deepEqual(bot.hands, [], 'and it goes nowhere: not the bot\'s change, or past its gates');
+      assert.equal(ctx.systemMessages[0].content, 'evan voted no: “Sort the list by date”');
+    });
+  });
+});
+
+test('#3977: a Yes, with or without words, never reaches the bot', async () => {
+  await withBotDm({ target: BOT_TARGET }, async (bot) => {
+    await withServer({}, async (ctx) => {
+      await ctx.post({ vote: 'yes' });
+      await ctx.post({ vote: 'yes', reason: 'Love it' });
+      assert.deepEqual(bot.asked, [], 'not even asked');
+      assert.deepEqual(bot.hands, []);
+    });
+  });
+});
+
+test('#3977: new words on the same No reach the bot once; the same words again do not', async () => {
+  const prev = [{ vote: 'no', reason: 'Sort it', approval_epoch: 2, current_epoch: 2 }];
+  await withBotDm({ target: BOT_TARGET }, async (bot) => {
+    await withServer({ prev }, async (ctx) => {
+      const r = await ctx.post({ vote: 'no', reason: 'Sort it by date, newest first' });
+      assert.deepEqual(await r.json(), { ok: true, merged: false, unchanged: false, reasonUpdated: true });
+      assert.deepEqual(bot.hands.map((h) => h.line), ['Sort it by date, newest first']);
+      assert.equal(ctx.systemMessages.length, 0, 'no second vote row, as for any new words');
+    });
+  });
+  await withBotDm({ target: BOT_TARGET }, async (bot) => {
+    await withServer({ prev }, async (ctx) => {
+      const same = await ctx.post({ vote: 'no', reason: 'Sort it' });
+      assert.deepEqual(await same.json(), { ok: true, merged: false, unchanged: true });
+      const bare = await ctx.post({ vote: 'no' });
+      assert.deepEqual(await bare.json(), { ok: true, merged: false, unchanged: true });
+      assert.deepEqual(bot.asked, [], 'a re-cast that moved nothing is never handed again');
+      assert.deepEqual(bot.hands, []);
+    });
+  });
+});
+
 // ── 4. The roster ─────────────────────────────────────────────────────
 
 test('the roster carries each counted line and the people whose vote was on an earlier version', async () => {
@@ -429,7 +533,14 @@ test('mergeCredits: the author, the counted Yes voters, then the objectors with 
     const talk = pool.queries.find((q) => /FROM chat_messages cm/.test(q.sql));
     assert.match(talk.sql, /cm\.thread_type = 'session' AND cm\.thread_ref = \$2/, 'the proposal\'s own thread');
     assert.match(talk.sql, /cm\.msg_type = 'message'/, 'a word from a person, not a vote row or a notice');
-    assert.deepEqual(talk.params, [5, 41]);
+    assert.deepEqual(talk.params, [5, 41, null], 'no bound unless one is asked for');
+    // The merge-followups machine names them when the change goes live, which
+    // can be well after the merge: only those who spoke before it count.
+    const bounded = makeRecordingPool([]);
+    await subject.mergeCredits(bounded, { id: 41, app_id: 5, user_id: null }, { before: '2026-10-07T12:00:00.000Z' });
+    const boundedTalk = bounded.queries.find((q) => /FROM chat_messages cm/.test(q.sql));
+    assert.match(boundedTalk.sql, /cm\.created_at <= \$3::timestamptz/);
+    assert.deepEqual(boundedTalk.params, [5, 41, '2026-10-07T12:00:00.000Z']);
 
     const nobody = makeRecordingPool([]);
     assert.deepEqual(await subject.mergeCredits(nobody, { id: 41, app_id: 5, user_id: null }),
@@ -468,12 +579,13 @@ function makeIssuePool(handlers) {
   };
 }
 
+// A request (kind 'general'): the route records its vote itself. A
+// governance proposal's vote goes to the governance machine, which applies
+// the same rules (tests/workflow-governance-routes-postgres.test.js).
 const GOV_ROW = (over) => ({
-  id: 61, app_id: 9, app_slug: 'cool-app', kind: 'close_issue', status: 'open',
-  created_by: 42, title: 'Close issue: "Dark mode resets"',
-  // No issueNumber: the apply helper returns before touching GitHub, which
-  // keeps these tests about the VOTE rather than about the close.
-  payload: { issueTitle: 'Dark mode resets' },
+  id: 61, app_id: 9, app_slug: 'cool-app', kind: 'general', status: 'open',
+  created_by: 42, title: 'Dark mode resets',
+  payload: {},
   ...over,
 });
 
@@ -512,7 +624,7 @@ function loadIssueVotes(pool) {
     ...realActiveUsers,
     getActiveUserStats: async () => ({ active: 3, majority: 2 }),
   });
-  stub(ids.adminApproval, { isAppLocked: async () => false, hasAdminUpVote: async () => true });
+  stub(ids.adminApproval, { isAppLocked: async () => false });
   stub(ids.events, {
     EVENT_TYPES: { ISSUE_VOTE_CAST: 'issue_vote_cast' },
     record: (_pool, event) => { eventCalls.push(event); },
@@ -588,7 +700,7 @@ test('issue vote: a No with a line is recorded, and the proposal\'s thread quote
   assert.deepEqual(insert.params, [61, 3, 'down', 'This one is still broken.'],
     'normalised by votes.js\'s normaliser, whitespace and all');
   assert.equal(systemMessages[0].content,
-    'evan voted down on close proposal for issue #?: “This one is still broken.”');
+    'evan voted down on issue: "Dark mode resets": “This one is still broken.”');
   assert.deepEqual(systemMessages[0].thread, { type: 'governance', ref: 61 });
 });
 
@@ -597,7 +709,7 @@ test('issue vote: a Yes needs no line, emits a durable action, and the thread re
   assert.equal(res.statusCode, 200);
   assert.deepEqual(pool.issued(/INSERT INTO issue_votes/).params, [61, 3, 'up', null],
     'no line: null, never the empty string');
-  assert.equal(systemMessages[0].content, 'evan voted up on close proposal for issue #?');
+  assert.equal(systemMessages[0].content, 'evan voted up on issue: "Dark mode resets"');
   assert.deepEqual(eventCalls, [{
     type: 'issue_vote_cast', userId: 3, appId: 9,
     metadata: { vote: 'up', issueId: 61, issueVoteId: 91 },
@@ -744,8 +856,9 @@ test('the browser sends the line, and re-reads the roster once the vote lands', 
     'a refused No says so in the server\'s words');
   assert.match(fn, /AppView\._invalidateGovVoteRoster\(issueId\);/);
   // The roster is the governance twin of _loadVoteRoster, with the same
-  // re-entry guard — publishing repaints, and a paint calls the loader.
-  assert.match(view, /if \(AppView\._govVoteRosterInFlight\.has\(issueId\)\) return;/);
+  // re-entry guard — publishing repaints, and a paint calls the loader. A
+  // fresh read asked for meanwhile is queued behind it (#4177), not run.
+  assert.match(view, /if \(AppView\._govVoteRosterInFlight\.has\(issueId\)\) \{\s*if \(fresh\) AppView\._govVoteRosterStale\.add\(Number\(issueId\)\);\s*return;\s*\}/);
   assert.match(view, /`\/api\/apps\/\$\{slug\}\/governance\/\$\{issueId\}\/votes\$\{AppView\._demoQS\(\)\}`/);
   assert.match(view, /if \(t\.kind === 'gov'\) AppView\._loadGovVoteRoster\(item\.id\);/);
   assert.match(view, /roster: AppView\._govVoteRoster\[item\.id\] \|\| \{ phase: 'loading' \},/);

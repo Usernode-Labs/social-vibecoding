@@ -2,6 +2,7 @@ import { useRef } from 'react';
 
 import { Alert } from '@/components/ui/alert';
 import { OFFLINE_BANNER_ID, offlineBannerVisible } from '../../lib/offline';
+import { useMessages } from '../../lib/i18n/react';
 import { useHiddenClass } from '../../lib/legacy-dom';
 import { useVisibility } from '../../lib/visibility-store';
 
@@ -39,6 +40,7 @@ import { useVisibility } from '../../lib/visibility-store';
  * classes to shell nodes at runtime. See lib/legacy-dom.ts.
  */
 export function OfflineBanner() {
+  const t = useMessages();
   const ref = useRef<HTMLDivElement>(null);
   // `false` = the state the prerendered markup shipped with (`hidden`), so
   // the hydrating render always matches the server markup exactly.
@@ -47,7 +49,7 @@ export function OfflineBanner() {
 
   return (
     <Alert ref={ref} id={OFFLINE_BANNER_ID} variant="banner" startHidden>
-      Reconnecting to Homeroom. Showing saved content
+      {t('core:banner.offline.text')}
     </Alert>
   );
 }
@@ -81,12 +83,13 @@ export function OfflineBanner() {
  * whichever came first, so `cn` cannot be in this path. See alert.tsx.
  */
 export function ViewAsNonAdminBanner() {
+  const t = useMessages();
   return (
     <div
       id="view-as-non-admin-banner"
       className="hidden bg-amber-500/15 text-amber-800 dark:text-amber-300 border-b border-amber-500/30 px-4 py-2 text-xs flex items-center justify-center gap-2"
     >
-      <span>Viewing as non-admin (admin UI hidden).</span>
+      <span>{t('core:banner.viewAsNonAdmin.text')}</span>
       <button
         id="view-as-non-admin-disable"
         className="underline hover:text-amber-600 dark:hover:text-amber-200"
@@ -95,7 +98,7 @@ export function ViewAsNonAdminBanner() {
           window.location.reload();
         }}
       >
-        Switch back
+        {t('core:banner.viewAsNonAdmin.switchBack')}
       </button>
     </div>
   );

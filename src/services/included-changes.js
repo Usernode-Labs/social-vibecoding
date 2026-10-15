@@ -54,26 +54,10 @@ function fullSha(value) {
   return /^[0-9a-f]{40}$/.test(sha) ? sha : null;
 }
 
-/** "PR #3: First version of Flat 4B Chores", or "PR #3" untitled. */
-function prLabel(row) {
-  const ref = row?.pr_number ? `PR #${row.pr_number}` : `Change ${row?.id}`;
-  return row?.pr_title ? `${ref}: ${row.pr_title}` : ref;
-}
-
-/** The line its pull request is closed with. */
-function closingComment(carrier) {
-  return `Included in #${carrier.pr_number}, which went live.`;
-}
-
-/** The line in its own thread. */
-function threadLine(row, carrier) {
-  return `${prLabel(row)} went live as part of ${prLabel(carrier)}, which was built on it. Its own vote is closed.`;
-}
-
-/** The author's notification, under "Live". */
-function authorLine(carrier) {
-  return `Included in #${carrier.pr_number}, which went live.`;
-}
+// What is said about an included change (its closing comment, its thread's
+// lines, its author's notification): src/workflow/rules/included-lines.ts,
+// which the merge-followups machine writes with.
+const { prLabel, closingComment, threadLine, liveLine, authorLine } = require('../workflow/rules/included-lines.ts');
 
 /**
  * Pure: the candidates whose head is one of `commitShas`, the merged pull
@@ -109,6 +93,7 @@ const CANDIDATES_SQL = `SELECT cs.id, cs.source, cs.reviewed_head_sha, cs.import
 const MARK_SQL = `UPDATE chat_sessions c
     SET status = 'merged',
         merged_at = COALESCE(m.merged_at, NOW()),
+        live_at = COALESCE(m.live_at, NOW()),
         merge_commit_sha = m.merge_commit_sha,
         included_in_session_id = m.id
    FROM chat_sessions m
@@ -132,10 +117,11 @@ function depsOf(deps = {}) {
     agentSessions: deps.agentSessions || require('./agent-sessions'),
     bot: deps.bot || require('./homeroom-bot'),
     dm: deps.dm || require('./homeroom-bot-dm'),
+    live: deps.live || require('./homeroom-bot-live'),
     journey: deps.journey || require('./journey-events'),
     watcher: deps.watcher || require('./issue-close-watcher'),
     isSessionBusy: deps.isSessionBusy || require('./active-workers').isSessionBusy,
-    resolveIssueBounty: deps.resolveIssueBounty || ((...args) => require('../routes/votes').resolveIssueBounty(...args)),
+    resolveIssueBounty: deps.resolveIssueBounty || require('../workflow/rules/bounties.ts').resolveIssueBounty,
   };
 }
 
@@ -258,9 +244,22 @@ async function settleIncluded({ config, pool, row, carrier, sha, deployed = true
     for (const n of created || []) await d.notifications.hydrateAndPush(pool, n).catch(() => {});
   });
 
+  // #4787: and its voters, yes or no, as its author was told above — a
+  // change carried inside another goes live there, and a voter of the
+  // carried change had a say in it.
+  await step('tell its voters', async () => {
+    const created = await d.notifications.createVotedChangeMergedNotifications?.(pool, {
+      appId: row.app_id, sessionId: row.id, authorId: row.user_id,
+    });
+    for (const n of created || []) await d.notifications.hydrateAndPush(pool, n).catch(() => {});
+  });
+
   // Whoever asked for it hears it is live (for a first version, its
   // creator), and the journey records it going live, as on its own merge.
   await step('tell whoever asked for it', () => d.dm.noteProposalMerged(pool, row, { config, sha }));
+  // And the request the bot built it for says it is live, once (beside the
+  // DM above; the merge of the streams can fold the two into one hook).
+  await step('say on its request that it is live', () => d.live.announceLive(pool, { session: row, deps: { github: d.github, ws: d.ws } }));
   await step('record it going live', () => d.journey.recordChangeLive(pool, { config, session: row, sha }));
   return did;
 }
@@ -269,18 +268,26 @@ async function settleIncluded({ config, pool, row, carrier, sha, deployed = true
  * Close the requests it was linked to, as its own merge would have through
  * `Closes #N`: bounties on them resolve to its author, and each one closed is
  * then read as closed everywhere (the open-issues cache, its twin row, a
- * close-issue vote on it). Resolves the numbers closed on GitHub.
+ * close-issue vote on it, the Homeroom bot's proposals built for it alone).
+ * Resolves the numbers closed on GitHub, or with
+ * `report`, { closed, failed: [{ number, status }] }, so a durable caller
+ * (the merge-followups workflow machine) can retry the ones that failed;
+ * with `strict`, a failure to record a close here (twin rows, superseded
+ * proposals) throws, for the same caller to retry.
  */
-async function closeRequests({ pool, row, carrier, github, repo, d }) {
+async function closeRequests({ pool, row, carrier, github, repo, d, bounties = true, report = false, strict = false }) {
   const { sanitizeIssueNumbers } = require('./pr-metadata');
   const numbers = sanitizeIssueNumbers(row.linked_issues);
-  if (!numbers.length) return [];
-  for (const n of numbers) {
+  const answer = (closed, failed) => (report ? { closed, failed } : closed);
+  if (!numbers.length) return answer([], []);
+  // The merge-followups workflow machine pays the bounties itself, in the
+  // transition that marks the change merged (bounties: false).
+  if (bounties) for (const n of numbers) {
     await d.resolveIssueBounty(pool, {
       appId: row.app_id, sessionId: row.id, awardeeUserId: row.user_id || null, issueNumber: n,
     }).catch((err) => log.warn('included-changes', 'Bounty payout failed', { sessionId: row.id, issueNumber: n, err: err.message }));
   }
-  if (!github) return [];
+  if (!github) return answer([], []);
   github.noteIssuesClosed?.(repo.owner, repo.repo, numbers);
   const closed = [];
   const failed = [];
@@ -289,29 +296,35 @@ async function closeRequests({ pool, row, carrier, github, repo, d }) {
       await github.closeIssue(repo.owner, repo.repo, n);
       closed.push(n);
     } catch (err) {
-      failed.push(n);
+      failed.push({ number: n, status: err.status ?? null });
       log.warn('included-changes', 'Could not close a request of an included change', {
         sessionId: row.id, issueNumber: n, status: err.status, err: err.message,
       });
     }
   }
-  if (failed.length) github.unsuppressIssues?.(repo.owner, repo.repo, failed);
+  if (failed.length) github.unsuppressIssues?.(repo.owner, repo.repo, failed.map((f) => f.number));
   if (closed.length) {
     const prNumber = carrier.pr_number || null;
     d.watcher.bustAndBroadcast({ owner: repo.owner, repo: repo.repo, appSlug: row.app_slug, appId: row.app_id, closed });
-    d.watcher.closeTwinRows({ pool, appId: row.app_id, prNumber, numbers: closed });
-    d.watcher.resolveSupersededProposals({ pool, appId: row.app_id, appSlug: row.app_slug, prNumber, numbers: closed });
+    await Promise.all([
+      d.watcher.closeTwinRows({ pool, appId: row.app_id, prNumber, numbers: closed, strict }),
+      d.watcher.resolveSupersededProposals({ pool, appId: row.app_id, appSlug: row.app_slug, prNumber, numbers: closed, strict }),
+      d.watcher.withdrawBotProposals({ pool, appId: row.app_id, prNumber, numbers: closed, strict }),
+    ]);
   }
-  return closed;
+  return answer(closed, failed);
 }
 
 module.exports = {
   includeStackedChanges,
   settleIncluded,
+  closeRequests,
+  depsOf,
   containedIn,
   prLabel,
   closingComment,
   threadLine,
+  liveLine,
   authorLine,
   CANDIDATES_SQL,
   MARK_SQL,

@@ -79,6 +79,7 @@ const HEAVY = [
   { key: 'campaigns', file: 'admin-campaigns', global: 'AdminCampaigns' },
   { key: 'push', file: 'admin-push', global: 'AdminPush' },
   { key: 'mail', file: 'admin-mail', global: 'AdminMail' },
+  { key: 'sms', file: 'admin-sms', global: 'AdminSms' },
 ];
 
 const SRC = new Map(HEAVY.map((s) => [s.file, readMod(s.file)]));

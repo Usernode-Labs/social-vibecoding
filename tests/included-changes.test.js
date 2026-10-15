@@ -80,6 +80,7 @@ function stubs({ commits = [H3, H8], listFails = false, busy = [] } = {}) {
     worker: { retireWorker: rec('retireWorker') },
     notifications: {
       createPrMergedNotification: async (_pool, args) => { calls.push(['createPrMergedNotification', args]); return []; },
+      createVotedChangeMergedNotifications: async (_pool, args) => { calls.push(['createVotedChangeMergedNotifications', args]); return []; },
       hydrateAndPush: rec('hydrateAndPush'),
     },
     agentSessions: { noteChangeClosed: rec('noteChangeClosed') },
@@ -90,6 +91,7 @@ function stubs({ commits = [H3, H8], listFails = false, busy = [] } = {}) {
       bustAndBroadcast: (args) => { calls.push(['bustAndBroadcast', args]); },
       closeTwinRows: (args) => { calls.push(['closeTwinRows', { appId: args.appId, numbers: args.numbers }]); },
       resolveSupersededProposals: (args) => { calls.push(['resolveSupersededProposals', { appId: args.appId, numbers: args.numbers }]); },
+      withdrawBotProposals: (args) => { calls.push(['withdrawBotProposals', { appId: args.appId, numbers: args.numbers }]); },
     },
     isSessionBusy: (id) => busy.includes(id),
     resolveIssueBounty: async (_pool, args) => { calls.push(['resolveIssueBounty', args]); return { awarded: [], voided: [] }; },
@@ -200,9 +202,11 @@ test('a change the merged one was built on is marked merged as included, and set
     'createIssueComment', 'closePR',
     'sendSystemMessage',
     'resolveIssueBounty', 'noteIssuesClosed', 'closeIssue', 'bustAndBroadcast', 'closeTwinRows', 'resolveSupersededProposals',
+    'withdrawBotProposals',
     'teardownStaging', 'retireWorker', 'noteChangeClosed',
     'pushVoteUpdate',
     'createPrMergedNotification',
+    'createVotedChangeMergedNotifications',
     'noteProposalMerged', 'recordChangeLive',
   ]);
   const call = (name) => calls.find((c) => c[0] === name);
@@ -217,9 +221,13 @@ test('a change the merged one was built on is marked merged as included, and set
   assert.deepEqual(line[5], { type: 'session', ref: 6269 }, 'in its own thread, never a channel');
   assert.deepEqual(call('resolveIssueBounty')[1], { appId: 41, sessionId: 6269, awardeeUserId: 9, issueNumber: 1 });
   assert.deepEqual(call('closeTwinRows')[1], { appId: 41, numbers: [1] });
+  assert.deepEqual(call('withdrawBotProposals')[1], { appId: 41, numbers: [1] },
+    'the bot\'s other proposals built for the closed request alone are withdrawn');
   assert.equal(call('noteChangeClosed')[1].outcome, 'merged');
   assert.deepEqual(call('createPrMergedNotification')[1],
     { userId: 9, appId: 41, sessionId: 6269, credits: 'Included in #8, which went live.' });
+  assert.deepEqual(call('createVotedChangeMergedNotifications')[1],
+    { appId: 41, sessionId: 6269, authorId: 9 }, 'its voters are told it is live too (#4787)');
   assert.deepEqual(call('pushVoteUpdate')[1],
     { sessionId: 6269, appSlug: 'flat-4b-chores-e98ecd', appId: 41, merged: true, includedIn: 6288 });
   assert.equal(call('noteRequestMerged')[1].id, 6269, 'the bot settles the included change\'s own request');
@@ -236,9 +244,19 @@ test('after a merge whose deploy failed it is merged and closed, and nobody is t
   assert.deepEqual(did, { id: 6269, prClosed: true, requestsClosed: [1] });
   const names = calls.map((c) => c[0]);
   assert.ok(names.includes('closePR') && names.includes('closeIssue') && names.includes('pushVoteUpdate'));
-  for (const quiet of ['createPrMergedNotification', 'noteProposalMerged', 'recordChangeLive']) {
+  for (const quiet of ['createPrMergedNotification', 'createVotedChangeMergedNotifications', 'noteProposalMerged', 'recordChangeLive']) {
     assert.ok(!names.includes(quiet), `${quiet} waits for a deploy that did not happen`);
   }
+});
+
+test('#4787: a telling-its-voters step that fails is logged and the merge goes on', async () => {
+  const { deps, calls } = stubs();
+  deps.notifications.createVotedChangeMergedNotifications = async () => { throw new Error('db hiccup'); };
+  const pool = poolFor({ candidates: [{ id: 6269, source: 'native', reviewed_head_sha: H3 }] });
+  const out = await included.includeStackedChanges({ pool, session: MERGED, deps });
+  const [did] = await out.done;
+  assert.deepEqual(did, { id: 6269, prClosed: true, requestsClosed: [1] });
+  assert.ok(calls.some((c) => c[0] === 'noteProposalMerged'), 'the rest of the live work still ran');
 });
 
 test('a step that fails is logged and the rest go on', async () => {

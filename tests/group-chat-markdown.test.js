@@ -167,7 +167,7 @@ function loadGroupChat(extra = {}) {
   vm.createContext(sandbox);
   vm.runInContext(
     src + '\nglobalThis.__M = { GroupChat, renderMessageBody, renderWithMentions, '
-      + 'tokenizeMentionsAndRefs, decorateMentionsAndRefs, GC_MAX_MESSAGE_LEN, document };',
+      + 'tokenizeMentionsAndRefs, decorateMentionsAndRefs, renderRequestMentions, GC_MAX_MESSAGE_LEN, document };',
     sandbox
   );
   return sandbox.__M;
@@ -225,7 +225,7 @@ test('decorateMentionsAndRefs chips mentions/refs in ordinary text nodes', () =>
   const p = el(document, 'p', 'hey @bob check PR#7');
   decorateMentionsAndRefs(p);
   const html = p.innerHTML;
-  assert.match(html, /<span class="gc-mention">@bob<\/span>/);
+  assert.match(html, /<a class="gc-mention" href="#leaderboard\/users\/bob" data-mention="bob">@bob<\/a>/);
   assert.match(html, /<span class="gc-ref gc-ref-pr" data-ref-type="pr" data-ref-number="7"/);
 });
 
@@ -252,7 +252,7 @@ test('decorateMentionsAndRefs does NOT chip inside <code>, <pre> or <a>', () => 
   assert.match(html, /<pre><code>@carol PR#9<\/code><\/pre>/);
   assert.match(html, /<a>@dave #1<\/a>/);
   // the plain text run outside those got decorated
-  assert.match(html, /<span class="gc-mention">@eve<\/span>/);
+  assert.match(html, /<a class="gc-mention" href="#leaderboard\/users\/eve" data-mention="eve">@eve<\/a>/);
   assert.match(html, /data-ref-number="2"/);
 });
 
@@ -265,8 +265,114 @@ test('decorateMentionsAndRefs never reintroduces raw HTML from a text node', () 
   const html = p.innerHTML;
   assert.doesNotMatch(html, /<script>/, 'angle brackets stay escaped');
   assert.match(html, /&lt;script&gt;/);
-  assert.match(html, /<span class="gc-mention">@bob<\/span>/, 'mention still chipped');
+  assert.match(html, /<a class="gc-mention" href="#leaderboard\/users\/bob" data-mention="bob">@bob<\/a>/, 'mention still chipped');
   assert.match(html, /data-ref-number="5"/, 'ref still chipped');
+});
+
+// ─── #4668: a chip with a project behind it is a real link ──────────────────
+
+test('decorateMentionsAndRefs emits anchor chips when the chat names a project', () => {
+  const { decorateMentionsAndRefs, document } = loadGroupChat({
+    AppView: { appData: { slug: 'lost-starways' } },
+  });
+  const p = el(document, 'p', 'closing issue #28 and PR#31');
+  decorateMentionsAndRefs(p);
+  const html = p.innerHTML;
+  assert.match(html, /<a class="gc-ref gc-ref-issue" data-ref-type="issue" data-ref-number="28" href="#app\/lost-starways\/dev\/issues\/28">#28<\/a>/);
+  assert.match(html, /<a class="gc-ref gc-ref-pr" data-ref-type="pr" data-ref-number="31" href="#app\/lost-starways\/dev\/changes\/31">PR#31<\/a>/);
+  // an anchor is focusable and a link already — no role or tabindex
+  assert.doesNotMatch(html, /role="link"|tabindex="0"/);
+});
+
+test('renderWithMentions emits the same anchor chips on the string fallback path', () => {
+  const { renderWithMentions } = loadGroupChat({
+    AppView: { appData: { slug: 'lost-starways' } },
+  });
+  const out = renderWithMentions('closing issue #28 and PR#31');
+  assert.match(out, /<a class="gc-ref gc-ref-issue" href="#app\/lost-starways\/dev\/issues\/28" data-ref-type="issue" data-ref-number="28">#28<\/a>/);
+  assert.match(out, /<a class="gc-ref gc-ref-pr" href="#app\/lost-starways\/dev\/changes\/31" data-ref-type="pr" data-ref-number="31">PR#31<\/a>/);
+});
+
+test('the mounting caller\'s app names the chip\'s address, not the app view\'s', () => {
+  const { GroupChat, renderWithMentions } = loadGroupChat({
+    AppView: { appData: { slug: 'lost-starways' } },
+  });
+  GroupChat._app = { slug: 'other' };
+  assert.match(renderWithMentions('#28'), /href="#app\/other\/dev\/issues\/28"/);
+});
+
+test('with no project named, a chip stays today\'s plain span', () => {
+  const { renderWithMentions } = loadGroupChat();
+  const out = renderWithMentions('closing issue #28');
+  assert.match(out, /<span class="gc-ref gc-ref-issue" data-ref-type="issue" data-ref-number="28" role="link" tabindex="0">#28<\/span>/);
+  assert.doesNotMatch(out, /<a class="gc-ref/);
+});
+
+// A chip as the decoration builds it, with the `dataset` a real DOM gives.
+function makeChip(document, isPr, num) {
+  const chip = document.createElement('a');
+  chip.className = isPr ? 'gc-ref gc-ref-pr' : 'gc-ref gc-ref-issue';
+  chip.setAttribute('href', `#app/a/dev/${isPr ? 'changes' : 'issues'}/${num}`);
+  chip.setAttribute('data-ref-type', isPr ? 'pr' : 'issue');
+  chip.setAttribute('data-ref-number', String(num));
+  chip.dataset = { refType: isPr ? 'pr' : 'issue', refNumber: String(num) };
+  return chip;
+}
+
+test('_openRef: the chip naming the open request scrolls back up to it', () => {
+  const scrolled = [];
+  const AppView = {
+    appData: { slug: 'a' },
+    _devTopic: { kind: 'issue', id: 28 },
+    revealInDrawer: () => scrolled.push('revealed'),
+  };
+  const loc = { hash: '' };
+  const { GroupChat, document } = loadGroupChat({ AppView, location: loc });
+  GroupChat._threadPinned = true;
+  GroupChat._threadScrollEl = () => ({ scrollTo(opts) { scrolled.push(opts); } });
+  GroupChat._openRef(makeChip(document, false, '28'));
+  assert.equal(scrolled.length, 1, 'one scroll, nothing revealed');
+  assert.equal(scrolled[0].top, 0);
+  assert.equal(scrolled[0].behavior, 'smooth');
+  assert.equal(GroupChat._threadPinned, false);
+});
+
+test('_openRef: another request in the same app still reveals in the drawer', () => {
+  const calls = [];
+  const AppView = { appData: { slug: 'a' }, revealInDrawer: (...a) => calls.push(a) };
+  const loc = { hash: '' };
+  const { GroupChat, document } = loadGroupChat({ AppView, location: loc });
+  GroupChat._openRef(makeChip(document, false, '12'));
+  assert.deepEqual(calls, [['issue', '12']]);
+  assert.equal(loc.hash, '');
+});
+
+test('_openRef: a chip for a different project follows its own address', () => {
+  const calls = [];
+  const AppView = { appData: { slug: 'b' }, revealInDrawer: (...a) => calls.push(a) };
+  const loc = { hash: '' };
+  const { GroupChat, document } = loadGroupChat({ AppView, location: loc });
+  GroupChat._app = { slug: 'a' };
+  GroupChat._openRef(makeChip(document, false, '28'));
+  assert.deepEqual(calls, []);
+  assert.equal(loc.hash, '#app/a/dev/issues/28');
+});
+
+test('_attachQuoteHandlers: a modified click stands down before preventDefault, and both press paths route through _openRef', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'group-chat.js'), 'utf8');
+  const clickBranch = src.slice(
+    src.indexOf("const ref = e.target.closest('.gc-ref');"),
+    src.indexOf('.gc-spec-pr'),
+  );
+  const keydownBranch = src.slice(src.indexOf('#130: chips are spans'));
+  // The modified-click early return precedes preventDefault, so the browser
+  // — not this handler — opens the new tab, and no reply is staged either
+  // (the branch returns before the tap-to-quote tail).
+  const modifiedAt = clickBranch.indexOf('e.metaKey || e.ctrlKey || e.shiftKey || e.altKey');
+  assert.ok(modifiedAt > -1, 'a modified click is recognised');
+  assert.ok(modifiedAt < clickBranch.indexOf('e.preventDefault()'), 'before preventDefault');
+  assert.match(clickBranch, /GroupChat\._openRef\(ref\)/);
+  assert.match(keydownBranch, /GroupChat\._openRef\(ref\)/);
 });
 
 // ─── (A3) renderMessageBody fallback (no DevChat / no markdown libs) ─────────
@@ -292,7 +398,91 @@ test('renderMessageBody uses DevChat.renderMarkdown when available', () => {
   const out = renderMessageBody('**bold** @bob');
   assert.equal(receivedOpts && receivedOpts.breaks, true, 'breaks:true passed through');
   assert.match(out, /<strong>bold<\/strong>/, 'markdown formatting preserved');
-  assert.match(out, /<span class="gc-mention">@bob<\/span>/, 'mention decorated atop markdown');
+  assert.match(out, /<a class="gc-mention" href="#leaderboard\/users\/bob" data-mention="bob">@bob<\/a>/, 'mention decorated atop markdown');
+});
+
+// ─── (A4) #4029: a mention is a link to the person's page ──────────────────
+
+test('a person\'s mention links to their page on the fallback path; the viewer\'s own keeps -self', () => {
+  const { renderWithMentions } = loadGroupChat();
+  const out = renderWithMentions('hi @bob and @alice');
+  assert.match(out, /<a class="gc-mention" href="#leaderboard\/users\/bob" data-mention="bob">@bob<\/a>/);
+  assert.match(out, /<a class="gc-mention gc-mention-self" href="#leaderboard\/users\/alice" data-mention="alice">@alice<\/a>/);
+});
+
+test('Homeroom bot\'s mention stays text (no person page) on both paths', () => {
+  const { renderWithMentions, decorateMentionsAndRefs, document } = loadGroupChat();
+  for (const out of [renderWithMentions('ask @Homeroom bot and @homeroom_bot'),
+    (() => { const p = el(document, 'p', 'ask @Homeroom bot and @homeroom_bot'); decorateMentionsAndRefs(p); return p.innerHTML; })()]) {
+    assert.match(out, /<span class="gc-mention">@Homeroom bot<\/span>/);
+    assert.match(out, /<span class="gc-mention">@homeroom_bot<\/span>/);
+    assert.doesNotMatch(out, /leaderboard\/users/, 'the bot is never a link');
+  }
+});
+
+// ─── (A5) #3952: @mentions in a request's text ─────────────────────────────
+//
+// A request's body and its GitHub comments reach the page as GitHub stores
+// them: everything Homeroom sent went through services/github.js safeMention,
+// which puts a zero-width space after each `@`. That guard is what marks a
+// name as typed on Homeroom, so it is what gets linked; a bare `@handle`
+// came from GitHub itself and stays text.
+
+const ZWSP = '​';
+const github = require('../src/services/github');
+
+test('a request names a person with the chat\'s mention link, guard removed', () => {
+  const { renderRequestMentions } = loadGroupChat();
+  // Exactly what GitHub holds for "Fix the header @snait lmk wyt".
+  const stored = github.safeMention('Fix the header @snait lmk wyt');
+  assert.ok(stored.includes(`@${ZWSP}snait`), 'the fixture is what safeMention writes');
+  const out = renderRequestMentions(`<p class="dc-p">${stored}</p>`);
+  assert.equal(out,
+    '<p class="dc-p">Fix the header <a class="gc-mention" href="#leaderboard/users/snait" data-mention="snait">@snait</a> lmk wyt</p>');
+  assert.ok(!out.includes(ZWSP), 'the guard is display-only and never shows');
+});
+
+test('a request\'s mentions keep chat\'s rules: self, the bot, emails, no refs', () => {
+  const { renderRequestMentions } = loadGroupChat(); // the viewer is alice
+  const text = github.safeMention('@alice and @Homeroom bot, mail me@example.com about #12 and PR#3');
+  const out = renderRequestMentions(`<p>${text}</p>`);
+  assert.match(out, /<a class="gc-mention gc-mention-self" href="#leaderboard\/users\/alice" data-mention="alice">@alice<\/a>/);
+  assert.match(out, /<span class="gc-mention">@Homeroom bot<\/span>/, 'the bot has no person page');
+  assert.match(out, /mail me@example\.com about #12 and PR#3/, 'an email is text, and so are refs here');
+  assert.doesNotMatch(out, /gc-ref|data-ref-number|gc-channel-ref/, 'a request\'s #12 opens nothing on its page');
+});
+
+test('a bare @handle (written on GitHub) is not a person here, and stays text', () => {
+  const { renderRequestMentions } = loadGroupChat();
+  const html = `<p>cc @octocat, and @${ZWSP}bob from Homeroom</p>`;
+  const out = renderRequestMentions(html);
+  assert.match(out, /cc @octocat, and <a class="gc-mention" href="#leaderboard\/users\/bob" data-mention="bob">@bob<\/a> from Homeroom/);
+  assert.doesNotMatch(out, /users\/octocat/);
+  // Nothing guarded at all: the markup comes back exactly as it went in.
+  const plain = '<p>cc @octocat</p>';
+  assert.equal(renderRequestMentions(plain), plain);
+});
+
+test('code and links keep their text literal, without the guard in it', () => {
+  const { renderRequestMentions } = loadGroupChat();
+  const out = renderRequestMentions(
+    `<p>run <code>npm i @${ZWSP}types/node</code> then ask <a href="https://example.com">@${ZWSP}carol</a></p>`
+    + `<pre><code>@${ZWSP}Component\nclass A {}</code></pre>`,
+  );
+  assert.match(out, /<code>npm i @types\/node<\/code>/, 'a copied command is what was typed');
+  assert.match(out, /<a href="https:\/\/example\.com">@carol<\/a>/, 'never a link inside a link');
+  assert.match(out, /<pre><code>@Component\nclass A \{\}<\/code><\/pre>/);
+  assert.doesNotMatch(out, /gc-mention/);
+  assert.ok(!out.includes(ZWSP));
+});
+
+test('tokenizeMentionsAndRefs mentionsOnly leaves refs and channels as text', () => {
+  const { tokenizeMentionsAndRefs } = loadGroupChat();
+  const segs = tokenizeMentionsAndRefs('see #12, PR#3 and #general, @bob', 'alice',
+    new Set(['general']), { mentionsOnly: true });
+  assert.deepEqual(Array.from(segs, (s) => s.type), ['text', 'mention']);
+  assert.equal(segs[0].value, 'see #12, PR#3 and #general, ');
+  assert.equal(segs[1].name, 'bob');
 });
 
 test('GC_MAX_MESSAGE_LEN is 8000', () => {

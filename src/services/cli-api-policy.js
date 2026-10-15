@@ -259,10 +259,38 @@ const CONNECTOR_ALLOWED_ROUTES = Object.freeze([
   { method: 'POST', pattern: '/api/bot-studio/tasks/:id/taste' },
   { method: 'GET', pattern: '/api/bot-studio/runs/:id/trials' },
   { method: 'GET', pattern: '/api/bot-studio/trials/:id' },
+  { method: 'GET', pattern: '/api/bot-studio/trials/:id/transcript' },
   { method: 'GET', pattern: '/api/bot-studio/bot' },
   { method: 'POST', pattern: '/api/bot-studio/bot/runs/:id/rating' },
   { method: 'GET', pattern: '/api/bot-studio/shots' },
   { method: 'GET', pattern: '/api/bot-studio/shots/:id' },
+  // The Homeroom bot's configurations, first versions' and later changes'
+  // (routes/bot-configs.js): the same gate first on every handler, reads
+  // included (a pair shows screenshots of any app, private ones too); every
+  // write limited per person and refused to a browser on another origin.
+  // They change no app: they save a configuration version, set its role, set
+  // a scope's side-build budget, and record a pick.
+  { method: 'GET', pattern: '/api/bot-configs' },
+  { method: 'POST', pattern: '/api/bot-configs' },
+  { method: 'POST', pattern: '/api/bot-configs/:id/role' },
+  { method: 'POST', pattern: '/api/bot-configs/budget' },
+  { method: 'GET', pattern: '/api/bot-configs/pairs/next' },
+  { method: 'POST', pattern: '/api/bot-configs/pairs/:token/pick' },
+  // Before & after shots evals (routes/shots-evals.js): the same gate first on
+  // every handler, reads included (an eval shows screenshots of any app,
+  // private ones too); every write limited per person and refused to a
+  // browser on another origin; a launch must name its cap. They change no
+  // app and no proposal: they save a shots configuration, launch or cancel
+  // an eval of merged proposals, and record a pick.
+  { method: 'GET', pattern: '/api/shots-evals' },
+  { method: 'POST', pattern: '/api/shots-evals' },
+  { method: 'GET', pattern: '/api/shots-evals/configs' },
+  { method: 'POST', pattern: '/api/shots-evals/configs' },
+  { method: 'GET', pattern: '/api/shots-evals/pairs/next' },
+  { method: 'POST', pattern: '/api/shots-evals/pairs/:token/pick' },
+  { method: 'GET', pattern: '/api/shots-evals/:id' },
+  { method: 'GET', pattern: '/api/shots-evals/:id/shots' },
+  { method: 'POST', pattern: '/api/shots-evals/:id/cancel' },
   // Test accounts for first-run testing (routes/test-accounts.js). The third
   // deliberate exception: these make, list and retire ACCOUNTS — a new
   // sign-in, handed back once to the admin who asked. They may because of the
@@ -277,6 +305,20 @@ const CONNECTOR_ALLOWED_ROUTES = Object.freeze([
   { method: 'POST', pattern: '/api/test-accounts' },
   { method: 'GET', pattern: '/api/test-accounts' },
   { method: 'POST', pattern: '/api/test-accounts/:id/retire' },
+  // A one-time phone sign-in for a test number, the same gate: what it signs
+  // in to is a test account (services/test-accounts.js mintPhoneSignIn).
+  { method: 'POST', pattern: '/api/test-accounts/phone-sign-ins' },
+  // The waitlist's "you're in" mail sent to a test address, the same gate:
+  // the account its link makes is a test account (services/test-accounts.js
+  // sendRelease), and the mail goes through the ordinary throttle.
+  { method: 'POST', pattern: '/api/test-accounts/release-emails' },
+  // A test project's run report, the same gate: a read of what was recorded
+  // about its first version, or the copy retiring the account kept
+  // (services/run-report.js). Metadata and short excerpts, never a secret.
+  { method: 'GET', pattern: '/api/test-accounts/run-report' },
+  // The browser languages people use, and where the translation step stands
+  // (routes/ui-telemetry.js): a read, behind the same full-admin gate.
+  { method: 'GET', pattern: '/api/browser-languages' },
 ]);
 
 // ── Delegated grants (#2779) ───────────────────────────────────────────

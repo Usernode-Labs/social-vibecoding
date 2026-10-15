@@ -16,7 +16,7 @@ export interface AskStreamResult {
   error?: string;
 }
 
-const GENERIC_FAILURE = 'That did not go through. Try asking again.';
+import { t } from '../../../lib/i18n/runtime';
 
 /**
  * Read the ask route's SSE body to completion.
@@ -68,7 +68,7 @@ export async function readAskStream(
         model: payload.model,
       };
     } else if (event === 'error') {
-      result = { text: '', error: payload.error || GENERIC_FAILURE };
+      result = { text: '', error: payload.error || t('project:ask.failed') };
     }
   };
 

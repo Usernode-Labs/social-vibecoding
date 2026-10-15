@@ -12,6 +12,12 @@
 // answered by real git against a real repository. Mocking git here would test
 // the mock, and the whole argument for the change is that git's answer is the
 // one that cannot be forged.
+//
+// What the checks then do is the preview machine's: the reconciler hands the
+// new head to services/preview-workflow.js (carrying the old head's green
+// verdict on a clean merge, else asking for the new head to be checked) and
+// writes no checks column itself. There is no workflow runtime here, so that
+// adapter is stubbed and what it is handed is the assertion.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -107,14 +113,16 @@ function makePool({ epoch = 0, voters = 0 }) {
       }
       return { rows: [], rowCount: 0 };
     },
-    kickedChecks() {
-      return this.writes.some((w) => /checks_commit_sha/.test(w.sql));
+    // The checks columns are the preview machine's to write.
+    wroteChecks() {
+      return this.writes.some((w) => /checks_commit_sha|check_state/.test(w.sql) && /^\s*UPDATE/i.test(w.sql));
     },
   };
 }
 
 function load(r, posted = []) {
-  const rebuilds = [];
+  // What the reconciler hands the preview machine, one entry per revision().
+  const handed = [];
   const restores = [
     stub('src/services/github.js', { isEnabled: () => true }),
     stub('src/services/ws.js', {
@@ -124,10 +132,12 @@ function load(r, posted = []) {
         posted.push({ appId, content, type, meta, thread });
       },
     }),
-    stub('src/services/visuals.js', {
-      async setChecksPending(pool_, id, sha) { rebuilds.push(sha); }, notifyChecksPending() {},
+    stub('src/services/preview-workflow.js', {
+      async revision({ session: s, head, source, trigger, carryFrom }) {
+        handed.push({ sessionId: s.id, head, source, trigger, carryFrom });
+        return { status: 'accepted', reason: null };
+      },
     }),
-    stub('src/services/pr-import-sync.js', { async rerunChecksForNewHead() {} }),
   ];
   // Only the clone is stubbed: every plumbing call underneath runs for real.
   const mirror = require('../src/services/repo-mirror');
@@ -140,13 +150,19 @@ function load(r, posted = []) {
   const votes = require('../src/routes/votes');
   return {
     votes,
-    rebuilds,
+    handed,
     restore() {
       restores.reverse().forEach((f) => f());
       delete require.cache[require.resolve('../src/routes/votes')];
     },
   };
 }
+
+// The revision a head move hands over: the new head, checked afresh unless a
+// green verdict of `carryFrom` carries.
+const handOff = (head, carryFrom = null) => ({
+  sessionId: 42, head, source: 'reviewed-head', trigger: 'commit-push', carryFrom,
+});
 
 function session(r, overrides = {}) {
   return {
@@ -161,18 +177,22 @@ function session(r, overrides = {}) {
 
 test('a clean merge of main keeps the approvals and carries the checks', async () => {
   const r = repo().moveMain('b.txt', 'main moved b\n').syncIntoFeature();
-  const { votes, rebuilds, restore } = load(r);
+  const { votes, handed, restore } = load(r);
   const pool = makePool({ epoch: 0 });
   try {
+    const row = session(r);
     const out = await votes.reconcileNativeReviewedHead({
-      config: {}, pool, session: session(r), notify: false,
+      config: {}, pool, session: row, notify: false,
     });
     assert.equal(out.kind, 'mechanical');
     assert.equal(out.votesKept, true);
     assert.equal(out.epoch, 0, 'a merge nobody edited must not move the epoch');
     assert.equal(out.headSha, r.featureHead());
-    assert.equal(pool.kickedChecks(), true, 'the passing verdict is stamped onto the merged commit');
-    assert.deepEqual(rebuilds, [], 'and nothing is rebuilt');
+    assert.deepEqual(handed, [handOff(r.featureHead(), r.approved)],
+      'the machine carries the passing verdict of the approved head onto the merged commit');
+    assert.equal(out.checksCarry, true, 'and says so, for a caller that reports it');
+    assert.equal(row.checks_commit_sha, r.featureHead(), 'the caller\'s row reads the carried verdict');
+    assert.equal(pool.wroteChecks(), false, 'the stamp itself is the machine\'s');
   } finally { restore(); r.cleanup(); }
 });
 
@@ -183,7 +203,7 @@ test('a clean merge over a run still in flight rebuilds instead of carrying', as
   // building until the stale sweeper noticed ten minutes later.
   for (const state of ['pending', 'error', null]) {
     const r = repo().moveMain('b.txt', 'main moved b\n').syncIntoFeature();
-    const { votes, rebuilds, restore } = load(r);
+    const { votes, handed, restore } = load(r);
     const pool = makePool({ epoch: 0 });
     try {
       // eslint-disable-next-line no-await-in-loop
@@ -192,8 +212,8 @@ test('a clean merge over a run still in flight rebuilds instead of carrying', as
       });
       assert.equal(out.kind, 'mechanical');
       assert.equal(out.votesKept, true, `${state}: the votes still stand — only the checks policy differs`);
-      assert.equal(pool.kickedChecks(), false, `${state}: an unfinished verdict is not carried`);
-      assert.deepEqual(rebuilds, [r.featureHead()], `${state}: the checks re-run against the merged commit`);
+      assert.equal(out.checksCarry, false, `${state}: an unfinished verdict is not carried, and the answer says so`);
+      assert.deepEqual(handed, [handOff(r.featureHead())], `${state}: the checks re-run against the merged commit`);
     } finally { restore(); r.cleanup(); }
   }
 });
@@ -204,7 +224,7 @@ test('a settled failure does NOT carry: main may be what fixes it, so the merged
   // went red on a red base, main was repaired, the sync merged the repair in
   // and carried the old failure onto the merged commit with nothing building.
   const r = repo().moveMain('b.txt', 'main moved b\n').syncIntoFeature();
-  const { votes, rebuilds, restore } = load(r);
+  const { votes, handed, restore } = load(r);
   const pool = makePool({ epoch: 0 });
   try {
     const out = await votes.reconcileNativeReviewedHead({
@@ -212,14 +232,14 @@ test('a settled failure does NOT carry: main may be what fixes it, so the merged
     });
     assert.equal(out.kind, 'mechanical');
     assert.equal(out.votesKept, true, 'the votes still stand — only the checks policy differs');
-    assert.equal(pool.kickedChecks(), false, 'the failing verdict is not stamped onto the merged commit');
-    assert.deepEqual(rebuilds, [r.featureHead()], 'the checks re-run against the merged commit');
+    assert.deepEqual(handed, [handOff(r.featureHead())],
+      'the failing verdict is not carried: the checks re-run against the merged commit');
   } finally { restore(); r.cleanup(); }
 });
 
 test('an author push clears the approvals and re-runs the checks', async () => {
   const r = repo().writeOnFeature('a.txt', 'PROPOSAL CHANGED\nl2\nl3\n');
-  const { votes, restore } = load(r);
+  const { votes, handed, restore } = load(r);
   const pool = makePool({ epoch: 0 });
   try {
     const revised = session(r, { pr_summary_md: 'The earlier explanation.' });
@@ -229,6 +249,7 @@ test('an author push clears the approvals and re-runs the checks', async () => {
     assert.equal(out.kind, 'authored');
     assert.equal(out.votesKept, false);
     assert.equal(out.epoch, 1, 'the epoch moves, which is what stops the old votes counting');
+    assert.deepEqual(handed, [handOff(r.featureHead())], 'the pushed commit is checked afresh');
     assert.equal(revised.pr_summary_md, 'The earlier explanation.',
       'the previous explanation remains readable while its freshness is reviewed');
     assert.equal(revised.pr_summary_stale, true);
@@ -247,7 +268,7 @@ test('a resolved conflict keeps the approvals but re-checks the merged tree', as
   git(r.dir, 'add', '-A'); git(r.dir, 'commit', '-qm', 'resolved');
   git(r.dir, 'checkout', '-q', 'main');
 
-  const { votes, restore } = load(r);
+  const { votes, handed, restore } = load(r);
   const pool = makePool({ epoch: 0 });
   try {
     const out = await votes.reconcileNativeReviewedHead({
@@ -256,8 +277,9 @@ test('a resolved conflict keeps the approvals but re-checks the merged tree', as
     assert.equal(out.kind, 'resolved');
     assert.equal(out.votesKept, true, 'the resolution is bounded by the conflict');
     assert.equal(out.epoch, 0);
-    assert.equal(pool.kickedChecks(), false,
+    assert.deepEqual(handed, [handOff(r.featureHead())],
       'a Claude-edited tree is unverified, so its verdict must NOT be carried');
+    assert.equal(out.checksCarry, false);
   } finally { restore(); r.cleanup(); }
 });
 
@@ -281,14 +303,41 @@ test('a merge commit shaped like ours but carrying an edit is an author push', a
     });
     assert.equal(out.kind, 'authored', 'commit shape must buy nothing');
     assert.equal(out.epoch, 1);
+    assert.equal(out.checksCarry, false, 'nor carry a verdict');
   } finally { restore(); r.cleanup(); }
+});
+
+test('a deferring caller hands off the build itself, but a carried verdict is handed over here', async () => {
+  // services/proposal-update.js and cli-handoff-sync.js write their own pins
+  // first and then hand the head over; the reconciler only reports that the
+  // checks are theirs to ask for.
+  const pushed = repo().writeOnFeature('a.txt', 'PROPOSAL CHANGED\nl2\nl3\n');
+  let loaded = load(pushed);
+  try {
+    const out = await loaded.votes.reconcileNativeReviewedHead({
+      config: {}, pool: makePool({ epoch: 0 }), session: session(pushed), notify: false, deferChecks: true,
+    });
+    assert.equal(out.checksDeferred, true);
+    assert.deepEqual(loaded.handed, []);
+  } finally { loaded.restore(); pushed.cleanup(); }
+
+  const synced = repo().moveMain('b.txt', 'main moved b\n').syncIntoFeature();
+  loaded = load(synced);
+  try {
+    const out = await loaded.votes.reconcileNativeReviewedHead({
+      config: {}, pool: makePool({ epoch: 0 }), session: session(synced), notify: false, deferChecks: true,
+    });
+    assert.equal(out.checksCarry, true);
+    assert.equal(out.checksDeferred, false, 'nothing is left to check');
+    assert.deepEqual(loaded.handed, [handOff(synced.featureHead(), synced.approved)]);
+  } finally { loaded.restore(); synced.cleanup(); }
 });
 
 test('an unmoved head writes nothing at all', async () => {
   const r = repo();
   git(r.dir, 'checkout', '-q', 'feature');
   git(r.dir, 'checkout', '-q', 'main');
-  const { votes, restore } = load(r);
+  const { votes, handed, restore } = load(r);
   const pool = makePool({ epoch: 4 });
   try {
     const out = await votes.reconcileNativeReviewedHead({
@@ -297,6 +346,7 @@ test('an unmoved head writes nothing at all', async () => {
     assert.equal(out.unchanged, true);
     assert.equal(out.epoch, 4);
     assert.equal(pool.writes.length, 0, 'nothing to reconcile means nothing to write');
+    assert.deepEqual(handed, [], 'and nothing to hand over');
   } finally { restore(); r.cleanup(); }
 });
 
@@ -430,6 +480,24 @@ test('a silent caller that retires votes still says so, in the proposal\'s own t
   } finally { restore(); r.cleanup(); }
 });
 
+// One request, one story: an update Homeroom made (the bot's, or one sent
+// through Homeroom) is one plain line in the change's thread, with no
+// "on GitHub" and no pull request number; the bot's own note does not
+// repeat it.
+test('an update Homeroom made says so in one line, without GitHub or a pull request number', async () => {
+  const r = repo().writeOnFeature('a.txt', 'PROPOSAL CHANGED\nl2\nl3\n');
+  const posted = [];
+  const { votes, restore } = load(r, posted);
+  try {
+    await votes.reconcileNativeReviewedHead({
+      config: {}, pool: makePool({ epoch: 3, voters: 1 }), session: session(r, { approval_epoch: 3 }), notify: true, madeBy: 'bot',
+    });
+    assert.equal(posted.length, 1);
+    assert.equal(posted[0].content, 'Updated. Earlier votes were cleared, so take another look.');
+    assert.deepEqual(posted[0].thread, { type: 'session', ref: 42 });
+  } finally { restore(); r.cleanup(); }
+});
+
 test('a silent caller posts nothing when the move cleared no votes, kept them, or its caller announces it', async () => {
   const pushed = repo().writeOnFeature('a.txt', 'PROPOSAL CHANGED\nl2\nl3\n');
   const posted = [];
@@ -461,4 +529,83 @@ test('the merge\'s head-moved 409 announces the cleared votes itself, so the rec
   const src = fs.readFileSync(path.join(__dirname, '..', 'src/routes/votes.js'), 'utf8');
   assert.match(src, /nativeRefresh = await reconcileNativeReviewedHead\(\{\s*config, pool, session, fresh: true, notify: false,\s*announceClearedVotes: false,\s*\}\)/);
   assert.match(src, /Earlier-revision votes were cleared and the new commit is being checked/);
+});
+
+// Run four (13 Oct 2026): a fix round of the bot's on Club Votes read "PR #7:
+// … was updated on GitHub. Earlier votes were cleared, so please re-review
+// commit 3f2a…", because the caller that reconciled its push first passed no
+// `madeBy`, and its description was marked "Written for an earlier version
+// of this change." Both are decided by the reconciler now, from the commits
+// the move added (services/homeroom-commits.js), whichever caller claims it.
+function commitOnFeature(r, file, body, message, { email = 'usernode-bot@users.noreply.github.com', name = 'usernode-bot' } = {}) {
+  git(r.dir, 'checkout', '-q', 'feature');
+  fs.writeFileSync(path.join(r.dir, file), body);
+  git(r.dir, 'add', '-A');
+  execFileSync('git', ['-C', r.dir, 'commit', '-qm', message], {
+    env: { ...process.env, GIT_COMMITTER_EMAIL: email, GIT_COMMITTER_NAME: name, GIT_AUTHOR_EMAIL: email, GIT_AUTHOR_NAME: name },
+  });
+  git(r.dir, 'checkout', '-q', 'main');
+  return r;
+}
+const claimOf = (pool) => pool.writes.find((w) => /approval_epoch = approval_epoch \+/.test(w.sql));
+
+test('a push Homeroom committed says "Updated." whichever caller reconciles it, with no madeBy', async () => {
+  const r = commitOnFeature(repo(), 'a.txt', 'PROPOSAL CHANGED\nl2\nl3\n', 'Changes via Homeroom');
+  const posted = [];
+  const { votes, restore } = load(r, posted);
+  try {
+    const pool = makePool({ epoch: 3, voters: 1 });
+    // The merge queue's re-pin: silent, and no madeBy.
+    await votes.reconcileNativeReviewedHead({ config: {}, pool, session: session(r, { approval_epoch: 3 }), notify: false });
+    assert.equal(posted.length, 1);
+    assert.equal(posted[0].content, 'Updated. Earlier votes were cleared, so take another look.');
+    assert.equal(claimOf(pool).params[4], false, 'an update that is not a fix round makes the description stale, as before');
+    assert.match(claimOf(pool).sql, /pr_summary_stale = CASE WHEN \$5::boolean THEN pr_summary_stale/);
+  } finally { restore(); r.cleanup(); }
+});
+
+test('a fix round of the bot\'s leaves the description as it stands', async () => {
+  const fixes = [
+    'Homeroom bot: fix the failing checks on #12',
+    'Homeroom bot: fix what did not work on #12',
+    'Homeroom bot: seed what the before and after shots of #12 need',
+  ];
+  for (const message of fixes) {
+    const r = commitOnFeature(repo(), 'a.txt', 'PROPOSAL FIXED\nl2\nl3\n', message);
+    const posted = [];
+    const { votes, restore } = load(r, posted);
+    try {
+      const pool = makePool({ epoch: 3, voters: 1 });
+      const out = await votes.reconcileNativeReviewedHead({ config: {}, pool, session: session(r, { approval_epoch: 3 }), notify: true });
+      assert.equal(out.epoch, 4, `${message}: the votes are cleared all the same`);
+      assert.equal(claimOf(pool).params[4], true, `${message}: the description keeps its freshness`);
+      assert.equal(posted[0].content, 'Updated. Earlier votes were cleared, so take another look.');
+    } finally { restore(); r.cleanup(); }
+  }
+});
+
+test('a person\'s push, or a fix message somebody else committed, is said and treated as before', async () => {
+  for (const [message, who] of [
+    ['Tweak the poll colours', { email: 'ada@example.com', name: 'Ada' }],
+    ['Homeroom bot: fix the failing checks on #12', { email: 'noreply@github.com', name: 'GitHub' }],
+  ]) {
+    const r = commitOnFeature(repo(), 'a.txt', 'PROPOSAL CHANGED\nl2\nl3\n', message, who);
+    const posted = [];
+    const { votes, restore } = load(r, posted);
+    try {
+      const pool = makePool({ epoch: 3, voters: 1 });
+      await votes.reconcileNativeReviewedHead({ config: {}, pool, session: session(r, { approval_epoch: 3 }), notify: true });
+      assert.match(posted[0].content, /^PR #99: A proposal was updated on GitHub\. Earlier votes were cleared, so please re-review commit [0-9a-f]{8}\.$/, message);
+      assert.equal(claimOf(pool).params[4], false, `${message}: stale, as before`);
+    } finally { restore(); r.cleanup(); }
+  }
+  // A Homeroom commit that is not a fix round, after a fix: the move is not only a fix.
+  const r = commitOnFeature(commitOnFeature(repo(), 'a.txt', 'FIXED\nl2\nl3\n', 'Homeroom bot: fix the failing checks on #12'),
+    'b.txt', 'b changed\n', 'Homeroom bot: follow-up on #12');
+  const { votes, restore } = load(r, []);
+  try {
+    const pool = makePool({ epoch: 0, voters: 0 });
+    await votes.reconcileNativeReviewedHead({ config: {}, pool, session: session(r), notify: false });
+    assert.equal(claimOf(pool).params[4], false, 'a follow-up changes what it does');
+  } finally { restore(); r.cleanup(); }
 });

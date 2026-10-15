@@ -7,6 +7,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 // React bundle the dependency is explicit (#1082 chunk E).
 import { AdminUI } from './admin-console.js';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
+import { changeHref } from '../../lib/change-href';
 
 // Screenshot gallery section of the admin console (#860) — the retired
 // standalone /gallery page, ported into #admin/gallery.
@@ -206,7 +207,7 @@ function ProposalCard({ p }: { p: Proposal }) {
   if (merged) meta.push(<span key="date">{merged}</span>);
   if (p.appSlug) {
     meta.push(
-      <a key="open" href={`/#app/${p.appSlug}/dev/proposals/${p.id}`} className={LINK}>Open proposal →</a>,
+      <a key="open" href={`/${changeHref(p.appSlug, p.id, p.prNumber)}`} className={LINK}>Open proposal →</a>,
     );
   }
 

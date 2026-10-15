@@ -46,6 +46,7 @@ const {
 } = require('../middleware/rate-limits');
 const { waitlistIntegratorAuth } = require('../services/waitlist-integrator');
 const waitlist = require('../services/waitlist');
+const releaseLinks = require('../services/release-links');
 const questions = require('../services/waitlist-questions');
 const { sendWaitlistJoinMail, sendWaitlistCodeMail } = require('../services/topochain/mailer');
 const { sendWaitlistJoinSms, sendWaitlistCodeSms } = require('../services/sms');
@@ -171,6 +172,28 @@ function publicApiRoutes(config) {
       log.error('public-api', 'contributors failed', {
         slug: req.params.slug, message: err.message,
       });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // GET /api/public/app-host?host= — which app a LIVE custom domain serves
+  // (#4405): the slug and the name, nothing else. The hosted bridge asks
+  // from the app's own page to draw its Homeroom button there, which is why
+  // this is anonymous and under the CORS-open prefix. 404 for anything that
+  // is not a live custom host, a Homeroom host included (the bridge already
+  // knows those from platform.json).
+  router.get('/api/public/app-host', async (req, res) => {
+    const host = String(req.query.host || '').trim().toLowerCase().replace(/:\d+$/, '');
+    if (!host || host.length > 253 || !/^[a-z0-9.-]+$/.test(host) || !host.includes('.')) {
+      return res.status(404).json({ error: 'Not found' });
+    }
+    try {
+      const found = await require('../services/app-domains').lookupLiveHost(pool, host);
+      if (!found) return res.status(404).json({ error: 'Not found' });
+      res.set('Cache-Control', 'public, max-age=60');
+      res.json({ slug: found.slug, name: found.name });
+    } catch (err) {
+      log.error('public-api', 'app-host lookup failed', { host, message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -775,6 +798,12 @@ function publicApiRoutes(config) {
         // short-circuit: that branch is the confirmation poll, it repeats on a
         // timer, and it has no reader for this.
         email: row.email,
+        // Whether a "You're in" mail's link for this row may be spent as the
+        // page opens (features/auth/landing.tsx): released, and the account
+        // the address would prove is still new (none yet, or no username and
+        // no password). A boolean and nothing else. Read only: it spends no
+        // link and makes no session (services/release-links.js isNewAccount).
+        new_account: await releaseLinks.isNewAccount(pool, row),
         answers,
         oauth: {
           github: !!(config.waitlistGithubClientId && config.waitlistGithubClientSecret),

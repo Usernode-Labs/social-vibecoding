@@ -230,6 +230,8 @@ declare global {
       resumeMainMerges?(slug: string, btn?: HTMLButtonElement | null): Promise<boolean | undefined>;
       /** The "Proposal checks" dialog for one change: its checks, Refresh and Re-run. */
       openSessionChecks?(sessionId: number): void;
+      /** The Members dialog (features/dialogs/members-controller.js). */
+      openMembersModal?(opts?: { focus?: 'approvals' }): void;
       /** POST /api/sessions/:id/recheck, with the platform's own toasts; true once it started. */
       castRecheck?(sessionId: number): Promise<boolean | undefined>;
       /**
@@ -293,6 +295,16 @@ declare global {
         string,
         { isOpen(): boolean; open(payload?: unknown): void; close(): void } | undefined
       >;
+      /**
+       * features/first-session: the first session's screens, and the one
+       * front door for a new project. `create` opens "What do you want to
+       * make?" from the Create button, or its import form (`import`); false
+       * when another of its screens holds the view.
+       */
+      firstSession?: {
+        create?(opts?: { import?: boolean }): boolean;
+        [key: string]: unknown;
+      };
       messages?: {
         open(conversationId?: number | null): void;
         route(conversationId?: number | null): void;
@@ -309,6 +321,15 @@ declare global {
         resync(): Promise<void> | void;
         /** The Messages screen, or a room embedded in its community's page, is on screen. */
         showing(): boolean;
+      };
+      /** lib/live-reads.ts (#4177): re-read what is on screen after a gap. */
+      liveReads?: {
+        watch(
+          reread: (resync: { reason: string; reasons: string[]; urls: string[] | null }) => unknown,
+          options?: { reads?: (url: URL) => boolean },
+        ): () => void;
+        resync(reason: string, url?: string | null): void;
+        FRESH: RequestInit;
       };
       /**
        * features/agent-session/store.ts (#2779). `new` is the conversation

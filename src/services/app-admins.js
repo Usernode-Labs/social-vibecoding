@@ -149,6 +149,18 @@ function parseManifestSource(raw) {
 
 const byKey = (a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
 
+// A rules value (governance-rules.js) in a form that differs only when what
+// it decides differs: people case-folded and sorted, groups by name.
+function canonicalRules(value) {
+  return {
+    preset: value.preset || null,
+    groups: (value.groups || [])
+      .map((g) => ({ name: String(g.name).toLowerCase(), people: (g.people || []).map((p) => String(p).toLowerCase()).sort() }))
+      .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)),
+    rules: (value.rules || []).map((r) => `${r.group}:${r.kind}:${r.n ?? ''}`).sort(),
+  };
+}
+
 // The five protected blocks of one dapp.json source, each in a canonical
 // form so only a change that MEANS something reads as one: through the
 // same readers the deploy uses (app-manifest.js), with ordering, casing
@@ -167,8 +179,14 @@ function explicitApprovalBlocks(raw) {
   const secrets = appManifest.readSecrets(parsed, { platformEnv });
   return {
     admins: normalizeAdmins(appManifest.readAdmins(parsed) || []),
+    // #4666: the rules a block sets, canonical, so a change to a group's
+    // people or to a rule reads as a change to how changes are approved.
     governance: governance
-      ? { approvers: governance.approvers, approvals: governance.approvals } : null,
+      ? {
+        approvers: governance.approvers,
+        approvals: governance.approvals,
+        ...(governance.rules ? { rules: canonicalRules(governance.rules) } : {}),
+      } : null,
     visibility: visibility ? { build: visibility.build, view: visibility.view } : null,
     platform_env: platformEnv
       .map((e) => ({ key: e.key, required: e.required, private: e.private, default: e.default }))

@@ -92,6 +92,7 @@ function loadAppCreator({ dockerStubs = {}, secretsStubs = {}, wsStubs = {} } = 
     reconcileAppScreenshot: async () => {},
     reconcileAppIcon: async () => {},
     reconcileAppAdmins: async () => {},
+    reconcileAppTopics: async () => null,
   });
   stub(ids.appSecrets, {
     getRawValues: async () => ({}),

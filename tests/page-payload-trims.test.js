@@ -87,6 +87,9 @@ test('the chat composers warm their candidates on focus, not on every mount', ()
   const gc = read('public/js/group-chat.js');
   for (const who of ['RefAutocomplete', 'MentionAutocomplete']) {
     assert.match(gc, new RegExp(`if \\(document\\.activeElement === input\\) ${who}\\._loadCandidates\\(slug\\);`));
-    assert.match(gc, new RegExp(`input\\.addEventListener\\('focus', \\(\\) => \\{\\s*if \\(${who}\\._input === input\\) ${who}\\._loadCandidates\\(${who}\\._slug\\);`));
+    // #4571: the focus handler retargets the menu to this box first (`own()`),
+    // then always warms the box's own project — the old `_input === input`
+    // guard would never warm a box the last attach had moved past.
+    assert.match(gc, new RegExp(`input\\.addEventListener\\('focus', \\(\\) => \\{\\s*own\\(\\);\\s*${who}\\._loadCandidates\\(${who}\\._slug\\);`));
   }
 });

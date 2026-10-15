@@ -76,16 +76,18 @@ test('it lights on the Settings screen and nowhere else', () => {
   }
 });
 
-test('desktop only: hidden on the phone bar, drawn beside Me inside the rail block', () => {
+test('desktop only: hidden on the phone bar, drawn above Me at the strip\'s foot', () => {
   const base = CSS.indexOf('\n.platform-rail-settings {\n  display: none;\n}');
   assert.ok(base > 0, 'the phone bar never shows it (top-level display: none)');
-  const desk = CSS.indexOf('\n  .platform-rail-settings {\n    position: absolute;');
-  assert.ok(desk > 0, 'the rail draws it');
+  // #4417: a 76px strip has no row for the cog to end, so it stands above
+  // you, in the flow: your settings, then you, at the foot.
+  const desk = CSS.indexOf('\n  .platform-rail-settings {\n    position: relative;');
+  assert.ok(desk > 0, 'the strip draws it');
   const media = CSS.lastIndexOf('@media (min-width: 768px) {', desk);
   assert.ok(media > 0 && media > base, 'inside the desktop media query');
-  // …and in the same block as Me's foot rules, which make room for it.
-  const meRule = CSS.indexOf('  #platform-tab-me {\n    margin-right: 48px;');
-  assert.ok(meRule > media && meRule < desk, 'Me gives up the cog\'s room, in the same desktop block');
+  const order = CSS.indexOf('  .platform-rail-settings {\n    order: 2;\n  }\n  #platform-tab-me {\n    order: 3;\n  }');
+  assert.ok(order > media && order < desk, 'the cog, then you, after the rule, in the same desktop block');
+  assert.doesNotMatch(CSS, /#platform-tab-me \{\s*margin-right: 48px;/, 'Me gives up no room to it any more');
   assert.match(CSS, /\.platform-rail-settings\[aria-current="page"\] \{\s*background: var\(--lit-tint\);/,
     'lit like a rail row');
 });

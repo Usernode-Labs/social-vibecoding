@@ -7,7 +7,7 @@
 // request they are answering. Nothing read what they wrote, so "what are
 // you working on?" was posted on a request as an answer.
 //
-// Now a message to the bot, from somebody on its DM list, is read by a
+// Now a message to the bot, from somebody it works for, is read by a
 // cheap model (the bot's own, GLM 5.3 Flash by default, on the bot's
 // included OpenRouter key) with tools over the bot's OWN records for that
 // person. It can:
@@ -55,6 +55,12 @@
 // model still gave no answer says, in order: that their answer was passed
 // on; what the records say; that the bot's key does not work; one plain
 // answer from the conversation alone (plainAnswer); and only then that.
+//
+// #4145: it can read a project's own code on main (list_source, read_source)
+// for anybody who can build on that project, so "check in main how it
+// works" is answered from the code rather than with "I can't read it". The
+// same people can already read it through a work order or a dev session.
+// Files that hold secrets by convention (.env, keys) are never read.
 //
 // It can also read the platform the way the agent-session Mayor does: the
 // same connector read tools (get_request, get_discussion, list_requests,
@@ -146,6 +152,14 @@ const MAX_REPLY_CHARS = 2500;
 const MAX_TOOL_RESULT_CHARS = 12_000;
 const MAX_TITLE_CHARS = 200;
 const MAX_DETAILS_CHARS = 3000;
+// #4145: a project's code. One read_source answer carries at most this many
+// characters of a file (it fits MAX_TOOL_RESULT_CHARS once escaped as JSON),
+// a list_source answer at most this many paths.
+const SOURCE_CHUNK_CHARS = 8000;
+const SOURCE_MAX_PATHS = 200;
+const SOURCE_REF = 'main';
+// Never read, whoever asks: where secrets live by convention.
+const SECRET_PATH_RE = /(^|\/)(\.env(\.[^/]*)?|\.npmrc|\.netrc|id_(rsa|ed25519|ecdsa)[^/]*|[^/]*\.(pem|key|p12|pfx|keystore|jks))$/i;
 // The person's pictures are sent from this many of their newest messages.
 const IMAGE_REPLAY_MESSAGES = 2;
 const DEFAULT_MODEL = 'z-ai/glm-5.3-flash';
@@ -156,7 +170,7 @@ const OPENROUTER = { provider: 'openrouter', purpose: 'coding_agent' };
 // offer_request and the person's tap.
 const PLATFORM_TOOLS = Object.freeze([
   'get_platform_conventions', 'list_apps', 'get_app', 'list_requests', 'get_request',
-  'get_discussion', 'get_proposal', 'list_my_proposals', 'get_change',
+  'get_discussion', 'get_message', 'get_proposal', 'list_my_proposals', 'get_change',
 ]);
 const PLATFORM_GRANT_SECONDS = 300;
 
@@ -165,11 +179,21 @@ const NOT_NOW = 'Not now';
 // #11 (WP3): the answers under an offer to withdraw one of its proposals.
 const WITHDRAW_IT = 'Withdraw it';
 const KEEP_IT = 'Keep it';
+// #4239: the answers under an offer to move a request about Homeroom itself
+// to Homeroom's own board (homeroom-bot-move.js).
+const MOVE_IT = 'Move it to Homeroom';
+const KEEP_HERE = 'Keep it here';
+// #4525: the answers under an offer to open a vote on closing one of their
+// requests (the request page's own "Propose to close").
+const PROPOSE_CLOSE = 'Propose to close';
+const KEEP_OPEN = 'Keep it open';
 // The answers under each kind of offer (homeroom_bot_dm_actions.kind), the
 // one that does it first.
 const OFFER_ANSWERS = Object.freeze({
   file_request: Object.freeze([FILE_IT, NOT_NOW]),
   withdraw_proposal: Object.freeze([WITHDRAW_IT, KEEP_IT]),
+  move_request: Object.freeze([MOVE_IT, KEEP_HERE]),
+  close_request: Object.freeze([PROPOSE_CLOSE, KEEP_OPEN]),
 });
 
 /**
@@ -283,15 +307,35 @@ function platformRules() {
     .join('\n\n');
 }
 
-function systemPrompt({ username, perPerson = 2, today = new Date(), platform = true }) {
+/**
+ * Pure (one story): what a turn written in a request's thread is told about
+ * that request, so it answers about it, in its thread, without asking which
+ * one they mean. Empty outside a thread.
+ */
+function threadLines(request) {
+  if (!request?.appSlug || !request.issueNumber) return [];
+  const name = request.appName || request.appSlug;
+  const what = request.firstVersion ? `the first version of ${name}`
+    : `their request #${request.issueNumber} on ${name}${request.title ? ` ("${clip(request.title, 140)}")` : ''}`;
+  return [
+    'THIS CONVERSATION',
+    `- They are writing in the thread of ${what}. Everything they say here is about it: answer about it, in this`,
+    `  thread, and never ask which request they mean. For your records of it, call request_detail with project`,
+    `  "${request.appSlug}" and number ${Number(request.issueNumber)}.`,
+    '',
+  ];
+}
+
+function systemPrompt({ username, perPerson = 2, today = new Date(), platform = true, request = null }) {
   return [
     `You are Homeroom bot, talking with @${username} in a direct message on Homeroom. Homeroom is a platform where`,
-    'people build small web apps together. Every change is a proposal that the project\'s group votes on.',
+    'people build small web apps together. Every change to a project is voted on by the project\'s group.',
     '',
+    ...threadLines(request),
     `What you do for ${username}: you read the requests they post on their projects, ask them a question when a`,
-    'request is unclear, build the clear ones into proposals for the group to vote on, and tell them here how it is',
-    `going. You work through a queue, on up to ${perPerson} of their projects at once and one request per project`,
-    'at a time.',
+    'request is unclear, build the clear ones into changes for the group to vote on, and tell them here how it is',
+    `going. You work through a queue, on up to ${perPerson} of their requests at once: you read one request per`,
+    `project at a time, and build up to ${require('./homeroom-bot').BUILDS_PER_PROJECT} per project at once.`,
     '',
     'In this chat you can:',
     '- Say what you are working on for them and how far along it is. For "how far along are you?", "is it ready?"',
@@ -305,52 +349,76 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     '  press Build it for them.',
     '- When their message answers a question you asked them, pass it on (answer_question). Their message is posted',
     '  word for word on the request\'s public discussion, where the group can see it; say so.',
-    '- Change one of your own proposals that is up for a vote when they clearly ask you to (revise_proposal). Their',
-    '  message is posted in the proposal\'s public discussion under their name, with the change as you understood',
-    '  it, and you follow up on it next, as on any reply there: you change the proposal (its votes are cleared) or',
-    '  ask them one question. Say so. When it is not clear what they want changed, or which proposal, ask them, or',
-    '  offer it ("Want me to change the proposal to ...?"), and call revise_proposal once they say yes.',
-    '- A proposal of yours they attached to their message (the conversation says so, with its proposal id) is the one',
+    '- Change one of your own changes that is up for a vote when they clearly ask you to (revise_proposal). Their',
+    '  message is posted in the change\'s public discussion under their name, with the change as you understood',
+    '  it, and you follow up on it next, as on any reply there: you update the change (its votes are cleared) or',
+    '  ask them one question. Say so. When it is not clear what they want changed, or which change, ask them, or',
+    '  offer it ("Want me to update the change to ...?"), and call revise_proposal once they say yes.',
+    '- A change of yours they attached to their message (the conversation says so, with its proposal id) is the one',
     '  they are writing about. While it is waiting for approval, a problem they report with it, or anything they want',
-    '  different in it, is a change to that proposal: call revise_proposal with its proposal id. Never offer a new',
-    '  request for something that proposal should fix: it is not live yet.',
+    '  different in it, is for that change: call revise_proposal with its proposal id. Never offer a new',
+    '  request for something that change should fix: it is not live yet.',
     '- Offer to file a new request on one of their projects when they ask you to build or change something that',
-    '  is not one of your open proposals (offer_request). Nothing is filed until they tap File it under your',
+    '  is not one of your open changes (offer_request). Nothing is filed until they tap File it under your',
     '  message. Use their own words. You never file anything yourself, and never write that something was filed:',
-    '  Homeroom says so itself when they tap it.',
+    '  Homeroom says so itself when they tap it. Pass the project\'s name as they wrote it (named): when it is not',
+    '  exactly one of theirs, the card asks "Did you mean ...?", so never say it is the closest match and carry on.',
+    '  When they answer No, another app, list the few of their projects (my_projects) whose names are closest and',
+    '  ask which. When offer_request names similar open requests, say so and offer to add their words to one of',
+    '  them (comment_on_request) instead.',
+    '- A request on one of their projects that is about Homeroom itself (its header, its request form, a project\'s',
+    '  description or invite message, how votes or notifications work), not the project\'s code, belongs on Homeroom\'s',
+    '  own board: request_detail says aboutHomeroom when you left it for that reason. When they filed it or asked for',
+    '  it, or they made the project or are one of its admins, offer to move it there (offer_move_request). Nothing',
+    '  moves until they tap Move it to Homeroom under your message, so never say it was moved.',
+    '- When they ask you to close a request, or say one is done and can be closed, offer a vote on closing it',
+    '  (offer_close_request). Nothing happens until they tap Propose to close under your message, and it closes only',
+    '  if its group votes for it, so never say it was closed.',
     '- Add their words to a request that already exists when they ask you to (comment_on_request): posted on its',
     '  public discussion under their name, and you look at the request again next. Say so.',
     '- Start one of their requests now when they ask you to (start_request): it goes to the front of your queue,',
     '  and the result says whether you are on it or what it still waits for. Say exactly that.',
-    '- Withdraw one of your own proposals that is still open when the person who asked for its request, or the',
+    '- Withdraw one of your own changes that is still open when the person who asked for its request, or the',
     '  project\'s owner, asks you to (withdraw_proposal). It is withdrawn only once they tap Withdraw it under your',
-    '  message, so ask them to. The one exception: a second proposal for a request that already has one approved',
+    '  message, so ask them to. The one exception: a second change for a request that already has one approved',
     '  or up for a vote is withdrawn straight away, and you say so.',
+    '- Read the code of a project they can build on, as it is on main, when they ask how something works or what',
+    '  the code does (list_source to find files by path or name, then read_source). Answer from what the code says,',
+    '  in plain words, and say which file you read. Never quote secrets, and say plainly when the code you read does',
+    '  not answer the question.',
     '- Tell the Homeroom team about a problem they hit that nothing above fixes, when they ask you to or say yes',
     '  when you offer (report_problem). It is filed as a report from them where the team tracks problems, which',
     '  anyone can read; the last few messages of this chat go only to the team, privately. Say so.',
     'Finish every turn by calling reply exactly once: short plain text, cards for up to 3 requests,',
-    'proposals or projects you mention, and up to 3 suggestions: short things they might say next, in their own',
+    'changes or projects you mention, and up to 3 suggestions: short things they might say next, in their own',
     'words ("How long will it take?"), each something you can do or answer from this chat. Offer at least one',
     'unless the conversation has plainly ended.',
     '',
     'HOW HOMEROOM WORKS',
-    '- Each project has a board of requests (features and bugs) and a group of members. A change to a project is a',
-    '  proposal: a branch with a staging preview to try, automated checks that must pass, and a vote by the',
-    '  project\'s group. It merges and goes live only when the group approves it and its checks pass.',
+    '- Each project has a board of requests (features and bugs) and a group of members. A change to a project has',
+    '  a staging preview to try, automated checks that must pass and a vote by the',
+    '  project\'s group. It goes live only when the group approves it and its checks pass.',
+    '- How a project\'s changes are approved (who says yes, how many yeses) and who can see it are set by its creator',
+    '  or admins on the project\'s page: ⋯, Settings & rules, Who can see & change it. What they pick goes to the group',
+    '  as one change. A request to change them is not built: say where it is changed, and that its creator or admins',
+    '  can do it.',
+    '- To invite friends to a project, they open its page and tap Invite (or Invite people under Share it). It',
+    '  makes a link to share, and anybody who opens it joins the project, somebody new to Homeroom included.',
     '- You build only on the projects you are switched on for, which botBuildsHere in my_work and my_projects says',
     '  (it may be every project, or a few). On any other project their requests wait for the group, or for someone',
     '  to start a change; say so when they ask why nothing is happening.',
     '- Their weekly building time pays for your work on their requests, not for these answers (buildingTime in',
     '  my_work). Mention it only when they ask about it, or when my_work marks it low. Never name an amount of money.',
     '  When it is used up, their requests wait until Monday, and someone else in the project can ask you to start one.',
-    '- Homeroom tells them itself, in this chat, when a request is filed, when a proposal is ready to vote on and',
-    '  when it goes live. Those messages start with "[Homeroom posted this automatically]" in this conversation.',
-    '  Never write a message like them, and never start a reply with a note in brackets. A proposal that is being',
-    '  merged is "being merged", not live: they get a message here when it is live.',
+    '- Homeroom tells them itself how each request is going: on its card in this chat and in the tray above it, and',
+    '  in its thread here. Each request\'s card is the first message of its own thread, where everything about it',
+    '  is said; the main chat shows the moments that need them (a question, a plan, a change to try, a stop, live).',
+    '  Those messages start with "[Homeroom posted this automatically]" in this conversation.',
+    '  Never write a message like them, and never start a reply with a note in brackets. A change that is',
+    '  going live is "going live", not live yet: they get a message here when it is live.',
     ...(platform ? [
       '- To read what a request says, use get_request; what people said about it, get_discussion (threadType',
-      '  "issue", ref the request number); a proposal, get_proposal; to look around, list_apps and list_requests;',
+      '  "issue", ref the request number); a change, get_proposal; to look around, list_apps and list_requests;',
       '  how apps are built here, get_platform_conventions. They read only what this person can see.',
     ] : []),
     '',
@@ -360,21 +428,25 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     '- When they ask how long something will take, lead with how long its step usually takes (typicalMinutes in',
     '  progress, a range of minutes). A step\'s time limit is only the most it can take before it is stopped:',
     '  mention it as that, never as the wait. Never guess a time of your own, and never say it is nearly done.',
-    '- Plain everyday words. No code and no internal ids. Show the requests, proposals and projects you mention',
+    '- Plain everyday words. No code and no internal ids. Show the requests, changes and projects you mention',
     '  as cards: they are the links. Write a link in the text only when a tool returned it, exactly as returned.',
-    '  Call things "request", "proposal" and the project by its name.',
+    '  Call things "request", "change" and the project by its name.',
+    '- Answer in the language of their latest message, and in the language they wrote in before when it is too short',
+    '  to tell. English only when you cannot tell.',
+    '- When something they ask for already exists, say where they find it, in the words they see on screen: the',
+    '  screen or tab and the button to tap. Only when the tools or the code you read show it.',
     '- Keep a reply under 120 words unless they ask for detail.',
     '- Never write an em dash. Use a comma, a colon or a full stop instead.',
-    '- From this chat you cannot build, merge, vote, close requests or change settings, or change anybody else\'s',
-    '  proposal. Changes happen through requests and their proposals, and to your own proposals through',
+    '- From this chat you cannot build, merge, vote, close requests yourself or change settings, or change anybody else\'s',
+    '  change. Changes come from requests, and your own changes are updated through',
     '  revise_proposal. Everything you can do is listed above: never say you cannot do one of those things.',
     '- Never say you will do something (revise, change, build, post, file, withdraw, report, look at it again)',
     '  unless a tool you called in this turn started it and its result says so, or progress or my_work shows it',
     '  under way. Never promise to follow up, look into, sort out, investigate or get back to them later: nothing',
-    '  brings you back to it. Never say the team has been told, or that a proposal was withdrawn or closed, unless',
+    '  brings you back to it. Never say the team has been told, or that a change was withdrawn or closed, unless',
     '  report_problem or withdraw_proposal did it in this turn. If a tool refused, say plainly why, and that',
     '  nothing was done. When you cannot do something, say so plainly, and what they can do instead: leave it, vote',
-    '  No on the proposal, comment on the request, or use Send feedback. When you have not started something you',
+    '  No on the change, comment on the request, or use Send feedback. When you have not started something you',
     '  can do, offer to do it instead of promising it.',
     '- Decline, in one friendly sentence, anything sexual, violent, about gambling or otherwise not allowed on',
     '  Homeroom (suggestive or mature themes, nudity, weapons, simulated gambling and loot boxes too: the',
@@ -427,6 +499,43 @@ const TOOLS = [
       name: 'my_projects',
       description: 'The projects this person is a member of, where they can file requests, and whether you build on each.',
       parameters: { type: 'object', properties: {}, additionalProperties: false },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_source',
+      description: 'The files in a project\'s code on main, for a project they can build on: paths and sizes, at most '
+        + `${SOURCE_MAX_PATHS}. Narrow it with dir (a folder, like "src/services") and match (words in the path, like "mail"). `
+        + '`more` says how many matching paths were left out.',
+      parameters: {
+        type: 'object',
+        properties: {
+          project: { type: 'string', description: 'The project\'s name or short name.' },
+          dir: { type: 'string', description: 'Only files under this folder.' },
+          match: { type: 'string', description: 'Only paths containing all of these words (case does not matter).' },
+        },
+        required: ['project'],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'read_source',
+      description: 'One file of a project\'s code on main, for a project they can build on, with line numbers, '
+        + `about ${SOURCE_CHUNK_CHARS} characters at a time. For a long file, nextLine says where to go on: call again with fromLine.`,
+      parameters: {
+        type: 'object',
+        properties: {
+          project: { type: 'string', description: 'The project\'s name or short name.' },
+          path: { type: 'string', description: 'The file\'s path, from list_source.' },
+          fromLine: { type: 'integer', description: 'The first line to read (1 by default).' },
+        },
+        required: ['project', 'path'],
+        additionalProperties: false,
+      },
     },
   },
   {
@@ -504,10 +613,45 @@ const TOOLS = [
         type: 'object',
         properties: {
           project: { type: 'string', description: 'The project\'s name or short name, from my_projects.' },
+          named: { type: 'string', description: 'The project\'s name exactly as they wrote it, when they named one. A name that is not exactly the project\'s is asked about on the card ("Did you mean ...?").' },
           title: { type: 'string', description: 'A short title for the request, in their words.' },
           details: { type: 'string', description: 'What they asked for, in their words, with anything they said that matters.' },
         },
         required: ['project', 'title', 'details'],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'offer_move_request',
+      description: 'Offer to move one of their requests that is about Homeroom itself (its header, its request form, a project\'s description or invite message, how votes or notifications work), not the project\'s code, to Homeroom\'s own board. Only a request they filed or asked for, or one on a project they made or are an admin of. They see it under your reply with Move it to Homeroom and Keep it here; nothing moves unless they tap Move it to Homeroom. Then it is filed on Homeroom\'s board with a link back, and the original is closed, or put to its group\'s vote when anybody else took part in it. One offer per turn.',
+      parameters: {
+        type: 'object',
+        properties: {
+          project: { type: 'string', description: 'The project it is on: its name or short name.' },
+          number: { type: 'integer', description: 'The request number.' },
+          reason: { type: 'string', description: 'Why it is about Homeroom rather than the project, in a few plain words. They see it with the offer.' },
+        },
+        required: ['project', 'number', 'reason'],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'offer_close_request',
+      description: 'Offer to open a vote on closing one open request on one of their projects, when they ask for it to be closed or say it is done and can be closed. They see it under your reply with Propose to close and Keep it open; nothing happens unless they tap Propose to close, and then the request\'s group votes on closing it, so never say it was closed. One offer per turn.',
+      parameters: {
+        type: 'object',
+        properties: {
+          project: { type: 'string', description: 'The project it is on: its name or short name.' },
+          number: { type: 'integer', description: 'The request number.' },
+          reason: { type: 'string', description: 'Why it should close, in a few plain words. They see it with the offer, and it becomes the vote\'s reason.' },
+        },
+        required: ['project', 'number', 'reason'],
         additionalProperties: false,
       },
     },
@@ -613,6 +757,8 @@ const PLAIN_REPLY_TOOL = {
 /** Pure: one request's state in a few plain words, from its records. */
 function statusOf(row) {
   const proposal = row.proposal_status || null;
+  // Merged is live once production runs it (chat_sessions.live_at).
+  if (proposal === 'merged' && row.proposal_live_at === null) return 'approved, going live now';
   if (proposal === 'merged') return 'approved and live';
   if (proposal === 'merging') return 'approved, being merged now';
   if (row.started_at) return 'looking at it now';
@@ -686,7 +832,7 @@ async function myWork(pool, { userId, settings, config = null, deps = {} }) {
      SELECT m.app_id, a.slug, a.name, m.issue_number, m.issue_title, m.first_version, m.recorded,
             q.id AS queue_id, q.started_at, q.enqueued_at,
             run.verdict, run.created_at AS run_at, run.build_ok, run.build_error, run.awaiting_go_at AS plan_waiting_at,
-            prop.proposal_session_id, cs.status AS proposal_status,
+            prop.proposal_session_id, cs.status AS proposal_status, cs.live_at AS proposal_live_at,
             oq.message_id AS open_question
        FROM mine m
        JOIN apps a ON a.id = m.app_id
@@ -773,7 +919,7 @@ async function myWork(pool, { userId, settings, config = null, deps = {} }) {
     }))
     : (await bot.workingNow(pool, settings, { userId }))
       .map((w) => ({ project: w.appSlug, projectName: w.appName, number: w.issueNumber, since: w.since }));
-  const cap = Number(settings?.userWeeklyCents) || 0;
+  const cap = Number(await dmModule(deps).weeklyCapCents(pool, settings, userId)) || 0;
   const spent = cap > 0 ? await dmModule(deps).weeklySpentCents(pool, userId) : 0;
   return {
     workingOnNow,
@@ -787,7 +933,7 @@ async function myWork(pool, { userId, settings, config = null, deps = {} }) {
           : f.status === 'failed' ? 'could not start it' : 'waiting for the project to finish setting up',
       };
     }),
-    atOnce: `You work on up to ${settings?.perPerson || 2} of their projects at a time, one request per project.`,
+    atOnce: `You work on up to ${settings?.perPerson || 2} of their requests at a time: one read per project, and up to ${require('./homeroom-bot').BUILDS_PER_PROJECT} builds per project.`,
     // #3772: said only when they ask, or when little is left; every status
     // answer used to end with it. A share of the week, never an amount: the
     // bot says "building time", not money.
@@ -824,6 +970,89 @@ async function canView(pool, app, user) {
   } catch { return false; }
 }
 
+// ── A project's code (#4145) ──────────────────────────────────────────────
+
+/** Pure: a path as the model wrote it, made relative and safe, or null. */
+function sourcePath(value) {
+  const parts = String(value || '').trim().replace(/\\/g, '/').split('/').filter((part) => part && part !== '.');
+  if (!parts.length || parts.some((part) => part === '..')) return null;
+  return parts.join('/');
+}
+
+/**
+ * The project and its repository, when this person can both see it and build
+ * on it. Both, because the two are set apart: a project open to any builder
+ * may still be seen only by its members, and its code is no more public than
+ * the project is.
+ */
+async function sourceRepo(pool, { user, project, deps = {} }) {
+  const app = await findApp(pool, project);
+  let allowed = false;
+  if (app && user?.id) {
+    const access = require('./app-access');
+    try {
+      allowed = await access.checkAppAccess(pool, app, user, 'view')
+        && await access.checkAppAccess(pool, app, user, 'collab');
+    } catch { allowed = false; }
+  }
+  if (!allowed) return { error: 'No such project whose code they can read. Check my_projects.' };
+  const repo = botModule(deps).parseRepo(app.repo_url);
+  if (!repo) return { error: 'That project has no code yet.' };
+  return { app, repo };
+}
+
+async function listSource(pool, { user, project, dir, match, deps = {} }) {
+  const found = await sourceRepo(pool, { user, project, deps });
+  if (found.error) return found;
+  const github = deps.github || require('./github');
+  const tree = await github.listRepoFiles(found.repo.owner, found.repo.repo, SOURCE_REF);
+  if (!tree) return { error: 'Could not read that project\'s code on main.' };
+  const prefix = dir ? sourcePath(dir) : null;
+  if (dir && !prefix) return { error: 'That folder is not a path in the project.' };
+  const words = String(match || '').toLowerCase().split(/\s+/).filter(Boolean);
+  const hits = tree.files.filter((f) => !SECRET_PATH_RE.test(f.path)
+    && (!prefix || f.path.startsWith(`${prefix}/`))
+    && words.every((w) => f.path.toLowerCase().includes(w)));
+  return {
+    project: found.app.slug,
+    branch: SOURCE_REF,
+    files: hits.slice(0, SOURCE_MAX_PATHS).map((f) => ({ path: f.path, size: f.size })),
+    more: Math.max(0, hits.length - SOURCE_MAX_PATHS),
+    ...(tree.truncated ? { note: 'The project is very large, so some files may be missing from this list.' } : {}),
+  };
+}
+
+async function readSource(pool, { user, project, path: rawPath, fromLine, deps = {} }) {
+  const found = await sourceRepo(pool, { user, project, deps });
+  if (found.error) return found;
+  const filePath = sourcePath(rawPath);
+  if (!filePath) return { error: 'That is not a file path in the project.' };
+  if (SECRET_PATH_RE.test(filePath)) return { error: 'That file holds secrets, so it is never read.' };
+  const github = deps.github || require('./github');
+  const text = await github.getFileContent(found.repo.owner, found.repo.repo, filePath, SOURCE_REF);
+  if (text == null) return { error: 'No such file on main. Use list_source to find it.' };
+  if (text.includes('\u0000')) return { error: 'That file is not text.' };
+  const lines = text.split('\n');
+  const from = Math.min(Math.max(1, Number.isInteger(Number(fromLine)) ? Number(fromLine) : 1), lines.length);
+  const out = [];
+  let used = 0;
+  let line = from;
+  for (; line <= lines.length; line += 1) {
+    const row = `${line}: ${lines[line - 1]}`;
+    if (out.length && used + row.length + 1 > SOURCE_CHUNK_CHARS) break;
+    out.push(row.length > SOURCE_CHUNK_CHARS ? `${row.slice(0, SOURCE_CHUNK_CHARS - 1)}…` : row);
+    used += row.length + 1;
+  }
+  return {
+    project: found.app.slug,
+    branch: SOURCE_REF,
+    path: filePath,
+    totalLines: lines.length,
+    text: out.join('\n'),
+    ...(line <= lines.length ? { nextLine: line } : {}),
+  };
+}
+
 /**
  * Pure: what became of one look's build, for request_detail, or undefined
  * when the look built nothing. WP1 (#10): a build that waits or runs says
@@ -856,7 +1085,7 @@ async function requestDetail(pool, { user, project, number, settings = null, dep
   // nothing to anybody, and its verdict read as the bot's decision.
   const { rows: runs } = await pool.query(
     `SELECT verdict, question, question_answers, reason, build_note, build_ok, build_error, created_at,
-            proposal_session_id, cap_suppressed, live_build_waiting_at, build_session_id
+            proposal_session_id, cap_suppressed, live_build_waiting_at, build_session_id, about_platform
        FROM homeroom_bot_runs WHERE app_id = $1 AND issue_number = $2 AND mode = 'live'
       ORDER BY id DESC LIMIT 4`,
     [app.id, n],
@@ -891,6 +1120,8 @@ async function requestDetail(pool, { user, project, number, settings = null, dep
       }[r.verdict] || r.verdict,
       question: r.question ? clip(r.question, 600) : undefined,
       why: r.reason ? clip(r.reason, 600) : undefined,
+      // #4239: left because it is about Homeroom itself (offer_move_request).
+      aboutHomeroom: r.about_platform ? true : undefined,
       plan: r.build_note ? clip(r.build_note, 800) : undefined,
       build: buildWords(r),
     })),
@@ -954,6 +1185,20 @@ const CLAIMS = Object.freeze([
     instead: 'I haven\'t filed anything for that yet. Tell me what you want filed and I\'ll draft it for you to confirm.',
   },
   {
+    kind: 'drafted',
+    // #4605: "A File it button will appear under this message", "tap File
+    // it", "you'll see File it below", "I've drafted the request". A draft
+    // exists only when offer_request made one this turn, so a reply that says
+    // one is there with nothing behind it leaves the person nothing to tap
+    // (Drea, twice, on Rilo). Not a filing: `filed` above needs "I filed".
+    re: /\bFile it\b[^.!?\n]{0,80}\b(?:appear|show(?:s|n)? up|below|under (?:this|my|the|that) (?:message|reply))|\b(?:tap|press|click|hit|use)\s+(?:the\s+)?\**["“]?File it\b|\b(?:you(?:'ll| will| should)? see|there(?:'s| is| will be))\b[^.!?\n]{0,60}\bFile it\b|\bI(?:'ve| have)?(?: just| now)? (?:drafted|prepared|written up|put together)\b[^.!?\n]{0,60}\b(?:request|draft)\b|\b(?:draft|drafted request)\b[^.!?\n]{0,40}\b(?:below|under (?:this|my|the) (?:message|reply))\b/i,
+    // Any offer this turn made backs the reply; the check does not look at
+    // what kind of offer it was.
+    backed: (ctx) => !!ctx.offer,
+    said: 'says a drafted request with File it is under it',
+    instead: 'I haven\'t drafted it yet, so there\'s nothing to tap. Tell me what you want filed and I\'ll draft it for you to confirm.',
+  },
+  {
     kind: 'posted',
     re: /\bI(?:'ve| have)?(?: just| now)? (?:posted|added|put|passed|left|sent|shared)\b[^.!?\n]{0,80}\b(?:discussion|comment|request|proposal|board|issue|thread)\b/i,
     backed: (ctx) => !!(ctx.posted || ctx.revised || ctx.commented),
@@ -981,6 +1226,23 @@ const CLAIMS = Object.freeze([
     backed: (ctx) => !!ctx.withdrew,
     said: 'says a proposal was withdrawn',
     instead: 'I haven\'t withdrawn anything.',
+  },
+  {
+    kind: 'moved',
+    // #4239: a request is moved only by its Move it to Homeroom tap.
+    re: /\bI(?:'ve| have)?(?: just| now| already)? moved (?:it|this|that|the request|your request|#\d+)\b|\b(?:has|have) been moved\b/i,
+    backed: () => false,
+    said: 'says a request was moved',
+    instead: 'I haven\'t moved it yet.',
+  },
+  {
+    kind: 'closed_request',
+    // #4525: a request closes only when its group votes for it, so the bot
+    // never closes one: an offer only opens the vote.
+    re: /\bI(?:'ve| have)?(?: just| now| already)? closed (?:it|this|that|the request|your request|#\d+)\b|\b(?:has|have) been closed\b/i,
+    backed: () => false,
+    said: 'says a request was closed',
+    instead: 'I haven\'t closed it. Its group decides that by a vote.',
   },
   {
     kind: 'reported',
@@ -1074,6 +1336,11 @@ function checkNote(problems) {
   const promised = problems.some((p) => p.kind === 'promised')
     ? ' Never promise to look into something or come back to it later: say what you cannot do from here, and what they can do (leave it, vote No on the proposal, comment on the request, or use Send feedback), or offer report_problem.'
     : '';
+  // #4605: a draft promised with no offer behind it. The second pass drafts
+  // it; refused, the promise is cut (stripClaims) rather than sent again.
+  const drafted = problems.some((p) => p.kind === 'drafted')
+    ? ' Your reply says a draft with File it and Not now is under it, but you did not call offer_request in this turn, so nothing is under it. Call offer_request now with the project, title and details, then reply. If offer_request is refused, say why plainly and do not mention File it.'
+    : '';
   return [
     `[Homeroom check, not from them: your reply ${list}.`,
     'No tool you called in this turn did that.',
@@ -1081,7 +1348,7 @@ function checkNote(problems) {
     'offer_request drafts a request for them to file, comment_on_request posts on a request, start_request starts',
     'one, revise_proposal changes your proposal, withdraw_proposal withdraws one of your proposals, report_problem',
     'tells the Homeroom team. Otherwise say plainly that it has not been done.',
-    `${promised}${unknown} Then call reply again.]`,
+    `${promised}${drafted}${unknown} Then call reply again.]`,
   ].join(' ').replace(/\s+/g, ' ').trim();
 }
 
@@ -1130,13 +1397,21 @@ function imagePart(picture) {
  * again on every round of a turn, so older pictures stay a line. A message
  * moderation hid shows no files at all, as it shows none to people.
  */
-async function historyMessages(pool, { conversationId, botId, upToId, imageInput = false, takeImages = null, cardsOf = null, viewer = null }) {
+async function historyMessages(pool, {
+  conversationId, botId, upToId, imageInput = false, takeImages = null, cardsOf = null, viewer = null, threadRootId = null,
+}) {
+  // One story per request: written in a request's thread, the turn reads
+  // that thread (its card and everything under it); anywhere else, the main
+  // chat as the person sees it (the moments shown there included).
   const { rows } = await pool.query(
     `SELECT id, sender_id, content, metadata, moderation_hidden_at FROM conversation_messages
-      WHERE conversation_id = $1 AND id <= $2 AND deleted_at IS NULL AND thread_root_id IS NULL
+      WHERE conversation_id = $1 AND id <= $2 AND deleted_at IS NULL
         AND msg_type = 'message'
+        AND (CASE WHEN $4::int IS NULL
+                  THEN (thread_root_id IS NULL OR (metadata->'homeroomBot'->>'alsoInChat') = 'true')
+                  ELSE (id = $4 OR thread_root_id = $4) END)
       ORDER BY id DESC LIMIT $3`,
-    [conversationId, upToId, MAX_HISTORY],
+    [conversationId, upToId, MAX_HISTORY, threadRootId],
   );
   rows.reverse();
   const theirs = rows.filter((m) => Number(m.sender_id) !== Number(botId) && !m.moderation_hidden_at).map((m) => Number(m.id));
@@ -1501,6 +1776,8 @@ async function runTool(pool, ctx, name, args) {
       case 'comment_on_request': return await commentOnRequest(pool, ctx, args);
       case 'start_request': return await startRequest(pool, ctx, args);
       case 'my_projects': return await myProjects(pool, { user, settings, deps });
+      case 'list_source': return await listSource(pool, { user, project: args.project, dir: args.dir, match: args.match, deps });
+      case 'read_source': return await readSource(pool, { user, project: args.project, path: args.path, fromLine: args.fromLine, deps });
       case 'answer_question': {
         const dm = dmModule(deps);
         let filter = {};
@@ -1545,9 +1822,26 @@ async function runTool(pool, ctx, name, args) {
         const title = clip(withoutEmDashes(String(args.title || '').replace(/\s+/g, ' ')).replace(/:+$/, ''), MAX_TITLE_CHARS);
         const details = clip(args.details, MAX_DETAILS_CHARS);
         if (title.length < 3) return { ok: false, error: 'The title is too short.' };
-        ctx.offer = { app, title, details };
-        return { ok: true, shown: 'They see it under your reply with File it and Not now. Nothing is filed until they tap File it.' };
+        // #4501: a name they wrote that is not exactly this project's is a
+        // guess, and a guess is confirmed on the card before anything files.
+        const guess = guessedProject(args.named, app);
+        ctx.offer = { app, title, details, ...(guess ? { guess } : {}) };
+        // A request already on its board that looks like this one is said,
+        // so their words can go on it instead (request-similarity.js).
+        const similar = await require('./request-similarity').openSimilar(app, title, { github: ctx.deps?.github });
+        return {
+          ok: true,
+          shown: guess
+            ? `The card asks "Did you mean ${app.name || app.slug}?" with Yes, file it, No, another app and Open ${app.name || app.slug}. Nothing is filed until they tap Yes. Never say it is the closest match and carry on.`
+            : 'They see it under your reply with File it and Not now. Nothing is filed until they tap File it.',
+          ...(similar.length ? {
+            similarOpen: similar,
+            similarNote: 'These open requests on the same project look like the same thing. Say so, show them as cards, and offer to add their words to one (comment_on_request) instead. The offer stays under your reply for them to decide.',
+          } : {}),
+        };
       }
+      case 'offer_move_request': return await offerMoveRequest(pool, ctx, args);
+      case 'offer_close_request': return await offerCloseRequest(pool, ctx, args);
       case 'reply': {
         ctx.reply = { text: clip(args.text, MAX_REPLY_CHARS), cards: args.cards, suggestions: args.suggestions };
         return { ok: true };
@@ -1835,14 +2129,30 @@ function defaultSchedule(work, ms) {
   return handle;
 }
 
-/** Ask the turn for `message` again, try `attempt`, after its delay. Never throws. */
+/**
+ * Ask the turn for `message` again, try `attempt`, after its delay. Never
+ * throws. The process marks the message as its own while it waits
+ * (services/processes.js 'dm_defer', a marker no drain waits for), and holds
+ * it while the try runs ('dm_answer', which a drain does): resumeDeferred
+ * elsewhere leaves either alone. A process that exits while it waits leaves
+ * the message to the leader's minute sweep.
+ */
 function scheduleDeferred(pool, config, args, attempt) {
   const schedule = args.deps?.schedule || defaultSchedule;
-  schedule(() => deferredTurn(pool, config, args, attempt).catch((err) => {
-    log.warn('homeroom-bot-mayor', 'A DM answer asked again failed', { userId: args.user?.id, attempt, err: err.message });
-    return null;
-  }), DEFER_DELAYS_MS[attempt - 1]);
+  const processes = require('./processes');
+  const id = args.message?.id;
+  const unmark = id != null ? processes.hold('dm_defer', id) : () => {};
+  schedule(() => {
+    const release = id != null ? processes.hold('dm_answer', id) : () => {};
+    unmark();
+    return deferredTurn(pool, config, args, attempt).catch((err) => {
+      log.warn('homeroom-bot-mayor', 'A DM answer asked again failed', { userId: args.user?.id, attempt, err: err.message });
+      return null;
+    }).finally(release);
+  }, DEFER_DELAYS_MS[attempt - 1]);
 }
+
+const DEFER_HOLD_KINDS = ['dm_defer', 'dm_answer'];
 
 /**
  * One later try at a message the model could not answer: its whole turn
@@ -1874,18 +2184,23 @@ async function deferredTurn(pool, config, { bot, user, conversationId, message, 
  * After a restart: the answers a process that has gone was to ask again. A
  * message whose newest turn said it would answer later ('deferred', or a
  * plain answer marked `later`) and has had fewer than every try is asked
- * again, soon. Called once by the leader as the bot starts
- * (homeroom-bot.js start). Never throws; resolves how many it picked up.
+ * again, soon, unless a live process still holds it (scheduleDeferred: a web
+ * process, which answers DMs and never leads, docs/plans/web-and-conductor.md,
+ * or the replaced leader finishing its work). Called by the leader as the
+ * bot starts (homeroom-bot.js start), and every minute after for what a
+ * process that died left (`minAgeSeconds`: a turn just written is not yet
+ * held). Never throws; resolves how many it picked up.
  */
-async function resumeDeferred(pool, config, deps = {}) {
+async function resumeDeferred(pool, config, deps = {}, { minAgeSeconds = 0 } = {}) {
   try {
     const bot = await dmModule(deps).botAccount(pool);
     if (!bot) return 0;
-    const { rows } = await pool.query(
+    const { rows: found } = await pool.query(
       `SELECT t.message_id, t.conversation_id, t.tries, u.id AS user_id, u.username,
+              u.is_synthetic, u.has_platform_access, u.is_admin, u.private_member_since,
               m.content, m.reply_to_id
          FROM (
-           SELECT DISTINCT ON (message_id) message_id, conversation_id, user_id, fallback,
+           SELECT DISTINCT ON (message_id) message_id, conversation_id, user_id, fallback, created_at,
                   COUNT(*) OVER (PARTITION BY message_id)::int AS tries
              FROM homeroom_bot_dm_turns
             WHERE message_id IS NOT NULL AND created_at > NOW() - INTERVAL '20 minutes'
@@ -1893,11 +2208,38 @@ async function resumeDeferred(pool, config, deps = {}) {
          ) t
          JOIN users u ON u.id = t.user_id
          JOIN conversation_messages m ON m.id = t.message_id AND m.deleted_at IS NULL
-        WHERE t.fallback IN ('deferred', 'plain_later') AND t.tries <= $1`,
-      [DEFER_DELAYS_MS.length],
+        WHERE t.fallback IN ('deferred', 'plain_later') AND t.tries <= $1
+          AND t.created_at < NOW() - make_interval(secs => $2)
+          -- Written to since: that message's turn reads this one too
+          -- (deferredTurn skips it), so it is not picked up again and again.
+          AND NOT EXISTS (
+            SELECT 1 FROM conversation_messages n
+             WHERE n.conversation_id = t.conversation_id AND n.sender_id = t.user_id AND n.id > t.message_id
+               AND n.deleted_at IS NULL AND n.thread_root_id IS NULL)`,
+      [DEFER_DELAYS_MS.length, Math.max(0, Number(minAgeSeconds) || 0)],
     );
+    const processes = deps.processes || require('./processes');
+    const rows = [];
+    for (const row of found) {
+      if (DEFER_HOLD_KINDS.some((kind) => processes.heldHere(kind, row.message_id))) continue;
+      // Exact, not the mirror: a duplicate answer is what this prevents. A
+      // holder this process cannot read is one it must not act over.
+      let holders;
+      try { holders = await processes.holders(DEFER_HOLD_KINDS, row.message_id, pool); } catch { continue; }
+      if (!holders.length) rows.push(row);
+    }
     for (const row of rows) {
-      const user = { id: Number(row.user_id), username: row.username };
+      // What dm.hasBot reads about the person (deferredTurn checks it), as the
+      // auth middleware builds it: with only an id and a name, every answer a
+      // restart picked up was dropped there without a word.
+      const user = {
+        id: Number(row.user_id),
+        username: row.username,
+        isSynthetic: !!row.is_synthetic,
+        hasPlatformAccess: !!row.has_platform_access,
+        isAdmin: !!row.is_admin,
+        privateMember: !row.has_platform_access && !row.is_admin && row.private_member_since != null,
+      };
       const message = { id: Number(row.message_id), content: row.content, reply: row.reply_to_id ? { id: Number(row.reply_to_id) } : null };
       scheduleDeferred(pool, config, {
         bot, user, conversationId: Number(row.conversation_id), message, deps,
@@ -2035,7 +2377,7 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
       // still answered.
       try {
         history = await historyMessages(pool, {
-          conversationId, botId: bot.id, upToId: message.id, imageInput, takeImages,
+          conversationId, botId: bot.id, upToId: message.id, imageInput, takeImages, threadRootId: deps.threadRequest?.rootId || null,
           cardsOf: () => activityModule(deps).cardsFor(pool, { user, settings, config }),
           viewer: user,
         });
@@ -2046,7 +2388,13 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
         });
       }
       const messages = [
-        { role: 'system', content: systemPrompt({ username: user.username, perPerson: settings.perPerson, platform: platformTools.length > 0 }) },
+        {
+          role: 'system',
+          content: systemPrompt({
+            username: user.username, perPerson: settings.perPerson, platform: platformTools.length > 0,
+            request: deps.threadRequest || null,
+          }),
+        },
         ...history,
       ];
       // #3772: a message that reads as a decision on a draft that is not
@@ -2193,19 +2541,91 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
 
 // ── An offer, and the tap that decides it ─────────────────────────────────
 
+/**
+ * #4501: the name somebody wrote for a project, when it is not exactly the
+ * project the model picked ("Gym Trackr" for Gym Tracker), or null. Case,
+ * spaces and punctuation aside, and a slug's own suffix aside. Pure.
+ */
+function guessedProject(named, app) {
+  const squash = (value) => String(value || '').toLowerCase().normalize('NFKC').replace(/[^\p{L}\p{N}]+/gu, '');
+  const wrote = squash(named);
+  if (!wrote || !app) return null;
+  const slug = String(app.slug || '');
+  const exact = [app.name, slug, slug.replace(/-[0-9a-f]{6}$/, '')].map(squash).filter(Boolean);
+  return exact.includes(wrote) ? null : clip(String(named).replace(/\s+/g, ' ').trim(), 80);
+}
+
+// #4501: the buttons under a request filed on a project whose name was a
+// guess. Yes files it, as File it does; No, another app is said back on the
+// card, so the model asks which project; Open lets them look first.
+const GUESS_YES = 'Yes, file it';
+const GUESS_OTHER = 'No, another app';
+
+function guessMeta({ app, name, actionId }) {
+  const open = dmModule({}).openAppAction({ slug: app.slug, appName: name });
+  return {
+    kind: 'confirm', appSlug: app.slug, appName: name, actionId, question: `Did you mean ${name}?`,
+    answers: [GUESS_YES, GUESS_OTHER],
+    actions: [
+      { id: 'yes', label: GUESS_YES, style: 'primary', type: 'server' },
+      { id: 'other', label: GUESS_OTHER, style: 'secondary', type: 'prompt', quote: true },
+      ...(open ? [{ ...open, style: 'secondary' }] : []),
+    ],
+    status: 'open', mirrors: false,
+  };
+}
+
+// An offer's metadata: its question and its buttons (offerActions).
+function confirmMeta(kind, { app, name, actionId, question }) {
+  return {
+    kind: 'confirm', appSlug: app.slug, appName: name, actionId, question,
+    // `answers` for a client that predates `actions`.
+    answers: [...OFFER_ANSWERS[kind]], actions: offerActions(kind), status: 'open', mirrors: false,
+  };
+}
+
+// #4525: an offer to propose closing a request, as its message says it and
+// as its metadata carries it. The before & after shots demo state of one
+// waiting for an answer writes the same (shots-demo-states.js).
+function closeOfferText({ name, issueNumber, text = null, title, why = null }) {
+  return [
+    text || `Want me to open a vote on closing request #${issueNumber}? It closes only if its group votes for it.`,
+    '',
+    `**${name}** · request #${issueNumber}: ${clip(title, 140)}`,
+    ...(why ? ['', `Why: ${clip(why, 600)}`] : []),
+  ].join('\n');
+}
+
+function closeOfferMeta({ app, name, actionId, issueNumber }) {
+  return confirmMeta('close_request', {
+    app, name, actionId, question: `Propose closing request #${issueNumber} on ${name}?`,
+  });
+}
+
 async function offer(pool, { bot, user, conversationId, message, text, offer: o, deps }) {
   const dm = dmModule(deps);
   const name = o.app.name || o.app.slug;
   // #11 (WP3): an offer to withdraw one of its proposals is decided the same
-  // way, by a tap, and names the proposal (session_id) it is about.
+  // way, by a tap, and names the proposal (session_id) it is about. #4239:
+  // so is one to move a request to Homeroom's own board, which names the
+  // request (source_issue_number). #4525: so is one to propose closing a
+  // request, which names it too.
   const withdraw = o.kind === 'withdraw_proposal';
-  const kind = withdraw ? 'withdraw_proposal' : 'file_request';
+  const move = o.kind === 'move_request';
+  const close = o.kind === 'close_request';
+  const kind = withdraw || move || close ? o.kind : 'file_request';
   const { rows: [action] } = await pool.query(
-    `INSERT INTO homeroom_bot_dm_actions (user_id, conversation_id, app_id, kind, title, details, session_id)
-     VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
-    [user.id, conversationId, o.app.id, kind, o.title, o.details || null, withdraw ? o.sessionId : null],
+    `INSERT INTO homeroom_bot_dm_actions (user_id, conversation_id, app_id, kind, title, details, session_id, source_issue_number)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+    [user.id, conversationId, o.app.id, kind, o.title, o.details || null, withdraw ? o.sessionId : null,
+      move || close ? o.issueNumber : null],
   );
-  const body = withdraw
+  const moveSvc = require('./homeroom-bot-move');
+  const body = move
+    ? moveSvc.moveOfferText({ name, issueNumber: o.issueNumber, text, title: o.title, why: o.details })
+    : close
+    ? closeOfferText({ name, issueNumber: o.issueNumber, text, title: o.title, why: o.details })
+    : withdraw
     ? [
       text || `Want me to withdraw this proposal on ${name}?`,
       '',
@@ -2213,7 +2633,7 @@ async function offer(pool, { bot, user, conversationId, message, text, offer: o,
       ...(o.details ? ['', `Why: ${clip(o.details, 600)}`] : []),
     ].join('\n')
     : [
-      text || `Here is the request I'd file on ${name}.`,
+      text || (o.guess ? `Did you mean ${name}? Here is the request I'd file there.` : `Here is the request I'd file on ${name}.`),
       '',
       `**${name}** · new request: ${o.title}`,
       ...(o.details ? ['', clip(o.details, 1200)] : []),
@@ -2228,13 +2648,15 @@ async function offer(pool, { bot, user, conversationId, message, text, offer: o,
     // homeroom-bot-dm.js requestStart).
     replyToId: message.id,
     // The proposal it would withdraw, to open before deciding.
-    objects: withdraw ? [{ type: 'proposal', appId: Number(o.app.id), sessionId: Number(o.sessionId) }] : null,
-    metadata: {
-      kind: 'confirm', appSlug: o.app.slug, appName: name, actionId: action.id,
-      question: withdraw ? `Withdraw this proposal on ${name}?` : `File this as a request on ${name}?`,
-      // `answers` for a client that predates `actions`.
-      answers: [...OFFER_ANSWERS[kind]], actions: offerActions(kind), status: 'open', mirrors: false,
-    },
+    objects: withdraw ? [{ type: 'proposal', appId: Number(o.app.id), sessionId: Number(o.sessionId) }]
+      : move || close ? [{ type: 'issue', appId: Number(o.app.id), issueNumber: Number(o.issueNumber) }] : null,
+    metadata: move ? moveSvc.moveOfferMeta({ app: o.app, actionId: action.id })
+      : close ? closeOfferMeta({ app: o.app, name, actionId: action.id, issueNumber: o.issueNumber })
+      : o.guess ? guessMeta({ app: o.app, name, actionId: action.id })
+      : confirmMeta(kind, {
+        app: o.app, name, actionId: action.id,
+        question: withdraw ? `Withdraw this proposal on ${name}?` : `File this as a request on ${name}?`,
+      }),
   });
   if (sent?.messageId) {
     await pool.query('UPDATE homeroom_bot_dm_actions SET message_id = $2 WHERE id = $1', [action.id, sent.messageId]);
@@ -2255,6 +2677,10 @@ function said(content, word) {
 const OFFER_WORDS = Object.freeze({
   file_request: { yes: new Set(['file it', 'file it please', 'please file it']), no: new Set(['not now']) },
   withdraw_proposal: { yes: new Set(['withdraw it', 'withdraw it please', 'please withdraw it']), no: new Set(['keep it']) },
+  move_request: { yes: new Set(['move it', 'move it to homeroom', 'move it please', 'please move it']), no: new Set(['keep it here']) },
+  // #4525: the close offer's own words. "Propose to close" is the request
+  // page's own button text.
+  close_request: { yes: new Set(['propose to close', 'propose to close it', 'propose closing it']), no: new Set(['keep it open']) },
 });
 const PLAIN_YES = new Set(['yes', 'yes please', 'yep', 'yeah', 'yup', 'sure', 'ok', 'okay', 'do it', 'go ahead', 'please do', 'file', 'go for it']);
 const PLAIN_NO = new Set(['no', 'nope', 'no thanks', 'cancel', 'don\'t', 'dont']);
@@ -2420,8 +2846,11 @@ async function settleOffer(pool, config, {
   const dm = dmModule(deps);
   const no = !yes;
   const [yesWord, noWord] = OFFER_ANSWERS[action.kind] || OFFER_ANSWERS.file_request;
+  // A tap is answered where its offer is: in its request's thread, when the
+  // offer was said there (homeroom-bot-dm.js threadRootFor reads the thread
+  // off the message; the bot's own message is never quoted).
   const ack = (content, extra = {}) => dm.sendDm(pool, {
-    bot, userId: user.id, content, idempotencyKey: ackKey, replyToId, ...extra,
+    bot, userId: user.id, content, idempotencyKey: ackKey, replyToId: replyToId || action.message_id || null, ...extra,
   });
   // Decided once: the first tap wins, and a second says what happened.
   const { rows: claimed } = await pool.query(
@@ -2431,7 +2860,7 @@ async function settleOffer(pool, config, {
   );
   if (!claimed.length) {
     if (tapped) return { alreadyDecided: true };
-    if (action.status === 'done' && action.issue_number) return ack(...await alreadyFiled(pool, action));
+    if (action.status === 'done' && action.issue_number && action.kind !== 'move_request') return ack(...await alreadyFiled(pool, action));
     return ack('That one is already decided.');
   }
   // The buttons give way to the choice on every device it is open on.
@@ -2442,6 +2871,10 @@ async function settleOffer(pool, config, {
   }
   if (no && tapped) return { declined: true };
   if (action.kind === 'withdraw_proposal') return decideWithdraw(pool, { bot, user, action, yes, ack, deps });
+  if (action.kind === 'move_request') {
+    return require('./homeroom-bot-move').decideMove(pool, config, { bot, user, settings, action, yes, ack, deps });
+  }
+  if (action.kind === 'close_request') return decideClose(pool, { user, action, yes, ack, deps });
   if (no) return ack('OK, I won\'t file it.');
   const { rows: apps } = await pool.query(
     `SELECT ${require('./app-access').nonSecretAppColumnList()} FROM apps WHERE id = $1`, [action.app_id],
@@ -2469,7 +2902,7 @@ async function settleOffer(pool, config, {
       // the bot starting on it finds it already there (homeroom-bot.js
       // runTriage) and it follows the request from "waiting" to the end.
       const card = await activityModule(deps).startCard(pool, {
-        app, issueNumber: filed.issueNumber, bot, jobKey: filed.queueId, settings, filed: true,
+        app, issueNumber: filed.issueNumber, bot, jobKey: filed.queueId, settings, filed: true, inDm: true,
         requester: {
           userId: user.id, username: user.username, issueTitle: action.title, firstVersion: false, askedText,
           // What dm.hasBot reads, from the signed-in person who tapped File it.
@@ -2555,10 +2988,10 @@ async function fileRequest(pool, config, {
        asked_text = COALESCE(EXCLUDED.asked_text, homeroom_bot_requesters.asked_text)`,
     [app.id, issueNumber, user.id, title, askedText ? clip(askedText, 2000) : null],
   );
+  // The people who follow new requests on the project, and (#3952) the
+  // people it names with @, in their words: once each (#4271). Never rejects.
   try {
-    notifications.createIssueOpenedNotifications?.(pool, { appId: app.id, issueNumber, authorId: user.id })
-      ?.then((rows) => Promise.all(rows.map((row) => notifications.hydrateAndPush(pool, row))))
-      ?.catch((err) => log.warn('homeroom-bot-mayor', 'Issue-opened notification failed', { err: err.message }));
+    notifications.notifyIssueFiled?.(pool, { appId: app.id, issueNumber, authorId: user.id, text: `${title}\n\n${body}` });
   } catch {}
   await ws.sendSystemMessage(pool, app.id, `${user.username} created issue: "${title}" (#${issueNumber})`,
     'system', null, { type: 'issue', ref: issueNumber }).catch(() => {});
@@ -3086,7 +3519,7 @@ async function withdrawGate(pool, { bot, user, sessionId, deps = {} }) {
   let duplicateOf = null;
   if (issueNumber) {
     const { rows: others } = await pool.query(
-      `SELECT id, status, pr_number FROM chat_sessions
+      `SELECT id, status, pr_number, COALESCE(NULLIF(pr_title, ''), NULLIF(session_title, '')) AS title FROM chat_sessions
         WHERE app_id = $1 AND user_id = $2 AND id <> $3 AND $4 = ANY(linked_issues) AND is_headless = FALSE
           AND (status IN ('merging', 'merged') OR (status = 'promoted' AND id < $3))
         ORDER BY (status IN ('merging', 'merged')) DESC, id
@@ -3100,14 +3533,15 @@ async function withdrawGate(pool, { bot, user, sessionId, deps = {} }) {
 
 /** Pure: the note a withdrawal leaves on its request's discussion. */
 function withdrawNote({ session, duplicateOf = null }, { reason, username }) {
-  const title = session.title ? ` "${clip(session.title, 120)}"` : '';
-  const pr = session.pr_number ? ` (PR #${session.pr_number})` : '';
+  // A neutral line on the request, in Homeroom's words: the change by its
+  // title, never "its proposal (PR #n)".
+  const title = session.title ? `“${clip(session.title, 120)}”` : 'Homeroom bot\'s change for this request';
   if (reason === 'superseded' && duplicateOf) {
-    const other = duplicateOf.pr_number ? `PR #${duplicateOf.pr_number}` : 'another of its proposals';
+    const other = duplicateOf.title ? `“${clip(duplicateOf.title, 120)}”` : 'another change for this request';
     const where = ['merging', 'merged'].includes(duplicateOf.status) ? 'was already approved' : 'is already up for a vote';
-    return `Homeroom bot withdrew its proposal${title}${pr} for this request: it repeated ${other}, which ${where}.`;
+    return `${title} was withdrawn: it repeated ${other}, which ${where}.`;
   }
-  return `Homeroom bot withdrew its proposal${title}${pr} for this request, at ${username}'s request.`;
+  return `${title} was withdrawn at ${username}'s request.`;
 }
 
 /**
@@ -3190,6 +3624,152 @@ async function withdrawProposal(pool, ctx, args) {
     proposal,
     shown: 'They see it under your reply with Withdraw it and Keep it. Nothing is withdrawn until they tap Withdraw it: ask them to, and never say it was withdrawn.',
   };
+}
+
+/**
+ * #4239: offer_move_request. Nothing moves here: the offer goes under the
+ * reply with Move it to Homeroom and Keep it here, and a tap decides it
+ * (homeroom-bot-move.js decideMove), each gate read again then.
+ */
+async function offerMoveRequest(pool, ctx, args) {
+  const { user, deps } = ctx;
+  if (ctx.offer) return { ok: false, error: 'You already put one thing under this reply for them to decide; one per turn. Nothing was moved.' };
+  const app = await findApp(pool, args.project);
+  if (!app || !(await canView(pool, app, user))) return { ok: false, error: 'No such project. Check my_projects.' };
+  ctx.appIds.add(Number(app.id));
+  const moveSvc = require('./homeroom-bot-move');
+  const gate = await moveSvc.moveGate(pool, { app, issueNumber: args.number, user, deps });
+  if (!gate.ok) return { ok: false, error: `${gate.error} Nothing was moved.` };
+  const target = await findApp(pool, botModule(deps).PLATFORM_SELF_APP_SLUG);
+  if (!target) return { ok: false, error: 'Homeroom\'s own board is not available. Nothing was moved.' };
+  if (!(await canFile(pool, target, user))) {
+    return { ok: false, error: 'They are not a member of Homeroom\'s own community, so they cannot file there. They can join it from its page. Nothing was moved.' };
+  }
+  ctx.offer = {
+    kind: 'move_request', app, issueNumber: gate.issueNumber,
+    title: clip(withoutEmDashes(String(gate.issue.title || `Request ${gate.issueNumber}`).replace(/\s+/g, ' ')), MAX_TITLE_CHARS),
+    details: clip(withoutEmDashes(String(args.reason || '').replace(/\s+/g, ' ')), 600) || null,
+  };
+  return {
+    ok: true,
+    request: { project: app.slug, number: gate.issueNumber, title: gate.issue.title },
+    shown: 'They see it under your reply with Move it to Homeroom and Keep it here. Nothing moves until they tap Move it to Homeroom: ask them to, and never say it was moved.',
+  };
+}
+
+/**
+ * #4525: the gates of an offer to propose closing one of their requests,
+ * read again at the tap. Unlike a move (homeroom-bot-move.js moveGate), a
+ * request on Homeroom's own board counts too, and there is no "theirs" rule:
+ * any member may propose closing an open request, as the request page's
+ * "Propose to close" lets them. Resolves { ok, app, issueNumber,
+ * issue: { title } } or { ok: false, code, error }.
+ */
+async function closeGate(pool, { app, issueNumber, user, deps = {} }) {
+  const github = deps.github || require('./github');
+  const n = Number(issueNumber);
+  if (!app || !Number.isInteger(n) || n <= 0) return { ok: false, code: 'not_found', error: 'There is no such request.' };
+  const repo = botModule(deps).parseRepo(app.repo_url);
+  if (!repo || !github.isEnabled()) return { ok: false, code: 'unreadable', error: 'Its request cannot be read right now.' };
+  let raw;
+  try {
+    raw = await github.getIssue(repo.owner, repo.repo, n);
+  } catch (err) {
+    if (err?.status === 404) return { ok: false, code: 'not_found', error: 'There is no such request.' };
+    log.warn('homeroom-bot-mayor', 'Could not read a request to close', { app: app.slug, issueNumber: n, err: err.message });
+    return { ok: false, code: 'unreadable', error: 'Its request cannot be read right now.' };
+  }
+  if (!raw || raw.pull_request) return { ok: false, code: 'not_found', error: 'There is no such request.' };
+  if (raw.state !== 'open') return { ok: false, code: 'closed', error: 'That request is already closed.' };
+  const { rows: open } = await pool.query(
+    `SELECT id FROM issues
+      WHERE app_id = $1 AND kind = 'close_issue' AND status = 'open' AND (payload->>'issueNumber')::int = $2`,
+    [app.id, n],
+  );
+  if (open.length) return { ok: false, code: 'already_proposed', error: 'A vote on closing it is already open.', id: Number(open[0].id) };
+  if (!(await canFile(pool, app, user))) {
+    return { ok: false, code: 'join_required', error: 'They are not a member of that project, so they cannot propose closing its requests. They can join it from its page.' };
+  }
+  return { ok: true, app, issueNumber: n, issue: { title: String(raw.title || '').trim() } };
+}
+
+/**
+ * #4525: offer_close_request. Nothing closes here: the offer goes under the
+ * reply with Propose to close and Keep it open, and a tap opens the same
+ * close_issue vote the request page opens (homeroom-bot-move.js
+ * proposeClose), each gate read again then.
+ */
+async function offerCloseRequest(pool, ctx, args) {
+  const { user, deps } = ctx;
+  if (ctx.offer) return { ok: false, error: 'You already put one thing under this reply for them to decide; one per turn. Nothing was proposed.' };
+  const app = await findApp(pool, args.project);
+  if (!app || !(await canView(pool, app, user))) return { ok: false, error: 'No such project. Check my_projects.' };
+  ctx.appIds.add(Number(app.id));
+  const gate = await closeGate(pool, { app, issueNumber: args.number, user, deps });
+  if (!gate.ok) return { ok: false, error: `${gate.error} Nothing was proposed.` };
+  ctx.offer = {
+    kind: 'close_request', app, issueNumber: gate.issueNumber,
+    title: clip(withoutEmDashes(String(gate.issue.title || `Request ${gate.issueNumber}`).replace(/\s+/g, ' ')), MAX_TITLE_CHARS),
+    details: clip(withoutEmDashes(String(args.reason || '').replace(/\s+/g, ' ')), 600) || null,
+  };
+  return {
+    ok: true,
+    request: { project: app.slug, number: gate.issueNumber, title: gate.issue.title },
+    shown: 'They see it under your reply with Propose to close and Keep it open. Nothing happens until they tap Propose to close, and then the request\'s group votes on closing it: never say it was closed.',
+  };
+}
+
+/**
+ * #4525: a tap under an offer to propose closing a request. Propose to
+ * close opens the same close_issue vote the request page opens
+ * (homeroom-bot-move.js proposeClose), with the tapper as its proposer, so
+ * the vote, the request's discussion and the project's vote list show their
+ * name. Keep it open leaves everything as it is.
+ */
+async function decideClose(pool, { user, action, yes, ack, deps = {} }) {
+  if (!yes) return ack('OK, I\'ll leave it open.');
+  const failed = async (error, text) => {
+    await pool.query('UPDATE homeroom_bot_dm_actions SET status = \'failed\', error = $2 WHERE id = $1', [action.id, clip(error, 300)]);
+    return ack(text);
+  };
+  const closed = 'I couldn\'t propose closing it just now. Try again in a minute.';
+  const { rows } = await pool.query('SELECT slug FROM apps WHERE id = $1', [action.app_id]);
+  const app = rows[0] ? await findApp(pool, rows[0].slug) : null;
+  const n = Number(action.source_issue_number);
+  const name = app ? (app.name || app.slug) : 'the project';
+  let gate = null;
+  if (app && Number.isInteger(n) && n > 0) gate = await closeGate(pool, { app, issueNumber: n, user, deps });
+  if (!gate || !gate.ok) {
+    const code = gate ? gate.code : 'gone';
+    return failed(code,
+      code === 'already_proposed' ? 'A vote on closing it is already open.'
+        : code === 'closed' ? 'That request is already closed.'
+        : code === 'join_required' ? 'I couldn\'t propose closing it: you need to be a member of that project first. You can join it from its page.'
+        : closed);
+  }
+  const moveSvc = require('./homeroom-bot-move');
+  let proposed;
+  try {
+    proposed = await moveSvc.proposeClose(pool, {
+      app, user, issueNumber: n, issueTitle: gate.issue.title, reason: action.details, deps,
+    });
+  } catch (err) {
+    log.warn('homeroom-bot-mayor', 'Could not propose closing a request from a DM', { app: app.slug, issueNumber: n, err: err.message });
+    return failed(err.message, closed);
+  }
+  if (!proposed.ok) {
+    return failed(proposed.code,
+      proposed.code === 'already_proposed' ? 'A vote on closing it is already open.'
+        : proposed.code === 'join_required' ? 'I couldn\'t propose closing it: you need to be a member of that project first. You can join it from its page.'
+        : closed);
+  }
+  return ack(
+    `Done. I opened a vote on closing request #${n} on ${name}. It closes if its group votes for it.`,
+    {
+      objects: [{ type: 'issue', appId: Number(app.id), issueNumber: n }],
+      metadata: { kind: 'closing', appSlug: app.slug, appName: name, issueNumber: n, issueTitle: gate.issue.title },
+    },
+  );
 }
 
 /** A tap under an offer to withdraw a proposal: Withdraw it withdraws it, if every gate still holds. */
@@ -3378,6 +3958,8 @@ module.exports = {
   WITHDRAW_IT,
   KEEP_IT,
   OFFER_ANSWERS,
+  MOVE_IT,
+  KEEP_HERE,
   CANT_LOOK_TEXT,
   REPORT_SOURCE,
   MAX_REPORTS_PER_DAY,
@@ -3410,6 +3992,13 @@ module.exports = {
   myWork,
   requestDetail,
   myProjects,
+  // #4145
+  SECRET_PATH_RE,
+  SOURCE_CHUNK_CHARS,
+  SOURCE_MAX_PATHS,
+  sourcePath,
+  listSource,
+  readSource,
   historyMessages,
   picturesMessage,
   withoutPictures,
@@ -3420,9 +4009,23 @@ module.exports = {
   decideOffer,
   decideOfferTap,
   offerActions,
+  confirmMeta,
+  closeOfferText,
+  closeOfferMeta,
+  guessedProject,
+  guessMeta,
   decideTyped,
   typedDecision,
   fileRequest,
+  findApp,
+  canFile,
+  offerMoveRequest,
+  // #4525
+  PROPOSE_CLOSE,
+  KEEP_OPEN,
+  closeGate,
+  offerCloseRequest,
+  decideClose,
   // #3772, #3769, #3768, #3771
   REQUEST_TIMEOUT_MS,
   DEFER_DELAYS_MS,
@@ -3442,6 +4045,7 @@ module.exports = {
   commentOnRequest,
   startRequest,
   resumeDeferred,
+  scheduleDeferred,
   deferredTurn,
   // #11 (WP3)
   withdrawGate,
@@ -3450,5 +4054,17 @@ module.exports = {
   reportBody,
   reportReceipt,
   reportProblem,
+  // The voice outside the DM (homeroom-bot-voice.js) runs on the same engine.
+  canView,
+  askModel,
+  parseArgs,
+  codeOf,
+  botKey,
+  platformCall,
+  withdrawNow,
+  proposalNamed,
+  ownOpenProposals,
+  MAX_TOOL_RESULT_CHARS,
+  DEFAULT_MODEL,
   _chainsForTests() { return chains.size; },
 };

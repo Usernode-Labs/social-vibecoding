@@ -89,7 +89,7 @@ export type RefSegment =
   | { type: 'ref'; isPr: boolean; num: string }
   | { type: 'channel'; handle: string };
 
-const TOKEN = /(^|[^\w&])(@([A-Za-z0-9_]{1,32})|(pr ?#|#)(\d{1,7})(?!\w)|#([A-Za-z][A-Za-z0-9-]{0,39})(?![\w-]))/gi;
+const TOKEN = /(^|[^\w&])(@([A-Za-z0-9_]{1,32}(?:(?<=homeroom) bot\b)?)|(pr ?#|#)(\d{1,7})(?!\w)|#([A-Za-z][A-Za-z0-9-]{0,39})(?![\w-]))/gi;
 
 export function tokenizeRefs(text: string, handles: ReadonlySet<string>): RefSegment[] {
   const segs: RefSegment[] = [];
@@ -117,6 +117,20 @@ export function tokenizeRefs(text: string, handles: ReadonlySet<string>): RefSeg
   }
   pushText(text.slice(pos));
   return segs.length ? segs : [{ type: 'text', value: '' }];
+}
+
+/**
+ * #4029: where `@name` opens — that person's page, the address a project's
+ * contributors and Kudos' Top users already open.
+ */
+export function personHref(username: string): string {
+  return `#leaderboard/users/${encodeURIComponent(username)}`;
+}
+
+/** #4029: whether `@name` names Homeroom bot, which has no person page. */
+export function isBotMention(name: string): boolean {
+  const key = String(name || '').toLowerCase();
+  return key === 'homeroom bot' || key === 'homeroom_bot';
 }
 
 /**
@@ -152,10 +166,18 @@ export function decorateRefs(root: Element, handles: ReadonlySet<string>, me: st
       if (seg.type === 'text') {
         frag.appendChild(doc.createTextNode(seg.value));
       } else if (seg.type === 'mention') {
-        const span = doc.createElement('span');
-        span.className = seg.name.toLowerCase() === me ? 'gc-mention gc-mention-self' : 'gc-mention';
-        span.textContent = `@${seg.name}`;
-        frag.appendChild(span);
+        // #4029: a link to the person's page; Homeroom bot has none, so its
+        // mention ("@Homeroom bot", the app chat's B9 form, or its handle)
+        // stays text.
+        const bot = isBotMention(seg.name);
+        const el = doc.createElement(bot ? 'span' : 'a');
+        el.className = seg.name.toLowerCase() === me ? 'gc-mention gc-mention-self' : 'gc-mention';
+        if (!bot) {
+          el.setAttribute('href', personHref(seg.name));
+          el.setAttribute('data-mention', seg.name);
+        }
+        el.textContent = `@${seg.name}`;
+        frag.appendChild(el);
       } else if (seg.type === 'ref') {
         // An issue in a message that names its project is a link to the
         // request (#3770). Anything else has no app to reveal it in — a DM

@@ -728,6 +728,113 @@ function Drift({ drift }: { drift: any[] }) {
   );
 }
 
+// The checks queue (services/checks-queue.js snapshot): how many proposal
+// runs hold a CHECKS_MAX_CONCURRENT_RUNS slot, who waits and for how long,
+// and how the last day's slots went. It is the one place the limit can be
+// judged against the cluster without reading logs. Times are measured
+// against the payload's own `now`, so a cached payload reads consistently.
+const QUEUE_PILL: Record<string, string> = {
+  holding: 'pill-running',
+  waiting: 'pill-stopped',
+  stale: 'pill-missing',
+};
+
+function ordinal(n: number): string {
+  const mod100 = n % 100;
+  if (mod100 >= 11 && mod100 <= 13) return `${n}th`;
+  const suffix: Record<number, string> = { 1: 'st', 2: 'nd', 3: 'rd' };
+  return `${n}${suffix[n % 10] || 'th'}`;
+}
+
+function fmtWait(ms?: number | null): string {
+  return ms == null ? '—' : fmtDurationSeconds(Math.max(0, Math.floor(ms / 1000)));
+}
+
+function queueRunPlace(run: any): string {
+  if (run.state === 'holding') return 'has a slot';
+  if (run.state === 'waiting') return `${ordinal(run.place || 1)} in line`;
+  return 'stale';
+}
+
+function ChecksQueue({ q, now }: { q: any; now: number }) {
+  if (!q) return <div className="text-zinc-500 dark:text-zinc-400 text-xs">Queue status is unavailable.</div>;
+  const runs: any[] = Array.isArray(q.runs) ? q.runs : [];
+  const slots = q.slots || {};
+  const day = q.last24h;
+  const since = (iso?: string | null): number | null => {
+    const t = iso ? new Date(iso).getTime() : NaN;
+    return Number.isNaN(t) ? null : Math.max(0, now - t);
+  };
+  const pct = q.cap ? (slots.sharedUsed / q.cap) * 100 : 0;
+  // Red once runs are held back: the limit, not the cluster, is deciding.
+  const tone: Tone = pct >= 100 || q.waiting > 0 ? 'red' : pct >= 75 ? 'yellow' : 'green';
+  return (
+    <>
+      {q.enabled ? (
+        <>
+          <MeterRow label="Proposal runs (holding / limit)" value={`${slots.sharedUsed} / ${q.cap}`} pct={pct} tone={tone} />
+          <div className="flex justify-between flex-wrap gap-x-3 text-xs mb-3 text-zinc-600 dark:text-zinc-400">
+            <span>
+              {'Main-watch '}<span className="mono text-zinc-800 dark:text-zinc-200">{Math.min(slots.main || 0, 1)}</span>
+              {' in its own slot'}
+            </span>
+            <span>
+              <span className="mono text-zinc-800 dark:text-zinc-200">{q.waiting}</span>{' waiting'}
+              {q.oldestWaitMs != null
+                ? <>{' · oldest '}<span className="mono text-zinc-800 dark:text-zinc-200">{fmtWait(q.oldestWaitMs)}</span></>
+                : null}
+            </span>
+          </div>
+          {runs.length ? (
+            <div className="space-y-2">
+              {runs.map((run) => {
+                const holding = run.state === 'holding' || (run.state === 'stale' && run.admittedAt);
+                const time = holding
+                  ? `slot for ${fmtWait(since(run.admittedAt))}`
+                  : `waiting ${fmtWait(since(run.queuedAt))}`;
+                return (
+                  <div key={run.runId}
+                    className={`rounded border ${run.ownerAlive ? 'border-zinc-200 dark:border-zinc-800' : 'border-red-300 dark:border-red-700/40'} bg-zinc-50 dark:bg-zinc-900/40 p-2`}>
+                    <div className="flex items-center gap-2 flex-wrap text-xs">
+                      <span className={`pill ${QUEUE_PILL[run.state] || 'pill-stopped'}`}><span className="dot" />{queueRunPlace(run)}</span>
+                      <span className="text-zinc-600 dark:text-zinc-400">{run.classLabel || run.class}</span>
+                      {run.app ? <span className="mono text-zinc-500 dark:text-zinc-400">{run.app}</span> : null}
+                      {run.prNumber != null ? <span>{`PR #${run.prNumber}`}</span> : null}
+                      <span className="text-zinc-500 dark:text-zinc-400 ml-auto">
+                        {`${time} · `}
+                        {run.ownerAlive
+                          ? 'owner alive'
+                          : <span className="text-red-700 dark:text-red-400">owner gone</span>}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : <div className="text-zinc-500 dark:text-zinc-400 text-xs">No checks running or waiting.</div>}
+        </>
+      ) : (
+        <div className="text-xs text-zinc-600 dark:text-zinc-400">The checks queue is off. Every run starts at once.</div>
+      )}
+      <div className="mt-3 pt-3 border-t border-zinc-200 dark:border-zinc-800 text-xs text-zinc-600 dark:text-zinc-400">
+        <div className="font-medium text-zinc-700 dark:text-zinc-300 mb-1">Last 24 hours</div>
+        {day ? (
+          <span>
+            <span className="mono">{day.waited}</span>{' of '}<span className="mono">{day.runs}</span>{' runs waited'}
+            {day.waited
+              ? <>{' · median wait '}<span className="mono">{fmtWait(day.medianWaitMs)}</span>
+                {' · longest '}<span className="mono">{fmtWait(day.longestWaitMs)}</span></>
+              : null}
+            {day.failedOpen
+              ? <>{' · '}<span className="mono text-red-700 dark:text-red-400">{day.failedOpen}</span>{' went ahead without a slot'}</>
+              : null}
+          </span>
+        ) : <span>Unavailable.</span>}
+      </div>
+    </>
+  );
+}
+
 // A log line's stamp: the time WITH seconds, preceded by the day once the
 // event is not today's. `messageStamp` drops seconds by design (a transcript
 // does not need them); a log does, so the time half is spelled here and only
@@ -822,6 +929,8 @@ function StatusSection() {
 
   const d = data || {};
   const isAdmin = !!d.isAdmin;
+  // The instant the payload describes, for durations measured against it.
+  const statusNow = d.now && !Number.isNaN(new Date(d.now).getTime()) ? new Date(d.now).getTime() : Date.now();
   const deploy = d.deployProgress;
   const sha = deploy?.sha ? String(deploy.sha).substring(0, 7) : '';
   const elapsed = deploy?.startedAt
@@ -926,6 +1035,13 @@ function StatusSection() {
             </div>
           </section>
 
+          <section className="admin-only">
+            <h3 id="admin-status-checks-queue-heading" className={`${SECTION_H3} mb-2`}>Checks queue</h3>
+            <div id="admin-status-checks-queue" className={`${AdminUI.card} p-4 text-sm`}>
+              {data && isAdmin ? <ChecksQueue q={d.checksQueue} now={statusNow} /> : null}
+            </div>
+          </section>
+
           <section>
             <h3 className={`${SECTION_H3} mb-2`}>Workers</h3>
             <div id="admin-status-workers" className="space-y-2 text-sm">
@@ -989,4 +1105,6 @@ const AdminStatus = {
 // evaluates this module in Node, where there is no window.
 if (typeof window !== 'undefined') (window as any).AdminStatus = AdminStatus;
 
-export { AdminStatus };
+// ChecksQueue is exported for tests/checks-queue-status.test.js, which
+// renders it against payloads; nothing else imports it.
+export { AdminStatus, ChecksQueue };

@@ -163,8 +163,20 @@ test('a create names its own new repository', () => {
   'a local build with no GitHub gets no pointer');
 
   const creator = read('src/services/app-creator.js');
-  assert.match(creator, /repoUrl = repo\.html_url;[\s\S]{0,300}getTemplateFiles\(name, slug, dbUrl, repoUrl[,)]/,
+  // No database URL (#4895): none goes into a repository, and the database
+  // is made beside the repository rather than before it.
+  assert.match(creator, /repoUrl = repo\.html_url;[\s\S]{0,400}getTemplateFiles\(name, slug, null, repoUrl[,)]/,
     'the GitHub create passes the repository it just made');
+});
+
+// #4895: the database and the repository are made side by side, which holds
+// only while the starter carries no database URL: the repository is public.
+test('the starter writes no database URL, so it does not wait for the database', () => {
+  const secret = 'postgres://app_demo:hunter2-not-real@db.internal:5432/app_demo';
+  const withUrl = template.getTemplateFiles('Demo', 'demo', secret, 'https://github.com/usernode-bot/demo');
+  const without = template.getTemplateFiles('Demo', 'demo', null, 'https://github.com/usernode-bot/demo');
+  assert.ok(!withUrl.some((f) => f.content.includes('hunter2-not-real')), 'no file carries it');
+  assert.deepEqual(withUrl, without, 'the files are the same either way');
 });
 
 test('an import adds the pointer with the scaffold', () => {

@@ -43,6 +43,8 @@ const path = require('path');
 const log = require('../logger');
 const packs = require('./packs');
 const scaffold = require('./scaffold');
+const speed = require('./speed');
+const stageCosts = require('../stage-costs');
 
 const SUITE_NAME = 'App bench studio';
 const HOST_KEY = 'default';
@@ -55,12 +57,16 @@ const MAX_MODELS = 5;
 const MAX_PACKS = 4;
 const MAX_REFERENCES = 5;
 const MAX_REPEATS = 3;
-const MAX_CONCURRENCY = 6;
+// Builds at once. 9, not 6 (14 Oct 2026): a three-arm run of three briefs
+// twice is 18 trials, which go in two rounds instead of three. Run 191's own
+// trial durations put it at about 60 minutes instead of about 90; each
+// build's own time is what the run measures, and the lane keeps room beside
+// it (lane.js MAX_IN_FLIGHT).
+const MAX_CONCURRENCY = 9;
 const MIN_CAP_USD = 0.5;
 const MAX_CAP_USD = 1000;
 const MAX_LIVE_PREVIEWS = 4;
 const PREVIEW_HOURS = 24;
-const PREVIEW_STUCK_MINUTES = 45;
 const PREVIEW_SWEEP_MS = 10 * 60 * 1000;
 const HOST_WAIT_MS = 90 * 1000;
 const LABEL_RE = /^[a-z0-9][a-z0-9._-]{0,39}$/;
@@ -68,6 +74,11 @@ const SHA_RE = /^[0-9a-f]{40}$/i;
 const MAX_NOTE_CHARS = 500;
 const ACTIVITY_CHARS = 200;
 const GALLERY_TRIALS_PER_BRIEF = 30;
+// A trial's spec as get_bench_trial gives it: whole, up to this. An HTML
+// spec's markdown copy carries its drawn screens' markup, and a first
+// version's can draw two full screens (~30-60K characters in all); it was
+// clipped at 12,000, which cut off everything after the opening section.
+const TRIAL_SPEC_CHARS = 120000;
 
 let lastPreviewSweepAt = 0;
 
@@ -206,14 +217,21 @@ async function ensureSuite(pool, { actorId = null } = {}) {
 /** The checked-in starter briefs (suites/app-bench-starter.json). */
 function starterBriefs(file = STARTER_FILE) {
   const def = JSON.parse(fs.readFileSync(file, 'utf8'));
-  return (def.briefs || []).map((b) => ({ ref: String(b.ref), appName: String(b.name), brief: String(b.brief) }));
+  return (def.briefs || []).map((b) => ({
+    ref: String(b.ref), appName: String(b.name), brief: String(b.brief), ...(b.template ? { template: String(b.template) } : {}),
+  }));
 }
 
 /**
  * The briefs a launch names, checked: the starter set (`briefSet:
  * "starter"`, optionally narrowed by `refs`), and/or `briefs`, each
- * { name, brief, ref? }, { ref } (a starter brief) or { taskId } (an
- * existing taste task's brief and name).
+ * { name, brief, ref?, template? }, { ref, template? } (a starter brief) or
+ * { taskId } (an existing taste task's brief, name and template).
+ *
+ * `template` is the starter the first commit is scaffolded from
+ * (services/app-templates.js), `empty` when absent, as a new project's is.
+ * The same brief from a game starter and from `empty` is two tasks, so a
+ * run can build both side by side.
  */
 async function resolveBriefs(pool, body = {}) {
   const taste = require('./taste');
@@ -231,13 +249,15 @@ async function resolveBriefs(pool, body = {}) {
       const task = await suites.taskRow(pool, { taskId: Number(raw.taskId) });
       if (!task || !taste.isTasteStage(task.stage)) return httpError(404, `No taste task ${raw.taskId}`);
       const input = taste.inputOf(await snapshots.readSnapshot(pool, task.snapshot_id));
-      items.push({ ref: task.tags?.taste_ref || null, appName: input.appName, brief: input.brief });
+      items.push({ ref: task.tags?.taste_ref || null, appName: input.appName, brief: input.brief, template: input.template });
     } else if (raw && raw.ref && !raw.brief) {
       const b = starter.find((s) => s.ref === String(raw.ref));
       if (!b) return httpError(404, `No starter brief "${raw.ref}"`);
-      items.push(b);
+      items.push(raw.template != null ? { ...b, template: raw.template } : b);
     } else {
-      items.push({ ref: raw?.ref ? String(raw.ref).slice(0, 80) : null, appName: raw?.name ?? raw?.appName, brief: raw?.brief });
+      items.push({
+        ref: raw?.ref ? String(raw.ref).slice(0, 80) : null, appName: raw?.name ?? raw?.appName, brief: raw?.brief, template: raw?.template,
+      });
     }
   }
   if (!items.length) return httpError(400, 'Name at least one brief, or briefSet "starter"');
@@ -245,19 +265,25 @@ async function resolveBriefs(pool, body = {}) {
   const out = [];
   const seen = new Set();
   for (const item of items) {
-    const v = taste.validateInput('first_version', { appName: item.appName, brief: item.brief });
+    const v = taste.validateInput('first_version', { appName: item.appName, brief: item.brief, template: item.template });
     if (!v.ok) return v;
-    const key = studioKey(v.input.appName, v.input.brief);
+    const key = studioKey(v.input.appName, v.input.brief, v.input.template);
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push({ ref: item.ref || null, appName: v.input.appName, brief: v.input.brief, key });
+    out.push({ ref: item.ref || null, appName: v.input.appName, brief: v.input.brief, template: v.input.template, key });
   }
   return { ok: true, items: out };
 }
 
-/** The key a brief's task is found by: the same name and brief, the same task. Pure. */
-function studioKey(appName, brief) {
-  return crypto.createHash('sha256').update(`${appName}\n${brief}`).digest('hex').slice(0, 32);
+/**
+ * The key a brief's task is found by: the same name, brief and starter, the
+ * same task. The default starter adds nothing, so a brief's task from before
+ * starters were named is still found. Pure.
+ */
+function studioKey(appName, brief, template = null) {
+  const appTemplates = require('../app-templates');
+  const starter = template && template !== appTemplates.DEFAULT_TEMPLATE ? `\n${template}` : '';
+  return crypto.createHash('sha256').update(`${appName}\n${brief}${starter}`).digest('hex').slice(0, 32);
 }
 
 async function taskFor(pool, { suiteId, host, item }) {
@@ -270,7 +296,7 @@ async function taskFor(pool, { suiteId, host, item }) {
   if (have) return { ok: true, task: have };
   const taste = require('./taste');
   const out = await taste.addTask(pool, {
-    suiteId, kind: 'first_version', appSlug: host.slug, appName: item.appName, brief: item.brief, ref: item.ref,
+    suiteId, kind: 'first_version', appSlug: host.slug, appName: item.appName, brief: item.brief, template: item.template, ref: item.ref,
   });
   if (!out.ok) return out;
   await pool.query(
@@ -288,8 +314,10 @@ function validateLaunch(body = {}) {
   const models = [...new Set((Array.isArray(body.models) ? body.models : [TODAY]).map((m) => String(m || '').trim()).filter(Boolean))];
   if (!models.length) return httpError(400, 'Pick at least one model, or "today"');
   if (models.length > MAX_MODELS) return httpError(400, `At most ${MAX_MODELS} models in one studio run`);
-  const bad = models.find((m) => m !== TODAY && !bot.MODEL_ID_RE.test(m));
-  if (bad) return httpError(400, `${bad} is not an OpenRouter model id (or "today")`);
+  // `config:<id>` builds by a Homeroom bot configuration version
+  // (services/bot-configs.js): its models, reviewer and pack.
+  const bad = models.find((m) => m !== TODAY && !/^config:\d{1,9}$/.test(m) && !bot.MODEL_ID_RE.test(m));
+  if (bad) return httpError(400, `${bad} is not an OpenRouter model id (or "today", or "config:<version id>")`);
   const packIds = body.contextPackIds == null ? [0] : [...new Set((Array.isArray(body.contextPackIds) ? body.contextPackIds : []).map(Number))];
   if (!packIds.length || packIds.length > MAX_PACKS || packIds.some((n) => !Number.isInteger(n) || n < 0)) {
     return httpError(400, `contextPackIds is 1 to ${MAX_PACKS} pack ids, 0 for no pack`);
@@ -311,10 +339,31 @@ function validateLaunch(body = {}) {
       return httpError(400, `concurrency is 1 to ${MAX_CONCURRENCY}`);
     }
   }
+  if (body.sharedPlans != null && typeof body.sharedPlans !== 'boolean') return httpError(400, 'sharedPlans is true or false');
   return {
     ok: true, models, packIds, references, repeats, capUsd: Math.round(capUsd * 100) / 100, concurrency,
     note: body.note ? String(body.note).slice(0, MAX_NOTE_CHARS) : null,
+    sharedPlans: body.sharedPlans === true,
   };
+}
+
+/**
+ * How an arm plans (bench/shared-plans.js mismatchOf): its triage and spec
+ * models, `lean_plan`, and its configuration's own pack. Pure but for the
+ * live bot's settings a `today` arm reads.
+ */
+function planningOf(model, recipe, { settings, config }) {
+  const bot = require('../homeroom-bot');
+  if (recipe) {
+    return {
+      label: model, triage: recipe.models.triage, spec: recipe.models.spec,
+      leanPlan: require('../bot-configs').tweaksOf(recipe).includes('lean_plan'), pack: recipe.pack || null,
+    };
+  }
+  if (model === TODAY) {
+    return { label: model, triage: bot.stageModel(settings, config, 'triage'), spec: bot.stageModel(settings, config, 'spec'), leanPlan: false, pack: null };
+  }
+  return { label: model, triage: model, spec: model, leanPlan: false, pack: null };
 }
 
 /**
@@ -327,6 +376,28 @@ function validateLaunch(body = {}) {
 async function launch(pool, config, body = {}, { actorId = null, deps = {} } = {}) {
   const v = validateLaunch(body);
   if (!v.ok) return v;
+  // A configuration arm (`config:<id>`): its recipe, read before anything is
+  // made, and what it is priced by (each stage at its own model's price, its
+  // reviewer's rounds included).
+  const recipes = new Map();
+  for (const m of v.models) {
+    const botConfigs = require('../bot-configs');
+    const id = botConfigs.configIdOfModel(m);
+    if (id == null) continue;
+    // eslint-disable-next-line no-await-in-loop
+    const version = await botConfigs.versionById(pool, id);
+    const recipe = version ? botConfigs.recipeOf(version.recipe) : null;
+    if (!recipe) return httpError(404, `No configuration version ${id} with a recipe that still validates`);
+    recipes.set(m, recipe);
+  }
+  const bot = require('../homeroom-bot');
+  const settings = await bot.readSettings(pool);
+  // A run that shares its plans builds every arm from one plan per brief,
+  // pack and repeat, so its arms must all plan alike.
+  if (v.sharedPlans) {
+    const why = require('./shared-plans').mismatchOf(v.models.map((m) => planningOf(m, recipes.get(m) || null, { settings, config })));
+    if (why) return httpError(400, why);
+  }
   const briefs = await resolveBriefs(pool, body);
   if (!briefs.ok) return briefs;
   const loaded = await packs.loadForLaunch(pool, v.packIds);
@@ -341,18 +412,22 @@ async function launch(pool, config, body = {}, { actorId = null, deps = {} } = {
     if (!t.ok) return t;
     tasks.push({ ...item, taskId: t.task.id });
   }
-  const bot = require('../homeroom-bot');
   const catalog = require('./catalog');
-  const settings = await bot.readSettings(pool);
   const priced = (m) => (m === TODAY ? bot.stageModel(settings, config, 'build') : m);
-  const models = await catalog.listModels(pool, v.models.map(priced).filter(Boolean));
+  const models = await catalog.listModels(pool, [
+    ...v.models.filter((m) => !recipes.has(m)).map(priced).filter(Boolean),
+    ...[...recipes.values()].flatMap((r) => catalog.recipeModelIds(r)),
+  ]);
   const plan = { task: [], model: [], attempt: [], status: [], error: [], est: [], token: [], pack: [] };
   let estimate = 0;
   for (const t of tasks) {
     for (const m of v.models) {
-      const info = catalog.modelInfo(models, priced(m) || m);
-      const reason = m === TODAY ? null : catalog.notApplicableReason(info, 'first_version', t.brief.length);
-      const est = Math.round(catalog.estimateTrialCost(info, 'first_version', []) * 10000) / 10000;
+      const recipe = recipes.get(m) || null;
+      const info = catalog.modelInfo(models, recipe ? recipe.models.build : (priced(m) || m));
+      const reason = m === TODAY || recipe ? null : catalog.notApplicableReason(info, 'first_version', t.brief.length);
+      const est = Math.round((recipe
+        ? catalog.estimateRecipeCost(models, recipe)
+        : catalog.estimateTrialCost(info, 'first_version', [])) * 10000) / 10000;
       for (const packId of v.packIds) {
         for (let attempt = 1; attempt <= v.repeats; attempt += 1) {
           plan.task.push(t.taskId);
@@ -376,14 +451,17 @@ async function launch(pool, config, body = {}, { actorId = null, deps = {} } = {
     await client.query('BEGIN');
     ({ rows: [run] } = await client.query(
       `INSERT INTO bench_runs (suite_id, models, baseline_model, stages, repeats, cap_usd, concurrency, note, started_by,
-                               kind, context_pack_ids, references_per_brief)
-       VALUES ($1, $2::text[], $3, ARRAY['first_version'], $4, $5, $6, $7, $8, 'studio', $9::int[], $10)
+                               kind, context_pack_ids, references_per_brief, shared_plans)
+       VALUES ($1, $2::text[], $3, ARRAY['first_version'], $4, $5, $6, $7, $8, 'studio', $9::int[], $10, $11)
        RETURNING *`,
-      [suiteId, v.models, v.models[0], v.repeats, v.capUsd, concurrency, v.note, actorId, v.packIds, v.references],
+      [suiteId, v.models, v.models[0], v.repeats, v.capUsd, concurrency, v.note, actorId, v.packIds, v.references, v.sharedPlans],
     ));
+    // Each trial's plan is its brief's `attempt`th (shared-plans.js), kept
+    // through a rerun.
     await client.query(
-      `INSERT INTO bench_trials (run_id, task_id, model, attempt, status, error, est_cost_usd, item_token, context_pack_id, finished_at)
-       SELECT $1, t, m, a, s, e, est, tok, pk, CASE WHEN s = 'not_applicable' THEN NOW() ELSE NULL END
+      `INSERT INTO bench_trials (run_id, task_id, model, attempt, status, error, est_cost_usd, item_token, context_pack_id, finished_at,
+                                 plan_key)
+       SELECT $1, t, m, a, s, e, est, tok, pk, CASE WHEN s = 'not_applicable' THEN NOW() ELSE NULL END, a
          FROM UNNEST($2::int[], $3::text[], $4::int[], $5::text[], $6::text[], $7::numeric[], $8::text[], $9::int[])
               AS p(t, m, a, s, e, est, tok, pk)`,
       [run.id, plan.task, plan.model, plan.attempt, plan.status, plan.error, plan.est, plan.token, plan.pack],
@@ -400,11 +478,14 @@ async function launch(pool, config, body = {}, { actorId = null, deps = {} } = {
   log.info('bench', 'Studio run launched', { runId: run.id, briefs: tasks.length, models: v.models, packs: v.packIds, trials: plan.task.length });
   return {
     ok: true,
-    run: { id: run.id, status: run.status, capUsd: Number(run.cap_usd), concurrency, models: v.models, contextPackIds: v.packIds, repeats: v.repeats },
+    run: {
+      id: run.id, status: run.status, capUsd: Number(run.cap_usd), concurrency, models: v.models, contextPackIds: v.packIds, repeats: v.repeats,
+      sharedPlans: v.sharedPlans,
+    },
     trials: plan.task.length,
     notApplicable: plan.status.filter((s) => s === 'not_applicable').length,
     estimateUsd: Math.round(estimate * 100) / 100,
-    briefs: tasks.map((t) => ({ taskId: t.taskId, ref: t.ref, appName: t.appName })),
+    briefs: tasks.map((t) => ({ taskId: t.taskId, ref: t.ref, appName: t.appName, template: t.template })),
     references: v.references,
     host: { slug: host.app.slug, repoUrl: host.app.repo_url },
   };
@@ -444,14 +525,27 @@ function codeLinks(row) {
   };
 }
 
+// A preview's status as the preview machine has it (a preview-only instance
+// for its session, src/workflow/preview/): 'building' becomes 'live' once the
+// machine serves the build's commit, and 'failed' once its build failed. The
+// lane's sweep writes the same onto the row (sweepPreviews).
+const PREVIEW_COLUMNS = `bp.id, bp.trial_id, bp.session_id, bp.expires_at, bp.created_at,
+            CASE WHEN bp.status = 'building' AND w.state = 'settled' AND w.data->'serving'->>'head' = tr.build_sha THEN 'live'
+                 WHEN bp.status = 'building' AND w.state = 'failed' THEN 'failed'
+                 ELSE bp.status END AS status,
+            COALESCE(bp.error, CASE WHEN bp.status = 'building' AND w.state = 'failed' THEN w.data->>'failure' END) AS error,
+            cs.staging_url, a.slug AS app_slug`;
+const PREVIEW_JOINS = `JOIN bench_trials tr ON tr.id = bp.trial_id
+       LEFT JOIN chat_sessions cs ON cs.id = bp.session_id
+       LEFT JOIN apps a ON a.id = cs.app_id
+       LEFT JOIN wf_instances w ON w.machine = 'preview' AND w.key = 'session:' || bp.session_id`;
+
 async function previewsFor(pool, trialIds) {
   if (!trialIds.length) return new Map();
   const { rows } = await pool.query(
-    `SELECT DISTINCT ON (bp.trial_id) bp.id, bp.trial_id, bp.session_id, bp.status, bp.error, bp.expires_at, bp.created_at,
-            cs.staging_url, a.slug AS app_slug
+    `SELECT DISTINCT ON (bp.trial_id) ${PREVIEW_COLUMNS}
        FROM bench_previews bp
-       LEFT JOIN chat_sessions cs ON cs.id = bp.session_id
-       LEFT JOIN apps a ON a.id = cs.app_id
+       ${PREVIEW_JOINS}
       WHERE bp.trial_id = ANY($1::int[])
       ORDER BY bp.trial_id, bp.id DESC`,
     [trialIds],
@@ -477,6 +571,7 @@ function previewOut(r) {
 const TRIAL_SQL = `SELECT tr.id, tr.run_id, tr.task_id, tr.model, tr.attempt, tr.status, tr.context_pack_id, tr.reference_label,
             tr.progress, tr.cost_usd::float8 AS cost_usd, tr.est_cost_usd::float8 AS est_cost_usd, tr.error,
             tr.created_at, tr.started_at, tr.finished_at, tr.duration_ms,
+            tr.prior_ms::float8 AS prior_ms, tr.first_started_at, (tr.checkpoint->>'handBacks')::int AS hand_backs,
             tr.build_branch, tr.build_sha, tr.base_sha, tr.capture_sha, tr.build_commits, tr.branch_deleted_at, tr.kept_at,
             tr.capture, tr.parsed, tr.deterministic,
             tk.tags, sn.extra->>'appName' AS app_name, a.slug AS app_slug, a.repo_url,
@@ -521,8 +616,63 @@ function verdictOf(row, grades = []) {
   };
 }
 
-/** A trial row as the watch and the gallery show it. Pure but for the preview and grades passed in. */
-function trialOut(row, { preview = null, grades = [] } = {}) {
+/**
+ * A first version's review as one trial shows it (services/bot-review.js
+ * runReviewLoop's state, slimmed): the reviewer, the first build as round 0
+ * captured it, then each round's verdict, its issues (id, severity, screen,
+ * problem, fix), the earlier issues it called fixed, what its reviewer call
+ * and its fix turn cost and took and the commit the fix made, and why the
+ * review stopped. Null without one. Pure.
+ */
+function reviewRecord(review) {
+  if (!review || typeof review !== 'object') return null;
+  const n = (v) => (v == null || !Number.isFinite(Number(v)) ? null : Number(v));
+  const r0 = review.round0 || null;
+  return {
+    reviewer: review.reviewer ? {
+      model: review.reviewer.model || null, maxRounds: n(review.reviewer.maxRounds), budgetMinutes: n(review.reviewer.budgetMinutes),
+    } : null,
+    state: review.state || null,
+    round0: r0 ? {
+      sha: r0.sha || null, commits: n(r0.commits), booted: r0.capture ? r0.capture.booted === true : null,
+      captureError: r0.captureError ? clip(r0.captureError, 300) : null, costUsd: n(r0.costUsd), activeMs: n(r0.activeMs),
+    } : null,
+    rounds: (Array.isArray(review.rounds) ? review.rounds : []).slice(0, 10).map((r) => ({
+      round: n(r?.round),
+      sha: r?.sha || null,
+      booted: typeof r?.booted === 'boolean' ? r.booted : null,
+      verdict: r?.verdict || null,
+      reviewedBy: r?.reviewedBy || null,
+      issues: (Array.isArray(r?.issues) ? r.issues : []).slice(0, 20).map((i) => ({
+        id: clip(i?.id, 80), severity: i?.severity || null, screen: clip(i?.screen, 200),
+        problem: clip(i?.problem, 1000), fix: clip(i?.fix, 1000),
+      })),
+      previousFixed: (Array.isArray(r?.previousFixed) ? r.previousFixed : []).slice(0, 20).map((x) => clip(x, 80)),
+      reviewer: {
+        costUsd: n(r?.reviewerCostUsd), ms: n(r?.reviewerMs), error: r?.reviewerError ? clip(r.reviewerError, 300) : null,
+        // Asked twice (bot-review.js reviewCapture): what was wrong with its first reply.
+        retry: r?.reviewerRetry ? clip(r.reviewerRetry, 300) : null,
+      },
+      fix: r?.fix ? {
+        ok: !!r.fix.ok, costUsd: n(r.fix.costUsd), ms: n(r.fix.ms), sha: r.fix.sha || null, commits: n(r.fix.commits),
+        error: r.fix.error ? clip(r.fix.error, 300) : null,
+      } : null,
+    })),
+    stop: review.stop || null,
+    stopDetail: review.stopDetail ? clip(review.stopDetail, 300) : null,
+    finalSha: review.finalSha || null,
+    rolledBack: review.rolledBack ? { from: review.rolledBack.from || null, to: review.rolledBack.to || null, why: review.rolledBack.why || null } : null,
+    costUsd: n(review.costUsd),
+  };
+}
+
+/**
+ * A trial row as the watch and the gallery show it. Pure but for the preview,
+ * grades and build turns passed in. Only a read handed `buildTurns`
+ * (speed.buildTurnsFor's rows) carries buildSpeed: one that did not ask the
+ * ledger leaves it out rather than calling a timed build untimed.
+ */
+function trialOut(row, { preview = null, grades = [], buildTurns = null } = {}) {
   const { pickShots } = require('./capture');
   const p = row.progress || {};
   const parsed = row.parsed || {};
@@ -530,6 +680,14 @@ function trialOut(row, { preview = null, grades = [] } = {}) {
   const shots = row.capture ? pickShots(row.capture).chosen.map((sh) => ({ caption: sh.caption, artifactId: sh.artifactId })) : [];
   const started = row.started_at ? new Date(row.started_at).getTime() : null;
   const ended = row.finished_at ? new Date(row.finished_at).getTime() : null;
+  // A first version a restart handed back (services/bench/lane.js "After a
+  // restart") ran over several claims: its elapsed time is theirs together,
+  // the wait in the queue between them left out.
+  const priorMs = Number(row.prior_ms) || 0;
+  const handBacks = Number(row.hand_backs) || 0;
+  const firstStarted = row.first_started_at ? new Date(row.first_started_at).getTime() : null;
+  const buildSpeed = Array.isArray(buildTurns) ? speed.buildSpeedOf(buildTurns, row) : undefined;
+  const planSpeed = Array.isArray(buildTurns) ? speed.planSpeedOf(buildTurns, row) : undefined;
   return {
     trialId: Number(row.id),
     runId: Number(row.run_id),
@@ -544,11 +702,44 @@ function trialOut(row, { preview = null, grades = [] } = {}) {
     stepAt: p.stepAt || null,
     startedAt: iso(row.started_at),
     finishedAt: iso(row.finished_at),
-    elapsedMs: started ? Math.max(0, (ended || Date.now()) - started) : null,
+    elapsedMs: started ? priorMs + Math.max(0, (ended || Date.now()) - started) : (priorMs || null),
+    // How often a restart handed it back, and the wall clock from its first claim.
+    resumed: handBacks > 0
+      ? { restarts: handBacks, wallMs: firstStarted ? Math.max(0, (ended || Date.now()) - firstStarted) : null }
+      : null,
     costUsd: Number.isFinite(row.cost_usd) ? row.cost_usd : null,
+    // What that cost was made of, stage by stage and model by model, adding
+    // up to it (services/stage-costs.js): null for a trial that recorded no
+    // stages (one from before they were, a triage-only task).
+    costBreakdown: parsed.costParts ? stageCosts.breakdown(Number.isFinite(row.cost_usd) ? row.cost_usd : null, parsed.costParts) : null,
+    // What its build took (its build turn and any nudge, as the turn ledger
+    // recorded them) and what its review found, as numbers an arm's medians
+    // are taken over (services/bench/speed.js).
+    ...(buildSpeed !== undefined ? { buildSpeed } : {}),
+    // Its plan step (the spec turn) the same way, beside it.
+    ...(planSpeed !== undefined ? { planSpeed } : {}),
+    reviewOutcome: speed.reviewOutcomeOf(parsed.review, { buildStartedAt: buildSpeed?.startedAt || null }),
     activity: Array.isArray(p.lines) ? p.lines.map((l) => clip(l, ACTIVITY_CHARS)) : [],
     skills: parsed.skills || p.skills || { invoked: [], read: [] },
+    // Whether its build could look at its own screens: what its prompt told
+    // it, what its model was handed, and the screenshots, text snapshots and
+    // page loads it took (runner.buildStage, progress.lookIn). Live from the
+    // watch while it runs.
+    sight: parsed.sight || (p.looks ? { told: null, passed: null, ...p.looks } : null),
     triage: parsed.triage ? { verdict: parsed.triage.verdict || null, question: parsed.triage.question ? clip(parsed.triage.question, 300) : null } : null,
+    // How its plan was made (runner.planFirstVersion): at Make it, with its
+    // early first look, or by the triage; and, in a run that shares its
+    // plans, which one it built from and whether it made it.
+    planFrom: parsed.earlyPlan || parsed.sharedPlan || parsed.earlyLook ? {
+      makeIt: parsed.triage?.fromMakeIt === true,
+      earlyLook: parsed.earlyLook
+        ? { chars: Number(parsed.earlyLook.chars) || 0, error: parsed.earlyLook.error || null, shared: parsed.earlyLook.shared === true }
+        : null,
+      shared: parsed.sharedPlan ? {
+        id: Number(parsed.sharedPlan.id), key: Number(parsed.sharedPlan.key), made: parsed.sharedPlan.made === true,
+        makerTrialId: parsed.sharedPlan.makerTrialId == null ? null : Number(parsed.sharedPlan.makerTrialId),
+      } : null,
+    } : null,
     built: parsed.built === true,
     booted: row.capture ? row.capture.booted === true : null,
     shots,
@@ -571,9 +762,12 @@ async function runRow(pool, runId) {
 
 /**
  * A run as it moves: every trial's arm, step, time, spend, last activity
- * lines, skills, newest screenshots, code and preview. With `since` (an
- * ISO time), only the trials that changed after it, and the cursor to pass
- * next time. A studio run's view; any run can be watched.
+ * lines, skills, newest screenshots, code and preview, its build's speed and
+ * its review's outcome; and per arm, the medians of those over its trials
+ * that ended (`arms`, speed.armSpeed), always over every trial. With `since`
+ * (an ISO time), only the trials that changed after it, and the cursor to
+ * pass next time. A studio run's view; any run can be watched. The build
+ * turns of all its trials are one query, however many there are.
  */
 async function watchRun(pool, runId, { since = null } = {}) {
   const run = await runRow(pool, runId);
@@ -581,8 +775,8 @@ async function watchRun(pool, runId, { since = null } = {}) {
   const now = new Date().toISOString();
   const { rows } = await pool.query(`${TRIAL_SQL} WHERE tr.run_id = $1 ORDER BY tr.task_id, tr.id`, [Number(runId)]);
   const ids = rows.map((r) => Number(r.id));
-  const [previews, grades] = await Promise.all([previewsFor(pool, ids), gradesFor(pool, ids)]);
-  const all = rows.map((r) => trialOut(r, { preview: previews.get(Number(r.id)) || null, grades: grades.get(Number(r.id)) || [] }));
+  const [previews, grades, buildTurns] = await Promise.all([previewsFor(pool, ids), gradesFor(pool, ids), speed.buildTurnsFor(pool, rows)]);
+  const all = rows.map((r) => trialOut(r, { preview: previews.get(Number(r.id)) || null, grades: grades.get(Number(r.id)) || [], buildTurns }));
   const sinceMs = since ? Date.parse(since) : NaN;
   const trials = Number.isFinite(sinceMs)
     ? all.filter((t) => Date.parse(t.updatedAt || 0) > sinceMs || (t.preview && t.preview.status === 'building'))
@@ -593,15 +787,21 @@ async function watchRun(pool, runId, { since = null } = {}) {
     `SELECT task_id, context_pack_id, status, sha, branch, error FROM bench_scaffolds WHERE run_id = $1 ORDER BY id`,
     [Number(runId)],
   );
+  // An open run whose new trials wait because the provider refused the
+  // bench's key for its spending limit (lane.js providerLimitPause).
+  const limited = ['queued', 'running'].includes(run.status) ? await require('./lane').providerLimitPause(pool) : null;
   return {
     ok: true,
     run: {
       id: Number(run.id), kind: run.kind, status: run.status, suite: run.suite_name, models: run.models,
       contextPackIds: run.context_pack_ids || [], referencesPerBrief: Number(run.references_per_brief) || 0,
+      sharedPlans: run.shared_plans === true,
+      waiting: limited ? { reason: 'provider_limit', until: limited.until } : null,
       capUsd: run.cap, spentUsd: run.spent, concurrency: run.concurrency,
       createdAt: iso(run.created_at), startedAt: iso(run.started_at), finishedAt: iso(run.finished_at),
     },
     counts,
+    arms: speed.armSpeed(all),
     firstCommits: firsts.map((f) => ({
       taskId: Number(f.task_id), packId: f.context_pack_id ? Number(f.context_pack_id) : 0, status: f.status,
       sha: f.sha || null, branch: f.branch || null, error: f.error ? clip(f.error, 200) : null,
@@ -620,7 +820,9 @@ const CAPTURE_CONTRACT = [
   '(USERNODE_ENV=staging) on a fresh, empty database, with one throwaway viewer signed in. It takes 16 screenshots:',
   '390x844 and 1280x800, light and dark (`?un-theme=light|dark`), and four states: populated (the app\'s staging seed',
   'plus `?demo=1`), empty (every table truncated), error (GET /api/* answering 500) and loading (GET /api/* held two',
-  'seconds). It also counts console errors, overflow at 360px, tap targets under 44px, text below WCAG AA and cards',
+  'seconds). Then, on the populated screen, it taps the screen\'s primary action once (its one `.btn-primary`, else a',
+  'form\'s submit button, else the button in the accent colour) and takes up to three more: phone light and dark,',
+  'desktop light. It also counts console errors, overflow at 360px, tap targets under 44px, text below WCAG AA and cards',
   'nested in cards, and lints the client source for emoji used as icons, uppercase tracked eyebrows, one-off text',
   'sizes and stray hex colours. A judge then grades the screenshots, blind, against the brief.',
 ].join('\n');
@@ -852,12 +1054,14 @@ async function rerunTrial(pool, trialId) {
   if (t.reference_label && !t.capture_sha) return httpError(409, 'That reference has no commit to capture');
   const { rows: [made] } = await pool.query(
     `INSERT INTO bench_trials (run_id, task_id, model, attempt, status, item_token, est_cost_usd, context_pack_id,
-                               reference_label, capture_sha, base_sha, build_commits)
-     SELECT $1, $2, $3, COALESCE(MAX(attempt), 0) + 1, 'pending', $4, $5, $6, $7, $8, $9, $10
+                               reference_label, capture_sha, base_sha, build_commits, plan_key)
+     SELECT $1, $2, $3, COALESCE(MAX(attempt), 0) + 1, 'pending', $4, $5, $6, $7, $8, $9, $10, $11
        FROM bench_trials WHERE run_id = $1 AND task_id = $2 AND model = $3 AND COALESCE(context_pack_id, 0) = COALESCE($6::int, 0)
      RETURNING id, attempt`,
     [t.run_id, t.task_id, t.model, token(), t.est_cost_usd, t.context_pack_id, t.reference_label,
-      t.reference_label ? t.capture_sha : null, t.reference_label ? t.base_sha : null, t.reference_label ? t.build_commits : null],
+      t.reference_label ? t.capture_sha : null, t.reference_label ? t.base_sha : null, t.reference_label ? t.build_commits : null,
+      // The same plan as the trial it runs again (shared-plans.js).
+      t.plan_key ?? t.attempt],
   );
   await require('./lane').reopenRun(pool, t.run_id);
   return { ok: true, trialId: Number(made.id), attempt: Number(made.attempt), runId: Number(t.run_id) };
@@ -904,24 +1108,98 @@ async function trialRows(pool, runId) {
       trialId: t.trialId, taskId: t.taskId, stage: stageOf.get(t.trialId)?.stage || null,
       issueNumber: stageOf.get(t.trialId)?.issue_number ?? null, ref: t.ref, appName: t.appName,
       arm: t.armLabel, attempt: t.attempt, status: t.status, final: t.final, criteria: t.criteria,
-      costUsd: t.costUsd, elapsedMs: t.elapsedMs, built: t.built, booted: t.booted, skills: t.skills,
+      costUsd: t.costUsd, elapsedMs: t.elapsedMs, built: t.built, booted: t.booted, skills: t.skills, sight: t.sight,
       error: t.error ? require('./report').reasonText(t.error) : null,
     })),
   };
 }
 
+// ── A trial's transcript ─────────────────────────────────────────────────
+
+const TRANSCRIPT_PAGE = 500;
+
+/**
+ * A trial's steps as its transcript recorded them (bench_trial_lines): each
+ * step it reached, in order, with when it began (its `step` row, or its
+ * first line), when its last line came, how long that was and how many lines
+ * it reported. A step reached again (a claim after a restart) is a second
+ * entry. Null for a trial with no transcript (one from before 13 Oct 2026).
+ */
+async function timelineOf(pool, trialId) {
+  const { rows } = await pool.query(
+    `SELECT step, kind, at, replayed FROM bench_trial_lines WHERE trial_id = $1 ORDER BY id`,
+    [Number(trialId)],
+  );
+  if (!rows.length) return null;
+  const out = [];
+  let cur = null;
+  for (const r of rows) {
+    const step = r.step || null;
+    if (!cur || r.kind === 'step' || step !== cur.step) {
+      cur = { step, from: iso(r.at), to: iso(r.at), lines: 0, replayed: 0 };
+      out.push(cur);
+    }
+    cur.to = iso(r.at);
+    if (r.kind === 'line') {
+      cur.lines += 1;
+      if (r.replayed) cur.replayed += 1;
+    }
+  }
+  return out.map((e, i) => {
+    // A step runs until the next one begins; the last, until its last line.
+    const end = out[i + 1] ? out[i + 1].from : e.to;
+    return { ...e, to: end, ms: Math.max(0, Date.parse(end) - Date.parse(e.from)) };
+  });
+}
+
+/**
+ * A page of a trial's transcript, oldest first: up to `limit` lines (500 at
+ * most) after the cursor `after` (a line's id), of one `step` when given,
+ * each { id, at, step, kind, line, replayed }; `next` is the cursor for the
+ * page after, null at the end; `total` the trial's lines in all.
+ */
+async function transcriptOf(pool, trialId, { step = null, after = null, limit = TRANSCRIPT_PAGE } = {}) {
+  const { rows: [trial] } = await pool.query('SELECT id FROM bench_trials WHERE id = $1', [Number(trialId)]);
+  if (!trial) return httpError(404, 'No such trial');
+  const n = Math.min(Math.max(Number(limit) || TRANSCRIPT_PAGE, 1), TRANSCRIPT_PAGE);
+  const from = Number.isSafeInteger(Number(after)) && Number(after) > 0 ? Number(after) : 0;
+  const stepName = typeof step === 'string' && /^[a-z_]{1,16}$/.test(step) ? step : null;
+  // Ordered by the column, a number: by the output's text `id` it put
+  // 1000 before 999, and a page's cursor skipped the lines between.
+  const { rows } = await pool.query(
+    `SELECT id::text AS id, at, step, kind, line, replayed FROM bench_trial_lines
+      WHERE trial_id = $1 AND id > $2::bigint AND ($3::text IS NULL OR step = $3::text)
+      ORDER BY bench_trial_lines.id LIMIT $4`,
+    [Number(trialId), from, stepName, n + 1],
+  );
+  const { rows: [count] } = await pool.query('SELECT COUNT(*)::int AS n FROM bench_trial_lines WHERE trial_id = $1', [Number(trialId)]);
+  const page = rows.slice(0, n);
+  return {
+    ok: true,
+    trialId: Number(trialId),
+    step: stepName,
+    total: Number(count?.n) || 0,
+    lines: page.map((r) => ({ id: Number(r.id), at: iso(r.at), step: r.step || null, kind: r.kind, line: r.line, replayed: !!r.replayed })),
+    next: rows.length > n ? Number(page[page.length - 1].id) : null,
+  };
+}
+
 /**
  * One trial in full: its brief, arm, what the triage said and planned, its
- * spec (clipped), files changed, the automatic checks, the grade and
- * critique, its code and preview, and its screenshots (with `images`, as
- * base64 PNGs, at most 8 MB). Refused like trialRows for a trial of a run
- * that is not a studio run while it waits for the judge.
+ * spec (whole up to TRIAL_SPEC_CHARS, and its drawn screens' sizes), what
+ * each stage cost (trialOut's costBreakdown), a first version's review
+ * round by round (reviewRecord), its build's speed and its review's outcome
+ * (trialOut's buildSpeed and reviewOutcome), files changed, the automatic
+ * checks, the grade and critique, its code and preview, and its screenshots
+ * (with `images`, as base64 PNGs, at most 8 MB). Refused like trialRows for a
+ * trial of a run that is not a studio run while it waits for the judge.
  */
 async function trialDetail(pool, trialId, { images = false } = {}) {
   const { rows: [row] } = await pool.query(
     `SELECT tr.id, tr.run_id, tr.task_id, tr.model, tr.attempt, tr.status, tr.context_pack_id, tr.reference_label,
             tr.progress, tr.cost_usd::float8 AS cost_usd, tr.est_cost_usd::float8 AS est_cost_usd, tr.error,
             tr.created_at, tr.started_at, tr.finished_at, tr.duration_ms,
+            tr.prior_ms::float8 AS prior_ms, tr.first_started_at, (tr.checkpoint->>'handBacks')::int AS hand_backs,
             tr.build_branch, tr.build_sha, tr.base_sha, tr.capture_sha, tr.build_commits, tr.branch_deleted_at, tr.kept_at,
             tr.capture, tr.parsed, tr.deterministic, tr.changed_files,
             tk.tags, tk.stage, tk.snapshot_id, sn.extra->>'appName' AS app_name, a.slug AS app_slug, a.repo_url,
@@ -937,7 +1215,8 @@ async function trialDetail(pool, trialId, { images = false } = {}) {
   );
   if (!row) return httpError(404, 'No such trial');
   const grades = (await gradesFor(pool, [Number(row.id)])).get(Number(row.id)) || [];
-  const t = trialOut(row, { preview: (await previewsFor(pool, [Number(row.id)])).get(Number(row.id)) || null, grades });
+  const buildTurns = await speed.buildTurnsFor(pool, [row]);
+  const t = trialOut(row, { preview: (await previewsFor(pool, [Number(row.id)])).get(Number(row.id)) || null, grades, buildTurns });
   if (row.run_kind !== 'studio' && t.final === 'pending') {
     return httpError(409, 'This trial waits for the judge: grade it blind first (list_bench_grading_queue)', { code: 'judge_pending' });
   }
@@ -962,11 +1241,22 @@ async function trialDetail(pool, trialId, { images = false } = {}) {
       question: parsed.triage.question ? clip(parsed.triage.question, 600) : null,
       assumptions: (parsed.triage.assumptions || []).slice(0, 10).map((a) => clip(a, 300)),
     } : null,
-    spec: parsed.spec ? clip(parsed.spec, 12000) : null,
+    spec: parsed.spec ? clip(parsed.spec, TRIAL_SPEC_CHARS) : null,
+    specChars: parsed.spec ? String(parsed.spec).length : null,
+    specNote: parsed.specNote ? clip(parsed.specNote, 600) : null,
+    // Each drawn screen's size, characters, inline SVGs and SVG shapes, and
+    // whether it ran past twice its budget (spec-html.js screenStats).
+    specScreens: Array.isArray(parsed.specScreens) ? parsed.specScreens.slice(0, 6) : null,
+    // A reviewed first version's rounds (services/bot-review.js).
+    review: reviewRecord(parsed.review),
     blocked: parsed.blocked ? clip(parsed.blocked, 600) : null,
     changedFiles: Array.isArray(row.changed_files?.files) ? row.changed_files.files.slice(0, 200).map((f) => f.filename || f) : null,
     checks: row.capture ? grading.tasteSignals(row.capture) : null,
     bootError: row.capture && row.capture.booted === false ? clip(row.capture.error || 'did not boot', 400) : null,
+    // Its steps as its transcript recorded them, and how many lines that
+    // holds (transcriptOf pages through them).
+    timeline: await timelineOf(pool, row.id),
+    transcriptLines: Number((await pool.query('SELECT COUNT(*)::int AS n FROM bench_trial_lines WHERE trial_id = $1', [Number(row.id)])).rows[0]?.n) || 0,
   };
   if (images && row.capture) {
     const picked = capture.pickShots(row.capture).chosen;
@@ -989,11 +1279,12 @@ async function trialDetail(pool, trialId, { images = false } = {}) {
 
 /**
  * Put a studio build (a trial's or a reference's) up as a preview for a
- * day: a session on the host app at the build's commit, built by the
- * platform's own preview path (services/staging.js), whose database is a
- * clone of the host app's own, empty one. At most MAX_LIVE_PREVIEWS at once.
- * The admin who asks is made a member of the host app, so the preview opens
- * for them. Resolves the preview at once; it builds in the background.
+ * day: a session on the host app at the build's commit, built by the preview
+ * machine as a preview with no checks (src/workflow/preview/, reason
+ * 'preview'), whose database is a clone of the host app's own, empty one. At
+ * most MAX_LIVE_PREVIEWS at once. The admin who asks is made a member of the
+ * host app, so the preview opens for them. Resolves the preview at once; the
+ * machine builds it.
  */
 async function deployPreview(pool, config, { trialId, user, deps = {} } = {}) {
   const { rows: [t] } = await pool.query(
@@ -1010,13 +1301,13 @@ async function deployPreview(pool, config, { trialId, user, deps = {} } = {}) {
   if (t.status !== 'ok' || !t.build_sha || !t.build_branch) return httpError(409, 'That trial has no build to preview');
   if (t.branch_deleted_at) return httpError(409, 'Its branch is gone: a build is kept seven days unless it was kept');
   const { rows: [open] } = await pool.query(
-    `SELECT bp.*, cs.staging_url, a.slug AS app_slug FROM bench_previews bp
-       LEFT JOIN chat_sessions cs ON cs.id = bp.session_id LEFT JOIN apps a ON a.id = cs.app_id
+    `SELECT ${PREVIEW_COLUMNS} FROM bench_previews bp
+       ${PREVIEW_JOINS}
       WHERE bp.trial_id = $1 AND bp.status IN ('building', 'live') AND bp.expires_at > NOW()
       ORDER BY bp.id DESC LIMIT 1`,
     [t.id],
   );
-  if (open) return { ok: true, preview: previewOut(open), reused: true };
+  if (open && open.status !== 'failed') return { ok: true, preview: previewOut(open), reused: true };
   const { rows: [{ n }] } = await pool.query(
     "SELECT COUNT(*)::int AS n FROM bench_previews WHERE status IN ('building', 'live') AND expires_at > NOW()",
   );
@@ -1041,24 +1332,28 @@ async function deployPreview(pool, config, { trialId, user, deps = {} } = {}) {
      VALUES ($1, $2, $3, NOW() + make_interval(hours => $4)) RETURNING *`,
     [t.id, session.id, user?.id || null, PREVIEW_HOURS],
   );
-  const staging = deps.staging || require('../staging');
-  const app = { id: t.app_id, slug: t.slug, name: t.name, repo_url: t.repo_url, self_hosted: t.self_hosted };
-  Promise.resolve()
-    .then(() => staging.buildAndDeployStaging(config, { ...session, app_slug: t.slug }, app, t.build_sha))
-    .then(() => pool.query("UPDATE bench_previews SET status = 'live' WHERE id = $1 AND status = 'building'", [preview.id]))
-    .catch((err) => pool.query(
-      "UPDATE bench_previews SET status = 'failed', error = $2 WHERE id = $1 AND status = 'building'",
-      [preview.id, String(err && err.message || 'failed').slice(0, 500)],
-    ).catch(() => {}));
+  const previews = deps.previewWorkflow || require('../preview-workflow');
+  const asked = await previews.request({
+    pool, session: { ...session, app_slug: t.slug }, head: t.build_sha, reason: 'preview', actor: user?.id ? `user:${user.id}` : null,
+  }).catch((err) => ({ status: 'rejected', reason: err.message }));
+  if (asked.status === 'rejected') {
+    const { rows: [failed] } = await pool.query(
+      "UPDATE bench_previews SET status = 'failed', error = $2 WHERE id = $1 AND status = 'building' RETURNING *",
+      [preview.id, `the preview could not be started (${String(asked.reason || 'refused').slice(0, 200)})`],
+    );
+    log.warn('bench', 'Studio preview refused', { trialId: t.id, previewId: preview.id, sessionId: session.id, reason: asked.reason });
+    return { ok: true, preview: previewOut({ ...(failed || preview), app_slug: t.slug, staging_url: null }) };
+  }
   log.info('bench', 'Studio preview requested', { trialId: t.id, previewId: preview.id, sessionId: session.id });
   return { ok: true, preview: previewOut({ ...preview, app_slug: t.slug, staging_url: null }) };
 }
 
 /**
- * Previews over time (on the leader, from the lane's pass): a live one is
- * kept from the platform's idle collection until it is a day old, then
- * taken down and its session archived; one left building by a process that
- * is gone fails. Throttled; never throws.
+ * Previews over time (on the leader, from the lane's pass): a building one
+ * takes the preview machine's outcome (live once it serves the build, failed
+ * once its build failed); a live one is kept from the platform's idle
+ * collection until it is a day old, then taken down and its session
+ * archived. Throttled; never throws.
  */
 async function sweepPreviews(pool, deps = {}, now = Date.now()) {
   if (now - lastPreviewSweepAt < PREVIEW_SWEEP_MS && !deps.force) return 0;
@@ -1070,11 +1365,9 @@ async function sweepPreviews(pool, deps = {}, now = Date.now()) {
         WHERE id IN (SELECT session_id FROM bench_previews WHERE status IN ('building', 'live') AND expires_at > NOW())`,
     );
     await pool.query(
-      `UPDATE bench_previews bp SET status = 'failed', error = 'the preview stopped building (the platform restarted)'
-        FROM chat_sessions cs
-       WHERE cs.id = bp.session_id AND bp.status = 'building' AND cs.staging_url IS NULL
-         AND bp.created_at < NOW() - make_interval(mins => $1)`,
-      [PREVIEW_STUCK_MINUTES],
+      `UPDATE bench_previews bp SET status = m.status, error = m.error
+         FROM (SELECT ${PREVIEW_COLUMNS} FROM bench_previews bp ${PREVIEW_JOINS} WHERE bp.status = 'building') m
+        WHERE bp.id = m.id AND m.status IN ('live', 'failed')`,
     );
     const { rows } = await pool.query(
       `SELECT id, session_id FROM bench_previews
@@ -1176,6 +1469,8 @@ async function listStudioRuns(pool, { limit = 20 } = {}) {
 }
 
 module.exports = {
+  timelineOf,
+  transcriptOf,
   SUITE_NAME,
   HOST_KEY,
   TODAY,
@@ -1187,6 +1482,7 @@ module.exports = {
   MAX_CONCURRENCY,
   MAX_LIVE_PREVIEWS,
   PREVIEW_HOURS,
+  TRIAL_SPEC_CHARS,
   CAPTURE_CONTRACT,
   HAND_BACK,
   isHostApp,
@@ -1203,6 +1499,7 @@ module.exports = {
   codeLinks,
   previewOut,
   verdictOf,
+  reviewRecord,
   trialOut,
   watchRun,
   referenceOrder,

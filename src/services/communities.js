@@ -189,6 +189,43 @@ async function privateVoteRefusal(pool, appId, userId) {
   };
 }
 
+/**
+ * A vote on a PUBLIC app from an account the verified-identity rule holds
+ * (schema.sql public_vote_needs_identity: the rule is on, and the voter is
+ * neither verified, by a phone, GitHub and X, or zkPassport, nor let in
+ * before it was switched on). Refused before anything is recorded, so the
+ * Vote button can offer the verification instead of a vote that would not
+ * count; counts_toward_outcome leaves such a vote out of every tally too.
+ * Returns the refusal body, or null when the vote may go ahead.
+ */
+async function identityVoteRefusal(pool, appId, userId) {
+  if (!appId || !userId) return null;
+  const { rows } = await pool.query(
+    'SELECT public_vote_needs_identity($1, $2) AS needs',
+    [userId, appId]
+  );
+  if (rows[0]?.needs !== true) return null;
+  return {
+    error: 'Votes on public apps count from verified accounts. Verify your phone number, or link both GitHub and X in Settings.',
+    code: 'identity_required',
+  };
+}
+
+// #4378: making a project PUBLIC needs a verified owner, so each person
+// counts once on the public side. The same predicate the vote routes'
+// refusal rests on (identity_needed, inside public_vote_needs_identity): a
+// verified account, one let in before the rule, or the rule off all pass.
+// The same response shape, so the client opens the same verify sheet.
+async function identityPublicRefusal(pool, userId) {
+  if (!userId) return null;
+  const { rows } = await pool.query('SELECT identity_needed($1) AS needs', [userId]);
+  if (rows[0]?.needs !== true) return null;
+  return {
+    error: 'Public projects need a verified owner. Verify your phone number, or link both GitHub and X in Settings.',
+    code: 'identity_required',
+  };
+}
+
 function joinRequiredBody(app) {
   const name = app.name || app.slug || 'this project';
   return {
@@ -505,11 +542,12 @@ async function generalChannelSummary(pool, userId) {
   };
 }
 
-// Members & activity on the hub: how many people did something here this
-// week (said something in the channel, started a change, or voted on one),
-// and how many changes shipped in the last thirty days. People only: a
-// synthetic account (the Homeroom bot, which opens changes and, since #3288,
-// posts ordinary messages) is never counted as somebody active here.
+// The hub's people row: how many people did something here this week (said
+// something in the channel, started a change, or voted on one) and up to
+// five of them by name; also each of the last fourteen days, and how many
+// changes shipped in the last thirty days. People only: a synthetic account
+// (the Homeroom bot, which opens changes and, since #3288, posts ordinary
+// messages) is never counted or named as somebody active here.
 async function activitySummary(pool, appId) {
   // THE TREND: people active on each of the last fourteen days, oldest
   // first, the same three kinds of taking part as the week's count. Days
@@ -557,12 +595,42 @@ async function activitySummary(pool, appId) {
            AND COALESCE(s.merged_at, s.created_at) > NOW() - INTERVAL '30 days') AS shipped_month`,
     [appId]
   );
+  // WHO, BY NAME: the hub's faces row ("evan, talha, zura and 35 more"),
+  // up to five of the people the week's count counts, the most recently
+  // active first. The same three kinds of taking part over the same seven
+  // days, and the same people-only join, so a name here is always one of
+  // `active_week`.
+  const { rows: people } = await pool.query(
+    `SELECT u.id, u.username, u.display_name
+       FROM (
+         SELECT m.user_id, m.created_at AS at FROM chat_messages m
+          WHERE m.app_id = $1 AND m.user_id IS NOT NULL
+            AND m.created_at > NOW() - INTERVAL '7 days'
+         UNION ALL
+         SELECT s.user_id, s.created_at FROM chat_sessions s
+          WHERE s.app_id = $1 AND s.user_id IS NOT NULL
+            AND s.created_at > NOW() - INTERVAL '7 days'
+         UNION ALL
+         SELECT v.user_id, v.created_at FROM pr_votes v
+           JOIN chat_sessions s ON s.id = v.session_id
+          WHERE s.app_id = $1 AND v.user_id IS NOT NULL
+            AND v.created_at > NOW() - INTERVAL '7 days'
+       ) who JOIN users u ON u.id = who.user_id AND u.is_synthetic IS NOT TRUE
+      GROUP BY u.id, u.username, u.display_name
+      ORDER BY MAX(who.at) DESC, u.id
+      LIMIT $2`,
+    [appId, ACTIVE_PEOPLE_SHOWN]
+  );
   return {
     active_week: rows[0]?.active_week || 0,
     shipped_month: rows[0]?.shipped_month || 0,
     daily: days.map((d) => ({ day: d.day, n: d.n })),
+    active_people: people.map((p) => ({ id: p.id, username: p.username, display_name: p.display_name || null })),
   };
 }
+
+// How many of the week's people the hub names (its faces row).
+const ACTIVE_PEOPLE_SHOWN = 5;
 
 // UNCHOSEN COMMUNITIES: the ones whose votes do not put a number on the
 // Communities tab for this viewer (5 Oct 2026).
@@ -639,6 +707,8 @@ module.exports = {
   AUDIENCES,
   AUDIENCE_LABELS,
   privateVoteRefusal,
+  identityVoteRefusal,
+  identityPublicRefusal,
   audienceSql,
   isMember,
   getMembership,

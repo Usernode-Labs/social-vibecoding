@@ -2,9 +2,11 @@
 
 // The before & after shots start once the preview is up, beside the checks,
 // instead of after the whole suite (the first production run of the shots
-// agent waited ~3m45s for checks it never reads). Only when nothing holds
+// agent waited ~3m45s for checks it never reads): the preview machine's
+// ready hand-off (src/workflow/preview/services.ts). Only when nothing holds
 // the session: a run first waits at most two minutes for the proposal's
-// agent to be free, and a turn that launched the capture is still wrapping up.
+// agent to be free, and a turn that launched the capture is still wrapping
+// up; the verdict's follow-ups start them otherwise.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -64,21 +66,35 @@ test('a session with a turn open, or a busy worker, keeps the start after its ch
   assert.deepEqual(unknown.queries, [], 'no commit, nothing to look up');
 });
 
-test('the checks run starts the shots right after it claims the preview, and still hands off after', () => {
-  const source = fs.readFileSync(path.join(__dirname, '../src/services/visuals.js'), 'utf8');
-  const body = source.slice(source.indexOf('async function captureForSession('));
-  const claim = body.indexOf('_inFlight.set(key, { operation, commitHash: commitHash || null });');
-  const early = body.indexOf('startShotsIfIdle(config, pool, session.id, commitHash);');
-  const decided = body.indexOf('checksAlreadyDecided(pool, session.id, commitHash)');
-  assert.ok(claim > 0 && early > claim && early < decided,
-    'after the run claims its slot, before any early return');
-  assert.match(body, /scheduleShots\(config, pool, session\.id, commitHash\);\n  \}\n\}/,
-    'the hand-off after the checks stays as the fallback');
+test('the preview machine starts the shots once the preview serves, beside its checks run, and still hands off after', async (t) => {
+  // The publish that makes the preview serve queues the ready hand-off in
+  // the same step that starts the checks run.
+  const machine = fs.readFileSync(path.join(__dirname, '../src/workflow/preview/machine.ts'), 'utf8');
+  const published = machine.slice(machine.indexOf("return startRun({ name: 'preparing', data: d }, d0.trigger, ctx, {"));
+  assert.match(published.slice(0, 600), /\{ kind: WORK\.ready, key: `ready:\$\{served\.n\}`, input: \{ sessionId: d\.sessionId, head: served\.head \} \}/);
+
+  const { previewServices } = require('../src/workflow/preview/services.ts');
+  const { WORK } = require('../src/workflow/preview/machine.ts');
+  const { pool, scheduled } = stubs(t);
+  const handlers = previewServices({ config, pool });
+  await handlers[WORK.ready].run({ input: { sessionId: 42, head: HEAD } });
+  await settle();
+  assert.deepEqual(scheduled, [{ sessionId: 42, headSha: HEAD, trigger: 'preview-ready' }],
+    'the ready hand-off is startShotsIfIdle');
+
+  // The verdict's follow-ups schedule them again for the head: the
+  // fallback for a session a turn held when the preview came up.
+  scheduled.length = 0;
+  await handlers[WORK.followUps].run({ input: { sessionId: 42, appId: 9, head: HEAD, state: 'error' } });
+  assert.deepEqual(scheduled, [{ sessionId: 42, headSha: HEAD, trigger: 'preview-ready' }]);
 });
 
 test('an interrupted run is looked for every 30 seconds, apart from the two-minute sweep', () => {
   const server = fs.readFileSync(path.join(__dirname, '../server.js'), 'utf8');
-  assert.match(server, /setInterval\(retryInterruptedShots, 30 \* 1000\)/);
-  const unstarted = server.slice(server.indexOf('const runUnstartedShots = '), server.indexOf('setInterval(runUnstartedShots'));
+  // Leader timers (services/leader-timers.js) since they stop at shutdown.
+  assert.match(server, /leaderTimers\.every\('shots-retry-interrupted', retryInterruptedShots, 30 \* 1000\)/);
+  const unstarted = server.slice(server.indexOf('const runUnstartedShots = '),
+    server.indexOf("leaderTimers.every('shots-recover-unstarted', runUnstartedShots"));
+  assert.ok(unstarted.length > 0, 'the unstarted sweep is still its own timer');
   assert.doesNotMatch(unstarted, /retryInterrupted/, 'the retry no longer waits for the slower sweep');
 });

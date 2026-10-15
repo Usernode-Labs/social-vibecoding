@@ -43,6 +43,8 @@
  * prompt and the one in-flight question.
  */
 
+import { t } from './i18n/runtime';
+
 export type JoinRequired = {
   code: 'join_required';
   error?: string;
@@ -91,10 +93,10 @@ export function registerJoinAnchor(slug: string, anchor: JoinAnchor): () => void
 async function askInDialog(body: JoinRequired, name: string): Promise<boolean> {
   const w = window as any;
   return !!(await w.ConfirmModal?.show?.({
-    title: `Join ${name}?`,
-    message: 'Members start changes, file requests, vote and chat here. Join to take part.',
-    confirmLabel: 'Join',
-    cancelLabel: 'Not now',
+    title: t('core:join.prompt.title', { community: name }),
+    message: t('core:join.prompt.message'),
+    confirmLabel: t('core:join.prompt.join'),
+    cancelLabel: t('core:join.prompt.notNow'),
   }));
 }
 

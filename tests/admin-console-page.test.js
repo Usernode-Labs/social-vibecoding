@@ -24,6 +24,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { message } = require('./lib/platform-i18n');
 
 const root = path.join(__dirname, '..');
 const html = fs.readFileSync(path.join(root, 'public/index.html'), 'utf8');
@@ -125,12 +126,21 @@ test('the console island imports every admin module, console first', () => {
     .map((m) => m[1]);
   assert.equal(order[0], 'admin-console', 'admin-console.js is imported first');
   assert.deepEqual(order.slice(1).sort(), [
-    'admin-analytics', 'admin-campaigns', 'admin-codes', 'admin-db-export',
+    'admin-analytics',
+    // Apps & usage: every app's members, contributors and activity.
+    'admin-apps-usage',
+    // How the Homeroom bot builds first versions, and how each configuration measures up.
+    'admin-bot-configs',
+    'admin-campaigns', 'admin-codes', 'admin-db-export',
+    // #4405: every custom domain a project has claimed.
+    'admin-domains',
     'admin-e2e', 'admin-estimator', 'admin-featured-apps', 'admin-features',
     'admin-gallery',
     // #2684: the Homeroom bot's shadow-mode verdicts and their ratings.
     'admin-homeroom-bot',
     // #3369: Journey, the user journey and the North Star.
+    // #4296: Unexpected events, beside Health & status.
+    'admin-incidents',
     'admin-journey',
     'admin-limits', 'admin-mail', 'admin-merges',
     // #2570: Model costs, where the picker's per-model notes and cost
@@ -142,6 +152,8 @@ test('the console island imports every admin module, console first', () => {
     'admin-sign-in',
     // The watch-only small-change tag's verdicts.
     'admin-small-changes',
+    // #4128: SMS delivery, a test text through Firebase Phone Auth.
+    'admin-sms',
     'admin-staging-reap',
     // #2253: App storage, the per-app database cap's console section.
     'admin-status', 'admin-storage',
@@ -152,6 +164,8 @@ test('the console island imports every admin module, console first', () => {
     'admin-topochain', 'admin-users',
     // Welcome messages: the group and first message somebody let in gets.
     'admin-welcome-dm',
+    // The workflow machines: problems, instances and timelines.
+    'admin-workflows',
   ], 'every section module is imported by the island');
 });
 
@@ -362,8 +376,10 @@ test('the two formerly-public sections stay reachable for non-admins', () => {
   assert.match(head, /if \(!isAdmin && !publicMode\)/,
     'a non-admin on any non-public section still bails');
   assert.match(head, /App\.navigateHome\(\)/, 'and lands on home');
-  assert.match(fn.slice(0, 4000), /publicMode \? 'Platform status' : 'Admin & moderation'/,
+  assert.match(fn.slice(0, 4000), /publicMode\s+\? PlatformI18n\.t\('shell:title\.platformStatus'\)\s+: PlatformI18n\.t\('shell:title\.admin'\)/,
     'public mode retitles the header');
+  assert.equal(message('shell:title.platformStatus'), 'Platform status');
+  assert.equal(message('shell:title.admin'), 'Admin & moderation');
 });
 
 test('section switches replace, never push, history', () => {

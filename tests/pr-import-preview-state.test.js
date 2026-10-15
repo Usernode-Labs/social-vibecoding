@@ -8,13 +8,15 @@
 // reviewers as a broken card.
 //
 // The state is derived on READ, not persisted (no staging_state column):
-//   staging_building = no staging_url AND staging.hasInFlightBuild(id)
+//   staging_building = no staging_url AND check_state 'pending' AND
+//                      check_phase 'building' (the phase the preview machine
+//                      writes when it starts a build: every Pod sees it, and
+//                      it survives a restart)
 //   staging_error    = no staging_url AND check_state 'error' AND the
 //                      check_error_detail the failure path already captured
 //
 // Covered here:
-//   - services/staging.previewDisplayState against a REAL in-flight build
-//     (the flag is the live build registry, not a fixture);
+//   - services/staging.previewDisplayState over the row's own columns;
 //   - the client's three renderings — Preview button / non-interactive
 //     "Preview building…" pill / "Preview unavailable" chip (+ "Retry
 //     preview" for viewers who can act, and none for read-only viewers);
@@ -38,9 +40,8 @@ function stub(id, exports) {
   require.cache[id] = { id, filename: id, loaded: true, exports, paths: [] };
 }
 
-// Same collaborator stubbing as tests/pr-import-fork-clone.test.js, with a
-// gate on the DB-clone step so a build can be held mid-flight while
-// previewDisplayState is read.
+// Same collaborator stubbing as tests/pr-import-fork-clone.test.js: staging.js
+// binds its collaborators at load, and none of them is reached here.
 function loadStaging() {
   const ids = {
     logger: require.resolve('../src/services/logger'),
@@ -56,11 +57,6 @@ function loadStaging() {
   };
   const orig = {};
   for (const [k, id] of Object.entries(ids)) orig[k] = require.cache[id];
-
-  let release;
-  const gate = new Promise((r) => { release = r; });
-  let reachedClone;
-  const cloneStarted = new Promise((r) => { reachedClone = r; });
 
   stub(ids.logger, { info() {}, warn() {}, error() {}, debug() {} });
   stub(ids.github, { getCloneUrl: async () => 'https://x/clone.git', isEnabled: () => true });
@@ -91,7 +87,7 @@ function loadStaging() {
   stub(ids.dbManager, {
     appDbName: (slug) => `app_${slug}`,
     stagingDbName: (slug, u, hash) => `app_${slug}_staging_${u}_${String(hash).substring(0, 6)}`,
-    cloneDatabase: async () => { reachedClone(); await gate; return { password: 'pw' }; },
+    cloneDatabase: async () => ({ password: 'pw' }),
     connectionUrl: () => 'postgres://x',
   });
 
@@ -102,38 +98,36 @@ function loadStaging() {
       if (orig[k]) require.cache[id] = orig[k]; else delete require.cache[id];
     }
   };
-  return { subject, restore, release, cloneStarted };
+  return { subject, restore };
 }
 
-const APP = { id: 5, slug: 'widget', name: 'Widget', repo_url: 'https://github.com/acme/widget' };
-
-test('a live build makes the row read as building — and stops once it lands', async () => {
-  const { subject, restore, release, cloneStarted } = loadStaging();
+test('a build the machine is running makes the row read as building — and stops once it lands', () => {
+  const { subject, restore } = loadStaging();
   try {
-    const session = { id: 91, branch_name: 'contributor/f', pr_number: 9401, staging_container_id: null };
-    const build = subject.buildAndDeployStaging({ jwtSecret: 's' }, session, APP, 'abc123');
-    await cloneStarted;
-
-    const during = subject.previewDisplayState({ id: 91, staging_url: null, check_state: 'pending' });
-    assert.equal(during.staging_building, true, 'the in-flight build is what lights the pill');
+    const during = subject.previewDisplayState({ id: 91, staging_url: null, check_state: 'pending', check_phase: 'building' });
+    assert.equal(during.staging_building, true, "the row's building phase is what lights the pill");
     assert.equal(during.staging_error, null, 'a build in progress is not a failure');
+    assert.equal(during.preview_state, 'building');
 
     // A row that already HAS a preview never shows the pill, even mid-rebuild:
     // the working Preview button is the more useful affordance.
-    const withUrl = subject.previewDisplayState({ id: 91, staging_url: 'https://x', check_state: 'pending' });
+    const withUrl = subject.previewDisplayState({ id: 91, staging_url: 'https://x', check_state: 'pending', check_phase: 'building' });
     assert.equal(withUrl.staging_building, false, 'staging_url wins over a rebuild');
 
-    release();
-    await build;
-    const after = subject.previewDisplayState({ id: 91, staging_url: null, check_state: 'pending' });
+    // Once the build lands the checks run against it: still pending, no
+    // longer building.
+    const after = subject.previewDisplayState({ id: 91, staging_url: null, check_state: 'pending', check_phase: 'running' });
     assert.equal(after.staging_building, false, 'the flag clears when the build finishes');
+    assert.equal(
+      subject.previewDisplayState({ id: 91, staging_url: null, check_state: 'pending', check_phase: null }).staging_building,
+      false, "a 'pending' with no building phase is not a build"
+    );
   } finally { restore(); }
 });
 
 test('a checks error with no preview surfaces its reason as staging_error', async () => {
-  const { subject, restore, release } = loadStaging();
+  const { subject, restore } = loadStaging();
   try {
-    release();
     const reason = 'app failed to boot: missing required secret DEMO_API_KEY';
     assert.deepEqual(
       subject.previewDisplayState({ id: 4, staging_url: null, check_state: 'error', check_error_detail: reason }),
@@ -186,6 +180,7 @@ function makeAppView({ readOnly = false } = {}) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(`${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
@@ -291,8 +286,7 @@ test('the staging ?demo=1 mocks cover all three preview states', () => {
 
   const imported = body.match(/source: 'imported'/g) || [];
   assert.ok(imported.length >= 3,
-    'one imported mock per preview state — these pills cannot be seeded in the DB '
-    + 'because staging_building is derived from an in-memory build registry');
+    'one imported mock per preview state, so all three are reviewable in a staging preview');
   assert.match(body, /staging_building: true/, 'the building pill has a fixture');
   assert.match(body, /staging_error: '[^']+'/, 'the unavailable chip has a fixture');
   assert.match(body, /staging_url: 'https:\/\/mock-preview/, 'the Preview button has a fixture');
@@ -315,7 +309,8 @@ test('dapp.json asserts the text the new pills render', () => {
   }
   const texts = mine.map((t) => t.expectText).filter(Boolean);
   assert.ok(texts.some((t) => /Preview building/.test(t)), 'building pill checked');
-  assert.ok(texts.some((t) => /Preview unavailable/.test(t)), 'unavailable chip checked');
+  // #4455: a change's page says it in its Testing card, beside the retry.
+  assert.ok(texts.some((t) => /Preview unavailable|The preview didn’t start/.test(t)), 'unavailable chip checked');
 });
 
 // ── the sweeper and check-status guards (server.js) ────────────────────
@@ -325,33 +320,32 @@ test('dapp.json asserts the text the new pills render', () => {
 // silent and destructive, so they're worth pinning even at this coarse
 // granularity.
 //
-//  Pass 3 (staging heal): an imported proposal's first build runs with no
-//  worker attached and takes minutes, during which staging_url is NULL. Without
-//  the guard the heal pass reads "preview missing" and launches a SECOND build
-//  of the same commit.
+//  Pass 3 (staging heal): an imported proposal's first build takes minutes,
+//  during which staging_url is NULL. The heal pass hands the session to
+//  stagingRecovery.rebuildSessionStaging, which leaves a preview the machine
+//  is preparing, retiring or retrying to it ('left_to_machine') rather than
+//  asking for a second build of the same commit.
 //
-//  Pass 2 (idle GC): archived rows are now reclaimable — a withdrawn
-//  proposal's container is pure waste — but the same in-flight check has to
-//  stand between the GC and a live build, or the GC deletes the container the
-//  build is about to record.
-test('server.js: both sweeper passes and check status consult staging.hasInFlightBuild', () => {
+//  Pass 2 (idle GC): archived rows are reclaimable — a withdrawn proposal's
+//  container is pure waste — and the GC asks the machine to retire it
+//  (sessionLifecycle.teardownStagingForSession); the machine refuses a
+//  preview it is building or checking, so the GC never deletes the container
+//  a build is about to publish.
+test('server.js: the sweeper passes leave a live build to the preview machine', () => {
   const src = require('node:fs').readFileSync(
     require('node:path').join(__dirname, '..', 'server.js'), 'utf8'
   );
 
-  assert.match(src, /const stagingSvc = require\('\.\/src\/services\/staging'\)/,
-    'named stagingSvc: recoverActiveWorkers() already binds a local `staging`');
-
-  const guards = src.match(/stagingSvc\.hasInFlightBuild\(/g) || [];
-  assert.equal(guards.length, 3,
-    'one guard each in check status, the idle-GC pass, and the heal pass');
+  assert.ok(!/hasInFlightBuild/.test(src), 'no per-process build registry is consulted any more');
   assert.match(src,
-    /function checkRecoveryInFlight\(sessionId\)[\s\S]*stagingSvc\.hasInFlightBuild\(Number\(sessionId\)\)/,
-    'stalled-check reporting leaves a live staging build in flight');
-  assert.match(src, /if \(stagingSvc\.hasInFlightBuild\(session\.id\)\) continue;/,
-    'heal pass skips the session instead of starting a duplicate build');
-  assert.match(src, /if \(stagingSvc\.hasInFlightBuild\(row\.id\)\) continue;/,
-    'GC pass leaves a live build\'s container alone');
+    /function checkRecoveryInFlight\(sessionId\) \{\n\s*return activeWorkersSvc\.isSessionBusy\(sessionId\) \|\| hasInFlightHandoffPipeline\(sessionId\);/,
+    'stalled-check reporting leaves a session to its own turn or hand-off tail');
+  assert.match(src,
+    /await stagingRecovery\.rebuildSessionStaging\(\{ config, pool, session, reason: 'heal' \}\)/,
+    'the heal pass hands the session to the machine instead of building');
+  assert.match(src,
+    /if \(activeWorkersSvc\.isSessionBusy\(row\.id\)\) continue;\n(\s*\/\/[^\n]*\n)*\s*try \{\n\s*await sessionLifecycle\.teardownStagingForSession\(\{ pool, sessionId: row\.id, reason: 'idle-gc' \}\);/,
+    'the GC pass asks the machine to retire, which refuses a live build');
 
   // The GC query no longer excludes archived rows...
   assert.match(src, /AND status NOT IN \('promoted', 'merging', 'merged'\)/);

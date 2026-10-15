@@ -11,6 +11,8 @@
 
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 
+import { RichMessage, useMessages } from '../../lib/i18n/react';
+
 /**
  * The survey field, in ONE spelling for both screens (#2437).
  *
@@ -85,21 +87,22 @@ export interface WaitlistStatus {
  * can press it is the same category of mistake that component's own doc
  * comment warns about for tabs.
  */
+// `label` and `note` are message ids, read when the pill renders.
 export const QUEUE_PILL = {
   pending: {
-    label: 'Waiting for confirmation',
+    label: 'auth:queue.pending.label',
     tint: 'bg-amber-50 dark:bg-amber-900/30 border-amber-200 dark:border-amber-700 text-amber-700 dark:text-amber-300',
-    note: 'Click the link in the email we sent, and your answers below move you up.',
+    note: 'auth:queue.pending.note',
   },
   confirmed: {
-    label: 'On the waitlist',
+    label: 'auth:queue.confirmed.label',
     tint: 'bg-violet-50 dark:bg-violet-900/30 border-violet-200 dark:border-violet-700 text-violet-700 dark:text-violet-300',
-    note: 'Your address is confirmed. Answering the questions below moves you up.',
+    note: 'auth:queue.confirmed.note',
   },
   admitted: {
-    label: "You're in",
+    label: 'auth:queue.admitted.label',
     tint: 'bg-emerald-50 dark:bg-emerald-900/30 border-emerald-200 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300',
-    note: 'Access is open for you. Check your email for the invite.',
+    note: 'auth:queue.admitted.note',
   },
 } as const;
 
@@ -133,11 +136,12 @@ export function StatusPill({
   status,
   note: showNote = true,
 }: { id: string; status: WaitlistStatus | null; note?: boolean }) {
+  const t = useMessages('auth');
   const key = status?.state;
   const pill = key ? QUEUE_PILL[key] : null;
   const note = !showNote ? null
     : (pill && key === 'admitted' && status?.has_account
-      ? 'Access is open and your account is linked. Sign in any time.'
+      ? 'auth:queue.admitted.noteLinked'
       : pill?.note);
   return (
     <div
@@ -149,10 +153,10 @@ export function StatusPill({
           <span
             className={`shrink-0 inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-semibold ${pill.tint}`}
           >
-            {pill.label}
+            {t(pill.label)}
           </span>
           {note ? (
-            <span className="text-xs text-zinc-500 dark:text-zinc-400">{note}</span>
+            <span className="text-xs text-zinc-500 dark:text-zinc-400">{t(note)}</span>
           ) : null}
         </>
       ) : null}
@@ -400,6 +404,34 @@ export function useSurveyAnswered(token: string | null): boolean {
   );
 }
 
+/** The links RecaptchaLine draws: RECAPTCHA_LINE in ./recaptcha.ts. */
+export type RecaptchaLinks = {
+  privacy: { href: string };
+  terms: { href: string };
+};
+
+/**
+ * "Protected by reCAPTCHA · Google Privacy · Terms", the notice Google asks
+ * for where its badge is hidden (./recaptcha.ts), one step smaller and
+ * quieter than the terms line above it (#4379). `data` names the attribute
+ * a caller's checks select on.
+ */
+export function RecaptchaLine({ notice, className = '', data = {} }: {
+  notice: RecaptchaLinks;
+  className?: string;
+  data?: Record<string, string>;
+}) {
+  const linkClass = 'underline underline-offset-2 hover:text-zinc-600 dark:hover:text-zinc-300';
+  return (
+    <p data-recaptcha-line="" {...data} className={`text-center text-[12px] leading-snug text-zinc-400 dark:text-zinc-500 ${className}`}>
+      <RichMessage id="auth:recaptcha.line" components={[
+      <a href={notice.privacy.href} target="_blank" rel="noopener noreferrer" className={linkClass} />,
+      <a href={notice.terms.href} target="_blank" rel="noopener noreferrer" className={linkClass} />,
+      ]} />
+    </p>
+  );
+}
+
 /**
  * "By continuing, you agree to Homeroom's terms." under the sign-in screens'
  * main button (./sign-in-sheet.tsx, ./login.tsx). Continuing past it is the
@@ -407,17 +439,32 @@ export function useSurveyAnswered(token: string | null): boolean {
  * (../settings/terms-first-run.js), so nothing asks again after sign-in.
  * The link arrives with the options; until then, and when there is none,
  * the line names the terms without one, which is also what the prerender
- * draws.
+ * draws. Where a step runs reCAPTCHA with its badge hidden (./recaptcha.ts,
+ * the sign-in sheet's phone and code steps), `recaptcha` (the sheet hands
+ * its RECAPTCHA_LINE) adds Google's notice as a second, quieter line under
+ * it: "Protected by reCAPTCHA · Google Privacy · Terms" (#4207, #4379).
  */
-export function TermsNotice({ verb = 'continuing', className = '' }: { verb?: string; className?: string }) {
+export function TermsNotice({ verb = 'continuing', className = '', recaptcha = null }: {
+  verb?: 'continuing' | 'signing in';
+  className?: string;
+  recaptcha?: RecaptchaLinks | null;
+}) {
   const link = useWaitlistOptions()?.terms_link || null;
-  return (
-    <p className={`text-center text-[13px] text-zinc-500 dark:text-zinc-400 ${className}`}>
-      {`By ${verb}, you agree to Homeroom's `}
-      {link ? (
-        <a href={link} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 hover:text-zinc-700 dark:hover:text-zinc-200">terms</a>
-      ) : 'terms'}
-      .
+  const linkClass = 'underline underline-offset-2 hover:text-zinc-700 dark:hover:text-zinc-200';
+  const terms = (
+    <p data-terms-notice={recaptcha ? 'recaptcha' : undefined} className={`text-center text-[13px] text-zinc-500 dark:text-zinc-400 ${className}`}>
+      <RichMessage id={verb === 'signing in' ? 'auth:terms.signingIn' : 'auth:terms.continuing'} components={[
+      link ? (
+        <a href={link} target="_blank" rel="noopener noreferrer" className={linkClass} />
+      ) : <></>,
+      ]} />
     </p>
+  );
+  if (!recaptcha) return terms;
+  return (
+    <>
+      {terms}
+      <RecaptchaLine notice={recaptcha} className="mt-1" />
+    </>
   );
 }

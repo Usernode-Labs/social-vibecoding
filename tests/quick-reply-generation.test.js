@@ -55,7 +55,7 @@ const toolUseResponse = (replies) => ({
 const textResponse = (text) => ({
   content: [{ type: 'text', text }],
   usage: { input_tokens: 1700, output_tokens: 35 },
-  model: 'claude-haiku-4-5',
+  model: 'claude-haiku-5-5',
 });
 
 // ── buildQuickReplyContext ───────────────────────────────────────────
@@ -216,7 +216,7 @@ test('the backstop parses schema-clean JSON and runs on Haiku', async () => {
       const out = await llm.generateQuickReplies({
         rules: QUICK_REPLY_RULES_TEXT, context: 'APP: x',
       });
-      assert.equal(calls[0].params.model, 'claude-haiku-4-5',
+      assert.equal(calls[0].params.model, 'claude-haiku-5-5',
         'a DIFFERENT model from the turn\'s own, so one model failing does not take both rungs down');
       assert.ok(calls[0].params.output_config, 'structured outputs are requested');
       assert.deepEqual(out.replies, { replies: ['Retry the push', 'Why did the push fail?'] },

@@ -151,30 +151,24 @@ test('the tail-recovery fixtures are shared, active and fixed-id', () => {
     assert.ok(columns.includes('shared_at'), 'shared, or the checks cannot see it');
     assert.ok(columns.includes('is_headless'), 'explicitly non-headless');
   }
-  // Ids must match what dapp.json deep-links, or the checks 404 into the
-  // home feed and silently assert nothing.
+  // #3976: these were deep-linked by dapp.json checks on the classic dev
+  // chat. Classic sessions are read-only now and those checks were retired
+  // with the chat; the fixtures keep their fixed ids for the preview until
+  // the classic dev chat itself is removed.
   for (const id of [900820, 900821, 900822]) {
     assert.ok(BODY.includes(String(id)), `seeds session ${id}`);
-    assert.ok((DAPP.tests || []).some((t) => (t.path || '').includes(`/sessions/${id}`)),
-      `a dapp.json check opens session ${id}`);
+    assert.ok(!(DAPP.tests || []).some((t) => (t.path || '').includes(`/dev/sessions/${id}`)),
+      `no declared check opens classic session ${id}`);
   }
 });
 
-test('the tail-recovery checks assert text the fixtures actually render', () => {
-  const byPath = (id) => (DAPP.tests || []).filter((t) => (t.path || '').endsWith(`/sessions/${id}`));
-
-  // 900820 — the resumed tail's own rows.
-  const recovered = byPath(900820);
-  assert.ok(recovered.length >= 2, 'the tail-recovered transcript is checked');
-  assert.ok(recovered.some((t) => t.expectText === 'Staging deployed!'),
-    'the card the interrupted tail owed the user is asserted');
-  assert.ok(BODY.includes("'Staging deployed!'"), 'and the fixture actually seeds it');
+test('the tail-recovery fixtures seed what they exist to show', () => {
+  // 900820 — the resumed tail's own rows: the card the interrupted tail
+  // owed the user.
+  assert.ok(BODY.includes("'Staging deployed!'"), 'the fixture seeds the Changes-ready row');
 
   // 900821 — the in-progress rebuild row must be the LAST row, or the
   // client will not spin it (see _activateTrailingStagingBuild).
-  const rebuilding = byPath(900821);
-  assert.ok(rebuilding.some((t) => /dc-status-spinner-arc/.test(t.expectSelector || '')),
-    'the spinner is what this fixture exists to pin');
   const rebuildIdx = BODY.indexOf("'staging-fixture/staging-rebuild-running'");
   const rebuildBlock = BODY.slice(rebuildIdx, BODY.indexOf('Fixture 5', rebuildIdx));
   const lastRow = rebuildBlock.lastIndexOf("['system', 'Building staging preview...'");
@@ -183,13 +177,8 @@ test('the tail-recovery checks assert text the fixtures actually render', () => 
     'and it is the final row — a row after it would (correctly) stop the spinner');
 
   // 900822 — the honest wording, kept in sync with recovery-pills.js.
-  const landed = byPath(900822);
-  const wording = landed.find((t) => /committed and pushed/.test(t.expectText || ''));
-  assert.ok(wording, 'the code-landed wording is asserted');
   const seeded = BODY.match(/'(Your changes are committed and pushed to [^']*)'/);
   assert.ok(seeded, 'the fixture seeds that row');
-  assert.ok(seeded[1].includes(wording.expectText),
-    `dapp.json expects "${wording.expectText}" but the seeded row reads "${seeded[1]}"`);
   // The one thing this row must NEVER say.
   assert.ok(!/send your request again/i.test(seeded[1]),
     'landed work must not be reported as something to redo');

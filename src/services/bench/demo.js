@@ -229,8 +229,9 @@ async function seedStagingBench(pool) {
 // ── #3737: the taste eval, on staging ────────────────────────────────────
 //
 // One open suite with a first-version task and a capture task on the same
-// brief, and a finished run of both, each with its sixteen screenshots
-// (drawn here: a ground in the look's colour and a few bars per state) and
+// brief, and a finished run of both, each with its nineteen screenshots
+// (drawn here: a ground in the look's colour and a few bars per state; the
+// result state's with "Plan the week" as the control it tapped) and
 // the judge's grade, so the results table shows both arms, the spot check
 // shows screenshots, and the suite's tasks show their brief and the form to
 // add another. Its run is older than the core demo's, so the console still
@@ -247,19 +248,26 @@ const TASTE_BRIEF = 'Staging demo: a planner for a weekly bake. Pick the breads 
 /** A PNG of one flat colour with horizontal bars: enough to stand in for a screenshot. Pure. */
 function demoPng(width, height, ground, bars = []) {
   const zlib = require('zlib');
-  const row = Buffer.alloc(1 + width * 3);
+  // A row is one of a few: the ground, or a bar's. Each is drawn once and
+  // every row that looks the same shares it (the result is read, never
+  // written), where drawing all 800 pixel by pixel took most of the time.
+  const drawn = new Map();
+  const lineFor = (bar) => {
+    let line = drawn.get(bar);
+    if (line) return line;
+    line = Buffer.alloc(1 + width * 3);
+    for (let x = 0; x < width; x += 1) {
+      const [r, g, b] = bar && x >= 16 && x < width - 16 ? bar.rgb : ground;
+      line[1 + x * 3] = r;
+      line[2 + x * 3] = g;
+      line[3 + x * 3] = b;
+    }
+    drawn.set(bar, line);
+    return line;
+  };
   const rows = [];
   for (let y = 0; y < height; y += 1) {
-    const bar = bars.find((b) => y >= b.y && y < b.y + b.h);
-    const [r, g, b] = bar ? bar.rgb : ground;
-    const line = Buffer.from(row);
-    for (let x = 0; x < width; x += 1) {
-      const inBar = bar && x >= 16 && x < width - 16;
-      line[1 + x * 3] = inBar ? r : ground[0];
-      line[2 + x * 3] = inBar ? g : ground[1];
-      line[3 + x * 3] = inBar ? b : ground[2];
-    }
-    rows.push(line);
+    rows.push(lineFor(bars.find((b) => y >= b.y && y < b.y + b.h)));
   }
   const chunk = (type, data) => {
     const len = Buffer.alloc(4);
@@ -297,8 +305,50 @@ function demoShot(viewport, look, state) {
   const bars = state === 'empty' ? [{ y: 120, h: 40, rgb: ink }]
     : state === 'error' ? [{ y: 120, h: 56, rgb: [220, 38, 38] }]
       : state === 'loading' ? [0, 1, 2].map((i) => ({ y: 120 + i * 96, h: 72, rgb: ink }))
-        : [{ y: 64, h: 48, rgb: accent }, ...[0, 1, 2, 3].map((i) => ({ y: 160 + i * 112, h: 88, rgb: ink }))];
+        // The result: the form folded up and the answer below it.
+        : state === 'result' ? [{ y: 64, h: 48, rgb: accent }, { y: 160, h: 88, rgb: ink }, { y: 280, h: 320, rgb: accent }]
+          : [{ y: 64, h: 48, rgb: accent }, ...[0, 1, 2, 3].map((i) => ({ y: 160 + i * 112, h: 88, rgb: ink }))];
   return demoPng(width, height, ground, bars);
+}
+
+// The control the demo's result screens tapped, as the step records it.
+const DEMO_ACTION = Object.freeze({ label: 'Plan the week', rule: 'kit-primary' });
+
+// One drawing per (screen size, look, state). The demo's eight builds show
+// the same few pictures, 152 screenshots of at most twenty kinds, and a
+// preview draws them at every start: drawing each kind once took the two
+// seeders from about two seconds to a tenth of that. The bytes are the same
+// ones as before, and nothing writes to them.
+const demoShotCache = new Map();
+function demoShotOnce(viewport, look, state) {
+  const key = `${viewport}/${look}/${state}`;
+  let hit = demoShotCache.get(key);
+  if (!hit) {
+    const data = demoShot(viewport, look, state);
+    hit = { data, sha256: crypto.createHash('sha256').update(data).digest('hex') };
+    demoShotCache.set(key, hit);
+  }
+  return hit;
+}
+
+/** The demo's screenshots, one per planned shot, the result screens with the control they tapped. */
+function demoShots(capture, lookOf = (p) => p.look) {
+  return capture.plannedShots().map((p) => {
+    const { data, sha256 } = demoShotOnce(p.viewport, lookOf(p), p.state);
+    return {
+      ...p, data, bytes: data.length, sha256, status: 200, consoleErrors: 0,
+      ...(p.state === 'result' ? { action: DEMO_ACTION } : {}),
+    };
+  });
+}
+
+/** The step's account of the demo's result screens. */
+function demoPrimaryAction(capture) {
+  return capture.plannedShots().filter((p) => p.state === 'result').map((p) => ({
+    id: p.id,
+    used: { ...DEMO_ACTION, why: 'the design kit\'s primary button (.btn-primary), the only one in the main content' },
+    settled: 'network idle', changes: 3, revealed: p.viewport === 'phone', dialogs: 0, blocked: 0, ms: 1400,
+  }));
 }
 
 async function seedStagingTaste(pool) {
@@ -355,12 +405,9 @@ async function seedStagingTaste(pool) {
     ];
     for (const [i, k] of kinds.entries()) {
       const id = TASTE_TRIAL_BASE + i + 1;
-      const shots = capture.plannedShots().map((p) => {
-        const data = demoShot(p.viewport, p.look, p.state);
-        return { ...p, data, bytes: data.length, sha256: crypto.createHash('sha256').update(data).digest('hex'), status: 200, consoleErrors: 0 };
-      });
+      const shots = demoShots(capture);
       const summary = capture.summarize({
-        booted: true, steps: {}, ms: 61_000,
+        booted: true, steps: {}, ms: 61_000, primaryAction: demoPrimaryAction(capture),
         checks: {
           consoleErrors: { count: i, screens: 8, samples: i ? ['Staging demo: Failed to load resource'] : [] },
           overflow360: { light: 0, dark: i * 24, worst: i * 24 },
@@ -495,11 +542,8 @@ async function seedStagingStudio(pool) {
       for (const arm of arms) {
         n += 1;
         const id = STUDIO_TRIAL_BASE + n;
-        const shots = capture.plannedShots().map((p) => {
-          const data = demoShot(p.viewport, arm.pass ? p.look : 'dark', p.state);
-          return { ...p, data, bytes: data.length, sha256: crypto.createHash('sha256').update(data).digest('hex'), status: 200, consoleErrors: 0 };
-        });
-        const summary = capture.summarize({ booted: true, steps: {}, ms: 58_000, checks: {}, tells: {} }, shots, [], {});
+        const shots = demoShots(capture, (p) => (arm.pass ? p.look : 'dark'));
+        const summary = capture.summarize({ booted: true, steps: {}, ms: 58_000, primaryAction: demoPrimaryAction(capture), checks: {}, tells: {} }, shots, [], {});
         const parsed = { built: true, triage: { verdict: 'ready', buildNote: 'Staging demo plan.' }, skills: { invoked: arm.pack ? ['staging-demo-theme'] : [], read: [] } };
         // eslint-disable-next-line no-await-in-loop
         await pool.query(

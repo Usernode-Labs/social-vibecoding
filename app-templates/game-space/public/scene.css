@@ -1,0 +1,281 @@
+/* The space game's scene: deep space, glass panels over it, and the field
+ * (drawn on a canvas by public/app.js) filling the screen. It is one look
+ * of its own, night in both of the page's looks, written down in
+ * CLAUDE.md "## Design". Its colours are named once, here, and the canvas
+ * draws with the same ones. The kit's own parts (the toast) follow the
+ * page's look.
+ */
+
+.space,
+.space-over {
+  --void: #050817;
+  --deep: #0c0f2e;
+  --nebula: #2a1356;
+  --glass: rgba(16, 20, 54, 0.66);
+  --glass-line: rgba(150, 170, 255, 0.24);
+  --star: #e8ecff;
+  --star-soft: rgba(232, 236, 255, 0.72);
+  --cyan: #4ce0ff;
+  --pink: #ff5fa2;
+  --violet: #b388ff;
+  --amber: #ffb547;
+  --gold: #ffe27a;
+  font-family: 'Avenir Next', 'Segoe UI', ui-sans-serif, system-ui, sans-serif;
+  color: var(--star);
+}
+.space {
+  background: radial-gradient(130% 90% at 50% 0%, var(--nebula) 0%, var(--deep) 45%, var(--void) 100%);
+}
+/* The title screen dims the field a little, more towards the bottom. */
+#title {
+  background: linear-gradient(rgba(5, 8, 23, 0.1), rgba(5, 8, 23, 0.6));
+}
+
+/* ── The title screen, over the field ─────────────────────────────────── */
+
+.title-name {
+  font-size: clamp(2.75rem, 12vw, 4.75rem);
+  line-height: 0.95;
+  font-weight: 900;
+  font-style: italic;
+  text-align: center;
+  overflow-wrap: anywhere;
+  background: linear-gradient(100deg, var(--cyan) 0%, var(--violet) 50%, var(--pink) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 0 22px rgba(76, 224, 255, 0.35));
+}
+.title-line {
+  max-width: 22rem;
+  text-align: center;
+  font-size: 1.0625rem;
+  line-height: 1.45;
+  color: var(--star-soft);
+}
+
+/* A glass panel: the hangar, the best runs, the end of a run. */
+.glass {
+  width: 100%;
+  border-radius: 1.25rem;
+  border: 1px solid var(--glass-line);
+  background: var(--glass);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.04) inset;
+  padding: 1.25rem;
+}
+.glass-title {
+  font-size: 1.25rem;
+  font-weight: 800;
+  line-height: 1.2;
+}
+.glass-note {
+  font-size: 0.9375rem;
+  line-height: 1.4;
+  color: var(--star-soft);
+}
+.glass .skeleton {
+  background: rgba(150, 170, 255, 0.18);
+}
+
+/* The pilots in the hangar. */
+.pilots {
+  display: flex;
+  flex-direction: column;
+}
+.pilot {
+  display: flex;
+  min-height: 3rem;
+  align-items: center;
+  gap: 0.75rem;
+  border-top: 1px solid var(--glass-line);
+}
+.pilot:first-child {
+  border-top: 0;
+}
+.pilot-ship {
+  height: 2rem;
+  width: 2rem;
+  flex-shrink: 0;
+  filter: drop-shadow(0 0 6px rgba(76, 224, 255, 0.35));
+}
+.pilot-name {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 700;
+}
+.pilot-note {
+  font-size: 0.875rem;
+  color: var(--star-soft);
+  font-variant-numeric: tabular-nums;
+}
+.pilot-away {
+  opacity: 0.5;
+}
+
+/* The scene's buttons: a bright one for the thing to do now. 44px or more. */
+.btn-launch,
+.btn-ghost {
+  display: inline-flex;
+  min-height: 3rem;
+  min-width: 2.75rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border-radius: 0.875rem;
+  padding: 0 1.5rem;
+  font-weight: 800;
+  font-size: 1.0625rem;
+}
+.btn-launch {
+  background: linear-gradient(100deg, var(--cyan), var(--violet));
+  color: var(--void);
+  box-shadow: 0 0 24px rgba(76, 224, 255, 0.35);
+}
+.btn-ghost {
+  border: 1px solid var(--glass-line);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--star);
+}
+.btn-launch:disabled,
+.btn-ghost:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+.btn-launch:focus-visible,
+.btn-ghost:focus-visible,
+.hud-btn:focus-visible {
+  outline: 3px solid var(--cyan);
+  outline-offset: 3px;
+}
+
+.ranks {
+  display: flex;
+  flex-direction: column;
+}
+.rank {
+  display: flex;
+  min-height: 2.75rem;
+  align-items: center;
+  gap: 0.75rem;
+  border-top: 1px solid var(--glass-line);
+}
+.rank:first-child {
+  border-top: 0;
+}
+.rank-place {
+  width: 1.5rem;
+  flex-shrink: 0;
+  font-weight: 800;
+  color: var(--cyan);
+  font-variant-numeric: tabular-nums;
+}
+.rank-score {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.controls {
+  max-width: 22rem;
+  text-align: center;
+  font-size: 0.875rem;
+  line-height: 1.45;
+  color: var(--star-soft);
+}
+
+/* ── The run: the field fills the screen, the HUD over it ─────────────── */
+
+.hud-btn {
+  display: flex;
+  height: 2.75rem;
+  width: 2.75rem;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  border: 1px solid var(--glass-line);
+  background: var(--glass);
+  color: var(--star);
+  font-size: 1.25rem;
+  font-weight: 800;
+}
+.hud-score {
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 0 14px rgba(76, 224, 255, 0.6);
+}
+.hud-points {
+  font-size: 2rem;
+  line-height: 1;
+  font-weight: 900;
+  font-style: italic;
+}
+.hud-sector {
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: var(--cyan);
+}
+.hud-shields {
+  display: flex;
+  min-width: 2.75rem;
+  justify-content: flex-end;
+  gap: 0.25rem;
+  padding-top: 0.5rem;
+}
+.shield {
+  height: 1.25rem;
+  width: 1.125rem;
+}
+.hud-pilots {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.125rem;
+  font-size: 0.8125rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--star-soft);
+}
+.hud-hint {
+  border-radius: 9999px;
+  background: var(--glass);
+  padding: 0.5rem 1rem;
+  font-size: 0.875rem;
+  color: var(--star);
+}
+
+.veil {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgba(5, 8, 23, 0.55);
+}
+.big-score {
+  font-size: 3rem;
+  line-height: 1;
+  font-weight: 900;
+  font-style: italic;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  color: var(--gold);
+  text-shadow: 0 0 24px rgba(255, 226, 122, 0.45);
+}
+
+/* A hit: the screen flashes once. */
+.flash {
+  animation: flash 0.35s ease-out;
+}
+@keyframes flash {
+  0% { box-shadow: inset 0 0 0 100vmax rgba(255, 95, 162, 0.35); }
+  100% { box-shadow: inset 0 0 0 100vmax rgba(255, 95, 162, 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .flash {
+    animation: none;
+  }
+}

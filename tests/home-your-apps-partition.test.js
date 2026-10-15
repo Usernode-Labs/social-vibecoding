@@ -21,7 +21,10 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const vm = require('node:vm');
 
-const { HOME_SRC } = require('./helpers/home-modules');
+const { HOME_SRC, LAYOUT_SRC } = require('./helpers/home-modules');
+const { installAppCard } = require('./helpers/app-card');
+const { installGridStore } = require('./helpers/home-grid-store');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 function makeHome(appOver) {
   const sandbox = {
@@ -55,7 +58,9 @@ function makeHome(appOver) {
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
-  vm.runInContext(`${HOME_SRC}\n;globalThis.__Home = Home;`, sandbox);
+  // home-layout.js is a plain script with no import; topRowApps (#4935)
+  // resolves HomeLayout against it, so it loads wherever Home does.
+  vm.runInContext(`${LAYOUT_SRC}\n${HOME_SRC}\n;globalThis.__Home = Home;`, sandbox);
   return sandbox.__Home;
 }
 
@@ -185,6 +190,52 @@ test('filterApps: returns only the matches, in input order', () => {
   assert.deepEqual(Home.filterApps(apps, 'ar').map((a) => a.slug), ['chess', 'word']);
   assert.deepEqual(Home.filterApps(apps, '').map((a) => a.slug), ['chess', 'puzzle', 'word']);
   assert.deepEqual(Home.filterApps(apps, 'nope'), []);
+});
+
+test('filterApps: an exact name or slug match leads; the rest keep input order (#4793)', () => {
+  const Home = makeHome();
+  const apps = [
+    app({ name: 'Chess Arena', slug: 'arena-1' }),
+    app({ name: 'Chess Club', slug: 'club-2' }),
+    app({ name: 'Speed Chess', slug: 'speed-3' }),
+    app({ name: 'Chess', slug: 'chess-4' }),
+    app({ name: 'Board Games', slug: 'chess' }),
+  ];
+  const slugs = (q) => Home.filterApps(apps, q).map((a) => a.slug);
+  assert.deepEqual(slugs('chess'), ['chess-4', 'chess', 'arena-1', 'club-2', 'speed-3'],
+    'name and slug exact matches lead, in input order among themselves');
+  assert.deepEqual(slugs('  CHESS '), ['chess-4', 'chess', 'arena-1', 'club-2', 'speed-3'],
+    'case and surrounding whitespace do not matter');
+  assert.deepEqual(slugs('speed-3'), ['speed-3'], 'an exact slug match');
+  assert.deepEqual(slugs('chess club'), ['club-2'], 'an exact name match');
+  assert.deepEqual(slugs('ches'), ['arena-1', 'club-2', 'speed-3', 'chess-4', 'chess'],
+    'no exact match: input order unchanged');
+  assert.deepEqual(slugs(''), apps.map((a) => a.slug), 'empty query: everything, unchanged');
+  assert.deepEqual(slugs('   '), apps.map((a) => a.slug), 'blank query: everything, unchanged');
+});
+
+test('isExactMatch: whole name or slug, trimmed, any case; never on an empty query', () => {
+  const Home = makeHome();
+  const a = app({ name: 'Chess Arena', slug: 'chess-arena-3f2a' });
+  assert.equal(Home.isExactMatch(a, 'chess arena'), true);
+  assert.equal(Home.isExactMatch(a, ' CHESS-ARENA-3F2A '), true);
+  assert.equal(Home.isExactMatch(a, 'chess'), false, 'a substring is not exact');
+  assert.equal(Home.isExactMatch(a, ''), false);
+  assert.equal(Home.isExactMatch(a, null), false);
+});
+
+test('search: a composed and a decomposed accent are the same letter', () => {
+  const Home = makeHome();
+  const decomposed = 'Café';         // e + combining acute, as stored
+  const composed = 'Café';            // é as one code point, as typed
+  const a = app({ name: decomposed, slug: 'cafe-1' });
+  assert.equal(Home.isExactMatch(a, composed), true, 'exact across forms');
+  assert.equal(Home.isExactMatch(app({ name: composed }), decomposed), true, 'and the other way');
+  assert.equal(Home.matchesQuery(app({ name: `Le ${decomposed} Bar` }), composed.toLowerCase()), true,
+    'substring across forms');
+  const apps = [app({ name: `${composed} Crawl`, slug: 'crawl' }), a];
+  assert.deepEqual(Home.filterApps(apps, composed).map((x) => x.slug), ['cafe-1', 'crawl'],
+    'the decomposed exact match leads');
 });
 
 // ── The home grid is "Your apps" only ─────────────────────────────
@@ -317,4 +368,137 @@ test('partitionApps: a row with no created_at is not a hoist candidate', () => {
   // assertion above is about the missing date and not a dead code path.
   const dated = app({ slug: 'dated', is_collaborator: true, created_by: 1, created_at: '2026-08-25T00:00:00Z' });
   assert.equal(Home.partitionApps([other, dated]).yours[0].slug, 'dated');
+});
+
+// ── The desktop strip's pinned part (#4935) ───────────────────────
+//
+// "Pinned" on the strip is the TOP ROW of My apps, in reading order, as
+// the viewer arranged it on Home. Home names it to the nav bridge on
+// every grid paint (topRowApps → UsernodeReact.nav.setPinnedApps); the
+// strip's store and the drawing live in the nav feature and are pinned
+// by tests/nav-tab-bar.test.js and tests/pinned-apps-store.test.js.
+
+// A layout, as HomeLayout.toWire / a stored _layouts entry writes it.
+const cell = (slug, col, row) => ({ type: 'app', slug, col, row });
+
+test('topRowApps: row 0 only, in reading order, holes skipped', () => {
+  const Home = makeHome();
+  Home._apps = [
+    app({ slug: 'left', name: 'Left', icon_url: 'https://sv.test/l.png', is_favorited: true }),
+    app({ slug: 'right', name: 'Right', icon_emoji: '🎲', is_favorited: true }),
+  ];
+  // A hole at col 1, an app on row 1 (a second-row tile must never lead),
+  // and a widget cell the overhaul no longer places but the model still
+  // tolerates.
+  const layout = [
+    cell('left', 0, 0),
+    { type: 'widget', widget: 'challenges', col: 1, row: 0 },
+    cell('right', 2, 0),
+    cell('left', 0, 1),
+  ];
+  const tops = Home.topRowApps(layout);
+  // Spread before asserting: topRowApps returns a vm-realm array, whose
+  // Array.prototype deepStrictEqual rejects against this file's own.
+  assert.deepEqual([...tops].map((a) => a.slug), ['left', 'right'],
+    'reading order left to right, the widget hole and row 1 dropped');
+  assert.deepEqual(
+    { ...tops[0] },
+    { slug: 'left', name: 'Left', iconUrl: 'https://sv.test/l.png', iconEmoji: null },
+    'display fields only: icon_url maps to iconUrl, a missing emoji is null'
+  );
+  assert.deepEqual(
+    { ...tops[1] },
+    { slug: 'right', name: 'Right', iconUrl: null, iconEmoji: '🎲' }
+  );
+});
+
+test('topRowApps: a slug off My apps is dropped, demos included', () => {
+  const Home = makeHome();
+  // 'stranger' is neither a member nor a favourite; a demo tile is never
+  // either, so the same guard covers it without a demo-specific check.
+  Home._apps = [
+    app({ slug: 'mine', is_favorited: true }),
+    app({ slug: 'stranger' }),
+  ];
+  const tops = Home.topRowApps([cell('stranger', 0, 0), cell('gone', 1, 0), cell('mine', 2, 0)]);
+  assert.deepEqual([...tops].map((a) => a.slug), ['mine'],
+    'unknown and not-yours slugs leave no hole in the strip either');
+});
+
+test('topRowApps: no layout, or nothing of yours on row 0, is an empty list', () => {
+  const Home = makeHome();
+  Home._apps = [app({ slug: 'mine', is_collaborator: true })];
+  assert.equal(Home.topRowApps(null).length, 0, 'null layout');
+  assert.equal(Home.topRowApps([]).length, 0, 'empty layout');
+  assert.equal(Home.topRowApps([cell('mine', 0, 3)]).length, 0, 'yours, but not on row 0');
+});
+
+// The publish side: a render of the GRID branch hands the top row to the
+// nav bridge once; a search render (and, by the same branch, the offline
+// and error states that share its shape) publishes nothing. The sandbox is
+// the render-capable one from home-create-tile.test.js, with a recording
+// bridge where the nav island would be.
+
+function makePublishingHome() {
+  const pins = [];
+  const sandbox = {
+    console,
+    App: { user: { id: 1, canCreateApps: true } },
+    PlatformUI: { toast: () => {} },
+    innerWidth: 1280,
+    document: {
+      createElement: () => ({ style: {}, textContent: '', innerHTML: '' }),
+      getElementById: () => null,
+      querySelector: () => null,
+      querySelectorAll: () => [],
+      addEventListener: () => {},
+      body: { appendChild: () => {} },
+    },
+    fetch: async () => ({ ok: true, json: async () => ({}) }),
+    location: { search: '', origin: 'https://sv.test' },
+    URL,
+    URLSearchParams,
+    setTimeout, clearTimeout, setInterval, clearInterval,
+    localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    UsernodeReact: {
+      nav: {
+        setPinnedApps: (apps) => { pins.push(JSON.parse(JSON.stringify(apps))); },
+      },
+    },
+  };
+  sandbox.window = sandbox;
+  sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = englishPlatformI18n();
+  vm.createContext(sandbox);
+  installAppCard(sandbox);
+  installGridStore(sandbox);
+  sandbox.HomePanels = { render: () => {}, ensureLoaded: () => Promise.resolve() };
+  vm.runInContext(`${LAYOUT_SRC}\n${HOME_SRC}\n;globalThis.__Home = Home;`, sandbox);
+  return { Home: sandbox.__Home, pins };
+}
+
+test('a grid render publishes the top row to the nav bridge once (#4935)', () => {
+  const { Home, pins } = makePublishingHome();
+  Home._apps = [
+    app({ slug: 'first', name: 'First', is_favorited: true }),
+    app({ slug: 'second', name: 'Second', is_collaborator: true }),
+  ];
+  Home._appsLoaded = true;
+  Home._layouts = { 4: [cell('second', 0, 0), cell('first', 1, 0)] };
+  Home.render();
+  assert.equal(pins.length, 1, 'one publish per grid paint');
+  assert.deepEqual(pins[0].map((a) => a.slug), ['second', 'first'],
+    'the arrangement the viewer chose, reading order');
+});
+
+test('a search render publishes nothing (#4935)', () => {
+  const { Home, pins } = makePublishingHome();
+  Home._apps = [app({ slug: 'first', name: 'First', is_favorited: true })];
+  Home._appsLoaded = true;
+  Home._query = 'first';
+  Home.render();
+  assert.equal(pins.length, 0,
+    'the search list is not the shelf: the strip keeps the last published top row');
 });

@@ -14,12 +14,40 @@
 // Every step before the row delete is best-effort, as it always was: a
 // runtime or database that is already gone must not stop the row going, and a
 // failed object-store sweep leaves orphans under app/<id>/ for manual cleanup
-// rather than a half-deleted app. The row delete is the one step that throws.
+// rather than a half-deleted app. Two steps throw: the previews' retirement,
+// first (the preview machine must have applied it before the rows go, or a
+// preview it adopts from its row is never retired), and the row delete.
 
 const log = require('./logger');
 const appAccess = require('./app-access');
 
+// Slugs whose teardown is running in this process. The row goes last, so for
+// the whole teardown the app still reads as a running app whose runtime is
+// missing, which is exactly what the self-heal sweep (services/app-heal.js)
+// rebuilds. It asks here first. On 2026-10-05 it did not: a test account was
+// retired, its app's database drop took 30 seconds, and the sweep rebuilt the
+// production Deployment ten seconds in. The row was then deleted, and the
+// Deployment crash-looped against the dropped database for a week. Each slug
+// is also this process's hold (services/processes.js): a heal sweep on
+// another platform process sees the teardown too.
+const tearingDown = require('./processes').heldSet('teardown');
+
+function isTearingDown(slug) {
+  if (tearingDown.has(slug)) return true;
+  try { return require('./processes').heldElsewhere('teardown', slug); } catch { return false; }
+}
+
 async function teardownApp(pool, config, app) {
+  tearingDown.add(app.slug);
+  try {
+    await removeApp(pool, config, app);
+  } finally {
+    tearingDown.delete(app.slug);
+  }
+}
+
+async function removeApp(pool, config, app) {
+  await retirePreviews(pool, app);
   // Teardown through the backend that owns this app. Historical rows
   // without runtime_kind/runtime_name remain Docker-compatible.
   if (app.runtime_name || app.container_id) {
@@ -34,6 +62,20 @@ async function teardownApp(pool, config, app) {
         runtimeKind: 'docker', runtimeName: `usernode-app-${app.slug}`,
       }).catch(() => {});
     }
+  }
+
+  // The custom domain's edge resources (#4405): its Ingress and the
+  // certificate Secret on Kubernetes; on Docker nothing, as below. The row
+  // itself goes with the app (ON DELETE CASCADE).
+  try {
+    const appDomains = require('./app-domains');
+    const domain = await appDomains.forApp(pool, app.id);
+    if (domain) {
+      await appDomains.teardownEdge(config, domain);
+      appDomains.invalidateHost(domain.hostname);
+    }
+  } catch (err) {
+    log.warn('apps', 'Custom domain teardown failed on app delete', { appId: app.id, err: err.message });
   }
 
   // No Caddy route to remove — the wildcard site maps hostnames to
@@ -68,4 +110,29 @@ async function teardownApp(pool, config, app) {
   appAccess.invalidateVisibility(app.id, app.slug);
 }
 
-module.exports = { teardownApp };
+// The app's previews are retired by the preview machine, by identity: the
+// ones it holds, and any a row still points at, which it adopts from the row
+// when it applies the request. Its work needs only the names it recorded, so
+// the rows can go afterwards, but only once each request has RETIRED it: one
+// the machine has only recorded would find the row gone and never retire what
+// it named, and one it refused or faulted on retires nothing. First, so a
+// refusal leaves the app as it was; a delete asked again finishes it.
+const RETIRE_WAIT_MS = 30_000;
+async function retirePreviews(pool, app) {
+  const previewWorkflow = require('./preview-workflow');
+  const { rows } = await pool.query(
+    `SELECT cs.id FROM chat_sessions cs
+       LEFT JOIN wf_instances w ON w.machine = 'preview' AND w.key = 'session:' || cs.id
+      WHERE cs.app_id = $1
+        AND ((w.key IS NOT NULL AND w.state NOT IN ('retired', 'detached'))
+             OR cs.staging_url IS NOT NULL OR cs.staging_runtime_name IS NOT NULL)`, [app.id]);
+  for (const r of rows) {
+    const out = await previewWorkflow.retire({ session: { id: r.id, app_id: app.id }, reason: 'app_deleted', terminal: true,
+      waitMs: RETIRE_WAIT_MS });
+    if (!out.retired) {
+      throw new Error(`The preview of proposal ${r.id} is not retired yet (${out.reason || out.status}); delete the app again in a minute`);
+    }
+  }
+}
+
+module.exports = { teardownApp, isTearingDown };

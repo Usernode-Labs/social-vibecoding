@@ -150,6 +150,7 @@ async function checkActiveCap(pool, config, user) {
       log.warn('connector-limits', 'Could not free a session slot', { userId: user.id, err: err.message });
     }
     if (!freed) {
+      lifecycle.recordCapacityRefusal(pool, { cap: 'user', path: 'connector', userId: user.id });
       return limitError(
         'at_capacity',
         `${lifecycle.USER_SLOTS_BUSY} Or submit this work for review instead of sharing it as in-progress.`
@@ -185,6 +186,11 @@ async function checkActiveCap(pool, config, user) {
 // which is the real bound on a session with a live preview behind it. This
 // cap is what it says it is — how many work orders are held open and NOT yet
 // handed anywhere.
+//
+// #4266: external-agent-tasks.listHeldWorkOrders selects on this WHERE clause
+// exactly, and the connector's list_my_work_orders reads it, so a caller
+// refused here can see which work orders the count is made of. Change one and
+// change the other.
 async function checkOpenWorkOrders(pool, userId) {
   const open = await countOr(
     pool,
@@ -205,6 +211,16 @@ async function checkOpenWorkOrders(pool, userId) {
   }
   return null;
 }
+
+// What a CONNECTOR caller refused by the cap above can do about it, by tool
+// name (#4266). Not written into that refusal, because the browser
+// walkthrough shows the same sentence (routes/dev-flow.js) and a tool name
+// means nothing on the platform's own screen. services/mcp-tools.js appends
+// it to prepare_work's `at_capacity`. The last sentence is there because a
+// closed work order cannot be submitted: an agent may still be building it.
+const OPEN_WORK_ORDERS_CONNECTOR_HINT = 'To see which ones, call list_my_work_orders. close_work_order '
+  + 'puts one away by its task id, which frees its slot straight away. Check with the user before '
+  + 'closing one, because a coding agent still working on it can no longer submit it.';
 
 // ── 3. The platform-build fallback ─────────────────────────────────────
 //
@@ -242,5 +258,6 @@ module.exports = {
   checkPromotedCap,
   checkActiveCap,
   checkOpenWorkOrders,
+  OPEN_WORK_ORDERS_CONNECTOR_HINT,
   checkFallbackStart,
 };

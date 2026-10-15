@@ -42,6 +42,14 @@ function block(id, nextId) {
 
 // User-facing text only: JSX comments are developer prose and may use
 // whatever punctuation they like.
+const { message } = require('./lib/platform-i18n');
+// The pane's prose lives in the catalog (frontend/locales/en/settings.json).
+// This is the English of every message a stretch of source wires, in order:
+// what a reader of that stretch sees, less the markup. Inline code and
+// emphasis appear as the catalog's numbered tags (<1>homeroom</1>).
+const wiredEnglish = (source) => [...source.matchAll(/['"]((?:settings|core):[\w.]+)['"]/g)]
+  .map((match) => message(match[1])).join('\n');
+
 const stripComments = (src) => src.replace(/\{\/\*[\s\S]*?\*\/\}/g, '');
 
 const CODEX = block('connector-setup-codex', 'connector-setup-generic');
@@ -55,12 +63,15 @@ const GENERIC = (() => {
   assert.ok(end > start, 'the generic row closes');
   return TSX.slice(start, end);
 })();
+const CODEX_COPY = wiredEnglish(CODEX);
+const GENERIC_COPY = wiredEnglish(GENERIC);
 
 // ── The Codex CLI block ────────────────────────────────────────────────
 
 test('#1892: the Codex block carries both forms the CLI takes, under the canonical name', () => {
   // #2370: the route is a <details>; its summary names it and its step count.
-  assert.match(CODEX, /3 steps &middot; in the terminal/);
+  assert.match(CODEX, /hint=\{t\('settings:connectors\.codex\.hint'\)\}/);
+  assert.equal(message('settings:connectors.codex.hint'), '3 steps · in the terminal');
   // Verified against codex-rs/cli/src/mcp_cmd.rs on main (2026-09-14):
   // `codex mcp add [OPTIONS] <NAME> (--url <URL> | -- <COMMAND>...)`.
   const add = TSX.match(/const CODEX_ADD_COMMAND = `([^`]*)`/);
@@ -78,8 +89,8 @@ test('#1892: the Codex block carries both forms the CLI takes, under the canonic
   assert.match(CODEX, /\{CODEX_ADD_COMMAND\}<\/pre>/);
   assert.match(CODEX, /\{CODEX_CONFIG_TOML\}<\/pre>/);
   // And the sign-in and listing commands, by name.
-  assert.match(CODEX, new RegExp(`codex mcp login ${constants.SERVER_NAME}`));
-  assert.match(CODEX, /codex mcp list/);
+  assert.match(CODEX_COPY, new RegExp(`codex mcp login ${constants.SERVER_NAME}`));
+  assert.match(CODEX_COPY, /codex mcp list/);
 });
 
 test('#1892: the placeholder is one string in both files, and settings.js swaps it for the live URL', () => {
@@ -122,55 +133,59 @@ test('#1892: the Codex block says what the hosted platform refuses, and why, ins
   // mcp-oauth.js accepts a loopback redirect only in local-development mode,
   // so on the hosted platform dynamic client registration refuses it. The
   // copy names the host, the mode and the error, each pinned to the code.
-  assert.match(CODEX, /127\.0\.0\.1/);
+  assert.match(CODEX_COPY, /127\.0\.0\.1/);
   assert.match(OAUTH, /host === '127\.0\.0\.1'/);
   assert.match(OAUTH, /config\.cliAuthLocalMode && loopback/);
-  assert.match(CODEX, /local-development mode/);
-  assert.match(CODEX, /invalid_redirect_uri/);
+  assert.match(CODEX_COPY, /local-development mode/);
+  assert.match(CODEX_COPY, /invalid_redirect_uri/);
   assert.match(REMOTE, /error: 'invalid_redirect_uri'/);
   // And it says what a connector-less Codex session can still do, which is
   // the hand-off the platform already runs: push, and the chat submits.
-  assert.match(CODEX, /pushes the branch/);
+  assert.match(CODEX_COPY, /pushes the branch/);
 });
 
 // ── The generic block ──────────────────────────────────────────────────
 
 test('#1892: the generic block names the transport and the auth-discovery path the route serves', () => {
-  assert.match(GENERIC, /4 steps &middot; any MCP client/);
-  assert.match(GENERIC, /Streamable HTTP/);
-  assert.match(GENERIC, /JSON-RPC over POST/);
+  assert.match(GENERIC, /hint=\{t\('settings:connectors\.generic\.hint'\)\}/);
+  assert.equal(message('settings:connectors.generic.hint'), '4 steps · any MCP client');
+  assert.match(GENERIC_COPY, /Streamable HTTP/);
+  assert.match(GENERIC_COPY, /JSON-RPC over POST/);
   // /mcp is POST-only; there is no GET/SSE handler to promise.
   assert.match(REMOTE, /router\.post\(MCP_PATH,/);
   assert.doesNotMatch(REMOTE, /router\.get\(MCP_PATH/);
   // The protected-resource metadata path is `/.well-known/oauth-protected-resource${MCP_PATH}`.
-  assert.match(GENERIC, new RegExp(`/\\.well-known/oauth-protected-resource${constants.MCP_PATH}`));
+  assert.match(GENERIC_COPY, new RegExp(`/\\.well-known/oauth-protected-resource${constants.MCP_PATH}`));
   assert.match(REMOTE, /router\.get\(`\/\.well-known\/oauth-protected-resource\$\{MCP_PATH\}`/);
-  assert.match(GENERIC, /dynamic client registration/);
-  assert.match(GENERIC, /no client ID or secret/);
+  assert.match(GENERIC_COPY, /dynamic client registration/);
+  assert.match(GENERIC_COPY, /no client ID or secret/);
 });
 
 test('#1892: the scopes and redirect hosts in the copy are the server constants', () => {
   for (const scope of [constants.READ_SCOPE, constants.WRITE_SCOPE]) {
-    assert.match(GENERIC, new RegExp(`<code[^>]*>${scope.replace(/[.:]/g, '\\$&')}</code>`), `${scope} is named`);
+    assert.match(GENERIC_COPY, new RegExp(`<\\d>${scope.replace(/[.:]/g, '\\$&')}</\\d>`), `${scope} is named`);
   }
   for (const host of constants.DEFAULT_REDIRECT_HOSTS) {
-    assert.match(GENERIC, new RegExp(`<code[^>]*>${host.replace(/\./g, '\\.')}</code>`), `${host} is named`);
+    assert.match(GENERIC_COPY, new RegExp(`<\\d>${host.replace(/\./g, '\\.')}</\\d>`), `${host} is named`);
   }
   // No host beyond the default list is named as accepted: an operator's
   // additions are described, not enumerated.
-  const named = [...GENERIC.matchAll(/<code[^>]*>([a-z]+\.(?:ai|com))<\/code>/g)].map((m) => m[1]);
+  const named = [...GENERIC_COPY.matchAll(/<\d>([a-z]+\.(?:ai|com))<\/\d>/g)].map((m) => m[1]);
+  // Every numbered tag in these two blocks is a <code>.
+  assert.doesNotMatch(GENERIC, /components=\{\[(?!CODE(?:, CODE)*\]\})/);
+  assert.match(TSX, /const CODE = <code /);
   assert.deepEqual([...new Set(named)].sort(), [...constants.DEFAULT_REDIRECT_HOSTS].sort());
-  assert.match(GENERIC, /operator has added/);
-  assert.match(GENERIC, /invalid_redirect_uri/);
+  assert.match(GENERIC_COPY, /operator has added/);
+  assert.match(GENERIC_COPY, /invalid_redirect_uri/);
 });
 
 test('#1892: the generic block teaches the tool-name prefix the permission rules depend on', () => {
   // Both spellings MCP-CONNECTOR.md documents, and the same "read it off
   // your own tool list" rule.
-  assert.match(GENERIC, new RegExp(`mcp__${constants.SERVER_NAME}__whoami`));
-  assert.match(GENERIC, new RegExp(`mcp__claude_ai_${constants.SERVER_NAME}__whoami`));
-  assert.match(GENERIC, /between the first and last/);
-  assert.match(GENERIC, /get_connector_guidance/);
+  assert.match(GENERIC_COPY, new RegExp(`mcp__${constants.SERVER_NAME}__whoami`));
+  assert.match(GENERIC_COPY, new RegExp(`mcp__claude_ai_${constants.SERVER_NAME}__whoami`));
+  assert.match(GENERIC_COPY, /between the first and last/);
+  assert.match(GENERIC_COPY, /get_connector_guidance/);
 });
 
 // ── Shape and conventions ──────────────────────────────────────────────
@@ -180,7 +195,9 @@ test('#1892: both blocks are numbered walkthroughs in the same idiom as the Clau
     const count = (src.match(/<SetupStep n=\{\d+\}/g) || []).length;
     assert.equal(count, steps, `the ${name} block has ${steps} steps`);
     for (let n = 1; n <= steps; n += 1) {
-      assert.match(src, new RegExp(`<SetupStep n=\\{${n}\\} title="[^"]+\\."`), `${name} step ${n} is titled`);
+      const titled = src.match(new RegExp(`<SetupStep n=\\{${n}\\} title=\\{t\\('(settings:[\\w.]+\\.title)'\\)\\}`));
+      assert.ok(titled, `${name} step ${n} is titled`);
+      assert.match(message(titled[1]), /\.$/, `${name} step ${n}'s title is a sentence`);
     }
     assert.match(src, /<ol className="space-y-2">/);
   }
@@ -199,13 +216,14 @@ test('#1892: both blocks are numbered walkthroughs in the same idiom as the Clau
   // sits INSIDE that row, where a ChatGPT reader never meets it.
   const claude = TSX.slice(order[0], order[1]);
   assert.match(claude, /id="connector-prompt-help"/, 'the permission panel is inside the Claude.ai route');
-  assert.match(claude, /title="Name it homeroom"/, 'and so is the naming note step 2 points at');
-  assert.match(claude, /also sets up Claude Code/,
+  assert.match(claude, /title=\{t\('settings:connectors\.naming\.title'\)\}/, 'and so is the naming note step 2 points at');
+  assert.equal(message('settings:connectors.naming.title'), 'Name it homeroom');
+  assert.match(wiredEnglish(claude), /also sets up Claude Code/,
     'the row says so, because the in-chat tip sends already-connected people here for those rules');
 });
 
 test('#1892: user-facing copy in the new blocks carries no em dash', () => {
-  for (const src of [stripComments(CODEX), stripComments(GENERIC)]) {
+  for (const src of [stripComments(CODEX), stripComments(GENERIC), CODEX_COPY, GENERIC_COPY]) {
     assert.doesNotMatch(src, /—|&mdash;|&#8212;/);
   }
 });
@@ -219,17 +237,20 @@ test('#1893: the Claude walkthrough names the connector at the step where the Na
   // so both Settings and the dev session page's launchpad render one copy.
   // The step itself is unchanged; only where it is written moved.
   const step2 = STEPS_TSX.slice(
-    STEPS_TSX.indexOf('<SetupStep n={2} title="Start a custom connector."'),
-    STEPS_TSX.indexOf('<SetupStep n={3} title="Paste your MCP server URL."')
+    STEPS_TSX.indexOf("<SetupStep n={2} title={t('settings:connectors.claudeSteps.start.title')}"),
+    STEPS_TSX.indexOf("<SetupStep n={3} title={t('settings:connectors.claudeSteps.paste.title')}")
   );
   assert.ok(step2.length > 0, 'the Claude steps are in order');
-  assert.match(step2, new RegExp(`<code[^>]*>${constants.SERVER_NAME}</code>`));
-  assert.match(step2, /Name field/);
+  assert.equal(message('settings:connectors.claudeSteps.start.title'), 'Start a custom connector.');
+  assert.equal(message('settings:connectors.claudeSteps.paste.title'), 'Paste your MCP server URL.');
+  assert.match(step2, /<RichMessage id="settings:connectors\.claudeSteps\.start\.body" components=\{\[CODE, CODE\]\} \/>/);
+  assert.match(wiredEnglish(step2), new RegExp(`<1>${constants.SERVER_NAME}</1>`));
+  assert.match(wiredEnglish(step2), /Name field/);
 });
 
 test('#1892: the no-prompts case covers Codex, which settings.js already files with ChatGPT', () => {
   const chat = TSX.slice(TSX.indexOf('id="connector-case-chat"'));
-  assert.match(chat, /Claude\.ai chat, ChatGPT and Codex/);
-  assert.match(chat, /Nothing to do/);
+  assert.match(wiredEnglish(chat), /Claude\.ai chat, ChatGPT and Codex/);
+  assert.match(wiredEnglish(chat), /Nothing to do/);
   assert.match(SETTINGS, /\/chatgpt\|openai\|codex\/\.test\(name\)/);
 });

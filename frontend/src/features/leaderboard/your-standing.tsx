@@ -16,6 +16,7 @@
 import { useEffect, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { MyStanding, myStandingStore, standingView } from './my-standing.js';
 
@@ -36,15 +37,16 @@ type StandingView = {
 
 /** The allocation, when it concerns the viewer — the Me card's rules, moved. */
 function Token({ token }: { token: TokenView }): ReactNode {
+  const t = useMessages('leaderboard');
   if (token.gated) {
     return (
       <div className="mt-3 border-t border-zinc-100 pt-3 dark:border-zinc-800">
-        <div className="text-sm font-semibold">Token allocation withheld</div>
+        <div className="text-sm font-semibold">{t('leaderboard:standing.token.withheld')}</div>
         <p className="mt-0.5 text-sm text-zinc-500 dark:text-zinc-400">
-          Review and accept the terms to see your token allocation.
+          {t('leaderboard:standing.token.review')}
         </p>
         <Button variant="neutral" size="sm" ink="neutral" className="mt-2" onClick={() => MyStanding.reviewTerms()}>
-          Review terms
+          {t('leaderboard:standing.token.reviewTerms')}
         </Button>
       </div>
     );
@@ -53,7 +55,7 @@ function Token({ token }: { token: TokenView }): ReactNode {
   return (
     <div className="mt-3 border-t border-zinc-100 pt-3 dark:border-zinc-800">
       <div className="flex items-baseline justify-between gap-3">
-        <span className="text-sm text-zinc-500 dark:text-zinc-400">Token allocation</span>
+        <span className="text-sm text-zinc-500 dark:text-zinc-400">{t('leaderboard:standing.token.label')}</span>
         <span
           className={token.revealed ? 'text-lg font-bold tabular-nums' : 'text-lg font-bold tabular-nums blur-md select-none'}
           aria-hidden={token.revealed ? 'false' : 'true'}
@@ -62,12 +64,11 @@ function Token({ token }: { token: TokenView }): ReactNode {
         </span>
       </div>
       <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-        Your share of the season&rsquo;s token pool. Allocations are provisional and
-        subject to the program terms.
+        {t('leaderboard:standing.token.note')}
       </p>
       {token.revealed ? null : (
         <Button variant="neutral" size="sm" ink="neutral" className="mt-2" onClick={() => MyStanding.revealTokens()}>
-          Reveal
+          {t('leaderboard:standing.token.reveal')}
         </Button>
       )}
     </div>
@@ -76,13 +77,15 @@ function Token({ token }: { token: TokenView }): ReactNode {
 
 export function YourStanding(): ReactNode {
   const state = useStoreState(myStandingStore);
+  // Subscribed before the view is built: its lines are read as it is.
+  const t = useMessages('leaderboard');
   // Every open of the tab re-reads: two small me-scoped reads, and a figure
   // that moves with every snapshot.
   useEffect(() => { void MyStanding.load(); }, []);
   const view = standingView(state) as StandingView | null;
   if (!view) return null;
   return (
-    <section id="lb-your-standing" aria-label="Your standing" className="mb-4 rounded-2xl bg-white p-4 dark:bg-zinc-900">
+    <section id="lb-your-standing" aria-label={t('leaderboard:standing.label')} className="mb-4 rounded-2xl bg-white p-4 dark:bg-zinc-900">
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
           <div className="truncate text-[1.0625rem] font-bold text-zinc-900 dark:text-zinc-100">{view.season}</div>
@@ -100,7 +103,7 @@ export function YourStanding(): ReactNode {
       {view.breakdown.length ? (
         <details className="mt-3 border-t border-zinc-100 pt-3 dark:border-zinc-800">
           <summary className="cursor-pointer text-sm font-medium text-violet-700 dark:text-violet-400">
-            Points by event
+            {t('leaderboard:standing.byEvent')}
           </summary>
           <ul className="mt-2 space-y-1.5">
             {view.breakdown.map((row) => (

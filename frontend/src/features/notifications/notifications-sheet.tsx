@@ -11,8 +11,9 @@
  * is opening it on the answer to a question nobody asked: you tapped the bell
  * BECAUSE it had a count, and the count is the unread. So Unread is first in
  * the strip and is the initial tab, and All is the archive you step sideways
- * into — which is what the footer link at the bottom of a filtered tab now
- * does, rather than paging more rows into a filter you are trying to empty.
+ * into — which is what the Messages footer link still does, rather than paging
+ * more rows into a filter you are trying to empty. Unread shows its older rows
+ * in place instead (#4700).
  *
  * All is LAST for the same reason it is not first. The strip reads as a
  * narrowing: the count you came for, then the one conversation kind you answer
@@ -105,10 +106,14 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 
 import { Button } from '@/components/ui/button';
 import { IconTile } from '@/components/ui/icon-tile';
-import { ChatBubbleTailIcon, ChevronRightIcon, XIcon } from '@/components/ui/icons';
+import {
+  BookmarkIcon, BookmarkSolidIcon, ChatBubbleTailIcon, ChevronRightIcon, XIcon,
+} from '@/components/ui/icons';
 
-import { swatchFor } from '../messages/format';
+import { UserAvatar, swatchFor } from '../messages/format';
+import type { ConversationUser } from '../messages/types';
 
+import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
 import { notificationsStore } from './notifications-store.js';
@@ -135,9 +140,16 @@ type ScreenRowView = NotificationRowView & {
   by?: string | null;
   /** Set on a conversation row — what the Messages tab filters on. */
   conversation?: boolean;
+  /** Set on a row from the Homeroom bot: it wears the bot's own face. */
+  bot?: boolean;
   /** Set on an agent-status row (#2815) — the Messages tab lists these too. */
   agent?: boolean;
   conversationId?: number | null;
+  /**
+   * #4769: the user has bookmarked this row for later. Independent of the
+   * read state — saving never reads, reading never saves.
+   */
+  saved?: boolean;
   /**
    * How many notifications this row stands for. Present only on a genuine
    * collapse (a run of consecutive same-conversation rows, see
@@ -156,6 +168,9 @@ type Tab = 'all' | 'unread' | 'messages';
 type MessagesEntry =
   | { type: 'notif'; key: string; at: number; view: ScreenRowView }
   | { type: 'session'; key: string; at: number; session: SessionRowView & { sortAt?: number } };
+
+/** The bot as the avatar reads it: a platform account, drawn as its mark. */
+const BOT_SENDER: ConversationUser = { id: 0, username: 'homeroom_bot', avatarUrl: null, bot: true };
 
 function controller(): any {
   return (typeof window !== 'undefined' ? (window as any).Notifications : null) || null;
@@ -177,10 +192,18 @@ function startOfToday(): number {
  * a PERSON speaking, so it gets the square swatch avatar Messages uses
  * (the same colour for the same handle); everything else is an EVENT, so
  * it gets the neutral glyph tile with the kind's icon.
+ *
+ * Run six (14 Oct 2026): the Homeroom bot is drawn as Messages draws it,
+ * the Homeroom mark (../messages/format.tsx UserAvatar), not an orange
+ * tile of the "H" of its handle.
  */
-function AvatarChip({ view }: { view: ScreenRowView }): ReactNode {
+export function AvatarChip({ view }: { view: ScreenRowView }): ReactNode {
   const who = (view.who || '?').replace(/^@/, '');
   const initial = who.charAt(0).toUpperCase() || '?';
+  if (view.conversation && view.bot) {
+    // Its image has no text (alt=""): the row's words say who it is from.
+    return <UserAvatar user={BOT_SENDER} size="lg" shape="square" />;
+  }
   if (view.conversation) {
     return (
       <span
@@ -219,6 +242,12 @@ function RowActions({ view, actions }: {
   view: { id: number };
   actions: { key: string; label: string; primary?: boolean }[];
 }): ReactNode {
+  // #3984: "Still yes" on its way. It is a vote, and on a slow network
+  // nothing showed until the server answered, so a second press looked like
+  // the thing to do. It reads "Sending…" and takes no press until then; the
+  // other row actions are not votes and keep their own behaviour.
+  const [busy, setBusy] = useState(false);
+  const t = useMessages('notifications');
   const buttons = actions.map((a) => (
     // The widget language's filled pill, through the shell's <Button>:
     // the accent one for the row's primary act, the neutral one beside it.
@@ -230,12 +259,19 @@ function RowActions({ view, actions }: {
       size="default"
       ink={a.primary ? 'solid' : 'neutral'}
       className="shrink-0"
+      disabled={a.key === 'still_yes' && busy}
+      aria-busy={a.key === 'still_yes' && busy ? 'true' : undefined}
       onClick={(event) => {
         event.stopPropagation();
-        controller()?._onRowAction(view.id, a.key);
+        if (a.key !== 'still_yes') { controller()?._onRowAction(view.id, a.key); return; }
+        if (busy) return;
+        setBusy(true);
+        Promise.resolve(controller()?._onRowAction(view.id, a.key))
+          .catch(() => false)
+          .then(() => setBusy(false));
       }}
     >
-      {a.label}
+      {a.key === 'still_yes' && busy ? t('notifications:row.sending') : a.label}
     </Button>
   ));
   if (actions.length > 1) return <div className="flex items-center gap-2 pl-[3.75rem]">{buttons}</div>;
@@ -333,6 +369,7 @@ type ScreenRowProps = {
  * slot's place in the list rather than the row's (app.css).
  */
 function ScreenRow({ view, touch, removes }: ScreenRowProps): ReactNode {
+  const t = useMessages('notifications');
   const clearable = view.unread;
   const shape = view.actions && view.actions.length ? 'actions' : 'plain';
   const rowRef = useRef<HTMLElement | null>(null);
@@ -343,7 +380,7 @@ function ScreenRow({ view, touch, removes }: ScreenRowProps): ReactNode {
     if (!clearable || !touch || !el || !ui?.swipeActions) return undefined;
     const swipe = ui.swipeActions(el, {
       actions: [{
-        label: 'Clear',
+        label: t('notifications:row.clear'),
         // The kit's full swipe belongs to its destructive action, and it
         // takes the row out of the document; only Unread wants that.
         destructive: removes,
@@ -352,7 +389,7 @@ function ScreenRow({ view, touch, removes }: ScreenRowProps): ReactNode {
       }],
     });
     return () => swipe.detach();
-  }, [clearable, touch, removes, shape, view.id]);
+  }, [clearable, touch, removes, shape, view.id, t]);
 
   // Everything between the row's left edge and its chevron: the tile, the
   // three lines, the count, the dot.
@@ -410,13 +447,31 @@ function ScreenRow({ view, touch, removes }: ScreenRowProps): ReactNode {
               in `title` (#1808) — the rest of the line is plain text, and the
               separator rides inside it rather than as a whitespace-only
               child, same rule as everywhere else on this row. */}
-          {[view.appLine, view.by ? `by @${view.by}` : null].filter(Boolean)
-            .map((part, index) => (index ? ` · ${part}` : part)).join('')}
           {view.time ? (
-            <time title={view.timeTitle}>
-              {[view.appLine, view.by].some(Boolean) ? ` · ${view.time}` : view.time}
-            </time>
-          ) : null}
+            /* One message per shape of the line: where from, who, when. The
+               time keeps its own element, separator included, as a tag. */
+            view.appLine && view.by ? (
+              <RichMessage
+                id="notifications:row.meta.sourceByWhen"
+                values={{ source: view.appLine, username: view.by, when: view.time }}
+                components={[<time title={view.timeTitle} />]}
+              />
+            ) : view.appLine ? (
+              <RichMessage
+                id="notifications:row.meta.sourceWhen"
+                values={{ source: view.appLine, when: view.time }}
+                components={[<time title={view.timeTitle} />]}
+              />
+            ) : view.by ? (
+              <RichMessage
+                id="notifications:row.meta.byWhen"
+                values={{ username: view.by, when: view.time }}
+                components={[<time title={view.timeTitle} />]}
+              />
+            ) : <time title={view.timeTitle}>{view.time}</time>
+          ) : view.appLine && view.by
+            ? t('notifications:row.meta.sourceBy', { source: view.appLine, username: view.by })
+            : view.by ? t('notifications:row.meta.by', { username: view.by }) : view.appLine}
         </span>
       </span>
       {/*
@@ -432,13 +487,13 @@ function ScreenRow({ view, touch, removes }: ScreenRowProps): ReactNode {
             + (view.unread
               ? 'bg-violet-600 text-white'
               : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400')}
-          aria-label={`${view.count} notifications`}
+          aria-label={t('notifications:row.runCount', { count: view.count })}
         >
           {view.count > 99 ? '99+' : view.count}
         </span>
       ) : null}
       {view.unread ? (
-        <span className="w-2 h-2 shrink-0 rounded-full bg-zinc-900 dark:bg-zinc-100" aria-label="Unread">
+        <span className="w-2 h-2 shrink-0 rounded-full bg-zinc-900 dark:bg-zinc-100" aria-label={t('notifications:row.unreadDot')}>
         </span>
       ) : null}
       <ChevronRightIcon className="w-5 h-5 shrink-0 text-zinc-300 dark:text-zinc-600" />
@@ -450,13 +505,16 @@ function ScreenRow({ view, touch, removes }: ScreenRowProps): ReactNode {
   const actions = view.actions || [];
   const row = actions.length ? (
     <div
-      ref={setRow}
+      ref={touch ? undefined : setRow}
       data-notif-id={view.id}
       // #2386: two actions (a friend request's Accept and Decline) stack
       // under the text; see RowActions.
+      // #4769: the row's right padding is pr-12, not the px-4 it was, so the
+      // bookmark button at the slot's right edge never sits under the
+      // chevron or the text.
       className={actions.length > 1
-        ? 'notifications-row w-full px-4 py-3.5 flex flex-col gap-2'
-        : 'notifications-row w-full px-4 py-3.5 flex items-center gap-3'}
+        ? 'notifications-row w-full pl-4 pr-12 py-3.5 flex flex-col gap-2'
+        : 'notifications-row w-full pl-4 pr-12 py-3.5 flex items-center gap-3'}
     >
       <button
         className="min-w-0 flex-1 text-left flex items-center gap-4"
@@ -471,9 +529,9 @@ function ScreenRow({ view, touch, removes }: ScreenRowProps): ReactNode {
     </div>
   ) : (
     <button
-      ref={setRow}
+      ref={touch ? undefined : setRow}
       data-notif-id={view.id}
-      className={'notifications-row w-full text-left px-4 py-3.5 '
+      className={'notifications-row w-full text-left pl-4 pr-12 py-3.5 '
         + 'hover:bg-black/[.03] dark:hover:bg-white/[.04] transition-colors flex items-center gap-4'}
       onClick={(event) => {
         event.stopPropagation();
@@ -483,14 +541,50 @@ function ScreenRow({ view, touch, removes }: ScreenRowProps): ReactNode {
       {body}
     </button>
   );
+  // #4769: the row's own save. Outline until saved, filled violet (the
+  // accent) once it is. Absolutely placed at the slot's right edge,
+  // vertically centred, with a 36px target — a second action on a
+  // phone-width row needs a real one. `stopPropagation` first, for the
+  // reason every handler in this sheet stops its click: this is not a tap
+  // that opens the row.
+  const bookmark = (
+    <button
+      type="button"
+      data-notification-save={view.id}
+      aria-pressed={view.saved ? 'true' : 'false'}
+      aria-label={t(view.saved ? 'notifications:row.unsave' : 'notifications:row.save')}
+      className={'absolute right-0.5 top-1/2 -translate-y-1/2 flex h-9 w-9 items-center justify-center '
+        + 'rounded-full transition-colors hover:bg-black/[.04] dark:hover:bg-white/[.06] '
+        + 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500'}
+      onClick={(event) => {
+        event.stopPropagation();
+        controller()?.toggleSave(view.id);
+      }}
+    >
+      {view.saved
+        ? <BookmarkSolidIcon aria-hidden="true" className="h-5 w-5 text-violet-700 dark:text-violet-400" />
+        : <BookmarkIcon aria-hidden="true" className="h-5 w-5 text-zinc-500 dark:text-zinc-400" />}
+    </button>
+  );
+  // On touch the bookmark is INSIDE the swipe host, so a swipe translates
+  // row and bookmark together; on desktop the slot keeps its flat structure,
+  // which is what dapp.json's selectors read. The row hands `setRow` to the
+  // wrapper on touch and keeps it itself on desktop, because swipeActions
+  // must hold whichever node translates.
+  const swipeHost = touch ? (
+    <div ref={setRow} data-notif-swipe className="relative">
+      {row}
+      {bookmark}
+    </div>
+  ) : row;
   return (
     <div key={`${clearable ? 'unread' : 'read'}:${shape}`} className="notifications-row-slot group/notif relative">
-      {row}
+      {swipeHost}
       {clearable && !touch ? (
         <button
           type="button"
           data-notification-clear={view.id}
-          aria-label="Clear notification"
+          aria-label={t('notifications:row.clearLabel')}
           // Hidden until the pointer is over the slot or something in it has
           // keyboard focus, and untouchable while hidden, so a click on the
           // tile's corner opens the row as it always did.
@@ -521,6 +615,11 @@ function ScreenRow({ view, touch, removes }: ScreenRowProps): ReactNode {
           <XIcon aria-hidden="true" className="h-3 w-3" strokeWidth="2.5" />
         </button>
       ) : null}
+      {/* #4769: AFTER the clear button in DOM order — the declared checks
+          read the slot's direct children as row + clear pair, and the
+          bookmark joins at the end. Touch renders it inside the swipe host
+          instead, so it is not here at all. */}
+      {!touch ? bookmark : null}
     </div>
   );
 }
@@ -544,6 +643,14 @@ export function NotificationsSheetView() {
   };
   // Unread, not All: the bell is tapped because it has a count.
   const [tab, setTab] = useState<Tab>('unread');
+  // The Unread tab's own reveal (#4700): "See older notifications" shows the
+  // older, mostly read rows IN PLACE instead of jumping to All, and turns
+  // into "Hide older notifications" while they are showing. It is a per-visit
+  // state, not a preference — an effect below collapses it when the sheet
+  // closes or the tab changes, so coming back to Unread starts collapsed
+  // again. It starts false, so the prerendered markup is unchanged.
+  const [olderShown, setOlderShown] = useState(false);
+  const t = useMessages('notifications');
 
   // `?shot=notifications-messages` lands on the Messages tab, so the capture
   // pipeline and the declared checks can reach a view that is otherwise only
@@ -563,6 +670,14 @@ export function NotificationsSheetView() {
     if (shot === 'notifications-messages') setTab('messages');
   }, []);
 
+  // The expanded Unread view is forgotten when the sheet closes or you leave
+  // the tab, so each visit to Unread starts collapsed again (see the state
+  // above). An effect, not the initial state, for the hydration reason the
+  // deep link above spells out.
+  useEffect(() => {
+    if (!open || tab !== 'unread') setOlderShown(false);
+  }, [open, tab]);
+
   const all = snap.screenList || [];
   const unread = all.filter((view) => view.unread);
   const messages = all.filter((view) => view.conversation || view.agent);
@@ -580,6 +695,11 @@ export function NotificationsSheetView() {
   const agentRows = [...(improve.sessions || []), ...(improve.otherSessions || [])];
   const rows = tab === 'unread' ? unread
     : tab === 'messages' ? messages : all;
+  // What the tab DRAWS. On Unread expanded (#4700) the older rows — the read
+  // ones already in hand, plus any further page the server still has — show
+  // UNDER the unread ones, on the same tab. `rows` stays the tab's own filter:
+  // the footer's conditions and counts read it, and the list is `shown`.
+  const shown = tab === 'unread' && olderShown ? all : rows;
   // #2815: the Messages tab interleaves the sessions with its notification
   // rows by time, one list, newest first — the order the Messages screen's
   // chats section keeps. Stable sort, so a tie keeps notifications first.
@@ -598,7 +718,7 @@ export function NotificationsSheetView() {
   const unreadCount = unread.reduce((sum, view) => sum + (view.count || 1), 0);
   const boundary = startOfToday();
   const entries: MessagesEntry[] = tab === 'messages' ? messageEntries
-    : rows.map((view) => ({ type: 'notif', key: `n:${view.id}`, at: view.createdAtMs || 0, view }));
+    : shown.map((view) => ({ type: 'notif', key: `n:${view.id}`, at: view.createdAtMs || 0, view }));
   const today = entries.filter((entry) => entry.at >= boundary);
   const earlier = entries.filter((entry) => entry.at < boundary);
   const renderEntry = (entry: MessagesEntry): ReactNode => (entry.type === 'session' ? (
@@ -648,7 +768,7 @@ export function NotificationsSheetView() {
       <div
         id="notifications-sheet"
         role="dialog"
-        aria-label="Notifications"
+        aria-label={t('notifications:sheet.title')}
         aria-hidden={open ? undefined : 'true'}
         {...(open ? { 'data-open': '' } : {})}
         className={'fixed z-50 flex flex-col dc-lift dc-lift-panel nav-sheet-transition'}
@@ -675,7 +795,7 @@ export function NotificationsSheetView() {
       */}
       <div className="flex items-center gap-2 px-4 pt-4 pb-1 shrink-0">
         <h2 className="flex-1 min-w-0 truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-          Notifications
+          {t('notifications:sheet.title')}
         </h2>
         {tab === 'unread' ? (
           <button
@@ -687,7 +807,7 @@ export function NotificationsSheetView() {
             disabled={!unread.length}
             onClick={() => controller()?.markAllRead()}
           >
-            Mark all read
+            {t('notifications:sheet.markAllRead')}
           </button>
         ) : null}
         <button
@@ -695,7 +815,7 @@ export function NotificationsSheetView() {
           type="button"
           className={'flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white text-zinc-900 shadow-sm '
             + 'hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800 un-touch-target'}
-          aria-label="Close"
+          aria-label={t('core:common.close')}
           onClick={() => NotificationsSheet.close()}
         >
           <XIcon className="w-5 h-5" />
@@ -706,7 +826,7 @@ export function NotificationsSheetView() {
         className={'flex gap-2 px-4 pt-1 pb-2 shrink-0 overflow-x-auto '
           + '[-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden'}
         role="tablist"
-        aria-label="Notification filters"
+        aria-label={t('notifications:sheet.filters')}
       >
         <button
           id="notifications-tab-unread"
@@ -715,7 +835,7 @@ export function NotificationsSheetView() {
           className={tabCls(tab === 'unread')}
           onClick={() => setTab('unread')}
         >
-          {unreadCount ? `Unread (${unreadCount})` : 'Unread'}
+          {unreadCount ? t('notifications:sheet.tab.unreadCount', { count: unreadCount }) : t('notifications:sheet.tab.unread')}
         </button>
         {/*
             Messages, SECOND. One place to catch up on conversations regardless
@@ -734,7 +854,7 @@ export function NotificationsSheetView() {
           className={tabCls(tab === 'messages')}
           onClick={() => setTab('messages')}
         >
-          Messages
+          {t('notifications:sheet.tab.messages')}
         </button>
         <button
           id="notifications-tab-all"
@@ -743,7 +863,7 @@ export function NotificationsSheetView() {
           className={tabCls(tab === 'all')}
           onClick={() => setTab('all')}
         >
-          All
+          {t('notifications:sheet.tab.all')}
         </button>
       </div>
       {/* The sheet's own scroller. The screen root used to be the scroller;
@@ -803,7 +923,7 @@ export function NotificationsSheetView() {
         >
           <ChatBubbleTailIcon className="w-5 h-5 shrink-0" />
           <span className="flex-1 min-w-0">
-            All messages
+            {t('notifications:sheet.allMessages')}
           </span>
           <ChevronRightIcon className="w-4 h-4 shrink-0 text-zinc-400 dark:text-zinc-500" />
         </button>
@@ -813,7 +933,7 @@ export function NotificationsSheetView() {
       {today.length ? (
         <>
           <SectionHead>
-            Today
+            {t('notifications:sheet.today')}
           </SectionHead>
           {today.map(renderEntry)}
         </>
@@ -821,14 +941,14 @@ export function NotificationsSheetView() {
       {earlier.length ? (
         <>
           <SectionHead>
-            Earlier
+            {t('notifications:sheet.earlier')}
           </SectionHead>
           {earlier.map(renderEntry)}
         </>
       ) : null}
       {!entries.length ? (
         <p className="px-4 py-8 text-sm text-zinc-500 text-center">
-          {tab === 'unread' ? 'You’re all caught up.' : 'Nothing here yet. You’ll get pinged here.'}
+          {tab === 'unread' ? t('notifications:sheet.empty.unread') : t('notifications:sheet.empty.other')}
         </p>
       ) : null}
       {/*
@@ -843,10 +963,16 @@ export function NotificationsSheetView() {
           now pages itself on its own cursor. See
           Notifications.loadOlderMessages for why that cursor is separate.
 
-          On UNREAD it is still the All tab, and for the reason above that has
-          not changed: paging Unread means asking for more of the thing you are
-          trying to get to zero, and the older rows are mostly read. What you
-          want from the bottom of that list is the unfiltered one.
+          On UNREAD it shows the older rows IN PLACE (#4700), where it used to
+          be the All tab. Paging Unread still cannot mean "more of the thing
+          you are trying to get to zero" — the older rows are mostly read, and
+          that is exactly why they now show UNDER the unread ones instead of
+          somewhere else. The collapsed footer reveals them, walking the same
+          loadOlder cursor the All tab's pager uses (a no-op on its own when
+          every loaded row is already in hand); once they are showing the
+          button reads "Hide older notifications" and collapses the list back
+          to just the unread ones, and a further page offers the ordinary
+          pager above it.
 
           On ALL it is the loader it always was.
 
@@ -864,10 +990,10 @@ export function NotificationsSheetView() {
             disabled={snap.loadingOlderMessages}
             onClick={() => controller()?.loadOlderMessages()}
           >
-            {snap.loadingOlderMessages ? 'Loading…' : 'See older message notifications'}
+            {snap.loadingOlderMessages ? t('notifications:sheet.older.loading') : t('notifications:sheet.older.messages')}
           </button>
         </div>
-      ) : tab !== 'all' && (all.length > rows.length || snap.screenCanLoadMore) ? (
+      ) : tab === 'messages' && (all.length > rows.length || snap.screenCanLoadMore) ? (
         <div className="px-4 py-3">
           <button
             id="notifications-see-older"
@@ -875,9 +1001,50 @@ export function NotificationsSheetView() {
             className="w-full text-center text-sm font-semibold text-violet-700 dark:text-violet-400 hover:underline"
             onClick={() => setTab('all')}
           >
-            See older notifications
+            {t('notifications:sheet.older.showAll')}
           </button>
         </div>
+      ) : tab === 'unread' && !olderShown && (all.length > unread.length || snap.screenCanLoadMore) ? (
+        <div className="px-4 py-3">
+          <button
+            id="notifications-see-older"
+            type="button"
+            className="w-full text-center text-sm font-semibold text-violet-700 dark:text-violet-400 hover:underline disabled:opacity-40"
+            disabled={snap.loadingMore}
+            onClick={() => {
+              setOlderShown(true);
+              controller()?.loadOlder();
+            }}
+          >
+            {snap.loadingMore ? t('notifications:sheet.older.loading') : t('notifications:sheet.older.reveal')}
+          </button>
+        </div>
+      ) : tab === 'unread' && olderShown && (all.length > unread.length || snap.screenCanLoadMore) ? (
+        <>
+          {snap.screenCanLoadMore ? (
+            <div className="px-4 py-3">
+              <button
+                id="notifications-load-older"
+                type="button"
+                className="w-full text-center text-sm font-semibold text-violet-700 dark:text-violet-400 hover:underline disabled:opacity-40"
+                disabled={snap.loadingMore}
+                onClick={() => controller()?.loadOlder()}
+              >
+                {snap.loadingMore ? t('notifications:sheet.older.loading') : t('notifications:sheet.older.load')}
+              </button>
+            </div>
+          ) : null}
+          <div className="px-4 py-3">
+            <button
+              id="notifications-hide-older"
+              type="button"
+              className="w-full text-center text-sm font-semibold text-violet-700 dark:text-violet-400 hover:underline"
+              onClick={() => setOlderShown(false)}
+            >
+              {t('notifications:sheet.older.hide')}
+            </button>
+          </div>
+        </>
       ) : tab === 'all' && snap.screenCanLoadMore ? (
         <div className="px-4 py-3">
           <button
@@ -887,7 +1054,7 @@ export function NotificationsSheetView() {
             disabled={snap.loadingMore}
             onClick={() => controller()?.loadOlder()}
           >
-            {snap.loadingMore ? 'Loading…' : 'See older notifications'}
+            {snap.loadingMore ? t('notifications:sheet.older.loading') : t('notifications:sheet.older.load')}
           </button>
         </div>
       ) : null}

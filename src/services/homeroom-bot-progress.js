@@ -40,6 +40,8 @@
 // claimed queue rows alone, so a build (whose queue row is gone) and a
 // follow-up waiting its turn showed as nothing while the bot said otherwise.
 
+const { changeHref } = require('./change-destination');
+
 // Lazy: the live module is large, and only the queue readers below need it.
 function live() { return require('./homeroom-bot-live'); }
 
@@ -65,18 +67,27 @@ const BOT_USERNAME = 'homeroom_bot';
 // A live build older than this is not holding its project up any more (the
 // longest one, a platform build's plan and build turn, is under two hours).
 const BUSY_BUILD_HOURS = 4;
+// How many of one project's builds run at once (homeroom-bot.js). Lazy, as
+// every read of that module here is.
+function buildsPerProject() { return require('./homeroom-bot').BUILDS_PER_PROJECT; }
 
+// #4053: a first version's steps are named for what is happening, never as
+// an instruction: "Step 4 of 7: Build it" read to an invited member as if
+// they were asked to build it (onboarding test, 6 October 2026). One story
+// per request: a request's steps are named the same way, in the same words
+// everywhere they are said (the card, the tray, the bot's answers).
 const FIRST_VERSION_STEPS = Object.freeze([
-  'Set up the project', 'Read the description', 'Write a plan', 'Build it', 'Test it', 'Approval', 'Live',
+  'Setting up', 'Reading', 'Planning', 'Building', 'Testing', 'Ready to try', 'Live',
 ]);
 const REQUEST_STEPS = Object.freeze([
-  'Read the request', 'Write a plan', 'Build it', 'Test it', 'Approval', 'Live',
+  'Reading', 'Planning', 'Building', 'Testing', 'Ready to try', 'Live',
 ]);
 
 // Which step each stage is part of. A request's first step is "Read".
 const STEP_OF_STAGE = Object.freeze({
   setting_up: 'setup',
   queued: 'read',
+  on_hold: 'read',
   reading: 'read',
   question: 'read',
   // B6: a first version's plan, waiting for its creator's Build it.
@@ -87,6 +98,9 @@ const STEP_OF_STAGE = Object.freeze({
   planning: 'plan',
   stalled: 'plan',
   building: 'build',
+  // A first version's screens reviewed and fixed (services/bot-review.js):
+  // still building it, as far as its creator is concerned.
+  reviewing: 'build',
   proposing: 'build',
   checks: 'checks',
   checks_failed: 'checks',
@@ -102,7 +116,7 @@ const STEP_OF_STAGE = Object.freeze({
 // something this minute, rather than waiting on the person, the group, the
 // checks or its queue: what "working on now" means.
 const BUSY_STAGES = new Set([
-  'setting_up', 'reading', 'revising', 'fixing', 'starting', 'planning', 'building', 'proposing', 'merging',
+  'setting_up', 'reading', 'revising', 'fixing', 'starting', 'planning', 'building', 'reviewing', 'proposing', 'merging',
 ]);
 
 // #3734: what the bot has in hand for the person: doing this minute, or in
@@ -122,17 +136,183 @@ const SETUP_PARTS = Object.freeze({
 // B6: a first version's plan is the one its creator answers (stage 'plan').
 // Once they tap Build it, the build's own plan being written, and its turn
 // and workspace being waited for, are the build to them, not the plan again:
-// "Step 3 of 7: Write a plan", "writing the plan for the build", read as if
-// their Build it had not counted (first-session run-through, 5 October 2026).
-// A request's steps are unchanged: its plan is the bot's own.
+// "Step 3 of 7", "writing the plan for the build", read as if their Build it
+// had not counted (first-session run-through, 5 October 2026). A request's
+// steps are unchanged: its plan is the bot's own.
 const FIRST_VERSION_BUILD_STAGES = new Set(['build_queued', 'starting', 'planning']);
+
+const STEP_ORDER = Object.freeze(['setup', 'read', 'plan', 'build', 'checks', 'vote', 'live']);
 
 function stepNumber(stage, firstVersion) {
   const key = firstVersion && FIRST_VERSION_BUILD_STAGES.has(stage) ? 'build' : STEP_OF_STAGE[stage];
   if (!key) return null;
-  const order = ['setup', 'read', 'plan', 'build', 'checks', 'vote', 'live'];
-  const at = order.indexOf(key);
+  const at = STEP_ORDER.indexOf(key);
   return firstVersion ? at + 1 : at;
+}
+
+/**
+ * #4053: the build line, one line at the foot of a project's thumbnail that
+ * says where its first version is, the same way on every screen that draws
+ * it (the made screen, the App tab, the hub). The browser holds the words
+ * (frontend/src/features/first-session/build-line.tsx); the server says
+ * which one, for the person reading:
+ *
+ *   planning     steps 1 to 3: set up, read, plan       everyone
+ *   plan         its plan waits for Build it            the person who started it
+ *   plan-member  the same                               everyone else
+ *   question     it asked the person who started it     them
+ *   building     step 4 (from Build it on)              everyone
+ *   testing      step 5: its checks                     everyone
+ *   ready        step 6: up for approval, to try        everyone
+ *   live         step 7                                 everyone
+ *   stopped      its build stopped, nothing live yet    everyone
+ *
+ * Step numbers stay in Homeroom bot's chat: the line never counts.
+ *
+ * `stopped` (14 Oct 2026, newcomer run eight, Club Votes): its first version
+ * was built and could not be proposed, and the App tab had no first version
+ * to say any more, so it showed the starter template running, with nothing
+ * to say that anything had gone wrong. It is not a step: buildLineOf never
+ * names it, and homeroom-bot-dm.js firstVersionState says it when
+ * firstVersionStopped below does.
+ */
+const BUILD_LINE_STATES = Object.freeze(['planning', 'plan', 'plan-member', 'question', 'building', 'testing', 'ready', 'live', 'stopped']);
+
+const BUILD_LINE_OF_STEP = Object.freeze({
+  setup: 'planning', read: 'planning', plan: 'planning', build: 'building', checks: 'testing', vote: 'ready', live: 'live',
+});
+
+/**
+ * Pure: the build line for a first version at `stage` (stageOf, or
+ * 'setting_up'), read by its creator (`forCreator`) or anyone else.
+ * `question` is a question the bot waits on the creator for. Null for a
+ * stage that is no step.
+ */
+function buildLineOf(stage, { forCreator = false, question = false } = {}) {
+  if (stage === 'plan') return forCreator ? 'plan' : 'plan-member';
+  if (stage === 'question' && question && forCreator) return 'question';
+  const key = FIRST_VERSION_BUILD_STAGES.has(stage) ? 'build' : STEP_OF_STAGE[stage];
+  return (key && BUILD_LINE_OF_STEP[key]) || null;
+}
+
+// N4 (newcomer run four, 12-13 October 2026): every stage of a first
+// version's build named for what is happening, with when it began, so a
+// screen can say "Drawing the screens · 2 min so far". The build line
+// (buildLineOf) still says `building` for all of them, which Live and the
+// thumbnail's screens key on; this is the finer name its words come from
+// (frontend/src/features/first-session/build-line-words.js PHASE_WORDS).
+// Until this the spec turn, the build and each review round all read as
+// "Building it", and the build agent's last phrase ("Adding the ballot
+// bar") stayed up through 36 minutes of review.
+//
+//   starting   its build waits its turn and its workspace starts: no
+//              spec turn yet, so nothing is drawn (run five, 13 Oct 2026:
+//              "Drawing the screens" showed before the build was picked up)
+//   drawing    its spec turn draws the screens (the first look is drawn
+//              first: the spec saves its main screen before it writes the
+//              rest, live.js FIRST_VERSION_SCREENS_FIRST)
+//   writing    the spec turn writes the rest of the plan, once the first
+//              look is drawn
+//   building   the build turn
+//   built      the build landed and its screens are captured for review
+//   checking   a review round, `round` of `rounds`
+//   testing    proposed, and its checks run (or are fixed)
+const FIRST_VERSION_PHASES = Object.freeze(['starting', 'drawing', 'writing', 'building', 'built', 'checking', 'testing']);
+
+/**
+ * Pure: the phase of a first version whose plan is decided, from its stage
+ * (stageOf), its request row (requestRows) and when its first look was
+ * drawn: `{ key, since, round?, rounds? }`, or null for a stage before or
+ * after the build (setting up, reading, the plan waiting, ready to try).
+ */
+function firstVersionPhase(state, row = {}, { firstLookAt = null } = {}) {
+  const stage = state && state.stage;
+  const since = (value) => iso(value);
+  switch (stage) {
+    case 'build_queued':
+    case 'starting':
+      return { key: 'starting', since: since(state.since || row.build_waiting_at || row.run_at) };
+    case 'planning':
+      return firstLookAt
+        ? { key: 'writing', since: since(firstLookAt) }
+        : { key: 'drawing', since: since(row.build_started_at || state.since) };
+    case 'building':
+      return { key: 'building', since: since(state.since) };
+    case 'reviewing': {
+      const rounds = Math.max(1, Number(row.review_max_rounds) || 1);
+      const round = Math.min(Number(row.review_round) || 0, rounds);
+      return round > 0
+        ? { key: 'checking', since: since(row.review_started_at || state.since), round, rounds }
+        : { key: 'built', since: since(row.review_started_at || state.since) };
+    }
+    case 'proposing':
+    case 'checks':
+    case 'checks_failed':
+    case 'fix_queued':
+    case 'fixing':
+      return { key: 'testing', since: since(row.proposal_at || state.since) };
+    default:
+      return null;
+  }
+}
+
+// The App tab's step list (N4), in order, by key: Plan written, Screens
+// drawn, Building, Checking the screens, Testing, Live (the words are the
+// browser's: build-line-words.js STEP_WORDS).
+const FIRST_VERSION_STEP_KEYS = Object.freeze(['plan', 'screens', 'build', 'check', 'test', 'live']);
+
+const PHASE_STEP = Object.freeze({
+  starting: 'screens', drawing: 'screens', writing: 'build', building: 'build', built: 'check', checking: 'check', testing: 'test',
+  // Run five (13 Oct 2026, fix 7): merged and not live yet (stage
+  // 'merging'). Never a phase a screen names: only the step list's place,
+  // so every step before Live stays done while it goes live.
+  live: 'live',
+});
+
+/** The step list's place while a first version goes live (firstVersionSteps). */
+const GOING_LIVE = Object.freeze({ key: 'live', since: null });
+
+/**
+ * Pure: the App tab's step list for a first version still on its way:
+ * one row per FIRST_VERSION_STEP_KEYS, `state` 'done', 'now', 'next' or
+ * 'skipped' (no review ran: the row is left out). A done row carries the
+ * whole minutes it took when both its ends are known; the row being worked
+ * on carries when it began (`since`), which the browser counts on from.
+ * `times` are when things happened: `made` (Make it), `decided` (its plan
+ * went ahead), `firstLook`, `spec` (the plan for the build posted),
+ * `review` (the review began) and `proposal`. `phase` is firstVersionPhase,
+ * null while the plan is not decided yet, or GOING_LIVE once it merged and
+ * is not live yet: every step before Live done, Live under way.
+ */
+function firstVersionSteps(phase, times = {}) {
+  const at = phase ? FIRST_VERSION_STEP_KEYS.indexOf(PHASE_STEP[phase.key]) : 0;
+  const t = (value) => {
+    const ms = value ? new Date(value).getTime() : NaN;
+    return Number.isFinite(ms) ? ms : null;
+  };
+  const screensEnd = t(times.firstLook) ?? t(times.spec);
+  const bounds = {
+    plan: [t(times.made), t(times.decided)],
+    screens: [t(times.decided), screensEnd],
+    build: [screensEnd, t(times.review) ?? t(times.proposal)],
+    check: [t(times.review), t(times.proposal)],
+    test: [t(times.proposal), null],
+    live: [null, null],
+  };
+  return FIRST_VERSION_STEP_KEYS.map((key, i) => {
+    if (i < at) {
+      if (key === 'check' && !times.review) return { key, state: 'skipped' };
+      const [from, to] = bounds[key];
+      const minutes = from != null && to != null && to >= from ? Math.floor((to - from) / MINUTE_MS) : null;
+      return { key, state: 'done', ...(minutes != null ? { minutes } : {}) };
+    }
+    if (i === at) {
+      // From when the step began, else from when its phase did.
+      const since = bounds[key][0] ?? t(phase?.since);
+      return { key, state: 'now', ...(since != null ? { since: new Date(since).toISOString() } : {}) };
+    }
+    return { key, state: 'next' };
+  });
 }
 
 function iso(value) {
@@ -163,6 +343,12 @@ function checksWords({ check_state: state, check_phase: phase, checks_progress: 
   if (state === 'pending' || state === 'running') {
     if (phase === 'building') return 'running: building the preview first';
     const p = progress && typeof progress === 'object' ? progress : {};
+    if (phase === 'queued') {
+      const ahead = Number(p.queue && p.queue.ahead);
+      return Number.isInteger(ahead) && ahead > 0
+        ? `waiting for a checks slot (${ahead} ahead)`
+        : 'waiting for a checks slot';
+    }
     const ran = Number(p.ran);
     const expected = Number(p.expected);
     const failed = Number(p.failed) || 0;
@@ -180,13 +366,14 @@ function failedCount(results) {
   return results.filter((t) => t && t.status && t.status !== 'pass').length;
 }
 
-function links(domain, { slug, number = null, proposal = null }) {
+function links(domain, { slug, number = null, proposal = null, pr = null }) {
   if (!domain || !slug) return {};
   const base = `https://${domain}/#app/${encodeURIComponent(slug)}`;
   return {
     project: base,
     ...(number ? { request: `${base}/dev/issues/${Number(number)}` } : {}),
-    ...(proposal ? { proposal: `${base}/dev/proposals/${Number(proposal)}` } : {}),
+    // #4367: a change with a pull request goes by its number.
+    ...(proposal ? { proposal: `https://${domain}/${changeHref(slug, proposal, pr)}` } : {}),
   };
 }
 
@@ -205,6 +392,38 @@ function leftOverQueue(row) {
 }
 
 /**
+ * Pure (N5): whether a proposal's check verdict is about the head up for
+ * approval: its reviewed head (an imported pull request's own head), from a
+ * requestRows row. True when either is not recorded, as before this was
+ * read. The merge gate asks the same (merge-queue.js effortOf).
+ */
+function checksOnHead(row) {
+  const head = row?.proposal_source === 'imported' ? row?.imported_pr_head_sha : row?.reviewed_head_sha;
+  const checked = row?.checks_sha;
+  if (typeof head !== 'string' || !head || typeof checked !== 'string' || !checked) return true;
+  return head.toLowerCase() === checked.toLowerCase();
+}
+
+// N5: a proposal's stages on the vote step that are not ready to try: a
+// follow-up waiting its turn or running changes the change.
+const FOLLOW_UP_STAGES = new Set(['followup_queued', 'revising']);
+
+/**
+ * Pure (N5): the stage a first version's App tab is drawn at, from its
+ * stage (stageOf) and whether it is ready to try (`ready`:
+ * homeroom-bot-dm.changeReadiness, the rule its ready card goes out on: its
+ * checks passed on its head and its before & after shots settled). Ready to
+ * try ('vote') only then; a vote that is not ready yet, and a follow-up
+ * queued or running on it, are its checks ('checks': Testing it). Any other
+ * stage is itself.
+ */
+function firstVersionStage(stage, { ready = false } = {}) {
+  if (stage === 'vote') return ready ? 'vote' : 'checks';
+  if (FOLLOW_UP_STAGES.has(stage)) return 'checks';
+  return stage;
+}
+
+/**
  * Pure: the stage of one of the person's requests, from one row of
  * requestRows below, or null when nothing about it is in progress.
  * `{ stage, since, doing, waitingOn?, limit? }`, where `limit` names which
@@ -213,6 +432,10 @@ function leftOverQueue(row) {
 function stageOf(input, { now = new Date() } = {}) {
   const row = leftOverQueue(input) ? { ...input, queue_id: null, started_at: null, enqueued_at: null, queue_reason: null } : input;
   const proposalOpen = row.proposal_status === 'promoted' || row.proposal_status === 'merging';
+  // #4539: the request itself was closed. Its waiting plan and the open
+  // question about it no longer wait on the person, and the ready plan reads
+  // as not in progress; a proposal still open shows its own state.
+  const closed = row.request_closed === true;
   const it = row.first_version ? 'the description' : 'the request';
   if (proposalOpen) {
     if (row.started_at) {
@@ -228,25 +451,40 @@ function stageOf(input, { now = new Date() } = {}) {
         ? { stage: 'fix_queued', since: row.enqueued_at, doing: 'waiting for a free builder to fix what its tests found' }
         : { stage: 'followup_queued', since: row.enqueued_at, doing: 'waiting for a free builder to follow up on the newest replies on the change' };
     }
-    if (row.question_at) {
+    if (row.question_at && !closed) {
       return { stage: 'question', since: row.question_at, doing: 'waiting for an answer to the question asked', waitingOn: 'them' };
     }
     if (row.proposal_status === 'merging') {
       return { stage: 'merging', since: null, doing: 'approved; making it live now' };
     }
+    // N5: a verdict about another commit than the one up for approval says
+    // nothing about it: its own checks are still to come (Club Votes, 12
+    // October 2026, read "Ready to try" off a pass of a fix the restart
+    // recovery had rolled back, and its own head then failed).
+    if (!checksOnHead(row)) {
+      const checks = checksWords({ ...row, check_state: 'pending', check_phase: null });
+      return { stage: 'checks', since: row.checks_at || row.proposal_at, doing: `it's waiting for approval, and its tests are ${checks}` };
+    }
     const checks = checksWords({ ...row, failed_checks: row.failed_checks ?? failedCount(row.test_results) });
+    // 13 Oct 2026, D1: a project's first version goes live without a vote
+    // once its tests pass (governance-gate.ts applyFirstVersion), so it
+    // waits on nobody's approval.
+    const first = row.first_version === true;
     if (row.check_state === 'passing' || row.check_state === 'skipped') {
-      return { stage: 'vote', since: row.proposal_at, doing: 'it\'s waiting for approval', waitingOn: 'the group' };
+      return first
+        ? { stage: 'vote', since: row.proposal_at, doing: 'its tests passed, and as the project\'s first version it goes live without a vote in a minute or two' }
+        : { stage: 'vote', since: row.proposal_at, doing: 'it\'s waiting for approval', waitingOn: 'the group' };
     }
+    const waiting = first ? 'it goes live without a vote once its tests pass' : 'it\'s waiting for approval';
     if (row.check_state === 'failing' || row.check_state === 'error' || row.check_state === 'unknown') {
-      return { stage: 'checks_failed', since: row.checks_at || row.proposal_at, doing: `it's waiting for approval, and its tests ${checks}` };
+      return { stage: 'checks_failed', since: row.checks_at || row.proposal_at, doing: `${waiting}, and its tests ${checks}` };
     }
-    return { stage: 'checks', since: row.checks_at || row.proposal_at, doing: `it's waiting for approval, and its tests are ${checks}` };
+    return { stage: 'checks', since: row.checks_at || row.proposal_at, doing: `${waiting}, and its tests are ${checks}` };
   }
   if (row.started_at) {
     return { stage: 'reading', since: row.started_at, doing: `reading ${it} to decide whether to ask a question or build it`, limit: 'reading' };
   }
-  if (row.question_at) {
+  if (row.question_at && !closed) {
     return { stage: 'question', since: row.question_at, doing: 'waiting for an answer to the question asked', waitingOn: 'them' };
   }
   // The newest look decided to build it, and nothing has finished it yet.
@@ -261,14 +499,18 @@ function stageOf(input, { now = new Date() } = {}) {
       };
     }
     // B6: a first version's plan, sent to its creator, waits for Build it.
+    // #4539: not on a closed request — it stops waiting, and reads as not
+    // built because the request was closed (outcomeOf).
     if (row.plan_waiting_at && !row.build_waiting_at && !row.build_session_id) {
+      if (closed) return null;
       return {
         stage: 'plan', since: row.plan_waiting_at, waitingOn: 'them',
         doing: 'the plan is ready and waits for Build it',
       };
     }
-    // Built after the turn that read it, one build per project at a time
-    // (homeroom-bot.js buildLive): waiting its turn until its build starts.
+    // Built after the turn that read it, up to BUILDS_PER_PROJECT per project
+    // at once (homeroom-bot.js buildLive): waiting its turn until its build
+    // starts.
     if (row.build_waiting_at && !row.build_session_id) {
       return { stage: 'build_queued', since: row.build_waiting_at, doing: 'ready to build; waiting its turn to be built' };
     }
@@ -279,6 +521,18 @@ function stageOf(input, { now = new Date() } = {}) {
       return { stage: 'stalled', since: row.run_at, doing: 'it was found ready to build, but nothing about the build has been recorded since' };
     }
     if (row.build_status === 'archived') return null;
+    // A first version whose build landed and whose screens are being
+    // reviewed and fixed before it is proposed (services/bot-review.js).
+    if (row.review_state === 'reviewing') {
+      const of = Math.max(1, Number(row.review_max_rounds) || 1);
+      const round = Math.max(1, Math.min(Number(row.review_round) || 1, of));
+      return {
+        stage: 'reviewing',
+        since: row.review_started_at || row.build_last_activity || null,
+        doing: `reviewing the screens (round ${round} of ${of}) and fixing what the review finds`,
+        limit: 'review',
+      };
+    }
     if (row.build_status === 'paused' || row.build_status === 'promoted') {
       return { stage: 'proposing', since: row.build_last_activity || null, doing: 'the build finished; getting it ready to try now' };
     }
@@ -290,6 +544,15 @@ function stageOf(input, { now = new Date() } = {}) {
     return { stage: 'planning', since: row.build_started_at || row.run_at, doing: 'writing the plan for the build', limit: 'plan' };
   }
   if (row.queue_id) {
+    // One story: held until the week resets, because its payer's building
+    // time is used up (homeroom-bot.js runTriage): On hold until Monday.
+    const held = row.held_until ? new Date(row.held_until) : null;
+    if (held && !Number.isNaN(held.getTime()) && held > now) {
+      return {
+        stage: 'on_hold', since: row.enqueued_at, waitingOn: 'time',
+        doing: 'on hold until Monday: this week\'s building time is used up',
+      };
+    }
     // Not its number in the queue: that counts every project's requests, and
     // the per-project and per-person limits decide more (queuedWait).
     return { stage: 'queued', since: row.enqueued_at, doing: 'waiting for a free builder' };
@@ -297,11 +560,35 @@ function stageOf(input, { now = new Date() } = {}) {
   return null;
 }
 
+/**
+ * Pure (14 Oct 2026, newcomer run eight): whether a first version's build
+ * stopped, from its request row (requestRows) while nothing about it is in
+ * progress (stageOf answered null): its newest look went ahead to build it
+ * and the build came to nothing (build_ok false: it did not finish, or it
+ * was built and not proposed), on a request still open, with no proposal of
+ * it up or merged. Not a build stopped as a skip (its request was answered
+ * or closed meanwhile) nor one found impossible as written (`blocked:`,
+ * which asks its maker for detail instead). Homeroom bot said it stopped,
+ * with Try again, in the build's thread.
+ */
+function firstVersionStopped(row) {
+  if (!row || row.mode !== 'live' || row.verdict !== 'ready' || row.build_ok !== false) return false;
+  if (row.request_closed === true) return false;
+  if (['promoted', 'merging', 'merged'].includes(row.proposal_status)) return false;
+  return !/^(?:skipped|blocked):/.test(String(row.build_error || ''));
+}
+
 /** Pure: what a request that is not in progress came to, or null. */
 function outcomeOf(row) {
   if (row.proposal_status === 'merged') return 'approved and live';
   if (row.proposal_status === 'closed') return 'the change was closed without going live';
   if (row.mode !== 'live') return null;
+  // #4539: the request was closed while its plan still waited for Build it:
+  // it was not built because the request was closed.
+  if (row.request_closed === true && row.verdict === 'ready' && row.build_ok == null
+    && row.plan_waiting_at && !row.build_session_id) {
+    return 'not built: the request was closed';
+  }
   if (row.build_ok === false && /^skipped:/.test(String(row.build_error || ''))) {
     return `not built: ${String(row.build_error).replace(/^skipped:\s*/, '').slice(0, 200)}`;
   }
@@ -325,6 +612,7 @@ function limitsFor(row, { settings, config, botSvc }) {
       reading: Math.round(turnSeconds / 60),
       plan: Math.round(budgets.specBudgetMs / MINUTE_MS),
       build: Math.round(budgets.turnBudgetMs / MINUTE_MS),
+      ...(Number(row.review_minutes) > 0 ? { review: Number(row.review_minutes) } : {}),
     };
   } catch {
     return {};
@@ -342,6 +630,7 @@ const TYPICAL_MINUTES = Object.freeze({
   starting: Object.freeze([1, 5]),
   planning: Object.freeze([3, 8]),
   building: Object.freeze([10, 25]),
+  reviewing: Object.freeze([5, 25]),
   proposing: Object.freeze([1, 3]),
   checks: Object.freeze([5, 20]),
   revising: Object.freeze([5, 20]),
@@ -379,24 +668,43 @@ async function requestRows(pool, userId) {
                            WHERE r2.app_id = q.app_id AND r2.issue_number = q.issue_number)
      )
      SELECT m.app_id, a.slug, a.name, a.repo_url, m.issue_number, m.issue_title, m.first_version,
-            q.id AS queue_id, q.started_at, q.enqueued_at, q.reason AS queue_reason,
+            q.id AS queue_id, q.started_at, q.enqueued_at, q.reason AS queue_reason, q.held_until,
             run.id AS run_id, run.mode, run.verdict, run.created_at AS run_at, run.duration_ms AS run_duration_ms,
             run.cap_suppressed,
             run.build_ok, run.build_error, run.build_session_id, run.proposal_session_id AS run_proposal,
             run.live_build_waiting_at AS build_waiting_at, run.awaiting_go_at AS plan_waiting_at,
+            run.review_state, run.review_started_at, run.review_round, run.review_max_rounds, run.review_minutes,
             bs.status AS build_status, bs.created_at AS build_started_at, bs.last_activity_at AS build_last_activity,
             bs.active_turn->>'mode' AS build_turn_mode, bs.active_turn->>'startedAt' AS build_turn_at,
             spec.created_at AS spec_at,
-            prop.proposal_session_id, cs.status AS proposal_status, cs.check_state, cs.check_phase,
+            prop.proposal_session_id,
+            -- Merged but not live yet (live_at) reads as merging: going live.
+            CASE WHEN cs.status = 'merged' AND cs.live_at IS NULL THEN 'merging' ELSE cs.status END AS proposal_status,
+            cs.check_state, cs.check_phase,
             cs.checks_progress, cs.checks_checked_at AS checks_at, cs.test_results,
-            COALESCE(cs.promoted_at, cs.created_at) AS proposal_at, cs.merged_at,
+            -- N5: which commit the verdict is about, and the head up for
+            -- approval (checksOnHead).
+            cs.checks_commit_sha AS checks_sha, cs.reviewed_head_sha, cs.imported_pr_head_sha,
+            cs.source AS proposal_source,
+            COALESCE(cs.promoted_at, cs.created_at) AS proposal_at, cs.live_at AS merged_at,
+            -- #4539: the request's own state, newest row by id (issues is not
+            -- unique on (app_id, github_issue_number), so a join could
+            -- duplicate rows). Null: no mirrored issue, or a first version
+            -- before its request is filed. Null reads as not closed.
+            (SELECT ri.status = 'closed' FROM issues ri
+              WHERE ri.app_id = m.app_id AND ri.github_issue_number = m.issue_number
+              ORDER BY ri.id DESC LIMIT 1) AS request_closed,
             oq.created_at AS question_at
        FROM mine m
        JOIN apps a ON a.id = m.app_id
        LEFT JOIN homeroom_bot_queue q ON q.app_id = m.app_id AND q.issue_number = m.issue_number
        LEFT JOIN LATERAL (
          SELECT id, mode, verdict, created_at, duration_ms, cap_suppressed, build_ok, build_error, build_session_id,
-                proposal_session_id, live_build_waiting_at, awaiting_go_at
+                proposal_session_id, live_build_waiting_at, awaiting_go_at,
+                review->>'state' AS review_state, review->>'startedAt' AS review_started_at,
+                jsonb_array_length(COALESCE(review->'rounds', '[]'::jsonb)) AS review_round,
+                (review->'reviewer'->>'maxRounds')::int AS review_max_rounds,
+                (review->'reviewer'->>'budgetMinutes')::int AS review_minutes
            FROM homeroom_bot_runs
           WHERE app_id = m.app_id AND issue_number = m.issue_number
           ORDER BY id DESC LIMIT 1
@@ -469,7 +777,8 @@ async function attachAttempts(pool, rows) {
     ({ rows: runs } = await pool.query(
       `SELECT r.id, r.app_id, r.issue_number, r.created_at, r.build_ok, r.build_error, r.cap_suppressed,
               r.live_build_waiting_at, r.build_session_id, r.proposal_session_id,
-              bs.status AS build_status, bs.created_at AS build_started_at, ps.status AS proposal_status
+              bs.status AS build_status, bs.created_at AS build_started_at,
+              CASE WHEN ps.status = 'merged' AND ps.live_at IS NULL THEN 'merging' ELSE ps.status END AS proposal_status
          FROM homeroom_bot_runs r
          LEFT JOIN chat_sessions bs ON bs.id = r.build_session_id
          LEFT JOIN chat_sessions ps ON ps.id = r.proposal_session_id
@@ -536,8 +845,9 @@ async function queuePositions(pool, rows, settings) {
  * person's waits: a request it is reading now (a claimed queue row, other
  * than a follow-up on its own proposal, which runs beside it), or one it is
  * building (a live ready run with no proposal yet, whose queue row is gone).
- * The bot starts one request per project at a time, so either holds the
- * rest. By app id: [{ issueNumber, since, what }], newest first.
+ * A read holds the project's other reads (its one session); builds hold its
+ * other builds once BUILDS_PER_PROJECT are under way. By app id:
+ * [{ issueNumber, since, what }], newest first.
  */
 async function projectsBusy(pool, rows) {
   const appIds = [...new Set(rows.filter((r) => (r.queue_id && !r.started_at) || (r.build_waiting_at && !r.build_session_id))
@@ -582,8 +892,10 @@ async function projectsBusy(pool, rows) {
  *
  * The bot's own sessions are never a request's `in_progress` (the issue
  * routes leave synthetic authors out on purpose), so without this a request
- * it was building read "Unassigned" and offered Claim and Start work, and a
- * claim then told the bot to leave the request alone.
+ * it was building read "Unassigned" and offered Start work. #4190: Claim is
+ * offered beside the bot's work on purpose, and a claim made once the bot is
+ * on the request means "I'm working on this too": it does not stop the bot
+ * (homeroom-bot.js issueHolders).
  *
  * Read twice over. First the same two reads as projectsBusy, which takes
  * the projects of the rows it is handed that wait: one waiting row names
@@ -627,18 +939,35 @@ async function botWorkByIssue(pool, appId) {
   // change) and it waits for a free builder: it is the bot's already, and
   // nobody starts it a second time.
   // B6: and a first version's plan, waiting for its creator's Build it.
+  // The request page's status card says which (`plan`: a plan waits for
+  // whoever asked for it to say Build it).
   const { rows: asked } = await pool.query(
-    `SELECT issue_number, enqueued_at FROM homeroom_bot_queue
+    `SELECT issue_number, enqueued_at, FALSE AS plan FROM homeroom_bot_queue
       WHERE app_id = $1 AND priority = 0 AND started_at IS NULL
         AND (held_until IS NULL OR held_until <= NOW())
      UNION ALL
-     SELECT issue_number, awaiting_go_at FROM homeroom_bot_runs
+     SELECT issue_number, awaiting_go_at, TRUE AS plan FROM homeroom_bot_runs
       WHERE app_id = $1 AND awaiting_go_at IS NOT NULL AND build_ok IS NULL`,
     [id],
   );
   for (const q of asked) {
     const n = Number(q.issue_number);
-    if (!out.has(n)) out.set(n, { what: 'queued', since: q.enqueued_at });
+    if (!out.has(n)) out.set(n, { what: 'queued', since: q.enqueued_at, ...(q.plan === true ? { plan: true } : {}) });
+  }
+  // And a request whose build its own limit holds: it starts when one of
+  // its changes on the project is voted in or closed (live.heldText).
+  const { rows: held } = await pool.query(
+    `SELECT DISTINCT ON (r.issue_number) r.issue_number, r.created_at, r.cap_suppressed
+       FROM homeroom_bot_runs r
+      WHERE r.app_id = $1 AND r.mode = 'live'
+        AND r.created_at > NOW() - make_interval(days => $2)
+      ORDER BY r.issue_number, r.id DESC`,
+    [id, ABANDONED_LIVE_WINDOW_DAYS],
+  ).catch(() => ({ rows: [] }));
+  for (const h of held) {
+    const n = Number(h.issue_number);
+    if (out.has(n) || !['proposals_per_app', 'proposals_total'].includes(h.cap_suppressed)) continue;
+    out.set(n, { what: 'queued', since: h.created_at, held: true });
   }
   return out;
 }
@@ -683,7 +1012,8 @@ async function waitingHolds(pool, staged) {
 
 /**
  * Pure (#3771): what a request in the queue waits for, as the `queued`
- * stage's words and `waitingFor`. Its project busy with another request;
+ * stage's words and `waitingFor`. Its project reading another request (a
+ * build runs on a session of its own and holds no read up);
  * the most the bot does for one person at once already under way; or, with
  * nothing in the way, its place in the queue. "Waiting in the queue
  * (number 4)" said none of that, and "when will you pick it up?" had no
@@ -697,16 +1027,16 @@ function queuedWait(row, {
   // FIRST_VERSION_PENDING_SQL). That is what it waits for, whatever else is.
   const firstVersion = firstVersionWait(row, holds, { reason: row.queue_reason });
   if (firstVersion) return { doing: FIRST_VERSION_WAIT, waitingFor: firstVersion };
-  const ahead = (busy.get(Number(row.app_id)) || []).find((b) => b.issueNumber !== Number(row.issue_number));
+  const ahead = (busy.get(Number(row.app_id)) || [])
+    .find((b) => b.what === 'reading' && b.issueNumber !== Number(row.issue_number));
   if (ahead) {
     // How long the other one has run is its own; the entry's time so far is
     // this request's wait.
     const minutes = minutesSince(ahead.since, now);
-    const doing = ahead.what === 'building' ? 'building' : 'reading';
     return {
-      doing: `waiting its turn: ${row.name || row.slug} is ${doing} request #${ahead.issueNumber} first (one request per project at a time)`,
+      doing: `waiting its turn: ${row.name || row.slug} is reading request #${ahead.issueNumber} first (one read per project at a time)`,
       waitingFor: {
-        reason: 'project_busy', number: ahead.issueNumber, doing, ...(Number.isInteger(minutes) ? { minutesSoFar: minutes } : {}),
+        reason: 'project_busy', number: ahead.issueNumber, doing: 'reading', ...(Number.isInteger(minutes) ? { minutesSoFar: minutes } : {}),
       },
     };
   }
@@ -730,23 +1060,30 @@ function queuedWait(row, {
 
 /**
  * Pure: what a build waiting its turn waits for, as the `build_queued`
- * stage's words and `waitingFor`: another build on its project (one at a
- * time), the most the bot does for one person at once, or nothing: it
- * starts next.
+ * stage's words and `waitingFor`: its project's other builds, once
+ * `perProject` are under way (homeroom-bot.js BUILDS_PER_PROJECT), the most
+ * the bot does for one person at once, or nothing: it starts next.
  */
-function buildWait(row, { busy = new Map(), working = 0, perPerson = 2, now = new Date(), holds = null } = {}) {
+function buildWait(row, {
+  busy = new Map(), working = 0, perPerson = 2, now = new Date(), holds = null, perProject = buildsPerProject(),
+} = {}) {
   // 2026-10-05: no build on a project starts while its first version is
   // not live (homeroom-bot.js liveBuildCandidates).
   const firstVersion = firstVersionWait(row, holds);
   if (firstVersion) return { doing: FIRST_VERSION_BUILD_WAIT, waitingFor: firstVersion };
-  const ahead = (busy.get(Number(row.app_id)) || [])
-    .find((b) => b.what === 'building' && b.issueNumber !== Number(row.issue_number));
-  if (ahead) {
+  const building = (busy.get(Number(row.app_id)) || [])
+    .filter((b) => b.what === 'building' && b.issueNumber !== Number(row.issue_number));
+  if (building.length >= perProject) {
+    // The one that started first is the one likely to finish first; the
+    // list is newest first.
+    const ahead = building[building.length - 1];
     const minutes = minutesSince(ahead.since, now);
+    const numbers = [...building].reverse().map((b) => `#${b.issueNumber}`).join(', ');
     return {
-      doing: `ready to build; ${row.name || row.slug} is building request #${ahead.issueNumber} first (one build per project at a time)`,
+      doing: `ready to build; ${row.name || row.slug} is building ${building.length === 1 ? 'request' : 'requests'} ${numbers} first (up to ${plural(perProject, 'build')} per project at a time)`,
       waitingFor: {
-        reason: 'project_building', number: ahead.issueNumber, ...(Number.isInteger(minutes) ? { minutesSoFar: minutes } : {}),
+        reason: 'project_building', number: ahead.issueNumber, building: building.length, most: perProject,
+        ...(Number.isInteger(minutes) ? { minutesSoFar: minutes } : {}),
       },
     };
   }
@@ -768,8 +1105,10 @@ async function proposalFacts(pool, sessionId, { domain = null } = {}) {
   if (!sessionId) return null;
   const revision = require('./pr-vote-revision');
   const { rows } = await pool.query(
-    `SELECT cs.id, cs.app_id, a.slug, cs.status, cs.check_state, cs.check_phase, cs.checks_progress,
-            cs.test_results, cs.session_title, cs.pr_title, cs.promoted_at, cs.created_at,
+    `SELECT cs.id, cs.app_id, a.slug,
+            CASE WHEN cs.status = 'merged' AND cs.live_at IS NULL THEN 'merging' ELSE cs.status END AS status,
+            cs.check_state, cs.check_phase, cs.checks_progress,
+            cs.test_results, cs.session_title, cs.pr_title, cs.pr_number, cs.promoted_at, cs.created_at,
             (SELECT COUNT(*)::int FROM pr_votes pv WHERE pv.session_id = cs.id AND pv.vote = 'yes'
                 AND ${revision.countedVotePredicateSql('pv', 'cs')}) AS yes,
             (SELECT COUNT(*)::int FROM pr_votes pv WHERE pv.session_id = cs.id AND pv.vote = 'no'
@@ -780,19 +1119,25 @@ async function proposalFacts(pool, sessionId, { domain = null } = {}) {
   const s = rows[0];
   if (!s) return null;
   let needed = null;
+  // 13 Oct 2026, D1: a project's first version goes live without a vote.
+  const first = s.status === 'promoted'
+    ? await require('./first-version-rule').isFirstVersion(pool, s.id)
+    : false;
   if (s.status === 'promoted') {
     try {
       const governance = require('./governance');
       const gov = await governance.getGovernance(pool, s.app_id);
       const electorate = await governance.getElectorate(pool, s.app_id, gov);
-      needed = governance.computeGate(gov, electorate.active, s.yes, s.no, s.promoted_at || s.created_at).required;
+      needed = governance.computeGate(gov, electorate.active, s.yes, s.no, s.promoted_at || s.created_at, undefined, { firstVersion: first }).required;
     } catch { needed = null; }
   }
-  const link = links(domain, { slug: s.slug, proposal: s.id }).proposal;
+  const link = links(domain, { slug: s.slug, proposal: s.id, pr: s.pr_number }).proposal;
   return {
     proposal: Number(s.id),
     title: s.session_title || s.pr_title || null,
-    status: { promoted: 'waiting for approval', merging: 'going live', merged: 'live', closed: 'closed' }[s.status] || s.status,
+    status: first
+      ? 'the project\'s first version: it goes live without a vote once its tests pass'
+      : ({ promoted: 'waiting for approval', merging: 'going live', merged: 'live', closed: 'closed' }[s.status] || s.status),
     checks: checksWords({ ...s, failed_checks: failedCount(s.test_results) }),
     yesVotes: s.yes,
     noVotes: s.no,
@@ -1019,12 +1364,23 @@ function progressText(progress, { max = 5 } = {}) {
 module.exports = {
   FIRST_VERSION_STEPS,
   REQUEST_STEPS,
+  BUILD_LINE_STATES,
+  buildLineOf,
+  // N4: a first version's stages by name, and its App tab's step list.
+  FIRST_VERSION_PHASES,
+  FIRST_VERSION_STEP_KEYS,
+  firstVersionPhase,
+  firstVersionSteps,
+  GOING_LIVE,
   SETUP_PARTS,
   BUSY_STAGES,
   IN_FLIGHT_STAGES,
   START_GRACE_MS,
   inFlight,
   stageOf,
+  checksOnHead,
+  firstVersionStage,
+  firstVersionStopped,
   buildUnderWay,
   attemptOutcome,
   attachAttempts,

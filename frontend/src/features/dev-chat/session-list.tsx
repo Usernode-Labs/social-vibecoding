@@ -22,6 +22,7 @@
 
 import { useState, type KeyboardEvent, type ReactNode } from 'react';
 
+import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { messageStamp } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
 import { sessionListStore } from './session-list-store';
@@ -117,11 +118,12 @@ function ActionButton({ a }: { a: SessionAction }): ReactNode {
  */
 function Row({ row }: { row: SessionRow }): ReactNode {
   const open = () => { void call('openSessionFromList', [row.id]); };
+  const t = useMessages('devchat');
   return (
     <div
       role="button"
       tabIndex={0}
-      aria-label={`Open session: ${row.title} (${row.status})`}
+      aria-label={t('devchat:sessions.row.open', { title: row.title, status: row.status })}
       className="dc-session-item px-3 py-2 cursor-pointer hover:bg-zinc-100 dark:hover:bg-zinc-800/50 flex items-center gap-2"
       data-id={row.id}
       onClick={open}
@@ -138,7 +140,7 @@ function Row({ row }: { row: SessionRow }): ReactNode {
       {row.busy ? (
         <span className="inline-flex items-center gap-1 text-xs text-emerald-700 shrink-0 dark:text-emerald-400">
           <span className="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>
-          {'working…'}
+          {t('devchat:sessions.row.working')}
         </span>
       ) : null}
       {row.pr ? (
@@ -148,7 +150,7 @@ function Row({ row }: { row: SessionRow }): ReactNode {
           rel="noopener"
           className="text-xs text-violet-700 hover:text-violet-700 dark:text-violet-400 dark:hover:text-violet-300"
           onClick={(e) => e.stopPropagation()}
-        >{`PR#${row.pr.number}`}</a>
+        >{t('devchat:sessions.row.pr', { number: row.pr.number })}</a>
       ) : null}
       {row.actions.map((a) => <ActionButton key={a.key} a={a} />)}
       <SessionDate createdAt={row.createdAt} />
@@ -176,21 +178,23 @@ function SessionDate({ createdAt }: { createdAt: string }) {
 }
 
 function EmptyPitch(): ReactNode {
+  const t = useMessages('devchat');
   return (
     <div className="text-center px-6 py-12">
       <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-1">
-        Want to change this app? Just ask.
+        {t('devchat:sessions.empty.title')}
       </p>
       <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-3 max-w-xs mx-auto">
-        {"Describe what you'd like different in plain English. An AI writes the code and opens a "
-          + 'real pull request. No coding required. The app’s users then vote it in.'}
+        {t('devchat:sessions.empty.body')}
       </p>
       <p className="text-xs text-zinc-500 dark:text-zinc-500">
-        {'Hit '}
-        <span className="font-medium text-emerald-700 dark:text-emerald-400">+ New Session</span>
-        {' above to start, e.g. '}
-        <span className="italic">&quot;make the header dark blue&quot;</span>
-        {'.'}
+        <RichMessage
+          id="devchat:sessions.empty.howTo"
+          components={[
+            <span className="font-medium text-emerald-700 dark:text-emerald-400" />,
+            <span className="italic" />,
+          ]}
+        />
       </p>
     </div>
   );
@@ -202,6 +206,7 @@ function EmptyPitch(): ReactNode {
  */
 function OlderRow({ older }: { older: number }): ReactNode {
   const [pending, setPending] = useState(false);
+  const t = useMessages('devchat');
   return (
     <button
       type="button"
@@ -214,7 +219,7 @@ function OlderRow({ older }: { older: number }): ReactNode {
         setPending(false);
       }}
     >
-      {pending ? 'Loading…' : `Show ${older.toLocaleString()} older ${older === 1 ? 'session' : 'sessions'}`}
+      {pending ? t('devchat:sessions.older.loading') : t('devchat:sessions.older.show', { count: older, number: older.toLocaleString() })}
     </button>
   );
 }

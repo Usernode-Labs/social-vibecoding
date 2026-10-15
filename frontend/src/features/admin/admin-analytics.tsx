@@ -196,33 +196,34 @@ function useTips(prefix: string, htmls: string[]): void {
 // Plain-language explanation per chart/box. Keyed by the data-info attribute
 // on each .dc-info icon in the markup below.
 const INFO: Record<string, string> = {
-  'include-admins': 'Admin accounts (including view-only admins) are excluded from every number on this page by default, so operator/test activity does not skew the stats. Tick this to include them.',
+  'include-admins': 'Admin accounts (including view-only admins) are excluded from every number on this page by default, so operator/test activity does not skew the stats. Tick this to include them. Test accounts and the Homeroom bot are never counted as users; a change the bot built counts for the person who asked for it.',
   counters: 'At-a-glance totals. WAU | MAU are two independent counts: distinct users active in the last 7 vs 30 days, not a ratio. "Promoted (open)" is sessions live in promoted/merging right now; the all-time counts never leave their bucket.',
   spend: 'LLM spend per day for the last 30 days. <b>Platform key</b> is spend billed to the platform (this is what the caps track: the platform\'s own daily cap, and each account\'s weekly one); <b>User key</b> is spend billed to users\' own Anthropic keys (display only); <b>Both</b> stacks them.',
-  funnels: 'Ordered paths use the same user or dev session at every step and a 30-day observation window. Mature cohorts show step conversion; maturing cohorts show provisional counts only. App-opening receipts depend on client reporting, so a missing receipt is coverage unknown rather than measured abandonment. Historical coarse/backfilled proposal times and bypassed stages are reported outside the denominator.',
-  growth: 'New signups, apps, and promoted/merged PRs bucketed per ISO week. Hover any bar for that week\'s exact count.',
-  'general-users': 'A general user has a positive project-use heartbeat or took a deliberate human action: sent a project, Messages, change, Mayor, or Global Chat message; cast a proposal or request vote; gave kudos; or favorited a project. System and assistant messages do not count. Days use UTC. Older project heartbeats can include an idle open tab, actions deleted before durable logging are unavailable, and favorite actions before explicit logging are unavailable. <b>DAU</b> is distinct users active that day; <b>WAU</b> is a 7-day rolling window (distinct users in the trailing 7 days, recomputed every day); <b>MAU</b> is a 30-day rolling window. Daily points over the last 90 days. Hover for the exact date and count.',
+  funnels: 'Ordered paths use the same user or dev session at every step and a 30-day observation window. A dev session the Homeroom bot built belongs to the person who asked for it. Mature cohorts show step conversion; maturing cohorts show provisional counts only. App-opening receipts depend on client reporting, so a missing receipt is coverage unknown rather than measured abandonment. Historical coarse/backfilled proposal times and bypassed stages are reported outside the denominator.',
+  growth: 'New signups, apps, and promoted/merged PRs bucketed per ISO week. A PR the Homeroom bot built counts for the person who asked for it. Hover any bar for that week\'s exact count.',
+  'general-users': 'A general user has a positive project-use heartbeat or took a deliberate human action: sent a project, Messages, change, Mayor, or Global Chat message (messages to the Homeroom bot included); filed a request; cast a proposal or request vote; gave kudos; or favorited a project. System and assistant messages, and the Homeroom bot itself, do not count. Days use UTC. Older project heartbeats can include an idle open tab, actions deleted before durable logging are unavailable, and favorite actions before explicit logging are unavailable. <b>DAU</b> is distinct users active that day; <b>WAU</b> is a 7-day rolling window (distinct users in the trailing 7 days, recomputed every day); <b>MAU</b> is a 30-day rolling window. Daily points over the last 90 days. Hover for the exact date and count.',
   retention: 'Each row is a signup-week cohort; each cell is the share of that cohort with recorded participation in a given UTC week. The General users definition describes what counts and its historical limits. Hover a cell for the exact counts. Use the <b>Align</b> toggle to line cohorts up on real calendar weeks (default) or by cohort age (Week 0, Week 1, …).',
-  'power-users': 'A power user, evaluated over a 7-day window, both used dapps &ge; 3 times that week (counting each use of any dapp) AND did &ge; 3 visible developer actions (each a kudos given, vote cast, or proposal made). <b>Power-user WAU</b> is a 7-day rolling count; <b>Consistency (L4)</b> stacks, per day, how many of the trailing 4 weeks each user was a power user (1/4…4/4). Hover for exact counts.',
-  'top-users': 'The 30 most prolific builders by lifetime dev sessions started, highest on the left. Hover a bar for the per-outcome breakdown (PRs produced, promoted, voted, merged).',
+  'power-users': 'A power user, evaluated over a 7-day window, both used dapps &ge; 3 times that week (counting each use of any dapp) AND did &ge; 3 visible developer actions (each a kudos given, vote cast, or proposal made; a proposal the Homeroom bot made for someone counts as theirs). <b>Power-user WAU</b> is a 7-day rolling count; <b>Consistency (L4)</b> stacks, per day, how many of the trailing 4 weeks each user was a power user (1/4…4/4). Hover for exact counts.',
+  'top-users': 'The 30 most prolific builders by lifetime dev sessions started, highest on the left. A session the Homeroom bot built counts for the person who asked for it. Hover a bar for the per-outcome breakdown (PRs produced, promoted, voted, merged).',
   'spend-by-builder': 'The 30 biggest LLM spenders, highest on the left. The toggle re-ranks by <b>Platform key</b> spend, <b>User key</b> (BYOK) spend, or <b>Both</b>. Hover a bar for the full breakdown.',
   kudos: 'Per ISO week, how many users gave 0, 1, 2, 3, 4–5, 6–10 or 11+ kudos (everyone gets a budget of 20/week). The 0 bucket is registered users who gave none that week, making this a participation view rather than a raw count. Counts direct PR kudos only. Issue-bounty pledges draw on the same weekly allowance but are not in this series.',
   'spend-distribution': 'Per day, how many users\' platform-funded AI spend (what the caps track) fell into each dollar bucket. The <b>$0</b> bucket is every registered user (as of that day) with no platform spend, and it usually dwarfs the paid buckets, so it is hidden by default; use the <b>Show $0</b> toggle to include it. The top tier splits <b>$20+ platform only</b> (heavy spenders with no usable own key) from <b>$20+ own key</b> (heavy spenders who had a personal Anthropic key configured, or spent on it that day, so could keep going). These are DAY buckets, not cap boundaries. The account cap is weekly, so a day above $20 is a heavy day rather than a refusal. The "has own key" signal is a current snapshot corrected by that day\'s own-key spend, so past-day attribution is approximate.',
   'ui-failures': 'Representative instrumented journeys over the last 14 days. Failure rate divides failed outcomes by successful plus failed outcomes; cancellations, timeouts, and navigation departures are shown separately. Repeats and departures are descriptive signals, not proof that someone was frustrated. Delivery receipts describe observed coverage, but cannot count telemetry that never reached the server.',
+  'page-loads': 'One Navigation Timing duration per full page load or reload (browser start to load finish), over the chosen window. Each load is credited to the first real screen the shell showed, or "Left before a screen showed" when none appeared before the load ended. In-page navigation and post-load fetches are not measured, and a page hidden before its load finished is left out because browsers slow hidden pages on purpose. The same privacy limits as UI failures apply: no service identities, nobody who objected, and admins excluded unless the box above is ticked.',
 };
 
 // Per-card Overview definitions (#341). Keyed by a stable card id, mirroring
 // the chart-level INFO map. Each is the plain-language definition of how that
 // card's number is actually computed (see <Counters/> + the /overview SQL).
 const CARD_INFO: Record<string, string> = {
-  'total-users': 'Count of all registered accounts (admins excluded unless the box above is ticked).',
+  'total-users': 'Count of all registered accounts (admins excluded unless the box above is ticked; test accounts and the Homeroom bot never count).',
   'new-7d': 'Accounts that signed up in the last 7 days.',
   'new-30d': 'Accounts that signed up in the last 30 days.',
-  'wau-mau': 'Two independent counts, not a ratio. <b>WAU</b> = distinct users with a positive project-use heartbeat or a human message, vote, kudos, or favorite action in the last 7 UTC days. <b>MAU</b> = the same, over the last 30 days. System and assistant messages do not count; older heartbeats can include an idle open tab. The General-users section below charts these same definitions as daily rolling windows.',
+  'wau-mau': 'Two independent counts, not a ratio. <b>WAU</b> = distinct users with a positive project-use heartbeat or a human message (to the Homeroom bot too), filed request, vote, kudos, or favorite action in the last 7 UTC days. <b>MAU</b> = the same, over the last 30 days. System and assistant messages do not count; older heartbeats can include an idle open tab. The General-users section below charts these same definitions as daily rolling windows.',
   'apps': 'Published apps that aren\'t self-hosted and aren\'t deleted.',
   'promoted-open': 'Live count of dev sessions sitting in the "promoted" or "merging" state right now (not a lifetime total).',
-  'promoted-all': 'Every dev session that was ever opened for a group vote.',
-  'merged-all': 'Every dev session that landed in production.',
+  'promoted-all': 'Every dev session that was ever opened for a group vote. A session the Homeroom bot built counts under the person who asked for it.',
+  'merged-all': 'Every dev session that landed in production, the Homeroom bot\'s builds included under the person who asked for each.',
   'kudos': 'Total kudos handed out across all users.',
   'llm-today': 'Today\'s platform-funded LLM spend (the spend the caps track), in dollars.',
   'llm-week': 'Platform-key LLM spend so far this week, in dollars. The week runs Monday 00:00 UTC to Monday 00:00 UTC, the same window the per-user weekly cap enforces.',
@@ -1302,6 +1303,7 @@ const UI_ACTION_LABELS: Record<string, string> = {
   change_create: 'Start a change',
   preview_open: 'Open preview',
   push_permission: 'Allow notifications',
+  topic_load: 'Open request or proposal page',
 };
 
 const UI_SCREEN_LABELS: Record<string, string> = {
@@ -1452,6 +1454,74 @@ function UIExperience({ report }: { report: any }) {
   );
 }
 
+// Page load times (#4965): one Navigation Timing duration per full page load,
+// credited to the first real screen the shell showed. The same
+// privacy-limited pipeline that records UI failures, so the same cohort rules
+// apply (the checkbox above governs it too).
+const LOAD_SCREEN_LABELS: Record<string, string> = {
+  home: 'Home', discover: 'Discover', communities: 'Communities',
+  challenges: 'Challenges', profile: 'Profile', my_proposals: 'My proposals',
+  settings: 'Settings', messages: 'Messages', assistant: 'Global Chat',
+  agent_session: 'Agent session', app: 'Running app', project: 'Project page',
+  shell_boot: 'Left before a screen showed',
+};
+
+const LOAD_DAY_OPTIONS: Array<[string, string]> = [
+  ['1', '1 day'], ['7', '7 days'], ['14', '14 days'], ['30', '30 days'],
+];
+
+function PageLoads({ report, days, onDays }: { report: any; days: string; onDays: (v: string) => void }) {
+  const unavailable = !report || report.unavailable;
+  const screens = (!unavailable && Array.isArray(report.screens)) ? report.screens : [];
+  return (
+    <section id="page-loads" className={`${AdminUI.card} p-4`}>
+      <div className="flex items-center justify-between flex-wrap gap-2 mb-1">
+        <h3 className={H3}>Page load times<InfoIcon info="page-loads" /></h3>
+        {!unavailable ? (
+          <ToggleGroup cls="load-days-btn" attr="data-days" value={days}
+            options={LOAD_DAY_OPTIONS} onChange={onDays} />
+        ) : null}
+      </div>
+      <p className={SUB}>How long full page loads take, from the browser starting to the page finishing loading. Each load is credited to the first screen shown.</p>
+      {unavailable ? (
+        <p className={AdminUI.cardDescription}>Page load analytics could not be loaded.</p>
+      ) : (
+        <div>
+          {screens.length ? (
+            <div className={AdminUI.tableWrap}>
+              <table className={AdminUI.table}>
+                <thead className={AdminUI.thead}><tr>
+                  <th className={AdminUI.th}>Screen</th><th className={AdminUI.th}>Loads</th>
+                  <th className={AdminUI.th}>People</th><th className={AdminUI.th}>Median</th>
+                  <th className={AdminUI.th}>95th percentile</th>
+                </tr></thead>
+                <tbody>
+                  <tr className={AdminUI.trHover}>
+                    <td className={AdminUI.td}>All page loads</td>
+                    <td className={`${AdminUI.td} tabular-nums`}>{fmtInt(report.total?.loads)}</td>
+                    <td className={`${AdminUI.td} tabular-nums`}>{fmtInt(report.total?.people)}</td>
+                    <td className={`${AdminUI.td} tabular-nums`}>{uiDuration(report.total?.p50Ms)}</td>
+                    <td className={`${AdminUI.td} tabular-nums`}>{uiDuration(report.total?.p95Ms)}</td>
+                  </tr>
+                  {screens.map((row: any) => (
+                    <tr className={AdminUI.trHover} key={row.screen}>
+                      <td className={AdminUI.td}>{LOAD_SCREEN_LABELS[row.screen] || row.screen}</td>
+                      <td className={`${AdminUI.td} tabular-nums`}>{fmtInt(row.loads)}</td>
+                      <td className={`${AdminUI.td} tabular-nums`}>{fmtInt(row.people)}</td>
+                      <td className={`${AdminUI.td} tabular-nums`}>{uiDuration(row.p50Ms)}</td>
+                      <td className={`${AdminUI.td} tabular-nums`}>{uiDuration(row.p95Ms)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : EMPTY}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function AnalyticsSection() {
   const [gate, setGate] = useState<string | null>(null);
   const [data, setData] = useState<any>(null);
@@ -1462,6 +1532,10 @@ function AnalyticsSection() {
   const [spendMode, setSpendMode] = useState<'platform' | 'user' | 'both'>('platform');
   const [builderMode, setBuilderMode] = useState<'platform' | 'user' | 'both'>('platform');
   const [spendDistIncludeZero, setSpendDistIncludeZero] = useState(INITIAL_SPEND_DIST_ZERO);
+  // Page load times have their own window (default 7 days), so they refetch
+  // on their own the way the funnels do.
+  const [loadDays, setLoadDays] = useState('7');
+  const [loadReport, setLoadReport] = useState<any>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
@@ -1556,6 +1630,20 @@ function AnalyticsSection() {
     })();
   }, [authed, includeAdmins, cohort]);
 
+  // Page load times (#4965), refetched when the window or the admin flag
+  // flips. A failure keeps the card with its "could not be loaded" line.
+  useEffect(() => {
+    if (!authed) return;
+    (async () => {
+      try {
+        const r = await getJSON(withAdmins(`/api/admin/analytics/page-loads?days=${encodeURIComponent(loadDays)}`));
+        if (alive.current) setLoadReport(r);
+      } catch {
+        if (alive.current) setLoadReport({ unavailable: true });
+      }
+    })();
+  }, [authed, includeAdmins, loadDays]);
+
   const d = data;
   const daily = (d?.generalUsers && d.generalUsers.daily) || [];
   const wau = (d?.powerUsers && d.powerUsers.wau) || [];
@@ -1600,6 +1688,8 @@ function AnalyticsSection() {
           </section>
 
           <UIExperience report={d?.uiFailures} />
+
+          <PageLoads report={loadReport} days={loadDays} onDays={setLoadDays} />
 
           {/* Daily spend */}
           <section className={`${AdminUI.card} p-4`}>
@@ -1807,7 +1897,7 @@ function AnalyticsSection() {
           {/* Top users by dev sessions */}
           <section className={`${AdminUI.card} p-4`}>
             <h3 className={`${H3} mb-1`}>Top builders<InfoIcon info="top-users" /></h3>
-            <p className={SUB}>Top 30 users by lifetime dev sessions started, highest on the left. Hover a bar for the per-outcome breakdown.</p>
+            <p className={SUB}>Top 30 users by lifetime dev sessions started, highest on the left. A change the Homeroom bot built counts for the person who asked for it. Hover a bar for the per-outcome breakdown.</p>
             <div id="top-users">
               {d ? (((d.topUsers && d.topUsers.users) || []).length
                 ? <TopUsers users={d.topUsers.users} includeAdmins={includeAdmins} /> : EMPTY) : null}

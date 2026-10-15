@@ -148,13 +148,13 @@ function findRoute(routes, method, path) {
   return routes.find((r) => r.method === method && r.path === path);
 }
 
-async function callById(routes, { slug = 'demo', id, query = {} }) {
+async function callById(routes, { slug = 'demo', id, query = {}, user = { id: 1 } }) {
   const route = findRoute(routes, 'get', '/api/apps/:slug/proposals/:id');
   assert.ok(route, 'proposals/:id route registered');
   let payload = null;
   let statusCode = 200;
   await route.handler(
-    { params: { slug, id: String(id) }, user: { id: 1 }, query },
+    { params: { slug, id: String(id) }, user, query },
     { json(p) { payload = p; }, status(c) { statusCode = c; return { json(p) { payload = p; } }; } }
   );
   return { payload, statusCode };
@@ -208,6 +208,57 @@ test('IS_STAGING + ?demo=1 resolves a mock merged id not in the DB', async () =>
   assert.equal(statusCode, 200);
   assert.equal(payload.proposal.id, 9100024);
   assert.equal(payload.proposal.status, 'merged');
+});
+
+test('#4524: IS_STAGING + ?demo=1 also resolves a mock session the board lists hold', async () => {
+  // The topic page's fast open asks this endpoint for its item BESIDE the
+  // board load, so the mock own session (990101, the session lists' own
+  // response) and the mock shared session (990002) must resolve here too —
+  // production's SQL serves those states, and a 404 in the network log is a
+  // console error, which fails every declared check on the route.
+  const { routes } = loadVotes({ row: null, staging: true });
+  const own = await callById(routes, { id: 990101, query: { demo: '1' } });
+  assert.equal(own.statusCode, 200);
+  assert.equal(own.payload.proposal.id, 990101);
+  assert.equal(own.payload.proposal.user_id, 1, 'the mock own session belongs to the viewer');
+  const shared = await callById(routes, { id: 990002, query: { demo: '1' } });
+  assert.equal(shared.statusCode, 200);
+  assert.equal(shared.payload.proposal.id, 990002);
+  assert.ok(shared.payload.proposal.shared_at, 'the mock shared session is shared');
+  const production = loadVotes({ row: null, staging: false });
+  assert.equal((await callById(production.routes, { id: 990002, query: { demo: '1' } })).statusCode, 404,
+    'production never fabricates a mock session');
+  assert.equal((await callById(routes, { id: 42, query: { demo: '1' } })).statusCode, 404,
+    'an id no generator holds still 404s');
+});
+
+test('#4505: the existing staging merged sample has the same viewer owner in list and detail', async () => {
+  const viewer = { id: 777, username: 'sample-member' };
+  const { routes } = loadVotes({ row: null, staging: true });
+  const detail = await callById(routes, { id: 9100000, query: { demo: '1' }, user: viewer });
+  assert.equal(detail.statusCode, 200);
+  assert.equal(detail.payload.proposal.user_id, viewer.id);
+  assert.equal(detail.payload.proposal.username, viewer.username);
+  assert.match(detail.payload.proposal.pr_title, /^\[Mock\]/);
+  const route = findRoute(routes, 'get', '/api/apps/:slug/merged');
+  let payload, statusCode = 200;
+  await route.handler({ params: { slug: 'demo' }, user: viewer, query: { demo: '1' } }, {
+    json(p) { payload = p; }, status(c) { statusCode = c; return this; },
+  });
+  assert.equal(statusCode, 200, JSON.stringify(payload));
+  const sample = payload.merged.find((row) => row.id === 9100000);
+  assert.equal(sample.user_id, detail.payload.proposal.user_id);
+  assert.equal(sample.username, detail.payload.proposal.username);
+  assert.equal(sample.deployment_state, 'pending');
+  assert.equal(payload.merged.find((row) => row.id === 9100001).username, 'staging-tester');
+  const incomplete = await callById(routes, { id: 9100000, query: { demo: '1' }, user: { id: 777 } });
+  assert.equal(incomplete.payload.proposal.user_id, 0);
+  assert.equal(incomplete.payload.proposal.username, 'staging-tester');
+  const regular = await callById(routes, { id: 9100000, user: viewer });
+  assert.equal(regular.statusCode, 404, 'normal staging does not fabricate the sample');
+  const production = loadVotes({ row: null, staging: false });
+  assert.equal((await callById(production.routes, { id: 9100000, query: { demo: '1' }, user: viewer })).statusCode, 404,
+    'production never fabricates a viewer-owned sample');
 });
 
 test('IS_STAGING + ?demo=1 resolves a mock promoted id too', async () => {
@@ -313,4 +364,146 @@ test('#3669: a promoted row carries the governance fields the vote pill and ledg
   const approvals = p.mergeRequirements.gates.find((g) => g.key === 'approvals');
   assert.equal(approvals.state, 'done', 'the vote has landed');
   assert.equal(approvals.detail && approvals.detail.note, '1 of 1');
+});
+
+// #4367: GET /api/apps/:slug/changes/:number turns a change's pull request
+// number into the session its page opens by, under the same view gate and
+// visibility rule as the by-id read above.
+async function callChange(routes, { slug = 'demo', number, query = {}, user = { id: 1 } }) {
+  const route = findRoute(routes, 'get', '/api/apps/:slug/changes/:number');
+  assert.ok(route, 'changes/:number route registered');
+  let payload = null;
+  let statusCode = 200;
+  await route.handler(
+    { params: { slug, number: String(number) }, user, query },
+    { json(p) { payload = p; }, status(c) { statusCode = c; return { json(p) { payload = p; } }; } }
+  );
+  return { payload, statusCode };
+}
+
+test('changes/:number resolves a PR number to its session, by app and visibility', async () => {
+  const { routes, captured } = loadVotes({
+    db: (sql) => (/cs\.pr_number = \$3/.test(sql) ? [{ id: 7296 }] : undefined),
+  });
+  const { payload, statusCode } = await callChange(routes, { number: 4509 });
+  assert.equal(statusCode, 200);
+  assert.deepEqual(payload, { sessionId: 7296, prNumber: 4509 });
+  const q = captured.calls.find((c) => /cs\.pr_number = \$3/.test(c.sql));
+  assert.match(q.sql, /cs\.app_id = \$1 AND cs\.pr_number = \$3/, 'by app and PR number, never by id');
+  assert.match(q.sql, /cs\.status IN \('promoted', 'merging', 'merged'\)/);
+  assert.match(q.sql, /cs\.user_id = \$2 OR cs\.shared_at IS NOT NULL/, 'a draft is its owner’s alone');
+  assert.deepEqual(q.params, [1, 1, 4509]);
+});
+
+test('changes/:number 404s for an unknown number, a bad number, or no access', async () => {
+  const none = loadVotes({ db: () => undefined });
+  assert.equal((await callChange(none.routes, { number: 4509 })).statusCode, 404);
+  for (const bad of ['abc', '0', '-3', '12x', '1e3']) {
+    const r = loadVotes({ db: () => [{ id: 1 }] });
+    assert.equal((await callChange(r.routes, { number: bad })).statusCode, 404, bad);
+    assert.ok(!r.captured.calls.some((c) => /pr_number = \$3/.test(c.sql)), `${bad} is never looked up`);
+  }
+  const gated = loadVotes({ gateApp: null });
+  assert.equal((await callChange(gated.routes, { number: 4509 })).statusCode, 404);
+  assert.ok(!gated.captured.calls.some((c) => /pr_number = \$3/.test(c.sql)), 'no row query past the gate');
+});
+
+// #4309 follow-up: a merged change of the platform's own app that is not live
+// yet carries when the next release does, for its page's "Merged; goes live
+// in the next release (about 8 minutes)". A child app's does not.
+test('a Homeroom merge not live yet carries its next release; a child app\'s, or a live one, does not', async () => {
+  const releaseWatch = require('../src/services/release-watch');
+  const MIN = 60 * 1000;
+  const now = Date.now();
+  const selfRow = { id: 1, main_sha: null, last_deploy_at: new Date(now - 3 * MIN), release_stall: null, release_run: null,
+    newest_at: new Date(now - MIN) };
+  const db = (sql) => (/FROM apps a\s+LEFT JOIN LATERAL/.test(sql) ? [selfRow] : undefined);
+  const row = { id: 4242, status: 'merged', live_at: null, merged_at: new Date(now - MIN).toISOString(), pr_number: 88 };
+
+  releaseWatch._forTest.resetOutlook();
+  let loaded = loadVotes({ row, gateApp: { id: 1, slug: 'usernode-2d5619', self_hosted: true }, db });
+  let { payload } = await callById(loaded.routes, { id: 4242 });
+  // Released 3 minutes ago, merged 1 minute ago: built in 4 more, live a minute after.
+  assert.deepEqual(payload.proposal.release, { state: 'next', etaAt: new Date(now + 5 * MIN).toISOString() });
+
+  releaseWatch._forTest.resetOutlook();
+  loaded = loadVotes({ row, gateApp: { id: 2, slug: 'notes', self_hosted: false }, db });
+  ({ payload } = await callById(loaded.routes, { id: 4242 }));
+  assert.equal(payload.proposal.release, undefined, 'a child app\'s merge goes live with its own deploy');
+  assert.ok(!loaded.captured.calls.some((c) => /FROM apps a\s+LEFT JOIN LATERAL/.test(c.sql)));
+
+  releaseWatch._forTest.resetOutlook();
+  loaded = loadVotes({ row: { ...row, live_at: new Date(now).toISOString() }, gateApp: { id: 1, slug: 'usernode-2d5619', self_hosted: true }, db });
+  ({ payload } = await callById(loaded.routes, { id: 4242 }));
+  assert.equal(payload.proposal.release, undefined, 'live');
+});
+
+// #5064: opened on its own (from the bell or Home), a merge of Homeroom
+// itself gets the board's deployment_state, so its page says going live
+// until the running build carries it, even though the legacy merge stamped
+// live_at at once.
+test('#5064: a Homeroom merge the running build does not carry yet reads as deploying on its own page', async () => {
+  const releaseWatch = require('../src/services/release-watch');
+  const A_SHA = 'a'.repeat(40);
+  const B_SHA = 'b'.repeat(40);
+  const MIN = 60 * 1000;
+  const now = Date.now();
+  const merged = { id: 4242, status: 'merged', live_at: new Date(now - MIN).toISOString(),
+    merged_at: new Date(now - MIN).toISOString(), merge_commit_sha: B_SHA, pr_number: 88 };
+  const outlookRow = { id: 1, main_sha: A_SHA, last_deploy_at: new Date(now - 3 * MIN), release_stall: null,
+    release_run: null, newest_at: new Date(now - MIN) };
+  const boundary = (at) => ({ id: 4100, pr_number: 80, merge_commit_sha: A_SHA, merged_at: at, created_at: at, pending_count: 1 });
+  const db = (running) => (sql) => {
+    if (/FROM apps a\s+LEFT JOIN LATERAL/.test(sql)) return [outlookRow];
+    if (/SELECT id, slug, self_hosted, main_sha, release_stall FROM apps WHERE id = \$1/.test(sql)) {
+      return [{ id: 1, slug: 'usernode-2d5619', self_hosted: true, main_sha: running, release_stall: null }];
+    }
+    if (/FROM chat_sessions live/.test(sql)) return [boundary(new Date(now - 60 * MIN).toISOString())];
+    return undefined;
+  };
+  const gateApp = { id: 1, slug: 'usernode-2d5619', self_hosted: true };
+
+  releaseWatch._forTest.resetOutlook();
+  let loaded = loadVotes({ row: merged, gateApp, db: db(A_SHA) });
+  let { payload } = await callById(loaded.routes, { id: 4242 });
+  assert.equal(payload.proposal.deployment_state, 'deploying', 'merged after the running build: going live');
+  assert.equal(payload.proposal.release.state, 'next', 'and its page says when');
+
+  // The running build is the change's own: live.
+  releaseWatch._forTest.resetOutlook();
+  loaded = loadVotes({ row: { ...merged, merge_commit_sha: A_SHA }, gateApp,
+    db: (sql) => (/FROM chat_sessions live/.test(sql)
+      ? [{ ...boundary(merged.merged_at), id: 4242 }] : db(A_SHA)(sql)) });
+  ({ payload } = await callById(loaded.routes, { id: 4242 }));
+  assert.equal(payload.proposal.deployment_state, 'deployed');
+
+  // A child app's merge is not asked about: it goes live with its own deploy.
+  loaded = loadVotes({ row: merged, gateApp: { id: 2, slug: 'notes', self_hosted: false }, db: db(A_SHA) });
+  ({ payload } = await callById(loaded.routes, { id: 4242 }));
+  assert.equal(payload.proposal.deployment_state, undefined);
+  assert.ok(!loaded.captured.calls.some((c) => /FROM chat_sessions live/.test(c.sql)));
+});
+
+test('?demo=1: the going-live mock reads the same on its page and in the Done column', async () => {
+  const { routes } = loadVotes({ row: null, staging: true });
+  const detail = await callById(routes, { id: 9100035, query: { demo: '1' } });
+  assert.equal(detail.statusCode, 200);
+  const p = detail.payload.proposal;
+  assert.equal(p.status, 'merged');
+  assert.equal(p.live_at, null);
+  assert.equal(p.release.state, 'next');
+  const minutes = Math.round((Date.parse(p.release.etaAt) - Date.now()) / 60000);
+  assert.equal(minutes, 4, 'four minutes off: the demo waits out the release gap (four minutes since 10 Oct 2026)');
+  const route = findRoute(routes, 'get', '/api/apps/:slug/merged');
+  let payload;
+  let statusCode = 200;
+  await route.handler({ params: { slug: 'demo' }, user: { id: 1 }, query: { demo: '1' } }, {
+    json(body) { payload = body; }, status(c) { statusCode = c; return this; },
+  });
+  assert.equal(statusCode, 200, JSON.stringify(payload));
+  const mock = payload.merged.find((row) => row.id === 9100035);
+  assert.equal(mock.deployment_state, 'deploying');
+  assert.equal(mock.release.state, 'next');
+  assert.equal(mock.live_at, null);
+  assert.match(mock.pr_title, /^\[Mock\] Going-live test/);
 });

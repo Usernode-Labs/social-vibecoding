@@ -19,11 +19,13 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 const SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf8');
 
 function makeAppView(over = {}) {
   const sandbox = {
+    PlatformI18n: englishPlatformI18n(),
     console,
     relTime: () => 'just now',
     escapeHtml: (s) => String(s == null ? '' : s),

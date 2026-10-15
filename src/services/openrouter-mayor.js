@@ -284,14 +284,21 @@ function hasParts(request, type) {
   ));
 }
 
+// `chatMessages`, when given, are messages already in the Chat Completions
+// shape, sent as they are after the system prompt instead of translating
+// `messages`: for a caller that has to place each part itself (the first
+// version's reviewer puts every screenshot right after its caption,
+// services/bot-review.js), which toChatMessages does not keep.
 function buildRequest({
-  model, reasoningEffort, systemPrompt, messages, tools, toolChoice, maxTokens, sessionId, fileInput = false,
-  imageInput = false, imagePlaceholder = IMAGE_PLACEHOLDER,
+  model, reasoningEffort, systemPrompt, messages, chatMessages: given = null, tools, toolChoice, maxTokens, sessionId,
+  fileInput = false, imageInput = false, imagePlaceholder = IMAGE_PLACEHOLDER,
 }) {
   const chatTools = toChatTools(tools);
-  const chatMessages = toChatMessages(systemPrompt, messages, {
-    fileInput: fileInput === true, imageInput: imageInput === true, imagePlaceholder,
-  });
+  const chatMessages = Array.isArray(given)
+    ? [...toChatMessages(systemPrompt, []), ...given]
+    : toChatMessages(systemPrompt, messages, {
+      fileInput: fileInput === true, imageInput: imageInput === true, imagePlaceholder,
+    });
   const request = {
     model: bareModelId(model),
     messages: chatMessages,
@@ -454,6 +461,11 @@ function createClient({
   billingPath = 'unknown',
   fetchImpl = globalThis.fetch,
   timeoutMs = DEFAULT_TIMEOUT_MS,
+  // Whether a request whose pictures the provider refused (HTTP 400) is
+  // sent again with each picture replaced by a line saying so (#3557). A
+  // caller for whom the pictures ARE the question (the first version's
+  // reviewer) passes false, and the refusal is an error instead.
+  imageFallback = true,
 }) {
   if (typeof apiKey !== 'string' || !apiKey.trim()) {
     throw new OpenRouterMayorError('authentication', 'OpenRouter key is unavailable');
@@ -468,13 +480,13 @@ function createClient({
   const imageInput = catalogModel?.supportsImages === true;
 
   async function streamChat({
-    messages, systemPrompt, tools, toolChoice, onToken, onDone, onError, signal, maxTokens, telemetryContext,
+    messages, chatMessages = null, systemPrompt, tools, toolChoice, onToken, onDone, onError, signal, maxTokens, telemetryContext,
   } = {}) {
     // `model` and `apiKey` from the caller are deliberately ignored: this
     // client is bound to the session's OpenRouter model and key, and a
     // Claude id or an Anthropic key must never reach OpenRouter.
     const request = (history, { images = imageInput } = {}) => buildRequest({
-      model: boundModel, reasoningEffort, systemPrompt, messages: history, tools, toolChoice, maxTokens, sessionId, fileInput,
+      model: boundModel, reasoningEffort, systemPrompt, messages: history, chatMessages, tools, toolChoice, maxTokens, sessionId, fileInput,
       imageInput: images, imagePlaceholder: images === imageInput ? IMAGE_PLACEHOLDER : IMAGE_REFUSED_PLACEHOLDER,
     });
     const body = request(messages);
@@ -537,9 +549,18 @@ function createClient({
         // the Mayor replays it on later turns. A request that carried one
         // and was refused as invalid is retried ONCE with each PDF replaced
         // by a line naming it. A picture is treated the same way.
+        // Not for messages sent as built (`chatMessages`), and not for
+        // pictures when the caller said so (`imageFallback`): a model
+        // answering about pictures it never saw is worse than no answer.
         const files = hasFileParts(body);
         const pictures = hasParts(body, 'image_url');
         if (!(err instanceof OpenRouterMayorError) || err.status !== 400 || (!files && !pictures)) throw err;
+        if (pictures && (!imageFallback || Array.isArray(chatMessages))) {
+          throw new OpenRouterMayorError(
+            'images_refused', 'The model provider refused the request\'s images (HTTP 400)', { status: 400 },
+          );
+        }
+        if (Array.isArray(chatMessages)) throw err;
         completion = await send(request(files ? withoutDocuments(messages) : messages, { images: !pictures && imageInput }));
       }
       const result = fromChatCompletion(completion, { requestedModel: boundModel });

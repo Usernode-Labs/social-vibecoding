@@ -208,13 +208,17 @@ test('?shot=cc-log-open opens the coding-run cards and nothing else, and writes 
   assert.deepEqual(writes, [], 'the deep link persists nothing');
 });
 
-test('the declared checks reach the open card through the deep link', () => {
-  const mine = DAPP.tests.filter((t) => t.name.startsWith('#1944'));
-  assert.equal(mine.length, 2);
-  for (const t of mine) {
-    assert.equal(t.path, '/?workspace=1&shot=cc-log-open#app/usernode-2d5619/dev/sessions/990412');
-    assert.match(t.expectSelector, /^details\.dc-cc-attached\[open\] > /, 'each asserts on the OPEN card');
-  }
-  assert.ok(mine.some((t) => t.expectSelector.endsWith('.dc-cc-head > .dc-cc-attached-chevron')), 'the chevron, in the head row');
-  assert.ok(mine.some((t) => t.expectSelector.endsWith('> pre.dc-cc-attached-log')), 'the log panel');
+test('the run card is checked where it is still drawn live: an agent session (#3976)', () => {
+  // The two #1944 checks opened the card on a classic session (990412,
+  // through ?shot=cc-log-open). Classic sessions are read-only now and their
+  // checks were retired with the chat, but this card is `Attached`, which an
+  // agent session draws for every coding run (agent-session/index.tsx
+  // RunCard), so its head row is checked on the agent-session fixture.
+  assert.equal(DAPP.tests.filter((t) => t.name.startsWith('#1944')).length, 0);
+  assert.ok(!DAPP.tests.some((t) => t.path.includes('/dev/sessions/990412')));
+  const run = DAPP.tests.find((t) => t.path === '/#messages/agent/990801'
+    && /\[data-agent-session-run\] > details\.dc-cc-attached/.test(t.expectSelector || ''));
+  assert.ok(run, 'an agent session\'s run card is a declared check');
+  assert.match(run.expectSelector, /\.dc-cc-head:has\(> \.dc-cc-attached-chevron\)/, 'the chevron, in the head row');
+  assert.match(run.expectSelector, /\+ \.dc-status-venue \+ \.dc-cc-chips$/, 'the agent under it, then the chips');
 });

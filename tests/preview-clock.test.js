@@ -28,6 +28,7 @@ const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
 
 const clock = require('../src/services/preview-clock');
 const testingNotes = require('../src/services/testing-notes');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 const DECLARED = '<!-- usernode:preview-at 2026-10-08T19:00 Europe/London -->';
 
@@ -241,11 +242,17 @@ test('a staging server reads the page\'s header, or the address on a page load',
 });
 
 test('every starter\'s api() helper sends the page\'s time on a preview opened at a moment', () => {
-  for (const name of ['game-2d', 'game-3d', 'multimedia-social', 'social-productivity']) {
-    const src = read(`app-templates/${name}/public/app.js`);
-    assert.match(src,
+  // Every starter under app-templates/ (services/app-templates.js), as a new
+  // project gets it: a game starter's helper is the shared game room's
+  // (public/game/room.js), the others' their own public/app.js.
+  const appTemplates = require('../src/services/app-templates');
+  for (const id of appTemplates.TEMPLATE_IDS.filter((t) => t !== appTemplates.DEFAULT_TEMPLATE)) {
+    const js = appTemplates.starterFiles(id)
+      .filter((f) => /^public\/.*\.js$/.test(f.path) && !/^public\/vendor\//.test(f.path))
+      .map((f) => f.content).join('\n');
+    assert.match(js,
       /if \(window\.usernode && window\.usernode\.previewNow\) headers\['x-usernode-now'\] = window\.usernode\.now\(\)\.toISOString\(\);/,
-      name);
+      id);
   }
 });
 
@@ -273,6 +280,7 @@ async function makeShell({ react = true, fetch = async () => ({ ok: true, json: 
   storeMod.stagingRefs.iframe = iframe;
   const byId = { 'staging-iframe': iframe };
   const sandbox = {
+    PlatformI18n: englishPlatformI18n(),
     console: { log() {}, warn() {}, error() {}, debug() {} },
     App: { user: { id: 1 }, currentTab: 'dev' },
     document: {

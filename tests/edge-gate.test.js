@@ -52,19 +52,31 @@ const state = {
   liveSessions: new Set(),     // `${sid}:${uid}`
   redeemed: new Set(),
   blocked: new Set(),          // `${uid}:${appId}`
+  customHostQueries: [],
 };
 function resetState() {
   state.liveSessions = new Set([`${SID}:${MEMBER_ID}`, `${SID}:${OUTSIDER_ID}`]);
   state.redeemed = new Set();
   state.blocked = new Set();
+  state.customHostQueries = [];
 }
 resetState();
+// Custom domains (#4405): the public app at app.example.com, the private one
+// at members.example.org, and a claim still waiting for DNS.
+const CUSTOM_PUB_HOST = 'app.example.com';
+const CUSTOM_PRIV_HOST = 'members.example.org';
+const CUSTOM_PENDING_HOST = 'soon.example.net';
 
 const APPS = {
   pubapp: { id: PUB_APP_ID, slug: 'pubapp', view_visibility: 'public', collab_visibility: 'public', runtime_name: 'sv-app-1-pubapp' },
   privapp: { id: PRIV_APP_ID, slug: 'privapp', view_visibility: 'private', collab_visibility: 'private', runtime_name: null },
 };
 const byId = (id) => Object.values(APPS).find((a) => a.id === Number(id));
+const CUSTOM_HOSTS = {
+  [CUSTOM_PUB_HOST]: { status: 'live', app: APPS.pubapp },
+  [CUSTOM_PRIV_HOST]: { status: 'live', app: APPS.privapp },
+  [CUSTOM_PENDING_HOST]: { status: 'pending', app: APPS.pubapp },
+};
 
 const fakePool = {
   async query(sql, params = []) {
@@ -119,6 +131,12 @@ const fakePool = {
     if (/SELECT id FROM users WHERE username = \$1/.test(sql)) {
       return { rows: params[0] === 'usernode-capture' ? [{ id: CAPTURE_ID }] : [] };
     }
+    // A custom domain (#4405, services/app-domains.js): only a LIVE one.
+    if (/FROM app_domains d JOIN apps a/.test(sql)) {
+      state.customHostQueries.push(params[0]);
+      const found = CUSTOM_HOSTS[params[0]];
+      return { rows: found && found.status === 'live' ? [{ app_id: found.app.id, slug: found.app.slug, name: found.app.slug }] : [] };
+    }
     throw new Error(`edge-gate stub: unexpected query: ${sql}`);
   },
 };
@@ -128,6 +146,7 @@ require.cache[poolPath] = {
   id: poolPath, filename: poolPath, loaded: true, exports: { getPool: () => fakePool },
 };
 delete require.cache[require.resolve('../src/services/app-access')];
+delete require.cache[require.resolve('../src/services/app-domains')];
 delete require.cache[require.resolve('../src/services/edge-gate')];
 delete require.cache[require.resolve('../src/routes/internal')];
 
@@ -585,6 +604,65 @@ test('asked by the Kubernetes gate, a 2xx names the app’s Service', async () =
   assert.equal(unknownPreview.status, 404);
   // Caddy never asks, and never gets one.
   assert.equal((await gate({ host: PUB_HOST })).headers['x-usernode-upstream'], undefined);
+});
+
+// ── Custom domains (#4405) ─────────────────────────────────────────────
+
+test('a live custom domain is the app’s production address: the same gate, the same sign-in', async () => {
+  require('../src/services/app-domains').resetCachesForTest();
+  // A public app: a guest, like at its Homeroom address.
+  const guest = await gate({ host: CUSTOM_PUB_HOST });
+  assert.equal(guest.status, 200);
+  assert.ok(guestOf(guest), 'a guest token for the app the host serves');
+  // A top-level visit hops to the apex with THIS host.
+  const visit = await gate({ host: CUSTOM_PUB_HOST, uri: '/scores', dest: 'document', site: 'cross-site' });
+  assert.equal(visit.status, 302);
+  assert.equal(new URL(visit.headers.location).searchParams.get('host'), CUSTOM_PUB_HOST);
+  // A cookie bound to the custom host signs the person in there.
+  const r = await gate({ host: CUSTOM_PUB_HOST, cookie: accessCookie(MEMBER_ID, CUSTOM_PUB_HOST, PUB_APP_ID), dest: 'document' });
+  assert.equal(r.status, 200);
+  assert.equal(jwt.decode(identityOf(r)).aud, `usernode:app:${PUB_APP_ID}`);
+  // The Homeroom host's cookie opens nothing here, and the other way round.
+  const other = await gate({ host: CUSTOM_PUB_HOST, cookie: accessCookie(MEMBER_ID, PUB_HOST, PUB_APP_ID) });
+  assert.ok(guestOf(other), 'a guest, not the person the Homeroom host’s cookie names');
+  // Never a preview: the production rules apply.
+  const k = await gate({ host: CUSTOM_PUB_HOST, extra: { 'X-Usernode-Gate': 'kubernetes' } });
+  assert.equal(k.headers['x-usernode-upstream'], 'sv-app-1-pubapp');
+  assert.equal(k.headers['x-usernode-applink'], chromeless('pubapp'));
+  // Caddy's custom-domain site asks for the container the same way.
+  const c = await gate({ host: CUSTOM_PUB_HOST, extra: { 'X-Usernode-Gate': 'caddy' } });
+  assert.equal(c.headers['x-usernode-upstream'], 'usernode-app-pubapp');
+  assert.equal(c.headers['x-usernode-applink'], chromeless('pubapp'));
+  // A private app at its custom domain: members only, as at its Homeroom address.
+  const priv = await gate({ host: CUSTOM_PRIV_HOST, dest: 'document' });
+  assert.equal(priv.status, 302);
+  assert.ok(isAuthorize(priv.headers.location));
+  const member = await gate({ host: CUSTOM_PRIV_HOST, cookie: accessCookie(MEMBER_ID, CUSTOM_PRIV_HOST, PRIV_APP_ID), dest: 'document' });
+  assert.equal(member.status, 200);
+  assert.equal(jwt.decode(identityOf(member)).aud, `usernode:app:${PRIV_APP_ID}`);
+  const outsider = await gate({ host: CUSTOM_PRIV_HOST, cookie: accessCookie(OUTSIDER_ID, CUSTOM_PRIV_HOST, PRIV_APP_ID), method: 'POST', origin: `https://${CUSTOM_PRIV_HOST}` });
+  assert.equal(outsider.status, 404);
+});
+
+test('a pending claim or an unknown host is 404 at the gate and at the apex hop: never an open redirect', async () => {
+  require('../src/services/app-domains').resetCachesForTest();
+  assert.equal((await gate({ host: CUSTOM_PENDING_HOST, dest: 'document' })).status, 404);
+  assert.equal((await gate({ host: 'nobody.example.com', dest: 'document' })).status, 404);
+  apexUser = { id: MEMBER_ID, username: `u${MEMBER_ID}` };
+  assert.equal((await authorize({ host: CUSTOM_PENDING_HOST, next: '/' })).status, 404);
+  assert.equal((await authorize({ host: 'nobody.example.com', next: '/' })).status, 404);
+  const ok = await authorize({ host: CUSTOM_PUB_HOST, next: '/scores' });
+  assert.equal(ok.status, 302);
+  const loc = new URL(ok.headers.location);
+  assert.equal(loc.host, CUSTOM_PUB_HOST, 'back to the custom host, with a code bound to it');
+  const code = platformJwt.verifyEdgeGrant(loc.searchParams.get('code'));
+  assert.equal(code.host, CUSTOM_PUB_HOST);
+  assert.equal(code.appId, PUB_APP_ID);
+  // Homeroom hosts never reach the table.
+  state.customHostQueries = [];
+  await gate({ host: PUB_HOST });
+  await gate({ host: `pubapp--s42.${DOMAIN}` });
+  assert.deepEqual(state.customHostQueries, []);
 });
 
 // ── The apex hop ───────────────────────────────────────────────────────

@@ -473,9 +473,13 @@ test('the wiring the module still owns is untouched', () => {
   assert.match(APP_VIEW, /menu\.classList\.toggle\('hidden'\)/, 'desktop dropdown still toggles hidden');
   assert.match(APP_VIEW, /menu\.querySelectorAll\('button\[data-plus\], \[data-plus-group\]'\)/,
     'the touch action sheet still collects the rows in DOM order');
-  // Which means the headings must stay non-buttons carrying data-plus-group.
-  assert.match(FRAME, /data-plus-group=\{groupKey\}/, 'headings carry data-plus-group');
-  assert.match(FRAME, /<div\s+data-plus-group=/, 'headings are divs, not buttons');
+  // #4045: the settings group is ONE row now ("Settings & rules"), a real
+  // action carrying both data-plus and the group's data-plus-group, and its
+  // rows sit in a panel the touch sheet leaves out and opens as its own.
+  assert.match(FRAME, /data-plus="settings"\s+group="settings"/, 'the settings row carries the group marker');
+  assert.match(FRAME, /data-plus-group=\{group\}/, 'which PlusRow writes as data-plus-group');
+  assert.match(APP_VIEW, /\.filter\(\(node\) => !\(settingsPanel && settingsPanel\.contains\(node\)\)\)/,
+    'the first sheet leaves the panel\'s rows to the settings sheet');
   // The delegated card-open handler is still bound on the stable #dev-body.
   assert.match(APP_VIEW, /const bodyEl = document\.getElementById\('dev-body'\);/,
     'the delegated handler still binds on #dev-body');

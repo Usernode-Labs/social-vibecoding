@@ -64,6 +64,8 @@
  * features/messages/format.tsx.
  */
 
+import { t } from './i18n/runtime';
+
 export interface Stamp {
   /** What the row shows: the time, preceded by the date when it is not today. */
   text: string;
@@ -191,10 +193,10 @@ export function agoStamp(
   if (elapsed >= RELATIVE_FLOOR_MS) return { text: datePart(date, now), title };
 
   const seconds = Math.max(0, Math.floor(elapsed / 1000));
-  if (seconds < 60) return { text: 'just now', title };
+  if (seconds < 60) return { text: t('core:time.ago.justNow'), title };
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return { text: `${minutes}m ago`, title };
+  if (minutes < 60) return { text: t('core:time.ago.minutes', { count: minutes }), title };
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return { text: `${hours}h ago`, title };
-  return { text: `${Math.floor(hours / 24)}d ago`, title };
+  if (hours < 24) return { text: t('core:time.ago.hours', { count: hours }), title };
+  return { text: t('core:time.ago.days', { count: Math.floor(hours / 24) }), title };
 }

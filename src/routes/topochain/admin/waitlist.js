@@ -24,6 +24,7 @@ const firstSession = require('../../../services/first-session');
 const { signalsFor } = require('../../../services/waitlist-signals');
 const { sendWaitlistReleaseMail } = require('../../../services/topochain/mailer');
 const { sendWaitlistReleaseSms } = require('../../../services/sms');
+const releaseLinks = require('../../../services/release-links');
 const { loadMobileAppUrls } = require('../../../services/mobile-store-links');
 const { adminWriteGate } = require('./auth');
 const { toIntId } = require('./util');
@@ -32,11 +33,19 @@ const { ok, fail, iso, paginate, meta, csvField } = require('../helpers');
 function formatSignup(row) {
   return {
     id: Number(row.id),
-    email: row.email,
-    // A row is keyed by exactly one of these; the other is null. A phone
-    // row shows the number, and the Details block reads the text's outcome
-    // off `invite_text` instead of `invite_email`.
+    email: row.email ?? null,
+    // A row is keyed by exactly one of email / phone_e164; the other is null.
+    // A phone row shows the number, and the Details block reads the text's
+    // outcome off `invite_text` instead of `invite_email`.
     phone_e164: row.phone_e164 ?? null,
+    // An account-phone row (#4223): joined from Home's card with a verified
+    // phone and neither an email nor a number of its own. It is shown by its
+    // account, with at most the number's last four digits, and it cannot be
+    // admitted until Homeroom can send texts to it (`needs_sms`,
+    // services/waitlist.js).
+    phone_only: row.email == null && row.phone_e164 == null,
+    phone_last4: row.email == null && row.phone_e164 == null && row.phone_last4 ? String(row.phone_last4) : null,
+    needs_sms: row.email == null && row.phone_e164 == null && !row.released_at && !waitlist.phoneReleaseReady(),
     submitted_at: iso(row.submitted_at),
     released_at: iso(row.released_at),
     // NULL after a join means the address never followed the confirm link
@@ -110,11 +119,16 @@ const SEARCH_MAX = 320;
 // anywhere in either, case-insensitively. The username half is an EXISTS
 // rather than a join so the count query, which has no join to users, can
 // share the clause unchanged.
+//
+// An admin's test release (services/test-accounts.js sendRelease) is a row
+// nobody is waiting in, so no listing, count or export includes it.
+const NOT_TEST_RELEASE = 'NOT EXISTS (SELECT 1 FROM test_waitlist_releases t WHERE t.signup_id = w.id)';
+
 function waitlistWhere(query, firstParam = 1) {
   const status = typeof query.status === 'string' ? query.status : '';
   const only = typeof query.only === 'string' ? query.only : '';
   const q = typeof query.q === 'string' ? query.q.trim().slice(0, SEARCH_MAX) : '';
-  const clauses = [];
+  const clauses = [NOT_TEST_RELEASE];
   const params = [];
   if (status === 'pending') clauses.push('w.released_at IS NULL');
   else if (status === 'released') clauses.push('w.released_at IS NOT NULL');
@@ -130,7 +144,7 @@ function waitlistWhere(query, firstParam = 1) {
                                WHERE su.id = w.linked_user_id
                                  AND su.username ILIKE ${p} ESCAPE '\\'))`);
   }
-  return { sql: clauses.length ? `WHERE ${clauses.join(' AND ')}` : '', params };
+  return { sql: `WHERE ${clauses.join(' AND ')}`, params };
 }
 
 function plainObject(v) {
@@ -323,9 +337,28 @@ function waitlistAdminRoutes(config) {
       });
       return;
     }
+    // An account-phone row has no address: its "you're in" goes by text, the
+    // SMS hook (#4096, services/waitlist.js sendReleaseText).
+    if (!released.email) {
+      await waitlist.sendReleaseText(pool, released);
+      return;
+    }
+    const hasAccount = released.linked_user_id != null;
+    // #4594: a new account's one-time sign-in link. A failure to mint drops
+    // the link, not the mail: the mail's link still prefills the address
+    // and sends a code, as it did before.
+    let signInToken = null;
+    if (!hasAccount) {
+      try {
+        signInToken = await releaseLinks.mint(pool, { signupId: released.id, email: released.email });
+      } catch (err) {
+        log.error('topochain-admin', 'release sign-in link not minted', { signupId: released.id, message: err.message });
+      }
+    }
     await sendWaitlistReleaseMail(config, released.email, {
       mobile,
-      hasAccount: released.linked_user_id != null,
+      hasAccount,
+      signInToken,
       // #1548: lets the signup screen prefill the address and send the
       // code without a second step. An unguessable capability already
       // delivered to this address, so it carries nothing the recipient
@@ -394,6 +427,7 @@ function waitlistAdminRoutes(config) {
                   AS invited_count,
                 p.email AS invited_by_email,
                 u.username AS linked_username, u.has_platform_access,
+                CASE WHEN w.email IS NULL THEN RIGHT(ph.phone_e164, 4) END AS phone_last4,
                 m.status AS invite_mail_status, m.created_at AS invite_mail_at,
                 m.error AS invite_mail_error,
                 s.status AS invite_text_status, s.created_at AS invite_text_at,
@@ -401,6 +435,7 @@ function waitlistAdminRoutes(config) {
            FROM waitlist_signups w
            LEFT JOIN users u ON u.id = w.linked_user_id
            LEFT JOIN waitlist_signups p ON p.id = w.invited_by
+           LEFT JOIN user_phone_identities ph ON ph.user_id = w.linked_user_id
            LEFT JOIN LATERAL (
              SELECT d.status, d.created_at, d.error
                FROM mail_deliveries d
@@ -447,7 +482,8 @@ function waitlistAdminRoutes(config) {
                 COUNT(*) FILTER (WHERE released_at IS NOT NULL)::int AS admitted,
                 COUNT(*) FILTER (WHERE confirmed_at IS NOT NULL)::int AS confirmed,
                 COUNT(*) FILTER (WHERE linked_user_id IS NOT NULL)::int AS linked
-           FROM waitlist_signups`
+           FROM waitlist_signups w
+          WHERE ${NOT_TEST_RELEASE}`
       );
       const totals = totalsRows[0];
 
@@ -457,8 +493,8 @@ function waitlistAdminRoutes(config) {
       const { rows: dailyRows } = await pool.query(
         `SELECT to_char(date_trunc('day', submitted_at), 'YYYY-MM-DD') AS day,
                 COUNT(*)::int AS count
-           FROM waitlist_signups
-          WHERE submitted_at >= NOW() - $1::interval
+           FROM waitlist_signups w
+          WHERE submitted_at >= NOW() - $1::interval AND ${NOT_TEST_RELEASE}
           GROUP BY 1`,
         [`${days} days`]
       );
@@ -557,7 +593,13 @@ function waitlistAdminRoutes(config) {
     try {
       const id = toIntId(req.params.id);
       if (!id) return fail(res, 404, 'Waitlist entry not found.');
-      const released = await waitlist.releaseWaitlistSignup(pool, id);
+      let released;
+      try {
+        released = await waitlist.releaseWaitlistSignup(pool, id);
+      } catch (err) {
+        if (err instanceof waitlist.WaitlistReleaseError) return fail(res, err.status, err.message);
+        throw err;
+      }
       if (!released) return fail(res, 404, 'Waitlist entry not found.');
       log.info('topochain-admin', 'Waitlist entry released', {
         signupId: id, linkedUserId: released.linked_user_id, adminId: req.user?.id,
@@ -666,7 +708,8 @@ function waitlistAdminRoutes(config) {
   //
   // One row failing does not abandon the rest: the rows before it are
   // already admitted, and stopping there would leave them admitted but
-  // unmailed.
+  // unmailed. A phone row (no email) is held until Homeroom can send texts
+  // (#4096): it is skipped and counted in `needs_sms`, not failed.
   router.post('/api/v4/admin/waitlist/bulk-release', adminWriteGate, async (req, res) => {
     try {
       const raw = Array.isArray(req.body?.ids) ? req.body.ids : [];
@@ -680,6 +723,7 @@ function waitlistAdminRoutes(config) {
       const already = [];
       const missing = [];
       const failed = [];
+      const needsSms = [];
       for (const id of ids) {
         try {
           const released = await waitlist.releaseWaitlistSignup(pool, id);
@@ -687,6 +731,10 @@ function waitlistAdminRoutes(config) {
           else if (released.newly_released) fresh.push(released);
           else already.push(id);
         } catch (err) {
+          if (err instanceof waitlist.WaitlistReleaseError && err.code === 'needs_sms') {
+            needsSms.push(id);
+            continue;
+          }
           log.error('topochain-admin', 'bulk release: one entry failed', { signupId: id, message: err.message });
           failed.push(id);
         }
@@ -701,6 +749,7 @@ function waitlistAdminRoutes(config) {
         signupIds: fresh.map((r) => Number(r.id)),
         alreadyAdmitted: already.length,
         missing: missing.length,
+        needsSms: needsSms.length,
         failed: failed.length,
         adminId: req.user?.id,
       });
@@ -709,6 +758,7 @@ function waitlistAdminRoutes(config) {
           admitted: fresh.map((r) => Number(r.id)),
           already_admitted: already,
           not_found: missing,
+          needs_sms: needsSms,
           failed,
         },
       });
@@ -767,15 +817,27 @@ function waitlistAdminRoutes(config) {
   // ── POST /api/v4/admin/users/:id/grant-access ────────────────────────
   // Direct platform-access grant for an account that never joined the
   // waitlist. Idempotent. A release by hand like Admit, so the account it
-  // lets in gets the invite tree's generation-0 skips.
+  // lets in gets the invite tree's generation-0 skips, its waitlist rows are
+  // marked released, and it gets Admit's "you're in" mail (#4083): once,
+  // only from the grant that let it in, and not when a row's own release
+  // already sent it.
   router.post('/api/v4/admin/users/:id/grant-access', adminWriteGate, async (req, res) => {
     try {
       const id = toIntId(req.params.id);
       if (!id) return fail(res, 404, 'User not found.');
       const { rows } = await pool.query('SELECT id FROM users WHERE id = $1', [id]);
       if (!rows.length) return fail(res, 404, 'User not found.');
-      await waitlist.grantPlatformAccess(pool, id, { manualRelease: true });
-      log.info('topochain-admin', 'Platform access granted directly', { userId: id, adminId: req.user?.id });
+      const letIn = await waitlist.grantPlatformAccess(pool, id, { manualRelease: true });
+      log.info('topochain-admin', 'Platform access granted directly', { userId: id, adminId: req.user?.id, letIn });
+      if (letIn) {
+        try {
+          const release = await waitlist.releaseRowsForGrant(pool, id);
+          if (release) await sendReleaseNotice(release, await loadReleaseMailMobile());
+        } catch (err) {
+          // The grant stands; only the notice failed.
+          log.error('topochain-admin', 'grant-access release mail failed', { userId: id, message: err.message });
+        }
+      }
       return ok(res, { data: { id, has_platform_access: true } });
     } catch (err) {
       log.error('topochain-admin', 'POST /admin/users/:id/grant-access failed', { message: err.message });

@@ -17,7 +17,7 @@
 // still starts and simply offers no tools, so the agent's MCP start-up never
 // fails a turn.
 
-const HOMEROOM_READ_TOOLS = Object.freeze([
+const ALL_READ_TOOLS = Object.freeze([
   'get_platform_conventions',
   'get_app',
   'list_requests',
@@ -25,6 +25,17 @@ const HOMEROOM_READ_TOOLS = Object.freeze([
   'get_proposal',
   'get_change',
 ]);
+
+// The tools this turn offers: all of them, or the ones the runner names in
+// HOMEROOM_READ_TOOLS (a comma list; never one outside the set). A first
+// version's build is offered get_platform_conventions alone (run-cc.sh,
+// BUILD_PROFILE=first_version): a brand-new app has nothing else to read.
+function readToolsFor(env = process.env) {
+  const named = String(env.HOMEROOM_READ_TOOLS || '').split(',').map((s) => s.trim()).filter(Boolean);
+  if (!named.length) return ALL_READ_TOOLS;
+  return Object.freeze(ALL_READ_TOOLS.filter((name) => named.includes(name)));
+}
+const HOMEROOM_READ_TOOLS = readToolsFor();
 
 // The worker image installs the SDK globally; a checkout has it in
 // node_modules. Either way the same modules load.

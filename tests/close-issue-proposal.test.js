@@ -1,8 +1,9 @@
-// Tests for the `close_issue` governance kind (src/routes/issues.js):
-// creation validation (open-target verification, dedupe, reason cap),
-// the vote-apply helper maybeApplyCloseIssueProposal (superseded guard,
-// gate, GitHub close-then-comment, bounty voiding, cache sync), and the
-// admin force-apply route accepting the new kind.
+// Tests for the `close_issue` governance kind's routes (src/routes/issues.js):
+// creation validation (open-target verification, dedupe, reason cap) and the
+// admin force-apply route's checks before it hands the proposal to the
+// governance machine. What the machine does with a vote or a force (the
+// target check, the gate, GitHub close-then-comment as work, bounty voiding,
+// the bot's proposals) is pinned by tests/workflow-governance-postgres.test.js.
 //
 // Like the sibling suites (withdraw-gov-proposal.test.js), collaborators
 // are stubbed via require.cache and handlers are driven directly off the
@@ -51,13 +52,13 @@ function loadIssues(pool, { gh = {}, active = 2 } = {}) {
     github: require.resolve('../src/services/github'),
     appAccess: require.resolve('../src/services/app-access'),
     activeUsers: require.resolve('../src/services/active-users'),
-    adminApproval: require.resolve('../src/services/admin-approval'),
+    workflow: require.resolve('../src/workflow/platform.ts'),
     subject: require.resolve('../src/routes/issues'),
   };
   const orig = {};
   for (const [k, id] of Object.entries(ids)) orig[k] = require.cache[id];
 
-  const spies = { systemMessages: [], issueUpdates: [], ghCalls: [] };
+  const spies = { systemMessages: [], issueUpdates: [], ghCalls: [], filed: [], adminApplied: [] };
   const stub = (id, exports) => {
     require.cache[id] = { id, filename: id, loaded: true, exports, paths: [] };
   };
@@ -110,7 +111,14 @@ function loadIssues(pool, { gh = {}, active = 2 } = {}) {
     ...realActiveUsers,
     getActiveUserStats: async () => ({ active, majority: Math.floor(active / 2) + 1 }),
   });
-  stub(ids.adminApproval, { isAppLocked: async () => false, hasAdminUpVote: async () => true });
+  // The governance machine: the routes hand it what they accept.
+  stub(ids.workflow, {
+    async fileProposal(issueId, appId) { spies.filed.push([issueId, appId]); },
+    async adminApplyProposal(issue, user) {
+      spies.adminApplied.push([issue.id, user.username]);
+      return { status: 200, body: { ok: true, applied: { applied: true }, secretChanged: null } };
+    },
+  });
 
   delete require.cache[ids.subject];
   const subject = require('../src/routes/issues');
@@ -347,6 +355,7 @@ test('create: happy path files a vote-only proposal, no GitHub twin', async () =
 
     assert.equal(spies.issueUpdates[0].action, 'created');
     assert.equal(spies.issueUpdates[0].kind, 'close_issue');
+    assert.deepEqual(spies.filed, [[61, 9]], 'enrolled with the governance machine');
   } finally { restore(); }
 });
 
@@ -428,186 +437,25 @@ test('create: rejects a bad issueNumber (400) and an over-long reason (400)', as
   } finally { restore(); }
 });
 
-// ── Vote apply (maybeApplyCloseIssueProposal) ────────────────────────────
-
-function applyPool({ up = 2, down = 0, lockedRow, bountyRows = [{ id: 1 }] } = {}) {
-  return makePool([
-    [/SELECT slug, repo_url FROM apps/, [{ slug: APP.slug, repo_url: APP.repo_url }]],
-    [/vote = 'up'/, [{ cnt: String(up) }]],
-    [/vote = 'down'/, [{ cnt: String(down) }]],
-    [/SELECT \* FROM issues WHERE id = \$1 FOR UPDATE/, [lockedRow]],
-    [/UPDATE issues SET status = 'closed', payload = \$1/, []],
-    [/UPDATE issues SET status = 'closed'\s+WHERE app_id/, []],
-    [/UPDATE issue_bounties SET status = 'voided'/, bountyRows],
-    [/SELECT username FROM users/, [{ username: 'maker' }]],
-  ]);
-}
-
-test('apply: passing vote closes the proposal, GitHub close then comment with reason, voids bounties, syncs caches', async () => {
-  const proposal = CLOSE_PROPOSAL();
-  const pool = applyPool({ up: 2, down: 0, lockedRow: proposal });
-  const { subject, spies, restore } = loadIssues(pool, {
-    active: 2,
-    gh: { fetchPublicIssues: async () => OPEN_LIST }, // target still open → guard passes
-  });
-  try {
-    const r = await subject.maybeApplyCloseIssueProposal(pool, proposal);
-    assert.equal(r.applied, true);
-    assert.equal(r.issueNumber, 42);
-
-    // Proposal row closed with an audit payload.
-    const upd = pool.issued(/UPDATE issues SET status = 'closed', payload = \$1/);
-    assert.ok(upd, 'proposal close UPDATE issued');
-    const audit = JSON.parse(upd.params[0]);
-    assert.equal(audit.appliedBy, 'group-vote');
-    assert.ok(audit.appliedAt);
-    assert.equal(audit.issueNumber, 42, 'original payload preserved');
-
-    // Internal general twin rows for the target closed too.
-    const twin = pool.issued(/UPDATE issues SET status = 'closed'\s+WHERE app_id = \$1 AND github_issue_number = \$2/);
-    assert.ok(twin, 'internal twin close issued');
-    assert.equal(twin.params[1], 42);
-
-    // Open bounties voided (no awardee).
-    const voided = pool.issued(/UPDATE issue_bounties SET status = 'voided'/);
-    assert.ok(voided, 'bounty voiding issued');
-    assert.deepEqual(voided.params, [9, 42]);
-    assert.ok(!/awarded_user_id/.test(voided.sql), 'no awardee credited');
-
-    // GitHub: close BEFORE comment; comment carries tally + proposer reason.
-    const ghSeq = spies.ghCalls.filter((c) => ['closeIssue', 'createIssueComment'].includes(c.type));
-    assert.deepEqual(ghSeq.map((c) => c.type), ['closeIssue', 'createIssueComment']);
-    assert.equal(ghSeq[0].issueNumber, 42);
-    assert.match(ghSeq[1].body, /Closed by group vote \(2\//);
-    assert.match(ghSeq[1].body, /maker's reason: Already fixed\./);
-
-    // Cache/UI sync: suppression + bust + github_synced broadcast.
-    const noted = spies.ghCalls.find((c) => c.type === 'noteIssuesClosed');
-    assert.deepEqual(noted.numbers, [42]);
-    assert.ok(spies.ghCalls.find((c) => c.type === 'invalidateIssuesCache'));
-    assert.ok(spies.issueUpdates.find((u) => u.action === 'github_synced'));
-
-    // Chat: the governance thread and the issue's thread; no channel line.
-    assert.equal(spies.systemMessages.length, 2);
-    assert.match(spies.systemMessages[0][2], /Issue #42 closed by group vote \(2\//);
-    assert.deepEqual(spies.systemMessages[0][5], { type: 'governance', ref: 61 });
-    assert.deepEqual(spies.systemMessages[1][5], { type: 'issue', ref: 42 });
-  } finally { restore(); }
-});
-
-test('apply: below the gate leaves the proposal open (no txn, no GitHub)', async () => {
-  // Fresh proposal, large active count → threshold far from met.
-  const proposal = CLOSE_PROPOSAL({ created_at: new Date().toISOString() });
-  const pool = applyPool({ up: 1, down: 0, lockedRow: proposal });
-  const { subject, spies, restore } = loadIssues(pool, {
-    active: 20,
-    gh: { fetchPublicIssues: async () => OPEN_LIST },
-  });
-  try {
-    const r = await subject.maybeApplyCloseIssueProposal(pool, proposal);
-    assert.equal(r.applied, false);
-    assert.ok(!r.superseded);
-    assert.ok(!pool.issued(/UPDATE issues SET status = 'closed'/), 'row untouched');
-    assert.equal(spies.ghCalls.filter((c) => c.type === 'closeIssue').length, 0);
-  } finally { restore(); }
-});
-
-test('apply: superseded guard — healthy list without the target resolves instead of applying', async () => {
-  const proposal = CLOSE_PROPOSAL();
-  const pool = makePool([
-    [/SELECT slug, repo_url FROM apps/, [{ slug: APP.slug, repo_url: APP.repo_url }]],
-    // Resolver's lookup + guarded flip.
-    [/kind = 'close_issue' AND status = 'open'/, [{ id: 61, app_id: 9, payload: proposal.payload }]],
-    [/UPDATE issues SET status = 'closed', payload = \$2/, [{ id: 61 }]],
-  ]);
-  const { subject, spies, restore } = loadIssues(pool, {
-    active: 2,
-    gh: { fetchPublicIssues: async () => ({ issues: [], truncatedList: false }) }, // healthy, target gone
-  });
-  try {
-    const r = await subject.maybeApplyCloseIssueProposal(pool, proposal);
-    assert.deepEqual(r, { applied: false, superseded: true });
-
-    const upd = pool.issued(/UPDATE issues SET status = 'closed', payload = \$2/);
-    assert.ok(upd, 'resolver flipped the row');
-    const audit = JSON.parse(upd.params[1]);
-    assert.equal(audit.supersededBy, 'github-close');
-    assert.ok(audit.supersededAt);
-
-    // No GitHub writes, no bounty changes.
-    assert.equal(spies.ghCalls.filter((c) => ['closeIssue', 'createIssueComment'].includes(c.type)).length, 0);
-    assert.ok(!pool.issued(/issue_bounties/), 'bounties untouched');
-    assert.match(spies.systemMessages[0][2], /resolved automatically: the issue was closed on GitHub/);
-  } finally { restore(); }
-});
-
-test('apply: degraded fetch skips the superseded guard and proceeds to the gate', async () => {
-  const proposal = CLOSE_PROPOSAL({ created_at: new Date().toISOString() });
-  const pool = applyPool({ up: 1, down: 0, lockedRow: proposal });
-  const { subject, restore } = loadIssues(pool, {
-    active: 20,
-    gh: { fetchPublicIssues: async () => ({ issues: [], note: 'rate limited' }) },
-  });
-  try {
-    const r = await subject.maybeApplyCloseIssueProposal(pool, proposal);
-    assert.equal(r.applied, false);
-    assert.ok(!r.superseded, 'degraded fetch must not supersede');
-    assert.ok(pool.issued(/vote = 'up'/), 'gate evaluation ran');
-  } finally { restore(); }
-});
-
-test('apply: GitHub close failure is warn-and-continue (row already closed)', async () => {
-  const proposal = CLOSE_PROPOSAL();
-  const pool = applyPool({ up: 2, down: 0, lockedRow: proposal });
-  const { subject, restore } = loadIssues(pool, {
-    active: 2,
-    gh: {
-      fetchPublicIssues: async () => OPEN_LIST,
-      closeIssue: async () => { const e = new Error('boom'); e.status = 500; throw e; },
-    },
-  });
-  try {
-    const r = await subject.maybeApplyCloseIssueProposal(pool, proposal);
-    assert.equal(r.applied, true, 'apply result unaffected by GitHub failure');
-    assert.ok(pool.issued(/UPDATE issues SET status = 'closed', payload = \$1/));
-  } finally { restore(); }
-});
-
 // ── Admin force-apply route ───────────────────────────────────────────────
 
-test('admin-apply: accepts close_issue with force (gates bypassed); non-admin 403', async () => {
+test('admin-apply: a non-admin is refused; an admin\'s force goes to the governance machine', async () => {
   const proposal = CLOSE_PROPOSAL({ created_at: new Date().toISOString() });
-  const pool = makePool([
-    [/SELECT i\.\*, a\.slug AS app_slug/, [proposal]],
-    [/SELECT slug, repo_url FROM apps/, [{ slug: APP.slug, repo_url: APP.repo_url }]],
-    [/vote = 'up'/, [{ cnt: '0' }]],
-    [/vote = 'down'/, [{ cnt: '0' }]],
-    [/SELECT \* FROM issues WHERE id = \$1 FOR UPDATE/, [proposal]],
-    [/SELECT username FROM users/, [{ username: 'maker' }]],
-  ]);
-  const { router, spies, restore } = loadIssues(pool, {
-    active: 20,
-    gh: { fetchPublicIssues: async () => OPEN_LIST },
-  });
+  const pool = makePool([[/SELECT i\.\*, a\.slug AS app_slug/, [proposal]]]);
+  const { router, spies, restore } = loadIssues(pool);
   try {
     const handler = routeHandler(router, '/api/issues/:id/admin-apply');
-
     const denied = mockRes();
     await handler({ params: { id: '61' }, user: { id: 1, username: 'pleb' } }, denied);
     assert.equal(denied.statusCode, 403);
+    assert.deepEqual(spies.adminApplied, [], 'nothing reaches the machine');
 
     const res = mockRes();
-    await handler({ params: { id: '61' }, user: { id: 2, username: 'boss', canAdminWrite: true } }, res);
+    await handler({ params: { id: '61' }, user: { id: 2, username: 'boss', canAdminWrite: true }, get: () => undefined }, res);
     assert.equal(res.statusCode, 200);
-    assert.equal(res.body.ok, true);
-    assert.equal(res.body.applied.applied, true, 'force apply succeeded with zero votes');
-    assert.equal(res.body.secretChanged, null, 'BC alias null for close_issue');
-
-    const upd = pool.issued(/UPDATE issues SET status = 'closed', payload = \$1/);
-    const audit = JSON.parse(upd.params[0]);
-    assert.equal(audit.appliedBy, 'admin:boss');
-    const comment = spies.ghCalls.find((c) => c.type === 'createIssueComment');
-    assert.match(comment.body, /admin override \(boss\)/);
+    assert.deepEqual(res.body, { ok: true, applied: { applied: true }, secretChanged: null });
+    assert.deepEqual(spies.adminApplied, [[61, 'boss']]);
+    assert.ok(!pool.issued(/UPDATE issues/), 'the route writes nothing itself');
   } finally { restore(); }
 });
 
@@ -634,141 +482,6 @@ test('close / admin-apply / vote: a malformed or out-of-range id is 404 without 
       }
     }
     assert.equal(pool.calls.length, 0, 'no query reached Postgres');
-  } finally { restore(); }
-});
-
-// ── #1010: apply-progress broadcasts ─────────────────────────────────────
-//
-// The client renders a "Closing issue #N…" spinner for the window between a
-// deciding vote and the close landing, and drops it when the proposal is
-// decided. Both halves of that depend on WS events arriving at the right
-// TIME, so the ordering below is a contract, not an implementation detail.
-
-test('#1010 apply: the decided broadcast fires as soon as the txn commits, before the GitHub tail', async () => {
-  const proposal = CLOSE_PROPOSAL();
-  const pool = applyPool({ up: 2, down: 0, lockedRow: proposal });
-  const { subject, spies, restore } = loadIssues(pool, {
-    active: 2,
-    gh: { fetchPublicIssues: async () => OPEN_LIST },
-  });
-  try {
-    const r = await subject.maybeApplyCloseIssueProposal(pool, proposal);
-    assert.equal(r.applied, true);
-
-    const closed = spies.issueUpdates.find((u) => u.action === 'closed');
-    assert.ok(closed, 'applied outcome broadcast');
-    assert.equal(closed.issueId, 61);
-    assert.equal(closed.appId, 9);
-    assert.equal(closed.appSlug, 'cool-app');
-
-    // It must land BEFORE the GitHub close — otherwise every open card keeps
-    // rendering the proposal as live for the length of those round-trips.
-    const closedIdx = spies.issueUpdates.indexOf(closed);
-    const syncedIdx = spies.issueUpdates.findIndex((u) => u.action === 'github_synced');
-    assert.ok(syncedIdx > closedIdx, 'github_synced follows the decided broadcast');
-  } finally { restore(); }
-});
-
-test('#1010 apply: the decided broadcast fires even when GitHub is disabled', async () => {
-  const proposal = CLOSE_PROPOSAL();
-  const pool = applyPool({ up: 2, down: 0, lockedRow: proposal });
-  const { subject, spies, restore } = loadIssues(pool, {
-    active: 2,
-    gh: { isEnabled: () => false },
-  });
-  try {
-    const r = await subject.maybeApplyCloseIssueProposal(pool, proposal);
-    assert.equal(r.applied, true);
-    // The old code's only broadcast lived inside the GitHub branch, so this
-    // app's clients were never told and their cards lingered until a reload.
-    assert.ok(spies.issueUpdates.find((u) => u.action === 'closed'),
-      'decided broadcast is not gated on GitHub being wired up');
-    assert.ok(!spies.issueUpdates.find((u) => u.action === 'github_synced'),
-      'no cache-sync event when there is no GitHub to sync with');
-  } finally { restore(); }
-});
-
-test('#1010 apply: an unparsable repo_url still broadcasts the decision', async () => {
-  const proposal = CLOSE_PROPOSAL();
-  const pool = makePool([
-    [/SELECT slug, repo_url FROM apps/, [{ slug: APP.slug, repo_url: 'not-a-github-url' }]],
-    [/vote = 'up'/, [{ cnt: '2' }]],
-    [/vote = 'down'/, [{ cnt: '0' }]],
-    [/SELECT \* FROM issues WHERE id = \$1 FOR UPDATE/, [proposal]],
-    [/UPDATE issues SET status = 'closed', payload = \$1/, []],
-    [/UPDATE issues SET status = 'closed'\s+WHERE app_id/, []],
-    [/UPDATE issue_bounties SET status = 'voided'/, [{ id: 1 }]],
-  ]);
-  const { subject, spies, restore } = loadIssues(pool, { active: 2 });
-  try {
-    const r = await subject.maybeApplyCloseIssueProposal(pool, proposal);
-    assert.equal(r.applied, true);
-    assert.ok(spies.issueUpdates.find((u) => u.action === 'closed'));
-  } finally { restore(); }
-});
-
-test('#1010 vote route: the voted broadcast precedes the apply, and the response shape is unchanged', async () => {
-  const proposal = CLOSE_PROPOSAL();
-  const pool = makePool([
-    [/SELECT i\.\*, a\.slug AS app_slug/, [proposal]],
-    [/SELECT vote FROM issue_votes/, []],
-    [/INSERT INTO issue_votes/, []],
-    [/SELECT slug, repo_url FROM apps/, [{ slug: APP.slug, repo_url: APP.repo_url }]],
-    [/vote = 'up'/, [{ cnt: '2' }]],
-    [/vote = 'down'/, [{ cnt: '0' }]],
-    [/SELECT \* FROM issues WHERE id = \$1 FOR UPDATE/, [proposal]],
-    [/UPDATE issues SET status = 'closed', payload = \$1/, []],
-    [/UPDATE issues SET status = 'closed'\s+WHERE app_id/, []],
-    [/UPDATE issue_bounties SET status = 'voided'/, [{ id: 1 }]],
-    [/SELECT username FROM users/, [{ username: 'maker' }]],
-  ]);
-  const { router, spies, restore } = loadIssues(pool, {
-    active: 2,
-    gh: { fetchPublicIssues: async () => OPEN_LIST },
-  });
-  try {
-    const handler = routeHandler(router, '/api/issues/:id/vote');
-    const res = mockRes();
-    await handler({
-      params: { id: '61' },
-      user: { id: 7, username: 'voter' },
-      body: { vote: 'up' },
-    }, res);
-
-    assert.equal(res.statusCode, 200);
-    assert.equal(res.body.ok, true);
-    assert.equal(res.body.issueClosed.applied, true, 'apply result still on the response');
-    assert.equal(res.body.secretChanged, null, 'BC alias null for close_issue');
-
-    // The vote event must not be held behind the apply: other clients need
-    // the moved tally (and the derived "applying" state) immediately.
-    const votedIdx = spies.issueUpdates.findIndex((u) => u.action === 'voted');
-    const closedIdx = spies.issueUpdates.findIndex((u) => u.action === 'closed');
-    assert.ok(votedIdx !== -1, 'voted broadcast emitted');
-    assert.ok(closedIdx !== -1, 'decided broadcast emitted');
-    assert.ok(votedIdx < closedIdx, 'voted precedes the apply outcome');
-  } finally { restore(); }
-});
-
-test('#1010 vote route: a toggle-off vote emits only the voted event and no apply', async () => {
-  const proposal = CLOSE_PROPOSAL();
-  const pool = makePool([
-    [/SELECT i\.\*, a\.slug AS app_slug/, [proposal]],
-    [/SELECT vote FROM issue_votes/, [{ vote: 'up' }]],
-    [/DELETE FROM issue_votes/, []],
-  ]);
-  const { router, spies, restore } = loadIssues(pool, { active: 2 });
-  try {
-    const handler = routeHandler(router, '/api/issues/:id/vote');
-    const res = mockRes();
-    await handler({
-      params: { id: '61' },
-      user: { id: 7, username: 'voter' },
-      body: { vote: 'up' },
-    }, res);
-    assert.equal(res.body.toggled, true);
-    assert.deepEqual(spies.issueUpdates.map((u) => u.action), ['voted']);
-    assert.ok(!pool.issued(/FOR UPDATE/), 'no apply attempted on a retraction');
   } finally { restore(); }
 });
 

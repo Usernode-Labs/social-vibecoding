@@ -105,3 +105,43 @@ test('the isolated full-admin fixture includes self-app membership for channel s
   assert.deepEqual(installed.appMembership,
     { appId: 42, slug: 'usernode-2d5619', status: 'member' });
 });
+
+test('one moment for both sides: every NOW() a fixture writes is the pair\'s moment, bound as a parameter', async () => {
+  const at = '2026-10-09T10:00:00.000Z';
+  assert.equal(fixtures.pairMoment(new Date(at)), at);
+  assert.equal(fixtures.pairMoment(at), at);
+  assert.throws(() => fixtures.pairMoment('not a time'), /valid moment/);
+  assert.throws(() => fixtures.pairMoment(new Date(NaN)), /valid moment/);
+  // The same writes on two sides, at different instants, reach both
+  // databases as the same statements with the same values.
+  const sides = {};
+  for (const side of ['base', 'head']) {
+    const queries = [];
+    sides[side] = queries;
+    const client = fixtures.atMoment({
+      async query(sql, params) {
+        queries.push({ sql, params });
+        if (/INSERT INTO agent_sessions/.test(sql)) return { rowCount: 1, rows: [{ id: params[0], title: 'Fixture session' }] };
+        return { rowCount: 1, rows: [{ id: params?.[0] }] };
+      },
+    }, at);
+    await client.query('BEGIN');
+    await fixtures.copyAgentSession(client, {
+      userId: 2, appId: 7, sessionId: fixtures.MEMBER_SESSION_ID, changeId: fixtures.MEMBER_CHANGE_ID,
+      branch: 'shots-fixture/member-agent-session', persona: 'member',
+    });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  assert.deepEqual(sides.base, sides.head);
+  const writes = sides.base.filter(({ sql }) => /INSERT/.test(sql));
+  assert.equal(writes.length, 3);
+  for (const { sql, params } of writes) {
+    assert.doesNotMatch(sql, /\bnow\(\)/i, 'no statement reads either side\'s own clock');
+    assert.equal(params.at(-1), at);
+    assert.match(sql, new RegExp(`\\$${params.length}::timestamptz - INTERVAL`));
+  }
+  // A statement without NOW() is passed through as it was.
+  assert.deepEqual(sides.base[0], { sql: 'BEGIN', params: undefined });
+  const update = sides.base.find(({ sql }) => /UPDATE agent_sessions/.test(sql));
+  assert.deepEqual(update.params, [fixtures.MEMBER_SESSION_ID, fixtures.MEMBER_CHANGE_ID]);
+});

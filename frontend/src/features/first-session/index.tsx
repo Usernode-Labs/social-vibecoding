@@ -1,58 +1,88 @@
 /**
- * The first session after an invite: "You're in", then a short tour on the
- * real screens.
+ * The first session's screens: "What do you want to make?", the made screen,
+ * then the newcomer's first visit to their app and to Home.
  *
- *   welcome  A full-screen card on the landing's wallpaper: you joined this
- *            group, and — for an account the invite's own sign-up made — what
- *            Homeroom is, in three lines. Under that, the project as its
- *            invite showed it (./joined-picture.tsx). "Go to <name>" starts
- *            the tour, told whether its first version is still being built
- *            (read here from GET /api/apps/:slug, now that they may).
- *   tour     ./tour-steps.ts, over the live shell. Each screen is shown whole
- *            first, then the control that leads on is cut out of the dim and
- *            the reader presses it, or the card's blue hint, which presses
- *            the same control: the product's own handler navigates, and
- *            the tour only watches the press. Back re-opens the screen the
- *            previous step was on; Skip ends on the last step's screen.
+ *   make     ./make.tsx, "What do you want to make?". Make it makes the
+ *            project; "Look around first" goes Home, to its own four cards.
+ *   made     ./made.tsx, the project made, its first invite, and the way on:
+ *            "Invite people later", or "Go to app" once an invite is out.
+ *            A project that runs (ready-made, or a first version that is
+ *            live) opens full screen; one Homeroom bot is still building
+ *            goes to Home, the newcomer's first visit to Homeroom, and the
+ *            walk runs there.
+ *   tip      ./app-tip.tsx: the first time they open the app after the
+ *            hand-off, one tip under the Homeroom mark (./first-visit.ts
+ *            says when it is due).
+ *   tour     ./tour-steps.ts over the live shell: the walk on Home ("1, 2,
+ *            3"), the first time Home shows after that first visit to the
+ *            app, and "Look around first"'s four cards. Each card rings one
+ *            place with the rest dimmed, and leads on with Next; Skip ends
+ *            it where it is.
  *
- * App.\_followInvite (public/js/app.js) opens it through
+ * An invite brings people in the same way (Evan, 15 Oct 2026: "You're in"
+ * is gone). App._followInvite (public/js/app.js) and an invite accepted from
+ * the notifications (Notifications._acceptInvite) call
  * `window.UsernodeReact.firstSession.welcome(info)`, once per account and
- * project (localStorage), when the invite link it is following has just
- * joined the viewer; so does an invite by username, accepted from the
- * notifications (Notifications.\_acceptInvite, with the accept's `welcome`).
- * It answers false when it will not show, and the caller lands them where
- * it always did.
+ * project (localStorage), when the link has just let the viewer in: it opens
+ * the app itself, full screen, with the tip ("<inviter> invited you"), and
+ * somebody new to Homeroom (a private member, or an account the link's
+ * sign-up made) gets the walk on their first Home after it. Somebody who had
+ * an account before gets the tip alone. It answers false when it will not
+ * show, and the caller lands them where it always did.
+ *
+ * The same island is the platform's one front door for a new project: the
+ * Create button (App.showCreateModal, public/js/app.js) opens
+ * "What do you want to make?" through `create()`, with `entry` 'create'
+ * (`create({ import: true })`, from #create/import, opens it on importing a
+ * GitHub repo). From there it ends on the project's hub rather than on the
+ * first session's tip and walk, and it answers nothing the first session
+ * asks (noteAnswered).
  *
  * A sign-in from the invite's own page (Join, then the sheet) is followed in
  * the tick the signed-in shell starts, and the link's standing, which says
  * whether to welcome them, is a request away: Home showed for that long
- * before "You're in" (Evan, 5 October 2026). So the follow asks for the
- * welcome's frame first, `holdWelcome()`, drawn at once (flushSync) on the
- * same wallpaper, before the shell draws Home; welcome() fills it, and
- * `endHold()` takes it down for any other ending. The make screen's own
- * hand-off (#3894) works the same way.
+ * before the welcome (Evan, 5 October 2026). So the follow asks for a held
+ * frame first, `holdWelcome()`, drawn at once (flushSync) on the landing's
+ * wallpaper, before the shell draws Home; welcome() hands it to the app,
+ * and it goes once the app is on screen (appDrawn). `endHold()` takes it
+ * down for any other ending. The make screen's own hand-off (#3894) works
+ * the same way.
  *
  * ── The island rules ──────────────────────────────────────────────────
  *
  * It renders NOTHING until it is opened, so the prerendered shell is
  * unchanged, and only a press opens it, so the first client render matches.
  * Nothing in `public/js/**` writes into it; the legacy shell is only CALLED
- * (App.navigateHome, App.navigateToApp, App.openDiscussionInHub). The
- * spotlight's geometry is measured each frame from the target the step names
- * and kept in state only when it moves.
+ * (App.navigateHome, App.navigateToApp). The spotlight's geometry is
+ * measured each frame from the target the step names and kept in state only
+ * when it moves.
  */
 
-import { type Dispatch, type SetStateAction, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { type CSSProperties, type Dispatch, type SetStateAction, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 
 import { Button } from '@/components/ui/button';
+import { SpinnerRingIcon } from '@/components/ui/icons';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { Wordmark } from '@/components/ui/wordmark';
 
-import { joinPicture, JoinedPicture } from './joined-picture';
-import { type Made, MakeScreen } from './make';
+import { pushDismissible, type Release } from '../../lib/back-stack';
+import { useMessages } from '../../lib/i18n/react';
+import { usePageLock } from '../../lib/page-lock';
+import { AppContext } from '../app-context/app-context-controller.js';
+import { invalidateAppAllowance } from '../dialogs/app-allowance-store.js';
+import { AppTip } from './app-tip';
+import { cardPosition } from './card-placement';
+import {
+  anyOwed, armWalk, claimWalk, FIRST_VISIT_CHECK_MS, noteTipShown, noteWalkRun, oweTip, owedTip, owedWalk, oweWalk,
+  readScreen, type TipRecord, type TipWho, tipDue, walkArms, walkDue, type WalkRecord,
+} from './first-visit';
+import { type Made, type MakeEntry, MakeScreen } from './make';
 import { MadeScreen, madeAppOf, madeAppUrl } from './made';
-import { type FirstVersionStage, invitedSteps, makerSteps, privateSteps, type TourScreen, type TourStep } from './tour-steps';
+import { noteMoment } from './made-moments';
+import { APP_MENU, BOTTOM_BARS, homeWalkSteps, lookAroundSteps, type TourScreen, type TourStep } from './tour-steps';
+import { noteFirstSessionVisit, setTourRunning } from './tour-running';
+import { appReady, tileSettled, TOUR_WAIT_MAX_MS, WAIT_CHECK_MS, WAIT_GRACE_MS, WAIT_POLL_MS } from './tour-wait';
 
 export type FirstSessionInfo = {
   slug: string;
@@ -61,43 +91,41 @@ export type FirstSessionInfo = {
   name: string;
   iconEmoji?: string | null;
   iconUrl?: string | null;
+  /** The username of whoever sent the link. */
+  inviter?: string | null;
+  /** The name they go by, which the tip says ("Maya invited you."). */
   inviterName?: string | null;
   inviterMadeIt?: boolean;
-  /** Its first version is still on its way: "<maker> is making it" (community-invites.js firstVersionPending). */
+  /** Its first version is still on its way (community-invites.js firstVersionPending). */
   building?: boolean;
   /**
    * The account was made by the sign-up the link opened (or is a test
-   * account on its first sign-in: services/test-accounts.js onFirstRun).
+   * account on its first sign-in: services/test-accounts.js onFirstRun):
+   * somebody new to Homeroom, whose first Home gets the walk.
    */
   newAccount?: boolean;
-  /** The project's one line, and the picture its invite showed (./joined-picture.tsx). */
-  description?: string | null;
-  picture?: unknown;
-  /** Where its first version stands, for the tour's second step (./tour-steps.ts). */
-  firstVersion?: FirstVersionStage;
+  /** The walk's reader is a private member: its fourth card is the waitlist (./tour-steps.ts homeWalkSteps). */
+  privateMember?: boolean;
+  /**
+   * The walk's example of a change to ask Homeroom bot for in this project
+   * (walkExample: GET /api/apps/:slug `exampleChange`, from its ready-made
+   * starter). Not yet asked while undefined; null for a project with none.
+   */
+  example?: string | null;
 };
-
-/**
- * Where a project's first version stands, from GET /api/apps/:slug's
- * `first_version` (madeAppOf): being built, built and up for approval, or
- * null once there is none (the app is what there is).
- */
-export function firstVersionStage(body: unknown): FirstVersionStage {
-  const fv = madeAppOf(body)?.firstVersion;
-  if (!fv) return null;
-  return fv.ready ? 'ready' : 'building';
-}
 
 type Legacy = {
   App?: {
     user?: {
       id?: number; username?: string; displayName?: string | null; needsCommunitiesChoice?: boolean; privateMember?: boolean;
+      homeroomBotDm?: boolean;
+      waitlistIdea?: string | null;
     } | null;
-    _privateHomeVisited?: () => boolean;
     _notePrivateHome?: () => void;
     saveSessionSnapshot?: (user: unknown) => void;
     navigateHome?: (opts?: unknown) => void;
     navigateToApp?: (slug: string, tab: string) => unknown;
+    _isScreenVisible?: (id: string) => boolean;
     openDiscussionInHub?: (slug: string) => void;
     _WORKSHOP_VIEW_KEY?: string;
     _workshopViewPath?: (url: string) => string | null;
@@ -106,6 +134,10 @@ type Legacy = {
   AppView?: {
     _landOnHub?: (slug: string) => void;
   };
+  Home?: { load?: () => void };
+  // ../auth/username-first-run.js: set while it asks a provisional handle for a username.
+  UsernameFirstRun?: { _publicAsk?: Promise<boolean> | null };
+  Secrets?: { open?: (slug: string) => void };
   UsernodeReact?: Record<string, unknown>;
 };
 const legacy = (): Legacy => window as unknown as Legacy;
@@ -130,6 +162,41 @@ export function enterScreen(screen: TourScreen, slug: string, conversationId?: n
   else if (screen === 'hub') { AppView?._landOnHub?.(slug); App.navigateToApp?.(slug, 'dev'); }
   else if (screen === 'discussion') App.openDiscussionInHub?.(slug);
   else if (screen === 'bot' && conversationId) window.location.hash = `#messages/${conversationId}`;
+}
+
+/** The longest the held frame waits on a private member's app (appDrawn). */
+export const APP_DRAWN_MAX_MS = 10_000;
+
+/**
+ * Resolves once the app a private member is sent to (`going`, what
+ * App.navigateToApp returned) is the screen, or that navigation has ended
+ * somewhere else, or it has stopped to ask for a username: whichever comes
+ * first, and within APP_DRAWN_MAX_MS. "You're in"'s held frame stays up
+ * until then (#4215). For a provisional handle (a private group's phone
+ * Join) the navigation reads the app's audience before it reveals anything
+ * (App._navigateAfterUsername); by the time it does, Home has drawn the
+ * project's tile under the frame, and the app grows out of it (the
+ * navigation's zoom) with Home still up until the zoom ends. Taking the
+ * frame down at the hand-off showed Home for that whole time.
+ */
+export function appDrawn(going: unknown, host: Legacy = legacy(), now: () => number = Date.now): Promise<void> {
+  const app = host.App;
+  const appUp = () => !!app?._isScreenVisible?.('app-view');
+  const drawn = () => (appUp() && !app?._isScreenVisible?.('home-screen')) || !!host.UsernameFirstRun?._publicAsk;
+  const pending = going as Promise<unknown> | null | undefined;
+  if (drawn() || !pending || typeof pending.then !== 'function') return Promise.resolve();
+  const until = now() + APP_DRAWN_MAX_MS;
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = () => { settled = true; };
+    pending.then(done, done);
+    const check = () => {
+      // Settled with no app up: it went somewhere else ("Not now", refused).
+      if (drawn() || (settled && !appUp()) || now() > until) resolve();
+      else requestAnimationFrame(check);
+    };
+    requestAnimationFrame(check);
+  });
 }
 
 /**
@@ -174,50 +241,65 @@ export function targetBox(selectors: string): Box | null {
   return unionBox(visibleBoxes(selectors));
 }
 
-/** How far below a transcript's top edge a row it shows from its top begins. */
-const ROW_INSET = 8;
-
-/**
- * Pure: how far a transcript scrolls back so a row whose top is at `rowTop`
- * begins ROW_INSET below the transcript's own top (`scrollerTop`), both on
- * screen: 0 when it does already. Never forward: a row lower down is in view.
- */
-export function scrollBackFor(scrollerTop: number, rowTop: number, inset: number = ROW_INSET): number {
-  const by = scrollerTop + inset - rowTop;
-  return by > 0 ? Math.ceil(by) : 0;
-}
-
-type ScrollerLike = { scrollTop: number; getBoundingClientRect(): { top: number; height: number }; querySelectorAll(rows: string): ArrayLike<{ getBoundingClientRect(): { top: number } }> };
-
-/**
- * A step's transcript (TourStep.newestFromTop): its newest row is shown from
- * its top edge. Pinned to its newest line, the bot's chat put a plan card
- * taller than the space above the coach card part-way down, its first line
- * ("Here's my plan for …") above the cut-out. Run every frame while the step
- * is up, so it holds when the rows arrive after the step lands and when the
- * chat follows a card that grew; the step covers its cut-out, so the reader
- * is never scrolled against their own hand. Answers whether it scrolled.
- */
-export function showNewestFromTop(
-  spec: { scroller: string; rows: string },
-  root: { querySelectorAll(selectors: string): ArrayLike<unknown> } = document,
-): boolean {
-  const scroller = (Array.from(root.querySelectorAll(spec.scroller)) as ScrollerLike[])
-    .find((el) => el.getBoundingClientRect().height > 0);
-  if (!scroller) return false;
-  const rows = scroller.querySelectorAll(spec.rows);
-  const newest = rows.length ? rows[rows.length - 1] : null;
-  if (!newest) return false;
-  const by = scrollBackFor(scroller.getBoundingClientRect().top, newest.getBoundingClientRect().top);
-  if (!by) return false;
-  scroller.scrollTop = Math.max(0, scroller.scrollTop - by);
-  return true;
-}
-
 const PAD = 6;
 /** The ring's width (`ring-[3px]` below), kept on screen around a hole. */
 const RING = 3;
-const SHADE = 'pointer-events-auto fixed bg-[rgba(9,9,12,0.6)] transition-all duration-200';
+/*
+ * ONE SHADE, ONE SHAPE (onboarding run two, 12 Oct 2026, iPhone 17 Safari).
+ * The dim was four strips round the cut-out, each easing on its own: as the
+ * ring went from the mark to "Suggest an improvement", light rectangles
+ * flashed across the page for about 150ms, and the cut-out's square corners
+ * stood out round the rounded ring on every step. Now the dim is one box the
+ * size of the cut-out whose shadow is the dim (DIM, `dimStyle`), rounded as
+ * the ring is, moving as one. The four strips stay, clear, to take the
+ * presses outside the cut-out (SHADE); with no cut-out the whole screen is
+ * one dim that takes them (SHADE_ALL).
+ */
+const SHADE = 'pointer-events-auto fixed';
+const SHADE_ALL = 'pointer-events-auto fixed inset-0 bg-[rgba(9,9,12,0.6)]';
+/*
+ * IT GLIDES FROM STEP TO STEP, AND ONLY THEN (onboarding run three, 12 Oct
+ * 2026): eased all the time, the cut-out chased whatever its target did
+ * within a step. Leaving the menu it followed "Suggest an improvement" down
+ * with the sheet, a light bar sliding across the page; on Home it glided
+ * down 40pt and back over 250ms. Now it eases for the move a step makes
+ * (`gliding`, GLIDE_MS) and follows its target at once otherwise.
+ */
+const DIM = 'pointer-events-none fixed';
+const DIM_GLIDE = 'pointer-events-none fixed motion-safe:transition-[left,top,width,height] motion-safe:duration-200 motion-safe:ease-out';
+const GLIDE_MS = 260;
+/** The cut-out's corners: the ring's (`rounded-2xl`) round a control, square for a screen. */
+export const HOLE_RADIUS = 16;
+
+/** The dim drawn round a cut-out: its shadow, spread past any screen. */
+export function dimStyle(hole: Box, rounded: boolean): CSSProperties {
+  return {
+    left: hole.left,
+    top: hole.top,
+    width: hole.width,
+    height: hole.height,
+    borderRadius: rounded ? HOLE_RADIUS : 0,
+    boxShadow: '0 0 0 200vmax rgba(9,9,12,0.6)',
+  };
+}
+
+/*
+ * INTO THE MENU, THE RING WAITS FOR THE MENU (Evan, 10 Oct 2026, iPhone).
+ * The step after the Homeroom mark points inside the menu that tap opens,
+ * and on touch that menu is a kit sheet springing up from below (native.js
+ * presentSheet, about 0.45s, with no event when it stops). Measured every
+ * frame, the ring left the mark, then rode up with the sheet from the
+ * screen's foot, and the card hopped from place to place with it. Now, into
+ * a step in the menu from the step before it, the mark's ring stays where it
+ * is and the card is hidden until the target has held still, wholly on
+ * screen, for SETTLE_FRAMES frames (or SETTLE_CAP_MS has passed); then the
+ * ring moves there once, over MOVE's 200ms, the shades with it, and the card
+ * shows. The home tour waits for its sheet the same way
+ * (../home/tour/index.tsx SETTLE_FRAMES).
+ */
+const SETTLE_FRAMES = 2;
+const SETTLE_CAP_MS = 700;
+const MOVE = 'motion-safe:transition-[left,top,width,height] motion-safe:duration-200 motion-safe:ease-out';
 
 /**
  * Pure: a cut-out with its foot taken off by the bars lying across it
@@ -284,7 +366,8 @@ export function pressTarget(selectors: string, root: PressRoot = document): bool
  * ring anywhere.
  *
  * `press` is the control a tap step rings, measured with it: the cut-out
- * itself, or within it the step's `press` (✕ in the app screen).
+ * itself, or within it the step's `press` (✕ in the app screen, Open app on
+ * the hub).
  */
 export type Measured = { step: number; box: Box | null; press?: Box | null };
 
@@ -342,26 +425,152 @@ function boxKey(b: Box | null | undefined): string {
   return b ? `${Math.round(b.left)},${Math.round(b.top)},${Math.round(b.width)},${Math.round(b.height)}` : '';
 }
 
-/** The coach card's position for a target box, as inline style. */
-export function cardPlacement(box: Box | null, step: TourStep, viewport: { width: number; height: number }): React.CSSProperties {
-  const H = viewport.height;
-  const tabs = document.getElementById('platform-tabs');
-  const tabsTop = tabs && tabs.getBoundingClientRect().height ? tabs.getBoundingClientRect().top : H;
-  if (!box) return { bottom: H - tabsTop + 16 };
-  if (step.place && typeof step.place === 'object') {
-    const above = document.querySelector(step.place.above);
-    if (above) return { bottom: H - above.getBoundingClientRect().top + 12 };
-  }
-  if (step.place === 'bottom') return { bottom: H - tabsTop + 16 };
-  if (box.height > H * 0.45) return { bottom: Math.max(16, H - (box.top + box.height) + 20) };
-  if (box.top + box.height / 2 > H / 2) return { bottom: H - box.top + PAD + 12 };
-  return { top: box.top + box.height + PAD + 12 };
+/**
+ * Pure: does a target lie outside the band a step can show it in, between
+ * the top bar's foot (`top`) and the foot bars' top (`bottom`)? Then it is
+ * scrolled into view before it is ringed (the owner, 6 October 2026: "each
+ * step scrolls its target into view"). A cut-out of a whole screen (taller
+ * than the band) is a screen, not something to scroll to.
+ */
+export function outOfBand(box: Box, band: { top: number; bottom: number }): boolean {
+  if (box.height > band.bottom - band.top) return false;
+  return box.top < band.top || box.top + box.height > band.bottom;
 }
 
-/** The tour over the live shell (see the header); exported so a test can draw its card. */
-export function Tour({ info, steps, onEnd }: { info: FirstSessionInfo; steps: TourStep[]; onEnd: () => void }) {
-  const [index, setIndex] = useState(0);
+/**
+ * Bring a step's target into view, at once (a smooth scroll moves it under a
+ * ring still following it): the first one drawn, centred, unless it is on
+ * the tab bar or the top bar, which are always in view. Before that, a
+ * target the screen holds back is drawn by pressing the step's `revealWith`.
+ * Answers whether it is done: the target is there and in view.
+ */
+export function bringIntoView(step: Pick<TourStep, 'target' | 'revealWith'>, viewport: { width: number; height: number }): boolean {
+  const el = (Array.from(document.querySelectorAll(step.target)) as HTMLElement[])
+    .find((e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; });
+  if (!el) {
+    if (step.revealWith) pressTarget(step.revealWith);
+    return false;
+  }
+  if (el.closest(`#platform-tabs, #platform-header, #platform-parked, ${APP_MENU}`)) return true;
+  const header = document.getElementById('platform-header')?.getBoundingClientRect();
+  const band = { top: header && header.height ? header.bottom : 0, bottom: footTop(visibleBoxes(BOTTOM_BARS), viewport) };
+  const r = el.getBoundingClientRect();
+  if (outOfBand({ left: r.left, top: r.top, width: r.width, height: r.height }, band)) {
+    try { el.scrollIntoView({ block: 'center', behavior: 'auto' }); } catch { el.scrollIntoView(); }
+  }
+  return true;
+}
+
+/**
+ * Pure: where the foot of the screen begins, the top of the bars lying along
+ * it: the phone's tab bar and the Resume strip on it, each at least half the
+ * screen wide and starting in its lower half. The rail beside the screen from
+ * 768px up is neither, and a screen with no bar (the app, full screen) runs
+ * to its own edge: the screen's height.
+ */
+export function footTop(bars: Box[], viewport: { width: number; height: number }): number {
+  const H = viewport.height;
+  const foot = bars.filter((b) => b.width >= viewport.width / 2 && b.top > H / 2 && b.top < H);
+  return foot.length ? Math.min(...foot.map((b) => b.top)) : H;
+}
+
+/**
+ * The surface a `{ clear }` step keeps its card off (./card-placement.ts
+ * clearOf), as the reader sees it: the first element it names that is on
+ * the page, or, on touch, the kit's sheet that presents it (native.js
+ * presentSheet lifts the menu into `.un-sheet`, whose grabber and rounded
+ * top sit above the menu's own box; ../home/tour/spotlight.ts panelBox
+ * measures the same surface). Null when none is drawn.
+ */
+export function surfaceBox(selectors: string, root: Pick<Document, 'querySelectorAll'> = document): Box | null {
+  for (const el of Array.from(root.querySelectorAll(selectors))) {
+    const surface = (typeof el.closest === 'function' ? el.closest('.un-sheet') : null) || el;
+    const r = surface.getBoundingClientRect();
+    if (r.width > 0 && r.height > 0) return { left: r.left, top: r.top, width: r.width, height: r.height };
+  }
+  return null;
+}
+
+/**
+ * The coach card's position for a target box, as inline style
+ * (./card-placement.ts does the arithmetic, over what this measures). It
+ * never covers the tab bar, and it is always whole on the screen, on a
+ * laptop beside its rail as on a phone (#4182).
+ */
+export function cardPlacement(
+  box: Box | null,
+  step: TourStep,
+  viewport: { width: number; height: number },
+  foot: number = footTop(visibleBoxes(BOTTOM_BARS), viewport),
+): React.CSSProperties {
+  const place = step.place;
+  const above = place && typeof place === 'object' && 'above' in place ? document.querySelector(place.above) : null;
+  const [below] = place && typeof place === 'object' && 'below' in place ? visibleBoxes(place.below) : [];
+  const clear = place && typeof place === 'object' && 'clear' in place ? surfaceBox(place.clear) : null;
+  return cardPosition(box, place, viewport, {
+    foot,
+    aboveTop: above ? above.getBoundingClientRect().top : null,
+    belowBottom: below ? below.top + below.height : null,
+    clear,
+    pad: PAD,
+  });
+}
+
+/**
+ * The walk's step indicator, in place of the "1 of 3" counter: one small
+ * numbered circle per card, this card's filled in the ink that marks where
+ * you are (--lit-ink), the rest outlined.
+ */
+export function StepDots({ at, total }: { at: number; total: number }) {
+  const t = useMessages('onboarding');
+  return (
+    <ol data-first-session-steps="" aria-label={t('onboarding:firstSession.walk.steps', { step: at + 1, total })} className="mb-1.5 flex items-center gap-1.5">
+      {Array.from({ length: total }, (_, i) => (
+        <li
+          key={i}
+          aria-current={i === at ? 'step' : undefined}
+          className={i === at
+            ? 'flex h-5 w-5 items-center justify-center rounded-full bg-[color:var(--lit-ink)] text-[11px] font-bold leading-none text-white dark:text-zinc-950'
+            : 'flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-bold leading-none text-zinc-500 shadow-[inset_0_0_0_1.5px_rgba(161,161,170,0.6)] dark:text-zinc-400'}
+        >
+          {i + 1}
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+/**
+ * The tour over the live shell (see the header); exported so a test can draw
+ * its card. `moments`: the maker's walk after the made screen, whose start,
+ * cards and end are told to the server as they happen (./made-moments.ts).
+ * `numbered`: the walk's cards, with StepDots for the counter, no Back, and
+ * Done on the last.
+ */
+export function Tour({ info, steps, onEnd: endTour, start = 0, moments = false, numbered = false }: {
+  info: FirstSessionInfo; steps: TourStep[]; onEnd: () => void; start?: number; moments?: boolean; numbered?: boolean;
+}) {
+  const t = useMessages('onboarding');
+  // A screenshot state may open it part-way (tourShot, below), on its own
+  // screen; the tour itself always starts at its first card.
+  const [index, setIndex] = useState(() => Math.max(0, Math.min(start, steps.length - 1)));
   const [measured, setMeasured] = useState<Measured>({ step: -1, box: null });
+  const measuredRef = useRef(measured);
+  measuredRef.current = measured;
+  // Into a step in the menu: waiting for the menu (`settling`, the card
+  // hidden), then the one move there (`moving`). INTO THE MENU, above.
+  const settleRef = useRef<{ at: number; since: number; key: string; still: number } | null>(null);
+  const [settling, setSettling] = useState(false);
+  const [moving, setMoving] = useState(false);
+  // A step change's move of the cut-out, eased (IT GLIDES FROM STEP TO STEP).
+  const [gliding, setGliding] = useState(false);
+  const firstStepRef = useRef(true);
+  useLayoutEffect(() => {
+    if (firstStepRef.current) { firstStepRef.current = false; return undefined; }
+    setGliding(true);
+    const t = window.setTimeout(() => setGliding(false), GLIDE_MS);
+    return () => window.clearTimeout(t);
+  }, [index]);
   const [viewport, setViewport] = useState({ width: window.innerWidth, height: window.innerHeight });
   const step = steps[index];
   const stepRef = useRef(step);
@@ -371,11 +580,98 @@ export function Tour({ info, steps, onEnd }: { info: FirstSessionInfo; steps: To
   const box = boxForStep(measured, index);
   const pressBox = pressForStep(measured, index);
 
+  // Newcomer run five (13 Oct 2026): the maker's tour, card by card, for the
+  // run report. Its end says on which card, and whether it was skipped.
+  const momentsRef = useRef(moments);
+  useEffect(() => {
+    if (momentsRef.current) noteMoment(info.slug, 'tour_started', { steps: steps.length });
+  }, []);
+  useEffect(() => {
+    if (momentsRef.current) noteMoment(info.slug, 'tour_step_shown', { step: index + 1, steps: steps.length });
+  }, [index]);
+  const ended = useRef(false);
+  const finish = useCallback((how: 'done' | 'skipped') => {
+    if (momentsRef.current && !ended.current) {
+      ended.current = true;
+      noteMoment(info.slug, 'tour_ended', { step: indexRef.current + 1, steps: steps.length, how });
+    }
+    endTour();
+  }, [info.slug, steps.length, endTour]);
+  const onEnd = useCallback(() => finish('done'), [finish]);
+
+  // While it is up, the hub's first-version card and the App tab hold back
+  // their "Review the plan" (./tour-running.ts): the tour asks for nothing
+  // but its own cards, and the app the maker opens last offers it after.
+  useEffect(() => {
+    setTourRunning(true);
+    return () => setTourRunning(false);
+  }, []);
+
   // A new step measures its own target before it is painted, so its card
-  // never shows beside the last step's cut-out (see Measured).
+  // never shows beside the last step's cut-out (see Measured). Into a step
+  // in the menu from the one before it, that step's ring is kept instead,
+  // for this step, with the card hidden until the menu has settled (INTO
+  // THE MENU, above).
   useLayoutEffect(() => {
+    const before = measuredRef.current;
+    if (step.inMenu && before.step === index - 1 && before.box) {
+      settleRef.current = { at: index, since: performance.now(), key: '', still: 0 };
+      setSettling(true);
+      setMeasured({ ...before, step: index });
+      return;
+    }
+    settleRef.current = null;
+    setSettling(false);
     setMeasured(measure(index, step));
   }, [index, step]);
+
+  // A step that points at the app waits for it (TourStep.waitsFor,
+  // ./tour-wait.ts), decided before the step is painted, so its card never
+  // stands over a tile that cannot be opened yet or the app's "Opening..."
+  // cover. `held`: no card for a moment (WAIT_GRACE_MS), as an app that
+  // opens as usual is there by then; `shown`: the card says it is getting
+  // ready, with Skip and Back. Nothing in the cut-out takes a press
+  // meanwhile, so a tap on a tile still being set up cannot move the tour on.
+  const [wait, setWait] = useState<'held' | 'shown' | null>(null);
+  const waiting = wait !== null;
+  useLayoutEffect(() => {
+    setWait(step.waitsFor && !appReady(step.waitsFor, info.slug) ? 'held' : null);
+  }, [index, step, info.slug]);
+  // Then look every WAIT_CHECK_MS until it is ready, and at most
+  // TOUR_WAIT_MAX_MS. Waiting on a tile, ask the server too, and read Home
+  // again once it says the setup is over: Home may have missed the news.
+  useEffect(() => {
+    const kind = step.waitsFor;
+    if (!waiting || !kind) return undefined;
+    const { slug } = info;
+    let live = true;
+    const check = window.setInterval(() => {
+      try { if (appReady(kind, slug)) setWait(null); } catch { /* looked at again */ }
+    }, WAIT_CHECK_MS);
+    const say = window.setTimeout(() => setWait((w) => (w === 'held' ? 'shown' : w)), WAIT_GRACE_MS);
+    const cap = window.setTimeout(() => setWait(null), TOUR_WAIT_MAX_MS);
+    const ask = kind === 'running' ? window.setInterval(() => {
+      fetch(madeAppUrl(slug), { credentials: 'same-origin', cache: 'no-store' })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((body) => {
+          if (live && tileSettled(madeAppOf(body)?.status) && !appReady('running', slug)) legacy().Home?.load?.();
+        })
+        .catch(() => {});
+    }, WAIT_POLL_MS) : 0;
+    return () => {
+      live = false;
+      window.clearInterval(check);
+      window.clearTimeout(say);
+      window.clearTimeout(cap);
+      window.clearInterval(ask);
+    };
+  }, [waiting, index, step, info.slug]);
+  // The move lasts its 200ms; following after it is frame by frame again.
+  useEffect(() => {
+    if (!moving) return undefined;
+    const t = window.setTimeout(() => setMoving(false), 260);
+    return () => window.clearTimeout(t);
+  }, [moving]);
 
   // Then follow the target every frame; keep it only when it moved. A frame
   // that throws (a selector the document cannot parse) must not end the
@@ -383,15 +679,41 @@ export function Tour({ info, steps, onEnd }: { info: FirstSessionInfo; steps: To
   useEffect(() => {
     let raf = 0;
     let last = '';
+    // The step whose target was brought into view, and how many frames it
+    // has had to appear (a press of `revealWith` is tried once).
+    let shown = -1;
+    let tries = 0;
+    let lastAt = -1;
     const tick = () => {
       try {
         const at = indexRef.current;
+        if (at !== lastAt) { lastAt = at; tries = 0; }
+        // Into view first, once per step, so it is ringed where it shows.
+        if (shown !== at && tries < 240) {
+          // `revealWith` is pressed once, half a second in: a screen still
+          // drawing its target gets that long first.
+          const step = stepRef.current;
+          const asked = tries === 30 ? step : { target: step.target };
+          if (bringIntoView(asked, { width: window.innerWidth, height: window.innerHeight })) shown = at;
+          tries += 1;
+        }
         // Before measuring, so the cut-out is drawn round what it shows.
-        const reveal = stepRef.current.newestFromTop;
-        if (reveal) showNewestFromTop(reveal);
         const m = measure(at, stepRef.current);
         const key = `${at}:${boxKey(m.box)}:${boxKey(m.press)}`;
-        if (key !== last) { last = key; setMeasured(m); }
+        const settle = settleRef.current;
+        if (settle && settle.at === at) {
+          // Into the menu: kept until its target holds still, on screen.
+          const onScreen = !!m.box && m.box.top >= 0 && m.box.top + m.box.height <= window.innerHeight;
+          settle.still = onScreen && key === settle.key ? settle.still + 1 : 0;
+          settle.key = key;
+          if (settle.still >= SETTLE_FRAMES || performance.now() - settle.since > SETTLE_CAP_MS) {
+            settleRef.current = null;
+            last = key;
+            setMoving(true);
+            setSettling(false);
+            setMeasured(m);
+          }
+        } else if (key !== last) { last = key; setMeasured(m); }
         if (window.innerWidth !== viewport.width || window.innerHeight !== viewport.height) {
           setViewport({ width: window.innerWidth, height: window.innerHeight });
         }
@@ -402,60 +724,122 @@ export function Tour({ info, steps, onEnd }: { info: FirstSessionInfo; steps: To
     return () => cancelAnimationFrame(raf);
   }, [viewport.width, viewport.height]);
 
-  // A step whose target never shows (a screen that did not open) opens its
-  // screen itself after a moment.
+  // Opened part-way: the step's own screen, as Back would open it. Once,
+  // for where it was opened; every later step opens its own in go().
   useEffect(() => {
-    const t = window.setTimeout(() => { if (!targetBox(step.target)) enterScreen(step.screen, info.slug, info.conversationId); }, 2500);
+    if (index > 0) enterScreen(steps[index].screen, info.slug, info.conversationId);
+  }, []);
+
+  // A step inside the Homeroom menu (TourStep.inMenu) has it open: the tap
+  // before it opened it, and Back to it, or a tour opened part-way on it,
+  // opens it here. Moving on from it closes it, Back and Skip included, so
+  // the steps after it are on the app with nothing over it.
+  const inMenu = !!step.inMenu;
+  useEffect(() => {
+    if (!inMenu) return undefined;
+    if (!AppContext.isOpen()) AppContext.open();
+    return () => { if (AppContext.isOpen()) void AppContext.close(); };
+  }, [inMenu, index]);
+
+  // A step whose target never shows (a screen that did not open) opens its
+  // screen itself after a moment; a step in the menu, the menu.
+  useEffect(() => {
+    const t = window.setTimeout(() => {
+      if (targetBox(step.target)) return;
+      if (step.inMenu && !AppContext.isOpen()) AppContext.open();
+      else enterScreen(step.screen, info.slug, info.conversationId);
+    }, 2500);
     return () => window.clearTimeout(t);
   }, [index, step, info.slug]);
 
+  // OUT OF THE MENU, THE MENU GOES FIRST (onboarding run two, 12 Oct 2026,
+  // iPhone 17 Safari): Next on the step in the menu moved on at once, the
+  // tour's layer dropped under the kit's sheet as it slid away, and the
+  // sheet's top edge, grabber and all, stayed in sight over the next step.
+  // Now the step in the menu stays, card hidden and layer over the sheet,
+  // until the menu has closed (AppContext.close resolves once it is gone).
+  const [leavingMenu, setLeavingMenu] = useState(false);
   const go = useCallback((to: number) => {
-    if (to < 0) return;
+    if (to < 0 || leavingMenu) return;
     if (to >= steps.length) { onEnd(); return; }
-    if (steps[to].screen !== steps[index].screen || to < index) enterScreen(steps[to].screen, info.slug, info.conversationId);
-    setIndex(to);
-  }, [index, steps, info.slug, onEnd]);
+    const move = () => {
+      // Back to a step in the menu stays on its screen: the menu opens over it
+      // (inMenu, above), and re-entering the app could close it again.
+      if (steps[to].screen !== steps[index].screen || (to < index && !steps[to].inMenu)) enterScreen(steps[to].screen, info.slug, info.conversationId);
+      setIndex(to);
+    };
+    if (steps[index].inMenu && !steps[to].inMenu && AppContext.isOpen()) {
+      setLeavingMenu(true);
+      void Promise.resolve(AppContext.close()).catch(() => {}).then(() => {
+        setLeavingMenu(false);
+        move();
+      });
+      return;
+    }
+    move();
+  }, [index, steps, info.slug, onEnd, leavingMenu]);
 
   // A tap step advances when its control is pressed, by a finger or by the
   // card's hint (pressTarget). The press is not intercepted: it is the
   // product's own handler that navigates.
   useEffect(() => {
-    if (!step.tap) return undefined;
+    if (!step.tap || waiting) return undefined;
     const onClick = (e: MouseEvent) => {
       const t = e.target as Element | null;
       if (!t) return;
       const hit = Array.from(document.querySelectorAll(pressOf(step))).some((el) => el.contains(t));
       if (!hit) return;
+      // The last card's control ends the tour, and the press goes on to it:
+      // the maker's Open app opens the app.
+      if (step.last) { window.setTimeout(onEnd, 0); return; }
       window.setTimeout(() => setIndex((i) => (i === index ? i + 1 : i)), 0);
       const next = steps[index + 1];
       if (step.opensNext && next) window.setTimeout(() => enterScreen(next.screen, info.slug, info.conversationId), 250);
     };
     document.addEventListener('click', onClick, true);
     return () => document.removeEventListener('click', onClick, true);
-  }, [step, index, steps, info.slug, info.conversationId]);
+  }, [step, index, steps, info.slug, info.conversationId, onEnd, waiting]);
 
   const skip = useCallback(() => {
     enterScreen(steps[steps.length - 1].screen, info.slug, info.conversationId);
-    onEnd();
-  }, [steps, info.slug, onEnd]);
+    finish('skipped');
+  }, [steps, info.slug, finish]);
 
   // A tap step rings the control that leads on: the whole cut-out, kept a
   // ring's width inside the screen, or its `press` within a wider cut-out.
-  // Any other cut-out runs to the screen's edges.
-  const hole = box && holeFor(box, viewport, step.tap && !step.press ? RING : 0);
-  const ring = hole && step.tap && pressBox ? holeFor(pressBox, viewport) : null;
-  // Presses reach only that control: a step that only shows its screen
-  // covers all of its cut-out, and a tap step all of it but the ring.
-  const covers = hole ? (ring ? aroundBox(hole, ring) : [hole]) : [];
-  const card = cardPlacement(box, step, viewport);
+  // So does a step that only points at a control (`ringed`). Any other
+  // cut-out runs to the screen's edges.
+  const pointed = !!(step.tap || step.ringed);
+  // Waiting for the hub, nothing of the page under it is shown: it is a
+  // blank page, then skeleton rows, until the hub is drawn whole.
+  // Nor while it leaves the menu: its target slides away with the sheet
+  // (OUT OF THE MENU, THE MENU GOES FIRST).
+  const dimAll = (waiting && step.waitsFor === 'hub') || leavingMenu;
+  const hole = box && !dimAll && holeFor(box, viewport, pointed && !step.press ? RING : 0);
+  // While a step waits for the app (`waiting`) nothing is ringed, and all of
+  // its cut-out is covered.
+  const ring = hole && pointed && pressBox && !waiting ? holeFor(pressBox, viewport) : null;
+  // Presses reach only a tap step's control: a step that only shows its
+  // screen, or points at a control, covers all of its cut-out, and a tap
+  // step all of it but the ring.
+  const covers = hole ? (ring && step.tap ? aroundBox(hole, ring) : [hole]) : [];
+  // A card that says the app is getting ready stands at the foot.
+  const card = cardPlacement(waiting ? null : box, step, viewport);
+  // Where the card is in its tour: the walk's numbered circles, else "2 of 4".
+  const counter = numbered
+    ? <StepDots at={index} total={steps.length} />
+    : <p className="text-[12px] font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400">{t('onboarding:firstSession.tour.counter', { step: index + 1, total: steps.length })}</p>;
 
   return (
     // The layer itself lets presses through: only the shades, the card and
     // the covers over the cut-out take them, so the control the step asks
     // for is pressable.
-    <div data-first-session-tour={index + 1} className="pointer-events-none fixed inset-0 z-[9000]">
+    // A step in the menu is drawn over it: on touch the menu is a kit sheet
+    // (z-index 9991), and under it the card's Next was under its backdrop.
+    <div data-first-session-tour={index + 1} className={step.inMenu ? 'pointer-events-none fixed inset-0 z-[9995]' : 'pointer-events-none fixed inset-0 z-[9000]'}>
       {hole ? (
         <>
+          <div aria-hidden="true" data-first-session-dim="" className={gliding || moving ? DIM_GLIDE : DIM} style={dimStyle(hole, pointed)} />
           <div className={SHADE} style={{ left: 0, top: 0, right: 0, height: Math.max(0, hole.top) }} />
           <div className={SHADE} style={{ left: 0, top: hole.top + hole.height, right: 0, bottom: 0 }} />
           <div className={SHADE} style={{ left: 0, top: hole.top, width: Math.max(0, hole.left), height: hole.height }} />
@@ -463,177 +847,243 @@ export function Tour({ info, steps, onEnd }: { info: FirstSessionInfo; steps: To
           {ring ? (
             <div
               aria-hidden="true"
-              className="pointer-events-none fixed rounded-2xl ring-[3px] ring-[rgba(90,169,255,0.9)] motion-safe:animate-pulse"
+              className={moving
+                ? `pointer-events-none fixed rounded-2xl ring-[3px] ring-[rgba(90,169,255,0.9)] motion-safe:animate-pulse ${MOVE}`
+                : 'pointer-events-none fixed rounded-2xl ring-[3px] ring-[rgba(90,169,255,0.9)] motion-safe:animate-pulse'}
               style={ring}
             />
           ) : null}
           {covers.map((cover, i) => <div key={i} className="pointer-events-auto fixed" style={cover} />)}
         </>
       ) : (
-        <div className={`${SHADE} inset-0`} />
+        <div className={SHADE_ALL} />
       )}
       <div
         role="dialog"
         aria-labelledby="first-session-tour-title"
-        className="pointer-events-auto fixed left-4 right-4 mx-auto max-w-md rounded-[20px] bg-white p-4 text-zinc-900 shadow-[0_18px_40px_-16px_rgba(0,0,0,0.6)] dark:bg-zinc-800 dark:text-zinc-100"
+        data-tour-says-where-it-opens={step.saysWhereItOpens ? '' : undefined}
+        data-first-session-tour-wait={wait || undefined}
+        className={settling || wait === 'held' || leavingMenu
+          ? 'pointer-events-none fixed left-4 right-4 mx-auto max-w-md rounded-[20px] bg-white p-4 text-zinc-900 opacity-0 shadow-[0_18px_40px_-16px_rgba(0,0,0,0.6)] dark:bg-zinc-800 dark:text-zinc-100'
+          : 'pointer-events-auto fixed left-4 right-4 mx-auto max-w-md rounded-[20px] bg-white p-4 text-zinc-900 shadow-[0_18px_40px_-16px_rgba(0,0,0,0.6)] transition-opacity duration-150 dark:bg-zinc-800 dark:text-zinc-100'}
         style={card}
       >
-        <p className="text-[12px] font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400">{`${index + 1} of ${steps.length}`}</p>
-        <p id="first-session-tour-title" className="mt-0.5 text-[17px] font-semibold leading-snug">{step.title}</p>
-        <p className="mt-1 text-[15px] leading-snug text-zinc-600 dark:text-zinc-300">{step.text}</p>
-        <div className="mt-3 flex items-center justify-between gap-3">
-          {step.last ? <span /> : (
-            <button type="button" onClick={skip} className="py-1.5 text-[15px] font-semibold text-zinc-500 dark:text-zinc-400">Skip</button>
-          )}
-          <div className="flex items-center gap-2.5">
-            {index > 0 ? (
-              <button type="button" onClick={() => go(index - 1)} className="rounded-full bg-zinc-100 px-3.5 py-1.5 text-[15px] font-semibold text-zinc-900 dark:bg-zinc-700 dark:text-zinc-100">Back</button>
-            ) : null}
-            {step.tap && !step.last ? (
-              // The hint presses the control it names (pressTarget), so it
-              // does what a finger on the control does. Still the blue words
-              // it was: no fill, no edge, no underline, only a pressed state.
-              <button
-                type="button"
-                data-first-session-tap=""
-                onClick={() => { pressTarget(pressOf(step)); }}
-                className="py-1.5 text-[13px] font-semibold text-violet-700 transition-opacity active:opacity-60 dark:text-violet-400"
-              >
-                {step.tap}
-              </button>
-            ) : (
-              <Button type="button" onClick={() => go(index + 1)} variant="pillAccent" size="sm" ink="solid" className="text-[15px] font-semibold">
-                {step.last ? 'Got it' : 'Next'}
-              </Button>
-            )}
-          </div>
-        </div>
+        {waiting ? (
+          // The step waits for the app (`wait`): that it is getting ready,
+          // and the ways out, Skip and Back, never a press that leads on.
+          <>
+            {counter}
+            <p id="first-session-tour-title" role="status" className="mt-0.5 flex items-center gap-2 text-[17px] font-semibold leading-snug">
+              <SpinnerRingIcon className="h-4 w-4 shrink-0 animate-spin text-zinc-500 motion-reduce:animate-none dark:text-zinc-400" aria-hidden="true" />
+              <span className="min-w-0">{t('onboarding:firstSession.tour.wait.title', { app: info.name })}</span>
+            </p>
+            <p className="mt-1 text-[15px] leading-snug text-zinc-600 dark:text-zinc-300">{t('onboarding:firstSession.tour.wait.text')}</p>
+            <div className="mt-3 flex items-center justify-between gap-3">
+              <button type="button" onClick={skip} className="py-1.5 text-[15px] font-semibold text-zinc-500 dark:text-zinc-400">{t('onboarding:firstSession.tour.skip')}</button>
+              {index > 0 ? (
+                <button type="button" onClick={() => go(index - 1)} className="rounded-full bg-zinc-100 px-3.5 py-1.5 text-[15px] font-semibold text-zinc-900 dark:bg-zinc-700 dark:text-zinc-100">{t('core:common.back')}</button>
+              ) : null}
+            </div>
+          </>
+        ) : (
+          <>
+            {counter}
+            <p id="first-session-tour-title" className="mt-0.5 text-[17px] font-semibold leading-snug">{step.title}</p>
+            <p className="mt-1 text-[15px] leading-snug text-zinc-600 dark:text-zinc-300">{step.text}</p>
+            <div className="mt-3 flex items-center justify-between gap-3">
+              {step.last ? <span /> : (
+                <button type="button" onClick={skip} className="py-1.5 text-[15px] font-semibold text-zinc-500 dark:text-zinc-400">{t('onboarding:firstSession.tour.skip')}</button>
+              )}
+              <div className="flex items-center gap-2.5">
+                {index > 0 && !numbered ? (
+                  <button type="button" onClick={() => go(index - 1)} className="rounded-full bg-zinc-100 px-3.5 py-1.5 text-[15px] font-semibold text-zinc-900 dark:bg-zinc-700 dark:text-zinc-100">{t('core:common.back')}</button>
+                ) : null}
+                {step.tap ? (
+                  // The hint presses the control it names (pressTarget), so it
+                  // does what a finger on the control does. Still the blue words
+                  // it was: no fill, no edge, no underline, only a pressed state.
+                  <button
+                    type="button"
+                    data-first-session-tap=""
+                    onClick={() => { pressTarget(pressOf(step)); }}
+                    className="py-1.5 text-[13px] font-semibold text-violet-700 transition-opacity active:opacity-60 dark:text-violet-400"
+                  >
+                    {step.tap}
+                  </button>
+                ) : (
+                  <Button type="button" onClick={() => go(index + 1)} variant="pillAccent" size="sm" ink="solid" className="text-[15px] font-semibold">
+                    {step.last ? (numbered ? t('core:common.done') : t('onboarding:firstSession.tour.gotIt')) : t('onboarding:firstSession.tour.next')}
+                  </Button>
+                )}
+              </div>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
 }
 
 /**
- * "You're in"'s ground: the landing's wallpaper under the wordmark, full
- * screen. Held empty (WelcomeHeld) while the invite's standing is read.
+ * The frame held while an invite's standing is read (holdWelcome, see the
+ * header): the landing's wallpaper, full screen, under the Homeroom logo bar
+ * every first-run screen wears (owner, 7 October), with skeleton faces and
+ * lines where the invite's words were. It stays until the app the link
+ * opens is on screen (appDrawn), so Home never shows in between. The page
+ * under it holds still and takes no tap or focus, as under the make screen
+ * (../../lib/page-lock.ts).
  */
-function WelcomeFrame({ children, held = false }: { children: React.ReactNode; held?: boolean }) {
+export function WelcomeHeld() {
+  const t = useMessages('onboarding');
+  const rootRef = useRef<HTMLDivElement>(null);
+  usePageLock(rootRef);
   return (
     <div
+      ref={rootRef}
       role="dialog"
-      aria-labelledby={held ? undefined : 'first-session-title'}
-      aria-label={held ? 'Opening your invite' : undefined}
-      data-first-session-welcome={held ? 'held' : ''}
-      className="fixed inset-0 z-[9000] flex flex-col overflow-y-auto text-zinc-900 dark:text-zinc-100"
+      aria-label={t('onboarding:firstSession.welcome.opening')}
+      data-first-session-welcome="held"
+      className="fixed inset-0 z-[9000] flex flex-col text-zinc-900 dark:text-zinc-100"
       style={{ background: 'var(--home-wallpaper, #f4f2e4)' }}
     >
       <div className="flex h-[52px] shrink-0 items-center justify-center pt-[env(safe-area-inset-top)]">
-        <Wordmark className="h-6 w-auto text-[color:var(--brand-ink)]" />
+        <Wordmark className="h-6 w-auto text-zinc-950 dark:text-white" />
       </div>
-      <div className="mx-auto flex w-full max-w-sm grow flex-col px-4 pb-[max(34px,env(safe-area-inset-bottom))] text-center">
-        {children}
+      <div data-first-session-scroll="" className="min-h-0 flex-1 overflow-y-auto">
+        <div className="mx-auto flex min-h-full w-full max-w-sm flex-col px-6 pb-[max(40px,env(safe-area-inset-bottom))] text-center">
+          <SkeletonGroup label={t('onboarding:firstSession.welcome.opening')} className="my-auto flex flex-col items-center pb-10">
+            <span className="flex">
+              <Skeleton shape="block" className="h-10 w-10 rounded-full" />
+              <Skeleton shape="block" className="-ml-2.5 h-10 w-10 rounded-full" />
+            </span>
+            <Skeleton className="mt-5 w-32" />
+            <Skeleton shape="block" className="mt-3 h-9 w-64" />
+          </SkeletonGroup>
+        </div>
       </div>
     </div>
   );
 }
 
-/** The frame while the invite's standing is read: where its words will be. */
-export function WelcomeHeld() {
-  return (
-    <WelcomeFrame held>
-      <SkeletonGroup label="Opening your invite" className="flex flex-col items-center">
-        <Skeleton shape="block" className="mt-4 h-12 w-56 rounded-full" />
-        <Skeleton className="mt-5 w-28" />
-        <Skeleton shape="block" className="mt-4 h-8 w-64" />
-        <Skeleton shape="muted" className="mt-4 w-56" />
-      </SkeletonGroup>
-    </WelcomeFrame>
-  );
-}
-
-export function YoureIn({ info, onGo }: { info: FirstSessionInfo; onGo: (firstVersion: FirstVersionStage) => void }) {
-  const user = legacy().App?.user;
-  const who = user?.displayName || user?.username || '';
-  const existing = !info.newAccount;
-  const maker = info.inviterMadeIt && info.inviterName ? info.inviterName : null;
-  // Nothing is made yet while its first version is on its way.
-  const made = info.building ? 'is making' : 'made';
-  const go = useRef<HTMLButtonElement>(null);
-  useEffect(() => { go.current?.focus(); }, []);
-  // Whether its first version is still being built, for the tour's App
-  // step: the record as the App tab reads it, past the service worker's
-  // cache. A read that fails leaves the step as it was.
-  const stage = useRef<FirstVersionStage>(info.firstVersion ?? (info.building ? 'building' : null));
-  useEffect(() => {
-    let live = true;
-    fetch(madeAppUrl(info.slug), { credentials: 'same-origin', cache: 'no-store' })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((body) => { if (live && body) stage.current = firstVersionStage(body); })
-      .catch(() => {});
-    return () => { live = false; };
-  }, [info.slug]);
-  const tile = info.iconUrl ? <img src={info.iconUrl} alt="" className="h-full w-full object-cover" /> : (info.iconEmoji || info.name.slice(0, 1));
-  return (
-    <WelcomeFrame>
-      <div className="mx-auto mt-4 inline-flex items-center gap-2 rounded-full bg-white py-1.5 pl-1.5 pr-4 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900">
-        <span className="app-icon-tile flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-[10px] text-xl" aria-hidden="true">
-          {tile}
-        </span>
-        <span className="text-[14px] font-semibold">{`You joined ${info.name}`}</span>
-      </div>
-      <p className="mt-4 text-[13px] font-semibold uppercase tracking-[0.8px] text-zinc-500 dark:text-zinc-400">
-        {who ? `You're in, ${who}!` : 'You\'re in!'}
-      </p>
-      <h1 id="first-session-title" className="mt-2.5 text-balance text-[30px] font-extrabold leading-[34px]">
-        {existing ? `Welcome to ${info.name}.` : 'On Homeroom, communities make apps together.'}
-      </h1>
-      <p className="mt-2.5 text-pretty text-[16px] leading-[22px] text-zinc-500 dark:text-zinc-400">
-        {existing
-          ? `${maker ? `${maker} ${made} it for the group.` : 'It is the group\'s own app.'} Have a look, then say hi.`
-          : 'Anyone using an app can change it. The group decides what goes in.'}
-      </p>
-      {existing ? null : (
-        <div className="mt-6 rounded-2xl bg-white p-4 text-left shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900">
-          <p className="text-[13px] font-semibold uppercase tracking-[0.8px] text-zinc-500 dark:text-zinc-400">How it works</p>
-          <ol className="mt-3 grid gap-2.5">
-            {[
-              maker ? `Someone makes an app for their group. ${maker} ${made} this one.` : 'Someone makes an app for their group.',
-              'Anyone in the group can suggest an improvement. Homeroom bot builds it.',
-              'The group decides what goes in.',
-            ].map((line, i) => (
-              <li key={line} className="flex items-start gap-2.5 text-[15px] leading-snug text-zinc-700 dark:text-zinc-200">
-                <span className="mt-px flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full bg-violet-600 text-[12px] font-bold text-white">{i + 1}</span>
-                <span>{line}</span>
-              </li>
-            ))}
-          </ol>
-        </div>
-      )}
-      <JoinedPicture slug={info.slug} name={info.name} picture={joinPicture(info.picture)} description={info.description} tile={tile} building={!!info.building} compact={!existing} />
-      <div className="grow" />
-      <Button
-        ref={go}
-        type="button"
-        onClick={() => onGo(stage.current)}
-        layout="full"
-        variant="pillAccent"
-        size="pillLg"
-        ink="solidLate"
-        className="mt-8 flex items-center justify-center"
-      >
-        {`Go to ${info.name}`}
-      </Button>
-    </WelcomeFrame>
-  );
-}
-
 export type Mode =
   | { kind: 'none' }
-  | { kind: 'held' }
-  | { kind: 'welcome'; info: FirstSessionInfo }
-  | { kind: 'make' }
-  | { kind: 'made'; made: Made }
-  | { kind: 'tour'; info: FirstSessionInfo; path: 'invited' | 'maker' | 'private' };
+  // `app`: handed to the app an invite opened (welcome), and down once it is drawn.
+  | { kind: 'held'; app?: string }
+  // `entry` 'create' is the Create button's (see the header); none is the first session's.
+  | { kind: 'make'; shot?: MakeShot; entry?: MakeEntry; startImport?: boolean }
+  | { kind: 'made'; made: Made; entry?: MakeEntry }
+  | { kind: 'tour'; info: FirstSessionInfo; path: TourPath; start?: number; moments?: boolean };
+
+/** The walk on Home after the first visit to the app, or "Look around first" (./tour-steps.ts). */
+export type TourPath = 'walk' | 'look';
+
+/**
+ * "Look around first"'s tour is about Home and the tab bar, not a project:
+ * it carries no project, and every step is on Home.
+ */
+const LOOK_AROUND_INFO: FirstSessionInfo = { slug: '', name: '' };
+
+/**
+ * The tours' and the tip's screenshot states. Only a brand-new account's
+ * first session reaches them, so the before/after shots open one on demand
+ * (the owner's ruling for first-run screens, 6 October 2026, as app-view.js
+ * draws `?shot=first-version`): `?shot=tour-home` (the walk's three cards),
+ * `?shot=tour-home-private` (with the waitlist card), `?shot=tour-look`, and
+ * `&step=N` to open one at its Nth card; `?shot=app-tip` and
+ * `?shot=app-tip-invited`, the tip over the app. The walk and the tip are
+ * shown over the first project on the viewer's Home, the walk with its name
+ * and, when its starter has one, its example change (asked before the walk
+ * opens, so a shot from its second card shows it at once). Nothing is
+ * written: no answer to the question, no "seen" or "done" mark.
+ */
+const TOUR_SHOTS: Readonly<Record<string, { path: TourPath; privateMember?: boolean }>> = Object.freeze({
+  'tour-home': { path: 'walk' },
+  'tour-home-private': { path: 'walk', privateMember: true },
+  'tour-look': { path: 'look' },
+});
+
+export type TourShot = { path: TourPath; start: number; privateMember?: boolean };
+
+export function tourShot(search: string): TourShot | null {
+  let params: URLSearchParams;
+  try { params = new URLSearchParams(search); } catch { return null; }
+  const shot = params.get('shot') || '';
+  const found = Object.prototype.hasOwnProperty.call(TOUR_SHOTS, shot) ? TOUR_SHOTS[shot] : null;
+  if (!found) return null;
+  const n = Number(params.get('step'));
+  const start = Number.isInteger(n) && n > 1 ? n - 1 : 0;
+  return found.privateMember ? { path: found.path, start, privateMember: true } : { path: found.path, start };
+}
+
+/** The tip's screenshot states: whose tip it draws, or null. */
+export function tipShot(search: string): TipWho | null {
+  let shot: string | null = null;
+  try { shot = new URLSearchParams(search).get('shot'); } catch { return null; }
+  return shot === 'app-tip' ? 'maker' : shot === 'app-tip-invited' ? 'invited' : null;
+}
+
+/** Who sent the invite, in the invited tip's screenshot state. */
+export const SHOT_INVITER = 'Maya';
+
+/** The first project on Home, as its card names it, once Home has drawn it. */
+async function firstHomeProject(): Promise<{ slug: string; name: string } | null> {
+  for (let i = 0; i < 40; i += 1) {
+    const card = document.querySelector('#app-list .app-card[data-slug]');
+    const slug = card?.getAttribute('data-slug');
+    if (card && slug) {
+      const title = card.querySelector('.app-card-title');
+      return { slug, name: title?.getAttribute('title') || title?.textContent?.trim() || slug };
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, 250));
+  }
+  return null;
+}
+
+/**
+ * The project's example change, from GET /api/apps/:slug (`exampleChange`,
+ * services/app-templates.js), or null: a project with none, or an answer
+ * that is not one.
+ */
+export function walkExampleOf(body: unknown): string | null {
+  const app = body && typeof body === 'object' ? (body as { app?: unknown }).app : null;
+  const example = app && typeof app === 'object' ? (app as { exampleChange?: unknown }).exampleChange : null;
+  return typeof example === 'string' && example.trim() ? example.trim() : null;
+}
+
+/**
+ * Ask for it, by the same read as the made screen's (madeAppUrl: no-store,
+ * past the service worker's boot cache). Never throws: a read that fails is
+ * a walk that says it without an example.
+ */
+export async function walkExample(slug: string): Promise<string | null> {
+  try {
+    const res = await fetch(madeAppUrl(slug), { credentials: 'same-origin', cache: 'no-store' });
+    return res.ok ? walkExampleOf(await res.json()) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function openTourShot(shot: TourShot, setMode: Dispatch<SetStateAction<Mode>>): Promise<void> {
+  const open = (info: FirstSessionInfo) => setMode((prev) => (
+    prev.kind === 'none' ? { kind: 'tour', info, path: shot.path, start: shot.start } : prev
+  ));
+  legacy().App?.navigateHome?.();
+  if (shot.path === 'look') { open(LOOK_AROUND_INFO); return; }
+  const project = await firstHomeProject();
+  if (!project) return;
+  const example = await walkExample(project.slug);
+  open({ ...project, example, privateMember: !!shot.privateMember });
+}
+
+/** The tip's screenshot state: the first project on Home, opened, and its tip, written nowhere. */
+async function openTipShot(who: TipWho, setTip: Dispatch<SetStateAction<TipRecord | null>>): Promise<void> {
+  legacy().App?.navigateHome?.();
+  const project = await firstHomeProject();
+  if (!project) return;
+  await appDrawn(legacy().App?.navigateToApp?.(project.slug, 'app'));
+  setTip({ ...project, who, inviter: who === 'invited' ? SHOT_INVITER : null, shot: true });
+}
 
 // Set by the signed-out story's sheet for an account it just made
 // (../auth/landing.tsx): ask it what to make once the shell has signed in.
@@ -646,6 +1096,30 @@ export type Mode =
 const MAKE_FLAG = 'usernode:first-session:make';
 
 export const LOOK_AROUND_PATH = '/api/me/first-session/look-around';
+
+/**
+ * The make screen's screenshot states. Only a brand-new account's first run
+ * reaches it, and staging's accounts are not new, so the before/after shots
+ * open it by address instead (owner, 6 Oct 2026; app-view.js's
+ * `?shot=first-version` is the same idea): `?shot=make` as it opens, and
+ * `?shot=make-waitlist` with an answer from the waitlist in its first field.
+ * Opened once the shell is signed in, as the real one is, and it writes
+ * nothing: "Make it" makes nothing, "Look around first" only closes it.
+ * Every first-run step before it skips itself on a `?shot=` address.
+ */
+export type MakeShot = { idea: string | null };
+export const MAKE_SHOTS: Readonly<Record<string, string | null>> = Object.freeze({
+  make: null,
+  'make-waitlist': 'A tracker for my run club, so we can see who keeps up with their weekly miles',
+});
+
+/** The make screen's screenshot state a query string asks for, or null. */
+export function makeShot(search: string): MakeShot | null {
+  let shot: string | null = null;
+  try { shot = new URLSearchParams(search).get('shot'); } catch { return null; }
+  if (!shot || !Object.prototype.hasOwnProperty.call(MAKE_SHOTS, shot)) return null;
+  return { idea: MAKE_SHOTS[shot] };
+}
 
 /**
  * The question was answered in this document: Make it made a project, or
@@ -701,14 +1175,73 @@ function viewerName(): string {
   return user?.displayName || user?.username || '';
 }
 
+/**
+ * "What do you want to make?" from the Create button, over nothing else, or
+ * open on importing a GitHub repo (`startImport`, #create/import). Answers
+ * whether it opened: something already holding the screen keeps it.
+ */
+export function openCreate(setMode: Dispatch<SetStateAction<Mode>>, startImport = false): boolean {
+  let opened = false;
+  flushSync(() => setMode((prev) => {
+    if (prev.kind !== 'none') return prev;
+    opened = true;
+    return startImport ? { kind: 'make', entry: 'create', startImport: true } : { kind: 'make', entry: 'create' };
+  }));
+  if (opened) void invalidateAppAllowance();
+  return opened;
+}
+
+/**
+ * Whether the platform header is on screen, for the Create door's screens
+ * to sit below it (#4195). Not inside an app, where the header gives way to
+ * the chromeless pill, nor in the side panel: there they take the whole
+ * screen as before, rather than leave a band where no header is.
+ */
+export function platformHeaderShown(doc: Pick<Document, 'getElementById'> | null = typeof document === 'undefined' ? null : document): boolean {
+  const header = doc?.getElementById('platform-header');
+  return !!header && header.getClientRects().length > 0;
+}
+
+/**
+ * Whether a press in the page leaves the Create door: a control in the
+ * platform header (back, the bell, the workshop chip, the sidebar, the
+ * mark's menu), now that the header shows above the door's screens.
+ */
+export function leavesDoor(target: EventTarget | null): boolean {
+  const el = target as { closest?: (sel: string) => Element | null } | null;
+  if (!el || typeof el.closest !== 'function') return false;
+  const control = el.closest('a, button, [role="button"]');
+  return !!control && !!control.closest('#platform-header');
+}
+
 export function FirstSession() {
+  // The tour's steps are built in the language on screen, and again when it changes.
+  const t = useMessages('onboarding');
   const [mode, setMode] = useState<Mode>({ kind: 'none' });
+  // The tip over the app, while it is up (./app-tip.tsx).
+  const [tip, setTip] = useState<TipRecord | null>(null);
+  // Bumped when a tip or a walk is owed, so the watcher below looks again.
+  const [owing, setOwing] = useState(0);
+  // A visit that shows the first session's own screens is a first visit to
+  // its end (./tour-running.ts A FIRST VISIT STAYS ONE). Create's are not.
+  useEffect(() => {
+    if (mode.kind === 'none' && !tip) return;
+    if ((mode.kind === 'make' || mode.kind === 'made') && mode.entry === 'create') return;
+    noteFirstSessionVisit();
+  }, [mode, tip]);
 
   // An account the story's sheet just made is asked what to make, once,
   // as soon as the shell has signed it in with access (`sv:authed` fires
   // only then; somebody still waiting is in the waiting room instead).
   useEffect(() => {
     const check = (now: boolean) => {
+      const shot = makeShot(window.location.search);
+      if (shot) {
+        const open = () => setMode((prev) => (prev.kind === 'none' ? { kind: 'make', shot } : prev));
+        if (now) flushSync(open);
+        else open();
+        return;
+      }
       let flagged = false;
       try { flagged = sessionStorage.getItem(MAKE_FLAG) === '1'; } catch { /* no make screen */ }
       if (!flagged) return;
@@ -730,34 +1263,42 @@ export function FirstSession() {
       welcome(info: FirstSessionInfo): boolean {
         if (!info || !info.slug || seen(info.slug)) return false;
         markSeen(info.slug);
-        // A PRIVATE MEMBER lands inside the app the link was for, full
-        // screen, instead of "You're in" and the hub: Homeroom is what the
-        // mark menu's "Go to Homeroom" opens, and its tour (goHome) runs
-        // then. A frame held for the welcome goes.
-        if (legacy().App?.user?.privateMember) {
-          setMode((prev) => (prev.kind === 'held' ? { kind: 'none' } : prev));
-          enterScreen('app', info.slug);
-          return true;
+        // Straight into the app the link was for, full screen, with the tip
+        // under the mark (./first-visit.ts). Somebody new to Homeroom (a
+        // private member, or an account the link's sign-up made) is owed the
+        // walk on their first Home after it; an account that was here
+        // before the invite gets the tip alone.
+        const app = legacy().App;
+        const { slug } = info;
+        const name = info.name || slug;
+        const privateMember = !!app?.user?.privateMember;
+        const uid = app?.user?.id;
+        if (uid != null) {
+          oweTip(uid, { slug, name, who: 'invited', inviter: info.inviterName || null });
+          if (privateMember || info.newAccount) oweWalk(uid, { slug, name, privateMember });
+          setOwing((n) => n + 1);
         }
-        setMode({ kind: 'welcome', info });
+        rememberCommunity(slug);
+        // A frame held for the welcome goes once the app is on screen, not
+        // before (appDrawn): never Home in between. The follow's own ending
+        // (endHold) leaves a frame handed on.
+        setMode((prev) => (prev.kind === 'held' ? { kind: 'held', app: slug } : prev));
+        const going = app?.navigateToApp?.(slug, 'app');
+        void appDrawn(going).then(() => setMode((prev) => (prev.kind === 'held' && prev.app === slug ? { kind: 'none' } : prev)));
         return true;
       },
       // The mark menu's "Go to Homeroom" for a private member (features/
-      // app-context): Home, and the first time, the four-step tour of it
-      // from the app they were in. From then on the app has its ✕ again
-      // (App._privateHomeVisited, public/js/app.js).
-      goHome(info: { slug?: string | null; name?: string | null }): void {
+      // app-context): Home, noted first so the app has its ✕ from now on
+      // (App._privateHomeVisited, public/js/app.js). The app was their first
+      // visit, so the walk, if it is still owed, runs on this Home.
+      goHome(_info?: { slug?: string | null; name?: string | null }): void {
         const app = legacy().App;
-        const first = !app?._privateHomeVisited?.();
         app?._notePrivateHome?.();
         app?.navigateHome?.();
-        if (!first || !info?.slug) return;
-        rememberCommunity(info.slug);
-        setMode((prev) => (prev.kind === 'none'
-          ? { kind: 'tour', info: { slug: info.slug as string, name: info.name || (info.slug as string) }, path: 'private' }
-          : prev));
+        const uid = app?.user?.id;
+        if (uid != null) { armWalk(uid); setOwing((n) => n + 1); }
       },
-      // "You're in"'s frame, drawn before this returns (see the header):
+      // The held frame, drawn before this returns (see the header):
       // App._followInvite asks for it in the tick the signed-in shell starts,
       // before the shell draws Home. Only over nothing: a screen already up
       // stays.
@@ -771,9 +1312,10 @@ export function FirstSession() {
         return held;
       },
       // The follow ended some other way (the hub, a confirm, a toast): the
-      // frame goes, and only the frame.
+      // frame goes, and only the frame. A frame welcome() handed to the app
+      // stays until the app is drawn.
       endHold(): void {
-        setMode((prev) => (prev.kind === 'held' ? { kind: 'none' } : prev));
+        setMode((prev) => (prev.kind === 'held' && !prev.app ? { kind: 'none' } : prev));
       },
       // "What do you want to make?" for an account that is due the join
       // screen and did not come through the story's sheet, and for any
@@ -790,50 +1332,249 @@ export function FirstSession() {
       // device, say). Only that screen: once Make it has made something,
       // what follows it stays.
       dismissMake(): void {
-        setMode((prev) => (prev.kind === 'make' ? { kind: 'none' } : prev));
+        setMode((prev) => (prev.kind === 'make' && prev.entry !== 'create' ? { kind: 'none' } : prev));
+      },
+      // The Create button (App.showCreateModal): the one front door for a
+      // new project, for every signed-in viewer; `import` opens it on
+      // importing a GitHub repo.
+      create(opts?: { import?: boolean }): boolean {
+        return openCreate(setMode, !!opts?.import);
       },
     };
     w.UsernodeReact.firstSession = api;
     return () => { if (w.UsernodeReact?.firstSession === api) delete w.UsernodeReact.firstSession; };
   }, []);
 
+  // A tour's screenshot state (tourShot): once, as soon as the shell is
+  // signed in.
+  useEffect(() => {
+    const shot = tourShot(window.location.search);
+    if (!shot) return undefined;
+    let opened = false;
+    const open = () => {
+      if (opened || !legacy().App?.user) return;
+      opened = true;
+      void openTourShot(shot, setMode);
+    };
+    open();
+    document.addEventListener('sv:authed', open);
+    return () => document.removeEventListener('sv:authed', open);
+  }, []);
+
+  // The tip's screenshot state (tipShot), the same way.
+  useEffect(() => {
+    const who = tipShot(window.location.search);
+    if (!who) return undefined;
+    let opened = false;
+    const open = () => {
+      if (opened || !legacy().App?.user) return;
+      opened = true;
+      void openTipShot(who, setTip);
+    };
+    open();
+    document.addEventListener('sv:authed', open);
+    return () => document.removeEventListener('sv:authed', open);
+  }, []);
+
+  // THE FIRST VISIT (./first-visit.ts): while a tip or a walk is owed to the
+  // person signed in, and nothing else of the island's is up, look at the
+  // screen every FIRST_VISIT_CHECK_MS. The app opened past its loading
+  // screens shows the tip, once; the app on screen arms the walk, and Home
+  // after it runs the walk, once. Nothing owed on this device (read as the
+  // island mounts, and again whenever something is owed): no looking at all.
+  const startWalk = useCallback((walk: WalkRecord) => {
+    // The waitlist card only while they are still a private member: one let
+    // in since the invite has no card to point at.
+    const privateMember = !!walk.privateMember && !!legacy().App?.user?.privateMember;
+    setMode((prev) => (prev.kind === 'none'
+      ? { kind: 'tour', info: { slug: walk.slug, name: walk.name, privateMember }, path: 'walk', moments: !!walk.maker }
+      : prev));
+  }, []);
+  useEffect(() => {
+    if (mode.kind !== 'none' || tip || !anyOwed()) return undefined;
+    let timer = 0;
+    const tick = () => {
+      const uid = legacy().App?.user?.id;
+      if (uid == null) return;
+      const owed = { tip: owedTip(uid), walk: owedWalk(uid) };
+      if (!owed.tip && !owed.walk) { window.clearInterval(timer); return; }
+      let screen;
+      try { screen = readScreen(); } catch { return; }
+      // Armed first: the tip that shows on this same visit stops the
+      // looking until it closes, and the walk is due on the Home after it.
+      if (owed.walk && walkArms(owed.walk, screen)) armWalk(uid);
+      else if (owed.walk && walkDue(owed.walk, screen)) {
+        noteWalkRun(uid);
+        startWalk(owed.walk);
+        return;
+      }
+      if (owed.tip && tipDue(owed.tip, screen)) {
+        noteTipShown(uid);
+        setTip(owed.tip);
+      }
+    };
+    timer = window.setInterval(tick, FIRST_VISIT_CHECK_MS);
+    tick();
+    return () => window.clearInterval(timer);
+  }, [mode.kind, tip, owing, startWalk]);
+  const closeTip = useCallback(() => setTip(null), []);
+
   const end = useCallback(() => setMode({ kind: 'none' }), []);
+
+  // The Create door's screens own the device's back press, as the New
+  // project dialog they replaced did (lib/back-stack.ts): back closes them,
+  // from the make screen or the made one (the claim is kept across Make it).
+  // Left any other way, the claim is handed back first (leaveDoor): as a
+  // navigating one when the way out goes somewhere (the hub, the chat, a
+  // dialog that claims its own), so its queued traversal cannot undo that.
+  const createDoor = (mode.kind === 'make' || mode.kind === 'made') && mode.entry === 'create';
+  const doorBack = useRef<Release | null>(null);
+  useEffect(() => {
+    if (!createDoor) return undefined;
+    const release = pushDismissible(() => {
+      doorBack.current = null;
+      setMode((prev) => ((prev.kind === 'make' || prev.kind === 'made') && prev.entry === 'create' ? { kind: 'none' } : prev));
+      return true;
+    });
+    doorBack.current = release;
+    return () => {
+      if (doorBack.current !== release) return;
+      doorBack.current = null;
+      release();
+    };
+  }, [createDoor]);
+  const leaveDoor = useCallback((navigating: boolean) => {
+    const release = doorBack.current;
+    doorBack.current = null;
+    release?.(navigating ? { navigating: true } : undefined);
+    setMode({ kind: 'none' });
+  }, []);
+  // From Create the door's screens sit below the platform header when it
+  // shows (#4195), read once as the door opens and kept from make to made.
+  const underHeader = useMemo(() => createDoor && platformHeaderShown(), [createDoor]);
+  // Going somewhere else leaves the door, as its own ways out do: a route
+  // change (the hash), and any press on the header's controls, whose sheets
+  // and menus open below the door's screens otherwise. The press goes on to
+  // its control; the door only gets out of the way.
+  useEffect(() => {
+    if (!createDoor) return undefined;
+    const onRoute = () => leaveDoor(true);
+    const onPress = (e: Event) => { if (leavesDoor(e.target)) leaveDoor(true); };
+    window.addEventListener('hashchange', onRoute);
+    document.addEventListener('click', onPress, true);
+    return () => {
+      window.removeEventListener('hashchange', onRoute);
+      document.removeEventListener('click', onPress, true);
+    };
+  }, [createDoor, leaveDoor]);
   const steps = useMemo(() => {
     if (mode.kind !== 'tour') return [];
-    const project = {
-      slug: mode.info.slug, name: mode.info.name, conversationId: mode.info.conversationId, firstVersion: mode.info.firstVersion,
-    };
-    if (mode.path === 'private') return privateSteps(project);
-    return mode.path === 'maker' ? makerSteps(project) : invitedSteps(project);
-  }, [mode]);
+    if (mode.path === 'look') return lookAroundSteps();
+    const { slug, name, example, privateMember } = mode.info;
+    return homeWalkSteps({ slug, name, example, privateMember: !!privateMember });
+  }, [mode, t]);
+  // The walk's Homeroom bot card names a change this project could ask for
+  // (walkExample), asked once as the walk opens. Its first card needs none,
+  // so the answer is in before the second card shows; until then, and for a
+  // project with none, that card says where the bot is without one.
+  const walkSlug = mode.kind === 'tour' && mode.path === 'walk' && mode.info.example === undefined ? mode.info.slug : null;
+  useEffect(() => {
+    if (!walkSlug) return undefined;
+    let live = true;
+    void walkExample(walkSlug).then((example) => {
+      if (!live) return;
+      setMode((prev) => (prev.kind === 'tour' && prev.path === 'walk' && prev.info.slug === walkSlug && prev.info.example === undefined
+        ? { ...prev, info: { ...prev.info, example } }
+        : prev));
+    });
+    return () => { live = false; };
+  }, [walkSlug]);
 
-  if (mode.kind === 'make') {
+  if (mode.kind === 'make' && mode.entry === 'create') {
     return (
       <MakeScreen
         who={viewerName()}
+        entry="create"
+        startImport={!!mode.startImport}
+        underHeader={underHeader}
+        // Nothing is answered: the tile behind is refreshed, so the new
+        // project is in the grid when the made screen goes, and the
+        // allowance is read again.
+        onMade={(made) => {
+          legacy().Home?.load?.();
+          void invalidateAppAllowance();
+          setMode({ kind: 'made', made, entry: 'create' });
+        }}
+        onClose={() => leaveDoor(false)}
+      />
+    );
+  }
+  if (mode.kind === 'make') {
+    const { shot } = mode;
+    return (
+      <MakeScreen
+        who={viewerName()}
+        // What they said on the waitlist, if anything: known now, from the
+        // signed-in user (or the screenshot state), so the box opens filled.
+        idea={shot ? shot.idea : legacy().App?.user?.waitlistIdea ?? null}
         // POST /api/apps answered the question as it made the project.
         onMade={(made) => { noteAnswered(); setMode({ kind: 'made', made }); }}
+        // Home, and its own short tour of where things are (decision E).
         onLookAround={() => {
+          if (shot) { setMode({ kind: 'none' }); return; }
           noteAnswered();
           void recordLookAround();
-          setMode({ kind: 'none' });
           legacy().App?.navigateHome?.();
+          setMode({ kind: 'tour', info: LOOK_AROUND_INFO, path: 'look' });
         }}
       />
     );
   }
   if (mode.kind === 'made') {
     const { made } = mode;
+    const fromCreate = mode.entry === 'create';
     return (
       <MadeScreen
         made={made}
         me={viewerName()}
-        onContinue={() => {
-          const info = { slug: made.slug, name: made.name, iconEmoji: made.emoji, conversationId: made.conversationId };
+        entry={mode.entry}
+        underHeader={fromCreate && underHeader}
+        onContinue={(skipped, firstVersion) => {
+          // Run five: Invite people later, or the way on once the link is out (./made-moments.ts).
+          noteMoment(made.slug, skipped ? 'invite_later_tapped' : 'continue_tapped');
           markSeen(made.slug);
           rememberCommunity(made.slug);
-          enterScreen('home', made.slug);
-          setMode({ kind: 'tour', info, path: 'maker' });
+          // From Create: the project's own hub, where its first change is
+          // started, as the New project dialog's Open project went. The
+          // tip and the walk are the first session's.
+          if (fromCreate) {
+            leaveDoor(true);
+            enterScreen('hub', made.slug);
+            return;
+          }
+          const uid = legacy().App?.user?.id;
+          const { slug, name } = made;
+          // Not live yet (Homeroom bot still building it, or built and up
+          // for approval): nothing to open. This is their first visit to
+          // Homeroom, so Home and its walk now, and the tip the first time
+          // they open the app once it is live.
+          if (firstVersion !== null) {
+            if (uid != null) oweTip(uid, { slug, name, who: 'maker', live: true });
+            setOwing((n) => n + 1);
+            enterScreen('home', slug);
+            if (uid != null && !claimWalk(uid)) { setMode({ kind: 'none' }); return; }
+            setMode({ kind: 'tour', info: { slug, name }, path: 'walk', moments: true });
+            return;
+          }
+          // It runs: the app itself, full screen, with the tip, and the walk
+          // on the first Home after it.
+          if (uid != null) {
+            oweTip(uid, { slug, name, who: 'maker' });
+            oweWalk(uid, { slug, name, maker: true });
+          }
+          setOwing((n) => n + 1);
+          setMode({ kind: 'none' });
+          enterScreen('app', slug);
         }}
         // The plan is answered in the chat with Homeroom bot: the first
         // session ends there, with no tour over it.
@@ -841,25 +1582,21 @@ export function FirstSession() {
           markSeen(made.slug);
           rememberCommunity(made.slug);
           setMode({ kind: 'none' });
+          if (fromCreate) leaveDoor(true);
           enterScreen('bot', made.slug, conversationId);
+        }}
+        // A setup waiting on its secrets: the project's secrets dialog,
+        // with this screen out of its way.
+        onSetSecrets={() => {
+          leaveDoor(true);
+          legacy().Secrets?.open?.(made.slug);
         }}
       />
     );
   }
 
-  if (mode.kind === 'welcome') {
-    return (
-      <YoureIn
-        info={mode.info}
-        onGo={(firstVersion) => {
-          rememberCommunity(mode.info.slug);
-          enterScreen('home', mode.info.slug);
-          setMode({ kind: 'tour', info: { ...mode.info, firstVersion }, path: 'invited' });
-        }}
-      />
-    );
-  }
   if (mode.kind === 'held') return <WelcomeHeld />;
-  if (mode.kind === 'tour') return <Tour info={mode.info} steps={steps} onEnd={end} />;
+  if (mode.kind === 'tour') return <Tour info={mode.info} steps={steps} onEnd={end} start={mode.start} moments={!!mode.moments} numbered={mode.path === 'walk'} />;
+  if (tip) return <AppTip tip={tip} onClose={closeTip} />;
   return null;
 }

@@ -565,21 +565,21 @@ test('cold checks separate document navigation from equivalent network-idle read
 
 test('a hash cohort owns its own console errors, and load errors are shared', async () => {
   const read = collect();
-  const timers = [];
+  // Each error is raised asynchronously, as a page's are, but in a microtask
+  // queued by the navigation itself, so it lands before the runner moves on
+  // whatever the clock does. Timers of 40 and 60 ms fired after a 100 ms
+  // settle window on a loaded checks pod (12 Oct 2026), and the cohort's
+  // error went unheard.
   const page = makeEventPage({
-    onGoto: (p) => timers.push(setTimeout(() => p.emitError('boot exploded'), 40)),
-    onHash: (p, h) => timers.push(setTimeout(() => p.emitError(`broken in ${h}`), 60)),
+    onGoto: (p) => queueMicrotask(() => p.emitError('boot exploded')),
+    onHash: (p, h) => queueMicrotask(() => p.emitError(`broken in ${h}`)),
   });
   const group = [
     { index: 0, name: 'a', path: '/dev', url: 'http://s/dev#/a' },
     { index: 1, name: 'b', path: '/dev', url: 'http://s/dev#/b' },
   ];
-  try {
-    await runTestGroup({ newPage: async () => page }, group,
-      { settleQuietMs: 100, settleMaxMs: 900 });
-  } finally {
-    for (const t of timers) clearTimeout(t);
-  }
+  await runTestGroup({ newPage: async () => page }, group,
+    { settleQuietMs: 100, settleMaxMs: 900 });
   const { frames } = read();
   assert.equal(page.gotos.length, 1, 'one cold load for the whole document');
   assert.deepEqual(page.hashes, ['#/b'], 'the second cohort is reached in-page');
@@ -693,10 +693,11 @@ test('an Error still resolving at a hash switch counts against the cohort it fir
 
 test('a cohort that breaks does not fail the cohorts it shares a document with', async () => {
   const read = collect();
-  const timers = [];
+  // In a microtask of the hash switch, not on a 40 ms timer that can fire
+  // after the 80 ms settle on a loaded pod (see the hash cohort test above).
   const page = makeEventPage({
     onHash: (p, h) => {
-      if (h === '#/b') timers.push(setTimeout(() => p.emitError('only b is broken'), 40));
+      if (h === '#/b') queueMicrotask(() => p.emitError('only b is broken'));
     },
   });
   const group = [
@@ -704,12 +705,8 @@ test('a cohort that breaks does not fail the cohorts it shares a document with',
     { index: 1, name: 'b', path: '/dev', url: 'http://s/dev#/b' },
     { index: 2, name: 'c', path: '/dev', url: 'http://s/dev#/c' },
   ];
-  try {
-    await runTestGroup({ newPage: async () => page }, group,
-      { settleQuietMs: 80, settleMaxMs: 600 });
-  } finally {
-    for (const t of timers) clearTimeout(t);
-  }
+  await runTestGroup({ newPage: async () => page }, group,
+    { settleQuietMs: 80, settleMaxMs: 600 });
   const { frames } = read();
   const byIndex = new Map(frames.map((f) => [f.index, f]));
   assert.equal(byIndex.get(0).status, 'pass');
@@ -830,13 +827,23 @@ test('cold fallback still fails a missing selector within a bounded window', asy
   const read = collect();
   const page = makeColdOnlyPage();
   const group = [COLD_ONLY_GROUP[0], { ...COLD_ONLY_GROUP[1], expectSelector: '#never' }];
-  const started = Date.now();
+  const settleMaxMs = 40;
+  const assertMaxMs = 100;
+  // The fallback pays one hash-switch judgement and one cold reload, each with
+  // a settle and an assertion window, so the bound comes from those windows —
+  // not a fixed wall-clock constant. It is timed with the monotonic
+  // performance.now(): a step of the wall clock once failed this test at
+  // 326ms of real time (#4933).
+  const windowsMs = 2 * (settleMaxMs + assertMaxMs);
+  const started = performance.now();
   await runTestGroup({ newPage: async () => page }, group,
-    { settleQuietMs: 20, settleMaxMs: 40, assertMaxMs: 100, assertPollMs: 20 });
+    { settleQuietMs: 20, settleMaxMs, assertMaxMs, assertPollMs: 20 });
+  const elapsed = performance.now() - started;
   const row = read().frames.find((f) => f.index === 1);
   assert.equal(row.status, 'fail');
   assert.match(row.failureReason, /#never/);
-  assert.ok(Date.now() - started < 2000, 'fallback cannot wait indefinitely');
+  assert.ok(elapsed < windowsMs * 10,
+    `fallback cannot wait indefinitely, took ${Math.round(elapsed)}ms`);
 });
 
 test('the cohort fallback can be switched off, and then the hash verdict stands', async () => {
@@ -1258,4 +1265,50 @@ test('a group budgets its one navigation, so a lone check can outlast NAV_TIMEOU
   const loneGroupBudget = perTest + perTest; // one check, one cohort
   assert.ok(loneGroupBudget > navTimeout,
     `a single-check group gets ${loneGroupBudget}ms, which must exceed NAV_TIMEOUT_MS ${navTimeout}ms`);
+});
+
+test('#3978: a failed expectText names what was on the page', async () => {
+  const read = collect();
+  const browser = { newPage: async () => ({
+    on() {}, async setViewport() {}, async goto() { return { status: () => 200 }; },
+    async waitForNetworkIdle() {},
+    async $(sel) { return sel === '#here' ? {} : null; },
+    async evaluate(fn) {
+      const src = String(fn);
+      if (/includes\(/.test(src)) return false;
+      if (/innerText/.test(src)) return '  Menu\n  Your apps\n  Board  ';
+      return true;
+    },
+    async close() {},
+  }) };
+  await runTests(browser, [
+    { index: 0, name: 'a', path: '/x', url: 'http://staging/x', expectText: 'welcome' },
+  ], { concurrency: 1, testTimeoutMs: 20000, env: { ...process.env, TEST_RETRY_RUNS: '0' } });
+  const frame = read().frames[0];
+  assert.equal(frame.status, 'fail');
+  assert.match(frame.failureReason, /Expected text "welcome" was not found on the page/);
+  assert.match(frame.failureReason, /the page text was: "Menu Your apps Board"/,
+    'the snippet is flattened and the caller can see what rendered instead');
+});
+
+test('#3978: an innerText probe that answers non-string leaves the reason alone', async () => {
+  const read = collect();
+  const browser = { newPage: async () => ({
+    on() {}, async setViewport() {}, async goto() { return { status: () => 200 }; },
+    async waitForNetworkIdle() {},
+    async $(sel) { return sel === '#here' ? {} : null; },
+    async evaluate(fn) {
+      const src = String(fn);
+      if (/includes\(/.test(src)) return false;
+      if (/innerText/.test(src)) throw new Error('probe refused');
+      return true;
+    },
+    async close() {},
+  }) };
+  await runTests(browser, [
+    { index: 0, name: 'a', path: '/x', url: 'http://staging/x', expectText: 'welcome' },
+  ], { concurrency: 1, testTimeoutMs: 20000, env: { ...process.env, TEST_RETRY_RUNS: '0' } });
+  const frame = read().frames[0];
+  assert.equal(frame.failureReason, 'Expected text "welcome" was not found on the page',
+    'no snippet, and no "true" or error text posing as one');
 });

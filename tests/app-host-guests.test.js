@@ -399,11 +399,18 @@ test('the scaffold: a guest reads, a guest’s write is account_required, a forg
 });
 
 test('starter read routes do not assume a person', () => {
-  for (const name of ['game-2d', 'game-3d', 'multimedia-social', 'social-productivity']) {
-    const src = fs.readFileSync(path.join(__dirname, '..', 'app-templates', name, 'api.js'), 'utf8');
-    for (const m of src.matchAll(/app\.get\([^]*?\n {2}\}\);/g)) {
-      assert.doesNotMatch(m[0].replace(/req\.user \? req\.user\.(id|username) : null|!!req\.user && [^,]+|req\.user \? \{[^}]*\} : null/g, ''),
-        /req\.user\./, `${name}: a read route reads req.user without a guard`);
+  // Every starter (services/app-templates.js), as a new project gets it: its
+  // api.js, and a game starter's game room (game/*.js) too, whose routes sit
+  // indented inside a class.
+  const appTemplates = require('../src/services/app-templates');
+  for (const id of appTemplates.TEMPLATE_IDS.filter((t) => t !== appTemplates.DEFAULT_TEMPLATE)) {
+    const files = appTemplates.starterFiles(id).filter((f) => f.path === 'api.js' || /^game\/.+\.js$/.test(f.path));
+    assert.ok(files.some((f) => f.path === 'api.js'), `${id}: has an api.js`);
+    for (const f of files) {
+      for (const m of f.content.matchAll(/app\.get\([^]*?\n\s*\}\);/g)) {
+        assert.doesNotMatch(m[0].replace(/req\.user \? req\.user\.(id|username) : null|!!req\.user && [^,]+|req\.user \? \{[^}]*\} : null/g, ''),
+          /req\.user\./, `${id} ${f.path}: a read route reads req.user without a guard`);
+      }
     }
   }
 });

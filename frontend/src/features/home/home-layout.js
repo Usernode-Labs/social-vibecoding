@@ -541,8 +541,8 @@ const HomeLayout = {
   //
   // `shown` is what the caller is about to draw and `bound` the last row
   // index the collapsed window may draw (defaultRowBound). An empty `shown`
-  // never holds it back: an empty launcher's tile flows after the
-  // "No apps added yet" note and must always be there.
+  // never holds it back: an empty launcher's tile is all it shows and must
+  // always be there.
   // Pure — unit-tested in tests/home-layout-model.test.js.
   createTileCollapsed(shown, cols, bound) {
     const onCanvas = (shown || []).filter((it) => it && it.row < HomeLayout.MAX_ROWS);

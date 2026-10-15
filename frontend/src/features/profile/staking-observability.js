@@ -1,5 +1,7 @@
 // Public receiver reads run on the device. Never forward the platform's
 // cookies, authorization or page URL to this independently hosted service.
+import { t } from '../../lib/i18n/runtime';
+
 export class StakingDataError extends Error {
   constructor(code, message) { super(message); this.code = code; }
 }
@@ -12,7 +14,7 @@ export function observabilityOrigin(value) {
         || url.username || url.password || url.search || url.hash || url.pathname !== '/') throw new Error();
     return url.origin;
   } catch {
-    throw new StakingDataError('configuration', 'The epoch data service is not configured correctly.');
+    throw new StakingDataError('configuration', t('profile:staking.error.misconfigured'));
   }
 }
 
@@ -32,8 +34,8 @@ export async function readObservabilityJson(url, signal, {
       cache: 'no-store', redirect: 'error', headers: { accept: 'application/json' } });
     reader = response.body?.getReader();
     if (!response.ok) throw new StakingDataError('http',
-      `Epoch data service returned HTTP ${response.status}. Please retry.`);
-    if (!reader) throw new StakingDataError('invalid_response', 'Epoch data service returned an empty response.');
+      t('profile:staking.error.http', { status: response.status }));
+    if (!reader) throw new StakingDataError('invalid_response', t('profile:staking.error.emptyResponse'));
     const decoder = new TextDecoder();
     const chunks = [];
     let length = 0;
@@ -41,17 +43,17 @@ export async function readObservabilityJson(url, signal, {
       const { done, value } = await reader.read();
       if (done) break;
       length += value.byteLength;
-      if (length > maxBytes) throw new StakingDataError('response_too_large', 'Epoch data response is too large.');
+      if (length > maxBytes) throw new StakingDataError('response_too_large', t('profile:staking.error.tooLarge'));
       chunks.push(decoder.decode(value, { stream: true }));
     }
     chunks.push(decoder.decode());
     try { return JSON.parse(chunks.join('')); }
-    catch { throw new StakingDataError('invalid_response', 'Epoch data service returned an invalid response.'); }
+    catch { throw new StakingDataError('invalid_response', t('profile:staking.error.invalidResponse')); }
   } catch (error) {
     if (signal?.aborted || error instanceof StakingDataError) throw error;
     throw new StakingDataError(timedOut ? 'timeout' : 'connection', timedOut
-      ? 'Epoch data request timed out. Please retry.'
-      : 'Could not reach the epoch data service. Please retry.');
+      ? t('profile:staking.error.timeout')
+      : t('profile:staking.error.unreachable'));
   } finally {
     clearTimeout(timer);
     signal?.removeEventListener('abort', abort);
@@ -63,13 +65,13 @@ export async function fetchStakingEpoch({ observabilityUrl, chainId, wallet, epo
   read = readObservabilityJson,
 } = {}) {
   const origin = observabilityOrigin(observabilityUrl);
-  if (typeof chainId !== 'string' || !chainId) throw new StakingDataError('configuration', 'The network is unavailable.');
+  if (typeof chainId !== 'string' || !chainId) throw new StakingDataError('configuration', t('profile:staking.error.network'));
   if (typeof wallet !== 'string' || !/^(?:ut1|B62)[a-zA-Z0-9]{20,120}$/.test(wallet)) {
-    throw new StakingDataError('wallet', 'A valid wallet address is required.');
+    throw new StakingDataError('wallet', t('profile:staking.error.wallet'));
   }
   const current = epoch === 'current';
   if (!current && !/^(0|[1-9]\d{0,8})$/.test(String(epoch))) {
-    throw new StakingDataError('epoch', 'A valid epoch is required.');
+    throw new StakingDataError('epoch', t('profile:staking.error.epoch'));
   }
   const upstream = (path, parameters) => {
     const url = new URL('/v1/observability/' + path, origin);
@@ -84,10 +86,10 @@ export async function fetchStakingEpoch({ observabilityUrl, chainId, wallet, epo
   if (!Number.isSafeInteger(number) || number < 0 || !Number.isSafeInteger(stats.slots_per_epoch)
       || stats.slots_per_epoch <= 0 || !Number.isSafeInteger(stats.current_slot) || stats.current_slot < 0
       || !Number.isFinite(stats.generated_at_ms) || (!current && number !== Number(epoch))) {
-    throw new StakingDataError('invalid_response', 'Epoch data is not available yet.');
+    throw new StakingDataError('invalid_response', t('profile:staking.error.notYet'));
   }
   const currentEpoch = Math.floor(stats.current_slot / stats.slots_per_epoch);
-  if (number > currentEpoch) throw new StakingDataError('epoch', 'That epoch has not started yet.');
+  if (number > currentEpoch) throw new StakingDataError('epoch', t('profile:staking.error.notStarted'));
   const slots = await upstream('vrf/slots', { sender: wallet, epoch: String(number) });
   const start = number * stats.slots_per_epoch;
   const end = start + stats.slots_per_epoch - 1;

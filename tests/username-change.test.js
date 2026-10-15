@@ -684,6 +684,8 @@ test('the username charset is a strict subset of the branch charset', () => {
 
 const vm = require('node:vm');
 
+const { englishPlatformI18n } = require('./lib/platform-i18n');
+
 const SETTINGS_SOURCE = read('frontend/src/features/settings/settings.js');
 
 /** A DOMTokenList that validates its tokens the way the DOM spec requires. */
@@ -727,6 +729,7 @@ function usernameForm({ respond } = {}) {
   };
   const calls = [];
   const context = vm.createContext({
+    PlatformI18n: englishPlatformI18n(),
     window: {},
     document: {
       addEventListener() {},

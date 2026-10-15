@@ -33,14 +33,17 @@
  */
 
 import { type KeyboardEvent, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-
+import { flushSync } from 'react-dom';
 
 import { alertVariants } from '@/components/ui/alert';
 import { buttonVariants } from '@/components/ui/button';
-import { ChevronLeftIcon, LockIcon } from '@/components/ui/icons';
+import { ChevronLeftIcon, LockIcon, SpinnerArcIcon } from '@/components/ui/icons';
 import { Wordmark } from '@/components/ui/wordmark';
+import { cn } from '@/lib/utils';
 
 import { useMountedOnReveal } from '../../lib/mount-on-reveal';
+import { Message, RichMessage, useMessages } from '../../lib/i18n/react';
+import { t as translate } from '../../lib/i18n/runtime';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { FRAME_THEME_PARAM } from '../app-frame/app-frame-policy.js';
 import {
@@ -60,10 +63,19 @@ import {
   useAuthScreensPatch,
   zoomFx,
 } from './shared';
-import { DeadInvite, InvitePending, inviteTokenFrom, MadeForYou, useInvitePreview } from './invite-card';
-import { SignInSheet, type SignInProvider, type SignInResume } from './sign-in-sheet';
+import { DeadInvite, InviteJoinBar, InvitePending, inviteTokenFrom, MadeForYou, useInvitePreview } from './invite-card';
+import { type ReleaseAccount, releaseAccountFromToken } from './login';
+import {
+  type AccountStep,
+  type ReleaseSpend,
+  SignInSheet,
+  type SignInProvider,
+  type SignInResume,
+  spendReleaseLink,
+} from './sign-in-sheet';
 import { Story } from './story';
 import { useWaitlistOptions, type WaitlistOptions, waitlistOptions } from './waitlist-shared';
+import { WelcomePage } from './welcome-page';
 
 const LANDING_TITLE = 'Homeroom';
 
@@ -254,6 +266,8 @@ function swapViewerFrame(): HTMLIFrameElement | null {
  * again. See the file header.
  */
 const ViewerRegion = memo(function ViewerRegion() {
+  // Read once, not subscribed: this subtree must never re-render (above), so
+  // the frame's title stays in the language the screen first mounted in.
   return (
     <div id="app-viewer" className="hidden flex-1 min-h-0 flex flex-col bg-white dark:bg-zinc-950">
       {/*
@@ -268,12 +282,29 @@ const ViewerRegion = memo(function ViewerRegion() {
       <iframe
         id="app-viewer-frame"
         className="flex-1 w-full border-0"
-        title="App"
+        title={translate('auth:landing.viewerTitle')}
         allow="clipboard-write"
       ></iframe>
     </div>
   );
 });
+
+/**
+ * The lock on an account-required tile. Its own component so the tooltip is
+ * read in the language on screen while LandingTile stays a plain function of
+ * its props (tests/app-card-keyboard-open.test.js calls it as one).
+ */
+function AccountRequiredBadge() {
+  const t = useMessages('auth');
+  return (
+    <span
+      className="absolute -top-1.5 -right-1.5 w-6 h-6 flex items-center justify-center rounded-full bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-600 shadow-sm text-zinc-500 dark:text-zinc-300"
+      title={t('auth:landing.tile.accountRequired')}
+    >
+      <LockIcon className="w-3.5 h-3.5" aria-hidden="true" />
+    </span>
+  );
+}
 
 /**
  * One launcher tile, mirroring the authed homescreen's renderAppCard shape
@@ -362,12 +393,7 @@ export function LandingTile({
           </div>
         )}
         {gated ? (
-          <span
-            className="absolute -top-1.5 -right-1.5 w-6 h-6 flex items-center justify-center rounded-full bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-600 shadow-sm text-zinc-500 dark:text-zinc-300"
-            title="Account required"
-          >
-            <LockIcon className="w-3.5 h-3.5" aria-hidden="true" />
-          </span>
+          <AccountRequiredBadge />
         ) : null}
       </div>
       {/*
@@ -384,7 +410,7 @@ export function LandingTile({
           {label}
         </div>
         {gated ? (
-          <p className="app-card-status text-zinc-500 dark:text-zinc-500">Account required</p>
+          <p className="app-card-status text-zinc-500 dark:text-zinc-500"><Message id="auth:landing.tile.accountRequired" /></p>
         ) : null}
       </div>
     </div>
@@ -419,12 +445,17 @@ const LANDING_BACK_CLASS = 'inline-flex items-center justify-center w-7 h-7 roun
  * `flex items-center justify-center` is what an anchor needs and a button
  * gets from the browser; `w-full` comes from `layout: 'full'`.
  */
-const PRIMARY_PILL = `${buttonVariants({
-  layout: 'full',
-  variant: 'pillAccent',
-  size: 'pillLg',
-  ink: 'solidLate',
-})} flex items-center justify-center`;
+const PRIMARY_PILL = cn(
+  buttonVariants({
+    layout: 'full',
+    variant: 'pillAccent',
+    size: 'pillLg',
+    ink: 'solidLate',
+  }),
+  // Weight 650 for the main buttons on the story and its sheets (the C1
+  // boards), where pillLg's own is 600.
+  'flex items-center justify-center font-[650]',
+);
 
 /**
  * The secondary pill, transcribed from `PILL_LINK` in login.tsx — the white
@@ -530,31 +561,33 @@ const CHIP_LABEL = 'text-[15px] text-[rgba(0,0,0,0.8)] dark:text-zinc-100';
  * until then the rail says what is true of the platform whoever is reading
  * it. Only the LOOK is transcribed.
  */
+// `line` is a message id, read when the rail renders.
 const CHIPS: readonly { line: string; dot: string }[] = [
   {
-    line: 'Describe an app in chat',
+    line: 'auth:landing.chips.describe',
     dot: 'radial-gradient(circle closest-side, #6717fb 0%, #5a32fb 12.5%, #4e4dfc 25%,'
       + ' #3484fc 50%, #1bbafd 75%, #0fd5fd 87.5%, #02f0fd 100%)',
   },
   {
-    line: 'An AI builds it',
+    line: 'auth:landing.chips.build',
     dot: 'radial-gradient(circle closest-side, #41b24a 0%, #66c459 25%, #8bd669 50%,'
       + ' #b0e878 75%, #d6fa87 100%)',
   },
   {
-    line: 'The community votes it in',
+    line: 'auth:landing.chips.vote',
     dot: 'radial-gradient(circle closest-side, #fb179d 0%, #fc3776 25%, #fc5750 50%,'
       + ' #fd7629 75%, #fd8615 87.5%, #fd9602 100%)',
   },
   {
-    line: 'Contributors own a share',
+    line: 'auth:landing.chips.own',
     dot: 'radial-gradient(circle closest-side, #ffae2b 0%, #ffce4d 50%, #ffee6f 100%)',
   },
 ];
 
 /**
  * The story's sheet, once a sign-in through it has a session and before the
- * shell takes over (its `beforeFinish`).
+ * shell takes over (its `beforeFinish`), and the full-page Welcome's the
+ * same way (./welcome-page.tsx).
  *
  * A new account made from the story is asked what to make next
  * (../first-session/make.tsx), not which communities to join: the session's
@@ -563,27 +596,109 @@ const CHIPS: readonly { line: string; dot: string }[] = [
  * yet (one an admin made, say, through the password step, or one that saw
  * it, left without answering and is signing in again); the join step opens
  * its make screen in the same tick the shell starts
- * (./communities-first-run.js). Either way the sheet hands off to that
- * screen (`handOff`) while this runs, so the two read as one movement.
- * Recording the start answers nothing: the question is asked until Make it
- * or "Look around first". Anyone else goes where they always have, with no
- * hand-off.
+ * (./communities-first-run.js). Either way this answers true and the sheet
+ * hands off to that screen, once the shell is ready to draw it (#4892), so
+ * the two read as one movement. The start is recorded before the shell
+ * starts, with the sheet still up, so the join step's own record comes
+ * second. Recording the start answers nothing: the question is asked until
+ * Make it or "Look around first". Anyone else goes where they always have,
+ * with no hand-off.
  */
-export async function startedFromStory(kind: 'existing' | 'new', handOff: () => Promise<void>): Promise<void> {
-  if (kind !== 'new') {
-    if (await firstSessionNext()) await handOff();
-    return;
-  }
+export async function startedFromStory(kind: 'existing' | 'new'): Promise<boolean> {
+  if (kind !== 'new') return firstSessionNext();
   try { sessionStorage.setItem('usernode:first-session:make', '1'); } catch { /* the make screen is then skipped */ }
-  await Promise.all([
-    fetch('/api/me/first-session/started', { method: 'POST', credentials: 'same-origin' }).catch(() => {}),
-    handOff(),
-  ]);
+  await fetch('/api/me/first-session/started', { method: 'POST', credentials: 'same-origin' }).catch(() => {});
+  return true;
+}
+
+/**
+ * How long "Signing you in…" may stand. A spend answers in about a second;
+ * one that has not after this gives way: as the page opens, to the story and
+ * its Get started, with nothing more spent on load; under Get started, to
+ * the sheet as it is ("Signing you in from your email…" and its ✕). A
+ * stalled request never leaves a spinner with no way out.
+ */
+export const SIGNING_IN_MAX_MS = 20_000;
+
+/**
+ * A "You're in" link that may be spent as the page opens (Evan, 12 Oct
+ * 2026): a new account's (`signup`), carrying both the token that names its
+ * address, which the check reads, and its one-time sign-in. Its arrival puts
+ * "Signing you in…" up at once, before anything is known, so the story is
+ * never seen first and then taken away.
+ */
+export function straightLink(link: ReleaseLink | null | undefined): boolean {
+  return !!link && link.route === 'signup' && !!link.token && !!link.signIn;
+}
+
+/**
+ * Whether that link is spent now, before any tap. Only when the check, a GET
+ * that spends nothing and makes no session (GET /api/public/waitlist/more/
+ * :token, `new_account`), says its account is still new: none yet, or one
+ * with no username and no password. An account already set up waits for Get
+ * started, so a mail scanner or an app's own browser that runs this page
+ * can never sign it in; so does a link whose check failed, and every link
+ * while the story is switched off. The spend itself asks the server to hold
+ * the same line (`newAccountOnly`, src/services/release-links.js).
+ */
+export function spendsOnLoad({ link, account, options }: {
+  link: ReleaseLink | null | undefined;
+  account: ReleaseAccount | null;
+  options: WaitlistOptions | null;
+}): boolean {
+  return straightLink(link) && account?.newAccount === true && options?.story_landing !== false;
+}
+
+/**
+ * Where that spend leads: the full-page Welcome for the account it opened;
+ * `used`, the story, whose Get started sends a code because the link was
+ * already used or has expired; or `story`, the story with the link still
+ * unspent for Get started (the server's answer for an account set up in the
+ * meantime, or no answer at all). Nothing here signs anybody in: a
+ * `signed-in` answer, which `newAccountOnly` rules out, would be the story too.
+ */
+export function afterLoadSpend(spent: ReleaseSpend | 'refused' | null): AccountStep | 'used' | 'story' {
+  if (spent === 'refused') return 'used';
+  if (spent && spent.next === 'set-password') {
+    return { email: spent.email, needsUsername: spent.needsUsername, suggestedUsername: spent.suggestedUsername };
+  }
+  return 'story';
+}
+
+/**
+ * "SIGNING YOU IN…": while a "You're in" mail's one-time sign-in is checked
+ * and spent, a plain screen over everything: the logotype, a spinner and the
+ * one line, on the landing's own ground. As the page opens, for a new
+ * account's link (`straightLink`); and while Get started spends it (the
+ * sheet's `link` step, ./sign-in-sheet.tsx). The onboarding run of 12 Oct
+ * 2026 saw the story, with the address under "Welcome to Homeroom", stay up
+ * while the link signed in, and then the Welcome sheet over it. The address
+ * is not said here: the Welcome page that follows says it.
+ *
+ * It takes the taps while it is up (the dim under it would close the sheet),
+ * and it is up only for that moment: rendered nothing otherwise, so the
+ * interior's first commit is unchanged.
+ */
+export function SigningIn() {
+  const t = useMessages('auth');
+  return (
+    <div
+      data-landing-signing-in=""
+      role="status"
+      className="fixed inset-0 z-[60] flex touch-none flex-col items-center justify-center px-4 text-center"
+      style={{ background: 'var(--home-wallpaper)' }}
+    >
+      <Wordmark className="h-8 w-auto text-zinc-950 dark:text-white" />
+      <SpinnerArcIcon className="mt-8 h-6 w-6 animate-spin motion-reduce:animate-none text-zinc-500 dark:text-zinc-400" aria-hidden="true" />
+      <p className="mt-3 text-[15px] leading-5 text-zinc-500 dark:text-zinc-400">{t('auth:landing.signingIn')}</p>
+    </div>
+  );
 }
 
 export function LandingScreen() {
   const rootRef = useRef<HTMLElement>(null);
   useVisibilityHiddenClass(rootRef, AUTH_SCREEN_IDS.landing, false);
+  const t = useMessages('auth');
   // The screen's interior mounts on its first reveal, not in the prerender —
   // see lib/mount-on-reveal.ts. AuthScreens.show() asks for it (through
   // window.UsernodeReact.mount) before it wires or reveals the screen, so the
@@ -603,14 +718,91 @@ export function LandingScreen() {
   const { preview: invite, pending: invitePending } = useInvitePreview();
   const madeForYou = !!invite?.live;
   // Which sign-in sheet is up (./sign-in-sheet.tsx): an invite's Join, or
-  // the story's Get started or Sign in.
+  // the story's Make an account or Sign in.
   const [sheet, setSheet] = useState<null | 'join' | 'start' | 'signin'>(null);
   // Back from Apple or Google: where the sheet picks up (./sign-in-sheet.tsx).
   const [resume, setResume] = useState<SignInResume | null>(null);
   // A waitlist "you're in" mail's link (AuthScreens.enter): this story with
   // the sheet already open, at the step the link asked for.
   const [release, setRelease] = useState<ReleaseLink | null>(null);
-  const closeSheet = useCallback(() => { setSheet(null); setResume(null); setRelease(null); }, []);
+  // Closing the sheet keeps the link (Evan, 10 Oct 2026): Get started again
+  // signs in from the email again, while the account it started is not set
+  // up yet (src/services/release-links.js), rather than asking for a code.
+  const closeSheet = useCallback(() => { setSheet(null); setResume(null); }, []);
+  // The address a new account's link names, for the story to greet (Evan,
+  // 10 Oct 2026: "Welcome to Homeroom" and the email).
+  const [releaseEmail, setReleaseEmail] = useState<string | null>(null);
+  // A NEW ACCOUNT'S LINK, AS THE PAGE OPENS (Evan, 12 Oct 2026): no story
+  // and no Get started, but "Signing you in…" at once (`holding`) while the
+  // link is checked and spent, then the full-page Welcome (`welcome`,
+  // ./welcome-page.tsx). A link that spend found already used, or expired,
+  // gives the story back, and its Get started then sends a code rather than
+  // spending the link again (`releaseUsed`).
+  const [holding, setHolding] = useState(false);
+  const [welcome, setWelcome] = useState<AccountStep | null>(null);
+  const [releaseUsed, setReleaseUsed] = useState(false);
+  // Bumped when "Signing you in…" gives way to the story (SIGNING_IN_MAX_MS):
+  // an answer that lands after that changes nothing, and nothing more is
+  // spent on load. Get started takes it from there.
+  const straightRun = useRef(0);
+  useEffect(() => {
+    if (!holding) return undefined;
+    const timer = window.setTimeout(() => { straightRun.current += 1; setHolding(false); }, SIGNING_IN_MAX_MS);
+    return () => window.clearTimeout(timer);
+  }, [holding]);
+  // The story's lookup of the address the link's token names, which also
+  // says whether its account is still new (`new_account`). A GET: it spends
+  // nothing and makes no session. A new account's link is then spent with
+  // `newAccountOnly`, which the server answers only with the account step:
+  // an account set up in the meantime is refused there, its link unspent and
+  // no session made, and gets the story like any account already set up,
+  // whose link only Get started spends (Evan, 10 Oct 2026: a link spent on
+  // load was used up by whatever loaded it, an app's own browser before it
+  // handed the link to Safari, or a mail scanner that runs the page).
+  useEffect(() => {
+    if (!release || release.route !== 'signup' || !release.token) return undefined;
+    const link = release;
+    const token = release.token;
+    const run = straightRun.current;
+    let live = true;
+    void Promise.all([releaseAccountFromToken(token), straightLink(link) ? waitlistOptions() : null]).then(async ([account, options]) => {
+      if (!live) return;
+      setReleaseEmail(account?.email ?? null);
+      if (run !== straightRun.current || !spendsOnLoad({ link, account, options })) {
+        setHolding(false);
+        return;
+      }
+      // From here the link is spent whatever the screen does, so its answer
+      // lands, unless the story has taken over in the meantime.
+      const next = afterLoadSpend(await spendReleaseLink(link.signIn!, { newAccountOnly: true }));
+      if (run !== straightRun.current) return;
+      if (next === 'used') setReleaseUsed(true);
+      else if (next !== 'story') setWelcome(next);
+      setHolding(false);
+    });
+    return () => { live = false; };
+  }, [release]);
+  // Where the sheet would show its own account step for such a link (after
+  // Get started spent it, or after the code a used link sends): the same
+  // full-page Welcome, in the sheet's place.
+  const toWelcome = useCallback((account: AccountStep) => {
+    setWelcome(account);
+    setSheet(null);
+    setResume(null);
+  }, []);
+  // The sheet spending that link's one-time sign-in (its `onSigningIn`):
+  // "Signing you in…" over everything (SigningIn), for that moment. Every
+  // way it ends takes the screen down with it: Welcome, the code a refused
+  // or failed spend falls back to, an error, a closed sheet. Past
+  // SIGNING_IN_MAX_MS it gives way to the sheet as it stands.
+  const [signingIn, setSigningIn] = useState(false);
+  const [signingInOverdue, setSigningInOverdue] = useState(false);
+  useEffect(() => {
+    setSigningInOverdue(false);
+    if (!signingIn) return undefined;
+    const timer = window.setTimeout(() => setSigningInOverdue(true), SIGNING_IN_MAX_MS);
+    return () => window.clearTimeout(timer);
+  }, [signingIn]);
 
   // Both start at the value the prerendered markup shipped with: no session,
   // no app open. `_renderLandingHeader`'s equivalent (refreshHeader) runs on
@@ -628,7 +820,7 @@ export function LandingScreen() {
   const siteUrl = marketingSiteUrl(waitlistPayload);
 
   // THE STORY (./story.tsx), unless the first session's switch is off: what
-  // Homeroom is and "Get started", in place of the waitlist pitch, for a
+  // Homeroom is and "Make an account", in place of the waitlist pitch, for a
   // visitor with no session who did not come by an invite link. It is the
   // default, so it is what this interior's first render draws, before the
   // options say otherwise: the interior mounts on reveal
@@ -661,7 +853,7 @@ export function LandingScreen() {
    * states this screen has left:
    *   anonymous            → the "Join the waitlist" / "Sign in" pills and the
    *                          "Already joined?" line
-   *   waiting-room session → one "Your queue status" pill instead, back to the
+   *   waiting-room session → one "Your spot on the waitlist" pill instead, back to the
    *                          room that can tell them where they stand
    *
    * It does NOT decide the header label: that is `openApp`'s (the app's name
@@ -675,6 +867,10 @@ export function LandingScreen() {
   }, []);
   const storyOn = waitlistPayload?.story_landing !== false && !onInvitePath && !session;
   const pitchHidden = madeForYou || storyOn || invitePending;
+  // As the page opens for a new account's link, or over Get started's
+  // sheet, the one that carries the link.
+  const sheetSigningIn = signingIn && !signingInOverdue && storyOn && sheet === 'start';
+  const signingInShown = holding || sheetSigningIn;
   const webProviders = useMemo(() => signInProvidersFrom(waitlistPayload), [waitlistPayload]);
   const nativeProviders = useNativeSignInProviders(waitlistPayload);
   const nativeSignIn = nativeProviders.length > 0;
@@ -697,11 +893,14 @@ export function LandingScreen() {
   // The story switched off while a release link waited for it: no sheet to
   // open, so the link goes where it always went, the sign-in screen, which
   // takes the token from here (./login.tsx).
+  // Nothing was spent on load for it (`spendsOnLoad`), and "Signing you in…"
+  // goes with the story.
   useEffect(() => {
     if (!release || waitlistPayload?.story_landing !== false) return;
     if (release.token) keepReleaseLink(release);
     setRelease(null);
     setSheet(null);
+    setHolding(false);
     location.hash = `#${release.route}`;
   }, [release, waitlistPayload]);
 
@@ -772,7 +971,7 @@ export function LandingScreen() {
         if (launchId !== st.launchId) return;
         if (!token) {
           legacy().PlatformUI?.toast?.(
-            'Could not sign in to this app. Check your connection and try again.',
+            translate('auth:landing.appSignInFailed'),
             { error: true },
           );
           return;
@@ -782,7 +981,7 @@ export function LandingScreen() {
           url.searchParams.set('token', token);
           launchUrl = url.toString();
         } catch {
-          legacy().PlatformUI?.toast?.('This app could not be opened.', { error: true });
+          legacy().PlatformUI?.toast?.(translate('auth:landing.appOpenFailed'), { error: true });
           return;
         }
       }
@@ -1059,16 +1258,28 @@ export function LandingScreen() {
 
   const landingOnShow = useCallback(() => {
     refreshHeader();
-    // Arrived by a waitlist "you're in" link: the sheet, open over the story
-    // at the step the link asked for. Read once, so a reload now would lose
-    // it; a sign-in has begun, so the shell does not swap the build in under
-    // it (App.noteSignInBegun).
+    // Arrived by a waitlist "you're in" link. Read once, so a reload now
+    // would lose it; a sign-in has begun, so the shell does not swap the
+    // build in under it (App.noteSignInBegun).
+    //
+    // A new account's link (Evan, 12 Oct 2026): "Signing you in…" at once
+    // (`holding`), while the effect above checks, with a GET that spends
+    // nothing, whether the account is still new, and spends the link if it
+    // is; then the full-page Welcome. It is committed here, in flushSync,
+    // because show() reveals the screen right after this hook returns, and
+    // the story must not be seen first and then taken away. An account
+    // already set up gets the story once the check says so, and its link
+    // still waits for Get started (the 10 Oct rule): only the sheet spends
+    // it. An existing account's `?login=1` link opens Sign in, as before.
     const link = takeReleaseLink();
     if (link) {
       noteSignInBegun();
-      setRelease(link);
-      setResume(null);
-      setSheet(link.route === 'signup' ? 'start' : 'signin');
+      flushSync(() => {
+        setRelease(link);
+        setResume(null);
+        setHolding(straightLink(link));
+        if (link.route !== 'signup') setSheet('signin');
+      });
     }
     if (!st.appsLoaded) {
       st.appsLoaded = true;
@@ -1221,7 +1432,7 @@ export function LandingScreen() {
             id="landing-back-btn"
             type="button"
             className={hiddenLast(!openApp, LANDING_BACK_CLASS)}
-            aria-label="Back to apps"
+            aria-label={t('auth:landing.backToApps')}
             onClick={() => live.current.closeLandingApp()}
           >
             <ChevronLeftIcon className="w-5 h-5" />
@@ -1240,15 +1451,15 @@ export function LandingScreen() {
             same box either way, and a class string that moved with the state
             would rewrite this element's attribute on every open and close.
             The mark is `h-7` — the content row exactly — takes its width from
-            its own aspect ratio and its ink from this element, which is why
-            it needs no dark variant; `title` gives it the accessible name the
+            its own aspect ratio, and is inked black (white in dark mode) like
+            the logotype everywhere (#4382); `title` gives it the accessible name the
             text branch has for free, so the bar still answers "Homeroom".
         */}
         <h1
           id="landing-header-title"
           className="flex-1 min-w-0 text-lg font-bold pointer-events-none truncate text-center"
         >
-          {openApp ? headerTitle : <Wordmark className="h-7 w-auto inline-block align-middle" title={LANDING_TITLE} />}
+          {openApp ? headerTitle : <Wordmark className="h-7 w-auto inline-block align-middle text-zinc-950 dark:text-white" title={LANDING_TITLE} />}
         </h1>
         {/*
             The trailing 28px, mirroring the lead box so the label sits on the
@@ -1282,7 +1493,9 @@ export function LandingScreen() {
             scroller's own bottom padding is the safe-area inset
             (.platform-safe-scroll REPLACES it), which is zero on a desktop
             or an Android without one, so the last thing on the screen needs
-            air of its own either way.
+            air of its own either way. A live invite's page ends on its pinned
+            Join bar instead (InviteJoinBar, below this scroller), which
+            clears the home indicator itself, so it keeps only `pb-4`.
 
             `flex min-h-full flex-col` is the BOTTOM PIN — board 1 is a flex
             column whose action block sits at the foot of the screen with that
@@ -1328,7 +1541,7 @@ export function LandingScreen() {
             safe-area inset in the scroller's own padding — so the pin cannot
             introduce an overflow of its own.
         */}
-        <div className="max-w-sm md:max-w-lg xl:max-w-2xl mx-auto flex min-h-full flex-col pb-[34px]">
+        <div className={`max-w-sm md:max-w-lg xl:max-w-2xl mx-auto flex min-h-full flex-col ${madeForYou ? 'pb-4' : 'pb-[34px]'}`}>
           {/*
               Offline explanation (#1021). Both ways in from this screen —
               the marketing waitlist page and Sign in — need a connection, so
@@ -1336,28 +1549,29 @@ export function LandingScreen() {
           */}
           <div className={OFFLINE_NOTICE}>
             <h2 className="text-sm font-semibold text-amber-800 dark:text-amber-400">
-              You're offline
+              {t('auth:landing.offline.title')}
             </h2>
             <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-              Signing in and joining the waitlist both need a connection.
+              {t('auth:landing.offline.body')}
             </p>
             <button
               type="button"
               data-offline-retry=""
               className="mt-3 rounded-lg border border-amber-500/50 px-3 py-1.5 text-sm font-medium text-amber-800 dark:text-amber-300 hover:bg-amber-500/10 transition-colors"
             >
-              Try again
+              {t('auth:landing.offline.retry')}
             </button>
           </div>
           {/*
-              AN INVITE LINK'S CARDS (./invite-card.tsx): who made it, the
-              project itself, the note and the way in. Only on
+              AN INVITE LINK'S CARDS (./invite-card.tsx): the project and who
+              invited you, its picture and the note. The way in is pinned
+              below this scroller (InviteJoinBar). Only on
               /invite/<token>, with a placeholder in their place until its
               preview is back — nothing here on any other visit. A dead link
               says why, above the pitch.
           */}
           {invitePending && !invite ? <InvitePending /> : null}
-          {madeForYou ? <MadeForYou preview={invite!} primaryClass={PRIMARY_PILL} onJoin={() => setSheet('join')} /> : null}
+          {madeForYou ? <MadeForYou preview={invite!} /> : null}
           {invite && !invite.live ? <DeadInvite preview={invite} /> : null}
           {/*
               DECORATIVE, so `alt` is empty: everything it says is said again
@@ -1451,7 +1665,7 @@ export function LandingScreen() {
                       gives — it is a value no class literal can hold well.
                   */}
                   <span className={CHIP_DOT} style={{ background: dot }} aria-hidden="true" />
-                  <span className={CHIP_LABEL}>{line}</span>
+                  <span className={CHIP_LABEL}>{t(line)}</span>
                 </span>
               )))}
             </div>
@@ -1490,13 +1704,13 @@ export function LandingScreen() {
           */}
           <div className={hiddenLast(pitchHidden, 'px-4 flex grow flex-col text-center')}>
             <p className="mt-5 text-[13px] font-semibold uppercase tracking-[0.8px] text-zinc-500 dark:text-zinc-400">
-              Opening gradually
+              {t('auth:landing.pitch.eyebrow')}
             </p>
             <h1 className="mt-2.5 text-[30px] leading-[34px] md:text-[34px] md:leading-[38px] xl:text-[38px] xl:leading-[42px] font-extrabold text-balance">
-              Come build the next version with us.
+              {t('auth:landing.pitch.headline')}
             </h1>
             <p className="mt-2.5 text-[16px] leading-[22px] text-zinc-500 dark:text-zinc-400 text-pretty">
-              Access opens in batches, and we'll email you when your spot is ready.
+              {t('auth:landing.pitch.body')}
             </p>
             {/*
                 THE WAY OUT TO THE LONG VERSION. One sentence is the right
@@ -1524,7 +1738,7 @@ export function LandingScreen() {
                 data-offline-disabled=""
                 className="font-medium text-violet-700 dark:text-violet-400 hover:underline"
               >
-                Learn more about Homeroom
+                {t('auth:landing.learnMore')}
               </a>
             </p>
             {/*
@@ -1632,10 +1846,10 @@ export function LandingScreen() {
                     className={hiddenLast(!waitlistUrl, PRIMARY_PILL)}
                     onClick={onLeaveCta}
                   >
-                    Join the waitlist
+                    {t('auth:landing.joinWaitlist')}
                   </a>
                   <a href="#login" className={SECONDARY_PILL} onClick={onLeaveCta}>
-                    Sign in
+                    {t('auth:landing.signIn')}
                   </a>
                 </div>
                 {/*
@@ -1656,16 +1870,15 @@ export function LandingScreen() {
                     'mt-1.5 text-center text-[15px] text-zinc-500 dark:text-zinc-400',
                   )}
                 >
-                  {'Already joined? '}
+                  <RichMessage id="auth:landing.alreadyJoined" components={[
                   <a
                     id="landing-status-link"
                     href="#waitlist?confirm=1"
                     data-offline-disabled=""
                     className="font-medium text-violet-700 dark:text-violet-400 hover:underline"
                     onClick={onLeaveCta}
-                  >
-                    Check your status
-                  </a>
+                  />,
+                  ]} />
                 </p>
               </div>
               {/*
@@ -1688,15 +1901,24 @@ export function LandingScreen() {
                 className={hiddenLast(!session, PRIMARY_PILL)}
                 onClick={onLeaveCta}
               >
-                Your queue status
+                {t('auth:landing.backToWaiting')}
               </a>
             </div>
           </div>
           {storyOn ? (
-            <Story primaryClass={PRIMARY_PILL} onStart={() => setSheet('start')} onSignIn={() => setSheet('signin')} />
+            <Story primaryClass={PRIMARY_PILL} welcomeEmail={releaseEmail} onStart={() => setSheet('start')} onSignIn={() => setSheet('signin')} />
           ) : null}
         </div>
       </div>
+      {/*
+          A live invite's Join, pinned to the foot of the screen (#4203): the
+          column's next child after the scroller, so the scroller ends above
+          it and nothing on the page can sit under it. Not while an app is
+          open in the viewer, which takes the scroller's place.
+      */}
+      {madeForYou && !openApp ? (
+        <InviteJoinBar preview={invite!} primaryClass={PRIMARY_PILL} onJoin={() => setSheet('join')} />
+      ) : null}
       <ViewerRegion />
       {/*
           The sign-in sheet "Made for you"'s Join opens (./sign-in-sheet.tsx).
@@ -1706,14 +1928,7 @@ export function LandingScreen() {
       {madeForYou ? (
         <SignInSheet
           open={sheet === 'join'}
-          title={`Join ${invite!.project!.name}`}
-          intro={phoneSignIn
-            ? (invite!.project!.public
-              ? 'Just your phone number and a username. No app, no password.'
-              : 'Just your name and phone number. No app, no password.')
-            : providers.length
-              ? 'Sign in or make an account. It takes a minute.'
-              : 'Sign in or make an account with your email. It takes a minute.'}
+          title={t('auth:landing.sheet.join', { project: invite!.project!.name })}
           followInvite
           providers={providers}
           native={nativeSignIn}
@@ -1729,21 +1944,30 @@ export function LandingScreen() {
       {storyOn ? (
         <SignInSheet
           open={sheet === 'start' || sheet === 'signin'}
-          title={sheet === 'signin' ? 'Sign in' : 'Make your account'}
-          intro={sheet === 'signin'
-            ? (providers.length ? 'Welcome back.' : 'Welcome back. We\'ll email you a code.')
-            : (providers.length ? 'It takes a minute.' : 'With your email. It takes a minute.')}
+          title={sheet === 'signin' ? t('auth:landing.sheet.signIn') : t('auth:landing.sheet.makeAccount')}
           providers={providers}
           native={nativeSignIn}
           from={sheet === 'signin' ? 'signin' : 'story'}
           returnTo="/"
           resume={resume}
           releaseToken={sheet === 'start' ? release?.token ?? null : null}
+          releaseSignIn={sheet === 'start' && !releaseUsed ? release?.signIn ?? null : null}
+          linkUsed={sheet === 'start' && releaseUsed}
+          onAccount={sheet === 'start' && release?.route === 'signup' ? toWelcome : undefined}
           beforeFinish={startedFromStory}
           onClose={closeSheet}
           primaryClass={PRIMARY_PILL}
+          onSigningIn={setSigningIn}
+          held={signingInShown}
         />
       ) : null}
+      {/*
+          The full-page Welcome for a "You're in" link's new account
+          (./welcome-page.tsx), over the story and in the sheet's place.
+          Rendered nothing until there is one, like the two below it.
+      */}
+      {welcome ? <WelcomePage account={welcome} beforeFinish={startedFromStory} /> : null}
+      {signingInShown ? <SigningIn /> : null}
         </>
       ) : null}
     </main>

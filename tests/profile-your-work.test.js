@@ -16,6 +16,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -33,7 +34,8 @@ test('the summary counts what is in progress: in an agent session or up for a vo
   const profile = require('../src/routes/profile');
   assert.equal(profile.shapeSummary({ counts: { merged: 9, in_progress: 2 } }).inProgress, 2);
   const sql = read('src/routes/profile.js');
-  assert.match(sql, /COUNT\(\*\) FILTER \(WHERE cs\.status IN \(\s*'active', 'paused', 'promoted', 'merging'\s*\)\)::int AS in_progress,/);
+  // A merged change still going live (live_at null) is in progress too.
+  assert.match(sql, /COUNT\(\*\) FILTER \(WHERE cs\.status IN \(\s*'active', 'paused', 'promoted', 'merging'\s*\) OR \(cs\.status = 'merged' AND cs\.live_at IS NULL\)\)::int AS in_progress,/);
 });
 
 test('your requests: each says where it stands, and the counts are the whole set\'s', () => {
@@ -198,7 +200,7 @@ test('Your votes: still open, then decided, each saying your vote as it stands',
   });
   assert.deepEqual(view.sections.map((s) => [s.label, s.rows.map((r) => [r.title, r.meta, r.href])]), [
     ['Still open', [
-      ['Weekly distance leaderboard', 'Run Club · you voted yes', '#app/run-club/dev/proposals/31'],
+      ['Weekly distance leaderboard', 'Run Club · you voted yes', '#app/run-club/dev/changes/40'],
       ['Rename to Run Crew', 'Run Club · you voted yes', '#app/run-club/dev/governance/77'],
     ]],
     ['Decided', [
@@ -219,7 +221,10 @@ test('the screen ships hidden and empty, one root for all three views', () => {
   assert.doesNotMatch(html, /data-profile-work-group|Loading/, 'nothing but the frame until it is opened');
   assert.equal(mod.workKind('votes'), 'votes');
   assert.equal(mod.workKind('anything'), 'changes');
-  assert.deepEqual(mod.WORK_TITLES, { changes: 'Your changes', requests: 'Your requests', votes: 'Your votes' });
+  // The titles are catalog entries; the table holds their ids.
+  assert.deepEqual(mod.WORK_TITLES,
+    { changes: 'profile:work.changes.title', requests: 'profile:work.requests.title', votes: 'profile:work.votes.title' });
+  assert.deepEqual(Object.values(mod.WORK_TITLES).map((id) => message(id)), ['Your changes', 'Your requests', 'Your votes']);
 });
 
 test('each view draws its own groups; long ones fold; Your requests ends on Suggest an improvement', () => {
@@ -288,7 +293,11 @@ test('the router: three addresses no username can have, one screen, the bar name
   const app = read('public/js/app.js');
   assert.match(app, /PROFILE_WORK: \{\s*proposals: 'changes',\s*'your-changes': 'changes',\s*'your-requests': 'requests',\s*'your-votes': 'votes',\s*\},/);
   assert.match(app, /if \(parts\[0\] === 'profile' && App\.PROFILE_WORK\[parts\[1\]\]\) \{[\s\S]{0,600}?App\.navigateToProfileProposals\(App\.PROFILE_WORK\[parts\[1\]\]\);/);
-  assert.match(app, /App\.setHeaderTitle\(App\.PROFILE_WORK_TITLES\[view\]\);/);
+  // The table holds the three titles' message ids, read when the bar is named.
+  assert.match(app, /App\.setHeaderTitle\(PlatformI18n\.t\(App\.PROFILE_WORK_TITLES\[view\]\)\);/);
+  assert.match(app, /PROFILE_WORK_TITLES: \{\s*changes: 'shell:title\.yourChanges', requests: 'shell:title\.yourRequests', votes: 'shell:title\.yourVotes',\s*\},/);
+  assert.deepEqual(['shell:title.yourChanges', 'shell:title.yourRequests', 'shell:title.yourVotes'].map((id) => message(id)),
+    ['Your changes', 'Your requests', 'Your votes']);
   assert.match(app, /window\.UsernodeReact\?\.profileProposals\?\.open\?\.\(view\);/);
   // The dialog's "See your requests" lands on the view.
   assert.match(read('frontend/src/features/dialogs/feedback-controller.js'), /const SEE_MINE_ROUTE = '#profile\/your-requests';/);
@@ -314,8 +323,10 @@ test('#3498: every wallpaper and bar rule that names Workshop names Your work to
   // The rules keyed on a visible screen root: `body:has(:is(<roots>):not(.hidden))`.
   const routeRules = SELECTORS.filter((sel) => /body:has\(:is\([^)]*#workshop-screen[^)]*\):not\(\.hidden\)\)/.test(sel));
   // The light and dark ground, their 640px layer sets and the launch cover
-  // (5); the cleared bar, its glass, its clip and its faked layer (4).
-  assert.equal(routeRules.length, 9, 'the nine route rules that name #workshop-screen are found');
+  // (5); the cleared bar, its glass, its clip and its faked layer, the
+  // opaque ground under that glass in an iOS browser tab, and (run seven)
+  // that bar sticky at the top there, the document not scrolling (6).
+  assert.equal(routeRules.length, 11, 'the eleven route rules that name #workshop-screen are found');
   for (const sel of routeRules) {
     assert.ok(sel.includes('#profile-proposals-screen'),
       `${sel.replace(/\s+/g, ' ').slice(0, 90)}… also names #profile-proposals-screen`);
@@ -323,7 +334,7 @@ test('#3498: every wallpaper and bar rule that names Workshop names Your work to
   const ground = routeRules.filter((sel) => !sel.includes('#platform-header'));
   assert.equal(ground.length, 5, 'so the page paints the wallpaper, not the gray body');
   const bar = routeRules.filter((sel) => sel.includes('#platform-header'));
-  assert.equal(bar.length, 4, 'and the bar wears the same glass as on Workshop');
+  assert.equal(bar.length, 6, 'and the bar wears the same glass as on Workshop');
 });
 
 test('#3498: on a desktop the screen moves over for the rail like its siblings', () => {

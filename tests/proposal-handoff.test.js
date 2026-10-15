@@ -40,9 +40,8 @@ function makeHarness() {
   const ids = {
     pool: require.resolve('../src/db/pool'),
     github: require.resolve('../src/services/github'),
-    staging: require.resolve('../src/services/staging'),
     recovery: require.resolve('../src/services/staging-recovery'),
-    visuals: require.resolve('../src/services/visuals'),
+    previewWorkflow: require.resolve('../src/services/preview-workflow'),
     activeWorkers: require.resolve('../src/services/active-workers'),
     appAccess: require.resolve('../src/services/app-access'),
     events: require.resolve('../src/services/events'),
@@ -50,11 +49,10 @@ function makeHarness() {
     proposalUpdate: require.resolve('../src/services/proposal-update'),
     prMetadata: require.resolve('../src/services/pr-metadata'),
     prImportSync: require.resolve('../src/services/pr-import-sync'),
-    // #907: the staging/checks half of a handoff build now lives in a shared
-    // module so a locally-run coding turn goes through the very same pipeline.
-    // It has to be evicted alongside the route, or it keeps a closure over the
-    // real staging and github services and the stubs below quietly stop
-    // applying to everything the route delegates.
+    // #907: the staging/checks half of a handoff build lives in a shared
+    // module so a locally-run coding turn goes through the very same pipeline
+    // (it hands the head to the preview machine). It is evicted alongside the
+    // route, so it binds the stubs below rather than a previous test's.
     pipeline: require.resolve('../src/services/handoff-pipeline'),
     subject: require.resolve('../src/routes/proposal-handoff'),
   };
@@ -70,22 +68,18 @@ function makeHarness() {
     specs: [],
     github: [],
     prMetadata: [],
-    staging: [],
-    teardowns: [],
-    captures: [],
+    // What reached the preview machine: [sessionId, head, source, trigger]
+    // per revision, [sessionId, reason] per cleared verdict.
+    revisions: [],
+    cleared: [],
+    // Holds a revision's hand-off open (the machine's append not answered).
+    revisionGate: null,
     accessAppIds: [],
     accessAllowed: true,
-    teardownLeaks: false,
     busy: false,
-    captureBusy: false,
-    stagingGate: null,
-    stagingFailure: false,
-    failures: [],
     remoteHead: null,
     archiveOnAdvance: false,
     supersedeUploadOnAdvance: false,
-    rejectPending: false,
-    persistStagingError: false,
     uploadHead: '3'.repeat(40),
     reconciliations: [],
     promotedChecks: [],
@@ -210,11 +204,6 @@ function makeHarness() {
         return { rows: row ? [{ ...row, app_slug: app.slug, app_name: app.name,
           repo_url: app.repo_url, collab_visibility: 'public', view_visibility: 'public' }] : [] };
       }
-      if (/SELECT status, checks_commit_sha, reviewed_head_sha FROM chat_sessions/.test(text)) {
-        const row = state.sessions.find((s) => s.id === Number(params[0]));
-        return { rows: row ? [{ status: row.status, checks_commit_sha: row.checks_commit_sha,
-          reviewed_head_sha: row.reviewed_head_sha || null }] : [] };
-      }
       if (/SET handoff_head_sha = \$1/.test(text)) {
         const row = state.sessions.find((s) => s.id === Number(params[1]));
         const promotedRevision = /reviewed_head_sha IS NOT DISTINCT FROM \$1/.test(text);
@@ -230,17 +219,13 @@ function makeHarness() {
             && (row.checks_commit_sha || null) === (params[3] || null)
             && (row.handoff_head_sha || null) === (params[4] || null)
             && (row.handoff_upload_checked_sha || null) === (params[5] || null);
+        // The verdict and the preview are the preview machine's: adoption
+        // writes only the hand-off pins.
         if (matched) {
           Object.assign(row, {
             handoff_head_sha: params[0],
             handoff_uploaded_sha: params[0],
             handoff_upload_checked_sha: null,
-            ...(promotedRevision ? {} : {
-              check_state: 'pending',
-              checks_commit_sha: params[0],
-              staging_container_id: null,
-              staging_url: null,
-            }),
           });
         }
         return { rows: [], rowCount: matched ? 1 : 0 };
@@ -259,38 +244,6 @@ function makeHarness() {
           row.handoff_upload_checked_sha = row.checks_commit_sha;
           row.handoff_uploaded_sha = params[0];
           row.handoff_local_commit_sha = params[4];
-          row.check_state = null;
-          row.check_error_detail = null;
-        }
-        return { rows: [], rowCount: matched ? 1 : 0 };
-      }
-      if (/SET staging_container_id = \$1, staging_url = \$2/.test(text)) {
-        // #907: ownership is now an inline `source IS DISTINCT FROM 'imported'`
-        // clause rather than a bound `source = $n`, because the same pipeline
-        // also stages native sessions run by a local coding agent. Emulate the
-        // predicate, and assert the guard is actually still in the statement.
-        assert.match(text, /source IS DISTINCT FROM 'imported'/,
-          'the pipeline must never stage over an imported mirror');
-        const row = state.sessions.find((s) => s.id === Number(params[2]));
-        const owned = row && row.source !== 'imported';
-        if (/status NOT IN/.test(text)) {
-          const matched = owned
-            && (!['active', 'paused'].includes(row.status) || row.checks_commit_sha === params[3]);
-          if (matched) {
-            row.staging_container_id = params[0];
-            row.staging_url = params[1];
-          }
-          return { rows: [], rowCount: matched ? 1 : 0 };
-        }
-        if (state.persistStagingError) throw new Error('staging persistence unavailable');
-        // #3043: or promoted on this very commit while the run was checking it.
-        assert.match(text, /status = 'promoted' AND LOWER\(reviewed_head_sha\) = LOWER\(\$4\)/);
-        const matched = owned && row.checks_commit_sha === params[3]
-          && (row.status === params[4]
-            || (row.status === 'promoted' && row.reviewed_head_sha === params[3]));
-        if (matched) {
-          row.staging_container_id = params[0];
-          row.staging_url = params[1];
         }
         return { rows: [], rowCount: matched ? 1 : 0 };
       }
@@ -299,8 +252,7 @@ function makeHarness() {
         row.spec_md = params[0];
         return { rows: [], rowCount: 1 };
       }
-      if (/UPDATE chat_sessions SET last_activity_at/.test(text)
-          || /SET check_state = 'pending'/.test(text)) {
+      if (/UPDATE chat_sessions SET last_activity_at/.test(text)) {
         return { rows: [], rowCount: 1 };
       }
       return { rows: [], rowCount: 0 };
@@ -346,24 +298,7 @@ function makeHarness() {
     },
     describeGithubError: (err) => ({ message: err.message }),
   });
-  stubModule(ids.staging, {
-    hasInFlightBuild: () => false,
-    buildAndDeployStaging: async (_config, session, _app, sha) => {
-      state.staging.push([session.id, sha]);
-      if (state.stagingGate) await state.stagingGate;
-      if (state.stagingFailure) throw new Error('fixture build failure');
-      return { containerId: 'container-1', stagingUrl: 'https://preview.example', hostname: 'preview' };
-    },
-    warmStagingCert: async () => {},
-    teardownStaging: async (session) => {
-      state.teardowns.push([session.id, session.staging_container_id, session.staging_url]);
-      return state.teardownLeaks
-        ? { removed: false, leaked: true }
-        : { removed: true, leaked: false };
-    },
-  });
   stubModule(ids.recovery, {
-    recordStagingBootFailure: async (args) => { state.failures.push(args); },
     checkRunOverdue(session, { now = Date.now(), staleMs = 10 * 60 * 1000 } = {}) {
       if (session?.check_state != null && session.check_state !== 'pending') return false;
       if (!(session?.checks_commit_sha || session?.handoff_head_sha)) return false;
@@ -373,26 +308,30 @@ function makeHarness() {
       return !Number.isFinite(checkedAt) || (now - checkedAt) > staleMs;
     },
   });
+  // The preview machine, as its hand-off module (services/preview-workflow.js)
+  // reaches it. A revision is answered the way the machine answers one: its
+  // pending stamp of the head is written before the append is answered; once
+  // answered, this fixture lets the run finish at once (published, then a
+  // passing verdict) so a flow can be followed to ready. A cleared verdict
+  // is the machine's ChecksCleared.
+  stubModule(ids.previewWorkflow, {
+    async revision({ session, head, source, trigger }) {
+      state.revisions.push([Number(session.id), head, source, trigger]);
+      const row = state.sessions.find((s) => s.id === Number(session.id));
+      if (row) Object.assign(row, { checks_commit_sha: head, check_state: 'pending', check_phase: 'building' });
+      if (state.revisionGate) await state.revisionGate;
+      if (row) Object.assign(row, { staging_url: 'https://preview.example', check_state: 'passing', check_phase: null });
+    },
+    async clear({ session, reason }) {
+      state.cleared.push([Number(session.id), reason]);
+      const row = state.sessions.find((s) => s.id === Number(session.id));
+      if (row) Object.assign(row, { check_state: null, check_phase: null, check_error_detail: null });
+    },
+    async held() { return false; },
+  });
   stubModule(ids.activeWorkers, {
     isSessionBusy: () => state.busy,
     beginSessionOperation: () => () => {},
-  });
-  stubModule(ids.visuals, {
-    hasInFlightCapture: () => state.captureBusy,
-    setChecksPending: async (_pool, sessionId) => {
-      if (state.rejectPending) {
-        const row = state.sessions.find((candidate) => candidate.id === Number(sessionId));
-        if (row) row.status = 'archived';
-        return false;
-      }
-      return true;
-    },
-    notifyChecksPending: () => {},
-    captureForSession: async (_config, session, _app, sha) => {
-      state.captures.push([session.id, sha]);
-      const row = state.sessions.find((s) => s.id === Number(session.id));
-      row.check_state = 'passing';
-    },
   });
   stubModule(ids.appAccess, {
     getAppForUser: async () => ({ ...app }),
@@ -407,6 +346,11 @@ function makeHarness() {
   });
   stubModule(ids.sessionLifecycle, {
     freeGlobalSlot: async () => ({ freed: false }),
+    // The platform-wide gate (session-lifecycle.claimGlobalSlot): never full
+    // here; tests/session-capacity.test.js covers it.
+    claimGlobalSlot: async () => ({ ok: true }),
+    recordCapacityRefusal: () => {},
+    PLATFORM_AT_CAPACITY: 'Platform is at capacity right now. Try again in a few minutes.',
     finalizeArchivedSession: async (args) => { state.finalizedArchives.push(args); },
   });
   stubModule(ids.proposalUpdate, {
@@ -874,6 +818,37 @@ test('an update may carry a summary, capped exactly as the import caps it', () =
   assert.match(route.slice(0, 3000), /summary: input\.summary/);
 });
 
+// #4263. The connector's update work order hands a fix in as a patch, so the
+// update route takes one in place of the fork branch: never both, and always
+// with the commit it was made from, which is where the service applies it.
+test('an update may carry a patch instead of a branch, with the commit it was made from', () => {
+  const { subject, restore } = makeHarness();
+  const PATCH = 'diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n';
+  try {
+    const parsed = subject.parseUpdateFromForkBody({ patch: PATCH, expectedHeadSha: HEAD.toUpperCase() });
+    assert.equal(parsed.patch, PATCH, 'verbatim: a patch is whitespace-sensitive, so it is not trimmed');
+    assert.equal(parsed.branch, null);
+    assert.equal(parsed.expectedHeadSha, HEAD);
+    assert.equal(subject.parseUpdateFromForkBody({ branch: 'dev/x' }).patch, null);
+
+    assert.throws(() => subject.parseUpdateFromForkBody({ patch: PATCH }), /expectedHeadSha/);
+    assert.throws(() => subject.parseUpdateFromForkBody({
+      patch: PATCH, branch: 'dev/x', expectedHeadSha: HEAD,
+    }), /branch or patch, not both/);
+    assert.throws(() => subject.parseUpdateFromForkBody({ patch: '', expectedHeadSha: HEAD }), /patch/);
+    assert.throws(() => subject.parseUpdateFromForkBody({ patch: 7, expectedHeadSha: HEAD }), /patch/);
+    // Neither is still a missing branch, as before.
+    assert.throws(() => subject.parseUpdateFromForkBody({}), /branch/);
+  } finally { restore(); }
+  const routeSrc = require('node:fs').readFileSync(
+    require('node:path').join(__dirname, '../src/routes/proposal-handoff.js'), 'utf8');
+  const route = routeSrc.slice(routeSrc.indexOf("'/api/apps/:slug/proposals/:id/update-from-fork'"));
+  assert.match(route.slice(0, 3000), /patch: input\.patch/, 'handed to the service that applies it');
+  // The share route creates a card from a fork branch only: no patch there.
+  const share = routeSrc.slice(routeSrc.indexOf('function parseShareInProgressBody(body)'));
+  assert.doesNotMatch(share.slice(0, share.indexOf('\n}\n')), /'patch'/);
+});
+
 test('build adoption is serialized per handoff session', async () => {
   const { subject, restore } = makeHarness();
   try {
@@ -899,8 +874,8 @@ test('build adoption is serialized per handoff session', async () => {
 
 test('an accepted local pipeline is idempotent by head and blocks a competing revision', async () => {
   const { router, state, restore } = makeHarness();
-  let releaseStaging;
-  state.stagingGate = new Promise((resolve) => { releaseStaging = resolve; });
+  let releaseRevision;
+  state.revisionGate = new Promise((resolve) => { releaseRevision = resolve; });
   try {
     const start = routeHandler(router, '/api/apps/:slug/proposal-handoffs', 'post');
     await start({
@@ -929,7 +904,8 @@ test('an accepted local pipeline is idempotent by head and blocks a competing re
       user: { id: 7, username: 'maker' },
     }, retry);
     assert.equal(retry.statusCode, 202, 'a lost-response retry joins the accepted head');
-    assert.equal(state.staging.length, 1, 'the retry does not launch a duplicate pipeline');
+    assert.deepEqual(state.revisions, [[101, HEAD, 'cli', 'commit-push']],
+      'the retry does not launch a duplicate pipeline');
 
     const competing = mockRes();
     await build({
@@ -939,79 +915,10 @@ test('an accepted local pipeline is idempotent by head and blocks a competing re
     assert.equal(competing.statusCode, 409);
     assert.equal(competing.body.error, 'session_busy');
   } finally {
-    releaseStaging();
+    releaseRevision();
     await new Promise((resolve) => setImmediate(resolve));
     restore();
   }
-});
-
-for (const [initialStatus, endStatus] of [['active', 'archived'], ['paused', 'archived'], ['active', 'paused'], ['paused', 'active']]) {
-  test(`${initialStatus} to ${endStatus} during a build discards its finished staging result`, async () => {
-    const { router, state, restore } = makeHarness();
-    let releaseStaging;
-    state.stagingGate = new Promise((resolve) => { releaseStaging = resolve; });
-    try {
-      const start = routeHandler(router, '/api/apps/:slug/proposal-handoffs', 'post');
-      await start({
-        params: { slug: 'demo' }, body: START_BODY, cliAuthenticated: true,
-        user: { id: 7, username: 'maker' },
-      }, mockRes());
-      state.sessions[0].status = initialStatus;
-      markUploaded(state);
-      const build = routeHandler(router, '/api/sessions/:id/proposal-handoff/build', 'post');
-      const accepted = mockRes();
-      await build({
-        params: { id: '101' }, cliAuthenticated: true,
-        user: { id: 7, username: 'maker' },
-        body: { schemaVersion: 1, headSha: HEAD, history: [], tests: [] },
-      }, accepted);
-      assert.equal(accepted.statusCode, 202);
-
-      state.sessions[0].status = endStatus;
-      releaseStaging();
-      for (let i = 0; i < 10 && state.teardowns.length === 0; i += 1) {
-        await new Promise((resolve) => setImmediate(resolve));
-      }
-      assert.deepEqual(state.teardowns, [[101, 'container-1', 'https://preview.example']]);
-      assert.equal(state.sessions[0].staging_url, null,
-        'an archived row never regains a preview link from the detached build');
-      assert.equal(state.captures.length, 0,
-        'checks never run against a preview discarded after withdrawal');
-    } finally {
-      releaseStaging();
-      restore();
-    }
-  });
-}
-
-test('a leaked preview remains discoverable when its first persistence write fails', async () => {
-  const { router, state, restore } = makeHarness();
-  try {
-    const start = routeHandler(router, '/api/apps/:slug/proposal-handoffs', 'post');
-    await start({
-      params: { slug: 'demo' }, body: START_BODY, cliAuthenticated: true,
-      user: { id: 7, username: 'maker' },
-    }, mockRes());
-    markUploaded(state);
-    state.persistStagingError = true;
-    state.teardownLeaks = true;
-
-    const build = routeHandler(router, '/api/sessions/:id/proposal-handoff/build', 'post');
-    const accepted = mockRes();
-    await build({
-      params: { id: '101' }, cliAuthenticated: true,
-      user: { id: 7, username: 'maker' },
-      body: { schemaVersion: 1, headSha: HEAD, history: [], tests: [] },
-    }, accepted);
-    assert.equal(accepted.statusCode, 202);
-    for (let i = 0; i < 10 && !state.sessions[0].staging_url; i += 1) {
-      await new Promise((resolve) => setImmediate(resolve));
-    }
-    assert.deepEqual(state.teardowns, [[101, 'container-1', 'https://preview.example']]);
-    assert.equal(state.sessions[0].staging_url, 'https://preview.example',
-      'the reaper retains a durable pointer to the container that could not be removed');
-    assert.equal(state.captures.length, 0);
-  } finally { restore(); }
 });
 
 test('an archive that wins during GitHub adoption prevents a detached build from starting', async () => {
@@ -1037,7 +944,7 @@ test('an archive that wins during GitHub adoption prevents a detached build from
     assert.equal(res.body.error, 'session_state_changed');
     assert.equal(state.sessions[0].status, 'archived');
     assert.equal(state.sessions[0].handoff_head_sha, null);
-    assert.equal(state.staging.length, 0,
+    assert.equal(state.revisions.length, 0,
       'the archived session is not resurrected into a detached staging run');
   } finally { restore(); }
 });
@@ -1064,33 +971,7 @@ test('a newer upload that wins during build verification prevents stale adoption
     assert.equal(res.statusCode, 409);
     assert.equal(res.body.error, 'session_state_changed');
     assert.equal(state.sessions[0].handoff_head_sha, null);
-    assert.equal(state.staging.length, 0);
-  } finally { restore(); }
-});
-
-test('an archive after adoption but before the pending stamp still prevents staging', async () => {
-  const { router, state, restore } = makeHarness();
-  try {
-    const start = routeHandler(router, '/api/apps/:slug/proposal-handoffs', 'post');
-    await start({
-      params: { slug: 'demo' }, body: START_BODY, cliAuthenticated: true,
-      user: { id: 7, username: 'maker' },
-    }, mockRes());
-    markUploaded(state);
-    state.rejectPending = true;
-
-    const build = routeHandler(router, '/api/sessions/:id/proposal-handoff/build', 'post');
-    const res = mockRes();
-    await build({
-      params: { id: '101' }, cliAuthenticated: true,
-      user: { id: 7, username: 'maker' },
-      body: { schemaVersion: 1, headSha: HEAD, history: [], tests: [] },
-    }, res);
-
-    assert.equal(res.statusCode, 409);
-    assert.equal(res.body.error, 'session_state_changed');
-    assert.equal(state.sessions[0].status, 'archived');
-    assert.equal(state.staging.length, 0);
+    assert.equal(state.revisions.length, 0);
   } finally { restore(); }
 });
 
@@ -1127,25 +1008,28 @@ test('handoff session paths require canonical positive integer ids', async () =>
   } finally { restore(); }
 });
 
-test('a capture owned by the web workflow blocks local head adoption', async () => {
-  const { router, state, restore } = makeHarness();
+// A build or checks run is the preview machine's, recorded on the row it
+// writes (check_state 'pending' and its phase), so every process reads it the
+// same way. It does not block a new head: the revision supersedes that run.
+test('a checks run the machine records on the row reads as in flight', () => {
+  const { subject, restore } = makeHarness();
   try {
-    const start = routeHandler(router, '/api/apps/:slug/proposal-handoffs', 'post');
-    await start({
-      params: { slug: 'demo' }, body: START_BODY, cliAuthenticated: true,
-      user: { id: 7, username: 'maker' },
-    }, mockRes());
-    state.captureBusy = true;
-    const build = routeHandler(router, '/api/sessions/:id/proposal-handoff/build', 'post');
-    const res = mockRes();
-    await build({
-      params: { id: '101' }, cliAuthenticated: true,
-      user: { id: 7, username: 'maker' },
-      body: { schemaVersion: 1, headSha: HEAD, history: [], tests: [] },
-    }, res);
-    assert.equal(res.statusCode, 409);
-    assert.equal(res.body.error, 'session_busy');
-    assert.equal(state.github.length, 1, 'only proposal_start touched GitHub');
+    const session = {
+      id: 5, app_slug: 'demo', status: 'active', source: 'cli_handoff',
+      branch_name: 'dev/cli-u7-feature-0001', handoff_base_sha: BASE,
+      handoff_head_sha: HEAD, handoff_uploaded_sha: HEAD, checks_commit_sha: HEAD,
+      check_state: 'pending', checks_checked_at: new Date(), staging_url: null,
+    };
+    for (const [phase, building, capturing] of [
+      ['building', true, false], ['testing', false, true], ['queued', false, true],
+    ]) {
+      const status = subject.publicSessionStatus({ ...session, check_phase: phase });
+      assert.equal(status.checks.inFlight, true, phase);
+      assert.equal(status.checks.activity.build, building, phase);
+      assert.equal(status.checks.activity.capture, capturing, phase);
+    }
+    const settled = subject.publicSessionStatus({ ...session, check_state: 'passing', check_phase: null });
+    assert.equal(settled.checks.inFlight, false);
   } finally { restore(); }
 });
 
@@ -1170,7 +1054,7 @@ test('build submission rejects a commit that did not use the verified upload pat
     assert.equal(res.body.error, 'head_not_uploaded');
     assert.match(res.body.message, /proposal_push_commit/);
     assert.equal(state.github.length, 1, 'only proposal_start may touch GitHub');
-    assert.equal(state.staging.length, 0);
+    assert.equal(state.revisions.length, 0);
   } finally { restore(); }
 });
 
@@ -1248,6 +1132,8 @@ test('a checked web continuation supersedes an unsubmitted local upload as branc
     assert.equal(state.sessions[0].handoff_local_commit_sha, '8'.repeat(40));
     assert.equal(state.sessions[0].checks_commit_sha, webHead,
       'upload invalidates the verdict without relabeling the previous checked revision');
+    assert.deepEqual(state.cleared, [[101, 'upload'], [101, 'upload']],
+      'each upload asks the preview machine to clear the verdict');
     assert.equal(state.sessions[0].check_state, null);
     assert.equal(state.sessions[0].handoff_upload_checked_sha, webHead);
     assert.equal(subject.publicSessionStatus(state.sessions[0]).state, 'uploaded',
@@ -1356,7 +1242,7 @@ test('promoted managed uploads reset votes immediately and build only the final 
     assert.equal(state.sessions[0].handoff_head_sha, FINAL_REVISION);
     assert.equal(state.promotedChecks.length, 1);
     assert.equal(state.promotedChecks[0].newHead, FINAL_REVISION);
-    assert.equal(state.staging.length, 0,
+    assert.equal(state.revisions.length, 0,
       'the active-only handoff pipeline is never used for a promoted proposal');
 
     const retry = mockRes();
@@ -1675,8 +1561,8 @@ test('native CLI handoff persists context, adopts an exact commit, and reaches r
     await new Promise((resolve) => setImmediate(resolve));
 
     assert.deepEqual(state.github.filter((call) => call[0] === 'compare')[0].slice(-2), [BASE, BOT_HEAD]);
-    assert.deepEqual(state.staging, [[101, BOT_HEAD]]);
-    assert.deepEqual(state.captures, [[101, BOT_HEAD]]);
+    assert.deepEqual(state.revisions, [[101, BOT_HEAD, 'cli', 'commit-push']],
+      'the adopted head is handed to the preview machine');
     assert.equal(state.sessions[0].handoff_head_sha, BOT_HEAD);
     assert.equal(state.sessions[0].staging_url, 'https://preview.example');
     assert.ok(state.messages.some((m) => m.metadata.handoffEventId.startsWith(`tests:${BOT_HEAD}:`)));
@@ -1715,7 +1601,7 @@ test('native CLI handoff persists context, adopts an exact commit, and reaches r
       'an in-flight web operation must not expose the old checked head as ready');
     state.busy = false;
 
-    const stagingRuns = state.staging.length;
+    const revisionsBefore = state.revisions.length;
     const readyRetryRes = mockRes();
     await build({
       params: { id: '101' }, cliAuthenticated: true, user: { id: 7, username: 'maker' },
@@ -1728,7 +1614,7 @@ test('native CLI handoff persists context, adopts an exact commit, and reaches r
     }, readyRetryRes);
     assert.equal(readyRetryRes.statusCode, 200);
     assert.equal(readyRetryRes.body.state, 'ready');
-    assert.equal(state.staging.length, stagingRuns,
+    assert.equal(state.revisions.length, revisionsBefore,
       'an already-ready head retry does not rebuild healthy staging');
 
     const readyPromoteRes = mockRes();
@@ -1897,96 +1783,11 @@ test('paused local uploads and builds retain ownership, busy, lifecycle and idem
     }
     assert.equal(session.status, 'paused');
     assert.equal(session.staging_url, 'https://preview.example');
-    assert.deepEqual(state.captures, [[101, BOT_HEAD]]);
+    assert.deepEqual(state.revisions, [[101, BOT_HEAD, 'cli', 'commit-push']]);
     assert.equal(subject.publicSessionStatus(session).revisionState, 'ready');
     assert.equal((await invoke(build, buildBody)).statusCode, 200);
-    assert.equal(state.staging.length, 1, 'ready paused retry does not rebuild');
+    assert.equal(state.revisions.length, 1, 'ready paused retry does not rebuild');
     assert.equal((await invoke(push, pushBody)).body.uploaded, false);
     assert.equal(session.check_state, 'passing');
   } finally { restore(); }
-});
-
-for (const changed of [false, true]) {
-  test(`paused build failures are recorded only while the same lifecycle owns them (changed=${changed})`, async () => {
-    const { router, state, subject, restore } = makeHarness();
-    let release;
-    state.stagingGate = new Promise((resolve) => { release = resolve; });
-    state.stagingFailure = true;
-    try {
-      await routeHandler(router, '/api/apps/:slug/proposal-handoffs', 'post')({
-        params: { slug: 'demo' }, body: START_BODY, cliAuthenticated: true, user: { id: 7, username: 'maker' },
-      }, mockRes());
-      state.sessions[0].status = 'paused';
-      markUploaded(state);
-      const res = mockRes();
-      await routeHandler(router, '/api/sessions/:id/proposal-handoff/build', 'post')({
-        params: { id: '101' }, cliAuthenticated: true, user: { id: 7 },
-        body: { schemaVersion: 1, headSha: HEAD, history: [], tests: [] },
-      }, res);
-      assert.equal(res.statusCode, 202);
-      if (changed) state.sessions[0].status = 'archived';
-      release();
-      for (let n = 0; n < 10 && subject.hasInFlightHandoffPipeline(101); n += 1) {
-        await new Promise((resolve) => setImmediate(resolve));
-      }
-      assert.equal(state.failures.length, changed ? 0 : 1);
-      if (!changed) assert.equal(state.failures[0].commitHash, HEAD);
-      assert.equal(state.captures.length, 0);
-    } finally { release(); restore(); }
-  });
-}
-
-// #3043: a change may be submitted for review while its own run is still
-// checking it. Promotion pins reviewed_head_sha to the commit being checked,
-// and the vote is waiting on exactly this run's verdict, so the run keeps
-// its right to publish. Promoted on ANOTHER commit, it does not.
-for (const reviewed of ['same', 'other']) {
-  test(`a run promoted mid-build publishes only onto its own reviewed commit (${reviewed})`, async () => {
-    const { router, state, subject, restore } = makeHarness();
-    let release;
-    state.stagingGate = new Promise((resolve) => { release = resolve; });
-    try {
-      await routeHandler(router, '/api/apps/:slug/proposal-handoffs', 'post')({
-        params: { slug: 'demo' }, body: START_BODY, cliAuthenticated: true, user: { id: 7, username: 'maker' },
-      }, mockRes());
-      state.sessions[0].status = 'paused';
-      markUploaded(state);
-      const res = mockRes();
-      await routeHandler(router, '/api/sessions/:id/proposal-handoff/build', 'post')({
-        params: { id: '101' }, cliAuthenticated: true, user: { id: 7 },
-        body: { schemaVersion: 1, headSha: HEAD, history: [], tests: [] },
-      }, res);
-      assert.equal(res.statusCode, 202);
-      assert.equal(subject.hasInFlightHandoffPipeline(101), true);
-      // The promote route's own write, while the build is still running.
-      Object.assign(state.sessions[0], { status: 'promoted',
-        reviewed_head_sha: reviewed === 'same' ? HEAD : BOT_HEAD });
-      release();
-      for (let n = 0; n < 10 && subject.hasInFlightHandoffPipeline(101); n += 1) {
-        await new Promise((resolve) => setImmediate(resolve));
-      }
-      if (reviewed === 'same') {
-        assert.equal(state.sessions[0].staging_url, 'https://preview.example', 'the preview is kept');
-        assert.deepEqual(state.captures, [[101, HEAD]], 'and the verdict the vote waits on is taken');
-      } else {
-        assert.equal(state.sessions[0].staging_url || null, null, 'another commit is under review');
-        assert.equal(state.captures.length, 0);
-      }
-    } finally { release(); restore(); }
-  });
-}
-
-test('publishableStatus: the status a run started in, or promoted on its own commit', () => {
-  const { publishableStatus } = require('../src/services/handoff-pipeline');
-  const head = 'a'.repeat(40);
-  assert.equal(publishableStatus({ status: 'paused' }, 'paused', head), true);
-  assert.equal(publishableStatus({ status: 'active' }, 'paused', head), false);
-  assert.equal(publishableStatus({ status: 'promoted', reviewed_head_sha: head }, 'active', head), true);
-  assert.equal(publishableStatus({ status: 'promoted', reviewed_head_sha: head.toUpperCase() }, 'active', head), true);
-  assert.equal(publishableStatus({ status: 'promoted', reviewed_head_sha: 'b'.repeat(40) }, 'active', head), false);
-  assert.equal(publishableStatus({ status: 'promoted', reviewed_head_sha: null }, 'active', head), false);
-  for (const status of ['archived', 'merging', 'merged']) {
-    assert.equal(publishableStatus({ status, reviewed_head_sha: head }, 'active', head), false, status);
-  }
-  assert.equal(publishableStatus(null, 'active', head), false);
 });

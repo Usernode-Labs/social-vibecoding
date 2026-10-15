@@ -20,6 +20,8 @@
 
 import { useEffect, useSyncExternalStore } from 'react';
 
+import { t } from '../../lib/i18n/runtime';
+
 type PlatformTargetLike = {
   slug?: () => string | null;
   known?: () => { restricted?: boolean } | null;
@@ -75,7 +77,7 @@ export function subscribePlatformSlug(onChange: () => void): () => void {
  */
 export function generalHubBack(slug: string | null): { label: string; onBack: () => void } {
   return {
-    label: slug ? 'Homeroom' : 'Communities',
+    label: slug ? 'Homeroom' : t('messages:channel.backCommunities'),
     onBack: () => openChannelHub(slug),
   };
 }

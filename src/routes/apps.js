@@ -16,10 +16,13 @@ const pendingSecrets = require('../services/pending-secrets');
 const appManifest = require('../services/app-manifest');
 const { ADMIN_MUTATION_LOCK } = require('../services/advisory-locks');
 const renamePr = require('../services/rename-pr');
+const topicsPr = require('../services/topics-pr');
+const places = require('../services/places');
 const staging = require('../services/staging');
 const { drainGuard } = require('../services/lifecycle');
-const deployFailure = require('../services/deploy-failure');
-const { appCreateLimiter, appAllowanceRequestLimiter, issueCreateLimiter, githubLookupLimiter, feedbackTitleLimiter } = require('../middleware/rate-limits');
+const appCreationOwner = require('../services/app-creation-owner');
+const { appCreateLimiter, appAllowanceRequestLimiter, issueCreateLimiter, githubLookupLimiter, feedbackTitleLimiter, firstSessionMomentLimiter } = require('../middleware/rate-limits');
+const { rateLimit } = require('express-rate-limit');
 const events = require('../services/events');
 const appOpenings = require('../services/app-openings');
 const appAccess = require('../services/app-access');
@@ -36,13 +39,23 @@ const activeUsers = require('../services/active-users');
 const createOptions = require('../services/create-options');
 const appTemplates = require('../services/app-templates');
 const collabInvites = require('../services/collab-invites');
+const communityInvites = require('../services/community-invites');
 const emailInvites = require('../services/email-invites');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 const appActivity = require('../services/app-activity');
+const appDomains = require('../services/app-domains');
 
 // Cap on the `initialApprovers` list a governance-pr request may carry
 // (see that route below) — a sanity bound, not a product limit.
 const MAX_INITIAL_APPROVERS = 20;
+
+// The doors a project is made through from the platform's own screens, as
+// POST /api/apps's `from`: the first session's "What do you want to make?"
+// and the Create button's, which opens the same screen and the New project
+// dialog as its More options (frontend/src/features/first-session/make.tsx).
+// Both land on the made screen, so both get the idea's sketch; only the
+// first answers the join screen, and only it counts in the admin Journey.
+const MAKE_ORIGINS = new Set(['first-session', 'create']);
 
 // Validate a (collabVisibility, viewVisibility) pair against the
 // invariants (see schema.sql): both must be public|private, and
@@ -241,6 +254,27 @@ function compactGlobalChatApp(app, user, adminAppIds = new Set()) {
 const IS_LOCAL_DEV = process.env.NODE_ENV === 'development' || process.env.USERNODE_LOCAL_DEV === '1';
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
+// #4405: the address Share offers. The custom domain once it is live, the
+// Homeroom address until then (and on a dev box, where the app's url is
+// localhost and no custom host could reach it).
+function shareUrl(url, customDomain) {
+  if (!url || !customDomain || customDomain.status !== 'live') return url;
+  if (!/^https:/.test(url)) return url;
+  return `https://${customDomain.hostname}`;
+}
+
+// The live custom domain of each listed app, keyed by app id, in one read.
+async function liveDomainsFor(pool, appIds) {
+  const map = new Map();
+  if (!appIds.length) return map;
+  const { rows } = await pool.query(
+    `SELECT app_id, hostname, status FROM app_domains WHERE status = 'live' AND app_id = ANY($1::int[])`,
+    [appIds]
+  );
+  for (const row of rows) map.set(Number(row.app_id), { hostname: row.hostname, status: row.status });
+  return map;
+}
+
 // Catalog samples are stored rows; all app APIs use the same identity.
 const stagingApps = require('../services/staging-apps');
 
@@ -251,10 +285,10 @@ const stagingApps = require('../services/staging-apps');
  * steps of homeroom-bot-progress.js FIRST_VERSION_STEPS), cut to what the
  * hub draws. Pure.
  *
- *   step, of, step_name  "Step 4 of 7: Build it", the step's name exactly
- *                        as firstVersionState names it for this viewer, so
- *                        the hub says what the App tab and the made screen
- *                        say
+ *   step, of             which of FIRST_VERSION_STEPS it is on
+ *   line                 its build line for this viewer (#4053:
+ *                        homeroom-bot-progress.js buildLineOf), so the hub
+ *                        says what the App tab and the made screen say
  *   ready                built and up for approval: ready to try
  *   mine                 whose description it is: the viewer's
  *   creator              whose description it is, by username
@@ -263,11 +297,29 @@ const stagingApps = require('../services/staging-apps');
  *                        person whose description it is and nobody else
  *   conversation_id      their DM with the bot, for theirs alone
  *   session_id           the change, once it is ready to try
+ *   plan                 #4074: the plan waiting for its maker's Build it,
+ *                        read only, for a MEMBER who is not its maker
+ *                        (`member`, the route's own membership read), else
+ *                        null. What the first version will do and each
+ *                        question with its suggested answer: no ids, no
+ *                        other answers, nothing its maker wrote to the bot.
+ *                        #4396: once Build it was pressed, the plan chosen
+ *                        (`chosenPlan`), cut the same way, while it is
+ *                        built and tested, until it is ready.
+ *
+ * THE PLAN IS A READ FOR MEMBERS ONLY, a deliberate exception to "membership
+ * gates taking part, not reading" (AGENTS.md; decision G, 6 Oct 2026). It is
+ * the maker's own exchange with Homeroom bot, shared with the people who
+ * joined to build with them, not with everyone who can see a public
+ * project. It is the CURRENT plan: firstVersionState reads the newest plan
+ * card whose Build it is still open (waitingPlan), so after Change something
+ * nobody reads one until the bot has written the new one, and the words
+ * asked for (homeroom_bot_runs.plan_change) are never read.
  *
  * No build time. Evan, 5 Oct 2026: no average build time for a first
  * version, which plans first and waits on its maker's answer.
  */
-function hubFirstVersion(state, viewerId) {
+function hubFirstVersion(state, viewerId, { member = false } = {}) {
   if (!state) return null;
   const mine = viewerId != null && Number(state.userId) === Number(viewerId);
   const ready = !!state.ready;
@@ -275,13 +327,170 @@ function hubFirstVersion(state, viewerId) {
   return {
     step: Number.isInteger(state.step) ? state.step : null,
     of: Number.isInteger(state.of) ? state.of : null,
-    step_name: state.stepName || null,
+    line: state.line || null,
+    // Run five: its stage while it is built, so the hub card names the same
+    // one the App tab and the Home tile do (homeroom-bot-progress.js
+    // firstVersionPhase).
+    phase: state.phase || null,
     ready,
     mine,
     creator: state.creator || null,
     waits_on: mine && !ready ? (state.plan ? 'plan' : state.question ? 'question' : null) : null,
     conversation_id: mine ? (Number(state.conversationId) || null) : null,
     session_id: Number.isInteger(sessionId) && sessionId > 0 ? sessionId : null,
+    plan: member && !mine && !ready && !state.stopped ? sharedPlan(state.plan || state.chosenPlan) : null,
+    // 14 Oct 2026: its build stopped (line 'stopped'), and for its maker
+    // where Try again is (stoppedThread).
+    ...(state.stopped ? { stopped: true, thread: mine ? stoppedThread(state) : null } : {}),
+  };
+}
+
+/**
+ * 14 Oct 2026 (newcomer run eight): where a first version's maker was told
+ * its build stopped, with Try again under it (homeroom-bot-dm.js
+ * stoppedThreadOf): `{ conversationId, threadRootId, messageId }`, the
+ * conversation their chat with Homeroom bot when the message cannot be
+ * read. Only ever sent to the maker. Pure.
+ */
+function stoppedThread(state) {
+  const said = state && state.stopped && typeof state.stopped === 'object' ? state.stopped : {};
+  const id = (value) => (Number.isInteger(Number(value)) && Number(value) > 0 ? Number(value) : null);
+  return {
+    conversationId: id(said.conversationId) || id(state && state.conversationId),
+    threadRootId: id(said.threadRootId),
+    messageId: id(said.messageId),
+  };
+}
+
+/** #4074: the plan as members read it (hubFirstVersion), or null. Pure. */
+function sharedPlan(plan) {
+  if (!plan || !Array.isArray(plan.bullets)) return null;
+  const bullets = plan.bullets.filter((b) => typeof b === 'string' && b.trim()).slice(0, 5);
+  if (!bullets.length) return null;
+  const questions = (Array.isArray(plan.questions) ? plan.questions : []).slice(0, 2)
+    .map((q) => ({
+      question: q && typeof q.question === 'string' ? q.question : '',
+      suggested: q && Array.isArray(q.answers) && typeof q.answers[0] === 'string' ? q.answers[0] : null,
+    }))
+    .filter((q) => q.question.trim());
+  return { bullets, questions };
+}
+
+/**
+ * #4396: WHILE YOU WAIT. What the App tab's waiting screen offers a member
+ * who is not the maker of a first version that is not ready yet (public/js/
+ * app-view.js _firstVersionView, features/app-frame/app-status.tsx
+ * WaitingCard): `member`, the plan as members read it (sharedPlan, the
+ * hub's own cut) as `memberPlan`, and `makerNote`, the first thing its maker
+ * said in the project's channel (the made screen posts their note there),
+ * in one line. Nothing for anyone else: `{ member: false }`.
+ */
+async function waitingMemberFields(pool, appId, viewerId, state) {
+  if (viewerId == null || !(await communities.isMember(pool, appId, viewerId))) return { member: false };
+  const { rows: [note] } = await pool.query(
+    `SELECT m.content
+       FROM chat_messages m
+      WHERE m.app_id = $1 AND m.user_id = $2
+        AND m.thread_type IS NULL AND m.deleted_at IS NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM user_blocks blocked
+           WHERE blocked.blocker_id = $3 AND blocked.blocked_user_id = m.user_id
+        )
+      ORDER BY m.created_at ASC, m.id ASC
+      LIMIT 1`,
+    [appId, state.userId, viewerId],
+  );
+  const text = typeof note?.content === 'string' ? note.content.replace(/\s+/g, ' ').trim() : '';
+  return {
+    member: true,
+    memberPlan: sharedPlan(state.plan || state.chosenPlan),
+    makerNote: text ? text.slice(0, 200) : null,
+  };
+}
+
+/**
+ * #4387: what a first version's App tab shows a MEMBER while it is built
+ * (services/first-version-screens.js): `caption`, the build agent's
+ * "Adding …" phrase while it is built, and `screens` ({ kind, count, at, v }),
+ * the first look from "Building it", the real screens from "Testing it",
+ * each image read from GET /api/apps/:slug/first-version/screens/:kind/:n.
+ * Both come from the plan, which is a read for members (hubFirstVersion), so
+ * anyone else gets neither and sees the thumbnail: `{}`.
+ */
+async function firstVersionShowcaseFields(pool, appId, viewerId, { mine = false, line = null } = {}) {
+  if (viewerId == null) return {};
+  const fvScreens = require('../services/first-version-screens');
+  const showcase = await fvScreens.showcaseOf(pool, appId);
+  if (!showcase) return {};
+  const fields = fvScreens.firstVersionShowcase(showcase, line);
+  if (!fields.caption && !fields.screens) return {};
+  if (!mine && !(await communities.isMember(pool, appId, viewerId))) return {};
+  return fields;
+}
+
+/**
+ * #4449: whether a MEMBER's App tab offers Live while the first version is
+ * built (services/first-version-live.js), while the Admin setting is on, for
+ * the maker and the project's members, the readers of its first look:
+ *
+ *   { live: true }      at "Building it" (its screens reviewed too), once
+ *                       the watcher has a good frame to show (N6: offered
+ *                       before that, it was "Starting the app…" over an
+ *                       empty phone for minutes; the first look, or the
+ *                       sketch, shows until then)
+ *   { liveLast: true }  N7: at "Testing it" and "Ready to try" with no real
+ *                       screens (`realScreens`, which say more), the build's
+ *                       last good frame, kept on the card rather than going
+ *                       back to the first look drawn from the plan
+ *
+ * else `{}`.
+ */
+async function firstVersionLiveFields(pool, appId, viewerId, { mine = false, line = null, realScreens = false } = {}) {
+  if (viewerId == null) return {};
+  const held = line === 'testing' || line === 'ready';
+  if (line !== 'building' && !(held && !realScreens)) return {};
+  const fvLive = require('../services/first-version-live');
+  if (!(await fvLive.liveEnabled(pool))) return {};
+  const status = await fvLive.liveStatusOf(pool, appId);
+  if (!status?.good) return {};
+  if (!mine && !(await communities.isMember(pool, appId, viewerId))) return {};
+  return held ? { liveLast: true } : { live: true };
+}
+
+/**
+ * IN ITS FIRST WEEK, A FIRST VERSION THAT WENT LIVE STAYS ON THE HUB (#4045,
+ * decision D), as its card's Live and Open app: firstVersionState answers
+ * null once the bot's proposal merged, and the week's hub has nothing else
+ * that opens the app. The card's shape, with `line: 'live'`, when Homeroom
+ * bot built this project's first version and it merged; null otherwise.
+ */
+async function liveFirstVersion(pool, appId, viewerId) {
+  const { rows } = await pool.query(
+    `SELECT f.user_id, u.username
+       FROM homeroom_bot_first_versions f
+       LEFT JOIN users u ON u.id = f.user_id
+      WHERE f.app_id = $1 AND f.bot_builds = TRUE
+        AND EXISTS (
+          SELECT 1 FROM homeroom_bot_runs r
+            JOIN chat_sessions cs ON cs.id = r.proposal_session_id
+           WHERE r.app_id = f.app_id AND r.issue_number = f.issue_number AND cs.status = 'merged'
+        )`,
+    [appId],
+  );
+  const row = rows[0];
+  if (!row) return null;
+  return {
+    step: null,
+    of: null,
+    line: 'live',
+    phase: null,
+    ready: false,
+    mine: viewerId != null && Number(row.user_id) === Number(viewerId),
+    creator: row.username || null,
+    waits_on: null,
+    conversation_id: null,
+    session_id: null,
+    plan: null,
   };
 }
 
@@ -474,58 +683,11 @@ function platformSecretsView(rows, manifest, { includeValues, actionsSecrets = n
   return groups.flatMap((g) => byGroup.get(g).sort((a, b) => a.key.localeCompare(b.key)));
 }
 
-// If app creation hasn't reached `running` within this window, a watchdog
-// flips the row to `error` so the home screen stops showing "Spinning up..."
-// and the creator can retry.
-const CREATION_TIMEOUT_MS = 5 * 60 * 1000;
+// A creator's retries of a failed creation. A failure the platform's own
+// restarts caused does not count, and is not refused by it
+// (services/app-creation-owner.js isInterrupted): that attempt was
+// interrupted, not wrong.
 const MAX_RETRY_COUNT = 3;
-
-function scheduleCreationWatchdog(pool, appId) {
-  setTimeout(async () => {
-    try {
-      // COALESCE guard (#416): only write the synthetic timeout record
-      // when no real captured failure landed first — the watchdog can
-      // fire after createApp's own catch already persisted the cause.
-      const timeoutRecord = deployFailure.syntheticRecord(
-        'timeout',
-        `App creation timed out after ${Math.round(CREATION_TIMEOUT_MS / 60000)} minutes`
-      );
-      const { rowCount } = await pool.query(
-        `UPDATE apps SET status = 'error',
-                         last_failure = COALESCE(last_failure, $2::jsonb)
-         WHERE id = $1 AND status = 'creating'`,
-        [appId, JSON.stringify(timeoutRecord)]
-      );
-      if (rowCount > 0) {
-        log.warn('apps', 'App creation timed out, marked as error', { appId });
-      }
-    } catch (err) {
-      log.warn('apps', 'Creation watchdog query failed', { appId, err: err.message });
-    }
-  }, CREATION_TIMEOUT_MS).unref?.();
-}
-
-// Called on server startup: any app that was mid-creation when the previous
-// process died is stranded in `creating`. Flip anything older than 10min.
-async function sweepStuckCreatingApps(pool) {
-  try {
-    const sweepRecord = deployFailure.syntheticRecord(
-      'timeout',
-      'App creation was interrupted by a platform restart'
-    );
-    const { rowCount } = await pool.query(
-      `UPDATE apps SET status = 'error',
-                       last_failure = COALESCE(last_failure, $1::jsonb)
-       WHERE status = 'creating' AND created_at < NOW() - INTERVAL '10 minutes'`,
-      [JSON.stringify(sweepRecord)]
-    );
-    if (rowCount > 0) {
-      log.info('apps', 'Swept stuck creating apps on boot', { count: rowCount });
-    }
-  } catch (err) {
-    log.warn('apps', 'Boot sweep failed', { err: err.message });
-  }
-}
 
 // #2524: how much time ONE activity heartbeat may report, and how much a
 // single (user, app, day) row may ever hold.
@@ -553,6 +715,51 @@ const { ACTIVITY_MAX_PER_POST, ACTIVITY_MAX_PER_DAY } = appActivity;
  * this body comes from our own client, which sends a number.
  */
 const { activitySeconds } = appActivity;
+
+/**
+ * Whether the Communities list says "Invite link out" on a project's row
+ * (features/workshop/index.tsx rowSubtitle, 15 Oct 2026): the viewer has a
+ * live invite link out for it (`out`, community-invites.js linksOutFor) and
+ * nobody has joined yet, through those links or otherwise (`memberCount`,
+ * the viewer alone). Which section the row sits in is its audience's, and
+ * this does not move it: a project with only a link out is still Just you.
+ */
+function inviteLinkOut(out, memberCount) {
+  return !!out && out.links > 0 && out.joined === 0 && (parseInt(memberCount, 10) || 0) <= 1;
+}
+
+/**
+ * #4053 (owner, 7 Oct 2026): the build line of every first version Homeroom
+ * bot is still making among `apps`, for this viewer (homeroom-bot-dm.js
+ * firstVersionState, the same answer GET /api/apps/:slug gives as
+ * `first_version.line`): Map(appId -> line). The Home tile says it in place
+ * of "Spinning up...". One query finds the few under way; best-effort, so a
+ * read that fails leaves the tiles as they were. `phases`, when given, is
+ * filled with each one's stage while it is built (`first_version.phase`),
+ * so the tile names the same stage the App tab does (run five, 13 Oct 2026).
+ */
+async function firstVersionLinesFor(pool, apps, viewerId, phases = null) {
+  const lines = new Map();
+  const ids = apps.map((a) => Number(a.id)).filter((id) => Number.isInteger(id) && id > 0);
+  if (!ids.length) return lines;
+  try {
+    const { rows } = await pool.query(
+      `SELECT app_id FROM homeroom_bot_first_versions
+        WHERE app_id = ANY($1::int[]) AND bot_builds = TRUE AND status IN ('waiting', 'filing', 'filed')`,
+      [ids]
+    );
+    const botDm = require('../services/homeroom-bot-dm');
+    await Promise.all(rows.map(async ({ app_id: appId }) => {
+      const state = await botDm.firstVersionState(pool, appId, { viewerId });
+      const line = state && (state.line || (state.ready ? 'ready' : 'planning'));
+      if (line) lines.set(Number(appId), line);
+      if (line && phases && state.phase) phases.set(Number(appId), state.phase);
+    }));
+  } catch (err) {
+    log.warn('apps', 'Could not read the first versions for the list', { message: err.message });
+  }
+  return lines;
+}
 
 function appRoutes(config, { pool = getPool(config) } = {}) {
   const router = Router();
@@ -588,6 +795,12 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       // and open issues. All DB-derived; no GitHub round trips.
       const userId = req.user?.id || null;
       const isAdmin = !!req.user?.isAdmin;
+      // ?scope=joined (#5023): only the communities this viewer is in. The
+      // Workshop and its community switcher list nothing else, and without
+      // it they were sent the whole catalog (and the per-app work below:
+      // secrets, contributors, domains, first versions, lineage) only to
+      // throw most of it away. Same rows, same fields, fewer of them.
+      const joinedOnly = req.query.scope === 'joined' && userId != null;
       // Visibility filter: admins see everything; everyone else sees
       // view-public apps plus apps they're a member of (the `me` join).
       // View-private apps are simply absent from the list for outsiders
@@ -677,12 +890,13 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
             -- merged_at was added by a later ALTER TABLE and is NULL on
             -- every row merged before it existed, so COALESCE to
             -- created_at rather than dropping that history on the floor.
-            COUNT(*) FILTER (WHERE status = 'merged') AS merged_prs,
+            -- Counted once live (live_at): a merge still going live is not yet.
+            COUNT(*) FILTER (WHERE status = 'merged' AND live_at IS NOT NULL) AS merged_prs,
             COUNT(*) FILTER (
-              WHERE status = 'merged'
+              WHERE status = 'merged' AND live_at IS NOT NULL
                 AND COALESCE(merged_at, created_at) > NOW() - INTERVAL '30 days'
             ) AS merged_prs_recent,
-            MAX(COALESCE(merged_at, created_at)) FILTER (WHERE status = 'merged')
+            MAX(COALESCE(merged_at, created_at)) FILTER (WHERE status = 'merged' AND live_at IS NOT NULL)
               AS last_merged_at
           FROM chat_sessions
           GROUP BY app_id
@@ -696,8 +910,9 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         WHERE a.moderation_suspended_at IS NULL AND (NOT a.self_hosted OR $1::boolean)
           AND NOT EXISTS (SELECT 1 FROM user_app_blocks b WHERE b.user_id = $2 AND b.app_id = a.id)
           AND ($3::boolean OR a.view_visibility = 'public' OR me.user_id IS NOT NULL)
+          AND (NOT $4::boolean OR cm.user_id IS NOT NULL)
         ORDER BY (COALESCE(msg_counts.cnt, 0) + COALESCE(activity.total_seconds, 0)) DESC, a.created_at DESC
-      `, [showSelfHosted, userId, isAdmin]);
+      `, [showSelfHosted, userId, isAdmin, joinedOnly]);
 
       // #788: one query for every app this viewer is a per-app admin
       // of, so accessFlags below can resolve can_manage per row without
@@ -718,6 +933,26 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       const contributorCounts = await contributors.loadContributorCounts(
         pool, rows.map((a) => a.id)
       );
+      // #4405: the live custom domain of each app, one round trip, so the
+      // Share dialog can offer it without a per-app read.
+      const liveDomains = await liveDomainsFor(pool, rows.map((a) => a.id));
+      // #4053: where each first version Homeroom bot is making stands, for
+      // its Home tile, in the build line this viewer reads.
+      const firstVersionPhases = new Map();
+      const firstVersionLines = await firstVersionLinesFor(
+        pool, rows.filter((a) => !a.self_hosted && !stagingApps.isSample(a)), req.user?.id ?? null, firstVersionPhases
+      );
+      // The viewer's live invite links, for the Communities list's "Invite
+      // link out" (inviteLinkOut): one query for every project they are in.
+      // Best-effort: a read that fails says nothing on any row.
+      let linksOut = new Map();
+      if (userId) {
+        try {
+          linksOut = await communityInvites.linksOutFor(pool, rows.filter((a) => a.is_member).map((a) => a.id), userId);
+        } catch (err) {
+          log.warn('apps', 'Could not read the invite links for the list', { message: err.message });
+        }
+      }
 
       let apps = await Promise.all(rows.map(async (a) => {
         // Per-app missing-required-secrets list. Cheap (one extra query
@@ -820,13 +1055,17 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           // /api/apps/:slug still answers the whole snapshot.
           manifest_snapshot: appAccess.summarizeManifestSnapshot(a.manifest_snapshot),
           contributor_count: contributorCount,
+          first_version_line: firstVersionLines.get(Number(a.id)) || null,
+          first_version_phase: firstVersionPhases.get(Number(a.id)) || null,
           last_failure: undefined,
           last_failure_reason: lf ? (lf.reason || null) : null,
           last_failure_at: lf ? (lf.at || null) : null,
           url,
+          custom_domain: liveDomains.get(Number(a.id)) || null,
+          share_url: shareUrl(url, liveDomains.get(Number(a.id))),
           staging_sample: stagingSample,
           version,
-          deployProgress: appDeployStatus.read(a.slug),
+          deployProgress: appDeployStatus.read(a.slug, a),
           missingSecrets,
           // Server-built icon URL so the client never assembles ids into
           // paths (and staging demo rows can inject arbitrary sources).
@@ -847,6 +1086,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           member_count: parseInt(a.member_count, 10) || 0,
           audience: a.audience || 'open',
           last_active_at: a.last_active_at || null,
+          invite_link_out: inviteLinkOut(linksOut.get(Number(a.id)), a.member_count),
           ...accessFlags(a, req.user, a.is_collaborator, adminAppIds, contributorCount,
             config.selfAppSlug),
         };
@@ -1132,7 +1372,19 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       // "People I pick" starts with the creator as its one approver, the
       // same seed applyGovernanceChange plants when a manifest switches a
       // live app to invited approvers.
-      if (rule) {
+      // #4666: a preset, or rules of its own, is written to governance_rules
+      // (its groups' people resolved, as the reconcile stores them); every
+      // new project gets one, You or the group unless it asked for another.
+      if (rule && Array.isArray(rule.rules)) {
+        const stored = rule.groups && rule.groups.length
+          ? await appManifest.storedRules(pool, rule)
+          : require('../services/governance-rules').storedForm(rule);
+        const { rows: governed } = await pool.query(
+          `UPDATE apps SET governance_rules = $1::jsonb WHERE id = $2 RETURNING *`,
+          [JSON.stringify(stored), appRow.id]
+        );
+        appRow = governed[0] || appRow;
+      } else if (rule) {
         const { rows: governed } = await pool.query(
           `UPDATE apps SET approver_policy = $1, approvals_required = $2
             WHERE id = $3 RETURNING *`,
@@ -1165,10 +1417,16 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       // starter rather than the empty scaffold. On the row, like the rule
       // above, because app-creator scaffolds from the row: a Retry after a
       // failed create writes the same starter.
+      // A ready-made starter's icon is its own (template.js writes it into
+      // the new dapp.json, and nothing is sketched), so it is on the record
+      // from the start: Home's tile shows it while the app is still being
+      // set up, not a letter until the first deploy reads dapp.json back
+      // (Evan, 10 Oct 2026). That reconcile then finds nothing to change.
       if (template !== appTemplates.DEFAULT_TEMPLATE) {
+        const readyIcon = appTemplates.isReadyMade(template) ? appTemplates.get(template).icon || null : null;
         const { rows: templated } = await pool.query(
-          `UPDATE apps SET template = $1 WHERE id = $2 RETURNING *`,
-          [template, appRow.id]
+          `UPDATE apps SET template = $1, icon_emoji = COALESCE($3, icon_emoji) WHERE id = $2 RETURNING *`,
+          [template, appRow.id, readyIcon]
         );
         appRow = templated[0] || appRow;
       }
@@ -1216,56 +1474,68 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           ...(rule ? { approverPolicy: rule.approverPolicy, approvalsRequired: rule.approvalsRequired } : {}),
           ...(description ? { described: true } : {}),
           ...(template !== appTemplates.DEFAULT_TEMPLATE ? { template } : {}),
-          // The admin Journey's first session (journey.js firstSession).
-          ...(req.body.from === 'first-session' ? { from: 'first-session' } : {}),
+          // Which door it came through: the first session's "What do you
+          // want to make?" (the admin Journey's first session, journey.js
+          // firstSession, counts only these) or the Create button's, which
+          // opens the same screen and its More options (MAKE_ORIGINS).
+          ...(MAKE_ORIGINS.has(req.body.from) ? { from: req.body.from } : {}),
         },
       });
 
-      // The first session's card of the idea, and with it the project's
-      // icon (services/app-sketch.js): started BEFORE creation, which waits a
+      // The card of the idea, and with it the project's icon
+      // (services/app-sketch.js): started BEFORE creation, which waits a
       // little for it so the repository's first commit can carry it. Only
-      // from "What do you want to make?", only with a description to make it
-      // from, and never a reason the create fails. `timeZone` is the maker's
-      // device's, so the card's "today" is theirs (an unknown or invalid zone
-      // reads as UTC there).
-      if (req.body.from === 'first-session' && !repoUrlNormalized
+      // from "What do you want to make?" or its More options (MAKE_ORIGINS:
+      // the first session's door and the Create button's, both of which
+      // land on the made screen that draws it), only with a description to
+      // make it from, and never a reason the create fails. A connector's
+      // create sends no `from`, so it costs no sketch. `timeZone` is the
+      // maker's device's, so the card's "today" is theirs (an unknown or
+      // invalid zone reads as UTC there). A ready-made app has its own icon
+      // and nothing to sketch.
+      const readyMade = appTemplates.isReadyMade(template);
+      if (MAKE_ORIGINS.has(req.body.from) && !repoUrlNormalized && !readyMade
           && require('../services/homeroom-bot-dm').normalizeBrief(req.body.brief)) {
         await require('../services/app-sketch').startSketch(pool, {
           app: appRow, user: req.user, brief: req.body.brief,
           timeZone: typeof req.body.timeZone === 'string' ? req.body.timeZone.slice(0, 64) : null,
+          // Just me, from More options: nobody to share it with.
+          solo: options.audience === 'solo',
         }).catch((err) => log.warn('apps', 'Sketch not started', { appId: appRow.id, err: err.message }));
       }
 
-      // Kick off async creation — don't await. If it throws, flip to error.
-      createApp(config, appRow).catch(async (err) => {
-        log.error('apps', 'Async app creation failed', { appId: appRow.id, err: err.message });
-        await pool.query(
-          `UPDATE apps SET status = 'error',
-                           last_failure = COALESCE(last_failure, $2::jsonb)
-           WHERE id = $1 AND status = 'creating'`,
-          [appRow.id, JSON.stringify(deployFailure.record(err))]
-        ).catch(() => {});
+      // Kick off async creation — don't await. It runs on after this
+      // answers, under an owner written on the row with a heartbeat
+      // (services/app-creation-owner.js): if this process dies first, the
+      // leader resumes it rather than failing it, and if createApp throws or
+      // hangs past the watchdog, the row is flipped to error.
+      const creationOwner = await appCreationOwner.takeNew(pool, appRow.id);
+      appCreationOwner.drive(pool, appRow, {
+        owner: creationOwner,
+        provision: () => createApp(config, appRow),
+        label: 'Async app creation',
       });
 
-      // Backstop: if createApp hangs (never resolves or rejects), the
-      // watchdog will unstick the row after CREATION_TIMEOUT_MS.
-      scheduleCreationWatchdog(pool, appRow.id);
-
       // What the project should do, from the create dialog: filed as its
-      // first request, under its creator's name, once the project runs. For
+      // first request, under its creator's name, once its repository holds
+      // the starter (homeroom-bot-dm.js FILEABLE_SQL). For
       // somebody the Homeroom bot builds for (#3624), the bot builds it and
       // says so in their DM, which the dialog then offers to open; for
       // anybody else it is left to the group. Optional here (a connector
       // or an older client sends none), and never a reason the create fails.
-      // An import, or a project with no description, has nothing to build
-      // first; made by somebody on the bot's DM list, it is still one the
-      // bot acts on for real (noteProjectMade).
+      // An import, a ready-made app (services/app-templates.js: usable as
+      // soon as it runs) or a project with no description has nothing to
+      // build first; it is still one the bot acts on, and an import's
+      // backlog waits (noteProjectMade).
       let homeroomBot = null;
       const homeroomBotDm = require('../services/homeroom-bot-dm');
-      if (!repoUrlNormalized && homeroomBotDm.normalizeBrief(req.body.brief)) {
+      if (!repoUrlNormalized && !readyMade && homeroomBotDm.normalizeBrief(req.body.brief)) {
         try {
           homeroomBot = await homeroomBotDm.startFirstVersion(pool, config, {
             app: appRow, user: req.user, brief: req.body.brief,
+            // Its plan is written now, for the made screen to ask its
+            // questions while the project is set up (first-version-plan.js).
+            earlyPlan: MAKE_ORIGINS.has(req.body.from),
           });
         } catch (err) {
           log.warn('apps', 'Homeroom bot first version not started', { appId: appRow.id, err: err.message });
@@ -1289,7 +1559,15 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           .catch((err) => log.warn('apps', 'Join screen not answered', { userId: req.user.id, err: err.message }));
       }
 
-      res.status(201).json({ app: appAccess.stripAppSecrets(appRow), invited, ...(homeroomBot ? { homeroomBot } : {}) });
+      // A ready-made app's example picture (services/app-templates.js
+      // `exampleScreen`): the made screen's card shows it at once, tagged
+      // as an example, before the project has anything of its own.
+      const exampleScreen = readyMade ? appTemplates.get(template).exampleScreen || null : null;
+      res.status(201).json({
+        app: appAccess.stripAppSecrets(appRow), invited,
+        ...(homeroomBot ? { homeroomBot } : {}),
+        ...(exampleScreen ? { exampleScreen } : {}),
+      });
       platformLimits.nudge(pool, config, 'apps');
     } catch (err) {
       if (err.code === '23505') {
@@ -1390,25 +1668,21 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         appId: appRow.id,
         metadata: { forkedFromAppId: sourceApp.id, forkedFromSlug: sourceApp.slug },
       });
-      // #3624: a fork made by somebody on the Homeroom bot's DM list is one
-      // it acts on for real, as a project they create is. Never a reason the
-      // fork fails.
+      // #3624: a fork is recorded for the Homeroom bot as a project made
+      // without a description is. Never a reason the fork fails.
       try {
         await require('../services/homeroom-bot-dm').noteProjectMade(pool, { app: appRow, user: req.user, origin: 'fork' });
       } catch (err) {
         log.warn('apps', 'Homeroom bot project not recorded', { appId: appRow.id, err: err.message });
       }
 
-      forkApp(config, appRow, sourceApp).catch(async (err) => {
-        log.error('apps', 'Async fork failed', { appId: appRow.id, err: err.message });
-        await pool.query(
-          `UPDATE apps SET status = 'error',
-                           last_failure = COALESCE(last_failure, $2::jsonb)
-           WHERE id = $1 AND status = 'creating'`,
-          [appRow.id, JSON.stringify(deployFailure.record(err))]
-        ).catch(() => {});
+      // Owned and resumable, as a create is (services/app-creation-owner.js).
+      const creationOwner = await appCreationOwner.takeNew(pool, appRow.id);
+      appCreationOwner.drive(pool, appRow, {
+        owner: creationOwner,
+        provision: () => forkApp(config, appRow, sourceApp),
+        label: 'Async fork',
       });
-      scheduleCreationWatchdog(pool, appRow.id);
 
       res.status(201).json({ app: appAccess.stripAppSecrets(appRow) });
       platformLimits.nudge(pool, config, 'apps');
@@ -1426,9 +1700,10 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       // `audience` (services/communities.js) rides along, the same column
       // the /api/apps list carries, so the app's own screens can tell a
       // project that is just its creator's from a group's: the preview
-      // banner and the vote picker word themselves by it.
+      // banner and the vote picker word themselves by it. `template` is
+      // what it started from, for its `exampleChange` below.
       const { rows } = await pool.query(
-        `SELECT ${appAccess.nonSecretAppColumnList()},
+        `SELECT ${appAccess.nonSecretAppColumnList()}, template,
                 ${communities.audienceSql('apps', '(SELECT COUNT(*) FROM community_members m WHERE m.community_id = apps.community_id)')}
                   AS audience
            FROM apps WHERE slug = $1`,
@@ -1529,21 +1804,54 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           const state = await botDm.firstVersionState(pool, appRow.id, { viewerId: req.user?.id ?? null });
           if (state) {
             const mine = req.user?.id != null && Number(state.userId) === Number(req.user.id);
+            // #4387: what its members watch while it is built, read only
+            // for a member (firstVersionShowcaseFields).
+            const showcase = await firstVersionShowcaseFields(pool, appRow.id, req.user?.id, { mine, line: state.line || null })
+              .catch(() => ({}));
+            // #4449: and whether they can watch it take shape (Live).
+            const liveFields = await firstVersionLiveFields(pool, appRow.id, req.user?.id, {
+              mine, line: state.line || null, realScreens: showcase.screens?.kind === 'real',
+            }).catch(() => ({}));
+            // Run six: how long it still has to go, from the first versions
+            // that went live lately (services/first-version-eta.js), while
+            // it is built or tested. None without enough of them.
+            const estimate = state.line === 'building' || state.line === 'testing'
+              ? await require('../services/first-version-eta').estimateFor(pool, appRow.id, state.steps)
+              : null;
             firstVersion = {
               building: true,
               mine,
               step: state.step,
               of: state.of,
-              stepName: state.stepName,
+              // #4053: the build line its thumbnail shows this viewer.
+              line: state.line || null,
               creator: state.creator,
               ready: !!state.ready,
               question: mine && !!state.question,
               conversationId: mine ? state.conversationId : null,
               // B6: the plan it waits on, for its creator to build from here.
               ...(mine && state.plan ? { plan: state.plan } : {}),
+              // 13 Oct 2026: its plan from Make it, for its creator's made
+              // screen to ask its questions (first-version-plan.js).
+              ...(mine && state.early ? { early: state.early } : {}),
+              // N4: the stage named, with when it began, and the steps.
+              ...(state.phase ? { phase: state.phase } : {}),
+              ...(Array.isArray(state.steps) ? { steps: state.steps } : {}),
+              ...(estimate ? { estimate } : {}),
+              // #4396: for a member who is not its maker, while it is not
+              // ready, what the App tab's "While you wait" card offers.
+              ...(!mine && !state.ready && !state.stopped ? await waitingMemberFields(pool, appRow.id, req.user?.id, state).catch(() => ({ member: false })) : {}),
+              // 14 Oct 2026 (newcomer run eight): its build stopped, and
+              // nothing is live yet. The App tab keeps the first version's
+              // card, says Stopped, and gives its maker Try again: the
+              // build's thread in their chat with Homeroom bot (`thread`),
+              // where the bot's own Try again is.
+              ...(state.stopped ? { stopped: true, ...(mine ? { thread: stoppedThread(state) } : {}) } : {}),
               // Ready to try: the change, and who it waits on, as this
               // viewer reads it (firstVersionApproval).
               ...(state.ready && state.approval ? { approval: state.approval } : {}),
+              ...showcase,
+              ...liveFields,
               // No "usually about N minutes" (WP-E used to send the
               // ordinary request's typical build here): a first version
               // plans first and waits on its creator's answer, and took 50
@@ -1587,6 +1895,10 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         staging_sample: stagingSample,
         creationPhase: phaseEntry ? phaseEntry.phase : null,
         first_version: firstVersion,
+        // A change somebody could ask Homeroom bot for in this app, from
+        // its ready-made starter (services/app-templates.js exampleChange),
+        // or null: the first-session walk's Homeroom bot card offers it.
+        exampleChange: appTemplates.exampleChangeOf(appRow.template),
         missingSecrets,
         // Reviewer copy needs to distinguish an advisory shots run from
         // a real vote/merge gate. This is a platform rollout flag, not an app
@@ -1603,6 +1915,10 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         ...accessFlags(appRow, req.user, isCollaborator, adminAppIds, contributorCount,
           config.selfAppSlug),
       };
+      // #4405: the project's custom domain, and the address Share offers.
+      const domainRow = stagingSample ? null : await appDomains.forApp(pool, appRow.id);
+      appPayload.custom_domain = domainRow ? { hostname: domainRow.hostname, status: domainRow.status } : null;
+      appPayload.share_url = shareUrl(url, domainRow && domainRow.status === 'live' ? appPayload.custom_domain : null);
       await attachForkLineage(pool, appPayload);
       res.json({ app: appPayload });
     } catch (err) {
@@ -1623,13 +1939,15 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
     try {
       const appVersion = require('../services/app-version');
       const appDeployStatus = require('../services/app-deploy-status');
+      // With the deploy app delivery runs, if any (deploy_state).
       const gated = await appAccess.getAppForUser(
-        pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS
+        pool, req.params.slug, req.user, 'view',
+        `${appAccess.ACCESS_COLUMNS}, deploy_state, deploy_started_at, deploy_from_sha`
       );
       if (!gated) return res.status(404).json({ error: 'App not found' });
       const info = await appVersion.getAppVersion(pool, req.params.slug);
       if (!info) return res.status(404).json({ error: 'App not found' });
-      res.json({ ...info, deployProgress: appDeployStatus.read(req.params.slug) });
+      res.json({ ...info, deployProgress: appDeployStatus.read(req.params.slug, gated) });
     } catch (err) {
       log.error('apps', 'Failed to get app version', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -1661,6 +1979,167 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
     } catch (err) {
       log.error('apps', 'Failed to read sketch', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // #4387: one of a first version's screens for its App tab (the first
+  // look, or a real screen: services/first-version-screens.js), as a PNG,
+  // for the project's MEMBERS only, the read that says it is there
+  // (firstVersionShowcaseFields). 404 for anyone else, as for a screen that
+  // is not there: neither says whether it exists. Private to the browser
+  // that asked; nothing in it runs.
+  router.get('/api/apps/:slug/first-version/screens/:kind/:n', async (req, res) => {
+    try {
+      const fvScreens = require('../services/first-version-screens');
+      const kind = String(req.params.kind || '');
+      const n = /^[0-9]$/.test(req.params.n || '') ? Number(req.params.n) : -1;
+      if (!fvScreens.KINDS.includes(kind) || n < 0 || n >= fvScreens.MAX_SCREENS || !req.user?.id) {
+        return res.status(404).json({ error: 'Not found' });
+      }
+      const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS);
+      if (!app || !(await communities.isMember(pool, app.id, req.user.id))) return res.status(404).json({ error: 'Not found' });
+      const row = await fvScreens.readScreen(pool, app.id, kind, n);
+      if (!row || row.content_type !== 'image/png') return res.status(404).json({ error: 'Not found' });
+      res.set({
+        'Content-Type': 'image/png',
+        'Cache-Control': 'private, max-age=3600',
+        'X-Content-Type-Options': 'nosniff',
+        'Content-Security-Policy': "default-src 'none'",
+      });
+      return res.send(Buffer.isBuffer(row.data) ? row.data : Buffer.from(row.data || ''));
+    } catch (err) {
+      log.error('apps', 'Failed to read a first version screen', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // 15 Oct 2026 (newcomer run nine): the early first look's DRAWN screen,
+  // which the first look shows until its picture above is saved
+  // (`first_version.screens.drawn`, services/first-version-screens.js
+  // readDrawnDocument), for the same readers as the picture: the project's
+  // MEMBERS, 404 for anyone else and for none. It is model-written HTML, so
+  // every answer is a document that can do nothing (DRAWN_CSP): `sandbox`
+  // gives it an opaque origin with scripts, forms and navigation off, and
+  // nothing loads but its inline styles and data: images and fonts. The
+  // shell frames it with sandbox="" as well (frontend/src/features/
+  // first-session/drawn-look.tsx). Cached no longer than the picture.
+  router.get('/api/apps/:slug/first-version/first-look/drawn', async (req, res) => {
+    const fvScreens = require('../services/first-version-screens');
+    res.set({
+      'Content-Security-Policy': fvScreens.DRAWN_CSP,
+      'X-Content-Type-Options': 'nosniff',
+      'Referrer-Policy': 'no-referrer',
+    });
+    try {
+      if (!req.user?.id) return res.status(404).json({ error: 'Not found' });
+      const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS);
+      if (!app || !(await communities.isMember(pool, app.id, req.user.id))) return res.status(404).json({ error: 'Not found' });
+      const doc = await fvScreens.readDrawnDocument(pool, app.id);
+      if (!doc) return res.status(404).json({ error: 'Not found' });
+      res.set({ 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'private, max-age=3600' });
+      return res.send(doc);
+    } catch (err) {
+      log.error('apps', 'Failed to read a first version\'s drawn screen', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // 13 Oct 2026: the made screen's Submit, its maker's answers to their
+  // first version's questions (homeroom-bot-dm.js answerFirstVersion): kept
+  // once, and the build goes ahead with them, now or the moment its plan is
+  // made. Only its maker answers (403 for anyone else); answering is taking
+  // part, so it is a member's (requireAppMembership, AGENTS.md). A second
+  // Submit changes nothing.
+  router.post('/api/apps/:slug/first-version/answers', sameOriginBrowserOnly, communities.requireAppMembership(pool), async (req, res) => {
+    try {
+      if (!req.user?.id) return res.status(401).json({ error: 'Sign in first' });
+      const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS);
+      if (!app) return res.status(404).json({ error: 'App not found' });
+      const raw = Array.isArray(req.body?.answers) ? req.body.answers : [];
+      const answers = raw.slice(0, 2).map((a) => (typeof a === 'string' ? a.slice(0, 200) : null));
+      const done = await require('../services/homeroom-bot-dm').answerFirstVersion(pool, {
+        user: req.user, appId: app.id, answers,
+      });
+      if (!done.ok) return res.status(done.status || 409).json({ error: done.error });
+      res.set('Cache-Control', 'no-store');
+      return res.json({ ok: true, building: done.building, answers: done.answers });
+    } catch (err) {
+      log.error('apps', 'Failed to record a first version\'s answers', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Newcomer run five (13 Oct 2026): the made screen's moments, what it
+  // showed and what was tapped on it, as they happen
+  // (services/first-session-moments.js), for the run report. A member's
+  // own (404 for anyone else, as Live's are below: a 403 would offer them
+  // Join), rate-limited, and never waited on by the screen. 200 whether or
+  // not the account is one that is recorded.
+  router.post('/api/apps/:slug/first-version/moments', firstSessionMomentLimiter, sameOriginBrowserOnly, async (req, res) => {
+    try {
+      if (!req.user?.id) return res.status(401).json({ error: 'Sign in first' });
+      const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS);
+      if (!app || !(await communities.isMember(pool, app.id, req.user.id))) return res.status(404).json({ error: 'Not found' });
+      const moments = require('../services/first-session-moments');
+      const moment = moments.parseMoment(req.body);
+      if (!moment) return res.status(400).json({ error: 'A known kind and when it happened are required' });
+      const recorded = await moments.record(pool, { user: req.user, appId: app.id, moment });
+      res.set('Cache-Control', 'no-store');
+      return res.json({ ok: true, recorded });
+    } catch (err) {
+      log.error('apps', 'Failed to record a made screen moment', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // #4449: LIVE, the new app taking shape while its first version is built
+  // (services/first-version-live.js): the recording since `since`, the last
+  // chunk this viewer has, or from the latest good restart when it is
+  // behind it (`reset`). Already sanitised: nothing in it fetches anything.
+  // For the project's MEMBERS only, the gate of its screens above; 404 for
+  // anyone else, and while the Admin setting is off.
+  const liveMember = async (req) => {
+    if (!req.user?.id) return null;
+    const fvLive = require('../services/first-version-live');
+    if (!(await fvLive.liveEnabled(pool))) return null;
+    const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS);
+    if (!app || !(await communities.isMember(pool, app.id, req.user.id))) return null;
+    return app;
+  };
+  router.get('/api/apps/:slug/first-version/live', async (req, res) => {
+    try {
+      const app = await liveMember(req);
+      if (!app) return res.status(404).json({ error: 'Not found' });
+      const raw = String(req.query.since ?? '');
+      const since = /^[0-9]{1,9}$/.test(raw) ? Number(raw) : 0;
+      const live = await require('../services/first-version-live').liveOf(pool, app.id, since);
+      if (!live) return res.status(404).json({ error: 'Not found' });
+      res.set({ 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
+      return res.json(live);
+    } catch (err) {
+      log.error('apps', 'Failed to read a first version\'s Live', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // #4449: a member opened Live, or watched it for `seconds` (sent when they
+  // close or hide it): analytics only (events.js live_build_opened,
+  // live_build_watched).
+  router.post('/api/apps/:slug/first-version/live/seen', sameOriginBrowserOnly, async (req, res) => {
+    try {
+      const app = await liveMember(req);
+      if (!app) return res.status(404).json({ error: 'Not found' });
+      const body = req.body || {};
+      const kind = body.kind === 'opened' || body.kind === 'watched' ? body.kind : null;
+      const runId = Number(body.runId);
+      if (!kind || !Number.isInteger(runId) || runId <= 0) return res.status(400).json({ error: 'kind and runId are required' });
+      await require('../services/first-version-live').recordView(pool, {
+        userId: req.user.id, appId: app.id, runId, kind, seconds: body.seconds, goodFrame: body.goodFrame === true,
+      });
+      return res.json({ ok: true });
+    } catch (err) {
+      log.error('apps', 'Failed to record a Live view', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
     }
   });
 
@@ -2379,9 +2858,19 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       if (!app.repo_url) {
         return res.status(400).json({ error: 'This app is not backed by a GitHub repo' });
       }
+      // With the app-delivery machine on, the deploy is a recorded request
+      // it runs (one at a time per app, kept across a restart), and it
+      // writes the result.
+      const workflow = require('../workflow/platform.ts');
+      if (workflow.deliveryEnabled()) {
+        await workflow.requestDeploy(app.id, 'redeploy');
+        return res.json({ ok: true });
+      }
       // Fire-and-forget: same fan-out as the drift-poller and dev-chat
-      // merge paths use. Errors land on the deploy-status broadcast.
-      staging.rebuildProduction(config, app)
+      // merge paths use. Errors land on the deploy-status broadcast. Asked
+      // for by hand, so it retries even a commit the automatic paths have
+      // stopped retrying (deploy-failure.js waitsForNewCommit).
+      staging.rebuildProduction(config, app, { retrySameCommit: true })
         .then(async ({ containerId, sha }) => {
           await pool.query(
             `UPDATE apps SET container_id = $1, main_sha = $2, status = 'running',
@@ -2493,8 +2982,8 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
   // applying any group-voted change (PR merge, rename proposal, secret
   // change) additionally requires at least one admin yes/up vote on top
   // of the existing active-user majority — enforced in routes/votes.js
-  // (checkAndMerge) and routes/issues.js (maybeApplyRenameProposal /
-  // maybeApplySecretChangeProposal) via services/admin-approval.js.
+  // (checkAndMerge, via services/admin-approval.js) and by the governance
+  // machine for governance proposals (src/workflow/governance-proposal/).
   //
   // The home-card lock icon is the canonical UI affordance. We post a
   // system chat message + broadcast `app_update` so every viewer's card
@@ -2600,6 +3089,13 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         return res.status(400).json({ error: 'The app already has that visibility' });
       }
 
+      // Making it public needs a verified owner (#4378), asked before any
+      // PR is opened; the client opens the verify sheet on this code.
+      if (viewVisibility === 'public' && app.view_visibility !== 'public') {
+        const identityRefusal = await communities.identityPublicRefusal(pool, req.user?.id);
+        if (identityRefusal) return res.status(403).json(identityRefusal);
+      }
+
       if (!github.isEnabled() || !process.env.GITHUB_BOT_TOKEN) {
         return res.status(503).json({
           error: 'Visibility changes need GitHub configured on the platform (GITHUB_BOT_TOKEN).',
@@ -2638,6 +3134,87 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       });
     } catch (err) {
       log.error('apps', 'Visibility PR failed', { slug: req.params.slug, message: err.message });
+      res.status(500).json({ error: err.message || 'Internal server error' });
+    }
+  });
+
+  // #4666: WHO CAN SEE & CHANGE IT, as one proposal (services/who-decides-pr.js).
+  // The sheet of that name sends who can see it ('private' | 'public'), how
+  // its changes are approved (a preset, or groups and rules), or both, and
+  // gets one PR on dapp.json. Same proposers as the two single-block routes
+  // it stands in for: the creator, an app admin or a platform admin. The
+  // platform's own app may change its rule here, never its visibility.
+  router.post('/api/apps/:slug/who-decides-pr', drainGuard, issueCreateLimiter, async (req, res) => {
+    const whoDecides = require('../services/who-decides-pr');
+    let change;
+    try {
+      change = whoDecides.parseChange(req.body);
+    } catch (err) {
+      if (err instanceof whoDecides.WhoDecidesError) return res.status(err.status).json({ error: err.message });
+      throw err;
+    }
+    try {
+      const { rows } = await pool.query('SELECT * FROM apps WHERE slug = $1', [req.params.slug]);
+      if (!rows.length) return res.status(404).json({ error: 'App not found' });
+      const app = rows[0];
+      if (!(await appAccess.checkAppAccess(pool, app, req.user, 'view'))) {
+        return res.status(404).json({ error: 'App not found' });
+      }
+      if (!(await appAdmins.canManageApp(pool, app, req.user))) {
+        return res.status(403).json({ error: 'Only the project’s creator or an admin can propose who can see and change it' });
+      }
+      if (change.visibility && refuseIfSelfHosted(app, res)) return;
+
+      const gov = await governance.getGovernance(pool, app.id);
+      const diff = whoDecides.diffChange(change, {
+        collab: app.collab_visibility, view: app.view_visibility, rules: gov.rules,
+      });
+      if (!diff.visibility && !diff.governance) {
+        return res.status(400).json({ error: 'That is how it is already' });
+      }
+      if (diff.governance) {
+        try {
+          await whoDecides.checkPeople(pool, diff.governance);
+        } catch (err) {
+          if (err instanceof whoDecides.WhoDecidesError) {
+            return res.status(err.status).json({ error: err.message, ...err.extra });
+          }
+          throw err;
+        }
+      }
+
+      // Making it public needs a verified owner (#4378), as on visibility-pr.
+      if (diff.visibility === 'public' && app.view_visibility !== 'public') {
+        const identityRefusal = await communities.identityPublicRefusal(pool, req.user?.id);
+        if (identityRefusal) return res.status(403).json(identityRefusal);
+      }
+
+      if (!github.isEnabled() || !process.env.GITHUB_BOT_TOKEN) {
+        return res.status(503).json({
+          error: 'Changes to who decides need GitHub configured on the platform (GITHUB_BOT_TOKEN).',
+        });
+      }
+      if (!app.repo_url || !(app.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/)) {
+        return res.status(400).json({ error: 'App has no GitHub repository to open a PR against' });
+      }
+
+      // Competing access changes are allowed (#4960): more than one change
+      // to who can see and change it may be up for a vote at once, and the
+      // sheet warns that if both pass the later one may overwrite the
+      // earlier. The community read still returns the open one
+      // (findWhoDecidesPr) so the sheet can link to it.
+      const result = await whoDecides.createWhoDecidesPR(
+        config, pool, app, diff, { id: req.user.id, username: req.user.username }
+      );
+      res.status(201).json({
+        ok: true,
+        sessionId: result.sessionId,
+        prNumber: result.prNumber,
+        prUrl: result.prUrl,
+        title: result.title,
+      });
+    } catch (err) {
+      log.error('apps', 'Who-decides PR failed', { slug: req.params.slug, message: err.message });
       res.status(500).json({ error: err.message || 'Internal server error' });
     }
   });
@@ -3010,6 +3587,65 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
     }
   });
 
+  // #4417: propose a change to the project's TOPICS — a new one, a rename,
+  // a merge or an archive. They live in dapp.json's `topics` array, so the
+  // change is a manifest PR with its promoted vote session, the same
+  // lifecycle as a rename (services/topics-pr.js). Applies once it merges:
+  // the rebuild's reconcileAppTopics, or the platform's own boot.
+  //
+  // Body: { op: 'add', name, handle?, about?, icon? }
+  //     | { op: 'rename', id, name?, handle?, about?, icon? }
+  //     | { op: 'merge', id, into } | { op: 'archive', id }
+  //
+  // Proposing is taking part, so it is for members (requireAppMembership,
+  // 403 join_required), and for people who may build here (collab). The
+  // platform's own app is allowed: its dapp.json is the platform repo's.
+  router.post('/api/apps/:slug/topics-pr', drainGuard, issueCreateLimiter, communities.requireAppMembership(pool), async (req, res) => {
+    let change;
+    try {
+      change = topicsPr.parseChange(req.body);
+    } catch (err) {
+      return res.status(err.status || 400).json({ error: err.message });
+    }
+    try {
+      const { rows } = await pool.query('SELECT * FROM apps WHERE slug = $1', [req.params.slug]);
+      const app = rows[0];
+      if (!app || !(await appAccess.checkAppAccess(pool, app, req.user, 'view'))) {
+        return res.status(404).json({ error: 'App not found' });
+      }
+      if (!(await appAccess.checkAppAccess(pool, app, req.user, 'collab'))) {
+        return res.status(403).json({ error: 'Only people who can build here can propose a change to its topics' });
+      }
+      if (!github.isEnabled() || !process.env.GITHUB_BOT_TOKEN) {
+        return res.status(503).json({
+          error: 'Topic changes need GitHub configured on the platform (GITHUB_BOT_TOKEN).',
+        });
+      }
+      if (!app.repo_url) {
+        return res.status(400).json({ error: 'App has no GitHub repository to open a PR against' });
+      }
+      if (!(app.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/)) {
+        return res.status(400).json({ error: 'Could not parse the app repository URL' });
+      }
+      const result = await topicsPr.createTopicsPR(
+        config, pool, app, change, { id: req.user.id, username: req.user.username }
+      );
+      res.status(201).json({
+        ok: true,
+        sessionId: result.sessionId,
+        prNumber: result.prNumber,
+        prUrl: result.prUrl,
+        title: result.title,
+      });
+    } catch (err) {
+      if (err instanceof topicsPr.TopicsPrError) {
+        return res.status(err.status || 400).json({ error: err.message });
+      }
+      log.error('apps', 'Topics PR failed', { slug: req.params.slug, message: err.message });
+      res.status(500).json({ error: err.message || 'Internal server error' });
+    }
+  });
+
   // ── App-host authorize hop ─────────────────────────────────────────
   //
   // Platform session cookies are host-only (deliberately: child apps run
@@ -3022,6 +3658,111 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
   // services/edge-gate.js (handleAuthorize) has the details; middleware/auth.js
   // lets this one path through without a session so it can answer for a
   // signed-out visitor too.
+  // ── Custom domains (#4405) ───────────────────────────────────────────
+  //
+  // A project's own web address, claimed by whoever manages it and proved
+  // by two DNS records (services/app-domains.js has the status machine).
+  // Owner-set state, like secrets and the lock: not a dapp.json field, so no
+  // vote. The read answers any viewer (the dialog's manage flag decides what
+  // it shows); the writes need canManageApp and never apply to the platform's
+  // own app. "Check now" is bounded per app so a person tapping it cannot
+  // make the platform hammer public resolvers.
+  const domainCheckLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 6,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    keyGenerator: (req) => `domain-check:${req.params.slug}`,
+    handler: (req, res) => res.status(429).json({ error: 'Checked too often. Wait a minute and try again.', code: 'rate_limited' }),
+  });
+
+  async function domainContext(req, res, { manage = false } = {}) {
+    const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS);
+    if (!app) { res.status(404).json({ error: 'App not found' }); return null; }
+    const canManage = await appAdmins.canManageApp(pool, app, req.user);
+    if (manage) {
+      if (!canManage) { res.status(403).json({ error: 'Only the people who manage this app can change its domain' }); return null; }
+      if (refuseIfSelfHosted(app, res)) return null;
+    }
+    return { app, canManage };
+  }
+
+  function domainPayload(app, row, canManage) {
+    return {
+      domain: appDomains.publicRow(row),
+      records: row ? appDomains.expectedRecords(app, row) : [],
+      homeroom_host: caddy.productionHostname(app.slug),
+      can_manage: !!canManage && !app.self_hosted,
+    };
+  }
+
+  router.get('/api/apps/:slug/domain', async (req, res) => {
+    try {
+      const ctx = await domainContext(req, res);
+      if (!ctx) return;
+      const row = await appDomains.forApp(pool, ctx.app.id);
+      res.json(domainPayload(ctx.app, row, ctx.canManage));
+    } catch (err) {
+      log.error('apps', 'Read custom domain failed', { slug: req.params.slug, message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.post('/api/apps/:slug/domain', drainGuard, sameOriginBrowserOnly, async (req, res) => {
+    try {
+      const ctx = await domainContext(req, res, { manage: true });
+      if (!ctx) return;
+      let row;
+      try {
+        row = await appDomains.claim(pool, ctx.app, req.body?.hostname, req.user);
+      } catch (err) {
+        if (appDomains.isHostnameError(err)) return res.status(400).json({ error: err.message, code: err.code });
+        if (err.code === 'already_has_domain' || err.code === 'hostname_taken') {
+          return res.status(409).json({ error: err.message, code: err.code });
+        }
+        if (err.code === 'claim_limit') return res.status(429).json({ error: err.message, code: err.code });
+        throw err;
+      }
+      log.info('apps', 'Custom domain claimed', { slug: ctx.app.slug, hostname: row.hostname, by: req.user.username });
+      res.status(201).json(domainPayload(ctx.app, row, true));
+    } catch (err) {
+      log.error('apps', 'Claim custom domain failed', { slug: req.params.slug, message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.post('/api/apps/:slug/domain/check', drainGuard, domainCheckLimiter, sameOriginBrowserOnly, async (req, res) => {
+    try {
+      const ctx = await domainContext(req, res, { manage: true });
+      if (!ctx) return;
+      const row = await appDomains.forApp(pool, ctx.app.id);
+      if (!row) return res.status(404).json({ error: 'This project has no custom domain' });
+      if (row.status === 'disabled') {
+        return res.status(409).json({ error: 'An admin has disabled this domain.', code: 'disabled' });
+      }
+      const next = await appDomains.checkNow(pool, config, row);
+      res.json(domainPayload(ctx.app, next, true));
+    } catch (err) {
+      log.error('apps', 'Check custom domain failed', { slug: req.params.slug, message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.delete('/api/apps/:slug/domain', drainGuard, sameOriginBrowserOnly, async (req, res) => {
+    try {
+      const ctx = await domainContext(req, res, { manage: true });
+      if (!ctx) return;
+      const row = await appDomains.forApp(pool, ctx.app.id);
+      if (!row) return res.status(404).json({ error: 'This project has no custom domain' });
+      await appDomains.remove(pool, config, ctx.app, row, req.user);
+      log.info('apps', 'Custom domain removed', { slug: ctx.app.slug, hostname: row.hostname, by: req.user.username });
+      res.status(204).end();
+    } catch (err) {
+      log.error('apps', 'Remove custom domain failed', { slug: req.params.slug, message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   router.get('/__access/authorize', async (req, res) => {
     try {
       return await edgeGate.handleAuthorize(pool, req, res);
@@ -3198,6 +3939,12 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
 
   // Retry a failed app. Allowed for the app's creator or any admin, capped
   // at MAX_RETRY_COUNT per app to avoid a stuck app burning budget forever.
+  // A failure the platform's restarts caused is neither counted nor capped
+  // (services/app-creation-owner.js isInterrupted). The retry takes the row
+  // in the same write that flips it back to 'creating', and only while no
+  // attempt is still running anywhere: one past its watchdog keeps the row
+  // until it settles, so a second Retry can never start a second creation
+  // beside it.
   router.post('/api/apps/:slug/retry', drainGuard, sameOriginBrowserOnly, async (req, res) => {
     try {
       const { rows } = await pool.query(
@@ -3213,7 +3960,8 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         return res.status(403).json({ error: 'Only the app creator or an admin can retry' });
       }
 
-      if (appRow.retry_count >= MAX_RETRY_COUNT && !req.user.canAdminWrite) {
+      const interrupted = appCreationOwner.isInterrupted(appRow.last_failure);
+      if (appRow.retry_count >= MAX_RETRY_COUNT && !req.user.canAdminWrite && !interrupted) {
         return res.status(429).json({
           error: `Retry limit reached (${MAX_RETRY_COUNT}). Ask an admin to investigate.`,
         });
@@ -3242,29 +3990,20 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         }
       }
 
-      await pool.query(
-        `UPDATE apps
-            SET status = 'creating', retry_count = retry_count + 1,
-                last_failure = NULL
-          WHERE id = $1`,
-        [appRow.id]
-      );
-
-      const provision = appRow.forked_from
-        ? forkApp(config, appRow, sourceApp)
-        : createApp(config, appRow);
-      provision.catch(async (err) => {
-        log.error('apps', appRow.forked_from ? 'Retry fork failed' : 'Retry app creation failed', {
-          appId: appRow.id, err: err.message,
+      const creationOwner = await appCreationOwner.takeForRetry(pool, appRow.id, { counted: !interrupted });
+      if (!creationOwner) {
+        return res.status(409).json({
+          error: 'The last attempt to set this app up is still finishing. Try again in a minute.',
         });
-        await pool.query(
-          `UPDATE apps SET status = 'error',
-                           last_failure = COALESCE(last_failure, $2::jsonb)
-           WHERE id = $1 AND status = 'creating'`,
-          [appRow.id, JSON.stringify(deployFailure.record(err))]
-        ).catch(() => {});
+      }
+
+      appCreationOwner.drive(pool, appRow, {
+        owner: creationOwner,
+        provision: () => (appRow.forked_from
+          ? forkApp(config, appRow, sourceApp)
+          : createApp(config, appRow)),
+        label: appRow.forked_from ? 'Retry fork' : 'Retry app creation',
       });
-      scheduleCreationWatchdog(pool, appRow.id);
 
       res.json({ ok: true });
     } catch (err) {
@@ -3291,7 +4030,22 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         return res.status(404).json({ error: 'App not found' });
       }
       const appId = appRows[0].id;
+      // #4600: whether this pin JOINED the app's community. A pin joins
+      // through the app_favorites trigger (schema.sql,
+      // sync_favorite_community_member), so Home's featured list's ⊕ is a
+      // join as much as /membership is, and is counted the same way: on the
+      // spot (scoreOnJoin), not on the rule's next pass, and said so in the
+      // answer (`joined`) so the client can tell its Challenges block to
+      // read again.
+      let joined = false;
       if (favorited) {
+        const { rows: joinRows } = await pool.query(
+          `SELECT (a.community_id IS NOT NULL AND NOT EXISTS (
+                    SELECT 1 FROM community_members m
+                     WHERE m.community_id = a.community_id AND m.user_id = $2)) AS joins
+             FROM apps a WHERE a.id = $1`,
+          [appId, req.user.id]
+        );
         // DO UPDATE (not DO NOTHING) so the same statement also clears a
         // member's hidden=TRUE opt-out row — "Add to Your apps" un-hides.
         await pool.query(
@@ -3299,6 +4053,9 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
            ON CONFLICT (app_id, user_id) DO UPDATE SET hidden = FALSE`,
           [appId, req.user.id]
         );
+        joined = joinRows[0]?.joins === true;
+        // Never throws, so the pin answers the same either way.
+        if (joined) await challengeScorer.scoreOnJoin(pool, config);
       } else if (await appAccess.isCollaborator(pool, appId, req.user.id)) {
         // #618: membership (creator or accepted invite) pins the app into
         // "Your apps", so a member's "remove" must persist as an explicit
@@ -3328,7 +4085,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           metadata: { source: 'user_favorite_toggle' },
         });
       }
-      res.json({ ok: true, is_favorited: favorited });
+      res.json({ ok: true, is_favorited: favorited, joined });
     } catch (err) {
       log.error('apps', 'Failed to toggle favorite', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -3354,7 +4111,15 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       const showSelfHosted = !!req.user?.isAdmin || !!config.selfAppPublicVoting;
       const { rows: appRows } = await pool.query(
         `SELECT ${appAccess.ACCESS_COLUMNS}, name, repo_url,
-                LEFT(manifest_snapshot->>'description', 280) AS description
+                LEFT(manifest_snapshot->>'description', 280) AS description,
+                (NOT self_hosted AND created_at > NOW() - INTERVAL '7 days') AS first_week,
+                -- Since when the app has been live, for Recently live's card
+                -- of the app while none of its changes has gone live yet
+                -- (hub-cards.tsx RecentlyLive): when it first ran, set once
+                -- by its first deploy, or, for an app from before that
+                -- column that is up now, when it was made. NULL for an app
+                -- that has never run.
+                COALESCE(first_running_at, CASE WHEN status = 'running' THEN created_at END) AS live_since
            FROM apps WHERE slug = $1 AND (NOT self_hosted OR $2::boolean)`,
         [req.params.slug, showSelfHosted]
       );
@@ -3363,7 +4128,10 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         return res.status(404).json({ error: 'App not found' });
       }
       const membership = await communities.getMembership(pool, app, req.user?.id);
-      const members = await communities.listMembers(pool, app.id);
+      // The hub draws a few faces; "You're in" lists everyone who is in it
+      // (features/first-session, owner 7 October), so it asks for all of
+      // them, up to a page's worth.
+      const members = await communities.listMembers(pool, app.id, req.query.members === 'all' ? 200 : 8);
       // The channel is the app's group chat, which is COLLAB-gated
       // (app-access.js): a viewer who may see a view-public,
       // collab-private app but not talk in it gets no row for it rather
@@ -3410,20 +4178,53 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         ? await renamePr.findVisibilityPr(pool, app.id) : null;
       const gov = await governance.getGovernance(pool, app.id);
       const electorate = await governance.getElectorate(pool, app.id, gov);
-      const required = gov.approvalsRequired != null
-        ? gov.approvalsRequired
-        : activeUsers.requiredVotes(electorate.active, 0);
+      // #4666: the rule by name, its rules and groups, and its creator, for
+      // the rule line said from the reader's side and the Who can see &
+      // change it sheet. Best-effort: a rule that cannot be described is the
+      // line without its name, never a failed hub.
+      let described = null;
+      try {
+        described = await governance.describeApproval(pool, app.id, gov);
+      } catch (err) {
+        log.warn('apps', 'Could not describe the approval rule', { slug: app.slug, message: err.message });
+      }
+      const required = described && described.mode === 'rules' && described.required != null
+        ? described.required
+        : gov.approvalsRequired != null
+          ? gov.approvalsRequired
+          : activeUsers.requiredVotes(electorate.active, 0);
+      let creator = null;
+      if (!app.self_hosted && app.created_by) {
+        const { rows: creatorRows } = await pool.query(
+          'SELECT id, username, display_name FROM users WHERE id = $1', [app.created_by]
+        );
+        if (creatorRows[0]) {
+          creator = { id: creatorRows[0].id, username: creatorRows[0].username, display_name: creatorRows[0].display_name || null };
+        }
+      }
+      const pendingWhoDecides = canManage
+        ? await require('../services/who-decides-pr').findWhoDecidesPr(pool, app.id) : null;
       // WHAT IT IS. dapp.json's one line when it has one. A project made
       // from "What should it do?" without a one-liner (the first session's
       // own words, not an example's) has none until somebody writes one, so
       // its hub opened on nothing but "Just you" (first-session run-through,
-      // 5 Oct 2026). Its description's first sentence stands in, cut the way
-      // the create dialog's suggestion is when no model answers
+      // 5 Oct 2026). Its card's tagline stands in (#4235; app-sketch.js
+      // saves it as the description once the card is ready, so this covers
+      // projects made before that): a model-written line about what the app
+      // is for. Without a card, its description's first sentence, cut the
+      // way the create dialog's suggestion is when no model answers
       // (homeroom-bot-dm.js firstSentence). It is the project's first
       // request, so nobody who can see the project is shown more than that.
       const botDm = require('../services/homeroom-bot-dm');
       let description = typeof app.description === 'string' && app.description.trim()
         ? app.description.replace(/\s+/g, ' ').trim() : null;
+      if (!description && !app.self_hosted) {
+        const { rows: sketchRows } = await pool.query(
+          `SELECT design FROM app_sketches WHERE app_id = $1 AND status = 'ready'`,
+          [app.id]
+        );
+        description = require('../services/app-sketch').taglineOf(sketchRows[0]) || null;
+      }
       if (!description && !app.self_hosted) {
         const { rows: briefRows } = await pool.query(
           'SELECT brief FROM homeroom_bot_first_versions WHERE app_id = $1',
@@ -3435,24 +4236,83 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       // that description: the App tab's state (GET /api/apps/:slug
       // `first_version`), for the hub to say beside who it is for.
       // Best-effort: a read that fails is no state, never a failed hub.
+      //
+      // #4045: IN ITS FIRST WEEK (`first_week`: made under seven days ago,
+      // never the platform's own project) a first version that went live
+      // stays on the hub as Live with Open app (liveFirstVersion). The hub
+      // itself is drawn the same from its first day (15 Oct 2026), so the
+      // week is not in the payload. #4074: a member who did not start it
+      // reads the plan while it waits (hubFirstVersion `plan`), on the
+      // membership read above.
+      const firstWeek = !!app.first_week;
       let firstVersion = null;
       if (!app.self_hosted) {
         try {
           const state = await botDm.firstVersionState(pool, app.id, { viewerId: req.user?.id ?? null });
-          firstVersion = hubFirstVersion(state, req.user?.id ?? null);
+          firstVersion = hubFirstVersion(state, req.user?.id ?? null, { member: !!membership?.is_member });
+          // Run six: the hub card says the time left as the App tab does
+          // (services/first-version-eta.js), while it is built or tested.
+          if (firstVersion && (state.line === 'building' || state.line === 'testing')) {
+            const estimate = await require('../services/first-version-eta').estimateFor(pool, app.id, state.steps);
+            if (estimate) firstVersion.estimate = estimate;
+          }
+          if (!firstVersion && firstWeek) firstVersion = await liveFirstVersion(pool, app.id, req.user?.id ?? null);
         } catch (err) {
           log.warn('apps', 'Could not read the first version for the hub', { slug: app.slug, message: err.message });
         }
+      }
+      // AN INVITE LINK IS OUT (#4045, 8 Oct 2026): the viewer has a live one
+      // for a project that is still just theirs, so the hub draws their face
+      // with open seats beside it instead of "Just you". Asked only then;
+      // see hasLiveLink for what the records can and cannot say.
+      const inviteLink = membership?.is_member && membership.audience === 'solo' && req.user?.id
+        ? await communityInvites.hasLiveLink(pool, app.id, req.user.id) : false;
+      // WHAT INVITE IS OUT, for Share it's line (15 Oct 2026): "Invite link
+      // sent · nobody has joined yet · 7 days left". The links listInvites
+      // shows this viewer (their own, or every link to someone who manages
+      // the project), summed: how many are live, who joined through them,
+      // who still waits, and when the soonest ends. For a member or someone
+      // who manages it; best-effort, so a read that fails is no line.
+      let inviteSummary = null;
+      if (req.user?.id && (membership?.is_member || canManage)) {
+        try {
+          inviteSummary = await communityInvites.inviteSummary(pool, { app, user: req.user });
+        } catch (err) {
+          log.warn('apps', 'Could not sum the invite links for the hub', { slug: app.slug, message: err.message });
+        }
+      }
+      // #4417: THE PLACES. The page is navigated by one list — Hub, Needs
+      // you, Workshop, then #general and the project's topics — and this is
+      // what the list says beside each: the votes owed, and per channel its
+      // name, what it is for, whether it is live, how many requests it holds
+      // and how much in it is unread for this viewer. Best-effort: a list
+      // that cannot be read is #general alone, never a failed hub.
+      let placesPayload = null;
+      try {
+        placesPayload = await places.placesFor(pool, app, req.user, {
+          general: channel,
+          member: !!membership?.is_member,
+          showSelfHosted,
+        });
+        placesPayload.proposals = membership?.is_member ? await topicsPr.openTopicsPrs(pool, app.id) : [];
+      } catch (err) {
+        log.warn('apps', 'Could not read the places for the hub', { slug: app.slug, message: err.message });
       }
       res.json({
         slug: app.slug,
         name: app.name,
         // What the app is, for the page's hero (above).
         description,
+        invite_link: inviteLink,
+        invite_summary: inviteSummary,
+        // Since when the app itself has been live, for Recently live's card
+        // of the app while no change has gone live yet (the query above).
+        live_since: app.self_hosted || !app.live_since ? null : new Date(app.live_since).toISOString(),
         first_version: firstVersion,
         ...membership,
         members,
         channel,
+        places: placesPayload,
         activity,
         can_manage: !!canManage,
         audience_change: pendingAudience ? {
@@ -3465,7 +4325,20 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           approvals_required: gov.approvalsRequired,
           electorate: electorate.active,
           required,
+          // #4666
+          mode: described ? described.mode : (gov.rules ? 'rules' : 'columns'),
+          preset: described ? described.preset : null,
+          rules: described ? described.rules : null,
+          groups: described ? described.groups : [],
+          creator,
         },
+        // #4666: who can see it, as the two columns say, for the sheet.
+        visibility: { build: app.collab_visibility, view: app.view_visibility },
+        who_decides_change: pendingWhoDecides ? {
+          session_id: pendingWhoDecides.id,
+          pr_number: pendingWhoDecides.pr_number,
+          title: pendingWhoDecides.pr_title || null,
+        } : null,
       });
     } catch (err) {
       log.error('apps', 'Failed to load community', { message: err.message });
@@ -3697,14 +4570,14 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       }
 
       // "Try an app" counts the heartbeat that takes this person's time in
-      // an app they did not make across TRY_APPS_MIN_SECONDS, not the rule's
-      // next pass (#3570; challengeScorer.scoreOnAppTime). Every other
+      // an app across TRY_APPS_MIN_SECONDS, not the rule's next pass (#3570;
+      // challengeScorer.scoreOnAppTime). An app they made counts only for the
+      // First challenge (#4602); the pass's own query decides that. Every other
       // heartbeat is answered without a scoring pass, and nearly all without
       // even a read: today's total, returned above, says whether this one can
       // be the crossing at all. Never throws.
       await challengeScorer.scoreOnAppTime(pool, config, {
         appId: appRows[0].id,
-        ownerId: appRows[0].created_by,
         userId: req.user.id,
         seconds,
         daySeconds: activityRows[0]?.seconds_spent,
@@ -3724,8 +4597,9 @@ module.exports = {
   // For tests/demo-mode-lineage.test.js: the masking is a property of this
   // one resolver, so it is pinned there rather than through a route.
   attachForkLineage,
-  appRoutes, sweepStuckCreatingApps, accessFlags, canDeleteApp, compactGlobalChatApp,
-  deleteBlockReason, isCoreApp, hubFirstVersion,
+  appRoutes, accessFlags, canDeleteApp, compactGlobalChatApp,
+  deleteBlockReason, isCoreApp, hubFirstVersion, firstVersionLinesFor, sharedPlan, waitingMemberFields, firstVersionShowcaseFields,
+  firstVersionLiveFields, stoppedThread, inviteLinkOut,
   // #2524: the activity guard and its two bounds, so the contract is
   // unit-testable without standing up the whole app router.
   activitySeconds, ACTIVITY_MAX_PER_POST, ACTIVITY_MAX_PER_DAY,

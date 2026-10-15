@@ -48,7 +48,7 @@ test('generateReportSummary returns sanitized structured output', async () => {
   assert.equal(out.risks.length, 1);
   assert.equal(out.risks[0].severity, 'high');
   assert.deepEqual(out.owners.map((o) => o.username), ['alice']);
-  assert.equal(out.model, 'claude-haiku-4-5');
+  assert.equal(out.model, 'claude-haiku-5-5');
   assert.equal(out.usage.output_tokens, 200);
 });
 
@@ -59,7 +59,7 @@ test('generateReportSummary passes the input as data and requests structured out
     });
     assert.equal(stub.calls.length, 1);
     const params = stub.calls[0];
-    assert.equal(params.model, 'claude-haiku-4-5');
+    assert.equal(params.model, 'claude-haiku-5-5');
     assert.ok(params.messages[0].content.includes('INPUT_MARKER'));
     assert.ok(params.output_config && params.output_config.format
       && params.output_config.format.type === 'json_schema');

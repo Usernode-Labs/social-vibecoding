@@ -204,9 +204,7 @@ test('Flat 4B Chores, against the full PostgreSQL schema', { timeout: 180000 }, 
     `INSERT INTO platform_settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
     [key, value],
   );
-  await set('homeroom_bot_dm_users', JSON.stringify(['jordan', 'sam']));
   await set('homeroom_bot_mode', 'live');
-  await set('homeroom_bot_live_apps', JSON.stringify(['flat-4b']));
 
   // Jordan's first version: the bot's change, waiting for approval, not live.
   await pool.query(
@@ -238,6 +236,9 @@ test('Flat 4B Chores, against the full PostgreSQL schema', { timeout: 180000 }, 
   const reads = [];
   const deps = (answer) => ({
     readAsk: async (args) => { reads.push(args); return answer; },
+    // The chat's own path for a mention, as it is with the bot's voice off
+    // in chats (homeroom-bot-voice.js answers it otherwise).
+    voice: { enabledFor: async () => false, recordAsk: async () => null, dropAsks: async () => {} },
     github: {
       isEnabled: () => true,
       safeMention: (s) => s,
@@ -316,7 +317,7 @@ test('Flat 4B Chores, against the full PostgreSQL schema', { timeout: 180000 }, 
     assert.equal(threadPosts.length, 1);
   });
 
-  await t.test('her card follows the fix: updated, then waiting for approval from her and Jordan', async () => {
+  await t.test('her card follows the fix: updated, then going live without a vote', async () => {
     // The follow-up revised it; its checks run.
     await pool.query('DELETE FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 1', [app.id]);
     await pool.query(
@@ -336,7 +337,9 @@ test('Flat 4B Chores, against the full PostgreSQL schema', { timeout: 180000 }, 
     assert.deepEqual((await metaOf(fixId)).botRequest, { issueNumber: 1, status: 'ready', sessionId: first.id }, 'Try it, for everybody');
     const card = cardsTo(sam).find((c) => c.messageId === fixId);
     assert.equal(card.state.stage, 'proposed');
-    assert.equal(cardWords(card), 'Updated the first version. Waiting for approval from you and @jordan.');
+    // 13 Oct 2026 (D1): a project's first version is not put to a vote, so
+    // nobody, her and Jordan included, is waited on.
+    assert.equal(cardWords(card), 'Updated the first version. It goes live without a vote.');
     mine = await botChat.myRequests(pool, { app, user: sams, deps: deps(null) });
     assert.equal(fixCard().state.stage, 'proposed', 'and the same after a reload');
   });

@@ -56,6 +56,12 @@ ws.broadcastGlobal = (payload) => { broadcasts.push(payload); };
 const sessionBus = require('../src/services/session-bus');
 const stopRegistry = require('../src/services/stop-registry');
 const chatDelivery = require('../src/services/chat-delivery');
+// #3976: classic sessions are read-only, so POST /api/sessions/:id/chat now
+// refuses every row this suite drives (src/services/classic-sessions.js). The
+// classic turn it pins stays in place until the classic dev chat is deleted,
+// so the suite lifts that one gate, the way it stubs billing;
+// tests/classic-session-read-only.test.js pins the refusal itself.
+require('../src/services/classic-sessions').isClassicSession = () => false;
 const { sessionRoutes } = require('../src/routes/sessions');
 const express = require('express');
 

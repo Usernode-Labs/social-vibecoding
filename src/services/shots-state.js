@@ -7,6 +7,7 @@
 // revisions; people decide whether those shots show the change.
 
 const crypto = require('crypto');
+const dbRetry = require('./db-retry');
 const planContract = require('./visible-changes');
 const shots = require('./shots-files');
 
@@ -72,8 +73,18 @@ const RENAMED_CODES = Object.freeze({
 // that simply stopped) could be the run itself taking the process down, so
 // those keep the original, tighter budget: MAX_UNEXPLAINED_RETRIES retries,
 // after which the run is a failure a person has to retry.
+//
+// The ceiling was six, and a burst of rollouts spent it: the retries wait
+// 30 seconds, then twice as long each time up to five minutes
+// (shots-gc.retryInterrupted), so six covered about twenty minutes of
+// restarts, and a proposal then ended on "Homeroom restarted while these
+// before & after shots were being taken. You can take them again." for no
+// reason but the restarts. Since only graceful shutdowns can reach it (an
+// unexplained interruption stops at three), it is now a backstop against a
+// loop rather than a budget: twenty-four retries, about two hours of
+// back-to-back rollouts.
 const INTERRUPTED_RETRY_TRIGGER = 'interrupted-retry';
-const MAX_INTERRUPTED_RETRIES = 6;
+const MAX_INTERRUPTED_RETRIES = 24;
 const MAX_UNEXPLAINED_RETRIES = 2;
 const SHUTDOWN_INTERRUPTION = 'shutdown';
 const SHUTDOWN_INTERRUPTED_REASON = 'Homeroom restarted while these before & after shots were being taken. You can take them again.';
@@ -89,9 +100,60 @@ function interruptedRetryAllowed({ interrupted_retries: retries, unexplained_int
     && Number(unexplained) <= MAX_UNEXPLAINED_RETRIES;
 }
 
+// A run can also fail on a platform step that says nothing about the
+// proposal, and before this a person had to notice and take the shots again.
+// In the 200 proposals merged 2026-10-09 to 10-12, 11 of 166 runs ended that
+// way and none was retried, so each went to its vote with no pictures: a
+// Postgres template copy cut off at psql's 90 seconds (3), the shots agent
+// exiting 1 with no cause recorded (3), the worker's clone refused, GitHub's
+// hourly limit. shots-orchestrator.platformFault tags such a failure in its
+// trace as `platformFault: { kind, retryAt? }`, and the recovery sweep
+// (shots-gc.retryPlatformFaults) takes the same head again ONCE under this
+// trigger: after a pause, or for GitHub's limit once it resets (`retryAt`).
+// A second failure stays failed, whatever it was. Only the kinds below are
+// taken again: a build that fails, a change that broke on the after build
+// or a state the copies cannot reach is the proposal's to fix.
+const PLATFORM_RETRY_TRIGGER = 'platform-retry';
+const MAX_PLATFORM_RETRIES = 1;
+const PLATFORM_FAULT_KINDS = new Set([
+  'database', 'clone', 'worker_bootstrap', 'github_rate_limited', 'agent_exit',
+]);
+
+function platformFaultOf(row) {
+  const fault = row?.trace_summary?.platformFault;
+  return fault && typeof fault === 'object' && PLATFORM_FAULT_KINDS.has(fault.kind) ? fault : null;
+}
+
+// Whether a failed run gets its automatic retry for a platform fault, from
+// the `platform_retries` count every loader selects beside the run (the same
+// subquery in getForSession, shots-view.getForSessions and
+// shots-gc.retryPlatformFaults). A loader that did not count cannot promise.
+function platformRetryAllowed(row) {
+  if (row?.platform_retries == null) return false;
+  return row.state === 'failed' && !!platformFaultOf(row)
+    && Number(row.platform_retries) < MAX_PLATFORM_RETRIES;
+}
+
 function currentCode(code) {
   if (typeof code !== 'string' || !code.includes('evidence')) return code;
   return RENAMED_CODES[code] || code.replace(/visual_evidence/g, 'shots').replace(/evidence/g, 'shots');
+}
+
+// #4575: the codes a dispatch fails with when another turn (the Homeroom
+// bot's, say) holds the proposal's agent. The worker's own wording ("durable
+// active turn could not be persisted") means nothing to a person reading the
+// card, so a run that ended on one of these says so in plain words, even one
+// stored before this copy existed.
+const AGENT_BUSY_CODES = new Set([
+  'session_busy',
+  'TURN_IN_FLIGHT',
+  'durable_turn_persist_failed',
+  'durable_retry_persist_failed',
+]);
+const AGENT_BUSY_REASON = 'The proposal\u2019s agent was busy with another turn, so the shots didn\u2019t start. Take the shots again.';
+
+function agentBusyCode(code) {
+  return typeof code === 'string' && AGENT_BUSY_CODES.has(code);
 }
 
 class ShotsStateError extends Error {
@@ -387,7 +449,9 @@ function runSummary(row, artifactSummary = []) {
     baseSha: row.base_sha,
     headSha: row.head_sha,
     failureCode: currentCode(row.failure_code) || null,
-    failureReason: row.failure_reason || null,
+    failureReason: agentBusyCode(row.failure_code)
+      ? AGENT_BUSY_REASON
+      : (row.failure_reason || null),
     // Any finished run on the current head can be taken again; an explicit
     // no-visible-change declaration or a stop has nothing to retry.
     repairAvailable: row.state === 'failed' && currentCode(row.failure_code) !== 'visible_changes_conflict',
@@ -397,26 +461,48 @@ function runSummary(row, artifactSummary = []) {
     // view's to add.
     // The code as stored, not read through currentCode: the sweep matches it
     // exactly, so a run interrupted under the old name is not retried.
+    // A platform fault's single retry counts too (platformRetryAllowed).
     automaticRetryPending: row.state === 'failed'
-      && row.failure_code === 'shots_run_interrupted'
-      && interruptedRetryAllowed(row),
+      && ((row.failure_code === 'shots_run_interrupted' && interruptedRetryAllowed(row))
+        || platformRetryAllowed(row)),
     planHash: row.plan_hash || null,
     // One result per declared change: ready (with the shots agent's note
-    // on what its shots leave out, if any), or skipped with the reason
-    // people see on the proposal. Runs from before shots have none.
+    // on what its shots leave out, if any), unchanged, or skipped with the
+    // reason people see on the proposal. Runs from before shots have none.
     // The screens the card shows, with where each change's before and after
     // differ (services/shots-diff.js). Runs from before it have none.
     screens: shots.isShotsVerdict(row.hard_verdict) && Array.isArray(row.hard_verdict.screens)
       ? row.hard_verdict.screens : [],
-    // `failed`: the agent did the steps and the after build broke.
+    // `unchanged`: ready, but its before and after came out the same, so
+    // its shots cannot show the change (shots-files.resultStatus); it keeps
+    // the note that says so. `failed`: the agent did the steps and the
+    // after build broke.
     shotResults: shots.isShotsVerdict(row.hard_verdict) && Array.isArray(row.hard_verdict.stories)
-      ? row.hard_verdict.stories.map((story) => ({
-        id: story?.id,
-        status: story?.status === 'ready' || story?.status === 'failed' ? story.status : 'skipped',
-        reason: story?.status === 'ready' ? null : (story?.reason || null),
-        note: story?.status === 'ready' ? (story?.note || null) : null,
-      }))
+      ? row.hard_verdict.stories.map((story) => {
+        const status = shots.resultStatus(story);
+        const shown = status === 'ready' || status === 'unchanged';
+        return {
+          id: story?.id,
+          status,
+          reason: shown ? null : (story?.reason || null),
+          note: shown ? (story?.note || null) : null,
+          // What the shots agent did to both builds to reach it, when it did
+          // anything (shots-files.condition).
+          ...(Array.isArray(story?.conditions) && story.conditions.length
+            ? { conditions: shots.cleanConditions(story.conditions) } : {}),
+        };
+      })
       : [],
+    // What the shots agent noticed broken on the after build besides the
+    // declared changes (shots-files.notice). Advisory only: brokenOnHead and
+    // everything that gates a change read shotResults, never these. Runs
+    // from before them have none.
+    shotNotices: shots.isShotsVerdict(row.hard_verdict) && Array.isArray(row.hard_verdict.notices)
+      ? row.hard_verdict.notices : [],
+    // A project's first version: its before build was the starter
+    // template's placeholder, so only the after side was taken
+    // (services/shots-starter.js).
+    afterOnly: shots.isShotsVerdict(row.hard_verdict) && row.hard_verdict.afterOnly === true,
     progress: progress && typeof progress.phase === 'string'
       && /^[a-z][a-z0-9_-]{0,63}$/.test(progress.phase)
       ? { phase: progress.phase, at: progress.at || null } : null,
@@ -474,13 +560,12 @@ function timeOf(value) {
 }
 
 /**
- * Pure: the declared changes the shots on head `headSha` show failing (the
- * shots agent did the steps and the after build broke), from a session row's
+ * Pure: the declared changes whose result in the settled shots on head
+ * `headSha` passes `keep(result, declared)`, from a session row's
  * `shots_state` and `shots_detail`: [{ id, claim, steps, reason }]. Empty
- * for shots on another head, unsettled shots, and runs from before the
- * failed outcome existed.
+ * for shots on another head and for unsettled shots.
  */
-function brokenOnHead(row, headSha) {
+function resultsOnHead(row, headSha, keep) {
   const detail = row?.shots_detail;
   const head = lowerSha(headSha);
   if (!detail || typeof detail !== 'object' || !head) return [];
@@ -488,17 +573,74 @@ function brokenOnHead(row, headSha) {
   if (lowerSha(detail.headSha) !== head) return [];
   const claims = Array.isArray(detail.claims) ? detail.claims : [];
   const results = Array.isArray(detail.shotResults) ? detail.shotResults : [];
-  return results.filter((result) => result && result.status === 'failed' && typeof result.id === 'string')
+  return results.filter((result) => result && typeof result.id === 'string')
+    .map((result) => ({ result, declared: claims.find((claim) => claim && claim.id === result.id) || {} }))
+    .filter(({ result, declared }) => keep(result, declared))
     .slice(0, planContract.MAX_STORIES)
-    .map((result) => {
-      const declared = claims.find((claim) => claim && claim.id === result.id) || {};
-      return {
-        id: result.id,
-        claim: clip(declared.claim, 300) || result.id,
-        steps: Array.isArray(declared.steps) ? declared.steps.slice(0, 12).map((step) => String(step).slice(0, 200)) : [],
-        reason: clip(result.reason, 1000),
-      };
-    });
+    .map(({ result, declared }) => ({
+      id: result.id,
+      claim: clip(declared.claim, 300) || result.id,
+      steps: Array.isArray(declared.steps) ? declared.steps.slice(0, 12).map((step) => String(step).slice(0, 200)) : [],
+      reason: clip(result.reason, 1000),
+    }));
+}
+
+/**
+ * Pure: the declared changes the shots on head `headSha` show failing (the
+ * shots agent did the steps and the after build broke): [{ id, claim,
+ * steps, reason }]. Empty for shots on another head, unsettled shots, and
+ * runs from before the failed outcome existed.
+ */
+function brokenOnHead(row, headSha) {
+  return resultsOnHead(row, headSha, (result) => result.status === 'failed');
+}
+
+// ── A skip its author can fix ────────────────────────────────────────────
+//
+// 9 to 12 Oct 2026: of the 166 merged proposals that needed shots, 22 runs
+// failed with no declared change reachable and 13 more changes were skipped
+// inside runs that published, and each of those proposals went to its vote
+// without pictures of that change. Only a change that FAILED went back to its
+// author (brokenOnHead); a skip went nowhere.
+//
+// The shots agent skips a change for two kinds of reason. Some say the
+// copies lack the data the change needs: "The after copy has no '[Mock]
+// Advisory vote' row", "These copies have no member with a nearly spent
+// weekly allowance", "no fixture for this state". Its author can supply
+// that, with a staging seed in the proposal or a hints.setup step. Others
+// say the copies lack something no data gives them: a model key (4 of the
+// 35), a wallet (4), a mailbox to read a code from, a file to upload, a
+// network to drop, a location, the browser's own tab; or the after build
+// answered an error, or the agent never finished. A seed changes none of
+// those, so they never go back.
+//
+// So the rule is narrow on purpose. A skip qualifies only when its reason
+// names missing data (MISSING_DATA_RE) and none of those causes
+// (NOT_SEEDABLE_RE), and the change is new on the after side (baseState
+// not_present). A seed the proposal adds runs on the after copy alone, which
+// for a new change is the side that has it; for a change to something both
+// sides already show, the same seed would make them differ by more than the
+// change, so that one is left to a person. 11 of the 35 reasons name missing
+// data and no such cause; the baseState rule then leaves out the ones
+// declared as a change to a screen that was already there (a new bell row
+// declared "present" because the bell was, proposal 7886).
+const MISSING_DATA_RE = /\bfixtures?\b|\bno\b[^.;:]{0,60}?\b(?:rows?|records?|data|changes?|projects?|apps?|members?|accounts?|items?|entries|messages?|cards?|runs?|requests?|states?|seeds?)\b|\bdoes(?: not|n't) exist\b|\b(?:is|are)(?: not|n't) (?:on|in) (?:these|this|the|either) (?:copies|copy|after copy)\b/i;
+const NOT_SEEDABLE_RE = /\bmodel\b|\bwallets?\b|\bupload|file chooser|e-?mail|mailbox|\boffline\b|connection drop|network (?:request|connection)|stub fetch|geolocation|location permission|camera|microphone|clipboard|\bnot signed in\b|sign(?:ing|-| )in (?:is|isn't|is not)|browser(?:-| )tab|favicon|too fast|in flight|(?:hold|delay)(?: or (?:hold|delay))? (?:the )?(?:api )?requests?|\b(?:401|403|5\d\d)\b|unauthori[sz]ed|server error|did not save/i;
+
+/** Pure: whether a skip's reason says the copies lack data a seed could supply, and nothing a seed cannot. */
+function seedableSkip(reason) {
+  const text = typeof reason === 'string' ? reason : '';
+  return MISSING_DATA_RE.test(text) && !NOT_SEEDABLE_RE.test(text);
+}
+
+/**
+ * Pure: the declared changes the shots on head `headSha` skipped for want of
+ * data that the proposal itself could seed (seedableSkip, on a change
+ * declared new on the after side): [{ id, claim, steps, reason }].
+ */
+function skippedOnHead(row, headSha) {
+  return resultsOnHead(row, headSha, (result, declared) => result.status === 'skipped'
+    && declared.baseState === 'not_present' && seedableSkip(result.reason));
 }
 
 /**
@@ -626,12 +768,18 @@ function assertTransitionPayload(row, next, patch) {
   if (next === 'cancelled' || next === 'stale') patch.completedAt = patch.completedAt || new Date();
 }
 
-async function transitionRun(pool, runId, nextState, rawPatch = {}) {
+// The transition locks the run, then its proposal (FOR UPDATE OF r, s), while
+// createRun and markStaleForHead lock the proposal first: two of them on one
+// proposal at once can deadlock, and Postgres rolls one back (40P01). The
+// transition re-reads and re-checks everything under its lock, so a rolled-
+// back one is run again, a bounded number of times, from a fresh copy of
+// the patch.
+async function transitionRun(pool, runId, nextState, rawPatch = {}, { retry = {} } = {}) {
   if (!/^[0-9a-f]{32}$/.test(String(runId || ''))) {
     throw new ShotsStateError('invalid_shots_run', 'Invalid before & after shots run id.', 400);
   }
-  const patch = { ...rawPatch };
-  const next = await withTransaction(pool, async (client) => {
+  const next = await dbRetry.withDbRetry(() => withTransaction(pool, async (client) => {
+    const patch = { ...rawPatch };
     const selected = await client.query(
       `SELECT r.*, s.shots_run_id AS current_run_id
          FROM shot_runs r
@@ -726,7 +874,7 @@ async function transitionRun(pool, runId, nextState, rawPatch = {}) {
       );
     }
     return next;
-  });
+  }), { label: 'Shots run transition', ...retry });
   if (TERMINAL_STATES.has(next?.state)) noteSettled(pool, next.session_id);
   return next;
 }
@@ -975,7 +1123,10 @@ async function getForSession(pool, sessionId, { headSha = null } = {}) {
             (SELECT COUNT(*) FROM shot_runs crash
               WHERE crash.session_id = r.session_id AND crash.head_sha = r.head_sha
                 AND crash.failure_code = 'shots_run_interrupted'
-                AND COALESCE(crash.trace_summary->>'interruptedBy', '') <> 'shutdown')::int AS unexplained_interruptions
+                AND COALESCE(crash.trace_summary->>'interruptedBy', '') <> 'shutdown')::int AS unexplained_interruptions,
+            (SELECT COUNT(*) FROM shot_runs retry
+              WHERE retry.session_id = r.session_id AND retry.head_sha = r.head_sha
+                AND retry.trigger = 'platform-retry')::int AS platform_retries
        FROM shot_runs r
       WHERE r.session_id = $1 ${headClause}
         AND r.state NOT IN ('stale','cancelled')
@@ -1091,12 +1242,20 @@ async function storeArtifacts(pool, runId, artifacts, { headSha, planHash } = {}
 module.exports = {
   storeArtifacts,
   currentCode,
+  AGENT_BUSY_CODES,
+  AGENT_BUSY_REASON,
+  agentBusyCode,
   INTERRUPTED_RETRY_TRIGGER,
   MAX_INTERRUPTED_RETRIES,
   MAX_UNEXPLAINED_RETRIES,
   SHUTDOWN_INTERRUPTION,
   SHUTDOWN_INTERRUPTED_REASON,
   interruptedRetryAllowed,
+  PLATFORM_RETRY_TRIGGER,
+  MAX_PLATFORM_RETRIES,
+  PLATFORM_FAULT_KINDS,
+  platformFaultOf,
+  platformRetryAllowed,
   STATES,
   TRANSITIONS,
   TERMINAL_STATES,
@@ -1126,6 +1285,8 @@ module.exports = {
   getForSession,
   READY_HOLD_MS,
   brokenOnHead,
+  seedableSkip,
+  skippedOnHead,
   holdsReady,
   _setSettleListenerForTests: setSettleListenerForTests,
 };

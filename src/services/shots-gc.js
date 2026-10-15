@@ -15,6 +15,7 @@ const { visualHeadForSession, sameSha } = require('./pr-vote-revision');
 const FAILED_MEDIA_HOURS = 24;
 const ROLLBACK_MEDIA_DAYS = 7;
 const RUN_RETENTION_DAYS = 30;
+const EVAL_ARTIFACT_DAYS = 30;
 // A live run renews its durable row every 30 seconds. Waiting for the entire
 // 24-minute run budget after heartbeats stop hides interrupted deployments
 // and stalls the owner's manual rerun option. Keep a generous five-minute
@@ -308,6 +309,68 @@ async function retryInterrupted(config, pool, {
   return { examined: rows.length, scheduled };
 }
 
+// A run that a platform step failed (shots-state PLATFORM_RETRY_TRIGGER: the
+// copies' database, a clone, the worker's bootstrap, GitHub's hourly limit,
+// the shots agent's exit) is taken again ONCE on the same head, after
+// `minAgeMs`, or for GitHub's limit once the `retryAt` its trace recorded has
+// passed. The count is the `platform_retries` subquery the loaders select
+// (state.platformRetryAllowed), so the card says "trying again" exactly
+// while this sweep will start it. A second failure stays failed.
+const { PLATFORM_RETRY_TRIGGER, MAX_PLATFORM_RETRIES, PLATFORM_FAULT_KINDS } = state;
+
+async function retryPlatformFaults(config, pool, {
+  limit = 10, minAgeMs = 60_000, maxRetries = MAX_PLATFORM_RETRIES,
+  schedule = null, stateService = state, isShuttingDown = lifecycle.isShuttingDown,
+} = {}) {
+  if (!config.shots?.execute) return { examined: 0, scheduled: 0 };
+  if (isShuttingDown()) return { examined: 0, scheduled: 0 };
+  const { rows } = await pool.query(
+    `SELECT r.id AS run_id, r.head_sha, r.trace_summary->'platformFault'->>'kind' AS fault,
+            cs.id, cs.source, cs.imported_pr_head_sha,
+            cs.reviewed_head_sha, cs.checks_commit_sha, cs.handoff_head_sha
+       FROM chat_sessions cs
+       JOIN shot_runs r ON r.id = cs.shots_run_id
+       CROSS JOIN LATERAL (
+         SELECT (SELECT COUNT(*) FROM shot_runs retry
+                  WHERE retry.session_id = r.session_id AND retry.head_sha = r.head_sha
+                    AND retry.trigger = 'platform-retry')::int AS platform_retries
+       ) n
+      WHERE r.state = 'failed'
+        AND r.trace_summary->'platformFault'->>'kind' = ANY($3::text[])
+        AND cs.status NOT IN ('merged', 'archived')
+        AND n.platform_retries < $4
+        AND r.updated_at < NOW() - ($1::bigint * INTERVAL '1 millisecond')
+        AND (CASE WHEN jsonb_typeof(r.trace_summary->'platformFault'->'retryAt') = 'number'
+              THEN (r.trace_summary->'platformFault'->>'retryAt')::numeric ELSE 0 END)
+          <= EXTRACT(EPOCH FROM NOW()) * 1000
+      ORDER BY r.updated_at ASC LIMIT $2`,
+    [Math.max(0, Number(minAgeMs) || 0), Math.max(1, Math.min(50, Number(limit) || 10)),
+      [...PLATFORM_FAULT_KINDS], Math.max(0, Number(maxRetries) || 0)]
+  );
+  const dispatch = schedule || require('./shots-orchestrator').scheduleForSession;
+  let scheduled = 0;
+  for (const row of rows) {
+    // A newer commit owns the proposal now; its own checks start shots.
+    if (!sameSha(visualHeadForSession(row), row.head_sha)) continue;
+    try {
+      await stateService.rerunSameHead(pool, row.run_id, { trigger: PLATFORM_RETRY_TRIGGER });
+      const result = await dispatch(config, {
+        pool, sessionId: row.id, headSha: row.head_sha, trigger: PLATFORM_RETRY_TRIGGER,
+      });
+      if (result.scheduled) scheduled += 1;
+      log.info('shots', 'Taking before & after shots again after a platform fault', {
+        sessionId: row.id, runId: row.run_id, fault: row.fault, scheduled: !!result.scheduled,
+      });
+    } catch (error) {
+      // Another pod or a person may have retried it first; both are fine.
+      log.warn('shots', 'Could not retry a before & after shots run a platform fault ended', {
+        sessionId: row.id, runId: row.run_id, fault: row.fault, code: error.code, error: error.message,
+      });
+    }
+  }
+  return { examined: rows.length, scheduled };
+}
+
 async function prune(pool, config = {}) {
   const failedMediaHours = Math.max(1,
     Number(config.shots?.failedArtifactRetentionHours) || FAILED_MEDIA_HOURS);
@@ -346,14 +409,35 @@ async function prune(pool, config = {}) {
   };
 }
 
+// A shots eval's images (shots-eval.js) are for comparing configurations
+// while the comparison is fresh: kept EVAL_ARTIFACT_DAYS after the trial
+// finished. The trial keeps its results and numbers.
+async function pruneEvalArtifacts(pool, { days = EVAL_ARTIFACT_DAYS } = {}) {
+  const { rowCount } = await pool.query(
+    `DELETE FROM shots_eval_artifacts a
+      USING shots_eval_trials t
+      WHERE a.trial_id = t.id
+        AND t.state IN ('verified', 'failed', 'cancelled')
+        AND COALESCE(t.completed_at, t.updated_at) < NOW() - ($1::int * INTERVAL '1 day')`,
+    [Math.max(1, Number(days) || EVAL_ARTIFACT_DAYS)]
+  );
+  return rowCount || 0;
+}
+
 async function sweepOrphanCheckouts(pool, { maxAgeMs = 720_000, tmpDir = os.tmpdir() } = {}) {
   const boundedAge = Math.max(60_000, Number(maxAgeMs) || 720_000);
+  // A shots eval's trial (shots-eval-runner.js) checks out its revisions
+  // under its attempt id the same way, and keeps the same kind of lease.
   const active = await pool.query(
     `SELECT id FROM shot_runs
       WHERE state IN ('planned','provisioning','exploring','replaying','reviewing')
         AND updated_at >= NOW() - (
           (CASE WHEN COALESCE(trace_summary, '{}'::jsonb) ? 'progress'
-            THEN $1 ELSE $2 END)::bigint * INTERVAL '1 millisecond')`,
+            THEN $1 ELSE $2 END)::bigint * INTERVAL '1 millisecond')
+     UNION ALL
+     SELECT attempt_id AS id FROM shots_eval_trials
+      WHERE state IN ('provisioning','exploring','reviewing')
+        AND updated_at >= NOW() - ($2::bigint * INTERVAL '1 millisecond')`,
     [boundedAge, Math.max(boundedAge, LEGACY_RUN_GRACE_MS)]
   );
   const activePrefixes = new Set((active.rows || []).map((row) => String(row.id || '').slice(0, 8)));
@@ -404,8 +488,13 @@ async function sweepOrphanRuntimes(config, pool, {
   if (!runtimes.length) return result;
   // No deletion is attempted unless the entire state lookup succeeds. A
   // nonterminal row is left to heartbeat recovery, however old its runtime.
+  // A shots eval's trial names its copies by its attempt id; its row is
+  // read the same way (shots-eval-runner.js).
   const { rows } = await pool.query(
-    `SELECT id, session_id, state, updated_at FROM shot_runs WHERE id = ANY($1::text[])`,
+    `SELECT id, session_id, state, updated_at FROM shot_runs WHERE id = ANY($1::text[])
+     UNION ALL
+     SELECT attempt_id AS id, session_id, state, updated_at FROM shots_eval_trials
+      WHERE attempt_id = ANY($1::text[])`,
     [[...new Set(runtimes.map((ref) => ref.runId))]]
   );
   const runs = new Map(rows.map((run) => [run.id, run]));
@@ -439,6 +528,7 @@ async function sweep(config, pool) {
     maxAgeMs: config.shots?.maxRunMs || 1_440_000,
   });
   const pruned = await prune(pool, config);
+  const evalArtifacts = await pruneEvalArtifacts(pool);
   return {
     ...recovered,
     orphanRuntimesExamined: runtimes.examined,
@@ -447,6 +537,7 @@ async function sweep(config, pool) {
     orphanCheckoutsExamined: checkouts.examined,
     orphanCheckoutsRemoved: checkouts.removed,
     ...pruned,
+    evalArtifacts,
   };
 }
 
@@ -454,6 +545,7 @@ module.exports = {
   FAILED_MEDIA_HOURS,
   ROLLBACK_MEDIA_DAYS,
   RUN_RETENTION_DAYS,
+  EVAL_ARTIFACT_DAYS,
   LEGACY_RUN_GRACE_MS,
   cleanupRunResources,
   recoverInterrupted,
@@ -463,7 +555,11 @@ module.exports = {
   MAX_UNEXPLAINED_RETRIES,
   MAX_RETRY_DELAY_MS,
   INTERRUPTED_RETRY_TRIGGER,
+  retryPlatformFaults,
+  MAX_PLATFORM_RETRIES,
+  PLATFORM_RETRY_TRIGGER,
   prune,
+  pruneEvalArtifacts,
   sweepOrphanCheckouts,
   sweepOrphanRuntimes,
   sweep,

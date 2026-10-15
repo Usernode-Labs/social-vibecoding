@@ -157,7 +157,9 @@ test('run diagnostics are private to the author or app manager, available live, 
     completed_at: new Date('2026-09-01T00:02:00Z'),
     updated_at: new Date('2026-09-01T00:02:00Z'),
     plan_hash: 'c'.repeat(64),
-    hard_verdict: { passed: true, mode: 'shots', runs: 1, stories },
+    hard_verdict: { passed: true, mode: 'shots', runs: 1, stories, notices: [
+      { text: 'The sort control overlaps a heading.', change: 'invite-suggestions', screen: 'desktop', shot: null, alsoBefore: 'unknown' },
+    ] },
     // Columns a replay-era row may still hold; none of them is read.
     replay_plan: { secret: 'must not escape' }, author_plan: { secret: 'must not escape' }, repair_attempt: 1,
     failure_code: 'shots_capture_incomplete', failure_reason: 'The shots agent could not reach the dialog.',
@@ -222,6 +224,7 @@ test('run diagnostics are private to the author or app manager, available live, 
   assert.equal(diagnostics.currentRun, true);
   assert.equal(diagnostics.planHash, 'c'.repeat(64));
   assert.deepEqual(diagnostics.shotResults, stories);
+  assert.deepEqual(diagnostics.shotNotices, run.hard_verdict.notices, 'what the agent noticed, as stored');
   for (const key of ['replayPlan', 'authorPlan', 'authorPlanSupplied', 'repairAttempt', 'diagnosticArtifacts']) {
     assert.equal(Object.hasOwn(diagnostics, key), false, key);
   }

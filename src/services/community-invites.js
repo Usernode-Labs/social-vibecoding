@@ -7,8 +7,10 @@
  *   createInvite  any member makes one for a project they are in. It lasts
  *                 DEFAULT_DAYS and works for DEFAULT_USES people unless they
  *                 choose otherwise, within the LIMITS.
- *   listInvites   the viewer's own live links (every live link, for someone
- *                 who manages the project).
+ *   listInvites   the viewer's live links plus, for the last 30 days, the
+ *                 ones that ended (every such link, for someone who manages
+ *                 the project), each with how it ended and what became of
+ *                 the people who followed it.
  *   revokeInvite  its maker, a project admin or a platform admin turns it
  *                 off. People it queued who were not let in yet are cancelled
  *                 with it; people who already joined stay.
@@ -159,6 +161,11 @@ function serializeLink(row, viewerId) {
     createdBy: row.created_by_username || null,
     mine: row.created_by != null && row.created_by === viewerId,
     note: row.note || null,
+    // What became of it: live, or how it ended. A new link's RETURNING row
+    // has none of these, so it serializes live with nothing to show.
+    status: row.status || 'live',
+    joined: row.joined ?? 0,
+    waiting: row.waiting ?? 0,
   };
 }
 
@@ -208,25 +215,153 @@ async function createInvite(pool, { app, user, days, maxUses, note }) {
 }
 
 /**
- * The live links for `app` the viewer may see: their own, or every live
- * link when they manage the project. Newest first.
+ * The invite links for `app` the viewer may see: their own, or every link
+ * when they manage the project. The live ones first, newest first, then
+ * those that ended in the last ENDED_KEEP_DAYS days, each carrying how it
+ * ended (`status`, the same names and order of precedence as deadReason)
+ * and what became of the people who followed it (`joined`, `waiting`).
  */
+const ENDED_KEEP_DAYS = 30;
 async function listInvites(pool, { app, user }) {
   const manages = !!user && (user.canAdminWrite || await appAdmins.canManageApp(pool, app, user));
   const { rows } = await pool.query(
     `SELECT i.id, i.token, i.created_by, i.max_uses, i.uses, i.expires_at, i.created_at, i.note,
-            u.username AS created_by_username
+            u.username AS created_by_username,
+            CASE
+              WHEN i.revoked_at IS NOT NULL OR NOT community_invite_maker_holds(i.id) THEN 'revoked'
+              WHEN i.expires_at IS NOT NULL AND i.expires_at <= NOW()                THEN 'expired'
+              WHEN i.max_uses IS NOT NULL AND i.uses >= i.max_uses                   THEN 'used_up'
+              ELSE 'live'
+            END AS status,
+            r.joined, r.waiting
        FROM community_invites i
        LEFT JOIN users u ON u.id = i.created_by
+       LEFT JOIN LATERAL (
+         SELECT COUNT(*) FILTER (WHERE x.status = 'joined')::int AS joined,
+                COUNT(*) FILTER (WHERE x.status = 'queued' AND x.applied_at IS NULL)::int AS waiting
+           FROM community_invite_redemptions x
+          WHERE x.invite_id = i.id
+       ) r ON TRUE
       WHERE i.app_id = $1
-        AND i.revoked_at IS NULL AND (i.expires_at IS NULL OR i.expires_at > NOW())
-        AND (i.max_uses IS NULL OR i.uses < i.max_uses)
+        AND (
+          -- Live: not turned off, not past its end, not used up, and its
+          -- maker can still grant what it grants.
+          (i.revoked_at IS NULL AND (i.expires_at IS NULL OR i.expires_at > NOW())
+            AND (i.max_uses IS NULL OR i.uses < i.max_uses)
+            AND community_invite_maker_holds(i.id))
+          -- Ended within the keep window, each by its own clock:
+          OR i.revoked_at > NOW() - make_interval(days => $4::int)
+          OR (i.expires_at IS NOT NULL AND i.expires_at <= NOW()
+            AND i.expires_at > NOW() - make_interval(days => $4::int))
+          OR (i.max_uses IS NOT NULL AND i.uses >= i.max_uses
+            AND EXISTS (
+              SELECT 1 FROM community_invite_redemptions x
+               WHERE x.invite_id = i.id AND x.created_at > NOW() - make_interval(days => $4::int)))
+          -- A maker who lost standing leaves no end time: kept from when the
+          -- link was made.
+          OR (NOT community_invite_maker_holds(i.id)
+            AND i.created_at > NOW() - make_interval(days => $4::int))
+        )
         AND ($3::boolean OR i.created_by = $2)
-      ORDER BY i.created_at DESC, i.id DESC
+      ORDER BY (CASE
+        WHEN i.revoked_at IS NULL AND (i.expires_at IS NULL OR i.expires_at > NOW())
+          AND (i.max_uses IS NULL OR i.uses < i.max_uses)
+          AND community_invite_maker_holds(i.id) THEN 0
+        ELSE 1 END) ASC,
+        i.created_at DESC, i.id DESC
       LIMIT 50`,
-    [app.id, user?.id || null, manages]
+    [app.id, user?.id || null, manages, ENDED_KEEP_DAYS]
   );
   return { links: rows.map((r) => serializeLink(r, user?.id)), manages };
+}
+
+/**
+ * Whether `userId` has a live invite link for `app` (the same "live" as
+ * listInvites: not turned off, not past its end, not used up). The hub reads
+ * it to draw a project that is just theirs with open seats once a link is
+ * out (#4045, 8 Oct 2026). It is the only trace a link leaves: copying or
+ * sharing it happens on the person's device, and making the link is what
+ * opening the invite pane does, so this says "a link was made", which is as
+ * near to "went out" as the records get.
+ */
+async function hasLiveLink(pool, appId, userId) {
+  if (!appId || !userId) return false;
+  const { rows } = await pool.query(
+    `SELECT 1 FROM community_invites
+      WHERE app_id = $1 AND created_by = $2 AND revoked_at IS NULL
+        AND (expires_at IS NULL OR expires_at > NOW())
+        AND (max_uses IS NULL OR uses < max_uses)
+      LIMIT 1`,
+    [appId, userId]
+  );
+  return rows.length > 0;
+}
+
+/**
+ * What the invite links out for a project come to, in one small record:
+ * how many are live, how many people joined through them, how many still
+ * wait on one, and when the soonest of them ends (null when none of them
+ * has an end). Pure, over listInvites' serialized links: only the live ones
+ * count, so a link turned off, ended or used up says nothing here.
+ */
+function summarizeLinks(links) {
+  const live = (Array.isArray(links) ? links : []).filter((l) => l && l.status === 'live');
+  let soonest = null;
+  for (const link of live) {
+    if (!link.expiresAt) continue;
+    const at = Date.parse(link.expiresAt);
+    if (Number.isFinite(at) && (soonest == null || at < soonest)) soonest = at;
+  }
+  return {
+    links: live.length,
+    joined: live.reduce((n, l) => n + (Number(l.joined) || 0), 0),
+    waiting: live.reduce((n, l) => n + (Number(l.waiting) || 0), 0),
+    expires_at: soonest == null ? null : new Date(soonest).toISOString(),
+  };
+}
+
+/**
+ * The hub's Share it card's line about the invite that is out ("Invite link
+ * sent · nobody has joined yet · 7 days left"): summarizeLinks over the very
+ * links listInvites shows this viewer, scoped as it scopes them (their own,
+ * or every link when they manage the project). Null without a viewer.
+ */
+async function inviteSummary(pool, { app, user }) {
+  if (!app || !user) return null;
+  const { links } = await listInvites(pool, { app, user });
+  return summarizeLinks(links);
+}
+
+/**
+ * The Communities list's "Invite link out" (features/workshop/index.tsx
+ * rowSubtitle), for every project in the list at once: Map(appId ->
+ * { links, joined }), over the viewer's own LIVE links (listInvites' live:
+ * not turned off, not past its end, not used up, its maker still able to
+ * grant it) and the people who joined through them. One query for the
+ * whole list, never one per project. A project the viewer has no live link
+ * for is absent.
+ */
+async function linksOutFor(pool, appIds, userId) {
+  const out = new Map();
+  const ids = (Array.isArray(appIds) ? appIds : []).map(Number).filter((id) => Number.isInteger(id) && id > 0);
+  if (!ids.length || !userId) return out;
+  const { rows } = await pool.query(
+    `SELECT i.app_id, COUNT(*)::int AS links, COALESCE(SUM(r.joined), 0)::int AS joined
+       FROM community_invites i
+       LEFT JOIN LATERAL (
+         SELECT COUNT(*) FILTER (WHERE x.status = 'joined')::int AS joined
+           FROM community_invite_redemptions x
+          WHERE x.invite_id = i.id
+       ) r ON TRUE
+      WHERE i.app_id = ANY($1::int[]) AND i.created_by = $2
+        AND i.revoked_at IS NULL AND (i.expires_at IS NULL OR i.expires_at > NOW())
+        AND (i.max_uses IS NULL OR i.uses < i.max_uses)
+        AND community_invite_maker_holds(i.id)
+      GROUP BY i.app_id`,
+    [ids, userId]
+  );
+  for (const row of rows) out.set(Number(row.app_id), { links: row.links, joined: row.joined });
+  return out;
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -275,13 +410,45 @@ function joiningRuleText({ approvalsRequired = null, approverPolicy = 'anyone', 
 }
 
 /**
- * joiningRuleText for `app` (carrying id and locked), with its rule and its
- * headcount read. Never throws; null when the rule cannot be read.
+ * #4666: the same line for a project on a preset or rules of its own
+ * (services/governance-rules.js), said to the person inviting: the creator
+ * reads "you", everyone else reads the creator's name. Group vote is the
+ * default rule and keeps joiningRuleText's numbers.
  */
-async function joiningRule(pool, app) {
+function rulesJoiningText({ preset, creatorName = null, viewerIsCreator = false, locked = false } = {}) {
+  const admin = locked ? ' An admin has to say yes too.' : '';
+  const who = viewerIsCreator ? 'you say' : (creatorName ? `${creatorName} says` : 'its creator says');
+  if (preset === 'you_or_the_group') return `A change goes live when ${who} yes, or when most of the group does.${admin}`;
+  if (preset === 'two_yeses') return `A change goes live once two people say yes: whoever makes it, and one more.${admin}`;
+  if (preset === 'open_floor') return `Any member’s yes puts a change live, even their own.${admin}`;
+  return `A change goes live when any one of its rules passes.${admin}`;
+}
+
+/**
+ * joiningRuleText for `app` (carrying id, locked and created_by), with its
+ * rule and its headcount read. `viewerId` is the person reading it. Never
+ * throws; null when the rule cannot be read.
+ */
+async function joiningRule(pool, app, viewerId = null) {
   try {
     const governance = require('./governance');
     const gov = await governance.getGovernance(pool, app.id);
+    if (gov.rules) {
+      const preset = gov.rules.preset || require('./governance-rules').matchPreset(gov.rules.rules);
+      if (preset !== 'group_vote' || gov.rules.groups.length) {
+        let creatorName = null;
+        if (app.created_by && !app.self_hosted) {
+          const { rows } = await pool.query('SELECT username FROM users WHERE id = $1', [app.created_by]);
+          creatorName = rows[0]?.username || null;
+        }
+        return rulesJoiningText({
+          preset: gov.rules.groups.length ? null : preset,
+          creatorName,
+          viewerIsCreator: !!viewerId && viewerId === app.created_by,
+          locked: !!app.locked,
+        });
+      }
+    }
     let people = 1;
     let invited = 0;
     if (gov.approvalsRequired == null && gov.approverPolicy !== 'invited') {
@@ -478,26 +645,6 @@ async function firstVersionPending(db, appId) {
     log.warn('invites', 'Could not read whether a first version is on its way', { appId, err: err.message });
     return false;
   }
-}
-
-/**
- * The same picture for somebody who has just joined, at addresses that need
- * no link ("You're in", frontend/src/features/first-session): the card of
- * the idea, as words the screen draws itself, and the Discover card's image,
- * which anyone may see. An after-shot is served only through a live link,
- * so a member is shown none here. Null for no picture.
- */
-function memberPicture(slug, picture) {
-  if (!picture || !slug) return null;
-  if (picture.kind === 'sketch') return { kind: 'sketch', url: null, darkUrl: null, card: picture.card };
-  if (picture.kind === 'illustration') {
-    return {
-      kind: 'illustration',
-      url: `/app-illustrations/${picture.id}`,
-      darkUrl: picture.darkId ? `/app-illustrations/${picture.darkId}` : null,
-    };
-  }
-  return null;
 }
 
 /**
@@ -738,8 +885,8 @@ async function redeem(pool, { token, user, browser = null, requirePhone = false 
     // a new account answers ("What communities do you want to join?",
     // services/onboarding.js) is not put between them and it. Answered
     // as 'invite' for the admin Journey page, and communities_onboarded_at
-    // stays NULL, so the Getting started card stays out of their first
-    // session too.
+    // stays NULL. `getting_started_gate` alone marks a new account (#4601),
+    // so one that came by a link is a newcomer like any other.
     await client.query(
       `UPDATE users
           SET needs_communities_choice = FALSE,
@@ -915,6 +1062,10 @@ async function redeemCarried(pool, req, res, userId, { requirePhone = false } = 
     );
     if (!rows[0]) return null;
     const user = { id: rows[0].id, isAdmin: !!rows[0].is_admin, hasPlatformAccess: !!rows[0].has_platform_access };
+    // The admin Journey's invite funnel: signed up or in through this link.
+    // Recorded before following it, while they are not in it yet; never
+    // throws (journey-events.js).
+    await require('./journey-events').noteInviteSignedIn(pool, { token, userId: user.id, carried: true });
     const browser = require('./invite-activity').browserFrom(req);
     const result = await redeem(pool, { token, user, browser, requirePhone });
     if (!result.ok) return null;
@@ -928,6 +1079,25 @@ async function redeemCarried(pool, req, res, userId, { requirePhone = false } = 
   }
 }
 
+/**
+ * A sign-in that carried a link but does not follow it: an existing account
+ * is asked first, by the shell (App._followInvite), unless this sign-in IS
+ * the Join its page asked for. The carried copy is dropped, so nothing
+ * follows it later without asking. The admin Journey's invite funnel still
+ * counts the sign-in as one the link brought (#4272): they opened the link
+ * signed out and signed in carrying it, and the shell's standing read after
+ * it would otherwise take them for somebody already signed in. Recorded
+ * before the sign-in answers, so that read finds it. Never throws; resolves
+ * null, as redeemCarried does when it follows nothing.
+ */
+async function dropCarried(pool, req, res, userId) {
+  const token = req.cookies?.[INVITE_COOKIE];
+  clearInviteCookie(res);
+  if (!token || !isToken(token) || !userId) return null;
+  await require('./journey-events').noteInviteSignedIn(pool, { token, userId, carried: true });
+  return null;
+}
+
 module.exports = {
   DEFAULT_DAYS,
   DEFAULT_USES,
@@ -936,10 +1106,10 @@ module.exports = {
   cleanNote,
   pictureBytes,
   pictureFor,
-  memberPicture,
   firstVersionPending,
   joiningRule,
   joiningRuleText,
+  rulesJoiningText,
   NO_LIMIT,
   MAX_LIVE_PER_MAKER,
   TOKEN_RE,
@@ -949,6 +1119,10 @@ module.exports = {
   deadReason,
   grantFor,
   canCreate,
+  hasLiveLink,
+  summarizeLinks,
+  inviteSummary,
+  linksOutFor,
   canRevoke,
   createInvite,
   listInvites,
@@ -961,4 +1135,5 @@ module.exports = {
   setInviteCookie,
   clearInviteCookie,
   redeemCarried,
+  dropCarried,
 };

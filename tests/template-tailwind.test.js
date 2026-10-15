@@ -161,7 +161,32 @@ test('new apps declare a locked, build-time Tailwind compiler and standard build
   assert.deepEqual(lock.packages[''].devDependencies, pkg.devDependencies);
   assert.equal(lock.packages['node_modules/tailwindcss'].version, '3.4.17');
   assert.match(lock.packages['node_modules/tailwindcss'].integrity, /^sha512-/);
-  const second = getTemplateFiles('Other', 'other-456');
-  assert.equal(JSON.parse(file(second, 'package-lock.json')).name, 'other-456');
-  assert.equal(JSON.parse(file(files(), 'package-lock.json')).name, 'my-app-123');
+});
+
+// The image's `COPY package.json package-lock.json` and the `npm ci` steps
+// after it are the same for every app of a starter only if the two files
+// are. They used to carry the app's slug and name; now they carry the
+// template's own, so a new app's first build is served those steps from
+// the starter's shared layer cache (services/kubernetes-buildkit.js).
+test('every new app gets the template\'s own package files, byte for byte, whatever it is called', () => {
+  const nodeAppPackage = require('../src/templates/node-app/package.json');
+  const nodeAppLock = require('../src/templates/node-app/package-lock.json');
+  const one = files();
+  const other = getTemplateFiles('Other', 'other-456', null, 'https://github.com/example/other-456', { description: 'Something else' });
+  for (const p of ['package.json', 'package-lock.json']) {
+    assert.equal(file(other, p), file(one, p), `${p} is the same for every app`);
+    assert.doesNotMatch(file(one, p), /my-app-123|My App/, `${p} names no app`);
+  }
+  // Nothing else in them changes: they are the template's files as they are.
+  assert.equal(file(one, 'package.json'), JSON.stringify(nodeAppPackage, null, 2));
+  assert.equal(file(one, 'package-lock.json'), JSON.stringify(nodeAppLock, null, 2));
+  const pkg = JSON.parse(file(one, 'package.json'));
+  const lock = JSON.parse(file(one, 'package-lock.json'));
+  assert.equal(pkg.name, 'usernode-app-template');
+  assert.equal(pkg.description, 'Homeroom app template');
+  assert.equal(lock.name, pkg.name);
+  assert.equal(lock.packages[''].name, pkg.name);
+  // The app's name is still where it is read.
+  assert.equal(JSON.parse(file(other, 'dapp.json')).description, 'Something else');
+  assert.match(file(other, 'CLAUDE.md'), /^# Other /);
 });

@@ -33,6 +33,18 @@ const APPS = {
     repo_url: 'https://github.com/example/secret.git',
     view_visibility: 'private', collab_visibility: 'private',
   },
+  'club-votes': {
+    id: 9, slug: 'club-votes', name: 'Club Votes', status: 'running',
+    repo_url: 'https://github.com/example/club-votes.git',
+    view_visibility: 'public', collab_visibility: 'public',
+    icon_image_id: 'a1b2c3', icon_emoji: '🗳️',
+  },
+  'emoji-only': {
+    id: 10, slug: 'emoji-only', name: 'Emoji Only', status: 'running',
+    repo_url: 'https://github.com/example/emoji-only.git',
+    view_visibility: 'public', collab_visibility: 'public',
+    icon_image_id: null, icon_emoji: '🌱',
+  },
 };
 
 /**
@@ -110,6 +122,24 @@ test('a community hub and its discussion are as visible as the app', async () =>
   assert.equal(member.title, 'Secret App');
 });
 
+// Run four (13 Oct 2026): an app's card and its community's wear the app's
+// own icon, its image else its emoji; an app with neither carries no field,
+// and its card draws the glyph.
+test('an app\'s card and its community\'s carry the app\'s own icon when it has one', async () => {
+  const pool = fakePool();
+  const hub = await sharedObjects.hydrateLink(pool, viewer, { type: 'hub', app_slug: 'club-votes' });
+  assert.equal(hub.iconUrl, '/app-icons/a1b2c3');
+  assert.equal(hub.iconEmoji, '🗳️');
+  const app = await sharedObjects.hydrateLink(pool, viewer, { type: 'app', app_slug: 'emoji-only' });
+  assert.equal(app.available, true);
+  assert.equal(app.iconUrl, undefined, 'no image, no address');
+  assert.equal(app.iconEmoji, '🌱');
+  const plain = await sharedObjects.hydrateLink(pool, viewer, { type: 'app', app_slug: 'open' });
+  assert.equal('iconUrl' in plain || 'iconEmoji' in plain, false, 'an app with no icon: the glyph');
+  const chat = await sharedObjects.hydrateLink(pool, viewer, { type: 'discussion', app_slug: 'club-votes' });
+  assert.equal('iconUrl' in chat, false, 'a discussion keeps its #');
+});
+
 test('a change shows only where the change itself is visible', async () => {
   const pool = fakePool();
   assert.deepEqual(await sharedObjects.hydrateLink(pool, viewer, { type: 'proposal', app_slug: 'open', session_id: 41 }), {
@@ -133,6 +163,44 @@ test('a change shows only where the change itself is visible', async () => {
   const gov = await sharedObjects.hydrateLink(pool, viewer, { type: 'governance', app_slug: 'open', proposal_id: 5 });
   assert.equal(gov.available, true);
   assert.equal(gov.href, '#app/open/dev/governance/5');
+});
+
+// #4367: a change's address is its pull request's number, so a link may name
+// it that way (`dev/changes/<N>`). The number is looked up on the app the link
+// names, and the card is then read under the same visibility rule.
+test('a change named by its pull request number is the same card, at that address', async () => {
+  const base = fakePool();
+  const pool = {
+    seen: base.seen,
+    query: async (sql, params) => {
+      if (/FROM chat_sessions WHERE app_id = \$1 AND pr_number = \$2/.test(sql)) {
+        base.seen.push(sql);
+        return { rows: params[0] === 7 && params[1] === 4509 ? [{ id: 41 }] : [] };
+      }
+      const out = await base.query(sql, params);
+      if (/FROM chat_sessions cs LEFT JOIN users/.test(sql) && out.rows[0]) {
+        return { rows: [{ ...out.rows[0], pr_number: 4509 }] };
+      }
+      return out;
+    },
+  };
+  assert.deepEqual(sharedObjects.normalizeLink({ type: 'proposal', app_slug: 'open', pr_number: 4509 }),
+    { type: 'proposal', slug: 'open', ref: null, pr: 4509 });
+  const card = await sharedObjects.hydrateLink(pool, viewer, { type: 'proposal', app_slug: 'open', pr_number: 4509 });
+  assert.equal(card.available, true);
+  assert.equal(card.sessionId, 41);
+  assert.equal(card.prNumber, 4509);
+  assert.equal(card.href, '#app/open/dev/changes/4509', 'a change with a PR links by its number');
+  assert.deepEqual(
+    await sharedObjects.hydrateLink(pool, viewer, { type: 'proposal', app_slug: 'open', pr_number: 4510 }),
+    { type: 'proposal', available: false },
+    'a number with no change on the app is no card',
+  );
+  assert.deepEqual(
+    await sharedObjects.hydrateLink(pool, viewer, { type: 'proposal', app_slug: 'secret', pr_number: 4509 }),
+    { type: 'proposal', available: false },
+    'nor is a number on an app the reader cannot open',
+  );
 });
 
 test('a request is the issue card, read through the same public GitHub read', async (t) => {

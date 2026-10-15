@@ -52,10 +52,24 @@ function targetState(t: any) {
   const states = [t.moderation_hidden_at && 'Message hidden', t.moderation_suspended_at && 'App suspended', t.profile_disabled_at && 'Public profile hidden', t.participation_restricted_at && 'Participation restricted'].filter(Boolean);
   return states.length ? states.join(' · ') : 'No active moderation restriction';
 }
+// Sub-hash (#admin/reports/<caseId>), the campaigns pattern: the address
+// follows the case you pick, so a link to a case can be copied and, on a
+// report's compliance email, opens the case already selected. Read before
+// first paint (lazy initial state) and written with replaceState so picking
+// a case pushes no history entry.
+function readCaseId(): number | null {
+  const m = String(location.hash || '').match(/^#admin\/reports\/(\d+)/);
+  return m ? Number(m[1]) : null;
+}
+function writeCaseHash(id: number | null): void {
+  if (!String(location.hash || '').startsWith('#admin/reports')) return;
+  const target = id ? `#admin/reports/${id}` : '#admin/reports';
+  if (location.hash !== target) history.replaceState(null, '', target);
+}
 export function ModerationSection() {
   const [filters,setFilters] = useState({ status: 'new', type: '', reason: '', since: '' });
   const [rows,setRows] = useState<any[]>([]), [next,setNext] = useState<string | null>(null);
-  const [selected,setSelected] = useState<number | null>(null), [detail,setDetail] = useState<any>(null);
+  const [selected,setSelected] = useState<number | null>(() => readCaseId()), [detail,setDetail] = useState<any>(null);
   const [canWrite,setCanWrite] = useState(false), [error,setError] = useState('');
   const [loading,setLoading] = useState(false), [busy,setBusy] = useState(false), [version,setVersion] = useState(0);
   const [pendingAction,setPendingAction] = useState(''), [reason,setReason] = useState('');
@@ -72,6 +86,7 @@ export function ModerationSection() {
     finally { if (run === seq.current) setLoading(false); }
   }
   useEffect(() => { void load(); return () => { seq.current++; }; }, [filters,version]);
+  useEffect(() => { writeCaseHash(selected); }, [selected]);
   useEffect(() => { setReason(''); }, [selected]);
   useEffect(() => {
     setDetail(null);

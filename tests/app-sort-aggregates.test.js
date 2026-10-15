@@ -162,15 +162,16 @@ test('SQL counts merged sessions, and dates the NULL-merged_at history', async (
     const q = capturedQueries.find((c) => /FROM apps a/.test(c.sql));
     assert.ok(q, 'app listing query was issued');
 
-    assert.match(q.sql, /COUNT\(\*\) FILTER \(WHERE status = 'merged'\) AS merged_prs/);
+    // Counted once live (live_at): a merge still going live is not yet.
+    assert.match(q.sql, /COUNT\(\*\) FILTER \(WHERE status = 'merged' AND live_at IS NOT NULL\) AS merged_prs/);
     assert.match(
       q.sql,
-      /WHERE status = 'merged'\s+AND COALESCE\(merged_at, created_at\) > NOW\(\) - INTERVAL '30 days'/,
+      /WHERE status = 'merged' AND live_at IS NOT NULL\s+AND COALESCE\(merged_at, created_at\) > NOW\(\) - INTERVAL '30 days'/,
       'the 30-day window must fall back to created_at for pre-ALTER rows'
     );
     assert.match(
       q.sql,
-      /MAX\(COALESCE\(merged_at, created_at\)\) FILTER \(WHERE status = 'merged'\)\s+AS last_merged_at/
+      /MAX\(COALESCE\(merged_at, created_at\)\) FILTER \(WHERE status = 'merged' AND live_at IS NOT NULL\)\s+AS last_merged_at/
     );
   } finally {
     server.close();

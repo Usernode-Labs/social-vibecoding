@@ -72,8 +72,10 @@ test('the button opens the bot\'s chat for a build, the project otherwise', () =
 test('both templates carry a one-click unsubscribe and say why they came', () => {
   const unsubscribeUrl = 'https://app.onhomeroom.com/mail/unsubscribe?u=7&t=abc';
   const ready = templates.buildMessage('build_ready', { appName: 'Run Club', url: 'https://x/#messages/12', unsubscribeUrl });
-  assert.equal(ready.subject, 'Run Club is ready to try');
-  assert.match(ready.text, /Homeroom bot built what you asked for in Run Club/);
+  // "One story": the push's words when the sender hands none over
+  // (tests/homeroom-bot-notify-copy.test.js pins the request-titled ones).
+  assert.equal(ready.subject, 'Run Club: Ready to try');
+  assert.match(ready.text, /^Ready to try\. Try it, and approve it if you're happy\./);
   assert.match(ready.text, /To stop these emails: https:\/\/app\.onhomeroom\.com\/mail\/unsubscribe/);
   assert.deepEqual(ready.headers, {
     'List-Unsubscribe': `<${unsubscribeUrl}>`,
@@ -85,6 +87,21 @@ test('both templates carry a one-click unsubscribe and say why they came', () =>
   });
   assert.equal(joined.subject, '@sam joined Run Club through your invite');
   assert.ok(joined.headers['List-Unsubscribe']);
+  // #5068: the welcome hero. The pill is the first anchor (tracking index 0
+  // is the payload url), "Stop these emails" sits under it, and the
+  // project's name is the eyebrow.
+  const anchorsIn = (html) => Array.from(
+    html.matchAll(/<a\s+href="([^"]*)"([^>]*)>([\s\S]*?)<\/a>/g),
+    (m) => ({ href: m[1], attrs: m[2], text: m[3] }));
+  const [cta, stop] = anchorsIn(ready.html);
+  assert.equal(cta.href, 'https://x/#messages/12');
+  assert.equal(cta.text, 'Open it');
+  assert.match(cta.attrs, /border-radius:999px/, 'the pill, not the small square button');
+  // The href is an attribute value, so its & is escaped in the markup.
+  assert.equal(stop.href, unsubscribeUrl.replace(/&/g, '&amp;'));
+  assert.equal(stop.text, 'Stop these emails');
+  assert.match(ready.html, />Run Club</, 'the project name is the eyebrow');
+  assert.match(ready.html, /letter-spacing:0\.8px[^>]*>Run Club</, 'uppercase eyebrow style');
   // Every other kind's message is unchanged: no headers key at all.
   assert.equal('headers' in templates.buildMessage('otp', { code: '123456' }), false);
 });
@@ -116,7 +133,10 @@ test('the unsubscribe route is mounted before sign-in, and the column defaults o
   const at = server.indexOf("require('./src/routes/activity-mail').activityMailRoutes(config)");
   assert.ok(at > 0, 'mounted');
   assert.ok(at < server.indexOf('app.use(authMiddleware(config))'), 'before authMiddleware');
-  assert.match(server, /require\('\.\/src\/services\/activity-mail'\)\.init\(config\)/);
+  // Initialised with the configuration every process running the workflow
+  // machines sets up (src/workflow/setup.ts), which server.js runs at load.
+  assert.match(server, /require\('\.\/src\/workflow\/setup\.ts'\)\.configureWorkflowProcess\(config\)/);
+  assert.match(read('src/workflow/setup.ts'), /legacy\('services\/activity-mail'\)\.init\(config\)/);
   assert.match(read('src/db/schema.sql'), /ALTER TABLE users ADD COLUMN IF NOT EXISTS activity_email BOOLEAN NOT NULL DEFAULT TRUE;/);
   const route = read('src/routes/activity-mail.js');
   assert.match(route, /router\.get\('\/mail\/unsubscribe'/);

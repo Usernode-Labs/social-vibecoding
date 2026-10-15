@@ -79,6 +79,51 @@ test('the sheet sends its line with the vote, so castVote does not ask again', (
   assert.match(WORKSHOP, /\(k === 'n' \|\| k === 'N'\) && sheet === 'vote'\) \{ setVoteSide\('no'\); return; \}/);
 });
 
+// #4794: a vote saved from the Communities reel takes its card out of the
+// screen's own feed copy at once, so going back and re-entering Needs you
+// cannot redraw it as still owed. The reel learns of the vote ONLY where the
+// feed has it: inside the `ok === true` branch, after setAnswered — never on
+// a cancel, a refusal or a network failure.
+test('#4794: onAnswered fires only where the vote is saved, and the reel keeps the feed it was drawn', () => {
+  const REEL = read('frontend/src/features/workshop/needs-reel.tsx');
+  const SCREEN = read('frontend/src/features/workshop/index.tsx');
+  const answer = WORKSHOP.slice(WORKSHOP.indexOf('const answer = (which'), WORKSHOP.indexOf('const voteTrimmed'));
+  const okBranch = answer.slice(answer.indexOf('if (ok === true) {'), answer.indexOf('} else if (pinnedHere)'));
+  assert.match(okBranch, /setAnswered\(/, 'the confirmation is drawn first, as it is today');
+  assert.match(okBranch, /try \{ onAnswered\(row, which\); \} catch/, 'then the screen that owns the feed copy is told');
+  assert.equal((answer.match(/onAnswered/g) || []).length, 2,
+    'the hook appears twice in answer() — the guard and the call, both inside the ok branch');
+  assert.ok(!WORKSHOP.includes('onAnswered={'), 'a project page passes nothing; its refresh already drops the row');
+
+  // The reel acts only on a proposal's answer, with the epoch of the source
+  // item; a group decision has no Yes or No in the feed and never reaches it.
+  assert.match(REEL, /onAnswered\?: \(id: number, epoch: number \| null\) => void;/);
+  assert.match(REEL, /row\.askAbout\.kind === 'proposal'/);
+  assert.match(REEL, /epochs\.get\(row\.key\)/);
+  // A vote on the last card empties the feed copy; once the feed has been
+  // drawn this mount, the reel keeps it drawn instead of switching to the
+  // empty line over the viewer's head.
+  assert.match(REEL, /drawnRef\.current = true/);
+  assert.match(REEL, /!items && !drawnRef\.current/);
+  assert.match(REEL, /!shown\.length && !drawnRef\.current/);
+  // And the screen wires the reel to the controller that owns the store.
+  assert.match(SCREEN, /onAnswered=\{\(id, epoch\) => workshopController\.answered\(id, epoch\)\}/);
+  assert.match(SCREEN, /answered\(id: number, epoch: number \| null\)/);
+});
+
+// An approval row (a change on a project that is just yours) asks for a note
+// from the row itself, before the community read has landed and on the
+// staging demo's Just you card, whose project reads as public.
+test('an approval row\'s Yes line is a note before any community read; a group row keeps its line', () => {
+  const approval = reelRows([{ ...item, approve: true }])[0];
+  assert.equal(approval.yes.approve, true, 'the reel marks the row an approval');
+  const yes = form({ row: approval });
+  assert.match(yes, /<label class="dev-vote-reason-label" for="dev-ws-vote-reason-needs-proposal-42">Add a note, if you like\.<\/label>/);
+  assert.doesNotMatch(yes, /for the group/);
+  assert.match(form({ row: approval, side: 'no' }), /What’s not working for you\? One line is plenty\./, 'No is unchanged');
+  assert.match(form(), /Add a line for the group, if you like\./, 'a group row keeps its wording');
+});
+
 // #22: on a project that is just yours, the Yes line is a note: "for the
 // group" spoke to a group a solo project does not have. The form reads who
 // the row's project is for from the hub's shared community read

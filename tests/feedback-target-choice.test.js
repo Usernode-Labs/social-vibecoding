@@ -40,6 +40,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const CONTROLLER_PATH = path.join(
@@ -102,9 +103,9 @@ test('the hint ships empty, hidden and adjacent to the row it is about', () => {
 
 test('the copy lives in exactly one place', () => {
   assert.equal(
-    CONTROLLER_TEXT.split(HINT).length - 1,
+    CONTROLLER_TEXT.split("t('dialogs:feedback.target.choose')").length - 1,
     1,
-    `"${HINT}" is written once, as CHOOSE_TARGET_HINT`
+    `"${HINT}" is read once, as chooseTargetHint`
   );
 });
 
@@ -271,6 +272,8 @@ function makeHarness({ appData = null, sessionDraft = null } = {}) {
   };
 
   const sandbox = {
+    // The binding the controller's i18n import gives it (the import line is stripped above).
+    t: englishPlatformI18n().t,
     console: { ...console, warn: () => {}, debug: () => {} },
     URLSearchParams,
     location: { search: '', hash: '', pathname: '/' },
@@ -620,7 +623,9 @@ test('the dialog is headed Suggest an improvement from every way in', () => {
   // change" everywhere, so the heading is the markup's own and the
   // controller no longer writes it.
   const tsx = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/dialogs/feedback.tsx'), 'utf8');
-  assert.match(tsx, /<h2 className="text-lg font-bold">\s*Suggest an improvement\s*<\/h2>\s*<p[^>]*>\s*Members can see it, vote on it and pick it up\.\s*<\/p>/);
+  assert.match(tsx, /<h2 className="text-lg font-bold">\s*\{t\('dialogs:feedback\.heading'\)\}\s*<\/h2>\s*<p[^>]*>\s*\{t\('dialogs:feedback\.intro'\)\}\s*<\/p>/);
+  assert.equal(message('dialogs:feedback.heading'), 'Suggest an improvement');
+  assert.equal(message('dialogs:feedback.intro'), 'Members can see it, vote on it and pick it up.');
   assert.doesNotMatch(CONTROLLER_TEXT, /heading\.textContent|'Send feedback'/);
   const h = makeHarness({ appData: OPEN_APP });
   assert.doesNotThrow(() => h.sandbox.Feedback._open({ fromDev: true, intent: 'issue' }),
@@ -665,10 +670,11 @@ test('the title hint fits a phone-width field, and the resting heading is senten
   // only has to say the title is written for you; that it can be changed is
   // what a text field already says.
   const tsx = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/dialogs/feedback.tsx'), 'utf8');
-  const hint = /id="feedback-title"[\s\S]{0,120}?placeholder="([^"]*)"/.exec(tsx);
-  assert.ok(hint, 'the title field carries a hint');
+  const hintId = /id="feedback-title"[\s\S]{0,120}?placeholder=\{t\('([^']*)'\)\}/.exec(tsx);
+  assert.ok(hintId, 'the title field carries a hint');
+  const hint = [hintId[0], message(hintId[1])];
   assert.equal(hint[1], 'Suggested as you type');
   assert.ok(hint[1].length <= 24, 'short enough for the narrowest supported phone');
-  assert.match(tsx, /<h2 className="text-lg font-bold">\s*Suggest an improvement\s*<\/h2>/,
-    'the heading is sentence case');
+  assert.match(tsx, /<h2 className="text-lg font-bold">\s*\{t\('dialogs:feedback\.heading'\)\}\s*<\/h2>/);
+  assert.equal(message('dialogs:feedback.heading'), 'Suggest an improvement', 'the heading is sentence case');
 });

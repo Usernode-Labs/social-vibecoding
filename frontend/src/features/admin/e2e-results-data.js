@@ -565,8 +565,8 @@ export const E2E_CASES = Object.freeze([
   },
   {
     "id": "D8",
-    "name": "Dev-chat session & spec",
-    "flow": "New session → venue/model select → chat turn streams → spec versions; share spec to user/link (spec_shared push)",
+    "name": "Dev-chat session & plan",
+    "flow": "New session → venue/model select → chat turn streams → plan versions; share plan to user/link (spec_shared push)",
     "gate": "user",
     "method": "browser",
     "notes": "FULL pass 2026-08-19: model selector + credit meter + quick-replies, plain-English turn streamed the coding agent live (20 steps, ~4min, self-corrected a checks 401 and an accidental node_modules commit), auto-set session title, committed + pushed. Spec write + share-to-user path also exercised (see F4 notes). ~$5 spend",

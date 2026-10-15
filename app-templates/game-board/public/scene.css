@@ -1,0 +1,371 @@
+/* The board game's scene: a games table, the board on it, the pieces and
+ * the die. It is one look of its own, the same in the page's light and dark
+ * looks, the way a board game's box looks the same in any room; it is
+ * written down in CLAUDE.md "## Design". Its colours are named once, here,
+ * and public/app.js draws the board with the same ones. The kit's own parts
+ * (the toast, the loading shapes' animation) follow the page's look.
+ */
+
+.scene {
+  --felt: #0f5a50;
+  --felt-light: #1b7a6b;
+  --felt-deep: #083a34;
+  --cream: #fff8e7;
+  --cream-soft: rgba(255, 248, 231, 0.78);
+  --paper: #fbf3dc;
+  --paper-edge: #e8d7ae;
+  --ink: #3b2716;
+  --ink-soft: #6f5236;
+  --wood: #a86b35;
+  --wood-deep: #6b3f19;
+  --gold: #f6b93b;
+  --gold-deep: #c98a12;
+  --coral: #ee6b5a;
+  font-family: ui-rounded, 'SF Pro Rounded', 'Nunito', 'Varela Round', system-ui, sans-serif;
+  color: var(--cream);
+  background-color: var(--felt);
+  background-image:
+    radial-gradient(120% 80% at 50% -10%, var(--felt-light) 0%, rgba(27, 122, 107, 0) 60%),
+    radial-gradient(90% 70% at 50% 120%, var(--felt-deep) 0%, rgba(8, 58, 52, 0) 70%),
+    repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.025) 0 2px, rgba(0, 0, 0, 0) 2px 6px);
+}
+
+/* ── The title screen ─────────────────────────────────────────────────── */
+
+.title-name {
+  font-size: clamp(2.5rem, 11vw, 4.25rem);
+  line-height: 1;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  text-align: center;
+  color: var(--cream);
+  text-shadow: 0 3px 0 var(--wood-deep), 0 10px 24px rgba(0, 0, 0, 0.35);
+  overflow-wrap: anywhere;
+}
+.title-line {
+  max-width: 22rem;
+  text-align: center;
+  font-size: 1.0625rem;
+  line-height: 1.45;
+  color: var(--cream-soft);
+}
+
+/* The board on the title screen, lying on the table. */
+.title-board {
+  width: min(92%, 21rem);
+  transform: perspective(900px) rotateX(34deg) rotateZ(-5deg);
+  transform-origin: 50% 60%;
+  filter: drop-shadow(0 22px 22px rgba(0, 0, 0, 0.4));
+  margin: -1.5rem 0 -1.5rem;
+  pointer-events: none;
+}
+
+/* The score pad: the lobby and the leaderboard, on paper. */
+.pad {
+  position: relative;
+  width: 100%;
+  border-radius: 1.25rem;
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow: 0 1px 0 var(--paper-edge) inset, 0 18px 40px rgba(0, 0, 0, 0.35), 0 2px 0 var(--paper-edge);
+  padding: 1.25rem;
+}
+.pad-title {
+  font-size: 1.25rem;
+  font-weight: 800;
+  line-height: 1.2;
+}
+.pad-note {
+  font-size: 0.9375rem;
+  line-height: 1.4;
+  color: var(--ink-soft);
+}
+.pad .skeleton {
+  background: var(--paper-edge);
+}
+
+/* The seats around the table: a token for each player, and the open ones. */
+.seats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem 0.5rem;
+}
+.seat {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.375rem;
+  text-align: center;
+}
+.seat-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.875rem;
+  font-weight: 700;
+}
+.seat-note {
+  font-size: 0.75rem;
+  color: var(--ink-soft);
+}
+.seat-open {
+  display: flex;
+  height: 3rem;
+  width: 3rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  border: 2px dashed var(--paper-edge);
+  color: var(--ink-soft);
+  font-size: 1.25rem;
+}
+
+/* A player's piece: a glossy token in their colour, with their initial. */
+.token {
+  position: relative;
+  display: flex;
+  height: 3rem;
+  width: 3rem;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  color: #fff;
+  font-weight: 800;
+  font-size: 1.25rem;
+  background-image: radial-gradient(circle at 32% 28%, rgba(255, 255, 255, 0.65) 0 10%, rgba(255, 255, 255, 0) 45%);
+  box-shadow: 0 0 0 3px #fff, 0 4px 0 3px rgba(0, 0, 0, 0.18), 0 8px 14px rgba(0, 0, 0, 0.25);
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.35);
+}
+.token-small {
+  height: 1.75rem;
+  width: 1.75rem;
+  font-size: 0.875rem;
+  box-shadow: 0 0 0 2px #fff, 0 2px 4px rgba(0, 0, 0, 0.3);
+}
+.token-away {
+  opacity: 0.55;
+}
+
+/* The scene's own buttons: a big gold one for the thing to do now, and a
+   quieter one beside it. Kit sizes: 44px or more each way. */
+.btn-gold,
+.btn-quiet {
+  display: inline-flex;
+  min-height: 3rem;
+  min-width: 2.75rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border-radius: 9999px;
+  padding: 0 1.5rem;
+  font-weight: 800;
+  font-size: 1.0625rem;
+  transition: transform 0.08s ease-out, box-shadow 0.08s ease-out;
+}
+.btn-gold {
+  background: linear-gradient(var(--gold), var(--gold-deep));
+  color: var(--ink);
+  box-shadow: 0 4px 0 #8f5f07, 0 8px 16px rgba(0, 0, 0, 0.25);
+}
+.btn-gold:active:not(:disabled) {
+  transform: translateY(3px);
+  box-shadow: 0 1px 0 #8f5f07, 0 3px 8px rgba(0, 0, 0, 0.25);
+}
+.btn-quiet {
+  background: rgba(59, 39, 22, 0.08);
+  color: var(--ink);
+}
+.scene .btn-quiet-dark {
+  background: rgba(255, 248, 231, 0.12);
+  color: var(--cream);
+}
+.btn-gold:disabled,
+.btn-quiet:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+.btn-gold:focus-visible,
+.btn-quiet:focus-visible,
+.btn-disc:focus-visible {
+  outline: 3px solid var(--gold);
+  outline-offset: 3px;
+}
+
+/* The leaderboard on the pad. */
+.ranks {
+  display: flex;
+  flex-direction: column;
+}
+.rank {
+  display: flex;
+  min-height: 2.75rem;
+  align-items: center;
+  gap: 0.75rem;
+  border-top: 1px dashed var(--paper-edge);
+}
+.rank:first-child {
+  border-top: 0;
+}
+.rank-place {
+  display: flex;
+  height: 1.75rem;
+  width: 1.75rem;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  background: var(--paper-edge);
+  font-weight: 800;
+  font-size: 0.875rem;
+}
+.rank:first-child .rank-place {
+  background: var(--gold);
+}
+
+/* ── The game: the table fills the screen ─────────────────────────────── */
+
+.btn-disc {
+  display: flex;
+  height: 2.75rem;
+  width: 2.75rem;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  background: rgba(0, 0, 0, 0.25);
+  color: var(--cream);
+  font-size: 1.25rem;
+  font-weight: 800;
+}
+
+/* Whose turn: everyone's chip, the one rolling lit up. */
+.chip {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.5rem;
+  border-radius: 9999px;
+  background: rgba(0, 0, 0, 0.22);
+  padding: 0.25rem 0.75rem 0.25rem 0.25rem;
+  font-size: 0.875rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.chip-now {
+  background: var(--cream);
+  color: var(--ink);
+  box-shadow: 0 0 0 3px var(--gold);
+}
+.chip-name {
+  max-width: 8rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.chip-where {
+  font-weight: 600;
+  opacity: 0.75;
+}
+
+.board-svg {
+  display: block;
+  height: 100%;
+  width: 100%;
+}
+/* A piece hops from square to square. */
+.piece {
+  transition: transform 0.13s ease-out;
+}
+.piece-now .piece-ring {
+  animation: ring 1.2s ease-in-out infinite;
+}
+@keyframes ring {
+  50% { opacity: 0.2; }
+}
+
+/* The dice tray along the bottom. */
+.tray {
+  display: flex;
+  align-items: center;
+  gap: 0.875rem;
+  margin: 0 auto;
+  width: min(100%, 36rem);
+  border-radius: 1.5rem 1.5rem 0 0;
+  background: linear-gradient(var(--wood), var(--wood-deep));
+  box-shadow: 0 -2px 0 rgba(255, 255, 255, 0.18) inset, 0 -10px 30px rgba(0, 0, 0, 0.3);
+  padding: 0.875rem 1rem calc(0.875rem + env(safe-area-inset-bottom));
+}
+.tray-line {
+  font-size: 1.125rem;
+  font-weight: 800;
+  line-height: 1.2;
+}
+.tray-note {
+  font-size: 0.875rem;
+  line-height: 1.35;
+  color: var(--cream-soft);
+}
+
+/* The die: a white cube with pips. */
+.die {
+  display: grid;
+  height: 3.75rem;
+  width: 3.75rem;
+  flex-shrink: 0;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(3, 1fr);
+  padding: 0.5rem;
+  border-radius: 0.875rem;
+  background: linear-gradient(145deg, #ffffff, #ece3cf);
+  box-shadow: 0 4px 0 #cbbd9b, 0 8px 14px rgba(0, 0, 0, 0.3);
+}
+.pip {
+  margin: auto;
+  height: 0.625rem;
+  width: 0.625rem;
+  border-radius: 9999px;
+  background: var(--ink);
+  visibility: hidden;
+}
+.pip-on {
+  visibility: visible;
+}
+.die-rolling {
+  animation: tumble 0.14s linear infinite;
+}
+@keyframes tumble {
+  0% { transform: rotate(0deg) translateY(0); }
+  50% { transform: rotate(10deg) translateY(-4px); }
+  100% { transform: rotate(-6deg) translateY(0); }
+}
+
+/* The end of a game: the podium over the table. */
+.veil {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgba(4, 30, 27, 0.55);
+  backdrop-filter: blur(3px);
+}
+.trophy {
+  font-size: 3rem;
+  line-height: 1;
+  text-align: center;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .piece,
+  .btn-gold,
+  .btn-quiet {
+    transition: none;
+  }
+  .die-rolling,
+  .piece-now .piece-ring {
+    animation: none;
+  }
+}

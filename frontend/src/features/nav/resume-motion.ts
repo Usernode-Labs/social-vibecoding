@@ -5,8 +5,10 @@
  * ── What it is for ───────────────────────────────────────────────────
  *
  * Closing an app keeps it: its frame stays loaded (../app-frame/app-frame-store.js,
- * `kept`) and the rail's Active section lists it with Resume (desktop), or
- * the strip above the tab bar offers it (#platform-parked, the phone). Before
+ * `kept`) and the desktop strip's recent apps show it with the "still open"
+ * dot (./strip-apps.tsx, #4417; it was the rail's Active section with
+ * Resume), or the strip above the tab bar offers it (#platform-parked, the
+ * phone). Before
  * this, the app simply vanished when you closed it, and nothing on screen
  * said where it went. Every desktop OS answers that with motion — the window
  * shrinks into its dock or taskbar button, and grows back out of it — so the
@@ -15,8 +17,8 @@
  * ── Two motions, one target ──────────────────────────────────────────
  *
  * The TARGET is the same in both directions and is decided here
- * (resumeHandleFor): the Resume pill on the app's Active row in the rail, or
- * the phone's whole resume strip, whichever is actually on screen. A handle
+ * (resumeHandleFor): the app's tile on the desktop strip, or the phone's
+ * whole resume strip, whichever is actually on screen. A handle
  * that is hidden (the rail folded, the keyboard up, chromeless, signed out)
  * has no rect and answers null, and then nothing moves: the close or resume
  * is the plain cut it always was. That is the whole of "robust if the button
@@ -102,19 +104,18 @@ function usableElement(el: Element | null | undefined, doc: Document): HTMLEleme
 /**
  * The Resume control for `slug` that is on screen now, or null.
  *
- * The desktop rail's Active row first — its Resume pill, or the row when the
- * pill is not drawn (the row you are in has none) — then the phone's strip.
+ * The desktop strip's tile for the app first (#4417: the strip's five recent
+ * apps, ./strip-apps.tsx), then the phone's strip.
  * The strip is the target as a whole, not its pill: the whole strip resumes
  * the app (./parked-strip.tsx), and its children slide while it arrives, so
  * only the root's rect is where it will rest.
  */
 export function resumeHandleFor(slug: string, doc: Document = document): HTMLElement | null {
   if (!slug || !doc) return null;
-  const key = `app:${slug}`;
-  const rows = doc.querySelectorAll('#platform-recents .platform-active a.platform-recent[data-recent-key]');
+  const rows = doc.querySelectorAll('#platform-strip-apps a.platform-strip-app[data-strip-app]');
   for (const row of Array.from(rows)) {
-    if (row.getAttribute('data-recent-key') !== key) continue;
-    const hit = usableElement(row.querySelector('.platform-recent-resume'), doc)
+    if (row.getAttribute('data-strip-app') !== slug) continue;
+    const hit = usableElement(row.querySelector('.platform-strip-tile'), doc)
       || usableElement(row, doc);
     if (hit) return hit;
   }

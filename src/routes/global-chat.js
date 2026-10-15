@@ -279,7 +279,9 @@ function globalChatRoutes(config) {
   let suggestionExecutor = null;
   const allowanceCache = new Map();
   const turnCatalogCache = new Map();
-  const activeTurnControllers = new Map();
+  // Each turn is this process's hold (services/processes.js): a draining
+  // process finishes it before it exits.
+  const activeTurnControllers = require('../services/processes').heldMap('global_turn');
   function getOrchestrator() {
     orchestrator ||= createGlobalChatOrchestrator({
       pool,

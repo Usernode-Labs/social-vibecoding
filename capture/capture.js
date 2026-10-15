@@ -128,6 +128,21 @@ const VIEWPORT = {
   height: 800,
   deviceScaleFactor: resolveDeviceScaleFactor(process.env.DEVICE_SCALE_FACTOR),
 };
+// The checks' own density. A check asserts on the DOM and the console, never
+// on pixels, and painting every check page at 2× is four times the pixels:
+// on 10 Oct 2026 the browser pod spent a 733-check run at 7.9 of its 8 CPUs,
+// throttled most of the time, while the preview it was testing idled under
+// one. The platform sends TEST_DEVICE_SCALE_FACTOR=1; without it the checks
+// keep the run's density, as before. The shots keep DEVICE_SCALE_FACTOR.
+function resolveTestViewport(env) {
+  const raw = (env || {}).TEST_DEVICE_SCALE_FACTOR;
+  return {
+    ...VIEWPORT,
+    deviceScaleFactor: raw == null || String(raw).trim() === ''
+      ? VIEWPORT.deviceScaleFactor : resolveDeviceScaleFactor(raw),
+  };
+}
+const TEST_VIEWPORT = resolveTestViewport(process.env);
 
 // #768: optional per-target viewport override ({ width, height } from the
 // TARGETS entry — a `@mobile` testing path). Bounds keep a corrupted value
@@ -522,6 +537,7 @@ function setFrameSink(fn) {
   // failing one because a previous run had recorded it passing.
   _testStatus.clear();
   _retryOf.clear();
+  _diagCount = 0;
 }
 
 function emit(kind, media, status, buf, index, fellback) {
@@ -602,8 +618,12 @@ function emitTest(index, status, loadStatus, payload) {
 // an OLDER platform reading a NEWER image is unaffected by this line. The
 // other direction (new platform, old image) sees no sentinel at all and
 // falls back to comparing frame count against dispatched count.
-function emitTestsDone(ran, expected, deadline) {
-  _sink(`__USERNODE_TESTS_DONE__ ran=${ran || 0} expected=${expected || 0} deadline=${deadline ? 1 : 0}\n`);
+//
+// A shard (TEST_SHARD_INDEX / TEST_SHARD_COUNT) counts its own checks and
+// says which shard it was; the platform adds the shards' lines up.
+function emitTestsDone(ran, expected, deadline, shard = null) {
+  _sink(`__USERNODE_TESTS_DONE__ ran=${ran || 0} expected=${expected || 0} deadline=${deadline ? 1 : 0}`
+    + `${shard ? ` shard=${shard.index}/${shard.count}` : ''}\n`);
 }
 
 function execFileAsync(cmd, args, opts = {}) {
@@ -1161,6 +1181,62 @@ const RETRY_MAX_CHECKS = 10;
 // And none are, when this fraction of the suite is red: that is the change.
 const RETRY_SKIP_FRACTION = 0.25;
 
+// Each shard numbers its retries from its own base, so two shards' retries
+// of different checks never share an index once the platform joins their
+// output.
+const RETRY_SHARD_STRIDE = 100000;
+
+// ── Shards ──────────────────────────────────────────────────────────────
+//
+// The platform can split one run's checks across several browser pods
+// (services/visuals.js, CAPTURE_SHARDS). Every pod gets the whole list and
+// TEST_SHARD_INDEX / TEST_SHARD_COUNT, groups the checks exactly as an
+// unsharded run would, and runs only the groups assigned to its index. The
+// assignment is a pure function of the list, so the pods agree on it without
+// talking to each other, and every group lands in exactly one shard.
+const MAX_SHARDS = 16;
+
+function testShard(env) {
+  const e = env || {};
+  const count = parseInt(e.TEST_SHARD_COUNT, 10);
+  const index = parseInt(e.TEST_SHARD_INDEX, 10);
+  if (!Number.isInteger(count) || count < 2 || count > MAX_SHARDS) return null;
+  if (!Number.isInteger(index) || index < 0 || index >= count) return null;
+  return { index, count };
+}
+
+// What a group costs, roughly: its cold load dominates, each further hash
+// cohort is a switch and a settle, and each check an assertion. Only the
+// order matters, for longest-first.
+function groupCost(group) {
+  const tests = Array.isArray(group) ? group : [group];
+  return 3 + Math.max(0, cohortsOf(tests).length - 1) + 0.1 * tests.length;
+}
+
+// The groups, heaviest first, ties in their original order. A pool that
+// takes a heavy group last finishes on it alone; taking the heavy ones
+// first lets the light ones fill in around them.
+function heaviestFirst(groups) {
+  return (groups || [])
+    .map((group, position) => ({ group, position, cost: groupCost(group) }))
+    .sort((a, b) => (b.cost - a.cost) || (a.position - b.position))
+    .map((g) => g.group);
+}
+
+// Split the groups into `count` shards of about equal cost: each group, the
+// heaviest first, goes to the shard with the least so far (the lowest index
+// on a tie). Every shard's groups stay heaviest first.
+function shardGroups(groups, count) {
+  const shards = Array.from({ length: Math.max(1, count) }, () => ({ load: 0, groups: [] }));
+  for (const group of heaviestFirst(groups)) {
+    let target = shards[0];
+    for (const shard of shards) if (shard.load < target.load) target = shard;
+    target.groups.push(group);
+    target.load += groupCost(group);
+  }
+  return shards.map((shard) => shard.groups);
+}
+
 function retryRuns(env) {
   const raw = parseInt((env || {}).TEST_RETRY_RUNS, 10);
   if (!Number.isFinite(raw) || raw < 0) return RETRY_RUNS;
@@ -1211,7 +1287,22 @@ async function assertPresence(page, t) {
         t.expectText
       );
     } catch { found = false; }
-    if (!found) return `Expected text "${t.expectText}" was not found on the page`;
+    if (!found) {
+      // #3978: say what WAS on the page, so the fix turn can tell "the
+      // element moved" from "the page never rendered" without a re-run. One
+      // probe, only on the failure path, and only a string answer counts —
+      // a runner that answers this probe with something else is not a page
+      // this snippet was meant to trust.
+      let pageText = '';
+      try {
+        const answer = await page.evaluate(() => (document.body ? document.body.innerText : ''));
+        if (typeof answer === 'string') pageText = answer;
+      } catch { /* no snippet: the reason still names the missing text */ }
+      const snippet = pageText.trim().replace(/\s+/g, ' ').slice(0, 200);
+      return snippet
+        ? `Expected text "${t.expectText}" was not found on the page; the page text was: "${snippet}"`
+        : `Expected text "${t.expectText}" was not found on the page`;
+    }
   }
   return '';
 }
@@ -1509,6 +1600,105 @@ async function readRenderHealth(page, stylesheets, { recheckMs = RENDER_BLANK_RE
   return { v: 1, stylesheets: sheets, blank: shows === false };
 }
 
+// ── The network changing under the browser ───────────────────────────────
+//
+// Chromium cancels the connections it has in flight with
+// net::ERR_NETWORK_CHANGED when it sees the host's network change. On 7 Oct
+// 2026 six check runs in 22 minutes lost their first page loads to it,
+// within two or three seconds of their pod starting: 19 to 86 checks each,
+// every one a cold load failing at once, on two nodes, while runs either
+// side on the same nodes were clean. One run kept from 14 Sep shows the same.
+// The retry pass covered ten of them; the rest stood as the change's
+// failures, and a run that overlapped a rollout went round again and again.
+//
+// It is never the app's doing, so a group whose cold load meets it starts
+// over once, on a fresh context, before it has reported anything. What
+// changed in the pod is not known yet, so the run also writes down what the
+// pod's network looked like at that moment (emitDiag), which the platform
+// logs.
+const NETWORK_CHANGED_RE = /net::ERR_NETWORK_CHANGED/;
+const NETWORK_CHANGED_RETRY_DELAY_MS = 1000;
+// One run whose every group meets it must not write a frame per group.
+const MAX_DIAG_FRAMES = 3;
+let _diagCount = 0;
+
+function readSmallFile(file, max = 4000) {
+  try { return fs.readFileSync(file, 'utf8').slice(0, max); } catch { return null; }
+}
+
+function fileMtime(file) {
+  try { return fs.statSync(file).mtime.toISOString(); } catch { return null; }
+}
+
+// What the pod's own network looked like, read without privileges: its
+// interfaces' states, its IPv6 addresses with their flags (a tentative one
+// becoming permanent is a change Chromium sees), and when the files its DNS
+// configuration is read from last changed. `uptimeMs` is how long this
+// process, and so the container, had been running.
+function networkSnapshot() {
+  let ifaces = [];
+  try { ifaces = fs.readdirSync('/sys/class/net'); } catch { ifaces = []; }
+  const operstate = {};
+  for (const name of ifaces.slice(0, 8)) {
+    const state = readSmallFile(`/sys/class/net/${name}/operstate`, 40);
+    if (state != null) operstate[name] = state.trim();
+  }
+  const ipv6Disabled = readSmallFile('/proc/sys/net/ipv6/conf/all/disable_ipv6', 8);
+  return {
+    uptimeMs: Math.round(process.uptime() * 1000),
+    operstate,
+    ipv6Disabled: ipv6Disabled == null ? null : ipv6Disabled.trim(),
+    ipv6Addresses: (readSmallFile('/proc/net/if_inet6') || '').split('\n').filter(Boolean).slice(0, 8),
+    resolvConfChangedAt: fileMtime('/etc/resolv.conf'),
+    hostsChangedAt: fileMtime('/etc/hosts'),
+  };
+}
+
+// The document a check loaded, without its query: the checks' URLs carry a
+// session token.
+function documentOf(url) {
+  try {
+    const u = new URL(url);
+    return `${u.origin}${u.pathname}`;
+  } catch {
+    return '';
+  }
+}
+
+// One line, written whole: the frames around it are several writes each, and
+// a line on another stream could land inside one when Kubernetes merges them.
+//   __USERNODE_DIAG__ kind=<kind> <base64 JSON>
+// The platform's frame readers skip any line they do not know.
+// `uncapped` is for the one summary a run writes at its end (checks-timing),
+// which must neither be crowded out by nor crowd out the frames above.
+function emitDiag(kind, data, { uncapped = false } = {}) {
+  if (!uncapped) {
+    if (_diagCount >= MAX_DIAG_FRAMES) return false;
+    _diagCount += 1;
+  }
+  const json = JSON.stringify(data || {});
+  _sink(`__USERNODE_DIAG__ kind=${kind} ${Buffer.from(json, 'utf8').toString('base64')}\n`);
+  return true;
+}
+
+// Nearest-rank percentile over a numeric array (ms), 0 for none.
+function percentile(values, p) {
+  const xs = values.filter((v) => Number.isFinite(v)).sort((a, b) => a - b);
+  if (!xs.length) return 0;
+  return Math.round(xs[Math.min(xs.length - 1, Math.max(0, Math.ceil((p / 100) * xs.length) - 1))]);
+}
+
+function timingSummary(values) {
+  const xs = values.filter((v) => Number.isFinite(v));
+  return {
+    n: xs.length,
+    p50: percentile(xs, 50),
+    p90: percentile(xs, 90),
+    max: percentile(xs, 100),
+    mean: xs.length ? Math.round(xs.reduce((a, b) => a + b, 0) / xs.length) : 0,
+  };
+}
+
 // #47: run the declared tests for ONE route against the staging build.
 // Navigates once, collects console errors / uncaught exceptions / failed
 // loads (the #381 baseline) for that load, then evaluates each check's
@@ -1549,6 +1739,9 @@ async function runTestGroup(browser, group, opts) {
   const tests = Array.isArray(group) ? group : [group];
   const cohorts = cohortsOf(tests);
   const lead = tests[0];
+  // When the caller asks: how long the cold load took, from opening the
+  // context to the first settle (the checks-timing summary in runTests).
+  const startedAt = Date.now();
   const quietMs = Number.isFinite(o.settleQuietMs) ? o.settleQuietMs : SETTLE_QUIET_MS;
   const maxMs = Number.isFinite(o.settleMaxMs) ? o.settleMaxMs : SETTLE_MAX_MS;
   const assertMax = Number.isFinite(o.assertMaxMs) ? o.assertMaxMs : ASSERT_MAX_MS;
@@ -1577,6 +1770,9 @@ async function runTestGroup(browser, group, opts) {
     });
   };
   const consoleSink = makeConsoleErrorSink(pushErr);
+  // Set when a request of the cold load is cancelled because the network
+  // changed (see NETWORK_CHANGED_RE).
+  let networkChanged = false;
   const emitAll = (status, reasonFor) => {
     for (const t of tests) {
       const failureReason = reasonFor(t);
@@ -1592,12 +1788,26 @@ async function runTestGroup(browser, group, opts) {
   let context = null;
   let page;
   let status = 0;
+  // The cold load met a network change before anything was reported: say
+  // what the pod looked like, close this attempt, and run the group again
+  // once on a fresh context. The second attempt's verdict stands, whatever
+  // it is.
+  const startOver = async (stage) => {
+    emitDiag('network-changed', { stage, document: documentOf(lead.url), ...networkSnapshot() });
+    if (page) await page.close().catch(() => {});
+    if (context) await context.close().catch(() => {});
+    page = null;
+    context = null;
+    await sleep(Number.isFinite(o.networkChangedRetryDelayMs)
+      ? o.networkChangedRetryDelayMs : NETWORK_CHANGED_RETRY_DELAY_MS);
+    return runTestGroup(browser, group, { ...o, networkChangedRetry: true });
+  };
   try {
     if (typeof browser.createBrowserContext === 'function') {
       context = await browser.createBrowserContext();
     }
     page = await (context || browser).newPage();
-    await page.setViewport(VIEWPORT);
+    await page.setViewport(TEST_VIEWPORT);
 
     // The settle's activity clock. Every signal that the document is still
     // doing something bumps it; `waitForQuiet` returns once nothing has.
@@ -1661,12 +1871,21 @@ async function runTestGroup(browser, group, opts) {
     const stylesheets = makeStylesheetWatch(lead.url);
     on('response', (resp) => { try { stylesheets.onResponse(resp); } catch { /* not a sheet we can read */ } });
     on('requestfailed', (req) => { try { stylesheets.onRequestFailed(req); } catch { /* ignore */ } });
+    on('requestfailed', (req) => {
+      try {
+        const failure = typeof req.failure === 'function' ? req.failure() : null;
+        if (NETWORK_CHANGED_RE.test((failure && failure.errorText) || '')) networkChanged = true;
+      } catch { /* ignore */ }
+    });
     const renderRecheckMs = Number.isFinite(o.renderRecheckMs) ? o.renderRecheckMs : RENDER_BLANK_RECHECK_MS;
 
     try {
       const resp = await gotoTestDocument(page, lead.url);
       status = resp ? resp.status() : 200;
     } catch (err) {
+      if (!o.networkChangedRetry && NETWORK_CHANGED_RE.test((err && err.message) || '')) {
+        return await startOver('navigation');
+      }
       pushErr('load', `navigation failed: ${err.message}`, lead.url);
       emitAll(0, () => `Page failed to load: ${err.message}`);
       await page.close().catch(() => {});
@@ -1696,6 +1915,16 @@ async function runTestGroup(browser, group, opts) {
         // then wait it out.
         activity.bump();
         await waitForQuiet(activity, { quietMs, maxMs, minMs: Math.min(SETTLE_MIN_MS, maxMs) });
+        // The document loaded but some of what it fetched was cancelled by a
+        // network change (the platform's own scripts, on 7 Oct). Nothing is
+        // reported yet, so this is still the cold load and can start over.
+        if (!o.networkChangedRetry) {
+          await consoleSink.settle();
+          if (networkChanged || consoleErrors.some((e) => NETWORK_CHANGED_RE.test(e.message))) {
+            return await startOver('subresource');
+          }
+        }
+        if (o.timing) o.timing.loadMs = Date.now() - startedAt;
       } else {
         await consoleSink.settle();
         cohortFrom = consoleErrors.length;
@@ -1915,13 +2144,17 @@ async function runTests(browser, tests, opts) {
   const budgetMs = Number(o.deadlineMs) > 0 ? Number(o.deadlineMs) : 650000;
   const now = typeof o.now === 'function' ? o.now : () => Date.now();
 
+  const env = o.env || process.env;
+  const shard = o.shard !== undefined ? o.shard : testShard(env);
   if (!list.length) {
-    emitTestsDone(0, 0, false);
+    emitTestsDone(0, 0, false, shard);
     return { ran: 0, expected: 0, deadline: false };
   }
 
-  const env = o.env || process.env;
-  const groups = typeof o.groupTests === 'function' ? o.groupTests(list) : groupTests(list, env);
+  const allGroups = typeof o.groupTests === 'function' ? o.groupTests(list) : groupTests(list, env);
+  const groups = shard ? shardGroups(allGroups, shard.count)[shard.index] : heaviestFirst(allGroups);
+  // The checks this run answers for: a shard's own, or all of them.
+  const own = shard ? groups.flat() : list;
   const settleOpts = {
     settleQuietMs: Number.isFinite(o.settleQuietMs) ? o.settleQuietMs : settleQuietMs(env),
     settleMaxMs: Number.isFinite(o.settleMaxMs) ? o.settleMaxMs : settleMaxMs(env),
@@ -1931,10 +2164,18 @@ async function runTests(browser, tests, opts) {
     env,
   };
   const startedAt = now();
+  const wallStartedAt = Date.now();
   let ran = 0;
   let hitDeadline = false;
+  // Wall-clock milliseconds per group (and per cold load), for the summary
+  // the run writes at its end.
+  const groupTimes = [];
+  const retryTimes = [];
+  const loadTimes = [];
 
   const runOne = async (group, { counts = true } = {}) => {
+    const groupStartedAt = Date.now();
+    const timing = {};
     const cohortCount = cohortsOf(group).length;
     const groupBudgetMs = perTestMs
       + navBudgetMs
@@ -1950,6 +2191,8 @@ async function runTests(browser, tests, opts) {
       // The group's own ceiling, so a rolling assert window can never
       // outlive the budget this race enforces (see ASSERT_REPORT_RESERVE_MS).
       const groupOpts = { ...settleOpts, groupDeadlineAt: now() + groupBudgetMs };
+      // Where the group writes how long its cold load took.
+      groupOpts.timing = timing;
       outcome = await Promise.race([
         Promise.resolve()
           .then(() => runTestGroup(browser, group, groupOpts))
@@ -1977,6 +2220,8 @@ async function runTests(browser, tests, opts) {
       }
     }
     if (counts) ran += group.length;
+    (counts ? groupTimes : retryTimes).push(Date.now() - groupStartedAt);
+    if (counts && Number.isFinite(timing.loadMs)) loadTimes.push(timing.loadMs);
   };
 
   // Every group straight through the pool — with per-group contexts there
@@ -2007,21 +2252,40 @@ async function runTests(browser, tests, opts) {
   // Two caps, because a broken change must not become a slow broken change.
   // A quarter of the suite red is the CHANGE, not flakiness, and asking a
   // hundred checks again would triple the run at its least useful moment.
+  //
+  // The checks are asked in batches of RETRY_MAX_CHECKS, and the next batch
+  // only when every check in the last one passed on a retry: then the
+  // failures were the run's, not the change's, and the rest are likely the
+  // same. On 7 Oct one burst failed 19 checks together; the ten asked again
+  // all passed three times out of three, and the nine never asked stood as
+  // the change's failures. A batch with a check that failed every time
+  // stops the pass, because that run is red whatever the rest would say.
   const retries = retryRuns(env);
   const failedPrimaries = retries > 0
-    ? list.filter((t) => _testStatus.get(Number(t.index) || 0) === 'fail')
+    ? own.filter((t) => _testStatus.get(Number(t.index) || 0) === 'fail')
     : [];
-  const tooManyRed = failedPrimaries.length > list.length * RETRY_SKIP_FRACTION;
-  if (failedPrimaries.length && !tooManyRed && !hitDeadline) {
-    const asking = failedPrimaries.slice(0, RETRY_MAX_CHECKS);
+  const tooManyRed = failedPrimaries.length > own.length * RETRY_SKIP_FRACTION;
+  // A shard's retries, and a sweep's (TEST_RETRY_SLOT, one past the last
+  // shard), each start from a base of their own.
+  const retrySlot = shard
+    ? shard.index
+    : Math.min(MAX_SHARDS, Math.max(0, parseInt(env.TEST_RETRY_SLOT, 10) || 0));
+  let nextIndex = RETRY_INDEX_BASE + retrySlot * RETRY_SHARD_STRIDE;
+  for (let offset = 0;
+    failedPrimaries.length && !tooManyRed && !hitDeadline && offset < failedPrimaries.length;
+    offset += RETRY_MAX_CHECKS) {
+    const asking = failedPrimaries.slice(offset, offset + RETRY_MAX_CHECKS);
     const retryGroups = [];
-    let nextIndex = RETRY_INDEX_BASE;
+    const asked = new Map();
     for (const t of asking) {
+      const indices = [];
       for (let i = 0; i < retries; i += 1) {
         const index = nextIndex; nextIndex += 1;
         _retryOf.set(index, Number(t.index) || 0);
         retryGroups.push([{ ...t, index, solo: true }]);
+        indices.push(index);
       }
+      asked.set(t, indices);
     }
     let rCursor = 0;
     const retryWorker = async () => {
@@ -2037,13 +2301,28 @@ async function runTests(browser, tests, opts) {
     const retryWorkers = [];
     for (let i = 0; i < retryLanes; i += 1) retryWorkers.push(retryWorker());
     await Promise.all(retryWorkers);
+    const allRecovered = [...asked.values()]
+      .every((indices) => indices.some((index) => _testStatus.get(index) === 'pass'));
+    if (!allRecovered) break;
   }
+
+  // How long this run's groups took, in one line the platform logs
+  // (visuals.js parseDiagnostics). Wall clock, not CPU: it is what a check
+  // run waits on. No verdict reads it. Nothing in it names a URL.
+  emitDiag('checks-timing', {
+    shard: shard ? `${shard.index}/${shard.count}` : null,
+    lanes: Math.min(concurrency, groups.length),
+    wallMs: Date.now() - wallStartedAt,
+    groups: timingSummary(groupTimes),
+    loads: timingSummary(loadTimes),
+    retries: timingSummary(retryTimes),
+  }, { uncapped: true });
 
   // `ran` and `expected` still count DECLARED checks only. A retry is a
   // second opinion on a check the suite already ran, not another check, and
   // the platform's "did every check report?" arithmetic reads these two.
-  emitTestsDone(ran, list.length, hitDeadline);
-  return { ran, expected: list.length, deadline: hitDeadline };
+  emitTestsDone(ran, own.length, hitDeadline, shard);
+  return { ran, expected: own.length, deadline: hitDeadline };
 }
 
 async function main() {
@@ -2144,4 +2423,4 @@ if (require.main === module) {
 // file whose BEHAVIOUR (how many navigations it makes, whether it starts a
 // recording) is the thing under test, and it takes its page from the browser
 // it is handed, so a fake browser exercises it without Chromium.
-module.exports = { stylesheetProblem, makeStylesheetWatch, pageShowsSomethingInPage, readRenderHealth, parseCookie, resolveTargets, resolveDeviceScaleFactor, parseTargetViewport, parseCompanion, parseReady, waitForScenarioReady, mediaEnabled, resolveTests, captureTarget, runTests, runTestGroup, groupTestsByUrl, groupTestsByDocument, groupTests, cohortsOf, hashGroupCap, waitForQuiet, makeActivityClock, makeConsoleErrorSink, settleQuietMs, settleMaxMs, assertMaxMs, poolSize, testTimeoutMs, testsDeadlineMs, setFrameSink, CHROMIUM_LAUNCH_ARGS };
+module.exports = { timingSummary, testShard, groupCost, heaviestFirst, shardGroups, resolveTestViewport, RETRY_INDEX_BASE, RETRY_SHARD_STRIDE, networkSnapshot, documentOf, stylesheetProblem, makeStylesheetWatch, pageShowsSomethingInPage, readRenderHealth, parseCookie, resolveTargets, resolveDeviceScaleFactor, parseTargetViewport, parseCompanion, parseReady, waitForScenarioReady, mediaEnabled, resolveTests, captureTarget, runTests, runTestGroup, groupTestsByUrl, groupTestsByDocument, groupTests, cohortsOf, hashGroupCap, waitForQuiet, makeActivityClock, makeConsoleErrorSink, settleQuietMs, settleMaxMs, assertMaxMs, poolSize, testTimeoutMs, testsDeadlineMs, setFrameSink, CHROMIUM_LAUNCH_ARGS };

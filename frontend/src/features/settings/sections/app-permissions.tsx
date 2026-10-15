@@ -1,6 +1,7 @@
 import { SectionHeading, StatusLine } from '@/components/ui/field';
 
 import { AppPermissionsList } from '../app-permissions-list';
+import { useMessages } from '../../../lib/i18n/react';
 
 /**
  * App device permissions (#2219). Lists every app the user has let reach a
@@ -20,11 +21,12 @@ import { AppPermissionsList } from '../app-permissions-list';
  * is what the prerender emits and what hydration has to match.
  */
 export function AppPermissionsSection() {
+  const t = useMessages('settings');
   return (
     <div data-settings-section="app-permissions" className="hidden">
       <div id="app-permissions-section">
-        <SectionHeading title="App device permissions">
-          Apps you've allowed to use your location, microphone, camera, screen or connected devices. Each app is asked for separately, and only the app you granted gets it. Revoking stops the app the next time it opens, because a running app keeps what it was given until then.
+        <SectionHeading title={t('settings:appPermissions.title')}>
+          {t('settings:appPermissions.intro')}
         </SectionHeading>
         <div id="app-permissions-list" className="space-y-2">
           <AppPermissionsList />

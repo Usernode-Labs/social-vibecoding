@@ -17,6 +17,7 @@ const logRedaction = require('./log-redaction');
 const shotsAgent = require('./shots-agent');
 const shotsControl = require('./shots-control');
 const shotsHomeTile = require('./shots-home-tile');
+const shotsStarter = require('./shots-starter');
 const environment = require('./shots-environment');
 const identities = require('./shots-identities');
 const lifecycle = require('./lifecycle');
@@ -26,6 +27,7 @@ const state = require('./shots-state');
 const turnLifecycle = require('./turn-lifecycle');
 const { isUiAffecting: uiFileHeuristic } = require('./visual-file-classifier');
 const worker = require('./worker');
+const { SAMPLE_FILES } = require('../../worker/shots-samples');
 
 const ACTIVE_STATES = new Set(['planned', 'provisioning', 'exploring', 'replaying', 'reviewing']);
 const CLOSED_STATUSES = new Set(['merged', 'archived']);
@@ -45,12 +47,56 @@ function agentDiedRetryable(error) {
     && RETRYABLE_AGENT_EXITS.has(error.shotsExitCause);
 }
 
+// #4575: the dispatch never started because another turn (the Homeroom
+// bot's, a person's) took the proposal's agent while the copies were
+// building: the worker refused a second turn, or the session's one-turn
+// record was already held. Nothing ran, so the run waits for the agent to
+// be free and dispatches again, at most MAX_AGENT_BUSY_RETRIES times.
+const MAX_AGENT_BUSY_RETRIES = 2;
+const AGENT_BUSY_RETRY_PROGRESS = 'The proposal\u2019s agent was busy, so the shots didn\u2019t start. Trying again\u2026';
+
+function agentBusyRetryable(error) {
+  if (!error) return false;
+  if (error.sessionBusy === true || error.persistCode === 'session_busy') return true;
+  return state.agentBusyCode(error.code);
+}
+
+// A run that failed on a platform step that says nothing about the proposal,
+// by its kind, so the recovery sweep takes the same head again once
+// (shots-state PLATFORM_RETRY_TRIGGER). Read off the error, never off its
+// wording: a database or clone step the platform runs for the copies tags
+// its own error (shots-environment), GitHub's hourly limit and the shots
+// agent's exit have their own codes, and the worker's bootstrap names its
+// transient failures. Anything else, a revision that does not build
+// included, is the proposal's and is not taken again.
+const GITHUB_RESET_GRACE_MS = 60_000;
+const GITHUB_UNKNOWN_RESET_WAIT_MS = 15 * 60_000;
+const MAX_PLATFORM_RETRY_WAIT_MS = 65 * 60_000;
+
+function platformFault(error, { now = Date.now() } = {}) {
+  if (!error || typeof error !== 'object') return null;
+  if (error.code === 'github_rate_limited') {
+    // Taken again once the hour's budget has reset, not into the same wall.
+    const resetMs = Number(error.retryAfterMs);
+    const waitMs = Number.isFinite(resetMs) && resetMs > 0
+      ? resetMs + GITHUB_RESET_GRACE_MS : GITHUB_UNKNOWN_RESET_WAIT_MS;
+    return { kind: 'github_rate_limited', retryAt: now + Math.min(MAX_PLATFORM_RETRY_WAIT_MS, waitMs) };
+  }
+  if (error.code === 'shots_agent_failed') return { kind: 'agent_exit' };
+  if (state.PLATFORM_FAULT_KINDS.has(error.shotsPlatformFault)) return { kind: error.shotsPlatformFault };
+  if (worker.isRetryableBootstrapError(error)) return { kind: 'worker_bootstrap' };
+  return null;
+}
+
 // Runs a person stopped while this process executes them. The stop already
 // made the run terminal in the database; this keeps its runner from handing
 // the shots agent another turn before a state transition refuses it.
 const stopRequested = new Set();
 const DIFF_CONTEXT_CHARS = 8_000;
-const inFlight = new Map();
+// `${sessionId}:${headSha}` -> the run's promise. Each is this process's
+// hold on the session's shots (services/processes.js): another platform
+// process sees the run (inFlightRunFor) and a draining one finishes it.
+const inFlight = require('./processes').heldMap('shots', (key) => String(key).split(':')[0]);
 const inFlightRunIds = new Map();
 const liveHeartbeats = new Map();
 const HEARTBEAT_INTERVAL_MS = 30_000;
@@ -259,7 +305,10 @@ async function loadSession(pool, sessionId) {
   return rows[0];
 }
 
-async function resolveRevisionContext(session, explicitHead = null, githubService = github) {
+// `baseSha` pins the before revision instead of resolving it: a shots eval's
+// trial (shots-eval-runner.js) shoots the revisions its proposal's own run
+// shot.
+async function resolveRevisionContext(session, explicitHead = null, githubService = github, { baseSha: explicitBase = null } = {}) {
   const headSha = headForSession(session, explicitHead);
   if (!headSha) {
     throw new ShotsOrchestrationError(
@@ -268,7 +317,7 @@ async function resolveRevisionContext(session, explicitHead = null, githubServic
     );
   }
   const { owner, repo } = environment.repoParts(session.repo_url);
-  let baseSha = exactSha(session.handoff_base_sha);
+  let baseSha = exactSha(explicitBase) || exactSha(session.handoff_base_sha);
   let comparison = null;
   if (!baseSha) {
     const repository = await githubService.getRepoHead(owner, repo);
@@ -387,11 +436,160 @@ const GUEST_WHO = Object.freeze({
   unavailable: 'a visitor who is not signed in, with no identity here: guests are not available on these copies, so this app shows what it shows a signed-out visitor outside Homeroom, which can send the browser away from these two addresses; if it does, skip the change and say so',
 });
 
+// Phone sign-in on Homeroom's own copies (shots-environment.js
+// shotsPhoneSignInEnv): the fictional test numbers sign in with this run's
+// code and no text is sent, so a change to the Join sheet's phone step can
+// be walked to its end. The code is the one secret the brief carries, and
+// only for as long as the run: the brief lives in the run's in-memory
+// control and is never stored, the agent's skip reasons and notes
+// (shots-control.js) and its final words (agentFinalResponseSummary) are
+// masked of it, and both copies are gone before any shot is published.
+function phoneSignInBrief(code) {
+  return {
+    numbers: '+1, any area code, then 555 0100 to 0199, for example +1 415 555 0142',
+    code,
+    textSent: false,
+    use: 'Phone sign-in works on these two copies: enter a test number, then this code where it asks for the code it texted. '
+      + 'No text is sent, and an account a test number makes is a test account on that copy only. '
+      + 'Use a test number and this code only on the before and after addresses, never anywhere else. '
+      + 'A number that already made an account on a copy signs in to it, so take a fresh number for each screen size, '
+      + 'and the same one on the before and the after address. Never write the code in a note or a skip reason.',
+  };
+}
+
+// Each persona's browser (worker/write-shots-mcp-config.js). A persona with a
+// phone screen also has a phone browser, the same name with `_phone`: signed
+// in the same way, and presenting as a phone (its user agent, touch, screen
+// density), so a phone screen is not a desktop browser made narrow.
+const BROWSER_TOOLS = Object.freeze({
+  member: 'browser_member',
+  read_only_admin: 'browser_admin',
+  full_admin: 'browser_full_admin',
+  guest: 'browser_guest',
+});
+const phoneTool = (persona) => `${BROWSER_TOOLS[persona]}_phone`;
+
+// Which browser shoots each declared change's screens, by change id and
+// screen name. The shots bridge reads it too, to find a screen's clip.
+function screenBrowsers(intent) {
+  return Object.fromEntries((intent?.stories || []).map((story) => [story.id,
+    Object.fromEntries((story.viewports || []).map((viewport) => [viewport.name,
+      planContract.phoneScreen(viewport) ? phoneTool(story.persona) : BROWSER_TOOLS[story.persona]]))]));
+}
+
+// Homeroom's install strip shows only in a phone browser, and every shots page
+// opens with it dismissed (worker/shots-page-init.js); a page opened with this
+// on its query shows it, for a change to the strip itself. Fixed words only.
+const INSTALL_STRIP = Object.freeze({
+  param: 'shots-install-strip=show',
+  note: 'Homeroom\'s "Add it to your home screen" strip is dismissed on every page these browsers open. For a change to the strip itself, add param to the start path\'s query (before any #) on both addresses, in the phone browser.',
+});
+
+// What making a project does on Homeroom's own copies. Make it is accepted
+// there (the copies lift the server-wide cap, shots-environment.js
+// shotsCapacityEnv, and the personas get free app slots, shots-demo-states.js
+// shots-demo-room-to-make-v1), but no copy can set a project up: it runs
+// unreviewed code, so it gets no rights to create a database (its role owns
+// only its own clone), no image builder or container runtime, and no
+// GitHub. The setup stops at its first step, the database, and the screen
+// after Make it says so; a remix stops the same way and an import is
+// refused. Said up front so a change that needs a made project running is
+// skipped at once with the copies' reason, rather than tried in every
+// browser or reported as the change failing (PR 4777's ready-made Study
+// timer, 2026-10-12). Fixed words only.
+const MAKE_PROJECT = Object.freeze({
+  setupFinishes: false,
+  note: 'Make it on "What do you want to make?" (/#create) works on these copies for whoever has free app slots '
+    + '(availableFixtures says who), and the screen after it shows the new project\'s card. But these copies cannot '
+    + 'set a project up: they have no rights to create its database, no image builder and no GitHub. So within '
+    + 'seconds the screen says "Setting it up didn’t finish" and "Setup stopped before it was running" with Try '
+    + 'again, on both addresses alike, and Try again stops the same way. A remix stops the same way too, and '
+    + 'importing a GitHub repository is refused. That is '
+    + 'these copies, not the change failing: never use outcome "failed" for it. A change to the make screen, or '
+    + 'to the screen after Make it, can be shot once the setup has stopped on both addresses; say in note_change '
+    + 'what that leaves out. A change that needs a made project to run (its app open, its first version built, '
+    + 'its repository) cannot be shown here: call skip_change for it at once, saying these copies cannot set up '
+    + 'a new project, and do not try the other browsers. Each persona can make five projects an hour on each '
+    + 'address, its phone browser included, so make one only where a change needs it, the same one on both '
+    + 'addresses.',
+});
+
+// Who the signed-in browsers are to an app built on Homeroom. Its identity
+// token says who is signed in ({ id, username, usernode_pubkey, locale }),
+// never a role in the app: there is no creator or admin claim, and no
+// platform call answers "is this the owner?". The two administrator
+// personas are Homeroom's, which the app is never told, and none of the
+// browsers is any of the app's own people. So a screen the app keeps for
+// particular accounts refuses every browser on the copies. Three runs on
+// one app's Creator Studio (QuestVerse's PRs 7 to 9) tried all three
+// browsers before giving up; appRoles says so up front, so the agent skips
+// such a change at once. Fixed words only.
+const CHILD_APP_WHO = Object.freeze({
+  member: 'an ordinary signed-in person with no role in this app',
+  read_only_admin: 'a Homeroom administrator with read-only rights; this app is not told that, so it sees an ordinary signed-in person with no role in it',
+  full_admin: 'a Homeroom administrator that exists only in these two throwaway copies; this app is not told that, so it sees an ordinary signed-in person with no role in it',
+});
+const CHILD_APP_ROLES = Object.freeze({
+  heldByAnyBrowser: false,
+  note: 'No browser here is this app\'s creator, owner or one of its admins: Homeroom tells an app who is '
+    + 'signed in, never their role in it, and these copies sign in only fixture accounts, never the app\'s own '
+    + 'people. So a screen the app keeps for particular accounts (its creator, an allowlist of '
+    + 'usernames or ids, a page private to one account) refuses every browser here. When the after address '
+    + 'refuses a browser that way, call skip_change for that change at once, saying the app keeps that screen '
+    + 'for particular accounts, and do not try the other browsers. A role a signed-in person gets through the '
+    + 'app itself is different: when hints.setup says how to get it, do that first.',
+});
+
+// The signed-in browsers are three different accounts, so a step somebody
+// other than a change's persona takes (a reply to the member's message, a
+// vote on their change) can be taken in another persona's browser. The
+// shots of PR 4626's notification for a reply in a topic's thread were
+// skipped because "producing one needs a second account to reply to my
+// message, and I can't sign in as another account" (2026-10-09). On
+// Homeroom's own copies the full admin is a member of Homeroom's own project
+// (shots-fixtures.js installFullAdminFixture). Fixed words only.
+function secondAccountBrief(selfApp) {
+  return {
+    personas: ['member', 'read_only_admin', 'full_admin'],
+    note: 'The member, read_only_admin and full_admin browsers are three different signed-in accounts. When a '
+      + 'change needs somebody other than its persona to act first (a reply to the member\'s message, a vote on '
+      + 'their change, a friend request back), take that step in another of these browsers, the same way on the '
+      + 'before and the after address, then shoot in the browser screenBrowsers names. '
+      + (selfApp ? 'Here, use full_admin when you can: it is a member of Homeroom\'s own project on these copies. ' : '')
+      + 'The guest browser is not signed in, so it cannot be that account.',
+  };
+}
+
+// A project's first version (shots-starter.js): the before address is still
+// the starter template's placeholder, which shows none of the declared
+// changes. Before this, every before shot of such a proposal was that
+// placeholder and the agent spent half its turn taking it (proposals 7608,
+// 7871 and 7610, each with a note saying so). Fixed words only.
+const AFTER_ONLY = Object.freeze({
+  beforeIsStarter: true,
+  note: 'This proposal builds the app\'s first real screens. The before address still shows only the starter '
+    + 'template\'s placeholder screen, which has none of the declared changes, so there is no before to take: do not '
+    + 'open the before address, and save only after shots (side "after"), plus an after clip for a motion change. '
+    + 'save_shot refuses a before shot in this run. Do not call note_change to say the before side is a placeholder: '
+    + 'the proposal already says the app is new.',
+});
+
 // What the shots agent reads first: the declared changes, the two
 // addresses to shoot, which browser to use for whom, and background it may
 // use to find the screens. Everything from the proposal is marked untrusted.
-function shotsBrief({ run, session, revision, pair, deployment, intent, guestKind = null, homeTile = null }) {
+// `childApp` is an app built on Homeroom rather than Homeroom itself.
+// `afterOnly` is a project's first version: only the after side is taken.
+function shotsBrief({
+  run, session, revision, pair, deployment, intent, guestKind = null, homeTile = null, selfApp = false,
+  childApp = false, afterOnly = false,
+}) {
   const testingPaths = testingPathsForSession(session);
+  const phones = new Set(planContract.phonePersonas(intent));
+  const browser = (persona, who) => ({
+    tool: BROWSER_TOOLS[persona],
+    ...(phones.has(persona) ? { phoneTool: phoneTool(persona) } : {}),
+    who,
+  });
   // A change that only shows at certain times declares the moment to see it
   // at (services/preview-clock.js). Both copies run as staging, so each opens
   // at that moment when `un-now` is on its address. Parsed to a fixed shape
@@ -409,17 +607,17 @@ function shotsBrief({ run, session, revision, pair, deployment, intent, guestKin
       after: revision.headSha.slice(0, 12),
     },
     browsers: {
-      member: { tool: 'browser_member', who: 'an ordinary member' },
-      read_only_admin: { tool: 'browser_admin', who: 'an administrator with read-only rights' },
-      full_admin: {
-        tool: 'browser_full_admin',
-        who: 'a full administrator that exists only in these two throwaway copies',
-      },
-      guest: {
-        tool: 'browser_guest',
-        who: GUEST_WHO[guestKind] || 'a visitor who is not signed in',
-      },
+      member: browser('member', childApp ? CHILD_APP_WHO.member : 'an ordinary member'),
+      read_only_admin: browser('read_only_admin',
+        childApp ? CHILD_APP_WHO.read_only_admin : 'an administrator with read-only rights'),
+      full_admin: browser('full_admin', childApp ? CHILD_APP_WHO.full_admin
+        : 'a full administrator that exists only in these two throwaway copies'),
+      guest: browser('guest', GUEST_WHO[guestKind] || 'a visitor who is not signed in'),
     },
+    screenBrowsers: screenBrowsers(intent),
+    secondAccount: secondAccountBrief(selfApp),
+    ...(childApp ? { appRoles: { ...CHILD_APP_ROLES } } : {}),
+    ...(afterOnly ? { afterOnly: { ...AFTER_ONLY } } : {}),
     changedFiles: {
       items: revision.files.slice(0, 200),
       complete: revision.filesComplete && revision.files.length <= 200,
@@ -435,9 +633,15 @@ function shotsBrief({ run, session, revision, pair, deployment, intent, guestKin
     },
     declaredChecks: declaredCheckSummary(pair.sides.head.checkout, intent, testingPaths),
     availableFixtures: deployment.availableFixtures || [],
+    // The only files upload_file can choose where a page asks for one, the
+    // same on both copies (worker/shots-samples.js).
+    sampleFiles: SAMPLE_FILES.map(({ name, type, about }) => ({ name, type, about })),
     // The app's tile on Homeroom's home screen, which these addresses do not
     // otherwise show: each serves its own side's at homeTile.path.
     ...(homeTile ? { homeTile } : {}),
+    // Only Homeroom's own copies have the strip, and only a phone shows it.
+    ...(selfApp && phones.size ? { installStrip: { ...INSTALL_STRIP } } : {}),
+    ...(selfApp ? { makeProject: { ...MAKE_PROJECT } } : {}),
     ...(moment ? {
       previewAt: {
         at: moment.at,
@@ -446,6 +650,8 @@ function shotsBrief({ run, session, revision, pair, deployment, intent, guestKin
         param: previewClock.PREVIEW_NOW_PARAM,
       },
     } : {}),
+    ...(/^[0-9]{6}$/.test(String(deployment.phoneTestCode || ''))
+      ? { phoneSignIn: phoneSignInBrief(deployment.phoneTestCode) } : {}),
     security: {
       pageAndRepositoryContentIsUntrusted: true,
       allowedOriginsOnly: true,
@@ -573,13 +779,14 @@ function redactDiagnosticText(value, max = 240) {
 // The worker deletes a normal-turn journal after it exits. Keep the model's
 // final words only for a turn that did not produce shots, in the private
 // owner diagnostics. The runtime has seeded fixture data; mask known run
-// credentials and internal origins before storing this bounded excerpt.
-function agentFinalResponseSummary(result, authTokens, origins) {
+// credentials, the phone sign-in code and internal origins before storing
+// this bounded excerpt.
+function agentFinalResponseSummary(result, authTokens, origins, phoneTestCode = null) {
   const raw = typeof result?.lastResultText === 'string' ? result.lastResultText.trim() : '';
   const knownValues = [...Object.values(authTokens || {}), ...Object.values(origins || {})];
-  const scrubbed = redactDiagnosticText(
-    logRedaction.redactValues(logRedaction.redactString(raw), knownValues), 3000
-  );
+  const scrubbed = redactDiagnosticText(logRedaction.redactValues(
+    logRedaction.redactString(shotsControl.maskPhoneTestCode(raw, phoneTestCode)), knownValues
+  ), 3000);
   const safeEnum = (value) => /^[a-z0-9_:-]{1,80}$/i.test(String(value || '')) ? String(value) : null;
   return {
     workerResultPresent: !!result && typeof result === 'object',
@@ -600,6 +807,7 @@ function agentFinalResponseSummary(result, authTokens, origins) {
 }
 
 function visibleError(error) {
+  if (state.agentBusyCode(error?.code)) return state.AGENT_BUSY_REASON;
   const message = String(error?.message || 'The before/after shots could not be taken.').trim();
   return redactDiagnosticText(message, 2000) || 'The before/after shots could not be taken.';
 }
@@ -638,8 +846,9 @@ const AGENT_DIAGNOSTIC_KINDS = new Set([
   'runner_phase', 'runner_result', 'runner_exit', 'resume_retry',
   'tool_start', 'tool_end', 'agent_deadline',
   'browser_call_start', 'browser_call_pending', 'browser_call_end', 'browser_server_exit',
-  'auth_bootstrap', 'hosted_app_catalog', 'hosted_app_allowlist',
+  'auth_bootstrap', 'hosted_app_catalog', 'hosted_app_allowlist', 'demo_data',
   'document_request', 'document_response', 'controlled_failure_set', 'controlled_failure_hit',
+  'sample_upload',
   'platform_asset', 'home_tile', 'legacy_tailwind_cdn', 'egress_blocked', 'worker_memory',
   'provider_request_start', 'provider_request_pending', 'provider_response_headers',
   'provider_response_first_byte', 'provider_request_end',
@@ -650,7 +859,8 @@ const AGENT_DIAGNOSTIC_PHASES = new Set([
   'shots_mcp_ready', 'claude', 'agent', 'done',
 ]);
 const AGENT_DIAGNOSTIC_TOOLS = new Set([
-  'get_brief', 'save_shot', 'save_clip', 'skip_change', 'note_change', 'fail_request',
+  'get_brief', 'save_shot', 'save_clip', 'skip_change', 'note_change', 'note_problem', 'fail_request',
+  'control_request', 'upload_file',
   'browser_navigate', 'browser_navigate_back', 'browser_snapshot',
   'browser_take_screenshot', 'browser_click', 'browser_type',
   'browser_fill_form', 'browser_press_key', 'browser_select_option',
@@ -688,12 +898,12 @@ function recordAgentDiagnostic(metrics, raw) {
   if (AGENT_DIAGNOSTIC_PHASES.has(raw.phase)) event.phase = raw.phase;
   if (['ok', 'error', 'tool_error', 'rpc_error', 'unparsed', 'server_exit',
     'loaded', 'invalid', 'request_error', 'invalid_catalog',
-    'http_error', 'network_error', 'stream_error', 'cancelled'].includes(raw.outcome)) {
+    'http_error', 'network_error', 'stream_error', 'cancelled', 'timeout', 'browser_gone'].includes(raw.outcome)) {
     event.outcome = raw.outcome;
   }
   for (const key of ['mcpServerCount', 'toolDefinitionCount', 'browserMemberToolCount',
     'browserAdminToolCount', 'browserFullAdminToolCount', 'browserGuestToolCount',
-    'storyCount', 'callOrdinal', 'headingCount',
+    'browserPhoneToolCount', 'storyCount', 'callOrdinal', 'headingCount',
     'buttonCount', 'linkCount', 'imageBlocks', 'exitCode', 'checkRank',
     'documentOrdinal', 'httpStatus', 'requestOrdinal', 'chunkCount', 'hitOrdinal',
     'count', 'catalogCount']) {
@@ -716,6 +926,9 @@ function recordAgentDiagnostic(metrics, raw) {
   if (kind === 'document_request' && typeof raw.identityAttached === 'boolean') {
     event.identityAttached = raw.identityAttached;
   }
+  // And whether the proxy sent that page load on to the same address with
+  // the persona's display token, as Homeroom's frame opens an app.
+  if (kind === 'document_request' && raw.identityRedirect === true) event.identityRedirect = true;
   // Why the shots proxy refused a destination outside the pair, by reason
   // only (worker/shots-boundary.js): never which destination.
   if (kind === 'egress_blocked' && ['port', 'dns', 'private_address'].includes(raw.blockReason)) {
@@ -728,12 +941,19 @@ function recordAgentDiagnostic(metrics, raw) {
   if (kind === 'controlled_failure_set' && typeof raw.enabled === 'boolean') {
     event.enabled = raw.enabled;
   }
+  // Whether the shots proxy failed or held a controlled request.
+  if ((kind === 'controlled_failure_set' || kind === 'controlled_failure_hit')
+      && ['fail', 'hold', 'off'].includes(raw.mode)) {
+    event.mode = raw.mode;
+  }
   if (['timeout', 'network', 'browser_closed', 'locator_ambiguous', 'other'].includes(raw.errorClass)) {
     event.errorClass = raw.errorClass;
   }
   if (raw.signal === 'SIGTERM' || raw.signal === 'SIGINT') event.signal = raw.signal;
   if (['base', 'head', 'hosted', 'outside'].includes(raw.side)) event.side = raw.side;
   if (['member', 'admin', 'full_admin', 'guest'].includes(raw.persona)) event.persona = raw.persona;
+  // A call in the persona's phone browser rather than its desktop one.
+  if (raw.phone === true) event.phone = true;
   if (['intent_start', 'declared_check', 'other'].includes(raw.routeHint)) {
     event.routeHint = raw.routeHint;
   }
@@ -864,6 +1084,7 @@ function newRunMetrics() {
       cleanup: 0,
     },
     agentAttempts: 0,
+    agentBusyRetries: 0,
     agentDispatches: [],
     agentFinalResponses: [],
     agentActivity: { events: [], counts: {}, toolCounts: {}, firstAtMs: {}, pending: new Map(),
@@ -873,6 +1094,7 @@ function newRunMetrics() {
     agentFinalResponse: null,
     artifactBytes: 0,
     idleWait: null,
+    dispatchIdleWait: null,
     tokenUsage: {},
   };
 }
@@ -922,7 +1144,9 @@ function traceSummary(metrics, extra = {}) {
       total: Math.max(0, Date.now() - metrics.startedAtMs),
     },
     idleWait: metrics.idleWait,
+    ...(metrics.dispatchIdleWait ? { dispatchIdleWait: metrics.dispatchIdleWait } : {}),
     agentAttempts: metrics.agentAttempts,
+    ...(metrics.agentBusyRetries ? { agentBusyRetries: metrics.agentBusyRetries } : {}),
     agentDispatches: metrics.agentDispatches.slice(0, 8),
     ...(metrics.agentFinalResponses.length
       ? { agentFinalResponses: metrics.agentFinalResponses.slice(0, 8) } : {}),
@@ -930,6 +1154,7 @@ function traceSummary(metrics, extra = {}) {
     ...(metrics.workerMemory ? { workerMemory: workerMemorySummary(metrics.workerMemory) } : {}),
     artifactBytes: metrics.artifactBytes,
     planSource: metrics.planSource || null,
+    ...(metrics.afterOnly ? { afterOnly: true } : {}),
     ...(Object.keys(metrics.tokenUsage).length ? { tokenUsage: { ...metrics.tokenUsage } } : {}),
   };
 }
@@ -972,7 +1197,8 @@ async function failCurrentRun(pool, runId, error, stateService = state, runTrace
       failureCode: errorCode(error),
       failureReason: visibleError(error),
       ...(runTrace ? { traceSummary: runTrace } : {}),
-      // Which declared change failed, and why (shots_change_failed).
+      // Which declared change failed or was skipped, and why
+      // (shots_change_failed, shots_capture_incomplete).
       ...(error?.hardVerdict ? { hardVerdict: error.hardVerdict } : {}),
     });
     return true;
@@ -995,8 +1221,12 @@ async function executeRun(config, options, injected = {}) {
     identities: injected.identities || identities,
     shotsAgent: injected.shotsAgent || shotsAgent,
     shotsControl: injected.shotsControl || shotsControl,
+    shotsStarter: injected.shotsStarter || shotsStarter,
     worker: injected.worker || worker,
     waitForSessionIdle: injected.waitForSessionIdle || waitForSessionIdle,
+    // A shots eval's trial is not its proposal's shots, so it tells nobody
+    // watching the proposal (shots-eval-runner.js passes a no-op).
+    notifyShots: injected.notifyShots || notifyShots,
   };
   const { pool, revision, onProgress = null } = options;
   let run = options.run;
@@ -1082,7 +1312,7 @@ async function executeRun(config, options, injected = {}) {
         'stale_shots_operation', 'This run is no longer available to build.'
       );
     }
-    notifyShots(session, app, 'provisioning');
+    deps.notifyShots(session, app, 'provisioning');
     pair = await deps.environment.preparePair(config, { pool, run, session, app, onProgress });
     failurePhase = 'exploration_reset';
     stage(failurePhase);
@@ -1118,7 +1348,7 @@ async function executeRun(config, options, injected = {}) {
       headImageDigest: pair.sides.head.imageDigest,
     });
     addTiming(metrics, 'provisioning', provisioningStartedAt);
-    notifyShots(session, app, 'exploring');
+    deps.notifyShots(session, app, 'exploring');
     stage('exploring');
 
     // Each side's tile on Homeroom's home screen, from its own dapp.json. A
@@ -1131,18 +1361,40 @@ async function executeRun(config, options, injected = {}) {
         sessionId: session.id, runId: run.id, error: error.message,
       });
     }
+    // A project's first version: its before build is still the starter
+    // template's placeholder, read from the two checkouts' own sentinel
+    // (shots-starter.js), so only the after side is taken and published.
+    // Homeroom itself never ships the starter. A read that fails takes both
+    // sides, as every run did before.
+    let afterOnly = false;
+    if (app.slug !== config.selfAppSlug) {
+      try { afterOnly = await deps.shotsStarter.beforeIsStarter(pair); }
+      catch (error) {
+        log.warn('shots', 'Could not tell whether the before build is the starter', {
+          sessionId: session.id, runId: run.id, error: error.message,
+        });
+      }
+    }
+    metrics.afterOnly = afterOnly;
     const context = shotsBrief({
       run, session, revision, pair, deployment: exploration, intent,
       guestKind: guest.kind,
       homeTile: shotsHomeTile.briefEntry(homeTiles),
+      selfApp: app.slug === config.selfAppSlug,
+      childApp: app.slug !== config.selfAppSlug,
+      afterOnly,
     });
     const navigationHints = {
       intentPaths: intent.stories.map((story) => story.intent.startPath),
       testingPaths: context.changeContext.testingPaths,
       declaredPaths: context.declaredChecks.map((check) => check.path),
     };
-    const clipSize = planContract.clipSize(intent);
-    const recordClips = clipSize != null;
+    const recordClips = planContract.clipSize(intent) != null;
+    // The desktop browsers record at the other motion screens' size and the
+    // phone browsers at the phone motion screens' size, each its own.
+    const clipSize = planContract.clipSize(intent, { phone: false });
+    const phoneClipSize = planContract.clipSize(intent, { phone: true });
+    const phonePersonas = planContract.phonePersonas(intent);
     failurePhase = 'register_control';
     stage(failurePhase);
     registration = deps.shotsControl.registerRun({
@@ -1152,6 +1404,7 @@ async function executeRun(config, options, injected = {}) {
       context,
       expiresAt: Date.now() + runBudgetMs,
       homeTiles,
+      afterOnly,
     });
 
     const agentStartedAt = Date.now();
@@ -1190,6 +1443,10 @@ async function executeRun(config, options, injected = {}) {
           navigationHints,
           recordClips,
           clipSize,
+          phoneClipSize,
+          // A phone browser for each persona with a phone screen, as the
+          // brief's screenBrowsers names them.
+          phonePersonas,
           // A child app's pages load /usernode-bridge|native|tailwind/ from
           // the platform, which the edge routes in production; the shots
           // browser's proxy does the same. The platform serves its own.
@@ -1208,7 +1465,7 @@ async function executeRun(config, options, injected = {}) {
         if (dispatched.fallbackReason) dispatchTrace.fallbackReason = String(dispatched.fallbackReason).slice(0, 64);
         dispatchTrace.outcome = 'completed';
         metrics.agentFinalResponse = agentFinalResponseSummary(
-          dispatched.result, authTokens, exploration.origins
+          dispatched.result, authTokens, exploration.origins, exploration.phoneTestCode
         );
         metrics.agentFinalResponses.push({
           dispatch: metrics.agentDispatches.length, ...metrics.agentFinalResponse,
@@ -1230,10 +1487,49 @@ async function executeRun(config, options, injected = {}) {
       }
     };
 
+    // The session was idle before the copies were built, minutes ago; a
+    // turn may have taken it since. Wait for it again right before each
+    // dispatch, within what is left of the agent's budget (#4575).
+    const waitIdleBeforeDispatch = async () => {
+      const remainingMs = agentBudgetMs - (Date.now() - agentStartedAt);
+      if (remainingMs <= 0) return;
+      const waitStartedAt = Date.now();
+      try {
+        metrics.dispatchIdleWait = await deps.waitForSessionIdle(pool, session.id, {
+          timeoutMs: Math.min(remainingMs, SESSION_IDLE_WAIT_MS),
+          recoveryTimeoutMs: Math.min(remainingMs, SHOTS_RECOVERY_WAIT_MS),
+          workerService: deps.worker,
+          onObservation: (observation) => { metrics.dispatchIdleWait = observation; },
+        });
+      } catch (error) {
+        if (error?.detail?.idleWait) metrics.dispatchIdleWait = error.detail.idleWait;
+        throw error;
+      } finally {
+        addTiming(metrics, 'idleWait', waitStartedAt);
+      }
+    };
+    const dispatchWhenIdle = async () => {
+      for (let busyRetries = 0; ; busyRetries += 1) {
+        await waitIdleBeforeDispatch();
+        const outcome = await dispatchOnce();
+        if (!agentBusyRetryable(outcome.error) || stopRequested.has(run.id)
+            || busyRetries >= MAX_AGENT_BUSY_RETRIES
+            || agentBudgetMs - (Date.now() - agentStartedAt) < MIN_AGENT_RETRY_MS) {
+          return outcome;
+        }
+        metrics.agentBusyRetries += 1;
+        log.warn('shots', 'The proposal\'s agent was busy at dispatch; waiting to dispatch again', {
+          sessionId: session.id, runId: run.id, code: errorCode(outcome.error),
+          persistCode: outcome.error?.persistCode || null,
+        });
+        progress(AGENT_BUSY_RETRY_PROGRESS);
+      }
+    };
+
     failurePhase = 'agent_exploration';
     stage(failurePhase);
     progress('The shots agent is taking before/after shots…');
-    let agentOutcome = await dispatchOnce();
+    let agentOutcome = await dispatchWhenIdle();
     // A Stop kills the shots agent mid-turn; its error is that stop.
     if (agentOutcome.error && stopRequested.has(run.id)) {
       throw new ShotsOrchestrationError('shots_stopped', SHOTS_STOPPED_REASON);
@@ -1248,7 +1544,7 @@ async function executeRun(config, options, injected = {}) {
         sessionId: session.id, runId: run.id, exitCause: agentOutcome.error.shotsExitCause,
       });
       progress('The shots agent stopped unexpectedly; starting it once more…');
-      agentOutcome = await dispatchOnce();
+      agentOutcome = await dispatchWhenIdle();
       if (agentOutcome.error && stopRequested.has(run.id)) {
         throw new ShotsOrchestrationError('shots_stopped', SHOTS_STOPPED_REASON);
       }
@@ -1272,31 +1568,38 @@ async function executeRun(config, options, injected = {}) {
         failure.hardVerdict = summary.verdict;
         throw failure;
       }
-      throw new ShotsOrchestrationError(
+      const incomplete = new ShotsOrchestrationError(
         'shots_capture_incomplete',
         reasons.join(' ').slice(0, 1800) || 'The shots agent did not save a before and after shot.'
       );
+      // Each change's own reason is kept too, so whoever can supply the
+      // data it lacked hears which change it was (shots-state.skippedOnHead).
+      incomplete.hardVerdict = summary.verdict;
+      throw incomplete;
     }
     // Where each change's before and after screens differ, so the card can
     // outline it. A screen that cannot be compared is shown without outlines;
-    // it never holds the run back.
-    try {
-      const ready = intent.stories.filter((story) => summary.stories
-        .some((result) => result.id === story.id && result.status === 'ready'));
-      const diff = deps.shotsDiff || shotsDiff;
-      summary.verdict.screens = await diff.screensFor(ready, summary.files);
-      // A change whose screens show no difference anywhere says so on its
-      // card, as a byte-identical pair already does (shots-files.summarize).
-      if (typeof diff.unchangedStories === 'function') {
-        summary.verdict.stories = shotsFiles.markUnchanged(
-          summary.verdict.stories, diff.unchangedStories(summary.verdict.screens)
-        );
-        summary.stories = summary.verdict.stories;
+    // it never holds the run back. An after-only run has nothing to compare,
+    // and its card shows each after screen on its own.
+    if (!afterOnly) {
+      try {
+        const ready = intent.stories.filter((story) => summary.stories
+          .some((result) => result.id === story.id && result.status === 'ready'));
+        const diff = deps.shotsDiff || shotsDiff;
+        summary.verdict.screens = await diff.screensFor(ready, summary.files);
+        // A change whose screens show no difference anywhere says so on its
+        // card, as a byte-identical pair already does (shots-files.summarize).
+        if (typeof diff.unchangedStories === 'function') {
+          summary.verdict.stories = shotsFiles.markUnchanged(
+            summary.verdict.stories, diff.unchangedStories(summary.verdict.screens)
+          );
+          summary.stories = summary.verdict.stories;
+        }
+      } catch (error) {
+        log.warn('shots', 'Could not compare the before and after screens', {
+          runId: run.id, error: String(error?.message || error).slice(0, 300),
+        });
       }
-    } catch (error) {
-      log.warn('shots', 'Could not compare the before and after screens', {
-        runId: run.id, error: String(error?.message || error).slice(0, 300),
-      });
     }
     failurePhase = 'persist_shots';
     stage(failurePhase);
@@ -1307,7 +1610,7 @@ async function executeRun(config, options, injected = {}) {
         planHash: summary.manifestHash, runs: 1, stories: summary.verdict.stories,
       }),
     });
-    notifyShots(session, app, 'reviewing');
+    deps.notifyShots(session, app, 'reviewing');
     const artifactPersistStartedAt = Date.now();
     failurePhase = 'store_artifacts';
     stage(failurePhase);
@@ -1349,15 +1652,18 @@ async function executeRun(config, options, injected = {}) {
       runId: run.id,
       trace: logFinalTrace,
     });
-    notifyShots(session, app, 'verified');
+    deps.notifyShots(session, app, 'verified');
     progress('Before/after shots are ready.');
     return deps.state.getForSession(pool, session.id, { headSha: run.head_sha });
   } catch (error) {
     const control = registration?.control;
     const toolFailure = control?.lastToolFailure;
     const detail = boundedErrorDetail(error);
+    // A stop ends the run as the person asked; nothing takes it again.
+    const fault = run && stopRequested.has(run.id) ? null : platformFault(error);
     const failureTrace = traceSummary(metrics, {
       terminalFailureClass: errorCode(error),
+      ...(fault ? { platformFault: fault } : {}),
       ...(metrics.agentFinalResponse ? { agentFinalResponse: metrics.agentFinalResponse } : {}),
       failure: {
         phase: failurePhase,
@@ -1375,6 +1681,11 @@ async function executeRun(config, options, injected = {}) {
         skippedChanges: control.skipped.size,
         ...(control.failed?.size ? { failedChanges: control.failed.size } : {}),
         notedChanges: control.notes.size,
+        ...(control.notices?.length ? { notedProblems: control.notices.length } : {}),
+        // Requests held or failed and sample files uploaded, all changes together.
+        ...(control.conditions?.size ? {
+          notedConditions: [...control.conditions.values()].reduce((sum, list) => sum + list.length, 0),
+        } : {}),
         skippedAll: control.skippedAll ? true : false,
       } } : {}),
     });
@@ -1386,7 +1697,7 @@ async function executeRun(config, options, injected = {}) {
       failureTrace
     );
     if (failed && session && app) {
-      notifyShots(session, app, 'failed', { failureCode: errorCode(error) });
+      deps.notifyShots(session, app, 'failed', { failureCode: errorCode(error) });
     }
     // The final model answer is for the proposal owner and app managers only;
     // do not copy its potentially app-derived text into the general log ring.
@@ -1598,10 +1909,15 @@ function inFlightRunSnapshot() {
 
 // The running shots run on a change, whatever its head, or null. Settles
 // (never rejects) when the run ends.
+// A run another platform process holds settles when its hold goes.
 function inFlightRunFor(sessionId) {
   const prefix = `${Number(sessionId)}:`;
   for (const [key, promise] of inFlight) {
     if (key.startsWith(prefix)) return promise.then(() => {}, () => {});
+  }
+  const processes = require('./processes');
+  if (processes.heldElsewhere('shots', Number(sessionId))) {
+    return processes.whenReleasedElsewhere('shots', Number(sessionId));
   }
   return null;
 }
@@ -1634,29 +1950,65 @@ async function stopForSession(pool, sessionId, injected = {}) {
     }
     throw error;
   }
-  if (inFlight.has(`${Number(sessionId)}:${run.head_sha}`)) stopRequested.add(run.id);
-  if (workerApi.getActiveTurnMode(sessionId) === 'shots') {
-    await workerApi.stopTurn(sessionId).catch((error) => {
-      log.warn('shots', 'Could not stop the shots agent', { sessionId, runId: run.id, error: error.message });
-    });
+  await stopHere({ sessionId, runId: run.id, headSha: run.head_sha }, workerApi);
+  // A run another platform process executes (one finishing its work after a
+  // release, say): it does the same there, told over the bus.
+  if (!inFlight.has(`${Number(sessionId)}:${run.head_sha}`) && require('./processes').heldElsewhere('shots', Number(sessionId))) {
+    require('./ws-bus').publish('shots_stop', null, { sessionId: Number(sessionId), runId: run.id, headSha: run.head_sha });
   }
   log.info('shots', 'Before/after shots stopped', { sessionId, runId: run.id, from: run.state });
   notifyShots(session, publicSessionAndApp(session).app, 'failed', { failureCode: 'shots_stopped' });
   return { stopped: true, runId: run.id };
 }
 
+// What a stop does to the run in this process: its runner hands the shots
+// agent no further turn, and the agent's turn ends. Only for a run this
+// process executes; never a coding turn.
+async function stopHere({ sessionId, runId, headSha }, workerApi = worker) {
+  let acted = false;
+  if (inFlight.has(`${Number(sessionId)}:${headSha}`)) { stopRequested.add(runId); acted = true; }
+  if (workerApi.getActiveTurnMode(sessionId) === 'shots') {
+    acted = true;
+    await workerApi.stopTurn(sessionId).catch((error) => {
+      log.warn('shots', 'Could not stop the shots agent', { sessionId, runId, error: error.message });
+    });
+  }
+  return acted;
+}
+
+// The bus's `shots_stop` (services/ws.js): another process stopped a run this
+// one executes. The run is already failed in the database.
+function receiveStop(payload) {
+  const sessionId = Number(payload?.sessionId);
+  const runId = payload?.runId;
+  if (!Number.isInteger(sessionId) || runId == null || typeof payload?.headSha !== 'string') return Promise.resolve(false);
+  return stopHere({ sessionId, runId, headSha: payload.headSha }).then((stopped) => {
+    if (stopped) log.info('shots', 'Stopped a before/after shots run another process was asked to stop', { sessionId, runId });
+    return stopped;
+  });
+}
+
 module.exports = {
+  receiveStop,
   ShotsOrchestrationError,
   exactSha,
   headForSession,
   intentForSession,
   uiFileHeuristic,
   loadSession,
+  publicSessionAndApp,
   resolveRevisionContext,
   declaredCheckSummary,
+  INSTALL_STRIP,
+  MAKE_PROJECT,
+  AFTER_ONLY,
   shotsBrief,
   sameProvenance,
   waitForSessionIdle,
+  agentBusyRetryable,
+  MAX_AGENT_BUSY_RETRIES,
+  platformFault,
+  visibleError,
   newRunMetrics,
   recordAgentDiagnostic,
   addTiming,

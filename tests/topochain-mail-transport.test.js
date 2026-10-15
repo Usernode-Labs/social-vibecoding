@@ -107,7 +107,7 @@ test('a release send branches its copy on hasAccount and carries the link', asyn
     await t.send({ to: 'a@b.invalid', kind: 'waitlist_released', url: 'https://x.invalid/#login', hasAccount: true });
   });
   assert.match(bodies[0].subject, /you're in/i);
-  assert.match(bodies[0].text, /create your account/i);
+  assert.match(bodies[0].text, /create my account/i);
   assert.match(bodies[0].text, /https:\/\/x\.invalid\/#signup/);
   assert.match(bodies[1].text, /sign in/i);
   assert.match(bodies[1].text, /https:\/\/x\.invalid\/#login/);

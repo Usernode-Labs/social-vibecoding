@@ -41,6 +41,7 @@
  */
 
 const log = require('./logger');
+const leaderTimers = require('./leader-timers');
 const conversations = require('./conversations');
 const userDirectory = require('./user-directory');
 
@@ -75,7 +76,6 @@ const SEARCH_LIMIT = 8;
 const INTERVAL_MS = 30_000;
 const FIRST_SWEEP_DELAY_MS = 20_000;
 
-let timer = null;
 let running = false;
 
 function parseMemberIds(raw) {
@@ -450,7 +450,7 @@ async function sweep(pool) {
 }
 
 function start(config) {
-  if (timer) return;
+  if (leaderTimers.has('welcome-dm')) return;
   const { getPool } = require('../db/pool');
   const run = async () => {
     if (running) return;
@@ -464,14 +464,13 @@ function start(config) {
       running = false;
     }
   };
-  setTimeout(run, FIRST_SWEEP_DELAY_MS).unref?.();
-  timer = setInterval(run, INTERVAL_MS);
-  if (typeof timer.unref === 'function') timer.unref();
+  // A leader timer (services/leader-timers.js): no sweep starts once
+  // shutdown has begun, and one under way is given the drain to finish.
+  leaderTimers.every('welcome-dm', run, INTERVAL_MS, { firstDelayMs: FIRST_SWEEP_DELAY_MS });
 }
 
 function stop() {
-  if (timer) clearInterval(timer);
-  timer = null;
+  leaderTimers.clear('welcome-dm');
 }
 
 module.exports = {

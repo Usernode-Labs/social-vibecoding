@@ -29,6 +29,7 @@
 
 const log = require('../logger');
 const { MEASURES } = require('./challenge-rules');
+const { HELPER_FALLBACK_MODEL } = require('../llm');
 
 // Below this, a report cannot contain what the rubric asks for (what you did,
 // what happened, what you expected) no matter how it is worded.
@@ -38,10 +39,11 @@ const MIN_FEEDBACK_CHARS = 20;
 // rather than left as literals in the call because the admin's "How it
 // scores" panel prints them (./challenge-anatomy.js), and a number that is
 // typed twice is a number that is wrong in one of the two places. GLM 5.3
-// Flash marks it, and Haiku 4.5 when GLM does not answer in time
-// (llm.js helperMessage); each ledger row keeps the model that answered.
+// Flash marks it, and Haiku when GLM does not answer in time (llm.js
+// helperMessage, whose fallback model this reads rather than retypes); each
+// ledger row keeps the model that answered.
 const GRADE_MODEL = 'z-ai/glm-5.3-flash';
-const GRADE_FALLBACK_MODEL = 'claude-haiku-4-5';
+const GRADE_FALLBACK_MODEL = HELPER_FALLBACK_MODEL;
 const GRADE_TITLE_CHARS = 200;
 const GRADE_TEXT_CHARS = 2000;
 

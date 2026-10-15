@@ -23,11 +23,26 @@
     'shell_boot', 'app_detail', 'app_discussion', 'feedback_dialog',
     'report_dialog', 'change_workspace', 'preview', 'ping_ask', ...NAV_SCREENS,
   ]);
+  // A full page load is credited to the first REAL screen the shell showed
+  // (#4965): the twelve screen roots people land on, never a first-run sheet
+  // or the welcome tour. The other four NAV_SCREENS do not count as a
+  // landing.
+  const LOAD_SCREENS = [
+    'home', 'discover', 'communities', 'challenges', 'profile', 'my_proposals',
+    'settings', 'messages', 'assistant', 'agent_session', 'app', 'project',
+  ];
+  const SHEET_SCREENS = new Set([...NAV_SCREENS].filter(
+    (code) => !LOAD_SCREENS.includes(code)
+  ));
   const VIAS = new Set(['own', 'nudged', 'handed', 'address', 'back', 'returned']);
   const ACTIONS = new Set([
     'shell_boot', 'app_detail_load', 'app_discussion_load',
     'feedback_submit', 'content_report_submit', 'change_create', 'preview_open',
     'push_permission',
+    // A request/proposal/governance page opened from a link (#4524): the
+    // measure the fast-open work reports against. Keep identical with the
+    // server's ACTIONS.
+    'topic_load',
   ]);
   const OUTCOMES = new Set(['success', 'failure', 'cancelled']);
   const ERRORS = new Set([
@@ -53,6 +68,10 @@
   // A mark from markNextVia explains the navigation that follows it at once;
   // one that no navigation used goes stale rather than mislabel a later step.
   const NEXT_VIA_MS = 5000;
+  // The page-load read (#4965) waits for Navigation Timing to complete:
+  // every 500 ms, up to 30 s, then gives up silently.
+  const LOAD_POLL_MS = 500;
+  const LOAD_POLLS = 60;
 
   function createUITelemetry(env) {
     env = env || {};
@@ -98,6 +117,15 @@
     let hiddenAt = null;
     let nextVia = null;
     let nextViaAt = 0;
+    // One full page load (#4965): the first real screen the shell showed,
+    // and whether that load has already been reported. Page-scoped on
+    // purpose — resetObservations() clears a person's observations, not the
+    // load this page is one of.
+    let landingScreen = null;
+    let loadRecorded = false;
+    let loadEnded = false;
+    let loadPolls = 0;
+    let loadScheduled = false;
 
     function adminRoute() {
       try { return String(env.location?.hash || '').startsWith('#admin'); } catch (_) { return false; }
@@ -233,6 +261,12 @@
       const via = VIAS.has(context.via) ? context.via : (marked || 'own');
       nextVia = null;
       currentNav = { screen: screenCode, appSlug };
+      // The load is credited to the first real screen shown (#4965); a
+      // first-run sheet or the welcome tour is not a landing.
+      if (landingScreen === null && !SHEET_SCREENS.has(screenCode)) {
+        landingScreen = screenCode;
+        if (loadEnded) recordPageLoad();
+      }
       return emit('screen_visit', screenCode, { appSlug, via });
     }
 
@@ -544,6 +578,51 @@
       return 'boot_step_failed';
     }
 
+    // One measured full page load (#4965): browser start to load finish, read
+    // from Navigation Timing once. It is credited to the first real screen
+    // the shell showed; a load that ended before any screen did is kept
+    // under shell_boot ("Left before a screen showed"). A page hidden before
+    // its load finishes is dropped: browsers slow hidden pages on purpose.
+    // Only the screen name and the milliseconds are sent.
+    function readLoadMs() {
+      try {
+        if (typeof env.performance?.getEntriesByType !== 'function') return null;
+        const nav = env.performance.getEntriesByType('navigation')[0];
+        if (!nav || typeof nav.loadEventEnd !== 'number') return null;
+        const start = Number.isFinite(nav.startTime) ? nav.startTime : 0;
+        const durationMs = nav.loadEventEnd - start;
+        return Number.isFinite(durationMs) && durationMs > 0 ? durationMs : null;
+      } catch (_) { return null; }
+    }
+
+    function recordPageLoad() {
+      if (loadRecorded) return;
+      loadRecorded = true;
+      const durationMs = readLoadMs();
+      if (durationMs == null) return;
+      emit('page_load', landingScreen || 'shell_boot', { durationMs });
+    }
+
+    function schedulePageLoad() {
+      if (loadScheduled || adminRoute()) return;
+      loadScheduled = true;
+      const poll = () => {
+        if (loadRecorded) return;
+        const durationMs = readLoadMs();
+        if (durationMs == null && ++loadPolls <= LOAD_POLLS) {
+          setTimer(poll, LOAD_POLL_MS);
+          return;
+        }
+        if (durationMs != null) {
+          loadEnded = true;
+          // No screen has landed yet: wait for one, or for pagehide to keep
+          // the load under shell_boot.
+          if (landingScreen) recordPageLoad();
+        }
+      };
+      setTimer(poll, LOAD_POLL_MS);
+    }
+
     function recordBoot() {
       if (adminRoute()) return;
       screen('shell_boot');
@@ -577,6 +656,10 @@
         // The navigation mark goes first so it rides in that same flush.
         if (doc.visibilityState === 'hidden') {
           navHidden();
+          // A page hidden before its load finishes is not measured (#4965):
+          // browsers slow hidden pages on purpose. A load that already ended
+          // keeps the reading it took.
+          if (!loadEnded) loadRecorded = true;
           void flush(true);
         } else if (doc.visibilityState === 'visible') {
           navShown();
@@ -584,6 +667,7 @@
       });
       if (doc.readyState === 'loading') doc.addEventListener('DOMContentLoaded', recordBoot, { once: true });
       else setTimer(recordBoot, 0);
+      schedulePageLoad();
     }
     // Back and Forward, where the browser says so (the Navigation API); a
     // browser without it reports those steps as the person's own.
@@ -593,7 +677,13 @@
       });
     } catch (_) { /* optional */ }
     if (env && typeof env.addEventListener === 'function') {
-      env.addEventListener('pagehide', () => { abandonPending(); void flush(true); });
+      env.addEventListener('pagehide', () => {
+        // A load that finished but never landed on a screen is kept under
+        // shell_boot (#4965); it rides out in this same flush.
+        if (loadEnded) recordPageLoad();
+        abandonPending();
+        void flush(true);
+      });
       env.addEventListener('online', () => schedule(0));
       env.addEventListener('hashchange', () => { if (!adminRoute()) schedule(0); });
     }

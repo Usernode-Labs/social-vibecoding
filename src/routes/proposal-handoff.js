@@ -4,12 +4,11 @@ const crypto = require('node:crypto');
 const express = require('express');
 const { getPool } = require('../db/pool');
 const appAccess = require('../services/app-access');
+const previewWorkflow = require('../services/preview-workflow');
 const communities = require('../services/communities');
 const github = require('../services/github');
 const githubBudget = require('../services/github-budget');
-const staging = require('../services/staging');
 const stagingRecovery = require('../services/staging-recovery');
-const visuals = require('../services/visuals');
 const sessionLifecycle = require('../services/session-lifecycle');
 const proposalUpdate = require('../services/proposal-update');
 const prMetadata = require('../services/pr-metadata');
@@ -64,8 +63,6 @@ const {
   hasInFlightHandoffPipeline,
   beginHandoffPipeline,
   startHandoffPipeline,
-  discardHandoffStaging,
-  runStaging,
 } = require('../services/handoff-pipeline');
 
 class ValidationError extends Error {}
@@ -446,8 +443,24 @@ function parseShareInProgressBody(body) {
 }
 
 function parseUpdateFromForkBody(body) {
-  exactKeys(body, ['branch', 'forkRepo', 'expectedHeadSha', 'testingPaths', 'testingSteps', 'title', 'description', 'summary', 'linkedIssues', 'recheck', 'visibleChanges', 'visualEvidence'], 'body');
-  const branch = boundedText(body.branch, { label: 'branch', min: 1, max: 255, trim: true });
+  exactKeys(body, ['branch', 'patch', 'forkRepo', 'expectedHeadSha', 'testingPaths', 'testingSteps', 'title', 'description', 'summary', 'linkedIssues', 'recheck', 'visibleChanges', 'visualEvidence'], 'body');
+  // #4263. The new work arrives as a fork `branch` OR as a `patch` (the
+  // connector's update-by-patch), never both. A patch is applied AT a commit,
+  // so it names that commit in `expectedHeadSha`. Its size limit is the
+  // patch service's own (it names the limit and the fallback); this bound is
+  // only the body's.
+  if (body.patch != null && body.branch != null) {
+    throw new ValidationError('Pass branch or patch, not both');
+  }
+  const patch = body.patch == null
+    ? null
+    : boundedText(body.patch, { label: 'patch', min: 1, max: 512 * 1024 });
+  if (patch != null && body.expectedHeadSha == null) {
+    throw new ValidationError('A patch needs expectedHeadSha: the commit it was made against');
+  }
+  const branch = patch != null
+    ? null
+    : boundedText(body.branch, { label: 'branch', min: 1, max: 255, trim: true });
   const forkRepo = body.forkRepo == null
     ? null
     : boundedText(body.forkRepo, { label: 'forkRepo', min: 1, max: 100, trim: true });
@@ -507,7 +520,7 @@ function parseUpdateFromForkBody(body) {
     ? []
     : parseImportLinkedIssues({ linkedIssues: body.linkedIssues });
   const testing = require('../services/testing-notes').parseSubmitted(body);
-  return { branch, forkRepo, expectedHeadSha, testing, title,
+  return { branch, patch, forkRepo, expectedHeadSha, testing, title,
     description, summary,
     recheck, linkedIssues, visibleChanges: parseVisibleChanges(visibleChangesContract.declaredChanges(body)) };
 }
@@ -604,13 +617,18 @@ function managedRevisionKind(session) {
   return null;
 }
 
+// What is running on the session: a turn or an operation (this process's
+// own record, and the other processes' holds), a hand-off being adopted, and
+// the preview machine's build or checks run, read off the phase it writes on
+// the row (every Pod sees it, and it survives a restart).
 function checkRuntime(session) {
   const sessionId = Number(session.id);
+  const pending = session.check_state === 'pending';
   const runtime = {
     session: isSessionBusy(sessionId),
     pipeline: hasInFlightHandoffPipeline(session.id),
-    build: staging.hasInFlightBuild(sessionId),
-    capture: visuals.hasInFlightCapture(session.id),
+    build: pending && session.check_phase === 'building',
+    capture: pending && ['testing', 'queued'].includes(session.check_phase),
   };
   runtime.inFlight = Object.values(runtime).some(Boolean);
   return runtime;
@@ -888,6 +906,7 @@ function proposalHandoffRoutes(config) {
           user: req.user,
           session,
           branch: input.branch,
+          patch: input.patch,
           forkRepo: input.forkRepo,
           expectedHeadSha: input.expectedHeadSha,
           testing: input.testing,
@@ -1207,20 +1226,20 @@ function proposalHandoffRoutes(config) {
         const { freed } = await sessionLifecycle.freeUserSlot({
           pool, userId: req.user.id, excludeSessionId: replacementSession ? replacementSession.id : null,
         });
-        if (!freed) return res.status(429).json({ error: sessionLifecycle.USER_SLOTS_BUSY });
+        if (!freed) {
+          sessionLifecycle.recordCapacityRefusal(pool, {
+            cap: 'user', path: 'proposal_start', userId: req.user.id, appId: app.id,
+          });
+          return res.status(429).json({ error: sessionLifecycle.USER_SLOTS_BUSY });
+        }
       }
-      const { rows: globalCounts } = await pool.query(
-        `SELECT COUNT(*) AS cnt FROM chat_sessions
-          WHERE status IN ('active', 'promoted')
-            AND source IS DISTINCT FROM 'imported'`
-      );
-      if (Number(globalCounts[0].cnt) - replacedActiveSlot
-          >= Number(config.maxGlobalSessions || 100)) {
-        const { freed } = await sessionLifecycle.freeGlobalSlot({
-          pool, graceMs: config.sessionPressureGraceMs,
-        });
-        if (!freed) return res.status(429).json({ error: 'Platform is at capacity right now. Try again in a few minutes.' });
-      }
+      // The platform-wide cap, counted as every other start counts it
+      // (session-caps.countGlobalSessions): this path once had its own copy,
+      // which disagreed with the others (12 Oct 2026).
+      const global = await sessionLifecycle.claimGlobalSlot({
+        pool, config, path: 'proposal_start', userId: req.user.id, appId: app.id, discount: replacedActiveSlot,
+      });
+      if (!global.ok) return res.status(429).json({ error: sessionLifecycle.PLATFORM_AT_CAPACITY });
 
       const branchName = `dev/cli-u${req.user.id}-${input.requestId}`;
       // #1376: `requestId` is already validated to [a-z0-9-] and the user id
@@ -1410,10 +1429,9 @@ function proposalHandoffRoutes(config) {
         if (!(await appAccess.checkAppAccess(pool, accessRow(session), req.user, 'collab'))) {
           return res.status(404).json({ error: 'Active handoff session not found' });
         }
-        if (isSessionBusy(Number(session.id))
-            || hasInFlightHandoffPipeline(session.id)
-            || staging.hasInFlightBuild(Number(session.id))
-            || visuals.hasInFlightCapture(session.id)) {
+        // A build or checks run going needs no refusal: the upload's
+        // ChecksCleared, below, cancels it in the preview machine.
+        if (isSessionBusy(Number(session.id)) || hasInFlightHandoffPipeline(session.id)) {
           return res.status(409).json({
             error: 'session_busy',
             message: 'The shared proposal is currently changing. Retry when it finishes.',
@@ -1422,6 +1440,7 @@ function proposalHandoffRoutes(config) {
         const expectedParent = currentProposalBranchHead(session);
         const releaseOperation = beginSessionOperation(session.id);
         try {
+          await releaseOperation.recorded;
           const repo = repoCoordinates(session);
           if (!github.isEnabled() || !repo) {
             return res.status(400).json({ error: 'No GitHub repo configured for this app' });
@@ -1479,17 +1498,13 @@ function proposalHandoffRoutes(config) {
           const alreadyRecorded = session.handoff_uploaded_sha === uploaded.sha
             && session.handoff_local_commit_sha === input.localCommitSha;
           if (!alreadyRecorded) {
+            // The verdict no longer describes the branch: the preview
+            // machine clears it (ChecksCleared, below).
             const advanced = await pool.query(
               `UPDATE chat_sessions
                 SET handoff_uploaded_sha = $1, handoff_local_commit_sha = $5,
                     ${summaryFreshness.INVALIDATE_SQL},
                     handoff_upload_checked_sha = checks_commit_sha,
-                    check_state = NULL, check_phase = NULL,
-                    check_error_detail = NULL, test_results = '[]'::jsonb,
-                    checks_checked_at = NULL, consecutive_check_failures = 0,
-                    first_check_failure_at = NULL, last_check_failure_at = NULL,
-                    check_next_retry_at = NULL, check_error_notified_at = NULL,
-                    capture_state = NULL, capture_detail = NULL, captured_at = NULL,
                     last_activity_at = NOW()
               WHERE id = $2 AND status = $6 AND source = $3
                 AND (CASE
@@ -1506,6 +1521,7 @@ function proposalHandoffRoutes(config) {
             if (!advanced.rowCount) {
               return res.status(409).json({ error: 'session_state_changed' });
             }
+            await previewWorkflow.clear({ session, reason: 'upload' });
           }
           if (revisionKind === 'session' && !session.pr_number) {
             try {
@@ -1609,9 +1625,9 @@ function proposalHandoffRoutes(config) {
             ...shotsResponse(shotsApplied, session),
           });
         }
+        // A build or checks run going for this head is the preview machine's:
+        // the revision below joins it, or a newer head cancels it.
         const localPipelineBusy = hasInFlightHandoffPipeline(session.id);
-        const stagingBusy = staging.hasInFlightBuild(Number(session.id));
-        const captureBusy = visuals.hasInFlightCapture(session.id);
         if (localPipelineBusy && currentCheckedHead(session) === input.headSha) {
           return res.status(202).json({
             ok: true,
@@ -1622,7 +1638,7 @@ function proposalHandoffRoutes(config) {
           });
         }
         if (!isSessionBusy(Number(session.id))
-            && !localPipelineBusy && !stagingBusy && !captureBusy
+            && !localPipelineBusy
             && currentCheckedHead(session) === input.headSha
             && publicSessionStatus(session).revisionState === 'ready') {
           // The head SHA is the build's idempotency key. A retry after the
@@ -1632,7 +1648,7 @@ function proposalHandoffRoutes(config) {
           // commit can be retried without manufacturing a no-op commit.
           return res.status(200).json(publicSessionStatus(session));
         }
-        if (isSessionBusy(Number(session.id)) || localPipelineBusy || stagingBusy || captureBusy) {
+        if (isSessionBusy(Number(session.id)) || localPipelineBusy) {
           return res.status(409).json({
             error: 'session_busy',
             message: 'The shared proposal is currently changing in another local or web turn. Retry when it finishes.',
@@ -1658,6 +1674,7 @@ function proposalHandoffRoutes(config) {
           // scoped to the pre-vote lifecycle captured at submission.
           const releaseOperation = beginSessionOperation(session.id);
           try {
+            await releaseOperation.recorded;
             const repo = repoCoordinates(session);
             if (!github.isEnabled() || !repo) {
               return res.status(400).json({ error: 'No GitHub repo configured for this app' });
@@ -1811,9 +1828,7 @@ function proposalHandoffRoutes(config) {
                     END,
                     handoff_uploaded_sha = $1,
                     handoff_upload_checked_sha = NULL,
-                    check_state = 'pending', checks_commit_sha = $1,
-                    check_error_detail = NULL,
-                    staging_container_id = NULL, staging_url = NULL,
+                    -- The verdict and the preview are the preview machine's.
                     last_activity_at = NOW()
               WHERE id = $2 AND status = $7 AND source = $3
                 AND handoff_uploaded_sha = $1
@@ -1837,11 +1852,6 @@ function proposalHandoffRoutes(config) {
             visibleChanges: input.visibleChanges,
             headChanged: currentCheckedHead(session) !== input.headSha,
           });
-          const pending = await visuals.setChecksPending(pool, session.id, input.headSha, 'building', 'commit-push');
-          if (pending === false) {
-            return res.status(409).json({ error: 'session_state_changed' });
-          }
-          visuals.notifyChecksPending(session.id, input.headSha, 'building', 'commit-push');
 
           const freshSession = {
             ...session,
@@ -1951,6 +1961,7 @@ function proposalHandoffRoutes(config) {
       // window where a local build could replace the reviewed SHA between
       // this preflight and the status='promoted' write.
       releasePromotion = beginSessionOperation(session.id);
+      await releasePromotion.recorded;
       const repo = repoCoordinates(session);
       if (!repo) return res.status(409).json({ error: 'proposal_repo_missing' });
       let remoteHead;
@@ -1965,12 +1976,6 @@ function proposalHandoffRoutes(config) {
       const checkedHead = currentCheckedHead(session);
       if (String(remoteHead).toLowerCase() !== checkedHead) {
         const detail = 'The proposal branch changed after checks. Rebuild the new head locally or from the web Dev session before promoting.';
-        await pool.query(
-          `UPDATE chat_sessions SET check_state = 'error', check_error_detail = $1
-            WHERE id = $2 AND status = $5 AND source = $3
-              AND COALESCE(checks_commit_sha, handoff_head_sha) IS NOT DISTINCT FROM $4`,
-          [detail, session.id, SOURCE, checkedHead, session.status]
-        ).catch(() => {});
         return res.status(409).json({ error: 'branch_head_changed', message: detail });
       }
       // The common promotion route will create/read the PR after this

@@ -19,7 +19,11 @@
 // directory, no way for one app's RUN step to poison another app's layers.
 // The layer cache lives in the registry (`--export-cache type=registry,
 // mode=max`) under the app's own cache repository, which is the same
-// per-app boundary kpack's `cache.registry.tag` draws. The daemon runs
+// per-app boundary kpack's `cache.registry.tag` draws. It is uploaded only
+// when a build produced something a later build can reuse; see "The layer
+// cache upload" below. The one cache apps share is a ready-made starter's,
+// which only the platform's own build of that starter writes; see "The
+// starter's shared cache" below. The daemon runs
 // rootless (uid 1000 under RootlessKit, no capabilities) with seccomp and
 // AppArmor unconfined — what `unshare`/`mount` inside the user namespace
 // need — in a namespace of its own whose Pod Security level admits that;
@@ -37,10 +41,70 @@
 // without a `.dockerignore` cannot COPY repository metadata into its image.
 //
 // Result. buildctl's `--metadata-file` carries the pushed manifest digest;
-// the script copies just the digest into the container's termination
-// message, which is where the platform reads it from (and records it on
-// the Job as an annotation, so a later deploy of the same revision reuses
-// the image without a build, as compatibleCompletedBuilds does for kpack).
+// the script copies the digest into the container's termination message,
+// after a few lines saying what happened to the layer cache. The platform
+// reads both from there and records them on the Job as annotations: the
+// digest so a later deploy of the same revision reuses the image without a
+// build (as compatibleCompletedBuilds does for kpack), the cache lines so
+// the next build of the app knows which steps run on every build.
+//
+// The layer cache upload. `mode=max` writes every layer of every stage to
+// the cache repository, and on a preview most of those are the commit's
+// own: source copies and whatever is built from them. No later build can
+// use them, and uploading them was a quarter of a preview build (12-15 s
+// measured over 167 builds in October 2026, most of it after the image was
+// already pushed). So the build itself only imports the cache, and the
+// script uploads it afterwards, in a second buildctl run over the Pod's
+// warm store, only when a step ran whose result a later build could have
+// been served.
+//
+// Which steps those are cannot be read off one build: a lockfile that
+// changed and source that changed look the same, a COPY that ran followed
+// by a RUN that ran. It takes memory, and the memory is the app's finished
+// Jobs. Each carries what its build saw (CACHE_STEPS_ANNOTATION): which
+// steps ran, which the cache served, and whether the cache was uploaded.
+// From those (settledCacheSteps):
+//
+// - A step the cache served at least as often as it ran is reusable, so
+//   the build in which it runs uploads. That is a dependency install after
+//   its lockfile changed, or after the base image moved.
+// - A step no build has reported is new, so it uploads too.
+// - A step that mostly runs bakes in the commit or reads the source. It
+//   still gets CACHE_CHANCES uploads per CACHE_CHANCE_WINDOW_MS, and is
+//   "settled" once it has had them: it causes no upload until they age
+//   out. That retry is what keeps a reusable step from being written off
+//   for good after an unlucky start, and "mostly" rather than "always" is
+//   what keeps one rebuild of an already cached commit, which serves every
+//   step, from making each of them look reusable.
+//
+// No history (a new app, or one whose Jobs have all expired), a failed
+// lookup, or a trace the script cannot read all mean "upload", which is
+// what every build did before.
+//
+// Only steps that do work are counted: RUN, ADD and anything unfamiliar.
+// COPY, WORKDIR and FROM are not: redoing them costs a local copy or a pull
+// from the image's own registry, and counting a COPY that is served on some
+// builds and runs on others would upload on every source change.
+// BUILDKIT_CACHE_UPLOAD=always turns the decision off.
+//
+// The starter's shared cache. Every app made from one ready-made starter
+// (services/app-templates.js) gets the same package files
+// (services/template.js), so its image's dependency installs are the same
+// steps as every other copy's. Against its own cache alone, which a new
+// app does not have yet, each new app ran them cold, inside the build its
+// "Preparing it to run…" waits on. So a build of an app whose row names a
+// ready-made starter (apps.template) imports that starter's cache too,
+// `<cache prefix>/starter-<id>:buildkit-cache`, after its own. One build
+// writes it: the app's first, of the commit services/app-creator.js has
+// just made from the starter (`starterTree`). That build always uploads,
+// to the app's cache and the starter's in one run. Every other build only
+// reads it, so it holds what the starter itself builds and never one
+// app's changes. The build that writes it runs nothing an app controls:
+// the Dockerfile and the package files are the platform's, and a layer is
+// only ever served to a step whose inputs are the same.
+// A starter whose cache does not exist yet is what an app's own cache is
+// on its first build: BuildKit notes the missing ref and builds.
+// BUILDKIT_STARTER_CACHE=off goes back to per-app caches only.
 //
 // Availability. The lane is turned on in pieces — BUILD_ENGINE in the
 // platform's environment, the namespace/RBAC/Secret from the foundation
@@ -61,9 +125,13 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const stream = require('stream');
-const k8s = require('@kubernetes/client-node');
 const log = require('./logger');
 const { parseDockerBuildLine } = require('./docker');
+const appTemplates = require('./app-templates');
+
+// Loaded on first use, as in kubernetes.js: most processes that load this
+// file never patch a Job.
+const kubernetesClient = () => require('@kubernetes/client-node');
 
 const ENGINE = 'buildkit';
 const MANAGED_BY = 'social-vibecoding-runtime';
@@ -72,6 +140,20 @@ const ENGINE_LABEL = 'social.usernode.io/build-engine';
 const REVISION_LABEL = 'social.usernode.io/revision';
 const RECIPE_LABEL = 'social.usernode.io/build-recipe';
 const DIGEST_ANNOTATION = 'social.usernode.io/image-digest';
+// What a finished build saw of the layer cache, as the lines its script put
+// in the termination message: `cache-upload=<done|skipped|failed>`, then
+// `cache-ran=<tokens>` and `cache-served=<tokens>` when it could tell. A
+// token is the first twelve hex digits of the SHA-256 of a step's name (see
+// STEPS_AWK), so no step text travels through the environment or a label.
+const CACHE_STEPS_ANNOTATION = 'social.usernode.io/cache-steps';
+// How many uploading builds a step may run in, within the window, before it
+// is taken to run on every build.
+const CACHE_CHANCES = 2;
+const CACHE_CHANCE_WINDOW_MS = 24 * 60 * 60 * 1000;
+// A build with more counted steps than this reports none and uploads: its
+// report would not fit the 4 KiB termination message.
+const CACHE_MAX_STEPS = 200;
+const CACHE_TOKEN_RE = /^[a-f0-9]{12}$/;
 const POLL_MS = 1000;
 const DIGEST_RE = /sha256:[a-f0-9]{64}/;
 // How much of the build log a failure report keeps (the tail).
@@ -154,8 +236,58 @@ function requireConfig(config) {
   if (!['rootless', 'privileged'].includes(cfg.buildkitMode || 'rootless')) {
     throw new Error(`Unsupported BUILDKIT_MODE=${cfg.buildkitMode} (rootless, privileged)`);
   }
+  if (!['auto', 'always'].includes(cfg.buildkitCacheUpload || 'auto')) {
+    throw new Error(`Unsupported BUILDKIT_CACHE_UPLOAD=${cfg.buildkitCacheUpload} (auto, always)`);
+  }
   return cfg;
 }
+
+// What the build did, read from buildctl's `--trace` file: one JSON status
+// per line, a step being `{"digest":…,"inputs":[…],"name":…,"started":…,
+// "completed":…,"cached":true}` with the fields it has, in that order. The
+// plain progress log cannot answer this: a step the cache served prints no
+// CACHED line when its layers were then downloaded for a later step. The
+// image has busybox awk and no JSON tool, hence the string matching.
+//
+// Prints `S <stage> <command>` for a step the imported cache served,
+// `R <stage> <command>` for one that ran here, then `V <n>`, how many steps
+// it recognised at all (the caller reads 0, or no such line, as "cannot
+// tell"). A step is named without its `n/m` counter, which differs between
+// two proposals' Dockerfiles, and with the commit id spelled GIT_SHA: the
+// frontend expands build arguments in the name it shows.
+const STEPS_AWK = String.raw`
+BEGIN { sha = ENVIRON["GIT_SHA"]; n = 0 }
+{
+  line = $0
+  while ((at = index(line, "{\"digest\":\"sha256:")) > 0) {
+    line = substr(line, at + 18)
+    if (!match(line, /^[0-9a-f]+"(,"inputs":\[[^]]*\])?,"name":"/)) continue
+    d = substr(line, 1, 64)
+    rest = substr(line, RLENGTH + 1)
+    if (!match(rest, /^([^"\\]|\\.)*"/)) continue
+    name[d] = substr(rest, 1, RLENGTH - 1)
+    tail = substr(rest, RLENGTH + 1)
+    if (tail ~ /^(,"started":"[^"]*")?(,"completed":"[^"]*")?,"cached":true/) served[d] = 1
+    if (tail ~ /^(,"started":"[^"]*")?,"completed":"/) done[d] = 1
+    if (!(d in seen)) { seen[d] = 1; ids[++n] = d }
+  }
+}
+END {
+  steps = 0
+  for (i = 1; i <= n; i++) {
+    d = ids[i]; s = name[d]
+    if (!match(s, /^\[[^]]* +[0-9]+\/[0-9]+\] /)) continue
+    steps++
+    stage = substr(s, 2, RLENGTH - 3); sub(/ +[0-9]+\/[0-9]+$/, "", stage)
+    command = substr(s, RLENGTH + 1)
+    kind = command; sub(/ .*$/, "", kind)
+    if (kind == "COPY" || kind == "WORKDIR" || kind == "FROM") continue
+    if (sha != "") gsub(sha, "GIT_SHA", command)
+    if (d in served) print "S " stage " " command
+    else if (d in done) print "R " stage " " command
+  }
+  print "V " steps
+}`.trim();
 
 // The whole build, as one POSIX sh script. Parameters arrive as environment
 // so the script itself is a constant (and REPO_URL, which may carry a
@@ -183,6 +315,17 @@ const BUILD_SCRIPT = [
   'git checkout-index -a -f --prefix=/workspace/src/',
   'cd /workspace',
   'rm -rf /workspace/repo',
+  // The starter's shared cache (see the header): read by both runs below
+  // when STARTER_CACHE_REF names one, written by the upload only when
+  // STARTER_CACHE_EXPORT=yes. Each is spliced in as `${x:+--flag "$x"}`,
+  // which is nothing at all when x is empty.
+  'starter_import=; starter_export=',
+  'if [ -n "${STARTER_CACHE_REF:-}" ]; then',
+  '  starter_import="type=registry,ref=$STARTER_CACHE_REF$REGISTRY_ATTRS"',
+  '  if [ "${STARTER_CACHE_EXPORT:-}" = yes ]; then',
+  '    starter_export="type=registry,ref=$STARTER_CACHE_REF,mode=max,image-manifest=true,oci-mediatypes=true$REGISTRY_ATTRS"',
+  '  fi',
+  'fi',
   'say "building $DOCKERFILE -> $IMAGE_TAG"',
   'buildctl-daemonless.sh build \\',
   '  --frontend dockerfile.v0 \\',
@@ -191,15 +334,80 @@ const BUILD_SCRIPT = [
   '  --opt "filename=$DOCKERFILE" \\',
   '  --opt "build-arg:GIT_SHA=$GIT_SHA" \\',
   '  --output "type=image,name=$IMAGE_TAG,push=true$REGISTRY_ATTRS" \\',
-  '  --import-cache "type=registry,ref=$CACHE_REF$REGISTRY_ATTRS" \\',
-  '  --export-cache "type=registry,ref=$CACHE_REF,mode=max,image-manifest=true,oci-mediatypes=true$REGISTRY_ATTRS" \\',
+  '  --import-cache "type=registry,ref=$CACHE_REF$REGISTRY_ATTRS" ${starter_import:+--import-cache "$starter_import"} \\',
   '  --progress plain \\',
+  '  --trace /workspace/trace.json \\',
   '  --metadata-file /workspace/metadata.json',
-  // buildctl's metadata file is pretty-printed JSON, one key per line; the
-  // termination message is capped at 4KiB, so only the digest goes there.
+  // buildctl's metadata file is pretty-printed JSON, one key per line.
   'digest=$(grep -o \'"containerimage.digest": *"sha256:[0-9a-f]*"\' /workspace/metadata.json | head -n 1 | grep -o \'sha256:[0-9a-f]*\')',
   'test -n "$digest"',
-  'printf \'%s\' "$digest" > /dev/termination-log',
+  // The image is pushed. Nothing from here to the termination message may
+  // fail the build: the worst a mistake below can do is upload a cache
+  // nobody needed, or leave one for the next build to upload.
+  'set +e',
+  'cat > /workspace/steps.awk <<\'AWK\'',
+  STEPS_AWK,
+  'AWK',
+  'ran=; served=; steps=unknown',
+  'if awk -f /workspace/steps.awk /workspace/trace.json > /workspace/steps.txt 2>/dev/null \\',
+  '    && grep -q \'^V [1-9]\' /workspace/steps.txt; then',
+  '  steps=known',
+  '  while IFS= read -r step; do',
+  '    case "$step" in',
+  '      \'R \'*|\'S \'*) token=$(printf \'%s\' "${step#? }" | sha256sum | cut -c1-12) ;;',
+  '      *) continue ;;',
+  '    esac',
+  '    case "$step" in',
+  '      \'R \'*) ran="$ran $token" ;;',
+  '      *) served="$served $token" ;;',
+  '    esac',
+  '  done < /workspace/steps.txt',
+  '  ran=${ran# }; served=${served# }',
+  `  if [ "$(printf '%s' "$ran $served" | wc -w)" -gt ${CACHE_MAX_STEPS} ]; then steps=unknown; fi`,
+  'fi',
+  // Upload when a step ran that is not known to run on every build (see
+  // settledCacheSteps), whenever that cannot be told, and always from the
+  // build that writes the starter's shared cache.
+  'upload=no',
+  'if [ "${CACHE_UPLOAD:-auto}" = always ] || [ "$steps" != known ] || [ -n "$starter_export" ]; then',
+  '  upload=yes',
+  'else',
+  '  for token in $ran; do',
+  '    case " ${CACHE_SETTLED_STEPS:-} " in *" $token "*) ;; *) upload=yes ;; esac',
+  '  done',
+  'fi',
+  'cache=skipped',
+  'if [ "$upload" = yes ]; then',
+  '  say "uploading the layer cache"',
+  '  if [ -n "$starter_export" ]; then say "and the starter\'s shared cache, $STARTER_CACHE_REF"; fi',
+  // The same solve over the Pod's now warm store, with nothing to output:
+  // no step runs again and the pushed image cannot change. The imports
+  // stay because layers a cache served are still lazy references to it.
+  '  if timeout 300 buildctl-daemonless.sh build \\',
+  '      --frontend dockerfile.v0 \\',
+  '      --local context=/workspace/src \\',
+  '      --local dockerfile=/workspace/src \\',
+  '      --opt "filename=$DOCKERFILE" \\',
+  '      --opt "build-arg:GIT_SHA=$GIT_SHA" \\',
+  '      --import-cache "type=registry,ref=$CACHE_REF$REGISTRY_ATTRS" ${starter_import:+--import-cache "$starter_import"} \\',
+  '      --export-cache "type=registry,ref=$CACHE_REF,mode=max,image-manifest=true,oci-mediatypes=true$REGISTRY_ATTRS" ${starter_export:+--export-cache "$starter_export"} \\',
+  '      --progress plain > /workspace/cache-upload.log 2>&1; then',
+  '    cache=done',
+  '  else',
+  '    cache=failed',
+  '    say "the layer cache was not uploaded; the image is pushed and the build stands"',
+  '    tail -n 15 /workspace/cache-upload.log | sed \'s/^/[buildkit] cache: /\'',
+  '  fi',
+  'else',
+  '  say "layer cache not uploaded: nothing a later build can reuse was rebuilt"',
+  'fi',
+  // The termination message is capped at 4KiB and the kubelet keeps its
+  // end, so the digest goes last. Without it the build has no result.
+  '{',
+  '  printf \'cache-upload=%s\\n\' "$cache"',
+  '  if [ "$steps" = known ]; then printf \'cache-ran=%s\\ncache-served=%s\\n\' "$ran" "$served"; fi',
+  '  printf \'%s\' "$digest"',
+  '} > /dev/termination-log || exit 1',
   'say "pushed $IMAGE_TAG@$digest"',
 ].join('\n');
 
@@ -249,8 +457,24 @@ function recipeOf(cfg, dockerfile) {
   })).digest('hex').slice(0, 12);
 }
 
+// The shared layer cache of the ready-made starter the app was made from
+// (see "The starter's shared cache"), as `{ id, ref }`; null when it was
+// made from none, or BUILDKIT_STARTER_CACHE is off.
+function starterCache(cfg, runtime, app) {
+  if (cfg.buildkitStarterCache === false) return null;
+  const id = app?.template;
+  if (!appTemplates.isReadyMade(id)) return null;
+  const repository = `starter-${runtime.dnsName(id)}`;
+  // Beside the apps' own cache repositories, which are named by slug. A
+  // slug ends in a random suffix (app-manifest buildAppSlug), so none
+  // reads like this; an old one that did keeps its cache to itself.
+  if (repository === runtime.dnsName(app.slug)) return null;
+  return { id, ref: `${cfg.cacheRepositoryPrefix}/${repository}:buildkit-cache` };
+}
+
 function jobManifest(cfg, runtime, {
   app, revision, environment, sessionId, dockerfile, name, tag, cacheRef, recipe, inputSecretName,
+  settledSteps = [], starterCacheRef = null, starterExport = false,
 }) {
   const jobLabels = {
     ...runtime.labels({ appId: app.id, sessionId, environment }),
@@ -267,6 +491,14 @@ function jobManifest(cfg, runtime, {
     { name: 'IMAGE_TAG', value: tag },
     { name: 'CACHE_REF', value: cacheRef },
     { name: 'REGISTRY_ATTRS', value: cfg.buildkitInsecureRegistry ? ',registry.insecure=true' : '' },
+    // `auto`: the script uploads the layer cache unless every step that ran
+    // is in CACHE_SETTLED_STEPS. `always`: after every build.
+    { name: 'CACHE_UPLOAD', value: cfg.buildkitCacheUpload || 'auto' },
+    { name: 'CACHE_SETTLED_STEPS', value: settledSteps.join(' ') },
+    // The starter's shared cache: imported when named, and uploaded to
+    // with the app's own when STARTER_CACHE_EXPORT is `yes`.
+    { name: 'STARTER_CACHE_REF', value: starterCacheRef || '' },
+    { name: 'STARTER_CACHE_EXPORT', value: starterCacheRef && starterExport ? 'yes' : '' },
     // Rootless: Kubernetes has no `systempaths=unconfined`, and this is the
     // documented trade for it (examples/kubernetes/job.rootless.yaml). As
     // root the daemon can build its process sandbox, so it keeps it.
@@ -346,6 +578,79 @@ function digestFromPod(pod) {
   return m ? m[0] : null;
 }
 
+// What a build said about the layer cache, from its termination message or
+// from the copy of it on the Job (CACHE_STEPS_ANNOTATION); null when there
+// is nothing of the kind. `known` is false when the build could not tell
+// which steps ran, in which case it uploaded and names none.
+function cacheReport(text) {
+  const lines = String(text || '').split('\n');
+  const value = (key) => {
+    const line = lines.find((l) => l.startsWith(`cache-${key}=`));
+    return line === undefined ? null : line.slice(key.length + 7).trim();
+  };
+  const upload = value('upload');
+  if (!['done', 'skipped', 'failed'].includes(upload)) return null;
+  const tokens = (key) => {
+    const list = value(key);
+    return list === null ? null : list.split(/\s+/).filter((token) => CACHE_TOKEN_RE.test(token));
+  };
+  const ran = tokens('ran');
+  const served = tokens('served');
+  return { upload, known: Boolean(ran && served), ran: ran || [], served: served || [] };
+}
+
+function cacheReportText(report) {
+  const lines = [`cache-upload=${report.upload}`];
+  if (report.known) lines.push(`cache-ran=${report.ran.join(' ')}`, `cache-served=${report.served.join(' ')}`);
+  return lines.join('\n');
+}
+
+function cacheReportFromPod(pod) {
+  const status = pod?.status?.containerStatuses?.find((c) => c.name === CONTAINER);
+  return cacheReport(status?.state?.terminated?.message);
+}
+
+// What the app's finished builds reported, each with when it finished.
+// Builds from before the reports existed, and builds that could not tell
+// which steps ran, say nothing here.
+async function cacheHistory(cfg, clients, appId) {
+  const list = await clients.batch.listNamespacedJob({
+    namespace: cfg.buildkitNamespace,
+    labelSelector: `app.kubernetes.io/managed-by=${MANAGED_BY},social.usernode.io/app-id=${appId},${ENGINE_LABEL}=${ENGINE}`,
+  });
+  const reports = [];
+  for (const job of list?.items || []) {
+    if (!jobSucceeded(job) || job.metadata?.deletionTimestamp) continue;
+    const report = cacheReport(job.metadata?.annotations?.[CACHE_STEPS_ANNOTATION]);
+    const at = Date.parse(job.status?.completionTime || '');
+    if (report?.known && Number.isFinite(at)) reports.push({ ...report, at });
+  }
+  return reports;
+}
+
+// The steps that need no upload when they run, as far as the history
+// shows: they ran more often than the cache served them, and they have
+// already run in CACHE_CHANCES builds that uploaded it within the window.
+// Everything else that runs causes an upload: a step the cache serves at
+// least as often as it runs, a step nobody has reported, and a step that
+// has not had its chances (or whose chances have aged out).
+function settledCacheSteps(reports, now = Date.now()) {
+  const count = (map, token) => map.set(token, (map.get(token) || 0) + 1);
+  const ran = new Map();
+  const served = new Map();
+  const chances = new Map();
+  for (const report of reports) {
+    const here = new Set(report.ran);
+    for (const token of here) count(ran, token);
+    for (const token of new Set(report.served)) count(served, token);
+    if (report.upload !== 'done' || now - report.at > CACHE_CHANCE_WINDOW_MS) continue;
+    for (const token of here) count(chances, token);
+  }
+  return [...chances.keys()]
+    .filter((token) => chances.get(token) >= CACHE_CHANCES && ran.get(token) > (served.get(token) || 0))
+    .sort();
+}
+
 // The build container's exit code once it has terminated, else null.
 function exitCodeFromPod(pod) {
   const status = pod?.status?.containerStatuses?.find((c) => c.name === CONTAINER);
@@ -395,7 +700,14 @@ async function reusableJob(cfg, clients, { appId, revision, recipe }) {
 // line, exactly what services/docker.js reports for its BuildKit build, so
 // staging's per-step timing works unchanged. The Job's own `[buildkit] ...`
 // lines come through as `phase: 'source'` with no step counter.
-async function createBuild(config, { app, revision, environment, sessionId, sourceDir, onProgress = null }, runtime) {
+//
+// `app.template` names the starter the app was made from, if any, and
+// `starterTree` says the revision is that starter as the platform has just
+// generated it, which makes this the build that writes the starter's shared
+// cache (see the header). Only the caller that made the commit can say so.
+async function createBuild(config, {
+  app, revision, environment, sessionId, sourceDir, starterTree = false, onProgress = null,
+}, runtime) {
   if (!/^[a-f0-9]{40}$/i.test(revision || '')) {
     throw new Error('Kubernetes builds require a full 40-character Git commit SHA');
   }
@@ -426,10 +738,23 @@ async function createBuild(config, { app, revision, environment, sessionId, sour
     };
   }
 
+  // No history, or none that can be read, is a build that uploads the layer
+  // cache if anything ran: what every build did before there was a choice.
+  let settledSteps = [];
+  if ((cfg.buildkitCacheUpload || 'auto') !== 'always') {
+    try {
+      settledSteps = settledCacheSteps(await cacheHistory(cfg, clients, app.id));
+    } catch (err) {
+      log.warn('kubernetes', 'BuildKit layer cache history lookup failed; this build uploads the cache', { appId: app.id, err: err.message });
+    }
+  }
+  const starter = starterCache(cfg, runtime, app);
+  const starterExport = Boolean(starter && starterTree);
   const inputSecretName = runtime.withSuffix(name, 'input');
   const cloneUrl = await runtime.getCloneUrl(repo.owner, repo.name);
   const body = jobManifest(cfg, runtime, {
-    app, revision, environment, sessionId, dockerfile, name, tag, cacheRef, recipe, inputSecretName,
+    app, revision, environment, sessionId, dockerfile, name, tag, cacheRef, recipe, inputSecretName, settledSteps,
+    starterCacheRef: starter ? starter.ref : null, starterExport,
   });
   const namespace = cfg.buildkitNamespace;
   let created = null;
@@ -451,6 +776,10 @@ async function createBuild(config, { app, revision, environment, sessionId, sour
     // Left by an earlier attempt of this exact name; a fresh token replaces it.
     await core.replaceNamespacedSecret({ name: inputSecretName, namespace, body: secretBody }).catch(() => {});
   }
+  // No Job of ours will own the Secret when the create is refused or never
+  // gets a turn, so its clone credential goes before the build fails.
+  const deleteInputSecret = () => runtime.deleteIfPresent(core, 'deleteNamespacedSecret', inputSecretName, namespace)
+    .catch((err) => log.warn('kubernetes', 'BuildKit input Secret cleanup failed', { name: inputSecretName, err: err.message }));
   const createDeadline = Date.now() + 60000;
   while (true) {
     try {
@@ -458,7 +787,7 @@ async function createBuild(config, { app, revision, environment, sessionId, sour
       break;
     } catch (err) {
       if (!isConflict(err)) {
-        await runtime.deleteIfPresent(core, 'deleteNamespacedSecret', inputSecretName, namespace).catch(() => {});
+        await deleteInputSecret();
         if (isLaneMissing(err)) markUnavailable(err, `cannot create Jobs in ${namespace} (${err.message})`);
         err.buildFailed = true;
         err.buildLog = runtime.boundedText(err.message);
@@ -478,7 +807,10 @@ async function createBuild(config, { app, revision, environment, sessionId, sour
           break;
         }
       }
-      if (Date.now() >= createDeadline) throw new Error(`Timed out waiting to recreate BuildKit Job ${name}`);
+      if (Date.now() >= createDeadline) {
+        await deleteInputSecret();
+        throw new Error(`Timed out waiting to recreate BuildKit Job ${name}`);
+      }
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
   }
@@ -494,17 +826,35 @@ async function createBuild(config, { app, revision, environment, sessionId, sour
     }
   }
   try {
-    const digest = await waitForJob(cfg, runtime, clients, name, { onProgress });
+    const clock = stepClock();
+    const { digest, cache } = await waitForJob(cfg, runtime, clients, name, { onProgress, clock });
     const imageRef = `${repository}@${digest}`;
+    const annotations = { [DIGEST_ANNOTATION]: digest };
+    // The next build of the app reads this; a build that reported nothing
+    // (an older script) leaves nothing to read.
+    if (cache) annotations[CACHE_STEPS_ANNOTATION] = cacheReportText(cache);
+    if (cache?.upload === 'failed') {
+      log.warn('kubernetes', 'BuildKit layer cache upload failed; the image is pushed and the next build tries again', { name, appId: app.id });
+    }
     try {
+      const k8s = kubernetesClient();
       await batch.patchNamespacedJob(
-        { name, namespace, body: { metadata: { annotations: { [DIGEST_ANNOTATION]: digest } } } },
+        { name, namespace, body: { metadata: { annotations } } },
         k8s.setHeaderOptions('Content-Type', k8s.PatchStrategy.MergePatch)
       );
     } catch (err) {
       log.warn('kubernetes', 'BuildKit Job digest annotation not written', { name, err: err.message });
     }
-    return { buildRef: `${namespace}/${name}`, imageRef, requestedTag: tag, phases: null, engine: ENGINE };
+    // `steps`: the slowest steps as BuildKit timed them (stepClock), for a
+    // caller that records where a build went (services/app-creator.js).
+    // `starterCache`: which starter's shared cache it read, and whether it
+    // also wrote it (in the upload `cacheUpload` reports on).
+    return {
+      buildRef: `${namespace}/${name}`, imageRef, requestedTag: tag, phases: null, engine: ENGINE,
+      steps: clock.slowest(SLOWEST_STEPS_KEPT), cachedSteps: clock.cached,
+      cacheUpload: cache ? cache.upload : null,
+      starterCache: starter ? { starter: starter.id, export: starterExport } : null,
+    };
   } catch (err) {
     await runtime.deleteIfPresent(batch, 'deleteNamespacedJob', name, namespace, { propagationPolicy: 'Background' })
       .catch((cleanupErr) => log.warn('kubernetes', 'Failed BuildKit Job cleanup failed', { name, err: cleanupErr.message }));
@@ -524,7 +874,44 @@ function progressFromLine(line) {
   return parseDockerBuildLine(text);
 }
 
-async function waitForJob(cfg, runtime, clients, name, { onProgress = null } = {}) {
+// Where a build's time went, in BuildKit's own words (#4895). Plain progress
+// names each step on its first line (`#9 [css 3/7] RUN npm ci`) and closes
+// it with its duration (`#9 DONE 6.2s`, or `#9 CACHED` for a cache hit).
+// Those durations, not the gaps between lines, are the account: the stages
+// run side by side, and exporting the image and the cache, which a cold
+// first build pays for, print no step counter at all.
+const STEP_NAME_MAX = 60;
+const SLOWEST_STEPS_KEPT = 6;
+function stepClock() {
+  const names = new Map();
+  const closed = new Set();
+  const done = [];
+  let cached = 0;
+  return {
+    line(raw) {
+      const m = /^#(\d+) (.+)$/.exec(String(raw || '').trim());
+      if (!m) return;
+      const [, id, rest] = m;
+      const finished = /^DONE (\d+(?:\.\d+)?)s$/.exec(rest);
+      if (finished || rest === 'CACHED') {
+        if (closed.has(id)) return;
+        closed.add(id);
+        if (!finished) cached += 1;
+        else if (names.has(id)) done.push({ name: names.get(id), ms: Math.round(Number(finished[1]) * 1000) });
+        return;
+      }
+      if (!names.has(id) && !/^(ERROR|CANCELED)\b/.test(rest)) {
+        names.set(id, rest.length > STEP_NAME_MAX ? `${rest.slice(0, STEP_NAME_MAX - 1)}…` : rest);
+      }
+    },
+    slowest(n) {
+      return done.slice().sort((a, b) => b.ms - a.ms).slice(0, n);
+    },
+    get cached() { return cached; },
+  };
+}
+
+async function waitForJob(cfg, runtime, clients, name, { onProgress = null, clock = null } = {}) {
   const namespace = cfg.buildkitNamespace;
   const { batch, core } = clients;
   const deadline = Date.now() + (cfg.activeDeadlineSeconds + 60) * 1000;
@@ -558,6 +945,7 @@ async function waitForJob(cfg, runtime, clients, name, { onProgress = null } = {
       runtime.attachLineObserver(sink, (line) => {
         const clean = log.redactString(String(line || '').replace(/\x1b\[[0-9;]*m/g, ''));
         remember(clean);
+        if (clock) { try { clock.line(clean); } catch { /* observer only */ } }
         if (!report) return;
         const image = progressFromLine(clean);
         if (image) { try { onProgress(image); } catch { /* observer only */ } }
@@ -579,7 +967,7 @@ async function waitForJob(cfg, runtime, clients, name, { onProgress = null } = {
           const err = new Error(`BuildKit Job ${name} finished without an image digest`);
           throw err;
         }
-        return digest;
+        return { digest, cache: cacheReportFromPod(pod) };
       }
       if (jobFailed(job)) {
         const reason = job.status?.conditions?.find((c) => c.type === 'Failed')?.reason;
@@ -688,8 +1076,10 @@ module.exports = {
   unavailableReason,
   noteUnavailable,
   _forTest: {
-    BUILD_SCRIPT, PREFLIGHT_EXIT, UNAVAILABLE_MEMO_MS, jobManifest, recipeOf, progressFromLine, digestFromPod, exitCodeFromPod,
+    BUILD_SCRIPT, PREFLIGHT_EXIT, UNAVAILABLE_MEMO_MS, jobManifest, recipeOf, progressFromLine, stepClock, digestFromPod, exitCodeFromPod,
     repoOwnerAndName, requireConfig,
+    STEPS_AWK, CACHE_STEPS_ANNOTATION, CACHE_CHANCES, CACHE_CHANCE_WINDOW_MS, CACHE_MAX_STEPS,
+    cacheReport, cacheReportText, settledCacheSteps, starterCache,
     resetUnavailable() { _unavailable = null; },
   },
 };

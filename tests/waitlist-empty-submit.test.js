@@ -19,6 +19,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -76,7 +77,8 @@ test('the submit path checks before it posts, and says so in the status line', (
   const post = submit.indexOf("fetch('/api/public/waitlist/more/");
   assert.ok(guard !== -1, 'the guard is in the submit handler');
   assert.ok(guard < post, 'nothing is posted until the check has run');
-  assert.match(submit, /Answer at least one question before saving\./);
+  assert.match(submit, /text: translate\('auth:more\.save\.empty'\)/);
+  assert.match(message('auth:more.save.empty'), /Answer at least one question before saving\./);
   assert.match(submit, /tone: 'warn'/,
     'an empty save is a nudge, not an error the server returned');
   // The spinner must not be left running by the early return.

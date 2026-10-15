@@ -35,6 +35,7 @@
 import { useMemo, useRef, useState, type RefObject } from 'react';
 
 import { NewMessagesBanner, TranscriptOverlay } from '@/components/ui/chat';
+import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { JumpToLatest } from '../messages/jump-to-latest';
 import {
@@ -107,13 +108,6 @@ function ChannelJumpToLatest({ scroller }: { scroller: RefObject<HTMLElement | n
 const SAFE_BAR = 'platform-safe-bar';
 
 export interface GeneralChatProps {
-  /**
-   * The app's name for the first-arrival banner, or null once it has been
-   * seen. The localStorage read AND the write stay in app-view.js: whether
-   * this has been shown is a browser fact, not a render-time one, and a
-   * component that wrote it would fire again on every re-render.
-   */
-  introAppName: string | null;
   readOnly: boolean;
   /**
    * What the read-only bar says, when it is not the usual "only
@@ -123,9 +117,15 @@ export interface GeneralChatProps {
   notice?: string | null;
   /** GC_MAX_MESSAGE_LEN, passed through so the module owns the number. */
   maxLength: number;
+  /**
+   * #4417 follow-up: what the empty box says, when it is not the app's own
+   * stream: a topic's channel says "Message #handle".
+   */
+  placeholder?: string;
 }
 
-export function GeneralChat({ introAppName, readOnly, notice, maxLength }: GeneralChatProps) {
+export function GeneralChat({ readOnly, notice, maxLength, placeholder }: GeneralChatProps) {
+  const t = useMessages('chat');
   const messages = useRef<HTMLDivElement>(null);
   return (
     <div className="flex flex-col h-full min-h-0 dc-lift dc-lift-session">
@@ -134,18 +134,6 @@ export function GeneralChat({ introAppName, readOnly, notice, maxLength }: Gener
             #gc-messages scrolls and the composer bar is a shrink-0 sibling
             below it — so the keyboard inset is reserved here, on the column. */}
         <div className="gc-chat-pane platform-kb-column flex-1 flex flex-col min-h-0">
-          {/*
-              #3: name what group chat is for, once per browser. It is rarely
-              empty — system messages land here — so a permanent banner would
-              be clutter.
-          */}
-          {introAppName ? (
-            <div className="mx-3 mt-3 px-4 py-3 rounded-2xl bg-violet-500/10 text-[15px] leading-snug text-zinc-700 dark:text-zinc-200">
-              {'This is where everyone using '}
-              <span className="font-medium">{introAppName}</span>
-              {' talks and votes on proposed changes to it.'}
-            </div>
-          ) : null}
           {/* Over the stream's top and its foot: siblings of #gc-messages,
               which stays the transcript's alone. */}
           <ChannelUnreadBanner scroller={messages} />
@@ -165,7 +153,7 @@ export function GeneralChat({ introAppName, readOnly, notice, maxLength }: Gener
           <div className={`shrink-0 px-3 pt-1 pb-2 ${SAFE_BAR}`}>
             {readOnly ? (
               <div className="px-3 py-2 text-xs text-zinc-500 dark:text-zinc-400 text-center" data-gc-readonly-notice="">
-                {notice || 'You\u2019re viewing this app\u2019s dev space read-only. Only collaborators can post.'}
+                {notice || t('chat:group.readOnly.devSpace')}
               </div>
             ) : (
               <>
@@ -177,7 +165,7 @@ export function GeneralChat({ introAppName, readOnly, notice, maxLength }: Gener
                 <ComposerForm
                   scope="general"
                   fill
-                  placeholder="Type a message..."
+                  placeholder={placeholder || t('chat:group.composer.placeholder')}
                   maxLength={maxLength}
                 />
               </>
@@ -189,7 +177,7 @@ export function GeneralChat({ introAppName, readOnly, notice, maxLength }: Gener
           className="gc-spec-resizer"
           role="separator"
           aria-orientation="vertical"
-          aria-label="Resize spec panel"
+          aria-label={t('chat:group.specPanel.resize')}
         />
         <div id="gc-spec-side-panel" className="gc-spec-side-panel" />
       </div>

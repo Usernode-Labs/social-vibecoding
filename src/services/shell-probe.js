@@ -33,6 +33,7 @@ const http = require('http');
 const log = require('./logger');
 const applicationRuntime = require('./application-runtime');
 const { getPool } = require('../db/pool');
+const leaderTimers = require('./leader-timers');
 
 const PROBE_TIMEOUT_MS = 5000;
 const MAX_REDIRECT_HOPS = 3;
@@ -43,7 +44,6 @@ const RECHECK_AFTER_MS = 60 * 60 * 1000;
 // on one tick.
 const SWEEP_CONCURRENCY = 4;
 
-let intervalHandle = null;
 let sweepInFlight = false;
 let lastSweepAt = null;
 let lastError = null;
@@ -207,16 +207,15 @@ async function sweep(config) {
 }
 
 function start(config) {
-  if (intervalHandle) return;
   // First pass shortly after boot (give app containers a moment to come
   // up alongside the platform), then steady-state ticks.
-  setTimeout(() => { sweep(config); }, 15 * 1000);
-  intervalHandle = setInterval(() => { sweep(config); }, SWEEP_INTERVAL_MS);
-  intervalHandle.unref?.();
+  // A leader timer (services/leader-timers.js): no sweep starts once
+  // shutdown has begun, and one under way is given the drain to finish.
+  leaderTimers.every('shell-probe', () => sweep(config), SWEEP_INTERVAL_MS, { firstDelayMs: 15 * 1000 });
 }
 
 function stop() {
-  if (intervalHandle) { clearInterval(intervalHandle); intervalHandle = null; }
+  leaderTimers.clear('shell-probe');
 }
 
 function getStatus() {

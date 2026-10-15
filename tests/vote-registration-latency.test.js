@@ -103,6 +103,7 @@ function loadVotes({ pool, mirror, move = 'authored' }) {
     topicAttrs: require.resolve('../src/services/topic-attributes'),
     visuals: require.resolve('../src/services/visuals'),
     prImportSync: require.resolve('../src/services/pr-import-sync'),
+    previewWorkflow: require.resolve('../src/services/preview-workflow'),
     governance: require.resolve('../src/services/governance'),
     conversation: require.resolve('../src/services/conversation-prompt'),
     mirror: require.resolve('../src/services/repo-mirror'),
@@ -115,6 +116,7 @@ function loadVotes({ pool, mirror, move = 'authored' }) {
   const systemMessages = [];
   const voteUpdates = [];
   const gateCalls = [];
+  const revisions = [];
 
   stub(ids.logger, { info() {}, warn() {}, error() {}, debug() {} });
   stub(ids.pool, { getPool: () => pool });
@@ -168,6 +170,10 @@ function loadVotes({ pool, mirror, move = 'authored' }) {
     rerunChecksForNewHead: async () => {},
     reconcileImportedHead: async () => ({ reconciled: false, reason: 'fork_head' }),
   });
+  // The preview machine builds and checks a moved head.
+  stub(ids.previewWorkflow, {
+    revision: async (o) => { revisions.push({ head: o.head, source: o.source }); return { taken: true }; },
+  });
   stub(ids.governance, {
     getGovernance: async () => ({ approverPolicy: 'anyone' }),
     getApproverSet: async () => ({ ids: [] }),
@@ -193,7 +199,7 @@ function loadVotes({ pool, mirror, move = 'authored' }) {
       if (orig[k]) require.cache[id] = orig[k]; else delete require.cache[id];
     }
   };
-  return { subject, systemMessages, voteUpdates, gateCalls, restore };
+  return { subject, systemMessages, voteUpdates, gateCalls, revisions, restore };
 }
 
 // A mirror whose fetch settles only when the test says so, recording every
@@ -379,7 +385,7 @@ test('the offline read answers from the row and never touches the mirror', async
 test('an authored push found after the vote clears the approvals and skips the merge check', async () => {
   const pool = makePool();
   const mirror = controlledMirror(PUSHED);
-  const { subject, systemMessages, voteUpdates, gateCalls, restore } = loadVotes({ pool, mirror, move: 'authored' });
+  const { subject, systemMessages, voteUpdates, gateCalls, revisions, restore } = loadVotes({ pool, mirror, move: 'authored' });
   try {
     const session = nativeRow();
     const settled = subject.settleVoteInBackground({
@@ -394,6 +400,7 @@ test('an authored push found after the vote clears the approvals and skips the m
     assert.equal(mirror.calls.length, 1, 'fresh read only; checkAndMerge never ran');
     assert.equal(mirror.calls[0].fresh, true);
     assert.equal(gateCalls.length, 0);
+    assert.deepEqual(revisions, [{ head: PUSHED, source: 'reviewed-head' }], 'the machine checks the pushed head');
     assert.ok(voteUpdates.some((u) => u.headMoved), 'every client hears the head moved');
     assert.ok(systemMessages.some((m) => /votes were cleared/.test(m.content)),
       'and the thread asks for a re-review');

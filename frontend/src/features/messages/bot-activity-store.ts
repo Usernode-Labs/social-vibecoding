@@ -1,7 +1,7 @@
 import { useEffect, useRef, useSyncExternalStore } from 'react';
 
 import * as api from './api';
-import { WORK_CHANGED_EVENT } from './bot-shared';
+import { SPINNING_OUTCOMES, WORK_CHANGED_EVENT } from './bot-shared';
 import { handleEvent } from './store';
 import type { HomeroomBotActivity, HomeroomBotReadyNow } from './types';
 
@@ -33,6 +33,16 @@ import type { HomeroomBotActivity, HomeroomBotReadyNow } from './types';
 
 /** Asked again this often while a card is going, in case a step was not announced. */
 export const POLL_MS = 60 * 1000;
+
+
+/** Pure: whether anything the read holds is still moving, so it is read again now and then. */
+export function stillMoving(snap: Pick<BotActivitySnapshot, 'cards' | 'ready'>): boolean {
+  for (const card of snap.cards.values()) {
+    if (card.state === 'working' || (card.outcome && SPINNING_OUTCOMES.has(card.outcome))) return true;
+  }
+  for (const ready of snap.ready.values()) if (ready.state === 'going_live') return true;
+  return false;
+}
 
 export interface BotActivitySnapshot {
   cards: ReadonlyMap<number, HomeroomBotActivity>;
@@ -143,8 +153,8 @@ export function cardRecord(snap: BotActivitySnapshot, messageId: number, drawnAt
  * BotActivitySync. `newsKey` is the newest message the bot sent there.
  */
 export function useBotActivitySync(conversationId: number, newsKey: number | null): void {
-  const { cards } = useBotActivity();
-  const going = [...cards.values()].some((card) => card.state === 'working');
+  const snap = useBotActivity();
+  const going = stillMoving(snap);
   // The newest bot message already accounted for: the first one the
   // transcript draws is what was there when the read below was made.
   const seenNews = useRef<number | null>(null);

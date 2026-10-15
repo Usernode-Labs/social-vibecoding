@@ -11,6 +11,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { shellMarkup } = require('./lib/shell-markup');
+const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const PUBLIC = path.join(ROOT, 'public');
@@ -196,9 +197,13 @@ test('theme leads the Appearance page in Preferences', () => {
   );
   const list = settings.slice(settings.indexOf('SECTIONS: ['), settings.indexOf('    PAGES: {'));
   const lines = list.split('\n').filter((l) => l.includes("page: 'theme'"));
-  assert.match(lines[0] || '', /\{ key: 'theme', label: 'Theme', group: 'Preferences', page: 'theme' \}/,
+  // The registry holds message ids; the English catalog holds the words.
+  assert.match(lines[0] || '', /\{ key: 'theme', label: 'settings:nav\.part\.theme', group: 'settings:nav\.group\.preferences', page: 'theme' \}/,
     'theme is the first part of its page');
-  assert.match(settings, /theme: 'Appearance',/, 'and that page is labelled Appearance');
+  assert.equal(message('settings:nav.part.theme'), 'Theme');
+  assert.equal(message('settings:nav.group.preferences'), 'Preferences');
+  assert.match(settings, /theme: 'settings:nav\.page\.theme',/);
+  assert.equal(message('settings:nav.page.theme'), 'Appearance', 'and that page is labelled Appearance');
   assert.doesNotMatch(settings, /DEFAULT_SECTION: 'theme'/,
     'a bare #settings opens Account now, not Theme');
 });

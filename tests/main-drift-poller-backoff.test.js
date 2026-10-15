@@ -23,6 +23,7 @@ const ids = {
   staging: require.resolve('../src/services/staging'),
   ws: require.resolve('../src/services/ws'),
   conflictResolver: require.resolve('../src/services/conflict-resolver'),
+  platform: require.resolve('../src/workflow/platform.ts'),
 };
 
 const logged = [];
@@ -58,21 +59,30 @@ stub(ids.github, {
 });
 
 const rebuilds = [];
+const rebuildOptions = [];
 let rebuildOutcome = () => { throw new Error('docker build failed: apt-get update timed out'); };
 stub(ids.staging, {
-  rebuildProduction: async (config, app) => {
+  rebuildProduction: async (config, app, options) => {
     rebuilds.push(app.slug);
+    rebuildOptions.push(options);
     return rebuildOutcome(app);
   },
   MissingSecretsError: class extends Error {},
 });
 stub(ids.ws, { broadcastGlobal: () => {} });
 stub(ids.conflictResolver, { checkAndResolveConflicts: async () => {} });
+// The app-delivery machine: its flag here, and what was asked of it.
+const delivery = { on: false, requested: [], row: { deploy_state: null, last_failure: null } };
+stub(ids.platform, {
+  deliveryEnabled: () => delivery.on,
+  requestDeploy: async (appId, reason) => { delivery.requested.push([appId, reason]); return 1; },
+});
 
 const queries = [];
 const pool = {
   query: async (sql, params) => {
     queries.push({ sql: String(sql), params });
+    if (/SELECT deploy_state, last_failure FROM apps/.test(String(sql))) return { rows: [delivery.row], rowCount: 1 };
     return { rows: [], rowCount: 1 };
   },
 };
@@ -92,6 +102,7 @@ function reset() {
   poller._forTest.setClock(() => clock);
   clock = 1_000_000;
   rebuilds.length = 0;
+  rebuildOptions.length = 0;
   queries.length = 0;
   logged.length = 0;
   remoteSha = RED;
@@ -267,4 +278,56 @@ test('the failure log line says how many times and when it will try again', asyn
   assert.equal(line[3].failures, 1);
   assert.equal(line[3].retryInMs, POLL_INTERVAL_MS);
   assert.equal(line[3].attempted, RED.slice(0, 7));
+});
+
+test('with app delivery on, drift asks it for the deploy, from durable state: once while it runs, again after a failure has waited', async () => {
+  reset();
+  delivery.on = true;
+  try {
+    delivery.requested.length = 0;
+    delivery.row = { deploy_state: null, last_failure: null };
+    const asked = await poller.checkAndRedeployOne(config, pool, app);
+    assert.equal(asked.status, 'deploy_requested');
+    assert.deepEqual(delivery.requested, [[8, 'drift']]);
+    assert.equal(rebuilds.length, 0, 'no deploy of its own');
+    assert.ok(!queries.some((q) => /UPDATE apps/.test(q.sql)), 'the machine writes main_sha');
+
+    // While it deploys, in any process, nothing is asked again.
+    delivery.row = { deploy_state: 'deploying', last_failure: null };
+    assert.equal((await poller.checkAndRedeployOne(config, pool, app)).status, 'in_flight');
+
+    // The deploy of this commit failed a minute ago: wait, unless an admin asks.
+    delivery.row = { deploy_state: null, last_failure: { sha: RED, at: new Date(clock - 60 * 1000).toISOString() } };
+    assert.equal((await poller.checkAndRedeployOne(config, pool, app)).status, 'backing_off');
+    assert.equal((await poller.checkAndRedeployOne(config, pool, app, { manual: true })).status, 'deploy_requested');
+    clock += 30 * 60 * 1000;
+    assert.equal((await poller.checkAndRedeployOne(config, pool, app)).status, 'deploy_requested');
+    assert.deepEqual(delivery.requested.map((r) => r[1]), ['drift', 'check_updates', 'drift']);
+
+    // A failure that names no commit (a clone that failed) waits the same.
+    delivery.row = { deploy_state: null, last_failure: { sha: null, at: new Date(clock - 60 * 1000).toISOString() } };
+    assert.equal((await poller.checkAndRedeployOne(config, pool, app)).status, 'backing_off');
+  } finally { delivery.on = false; }
+});
+
+// A commit whose image was refused for running as root (deploy-failure.js)
+// waits for a commit that changes it; "Check for updates" still tries, and
+// tells the rebuild a person asked.
+test('a commit refused for running as root waits for a new one; a manual check still retries it', async () => {
+  reset();
+  const refused = { ...app, last_failure: { stage: 'healthcheck', kind: 'root_image', sha: RED, reason: 'runs as root' } };
+  const waiting = await poller.checkAndRedeployOne(config, pool, refused);
+  assert.equal(waiting.status, 'waits_for_new_commit');
+  assert.equal(rebuilds.length, 0);
+
+  rebuildOutcome = () => ({ containerId: 'c', sha: RED });
+  const manual = await poller.checkAndRedeployOne(config, pool, refused, { manual: true });
+  assert.equal(manual.status, 'redeployed');
+  assert.deepEqual(rebuildOptions, [{ retrySameCommit: true }]);
+
+  remoteSha = FIXED;
+  rebuildOptions.length = 0;
+  const fixed = await poller.checkAndRedeployOne(config, pool, refused);
+  assert.equal(fixed.status, 'redeployed', 'a new commit on main is deployed');
+  assert.deepEqual(rebuildOptions, [{}]);
 });

@@ -19,6 +19,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -127,7 +128,9 @@ function elements(node, expand, out = []) {
 
 function mountIntro() {
   const fake = steppedReact();
-  const mod = loadTsx(INTRO, { stubs: { react: fake.React } });
+  // The stepped React has no context, so the view's `useMessages` is the
+  // English runtime's `t` here.
+  const mod = loadTsx(INTRO, { stubs: { react: fake.React, '../../lib/i18n/react': { useMessages: () => message } } });
   fake.mount(() => mod.ChallengesIntro());
   const all = () => elements(fake.tree(), [mod.ChallengesIntroView]);
   return {
@@ -153,8 +156,10 @@ const text = (html) => html.replace(/<[^>]+>/g, '\n').split('\n').map((s) => s.t
 
 test('the card says Evan\'s words, in order', () => {
   const { INTRO_TITLE, INTRO_ROWS } = loadTsx(INTRO);
-  assert.equal(INTRO_TITLE, 'How challenges work');
-  assert.deepEqual(INTRO_ROWS.map((r) => [r.title, r.subtitle]), [
+  // The table holds message ids; the words are the catalog's.
+  assert.match(INTRO_TITLE, /^leaderboard:challenges\.intro\./);
+  assert.equal(message(INTRO_TITLE), 'How challenges work');
+  assert.deepEqual(INTRO_ROWS.map((r) => [message(r.title), message(r.subtitle)]), [
     ['Do it, and it counts', 'Complete challenges.'],
     ['Earn points', 'Each card shows what it earns. Points add up in standings.'],
     ['New ones each week', 'This week starts again on Monday. Always open has no deadline.'],

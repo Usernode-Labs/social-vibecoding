@@ -21,6 +21,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const CONTROLLER_TEXT = fs.readFileSync(
@@ -96,6 +97,8 @@ function makeHarness({
   const els = new Map();
   const fetchCalls = [];
   const sandbox = {
+    // The binding the controller's i18n import gives it (the import line is stripped above).
+    t: englishPlatformI18n().t,
     console: { ...console, warn: () => {}, debug: () => {} },
     URLSearchParams,
     location: { search, hash: '', pathname: '/' },

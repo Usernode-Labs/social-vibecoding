@@ -62,6 +62,7 @@ function makeAppView(over) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(`${APP_VIEW_SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   return sandbox.__AppView;
@@ -239,8 +240,8 @@ test('a loaded board draws its counts and its empty notes again', () => {
   const html = kanbanHtml(AppView);
   assert.ok(!html.includes('animate-pulse'), 'no placeholders once the data is real');
   assert.ok(html.includes('Nothing here yet'), 'the genuinely empty columns say so');
-  assert.match(html, /Requests <span class="[^"]*font-mono">· 1<\/span>/,
-    'the Requests count is the real one');
+  assert.match(html, /<span class="dev-kanban-step-name">Requests<\/span><span class="dev-kanban-step-n">1<\/span>/,
+    'the Requests count is the real one (#4486: on its step)');
 });
 
 test('the Workshop shows placeholders before the load and its own rows after', () => {
@@ -292,7 +293,8 @@ test('_loadDevData distinguishes not-ready from failed, and the feed respects it
   const fn = code.slice(code.indexOf('async _loadDevFeed('),
     code.indexOf('_repaintDevBody() {', code.indexOf('async _loadDevFeed(')));
   const nullGuard = fn.indexOf('if (ok === null) return;');
-  const failure = fn.indexOf('load the feed right now');
+  const failure = fn.indexOf("PlatformI18n.htmlText('changes:feed.loadFailed')");
+  assert.equal(require('./lib/platform-i18n').message('changes:feed.loadFailed'), "Couldn't load the feed right now.");
   assert.notEqual(nullGuard, -1, '_loadDevFeed returns early on null');
   assert.ok(nullGuard < failure,
     'the not-ready case is handled BEFORE the failure paint — claiming failure '

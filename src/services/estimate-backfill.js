@@ -31,6 +31,7 @@
 // drag the `pg` driver into every context that merely wants to read the
 // sweeper's constants (its own unit tests among them).
 const log = require('./logger');
+const leaderTimers = require('./leader-timers');
 
 const SWEEP_INTERVAL_MS = 30 * 60_000;   // every 30 minutes
 const FIRST_SWEEP_DELAY_MS = 2 * 60_000; // let boot settle first
@@ -120,12 +121,11 @@ async function sweep(config) {
 
 function start(config) {
   log.info('estimate-backfill', 'Starting', { intervalMs: SWEEP_INTERVAL_MS });
-  setTimeout(() => {
-    sweep(config).catch((err) => log.error('estimate-backfill', 'Initial sweep failed', { err: err.message }));
-  }, FIRST_SWEEP_DELAY_MS).unref?.();
-  setInterval(() => {
-    sweep(config).catch((err) => log.error('estimate-backfill', 'Sweep failed', { err: err.message }));
-  }, SWEEP_INTERVAL_MS).unref?.();
+  // A leader timer (services/leader-timers.js): no sweep starts once
+  // shutdown has begun, and one under way is given the drain to finish.
+  leaderTimers.every('estimate-backfill', () => sweep(config)
+    .catch((err) => log.error('estimate-backfill', 'Sweep failed', { err: err.message })),
+  SWEEP_INTERVAL_MS, { firstDelayMs: FIRST_SWEEP_DELAY_MS });
 }
 
 module.exports = {

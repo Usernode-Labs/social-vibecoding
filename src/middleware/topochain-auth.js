@@ -46,6 +46,12 @@ const CREDENTIAL_LEASE_EXPIRES_HEADER = 'Usernode-Credential-Lease-Expires-At';
 // mode (no cookie, unknown token, expired session, DB error) is swallowed
 // and falls through to `next()` with req.user left unset — this
 // middleware must NEVER produce a response itself.
+//
+// A lookup that THREW is still told apart from "no session": the error is
+// left on `req.sessionLookupError`. The public reads ignore it; a route
+// that requires the session (the /challenges-api web reads in
+// routes/topochain/mobile.js) answers 500 for it rather than a 401 that
+// tells a signed-in person they are signed out (#4808).
 function optionalSessionAuth(config) {
   const pool = getPool(config);
 
@@ -74,6 +80,7 @@ function optionalSessionAuth(config) {
       // Swallow EVERYTHING (SPEC 900) — a DB hiccup on a public read must
       // degrade to "anonymous", never to a 401 or 500.
       log.debug('topochain-auth', 'optionalSessionAuth swallowed a failure', { message: err.message });
+      req.sessionLookupError = err;
     }
     return next();
   };

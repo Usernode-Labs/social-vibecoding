@@ -2,10 +2,13 @@
 
 // A before/after run gets one purpose-bound JWT and this in-memory,
 // run-scoped control plane. The shots agent can read its brief, save shots
-// and clips, note what a change's shots leave out, and skip a change with a
-// reason. It cannot address another run, obtain app auth material, or invoke
-// generic platform APIs. A platform restart drops the registry; recovery
-// retries the durable run rather than trusting an orphan model process.
+// and clips, note what a change's shots leave out, skip a change with a
+// reason, note a few problems it saw on the after build, and record what it
+// did to both builds to reach a change (a request held or failed, a sample
+// file uploaded). It cannot address another run, obtain app auth material,
+// or invoke generic platform APIs. A platform restart drops the registry;
+// recovery retries the durable run rather than trusting an orphan model
+// process.
 
 const planContract = require('./visible-changes');
 const shots = require('./shots-files');
@@ -26,12 +29,29 @@ function cloneJson(value) {
   return value == null ? value : JSON.parse(JSON.stringify(value));
 }
 
+// The run's phone sign-in code (the brief's phoneSignIn.code, on Homeroom's
+// own copies), masked wherever the agent wrote it: six digits on their own,
+// or with a space or a dash between them ("482 913"). Below the length the
+// log redaction masks literals at, so it gets its own pattern.
+function maskPhoneTestCode(text, code) {
+  if (typeof text !== 'string' || !/^[0-9]{6}$/.test(String(code || ''))) return text;
+  const digits = new RegExp(`(?<![0-9])${[...String(code)].join('[ -]?')}(?![0-9])`, 'g');
+  return text.replace(digits, '****');
+}
+
 class RunControl {
-  constructor({ runId, sessionId, intent, context, expiresAt, homeTiles = null }) {
+  constructor({ runId, sessionId, intent, context, expiresAt, homeTiles = null, afterOnly = false }) {
     this.runId = runId;
     this.sessionId = Number(sessionId);
     this.intent = planContract.parseIntent(intent);
     this.context = cloneJson(context);
+    // A project's first version: the before address is still the starter
+    // template's placeholder (shots-starter.js), so this run takes and
+    // publishes the after side only, and a before shot is refused.
+    this.afterOnly = afterOnly === true;
+    // The brief hands the agent this code; what the agent writes for people
+    // (a skip reason, a note) is shown on the proposal, so it never keeps it.
+    this.phoneTestCode = this.context?.phoneSignIn?.code || null;
     // Each side's tile on Homeroom's home screen, served on that side's
     // address (services/shots-home-tile.js). Kept out of the brief, which
     // only describes them: an icon image is up to 256 KB.
@@ -45,6 +65,14 @@ class RunControl {
     this.failed = new Set();
     // What a change's shots leave out, shown beside them once it is ready.
     this.notes = new Map();
+    // Problems the agent noticed on the after build besides the declared
+    // changes, in the order it noted them (at most shots.MAX_NOTICES).
+    // Advisory: nothing here changes a change's status or the run's.
+    this.notices = [];
+    // What the agent did to both builds to reach each change's state (an API
+    // GET held or failed, a sample file uploaded), recorded before it does
+    // it and shown beside that change's shots.
+    this.conditions = new Map();
     // Set when the agent says nothing at all can be shot (for example every
     // screen shows a sign-in page); it explains every change that is not
     // ready and has no reason of its own.
@@ -86,6 +114,11 @@ class RunControl {
     try {
       this.assertOpen();
       const target = shots.shotTarget(this.intent, rawTarget);
+      if (this.afterOnly && target.side === 'base') {
+        throw new ShotsControlError('before_not_needed',
+          'This app is new: the before address shows only the starter template\'s placeholder, so this run '
+          + 'takes after shots only. Save the after side of each change and leave the before address alone.', 400);
+      }
       const info = target.media === 'webm' ? shots.inspectClip(buffer) : shots.inspectImage(buffer);
       shots.checkElementSize(
         this.declaredChange(target.storyId), target, info,
@@ -133,7 +166,7 @@ class RunControl {
   skipChange({ change = null, reason, outcome = null } = {}) {
     try {
       this.assertOpen();
-      const text = shots.reason(reason);
+      const text = maskPhoneTestCode(shots.reason(reason), this.phoneTestCode);
       const broke = shots.outcome(outcome) === 'failed';
       const said = broke ? { outcome: 'failed' } : {};
       if (change == null || change === '') {
@@ -159,10 +192,76 @@ class RunControl {
     try {
       this.assertOpen();
       const story = this.declaredChange(change);
-      this.notes.set(story.id, shots.note(note));
+      this.notes.set(story.id, maskPhoneTestCode(shots.note(note), this.phoneTestCode));
       return { noted: story.id, progress: this.progress() };
     } catch (error) {
       this.lastToolFailure = { operation: 'note-change', error };
+      throw error;
+    }
+  }
+
+  // A clear problem the agent saw on the after build while it took the
+  // shots, such as content cut off or controls overlapping. Shown on the
+  // proposal under "Also noticed". Noting the same problem at the same place
+  // again updates it rather than adding another; past the cap it is refused,
+  // so the agent keeps only what matters most.
+  noteProblem(raw = {}) {
+    try {
+      this.assertOpen();
+      const entry = shots.notice(this.intent, raw);
+      const same = this.notices.findIndex((existing) => existing.change === entry.change
+        && existing.screen === entry.screen && existing.text.toLowerCase() === entry.text.toLowerCase());
+      if (same >= 0) this.notices[same] = entry;
+      else if (this.notices.length >= shots.MAX_NOTICES) {
+        throw new ShotsControlError('too_many_notices',
+          `This run already has ${shots.MAX_NOTICES} problems noted, the most it keeps. Note only what a person would agree is broken.`);
+      } else this.notices.push(entry);
+      return {
+        noticed: entry.change,
+        screen: entry.screen,
+        alsoBefore: entry.alsoBefore,
+        notices: this.notices.length,
+        remaining: shots.MAX_NOTICES - this.notices.length,
+        // "unknown" says nothing to a person reading it, and the agent
+        // shoots the before side of every screen it shoots the after side
+        // of, so it is asked to look and say.
+        ...(entry.alsoBefore === 'unknown' ? { hint: this.alsoBeforeHint(entry) } : {}),
+      };
+    } catch (error) {
+      this.lastToolFailure = { operation: 'note-problem', error };
+      throw error;
+    }
+  }
+
+  // What a notice without alsoBefore asks of the agent: to look at the
+  // before shot of that screen, now or once it has taken it.
+  alsoBeforeHint({ change, screen }) {
+    const lead = this.saved.has(shots.slotKey({ storyId: change, viewport: screen, side: 'base', variant: 'context' }))
+      ? 'You saved the before shot of this screen: look at it'
+      : 'Once you have shot the before side of this screen, look at it';
+    return `${lead} and note this problem again with alsoBefore true or false, so people can tell whether this `
+      + 'change brought it. Noting the same problem at the same place updates it.';
+  }
+
+  // The shots bridge records what it is about to do to both builds for a
+  // change (control_request, upload_file) before it does it; the same thing
+  // again is recorded once.
+  noteCondition(raw = {}) {
+    try {
+      this.assertOpen();
+      const { change, ...entry } = shots.condition(this.intent, raw);
+      const list = this.conditions.get(change) || [];
+      if (!list.some((existing) => shots.sameCondition(existing, entry))) {
+        if (list.length >= shots.MAX_CONDITIONS) {
+          throw new ShotsControlError('too_many_conditions',
+            `${change} already has ${shots.MAX_CONDITIONS} controlled tests and sample files, the most a change shows.`);
+        }
+        list.push(entry);
+        this.conditions.set(change, list);
+      }
+      return { recorded: change, conditions: list.length };
+    } catch (error) {
+      this.lastToolFailure = { operation: 'note-condition', error };
       throw error;
     }
   }
@@ -178,7 +277,8 @@ class RunControl {
   summary() {
     return shots.summarize(this.intent, this.saved, this.skipped, {
       fallbackReason: this.skippedAll, notes: this.notes,
-      failed: this.failed, fallbackFailed: this.skippedAllFailed,
+      failed: this.failed, fallbackFailed: this.skippedAllFailed, notices: this.notices,
+      conditions: this.conditions, afterOnly: this.afterOnly,
     });
   }
 
@@ -224,6 +324,7 @@ function clearForTests() {
 module.exports = {
   ShotsControlError,
   RunControl,
+  maskPhoneTestCode,
   registerRun,
   forRequest,
   _clearForTests: clearForTests,

@@ -198,7 +198,8 @@ test('interaction-gated app shots survive legacy-hash normalization', () => {
   // asserts is the thing that matters: the hook keys off the ROUTED app
   // state, not the legacy hash, whatever statement shape it wears.
   const plusHook = appViewSource.slice(
-    appViewSource.indexOf("if (shot === 'plus-menu')"),
+    // #4045: `?shot=plus-menu-settings` shares the hook.
+    appViewSource.indexOf("if (shot === 'plus-menu' || plusMenuSettings)"),
     appViewSource.indexOf("if (shot === 'card-menu')"));
   assert.ok(plusHook.length > 0, 'the plus-menu hook exists');
   assert.match(plusHook, /App\.currentApp !== slug/,

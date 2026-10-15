@@ -83,6 +83,13 @@ try {
   global.setTimeout = origSetTimeout;
 }
 
+// ── preview hand-off stub ───────────────────────────────────────────────
+// The tail builds nothing: it hands the commit to the preview machine
+// (services/preview-workflow.js revision), read at call time.
+const revisionCalls = [];
+const previewWorkflow = require('../src/services/preview-workflow');
+previewWorkflow.revision = async (args) => { revisionCalls.push(args); };
+
 function makePool() {
   const calls = [];
   return {
@@ -101,10 +108,6 @@ function makePool() {
 function makeDurablePool(activeTurn) {
   const calls = [];
   const effects = new Map();
-  const state = {
-    stagingUrl: null,
-    stagingContainerId: null,
-  };
   const query = async (sql, params = []) => {
     const text = String(sql);
     calls.push({ sql: text, params });
@@ -134,17 +137,6 @@ function makeDurablePool(activeTurn) {
     if (/SELECT active_turn FROM chat_sessions/i.test(text)) {
       return { rows: [{ active_turn: activeTurn }], rowCount: 1 };
     }
-    if (/UPDATE chat_sessions SET staging_container_id/i.test(text)) {
-      state.stagingContainerId = params[0];
-      state.stagingUrl = params[1];
-      return { rows: [], rowCount: 1 };
-    }
-    if (/SELECT staging_url, staging_container_id FROM chat_sessions/i.test(text)) {
-      return { rows: [{
-        staging_url: state.stagingUrl,
-        staging_container_id: state.stagingContainerId,
-      }], rowCount: 1 };
-    }
     if (/SELECT content FROM chat_session_messages/i.test(text) && /role = 'user'/i.test(text)) {
       return { rows: [{ content: 'okay do it' }] };
     }
@@ -153,34 +145,8 @@ function makeDurablePool(activeTurn) {
   return {
     calls,
     effects,
-    state,
     query,
     async connect() { return { query, release() {} }; },
-  };
-}
-
-const certCalls = [];
-
-function makeStaging() {
-  const calls = [];
-  return {
-    calls,
-    buildAndDeployStaging: async (...args) => {
-      calls.push(args);
-      return { containerId: 'c', stagingUrl: 'https://x.example', hostname: 'x.example' };
-    },
-    // #896: live-path parity — the recovered tail pre-warms the preview's
-    // TLS cert before revealing the button, same as runClaudeCodeTool.
-    verifyStagingEdge: async (...args) => { certCalls.push(args); },
-  };
-}
-
-function makeFailingStaging(err) {
-  const calls = [];
-  return {
-    calls,
-    buildAndDeployStaging: async (...args) => { calls.push(args); throw err; },
-    verifyStagingEdge: async (...args) => { certCalls.push(args); },
   };
 }
 
@@ -208,7 +174,7 @@ test.beforeEach(() => {
   workerCalls.length = 0;
   prMetadataCalls.length = 0;
   pushBehavior = { mode: 'ok', sha: 'newpushedsha0001' };
-  certCalls.length = 0;
+  revisionCalls.length = 0;
 });
 
 test('a recovered OpenRouter chat reply stays a normal reply, not a Claude completion card', async () => {
@@ -217,7 +183,7 @@ test('a recovered OpenRouter chat reply stays a normal reply, not a Claude compl
   const ret = await finalizeRecoveredTurn({
     config: {},
     pool,
-    staging: makeStaging(),
+    staging: {},
     session: {
       ...SESSION,
       agent_backend: 'codex_openrouter',
@@ -253,11 +219,10 @@ test('a recovered OpenRouter chat reply stays a normal reply, not a Claude compl
 
 test('re-pushes an un-pushed recovered branch before creating the PR', async () => {
   const pool = makePool();
-  const staging = makeStaging();
   const emits = [];
 
   const ret = await finalizeRecoveredTurn({
-    config: {}, pool, staging,
+    config: {}, pool, staging: {},
     session: { ...SESSION },
     sessionId: 510,
     result: { ahead: 1, sha: 'localonlysha12345', pushOk: false, lastResultText: 'done', sessionId: 'cc-2' },
@@ -272,9 +237,10 @@ test('re-pushes an un-pushed recovered branch before creating the PR', async () 
     workerCalls.find((c) => c[0] === 'execPushFromWorker'),
     ['execPushFromWorker', 510, 'dev/evan-1781527910307']
   );
-  // Then the normal PR + staging tail runs.
+  // Then the normal PR tail runs, and the commit goes to the preview machine.
   assert.equal(prMetadataCalls.length, 1);
-  assert.equal(staging.calls.length, 1);
+  assert.equal(revisionCalls.length, 1);
+  assert.equal(revisionCalls[0].head, 'localonlysha12345');
   // No "couldn't push" warning when the re-push succeeds.
   assert.ok(!sysMsgInserted(pool));
 
@@ -283,18 +249,18 @@ test('re-pushes an un-pushed recovered branch before creating the PR', async () 
   assert.equal(ret.outcome, 'done');
   assert.match(ret.summary, /Commit localonl pushed to dev\/evan-1781527910307\./);
   assert.match(ret.summary, /Opened PR #7: https:\/\/example\/pr\/7/);
-  assert.match(ret.summary, /Staging redeployed: https:\/\/x\.example/);
+  assert.match(ret.summary, /The staging preview is building; its checks run once it is up\./);
 });
 
 // #896: a recovered turn must leave the same transcript a normal turn
 // leaves — no "(recovered after restart)" labels, and the completion +
-// PR + staging rows the live path writes.
+// PR + building-preview rows the live path writes. The preview's outcome
+// rows are the machine's own (src/workflow/preview/machine.ts).
 test('the recovered tail writes the same rows a normal turn does', async () => {
   const pool = makePool();
-  const staging = makeStaging();
 
   await finalizeRecoveredTurn({
-    config: {}, pool, staging,
+    config: {}, pool, staging: {},
     session: { ...SESSION },
     sessionId: 510,
     result: {
@@ -310,7 +276,7 @@ test('the recovered tail writes the same rows a normal turn does', async () => {
 
   const rows = insertedRows(pool);
   const contents = rows.map((r) => r.content);
-  assert.deepEqual(contents, ['Claude Code finished', 'PR #7 created', 'Staging deployed!'],
+  assert.deepEqual(contents, ['Claude Code finished', 'PR #7 created', 'Building staging preview...'],
     'the transcript reads exactly like a live turn, in the same order');
 
   const finished = rows[0];
@@ -321,27 +287,23 @@ test('the recovered tail writes the same rows a normal turn does', async () => {
 
   const stagingRow = rows[2];
   assert.equal(stagingRow.metadata.changesReady, true,
-    'changesReady — not the incidental stagingUrl — drives the Changes-ready card');
-  assert.equal(stagingRow.metadata.stagingUrl, 'https://x.example');
+    'changesReady drives the Changes-ready card while the preview builds');
+  assert.equal(stagingRow.metadata.stagingBuild, 'running');
 
   // The restart is recorded in metadata for operators, never in the text.
   for (const row of rows) {
     assert.equal(row.metadata.recovered, true, `${row.content} is tagged for SQL audit`);
     assert.doesNotMatch(row.content, /recover|restart/i);
   }
-
-  // Live-path parity bits that used to be missing entirely.
-  assert.equal(certCalls.length, 1, 'the preview cert is pre-warmed before the button appears');
 });
 
 test('skips PR creation and warns the user when the re-push fails', async () => {
   pushBehavior = { mode: 'throw' };
   const pool = makePool();
-  const staging = makeStaging();
   const emits = [];
 
   await finalizeRecoveredTurn({
-    config: {}, pool, staging,
+    config: {}, pool, staging: {},
     session: { ...SESSION },
     sessionId: 510,
     result: { ahead: 1, sha: 'localonlysha12345', pushOk: false, lastResultText: 'done', sessionId: 'cc-2' },
@@ -354,7 +316,7 @@ test('skips PR creation and warns the user when the re-push fails', async () => 
   // Push was attempted, but the doomed createPR is NOT.
   assert.ok(workerCalls.some((c) => c[0] === 'execPushFromWorker'));
   assert.equal(prMetadataCalls.length, 0);
-  assert.equal(staging.calls.length, 0);
+  assert.equal(revisionCalls.length, 0, 'nothing to preview: the commit is not on GitHub');
   // The user is told the truth, and the worker is reaped (keepWorker:false).
   assert.ok(sysMsgInserted(pool));
   assert.ok(emits.some((e) => e.event === 'status' && /not on GitHub/i.test(e.data.text)));
@@ -379,11 +341,10 @@ test('a permanently unpushable branch says so instead of advising a retry', asyn
   // same rejected name forever, so the copy must not suggest it.
   pushBehavior = { mode: 'throw', permanent: true };
   const pool = makePool();
-  const staging = makeStaging();
   const emits = [];
 
   await finalizeRecoveredTurn({
-    config: {}, pool, staging,
+    config: {}, pool, staging: {},
     session: { ...SESSION },
     sessionId: 510,
     result: { ahead: 1, sha: 'localonlysha12345', pushOk: false, lastResultText: 'done', sessionId: 'cc-3' },
@@ -404,10 +365,9 @@ test('a permanently unpushable branch says so instead of advising a retry', asyn
 
 test('does not re-push when the turn already pushed (pushOk:true)', async () => {
   const pool = makePool();
-  const staging = makeStaging();
 
   await finalizeRecoveredTurn({
-    config: {}, pool, staging,
+    config: {}, pool, staging: {},
     session: { ...SESSION },
     sessionId: 510,
     result: { ahead: 1, sha: 'pushedsha000123', pushOk: true, lastResultText: 'done', sessionId: 'cc-2' },
@@ -419,45 +379,10 @@ test('does not re-push when the turn already pushed (pushOk:true)', async () => 
 
   assert.ok(!workerCalls.some((c) => c[0] === 'execPushFromWorker'));
   assert.equal(prMetadataCalls.length, 1);
-  assert.equal(staging.calls.length, 1);
+  assert.equal(revisionCalls.length, 1);
 });
 
-// #896: staging is a recoverable failure point — the commit, push and PR
-// already landed. Before this, a failed preview build threw straight out
-// of the recovery task: no staging row, no wrap-up, no pills, and a
-// progress card frozen on [interrupted].
-test('a staging build that fails still leaves a proposable Changes-ready card', async () => {
-  const pool = makePool();
-  const staging = makeFailingStaging(new Error('container refused to boot'));
-  const emits = [];
-
-  const ret = await finalizeRecoveredTurn({
-    config: {}, pool, staging,
-    session: { ...SESSION },
-    sessionId: 510,
-    result: { ahead: 1, sha: 'pushedsha000123', pushOk: true, lastResultText: 'Did the thing.', sessionId: 'cc-2' },
-    repoOwner: 'Usernode-Labs', repoName: 'social-vibecoding',
-    emit: (event, data) => emits.push({ event, data }),
-    containerName: 'usernode-worker-510',
-    keepWorker: true,
-  });
-
-  // The recovery completes rather than throwing, so the wrap-up still runs.
-  assert.equal(ret.outcome, 'done');
-  assert.match(ret.summary, /Staging build failed/);
-
-  const failRow = insertedRows(pool).find((r) => r.content === 'Staging build failed');
-  assert.ok(failRow, 'the failure is persisted, not just logged');
-  assert.equal(failRow.metadata.changesReady, true,
-    'the commit is still proposable — promote rebuilds staging itself');
-  assert.equal(failRow.metadata.stagingFailed, true);
-  assert.equal(failRow.metadata.recovered, true);
-  assert.ok(emits.some((e) => e.event === 'staging_failed'));
-  // And the preview-bearing success row is NOT written.
-  assert.ok(!insertedRows(pool).some((r) => r.content === 'Staging deployed!'));
-});
-
-test('a retained recovered tail publishes a successful staging card once without rebuilding', async () => {
+test('a retained recovered tail publishes its building card once', async () => {
   const activeTurn = {
     turnId: '44444444-4444-4444-8444-444444444444',
     phase: 'tail_pending',
@@ -470,69 +395,13 @@ test('a retained recovered tail publishes a successful staging card once without
     prOpenedEventRecorded: true,
   };
   const pool = makeDurablePool(activeTurn);
-  const staging = makeStaging();
-  const stagingRecovery = require('../src/services/staging-recovery');
-  const originalNeedsRebuild = stagingRecovery.stagingNeedsRebuild;
-  stagingRecovery.stagingNeedsRebuild = async () => false;
-  try {
-    const args = {
-      config: {}, pool, staging,
-      session: { ...SESSION, pr_number: 7, pr_url: 'https://example/pr/7' },
-      sessionId: 510,
-      result: {
-        ahead: 1, sha: 'pushedsha000123', pushOk: true, sessionId: 'cc-2',
-        lastResultText: 'Sorted the leaderboard by score.',
-      },
-      repoOwner: 'Usernode-Labs', repoName: 'social-vibecoding',
-      emit: () => {},
-      containerName: 'usernode-worker-510',
-      keepWorker: true,
-      alreadyDone: done,
-      activeTurn,
-    };
-
-    await finalizeRecoveredTurn(args);
-    await finalizeRecoveredTurn(args);
-
-    assert.ok(prMetadataCalls.every((call) =>
-      call.effectTurnId === activeTurn.turnId
-      && call.effectSessionId === 510
-      && call.effectBillingByok === false),
-    'recovery threads one stable metadata receipt and payer identity into every retry');
-    assert.equal(staging.calls.length, 1, 'the committed stagingUrl is reused on tail retry');
-    assert.equal(insertedRows(pool).filter((row) => row.content === 'Staging deployed!').length, 1,
-      'the receipt suppresses the duplicate Changes-ready card');
-    assert.equal(done.stagingPublished, true);
-    const receipt = pool.effects.get(`${activeTurn.turnId}:recovered_staging_publication`);
-    assert.equal(receipt?.state, 'completed');
-    assert.deepEqual(receipt?.result?.checkpoint, { stagingPublished: true },
-      'replays restore the checkpoint committed with the success card');
-  } finally {
-    stagingRecovery.stagingNeedsRebuild = originalNeedsRebuild;
-  }
-});
-
-test('a retained staging failure is published once and later tail retries skip the build', async () => {
-  const activeTurn = {
-    turnId: '55555555-5555-4555-8555-555555555555',
-    phase: 'tail_pending',
-    journal: '/home/node/.claude/turn-5555.log',
-    tail: {},
-  };
-  const done = {
-    completionRowPosted: true,
-    prNumber: 7,
-    prOpenedEventRecorded: true,
-  };
-  const pool = makeDurablePool(activeTurn);
-  const staging = makeFailingStaging(new Error('container refused to boot'));
   const args = {
-    config: {}, pool, staging,
+    config: {}, pool, staging: {},
     session: { ...SESSION, pr_number: 7, pr_url: 'https://example/pr/7' },
     sessionId: 510,
     result: {
       ahead: 1, sha: 'pushedsha000123', pushOk: true, sessionId: 'cc-2',
-      lastResultText: 'Changed the score card.',
+      lastResultText: 'Sorted the leaderboard by score.',
     },
     repoOwner: 'Usernode-Labs', repoName: 'social-vibecoding',
     emit: () => {},
@@ -545,13 +414,18 @@ test('a retained staging failure is published once and later tail retries skip t
   await finalizeRecoveredTurn(args);
   await finalizeRecoveredTurn(args);
 
-  assert.equal(staging.calls.length, 1, 'a later wrap-up retry does not repeat a known failed build');
-  assert.equal(insertedRows(pool).filter((row) => row.content === 'Staging build failed').length, 1);
+  assert.ok(prMetadataCalls.every((call) =>
+    call.effectTurnId === activeTurn.turnId
+    && call.effectSessionId === 510
+    && call.effectBillingByok === false),
+  'recovery threads one stable metadata receipt and payer identity into every retry');
+  assert.ok(revisionCalls.every((call) => call.head === 'pushedsha000123' && call.trigger === 'boot-reconcile'),
+    'each retry hands the same commit over; the machine joins a revision it already has');
+  assert.equal(insertedRows(pool).filter((row) => row.content === 'Building staging preview...').length, 1,
+    'the receipt suppresses the duplicate Changes-ready card');
   assert.equal(done.stagingPublished, true);
-  assert.equal(typeof done.stagingFailed, 'object');
-  assert.equal(
-    typeof pool.effects.get(`${activeTurn.turnId}:recovered_staging_publication`)?.result?.checkpoint?.stagingFailed,
-    'object',
-    'replays restore the failure checkpoint committed with the failure card',
-  );
+  const receipt = pool.effects.get(`${activeTurn.turnId}:recovered_staging_publication`);
+  assert.equal(receipt?.state, 'completed');
+  assert.deepEqual(receipt?.result?.checkpoint, { stagingPublished: true },
+    'replays restore the checkpoint committed with the card');
 });

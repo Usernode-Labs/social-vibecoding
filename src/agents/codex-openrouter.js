@@ -392,6 +392,21 @@ function normalizeCodexLine(line, state) {
 
   if (ev.type === 'usernode.openrouter.request') {
     state.providerRequest = sanitizeProviderRequest(ev.diagnostic);
+    // The host OpenRouter named for a request (a refusal's), kept as the
+    // turn's routed provider as the Claude Code listener's are (worker.js
+    // observeCodingProviderResult), so a failed Codex turn records one too.
+    const host = state.providerRequest?.providerName;
+    if (host) {
+      state.routedProvider = host;
+      const seen = Array.isArray(state.routedProviders) ? state.routedProviders : (state.routedProviders = []);
+      if (!seen.includes(host) && seen.length < 8) seen.push(host);
+    }
+    // A request its shortlist refused and the listener sent again to every
+    // host, counted per turn as the Claude Code listener's are (run seven,
+    // 14 Oct 2026; worker.js observeCodingProviderResult). Only a request's
+    // first line says so (worker/codex-openrouter-request.js), so a refusal
+    // reported again with its host is not counted twice.
+    state.shortlistFallbacks = (state.shortlistFallbacks || 0) + (ev.diagnostic?.shortlistFallback === true ? 1 : 0);
     return [];
   }
   if (ev.type === 'usernode.openrouter.usage') {
@@ -414,9 +429,12 @@ function normalizeCodexLine(line, state) {
       const cmd = item.command || '';
       const label = cmd ? `$ ${String(cmd).slice(0, 150)}` : 'Running command';
       if (item.id) state.toolUses.set(item.id, { label, kind: 'command' });
+      // The whole command too, unclipped, so the worker can tell the
+      // command that booted the app (usernode-run-inloop) from a long one
+      // whose 150-character label stops before it. Read there, never stored.
       return [{
         kind: 'command_started', text: label, lifecycle: 'started',
-        itemId: item.id || null, toolName: 'command',
+        itemId: item.id || null, toolName: 'command', command: cmd ? String(cmd) : null,
       }];
     }
     if (t === 'file_change' || t === 'file.edit' || t === 'file.write') {

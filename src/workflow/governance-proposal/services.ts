@@ -1,0 +1,114 @@
+// The governance machine's I/O: work handlers (durable, reported back as
+// events) and notifiers (post-commit kicks, allowed to be lost). What
+// browsers hear is a push the transition publishes (../pushes.ts).
+
+import type { Json, Pool, WorkHandler } from '../kernel/index.ts';
+import { legacy } from '../legacy.ts';
+import { backoff, closeAndComment, gone, missingSecrets, permanent } from '../github-work.ts';
+
+interface Deps { config: any; pool: Pool }
+
+export function governanceServices({ config, pool }: Deps): Record<string, WorkHandler> {
+  const github = () => legacy('services/github');
+  return {
+    // Close a GitHub issue, then comment on it (github-work.ts). The
+    // transition that applies the result tells every web process to stop
+    // listing it, and browsers to re-read.
+    'github.closeIssue': {
+      maxAttempts: 6,
+      backoffMs: backoff,
+      async run(ctx): Promise<Json> {
+        const done = await closeAndComment(ctx, (gh, owner, repo, number) => gh.closeIssue(owner, repo, number));
+        if ((done as { gone?: boolean }).gone) return done;
+        return { closed: true };
+      },
+    },
+
+    // A secret change reaches the running app by a production rebuild.
+    'app.rebuildProduction': {
+      maxAttempts: 3,
+      backoffMs: backoff,
+      leaseMs: 120000,
+      async run({ input }): Promise<Json> {
+        const { rows: [app] } = await pool.query('SELECT * FROM apps WHERE id = $1', [input.appId]);
+        if (!app) return { skipped: 'no_app' };
+        if (app.self_hosted) return { skipped: 'self_hosted' };
+        let result;
+        try {
+          result = await legacy('services/staging').rebuildProduction(config, app);
+        } catch (err) {
+          if (missingSecrets(err)) throw permanent((err as Error).message);
+          throw err;
+        }
+        if (result) {
+          await pool.query(
+            `UPDATE apps SET container_id = $1, main_sha = $2, status = 'running', last_deploy_at = NOW()
+              WHERE id = $3`,
+            [result.containerId, result.sha || null, input.appId]);
+        }
+        return { containerId: result?.containerId ?? null };
+      },
+    },
+
+    // A passed maintenance campaign fans out over the fleet: the engine's
+    // loop, for as long as it runs (the kernel renews this item's lease).
+    // The campaign holds its own lease too, so whoever else drives it (the
+    // leader's resume, an admin's retry) and this never run it together;
+    // finding it driven elsewhere is done.
+    'campaign.run': {
+      maxAttempts: 5,
+      backoffMs: backoff,
+      async run({ input }): Promise<Json> {
+        const { rows: [c] } = await pool.query(
+          'SELECT id FROM maintenance_campaigns WHERE issue_id = $1 ORDER BY id DESC LIMIT 1', [input.issueId]);
+        if (!c) return { skipped: 'no_campaign' };
+        const out = await legacy('services/fleet-maintenance').runCampaign(config, pool, c.id);
+        return { campaignId: c.id, ...(out || {}) } as Json;
+      },
+    },
+
+    // A close vote closed a request: the Homeroom bot's proposals for it that
+    // are up for a vote are withdrawn once every request they are linked to
+    // is closed, and the bot is woken for the app. `strict`: a failure to
+    // read is thrown, and the item runs again.
+    'bot.requestsClosed': {
+      maxAttempts: 3,
+      backoffMs: backoff,
+      async run({ input }): Promise<Json> {
+        const out = await legacy('services/homeroom-bot-closed-requests')
+          .noteRequestsClosed(pool, { appId: input.appId, closed: input.closed, strict: true });
+        return { withdrawn: out?.withdrawn ?? [] };
+      },
+    },
+
+    // Whether a close proposal's target is still open on GitHub. A target
+    // closed by hand there is announced by nothing else.
+    'governance.checkTarget': {
+      maxAttempts: 3,
+      backoffMs: backoff,
+      async run({ input }): Promise<Json> {
+        const gh = github();
+        if (!gh.isEnabled()) throw permanent('GitHub is not configured');
+        try {
+          const issue = await gh.getIssue(input.owner, input.repo, input.number);
+          return { open: issue?.state === 'open' };
+        } catch (err) {
+          if (gone(err)) return { open: false };
+          throw err;
+        }
+      },
+    },
+  };
+}
+
+// Post-commit kicks that only speed something up: losing one costs a wait.
+export function governanceNotifiers({ config, pool }: Deps): Record<string, (n: any) => Promise<void> | void> {
+  return {
+    // A request board changed: the Workshop re-places its cards (an hourly
+    // sweep re-themes what it misses).
+    boardChange: (n) => legacy('services/ws').noteBoardChange({ appId: n.appId, appSlug: n.appSlug }),
+    // "Vote on a change", graded now rather than on the scorer's next pass,
+    // which grades the same vote if this is lost.
+    scoreVote: () => legacy('services/topochain/challenge-scorer').scoreOnVote(pool, config),
+  };
+}

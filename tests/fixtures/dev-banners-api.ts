@@ -4,5 +4,5 @@
  * different store object from the component's.
  */
 
-export { DevChatBanners, SyncBanner, NewChangeBanner, CreditsBanner } from '../../frontend/src/features/dev-chat/banners';
+export { DevChatBanners, SyncBanner, NewChangeBanner, CreditsBanner, ClassicReadOnlyBanner } from '../../frontend/src/features/dev-chat/banners';
 export { bannersStore } from '../../frontend/src/features/dev-chat/banners-store';

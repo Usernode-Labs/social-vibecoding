@@ -14,6 +14,7 @@ import { flushSync } from 'react-dom';
 
 import { navStore, tabForScreen } from './nav-store.js';
 import { parkedStore, setParked } from './parked-store.js';
+import { pinnedAppsStore, readPinnedApps, setPinnedApps } from './pinned-apps-store.js';
 import { forgetRecentApp, readRecentApps, recentAppsStore, rememberRecentApp } from './recent-apps-store.js';
 import {
   collapseIntoResume, RESUME_MOTION_MS, resumeHandleFor, takeResumeOrigin,
@@ -25,6 +26,7 @@ navStore.setFlush(flushSync);
 // page from what that callback did before it returned.
 parkedStore.setFlush(flushSync);
 recentAppsStore.setFlush(flushSync);
+pinnedAppsStore.setFlush(flushSync);
 
 export { navStore, parkedStore };
 
@@ -107,6 +109,9 @@ if (typeof window !== 'undefined') {
       // is empty. Nothing to do while the name has not changed.
       if ((viewer || null) !== navStore.get().viewer) {
         recentAppsStore.set({ apps: readRecentApps(viewer || null) });
+        // Same rule for the strip's pinned part (#4935): Home's top row is
+        // the account's own arrangement.
+        pinnedAppsStore.set({ apps: readPinnedApps(viewer || null) });
       }
       navStore.set({ viewer: viewer || null });
     },
@@ -116,6 +121,14 @@ if (typeof window !== 'undefined') {
      */
     setPrivateMember(on: boolean) {
       if (!!on !== navStore.get().privateMember) navStore.set({ privateMember: !!on });
+    },
+    /**
+     * Whether the verified-identity rule holds the viewer to it
+     * (nav-store.js): written by `App._syncViewer()`, and cleared by the
+     * phone sheets once a number is linked.
+     */
+    setIdentityNeeded(on: boolean) {
+      if (!!on !== navStore.get().identityNeeded) navStore.set({ identityNeeded: !!on });
     },
     /**
      * Offer `app` above the tab bar until it is resumed or dismissed, or
@@ -172,6 +185,14 @@ if (typeof window !== 'undefined') {
     forget(slug: string) {
       if (parkedStore.get().app?.slug === slug) setParked(null);
       forgetRecentApp(slug, navStore.get().viewer);
+    },
+    /**
+     * Home's top row of My apps, as the strip's pinned part (#4935). The one
+     * writer is Home's grid render (features/home/home.js), called with the
+     * apps' display data — the strip draws them without fetching anything.
+     */
+    setPinnedApps(apps: Array<{ slug?: string; name?: string; iconUrl?: string | null; iconEmoji?: string | null }>) {
+      setPinnedApps(apps, navStore.get().viewer);
     },
   };
 }

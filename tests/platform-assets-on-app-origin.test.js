@@ -1,3 +1,4 @@
+// test:changed: when src/prompts/app-conventions.md (the hosted-asset tags this suite pins, read through services/prompts.js; scripts/test-changed.js)
 'use strict';
 
 // The three centrally hosted assets, served from every app's OWN origin.
@@ -145,7 +146,9 @@ test('the asset server serves only its three directories', () => {
 });
 
 test('the files the backend is asked for are really in the image', () => {
-  for (const file of ['usernode-bridge/v1/bridge.js', 'usernode-native/v1/native.css',
+  // snapdom.js: the drawing library the bridge loads, on the app's own
+  // origin, when the shell asks an app for its picture (the C comment).
+  for (const file of ['usernode-bridge/v1/bridge.js', 'usernode-bridge/v1/snapdom.js', 'usernode-native/v1/native.css',
     'usernode-native/v1/native.js', 'usernode-tailwind/v1/tailwind.js']) {
     assert.ok(fs.existsSync(path.join(assetServer.ROOT, file)), `${file} ships in public/`);
   }

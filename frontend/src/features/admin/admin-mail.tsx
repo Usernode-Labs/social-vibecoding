@@ -359,6 +359,8 @@ interface MailMetric {
 }
 interface MailReports {
   byKind: MailMetric[]; byDay: MailMetric[]; trackingEnabled: boolean;
+  /** False unless mail goes out through Resend with its webhook connected. */
+  deliveryEvents?: boolean;
   recentEvents: Array<{ id: number; type: string; kind: string; recipient: string; url?: string;
     user_agent_class?: string; created_at: string; meta?: { demo?: string; proxyOrPrefetch?: boolean } }>;
 }
@@ -366,6 +368,9 @@ const METRICS = [
   ['sent', 'Sent'], ['delivered', 'Delivered'], ['bounced', 'Bounced'], ['complained', 'Complained'],
   ['opened', 'Opened (approx.)'], ['clicked', 'Clicked'], ['unsubscribed', 'Unsubscribed'],
 ] as const;
+// Only Resend's webhook reports these, so they are left out rather than
+// shown as a 0 that reads as "nothing was delivered" (reports.js).
+const DELIVERY_METRICS = new Set<string>(['delivered', 'bounced', 'complained']);
 
 function TrackingReports({ reports, failed, onRefresh }: { reports: MailReports | null; failed: boolean; onRefresh: () => void }) {
   const [group, setGroup] = useState<'byKind' | 'byDay'>('byKind');
@@ -375,11 +380,12 @@ function TrackingReports({ reports, failed, onRefresh }: { reports: MailReports 
       <button type="button" className={AdminUI.btn.outlineSm} onClick={onRefresh}>Refresh reports</button>
     </div>
     <p className={`${AdminUI.muted} mt-2`}>Last 30 days. Non-transactional mail only. Counts are unique messages, grouped by kind or send day in UTC.
-      Sent means accepted by the provider; Gmail does not report delivery or bounce events.</p>
+      Sent means accepted by the provider.</p>
     <p className={`${AdminUI.muted} mt-2`}>Open rate is approximate. Apple Mail privacy protection, image proxies and link scanners may fetch content before a person reads it.
       User agent classes are hints and cannot identify every proxy. Open rate uses only messages sent with tracking enabled.</p>
     {failed ? <p className={`${AdminUI.muted} mt-3`}>Could not load email reports.</p> : !reports
       ? <p className={`${AdminUI.loading} mt-3`}>Loading…</p> : <>
+        {!reports.deliveryEvents ? <p id="admin-mail-delivery-off" className={`${AdminUI.muted} mt-3`}>Delivered, bounced and complained are not shown: only the Resend transport, with its webhook connected, reports them. Gmail does not.</p> : null}
         {!reports.trackingEnabled ? <p className={`${AdminUI.muted} mt-3`}>Click and open tracking is off. Set PLATFORM_MAIL_TRACKING_SECRET in Platform variables to track future non-transactional mail.</p> : null}
         <div className="flex gap-2 mt-3" aria-label="Report grouping">
           <button type="button" className={group === 'byKind' ? AdminUI.btn.primarySm : AdminUI.btn.outlineSm} aria-pressed={group === 'byKind'} onClick={() => setGroup('byKind')}>By kind</button>
@@ -390,8 +396,8 @@ function TrackingReports({ reports, failed, onRefresh }: { reports: MailReports 
             <h4 className="text-sm font-semibold">{row.label}</h4>
             <span className={AdminUI.muted}>Approx. open rate: {row.tracked_sent ? `${Math.round(row.opened / row.tracked_sent * 100)}%` : '—'}</span>
           </div>
-          <dl className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3 mt-3">
-            {METRICS.map(([key, label]) => <div key={key}><dt className="text-xs text-zinc-500 dark:text-zinc-400">{label}</dt><dd className="text-sm font-semibold mt-1">{row[key]}</dd></div>)}
+          <dl className={`grid grid-cols-2 sm:grid-cols-4 ${reports.deliveryEvents ? 'lg:grid-cols-7' : 'lg:grid-cols-4'} gap-3 mt-3`}>
+            {METRICS.filter(([key]) => reports.deliveryEvents || !DELIVERY_METRICS.has(key)).map(([key, label]) => <div key={key}><dt className="text-xs text-zinc-500 dark:text-zinc-400">{label}</dt><dd className="text-sm font-semibold mt-1">{row[key]}</dd></div>)}
           </dl>
         </div>) : <p className={`${AdminUI.muted} mt-3`}>No tracked messages in the last 30 days.</p>}
         <h4 className="text-sm font-semibold mt-4">Recent tracking events</h4>

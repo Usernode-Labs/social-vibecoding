@@ -86,10 +86,13 @@ interface User {
   usernode_pubkey?: string | null;
   social_verified?: boolean;
   // #838: the identity tier the weekly cap follows, and its three proofs.
-  identity_tier?: 'unverified' | 'social' | 'zkpassport';
+  identity_tier?: 'unverified' | 'phone' | 'social' | 'zkpassport';
   has_github?: boolean;
   has_x?: boolean;
   has_zkpassport?: boolean;
+  has_phone?: boolean;
+  /** Let in before the verified-identity rule was switched on: the phone tier without a phone. */
+  identity_exempt?: boolean;
   openrouter_key_id?: string | null;
   openrouter_key_status?: string | null;
   openrouter_key_hash?: string | null;
@@ -135,11 +138,17 @@ const SMALL_INPUT = 'rounded bg-zinc-100 dark:bg-zinc-800 border border-zinc-200
 // this account is on and, for the unverified tier, which proofs it holds.
 const TIER_LABEL: Record<string, string> = {
   unverified: 'No verified identity',
+  phone: 'Phone verified',
   social: 'GitHub and X verified',
   zkpassport: 'zkPassport verified',
 };
+// The phone tier without a phone: let in before the verified-identity rule.
+function tierLabel(user: User): string {
+  if (user.identity_tier === 'phone' && !user.has_phone) return 'Let in before the identity rule';
+  return TIER_LABEL[user.identity_tier || 'unverified'];
+}
 function tierDetail(user: User): string {
-  if (user.identity_tier === 'zkpassport' || user.identity_tier === 'social') return '';
+  if (user.identity_tier && user.identity_tier !== 'unverified') return '';
   if (user.has_github && !user.has_x) return 'GitHub only';
   if (user.has_x && !user.has_github) return 'X only';
   return '';
@@ -237,15 +246,15 @@ async function resetUserPassword(user: User) {
 }
 
 /**
- * "Reset first run": the account's next load shows the join screen, the tour
- * and the Getting started card again, as for a new account (communities,
- * stage 5; POST /api/admin/users/:id/reset-first-run). For trying
- * onboarding on a test account, or on yourself. Nothing it owns changes.
+ * "Reset first run": the account's next load shows the join screen again,
+ * with the tour not done, as for a new account (communities, stage 5; POST
+ * /api/admin/users/:id/reset-first-run). For trying onboarding on a test
+ * account, or on yourself. Nothing it owns changes.
  */
 async function resetFirstRun(user: User) {
   const ok = await console_()._confirm({
     title: `Reset ${user.username}'s first run?`,
-    message: 'Next time they open Homeroom they see the join screen, the welcome tour and the Getting started card again, as if they had just signed up. Their communities, Home tiles, username and terms answer stay as they are.',
+    message: 'Next time they open Homeroom they see the join screen again, and the welcome tour is not done, as if they had just signed up. Their communities, Home tiles, username, terms answer and challenge points stay as they are.',
     confirmLabel: 'Reset',
   });
   if (!ok) return;
@@ -314,7 +323,7 @@ function Kebab({ user, open, onToggle, onReload }: {
 
 const dollars = (cents?: number | string | null) => (parseFloat(String(cents || 0)) / 100).toFixed(2);
 const roleOf = (u: User) => (!u.is_admin ? 'user' : (u.admin_readonly ? 'view_admin' : 'admin'));
-const tierText = (u: User) => `${TIER_LABEL[u.identity_tier || 'unverified']}${tierDetail(u) ? ` (${tierDetail(u)})` : ''}`;
+const tierText = (u: User) => `${tierLabel(u)}${tierDetail(u) ? ` (${tierDetail(u)})` : ''}`;
 const KEY_BADGE: Record<string, string> = {
   active: 'Key active', disabled: 'Key blocked', needs_review: 'Key needs review',
   provisioning: 'Key provisioning', deleted: 'Key deleted',
@@ -963,12 +972,13 @@ function UserDetails({ user, allUsers, fullAdminCount, canWrite, notice, onBack,
             ) : <span className="admin-user-weekly-limit-value">{weeklyOverrideDollars ? `$${weeklyOverrideDollars}` : 'Platform default for this tier'}</span>}
           </Row>
           <Row label="Tier">
-            <span>{TIER_LABEL[user.identity_tier || 'unverified']}</span>
+            <span>{tierLabel(user)}</span>
           </Row>
           <Row label="Proofs">
             <span className={user.has_github ? AdminUI.badge.success : AdminUI.badge.outline}>{`GitHub: ${user.has_github ? 'held' : 'not held'}`}</span>
             <span className={user.has_x ? AdminUI.badge.success : AdminUI.badge.outline}>{`X: ${user.has_x ? 'held' : 'not held'}`}</span>
             <span className={user.has_zkpassport ? AdminUI.badge.success : AdminUI.badge.outline}>{`zkPassport: ${user.has_zkpassport ? 'held' : 'not held'}`}</span>
+            <span className={user.has_phone ? AdminUI.badge.success : AdminUI.badge.outline}>{`Phone: ${user.has_phone ? 'held' : 'not held'}`}</span>
           </Row>
           <Row label="Daily cap (no longer enforced)" help="Kept so an existing value is not lost. The weekly cap is the limit that applies.">
             {canWrite ? (

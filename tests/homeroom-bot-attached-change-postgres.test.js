@@ -117,8 +117,9 @@ test('D: the prompt rules em dashes out, and one in a reply becomes what fits th
 
 test('B: the prompt and revise_proposal say an attached change is the one to fix', () => {
   const prompt = mayor.systemPrompt({ username: 'sam' });
-  assert.match(prompt, /A proposal of yours they attached to their message \(the conversation says so, with its proposal id\) is the one\n  they are writing about\./);
-  assert.match(prompt, /Never offer a new\n  request for something that proposal should fix: it is not live yet\./);
+  // One story: the prompt says "change", never "proposal" (its tools keep their names).
+  assert.match(prompt, /A change of yours they attached to their message \(the conversation says so, with its proposal id\) is the one\n  they are writing about\./);
+  assert.match(prompt, /Never offer a new\n  request for something that change should fix: it is not live yet\./);
   const revise = mayor.TOOLS.find((tool) => tool.function.name === 'revise_proposal');
   assert.match(revise.function.description, /or reported a problem with one they attached to their message\./);
 });
@@ -186,9 +187,8 @@ test('B and C against the full PostgreSQL schema', { timeout: 180000 }, async (t
   for (const member of [maya, sam]) {
     await pool.query('INSERT INTO community_members (community_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [app.community_id, member.id]);
   }
+  // On, for everyone with platform access, on every app but a paused one.
   await setting('homeroom_bot_mode', 'shadow');
-  await setting('homeroom_bot_dm_users', JSON.stringify(['maya', 'sam', 'ola']));
-  await setting('homeroom_bot_live_apps', JSON.stringify(['flat-chores']));
   // The group's first version: the bot's change for Maya's request #1,
   // waiting for approval. And an older one of its changes that is live.
   await pool.query(

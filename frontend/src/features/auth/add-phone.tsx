@@ -22,9 +22,11 @@ import { useRef, useState } from 'react';
 
 import { buttonVariants } from '@/components/ui/button';
 
+import { useMessages } from '../../lib/i18n/react';
 import { phoneRecaptchaToken } from './recaptcha';
 import { blockedOffline } from './shared';
-import { phoneE164, RecaptchaNotice } from './sign-in-sheet';
+import { PhoneInput, readPhone } from './phone-input';
+import { RecaptchaNotice } from './sign-in-sheet';
 
 export type JoinedGroup = { slug: string; name: string };
 
@@ -41,9 +43,12 @@ const QUIET = 'py-1 text-[15px] font-medium text-violet-700 dark:text-violet-400
 
 const RESEND_MS = 60 * 1000;
 
-export function AddPhoneCard({ groups, onJoined }: {
+export function AddPhoneCard({ groups, title: titleOverride, lead, onJoined }: {
   /** The groups this account is queued for, the first named in the title. */
   groups: readonly string[];
+  /** Instead of "Join … now": the verify sheet before a public vote (./verify-identity.tsx). */
+  title?: string;
+  lead?: string;
   onJoined: (joined: JoinedGroup[]) => void;
 }) {
   const [step, setStep] = useState<'phone' | 'code'>('phone');
@@ -54,13 +59,14 @@ export function AddPhoneCard({ groups, onJoined }: {
   const session = useRef('');
   const phoneField = useRef<HTMLInputElement>(null);
   const codeField = useRef<HTMLInputElement>(null);
+  const t = useMessages('auth');
 
-  const title = groups.length === 1 ? `Join ${groups[0]} now` : 'Join them now';
+  const title = titleOverride || (groups.length === 1 ? t('auth:addPhone.titleOne', { community: groups[0] }) : t('auth:addPhone.titleSeveral'));
 
-  async function requestCode(raw: string) {
+  // `value` is the E.164 number the field built (./phone-input.tsx), or the
+  // one sent before, for "Send a new code".
+  async function requestCode(value: string) {
     setError(null);
-    const value = phoneE164(raw);
-    if (!value) { setError('Enter your number with its country code, like +1 415 555 0123.'); return; }
     if (blockedOffline(setError)) return;
     setBusy(true);
     try {
@@ -73,7 +79,7 @@ export function AddPhoneCard({ groups, onJoined }: {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.ok || typeof data.sessionInfo !== 'string') {
-        setError(data.error || 'Could not send a code');
+        setError(data.error || t('auth:addPhone.sendFailed'));
         return;
       }
       session.current = data.sessionInfo;
@@ -81,7 +87,7 @@ export function AddPhoneCard({ groups, onJoined }: {
       setResendAt(Date.now() + RESEND_MS);
       setStep('code');
     } catch {
-      setError('Network error');
+      setError(t('auth:addPhone.networkError'));
     } finally {
       setBusy(false);
     }
@@ -90,7 +96,7 @@ export function AddPhoneCard({ groups, onJoined }: {
   async function verify() {
     setError(null);
     const code = (codeField.current?.value || '').trim();
-    if (!code) { setError('Enter the code from the text'); return; }
+    if (!code) { setError(t('auth:addPhone.codeMissing')); return; }
     if (blockedOffline(setError)) return;
     setBusy(true);
     try {
@@ -102,12 +108,12 @@ export function AddPhoneCard({ groups, onJoined }: {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.ok) {
-        setError(data.error || 'Invalid or expired code.');
+        setError(data.error || t('auth:addPhone.codeRejected'));
         return;
       }
       onJoined(Array.isArray(data.joined) ? data.joined : []);
     } catch {
-      setError('Network error');
+      setError(t('auth:addPhone.networkError'));
     } finally {
       setBusy(false);
     }
@@ -115,32 +121,41 @@ export function AddPhoneCard({ groups, onJoined }: {
 
   return (
     <section data-add-phone={step} className="mt-3 rounded-2xl bg-white dark:bg-zinc-900 p-5 text-left">
-      <h2 className="text-[17px] font-[650] text-zinc-900 dark:text-zinc-100">{step === 'phone' ? title : 'Check your texts'}</h2>
+      <h2 className="text-[17px] font-[650] text-zinc-900 dark:text-zinc-100">{step === 'phone' ? title : t('auth:addPhone.codeTitle')}</h2>
       <p className="mt-1 text-[15px] leading-snug text-zinc-500 dark:text-zinc-400">
         {step === 'phone'
-          ? 'Add your phone number and you’re in, no waiting. The group sees your name, never your number.'
-          : `We sent a 6-digit code to the number ending ${number.slice(-4)}.`}
+          ? lead || t('auth:addPhone.lead')
+          : t('auth:addPhone.codeSent', { lastDigits: number.slice(-4) })}
       </p>
+      {/* Keyed: the two forms are one ternary, so without a key React keeps
+          the same uncontrolled <input> across the step and the number typed
+          into it shows up in the Code field (#4143). */}
       {step === 'phone' ? (
-        <form className="mt-4 flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); void requestCode(phoneField.current?.value || ''); }}>
+        <form key="phone" className="mt-4 flex flex-col gap-3" onSubmit={async (e) => {
+          e.preventDefault();
+          setError(null);
+          const read = await readPhone(phoneField.current);
+          if (!read.ok) { setError(read.error); return; }
+          void requestCode(read.e164);
+        }}>
           <div className={FIELD_GROUP}>
-            <label htmlFor="add-phone-number" className={LABEL}>Phone number</label>
-            <input ref={phoneField} id="add-phone-number" type="tel" autoComplete="tel" inputMode="tel" enterKeyHint="go" defaultValue={number} placeholder="+1 415 555 0123" className={INPUT} />
+            <label htmlFor="add-phone-number" className={LABEL}>{t('auth:addPhone.numberLabel')}</label>
+            <PhoneInput inputRef={phoneField} id="add-phone-number" defaultValue={number} className="px-4 pb-1" />
           </div>
-          <button type="submit" disabled={busy} className={PRIMARY}>{busy ? 'Sending code…' : 'Text me a code'}</button>
+          <button type="submit" disabled={busy} className={PRIMARY}>{busy ? t('auth:addPhone.sending') : t('auth:addPhone.send')}</button>
           <RecaptchaNotice />
         </form>
       ) : (
-        <form className="mt-4 flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); void verify(); }}>
+        <form key="code" className="mt-4 flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); void verify(); }}>
           <div className={FIELD_GROUP}>
-            <label htmlFor="add-phone-code" className={LABEL}>Code</label>
+            <label htmlFor="add-phone-code" className={LABEL}>{t('auth:addPhone.codeLabel')}</label>
             <input ref={codeField} id="add-phone-code" inputMode="numeric" autoComplete="one-time-code" enterKeyHint="go" maxLength={6} className={`${INPUT} tracking-[0.4em]`} />
           </div>
-          <button type="submit" disabled={busy} className={PRIMARY}>{busy ? 'Checking…' : 'Continue'}</button>
+          <button type="submit" disabled={busy} className={PRIMARY}>{busy ? t('auth:addPhone.checking') : t('auth:addPhone.verify')}</button>
           <div className="flex items-center justify-between">
-            <button type="button" className={QUIET} onClick={() => { setError(null); setStep('phone'); }}>Use another number</button>
-            <button type="button" className={QUIET} disabled={busy} onClick={() => { if (Date.now() >= resendAt) void requestCode(number); else setError('Wait a minute before asking for a new code.'); }}>
-              Send a new code
+            <button type="button" className={QUIET} onClick={() => { setError(null); setStep('phone'); }}>{t('auth:addPhone.changeNumber')}</button>
+            <button type="button" className={QUIET} disabled={busy} onClick={() => { if (Date.now() >= resendAt) void requestCode(number); else setError(t('auth:addPhone.resendTooSoon')); }}>
+              {t('auth:addPhone.resend')}
             </button>
           </div>
         </form>

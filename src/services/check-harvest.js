@@ -1,476 +1,254 @@
 'use strict';
 
-// Settle checks runs whose launching process died.
+// Read a checks run's Jobs after the process that launched them is gone.
 //
 // A platform rollout replaces every platform Pod, and every merge to the
 // self-app is a rollout. A checks run in flight at that moment loses the
 // process that was streaming its capture and unit-suite Jobs — but the Jobs
 // themselves are the cluster's, not the Pod's, and they run to completion
-// regardless. Before this module the verdict they produced went nowhere: the
-// row stayed 'pending' until the stale sweeper (CHECKS_STALE_MS, ten
-// minutes) noticed and started the whole suite over on a fresh preview.
-// #2125 paid that four times in half an hour, once with a 490-check suite
-// three-quarters done.
+// regardless. #2125 paid four full suites in half an hour starting them over.
 //
-// The harvester reads the run instead of repeating it. Every run records a
-// manifest in check_runs before its Jobs exist (services/check-runs.js) and
-// heartbeats it while they run; a row nobody has heartbeated for the orphan
-// window is a run whose owner is gone. For each such row:
-//
-//   * the session is re-read — a row whose checks have since been decided,
-//     whose head has moved on, or whose lifecycle names a newer run, is
-//     moot and its manifest is simply cleared;
-//   * the run's Jobs are found by the preview-run-id label. A finished Job
-//     is read; a running one is waited on with its progress re-published to
-//     the card (the bar keeps moving across the hand-over); a missing one
-//     — never created, already collected, or cancelled by a successor that
-//     the checks above did not see — means a re-drive, immediately;
-//   * the output goes through visuals.settleCaptureRun: the same parse,
-//     verdict, stores and broadcasts a live run ends with, under the same
-//     commit guards. Under the preview lifecycle the run's operation row is
-//     adopted first (preview-lifecycle.adopt), so every write carries the
-//     ownership check a live run's does and a successor aborts the harvest
-//     rather than the other way round.
-//
-// Runs on the leader: once at boot, before the stale sweep (so a run that
-// can be harvested never reads as stuck), then on a timer. A sweep is
-// single-flight and bounded; a harvest holds the session's in-flight seat
-// (visuals.holdCapture) so every other surface sees it as the run it is.
+// The preview machine's checks run is a work item (src/workflow/preview/
+// services.ts checks.run). Its manifest is recorded in check_runs before its
+// Jobs exist (services/check-runs.js); when its claim is lost (its process
+// died, or its lease ran out), the retry of the same work item collects the
+// Jobs that manifest names (collectForWorkflow) rather than running the
+// checks again. The other way round, a run starting stops the Jobs of the
+// runs it supersedes (stopSupersededRuns), so they stop holding the capacity
+// it needs. main-watch reads its own interrupted unit suites with
+// joinUnitResults.
 
 const log = require('./logger');
 const checkRuns = require('./check-runs');
-const { getPool } = require('../db/pool');
 
-const SWEEP_MS = Math.max(5000, Number(process.env.CHECK_HARVEST_SWEEP_MS) || 30_000);
-const MAX_CONCURRENT = Math.max(1, Number(process.env.CHECK_HARVEST_CONCURRENCY) || 3);
 // Slack past the Jobs' own activeDeadlineSeconds before a still-running Job
 // is given up on — the cluster should have ended it by then.
 const DEADLINE_SLACK_MS = 30_000;
-
-// Statuses whose checks still matter. Mirrors the scope of the stale
-// sweeper (staging-recovery.isStuckCheckRecoveryScope): promoted rows, and
-// active CLI hand-offs whose head is being judged.
-const LIVE_STATUSES = new Set(['promoted', 'active', 'paused', 'merging']);
-
-const harvesting = new Map(); // sessionId → runId
-let sweeping = null;
 
 function isEnabled(config) {
   return (config?.captureRuntime || process.env.CAPTURE_RUNTIME) === 'kubernetes';
 }
 
-function isHarvesting(sessionId) {
-  return harvesting.has(Number(sessionId));
+// A run's capture shards, collected, read as one capture Job: their output
+// joined in shard order, as the live run joins it (visuals.runCaptureShards).
+// One shard gone, aborted or past its deadline is the run's state; the run
+// failed only if every shard did. `notStarted` names the shards that
+// reported nothing because their Pod never started its container, or was
+// evicted (check-pod-start.js), as the live run's do.
+function capturePodNeverStarted(result, shard) {
+  if (!result || result.state === 'succeeded') return null;
+  const fault = require('./check-pod-start').podStartCause(result.podStart);
+  if (!fault) return null;
+  return require('./visuals').reportedTestIndexes(String(result.stdout || '')).size ? null : { shard, ...fault };
 }
 
-async function loadSession(pool, sessionId) {
-  const { rows } = await pool.query(
-    `SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url,
-            a.runtime_name AS app_runtime_name, a.runtime_kind AS app_runtime_kind
-       FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
-      WHERE cs.id = $1`,
-    [sessionId]
-  );
-  return rows[0] || null;
-}
-
-// Whether the run the manifest describes is still the run the session is
-// waiting on. Anything else — decided meanwhile, head moved, session closed
-// — makes the manifest moot: nothing to settle, nothing to re-drive.
-function stillCurrent(session, commitSha) {
-  if (!session) return { current: false, why: 'session gone' };
-  if (!LIVE_STATUSES.has(session.status)) return { current: false, why: `session ${session.status}` };
-  if (session.check_state !== 'pending') return { current: false, why: `checks ${session.check_state || 'unset'}` };
-  // A shots-only run's settlement is its deferral stamp (check_state stays
-  // 'pending', check_phase becomes 'deferred'); a manifest outliving that
-  // stamp has already been settled.
-  if (session.check_phase === 'deferred') return { current: false, why: 'checks deferred' };
-  if ((session.checks_commit_sha || null) !== (commitSha || null)) return { current: false, why: 'head moved' };
-  return { current: true, why: '' };
-}
-
-function describeRow(row, reason) {
-  const manifest = row.manifest || {};
+function joinCaptures(results) {
+  const list = (results || []).filter(Boolean);
+  const notStarted = list.map((r, shard) => capturePodNeverStarted(r, shard)).filter(Boolean);
+  if (list.length <= 1) {
+    const one = list[0] || null;
+    return one && notStarted.length ? { ...one, notStarted } : one;
+  }
+  const worst = ['gone', 'aborted', 'timeout'].find((state) => list.some((r) => r.state === state));
   return {
-    sessionId: Number(row.session_id), runId: row.run_id, commitSha: row.commit_sha || null,
-    reason, trigger: manifest.trigger || null,
+    state: worst || (list.every((r) => r.state === 'failed') ? 'failed' : 'succeeded'),
+    stdout: list.map((r) => String(r.stdout || '')).join('\n'),
+    stderr: list.map((r) => String(r.stderr || '')).filter(Boolean).join('\n'),
+    partial: list.some((r) => r.partial),
+    partialReason: [...new Set(list.map((r) => r.partialReason).filter(Boolean))].join('; '),
+    notStarted,
   };
 }
 
-// Phase one of adoption: take the row and the session's in-flight seat.
-// Two writes and no cluster reads, so a sweep can seat every orphan before
-// anything slower looks at those sessions — the boot stale sweep above all,
-// which would otherwise read a harvestable run as stuck and start it over.
-// Returns { hold } to carry into adopt(), or a terminal { outcome } when
-// another harvester took the row first ('contested') or a live run already
-// has the session ('busy' — it will settle the head itself).
-async function claimRun(pool, row, base) {
-  const visuals = require('./visuals');
-  const lifecycle = require('./preview-lifecycle');
-  if (!(await checkRuns.claim(pool, base.runId, row.owner))) return { outcome: 'contested', ...base };
-  const stopHeartbeat = checkRuns.startHeartbeat(pool, base.runId);
-  const controller = new AbortController();
-  const release = visuals.holdCapture(base.sessionId, base.commitSha, {
-    abort: (why) => { if (!controller.signal.aborted) controller.abort(why || lifecycle.cancelled()); },
-  });
-  if (!release) {
-    stopHeartbeat();
-    return { outcome: 'busy', ...base };
-  }
-  harvesting.set(base.sessionId, base.runId);
-  return { hold: { stopHeartbeat, controller, release } };
+// A run's unit-suite shards, collected, read as one Job: the outputs joined
+// as the live run joins them (unit-suite.joinUnitShardOutputs). A shard
+// that failed or ran out of time makes the suite red, whatever the others
+// say or whether they could be read at all: a missing shard cannot make it
+// pass. Short of that, part of a suite is not the suite: null, no row, when
+// a shard is missing, and one gone or aborted is the suite's state. It
+// succeeded only if every shard did.
+function joinUnitResults(results, expectedShards = 1) {
+  const list = (results || []).filter(Boolean);
+  if (list.length <= 1 && expectedShards <= 1) return list[0] || null;
+  // A shard whose Pod never started its container and printed nothing: the
+  // suite did not run, whatever the others say, as the live path reads it
+  // (unit-suite.runUnitSuiteShards). Its own empty log is what is read.
+  const neverRan = list.find((r) => r.state !== 'succeeded' && !String(r.stdout || '').trim()
+    && require('./check-pod-start').podStartCause(r.podStart));
+  if (neverRan) return { ...neverRan, shardNotRun: true };
+  const red = list.filter((r) => r.state === 'failed' || r.state === 'timeout');
+  if (list.length < expectedShards && !red.length) return null;
+  const worst = ['gone', 'aborted'].find((state) => list.some((r) => r.state === state));
+  const failed = red[0] || list.find((r) => r.state !== 'succeeded');
+  const joined = require('./unit-suite').joinUnitShardOutputs(list);
+  const state = red.length ? (red.some((r) => r.state === 'timeout') ? 'timeout' : 'failed')
+    : (worst || (failed ? 'failed' : 'succeeded'));
+  return {
+    state,
+    stdout: joined.stdout,
+    stderr: joined.stderr,
+    timedOut: list.some((r) => r.timedOut),
+    exitCode: failed ? failed.exitCode : 0,
+  };
 }
 
-// One orphaned row, start to finish. Returns { outcome, ... } for the sweep's
-// log line: 'settled' (a verdict was stored from the Job's output), 'redriven'
-// (nothing readable — a fresh run was requested), 'moot' (the session no
-// longer wants this run), 'busy' (a live run here has the session),
-// 'contested' (another harvester took the row first), or 'failed'.
-// `hold` is the seat claimRun() took; without one the claim happens here.
-async function adopt(config, pool, row, { reason = 'sweep', hold = null } = {}) {
+// A preview machine's checks run whose claim was lost (its process died, or
+// its lease ran out), collected by the retry of the same work item rather
+// than run again (src/workflow/preview/services.ts checks.run): the Jobs its
+// manifest names, read to the end and settled in collect mode, so the
+// settlement is returned for the machine to store. Null when there is
+// nothing to read (no launched manifest, a Job gone, a blocking unit suite
+// that cannot be read): the retry then runs the checks again. Throws the
+// signal's reason when the work item is cancelled meanwhile, and throws when
+// whether the unit suite blocks merges cannot be read: the item is retried
+// and reads the Jobs again. Never settled as advisory on that doubt (#4996,
+// #4973).
+async function collectForWorkflow(config, pool, { runKey, session, app, signal }) {
   const visuals = require('./visuals');
   const kubernetes = require('./kubernetes');
   const unitSuite = require('./unit-suite');
   const checkHistory = require('./check-history');
   const appManifest = require('./app-manifest');
-  const lifecycle = require('./preview-lifecycle');
-  const mergeDebug = require('./merge-debug');
-  const stagingRecovery = require('./staging-recovery');
-
-  const sessionId = Number(row.session_id);
+  if (!isEnabled(config)) return null;
+  // The newest claim of the run that launched its Jobs.
+  const { rows: [row] } = await pool.query(
+    `SELECT run_id, session_id, commit_sha, manifest, started_at FROM check_runs
+      WHERE session_id = $1 AND manifest->>'runKey' = $2 AND manifest->>'launched' = 'true'
+      ORDER BY started_at DESC LIMIT 1`, [session.id, runKey]);
+  const manifest = row?.manifest || {};
+  if (!row || manifest.workflow !== true) return null;
   const runId = row.run_id;
-  const manifest = row.manifest || {};
+  const sessionId = Number(session.id);
   const commitSha = row.commit_sha || null;
-  const startedAt = Date.now();
-  const base = describeRow(row, reason);
-
-  if (!hold) {
-    const taken = await claimRun(pool, row, base);
-    if (!taken.hold) return taken;
-    hold = taken.hold;
-  }
-  const { stopHeartbeat, controller, release } = hold;
-
-  let operation = null;
-  let verdict = null;
-  // The lifecycle row can still name the dead run as `running` before the
-  // harvest adopts it (or when adoption declines). Closing it through a
-  // stub keeps teardown() from reading the dead run as busy; settleAdopted
-  // touches the row only while it still carries this run id, so a
-  // successor's row is never overwritten.
-  const settleLifecycle = async (outcome) => {
-    if (!lifecycle.enabled(config)) return;
-    await lifecycle.settleAdopted(config, operation || { sessionId, runId }, outcome).catch(() => {});
-  };
-  const moot = async (why) => {
-    log.info('check-harvest', 'Orphaned run is moot — clearing its manifest', { ...base, why });
-    await checkRuns.finish(pool, runId);
-    await settleLifecycle({ error: lifecycle.cancelled() });
-    return { outcome: 'moot', why, ...base };
-  };
-  const redrive = async (session, why) => {
-    log.info('check-harvest', 'Orphaned run has nothing to read — re-driving its checks now', { ...base, why });
-    await checkRuns.finish(pool, runId);
-    await settleLifecycle({ error: new Error(why) });
-    mergeDebug.endRun(pool, manifest.debugRunId || null, {
-      status: 'error', summary: `checks run orphaned (${why}); re-driven`,
-    });
-    // Release the seat BEFORE the re-drive so captureForSession does not
-    // park itself behind the harvest that is asking for it.
-    release(null);
-    await stagingRecovery.recheckSessionChecks({ config, pool, session, reason: 'orphaned-run' });
-    return { outcome: 'redriven', why, ...base };
-  };
-
-  try {
-    const session = await loadSession(pool, sessionId);
-    const currency = stillCurrent(session, commitSha);
-    if (!currency.current) return await moot(currency.why);
-    const app = {
-      id: session.app_id, slug: session.app_slug, name: session.app_name, repo_url: session.repo_url,
-      runtime_name: session.app_runtime_name, runtime_kind: session.app_runtime_kind,
-    };
-    if (!manifest.launched) return await redrive(session, 'process died before the Jobs were created');
-
-    // Under the lifecycle the run's operation row must still be ours to
-    // settle; a newer run's row means a successor already owns the session
-    // and will settle (or has settled) it.
-    if (lifecycle.enabled(config)) {
-      operation = await lifecycle.adopt(config, { sessionId, runId, revision: commitSha });
-      if (!operation) return await moot('lifecycle names another run');
-      operation.signal.addEventListener('abort', () => {
-        if (!controller.signal.aborted) controller.abort(operation.signal.reason);
-      }, { once: true });
-    }
-
-    const jobs = await kubernetes.findCheckJobs(config, { sessionId, previewRunId: runId });
-    // A deferred verdict on a range with no frontend files launches no
-    // capture container at all (visuals: shotsOnly && !media) — its stamp is
-    // the whole settlement, and there is nothing on the cluster to find.
-    const captureExpected = !(manifest.shotsOnly && !manifest.media);
-    if (captureExpected && !jobs.capture) return await redrive(session, 'capture Job not found');
-
-    log.info('check-harvest', 'Adopting an orphaned checks run', {
-      ...base, owner: row.owner,
-      capture: jobs.capture ? jobs.capture.state : 'none',
-      unitSuite: jobs.unitSuite ? jobs.unitSuite.state : 'none',
-      tests: Number(manifest.testsCount) || 0,
-    });
-
-    // Progress for the card while a still-running Job is waited on. The
-    // frames are re-read from the start of the log, so the counts pick up
-    // where the dead process's did and go on from there.
-    const trigger = manifest.trigger || 'boot-reconcile';
-    const progress = visuals.makeChecksProgressState({
-      expected: Number(manifest.testsCount) || 0,
-      build: manifest.build || null,
-      flush: async (snap) => {
-        if (controller.signal.aborted) return;
-        try { await visuals.setChecksProgress(pool, sessionId, commitSha, snap); } catch { return; }
-        visuals.notifyChecksProgress(sessionId, commitSha, snap, 'testing', trigger);
+  const jobs = await kubernetes.findCheckJobs(config, { sessionId, previewRunId: runId });
+  // The early unit suite (preview services checks.unitEarly) has its own run
+  // id, which the manifest names when the run went to read it. A run that
+  // found it unreadable launched its own under the claim's id: those, when
+  // there are any, are the suite.
+  const ownUnit = (Array.isArray(jobs.unitSuites) && jobs.unitSuites.length) || jobs.unitSuite;
+  const unitFrom = manifest.unitRunId && !ownUnit
+    ? await kubernetes.findCheckJobs(config, { sessionId, previewRunId: manifest.unitRunId }) : jobs;
+  const unitJobs = Array.isArray(unitFrom.unitSuites) && unitFrom.unitSuites.length
+    ? unitFrom.unitSuites : (unitFrom.unitSuite ? [unitFrom.unitSuite] : []);
+  const captureJobs = Array.isArray(jobs.captures) ? jobs.captures : (jobs.capture ? [jobs.capture] : []);
+  const captureExpected = !(manifest.shotsOnly && !manifest.media);
+  if (captureExpected && captureJobs.length < (Number(manifest.captureShards) || 1)) return null;
+  const unitTracker = unitSuite.makeUnitSuiteTracker(await unitSuite.loadExpectedTests(pool, app.id));
+  const [capture, unit] = await Promise.all([
+    captureJobs.length ? Promise.all(captureJobs.map((job) => kubernetes.collectCheckJob(config, {
+      name: job.name, kind: 'capture',
+      timeoutMs: visuals.RUN_TIMEOUT_MS + DEADLINE_SLACK_MS, maxBuffer: visuals.RUN_MAX_BUFFER, signal,
+    }))).then(joinCaptures) : Promise.resolve(null),
+    unitJobs.length ? Promise.all(unitJobs.map((job) => kubernetes.collectCheckJob(config, {
+      name: job.name, kind: 'unit-suite',
+      timeoutMs: unitSuite.UNIT_SUITE_TIMEOUT_MS + DEADLINE_SLACK_MS, maxBuffer: unitSuite.UNIT_SUITE_MAX_BUFFER,
+      onStdoutLine: (line) => {
+        if (unitJobs.length > 1 && /^# (tests|pass|fail|skipped|cancelled|todo) /.test(line)) return;
+        unitTracker.feed(line);
       },
+      signal,
+    }))).then((results) => joinUnitResults(results, Number(unitFrom.unitShards) || 1)) : Promise.resolve(null),
+  ]);
+  if (signal?.aborted) throw signal.reason;
+  if (capture && (capture.state === 'gone' || capture.state === 'aborted')) return null;
+  const graduated = (await checkHistory.loadGraduated(pool, app.id, { sessionId, strict: true }))
+    .has(appManifest.checkKey(unitSuite.UNIT_CHECK_NAME, unitSuite.UNIT_CHECK_PATH));
+  let unitOutcome = null;
+  if (unit && (unit.state === 'succeeded' || unit.state === 'failed' || unit.state === 'timeout')) {
+    unitOutcome = await unitSuite.outcomeFromLog({
+      pool, appId: app.id, sessionId, succeeded: unit.state === 'succeeded',
+      stdout: unit.stdout, stderr: unit.stderr, timedOut: unit.timedOut || unit.state === 'timeout',
+      exitCode: unit.exitCode, graduated, tracker: unitTracker,
     });
-    const unitTracker = unitSuite.makeUnitSuiteTracker(await unitSuite.loadExpectedTests(pool, app.id));
-    let capture = null;
-    let unit = null;
-    try {
-      [capture, unit] = await Promise.all([
-        jobs.capture ? kubernetes.collectCheckJob(config, {
-          name: jobs.capture.name, kind: 'capture',
-          timeoutMs: visuals.RUN_TIMEOUT_MS + DEADLINE_SLACK_MS, maxBuffer: visuals.RUN_MAX_BUFFER,
-          onStdoutLine: progress.observeCapture, signal: controller.signal,
-        }) : Promise.resolve(null),
-        jobs.unitSuite ? kubernetes.collectCheckJob(config, {
-          name: jobs.unitSuite.name, kind: 'unit-suite',
-          timeoutMs: unitSuite.UNIT_SUITE_TIMEOUT_MS + DEADLINE_SLACK_MS, maxBuffer: unitSuite.UNIT_SUITE_MAX_BUFFER,
-          onStdoutLine: (line) => { if (unitTracker.feed(line)) progress.observeUnit(unitTracker.snapshot()); },
-          signal: controller.signal,
-        }) : Promise.resolve(null),
-      ]);
-    } finally {
-      progress.close();
-    }
-    if (controller.signal.aborted) return await moot('superseded while collecting');
-    if (capture && (capture.state === 'gone' || capture.state === 'aborted')) {
-      // The Job vanished under us. A successor that cancelled it would have
-      // moved the session on; if it has not, the TTL collected the Job and
-      // its output with it, and only a fresh run can judge this head.
-      const again = stillCurrent(await loadSession(pool, sessionId), commitSha);
-      if (!again.current) return await moot(again.why);
-      return await redrive(session, 'capture Job gone before it could be read');
-    }
-
-    // The unit-suite row, from the Job's own verdict. Graduation is read
-    // now rather than from the manifest: the history could only have moved
-    // towards graduated, and that is what a fresh run would see too. A Job
-    // that vanished contributes no row — the same as a runner that failed
-    // to launch in a live run.
-    let unitOutcome = null;
-    if (unit && (unit.state === 'succeeded' || unit.state === 'failed')) {
-      let graduated = false;
-      try {
-        graduated = (await checkHistory.loadGraduated(pool, app.id))
-          .has(appManifest.checkKey(unitSuite.UNIT_CHECK_NAME, unitSuite.UNIT_CHECK_PATH));
-      } catch (err) {
-        log.warn('check-harvest', 'Graduation lookup failed — unit row advisory', { ...base, err: err.message });
-      }
-      unitOutcome = await unitSuite.outcomeFromLog({
-        pool, appId: app.id, sessionId,
-        succeeded: unit.state === 'succeeded',
-        stdout: unit.stdout, stderr: unit.stderr, timedOut: unit.timedOut,
-        graduated, tracker: unitTracker,
-      });
-    }
-
-    // A capture Job that failed without a frame to salvage, or one the
-    // cluster never ended, is a run that could not judge — the live path
-    // records 'error' for that (fail-closed, "couldn't run", retried by the
-    // stale sweeper's error lane), and so does this.
-    const unreadable = capture && ((capture.state === 'failed' && !capture.stdout.trim()) || capture.state === 'timeout');
-    if (unreadable) {
-      const why = capture.state === 'timeout'
-        ? 'capture Job still running past its deadline'
-        : `capture Job failed${capture.stderr ? ` (${capture.stderr})` : ''}`;
-      log.warn('check-harvest', 'Orphaned run produced nothing to judge — recording an error verdict', { ...base, why });
-      const writePool = operation ? operation.pool : pool;
-      await visuals.storeCaptureOutcome(writePool, sessionId, 'failed', { reason: why.slice(0, 300) }).catch(() => {});
-      const stored = await visuals.storeChecks(writePool, sessionId, commitSha, { state: 'error', results: [] }, why);
-      if (stored) visuals.notifyChecks(sessionId, { state: 'error', results: [] }, commitSha, null);
-      // A live capture schedules shots from its finally block. This run's
-      // launcher is gone, so the harvester must perform that hand-off itself.
-      // The shots use their own exact-revision pair and can still succeed when
-      // the legacy capture Job produced no usable output.
-      visuals.scheduleShots(config, pool, sessionId, commitSha, 'checks-harvested');
-      verdict = 'error';
-      mergeDebug.endRun(pool, manifest.debugRunId || null, {
-        status: 'error', summary: `checks error in ${Math.round((Date.now() - (manifest.startedAt || startedAt)) / 1000)}s (harvested: ${why})`,
-      });
-      if (operation) await lifecycle.settleAdopted(config, operation, { result: { state: 'error' } });
-      await checkRuns.finish(pool, runId);
-      return { outcome: 'settled', state: 'error', why, ...base };
-    }
-
-    const traceStep = (phase, message, detail) => mergeDebug.step(pool, manifest.debugRunId || null, { phase, message, detail });
-    traceStep('harvest', 'Run adopted after its process died', {
-      owner: row.owner, reason, capture: capture ? capture.state : 'none', unitSuite: unit ? unit.state : 'none',
-    });
-    const settled = await visuals.settleCaptureRun(config, operation ? operation.pool : pool, {
-      session, app, commitHash: commitSha, trigger, send: null, operation, traceStep,
-      runStartedAt: Number(manifest.startedAt) || Date.parse(row.started_at) || startedAt,
-      shotsOnly: !!manifest.shotsOnly, admissionReason: manifest.admissionReason || null,
-      media: !!manifest.media,
-      legacyMediaSuppressed: manifest.legacyMediaSuppressed === true,
-      capturePaths: Array.isArray(manifest.capturePaths) && manifest.capturePaths.length
-        ? manifest.capturePaths : ['/'],
-      pathDefaulted: !!manifest.pathDefaulted,
-      captureRouteSource: manifest.captureRouteSource || null,
-      visualScenarios: Array.isArray(manifest.visualScenarios) ? manifest.visualScenarios : [],
-      prodRunning: !!manifest.prodRunning,
-      stagingOrigin: manifest.stagingOrigin || '',
-      targets: Array.isArray(manifest.targets) ? manifest.targets : [],
-      testsCount: Number(manifest.testsCount) || 0,
-      dispatched: Array.isArray(manifest.dispatched) ? manifest.dispatched : null,
-      ceilingDropped: Number(manifest.ceilingDropped) || 0,
-      stdout: capture ? capture.stdout : '',
-      stderr: capture ? (capture.stderr || '') : '',
-      runPartial: capture ? !!capture.partial : false,
-      runPartialReason: capture ? (capture.partialReason || '') : '',
-      unitOutcome,
-      // A harvested run outlived the process that launched it, so it ran
-      // across a restart: a red verdict from it runs again (visuals.js,
-      // ROLLOUT_BOOT_WINDOW_MS) instead of standing against the author.
-      overlappedRollout: true,
-    });
-    verdict = settled.traceStatus;
-    // The live capture's finally block does not run after adoption. Without
-    // this call a successfully harvested proposal keeps its shots claim in
-    // "planned" forever even though checks and screenshots have settled.
-    visuals.scheduleShots(config, pool, sessionId, commitSha, 'checks-harvested');
-    mergeDebug.endRun(pool, manifest.debugRunId || null, {
-      status: verdict,
-      summary: `checks ${verdict} in ${Math.round((Date.now() - (Number(manifest.startedAt) || startedAt)) / 1000)}s (harvested)`,
-    });
-    if (operation) {
-      await lifecycle.settleAdopted(config, operation, { result: settled.result });
-      // The lifecycle wrapper fires this for a live run once its operation
-      // completes (captureForSession skips it while one is in scope).
-      visuals.maybeAutoMergeAfterChecks(config, pool, session, settled.result.state);
-      visuals.noteBotChecksAfterChecks?.(pool, session, settled.result.state);
-    }
+  }
+  // A suite that blocks merges and cannot be read is one only a fresh run
+  // can judge.
+  if (!unitOutcome && !manifest.shotsOnly && graduated) return null;
+  // A capture Job that wrote nothing at all, or that its deadline did not
+  // end, says nothing about the proposal. It is the
+  // platform's fault, and spends none of the proposal's automatic retries.
+  if (capture && ((capture.state === 'failed' && !capture.stdout.trim()) || capture.state === 'timeout')) {
+    const why = capture.state === 'timeout'
+      ? 'capture Job still running past its deadline'
+      : `capture Job failed${capture.stderr ? ` (${capture.stderr})` : ''}`;
+    kubernetes.deleteSettledCheckJobs(config, { sessionId, previewRunId: runId }).catch(() => {});
     await checkRuns.finish(pool, runId);
-    log.info('check-harvest', 'Orphaned run settled from its Jobs', {
-      ...base, state: settled.result.state, durationMs: Date.now() - startedAt,
+    return { outcome: 'blocked', reason: why.slice(0, 300), platformFault: true };
+  }
+  const settled = await visuals.settleCaptureRun(config, pool, {
+    session, app, commitHash: commitSha,
+    runStartedAt: Number(manifest.startedAt) || Date.parse(row.started_at) || Date.now(),
+    shotsOnly: !!manifest.shotsOnly, admissionReason: manifest.admissionReason || null,
+    media: !!manifest.media, legacyMediaSuppressed: manifest.legacyMediaSuppressed === true,
+    capturePaths: Array.isArray(manifest.capturePaths) && manifest.capturePaths.length ? manifest.capturePaths : ['/'],
+    pathDefaulted: !!manifest.pathDefaulted, captureRouteSource: manifest.captureRouteSource || null,
+    visualScenarios: Array.isArray(manifest.visualScenarios) ? manifest.visualScenarios : [],
+    prodRunning: !!manifest.prodRunning, stagingOrigin: manifest.stagingOrigin || '',
+    targets: Array.isArray(manifest.targets) ? manifest.targets : [],
+    testsCount: Number(manifest.testsCount) || 0,
+    dispatched: Array.isArray(manifest.dispatched) ? manifest.dispatched : null,
+    ceilingDropped: Number(manifest.ceilingDropped) || 0,
+    stdout: capture ? capture.stdout : '', stderr: capture ? (capture.stderr || '') : '',
+    runPartial: capture ? !!capture.partial : false, runPartialReason: capture ? (capture.partialReason || '') : '',
+    // The shards whose test Pod never started: the platform's fault, as on a
+    // live run (check-pod-start.js).
+    notStarted: capture?.notStarted || [],
+    unitOutcome, collect: { runId: runKey },
+  });
+  // Read out: the Jobs and the row go, as a live run's do once it settles.
+  kubernetes.deleteSettledCheckJobs(config, { sessionId, previewRunId: runId }).catch(() => {});
+  if (manifest.unitRunId) kubernetes.deleteSettledCheckJobs(config, { sessionId, previewRunId: manifest.unitRunId }).catch(() => {});
+  await checkRuns.finish(pool, runId);
+  return settled.result;
+}
+
+// The runs of the session whose manifest names `commitSha`: whoever reads
+// them, their verdict is one the row still takes. What stopSupersededRuns
+// spares.
+async function runsOfCommit(pool, sessionId, commitSha) {
+  const { rows } = await pool.query(
+    'SELECT run_id, commit_sha FROM check_runs WHERE session_id = $1', [Number(sessionId)]
+  );
+  return new Set(rows.filter((row) => (row.commit_sha || null) === (commitSha || null)).map((row) => row.run_id));
+}
+
+// A run starting for a session supersedes the session's runs for any other
+// commit. storeChecks writes only the verdict for the commit the row is
+// pending on, so nobody reads what their Jobs produce, and under load those
+// Jobs hold the capacity the new run needs. captureForSession calls this
+// once its manifest is written, before its own Jobs exist. A run for the
+// same commit is left alone: its verdict is still one the row takes, from
+// its own work item or from that item's retry. A running Job whose manifest
+// is gone belongs to a run that already ended without reading it, and is
+// stopped too. Never throws.
+async function stopSupersededRuns(config, pool, { sessionId, runId, commitSha }) {
+  if (!isEnabled(config) || !sessionId || !runId) return [];
+  try {
+    const current = await runsOfCommit(pool, sessionId, commitSha);
+    current.add(runId);
+    const stopped = await require('./kubernetes').stopCheckJobs(config, {
+      sessionId: Number(sessionId), spare: (id) => current.has(id),
     });
-    return { outcome: 'settled', state: settled.result.state, ...base };
-  } catch (err) {
-    if (lifecycle.isCancelled(err) || controller.signal.aborted) {
-      return await moot('superseded').catch(() => ({ outcome: 'moot', why: 'superseded', ...base }));
+    if (stopped.length) {
+      log.info('check-harvest', 'Stopped the Jobs of runs a newer run superseded', {
+        sessionId: Number(sessionId), runId, commitSha: commitSha || null, stopped,
+      });
     }
-    log.warn('check-harvest', 'Harvest failed (non-fatal); the stale sweep keeps the row', { ...base, err: err.message });
-    if (operation) await lifecycle.settleAdopted(config, operation, { error: err }).catch(() => {});
-    return { outcome: 'failed', err: err.message, ...base };
-  } finally {
-    stopHeartbeat();
-    harvesting.delete(sessionId);
-    operation?.release?.();
-    release(verdict);
-  }
-}
-
-// One pass over every orphaned manifest, in two phases. The claims run
-// inline — every orphan is seated (claimRun) before the returned promise
-// settles, so a caller that sequences the stale sweep after this one is
-// guaranteed to find those sessions in flight. The reads run detached with
-// bounded concurrency: a still-running Job is waited on for as long as its
-// deadline allows, and boot must not wait on that. `done` resolves to every
-// row's outcome once the reads finish; pass `wait: true` to await it here.
-//
-// The claim phase is single-flight: a boot sweep and a timer tick that
-// overlap share one pass rather than racing the same rows through the CAS.
-// Detached reads exclude their sessions from the next listing (isHarvesting)
-// and hold the seat, so a later pass never re-adopts a run in progress.
-async function sweep(config, { reason = 'sweep', pool = null, wait = false } = {}) {
-  if (!isEnabled(config)) return { skipped: true, reason: 'not kubernetes', done: Promise.resolve([]) };
-  if (!sweeping) {
-    sweeping = (async () => {
-      const db = pool || getPool(config);
-      const visuals = require('./visuals');
-      let rows;
-      try {
-        rows = await checkRuns.listOrphans(db, {
-          isInFlight: (id) => visuals.hasInFlightCapture(id) || isHarvesting(id),
-        });
-      } catch (err) {
-        log.warn('check-harvest', 'Could not list orphaned runs (non-fatal)', { reason, err: err.message });
-        return { error: err.message, orphans: 0, claimed: 0, done: Promise.resolve([]) };
-      }
-      if (!rows.length) return { orphans: 0, claimed: 0, done: Promise.resolve([]) };
-      log.info('check-harvest', 'Orphaned checks runs found', {
-        reason, count: rows.length, sessions: rows.map((r) => Number(r.session_id)),
-      });
-
-      const results = [];
-      const claimed = [];
-      for (const row of rows) {
-        const base = describeRow(row, reason);
-        try {
-          const taken = await claimRun(db, row, base);
-          if (taken.hold) claimed.push({ row, hold: taken.hold });
-          else results.push(taken);
-        } catch (err) {
-          results.push({ outcome: 'failed', err: err.message, ...base });
-        }
-      }
-
-      const queue = claimed.slice();
-      const workers = Array.from({ length: Math.min(MAX_CONCURRENT, queue.length) }, async () => {
-        while (queue.length) {
-          const { row, hold } = queue.shift();
-          try {
-            results.push(await adopt(config, db, row, { reason, hold }));
-          } catch (err) {
-            // adopt() releases its own seat in `finally`; this is only
-            // reachable if that threw too, so drop the seat by hand.
-            try { hold.stopHeartbeat(); hold.release(null); } catch { /* released */ }
-            harvesting.delete(Number(row.session_id));
-            results.push({ outcome: 'failed', err: err.message, ...describeRow(row, reason) });
-          }
-        }
-      });
-      const done = Promise.all(workers).then(() => {
-        const tally = {};
-        for (const r of results) tally[r.outcome] = (tally[r.outcome] || 0) + 1;
-        log.info('check-harvest', 'Harvest sweep finished', { reason, orphans: rows.length, ...tally });
-        return results;
-      });
-      return { orphans: rows.length, claimed: claimed.length, done };
-    })().finally(() => { sweeping = null; });
-  }
-  const summary = await sweeping;
-  if (wait) await summary.done;
-  return summary;
-}
-
-// Leader-only ticker. Returns the stop function.
-function start(config, { intervalMs = SWEEP_MS } = {}) {
-  if (!isEnabled(config)) return () => {};
-  const timer = setInterval(() => {
-    sweep(config, { reason: 'tick' }).catch((err) => {
-      log.warn('check-harvest', 'Harvest tick failed (non-fatal)', { err: err.message });
+    return stopped;
+  } catch (err) {
+    log.warn('check-harvest', 'Could not stop superseded check Jobs (non-fatal)', {
+      sessionId: Number(sessionId), runId, err: err.message,
     });
-  }, intervalMs);
-  if (typeof timer.unref === 'function') timer.unref();
-  return () => clearInterval(timer);
+    return [];
+  }
 }
 
 module.exports = {
-  SWEEP_MS,
+  collectForWorkflow,
   isEnabled,
-  isHarvesting,
-  sweep,
-  adopt,
-  start,
+  runsOfCommit,
+  stopSupersededRuns,
   // Exported for tests.
-  stillCurrent,
-  loadSession,
+  joinCaptures,
+  joinUnitResults,
 };

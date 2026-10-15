@@ -31,6 +31,7 @@
  */
 
 import { createStore } from '../../lib/plain-store.js';
+import { t } from '../../lib/i18n/runtime';
 
 /**
  * The Dev screen's board, as an href, in the LAYOUT named.
@@ -95,11 +96,25 @@ export function topicBackHref({ slug, tab, subTab, boardView, topicOrigin = null
  * conversation, and a chip reading "Workshop" there would promise the wrong
  * screen.
  *
+ * #4486: and an item opened from All items (a row's tap on a phone, or "Open
+ * as a page" from the panel beside the board) goes back to All items, which
+ * is the page the project's Workshop route reopens on (`workshopTab`, the
+ * tab AppView._workshopTab remembers), so the chip says so.
+ *
  * @param {string|null} href
- * @returns {'Messages'|'Workshop'}
+ * @param {string|null} [workshopTab]
+ * @returns {string} "Messages", "Workshop" or "All items", in the language on screen
  */
-export function topicBackLabel(href) {
-  return typeof href === 'string' && href.startsWith('#messages') ? 'Messages' : 'Workshop';
+export function topicBackLabel(href, workshopTab = null) {
+  if (backsToMessages(href)) return t('agent:topicBack.messages');
+  return workshopTab === 'all' && typeof href === 'string' && /\/workshop$/.test(href)
+    ? t('agent:topicBack.allItems')
+    : t('agent:topicBack.workshop');
+}
+
+/** Whether `href` goes back to a Messages conversation rather than a board. */
+function backsToMessages(href) {
+  return typeof href === 'string' && href.startsWith('#messages');
 }
 
 /**
@@ -121,7 +136,7 @@ export function topicBackLabel(href) {
  */
 export function topicWorkshopHref(route) {
   const back = topicBackHref(route);
-  if (!back || topicBackLabel(back) !== 'Messages') return null;
+  if (!back || !backsToMessages(back)) return null;
   return boardHref(route.slug, route.boardView);
 }
 

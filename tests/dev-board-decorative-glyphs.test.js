@@ -23,6 +23,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -62,11 +63,15 @@ test('the archived caret is hidden — aria-expanded already says it', () => {
 });
 
 test('both edit pencils are hidden, and their buttons keep their labels', () => {
-  for (const [key, label] of [[F.card, 'Edit title'], [F.head, 'Edit request']]) {
+  // The card's pencil reads its name from the catalog; the id is wired in the
+  // tag and the catalog holds the words.
+  for (const [key, name] of [[F.card, "aria-label={msg('project:card.title.edit')}"], [F.head, "aria-label={t('project:topic.request.body.editLabel')}"]]) {
     const src = read(key);
     assert.match(openingTag(src, 'PencilSquareIcon'), /aria-hidden="true"/);
-    assert.ok(src.includes(`aria-label="${label}"`), `${key}: button keeps its name`);
+    assert.ok(src.includes(name), `${key}: button keeps its name`);
   }
+  assert.equal(message('project:card.title.edit'), 'Edit title');
+  assert.equal(message('project:topic.request.body.editLabel'), 'Edit request');
 });
 
 test('the "my pick" tick is hidden, and the row announces the state instead', () => {

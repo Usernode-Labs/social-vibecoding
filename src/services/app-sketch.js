@@ -51,7 +51,7 @@
 const log = require('./logger');
 const sketchDates = require('./sketch-dates');
 
-// GLM 5.3 Flash, and Haiku 4.5 when it does not answer in time (llm.js
+// GLM 5.3 Flash, and Haiku 5.5 when it does not answer in time (llm.js
 // helperMessage); the card row keeps the model that answered.
 const SKETCH_MODEL = 'z-ai/glm-5.3-flash';
 // How long app creation waits for the card before seeding the repository
@@ -77,13 +77,16 @@ const CARD_SCHEMA = Object.freeze({
 });
 
 // What the card holds, in characters: a tagline and a point are each at most
-// two lines of the card at 390px (it shows the points that fit four lines,
-// first-session sketch-card.tsx fitPoints). The model is asked for less.
+// two lines of a card at 390px. The model is asked for less. Since #4053 the
+// project's thumbnail (first-session sketch-card.tsx) draws the emoji and
+// the tagline only; the points stay in the record.
 const TAGLINE_MAX = 80;
 const POINT_MAX = 72;
 const POINTS_MAX = 4;
 // Said on a fallback card with fewer than two points of its own: true of
-// every first-session project, which is made for a group.
+// every project made for a group. Not of one made for Just me (the New
+// project dialog's More options, behind the Create button's make screen),
+// which goes without it (`solo`).
 const SHARED_POINT = 'Shared with the people you invite';
 
 // ── The emoji ────────────────────────────────────────────────────────────
@@ -295,11 +298,11 @@ function distinctPoints(points, tagline) {
  * of every project when it has fewer than two), and the keyword map's emoji.
  * Deterministic, and never null.
  */
-function fallbackCard({ name = '', brief = '', today = null } = {}) {
+function fallbackCard({ name = '', brief = '', today = null, solo = false } = {}) {
   const clauses = clausesOf(checkedDates(brief, { today, brief })).map((c) => cleanLine(c, 400)).filter(Boolean);
   const tagline = clauses.length ? clipWords(clauses[0], TAGLINE_MAX) : cleanLine(`Made for ${name || 'your group'}`, TAGLINE_MAX);
   let points = distinctPoints(clauses.slice(1).map((c) => clipWords(c, POINT_MAX)), tagline).slice(0, POINTS_MAX);
-  if (points.length < 2) points = distinctPoints([...points, SHARED_POINT], tagline);
+  if (points.length < 2 && !solo) points = distinctPoints([...points, SHARED_POINT], tagline);
   return { kind: 'card', emoji: keywordEmoji(name, brief), tagline, points, source: 'fallback' };
 }
 
@@ -363,7 +366,7 @@ function sketchUserPrompt({ name, brief, audience, today = null, zone = null, ma
  * where the creator is (`today`, sketch-dates.localToday; `brief`, their
  * description).
  */
-function parseCardReply(text, { name = '', brief = '', today = null } = {}) {
+function parseCardReply(text, { name = '', brief = '', today = null, solo = false } = {}) {
   const out = String(text || '');
   const first = out.indexOf('{');
   const last = out.lastIndexOf('}');
@@ -381,7 +384,7 @@ function parseCardReply(text, { name = '', brief = '', today = null } = {}) {
   const points = distinctPoints((Array.isArray(obj.points) ? obj.points : []).map((p) => line(p, POINT_MAX)), tagline)
     .slice(0, POINTS_MAX);
   if (!tagline && points.length < 2) return null;
-  const fallback = (!tagline || points.length < 2) ? fallbackCard({ name, brief, today }) : null;
+  const fallback = (!tagline || points.length < 2) ? fallbackCard({ name, brief, today, solo }) : null;
   return {
     kind: 'card',
     emoji: chooseEmoji(obj.emoji, { name, brief }),
@@ -432,15 +435,33 @@ function sketchRecord({ design, model, createdAt }) {
  * already has one, or cannot be read: an icon somebody set is never replaced.
  */
 function manifestWithIcon(text, emoji) {
+  return manifestWithCard(text, { emoji });
+}
+
+/**
+ * The late commit's dapp.json: the card's emoji as its `icon` and its
+ * tagline as its `description`, each only where the file has none of its
+ * own (#4235: dapp.json's line always wins). Null when neither is added.
+ */
+function manifestWithCard(text, { emoji = null, tagline = null } = {}) {
   let manifest;
   try {
     manifest = JSON.parse(String(text || ''));
   } catch {
     return null;
   }
-  if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest) || manifest.icon || !iconEmoji(emoji)) return null;
-  const { description, ...rest } = manifest;
-  return JSON.stringify({ ...(description !== undefined ? { description } : {}), icon: { emoji }, ...rest }, null, 2);
+  if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) return null;
+  const addIcon = !manifest.icon && !!iconEmoji(emoji);
+  const line = typeof tagline === 'string' ? tagline.replace(/\s+/g, ' ').trim() : '';
+  const hasDescription = typeof manifest.description === 'string' && manifest.description.trim();
+  const addDescription = !hasDescription && !!line;
+  if (!addIcon && !addDescription) return null;
+  const { description, icon, ...rest } = manifest;
+  return JSON.stringify({
+    ...(addDescription ? { description: line } : (description !== undefined ? { description } : {})),
+    ...(addIcon ? { icon: { emoji } } : (icon !== undefined ? { icon } : {})),
+    ...rest,
+  }, null, 2);
 }
 
 // ── Generation ───────────────────────────────────────────────────────────
@@ -515,6 +536,40 @@ async function saveIcon(pool, app, emoji, deps = {}) {
   }
 }
 
+/**
+ * The card's tagline as the project's description (#4235), when it has none
+ * of its own: what the hub, the join screen and Discover read off
+ * `apps.manifest_snapshot`. A first-session project has no "What is it?"
+ * line, so without this its hub fell back on the first sentence of the
+ * creator's prompt ("I want a tier list for restaurants, that me and my
+ * friends can use…"). A line the creator gave, or one a deploy read from
+ * dapp.json, is never replaced. Best effort, never throws.
+ */
+async function saveDescription(pool, app, tagline) {
+  const line = typeof tagline === 'string' ? tagline.replace(/\s+/g, ' ').trim() : '';
+  if (!line) return false;
+  try {
+    const { rows } = await pool.query(
+      `UPDATE apps
+          SET manifest_snapshot = COALESCE(manifest_snapshot, '{"secrets": []}'::jsonb)
+                                  || jsonb_build_object('description', $2::text)
+        WHERE id = $1 AND COALESCE(btrim(manifest_snapshot->>'description'), '') = ''
+        RETURNING id`,
+      [app.id, line]
+    );
+    return rows.length > 0;
+  } catch (err) {
+    log.warn('app-sketch', 'Description not saved', { appId: app.id, err: err.message });
+    return false;
+  }
+}
+
+/** The tagline of a ready row's card, or null. */
+function taglineOf(sketch) {
+  const card = sketch ? cardOf(sketch.design) : null;
+  return card ? card.tagline : null;
+}
+
 const TIMED_OUT = Symbol('timed out');
 
 /** `promise`'s answer, or TIMED_OUT after `ms`. */
@@ -534,6 +589,7 @@ async function saveCard(pool, { app, card, model, error, deps }) {
     [app.id, JSON.stringify(card), model, error]
   );
   await saveIcon(pool, app, card.emoji, deps);
+  await saveDescription(pool, app, card.tagline);
 }
 
 /**
@@ -544,7 +600,7 @@ async function saveCard(pool, { app, card, model, error, deps }) {
  * trial's first commit, from the same call. `maker` is who the card is for,
  * as makerOf reads it (null: nobody named). Resolves { card, model, error }.
  */
-async function makeCard(pool, { name, brief, audience = null, timeZone = null, user, maker = null, appId = null, deps = {} }) {
+async function makeCard(pool, { name, brief, audience = null, solo = false, timeZone = null, user, maker = null, appId = null, deps = {} }) {
   const llm = deps.llm || require('./llm');
   const limits = deps.limits || require('./limits');
   const now = deps.now ? deps.now() : new Date();
@@ -578,24 +634,24 @@ async function makeCard(pool, { name, brief, audience = null, timeZone = null, u
     } else {
       await recordSpend(reply);
       model = reply.model || SKETCH_MODEL;
-      card = parseCardReply(reply.text, { name, brief, today });
+      card = parseCardReply(reply.text, { name, brief, today, solo });
       if (!card) error = 'unusable_reply';
     }
   } catch (err) {
     error = String(err && err.message || 'failed').slice(0, 200);
   }
   if (!card) {
-    card = fallbackCard({ name, brief, today });
+    card = fallbackCard({ name, brief, today, solo });
     model = 'fallback';
     log.warn('app-sketch', 'Card made without the model', { appId, error });
   }
   return { card, model, error };
 }
 
-async function generate(pool, { app, user, brief, audience, timeZone, deps }) {
+async function generate(pool, { app, user, brief, audience, solo, timeZone, deps }) {
   const maker = await makerOf(pool, user).catch(() => null);
   const { card, model, error } = await makeCard(pool, {
-    name: app.name, brief, audience, timeZone, user, maker, appId: app.id, deps,
+    name: app.name, brief, audience, solo, timeZone, user, maker, appId: app.id, deps,
   });
   await saveCard(pool, { app, card, model, error, deps });
   log.info('app-sketch', 'Card ready', { appId: app.id, source: card.source });
@@ -607,12 +663,13 @@ async function generate(pool, { app, user, brief, audience, timeZone, deps }) {
  * with a sketch row already (a retried create) is left alone. Without a model
  * (no key: a staging preview, a local stack) the card is made from the
  * description on the spot. `timeZone` is the creator's device's IANA zone, so
- * "today" is theirs; anything else reads as UTC.
+ * "today" is theirs; anything else reads as UTC. `solo`: made for Just me, so
+ * a fallback card does not say it is shared with anyone (SHARED_POINT).
  */
-async function startSketch(pool, { app, user, brief, audience = null, timeZone = null }, deps = {}) {
+async function startSketch(pool, { app, user, brief, audience = null, solo = false, timeZone = null }, deps = {}) {
   const llm = deps.llm || require('./llm');
   if (!llm.isEnabled()) {
-    const card = fallbackCard({ name: app.name, brief, today: sketchDates.localToday(deps.now ? deps.now() : new Date(), timeZone) });
+    const card = fallbackCard({ name: app.name, brief, solo, today: sketchDates.localToday(deps.now ? deps.now() : new Date(), timeZone) });
     const { rows } = await pool.query(
       `INSERT INTO app_sketches (app_id, user_id, status, design, model, ready_at)
        VALUES ($1, $2, 'ready', $3::jsonb, 'fallback', NOW())
@@ -622,6 +679,7 @@ async function startSketch(pool, { app, user, brief, audience = null, timeZone =
     );
     if (!rows.length) return false;
     await saveIcon(pool, app, card.emoji, deps);
+    await saveDescription(pool, app, card.tagline);
     return true;
   }
   const { rows } = await pool.query(
@@ -632,7 +690,7 @@ async function startSketch(pool, { app, user, brief, audience = null, timeZone =
     [app.id, user.id]
   );
   if (!rows.length) return false;
-  const work = generate(pool, { app, user, brief, audience, timeZone, deps }).catch((err) => {
+  const work = generate(pool, { app, user, brief, audience, solo, timeZone, deps }).catch((err) => {
     log.warn('app-sketch', 'Card failed', { appId: app.id, err: err.message });
     return null;
   });
@@ -679,30 +737,116 @@ async function markCommitted(pool, appId) {
  * A card that missed the repository's first commit: committed on its own
  * when it is ready, design/sketch.json and, when the repository's dapp.json
  * has no icon yet, the card's emoji as its `icon` (else the next deploy would
- * clear the icon saved to the project). Best effort, never throws.
+ * clear the icon saved to the project), and likewise its tagline as the
+ * `description` when it has none. Best effort, never throws.
  */
 async function commitWhenReady(pool, { appId, name, owner, repo }, deps = {}) {
   try {
     const sketch = await whenReady(pool, appId, LATE_COMMIT_WAIT_MS);
     if (!sketch || sketch.committed_at) return false;
-    const files = designFiles({ sketch });
-    if (!files.length) return false;
-    const github = deps.github || require('./github');
-    const card = cardOf(sketch.design);
-    const manifest = typeof github.getFileContent === 'function'
-      ? await github.getFileContent(owner, repo, 'dapp.json', 'main').catch(() => null)
-      : null;
-    const withIcon = manifest ? manifestWithIcon(manifest, card.emoji) : null;
-    if (withIcon) files.push({ path: 'dapp.json', content: withIcon });
-    await github.pushFiles(owner, repo, files, {
-      message: `Add the card ${name} was made with`,
-    });
-    await markCommitted(pool, appId);
-    return true;
+    return await commitCard(pool, sketch, { appId, name, owner, repo }, deps);
   } catch (err) {
     log.warn('app-sketch', 'Late card not committed', { appId, err: err.message });
     return false;
   }
+}
+
+// The late commit itself, for a ready card: commitWhenReady's, and the
+// leader's sweep's below. Throws what GitHub throws.
+async function commitCard(pool, sketch, { appId, name, owner, repo }, deps = {}) {
+  const files = designFiles({ sketch });
+  if (!files.length) return false;
+  const github = deps.github || require('./github');
+  const card = cardOf(sketch.design);
+  const manifest = typeof github.getFileContent === 'function'
+    ? await github.getFileContent(owner, repo, 'dapp.json', 'main').catch(() => null)
+    : null;
+  const withCard = manifest ? manifestWithCard(manifest, { emoji: card.emoji, tagline: card.tagline }) : null;
+  if (withCard) files.push({ path: 'dapp.json', content: withCard });
+  await github.pushFiles(owner, repo, files, {
+    message: `Add the card ${name} was made with`,
+  });
+  await markCommitted(pool, appId);
+  return true;
+}
+
+// ── Cards a restart kept out of the repository ──────────────────────────
+//
+// commitWhenReady runs in the process that made the repository, and dies
+// with it; and a creation the leader resumes after a restart
+// (app-creation-owner.js) finds the repository already made and clones it,
+// so it commits no card at all. The leader's sweep commits such a card: one
+// ready for SWEEP_AFTER_MINUTES (well past LATE_COMMIT_WAIT_MS, so a late
+// commit still running in a live process lands first), made in the last
+// SWEEP_WITHIN_HOURS (which also bounds how often one GitHub keeps refusing
+// is tried), for a project now running on the repository made for it. A
+// repository that already holds design/sketch.json (a commit that landed
+// before its process could mark it) is only marked, never committed twice.
+const SWEEP_AFTER_MINUTES = 10;
+const SWEEP_WITHIN_HOURS = 6;
+const COMMIT_SWEEP_MS = 15 * 60 * 1000;
+const COMMIT_SWEEP_BATCH = 10;
+
+/** One pass: resolves how many cards it committed (or found committed). Never throws. */
+async function sweepUncommitted(pool, deps = {}) {
+  const github = deps.github || require('./github');
+  if (typeof github.isEnabled === 'function' && !github.isEnabled()) return 0;
+  let done = 0;
+  try {
+    const { rows } = await pool.query(
+      `SELECT s.app_id, s.design, s.model, s.ready_at, s.committed_at, s.status,
+              a.name, a.repo_url
+         FROM app_sketches s JOIN apps a ON a.id = s.app_id
+        WHERE s.status = 'ready' AND s.committed_at IS NULL AND s.design->>'kind' = 'card'
+          AND s.ready_at < NOW() - make_interval(mins => $1)
+          AND s.created_at > NOW() - make_interval(hours => $2)
+          AND a.repo_url IS NOT NULL AND a.self_hosted IS NOT TRUE AND a.forked_from IS NULL
+          AND a.status IN ('running', 'awaiting_secrets')
+        ORDER BY s.created_at
+        LIMIT $3`,
+      [SWEEP_AFTER_MINUTES, SWEEP_WITHIN_HOURS, COMMIT_SWEEP_BATCH]
+    );
+    for (const row of rows) {
+      const parsed = github.parseGithubUrl(row.repo_url);
+      if (!parsed) continue;
+      try {
+        const existing = await github.getFileContent(parsed.owner, parsed.repo, 'design/sketch.json', 'main');
+        if (existing !== null) {
+          await markCommitted(pool, row.app_id);
+        } else if (!(await commitCard(pool, row, {
+          appId: row.app_id, name: row.name, owner: parsed.owner, repo: parsed.repo,
+        }, deps))) {
+          continue;
+        }
+        done += 1;
+        log.info('app-sketch', 'Card a restart kept out of the repository committed', { appId: row.app_id });
+      } catch (err) {
+        log.warn('app-sketch', 'Late card not committed by the sweep', { appId: row.app_id, err: err.message });
+      }
+    }
+  } catch (err) {
+    log.warn('app-sketch', 'Card commit sweep failed', { err: err.message });
+  }
+  return done;
+}
+
+let commitSweepHandle = null;
+let commitSweeping = false;
+
+/** The leader's half (server.js becomeLeader): a pass every COMMIT_SWEEP_MS. */
+function startCommitSweep(config, deps = {}) {
+  if (commitSweepHandle) return;
+  const pool = deps.pool || require('../db/pool').getPool(config);
+  commitSweepHandle = setInterval(() => {
+    if (commitSweeping) return;
+    commitSweeping = true;
+    sweepUncommitted(pool, deps).finally(() => { commitSweeping = false; });
+  }, COMMIT_SWEEP_MS);
+  commitSweepHandle.unref?.();
+}
+
+function stopCommitSweep() {
+  if (commitSweepHandle) { clearInterval(commitSweepHandle); commitSweepHandle = null; }
 }
 
 module.exports = {
@@ -730,13 +874,19 @@ module.exports = {
   makerLine,
   sketchRecord,
   manifestWithIcon,
+  manifestWithCard,
   readSketch,
   sketchStatus,
   saveIcon,
+  saveDescription,
+  taglineOf,
   makeCard,
   startSketch,
   whenReady,
   designFiles,
   markCommitted,
   commitWhenReady,
+  sweepUncommitted,
+  startCommitSweep,
+  stopCommitSweep,
 };

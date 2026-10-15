@@ -28,6 +28,8 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { CheckIcon, ChevronDownIcon } from '@/components/ui/icons';
+import { useMessages } from '../../lib/i18n/react';
+import { t } from '../../lib/i18n/runtime';
 import {
   act,
   announceFriendsChanged,
@@ -56,31 +58,37 @@ export function friendsButtonView(state: FriendState, username: string): {
   primary: { action: FriendAction | 'menu'; label: string; accent: boolean };
   secondary: { action: FriendAction; label: string } | null;
   menu: { action: FriendAction; label: string; confirm: string } | null;
+  /** The primary button's accessible name where it opens the menu. */
+  menuName: string | null;
 } {
   switch (state) {
     case 'outgoing':
       return {
-        primary: { action: 'menu', label: 'Requested', accent: false },
+        primary: { action: 'menu', label: t('messages:friends.button.requested'), accent: false },
         secondary: null,
-        menu: { action: 'cancel', label: 'Cancel request', confirm: `Cancel your friend request to @${username}?` },
+        menu: { action: 'cancel', label: t('messages:friends.button.cancelRequest'), confirm: t('messages:friends.button.cancelRequestConfirm', { username }) },
+        menuName: t('messages:friends.button.requestedMenu', { username }),
       };
     case 'incoming':
       return {
-        primary: { action: 'accept', label: 'Accept', accent: true },
-        secondary: { action: 'decline', label: 'Decline' },
+        primary: { action: 'accept', label: t('messages:friends.button.accept'), accent: true },
+        secondary: { action: 'decline', label: t('messages:friends.button.decline') },
         menu: null,
+        menuName: null,
       };
     case 'friends':
       return {
-        primary: { action: 'menu', label: 'Friends', accent: false },
+        primary: { action: 'menu', label: t('messages:friends.button.friends'), accent: false },
         secondary: null,
-        menu: { action: 'unfriend', label: 'Unfriend', confirm: `Unfriend @${username}? They won’t be told.` },
+        menu: { action: 'unfriend', label: t('messages:friends.button.unfriend'), confirm: t('messages:friends.button.unfriendConfirm', { username }) },
+        menuName: t('messages:friends.button.friendsMenu', { username }),
       };
     default:
       return {
-        primary: { action: 'request', label: 'Add friend', accent: true },
+        primary: { action: 'request', label: t('messages:friends.button.addFriend'), accent: true },
         secondary: null,
         menu: null,
+        menuName: null,
       };
   }
 }
@@ -94,6 +102,8 @@ export function FriendButton({
   username: string;
   initialState: FriendState;
 }): ReactNode {
+  // Subscribed: the labels friendsButtonView reads follow the language on screen.
+  useMessages('messages');
   const [state, setState] = useState<FriendState>(normalizeState(initialState));
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
@@ -156,7 +166,7 @@ export function FriendButton({
         ink={primary.accent ? 'solid' : 'neutral'}
         data-friend-action={primary.action}
         aria-haspopup={primary.action === 'menu' ? 'menu' : undefined}
-        aria-label={primary.action === 'menu' ? `${primary.label} with @${username}. More options` : undefined}
+        aria-label={primary.action === 'menu' ? view.menuName || undefined : undefined}
         disabled={pending}
         aria-busy={pending}
         className="inline-flex items-center gap-1.5 disabled:opacity-60"
