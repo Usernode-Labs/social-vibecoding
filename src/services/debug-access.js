@@ -189,6 +189,15 @@ const DENIED_COLUMNS = {
     'invite_code', // shareable capability — anyone holding it is attributed as this signup's invitee
     'project_invite_id', // which private app_email_invites row (project, inviter) brought this address in
   ],
+  // The daily security bot's sanitized evidence, tagged staging:private in
+  // schema.sql: it describes how a protection was probed, so never read
+  // while debugging.
+  security_bot_probes: [
+    'detail',
+  ],
+  security_bot_finding_occurrences: [
+    'context',
+  ],
 };
 
 // ── Container-log allowlist (used by the prod-debug logs endpoint) ─────
