@@ -77,7 +77,7 @@ const FACE_ON = 'border-zinc-300 text-zinc-500 group-hover:border-violet-500 gro
   + 'group-focus-visible:border-violet-500 group-focus-visible:text-violet-600 '
   + 'dark:border-zinc-600 dark:text-zinc-400 dark:group-hover:border-violet-400 dark:group-hover:text-violet-400';
 const FACE_OFF = 'border-zinc-300 text-zinc-400 dark:border-zinc-700 dark:text-zinc-500';
-// `.app-card-title` is the tiles' own label box: 11px on a 13px line, two
+// `.app-card-title` is the tiles' own label box: 12px on a 14px line, two
 // lines, clamped — so "Create an app" wraps and truncates exactly as an app
 // name in the next cell does.
 const LABEL_ON = 'home-create-label app-card-title text-zinc-500 group-hover:text-violet-700 '

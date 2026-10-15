@@ -138,7 +138,7 @@ test('the same lines on a Home tile, in short words that fit its one line; blue 
   for (const state of ['planning', 'plan-member', 'building', 'testing', 'ready', 'live']) {
     assert.equal(lineMod.buildLineTileClass(state), 'app-card-status line-clamp-1 text-zinc-500 dark:text-zinc-400', state);
   }
-  // One caption line and the two-line name fill the tile's 38px (app.css
+  // One caption line and the two-line name fill the tile's 40px (app.css
   // --home-cell-h), so the name no longer gives up a line.
   assert.equal(lineMod.BUILD_LINE_TILE_CARD, undefined);
   assert.equal(lineMod.buildLineTileOf('plan'), 'plan');
