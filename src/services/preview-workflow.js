@@ -123,15 +123,17 @@ async function lost({ session, detail = null }) {
 }
 
 // The machine is building the session's preview, retiring it, or its last
-// build failed: a sweep that finds the preview (or the older one a failed
-// build left serving) missing has nothing to add. A failure runs again on the
+// build or checks run errored ('failed', or 'settled' on an 'error'
+// verdict): a sweep that finds the preview (or the older one a failed build
+// left serving) missing has nothing to add. An error runs again on the
 // machine's timer while the streak is under its cap, else from the
 // stuck-checks lane within the row's own cap, else when a person asks;
 // never because a sweep noticed a runtime gone.
 const WORKING = new Set(['preparing', 'retiring', 'failed']);
 async function working(sessionId) {
   const instance = await platform().previewInstance(Number(sessionId));
-  return WORKING.has(instance?.state);
+  if (WORKING.has(instance?.state)) return true;
+  return instance?.state === 'settled' && instance.data?.verdict === 'error';
 }
 
 module.exports = { held, working, exactHead, revision, request, recheck, skipped, clear, retire, lost };

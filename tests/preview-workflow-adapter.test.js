@@ -43,14 +43,17 @@ test('a head that cannot be resolved hands nothing and builds nothing', async ()
   assert.equal(submitted.length, before);
 });
 
-test('a failed preview is the machine\'s whether or not its retry timer is set: past the cap a sweep starts nothing', async () => {
-  for (const [state, deadline, expected] of [
-    ['preparing', null, true], ['retiring', null, true],
-    ['failed', new Date(), true], ['failed', null, true],
-    ['settled', null, false], ['idle', null, false],
+test('an errored preview is the machine\'s whether or not its retry timer is set: past the cap a sweep starts nothing', async () => {
+  for (const [state, verdict, deadline, expected] of [
+    ['preparing', null, null, true], ['retiring', null, null, true],
+    ['failed', 'error', new Date(), true], ['failed', 'error', null, true],
+    // A checks run that errored settles on an 'error' verdict, with the same
+    // timer and cap as a failed build.
+    ['settled', 'error', new Date(), true], ['settled', 'error', null, true],
+    ['settled', 'passing', null, false], ['settled', 'failing', null, false], ['idle', null, null, false],
   ]) {
-    platform.previewInstance = async () => ({ state, data: {}, deadline_at: deadline });
-    assert.equal(await workflow.working(5), expected, `${state}${deadline ? ' with a timer' : ''}`);
+    platform.previewInstance = async () => ({ state, data: { verdict }, deadline_at: deadline });
+    assert.equal(await workflow.working(5), expected, `${state}/${verdict}${deadline ? ' with a timer' : ''}`);
   }
   platform.previewInstance = async () => null;
   assert.equal(await workflow.working(5), false, 'a session it does not hold');
