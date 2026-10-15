@@ -584,10 +584,12 @@ test('a restore that stops early fails the copy without taking the process down'
     SELECT g AS id, md5(random()::text) || md5(random()::text) || md5(random()::text) AS body
       FROM generate_series(1, 100000) g`);
   await src.end();
-  await admin.query(`CREATE ROLE ${role} LOGIN PASSWORD 'right'`);
+  // A role that may not log in, refused whatever the server's
+  // authentication (a trust rule lets a wrong password in): pg_restore reads
+  // the archive's header, fails to connect and exits, with nearly all of the
+  // dump still to come.
+  await admin.query(`CREATE ROLE ${role} NOLOGIN PASSWORD 'unused'`);
   await admin.query(`CREATE DATABASE ${target} TEMPLATE template0 OWNER ${role}`);
-  // A wrong password: pg_restore reads the archive's header, fails to log
-  // in and exits, with nearly all of the dump still to come.
-  await assert.rejects(dbManager.dumpRestore(source, target, [], { as: { user: role, password: 'wrong' } }),
+  await assert.rejects(dbManager.dumpRestore(source, target, [], { as: { user: role, password: 'unused' } }),
     /pg_restore=1/);
 });
