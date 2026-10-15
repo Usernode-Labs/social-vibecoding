@@ -10,8 +10,10 @@
  *          "A tip in the app, then 1, 2, 3 on Home"). A newcomer's first
  *          session hands them their app first, full screen, with one tip
  *          under the Homeroom mark (./app-tip.tsx). The first time Home
- *          shows after that, three cards: their project's tile, Homeroom
- *          bot in Messages, and Communities. A private member (let in by an
+ *          shows after that, three cards about their own project: its
+ *          tile, Homeroom bot in Messages (with a change they could ask for
+ *          in it, when its starter has one), and Communities, where its hub
+ *          is. A private member (let in by an
  *          invite link before the waitlist let them in) gets a fourth, the
  *          waitlist card that is how they make apps of their own
  *          (homeWalkSteps).
@@ -163,17 +165,34 @@ export function tileOf(slug: string): string {
   return `#app-list .app-card[data-slug="${slug}"]`;
 }
 
-/** The project a walk is about, and whether its reader is a private member (the waitlist card). */
-export type HomeWalkProject = { slug: string; privateMember?: boolean };
+/**
+ * The project a walk is about: its slug (the tile), its name, the change
+ * its Homeroom bot card offers as an example, and whether its reader is a
+ * private member (the waitlist card).
+ */
+export type HomeWalkProject = {
+  slug: string;
+  /** What the cards call it ("Best Brunch lives here, on Home."); the slug when it has none. */
+  name?: string;
+  /**
+   * A change somebody could ask for in this app ("add a cheap eats tier"):
+   * its ready-made starter's (GET /api/apps/:slug `exampleChange`,
+   * services/app-templates.js). None for any other project, or before it is
+   * known: the card then says where Homeroom bot is instead.
+   */
+  example?: string | null;
+  privateMember?: boolean;
+};
 
 /**
  * The walk on Home (see the header): three cards, or four for a private
  * member, each ringing its place, with Next and Done on the last. Nothing is
- * pressed: the tile is pointed at, not opened. Its card is the one place
- * the walk says what Home is, so it names no project ("Your apps live here,
- * on Home."): the tile beside it does.
+ * pressed: the tile is pointed at, not opened. Each card is about the
+ * reader's own project (Evan, 15 Oct 2026, "a more contextual tour"): where
+ * it lives, a change they could ask Homeroom bot for in it, and its hub.
  */
-export function homeWalkSteps({ slug, privateMember = false }: HomeWalkProject): TourStep[] {
+export function homeWalkSteps({ slug, name, example = null, privateMember = false }: HomeWalkProject): TourStep[] {
+  const app = name || slug;
   const steps: TourStep[] = [
     {
       screen: 'home',
@@ -182,7 +201,7 @@ export function homeWalkSteps({ slug, privateMember = false }: HomeWalkProject):
       target: tileOf(slug),
       ringed: true,
       title: translate('onboarding:firstSession.walk.home.title'),
-      text: translate('onboarding:firstSession.walk.home.text'),
+      text: translate('onboarding:firstSession.walk.home.text', { app }),
     },
     {
       // The tab bar's own tabs, the same elements on a phone's bar and on
@@ -191,7 +210,9 @@ export function homeWalkSteps({ slug, privateMember = false }: HomeWalkProject):
       target: '#platform-tab-messages',
       ringed: true,
       title: translate('onboarding:firstSession.walk.bot.title'),
-      text: translate('onboarding:firstSession.walk.bot.text'),
+      text: example
+        ? translate('onboarding:firstSession.walk.bot.textExample', { example })
+        : translate('onboarding:firstSession.walk.bot.text'),
     },
     {
       // Its key is still `workshop`.
@@ -199,7 +220,7 @@ export function homeWalkSteps({ slug, privateMember = false }: HomeWalkProject):
       target: '#platform-tab-workshop',
       ringed: true,
       title: translate('onboarding:firstSession.walk.communities.title'),
-      text: translate('onboarding:firstSession.walk.communities.text'),
+      text: translate('onboarding:firstSession.walk.communities.text', { app }),
     },
   ];
   if (privateMember) {

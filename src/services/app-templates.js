@@ -54,6 +54,15 @@
  * scripts/render-starter-examples.js draws them from the starter's own
  * screen; run it again when a ready-made app's screen changes.
  *
+ * And an example change (`exampleChange`, Evan, 15 October 2026): one
+ * short thing somebody could ask Homeroom bot to change in that app ("add a
+ * cheap eats tier"), lowercase-led, at most 32 characters, with no closing
+ * full stop. The first-session walk's Homeroom bot card offers it ("Ask it
+ * for changes, like “add a cheap eats tier”."), read from
+ * GET /api/apps/:slug's `exampleChange` (exampleChangeOf). A game starter,
+ * Empty, an import and a project Homeroom bot built have none, and the card
+ * says it without one.
+ *
  * Rules every starter keeps: the platform conventions, like any app (the
  * bridge by relative path and never vendored, no CDN, the viewer's theme,
  * staging seeds gated on USERNODE_ENV and owned by fake identities, "now"
@@ -87,14 +96,16 @@ const IMPACT = Object.freeze(['public/**', 'api.js']);
 
 /**
  * One tier list per category: the same app (app-templates/tier-list), with
- * what it ranks filled in. `example` is the add field's placeholder.
+ * what it ranks filled in. `example` is the add field's placeholder;
+ * `change` its example change (see the header).
  */
-function tierList(id, { plural, one, example, title }) {
+function tierList(id, { plural, one, example, title, change }) {
   return Object.freeze({
     id,
     dir: 'tier-list',
     ready: true,
     exampleScreen: exampleScreen(id),
+    exampleChange: change,
     title,
     summary: `A tier list of the group's favorite ${plural}: anyone adds one, everyone drags them into tiers, and the group's ranking shows where each lands.`,
     icon: '📊',
@@ -128,12 +139,13 @@ function tierList(id, { plural, one, example, title }) {
  * it decides filled in. `about` finishes "Polls about …", and the two
  * examples are its fields' placeholders.
  */
-function groupPoll(id, { title, about, question, option }) {
+function groupPoll(id, { title, about, question, option, change }) {
   return Object.freeze({
     id,
     dir: 'group-poll',
     ready: true,
     exampleScreen: exampleScreen(id),
+    exampleChange: change,
     title,
     summary: `The group's polls about ${about}: anyone adds options, everyone votes, and each poll closes with a winner.`,
     icon: '🗳️',
@@ -165,12 +177,13 @@ function groupPoll(id, { title, about, question, option }) {
  * with what the times are for filled in. `forWhat` finishes "Find a time
  * for …", and `example` is the new plan's name placeholder.
  */
-function findATime(id, { title, forWhat, example }) {
+function findATime(id, { title, forWhat, example, change }) {
   return Object.freeze({
     id,
     dir: 'find-a-time',
     ready: true,
     exampleScreen: exampleScreen(id),
+    exampleChange: change,
     title,
     summary: `Find a time for ${forWhat}: suggest a few times, everyone marks when they are free, and the best time rises to the top.`,
     icon: '📅',
@@ -202,12 +215,13 @@ function findATime(id, { title, forWhat, example }) {
  * the group's default monthly goal filled in. `decimals` says whether an
  * amount may have them (miles may; steps and books may not).
  */
-function groupChallenge(id, { title, plural, one, example, goal, decimals }) {
+function groupChallenge(id, { title, plural, one, example, goal, decimals, change }) {
   return Object.freeze({
     id,
     dir: 'group-challenge',
     ready: true,
     exampleScreen: exampleScreen(id),
+    exampleChange: change,
     title,
     summary: `A monthly challenge: who logs the most ${plural}, and how close the whole group gets to its goal together.`,
     icon: '🏃',
@@ -268,17 +282,18 @@ const TEMPLATES = Object.freeze([
     title: 'Empty',
     summary: 'The starter screen with one example to replace.',
   }),
-  tierList('tier-list-restaurants', { plural: 'restaurants', one: 'restaurant', example: 'e.g. the taco place on Main St', title: 'Restaurant tier list' }),
-  tierList('tier-list-hikes', { plural: 'hikes', one: 'hike', example: 'e.g. the lake loop', title: 'Hiking tier list' }),
-  tierList('tier-list-cities', { plural: 'cities', one: 'city', example: 'e.g. Lisbon', title: 'City tier list' }),
-  tierList('tier-list-games', { plural: 'games', one: 'game', example: 'e.g. chess', title: 'Game tier list' }),
-  groupPoll('poll-dinner', { title: 'Dinner poll', about: 'where we eat', question: 'e.g. Where should we eat Friday?', option: 'e.g. the taco place on Main' }),
-  groupPoll('poll-spending', { title: 'Spending poll', about: 'what we spend on', question: 'e.g. What should we do with the extra $300?', option: 'e.g. new chairs for the lobby' }),
-  groupPoll('poll-movies', { title: 'Movie night poll', about: 'what we watch', question: 'e.g. What are we watching Friday?', option: 'e.g. Arrival' }),
+  tierList('tier-list-restaurants', { plural: 'restaurants', one: 'restaurant', example: 'e.g. the taco place on Main St', title: 'Restaurant tier list', change: 'add a cheap eats tier' }),
+  tierList('tier-list-hikes', { plural: 'hikes', one: 'hike', example: 'e.g. the lake loop', title: 'Hiking tier list', change: 'add each hike\'s distance' }),
+  tierList('tier-list-cities', { plural: 'cities', one: 'city', example: 'e.g. Lisbon', title: 'City tier list', change: 'add a photo of each city' }),
+  tierList('tier-list-games', { plural: 'games', one: 'game', example: 'e.g. chess', title: 'Game tier list', change: 'add each game\'s player count' }),
+  groupPoll('poll-dinner', { title: 'Dinner poll', about: 'where we eat', question: 'e.g. Where should we eat Friday?', option: 'e.g. the taco place on Main', change: 'add a price range to each place' }),
+  groupPoll('poll-spending', { title: 'Spending poll', about: 'what we spend on', question: 'e.g. What should we do with the extra $300?', option: 'e.g. new chairs for the lobby', change: 'add a cost to each option' }),
+  groupPoll('poll-movies', { title: 'Movie night poll', about: 'what we watch', question: 'e.g. What are we watching Friday?', option: 'e.g. Arrival', change: 'add each movie\'s runtime' }),
   Object.freeze({
     id: 'grocery-list',
     ready: true,
     exampleScreen: exampleScreen('grocery-list'),
+    exampleChange: 'add a price to each item',
     title: 'Grocery list',
     summary: 'One shared grocery list that works like Homeroom\'s Todo List app: categories, ticked items kept in place, undo, search and due dates.',
     icon: '🛒',
@@ -304,6 +319,7 @@ const TEMPLATES = Object.freeze([
     id: 'chore-list',
     ready: true,
     exampleScreen: exampleScreen('chore-list'),
+    exampleChange: 'remind people on their turn',
     title: 'Chore list',
     summary: 'The group\'s chores, each always one person\'s or taking turns; turns move on every Monday.',
     icon: '🧹',
@@ -329,6 +345,7 @@ const TEMPLATES = Object.freeze([
     id: 'lending-library',
     ready: true,
     exampleScreen: exampleScreen('lending-library'),
+    exampleChange: 'add a photo of each thing',
     title: 'Lending library',
     summary: 'The things members can lend each other, who has each one now, and who has asked for it next.',
     icon: '📚',
@@ -354,6 +371,7 @@ const TEMPLATES = Object.freeze([
     id: 'study-timer',
     ready: true,
     exampleScreen: exampleScreen('study-timer'),
+    exampleChange: 'add a 5 minute break timer',
     title: 'Study timer',
     summary: 'One big Start button for a 25 minute focus session, a gentle beep when it ends, and how many sessions you finished today.',
     icon: '⏱️',
@@ -376,13 +394,14 @@ const TEMPLATES = Object.freeze([
       { name: 'Today’s count of finished sessions loads', path: '/', expectSelector: '#today[data-loaded]' },
     ]),
   }),
-  findATime('find-a-time-book-club', { title: 'Book club times', forWhat: 'our book club', example: 'e.g. November book club' }),
-  findATime('find-a-time-game-night', { title: 'Game night times', forWhat: 'game night', example: 'e.g. Game night this month' }),
-  findATime('find-a-time-trip', { title: 'Trip dates', forWhat: 'our trip', example: 'e.g. Lake weekend' }),
+  findATime('find-a-time-book-club', { title: 'Book club times', forWhat: 'our book club', example: 'e.g. November book club', change: 'show the book for each meeting' }),
+  findATime('find-a-time-game-night', { title: 'Game night times', forWhat: 'game night', example: 'e.g. Game night this month', change: 'vote on which game to play' }),
+  findATime('find-a-time-trip', { title: 'Trip dates', forWhat: 'our trip', example: 'e.g. Lake weekend', change: 'add a packing list' }),
   Object.freeze({
     id: 'potluck-planner',
     ready: true,
     exampleScreen: exampleScreen('potluck-planner'),
+    exampleChange: 'add a note for allergies',
     title: 'Potluck planner',
     summary: 'Potlucks with a date and a place, who is bringing what by course (so the table is not six salads), and a chat for each one.',
     icon: '🍲',
@@ -414,6 +433,7 @@ const TEMPLATES = Object.freeze([
     dir: 'signup-sheet',
     ready: true,
     exampleScreen: exampleScreen('signup-shifts'),
+    exampleChange: 'send a reminder the day before',
     title: 'Volunteer sign-up sheet',
     summary: 'A sign-up sheet for each event: the slots that need people, how many each takes, and who is on which.',
     icon: '✋',
@@ -441,6 +461,7 @@ const TEMPLATES = Object.freeze([
     dir: 'signup-sheet',
     ready: true,
     exampleScreen: exampleScreen('signup-rsvp'),
+    exampleChange: 'add a map to each event',
     title: 'Who\'s coming',
     summary: 'An event everyone answers: going, maybe or can\'t, with a note, and the headcount at the top.',
     icon: '🙋',
@@ -464,9 +485,9 @@ const TEMPLATES = Object.freeze([
       { name: 'A new event can be made', path: '/', expectSelector: '#new-event' },
     ]),
   }),
-  groupChallenge('challenge-miles', { title: 'Miles challenge', plural: 'miles', one: 'mile', example: 'e.g. 3.1', goal: 200, decimals: true }),
-  groupChallenge('challenge-steps', { title: 'Steps challenge', plural: 'steps', one: 'step', example: 'e.g. 8000', goal: 1000000, decimals: false }),
-  groupChallenge('challenge-books', { title: 'Reading challenge', plural: 'books', one: 'book', example: 'e.g. 1', goal: 20, decimals: false }),
+  groupChallenge('challenge-miles', { title: 'Miles challenge', plural: 'miles', one: 'mile', example: 'e.g. 3.1', goal: 200, decimals: true, change: 'add a weekly goal' }),
+  groupChallenge('challenge-steps', { title: 'Steps challenge', plural: 'steps', one: 'step', example: 'e.g. 8000', goal: 1000000, decimals: false, change: 'add a daily step streak' }),
+  groupChallenge('challenge-books', { title: 'Reading challenge', plural: 'books', one: 'book', example: 'e.g. 1', goal: 20, decimals: false, change: 'add a cover for each book' }),
   gameStarter({
     id: 'game-board',
     title: 'Board game starter',
@@ -609,6 +630,16 @@ function get(id) {
 }
 
 /**
+ * The example change a project made from this template could ask Homeroom
+ * bot for (`exampleChange`, see the header), or null: Empty (an `apps.template`
+ * of NULL included), a game starter, a deleted starter, an unknown id.
+ */
+function exampleChangeOf(id) {
+  const t = get(id);
+  return t && t.ready && typeof t.exampleChange === 'string' ? t.exampleChange : null;
+}
+
+/**
  * A game starter Homeroom bot's first version builds on (an entry with
  * `bot`: what it is, and what to keep while building the creator's game),
  * or null: the empty scaffold, a ready-made app, an unknown id.
@@ -684,6 +715,7 @@ module.exports = {
   TEMPLATE_IDS,
   botStarter,
   dirOf,
+  exampleChangeOf,
   get,
   isReadyMade,
   isTemplate,

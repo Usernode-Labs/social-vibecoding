@@ -23,7 +23,7 @@ const APP = read('public/js/app.js');
 
 test('the private member\'s walk: the three cards every newcomer gets, then the waitlist card', () => {
   const { homeWalkSteps } = loadTsx('frontend/src/features/first-session/tour-steps.ts');
-  const steps = homeWalkSteps({ slug: 'best-brunch', privateMember: true });
+  const steps = homeWalkSteps({ slug: 'best-brunch', name: 'Best Brunch', privateMember: true });
   assert.deepEqual(steps.map((s) => s.screen), ['home', 'home', 'home', 'home']);
   assert.deepEqual(steps.map((s) => s.target), [
     '#app-list .app-card[data-slug="best-brunch"]',
@@ -32,17 +32,22 @@ test('the private member\'s walk: the three cards every newcomer gets, then the 
     '#home-waitlist-card',
   ]);
   assert.deepEqual(steps.map((s) => [s.title, s.text]), [
-    ['Welcome to Homeroom', 'Your apps live here, on Home.'],
+    ['Welcome to Homeroom', 'Best Brunch lives here, on Home.'],
     ['Homeroom bot', 'It\'s in Messages. Ask it for a change.'],
-    ['Communities', 'Each one has a hub, to talk and decide.'],
+    ['Communities', 'Best Brunch\'s hub is here. Invite people and decide what changes.'],
     ['Make your own apps', 'Join the waitlist to get your spot.'],
   ]);
+  // The group's app from a ready-made starter: its example on the bot card,
+  // and the waitlist card as it was.
+  const fromStarter = homeWalkSteps({ slug: 'best-brunch', name: 'Best Brunch', example: 'add a price range to each place', privateMember: true });
+  assert.equal(fromStarter[1].text, 'Ask it for changes, like “add a price range to each place”.');
+  assert.deepEqual(fromStarter[3], steps[3]);
   // Each points at its place and leads on with Next; none is pressed.
   assert.deepEqual(steps.map((s) => !!s.ringed), [true, true, true, true]);
   assert.deepEqual(steps.map((s) => !!s.last), [false, false, false, true]);
   assert.ok(steps.every((s) => !s.tap && !s.inMenu && !s.waitsFor));
   // The first three are everybody's.
-  assert.deepEqual(steps.slice(0, 2), homeWalkSteps({ slug: 'best-brunch' }).slice(0, 2));
+  assert.deepEqual(steps.slice(0, 2), homeWalkSteps({ slug: 'best-brunch', name: 'Best Brunch' }).slice(0, 2));
   // No challenges or points.
   assert.doesNotMatch(JSON.stringify(steps), /challenge|points/i);
   // Every target is one the shell draws: the tabs are the bar's own ids, the
@@ -56,7 +61,7 @@ test('the private member\'s walk: the three cards every newcomer gets, then the 
 test('a private member lands in the app with the tip, and "Go to Homeroom" opens the Home that runs the walk', () => {
   const src = read('frontend/src/features/first-session/index.tsx');
   // The walk's fourth card for a private member.
-  assert.match(src, /return homeWalkSteps\(\{ slug: mode\.info\.slug, privateMember: !!mode\.info\.privateMember \}\);/);
+  assert.match(src, /const \{ slug, name, example, privateMember \} = mode\.info;\s+return homeWalkSteps\(\{ slug, name, example, privateMember: !!privateMember \}\);/);
   const welcome = src.slice(src.indexOf('welcome(info: FirstSessionInfo): boolean {'), src.indexOf('goHome('));
   assert.match(welcome, /const privateMember = !!app\?\.user\?\.privateMember;/);
   assert.match(welcome, /if \(privateMember \|\| info\.newAccount\) oweWalk\(uid, \{ slug, name, privateMember \}\);/);

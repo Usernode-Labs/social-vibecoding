@@ -187,9 +187,9 @@
     {
       "source": "src/routes/apps.js",
       "kind": "structural-template",
-      "fingerprint": "c6b99ca4735605a08367",
+      "fingerprint": "f8846f57b8bf055ee97d",
       "count": 1,
-      "preview": "`SELECT ${appAccess.nonSecretAppColumnList()}, ${communities.audienceSql('apps', '(SELECT COUNT(*) FROM community_members m WHERE m.community_id = apps.communit"
+      "preview": "`SELECT ${appAccess.nonSecretAppColumnList()}, template, ${communities.audienceSql('apps', '(SELECT COUNT(*) FROM community_members m WHERE m.community_id = app"
     },
     {
       "source": "src/routes/chat.js",

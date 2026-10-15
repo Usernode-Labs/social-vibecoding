@@ -1624,8 +1624,8 @@
     "description": "First card of the short walk on Home, the first time a new person reaches Home after opening their first app. It points at that app's tile."
   },
   "firstSession.walk.home.text": {
-    "text": "Your apps live here, on Home.",
-    "description": "Line under \"Welcome to Homeroom\" on the walk's first card, pointing at the app's tile on Home."
+    "text": "{{app}} lives here, on Home.",
+    "description": "Line under \"Welcome to Homeroom\" on the walk's first card, pointing at the app's tile on Home: their app is on the Home screen. {{app}} is the project's name, as its tile shows it."
   },
   "firstSession.walk.bot.title": {
     "text": "Homeroom bot",
@@ -1633,15 +1633,19 @@
   },
   "firstSession.walk.bot.text": {
     "text": "It's in Messages. Ask it for a change.",
-    "description": "Line on the walk's Homeroom bot card: where to find the bot (the Messages tab) and what to ask it for (a change to an app)."
+    "description": "Line on the walk's Homeroom bot card, for an app with no example change to offer (one Homeroom bot built, or a game): where to find the bot (the Messages tab) and what to ask it for (a change to the app)."
+  },
+  "firstSession.walk.bot.textExample": {
+    "text": "Ask it for changes, like “{{example}}”.",
+    "description": "Line on the walk's Homeroom bot card, which points at the Messages tab where the bot is, for an app made from a ready-made starter: the bot makes changes to the app when asked. {{example}} is a short change somebody could ask for in that app, in English and lowercase, for example \"add a cheap eats tier\" for a restaurant tier list; keep it inside the quotation marks your language uses."
   },
   "firstSession.walk.communities.title": {
     "text": "Communities",
     "description": "Third card of the walk on Home, pointing at the Communities tab, which lists every community the person is in."
   },
   "firstSession.walk.communities.text": {
-    "text": "Each one has a hub, to talk and decide.",
-    "description": "Line on the walk's Communities card: every community has a hub page where its people talk and decide on changes together."
+    "text": "{{app}}'s hub is here. Invite people and decide what changes.",
+    "description": "Line on the walk's Communities card, which points at the Communities tab: the project's hub page is there, where its people are invited and decide together which changes to its app go in. {{app}} is the project's name. \"Invite\" and \"decide\" are verbs."
   },
   "firstSession.walk.waitlist.title": {
     "text": "Make your own apps",
