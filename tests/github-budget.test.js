@@ -363,7 +363,6 @@ test('the timer-driven GitHub callers ask before they spend', () => {
   const asks = /githubBudget\.(budgetAllows\('background'\)|backgroundHold\()|require\('\.\/github-budget'\)\.budgetAllows\('background'\)/;
   for (const rel of [
     'src/services/main-drift-poller.js',
-    'src/services/merge-followup-recovery.js',
     'src/services/homeroom-bot.js',
     'src/services/workshop-themes.js',
     'src/services/app-heal.js',

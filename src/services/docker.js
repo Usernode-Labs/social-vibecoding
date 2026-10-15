@@ -358,7 +358,7 @@ async function runContainerInner(name, {
     // name still exists (a prior `stopAndRemove` raced, an aborted rebuild
     // left a half-removed container, or two rebuild paths interleaved),
     // docker fails with "The container name "/x" is already in use". The
-    // root-cause serialization lives in staging.rebuildProduction; this
+    // root-cause serialization lives in staging.deployProduction; this
     // retry just makes runContainer self-healing so a stray name never
     // bricks a deploy. Force-remove and try exactly once more.
     const msg = String((err && (err.stderr || err.message)) || '');

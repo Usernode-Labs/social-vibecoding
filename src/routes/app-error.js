@@ -4,7 +4,7 @@
 //
 // The Caddyfile's wildcard site routes every `<slug>.<domain>` request to
 // the container named `usernode-app-<slug>`. When that container is down
-// (crashed, stopped, or mid-redeploy — rebuildProduction stops the old
+// (crashed, stopped, or mid-redeploy — deployProduction stops the old
 // container before the new one passes its healthcheck), the proxy fails
 // and Caddy's handle_errors used to answer with the raw text "502 Bad
 // Gateway". Now the wildcard site's handle_errors rewrites 502/503/504 to

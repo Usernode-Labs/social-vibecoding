@@ -1,4 +1,4 @@
-// Unit tests for #687 Slice 4 — exact-SHA merge + shared finalizer.
+// Unit tests for #687 Slice 4 — exact-SHA merge.
 //
 // Covers (spec "Tests"):
 //   - github.mergePR forwards an optional `sha` to octokit.rest.pulls.merge,
@@ -6,8 +6,10 @@
 //     HeadMovedError; generic calls without a sha keep the raw error.
 //   - checkAndMerge pins imported rows to imported_pr_head_sha and native rows
 //     to reviewed_head_sha; imported head-moved recovery stays unchanged.
-//   - finalizeMerge runs byte-for-byte identically for native and imported
-//     merges (same deploy/stamp/teardown/announce tail).
+//
+// Everything after GitHub's merge (the deploy, the teardown, the merge line)
+// belongs to the merge-followups workflow machine, the same for native and
+// imported merges; tests/workflow-merge-followups-postgres.test.js covers it.
 //
 // Run with: node --test tests/pr-import-merge.test.js
 
@@ -125,7 +127,7 @@ test('mergePR: a 409 WITHOUT a pinned sha is NOT reinterpreted', async () => {
   }
 });
 
-// ── checkAndMerge: imported sha pinning, head-moved recovery, finalizer ─
+// ── checkAndMerge: imported sha pinning, head-moved recovery ──────────
 
 // Loads routes/votes with collaborators stubbed. `mergeImpl` lets each test
 // script GitHub's merge behaviour; every other collaborator is a no-op so
@@ -136,7 +138,7 @@ function loadVotes({ mergeImpl, reconcileImpl = null }) {
     prImportSync: require.resolve('../src/services/pr-import-sync'),
     pool: require.resolve('../src/db/pool'),
     github: require.resolve('../src/services/github'),
-    staging: require.resolve('../src/services/staging'),
+    platform: require.resolve('../src/workflow/platform.ts'),
     docker: require.resolve('../src/services/docker'),
     resolver: require.resolve('../src/services/conflict-resolver'),
     ws: require.resolve('../src/services/ws'),
@@ -147,7 +149,6 @@ function loadVotes({ mergeImpl, reconcileImpl = null }) {
     appAccess: require.resolve('../src/services/app-access'),
     governance: require.resolve('../src/services/governance'),
     mergeDebug: require.resolve('../src/services/merge-debug'),
-    worker: require.resolve('../src/services/worker'),
     subject: require.resolve('../src/routes/votes'),
   };
   const orig = {};
@@ -156,8 +157,7 @@ function loadVotes({ mergeImpl, reconcileImpl = null }) {
   const mergeCalls = [];
   const voteUpdates = [];
   const systemMessages = [];
-  const rebuildCalls = [];
-  const teardownCalls = [];
+  const reports = [];
   const reconcileCalls = [];
   const requeues = [];
 
@@ -185,9 +185,8 @@ function loadVotes({ mergeImpl, reconcileImpl = null }) {
     invalidateIssuesCache() {},
     noteIssuesClosed() {},
   });
-  stub(ids.staging, {
-    rebuildProduction: async (_c, app) => { rebuildCalls.push(app && app.id); return { sha: 'deployedsha', containerId: 'ctr-1' }; },
-    teardownStaging: async (session) => { teardownCalls.push(session.id); },
+  stub(ids.platform, {
+    mergeConfirmed: async (m) => { reports.push(m); return { status: 'accepted', eventId: 1 }; },
   });
   stub(ids.docker, {});
   stub(ids.resolver, {
@@ -221,7 +220,6 @@ function loadVotes({ mergeImpl, reconcileImpl = null }) {
     }),
   });
   stub(ids.mergeDebug, { startRun: async () => 1, step: async () => {}, endRun: async () => {} });
-  stub(ids.worker, { isInFlight: () => false, destroyCcVolume: async () => {}, retireWorker: async () => ({ deferred: false }) });
 
   delete require.cache[ids.subject];
   const subject = require(ids.subject);
@@ -232,7 +230,7 @@ function loadVotes({ mergeImpl, reconcileImpl = null }) {
     }
   };
   return {
-    subject, mergeCalls, voteUpdates, systemMessages, rebuildCalls, teardownCalls,
+    subject, mergeCalls, voteUpdates, systemMessages, reports,
     reconcileCalls, requeues, restore,
   };
 }
@@ -261,13 +259,11 @@ const cliSession = {
 function mergeReadyPool() {
   return makeRecordingPool([
     [/SET status = 'merging'/, [{ id: 1 }]],
-    [/SELECT \* FROM apps WHERE id/, [{ id: 5, slug: 'demo', self_hosted: false }]],
-    [/SET\s+status = 'merged'/, { rows: [], rowCount: 1 }],
   ]);
 }
 
 test('checkAndMerge: imported, native, and CLI handoff merges pin their reviewed head SHA', async () => {
-  const { subject, mergeCalls, restore } = loadVotes({
+  const { subject, mergeCalls, reports, restore } = loadVotes({
     mergeImpl: () => ({ sha: 'squashsha', merged: true }),
   });
   try {
@@ -284,13 +280,16 @@ test('checkAndMerge: imported, native, and CLI handoff merges pin their reviewed
     assert.equal(native.sha, nativeSession.reviewed_head_sha,
       'native merge pins its reviewed head sha');
     assert.equal(subject.reviewedHeadForSession(cliSession), cliSession.reviewed_head_sha);
+    // All three are reported to the merge-followups machine the same way.
+    assert.deepEqual(reports.map((m) => [m.sessionId, m.mergeSha]),
+      [[12, 'squashsha'], [13, 'squashsha'], [11, 'squashsha']]);
   } finally {
     restore();
   }
 });
 
 test('checkAndMerge: head-moved 409 leaves the imported row recoverable and does not error', async () => {
-  const { subject, voteUpdates, systemMessages, rebuildCalls, restore } = loadVotes({
+  const { subject, voteUpdates, systemMessages, reports, restore } = loadVotes({
     mergeImpl: () => { throw new (require('../src/services/github').HeadMovedError)(); },
   });
   const pool = mergeReadyPool();
@@ -304,9 +303,9 @@ test('checkAndMerge: head-moved 409 leaves the imported row recoverable and does
     const releasedToPromoted = pool.queries.some((q) => /SET status = 'promoted'\s+WHERE id = \$1 AND status = 'merging'/.test(q.sql));
     assert.ok(releasedToPromoted, 'row released to promoted for the sync poller to pick up');
 
-    // Never marked merged, never rebuilt production.
+    // Never marked merged, never reported as a merge.
     assert.ok(!pool.queries.some((q) => /SET\s+status = 'merged'/.test(q.sql)), 'never marked merged');
-    assert.equal(rebuildCalls.length, 0, 'no production rebuild on a refused merge');
+    assert.equal(reports.length, 0, 'no merge reported on a refused merge');
 
     // A head-moved notice, and a headMoved vote_update — but no mergeFailed.
     assert.ok(systemMessages.some((m) => /updated on GitHub/i.test(m.content)));
@@ -427,139 +426,6 @@ test('checkAndMerge: a fork-hosted imported head still defers to the poller on a
     assert.notEqual(r.votesKept, true);
     assert.ok(systemMessages.some((m) => /updated on GitHub since the vote/.test(m.content)));
     assert.deepEqual(requeues, [], 'nothing to retry against until the poller has re-pinned it');
-  } finally {
-    restore();
-  }
-});
-
-test('finalizeMerge: runs the identical deploy tail for native and imported merges', async () => {
-  const { subject, rebuildCalls, teardownCalls, systemMessages, voteUpdates, restore } = loadVotes({
-    mergeImpl: () => ({ sha: 'squashsha', merged: true }),
-  });
-  try {
-    const finalizerArgs = {
-      required: 1, activeCount: 1, yesCount: 1, majority: 1,
-      force: false, forceBy: null, dstep: () => {}, dend: () => {},
-      mergeCommitSha: 'abc123', config: { jwtSecret: 's' },
-    };
-    const appHandlers = mergeReadyPool();
-
-    await subject.finalizeMerge({ ...finalizerArgs, pool: mergeReadyPool(), session: { ...nativeSession } });
-    await subject.finalizeMerge({ ...finalizerArgs, pool: mergeReadyPool(), session: { ...importedSession } });
-    void appHandlers;
-
-    // Both merges rebuilt prod (same app), tore down staging, announced merge.
-    assert.equal(rebuildCalls.length, 2, 'both native + imported rebuilt production');
-    assert.deepEqual(teardownCalls.sort(), [11, 12], 'both tore down their staging');
-    const merged = voteUpdates; // finalizer itself emits none; announcements are system messages
-    void merged;
-    const mergeAnnouncements = systemMessages.filter((m) => /is live \(PR #\d+\)\. Thanks to everyone who voted/i.test(m.content));
-    assert.ok(mergeAnnouncements.length >= 2, 'both announced a successful merge identically');
-  } finally {
-    restore();
-  }
-});
-
-// ── #1688: the announcement names the people ─────────────────────────
-
-test('finalizeMerge: the merge line names who built, backed and shaped it, in words and as metadata', async () => {
-  const { subject, systemMessages, restore } = loadVotes({
-    mergeImpl: () => ({ sha: 'squashsha', merged: true }),
-  });
-  try {
-    const pool = makeRecordingPool([
-      [/SET status = 'merging'/, [{ id: 1 }]],
-      [/SELECT \* FROM apps WHERE id/, [{ id: 5, slug: 'demo', self_hosted: false }]],
-      [/SET\s+status = 'merged'/, { rows: [], rowCount: 1 }],
-      [/SELECT username FROM users WHERE id = \$1/, [{ username: 'evan' }]],
-      [/FROM pr_votes pv/, [
-        { username: 'evan', vote: 'yes', reason: null },
-        { username: 'alice', vote: 'yes', reason: 'Love it' },
-        { username: 'carol', vote: 'no', reason: 'The colors clash on mobile.' },
-        { username: 'bob', vote: 'yes', reason: null },
-        { username: 'dave', vote: 'no', reason: null },
-      ]],
-      [/FROM chat_messages cm/, [{ username: 'frank' }, { username: 'alice' }]],
-    ]);
-    await subject.finalizeMerge({
-      required: 1, activeCount: 4, yesCount: 3, majority: 1,
-      force: false, forceBy: null, dstep: () => {}, dend: () => {},
-      mergeCommitSha: 'abc123', config: { jwtSecret: 's' },
-      pool, session: { ...nativeSession },
-    });
-    const line = 'Native change is live (PR #30). Built by evan, backed by alice and bob, shaped by carol and frank. (3/4 votes)';
-    const announced = systemMessages.filter((m) => m.content === line);
-    assert.equal(announced.length, 1, 'the proposal\'s thread only; a channel carries no activity');
-    assert.deepEqual(announced[0].meta, {
-      merged: {
-        sessionId: 11, prNumber: 30, title: 'Native change',
-        author: 'evan', backers: ['alice', 'bob'], shapers: ['carol', 'frank'], votes: '3/4',
-      },
-    }, 'the names ride as data too, so a reader draws from them rather than the wording');
-    assert.deepEqual(announced[0].thread, { type: 'session', ref: 11 });
-  } finally {
-    restore();
-  }
-});
-
-// ── Follow-up to #2897: the platform's own app is not live at merge time ──
-// A self-hosted merge releases after it merges (GitHub Actions, then Argo CD),
-// so its announcement says it merged and will be live in a few minutes, and
-// the metadata carries `liveSoon` for the chat to read. A child app keeps
-// "is live" (the credits test above pins that line exactly).
-
-test('finalizeMerge: a self-hosted merge says it will be live in a few minutes, in words and as metadata', async () => {
-  const { subject, systemMessages, rebuildCalls, restore } = loadVotes({
-    mergeImpl: () => ({ sha: 'squashsha', merged: true }),
-  });
-  try {
-    const pool = makeRecordingPool([
-      [/SET status = 'merging'/, [{ id: 1 }]],
-      [/SELECT \* FROM apps WHERE id/, [{ id: 5, slug: 'social-vibecoding', self_hosted: true }]],
-      [/SET\s+status = 'merged'/, { rows: [], rowCount: 1 }],
-      [/SELECT username FROM users WHERE id = \$1/, [{ username: 'evan' }]],
-      [/FROM pr_votes pv/, [
-        { username: 'evan', vote: 'yes', reason: null },
-        { username: 'alice', vote: 'yes', reason: null },
-      ]],
-      [/FROM chat_messages cm/, []],
-    ]);
-    await subject.finalizeMerge({
-      required: 1, activeCount: 2, yesCount: 2, majority: 1,
-      force: false, forceBy: null, dstep: () => {}, dend: () => {},
-      mergeCommitSha: 'abc123', config: { jwtSecret: 's' },
-      pool, session: { ...nativeSession },
-    });
-    assert.equal(rebuildCalls.length, 0, 'the platform is released outside the process, never rebuilt here');
-    const line = 'Native change merged (PR #30) and will be live in a few minutes. Built by evan, backed by alice. (2/2 votes)';
-    const announced = systemMessages.filter((m) => m.content === line);
-    assert.equal(announced.length, 1, 'the proposal\'s thread only; a channel carries no activity');
-    assert.equal(announced[0].meta.merged.liveSoon, true);
-    assert.ok(!systemMessages.some((m) => /is live \(PR #30\)/.test(m.content)), 'no claim it is live yet');
-  } finally {
-    restore();
-  }
-});
-
-test('finalizeMerge: an untitled self-hosted merge without names keeps the "(yes/active votes)" tail', async () => {
-  const { subject, systemMessages, restore } = loadVotes({
-    mergeImpl: () => ({ sha: 'squashsha', merged: true }),
-  });
-  try {
-    const pool = makeRecordingPool([
-      [/SET status = 'merging'/, [{ id: 1 }]],
-      [/SELECT \* FROM apps WHERE id/, [{ id: 5, slug: 'social-vibecoding', self_hosted: true }]],
-      [/SET\s+status = 'merged'/, { rows: [], rowCount: 1 }],
-    ]);
-    await subject.finalizeMerge({
-      required: 1, activeCount: 1, yesCount: 1, majority: 1,
-      force: false, forceBy: null, dstep: () => {}, dend: () => {},
-      mergeCommitSha: 'abc123', config: { jwtSecret: 's' },
-      pool, session: { ...nativeSession, pr_title: '' },
-    });
-    const line = systemMessages.find((m) => /^PR #30 merged and will be live in a few minutes\. /.test(m.content));
-    assert.ok(line, systemMessages.map((m) => m.content).join('\n'));
-    assert.match(line.content, /\((\d+)\s*\/\s*(\d+)\s+vote/, 'the "(yes/active votes)" tail is unchanged');
   } finally {
     restore();
   }

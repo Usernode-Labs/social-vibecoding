@@ -6,7 +6,8 @@
 //   - a locked app with a winning vote + passing checks but NO admin yes
 //     still does not auto-merge.
 // Same require.cache stubbing pattern as votes-checks-gate.test.js — nothing
-// real spins up.
+// real spins up. A merge is reported to the merge-followups workflow machine
+// (platform.ts mergeConfirmed), stubbed here to record each report.
 //
 // Run with: node --test tests/votes-auto-merge-on-checks.test.js
 
@@ -47,14 +48,14 @@ function makeRecordingPool(handlers) {
 
 // Loads routes/votes with all side-effecting deps stubbed. `opts.locked` /
 // `opts.adminYes` shape the locked-app gate; `mergeCalls` counts real GitHub
-// merges.
+// merges and `reports` the merges handed to the merge-followups machine.
 function loadVotes(opts = {}) {
   const { locked = false, adminYes = true } = opts;
   const ids = {
     logger: require.resolve('../src/services/logger'),
     pool: require.resolve('../src/db/pool'),
     github: require.resolve('../src/services/github'),
-    staging: require.resolve('../src/services/staging'),
+    platform: require.resolve('../src/workflow/platform.ts'),
     docker: require.resolve('../src/services/docker'),
     resolver: require.resolve('../src/services/conflict-resolver'),
     ws: require.resolve('../src/services/ws'),
@@ -63,8 +64,6 @@ function loadVotes(opts = {}) {
     adminApproval: require.resolve('../src/services/admin-approval'),
     events: require.resolve('../src/services/events'),
     appAccess: require.resolve('../src/services/app-access'),
-    worker: require.resolve('../src/services/worker'),
-    issueWatcher: require.resolve('../src/services/issue-close-watcher'),
     subject: require.resolve('../src/routes/votes'),
   };
   const orig = {};
@@ -81,9 +80,9 @@ function loadVotes(opts = {}) {
     noteIssuesClosed() {},
     invalidateIssuesCache() {},
   });
-  stub(ids.staging, {
-    rebuildProduction: async () => ({ ok: true }),
-    teardownStaging: async () => {},
+  const reports = [];
+  stub(ids.platform, {
+    mergeConfirmed: async (m) => { reports.push(m); return { status: 'accepted', eventId: 1 }; },
   });
   stub(ids.docker, {});
   stub(ids.resolver, {
@@ -108,12 +107,6 @@ function loadVotes(opts = {}) {
   stub(ids.adminApproval, { isAppLocked: async () => locked, hasAdminYesVote: async () => adminYes });
   stub(ids.events, { record: () => {}, EVENT_TYPES: { PR_MERGED: 'pr_merged' } });
   stub(ids.appAccess, { sessionCollabGuard: () => (_req, _res, next) => next() });
-  const retired = [];
-  stub(ids.worker, {
-    destroyCcVolume: async () => {},
-    retireWorker: async (id) => { retired.push(id); return { deferred: false }; },
-  });
-  stub(ids.issueWatcher, { watchIssuesClosedAfterMerge: async () => {} });
 
   delete require.cache[ids.subject];
   const subject = require(ids.subject);
@@ -122,7 +115,7 @@ function loadVotes(opts = {}) {
       if (orig[k]) require.cache[id] = orig[k]; else delete require.cache[id];
     }
   };
-  return { subject, mergeCalls, systemMessages, retired, restore };
+  return { subject, mergeCalls, systemMessages, reports, restore };
 }
 
 const session = {
@@ -145,28 +138,30 @@ function poolReadyToMerge() {
       claimed = true;
       return [{ id: 7 }];
     }],
-    [/SELECT \* FROM apps WHERE id/, [{ id: 5, slug: 'whiteboard', self_hosted: false }]],
-    [/SET\s+status = 'merged'/, { rows: [], rowCount: 1 }],
   ]);
 }
 
 test('a voted + passing promoted PR auto-merges (the checks-complete drive target)', async () => {
-  const { subject, mergeCalls, retired, restore } = loadVotes();
+  const { subject, mergeCalls, reports, restore } = loadVotes();
   const p = poolReadyToMerge();
   try {
     const r = await subject.checkAndMerge({ jwtSecret: 's' }, p, { ...session });
     assert.equal(r.merged, true);
     assert.equal(mergeCalls.count, 1, 'merged on GitHub exactly once');
-    // Retired, not destroyed outright: a shots run still working in the
-    // worker keeps it until it finishes (worker.retireWorker).
-    assert.deepEqual(retired, [7], 'the merged change retires its worker');
+    // The follow-ups (the worker, the deploy, the teardown) are the
+    // merge-followups machine's: the merge is reported to it once.
+    assert.equal(reports.length, 1, 'the merge was reported to the merge-followups machine');
+    assert.equal(reports[0].sessionId, 7);
+    assert.equal(reports[0].mergeSha, 'deadbeefcafe');
+    assert.ok(!p.queries.some((q) => /SET\s+status = 'merged'/.test(q.sql)),
+      'checkAndMerge never writes the merged status itself');
   } finally {
     restore();
   }
 });
 
 test('two concurrent triggers on one ready PR produce exactly ONE GitHub merge', async () => {
-  const { subject, mergeCalls, restore } = loadVotes();
+  const { subject, mergeCalls, reports, restore } = loadVotes();
   const p = poolReadyToMerge();
   try {
     // Simulate a vote-triggered merge racing the checks-complete drive.
@@ -179,6 +174,7 @@ test('two concurrent triggers on one ready PR produce exactly ONE GitHub merge',
     const skipped = [a, b].filter((r) => r.inProgress);
     assert.equal(merged.length, 1, 'exactly one caller performed the merge');
     assert.equal(skipped.length, 1, 'the loser bailed with inProgress');
+    assert.equal(reports.length, 1, 'and the merge was reported once');
   } finally {
     restore();
   }

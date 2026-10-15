@@ -402,7 +402,7 @@ stateDiagram-v2
 
 - **One active change (D4).** Only `active_change_id` receives scout or build dispatches. Starting or switching to another change pauses the current one if it is `active`; that releases its worker and keeps its preview. A `promoted` change keeps its vote running while it is not the active change.
 - **Revising a change that is up for a vote** means switching to it first. The Mayor warns that revising clears the votes.
-- **When a change closes** (merge, rejection, withdrawal, stale-PR close), hooks in `finalizeMerge` and `finalizeArchivedSession` post a system row to the parent session (“PR #N merged”) and clear `active_change_id` if it pointed there. The conversation carries on.
+- **When a change closes** (merge, rejection, withdrawal, stale-PR close), hooks in the merge (the merge-followups workflow machine's `agentNote` write) and `finalizeArchivedSession` post a system row to the parent session (“PR #N merged”) and clear `active_change_id` if it pointed there. The conversation carries on.
 - **One Mayor turn at a time** per agent session, through the `active_turn` lease. Typing during a turn saves a draft, as the dev chat does today.
 - **Archiving an agent session** pauses its active change. It never withdraws a proposal. It can be unarchived.
 

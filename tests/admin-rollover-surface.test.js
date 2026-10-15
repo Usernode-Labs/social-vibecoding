@@ -231,7 +231,7 @@ test('the start button confirms before recreating anything', () => {
 test('the table renders one row per app with its outcome chip', () => {
   assert.match(rolloverTsx, /const ROLLOVER_STATES: Record<string, \{ label: string; cls: string \}> = \{/);
   for (const state of [
-    'pending', 'running', 'rolled', 'rebuilt',
+    'pending', 'running', 'rolled', 'rebuild_requested',
     'skipped_deploying', 'skipped_missing_secrets', 'skipped_no_db_password',
     'skipped_deleted', 'failed',
   ]) {

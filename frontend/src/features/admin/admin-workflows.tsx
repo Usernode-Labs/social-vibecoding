@@ -8,7 +8,7 @@ import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals
 // Workflows: what the workflow machines (src/workflow/) are doing and what
 // needs a person. Problems come first: a faulted or stalled instance, held
 // events, a deadline that did not fire, work that ran out of retries or is
-// running long, and writes to a machine's columns from outside it. Below
+// running long. Below
 // them, the instances by state, and one instance's timeline: every event
 // with its source, result, reason and what it emitted, linked to its cause.
 // Actions are events on that timeline (routes/admin-workflow.js), never row
@@ -30,25 +30,17 @@ type Work = {
   id: string; kind: string; workKey: string; status: string; attemptCount: number; lastError: any;
   result: any; dueAt: string; attempts: { number: number; outcome: string; service_id: string }[];
 };
-type Guard = { machine: string; flag: string; on: boolean; flagHere: boolean; blocked?: string | null };
 type Overview = {
   running: boolean;
-  guards?: Guard[];
   actions: Record<string, string[]>;
   counts: { machine: string; state: string; count: number }[];
   problems: {
     flagged: Instance[];
     overdueDeadlines: Instance[];
     work: (Work & { machine: string; key: string })[];
-    ownershipViolations: { table_name: string; column_path: string; count: number; last_at: string }[];
-    ownershipViolationRows?: Violation[];
   };
 };
 type Ref = { machine: string; key: string };
-type Violation = {
-  id: number; table: string; column: string; row: Record<string, unknown> | null;
-  application: string | null; query: string | null; createdAt: string;
-};
 
 const RESULT_BADGE = new Map([
   ['accepted', AdminUI.badge.success],
@@ -75,27 +67,9 @@ function InstanceLink({ r, onOpen }: { r: Ref; onOpen: (r: Ref) => void }) {
   );
 }
 
-// A machine's guard left on while its flag is off here: after a rollback,
-// legacy writes to the rows it held are logged (or refused) until an admin
-// turns it off. A boot with the flag off never does (the flag is per
-// process, and another process may still run the machine).
-async function turnGuardOff(g: Guard, onChanged: () => void) {
-  const what = 'Turn the guard off';
-  if (!(await console_()._confirm({ title: what, confirmLabel: what,
-    message: `Only once no process runs ${g.machine} (${g.flag} off everywhere): its rows go back to the legacy writers.` }))) return;
-  try { await post('/api/admin/workflow/guard-off', { machine: g.machine }); onChanged(); } catch (err: any) {
-    console_()._alert(`${what} failed: ${err.message}`);
-  }
-}
-
-function Problems({ overview, onOpen, onChanged = () => {} }: { overview: Overview; onOpen: (r: Ref) => void; onChanged?: () => void }) {
+function Problems({ overview, onOpen }: { overview: Overview; onOpen: (r: Ref) => void }) {
   const p = overview.problems;
-  const stray = (overview.guards || []).filter((g) => g.on && !g.flagHere);
-  // A flag set here whose machine does not run (app delivery without merge follow-ups).
-  const blocked = (overview.guards || []).filter((g) => g.blocked);
-  const canWrite = typeof window !== 'undefined' && !!console_()?.canWrite();
-  const none = !p.flagged.length && !p.overdueDeadlines.length && !p.work.length && !p.ownershipViolations.length
-    && !stray.length && !blocked.length;
+  const none = !p.flagged.length && !p.overdueDeadlines.length && !p.work.length;
   return (
     <div id="admin-wf-problems" className={`${AdminUI.card} p-4 mb-4`}>
       <div className={AdminUI.cardHeader}>
@@ -130,54 +104,8 @@ function Problems({ overview, onOpen, onChanged = () => {} }: { overview: Overvi
             <span className={AdminUI.muted}>{w.lastError?.message || ''}</span>
           </li>
         ))}
-        {stray.map((g) => (
-          <li key={`g:${g.machine}`} data-wf-problem="guard" className="flex flex-wrap items-center gap-2">
-            <span className={AdminUI.badge.warn}>guard on, flag off here</span>
-            <code className="text-xs">{g.machine}</code>
-            <span className={AdminUI.muted}>{`${g.flag} is off in this process; the rows the machine held are still guarded.`}</span>
-            {canWrite ? (
-              <button type="button" className={`${AdminUI.btn.outlineSm} ml-auto`} onClick={() => turnGuardOff(g, onChanged)}>
-                Turn the guard off
-              </button>
-            ) : null}
-          </li>
-        ))}
-        {blocked.map((g) => (
-          <li key={`b:${g.machine}`} data-wf-problem="blocked" className="flex flex-wrap items-center gap-2">
-            <span className={AdminUI.badge.warn}>flag set, machine off</span>
-            <code className="text-xs">{g.machine}</code>
-            <span className={AdminUI.muted}>{`${g.blocked}: it does not run in this process.`}</span>
-          </li>
-        ))}
-        {p.ownershipViolations.map((v) => (
-          <li key={`o:${v.table_name}.${v.column_path}`} data-wf-problem="ownership">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className={AdminUI.badge.warn}>written outside its machine</span>
-              <code className="text-xs">{`${v.table_name}.${v.column_path}`}</code>
-              <span className={AdminUI.muted}>{`${v.count} times, last ${when(v.last_at)}`}</span>
-            </div>
-            <ViolationRows rows={(p.ownershipViolationRows || []).filter((r) => r.table === v.table_name && r.column === v.column_path)} />
-          </li>
-        ))}
       </ul>
     </div>
-  );
-}
-
-// The latest writes of one column: which row, from which application
-// (the connection's application_name), and the statement that wrote it.
-function ViolationRows({ rows }: { rows: Violation[] }) {
-  if (!rows.length) return null;
-  return (
-    <ul className="mt-1 ml-4 space-y-1">
-      {rows.map((r) => (
-        <li key={r.id} data-wf-violation={r.id} className="text-xs">
-          <span className="font-mono">{`row ${r.row ? JSON.stringify(r.row) : '?'}`}</span>
-          <span className={AdminUI.muted}>{` by ${r.application || 'an unnamed connection'}, ${when(r.createdAt)}`}</span>
-          {r.query ? <code className={`block ${AdminUI.muted} truncate`} title={r.query}>{r.query}</code> : null}
-        </li>
-      ))}
-    </ul>
   );
 }
 
@@ -450,7 +378,7 @@ function WorkflowsSection() {
           The workflow runtime is not running in this process: it did not start (see the log). The bot's builds run unkept until it does. What is recorded is still shown.
         </p>
       ) : null}
-      <Problems overview={overview} onOpen={setAt} onChanged={load} />
+      <Problems overview={overview} onOpen={setAt} />
       <Instances overview={overview} onOpen={setAt} />
     </div>
   );

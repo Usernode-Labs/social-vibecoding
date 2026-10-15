@@ -263,14 +263,12 @@ test('the idle sweep leaves a worker another process keeps warm, and adoption le
   assert.match(adopt, /processes\.holders\('warm', sessionId, pool\)/);
 });
 
-test('a heal or a drift rebuild under way elsewhere is not started twice', async (t) => {
-  await elsewhere([['app_heal', 'ear-trainer'], ['drift_rebuild', 12]]);
+test('a heal under way elsewhere is not started twice', async (t) => {
+  await elsewhere([['app_heal', 'ear-trainer']]);
   t.after(() => processes._reset());
   const heal = require('../src/services/app-heal');
   const out = await heal.checkAndHealOne({}, null, { slug: 'ear-trainer', runtime_kind: 'docker' });
   assert.deepEqual(out, { status: 'in_flight', slug: 'ear-trainer' });
-  const drift = require('../src/services/main-drift-poller');
-  assert.deepEqual(await drift.checkAndRedeployOne({}, null, { id: 12, slug: 'ear-trainer' }), { status: 'in_flight', slug: 'ear-trainer' });
 });
 
 // ── Roles at boot ─────────────────────────────────────────────────────

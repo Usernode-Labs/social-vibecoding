@@ -135,11 +135,6 @@ const EVENT_TYPES = Object.freeze({
   // record itself is in-memory, so this is its only durable trace. No
   // backfill.
   STALE_PREVIEWS_REAPED: 'stale_previews_reaped',
-  // #851: a staging teardown could not remove its container. The session row
-  // deliberately still names it (see staging.teardownStaging), so this is the
-  // durable "a leak happened here" record — a non-zero count of these means
-  // the host is failing to remove containers, not that previews are lost.
-  STAGING_TEARDOWN_LEAKED: 'staging_teardown_leaked',
 
   // A mobile shell asked POST /api/v4/app-version/check whether it must
   // update. Recorded so the Topochain → App version admin screen can show

@@ -1631,8 +1631,6 @@ test('the loop is leader-only, locked, ships off, and its spend joins the shared
   assert.match(schema, /CREATE TABLE IF NOT EXISTS homeroom_bot_queue/);
   assert.match(schema, /CREATE TABLE IF NOT EXISTS homeroom_bot_runs/);
   assert.match(schema, /\('homeroom_bot_mode', 'off'\)/, 'the setting seeds off');
-  assert.ok(schema.indexOf('homeroom_bot_runs') < schema.indexOf('CREATE TABLE IF NOT EXISTS preview_operations'),
-    'preview_operations stays the last block in schema.sql');
   assert.match(SRC, /limits\.checkBudget\(pool, bot\.id\)/, 'gated by the weekly cap before every turn');
   assert.match(SRC, /usesIncludedKey\(pool, bot\.id\)/);
   assert.match(SRC, /limits\.recordSpend\(pool, bot\.id/, 'debited into llm_usage like any included-key turn');

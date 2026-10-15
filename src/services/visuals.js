@@ -1291,7 +1291,7 @@ function expandCapturePaths(paths) {
 // specification" — and falls back to the container status / raw error
 // message. Length-bounded so it fits a chat line and a tooltip.
 // Implementation moved to services/deploy-failure.js (issue #416) so the
-// production deploy paths (app-creator / staging.rebuildProduction) share
+// production deploy paths (app-creator / staging.deployProduction) share
 // the same error-line extraction; this thin delegate keeps the legacy
 // string shape for check_error_detail consumers.
 function summarizeBootFailure(err) {

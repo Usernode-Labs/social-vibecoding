@@ -47,15 +47,11 @@ function freshFixtures() {
     concurrentNow: 0,
     concurrentMax: 0,
     // staging
-    rebuildCalls: [],
-    rebuildResult: { containerId: 'rebuilt-id', sha: 'abc1234' },
-    rebuildError: null,
     serializeCalls: [],
     lockCalls: [],
     // What a row reads under its locks, when a deploy changed it meanwhile.
     current: new Map(),
-    // The app-delivery machine's flag, and what was asked of it.
-    delivery: false,
+    // The deploys asked of app delivery.
     requested: [],
     // app-deploy-status
     deploying: false,
@@ -125,17 +121,11 @@ function installStubs() {
       fx.serializeCalls.push(slug);
       return fn();
     },
-    async rebuildProduction(_config, app) {
-      fx.rebuildCalls.push(app.slug);
-      if (fx.rebuildError) throw fx.rebuildError;
-      return fx.rebuildResult;
-    },
   });
   stub(ids.guard, {
     async withResourceUse(_config, lock, key, fn) { fx.lockCalls.push([lock, key]); return fn(); },
   });
   stub(ids.platform, {
-    deliveryEnabled: () => fx.delivery,
     requestDeploy: async (appId, reason) => { fx.requested.push([appId, reason]); return 1; },
   });
   stub(ids.deployStatus, {
@@ -230,7 +220,7 @@ test('happy path re-runs the existing image, health-checks, and persists', async
   assert.deepEqual(outcomes(job), { 'echo-dapp': 'rolled' });
   assert.deepEqual(fx.respawnCalls, ['echo-dapp'], 'the cheap respawn path ran');
   assert.equal(fx.buildCalls.length, 0, 'no docker build — a rollover is env-only');
-  assert.equal(fx.rebuildCalls.length, 0, 'no full rebuild when the image exists');
+  assert.equal(fx.requested.length, 0, 'no rebuild asked for when the image exists');
   assert.equal(fx.healthyCalls.length, 1, 'the new container is health-checked');
   assert.equal(fx.healthyCalls[0][0], 'usernode-app-echo-dapp');
   assert.equal(fx.healthyCalls[0][2], '/health');
@@ -246,21 +236,6 @@ test('happy path re-runs the existing image, health-checks, and persists', async
   assert.deepEqual(update.params, ['container-id', 4]);
 });
 
-test('a missing image falls back to a full rebuild, outside the per-slug lock', async () => {
-  const rollover = setup();
-  fx.imageExists = false;
-  fx.apps = [appRow(9, 'no-image')];
-  const job = await runSweep(rollover);
-
-  assert.deepEqual(outcomes(job), { 'no-image': 'rebuilt' });
-  assert.deepEqual(fx.rebuildCalls, ['no-image']);
-  assert.equal(fx.respawnCalls.length, 0, 'no point re-running an image that is gone');
-  assert.equal(fx.serializeCalls.length, 0,
-    'rebuildProduction takes the per-slug lock itself — nesting would deadlock');
-  const update = fx.queries.find((q) => /^UPDATE apps SET container_id/.test(q.sql));
-  assert.match(update.sql, /main_sha = \$2/, 'the rebuild path does record the built sha');
-});
-
 test('a missing image with no repo is a failure, not a rebuild', async () => {
   const rollover = setup();
   fx.imageExists = false;
@@ -268,7 +243,7 @@ test('a missing image with no repo is a failure, not a rebuild', async () => {
   const job = await runSweep(rollover);
 
   assert.deepEqual(outcomes(job), { orphan: 'failed' });
-  assert.equal(fx.rebuildCalls.length, 0);
+  assert.equal(fx.requested.length, 0);
   assert.equal(job.failed, 1);
 });
 
@@ -279,8 +254,8 @@ test('missing required secrets skip the app and never fall back to a rebuild', a
   const job = await runSweep(rollover);
 
   assert.deepEqual(outcomes(job), { 'needs-secrets': 'skipped_missing_secrets' });
-  assert.equal(fx.rebuildCalls.length, 0,
-    'rebuildProduction would raise MissingSecretsError for the same reason');
+  assert.equal(fx.requested.length, 0,
+    'a deploy would raise MissingSecretsError for the same reason');
   assert.equal(job.failed, 0, 'a skip is not a failure');
   assert.equal(fx.markEnds[0].opts.failed, false, 'the version pill settles clean');
 });
@@ -318,7 +293,7 @@ test('on Kubernetes an app with an image is respawned from it, not rebuilt (its 
   const job = await runSweep(rollover, {}, { appRuntime: 'kubernetes' });
   assert.match(fx.queries.find((q) => /SELECT id, slug/.test(q.sql)).sql, /image_ref/);
   assert.deepEqual(outcomes(job), { 'kube-app': 'rolled' });
-  assert.equal(fx.rebuildCalls.length, 0);
+  assert.equal(fx.requested.length, 0);
 });
 
 test('a deploy that ran while the job waited is not undone: the respawn runs the image the row has now', async () => {
@@ -340,15 +315,17 @@ test('an app that started deploying while the job waited is skipped', async () =
   assert.equal(fx.respawnCalls.length, 0);
 });
 
-test('with app delivery on, a missing image asks it for the rebuild', async () => {
+test('a missing image asks app delivery for the rebuild, outside the per-slug lock', async () => {
   const rollover = setup();
-  fx.delivery = true;
   fx.imageExists = false;
   fx.apps = [appRow(16, 'gone-image')];
   const job = await runSweep(rollover);
   assert.deepEqual(outcomes(job), { 'gone-image': 'rebuild_requested' });
   assert.deepEqual(fx.requested, [[16, 'rollover']]);
-  assert.equal(fx.rebuildCalls.length, 0, 'no deploy of its own');
+  assert.equal(fx.respawnCalls.length, 0, 'no point re-running an image that is gone');
+  assert.equal(fx.serializeCalls.length, 0, 'app delivery orders its own deploys');
+  assert.ok(!fx.queries.some((q) => /^UPDATE apps SET container_id/.test(q.sql)),
+    'the machine writes what it deploys');
   assert.equal(fx.eventRecords[0].metadata.rebuildRequested, 1);
 });
 
@@ -529,7 +506,7 @@ test('the staging demo job is obviously fake and covers every chip', () => {
   }
   const states = demo.apps.map((a) => a.state);
   assert.ok(states.includes('rolled'));
-  assert.ok(states.includes('rebuilt'));
+  assert.ok(states.includes('rebuild_requested'));
   assert.ok(states.includes('skipped_missing_secrets'));
   assert.ok(states.includes('failed'));
   assert.equal(demo.failed, 1);

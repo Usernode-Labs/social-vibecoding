@@ -94,14 +94,21 @@ const EVENTS = {
 
 const same = (a: Json, b: Json) => JSON.stringify(a) === JSON.stringify(b);
 
+// The requests a person made by hand: their deploy tries even a commit the
+// automatic paths have stopped trying (its image runs as root:
+// deploy-failure.js waitsForNewCommit).
+const BY_HAND: ReadonlySet<string> = new Set(['redeploy', 'check_updates', 'demo_reset']);
+
 // What one deploy may skip: the running revision (after a crash that had
 // already deployed it) or the build (demo mode's preview image). Only when
 // every request it serves offers the same: a secret change beside a merge
-// needs a real deploy.
+// needs a real deploy. It retries a refused commit when any of them was
+// asked for by hand.
 function options(covered: Request[]) {
   const first = covered[0];
   const all = <K extends keyof Request>(k: K) => (covered.every((r) => same(r[k] as Json, first[k] as Json)) ? first[k] : null);
-  return { revision: all('revision') as string | null, reuse: all('reuse') as Json, prNumber: all('prNumber') as number | null };
+  return { revision: all('revision') as string | null, reuse: all('reuse') as Json, prNumber: all('prNumber') as number | null,
+    ...(covered.some((r) => BY_HAND.has(r.reason)) ? { retrySameCommit: true } : {}) };
 }
 
 // A deploy of everything recorded so far.
@@ -171,10 +178,9 @@ function deployed(s: Going, e: Event<WorkResultPayload>, f: Facts, ctx: Transiti
   // Its pull request, when the commit that deployed is a merge's own.
   const prNumber = served.find((r) => r.revision && r.revision === sha)?.prNumber ?? null;
   const messages: MessageRequest[] = served.flatMap((r) => answer(r, 'Delivered', { sha }));
-  // Every other merge of the app still waiting to go live hears it, as any
-  // deploy was heard before (staging.rebuildProduction's productionDeployed):
-  // one that decided on the work path, and one whose own answer did not
-  // make it live (GitHub did not say yet that the build contains it). Not
+  // Every other merge of the app still waiting to go live hears it: one
+  // whose own answer did not make it live (GitHub did not say yet that the
+  // build contains it), and one recorded before every merge asked here. Not
   // one with a request open here: this deploy answered it, or started
   // before it was recorded (before the merge applied its declared keys), so
   // it waits for its own deploy's answer.

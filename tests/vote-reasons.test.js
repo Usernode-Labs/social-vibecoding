@@ -17,7 +17,8 @@
 //   4. the roster names each counted vote's line, and the people whose vote
 //      was on an earlier version of the proposal;
 //   5. the merge credits: who is named when a proposal lands, and how the
-//      sentence reads.
+//      sentence reads (src/workflow/rules/merge-credits.ts, which the
+//      merge-followups machine runs).
 //
 // Run with: node --test tests/vote-reasons.test.js
 
@@ -116,7 +117,7 @@ function loadVotes({ pool }) {
     getPR: async () => ({ state: 'open', merged: false, head: { sha: HEAD } }),
     getInstallationOctokit: async () => ({ request: async () => ({ data: {} }) }),
   });
-  stub(ids.staging, { rebuildProduction: async () => ({ ok: true }), teardownStaging: async () => {} });
+  stub(ids.staging, { teardownStaging: async () => {} });
   stub(ids.docker, {});
   stub(ids.resolver, {
     checkAndResolveConflicts: async () => {},
@@ -490,25 +491,20 @@ test('the roster carries each counted line and the people whose vote was on an e
 // ── 5. The credits ────────────────────────────────────────────────────
 
 test('creditsSentence: built, backed, shaped — and the older wording with nobody to name', () => {
-  const { subject, restore } = loadVotes({ pool: makeRecordingPool([]) });
-  try {
-    const { creditsSentence } = subject;
-    const all = { author: 'evan', backers: ['alice', 'bob'], shapers: ['carol'] };
-    assert.equal(creditsSentence(all), 'Built by evan, backed by alice and bob, shaped by carol.');
-    assert.equal(creditsSentence(all, { withAuthor: false }), 'Backed by alice and bob, shaped by carol.',
-      'the author is left out of the sentence that goes to the author');
-    assert.equal(creditsSentence({ author: 'evan', backers: ['alice'], shapers: [] }), 'Built by evan, backed by alice.');
-    assert.equal(creditsSentence({ author: 'evan', backers: [], shapers: [] }), 'Built by evan.');
-    assert.equal(creditsSentence({ author: null, backers: ['alice', 'bob', 'carol'], shapers: [] }), 'Backed by alice, bob and carol.');
-    assert.equal(creditsSentence({ author: null, backers: [], shapers: ['carol'] }), 'Shaped by carol.');
-    assert.equal(creditsSentence({ author: null, backers: [], shapers: [] }), 'Thanks to everyone who voted');
-    assert.equal(creditsSentence({ author: null, backers: [], shapers: [] }, { withAuthor: false }), '');
-    const many = Array.from({ length: 10 }, (_, i) => `u${i + 1}`);
-    assert.equal(creditsSentence({ author: null, backers: many, shapers: [] }),
-      'Backed by u1, u2, u3, u4, u5, u6, u7, u8 and 2 more.', 'a sentence, not a roll call');
-  } finally {
-    restore();
-  }
+  const { creditsSentence } = require('../src/workflow/rules/merge-credits.ts');
+  const all = { author: 'evan', backers: ['alice', 'bob'], shapers: ['carol'] };
+  assert.equal(creditsSentence(all), 'Built by evan, backed by alice and bob, shaped by carol.');
+  assert.equal(creditsSentence(all, { withAuthor: false }), 'Backed by alice and bob, shaped by carol.',
+    'the author is left out of the sentence that goes to the author');
+  assert.equal(creditsSentence({ author: 'evan', backers: ['alice'], shapers: [] }), 'Built by evan, backed by alice.');
+  assert.equal(creditsSentence({ author: 'evan', backers: [], shapers: [] }), 'Built by evan.');
+  assert.equal(creditsSentence({ author: null, backers: ['alice', 'bob', 'carol'], shapers: [] }), 'Backed by alice, bob and carol.');
+  assert.equal(creditsSentence({ author: null, backers: [], shapers: ['carol'] }), 'Shaped by carol.');
+  assert.equal(creditsSentence({ author: null, backers: [], shapers: [] }), 'Thanks to everyone who voted');
+  assert.equal(creditsSentence({ author: null, backers: [], shapers: [] }, { withAuthor: false }), '');
+  const many = Array.from({ length: 10 }, (_, i) => `u${i + 1}`);
+  assert.equal(creditsSentence({ author: null, backers: many, shapers: [] }),
+    'Backed by u1, u2, u3, u4, u5, u6, u7, u8 and 2 more.', 'a sentence, not a roll call');
 });
 
 test('mergeCredits: the author, the counted Yes voters, then the objectors with a line and the people in the thread', async () => {
@@ -523,31 +519,27 @@ test('mergeCredits: the author, the counted Yes voters, then the objectors with 
     ]],
     [/FROM chat_messages cm/, [{ username: 'frank' }, { username: 'alice' }, { username: 'evan' }]],
   ]);
-  const { subject, restore } = loadVotes({ pool });
-  try {
-    const credits = await subject.mergeCredits(pool, { id: 41, app_id: 5, user_id: 7 });
-    assert.deepEqual(credits, { author: 'evan', backers: ['alice', 'bob'], shapers: ['carol', 'frank'] },
-      'in vote order, nobody named twice');
-    const votes = pool.queries.find((q) => /FROM pr_votes pv/.test(q.sql));
-    assert.match(votes.sql, /pv\.approval_epoch = cs\.approval_epoch/, 'only the votes that counted at merge');
-    const talk = pool.queries.find((q) => /FROM chat_messages cm/.test(q.sql));
-    assert.match(talk.sql, /cm\.thread_type = 'session' AND cm\.thread_ref = \$2/, 'the proposal\'s own thread');
-    assert.match(talk.sql, /cm\.msg_type = 'message'/, 'a word from a person, not a vote row or a notice');
-    assert.deepEqual(talk.params, [5, 41, null], 'no bound unless one is asked for');
-    // The merge-followups machine names them when the change goes live, which
-    // can be well after the merge: only those who spoke before it count.
-    const bounded = makeRecordingPool([]);
-    await subject.mergeCredits(bounded, { id: 41, app_id: 5, user_id: null }, { before: '2026-10-07T12:00:00.000Z' });
-    const boundedTalk = bounded.queries.find((q) => /FROM chat_messages cm/.test(q.sql));
-    assert.match(boundedTalk.sql, /cm\.created_at <= \$3::timestamptz/);
-    assert.deepEqual(boundedTalk.params, [5, 41, '2026-10-07T12:00:00.000Z']);
+  const subject = require('../src/workflow/rules/merge-credits.ts');
+  const credits = await subject.mergeCredits(pool, { id: 41, app_id: 5, user_id: 7 });
+  assert.deepEqual(credits, { author: 'evan', backers: ['alice', 'bob'], shapers: ['carol', 'frank'] },
+    'in vote order, nobody named twice');
+  const votes = pool.queries.find((q) => /FROM pr_votes pv/.test(q.sql));
+  assert.match(votes.sql, /pv\.approval_epoch = cs\.approval_epoch/, 'only the votes that counted at merge');
+  const talk = pool.queries.find((q) => /FROM chat_messages cm/.test(q.sql));
+  assert.match(talk.sql, /cm\.thread_type = 'session' AND cm\.thread_ref = \$2/, 'the proposal\'s own thread');
+  assert.match(talk.sql, /cm\.msg_type = 'message'/, 'a word from a person, not a vote row or a notice');
+  assert.deepEqual(talk.params, [5, 41, null], 'no bound unless one is asked for');
+  // The merge-followups machine names them when the change goes live, which
+  // can be well after the merge: only those who spoke before it count.
+  const bounded = makeRecordingPool([]);
+  await subject.mergeCredits(bounded, { id: 41, app_id: 5, user_id: null }, { before: '2026-10-07T12:00:00.000Z' });
+  const boundedTalk = bounded.queries.find((q) => /FROM chat_messages cm/.test(q.sql));
+  assert.match(boundedTalk.sql, /cm\.created_at <= \$3::timestamptz/);
+  assert.deepEqual(boundedTalk.params, [5, 41, '2026-10-07T12:00:00.000Z']);
 
-    const nobody = makeRecordingPool([]);
-    assert.deepEqual(await subject.mergeCredits(nobody, { id: 41, app_id: 5, user_id: null }),
-      { author: null, backers: [], shapers: [] });
-  } finally {
-    restore();
-  }
+  const nobody = makeRecordingPool([]);
+  assert.deepEqual(await subject.mergeCredits(nobody, { id: 41, app_id: 5, user_id: null }),
+    { author: null, backers: [], shapers: [] });
 });
 
 // ── 6. The issue side (#2603) ─────────────────────────────────────────

@@ -245,7 +245,7 @@ function mergeForDeploy(manifest, storedValues, platformDefaults, opts = {}) {
  * spawned dapp inherits whatever node URL (etc.) the platform was
  * configured against. Caller-facing because all three deploy paths
  * (`app-creator.js`, `staging.buildAndDeployStaging`,
- * `staging.rebuildProduction`) need exactly the same precedence.
+ * `staging.deployProduction`) need exactly the same precedence.
  *
  * Add new keys here only when their correct value is environment-
  * dependent and should never be hardcoded in a dapp's `dapp.json`.

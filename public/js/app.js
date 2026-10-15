@@ -2780,9 +2780,9 @@ const App = {
   // of the yellow + spinner state. Reacts to BOTH the start broadcast
   // (deploying:true → render the deploying pill) and the end
   // broadcast (deploying:false → re-fetch the version so the new
-  // SHA shows up). The server emits these from staging.js around
-  // every rebuildProduction call, so all entry paths (dev-chat
-  // merge, drift poller, manual check-updates) are covered.
+  // SHA shows up). The app-delivery workflow machine pushes these
+  // around every production deploy, so all entry paths (a merge, the
+  // drift poller, manual check-updates) are covered.
   handleAppRedeployStatus(data) {
     if (!data || !data.appSlug) return;
     const slug = data.appSlug;

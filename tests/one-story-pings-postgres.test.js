@@ -22,6 +22,7 @@ const fs = require('node:fs');
 const { Pool } = require('pg');
 
 const notifications = require('../src/services/notifications');
+const changeNotifications = require('../src/workflow/rules/change-notifications.ts');
 const voteDigest = require('../src/services/vote-digest');
 const dm = require('../src/services/homeroom-bot-dm');
 const policy = require('../src/services/mobile-push-policy');
@@ -179,7 +180,12 @@ test('one story: who the platform pings about a change Homeroom bot built, again
     const listed = await notifications.listForUser(pool, maya.id, { limit: 50 });
     assert.ok(!listed.some((n) => n.id === ring.id), 'a merged change\'s "ready to try" leaves the bell');
 
-    const live = await notifications.createVotedChangeMergedNotifications(pool, { appId: app.id, sessionId: darkMode.id, authorId: bot.id });
+    // The merge-followups machine's write at live (writeMergedNotification):
+    // the author's row and the voters' in one call.
+    const written = await changeNotifications.createPrMergedNotification(pool, {
+      userId: bot.id, appId: app.id, sessionId: darkMode.id, alsoVoters: true,
+    });
+    const live = written.filter((r) => r.kind === 'voted_change_merged');
     const byUser = new Map(live.map((r) => [Number(r.user_id), r.detail]));
     assert.deepEqual([...byUser.keys()].sort((a, b) => a - b), [ben.id, cy.id].sort((a, b) => a - b),
       'the voters, never the requester: the bot\'s own message tells her');

@@ -466,8 +466,9 @@ async function writeState(pool, app, mergeSha, state, detail) {
 }
 
 /**
- * Run the suite on a merge commit and record what it said. Fire-and-forget
- * from finalizeMerge; never throws.
+ * Run the suite on a merge commit and record what it said (the
+ * merge-followups machine's main.check work, and the drift poller on any new
+ * main); never throws unless `strict`.
  *
  * `confirmationOf` is the re-drive of an INTERRUPTED confirmation
  * (resumeInterrupted below): the first red's detail, already recorded, so

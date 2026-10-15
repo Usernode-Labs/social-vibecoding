@@ -5,10 +5,12 @@
 // from 17 Sep to 15 Oct 2026: every automatic path retried the same commit
 // (~1,200 attempts a day), its merges read as done, and its September version
 // kept serving. deploy-failure.js names the refusal and what to change;
-// rebuildProduction does not build or roll out that commit again unless a
-// person asks; the automatic paths wait for a commit that changes it.
+// deployProduction does not build or roll out that commit again unless a
+// person asks (app delivery passes retrySameCommit for a request that is a
+// Redeploy, a "Check for updates" or a demo reset); the automatic paths wait
+// for a commit that changes it.
 //
-// Functional, against the real rebuildProduction with its collaborators
+// Functional, against the real deployProduction with its collaborators
 // stubbed (the harness of tests/rebuild-deploy-failed-notify-once.test.js),
 // plus deploy-failure.js on its own.
 
@@ -195,7 +197,7 @@ test('a root-image refusal is named, with what to change, and marked to wait for
 
 test('the first refusal is recorded and its people are told once', async () => {
   reset();
-  await assert.rejects(staging.rebuildProduction(config, app), /runAsNonRoot/);
+  await assert.rejects(staging.deployProduction(config, app), /runAsNonRoot/);
   assert.equal(appRow.last_failure.kind, 'root_image');
   assert.equal(appRow.last_failure.sha, RED);
   assert.match(appRow.last_failure.reason, /USER 1000:1000/);
@@ -205,12 +207,12 @@ test('the first refusal is recorded and its people are told once', async () => {
 
 test('an automatic retry of the refused commit stops after the clone: no build, no rollout, no new record', async () => {
   reset();
-  await assert.rejects(staging.rebuildProduction(config, app), /runAsNonRoot/);
+  await assert.rejects(staging.deployProduction(config, app), /runAsNonRoot/);
   const recorded = appRow.last_failure;
   notified.length = 0;
   logged.length = 0;
 
-  await assert.rejects(staging.rebuildProduction(config, app), (err) => err instanceof staging.WaitsForNewCommitError && err.sha === RED);
+  await assert.rejects(staging.deployProduction(config, app), (err) => err instanceof staging.WaitsForNewCommitError && err.sha === RED);
   assert.equal(builds, 1, 'no second build');
   assert.equal(deploys, 1, 'no second rollout');
   assert.deepEqual(appRow.last_failure, recorded, 'the original failure stays as it was');
@@ -221,18 +223,18 @@ test('an automatic retry of the refused commit stops after the clone: no build, 
 
 test('a deploy asked for by hand retries the refused commit', async () => {
   reset();
-  await assert.rejects(staging.rebuildProduction(config, app), /runAsNonRoot/);
-  await assert.rejects(staging.rebuildProduction(config, app, { retrySameCommit: true }), /runAsNonRoot/);
+  await assert.rejects(staging.deployProduction(config, app), /runAsNonRoot/);
+  await assert.rejects(staging.deployProduction(config, app, { retrySameCommit: true }), /runAsNonRoot/);
   assert.equal(builds, 2);
   assert.equal(deploys, 2);
 });
 
 test('a commit that fixes the Dockerfile goes ahead and clears the failure', async () => {
   reset();
-  await assert.rejects(staging.rebuildProduction(config, app), /runAsNonRoot/);
+  await assert.rejects(staging.deployProduction(config, app), /runAsNonRoot/);
   headSha = FIXED;
   deployError = null;
-  const result = await staging.rebuildProduction(config, app);
+  const result = await staging.deployProduction(config, app);
   assert.equal(result.sha, FIXED);
   assert.equal(builds, 2);
   assert.equal(appRow.last_failure, null);
