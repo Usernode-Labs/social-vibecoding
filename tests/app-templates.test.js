@@ -359,6 +359,21 @@ test('the game starters: not ready-made, built on the shared game room, and told
   }
 });
 
+// The starter's shared layer cache (services/kubernetes-buildkit.js) can
+// serve a new app its `npm ci` steps only when its package files are the
+// same bytes as every other copy's: no app's slug or name goes into them.
+test('two apps made from the same starter have the same package files', () => {
+  const other = (id) => getTemplateFiles('Another One', 'another-one-f00d42', null, 'https://github.com/example/another-one-f00d42', { template: id });
+  for (const id of ['empty', ...READY, ...GAMES]) {
+    const one = generate(id);
+    const two = other(id);
+    for (const p of ['package.json', 'package-lock.json']) {
+      assert.equal(file(two, p), file(one, p), `${id}: ${p}`);
+      assert.doesNotMatch(file(one, p), /demo-app-abc123|Demo App/, `${id}: ${p} names no app`);
+    }
+  }
+});
+
 for (const id of GAMES) {
   test(`the ${id} game starter is a whole repository on the platform's conventions`, () => {
     const t = appTemplates.get(id);
@@ -421,7 +436,7 @@ for (const id of GAMES) {
     assert.equal(pkg.dependencies.ws, extra.ws.range);
     assert.equal(lock.packages[''].dependencies.ws, extra.ws.range);
     assert.deepEqual(lock.packages['node_modules/ws'], extra.ws.packages['node_modules/ws']);
-    assert.equal(lock.packages[''].name, 'demo-app-abc123');
+    assert.equal(lock.packages[''].name, 'usernode-app-template', 'the template\'s own name, not the app\'s');
     assert.deepEqual(Object.keys(lock.packages)[0], '', 'the root package first, as npm writes it');
     // Its manifest, README and notes.
     const manifest = JSON.parse(file(files, 'dapp.json'));

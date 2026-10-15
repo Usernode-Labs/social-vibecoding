@@ -717,6 +717,12 @@ function load() {
       // it rebuilt something a later build can reuse. `always`: after every
       // build, as before the choice existed.
       buildkitCacheUpload: process.env.BUILDKIT_CACHE_UPLOAD || 'auto',
+      // `on` (default): an app made from a ready-made starter also imports
+      // that starter's shared layer cache, and the app's first build, the
+      // starter as created, uploads to it. `off` (or 0/false): every app
+      // has its own cache only, as before.
+      buildkitStarterCache: !['off', '0', 'false'].includes(
+        String(process.env.BUILDKIT_STARTER_CACHE || 'on').trim().toLowerCase()),
     },
     // Postgres connection pool size (pg `Pool.max`). pg's built-in default
     // is 10, which can bottleneck under many concurrent SSE turns + staging
