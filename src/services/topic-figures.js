@@ -329,34 +329,26 @@ const VOTE_TO_MERGED_SQL = `
     FROM per
    WHERE merged_at >= $1::timestamptz AND merged_at < $2::timestamptz AND merged_at >= first_at`;
 
-// Merges into a project in the window: from GitHub merging it (or, with no
-// GitHub merge, the deploy starting) to the deploy finishing, and the ones
-// whose deploy failed. Homeroom's own release runs outside the merge:
+// Merges into a project in the window: from GitHub merging it to
+// production first running a build that contains it, and the ones whose
+// deploy failed and still wait for one that succeeds. Read off the
+// merge-followups workflow machine's instances (one per merge), which keep
+// both times. Homeroom's own release runs outside the merge:
 // HOMEROOM_LIVE_SQL reads it.
 const MERGE_LIVE_SQL = `
-  WITH runs AS (
-    SELECT r.id, r.summary
-      FROM merge_debug_runs r
-      JOIN apps ap ON ap.id = r.app_id
-     WHERE r.kind = 'merge' AND r.status = 'merged' AND ap.self_hosted IS NOT TRUE
-       AND r.started_at >= $1::timestamptz AND r.started_at < $2::timestamptz
-  ), timed AS (
-    SELECT ru.summary,
-           COALESCE(
-             (SELECT MIN(s.created_at) FROM merge_debug_steps s
-               WHERE s.run_id = ru.id AND s.phase = 'github_merge' AND s.detail ? 'sha'),
-             (SELECT MIN(s.created_at) FROM merge_debug_steps s
-               WHERE s.run_id = ru.id AND s.phase = 'prod_rebuild')) AS merged_at,
-           (SELECT MAX(s.created_at) FROM merge_debug_steps s
-             WHERE s.run_id = ru.id AND s.phase = 'prod_rebuild' AND s.detail ? 'sha') AS live_at
-      FROM runs ru
+  WITH merges AS (
+    SELECT w.state, (w.data->>'mergedAt')::timestamptz AS merged_at, (w.data->>'liveAt')::timestamptz AS live_at
+      FROM wf_instances w
+     WHERE w.machine = 'merge-followups' AND w.data->>'role' = 'merge'
+       AND (w.data->>'selfHosted')::boolean IS NOT TRUE
+       AND (w.data->>'mergedAt')::timestamptz >= $1::timestamptz AND (w.data->>'mergedAt')::timestamptz < $2::timestamptz
   )
   SELECT COUNT(*)::int AS total,
-         COUNT(*) FILTER (WHERE summary ILIKE '%production deploy failed%')::int AS failed,
+         COUNT(*) FILTER (WHERE state = 'deploy_failed')::int AS failed,
          COUNT(*) FILTER (WHERE live_at >= merged_at)::int AS n,
          (percentile_cont(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM live_at - merged_at))
            FILTER (WHERE live_at >= merged_at))::float8 AS median_secs
-    FROM timed`;
+    FROM merges`;
 
 // Merges into Homeroom in the window, from the merge to the first
 // production process serving a build that carries it

@@ -292,7 +292,9 @@ test('the Homeroom bot DM\'s activity tray reads one person\'s work, through the
     assert.deepEqual(again.history[0].earlier.map((r) => r.outcome), ['proposed']);
 
     // Merged since: that is the news, not the answer before it.
-    await pool.query(`UPDATE chat_sessions SET status = 'merged' WHERE id = $1`, [proposal.id]);
+    // Merged and live, as the merge-followups machine leaves a change
+    // production runs (nothing else moves a row into merged now).
+    await pool.query(`UPDATE chat_sessions SET status = 'merged', live_at = NOW() WHERE id = $1`, [proposal.id]);
     const merged = await tray.workFor(pool, { user: asAda });
     assert.equal(merged.history[0].outcome, 'live');
     assert.deepEqual(merged.history[0].earlier.map((r) => r.outcome), ['answer']);

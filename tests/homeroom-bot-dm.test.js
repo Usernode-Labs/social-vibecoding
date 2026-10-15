@@ -263,7 +263,7 @@ test('#20 (WP3): a message whose card cannot go says what it says without it', a
   assert.match(src, /withoutCards: dmText\(kind, \{ \.\.\.dm, sessionId: null \}, context\),/);
 });
 
-test('#7 (WP3): "live now" only once the app answered on the merge it deployed, and the platform\'s own app says a few minutes', async () => {
+test('#7 (WP3): "live now" is said when the change is live, and the platform\'s own app has no app to open', async () => {
   const line = '**Plant Pal** · request #3: Watering reminders';
   // One story (contract 2.2): a first version is "your first version"; a
   // change is "it", in its request's thread, with Open {project} under it.
@@ -289,35 +289,16 @@ test('#7 (WP3): "live now" only once the app answered on the merge it deployed, 
     { id: 'open_app', label: 'Open Page Turners', style: 'primary', type: 'open', target: '#app/page-turners/app' });
   assert.equal(dm.openAppAction({ slug: '', appName: 'X' }), null);
 
-  // Its health, read a few times a few seconds apart, on the build the merge deployed.
-  const probes = [];
-  const waits = [];
-  const runtime = (answers) => ({
-    productionRef: (_config, app) => ({ runtimeKind: 'kubernetes', runtimeName: `app-${app.slug}` }),
-    async probeHealth(_config, ref) { probes.push(ref.runtimeName); return answers.shift(); },
-  });
-  const deps = (answers) => ({ applicationRuntime: runtime(answers), sleep: async (ms) => { waits.push(ms); } });
-  const app = { id: 3, slug: 'plant-pal', self_hosted: false };
-  assert.equal(await dm.liveAfterMerge({}, app, { sha: 'abc', deps: deps([true]) }), true);
-  assert.deepEqual([probes, waits], [['app-plant-pal'], []]);
-  probes.length = 0;
-  assert.equal(await dm.liveAfterMerge({}, app, { sha: 'abc', deps: deps([false, false, true]) }), true, 'starting up');
-  assert.deepEqual(waits, [dm.LIVE_PROBE_WAIT_MS, dm.LIVE_PROBE_WAIT_MS]);
-  probes.length = 0;
-  waits.length = 0;
-  assert.equal(await dm.liveAfterMerge({}, app, { sha: 'abc', deps: deps([false, false, false, true]) }), false, 'not yet: a few minutes');
-  assert.equal(probes.length, dm.LIVE_PROBES);
-  probes.length = 0;
-  assert.equal(await dm.liveAfterMerge({}, { ...app, self_hosted: true }, { sha: 'abc', deps: deps([true]) }), false,
-    'the platform releases after the merge, elsewhere');
-  assert.equal(await dm.liveAfterMerge({}, app, { sha: null, deps: deps([true]) }), false, 'nothing deployed to confirm');
-  assert.equal(await dm.liveAfterMerge(null, app, { sha: 'abc', deps: deps([true]) }), false);
-  assert.deepEqual(probes, [], 'none of those reads its health');
-
-  // The merge passes what it deployed, and its config to read the health with.
-  const votes = read('src/routes/votes.js');
-  assert.match(votes, /sha = result\.sha;\n\s+deployedSha = sha \|\| null;/);
-  assert.match(votes, /require\('\.\.\/services\/homeroom-bot-dm'\)\.noteProposalMerged\(pool, session, \{ config, sha: deployedSha \}\)/);
+  // It says live: the merge-followups machine asks for it only once the
+  // change is live (machine.ts toLive's bot.dmMerged work), so nothing here
+  // reads the app's health or waits for it.
+  const src = read('src/services/homeroom-bot-dm.js');
+  const merged = src.slice(src.indexOf('async function noteProposalMerged('), src.indexOf('// ── A person writing to the bot'));
+  assert.match(merged, /^async function noteProposalMerged\(pool, session, \{ deps = \{\} \} = \{\}\)/);
+  assert.match(merged, /const live = true;/);
+  assert.doesNotMatch(merged, /probeHealth|liveAfterMerge/);
+  const services = read('src/workflow/merge-followups/services.ts');
+  assert.match(services, /legacy\('services\/homeroom-bot-dm'\)\.noteProposalMerged\(pool, \{ id: input\.sessionId \},\s*\{ deps: \{ strict: true \} \}\)/);
 });
 
 test('an answer is posted on the request saying where it came from', () => {

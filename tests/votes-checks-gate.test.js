@@ -1,7 +1,7 @@
 // #47 "CI for proposals": checkAndMerge blocks a non-'passing' proposal —
 // even with a winning vote — and lets a 'passing' one through. Admin
 // force-merge bypasses the gate. Same require.cache stubbing pattern as
-// votes-merge-deploy-failed.test.js — nothing real spins up.
+// votes-merge-report-failed.test.js — nothing real spins up.
 //
 // Run with: node --test tests/votes-checks-gate.test.js
 
@@ -45,7 +45,7 @@ function loadVotes() {
     logger: require.resolve('../src/services/logger'),
     pool: require.resolve('../src/db/pool'),
     github: require.resolve('../src/services/github'),
-    staging: require.resolve('../src/services/staging'),
+    platform: require.resolve('../src/workflow/platform.ts'),
     docker: require.resolve('../src/services/docker'),
     resolver: require.resolve('../src/services/conflict-resolver'),
     ws: require.resolve('../src/services/ws'),
@@ -69,10 +69,9 @@ function loadVotes() {
     isEnabled: () => true,
     mergePR: async () => ({ sha: 'deadbeefcafe', merged: true }),
   });
-  stub(ids.staging, {
-    rebuildProduction: async () => ({ ok: true }),
-    teardownStaging: async () => {},
-  });
+  // A merge is reported to the merge-followups workflow machine, which
+  // owns everything after GitHub's merge.
+  stub(ids.platform, { mergeConfirmed: async () => ({ status: 'accepted', eventId: 1 }) });
   stub(ids.docker, {});
   stub(ids.resolver, {
     checkAndResolveConflicts: async () => {},
@@ -125,8 +124,6 @@ function poolWith(checkState, testResults) {
     [/SELECT COUNT\(\*\) as cnt FROM pr_votes/, [{ cnt: '1' }]],
     [/SELECT check_state, test_results[\s\S]*FROM chat_sessions/, [{ check_state: checkState, test_results: testResults || [], check_error_detail: null }]],
     [/SET status = 'merging'/, [{ id: 7 }]],
-    [/SELECT \* FROM apps WHERE id/, [{ id: 5, slug: 'whiteboard', self_hosted: false }]],
-    [/SET\s+status = 'merged'/, { rows: [], rowCount: 1 }],
   ]);
 }
 
@@ -225,8 +222,6 @@ function firstVersionPool(checkState, testResults) {
     [/SELECT COUNT\(\*\) as cnt FROM pr_votes/, [{ cnt: '0' }]],
     [/SELECT check_state, test_results[\s\S]*FROM chat_sessions/, [{ check_state: checkState, test_results: testResults || [], check_error_detail: null }]],
     [/SET status = 'merging'/, [{ id: 7 }]],
-    [/SELECT \* FROM apps WHERE id/, [{ id: 5, slug: 'whiteboard', self_hosted: false }]],
-    [/SET\s+status = 'merged'/, { rows: [], rowCount: 1 }],
   ]);
 }
 

@@ -689,27 +689,17 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
       `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, proposal_session_id) VALUES ($1, $2, 'live', 'ready', $3)`,
       [notes.id, n, built.id],
     );
-    // #7 (WP3): "live now" once the app answered its health check on what
-    // the merge deployed, with a button that opens the app (5 October: its
-    // own, which no card the bot cannot attach takes with it), the
-    // proposal's card, and the app's address as its link.
-    const probed = [];
-    const healthy = {
-      applicationRuntime: {
-        productionRef: (_config, app) => ({ runtimeKind: 'kubernetes', runtimeName: `app-${app.slug}` }),
-        async probeHealth(_config, ref) { probed.push(ref.runtimeName); return true; },
-      },
-      sleep: async () => {},
-    };
+    // #7 (WP3): "live now", asked once production runs a build containing
+    // the change (the merge-followups machine), with a button that opens
+    // the app (5 October: its own, which no card the bot cannot attach
+    // takes with it), the proposal's card, and the app's address as its link.
     // One story: every change's requester hears it is live, in the request's
-    // thread and the main chat, with its Open button; the app is asked
-    // whether it answers first.
-    const live = await dm.noteProposalMerged(pool, { id: built.id }, { config: {}, sha: 'a'.repeat(40), deps: healthy });
+    // thread and the main chat, with its Open button.
+    const live = await dm.noteProposalMerged(pool, { id: built.id });
     const liveMsg = await read(live);
     assert.equal(liveMsg.content, 'It\'s live. Open Note board to see it.');
     assert.equal(liveMsg.threadRootId, ack.id);
     assert.deepEqual([liveMsg.metadata.homeroomBot.moment, liveMsg.metadata.homeroomBot.said, liveMsg.metadata.homeroomBot.alsoInChat], ['live', 'live', true]);
-    assert.deepEqual(probed, ['app-note-board']);
 
     // A request filed anywhere else started nowhere here; one whose start
     // she deleted is still told, without the quote.

@@ -20,14 +20,6 @@ platform:
   # kill switch; legacy default-root screenshots stay suppressed. This was
   # visualEvidenceV2Enabled before the rename; that key is no longer read.
   shotsEnabled: true
-  # The workflow merge-followups machine runs what follows a merge
-  # (docs/workflows.md). A rolling change is safe in both directions; see
-  # docs/kubernetes-operations.md.
-  workflowMergeFollowupsEnabled: false
-  # The workflow app-delivery machine runs every production deploy of an
-  # app (docs/workflows.md). Needs workflowMergeFollowupsEnabled. A rolling
-  # change is safe in both directions; see docs/kubernetes-operations.md.
-  workflowAppDeliveryEnabled: false
   # How long a platform Pod a release replaced keeps finishing the work it
   # started (turns and what follows them, previews, checks, shots runs,
   # merges) before it hands the rest over and exits. It exits as soon as it

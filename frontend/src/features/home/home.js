@@ -2633,9 +2633,6 @@ const Home = {
           });
         }
         return;
-      case 'redeployed':
-        PlatformUI.toast(message('home:check.redeployed', { sha: (data.to || '').slice(0, 7) }));
-        return;
       case 'in_flight':
         PlatformUI.toast(message('home:check.inFlight'));
         return;
@@ -2652,15 +2649,6 @@ const Home = {
         return;
       case 'invalid_repo':
         PlatformUI.toast(message('home:check.invalidRepo'));
-        return;
-      case 'rebuild_failed':
-        PlatformUI.toast(data.error
-          ? message('home:check.rebuildFailed', {
-            from: (data.from || '').slice(0, 7), to: (data.attempted || '').slice(0, 7), reason: data.error,
-          })
-          : message('home:check.rebuildFailedUnknown', {
-            from: (data.from || '').slice(0, 7), to: (data.attempted || '').slice(0, 7),
-          }));
         return;
       default:
         PlatformUI.toast(message('home:check.finished', { status: data.status }));

@@ -115,17 +115,9 @@ stubModule('../src/services/github', {
     return { previousSha: 'z'.repeat(40), sha: args[3], updated: state.mainMoves };
   },
 });
-stubModule('../src/services/staging', {
-  rebuildProduction: async (...args) => {
-    record('rebuildProduction')(...args);
-    return { containerId: 'cid', sha: 'b'.repeat(40) };
-  },
-});
-// The app-delivery workflow machine: its flag in this process, and what was
-// asked of it.
-const delivery = { on: false, requested: [] };
+// The app-delivery workflow machine: what was asked of it.
+const delivery = { requested: [] };
 stubModule('../src/workflow/platform.ts', {
-  deliveryEnabled: () => delivery.on,
   requestDeploy: async (appId, reason) => { delivery.requested.push([appId, reason]); return 1; },
 });
 stubModule('../src/services/ws', {
@@ -740,7 +732,8 @@ test('the number is the caller\'s, within the platform\'s own bounds, and null k
 
 // ── Reset ───────────────────────────────────────────────────────────────
 
-test('reset takes the partner\'s proposals down, puts main back, and rebuilds', async () => {
+test('reset takes the partner\'s proposals down, puts main back, and asks app delivery for the deploy', async () => {
+  delivery.requested.length = 0;
   state.sessions.push(
     { id: 9, app_id: 1, user_id: 50, status: 'merged', pr_number: 42 },
     { id: 10, app_id: 1, user_id: 50, status: 'promoted', pr_number: 43 },
@@ -764,8 +757,7 @@ test('reset takes the partner\'s proposals down, puts main back, and rebuilds', 
   assert.deepEqual(del.params[0], [9, 10]);
   assert.deepEqual(state.sessions.map((s) => s.id), [11], 'the creator\'s own proposal survives');
   assert.deepEqual(calls.forceBranchToSha[0], ['usernode-bot', 'demo-app', 'main', 'b'.repeat(40)]);
-  await settle();
-  assert.equal(calls.rebuildProduction[0][1].slug, 'demo-app');
+  assert.deepEqual(delivery.requested, [[1, 'demo_reset']]);
   assert.equal(queriesLike('INSERT INTO app_activity').length, 1, 'standing refreshed for the next take');
 });
 
@@ -786,40 +778,25 @@ test('a preview the machine has not retired yet stops the reset before anything 
   }
 });
 
-test('with app delivery on, the reset asks it for the deploy', async () => {
-  delivery.on = true;
-  delivery.requested.length = 0;
-  try {
-    const r = await post('/api/apps/demo-app/demo/reset', {});
-    assert.equal(r.status, 200, JSON.stringify(r.body));
-    assert.equal(r.body.redeploy, 'started');
-    assert.deepEqual(delivery.requested, [[1, 'demo_reset']]);
-    await settle();
-    assert.equal(calls.rebuildProduction, undefined, 'no deploy of its own');
-  } finally { delivery.on = false; }
-});
-
 test('a deploy request that cannot be recorded does not turn a done reset into an error', async () => {
-  delivery.on = true;
   const real = require.cache[require.resolve('../src/workflow/platform.ts')].exports.requestDeploy;
   require.cache[require.resolve('../src/workflow/platform.ts')].exports.requestDeploy = async () => { throw new Error('database down'); };
   try {
     const r = await post('/api/apps/demo-app/demo/reset', {});
     assert.equal(r.status, 200, JSON.stringify(r.body));
   } finally {
-    delivery.on = false;
     require.cache[require.resolve('../src/workflow/platform.ts')].exports.requestDeploy = real;
   }
 });
 
-test('when nothing merged, main is already at the base and nothing rebuilds', async () => {
+test('when nothing merged, main is already at the base and nothing is deployed', async () => {
+  delivery.requested.length = 0;
   state.mainMoves = false;
   const r = await post('/api/apps/demo-app/demo/reset', {});
   assert.equal(r.status, 200);
   assert.equal(r.body.main.moved, false);
   assert.equal(r.body.redeploy, 'skipped');
-  await settle();
-  assert.equal(calls.rebuildProduction, undefined);
+  assert.deepEqual(delivery.requested, []);
 });
 
 // ── Status ──────────────────────────────────────────────────────────────

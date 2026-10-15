@@ -196,10 +196,10 @@ const DECIDED_ASK_SETTLED_SQL = `(n.kind IN (${DECIDED_ASK_KINDS.map((k) => `'${
 // lookup and the live push. A merged change that is not live yet reads as
 // merging, which the bell words as going live: live_at is NULL (the
 // merge-followups machine), or (#5064) it is a merge of Homeroom itself that
-// the running build does not carry yet. With the machine's flag off the
-// merge stamps live_at at once, while the platform's own release comes
-// minutes later; the build that serves is apps.main_sha, and a change merged
-// after the one that build was merged from is still on its way. That is the
+// the running build does not carry yet (a row the old merge path stamped
+// live at once, while the platform's own release came minutes later): the
+// build that serves is apps.main_sha, and a change merged after the one that
+// build was merged from is still on its way. That is the
 // board's own boundary (routes/votes.js annotateDeploymentState); no match
 // for the running build reads as it always did, live.
 const RELEASE_PENDING_SQL = `(COALESCE(cs.merged_at, cs.created_at), cs.id) > (
@@ -720,40 +720,6 @@ async function notifyIssueFiled(pool, { appId, issueNumber, authorId, text = '' 
   return { mentions, opened };
 }
 
-// Your proposal merged. Addressed to its author, and the one notification in
-// this set that is unambiguously good news rather than a request to act.
-//
-// System-generated, so source_user_id stays null: a merge is the group's
-// decision arriving, not a person doing something to you. `force` rides in
-// `detail` so the drawer can tell an admin override apart from a vote that
-// carried, which are the same event with very different meanings to the
-// person who wrote the change.
-// #1688: `credits` is the "Backed by alice and bob, shaped by carol." sentence
-// for a merge the vote carried — it rides in `detail`, which a force merge
-// uses for its own marker, so the two never meet.
-// #4787: `alsoVoters` asks for the voters' rows in the same call. The
-// workflow's copy writes both and throws on either; here, outside the
-// machine's transaction, a voter's row failing must not take the author's
-// down with it, nor the merge that is being told about: logged, and the
-// author's rows still return.
-async function createPrMergedNotification(pool, { alsoVoters = false, ...args } = {}) {
-  // The workflow's (src/workflow/rules/change-notifications.ts), with this
-  // module's fail-open preference read: a broken read must not swallow it.
-  const created = await changeNotifications.createPrMergedNotification(pool, args, notificationPreferences.allowsKind);
-  if (alsoVoters && args.sessionId) {
-    try {
-      created.push(...await createVotedChangeMergedNotifications(pool, {
-        appId: args.appId, sessionId: args.sessionId, authorId: args.userId ?? null,
-      }));
-    } catch (err) {
-      log.warn('notifications', 'Voted-change merged notifications failed', {
-        appId: args.appId, sessionId: args.sessionId, err: err.message,
-      });
-    }
-  }
-  return created;
-}
-
 // #1688: a proposal this person had said yes to got a new version from its
 // author, and their yes no longer counts until they look again. One row per
 // (voter, session, epoch) — `detail` carries the epoch, so a second push
@@ -818,14 +784,6 @@ async function updateAsker(pool, sessionId) {
     log.warn('notifications', 'Could not read who asked for an update', { sessionId, err: err.message });
     return null;
   }
-}
-
-// #4787: the change a person voted on went live: one row per voter, yes or
-// no, the author never double-told (src/workflow/rules/change-notifications.ts),
-// with this module's preference read.
-async function createVotedChangeMergedNotifications(pool, args) {
-  return changeNotifications.createVotedChangeMergedNotifications(pool, args,
-    (db, q) => notificationPreferences.filterUsersByCategory(db, q));
 }
 
 // Somebody voted on a proposal of yours.
@@ -2209,10 +2167,8 @@ module.exports = {
   createIssueMentionNotifications,
   notifyIssueMentions,
   notifyIssueFiled,
-  createPrMergedNotification,
   createProposalVoteNotification,
   createRevisionRecheckNotifications,
-  createVotedChangeMergedNotifications,
   createAppHealthNotification,
   createPlatformLimitNotifications,
   createPlatformIncidentNotifications,

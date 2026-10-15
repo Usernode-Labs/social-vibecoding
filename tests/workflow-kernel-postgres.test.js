@@ -929,21 +929,14 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
     await pool.query(`UPDATE kt_legacy SET note = 'fine', payload = payload || '{"other": 1}' WHERE key = 'k12'`);
     await pool.query(`INSERT INTO kt_legacy (key, status) VALUES ('free:1', 'a')`);
     await pool.query(`UPDATE kt_legacy SET status = 'b' WHERE key = 'free:1'`); // outside the WHEN clause
-    // Log mode allows and records.
+    // There is no mode that lets such a write through.
     await pool.query(`INSERT INTO wf_settings (key, value) VALUES ('ownership_mode', 'log')`);
-    await pool.query(`UPDATE kt_legacy SET status = 'x' WHERE key = 'k12'`);
-    await pool.query(`DELETE FROM wf_settings WHERE key = 'ownership_mode'`);
-    const { ownershipViolations } = await inspect.problems(pool);
-    assert.deepEqual(ownershipViolations.map((v) => [v.table_name, v.column_path, v.count]), [['kt_legacy', 'status', 1]]);
-  });
-
-  await t.test('the problems name each write outside a machine: row, application, statement', async () => {
-    const { ownershipViolationRows: rows } = await inspect.problems(pool);
-    const legacyId = Number((await pool.query(`SELECT id FROM kt_legacy WHERE key = 'k12'`)).rows[0].id);
-    assert.equal(rows.length, 1);
-    assert.deepEqual([rows[0].table, rows[0].column, rows[0].row], ['kt_legacy', 'status', { id: legacyId }]);
-    assert.equal(typeof rows[0].application, 'string');
-    assert.match(rows[0].query, /UPDATE kt_legacy SET status = 'x'/);
+    try {
+      await assert.rejects(pool.query(`UPDATE kt_legacy SET status = 'x' WHERE key = 'k12'`), /WF_OWNERSHIP_VIOLATION: kt_legacy.status/);
+    } finally {
+      await pool.query(`DELETE FROM wf_settings WHERE key = 'ownership_mode'`);
+    }
+    assert.deepEqual(Object.keys(await inspect.problems(pool)).sort(), ['flagged', 'overdueDeadlines', 'work']);
   });
 
   await t.test('K17 appendAndWait answers with the outcome, or pending within its budget', async () => {

@@ -574,7 +574,7 @@ async function finalizeDeployInner(config, {
       environment: 'production',
       imageRef: build.imageRef,
       dockerName: containerName,
-      // Same revision evidence rebuildProduction stamps (#3335), so a new
+      // Same revision evidence deployProduction stamps (#3335), so a new
       // app's first container already says which commit it serves.
       labels: /^[a-f0-9]{40}$/i.test(mainSha || '')
         ? { 'social.usernode.io/source-revision': mainSha.toLowerCase() } : {},

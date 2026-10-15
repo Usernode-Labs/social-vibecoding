@@ -35,7 +35,7 @@ const appsJs = fs.readFileSync(path.join(root, 'src/routes/apps.js'), 'utf8');
 const route = (() => {
   const start = appsJs.indexOf("router.post('/api/apps/:slug/secret-declaration-pr'");
   assert.notStrictEqual(start, -1, 'secret-declaration-pr route not found');
-  const end = appsJs.indexOf("  // Trigger a fresh `rebuildProduction`", start);
+  const end = appsJs.indexOf('  // Ask app delivery for a fresh deploy.', start);
   assert.notStrictEqual(end, -1, 'end of the declaration route not found');
   return appsJs.slice(start, end);
 })();

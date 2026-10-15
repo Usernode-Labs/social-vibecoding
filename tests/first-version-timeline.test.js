@@ -134,12 +134,12 @@ test('the pipeline writes each stage where it happens', () => {
   // Its first look, whichever way it was drawn.
   assert.match(bot, /stage: 'first_look_saved', detail: \{ from: 'saved_screen' \}/);
   assert.match(bot, /if \(drawn\) void timeline\.record\(pool, \{ runId, stage: 'first_look_saved', detail: \{ from: 'spec' \} \}\);\s+return drawn;/);
-  // Merged, and live: now, or on the later look that finds it answering.
+  // Merged, and live: noteProposalMerged is asked once production runs the
+  // change (the merge-followups machine), so both are recorded then.
   const dm = read('src/services/homeroom-bot-dm.js');
   assert.match(dm, /SELECT r\.id AS run_id, r\.app_id, r\.issue_number/);
   assert.match(dm, /void timeline\.record\(pool, \{ runId: run\.run_id, stage: 'merged', sessionId: session\.id \}\);/);
-  assert.match(dm, /if \(live \|\| platform\) void timeline\.record\(pool, \{ runId: run\.run_id, stage: 'live', sessionId: session\.id \}\);/);
-  assert.match(dm, /await noteChatLive\(pool, run\);\s+void timeline\.record\(pool, \{ runId: run\.run_id, stage: 'live', detail: \{ late: true \} \}\);/);
+  assert.match(dm, /void timeline\.record\(pool, \{ runId: run\.run_id, stage: 'live', sessionId: session\.id \}\);/);
   // And at Make it, before there is a run.
   assert.match(read('src/services/first-version-plan.js'), /appId: app\.id, stage: 'plan_written', detail: \{ source: 'make_it', questions: made\.plan\.questions\.length \},/);
 });

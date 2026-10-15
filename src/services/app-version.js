@@ -3,7 +3,7 @@
 // #21 helpers: deriving the "version currently live on prod" for an app.
 //
 // The source of truth is `apps.main_sha` (populated by app-creator and
-// staging.rebuildProduction). This module provides:
+// staging.deployProduction). This module provides:
 //   - getAppVersion(pool, slug): join with chat_sessions for PR context
 //     so the UI can show a tooltip like "PR #42 · Add leaderboard · @evan".
 //   - backfillMainShas(pool): one-shot at server boot to fill in nulls

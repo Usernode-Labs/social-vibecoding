@@ -4,7 +4,7 @@
 // this only its author was told; smartfren666 voted on three proposals in a
 // week and found one had gone live by accident, days later.
 //
-//   1. the producer (services/notifications.js
+//   1. the producer (src/workflow/rules/change-notifications.ts
 //      createVotedChangeMergedNotifications): one row per voter, yes or no,
 //      the author never double-told, a muted voter left alone, a second call
 //      writes nothing — and, against the full PostgreSQL schema, the
@@ -12,16 +12,15 @@
 //      are otherwise typed text and `n.user_id = v.user_id` is an integer =
 //      text comparison Postgres refuses); and the door the merge workflow
 //      uses, createPrMergedNotification's alsoVoters, which tells the author
-//      and the voters in one call and keeps a voters-side failure off the
-//      author's rows;
+//      and the voters in one call, and throws on a voters-side failure so the
+//      machine's transaction is retried whole;
 //   2. the phone's banner, on a child app (live when it arrives) and on the
 //     platform's own (approved now, live in a few minutes);
 //   3. the bell's row: the same drawing as the author's "Live" row, no
 //     button of its own, and the kind opens the proposal;
-//   4. the merge paths: the machine's write (exercised for real against
-//     PostgreSQL in tests/workflow-merge-followups-postgres.test.js), the
-//     included change's step, and the votes.js tail. A throwing producer
-//     must never fail a merge.
+//   4. the merge path: the machine's write, for a merge and for a change
+//     included in another alike (exercised for real against PostgreSQL in
+//     tests/workflow-merge-followups-postgres.test.js).
 //
 // Run with: node --test tests/voted-change-merged-notifications.test.js
 
@@ -33,21 +32,16 @@ const path = require('node:path');
 const { englishPlatformI18n } = require('./lib/platform-i18n');
 const { loadTsx } = require('./lib/render-tsx');
 
-function stubModule(rel, exportsObj) {
-  const full = require.resolve(rel);
-  require.cache[full] = { id: full, filename: full, loaded: true, exports: exportsObj };
-}
-
+// The producer reads the voters' preference through the `filter` it is
+// handed; this one records the ask and mutes user 10.
 const filtered = [];
-stubModule('../src/services/notification-preferences', {
-  filterUsersByCategory: async (_pool, args) => {
-    filtered.push(args);
-    return args.userIds.filter((id) => id !== 10); // 10 muted the category
-  },
-  allowsKind: async () => true,
-});
+const filter = async (_pool, args) => {
+  filtered.push(args);
+  return args.userIds.filter((id) => id !== 10); // 10 muted the category
+};
 
-const notifications = require('../src/services/notifications');
+const changeNotifications = require('../src/workflow/rules/change-notifications.ts');
+const voted = (pool, args) => changeNotifications.createVotedChangeMergedNotifications(pool, args, filter);
 
 function makePool(voters = [{ user_id: 8 }, { user_id: 7 }, { user_id: 10 }, { user_id: 12 }]) {
   const queries = [];
@@ -77,7 +71,7 @@ function makePool(voters = [{ user_id: 8 }, { user_id: 7 }, { user_id: 10 }, { u
 test('one row per voter, yes or no; the author never double-told, a muted voter left alone', async () => {
   filtered.length = 0;
   const pool = makePool();
-  const rows = await notifications.createVotedChangeMergedNotifications(pool, {
+  const rows = await voted(pool, {
     appId: 5, sessionId: 41, authorId: 7,
   });
   assert.deepEqual(filtered, [{ userIds: [8, 10, 12], appId: 5, categoryKey: 'voted_changes_live' }],
@@ -101,17 +95,17 @@ test('one row per voter, yes or no; the author never double-told, a muted voter 
 test('nobody to tell: no filter, no insert', async () => {
   filtered.length = 0;
   const pool = makePool();
-  assert.deepEqual(await notifications.createVotedChangeMergedNotifications(pool, { appId: 5, sessionId: null, authorId: 7 }), []);
+  assert.deepEqual(await voted(pool, { appId: 5, sessionId: null, authorId: 7 }), []);
   assert.equal(pool.queries.length, 0);
   // A change only its author voted on (or a Just you project whose only
   // voter is its author): read, then nothing.
   const solo = makePool([{ user_id: 7 }]);
-  assert.deepEqual(await notifications.createVotedChangeMergedNotifications(solo, { appId: 5, sessionId: 41, authorId: 7 }), []);
+  assert.deepEqual(await voted(solo, { appId: 5, sessionId: 41, authorId: 7 }), []);
   assert.equal(solo.queries.length, 1, 'the votes were read');
   assert.deepEqual(filtered, [], 'nobody left, nobody asked the filter');
   // Everybody muted: filtered, then nothing written.
   const muted = makePool([{ user_id: 10 }]);
-  assert.deepEqual(await notifications.createVotedChangeMergedNotifications(muted, { appId: 5, sessionId: 41, authorId: 7 }), []);
+  assert.deepEqual(await voted(muted, { appId: 5, sessionId: 41, authorId: 7 }), []);
   assert.equal(filtered.length, 1);
   assert.equal(muted.queries.filter((q) => /INSERT INTO notifications/.test(q.sql)).length, 0);
 });
@@ -145,12 +139,12 @@ test('against PostgreSQL: the insert runs, dedupes, and never tells the author',
        VALUES ($1, $2, 'bot-1', 'merged', 'Dark mode', 'Dark mode') RETURNING id`, [app.id, mo.id]);
     await pool.query(`INSERT INTO pr_votes (session_id, user_id, vote) VALUES ($1, $2, 'yes'), ($1, $3, 'no')`, [s.id, ada.id, priya.id]);
 
-    const first = await notifications.createVotedChangeMergedNotifications(pool, {
+    const first = await voted(pool, {
       appId: app.id, sessionId: s.id, authorId: mo.id,
     });
     assert.deepEqual(first.map((r) => Number(r.user_id)).sort(), [Number(ada.id), Number(priya.id)],
       'the yes voter and the no voter, never the author');
-    const again = await notifications.createVotedChangeMergedNotifications(pool, {
+    const again = await voted(pool, {
       appId: app.id, sessionId: s.id, authorId: mo.id,
     });
     assert.deepEqual(again, [], 'a retried merge writes nothing');
@@ -263,10 +257,11 @@ test('#5064: going live until production runs it, then live', () => {
 
 // ── 4. The merge paths ────────────────────────────────────────────────
 
-// The merge workflow may only name the members of services/notifications.js
-// it already names (tests/workflow-process-state.test.js), so its write asks
-// for the voters' rows through createPrMergedNotification's own `alsoVoters`
-// rather than through a second door.
+// The merge workflow asks for the voters' rows through
+// createPrMergedNotification's own `alsoVoters` rather than through a second
+// door. Its preference reads are the rules' own (rules/notification-
+// preferences.ts), which read notification_preferences: here user 10 has
+// muted the category.
 function mergedPool({ voters = [], failVotes = false } = {}) {
   const queries = [];
   return {
@@ -277,6 +272,9 @@ function mergedPool({ voters = [], failVotes = false } = {}) {
       if (/FROM pr_votes/.test(s)) {
         if (failVotes) throw new Error('db hiccup');
         return { rows: voters };
+      }
+      if (/FROM notification_preferences/.test(s) && /category = \$1/.test(s)) {
+        return { rows: [{ user_id: 10, app_id: null, enabled: false }] };
       }
       if (/INSERT INTO notifications/.test(s)) {
         if (/'pr_merged'/.test(s)) {
@@ -294,54 +292,37 @@ function mergedPool({ voters = [], failVotes = false } = {}) {
   };
 }
 
+const allows = async () => true;
+
 test('alsoVoters: the author and the voters in one call, the author never double-told', async () => {
-  filtered.length = 0;
   const pool = mergedPool({ voters: [{ user_id: 8 }, { user_id: 7 }, { user_id: 10 }, { user_id: 12 }] });
-  const rows = await notifications.createPrMergedNotification(pool, {
+  const rows = await changeNotifications.createPrMergedNotification(pool, {
     userId: 7, appId: 5, sessionId: 41, credits: 'Backed by ada.', alsoVoters: true,
-  });
+  }, allows);
   assert.deepEqual(rows.map((r) => [r.kind, r.user_id]),
     [['pr_merged', 7], ['voted_change_merged', 8], ['voted_change_merged', 12]],
     'the author\'s row first, then the voters\' — the author (7) and the muted voter (10) left out');
-  assert.deepEqual(filtered, [{ userIds: [8, 10, 12], appId: 5, categoryKey: 'voted_changes_live' }]);
+  const prefs = pool.queries.find((q) => /FROM notification_preferences/.test(q.sql));
+  assert.deepEqual(prefs.params, ['voted_changes_live', [8, 10, 12], 5]);
 });
 
 test('alsoVoters with no author (a bot build): only the voters have someone to tell', async () => {
-  filtered.length = 0;
   const pool = mergedPool({ voters: [{ user_id: 8 }, { user_id: 12 }] });
-  const rows = await notifications.createPrMergedNotification(pool, {
+  const rows = await changeNotifications.createPrMergedNotification(pool, {
     userId: null, appId: 5, sessionId: 41, credits: null, alsoVoters: true,
-  });
+  }, allows);
   assert.deepEqual(rows.map((r) => r.kind), ['voted_change_merged', 'voted_change_merged']);
   assert.equal(pool.queries.some((q) => /'pr_merged'/.test(q.sql)), false,
     'no author row where there is no author');
 });
 
-test('alsoVoters: a voters-side failure leaves the author\'s rows standing', async () => {
-  filtered.length = 0;
+test('alsoVoters: a voters-side failure throws, so the machine\'s transaction is retried whole', async () => {
   const pool = mergedPool({ voters: [{ user_id: 8 }], failVotes: true });
-  const rows = await notifications.createPrMergedNotification(pool, {
+  await assert.rejects(changeNotifications.createPrMergedNotification(pool, {
     userId: 7, appId: 5, sessionId: 41, credits: null, alsoVoters: true,
-  });
-  assert.deepEqual(rows.map((r) => r.kind), ['pr_merged'], 'the author still hears it');
+  }, allows), /db hiccup/);
 });
 
-test('the votes.js merge tail calls the producer after the author\'s, wrapped so it cannot fail a merge', () => {
-  const src = fs.readFileSync(path.join(__dirname, '../src/routes/votes.js'), 'utf8');
-  const author = src.indexOf("createPrMergedNotification?.(pool");
-  const voters = src.indexOf('createVotedChangeMergedNotifications');
-  const settle = src.indexOf("settleDecidedChange?.(pool");
-  assert.ok(voters > -1, 'the tail tells the voters (#4787)');
-  assert.ok(voters > author, 'after the author\'s row');
-  assert.ok(voters < settle, 'the bell settles after both are read');
-  const tail = src.slice(voters - 200, voters + 700);
-  assert.match(tail, /createVotedChangeMergedNotifications\?\.\(pool, \{[\s\S]*?appId: session\.app_id,[\s\S]*?sessionId: session\.id,[\s\S]*?authorId: session\.user_id/);
-  assert.match(tail, /hydrateAndPush\(pool, row\)/, 'the row reaches the open tabs');
-  assert.match(tail, /'Voted-change merged notification (?:failed|threw)'/, 'a failure is logged, not a merge ender');
-});
-
-// The included change's step, and a throwing one not failing the merge, run
-// against the real harness in tests/included-changes.test.js. The machine's
-// write runs against PostgreSQL, producer and all, in
+// The machine's write (writeMergedNotification, for a merge and an included
+// change alike) runs against PostgreSQL, producer and all, in
 // tests/workflow-merge-followups-postgres.test.js (F5).
-

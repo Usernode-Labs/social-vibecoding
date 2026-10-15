@@ -478,7 +478,7 @@ test('a down app is kept once per app per minute; only a heal that brought it ba
   for (const status of ['healthy', 'cooldown', 'in_flight', 'deploying', 'heal_failed', 'restart_grace']) await outages.recordHealed(pool, app, { status }, 'sweep', minute);
   assert.equal(calls.length, 0);
   for (const status of outages.RESTART_OUTCOMES) await outages.recordHealed(pool, app, { status }, 'visit', minute);
-  assert.deepEqual(calls.map((c) => c[1][2]), ['started', 'restarted', 'rebuilt', 'respawned']);
+  assert.deepEqual(calls.map((c) => c[1][2]), ['started', 'restarted', 'deploy_requested', 'respawned']);
   await outages.recordHealed(pool, { ...app, self_hosted: true }, { status: 'restarted' }, 'sweep', minute);
   assert.equal(calls.length, 4, 'Homeroom itself is never recorded');
   // The watchdog records both of its paths; the page records a document load.
@@ -549,13 +549,13 @@ test('topic figures against the full schema', { timeout: 120000 }, async (t) => 
   await checkRun(platform, 'error', 3);
   for (let i = 0; i < 3; i += 1) await checkRun(project, 'passing', 1.5);
 
-  // A project's merges: one live 6 minutes after GitHub merged it, one whose
-  // deploy failed; and one that waited 10 minutes from its vote passing.
-  async function mergeRun(app, sessionId, { status = 'merged', summary = null, startedMins, steps = [] }) {
+  // A project's merge runs: one that waited 10 minutes from its vote passing
+  // to GitHub merging it, and one more merged on GitHub.
+  async function mergeRun(app, sessionId, { status = 'merged', startedMins, steps = [] }) {
     const run = (await pool.query(
-      `INSERT INTO merge_debug_runs (app_id, session_id, kind, status, summary, started_at, ended_at)
-       VALUES ($1, $2, 'merge', $3, $4, $5, $5) RETURNING id`,
-      [app.id, sessionId, status, summary, ago(startedMins)],
+      `INSERT INTO merge_debug_runs (app_id, session_id, kind, status, started_at, ended_at)
+       VALUES ($1, $2, 'merge', $3, $4, $4) RETURNING id`,
+      [app.id, sessionId, status, ago(startedMins)],
     )).rows[0].id;
     let seq = 0;
     for (const s of steps) {
@@ -570,13 +570,31 @@ test('topic figures against the full schema', { timeout: 120000 }, async (t) => 
   await mergeRun(project, session, { status: 'blocked', startedMins: 200 });
   await mergeRun(project, session, {
     startedMins: 195,
-    steps: [{ phase: 'github_merge', detail: { sha: 'abc' }, mins: 190 }, { phase: 'prod_rebuild', mins: 189 }, { phase: 'prod_rebuild', detail: { sha: 'abc' }, mins: 184 }],
+    steps: [{ phase: 'github_merge', detail: { sha: 'abc' }, mins: 190 }],
   });
   await mergeRun(project, null, {
     startedMins: 150,
-    summary: 'Merged on GitHub; production deploy failed (operator retry needed).',
     steps: [{ phase: 'github_merge', detail: { sha: 'def' }, mins: 149 }],
   });
+  // The same merges on the merge-followups machine, one instance each,
+  // written as the kernel writes them (only the transition pipeline may):
+  // the first live 6 minutes after GitHub merged it, the second's deploy
+  // failed. A change another merge carried in, and Homeroom's own merge, are
+  // not counted.
+  async function mergeFollowups(key, appId, state, data) {
+    await pool.query(`BEGIN; SET LOCAL app.wf_writer = 'transition';
+      INSERT INTO wf_instances (machine, key, app_id, state, data, machine_version)
+        VALUES ('merge-followups', '${key}', ${Number(appId)}, '${state}', '${JSON.stringify(data)}'::jsonb, 5);
+      COMMIT`);
+  }
+  await mergeFollowups(`session:${session}`, project.id, 'live',
+    { role: 'merge', selfHosted: false, mergedAt: ago(190).toISOString(), liveAt: ago(184).toISOString() });
+  await mergeFollowups('session:900001', project.id, 'deploy_failed',
+    { role: 'merge', selfHosted: false, mergedAt: ago(149).toISOString(), liveAt: null });
+  await mergeFollowups('session:900002', project.id, 'live',
+    { role: 'included', selfHosted: false, mergedAt: ago(149).toISOString(), liveAt: ago(140).toISOString() });
+  await mergeFollowups('session:900003', platform.id, 'live',
+    { role: 'merge', selfHosted: true, mergedAt: ago(100).toISOString(), liveAt: ago(99).toISOString() });
 
   // Merges into Homeroom: one from before records began, two that the
   // build at the second carries, and one after it.
@@ -727,7 +745,7 @@ test('topic figures against the full schema', { timeout: 120000 }, async (t) => 
     await outages.recordUnavailable(pool, project.slug, downAt);
     await outages.recordUnavailable(pool, platform.slug, downAt);
     await outages.recordHealed(pool, project, { status: 'restarted' }, 'sweep', downAt);
-    await outages.recordHealed(pool, project, { status: 'rebuilt' }, 'visit', downAt + 1000);
+    await outages.recordHealed(pool, project, { status: 'deploy_requested' }, 'visit', downAt + 1000);
     await outages.recordHealed(pool, project, { status: 'started' }, 'sweep', downAt + 10 * 60 * 1000);
     await outages.recordHealed(pool, project, { status: 'healthy' }, 'sweep', downAt);
     await outages.recordHealed(pool, platform, { status: 'restarted' }, 'sweep', downAt);
