@@ -2557,6 +2557,15 @@ const App = {
       const messages = window.UsernodeReact?.messages;
       if (messages?.showing?.()) messages.resync?.();
 
+      // The Communities screen (#5164): its counts and Needs you feed are
+      // the workshop controller's own quiet reads. When the worker corrected
+      // one of them after a slow first answer, re-run it here — the same
+      // loader, so a correction can never diverge from what the screen
+      // shows on its own. `return`: the workshop screen holds no app view
+      // to fall through to.
+      const workshop = window.UsernodeReact?.workshop;
+      if (workshop?.isOpen?.()) { workshop.refreshNeeds?.(); return; }
+
       // The app record itself is in the service worker's zero-deadline boot
       // lane. If its cached `creating` snapshot is corrected after first
       // paint, revalidate the open App tab just as the branches below refresh
