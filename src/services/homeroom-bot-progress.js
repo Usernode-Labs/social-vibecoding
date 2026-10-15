@@ -165,10 +165,18 @@ function stepNumber(stage, firstVersion) {
  *   testing      step 5: its checks                     everyone
  *   ready        step 6: up for approval, to try        everyone
  *   live         step 7                                 everyone
+ *   stopped      its build stopped, nothing live yet    everyone
  *
  * Step numbers stay in Homeroom bot's chat: the line never counts.
+ *
+ * `stopped` (14 Oct 2026, newcomer run eight, Club Votes): its first version
+ * was built and could not be proposed, and the App tab had no first version
+ * to say any more, so it showed the starter template running, with nothing
+ * to say that anything had gone wrong. It is not a step: buildLineOf never
+ * names it, and homeroom-bot-dm.js firstVersionState says it when
+ * firstVersionStopped below does.
  */
-const BUILD_LINE_STATES = Object.freeze(['planning', 'plan', 'plan-member', 'question', 'building', 'testing', 'ready', 'live']);
+const BUILD_LINE_STATES = Object.freeze(['planning', 'plan', 'plan-member', 'question', 'building', 'testing', 'ready', 'live', 'stopped']);
 
 const BUILD_LINE_OF_STEP = Object.freeze({
   setup: 'planning', read: 'planning', plan: 'planning', build: 'building', checks: 'testing', vote: 'ready', live: 'live',
@@ -550,6 +558,24 @@ function stageOf(input, { now = new Date() } = {}) {
     return { stage: 'queued', since: row.enqueued_at, doing: 'waiting for a free builder' };
   }
   return null;
+}
+
+/**
+ * Pure (14 Oct 2026, newcomer run eight): whether a first version's build
+ * stopped, from its request row (requestRows) while nothing about it is in
+ * progress (stageOf answered null): its newest look went ahead to build it
+ * and the build came to nothing (build_ok false: it did not finish, or it
+ * was built and not proposed), on a request still open, with no proposal of
+ * it up or merged. Not a build stopped as a skip (its request was answered
+ * or closed meanwhile) nor one found impossible as written (`blocked:`,
+ * which asks its maker for detail instead). Homeroom bot said it stopped,
+ * with Try again, in the build's thread.
+ */
+function firstVersionStopped(row) {
+  if (!row || row.mode !== 'live' || row.verdict !== 'ready' || row.build_ok !== false) return false;
+  if (row.request_closed === true) return false;
+  if (['promoted', 'merging', 'merged'].includes(row.proposal_status)) return false;
+  return !/^(?:skipped|blocked):/.test(String(row.build_error || ''));
 }
 
 /** Pure: what a request that is not in progress came to, or null. */
@@ -1354,6 +1380,7 @@ module.exports = {
   stageOf,
   checksOnHead,
   firstVersionStage,
+  firstVersionStopped,
   buildUnderWay,
   attemptOutcome,
   attachAttempts,

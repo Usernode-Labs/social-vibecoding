@@ -168,7 +168,9 @@ test('the line is the server\'s for this viewer, and its words are the build lin
   const src = read(HUB);
   const body = src.slice(src.indexOf('export const FIRST_VERSION_POLL_MS'), src.indexOf('export const owesVote'));
   assert.match(body, /return buildLineOf\(fv\.line\) \|\| \(fv\.ready \? 'ready' : 'planning'\);/);
-  assert.match(body, /<ThumbRow\s+name=\{data\?\.name \|\| slug\}\s+colorKey=\{slug\}\s+emoji=\{emoji\}\s+line=\{button \? null : line\}\s+lineWords=\{named\.words\}\s+lineNote=\{named\.note\}\s+\/>/);
+  assert.match(body, /<ThumbRow\s+name=\{data\?\.name \|\| slug\}\s+colorKey=\{slug\}\s+emoji=\{emoji\}\s+line=\{lineShown \? line : null\}\s+lineWords=\{named\.words\}\s+lineNote=\{named\.note\}\s+\/>/);
+  // A button hides the line, but for Try again, which does not say it stopped (14 Oct 2026).
+  assert.match(body, /const lineShown = !button \|\| action === 'retry';/);
   const code = body.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
   for (const name of ['Homeroom bot is planning it', 'Your plan is ready to review', 'Planning it', 'Building it', 'Testing it', 'Ready to try', 'Step ']) {
     for (const quote of ["'", '"', '`', '>']) {

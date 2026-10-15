@@ -647,6 +647,10 @@
     "text": "I couldn’t put it up for a vote",
     "description": "The line under a Homeroom bot activity card's title, under the heading \"Stopped\": the bot built the change but could not put it to the group's vote."
   },
+  "bot.state.line.stop.unproposedFirst": {
+    "text": "I built it but couldn’t put it live yet",
+    "description": "The line under a Homeroom bot activity card's title for a project's first version, under the heading \"Stopped\": the bot built the first version but could not make it live. A first version needs no vote. The bot speaks as I."
+  },
   "bot.state.line.stop.noStart": {
     "text": "I couldn’t get started",
     "description": "The line under a Homeroom bot activity card's title, under the heading \"Stopped\": the build never started. The bot speaks as I."

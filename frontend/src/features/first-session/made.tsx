@@ -120,7 +120,7 @@ import { askForPingWhileBotBuilds } from '../dialogs/ping-ask';
 import { PlanChoices } from '../messages/bot-plan-view';
 import type { HomeroomBotPlanQuestion } from '../messages/types';
 
-import { BUILD_LINE_WORDS, type BuildLineState, buildLineAsks, buildLineDone, buildLineOf, phaseLine, useNow } from './build-line';
+import { BUILD_LINE_WORDS, type BuildLineState, buildLineAsks, buildLineDone, buildLineOf, buildLineStopped, phaseLine, useNow } from './build-line';
 import { noteBuildStarted } from './build-line-words.js';
 import { copyText, inviteText } from './copy-invite';
 import { FIRST_LOOK_POLL_MS, firstLookSrc } from './first-look';
@@ -1533,9 +1533,9 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
     : buildNote(botBuilds, !!plan, stalled, imported, readyMade);
   const plainLine = named.words || (line === 'planning' && served === 'plan' ? translate(BUILD_LINE_WORDS.planning) : buildLine(fv, appStatus, botBuilds, imported, readyMade));
   // Something is under way: the project being set up, or the bot's build
-  // (not while its plan waits on them, nor on a setup that stopped: then
-  // nothing is).
-  const busy = appStatus === 'creating' || (botBuilds && !(fv && fv.ready) && !plan && !stalled);
+  // (not while its plan waits on them, nor on a setup or a build that
+  // stopped: then nothing is).
+  const busy = appStatus === 'creating' || (botBuilds && !(fv && fv.ready) && !plan && !stalled && !buildLineStopped(line));
   // Its setup's card, once it has run: in place, saying what the plain card would.
   const ranInPlace = setupShown && !settingUp && !stalled;
   const tile = sketch.card?.emoji || made.emoji || made.name.slice(0, 1);
@@ -1554,7 +1554,7 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
       setup: false,
       words: named.words || (line && line !== 'working' ? t(BUILD_LINE_WORDS[line]) : t(SETUP_SET_UP)),
       note: named.note || t(SETUP_SET_UP),
-      busy: !!line && !buildLineAsks(line) && !buildLineDone(line),
+      busy: !!line && !buildLineAsks(line) && !buildLineDone(line) && !buildLineStopped(line),
       asks: !!line && buildLineAsks(line),
     };
 

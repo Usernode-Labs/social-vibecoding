@@ -2858,9 +2858,13 @@ function rowView(n) {
   // The good-news row. `detail === 'forced'` is an admin override rather than
   // a vote that carried, and the label says which: to the person who wrote
   // the change those are the same event with very different meanings.
+  // #5064: until production runs it (`sessionStatus` 'merging', read live
+  // off the change as a "ready to try" row is), it says Going live.
   if (n.kind === 'pr_merged') {
+    const going = n.sessionStatus === 'merging';
     const head = headline(
-      n.detail === 'forced' ? t('notifications:row.merged.forced') : t('notifications:row.merged.live'),
+      n.detail === 'forced' ? t('notifications:row.merged.forced')
+        : (going ? t('notifications:row.merged.goingLive') : t('notifications:row.merged.live')),
       prLabel || n.sessionTitle || t('notifications:row.merged.yourChange'),
     );
     // #1688: on a merge the vote carried, `detail` names who backed and
@@ -2868,7 +2872,7 @@ function rowView(n) {
     const credits = n.detail && n.detail !== 'forced' ? String(n.detail) : '';
     return {
       ...base,
-      icon: '\u{1F389}',
+      icon: going ? '\u{1F680}' : '\u{1F389}',
       label: head.label,
       segments: credits ? [...head.segments, { t: 'text', v: credits }] : head.segments,
     };
@@ -2878,14 +2882,16 @@ function rowView(n) {
   // the author's "Live" row above: the same tile, a small grey first line
   // naming the kind, the change's title in bold below it. No button of its
   // own; the row itself opens the change (proposalKinds).
+  // #5064: "going live" until production runs it, as the author's row.
   if (n.kind === 'voted_change_merged') {
+    const going = n.sessionStatus === 'merging';
     const head = headline(
-      t('notifications:row.votedMerged.label'),
+      going ? t('notifications:row.votedMerged.goingLive') : t('notifications:row.votedMerged.label'),
       prLabel || n.sessionTitle || t('notifications:row.votedMerged.aChange'),
     );
     return {
       ...base,
-      icon: '\u{1F389}',
+      icon: going ? '\u{1F680}' : '\u{1F389}',
       ...head,
     };
   }

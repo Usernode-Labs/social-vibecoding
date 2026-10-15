@@ -124,7 +124,7 @@ test('while the plan waits, the build\'s note says so instead of promising a mes
   assert.match(src, /<p className=\{rowHidden \? 'mt-3 text-\[13px\] text-zinc-500 dark:text-zinc-400' : 'mt-1 text-\[13px\] text-zinc-500 dark:text-zinc-400'\}>\{note\}<\/p>/);
   assert.doesNotMatch(src, /sketchCaption/);
   // The plain card's busy dot: not while it waits on them, nor on a setup that stopped (stalledOf).
-  assert.match(src, /const busy = appStatus === 'creating' \|\| \(botBuilds && !\(fv && fv\.ready\) && !plan && !stalled\);/);
+  assert.match(src, /const busy = appStatus === 'creating' \|\| \(botBuilds && !\(fv && fv\.ready\) && !plan && !stalled && !buildLineStopped\(line\)\);/);
 });
 
 test('a first version promises no time at all, and says in one plain line that it asks when it has questions', () => {

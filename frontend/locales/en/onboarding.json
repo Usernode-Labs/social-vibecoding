@@ -151,6 +151,10 @@
     "text": "Live",
     "description": "One-line status under a new project's card, on its Home tile and on its hub while its first version is being made: the first version has been published and the app is running for everyone. An adjective, not the verb \"to live\"."
   },
+  "buildLine.stopped": {
+    "text": "Stopped",
+    "description": "One-line status under a new project's card, on its App tab, its hub and the screen shown after making it: Homeroom bot's build of its first version stopped before the app went live, and nothing is being built now. Its maker can start it again from their chat with Homeroom bot."
+  },
   "buildLine.tile.planning": {
     "text": "Planning",
     "description": "Very short status under a new project's name on its Home screen icon while its first version is being made: the assistant called Homeroom bot is planning it, writing its plan or working out its details before it builds it. Must fit one short line under a small app icon, so keep it to one or two short words."
@@ -183,6 +187,10 @@
     "text": "Live",
     "description": "Very short status under a new project's name on its Home screen icon: its first version has been published and the app is running for everyone. An adjective, not the verb \"to live\"."
   },
+  "buildLine.tile.stopped": {
+    "text": "Stopped",
+    "description": "Very short status under a new project's name on its Home screen icon: Homeroom bot's build of its first version stopped before the app went live. Must fit one short line under a small app icon."
+  },
   "buildLine.tile.phase.starting": {
     "text": "Starting",
     "description": "Very short status under a new project's name on its Home screen icon: Homeroom bot is starting to build its first version. A verb in progress. Must fit one short line under a small app icon."
@@ -212,8 +220,8 @@
     "description": "One-line status under a new project's card while its first version is made: the first version is built, and its screens are being looked at to find what to fix, before anyone tries it."
   },
   "buildLine.phase.checking": {
-    "text": "Checking the screens · round {{round}} of {{rounds}}",
-    "description": "One-line status under a new project's card while its first version is made: its screens are being looked at and fixed, in rounds. {{round}} is this round's number and {{rounds}} how many rounds there are at most, for example \"round 1 of 2\"."
+    "text": "Checking the screens",
+    "description": "One-line status under a new project's card while its first version is made: its screens are being looked at and fixed. Kept short so that how long is left still fits beside it on a phone; which round it is in is shown in the list of steps."
   },
   "buildLine.soFar_one": {
     "text": "{{count}} min so far",
