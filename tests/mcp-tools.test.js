@@ -1224,6 +1224,24 @@ test('post_message posts on every thread get_discussion reads, through the chat 
   }
 });
 
+// #5160: a via-agent message tags someone only as a typed one does, with
+// @handle — the route resolves it. So the description says how, and the
+// content goes out with the @ intact.
+test('post_message tells the agent to tag with @handle, and sends the mention verbatim', async () => {
+  const c = connector(() => ({ message: { id: 8, posted_via: 'agent' } }), postScopes);
+  try {
+    const description = c.specs.get('post_message').description;
+    assert.match(description, /To tag someone so they are notified, write `@` and their handle/);
+    assert.match(description, /a name without `@` tags nobody/);
+    await c.handlers.get('post_message')({
+      slug: 'recipe-box', threadType: 'session', ref: 50, content: '@bruno, a question about the workflow engine.',
+    });
+    assert.equal(c.calls.at(-1).body.content, '@bruno, a question about the workflow engine.');
+  } finally {
+    c.restore();
+  }
+});
+
 test('post_message reports the route\'s marker rather than assuming it', async () => {
   const c = connector(() => ({ message: { id: 5, posted_via: null } }), postScopes);
   try {

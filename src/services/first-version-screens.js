@@ -491,7 +491,9 @@ async function showcaseOf(pool, appId) {
  * What the App tab is told, for a member, at its build line (`line`):
  * the caption while it is built, and which screens to draw. The real
  * screens from "Testing it" on, the first look while it is built and tested
- * without them. Pure.
+ * without them. A build that stopped (14 Oct 2026, newcomer run eight) keeps
+ * the first look it showed while it was built, else the real screens it got
+ * to: never the starter's own page. Pure.
  */
 function firstVersionShowcase(showcase, line) {
   if (!showcase) return {};
@@ -500,8 +502,9 @@ function firstVersionShowcase(showcase, line) {
   const real = showcase.screens?.real;
   const look = showcase.screens?.first_look;
   const pick = real?.count && (line === 'testing' || line === 'ready') ? ['real', real]
-    : look?.count && (line === 'building' || line === 'testing') ? ['first_look', look]
-      : null;
+    : look?.count && (line === 'building' || line === 'testing' || line === 'stopped') ? ['first_look', look]
+      : real?.count && line === 'stopped' ? ['real', real]
+        : null;
   if (pick) {
     const at = pick[1].at || null;
     out.screens = { kind: pick[0], count: pick[1].count, at, v: at ? String(new Date(at).getTime()) : '0' };

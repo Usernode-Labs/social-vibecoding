@@ -1084,23 +1084,38 @@ const FAILED_SAID = Object.freeze({
   }),
 });
 
+// 14 Oct 2026 (newcomer run eight, Club Votes): a first version that was
+// built and then not proposed was "I built the first version, but I couldn't
+// put it up for approval." A first version needs nobody's approval (D1), so
+// it says what is true: it is built and not live yet. Its other causes say
+// nothing about approval, and read as a change's do.
+const FIRST_UNPROPOSED_SAID = Object.freeze({
+  me: (it) => `I built ${it} but couldn't put it live yet.`,
+  bot: (it) => `Homeroom bot built ${it} but couldn't put it live yet.`,
+});
+
 /**
  * Pure: why the bot stopped, in plain words, from the run's own record
  * (read by buildFailedCause, never quoted). `voice` is 'me' (the default:
  * the bot to the person it was for, in its DM) or 'bot' (about the bot, on
  * the request); `doing` is 'build' (the default) or 'update' (a change it
- * had built, which has nothing left to put up for approval).
+ * had built, which has nothing left to put up for approval). `first`: a
+ * project's first version, which goes live without approval.
  */
-function failedWords(reason, { it = 'this', voice = 'me', doing = 'build' } = {}) {
+function failedWords(reason, { it = 'this', voice = 'me', doing = 'build', first = false } = {}) {
   const read = buildFailedCause(reason);
   const d = FAILED_DOING[doing] || FAILED_DOING.build;
   const cause = d === FAILED_DOING.update && read.cause === 'unproposed' ? 'other' : read.cause;
+  if (first && cause === 'unproposed') return (FIRST_UNPROPOSED_SAID[voice] || FIRST_UNPROPOSED_SAID.me)(it);
   return (FAILED_SAID[voice] || FAILED_SAID.me)[cause](d, it, read.times);
 }
 
-/** Pure: why a build of `it` did not finish (failedWords), in the DM's voice or ('bot') on the request. */
-function buildFailedWords(reason, it = 'this', voice = 'me') {
-  return failedWords(reason, { it, voice, doing: 'build' });
+/**
+ * Pure: why a build of `it` did not finish (failedWords), in the DM's voice
+ * or ('bot') on the request; `first` for a project's first version.
+ */
+function buildFailedWords(reason, it = 'this', voice = 'me', { first = false } = {}) {
+  return failedWords(reason, { it, voice, doing: 'build', first });
 }
 
 /**
@@ -1225,6 +1240,15 @@ function requestNews(kind, dm, context) {
       // bot (it is not one of MIRRORED_KINDS), which starts the request
       // again (homeroom-bot-mayor.js start_request): on 5 Oct 2026 "Oh no,
       // can you try again?" had it building again within seconds.
+      // 14 Oct 2026 (newcomer run eight): a first version is named, never
+      // said to wait for approval it does not need, and points at the Try
+      // again under the message. Try again reads it again and writes a new
+      // plan for Build it (it does not re-propose what was built), so it
+      // says it starts over.
+      if (context.firstVersion) {
+        return `${line}\n\n${buildFailedWords(dm.reason, context.appName || it, 'me', { first: true })} `
+          + 'Tap Try again and I\'ll start over.';
+      }
       return `${line}\n\n${buildFailedWords(dm.reason, it)} Reply here and I'll try again.`;
     case 'followup_failed': {
       // 5 Oct 2026: an update to their change that did not happen, in plain
@@ -4791,8 +4815,10 @@ async function firstVersionApproval(pool, sessionId, viewerId = null) {
  * not filed yet (waiting or filing: the project is being set up), or it is
  * filed and no proposal for it has merged. Null once one has, once filing
  * failed, once the project failed to set up, and once the request came to
- * something other than a merge (the bot left it to the group, its build did
- * not succeed, its proposal was closed): then the app is what there is.
+ * something other than a merge (the bot left it to the group, its proposal
+ * was closed): then the app is what there is. A build that stopped is not
+ * that (14 Oct 2026): `line` 'stopped', with `stopped` saying where its
+ * maker was told (stoppedThreadOf), until Try again starts it over.
  *
  * `{ userId, creator, conversationId, step, of, line, question, ready }`:
  * whose description it is, their DM with the bot, the step of
@@ -4960,14 +4986,63 @@ async function firstVersionState(pool, appId, deps = {}) {
       ...(plan ? {} : early),
     };
   }
+  // 14 Oct 2026 (newcomer run eight, Club Votes): its build stopped, and
+  // nothing is live yet (progress.firstVersionStopped). This answered null
+  // here, so the App tab showed the starter template its repo was made from
+  // ("Welcome to your new app!") with nothing to say that anything had gone
+  // wrong. It says Stopped on every screen that draws the line, and where
+  // Try again is: the build's thread in its maker's chat with Homeroom bot
+  // (stoppedThreadOf). No steps: nothing is under way.
+  if (found && progress.firstVersionStopped(found.row)) {
+    const thread = await stoppedThreadOf(pool, {
+      userId: row.user_id, appId: row.app_id, issueNumber: row.issue_number,
+    }).catch((err) => {
+      log.warn('homeroom-bot-dm', 'Could not read where a stopped first version was said', { appId: row.app_id, err: err.message });
+      return null;
+    });
+    return {
+      ...base,
+      step: progress.stepNumber('building', true),
+      of: progress.FIRST_VERSION_STEPS.length,
+      line: 'stopped',
+      question: false,
+      ready: false,
+      stopped: thread || {},
+    };
+  }
   // Filed, and nothing in progress: either it came to something, or the bot
   // has not picked it up yet (filing wakes it, and it reads it next).
   if (found && progress.outcomeOf(found.row)) return null;
   return { ...base, ...at('queued'), question: false, ready: false, ...starting, ...early, ...steps(null) };
 }
 
+/**
+ * 14 Oct 2026: where Homeroom bot told the maker of a first version that its
+ * build stopped, the message with Try again under it (relayIssuePost,
+ * 'build_failed'): `{ conversationId, messageId, threadRootId }`, the root
+ * when it was said in the request's thread, or null when it was not said in
+ * their chat (they left it, or the DM was refused).
+ */
+async function stoppedThreadOf(pool, { userId, appId, issueNumber }) {
+  const { rows: [said] } = await pool.query(
+    `SELECT d.message_id, d.conversation_id, m.thread_root_id
+       FROM homeroom_bot_dm_messages d
+       JOIN conversation_messages m ON m.id = d.message_id AND m.deleted_at IS NULL
+      WHERE d.user_id = $1 AND d.app_id = $2 AND d.issue_number = $3 AND d.kind = 'build_failed'
+      ORDER BY d.message_id DESC
+      LIMIT 1`,
+    [Number(userId), Number(appId), Number(issueNumber)],
+  );
+  if (!said) return null;
+  return {
+    conversationId: Number(said.conversation_id) || null,
+    messageId: Number(said.message_id) || null,
+    threadRootId: Number(said.thread_root_id) || null,
+  };
+}
+
 // N4: the stages from its spec turn on, when a first look may be drawn.
-const LOOKED_STAGES = new Set(['planning', 'building', 'reviewing', 'proposing', 'checks', 'checks_failed', 'fix_queued', 'fixing', 'merging']);
+const LOOKED_STAGES =new Set(['planning', 'building', 'reviewing', 'proposing', 'checks', 'checks_failed', 'fix_queued', 'fixing', 'merging']);
 
 /** N4: when a first version's run had its first look drawn, or null. */
 async function firstLookAtOf(pool, runId) {

@@ -292,17 +292,84 @@ test('the first version being built, from the records the bot leaves', { timeout
     assert.equal((await routes.firstVersionLinesFor(pool, [app], ada.id)).size, 0);
   });
 
+  // 14 Oct 2026 (newcomer run eight, Club Votes): a build that stopped was
+  // no state, so the App tab framed the starter template. It says Stopped,
+  // and its maker's way to Try again.
+  await t.test('a build that stopped is said, with where its maker can try again', async () => {
+    await pool.query('DELETE FROM homeroom_bot_runs WHERE app_id = $1', [app.id]);
+    const { rows: [run] } = await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, build_ok, build_error)
+       VALUES ($1, 1, 'live', 'ready', FALSE, 'the change was built but could not be proposed: Server is restarting') RETURNING id`,
+      [app.id],
+    );
+    const stopped = await state();
+    assert.deepEqual(steps(stopped), { step: 4, of: 7, line: 'stopped', question: false, ready: false });
+    assert.deepEqual(stopped.stopped, {}, 'not said in her chat yet: nothing to point at');
+    assert.equal(stopped.steps, undefined, 'nothing is under way');
+    // Homeroom bot said it in the request's thread, with Try again under it.
+    const card = await dm.sendDm(pool, { bot, userId: ada.id, content: 'Plant Pal, its first version' });
+    const said = await dm.sendDm(pool, {
+      bot, userId: ada.id, content: 'I built Plant Pal but couldn\'t put it live yet. Tap Try again and I\'ll start over.',
+      threadRootId: card.messageId,
+    });
+    await pool.query(
+      `INSERT INTO homeroom_bot_dm_messages (message_id, user_id, conversation_id, app_id, issue_number, kind, run_id)
+       VALUES ($1, $2, $3, $4, 1, 'build_failed', $5)`,
+      [said.messageId, ada.id, said.conversationId, app.id, run.id],
+    );
+    const where = { conversationId: opened.conversationId, messageId: said.messageId, threadRootId: card.messageId };
+    assert.deepEqual((await state()).stopped, where);
+    assert.equal((await dm.firstVersionState(pool, app.id, { viewerId: sam.id })).line, 'stopped', 'for everyone');
+
+    let viewer = ada;
+    const server = express();
+    server.use(express.json());
+    server.use((req, _res, next) => { req.user = { id: viewer.id, username: viewer.username }; next(); });
+    server.use(appRoutes({}));
+    const listening = server.listen(0);
+    await new Promise((resolve) => listening.once('listening', resolve));
+    try {
+      const base = `http://127.0.0.1:${listening.address().port}`;
+      const get = async () => (await (await fetch(`${base}/api/apps/plant-pal?manifest=summary`)).json()).app.first_version;
+      const listed = async () => (await (await fetch(`${base}/api/apps`)).json()).apps.find((a) => a.slug === 'plant-pal');
+      assert.deepEqual(await get(), {
+        building: true, mine: true, step: 4, of: 7, line: 'stopped', creator: ada.username,
+        ready: false, question: false, conversationId: opened.conversationId,
+        stopped: true, thread: { conversationId: opened.conversationId, threadRootId: card.messageId, messageId: said.messageId },
+      }, 'its maker: Stopped, and the thread where Try again is');
+      assert.equal((await listed()).first_version_line, 'stopped', 'the Home tile says it');
+      viewer = sam;
+      const theirs = await get();
+      assert.deepEqual([theirs.line, theirs.stopped, theirs.thread, theirs.conversationId, theirs.member],
+        ['stopped', true, undefined, null, undefined], 'nobody else is handed her chat, nor a "While you wait"');
+      assert.equal((await listed()).first_version_line, 'stopped');
+    } finally {
+      if (typeof listening.closeAllConnections === 'function') listening.closeAllConnections();
+      listening.close();
+    }
+
+    // Try again (homeroom-bot-mayor.js start_request) puts it first in the
+    // queue: it is on its way again, read before it is planned.
+    await pool.query(`INSERT INTO homeroom_bot_queue (app_id, issue_number, priority, reason) VALUES ($1, 1, 0, 'dm_start')`, [app.id]);
+    const again = await state();
+    assert.equal(again.line, 'planning');
+    assert.equal(again.stopped, undefined);
+    await pool.query('DELETE FROM homeroom_bot_queue WHERE app_id = $1', [app.id]);
+  });
+
   await t.test('any other ending is the end of the state too', async () => {
     await pool.query('DELETE FROM homeroom_bot_runs WHERE app_id = $1', [app.id]);
     await pool.query(`INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict) VALUES ($1, 1, 'live', 'person')`, [app.id]);
     assert.equal(await state(), null, 'left for the group to decide');
-    await pool.query('DELETE FROM homeroom_bot_runs WHERE app_id = $1', [app.id]);
-    await pool.query(
-      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, build_ok, build_error)
-       VALUES ($1, 1, 'live', 'ready', FALSE, 'tests failed')`,
-      [app.id],
-    );
-    assert.equal(await state(), null, 'a build that did not succeed');
+    for (const error of ['skipped: its request was closed', 'blocked: needs a payment provider']) {
+      await pool.query('DELETE FROM homeroom_bot_runs WHERE app_id = $1', [app.id]);
+      await pool.query(
+        `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, build_ok, build_error)
+         VALUES ($1, 1, 'live', 'ready', FALSE, $2)`,
+        [app.id, error],
+      );
+      assert.equal(await state(), null, error);
+    }
     await pool.query('DELETE FROM homeroom_bot_runs WHERE app_id = $1', [app.id]);
     assert.equal((await state()).step, 2, 'with nothing recorded it waits to be read again');
     await pool.query(`UPDATE homeroom_bot_first_versions SET status = 'failed' WHERE app_id = $1`, [app.id]);
