@@ -1177,8 +1177,10 @@ function readFailure({
 // ends; the caller owns any throttling. Normal failures become check rows;
 // explicit cancellation propagates to the preview lifecycle owner.
 //
-// `jobNamePrefix` names the Job outside a preview run's own check Jobs: an
-// early unit suite started with the preview build (services/early-unit-suite.js).
+// `jobNamePrefix` names the Job outside a preview run's own check Jobs: the
+// preview machine's early unit suite, started with the preview build
+// (src/workflow/preview/services.ts checks.unitEarly) and read by the checks
+// run that follows (collectUnitSuite).
 //
 // `commitSha` is the commit the run judges. When it is given and the suite
 // passes on Kubernetes, the pass is recorded for reuse
@@ -1555,8 +1557,53 @@ async function outcomeFromLog({
   return shapeOutcome({ passed, reason, graduated, summary, unitDetails, notRun, setupFailed });
 }
 
+// The unit suite a launcher started under `previewRunId` (the preview
+// machine's early suite, src/workflow/preview/services.ts), read from the
+// cluster to its end by the checks run that follows it: the outcome
+// maybeRunUnitSuite would have returned. Null when there is nothing to read
+// (no Job under that id, a shard missing, a Job gone or aborted): the caller
+// then runs its own suite, never settles without one. Throws when whether
+// the suite blocks merges cannot be read, as a collected run does (#4996,
+// #4973).
+async function collectUnitSuite({ config, pool, appId, sessionId, previewRunId, onProgress = null, signal = null }) {
+  if (!isEnabled() || config?.workerRuntime !== 'kubernetes' || !previewRunId) return null;
+  const jobs = await kubernetes.findCheckJobs(config, { sessionId, previewRunId });
+  const unitJobs = Array.isArray(jobs.unitSuites) && jobs.unitSuites.length
+    ? jobs.unitSuites : (jobs.unitSuite ? [jobs.unitSuite] : []);
+  const shards = Number(jobs.unitShards) || 1;
+  if (!unitJobs.length || unitJobs.length < shards) return null;
+  const tracker = makeUnitSuiteTracker(await loadExpectedTests(pool, appId));
+  const report = () => {
+    if (typeof onProgress !== 'function') return;
+    try { onProgress(tracker.snapshot()); } catch { /* an observer cannot fail the run */ }
+  };
+  const results = await Promise.all(unitJobs.map((job) => kubernetes.collectCheckJob(config, {
+    name: job.name, kind: 'unit-suite',
+    timeoutMs: UNIT_SUITE_TIMEOUT_MS + 30_000, maxBuffer: UNIT_SUITE_MAX_BUFFER,
+    // A split suite's summary counters come from the joined output.
+    onStdoutLine: (line) => {
+      if (unitJobs.length > 1 && /^# (tests|pass|fail|skipped|cancelled|todo) /.test(line)) return;
+      if (tracker.feed(line)) report();
+    },
+    signal,
+  })));
+  if (signal?.aborted) throw signal.reason;
+  const unit = require('./check-harvest').joinUnitResults(results, shards);
+  if (!unit || !['succeeded', 'failed', 'timeout'].includes(unit.state)) return null;
+  const graduated = (await checkHistory.loadGraduated(pool, appId, { sessionId, strict: true }))
+    .has(appManifest.checkKey(UNIT_CHECK_NAME, UNIT_CHECK_PATH));
+  const outcome = await outcomeFromLog({
+    pool, appId, sessionId, succeeded: unit.state === 'succeeded',
+    stdout: unit.stdout, stderr: unit.stderr, timedOut: unit.timedOut || unit.state === 'timeout',
+    exitCode: unit.exitCode, graduated, tracker, podStart: unit.podStart || null, shardNotRun: !!unit.shardNotRun,
+  });
+  report();
+  return outcome;
+}
+
 module.exports = {
   maybeRunUnitSuite,
+  collectUnitSuite,
   outcomeFromLog,
   passedIn,
   makeUnitSuiteTracker,

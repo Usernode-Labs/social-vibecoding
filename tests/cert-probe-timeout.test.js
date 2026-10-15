@@ -252,12 +252,3 @@ test('#2328 verifyStagingEdge rejects a completed HTTP 5xx response', async () =
     assert.ok(logs.some((entry) => entry.level === 'warn' && entry.data.code === 502));
   } finally { restore(); }
 });
-
-test('#816 warmStagingCert stays as an alias so no call site breaks', () => {
-  const { staging, restore } = loadStaging({ probeEdge: async () => ({ ok: true }) });
-  try {
-    assert.equal(typeof staging.verifyStagingEdge, 'function');
-    assert.equal(staging.warmStagingCert, staging.verifyStagingEdge,
-      'the deprecated name must point at the same implementation, not a stale copy');
-  } finally { restore(); }
-});

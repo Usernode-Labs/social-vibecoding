@@ -244,6 +244,10 @@ test('the harvest joins a run\'s shards as the live run does', () => {
   assert.equal(checkHarvest.joinCaptures([{ state: 'failed', stdout: '' }, { state: 'failed', stdout: '' }]).state, 'failed');
 
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'check-harvest.js'), 'utf8');
-  assert.match(src, /if \(captureExpected && captureJobs\.length < \(Number\(manifest\.captureShards\) \|\| 1\)\) \{\s+return await redrive\(session, 'a capture shard Job not found'\);/);
-  assert.match(src, /if \(manifest\.unitRunId\) \{\s+const early = await kubernetes\.findCheckJobs\(config, \{ sessionId, previewRunId: manifest\.unitRunId \}\);/);
+  // A shard missing means the run cannot be read whole: nothing is collected,
+  // and the machine's retry runs the checks again.
+  assert.match(src, /if \(captureExpected && captureJobs\.length < \(Number\(manifest\.captureShards\) \|\| 1\)\) return null;/);
+  // The early unit suite's Jobs are read under its own run id, unless the
+  // claim launched its own.
+  assert.match(src, /const unitFrom = manifest\.unitRunId && !ownUnit\s+\? await kubernetes\.findCheckJobs\(config, \{ sessionId, previewRunId: manifest\.unitRunId \}\) : jobs;/);
 });

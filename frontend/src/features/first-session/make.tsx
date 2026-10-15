@@ -114,6 +114,13 @@ import { SpeakButton } from '../dictation/speak-button';
  * there let go of the template (Your own idea is marked instead, and Make
  * it no longer sends the template's description). The name stays theirs to
  * keep or change.
+ *
+ * INSTANT OR CUSTOM (Evan, 15 Oct 2026): one line above Who can change it
+ * says what Make it will do, and follows each pick and keystroke
+ * (`makeSpeed`). A choice that makes a ready-made app is Instant, ready in
+ * about a minute; anything Homeroom bot builds (their own words, Write it
+ * yourself, a game, Your own…) is Custom, 20 to 30 minutes. Before anything
+ * is picked or typed there is no line: Make it would only ask for the answer.
  */
 
 import { type KeyboardEvent as ReactKeyboardEvent, useCallback, useEffect, useRef, useState } from 'react';
@@ -121,7 +128,7 @@ import { createPortal } from 'react-dom';
 
 import { Button } from '@/components/ui/button';
 import { Chip } from '@/components/ui/chip';
-import { ChevronDownIcon, PencilSquareIcon, XIcon } from '@/components/ui/icons';
+import { BoltIcon, ChevronDownIcon, PencilSquareIcon, SparklesIcon, XIcon } from '@/components/ui/icons';
 import { Wordmark } from '@/components/ui/wordmark';
 
 import { RichMessage, useMessages } from '../../lib/i18n/react';
@@ -223,6 +230,33 @@ const TILE_OFF = 'shadow-[inset_0_0_0_1px_var(--app-sheet-line)]';
 export const OWN_IDEA = 'idea';
 /** The fourth tile while nothing from "Something else…" holds it. */
 export const MORE_TILE = 'more';
+
+/**
+ * INSTANT OR CUSTOM: what Make it will do with what is on screen now.
+ * `instant` while it would make a ready-made app, which is Make it's own
+ * test (`readyMadeOf` while the sentence is still the template's, not
+ * written out); `custom` while Homeroom bot would build it; null while
+ * nothing is picked or typed, when Make it would only ask for the answer.
+ * Pure.
+ */
+export type MakeSpeed = 'instant' | 'custom' | null;
+export function makeSpeed(
+  picked: Template | typeof OWN_IDEA | null,
+  choice: string,
+  written: string | null,
+  brief: string,
+): MakeSpeed {
+  const template = picked && picked !== OWN_IDEA ? picked : null;
+  if (template && written === null && readyMadeOf(template, choice)) return 'instant';
+  if (!picked && !brief.trim()) return null;
+  return 'custom';
+}
+
+/** The line for each, a message id: its first word is bold (`<0>…</0>`). */
+export const SPEED_LINE = {
+  instant: 'onboarding:firstSession.make.speed.instant',
+  custom: 'onboarding:firstSession.make.speed.custom',
+} as const;
 
 export type Missing = 'blank' | 'brief' | 'name' | null;
 
@@ -416,6 +450,8 @@ export function MakeScreen({
   const said = template ? sentence(template, choice, words) : null;
   // What Make it sends as the description: the sentence, or the plain box.
   const text = templated && said ? said.text : brief;
+  // INSTANT OR CUSTOM: the line above Who can change it.
+  const speed = makeSpeed(picked, choice, written, brief);
   // After the tap that drew it, the field for their words (or the plain box).
   const focusSoon = (field: () => HTMLElement | null) => {
     setTimeout(() => field()?.focus({ preventScroll: true }), 0);
@@ -808,6 +844,20 @@ export function MakeScreen({
               {missing === 'name' ? <p id="first-session-name-hint" role="alert" className={NEEDED}>{needed}</p> : null}
             </div>
           </div>
+          {/* INSTANT OR CUSTOM: one line, drawn as the rule line under it is
+              (its inks, icon size and inset), a step larger, with no colour
+              of its own. It is one line from 390px wide; narrower, it wraps
+              without leaving one word on its own. */}
+          {speed ? (
+            <p data-make-speed={speed} className="mt-3 flex items-center gap-2 px-1 text-[14px] leading-[1.4] text-zinc-600 dark:text-zinc-300">
+              {speed === 'instant'
+                ? <BoltIcon className="h-4 w-4 shrink-0 text-zinc-500 dark:text-zinc-400" aria-hidden="true" />
+                : <SparklesIcon className="h-4 w-4 shrink-0 text-zinc-500 dark:text-zinc-400" aria-hidden="true" />}
+              <span className="min-w-0 text-pretty">
+                <RichMessage id={SPEED_LINE[speed]} components={[<b className="font-semibold text-zinc-900 dark:text-zinc-100" />]} />
+              </span>
+            </p>
+          ) : null}
           <MakeRuleLine preset={rule} onPick={setRule} who={who} />
           {allowance}
           {error ? <p role="alert" className="mt-3 text-[14px] text-red-700 dark:text-red-400">{error}</p> : null}

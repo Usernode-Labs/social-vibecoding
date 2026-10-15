@@ -9,17 +9,16 @@
 // it: `routes/issues.js` had no `self_hosted` check anywhere, and
 // `services/staging.js` still has none, so the guard has to live here.
 //
-// Two halves are pinned below, and neither can be checked by running the
-// function (it needs a live pool, a live express request and a governance
-// gate), so this is text-pinning like its sibling tests:
+// CREATION is pinned below, by text like its sibling tests: it refuses what
+// can never be applied — a deploy-owned key, a value that can't survive the
+// .env line — and classifies `private` from the block that actually governs
+// the platform (`platform_env`), not from `secrets`.
 //
-//   1. CREATION refuses what can never be applied — a deploy-owned key, a
-//      value that can't survive the .env line — and classifies `private`
-//      from the block that actually governs the platform (`platform_env`),
-//      not from `secrets`.
-//   2. APPLY branches: platform → platform-env DAO, no rebuild, "next
-//      deploy" wording; child app → app_secrets, rebuild, unchanged wording.
-//      Plus the refusal path for a key that became unwritable mid-vote.
+// The APPLY is the governance machine's (src/workflow/governance-proposal/),
+// run against a real database in tests/workflow-governance-postgres.test.js:
+// platform → platform-env DAO, no rebuild (and its audit event); child app →
+// app_secrets and a rebuild; a key that became unwritable mid-vote refused
+// and closed. Its wording is pinned here.
 //
 // Run with: node --test tests/platform-env-vote.test.js
 
@@ -31,24 +30,17 @@ const path = require('node:path');
 
 const root = path.join(__dirname, '..');
 const issuesJs = fs.readFileSync(path.join(root, 'src/routes/issues.js'), 'utf8');
+const machineTs = fs.readFileSync(path.join(root, 'src/workflow/governance-proposal/machine.ts'), 'utf8');
 const stagingJs = fs.readFileSync(path.join(root, 'src/services/staging.js'), 'utf8');
 const secretsUiJs = fs.readFileSync(path.join(root, 'frontend/src/features/dialogs/app-secrets-controller.js'), 'utf8');
 
 // The `kind === 'secret_change'` validation block inside the issue-create
-// route, and the vote-apply function, sliced out by their opening lines.
+// route, sliced out by its opening line.
 const createBlock = (() => {
   const start = issuesJs.indexOf("      if (kind === 'secret_change') {");
   assert.notStrictEqual(start, -1, 'secret_change creation block not found');
   const end = issuesJs.indexOf("      } else if (kind === 'close_issue') {", start);
   assert.notStrictEqual(end, -1, 'end of the secret_change creation block not found');
-  return issuesJs.slice(start, end);
-})();
-
-const applyFn = (() => {
-  const start = issuesJs.indexOf('async function maybeApplySecretChangeProposal(');
-  assert.notStrictEqual(start, -1, 'maybeApplySecretChangeProposal not found');
-  const end = issuesJs.indexOf('\n}\n', start);
-  assert.notStrictEqual(end, -1, 'end of maybeApplySecretChangeProposal not found');
   return issuesJs.slice(start, end);
 })();
 
@@ -91,74 +83,20 @@ test('the proposal description promises a deploy, not a redeploy', () => {
     'an ordinary app secret still says what it always said');
 });
 
-// ── Apply: the store branch ───────────────────────────────────────────
+// ── Apply: what the machine says, and why it never rebuilds the platform ──
 
-test('the apply resolves self_hosted once, before the transaction', () => {
-  assert.match(applyFn, /SELECT id, self_hosted FROM apps WHERE id = \$1/);
-  assert.match(applyFn, /const selfHosted = !!appRows\[0\]\?\.self_hosted/,
-    'both the write branch and the side-effect branch must read the same flag');
-});
-
-test('a platform apply writes through the DAO; a child app writes app_secrets', () => {
-  assert.match(applyFn, /if \(selfHosted\) \{[\s\S]{0,600}platformEnv\.setValue\(client,/,
-    'through the DAO so isWritableKey is re-checked, the IV is fresh, and '
-    + '`private` comes from the declaration rather than the proposal payload');
-  assert.match(applyFn, /platformEnv\.deleteValue\(client, issue\.app_id, key\)/);
-  assert.match(applyFn, /INSERT INTO app_secrets/,
-    'the child-app path is unchanged');
-  assert.match(applyFn, /DELETE FROM app_secrets WHERE app_id = \$1 AND key = \$2/);
-});
-
-test('a platform apply NEVER calls staging.rebuildProduction', () => {
-  // The one defect this path existed to carry. Assert structurally: the
-  // rebuild must sit inside the `else` of the selfHosted branch.
-  const rebuildAt = applyFn.indexOf('staging.rebuildProduction');
-  assert.notStrictEqual(rebuildAt, -1, 'the child-app rebuild must still happen');
-
-  const branchAt = applyFn.indexOf('if (selfHosted) {', applyFn.indexOf("await client.query('COMMIT')"));
-  assert.notStrictEqual(branchAt, -1, 'the side-effect branch must exist');
-  const elseAt = applyFn.indexOf('} else {', branchAt);
-  assert.ok(elseAt !== -1 && elseAt < rebuildAt,
-    'rebuildProduction must be reachable only from the non-self-hosted branch — '
-    + 'services/staging.js has no self_hosted guard of its own');
-
-  assert.match(applyFn, /NEVER for the self-hosted row/,
-    'and the reason is written down where the next reader will look');
-});
-
-test('staging.js still has no guard of its own, which is why this one matters', () => {
+test('a platform apply never asks for a rebuild, and staging.js has no guard of its own', () => {
+  assert.match(machineTs, /issue\.kind === 'secret_change' && !issue\.app\.selfHosted/,
+    'the rebuild is asked only for a child app');
   assert.ok(!/self_hosted/.test(stagingJs),
     'if rebuildProduction ever grows its own guard this test should be revisited, '
-    + 'but until then routes/issues.js is the only thing standing between a voted '
-    + 'platform-variable change and a container rebuild of the platform');
+    + 'but until then the governance machine is the only thing standing between a '
+    + 'voted platform-variable change and a container rebuild of the platform');
 });
 
 test('the applied-change message says what actually happens next', () => {
-  assert.match(applyFn, /takes effect on the platform's next deploy/);
-  assert.match(applyFn, /redeploying…/, 'child apps keep their wording');
-});
-
-test('a platform apply is auditable as a platform-env change', () => {
-  assert.match(applyFn, /EVENT_TYPES\.PLATFORM_ENV_CHANGED/,
-    'one event type for a platform-variable change however it was applied');
-  assert.match(applyFn, /appliedBy: force \? 'admin-force-apply' : 'group-vote'/);
-  // And the value never travels with it.
-  const eventCall = applyFn.slice(applyFn.indexOf('EVENT_TYPES.PLATFORM_ENV_CHANGED'));
-  assert.ok(!/plaintext|valueEnc/.test(eventCall.slice(0, 500)),
-    'no ciphertext and no plaintext in the audit event');
-});
-
-// ── Apply: the mid-vote refusal ───────────────────────────────────────
-
-test('a key that became unwritable mid-vote is refused and CLOSED', () => {
-  assert.match(applyFn, /selfHosted && !platformEnv\.isWritableKey\(key\)/);
-  assert.match(applyFn, /appliedBy: 'refused:unwritable'/);
-  const refusal = applyFn.slice(applyFn.indexOf("appliedBy: 'refused:unwritable'"));
-  assert.match(refusal.slice(0, 900), /status = 'closed'/,
-    'leaving it open would re-run the failure, and re-post its message, on '
-    + 'every subsequent vote');
-  assert.match(refusal.slice(0, 1500), /sendSystemMessage/,
-    'and whoever voted finds out why nothing happened');
+  assert.match(machineTs, /takes effect on the platform's next deploy/);
+  assert.match(machineTs, /redeploying…/, 'child apps keep their wording');
 });
 
 // ── The gate still gates ──────────────────────────────────────────────

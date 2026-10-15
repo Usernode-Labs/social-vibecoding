@@ -579,12 +579,13 @@ function makeIssuePool(handlers) {
   };
 }
 
+// A request (kind 'general'): the route records its vote itself. A
+// governance proposal's vote goes to the governance machine, which applies
+// the same rules (tests/workflow-governance-routes-postgres.test.js).
 const GOV_ROW = (over) => ({
-  id: 61, app_id: 9, app_slug: 'cool-app', kind: 'close_issue', status: 'open',
-  created_by: 42, title: 'Close issue: "Dark mode resets"',
-  // No issueNumber: the apply helper returns before touching GitHub, which
-  // keeps these tests about the VOTE rather than about the close.
-  payload: { issueTitle: 'Dark mode resets' },
+  id: 61, app_id: 9, app_slug: 'cool-app', kind: 'general', status: 'open',
+  created_by: 42, title: 'Dark mode resets',
+  payload: {},
   ...over,
 });
 
@@ -623,7 +624,7 @@ function loadIssueVotes(pool) {
     ...realActiveUsers,
     getActiveUserStats: async () => ({ active: 3, majority: 2 }),
   });
-  stub(ids.adminApproval, { isAppLocked: async () => false, hasAdminUpVote: async () => true });
+  stub(ids.adminApproval, { isAppLocked: async () => false });
   stub(ids.events, {
     EVENT_TYPES: { ISSUE_VOTE_CAST: 'issue_vote_cast' },
     record: (_pool, event) => { eventCalls.push(event); },
@@ -699,7 +700,7 @@ test('issue vote: a No with a line is recorded, and the proposal\'s thread quote
   assert.deepEqual(insert.params, [61, 3, 'down', 'This one is still broken.'],
     'normalised by votes.js\'s normaliser, whitespace and all');
   assert.equal(systemMessages[0].content,
-    'evan voted down on close proposal for issue #?: “This one is still broken.”');
+    'evan voted down on issue: "Dark mode resets": “This one is still broken.”');
   assert.deepEqual(systemMessages[0].thread, { type: 'governance', ref: 61 });
 });
 
@@ -708,7 +709,7 @@ test('issue vote: a Yes needs no line, emits a durable action, and the thread re
   assert.equal(res.statusCode, 200);
   assert.deepEqual(pool.issued(/INSERT INTO issue_votes/).params, [61, 3, 'up', null],
     'no line: null, never the empty string');
-  assert.equal(systemMessages[0].content, 'evan voted up on close proposal for issue #?');
+  assert.equal(systemMessages[0].content, 'evan voted up on issue: "Dark mode resets"');
   assert.deepEqual(eventCalls, [{
     type: 'issue_vote_cast', userId: 3, appId: 9,
     metadata: { vote: 'up', issueId: 61, issueVoteId: 91 },

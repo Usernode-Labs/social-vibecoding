@@ -727,7 +727,7 @@ ALTER TABLE apps ADD COLUMN IF NOT EXISTS main_pr_number INTEGER;
 -- alongside created_at. Bumped to NOW() at every successful prod-
 -- container rebuild — the four sites in app-creator.js (initial
 -- deploy), routes/apps.js (/redeploy), routes/votes.js (vote-merge),
--- and routes/issues.js (secret-change driven rebuild). Backfilled to
+-- and the governance machine (a secret change's rebuild). Backfilled to
 -- created_at for existing rows on first boot so the home tile reads
 -- "updated <created_at>" instead of "never" for pre-migration apps;
 -- the IS NULL guard makes the backfill a one-shot.
@@ -776,16 +776,10 @@ ALTER TABLE apps ADD COLUMN IF NOT EXISTS last_failure JSONB;
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS creating_owner TEXT;
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS creating_heartbeat_at TIMESTAMPTZ;
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS creating_redrives INTEGER NOT NULL DEFAULT 0;
--- A production redeploy the platform owes the app (services/owed-redeploy.js):
--- a secret a vote changed reaches the running container only by a rebuild,
--- and main_sha does not move for it, so neither the drift poller nor the
--- heal would ever notice one a restart lost. Marked in the transaction that
--- applies the change (`redeploy_owed_at`, `redeploy_owed_reason`), cleared
--- by the rebuild that ran after it; the rebuild under way holds
--- `redeploy_owner` / `redeploy_heartbeat_at` as creation does, and the
--- leader runs again one whose owner went quiet, at most three times a mark
--- (`redeploy_kicks`). The governance machine (WF_GOVERNANCE_ENABLED) owes
--- its rebuild as durable work of its own and writes none of these.
+-- A production redeploy the old governance paths owed an app (the retired
+-- services/owed-redeploy.js). Nothing writes or reads these any more: the
+-- governance machine owes its rebuild as durable work of its own. Left in
+-- place; dropping them is a separate, irreversible step.
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS redeploy_owed_at TIMESTAMPTZ;
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS redeploy_owed_reason TEXT;
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS redeploy_owner TEXT;
@@ -793,8 +787,8 @@ ALTER TABLE apps ADD COLUMN IF NOT EXISTS redeploy_heartbeat_at TIMESTAMPTZ;
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS redeploy_kicks INTEGER NOT NULL DEFAULT 0;
 
 -- Admin-gated change lock. When TRUE, applying any group-voted change to
--- this app (PR merge in routes/votes.js, rename proposal + secret-change
--- proposal in routes/issues.js) additionally requires at least one admin
+-- this app (PR merge in routes/votes.js, a governance proposal in the
+-- governance machine, src/workflow/governance-proposal/) additionally requires at least one admin
 -- "yes"/"up" vote on top of the existing active-user majority. Toggled by
 -- admins via POST /api/apps/:slug/lock; the home-card lock icon (admin-
 -- only) is the canonical UI affordance. Default FALSE so every existing
@@ -2259,7 +2253,7 @@ CREATE INDEX IF NOT EXISTS idx_issue_votes_user ON issue_votes (user_id, created
 -- self-hosted app) that, once its vote passes, runs a sequential AI loop
 -- over every child app repo, opening one maintenance PR per app
 -- (chat_sessions.source='maintenance'). The campaign row is created by
--- the apply path (issues.maybeApplyMaintenanceCampaignProposal); per-app
+-- the governance machine's apply (src/workflow/governance-proposal/); per-app
 -- execution state lives in maintenance_campaign_apps so a platform
 -- restart resumes from the first pending row instead of losing track
 -- (fleet-maintenance.resumeRunningCampaigns).
@@ -10184,7 +10178,7 @@ COMMENT ON TABLE global_chat_usage IS 'staging:private';
 -- Two tests read this file, cut it at a marker near the top of one of the
 -- blocks below, and EXECUTE everything from there to the end of the file
 -- against a disposable schema holding nothing but their own stub tables:
--- tests/account-email.test.js and tests/preview-lifecycle.test.js. So a
+-- tests/account-email.test.js. So a
 -- statement down here has to run with no `apps`, no `users` and nothing
 -- else the platform has. A new table carrying a foreign key belongs ABOVE
 -- this line.
@@ -10243,7 +10237,7 @@ ALTER TABLE apps ADD COLUMN IF NOT EXISTS demo_prev_approvals INTEGER;
 -- keeps an earlier line when the same person re-casts the same side without
 -- a new one, which is what carries a Yes onto a proposal's next version.
 ALTER TABLE pr_votes ADD COLUMN IF NOT EXISTS reason TEXT;
--- #2603: the same line, on a governance vote. routes/issues.js requires one on
+-- #2603: the same line, on a governance vote. The governance machine requires one on
 -- a No (`down`) and accepts one on a Yes (`up`), with the identical 280-char
 -- cap; a row written before this column is NULL and reads exactly as it did.
 -- An issue vote toggles OFF when it is re-cast on the same side, so there is
@@ -11536,10 +11530,10 @@ COMMENT ON TABLE moderation_message_originals IS 'staging:private';
 
 CREATE UNIQUE INDEX IF NOT EXISTS moderation_reports_unique_open ON moderation_reports(case_id,cycle,reporter_user_id) WHERE legacy_type IS NULL;
 
--- Cross-Pod ownership of a preview build/capture; ephemeral runtime state.
---
--- tests/preview-lifecycle.test.js extracts this table definition into its
--- isolated scratch schema; later migrations may follow it normally.
+-- Cross-Pod ownership of a preview build/capture under the retired preview
+-- lifecycle; nothing writes it since the preview machine
+-- (src/workflow/preview/) became the only path. Kept for one release so a
+-- rollback target still finds it; drop it after that.
 CREATE TABLE IF NOT EXISTS preview_operations (
   session_id INTEGER PRIMARY KEY REFERENCES chat_sessions(id) ON DELETE CASCADE,
   desired_revision TEXT NOT NULL,
@@ -13666,7 +13660,9 @@ COMMENT ON TABLE wf_work_attempts IS 'staging:private';
 -- Kernel settings, written at boot (src/workflow/platform.ts):
 -- 'ownership_mode' is 'raise' (the default when absent) or 'log'; in log
 -- mode a write to an owned legacy column without the writer marker is
--- allowed and recorded in wf_ownership_violations instead of refused.
+-- allowed and recorded in wf_ownership_violations instead of refused. A
+-- machine whose old paths are deleted passes '@raise' to its guards
+-- (wf_guard_owned_columns below), which refuse whatever this says.
 -- 'enabled:<machine>' is the machine's ownership guard: a boot with the
 -- machine's flag on writes it. In 'log' mode (production, where Pods
 -- overlap) a boot with the flag off leaves it, and an admin removes it
@@ -13744,6 +13740,10 @@ CREATE TRIGGER wf_events_writer
 -- clause selects, but only while the machine is switched on: for a change
 -- only the machine may make, whether or not the row is enrolled yet (the
 -- move of a proposal into 'merged' is what enrolls it).
+--
+-- '@raise' anywhere among the arguments refuses a write outside the
+-- machine even while 'ownership_mode' is 'log': the machine's old paths are
+-- deleted, so no writer of these columns is left outside it.
 -- Whether a machine holds this instance and is on: what an `@enrolled=`
 -- guard below checks before it guards a row. Code outside the machine that
 -- must leave such a row alone (a legacy migration, a backfill) asks the same
@@ -13790,7 +13790,13 @@ BEGIN
     sub := NULLIF(split_part(owned, '.', 2), '');
     IF (sub IS NULL AND (after -> col) IS DISTINCT FROM (before -> col))
        OR (sub IS NOT NULL AND (after -> col -> sub) IS DISTINCT FROM (before -> col -> sub)) THEN
-      SELECT value INTO mode FROM wf_settings WHERE key = 'ownership_mode';
+      -- '@raise' among the arguments: the machine's old paths are deleted,
+      -- so a write outside it is refused whatever the cluster's mode.
+      IF '@raise' = ANY (TG_ARGV) THEN
+        mode := 'raise';
+      ELSE
+        SELECT value INTO mode FROM wf_settings WHERE key = 'ownership_mode';
+      END IF;
       IF COALESCE(mode, 'raise') = 'log' THEN
         INSERT INTO wf_ownership_violations (table_name, column_path, row_ref, query, application)
         VALUES (TG_TABLE_NAME, owned, jsonb_build_object('id', before -> 'id'),
@@ -13814,7 +13820,7 @@ CREATE TRIGGER issues_wf_governance_owned
   BEFORE UPDATE ON issues
   FOR EACH ROW
   WHEN (OLD.kind IN ('secret_change', 'rename', 'close_issue', 'maintenance_campaign', 'featured_illustration'))
-  EXECUTE FUNCTION wf_guard_owned_columns('@enrolled=governance-proposal/issue:', 'status',
+  EXECUTE FUNCTION wf_guard_owned_columns('@enrolled=governance-proposal/issue:', '@raise', 'status',
     'payload.appliedAt', 'payload.appliedBy', 'payload.withdrawnAt', 'payload.supersededAt');
 
 -- merge-followups (src/workflow/merge-followups/): what a merged pull
@@ -13919,7 +13925,10 @@ CREATE TRIGGER apps_wf_delivery_owned
 -- the checks' (which revision the verdict is for, and the verdict), and
 -- writes them in the transition that decides. checks_progress and
 -- check_phase stay the run's progress stream (a run says while it waits for
--- a checks slot, and when it starts testing) and are not guarded.
+-- a checks slot, and when it starts testing) and are not guarded. The old
+-- preview paths are deleted, so a write from outside the machine is refused
+-- whatever the cluster's ownership mode ('@raise'); a seed in migrate.js
+-- leaves a row the machine holds alone (wf_holds).
 DROP TRIGGER IF EXISTS chat_sessions_wf_preview_owned ON chat_sessions;
 CREATE TRIGGER chat_sessions_wf_preview_owned
   BEFORE UPDATE ON chat_sessions
@@ -13939,7 +13948,7 @@ CREATE TRIGGER chat_sessions_wf_preview_owned
         OR OLD.check_next_retry_at IS DISTINCT FROM NEW.check_next_retry_at
         OR OLD.console_check_state IS DISTINCT FROM NEW.console_check_state
         OR OLD.capture_state IS DISTINCT FROM NEW.capture_state)
-  EXECUTE FUNCTION wf_guard_owned_columns('@enrolled=preview/session:',
+  EXECUTE FUNCTION wf_guard_owned_columns('@enrolled=preview/session:', '@raise',
     'staging_url', 'staging_container_id', 'staging_image_ref', 'staging_build_ref', 'staging_runtime_kind',
     'staging_runtime_name', 'staging_commit_sha', 'checks_commit_sha', 'check_state',
     'test_results', 'check_error_detail', 'consecutive_check_failures', 'check_next_retry_at',

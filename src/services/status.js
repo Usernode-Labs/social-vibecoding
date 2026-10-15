@@ -10,7 +10,6 @@ const workerSvc = require('./worker');
 const applicationRuntime = require('./application-runtime');
 const runtimeStatus = require('./runtime-status');
 const activeWorkers = require('./active-workers');
-const stagingSvc = require('./staging');
 const checksQueue = require('./checks-queue');
 
 const WORKER_PREFIX = 'usernode-worker-';
@@ -76,6 +75,7 @@ async function gatherFull(config) {
               cs.session_title, cs.staging_container_id, cs.staging_url, cs.status, cs.created_at,
               cs.active_turn IS NOT NULL AS has_active_turn, cs.last_activity_at,
               cs.staging_image_ref, cs.staging_build_ref, cs.staging_runtime_kind, cs.staging_runtime_name,
+              (cs.check_state = 'pending' AND cs.check_phase = 'building') AS building,
               u.username, u.id AS user_id, a.slug AS app_slug
        FROM chat_sessions cs
        LEFT JOIN users u ON cs.user_id = u.id
@@ -330,7 +330,7 @@ async function gatherFull(config) {
       (s.pr_number || s.staging_build_ref || s.staging_runtime_name || s.staging_container_id) &&
       !s.has_active_turn &&
       !activeWorkers.isSessionBusy(s.id) &&
-      !stagingSvc.hasInFlightBuild(s.id) &&
+      !s.building &&
       Date.now() - new Date(s.last_activity_at || s.created_at).getTime() > MISSING_PREVIEW_THRESHOLD_MS
     )
     .map((s) => ({

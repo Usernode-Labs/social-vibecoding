@@ -106,6 +106,12 @@ export type FirstSessionInfo = {
   newAccount?: boolean;
   /** The walk's reader is a private member: its fourth card is the waitlist (./tour-steps.ts homeWalkSteps). */
   privateMember?: boolean;
+  /**
+   * The walk's example of a change to ask Homeroom bot for in this project
+   * (walkExample: GET /api/apps/:slug `exampleChange`, from its ready-made
+   * starter). Not yet asked while undefined; null for a project with none.
+   */
+  example?: string | null;
 };
 
 type Legacy = {
@@ -985,8 +991,10 @@ const LOOK_AROUND_INFO: FirstSessionInfo = { slug: '', name: '' };
  * `?shot=tour-home-private` (with the waitlist card), `?shot=tour-look`, and
  * `&step=N` to open one at its Nth card; `?shot=app-tip` and
  * `?shot=app-tip-invited`, the tip over the app. The walk and the tip are
- * shown over the first project on the viewer's Home. Nothing is written: no
- * answer to the question, no "seen" or "done" mark.
+ * shown over the first project on the viewer's Home, the walk with its name
+ * and, when its starter has one, its example change (asked before the walk
+ * opens, so a shot from its second card shows it at once). Nothing is
+ * written: no answer to the question, no "seen" or "done" mark.
  */
 const TOUR_SHOTS: Readonly<Record<string, { path: TourPath; privateMember?: boolean }>> = Object.freeze({
   'tour-home': { path: 'walk' },
@@ -1031,6 +1039,31 @@ async function firstHomeProject(): Promise<{ slug: string; name: string } | null
   return null;
 }
 
+/**
+ * The project's example change, from GET /api/apps/:slug (`exampleChange`,
+ * services/app-templates.js), or null: a project with none, or an answer
+ * that is not one.
+ */
+export function walkExampleOf(body: unknown): string | null {
+  const app = body && typeof body === 'object' ? (body as { app?: unknown }).app : null;
+  const example = app && typeof app === 'object' ? (app as { exampleChange?: unknown }).exampleChange : null;
+  return typeof example === 'string' && example.trim() ? example.trim() : null;
+}
+
+/**
+ * Ask for it, by the same read as the made screen's (madeAppUrl: no-store,
+ * past the service worker's boot cache). Never throws: a read that fails is
+ * a walk that says it without an example.
+ */
+export async function walkExample(slug: string): Promise<string | null> {
+  try {
+    const res = await fetch(madeAppUrl(slug), { credentials: 'same-origin', cache: 'no-store' });
+    return res.ok ? walkExampleOf(await res.json()) : null;
+  } catch {
+    return null;
+  }
+}
+
 async function openTourShot(shot: TourShot, setMode: Dispatch<SetStateAction<Mode>>): Promise<void> {
   const open = (info: FirstSessionInfo) => setMode((prev) => (
     prev.kind === 'none' ? { kind: 'tour', info, path: shot.path, start: shot.start } : prev
@@ -1039,7 +1072,8 @@ async function openTourShot(shot: TourShot, setMode: Dispatch<SetStateAction<Mod
   if (shot.path === 'look') { open(LOOK_AROUND_INFO); return; }
   const project = await firstHomeProject();
   if (!project) return;
-  open({ ...project, privateMember: !!shot.privateMember });
+  const example = await walkExample(project.slug);
+  open({ ...project, example, privateMember: !!shot.privateMember });
 }
 
 /** The tip's screenshot state: the first project on Home, opened, and its tip, written nowhere. */
@@ -1436,8 +1470,25 @@ export function FirstSession() {
   const steps = useMemo(() => {
     if (mode.kind !== 'tour') return [];
     if (mode.path === 'look') return lookAroundSteps();
-    return homeWalkSteps({ slug: mode.info.slug, privateMember: !!mode.info.privateMember });
+    const { slug, name, example, privateMember } = mode.info;
+    return homeWalkSteps({ slug, name, example, privateMember: !!privateMember });
   }, [mode, t]);
+  // The walk's Homeroom bot card names a change this project could ask for
+  // (walkExample), asked once as the walk opens. Its first card needs none,
+  // so the answer is in before the second card shows; until then, and for a
+  // project with none, that card says where the bot is without one.
+  const walkSlug = mode.kind === 'tour' && mode.path === 'walk' && mode.info.example === undefined ? mode.info.slug : null;
+  useEffect(() => {
+    if (!walkSlug) return undefined;
+    let live = true;
+    void walkExample(walkSlug).then((example) => {
+      if (!live) return;
+      setMode((prev) => (prev.kind === 'tour' && prev.path === 'walk' && prev.info.slug === walkSlug && prev.info.example === undefined
+        ? { ...prev, info: { ...prev.info, example } }
+        : prev));
+    });
+    return () => { live = false; };
+  }, [walkSlug]);
 
   if (mode.kind === 'make' && mode.entry === 'create') {
     return (

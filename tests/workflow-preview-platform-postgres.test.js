@@ -120,7 +120,12 @@ test('previews through the platform runtime', { timeout: 120000 }, async (t) => 
     await pool.query(`UPDATE chat_sessions SET last_activity_at = NOW() WHERE id = $1`, [s.id]);
     const other = await proposal();
     await pool.query(`UPDATE chat_sessions SET staging_url = 'https://legacy' WHERE id = $1`, [other.id]);
-    assert.equal(await platform.retirePreview(other.id, app.id, 'archived', true), null, 'not held: the caller retires it the old way');
+    // A row the machine does not hold is adopted and retired by it: nothing
+    // else tears a preview down.
+    const retired = await platform.retirePreview(other.id, app.id, 'archived', true);
+    assert.ok(['accepted', 'pending'].includes(retired.status), JSON.stringify(retired));
+    await until(async () => (await state(other)) === 'retired', 'retired');
+    assert.equal((await pool.query('SELECT staging_url FROM chat_sessions WHERE id = $1', [other.id])).rows[0].staging_url, null);
     await quiet();
   });
 
@@ -135,34 +140,10 @@ test('previews through the platform runtime', { timeout: 120000 }, async (t) => 
               check_state = CASE WHEN $3::boolean THEN check_state END,
               test_results = CASE WHEN $3::boolean THEN test_results ELSE '[]'::jsonb END
         WHERE id = $1`, [s.id, SHA('e'), true]);
-    assert.equal(await require('../src/services/preview-workflow').clear({ session: s, reason: 'upload' }), true);
+    await require('../src/services/preview-workflow').clear({ session: s, reason: 'upload' });
     await until(async () => (await pool.query('SELECT check_state FROM chat_sessions WHERE id = $1', [s.id])).rows[0].check_state === null,
       'cleared by the machine');
     await quiet();
   });
 
-  await t.test('with the flag off, the next boot detaches every held session and the old paths own it again', async () => {
-    const s = await proposal();
-    await platform.submitRevision({ sessionId: s.id, appId: app.id, head: SHA('c'), source: 'turn' });
-    await until(async () => (await state(s)) === 'settled', 'settled');
-    await quiet();
-    await platform.stopWorkflow();
-    await platform.startWorkflow({ ...config, wfPreviewsEnabled: false }, { loops: true });
-    assert.equal(platform.previewsEnabled(), false);
-    await until(async () => (await state(s)) === 'detached', 'detached');
-    const { rows } = await pool.query(`SELECT key FROM wf_settings WHERE key = 'enabled:preview'`);
-    assert.equal(rows.length, 0);
-    await pool.query(`UPDATE chat_sessions SET staging_url = NULL WHERE id = $1`, [s.id]);
-    await quiet();
-    const detaches = async () => (await pool.query(
-      `SELECT count(*)::int AS n FROM wf_events WHERE machine = 'preview' AND type = 'Detach'`)).rows[0].n;
-    const before = await detaches();
-    await platform.stopWorkflow();
-    await platform.startWorkflow({ ...config, wfPreviewsEnabled: false }, { loops: true });
-    // The runtime runs anyway (bot builds always do); the preview machine
-    // has nothing left to hand back, so it is not registered.
-    assert.equal(platform.previewsEnabled(), false);
-    await quiet();
-    assert.equal(await detaches(), before, 'nothing left to detach');
-  });
 });

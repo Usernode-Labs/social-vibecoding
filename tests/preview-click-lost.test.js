@@ -1,6 +1,6 @@
 'use strict';
 
-// A Preview click with the preview machine on (WF_PREVIEWS_ENABLED). The
+// A Preview click on a preview the machine holds. The
 // route rebuilds only once it found the runtime missing or stale
 // (routes/sessions.js inspectPreview), so for a session the machine holds
 // and serves, the click is an observation: it reports the preview lost and
@@ -19,8 +19,8 @@ const stub = (path, exports) => {
 const calls = [];
 const serving = { now: true };
 stub('../src/services/preview-workflow', {
-  enabled: () => true,
   held: async () => true,
+  working: async () => false,
   lost: async ({ session, detail }) => { calls.push(['lost', session.id, detail]); return serving.now; },
   request: async (o) => { calls.push(['request', o.session.id, o.reason]); return { taken: true }; },
   revision: async (o) => { calls.push(['revision', o.session.id, o.source]); return { taken: true }; },

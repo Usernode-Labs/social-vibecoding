@@ -26,19 +26,19 @@ function notifySessionState(sessionId) {
   } catch { /* notifier is best-effort; never break turn bookkeeping */ }
 }
 
-// ── The durable record (WF_PREVIEWS_ENABLED) ────────────────────────────
+// ── The durable record ──────────────────────────────────────────────────
 //
-// What this module keeps in memory is seen only by this process. With the
-// preview machine on, each operation and each worker's turn is also recorded
-// on the session's instance (src/workflow/preview/: OperationStarted, then
+// What this module keeps in memory is seen only by this process. Each
+// operation and each worker's turn is also recorded on the session's
+// preview instance (src/workflow/preview/: OperationStarted, then
 // OperationEnded), naming this process, and counted while this process is
 // alive (services/process-presence.js). That is how another process (the
 // workflow's carry search for a merge, and the machine's own retirement
 // guard) sees who is working on a session. Readers in this process keep
 // reading memory, as before. A start is recorded before the work goes on;
 // an end is recorded after it, in order. Recording never fails the work: a
-// record that cannot be written is logged and the work proceeds as on
-// [main].
+// record that cannot be written is logged and the work proceeds. Without a
+// workflow runtime (a script, a test) nothing is recorded.
 const recorded = new Map(); // sessionId -> Map<recordId, Promise<boolean>> (this process's open records)
 
 function previews() {

@@ -5,13 +5,13 @@
 // started its container, was stored as the proposal's "couldn't run" error
 // and spent its six automatic retries. Now:
 //
-//   * runCaptureShards and the harvest's joinCaptures name the shards that
+//   * runCaptureShards and the collect's joinCaptures name the shards that
 //     reported nothing because their Pod never started (`notStarted`);
-//   * settleCaptureRun stores a run left with checks missing for that reason
-//     as a platform fault, worded "The browser checks could not start: …";
-//   * a harvest that finds such a shard runs the checks once more, as the
-//     live run's sweep would have, and stores the platform fault the second
-//     time;
+//   * settleCaptureRun settles a run left with checks missing for that
+//     reason as a platform fault, worded "The browser checks could not
+//     start: …", for the preview machine to store;
+//   * a run the machine's retry collects from the cluster (check-harvest
+//     collectForWorkflow) settles the same way;
 //   * the merge gate reads a platform fault the error lane still covers as
 //     in progress, so the card says the checks will run again.
 //
@@ -26,11 +26,18 @@ const path = require('node:path');
 
 globalThis.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
 
+// The settlement takes its Postgres census through getPool(); pointing it at
+// the test's fake keeps the census off the network.
+const census = { pool: null };
+const poolId = require.resolve('../src/db/pool');
+require.cache[poolId] = {
+  id: poolId, filename: poolId, loaded: true, paths: [],
+  exports: { getPool: () => census.pool || { async query() { return { rows: [] }; } } },
+};
+
 const visuals = require('../src/services/visuals');
 const harvest = require('../src/services/check-harvest');
 const kubernetes = require('../src/services/kubernetes');
-const stagingRecovery = require('../src/services/staging-recovery');
-const lifecycle = require('../src/services/preview-lifecycle');
 const mergeRequirements = require('../src/services/merge-requirements');
 const ws = require('../src/services/ws');
 
@@ -102,18 +109,11 @@ test('the live run carries the shards that never started to the settle step', ()
 
 // ── The settle step ─────────────────────────────────────────────────────
 
-// A pool that records what storeChecks writes: state, detail, platform fault.
+// A pool that answers nothing: the settlement stores no verdict (the
+// machine does), so what it decided is read off what it returns.
 function settlePool() {
   const pool = {
-    stores: [],
-    async query(sql, params = []) {
-      if (/UPDATE chat_sessions\s+SET check_state = \$1/.test(sql)) {
-        const error = /check_error_platform = \$6::boolean/.test(sql);
-        pool.stores.push({ state: params[0], detail: error ? params[4] : null, platformFault: error ? params[5] : false });
-        return { rows: [], rowCount: 1 };
-      }
-      return { rows: [], rowCount: 0 };
-    },
+    async query() { return { rows: [], rowCount: 0 }; },
     async connect() { return { query: (sql, params) => pool.query(sql, params), release() {} }; },
   };
   return pool;
@@ -124,57 +124,58 @@ const APP = { id: 9, slug: 'demo', name: 'Demo', repo_url: '' };
 
 function settle(t, { stdout, notStarted }) {
   const pool = settlePool();
-  stub(t, lifecycle, { current: () => ({ pool }) });
+  census.pool = pool;
+  t.after(() => { census.pool = null; });
   stub(t, ws, { broadcastGlobal: () => {} });
   return visuals.settleCaptureRun({}, pool, {
-    session: SESSION, app: APP, commitHash: 'abc123', trigger: 'commit-push', send: () => {},
+    session: SESSION, app: APP, commitHash: 'abc123', collect: { runId: 'run-key-1' },
     runStartedAt: Date.now(), media: false, capturePaths: ['/'], pathDefaulted: false, prodRunning: false,
     stagingOrigin: '', targets: [], testsCount: 3, dispatched: null, ceilingDropped: 0,
     stdout, stderr: '', runPartial: true, runPartialReason: 'run timed out', unitOutcome: null, notStarted,
-  }).then((settled) => ({ settled, stores: pool.stores }));
+  }).then((settled) => ({ settled, verdict: settled.result }));
 }
 
 const NOT_STARTED = [{ shard: 1, lead: 'start', cause: 'a test pod waited 13 minutes for its container to start' }];
 
-test('checks missing because a test Pod never started are stored as the platform\'s fault, in the card\'s words', async (t) => {
-  const { settled, stores } = await settle(t, { stdout: frame(0), notStarted: NOT_STARTED });
-  assert.equal(settled.result.state, 'error');
-  assert.equal(stores.length, 1);
-  assert.equal(stores[0].platformFault, true, 'the error lane keeps retrying it past the proposal\'s own retries');
-  assert.equal(stores[0].detail, SENTENCE);
+test('checks missing because a test Pod never started settle as the platform\'s fault, in the card\'s words', async (t) => {
+  const { verdict } = await settle(t, { stdout: frame(0), notStarted: NOT_STARTED });
+  assert.equal(verdict.outcome, 'verdict');
+  assert.equal(verdict.state, 'error');
+  assert.equal(verdict.platformFault, true, 'the error lane keeps retrying it past the proposal\'s own retries');
+  assert.equal(verdict.errorDetail, SENTENCE);
 });
 
 test('a run that produced nothing at all, because its Pod never started, keeps the runner\'s words after the sentence', async (t) => {
-  const { stores } = await settle(t, { stdout: '', notStarted: NOT_STARTED });
-  assert.equal(stores[0].platformFault, true);
-  assert.ok(stores[0].detail.startsWith(`${SENTENCE} | Browser check runner`), stores[0].detail);
+  const { verdict } = await settle(t, { stdout: '', notStarted: NOT_STARTED });
+  assert.equal(verdict.platformFault, true);
+  assert.ok(verdict.errorDetail.startsWith(`${SENTENCE} | Browser check runner`), verdict.errorDetail);
 });
 
 test('without a shard that never started, the same missing checks keep today\'s verdict', async (t) => {
-  const { stores } = await settle(t, { stdout: frame(0), notStarted: [] });
-  assert.equal(stores[0].state, 'error');
-  assert.equal(stores[0].platformFault, false);
+  const { verdict } = await settle(t, { stdout: frame(0), notStarted: [] });
+  assert.equal(verdict.state, 'error');
+  assert.equal(verdict.platformFault, false);
   const none = await settle(t, { stdout: '', notStarted: [] });
-  assert.equal(none.stores[0].platformFault, false, 'a capture that produced nothing may be the preview\'s doing');
+  assert.equal(none.verdict.platformFault, false, 'a capture that produced nothing may be the preview\'s doing');
   const passing = await settle(t, { stdout: [frame(0), frame(1), frame(2)].join('\n'), notStarted: NOT_STARTED });
-  assert.equal(passing.stores[0].state, 'passing', 'every check reported: a Pod that started late changes nothing');
+  assert.equal(passing.verdict.state, 'passing', 'every check reported: a Pod that started late changes nothing');
 });
 
 test('a capture Job refused, lost, or whose Pod never started, outside the settle step, says so too', () => {
+  // A checks run that throws before a verdict returns a 'blocked'
+  // settlement; the machine records it as an 'error' with that reason.
   const src = read('src/services/visuals.js');
-  const publish = src.slice(src.indexOf('async function publishCaptureError('), src.indexOf('async function publishCaptureError(') + 1200);
-  assert.match(publish, /const fault = require\('\.\/check-pod-start'\)\.checkStartFault\(err\);/);
-  assert.match(publish, /\.\.\.\(fault \? \{ platformFault: true \} : \{\}\)/);
-  assert.match(publish, /fault \? require\('\.\/check-pod-start'\)\.browserNotRunSentence\(fault\) : err\.message/);
-  const catchAt = src.indexOf("log.warn('visuals', 'Capture failed (non-fatal)'");
-  const nonFatal = src.slice(catchAt, catchAt + 1600);
-  assert.match(nonFatal, /checkStartFault\(err\)/);
-  assert.match(nonFatal, /\.\.\.\(fault \? \{ platformFault: true \} : \{\}\)/);
+  const capture = src.slice(src.indexOf('async function captureForSession('), src.indexOf('function workflowOperation('));
+  const catchAt = capture.indexOf("traceStep('capture_error', 'Checks run threw'");
+  const thrown = capture.slice(catchAt, catchAt + 600);
+  assert.match(thrown, /const fault = require\('\.\/check-pod-start'\)\.checkStartFault\(err\);/);
+  assert.match(thrown, /\{ outcome: 'blocked', reason: require\('\.\/check-pod-start'\)\.browserNotRunSentence\(fault\), platformFault: true \}/);
+  assert.match(thrown, /: \{ outcome: 'blocked', reason: captureFailureDetail\(/, 'any other throw is not the platform\'s fault');
 });
 
-// ── The harvest ─────────────────────────────────────────────────────────
+// ── A collected run ─────────────────────────────────────────────────────
 
-test('the harvest names a shard whose Pod never started, as the live run does', () => {
+test('the collect names a shard whose Pod never started, as the live run does', () => {
   const joined = harvest.joinCaptures([
     { state: 'succeeded', stdout: frame(0) },
     { state: 'timeout', stdout: '', partial: true, partialReason: 'run timed out', podStart: NEVER },
@@ -186,7 +187,7 @@ test('the harvest names a shard whose Pod never started, as the live run does', 
   assert.deepEqual(one.notStarted.map((n) => n.shard), [0], 'one capture Job is read the same way');
 });
 
-test('a unit-suite shard that never started makes the harvested suite one that never ran', () => {
+test('a unit-suite shard that never started makes the collected suite one that never ran', () => {
   const joined = harvest.joinUnitResults([
     { state: 'succeeded', stdout: 'ok 1 - a\n', stderr: '', exitCode: 0 },
     { state: 'failed', stdout: '', stderr: 'DeadlineExceeded', exitCode: null, timedOut: true, podStart: NEVER },
@@ -196,15 +197,14 @@ test('a unit-suite shard that never started makes the harvested suite one that n
   assert.equal(joined.podStart, NEVER);
 });
 
-function makePool({ orphan, session }) {
+function makePool() {
   const pool = {
     deleted: [],
     async query(sql, params) {
-      if (/SELECT run_id, session_id, commit_sha, owner, manifest/.test(sql)) return { rows: [{ ...orphan }], rowCount: 1 };
-      if (/UPDATE check_runs SET owner/.test(sql)) return { rows: [], rowCount: 1 };
-      if (/UPDATE check_runs SET heartbeat_at/.test(sql)) return { rows: [], rowCount: 1 };
+      if (/SELECT run_id, session_id, commit_sha, manifest, started_at FROM check_runs/.test(sql)) {
+        return { rows: [orphanRow(pool.manifest)], rowCount: 1 };
+      }
       if (/DELETE FROM check_runs/.test(sql)) { pool.deleted.push(params[0]); return { rows: [], rowCount: 1 }; }
-      if (/FROM chat_sessions cs JOIN apps a/.test(sql)) return { rows: [{ ...session }], rowCount: 1 };
       return { rows: [], rowCount: 0 };
     },
   };
@@ -213,23 +213,19 @@ function makePool({ orphan, session }) {
 
 function orphanRow(manifest = {}) {
   return {
-    run_id: 'run-1', session_id: 42, commit_sha: 'abc123', owner: 'dead-pod:7', stale: true,
-    started_at: new Date(Date.now() - 90_000).toISOString(), heartbeat_at: new Date(Date.now() - 70_000).toISOString(),
-    queued_at: new Date(Date.now() - 120_000).toISOString(), admitted_at: new Date(Date.now() - 100_000).toISOString(),
-    manifest: { launched: true, trigger: 'promote-kick', startedAt: Date.now() - 90_000, media: false,
-      capturePaths: ['/'], targets: [], testsCount: 3, dispatched: null, ...manifest },
+    run_id: 'run-1', session_id: 42, commit_sha: 'abc123',
+    started_at: new Date(Date.now() - 90_000).toISOString(),
+    manifest: { workflow: true, runKey: 'run-key-1', launched: true, trigger: 'promote-kick', startedAt: Date.now() - 90_000,
+      media: false, capturePaths: ['/'], targets: [], testsCount: 3, dispatched: null, ...manifest },
   };
 }
 
-const HARVEST_SESSION = {
-  id: 42, app_id: 9, status: 'promoted', check_state: 'pending', check_phase: 'testing',
-  checks_commit_sha: 'abc123', app_slug: 'demo', app_name: 'Demo', repo_url: '', app_runtime_name: null, app_runtime_kind: null,
-};
+const COLLECT_SESSION = { id: 42, app_id: 9, status: 'promoted', checks_commit_sha: 'abc123' };
 const config = { captureRuntime: 'kubernetes', kubernetes: { workerNamespace: 'workers', appNamespace: 'apps' } };
 
 // The stuck shard's Job ended by its deadline (`failed`, as Kubernetes ends
-// it) or outlived the harvest's own wait (`timeout`).
-function harvestStubs(t, { captures, stuck = 'failed' }) {
+// it) or outlived the collect's own wait (`timeout`).
+function collectStubs(t, { captures, stuck = 'failed' }) {
   stub(t, ws, { broadcastGlobal: () => {} });
   stub(t, kubernetes, {
     findCheckJobs: async () => ({ capture: captures[0], captures, unitSuite: null }),
@@ -240,61 +236,34 @@ function harvestStubs(t, { captures, stuck = 'failed' }) {
   });
 }
 
-test('a harvested run with a shard that never started goes again once, in its place, marked so it does not loop', async (t) => {
-  const rechecks = [];
-  harvestStubs(t, { captures: [{ name: 'sv-capture-s42-a', state: 'succeeded' }, { name: 'sv-capture-s42-x', state: 'failed' }] });
-  stub(t, stagingRecovery, { recheckSessionChecks: async (args) => { rechecks.push(args); } });
-  stub(t, visuals, { settleCaptureRun: async () => assert.fail('nothing settles from a shard that never started, the first time') });
-  const pool = makePool({ orphan: orphanRow({ captureShards: 2 }), session: HARVEST_SESSION });
-  const summary = await harvest.sweep(config, { reason: 'boot', pool });
-  const [result] = await summary.done;
-  assert.equal(result.outcome, 'redriven');
-  assert.equal(result.why, 'a test pod never started');
-  assert.equal(rechecks.length, 1);
-  assert.equal(rechecks[0].reason, 'orphaned-run');
-  assert.equal(rechecks[0].redrive, 'pod-never-started');
-  assert.ok(rechecks[0].queuedSince, 'it keeps the place in line the run had');
-});
+function collect(manifest) {
+  const pool = makePool();
+  pool.manifest = manifest;
+  return harvest.collectForWorkflow(config, pool, { runKey: 'run-key-1', session: COLLECT_SESSION, app: APP })
+    .then((result) => ({ result, pool }));
+}
 
-test('a run already re-driven for that settles with the shard named, as the platform\'s fault', async (t) => {
+test('a collected run with a shard that never started settles with the shard named, as the platform\'s fault', async (t) => {
   let settledWith = null;
-  harvestStubs(t, { captures: [{ name: 'sv-capture-s42-a', state: 'succeeded' }, { name: 'sv-capture-s42-x', state: 'failed' }] });
-  stub(t, stagingRecovery, { recheckSessionChecks: async () => assert.fail('re-driven once already') });
+  collectStubs(t, { captures: [{ name: 'sv-capture-s42-a', state: 'succeeded' }, { name: 'sv-capture-s42-x', state: 'failed' }] });
   stub(t, visuals, {
-    settleCaptureRun: async (_c, _p, run) => { settledWith = run; return { traceStatus: 'error', result: { state: 'error' } }; },
-    scheduleShots: () => {},
+    settleCaptureRun: async (_c, _p, run) => { settledWith = run; return { traceStatus: 'error', result: { outcome: 'verdict', state: 'error' } }; },
   });
-  const pool = makePool({ orphan: orphanRow({ captureShards: 2, redrive: 'pod-never-started' }), session: HARVEST_SESSION });
-  const summary = await harvest.sweep(config, { reason: 'boot', pool });
-  const [result] = await summary.done;
-  assert.equal(result.outcome, 'settled');
-  assert.deepEqual(settledWith.notStarted.map((n) => n.shard), [1]);
+  const { result } = await collect({ captureShards: 2 });
+  assert.equal(result.state, 'error');
+  assert.ok(settledWith, 'the run settles from what its Jobs reported');
+  assert.deepEqual((settledWith.notStarted || []).map((n) => n.shard), [1],
+    'the shard whose Pod never started reaches the settlement, as the live run\'s does');
 });
 
-test('a capture Job that never started and left nothing to read is stored as the platform\'s fault', async (t) => {
-  const stores = [];
-  harvestStubs(t, { captures: [{ name: 'sv-capture-s42-x', state: 'failed' }], stuck: 'timeout' });
-  stub(t, visuals, {
-    settleCaptureRun: async () => assert.fail('nothing to settle from'),
-    storeChecks: async (_pool, _id, _sha, result, detail) => { stores.push({ result, detail }); return true; },
-    storeCaptureOutcome: async () => true,
-    scheduleShots: () => {},
-  });
-  const pool = makePool({ orphan: orphanRow({ redrive: 'pod-never-started' }), session: HARVEST_SESSION });
-  const summary = await harvest.sweep(config, { reason: 'boot', pool });
-  const [result] = await summary.done;
-  assert.equal(result.outcome, 'settled');
-  assert.equal(stores.length, 1);
-  assert.equal(stores[0].result.platformFault, true);
-  assert.equal(stores[0].detail, SENTENCE);
-});
-
-test('a re-drive carries its mark into the new run\'s manifest', () => {
-  const recheck = read('src/services/staging-recovery.js');
-  assert.match(recheck, /async function recheckSessionChecks\(\{ config, pool, session, reason, queuedSince = null, redrive = null \}\)/);
-  assert.match(recheck, /\.\.\.\(redrive \? \{ redrive \} : \{\}\),/);
-  const capture = read('src/services/visuals.js');
-  assert.match(capture, /launched: true,\n\s+trigger: trigger \|\| null,[\s\S]{0,300}\.\.\.\(opts\.redrive \? \{ redrive: opts\.redrive \} : \{\}\),/);
+test('a capture Job that never started and left nothing to read is blocked as the platform\'s fault', async (t) => {
+  collectStubs(t, { captures: [{ name: 'sv-capture-s42-x', state: 'failed' }], stuck: 'timeout' });
+  stub(t, visuals, { settleCaptureRun: async () => assert.fail('nothing to settle from') });
+  const { result, pool } = await collect({});
+  assert.equal(result.outcome, 'blocked');
+  assert.equal(result.platformFault, true, 'it spends none of the proposal\'s own retries');
+  assert.equal(result.reason, 'capture Job still running past its deadline');
+  assert.deepEqual(pool.deleted, ['run-1'], 'the manifest is cleared: there is nothing left to read');
 });
 
 // ── The merge gate ──────────────────────────────────────────────────────

@@ -27,10 +27,8 @@ function row(overrides = {}) {
   };
 }
 
-function activeHarness({ updateRows = null, pendingError = null } = {}) {
+function activeHarness({ updateRows = null } = {}) {
   const calls = [];
-  const pending = [];
-  const notified = [];
   const pipelines = [];
   let released = 0;
   const pool = {
@@ -49,20 +47,12 @@ function activeHarness({ updateRows = null, pendingError = null } = {}) {
   };
   const deps = {
     github: { async getBranchSha() { return NEW; } },
-    visuals: {
-      async setChecksPending(...args) {
-        pending.push(args);
-        if (pendingError) throw pendingError;
-        return true;
-      },
-      notifyChecksPending(...args) { notified.push(args); },
-    },
     pipeline: {
       beginHandoffPipeline() { return () => { released += 1; }; },
       startHandoffPipeline(...args) { pipelines.push(args); },
     },
   };
-  return { pool, deps, calls, pending, notified, pipelines, released: () => released };
+  return { pool, deps, calls, pipelines, released: () => released };
 }
 
 test('active CLI handoff adopts every managed pin and starts sync-main checks', async () => {
@@ -76,15 +66,13 @@ test('active CLI handoff adopts every managed pin and starts sync-main checks', 
   const adoption = h.calls.find((call) => /UPDATE chat_sessions/.test(call.sql));
   assert.match(adoption.sql, /handoff_head_sha = \$1/);
   assert.match(adoption.sql, /handoff_uploaded_sha = \$1/);
-  // The verdict and the preview are the preview machine's while its flag is
-  // on ($7); off, the adoption claims them as before.
-  assert.match(adoption.sql, /checks_commit_sha = CASE WHEN \$7::boolean THEN checks_commit_sha ELSE \$1 END/);
+  // The verdict and the preview are the preview machine's: the adoption
+  // leaves them alone.
+  assert.doesNotMatch(adoption.sql, /check_state =|checks_commit_sha =|staging_url =/);
   assert.match(adoption.sql, /handoff_head_sha IS NOT DISTINCT FROM \$4/);
   assert.match(adoption.sql, /handoff_uploaded_sha IS NOT DISTINCT FROM \$5/);
   assert.match(adoption.sql, /checks_commit_sha IS NOT DISTINCT FROM \$6/);
-  assert.deepEqual(adoption.params, [NEW, 41, 'dev/cli-u6-work', OLD, OLD, OLD, false]);
-  assert.deepEqual(h.pending[0].slice(1), [41, NEW, 'building', 'sync-main']);
-  assert.deepEqual(h.notified[0], [41, NEW, 'building', 'sync-main']);
+  assert.deepEqual(adoption.params, [NEW, 41, 'dev/cli-u6-work', OLD, OLD, OLD]);
   assert.equal(h.pipelines.length, 1);
   assert.equal(h.pipelines[0][4], NEW);
   assert.equal(h.pipelines[0][6], 'sync-main');
@@ -110,7 +98,6 @@ test('a concurrent managed-head change loses the database CAS and starts no chec
   }, h.deps);
   assert.equal(result.ok, false);
   assert.equal(result.reason, 'session_state_changed');
-  assert.equal(h.pending.length, 0);
   assert.equal(h.pipelines.length, 0);
 });
 
@@ -129,19 +116,6 @@ test('already-current CLI pins make an already-synced retry an idempotent no-op'
   });
   assert.equal(h.calls.length, 0);
   assert.equal(h.pipelines.length, 0);
-});
-
-test('an auxiliary phase-stamp failure cannot strand the adopted active head', async () => {
-  const h = activeHarness({ pendingError: new Error('database timeout') });
-  const result = await reconcileCliHandoffSync({
-    config: {}, pool: h.pool, session: row(), newHead: NEW,
-  }, h.deps);
-
-  assert.equal(result.ok, true);
-  assert.equal(result.checksStarted, true);
-  assert.equal(h.pipelines.length, 1);
-  assert.equal(h.pipelines[0][4], NEW);
-  assert.equal(h.pipelines[0][6], 'sync-main');
 });
 
 test('promoted pins are not current until the reviewed revision is current too', async () => {

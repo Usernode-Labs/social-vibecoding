@@ -156,7 +156,7 @@ test('#4239: moving a request about Homeroom itself to Homeroom\'s own board', {
   await setting('homeroom_bot_mode', 'shadow');
   const settings = await homeroomBot.readSettings(pool);
   const opened = await conversations.ensureAdmittedDirect(pool, bot.id, ada.id);
-  const workflow = { governsKind: () => false, async fileProposal() {} };
+  const workflow = { async fileProposal() {} };
 
   // A request Ada filed on Ear Trainer, about Homeroom's header.
   async function request(n, { by = ada, title = `Header ${n}`, body = 'The header frame covers the app.' } = {}) {

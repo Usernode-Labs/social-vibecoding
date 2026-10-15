@@ -67,6 +67,20 @@ export function governanceServices({ config, pool }: Deps): Record<string, WorkH
       },
     },
 
+    // A close vote closed a request: the Homeroom bot's proposals for it that
+    // are up for a vote are withdrawn once every request they are linked to
+    // is closed, and the bot is woken for the app. `strict`: a failure to
+    // read is thrown, and the item runs again.
+    'bot.requestsClosed': {
+      maxAttempts: 3,
+      backoffMs: backoff,
+      async run({ input }): Promise<Json> {
+        const out = await legacy('services/homeroom-bot-closed-requests')
+          .noteRequestsClosed(pool, { appId: input.appId, closed: input.closed, strict: true });
+        return { withdrawn: out?.withdrawn ?? [] };
+      },
+    },
+
     // Whether a close proposal's target is still open on GitHub. A target
     // closed by hand there is announced by nothing else.
     'governance.checkTarget': {

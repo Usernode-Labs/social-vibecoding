@@ -1700,9 +1700,10 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       // `audience` (services/communities.js) rides along, the same column
       // the /api/apps list carries, so the app's own screens can tell a
       // project that is just its creator's from a group's: the preview
-      // banner and the vote picker word themselves by it.
+      // banner and the vote picker word themselves by it. `template` is
+      // what it started from, for its `exampleChange` below.
       const { rows } = await pool.query(
-        `SELECT ${appAccess.nonSecretAppColumnList()},
+        `SELECT ${appAccess.nonSecretAppColumnList()}, template,
                 ${communities.audienceSql('apps', '(SELECT COUNT(*) FROM community_members m WHERE m.community_id = apps.community_id)')}
                   AS audience
            FROM apps WHERE slug = $1`,
@@ -1894,6 +1895,10 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         staging_sample: stagingSample,
         creationPhase: phaseEntry ? phaseEntry.phase : null,
         first_version: firstVersion,
+        // A change somebody could ask Homeroom bot for in this app, from
+        // its ready-made starter (services/app-templates.js exampleChange),
+        // or null: the first-session walk's Homeroom bot card offers it.
+        exampleChange: appTemplates.exampleChangeOf(appRow.template),
         missingSecrets,
         // Reviewer copy needs to distinguish an advisory shots run from
         // a real vote/merge gate. This is a platform rollout flag, not an app
@@ -2977,8 +2982,8 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
   // applying any group-voted change (PR merge, rename proposal, secret
   // change) additionally requires at least one admin yes/up vote on top
   // of the existing active-user majority — enforced in routes/votes.js
-  // (checkAndMerge) and routes/issues.js (maybeApplyRenameProposal /
-  // maybeApplySecretChangeProposal) via services/admin-approval.js.
+  // (checkAndMerge, via services/admin-approval.js) and by the governance
+  // machine for governance proposals (src/workflow/governance-proposal/).
   //
   // The home-card lock icon is the canonical UI affordance. We post a
   // system chat message + broadcast `app_update` so every viewer's card

@@ -61,6 +61,16 @@
 // 12 Oct on a test #4843 had fixed on main, 182 commits behind and merging
 // cleanly, its 18 yes votes waiting, because main watch never read green.
 // The same claim, so the sweep and the bot never both sync one head.
+//
+// #5220 adds the third, syncBeforeFix below: before the bot's fix turn on
+// one of its own failing proposals. The turn is a paid one, and should not
+// be spent on a failure main has already fixed, as evan had to ask it to
+// discover; so at check-failure time the bot asks the same safe question the
+// sweep does — behind main, merging cleanly, main passing the failing checks
+// now — but without the sweep's need for a second proposal failing the same
+// check: for one of the bot's own, main passing the check is the evidence,
+// as syncBeforeHandOff already takes the fix turn's word for it being not
+// the change's. The same claim, so no path syncs one head twice.
 
 const appManifest = require('./app-manifest');
 const { isUnitSuiteRow, UNIT_CHECK_NAME, UNIT_CHECK_PATH } = require('./unit-suite-row');
@@ -155,6 +165,28 @@ async function openVerdicts(pool, appId) {
   return rows;
 }
 
+// One promoted proposal's verdict, the same shape decideRow reads, with the
+// app it belongs to (syncBeforeFix reads what main passes and main watch say
+// for it). Null when there is no such row.
+async function ownVerdict(pool, sessionId) {
+  const { rows } = await pool.query(
+    `SELECT cs.app_id, cs.id, cs.source, cs.check_state, cs.checks_commit_sha, cs.reviewed_head_sha,
+            cs.checks_checked_at, cs.fixed_check_sync_head, cs.fixed_check_sync_keys,
+            COALESCE((
+              SELECT jsonb_agg(jsonb_build_object(
+                       'name', t->>'name', 'path', t->>'path', 'index', t->'index',
+                       'advisory', COALESCE(t->>'advisory', 'false') = 'true'))
+                FROM jsonb_array_elements(
+                       CASE WHEN jsonb_typeof(cs.test_results) = 'array' THEN cs.test_results ELSE '[]'::jsonb END) t
+               WHERE t->>'status' IS DISTINCT FROM 'pass'
+            ), '[]'::jsonb) AS failing
+       FROM chat_sessions cs
+      WHERE cs.id = $1`,
+    [Number(sessionId)]
+  );
+  return rows[0] || null;
+}
+
 // Main watch's latest verdict for the app (services/main-watch.js): whether
 // the unit suite last passed on main, when, on which commit, and main's tip
 // now. { passing, at, sha, tip } or null.
@@ -212,6 +244,57 @@ function mainGreenAtTip(mainWatch) {
 }
 
 /**
+ * One row's answer to "is this proposal stuck on main's failure?".
+ * Pure: `row` from openVerdicts (or ownVerdict), `passes` from mainPasses,
+ * `mainWatch` from mainWatchVerdict, `failingOn` the cross-proposal count of
+ * each failing check and `minFailing` the least that says the check, not one
+ * change, is what broke (the sweep needs MIN_FAILING of them; the bot's own
+ * proposal is judged alone, with 0). Resolves { candidate } when it syncs,
+ * { why } when it declines, {} when the row is not a failing verdict at all
+ * (which the sweep records as neither).
+ */
+function decideRow(row, passes, mainWatch, { failingOn = new Map(), minFailing = MIN_FAILING } = {}) {
+  if (row.check_state !== 'failing') return {};
+  const id = Number(row.id);
+  const head = row.checks_commit_sha ? String(row.checks_commit_sha).toLowerCase() : null;
+  const why = (() => {
+    if (row.source === 'imported') return 'imported';
+    if (!head) return 'no_verdict';
+    // The verdict is about an older commit: the current head has its own.
+    if (row.reviewed_head_sha && !sameSha(row.reviewed_head_sha, head)) return 'head_moved';
+    if (sameSha(row.fixed_check_sync_head, head)) return 'already_tried';
+    return null;
+  })();
+  if (why) return { why };
+  const blocking = (row.failing || []).filter((f) => !f.advisory && !isUnitSuiteRow(f));
+  const tried = new Set(row.fixed_check_sync_keys || []);
+  if (!blocking.length) {
+    const unitBlocks = (row.failing || []).some((f) => !f.advisory && isUnitSuiteRow(f));
+    if (!unitBlocks) return { why: 'nothing_fixed' };
+    // Synced as often as it gets, with this main already, or before with a
+    // main nobody can tell this one from: it waits for main to move on.
+    const synced = unitSyncCount(tried);
+    const tip = mainWatch && mainWatch.tip ? String(mainWatch.tip).toLowerCase() : null;
+    if (synced >= MAX_UNIT_SYNCS || tried.has(unitSyncKey(tip)) || (synced && !tip)) {
+      return { why: 'already_tried' };
+    }
+    if (!mainGreenSince(row, mainWatch) && !mainGreenAtTip(mainWatch)) return { why: 'unit_suite_only' };
+    return { candidate: { id, head, keys: [unitSyncKey(tip)] } };
+  }
+  const keys = [];
+  let reason = null;
+  for (const f of blocking) {
+    const key = keyOf(f);
+    if (!passes.has(key)) { reason = 'main_fails'; break; }
+    if ((failingOn.get(key) || 0) < minFailing) { reason = 'own_failure'; break; }
+    if (tried.has(key)) { reason = 'already_tried'; break; }
+    keys.push(key);
+  }
+  if (reason) return { why: reason };
+  return { candidate: { id, head, keys } };
+}
+
+/**
  * Which of an app's promoted proposals are stuck on checks main has fixed.
  * Pure: `rows` from openVerdicts, `passes` from mainPasses, `mainWatch`
  * from mainWatchVerdict.
@@ -231,48 +314,20 @@ function select(rows, passes, mainWatch = null) {
   const candidates = [];
   const skipped = {};
   for (const row of rows || []) {
-    const id = Number(row.id);
-    if (row.check_state !== 'failing') continue;
-    const head = row.checks_commit_sha ? String(row.checks_commit_sha).toLowerCase() : null;
-    const why = (() => {
-      if (row.source === 'imported') return 'imported';
-      if (!head) return 'no_verdict';
-      // The verdict is about an older commit: the current head has its own.
-      if (row.reviewed_head_sha && !sameSha(row.reviewed_head_sha, head)) return 'head_moved';
-      if (sameSha(row.fixed_check_sync_head, head)) return 'already_tried';
-      return null;
-    })();
-    if (why) { skipped[id] = why; continue; }
-    const blocking = (row.failing || []).filter((f) => !f.advisory && !isUnitSuiteRow(f));
-    const tried = new Set(row.fixed_check_sync_keys || []);
-    if (!blocking.length) {
-      const unitBlocks = (row.failing || []).some((f) => !f.advisory && isUnitSuiteRow(f));
-      if (!unitBlocks) { skipped[id] = 'nothing_fixed'; continue; }
-      // Synced as often as it gets, with this main already, or before with a
-      // main nobody can tell this one from: it waits for main to move on.
-      const synced = unitSyncCount(tried);
-      const tip = mainWatch && mainWatch.tip ? String(mainWatch.tip).toLowerCase() : null;
-      if (synced >= MAX_UNIT_SYNCS || tried.has(unitSyncKey(tip)) || (synced && !tip)) {
-        skipped[id] = 'already_tried';
-        continue;
-      }
-      if (!mainGreenSince(row, mainWatch) && !mainGreenAtTip(mainWatch)) { skipped[id] = 'unit_suite_only'; continue; }
-      candidates.push({ id, head, keys: [unitSyncKey(tip)] });
-      continue;
-    }
-    const keys = [];
-    let reason = null;
-    for (const f of blocking) {
-      const key = keyOf(f);
-      if (!passes.has(key)) { reason = 'main_fails'; break; }
-      if ((failingOn.get(key) || 0) < MIN_FAILING) { reason = 'own_failure'; break; }
-      if (tried.has(key)) { reason = 'already_tried'; break; }
-      keys.push(key);
-    }
-    if (reason) { skipped[id] = reason; continue; }
-    candidates.push({ id, head, keys });
+    const picked = decideRow(row, passes, mainWatch, { failingOn, minFailing: MIN_FAILING });
+    if (picked.candidate) candidates.push(picked.candidate);
+    else if (picked.why) skipped[Number(row.id)] = picked.why;
   }
   return { candidates, skipped };
+}
+
+/**
+ * The same question for ONE proposal, the Homeroom bot's own before its fix
+ * turn (syncBeforeFix below): without the sweep's cross-proposal count, so
+ * main passing every failing check now is evidence enough. Pure.
+ */
+function selectOwn(row, passes, mainWatch = null) {
+  return decideRow(row, passes, mainWatch, { minFailing: 0 });
 }
 
 async function loadRow(pool, sessionId) {
@@ -329,7 +384,9 @@ async function syncOne({ config, pool, candidate }, deps = defaultDeps()) {
     const trigger = candidate.trigger || 'fixed_on_main';
     log.info('fixed-check-sync', trigger === BOT_HANDOFF_TRIGGER
       ? 'The Homeroom bot would hand a proposal\'s red checks to a person; syncing it with main first'
-      : 'A proposal fails only checks main now passes; syncing it', {
+      : trigger === BOT_FIX_TRIGGER
+        ? 'The Homeroom bot would fix a proposal\'s failing checks; syncing it with main first when main looks to have fixed them'
+        : 'A proposal fails only checks main now passes; syncing it', {
       sessionId: id, headSha: candidate.head, behindBy, checks: candidate.keys.length, trigger,
     });
     const result = await deps.syncMain.runSyncMain(config, pool, id, {
@@ -400,6 +457,43 @@ async function syncBeforeHandOff({ config, pool, sessionId, head }, deps = defau
     config, pool,
     candidate: { id, head: String(head).toLowerCase(), keys: [BOT_HANDOFF_KEY], trigger: BOT_HANDOFF_TRIGGER },
   }, deps);
+}
+
+const BOT_FIX_TRIGGER = 'bot_fix';
+
+/**
+ * #5220: before the Homeroom bot's fix turn on its own proposal `sessionId`
+ * whose checks are failing, decide the same question the sweep does — behind
+ * main, merging cleanly, main passing every failing check now — without the
+ * sweep's need for a second proposal failing the same check, and bring the
+ * proposal up to date with main once if it says so (syncOne), so the paid
+ * turn is not spent on a failure main has already fixed and the votes the
+ * change has keep counting. `head` is the failing head the fix round is due
+ * on. The claim reuses the sweep's own column and keys, so the sweep, the
+ * hand-off sync and this never sync one head twice, and the once-per-named-
+ * check memory is shared. Never throws; resolves { synced, why, sha? }.
+ */
+async function syncBeforeFix({ config, pool, sessionId, head }, deps = defaultDeps()) {
+  const id = Number(sessionId);
+  if (!isEnabled()) return { synced: false, why: 'disabled' };
+  if (!(id > 0) || !head) return { synced: false, why: 'no_verdict' };
+  try {
+    const row = await ownVerdict(pool, id);
+    if (!row) return { synced: false, why: 'gone' };
+    // The verdict must be about the head the fix round is due on: an older
+    // one says nothing about the current code.
+    if (!sameSha(row.checks_commit_sha, head)) return { synced: false, why: 'head_moved' };
+    const picked = selectOwn(row,
+      await mainPasses(pool, row.app_id), await mainWatchVerdict(pool, row.app_id));
+    if (!picked.candidate) return { synced: false, why: picked.why || 'not_failing' };
+    return syncOne({
+      config, pool,
+      candidate: { ...picked.candidate, trigger: BOT_FIX_TRIGGER },
+    }, deps);
+  } catch (err) {
+    log.warn('fixed-check-sync', 'Could not decide a sync before a fix turn', { sessionId: id, err: err.message });
+    return { synced: false, why: 'threw' };
+  }
 }
 
 /**
@@ -473,12 +567,16 @@ async function stop() {
 
 module.exports = {
   select,
+  selectOwn,
   sweep,
   syncOne,
   syncBeforeHandOff,
+  syncBeforeFix,
   BOT_HANDOFF_KEY,
+  BOT_FIX_TRIGGER,
   mainPasses,
   openVerdicts,
+  ownVerdict,
   mainWatchVerdict,
   UNIT_KEY,
   unitSyncKey,

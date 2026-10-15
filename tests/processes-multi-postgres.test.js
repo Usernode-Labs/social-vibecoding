@@ -106,22 +106,22 @@ test('two platform processes see each other\'s holds and stops', { timeout: 1200
   await old.ask({ op: 'release', kind: 'session', ref: 7 });
   await until(async () => !(await fresh.ask({ op: 'heldElsewhere', kind: 'session', ref: 7 })), { label: 'the release reaching the new process' });
 
-  // The old process exits holding a build: its row goes, and the build is free at once.
-  await old.ask({ op: 'hold', kind: 'staging_build', ref: 9 });
-  await until(() => fresh.ask({ op: 'heldElsewhere', kind: 'staging_build', ref: 9 }), { label: 'the build seen' });
+  // The old process exits holding a sync: its row goes, and the sync is free at once.
+  await old.ask({ op: 'hold', kind: 'sync', ref: 9 });
+  await until(() => fresh.ask({ op: 'heldElsewhere', kind: 'sync', ref: 9 }), { label: 'the sync seen' });
   await old.ask({ op: 'stop' }).catch(() => {});
-  await until(async () => (await fresh.ask({ op: 'holders', kind: 'staging_build', ref: 9 })).length === 0,
+  await until(async () => (await fresh.ask({ op: 'holders', kind: 'sync', ref: 9 })).length === 0,
     { label: 'a stopped process holding nothing' });
 
   // A process that dies holding something holds nothing once its beat lapses.
   await pool.query(
     `INSERT INTO platform_processes (id, heartbeat_at) VALUES ('crashed', NOW())`);
-  await pool.query(`INSERT INTO process_holds (process_id, kind, ref) VALUES ('crashed', 'capture', '11')`);
+  await pool.query(`INSERT INTO process_holds (process_id, kind, ref) VALUES ('crashed', 'shots', '11')`);
   await fresh.ask({ op: 'refresh' });
-  assert.equal(await fresh.ask({ op: 'heldElsewhere', kind: 'capture', ref: 11 }), true);
+  assert.equal(await fresh.ask({ op: 'heldElsewhere', kind: 'shots', ref: 11 }), true);
   await pool.query(`UPDATE platform_processes SET heartbeat_at = NOW() - interval '10 minutes' WHERE id = 'crashed'`);
   await fresh.ask({ op: 'refresh' });
-  assert.equal(await fresh.ask({ op: 'heldElsewhere', kind: 'capture', ref: 11 }), false);
-  assert.deepEqual(await fresh.ask({ op: 'holders', kind: 'capture', ref: 11 }), []);
+  assert.equal(await fresh.ask({ op: 'heldElsewhere', kind: 'shots', ref: 11 }), false);
+  assert.deepEqual(await fresh.ask({ op: 'holders', kind: 'shots', ref: 11 }), []);
   await fresh.ask({ op: 'stop' }).catch(() => {});
 });

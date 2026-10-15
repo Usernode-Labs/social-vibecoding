@@ -68,6 +68,197 @@ function tierAnswer(placed) {
   };
 }
 
+// The group the polls, plans, sheets and challenges belong to: five people.
+const GROUP = [...PEOPLE, { id: 5, username: 'maya' }];
+const DAY = 24 * 60 * 60 * 1000;
+
+/**
+ * A poll as group-poll's api.js shape() draws it, open or decided. `options`
+ * are [label, the usernames who ticked it].
+ */
+function poll(id, { question, by, closesAt = null, decidedAt = null, options }) {
+  const closed = !!decidedAt;
+  const top = Math.max(0, ...options.map(([, voters]) => voters.length));
+  const voted = [];
+  for (const [, voters] of options) for (const v of voters) if (!voted.includes(v)) voted.push(v);
+  const mine = by === ME.username;
+  return {
+    id,
+    question,
+    mode: 'approval',
+    secret: false,
+    by,
+    mine,
+    closesAt,
+    closed,
+    decidedAt,
+    canClose: mine && !closed,
+    canDelete: mine,
+    options: options.map(([label, voters], i) => ({
+      id: id * 10 + i,
+      label,
+      by: GROUP[(i + 1) % GROUP.length].username,
+      mine: false,
+      votes: voters.length,
+      yours: voters.includes(ME.username),
+      voters,
+      leading: top > 0 && voters.length === top,
+      canRemove: false,
+    })),
+    turnout: {
+      voted: voted.length,
+      of: GROUP.length,
+      ofVoted: voted.length,
+      votedBy: voted,
+      waitingOn: GROUP.map((m) => m.username).filter((u) => !voted.includes(u)),
+    },
+    winners: closed ? options.filter(([, voters]) => top > 0 && voters.length === top).map(([label]) => label) : null,
+  };
+}
+
+const pollAnswer = (open, decided) => ({ me: ME, now: at(SAMPLE_NOW), members: 'ok', open, decided });
+
+/**
+ * A find-a-time plan as its api.js draws an open one. `times` are
+ * [startsAt, allDay, suggested by, marks], the marks one letter per GROUP
+ * member in order: f free, m if needed, n can't, - not answered. A whole
+ * day is kept as its date's midnight UTC.
+ */
+function timePlan(id, { name, by, times }) {
+  const MARK = { f: 'free', m: 'maybe', n: 'no' };
+  const slots = times.map(([startsAt, allDay, suggested, marks], i) => {
+    const byPerson = {};
+    GROUP.forEach((m, j) => { if (MARK[marks[j]]) byPerson[m.id] = MARK[marks[j]]; });
+    const said = Object.values(byPerson);
+    return {
+      id: id * 10 + i,
+      startsAt: at(startsAt),
+      allDay,
+      by: suggested,
+      passed: false,
+      canRemove: false,
+      marks: byPerson,
+      free: said.filter((v) => v === 'free').length,
+      maybe: said.filter((v) => v === 'maybe').length,
+      maybeNames: GROUP.filter((m) => byPerson[m.id] === 'maybe').map((m) => m.username),
+    };
+  });
+  const best = slots.filter((x) => x.free + x.maybe > 0)
+    .sort((a, b) => (b.free - a.free) || (b.maybe - a.maybe) || (Date.parse(a.startsAt) - Date.parse(b.startsAt)))[0];
+  const answered = GROUP.filter((m) => slots.some((x) => x.marks[m.id]));
+  return {
+    id,
+    name,
+    by,
+    mine: by === ME.username,
+    open: true,
+    set: null,
+    best: best ? best.id : null,
+    answered: answered.length,
+    people: answered.map((m) => ({ id: m.id, username: m.username, me: m.id === ME.id })).sort((a, b) => Number(b.me) - Number(a.me)),
+    slots,
+    waiting: GROUP.filter((m) => !answered.includes(m)).map((m) => ({ id: m.id, username: m.username, me: m.id === ME.id })),
+    nextAt: slots[0].startsAt,
+  };
+}
+
+const plansAnswer = (plans, past = []) => ({ me: ME, now: at(SAMPLE_NOW), maxTimes: 8, members: 'ok', plans, past });
+
+/** A sign-up sheet's event with slots, as its api.js draws one coming up: `slots` are [name, size, who took it]. */
+function slotsEvent(id, { name, startsAt, place, by, slots }) {
+  const shaped = slots.map(([slot, size, takers], i) => ({
+    id: id * 10 + i,
+    name: slot,
+    size,
+    taken: takers.length,
+    open: Math.max(0, size - takers.length),
+    full: takers.length >= size,
+    mine: takers.includes(ME.username),
+    people: takers.map((u) => ({ username: u, mine: u === ME.username, note: null })),
+  }));
+  return {
+    id, kind: 'slots', name, startsAt: at(startsAt), place, by, mine: by === ME.username, over: false,
+    slots: shaped,
+    spots: shaped.reduce((n, x) => n + x.size, 0),
+    open: shaped.reduce((n, x) => n + x.open, 0),
+    yours: shaped.filter((x) => x.mine).map((x) => x.name),
+  };
+}
+
+/** An event everyone answers, as its api.js draws one coming up: [username, note] for each answer. */
+function rsvpEvent(id, { name, startsAt, place, by, going, maybe, cant, unsaid }) {
+  const person = ([u, note]) => ({ username: u, mine: u === ME.username, note: note || null });
+  const yours = [['going', going], ['maybe', maybe], ['cant', cant]].map(([answer, list]) => [answer, list.find(([u]) => u === ME.username)]).find(([, hit]) => hit);
+  return {
+    id, kind: 'rsvp', name, startsAt: at(startsAt), place, by, mine: by === ME.username, over: false,
+    answer: yours ? { answer: yours[0], note: yours[1][1] || null } : null,
+    going: going.map(person),
+    maybe: maybe.map(person),
+    cant: cant.map(person),
+    counts: { going: going.length, maybe: maybe.length, cant: cant.length, unsaid },
+  };
+}
+
+const eventsAnswer = (mode, upcoming) => ({ me: ME, now: at(SAMPLE_NOW), mode, members: 'ok', upcoming, past: [] });
+
+/**
+ * This month of a group challenge, as its api.js draws it on 17 October:
+ * `logged` are [username, amount, day of the month, note], newest first,
+ * and the leaderboard, Lately and your own entries are read off them.
+ */
+function challengeAnswer({ goal, logged, september }) {
+  const round = (n) => Math.round(n * 100) / 100;
+  const totals = new Map();
+  const days = new Map();
+  for (const [u, amount, day] of logged) {
+    totals.set(u, round((totals.get(u) || 0) + amount));
+    days.set(u, new Set([...(days.get(u) || []), day]));
+  }
+  const ordered = [...totals].sort((a, b) => (b[1] - a[1]) || a[0].localeCompare(b[0]));
+  let rank = 0;
+  let last = null;
+  const leaderboard = ordered.map(([u, total], i) => {
+    if (total !== last) { rank = i + 1; last = total; }
+    const who = GROUP.find((m) => m.username === u);
+    return { userId: who.id, username: u, total, days: days.get(u).size, rank, me: who.id === ME.id };
+  });
+  const total = round(ordered.reduce((n, [, t]) => n + t, 0));
+  const entries = logged.map(([u, amount, day, note], i) => ({
+    id: 100 - i,
+    username: u,
+    amount,
+    day: `2026-10-${String(day).padStart(2, '0')}`,
+    note: note || null,
+    at: at(`2026-10-${String(day).padStart(2, '0')}T${String(20 - (i % 10)).padStart(2, '0')}:00:00-07:00`),
+    mine: u === ME.username,
+  }));
+  return {
+    me: ME,
+    now: at(SAMPLE_NOW),
+    today: '2026-10-17',
+    month: '2026-10',
+    thisMonth: '2026-10',
+    current: true,
+    daysInMonth: 31,
+    dayOfMonth: 17,
+    daysLeft: 14,
+    maxAmount: Math.max(1, goal / 2),
+    defaultGoal: goal,
+    goal: { amount: goal, custom: false, setBy: null },
+    total,
+    progress: Math.min(100, Math.floor((total / goal) * 100)),
+    beaten: total >= goal,
+    pace: { projected: (total / 17) * 31, perDay: Math.max(0, goal - total) / (31 - 17 + 1) },
+    leaderboard,
+    lately: entries.slice(0, 6),
+    yours: entries.filter((e) => e.mine),
+    members: 'ok',
+    notYet: GROUP.filter((m) => !totals.has(m.username)).map((m) => ({ username: m.username, me: m.id === ME.id })),
+    results: null,
+    pastMonths: [{ month: '2026-09', total: september, goal, beaten: september >= goal }],
+  };
+}
+
 /**
  * What each ready-made starter is shown with: the name the make screen
  * suggests for it (frontend/locales/en/onboarding.json
@@ -192,6 +383,171 @@ const SAMPLES = {
     name: 'Study Timer',
     ready: '#today[data-loaded]',
     api: { '/api/today': { me: ME, day: '2026-10-17', count: 3 } },
+  },
+  'poll-dinner': {
+    name: 'Dinner Decider',
+    ready: '#open-polls [data-poll] [data-option]',
+    api: {
+      '/api/polls': pollAnswer(
+        [poll(1, {
+          question: 'Where should we eat Friday?', by: 'sam', closesAt: at('2026-10-22T18:00:00-07:00'),
+          options: [['Taqueria Sol', ['sam', 'priya', 'jordan', 'maya']], ['Pho 88', ['alex', 'sam', 'priya']], ['Joe\'s Pizza', ['jordan', 'alex']], ['Noodle Bar', ['maya']]],
+        })],
+        [poll(2, {
+          question: 'Where for the team lunch?', by: 'priya', decidedAt: at('2026-10-09T12:00:00-07:00'),
+          options: [['Burger Barn', ['alex', 'sam', 'priya', 'maya']], ['Green Bowl', ['jordan', 'priya']]],
+        })],
+      ),
+    },
+  },
+  'poll-spending': {
+    name: 'Spending Poll',
+    ready: '#open-polls [data-poll] [data-option]',
+    api: {
+      '/api/polls': pollAnswer(
+        [poll(1, {
+          question: 'What should we do with the extra $300?', by: 'priya', closesAt: at('2026-10-24T20:00:00-07:00'),
+          options: [['New chairs for the lobby', ['priya', 'sam', 'maya', 'alex']], ['A dinner out together', ['jordan', 'sam', 'alex']], ['Save it for next year', ['maya']], ['Donate it', ['jordan']]],
+        })],
+        [poll(2, {
+          question: 'What should the snack budget go to?', by: 'sam', decidedAt: at('2026-10-02T17:00:00-07:00'),
+          options: [['Fresh fruit', ['alex', 'priya', 'maya']], ['Granola bars', ['sam', 'jordan']]],
+        })],
+      ),
+    },
+  },
+  'poll-movies': {
+    name: 'Movie Night Poll',
+    ready: '#open-polls [data-poll] [data-option]',
+    api: {
+      '/api/polls': pollAnswer(
+        [poll(1, {
+          question: 'What are we watching Friday?', by: 'jordan', closesAt: at('2026-10-23T17:00:00-07:00'),
+          options: [['Arrival', ['jordan', 'alex', 'priya', 'maya']], ['Paddington 2', ['sam', 'maya', 'alex']], ['Spirited Away', ['priya', 'sam']], ['The Princess Bride', ['jordan']]],
+        })],
+        [poll(2, {
+          question: 'Last week\'s movie?', by: 'maya', decidedAt: at('2026-10-15T18:00:00-07:00'),
+          options: [['Knives Out', ['alex', 'sam', 'jordan']], ['Up', ['maya', 'priya']]],
+        })],
+      ),
+    },
+  },
+  'find-a-time-book-club': {
+    name: 'Book Club Times',
+    ready: '#plans [data-plan] [data-slot]',
+    api: {
+      '/api/plans': plansAnswer([timePlan(1, {
+        name: 'November book club', by: 'priya',
+        times: [
+          ['2026-10-27T19:00:00-07:00', false, 'priya', 'ffnmf'],
+          ['2026-10-29T19:00:00-07:00', false, 'priya', 'ffffm'],
+          ['2026-10-31T14:00:00-07:00', false, 'sam', 'nfmn-'],
+          ['2026-11-01T00:00:00.000Z', true, 'jordan', 'mnff-'],
+        ],
+      })]),
+    },
+  },
+  'find-a-time-game-night': {
+    name: 'Game Night Times',
+    ready: '#plans [data-plan] [data-slot]',
+    api: {
+      '/api/plans': plansAnswer([timePlan(1, {
+        name: 'Game night this month', by: 'sam',
+        times: [
+          ['2026-10-23T19:30:00-07:00', false, 'sam', 'fffnm'],
+          ['2026-10-24T19:30:00-07:00', false, 'sam', 'mffff'],
+          ['2026-10-30T19:30:00-07:00', false, 'maya', 'nfm-f'],
+        ],
+      })]),
+    },
+  },
+  'find-a-time-trip': {
+    name: 'Trip Dates',
+    ready: '#plans [data-plan] [data-slot]',
+    api: {
+      '/api/plans': plansAnswer([timePlan(1, {
+        name: 'Lake weekend', by: 'jordan',
+        times: [
+          ['2026-11-07T00:00:00.000Z', true, 'jordan', 'ffmf-'],
+          ['2026-11-14T00:00:00.000Z', true, 'jordan', 'fnff-'],
+          ['2026-11-21T00:00:00.000Z', true, 'priya', 'mffnf'],
+        ],
+      })]),
+    },
+  },
+  'signup-shifts': {
+    name: 'Volunteer Sign-ups',
+    ready: '#events [data-event] [data-slot]',
+    api: {
+      '/api/events': eventsAnswer('slots', [slotsEvent(1, {
+        name: 'Park cleanup', startsAt: '2026-10-24T09:00:00-07:00', place: 'Riverside Park', by: 'priya',
+        slots: [
+          ['Morning shift, 9 to 11', 6, ['priya', 'sam', 'maya']],
+          ['Midday shift, 11 to 1', 4, ['jordan', 'alex']],
+          ['Trash bags and gloves', 2, ['sam']],
+          ['Snacks and water', 3, []],
+          ['Van driver', 1, ['jordan']],
+        ],
+      })]),
+    },
+  },
+  'signup-rsvp': {
+    name: 'Who\'s Coming',
+    ready: '#events [data-event] [data-headcount]',
+    api: {
+      '/api/events': eventsAnswer('rsvp', [rsvpEvent(1, {
+        name: 'Game night at Jo\'s', startsAt: '2026-10-23T19:00:00-07:00', place: 'Jo\'s place', by: 'jordan',
+        going: [['jordan', null], ['alex', 'Bringing snacks'], ['sam', '+1'], ['priya', null]],
+        maybe: [['maya', 'If work ends early']],
+        cant: [],
+        unsaid: 0,
+      })]),
+    },
+  },
+  'challenge-miles': {
+    name: 'Miles Challenge',
+    ready: '#leaderboard [data-person]',
+    api: {
+      '/api/challenge': challengeAnswer({
+        goal: 200,
+        september: 212.4,
+        logged: [
+          ['priya', 6.2, 17, 'Morning loop'], ['alex', 3.1, 16], ['sam', 5, 16, 'Trail run'], ['maya', 2.4, 15],
+          ['jordan', 4.8, 14], ['priya', 13.1, 12, 'Half marathon!'], ['alex', 6.5, 11], ['sam', 12.4, 10],
+          ['priya', 10.2, 8], ['jordan', 9.6, 6], ['alex', 11.8, 5], ['sam', 14.6, 3], ['maya', 7.1, 3], ['priya', 9.4, 2],
+        ],
+      }),
+    },
+  },
+  'challenge-steps': {
+    name: 'Steps Challenge',
+    ready: '#leaderboard [data-person]',
+    api: {
+      '/api/challenge': challengeAnswer({
+        goal: 1000000,
+        september: 1080400,
+        logged: [
+          ['sam', 11240, 17], ['priya', 9870, 16], ['alex', 8020, 16, 'Walked to work'], ['maya', 12650, 15],
+          ['jordan', 7400, 15], ['priya', 64300, 14, 'The week so far'], ['alex', 58900, 12], ['sam', 71200, 11],
+          ['maya', 49800, 9], ['jordan', 52100, 8], ['priya', 61500, 7], ['sam', 66000, 4], ['alex', 60300, 3],
+        ],
+      }),
+    },
+  },
+  'challenge-books': {
+    name: 'Reading Challenge',
+    ready: '#leaderboard [data-person]',
+    api: {
+      '/api/challenge': challengeAnswer({
+        goal: 20,
+        september: 17,
+        logged: [
+          ['priya', 1, 16, 'Piranesi'], ['alex', 1, 14, 'The Remains of the Day'], ['sam', 1, 13], ['maya', 1, 12, 'Circe'],
+          ['priya', 1, 10], ['jordan', 1, 9, 'Project Hail Mary'], ['alex', 1, 7], ['sam', 1, 5], ['priya', 1, 4],
+          ['alex', 1, 3], ['jordan', 1, 2], ['priya', 1, 1],
+        ],
+      }),
+    },
   },
 };
 
@@ -478,8 +834,13 @@ async function main() {
     }
   } finally {
     cdp.close();
-    chrome.child.kill();
-    fs.rmSync(work, { recursive: true, force: true });
+    // Chrome writes to its profile until it has exited: wait for it.
+    await new Promise((resolve) => {
+      chrome.child.once('exit', resolve);
+      chrome.child.kill();
+      setTimeout(resolve, 5000);
+    });
+    fs.rmSync(work, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   }
 }
 

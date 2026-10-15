@@ -886,13 +886,24 @@ async function cloneDatabase(sourceDb, targetDb, { viaTemplate = false } = {}) {
     // so the checks' platform-fault retries apply). That covers every
     // failure of a clone placed on the preview server, and any failure that
     // came from that server while the clone was placed on the main one.
-    if (err && typeof err === 'object' && (server === PREVIEW_SERVER || err.previewDatabaseServer)) {
+    // Except a copy refused for what the app's own data says (a private
+    // table with a foreign child, or refilled by its own code; row-level
+    // security on a private column; an extension the copy cannot make): no
+    // retry fixes those, and the author is the one to tell.
+    if (appCaused(err)) {
+      err.appCaused = true;
+    } else if (err && typeof err === 'object' && (server === PREVIEW_SERVER || err.previewDatabaseServer)) {
       err.infrastructure = true;
       err.previewDatabaseServerFault = true;
     }
     throw err;
   }
 }
+
+// A copy refused for what the app's own data or schema says, never for the
+// server: the redaction's fail-closed refusals (noFallback) and the ones
+// marked appCaused where they are thrown.
+const appCaused = (err) => !!(err && typeof err === 'object' && (err.noFallback || err.appCaused));
 
 async function cloneDatabaseOn(server, sourceDb, targetDb, { viaTemplate }) {
   await assertPreviewServerReachable(server);
@@ -2264,8 +2275,10 @@ async function extensionsOnlyAnAdminCanCreate(sourceDb, targetServer = PRIMARY_S
   // refused instead, saying why.
   const elsewhere = found.filter(([, schema]) => schema !== 'public');
   if (elsewhere.length > 0) {
-    throw new Error(`dumpRestore: ${elsewhere.map(([name, schema]) => `${name} (in schema ${schema})`).join(', ')}`
+    const err = new Error(`dumpRestore: ${elsewhere.map(([name, schema]) => `${name} (in schema ${schema})`).join(', ')}`
       + ' can only be created by an administrator, and only in the public schema of a copy');
+    err.appCaused = true;
+    throw err;
   }
   return found.map(([name, schema]) => ({ name, schema }));
 }
@@ -3003,7 +3016,7 @@ SELECT n.nspname || '.' || c.relname,
       log.warn('db-manager', 'Refusing to UPDATE non-standard identifier', {
         targetDb, qualified, column,
       });
-      failures.push({ target, error: 'unsafe identifier' });
+      failures.push({ target, error: 'unsafe identifier', schema: true });
       continue;
     }
     if (rlsRaw !== 'f') {
@@ -3018,6 +3031,7 @@ SELECT n.nspname || '.' || c.relname,
         error: rlsRaw === 't'
           ? 'row-level security applies to this role, so rows could be hidden from the scrub'
           : `unreadable row-level security flag ${JSON.stringify(rlsRaw)}`,
+        schema: true,
       });
       continue;
     }
@@ -3031,7 +3045,7 @@ SELECT n.nspname || '.' || c.relname,
       log.error('db-manager', 'staging:private column has unusable max length', {
         targetDb, qualified, column, maxLength,
       });
-      failures.push({ target, error: `unusable max length ${maxLength}` });
+      failures.push({ target, error: `unusable max length ${maxLength}`, schema: true });
       continue;
     }
     // A template is scrubbed when built and again on each clone. Its
@@ -3125,10 +3139,14 @@ SELECT n.nspname || '.' || c.relname,
   }
 
   if (failures.length > 0) {
-    throw new Error(
+    const err = new Error(
       `Failed to scrub ${failures.length} staging:private column(s) in ${targetDb}: ` +
       failures.map((f) => `${f.target} (${f.error})`).join('; ')
     );
+    // Every column refused for what the app's own schema says (row-level
+    // security, a name or a size the scrub cannot use): the app's to fix.
+    if (failures.every((f) => f.schema)) err.appCaused = true;
+    throw err;
   }
 
   return { scrubbed };

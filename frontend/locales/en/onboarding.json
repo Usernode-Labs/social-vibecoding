@@ -1071,6 +1071,14 @@
     "text": "Import from a GitHub repo",
     "description": "Link under the Make it button, when the screen was opened from the Create button: switches to a form that brings in an existing app from a GitHub repository instead of describing a new one. GitHub is a name."
   },
+  "firstSession.make.speed.instant": {
+    "text": "<0>Instant</0> · ready to use in about a minute",
+    "description": "One line above \"Who can change it\" on the \"What do you want to make?\" screen, after a lightning icon, while Make it would create one of Homeroom's ready-made apps (a starting idea's choice that needs no typing): nothing has to be built, so the project can be used about a minute after Make it is pressed. <0>…</0> is bold. Keep it short: it must fit on one line of a phone screen."
+  },
+  "firstSession.make.speed.custom": {
+    "text": "<0>Custom</0> · Homeroom bot builds it in 20 to 30 min",
+    "description": "One line above \"Who can change it\" on the \"What do you want to make?\" screen, after a sparkle icon, while Make it would ask Homeroom bot to build the first version from the member's own description (their own words, a game, or a starting idea finished in their own words). \"it\" is the project; \"min\" is short for minutes. <0>…</0> is bold. Keep it short: it must fit on one line of a phone screen."
+  },
   "firstSession.make.rule.line": {
     "text": "Who can change it: <0>{{preset}}</0>",
     "description": "One line under the description and name fields on the \"What do you want to make?\" screen, before the project exists: the approval rule it will be made with. <0>…</0> is bold. {{preset}} is the rule's name, such as \"You or the group\" or \"Two yeses\"."
@@ -1616,8 +1624,8 @@
     "description": "First card of the short walk on Home, the first time a new person reaches Home after opening their first app. It points at that app's tile."
   },
   "firstSession.walk.home.text": {
-    "text": "Your apps live here, on Home.",
-    "description": "Line under \"Welcome to Homeroom\" on the walk's first card, pointing at the app's tile on Home."
+    "text": "{{app}} lives here, on Home.",
+    "description": "Line under \"Welcome to Homeroom\" on the walk's first card, pointing at the app's tile on Home: their app is on the Home screen. {{app}} is the project's name, as its tile shows it."
   },
   "firstSession.walk.bot.title": {
     "text": "Homeroom bot",
@@ -1625,15 +1633,19 @@
   },
   "firstSession.walk.bot.text": {
     "text": "It's in Messages. Ask it for a change.",
-    "description": "Line on the walk's Homeroom bot card: where to find the bot (the Messages tab) and what to ask it for (a change to an app)."
+    "description": "Line on the walk's Homeroom bot card, for an app with no example change to offer (one Homeroom bot built, or a game): where to find the bot (the Messages tab) and what to ask it for (a change to the app)."
+  },
+  "firstSession.walk.bot.textExample": {
+    "text": "Ask it for changes, like “{{example}}”.",
+    "description": "Line on the walk's Homeroom bot card, which points at the Messages tab where the bot is, for an app made from a ready-made starter: the bot makes changes to the app when asked. {{example}} is a short change somebody could ask for in that app, in English and lowercase, for example \"add a cheap eats tier\" for a restaurant tier list; keep it inside the quotation marks your language uses."
   },
   "firstSession.walk.communities.title": {
     "text": "Communities",
     "description": "Third card of the walk on Home, pointing at the Communities tab, which lists every community the person is in."
   },
   "firstSession.walk.communities.text": {
-    "text": "Each one has a hub, to talk and decide.",
-    "description": "Line on the walk's Communities card: every community has a hub page where its people talk and decide on changes together."
+    "text": "{{app}}'s hub is here. Invite people and decide what changes.",
+    "description": "Line on the walk's Communities card, which points at the Communities tab: the project's hub page is there, where its people are invited and decide together which changes to its app go in. {{app}} is the project's name. \"Invite\" and \"decide\" are verbs."
   },
   "firstSession.walk.waitlist.title": {
     "text": "Make your own apps",

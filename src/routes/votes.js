@@ -88,24 +88,6 @@ async function readShotsGate(config, pool, session) {
   return shotsGateForSession(config, { ...session, ...(rows[0] || {}) });
 }
 
-// A pending verdict nothing will settle: no capture running or queued for
-// the change and no turn or operation holding it (a turn's tail runs its own
-// capture; a shots run holding the worker never settles checks).
-// A restart between setChecksPending and the capture leaves exactly this,
-// and the promote kick is the last thing that looks before voters wait.
-function strandedPendingChecks(session, {
-  visuals = require('../services/visuals'),
-  activeWorkers = require('../services/active-workers'),
-} = {}) {
-  if (session?.check_state !== 'pending' || session.check_phase === 'deferred') return false;
-  // The preview machine's 'pending' always has its work outstanding.
-  if (require('../services/preview-workflow').enabled()) return false;
-  const id = Number(session.id);
-  return !visuals.hasInFlightCapture(id)
-    && !activeWorkers.hasSessionOperation(id)
-    && !activeWorkers.activeWorkers.has(id);
-}
-
 // #687: pick the GitHub client the imported-PR flow talks to. Staging
 // previews use the in-memory mock (no GitHub credentials there — see
 // usesMockGithubForImports in config.js); production always uses the real
@@ -1042,12 +1024,9 @@ function stagingMockProposals(viewer) {
     },
     // #866: the three states of the Preview slot on an IMPORTED proposal.
     //
-    // These can't be seeded in the DB the way the imported-PR fixtures in
-    // migrate.js are: `staging_building` is derived per request from the
-    // in-memory build registry (staging.hasInFlightBuild — deliberately not a
-    // persisted column), so a seeded row can only ever render the "no
-    // preview" state. Mock rows carry the derived flags explicitly, which is
-    // the only way to review all three pills in a staging preview.
+    // Mock rows carry the derived flags explicitly (staging.previewDisplayState
+    // derives `staging_building` from the row's checks phase), which is the
+    // simplest way to review all three pills in a staging preview.
     //
     // The fork label lives on the IMPORT PICKER, not the card (mock candidate
     // 9403 in services/github-mock.js is the fork-headed one) — a card has no
@@ -1089,7 +1068,7 @@ function stagingMockProposals(viewer) {
     // (reason in the tooltip), the amber prose note, and — for a viewer who
     // can act — the "Retry preview" button beside it. check_error_detail
     // carries the same reason the chip shows, exactly as a real error row
-    // does (recordStagingBootFailure writes both).
+    // does (the preview machine's prepareFailed writes both).
     {
       ...mk(9000043, 900143,
         '[Mock] Imported-preview test: preview failed to build — unavailable chip + retry',
@@ -1539,9 +1518,9 @@ function stagingMockMerged(viewer) {
 // "Issue close" card interleaved among the merged mocks. One group-vote
 // apply and one admin force-apply, exercising both "closed by vote" and
 // "closed by admin" meta lines. Ids live outside the merged-mock range so
-// the type-scoped de-dup never collides. The payload mirrors what
-// maybeApplyCloseIssueProposal stamps (appliedAt/appliedBy + tally
-// snapshot); the target is mock issue 900003 from stagingMockIssues.
+// the type-scoped de-dup never collides. The payload mirrors what the
+// governance machine stamps on a close-issue apply (appliedAt/appliedBy +
+// tally snapshot); the target is mock issue 900003 from stagingMockIssues.
 function stagingMockCompletedCloseIssues() {
   const daysAgo = (d) => new Date(Date.now() - d * 86400 * 1000).toISOString();
   const mk = (id, appliedBy, appliedDays, createdDays, chat) => ({
@@ -1737,54 +1716,22 @@ function nativeGithubTarget(session) {
   return owner && repo ? { owner, repo: repo.replace(/\.git$/, '') } : null;
 }
 
+// The preview machine builds and checks a native proposal's reviewed head.
 async function kickNativeRevisionChecks({ config, pool, session, headSha }) {
-  // With WF_PREVIEWS_ENABLED on the preview machine builds and checks it.
-  if (await require('../services/preview-workflow').revision({
+  void config;
+  await require('../services/preview-workflow').revision({
     pool, session, head: headSha, source: 'reviewed-head', trigger: 'commit-push',
-  })) return;
-  const visuals = require('../services/visuals');
-  await visuals.setChecksPending(pool, session.id, headSha, 'building', 'commit-push')
-    .catch((err) => log.warn('votes', 'Native revision setChecksPending failed (non-fatal)', {
-      sessionId: session.id, headSha, err: err.message,
-    }));
-  try { visuals.notifyChecksPending(session.id, headSha, 'building', 'commit-push'); } catch (_) {}
-
-  const prImportSync = require('../services/pr-import-sync');
-  prImportSync.rerunChecksForNewHead({
-    config,
-    pool,
-    session,
-    newHead: headSha,
-  }).catch((err) => log.warn('votes', 'Native revision checks re-run failed', {
-    sessionId: session.id, headSha, err: err.message,
-  }));
+  });
 }
 
-// Imported PRs use their GitHub head as the reviewed revision. Stamp that
-// revision pending before returning control to a promotion/vote request, then
-// let the SHA-pinned preview rebuild continue in the background. The merge
-// gate independently compares the verdict SHA, so even a failed pending write
-// cannot let an older green result authorize this head.
+// Imported PRs use their GitHub head as the reviewed revision; the preview
+// machine builds and checks it. The merge gate independently compares the
+// verdict SHA, so an older green result never authorizes this head.
 async function kickImportedRevisionChecks({ config, pool, session, headSha }) {
-  if (await require('../services/preview-workflow').revision({
+  void config;
+  await require('../services/preview-workflow').revision({
     pool, session, head: headSha, source: 'imported', trigger: 'pr-import',
-  })) return;
-  const visuals = require('../services/visuals');
-  await visuals.setChecksPending(pool, session.id, headSha, 'building', 'pr-import')
-    .catch((err) => log.warn('votes', 'Imported revision setChecksPending failed (non-fatal)', {
-      sessionId: session.id, headSha, err: err.message,
-    }));
-  try { visuals.notifyChecksPending(session.id, headSha, 'building', 'pr-import'); } catch (_) {}
-
-  const prImportSync = require('../services/pr-import-sync');
-  prImportSync.rerunChecksForNewHead({
-    config,
-    pool,
-    session,
-    newHead: headSha,
-  }).catch((err) => log.warn('votes', 'Imported revision checks re-run failed', {
-    sessionId: session.id, headSha, err: err.message,
-  }));
+  });
 }
 
 const SHA40_RE = /^[0-9a-f]{40}$/i;
@@ -2071,36 +2018,14 @@ async function reconcileNativeReviewedHead({
     && sameSha(session.checks_commit_sha, oldHead)
     && ['passing', 'skipped'].includes(session.check_state);
   const needsChecks = !sameSha(session.checks_commit_sha, liveHead) && !checksCarry;
-  // With WF_PREVIEWS_ENABLED on the machine decides both: it carries a green
-  // verdict of the old head, else checks the new one. A deferred caller
-  // hands off the build itself once its own pins are written.
-  const previewWorkflow = require('../services/preview-workflow');
-  if (previewWorkflow.enabled()) {
-    if (checksCarry || (needsChecks && !deferChecks)) {
-      await previewWorkflow.revision({ pool, session, head: liveHead, source: 'reviewed-head', trigger: 'commit-push',
-        carryFrom: checksCarry ? oldHead : null });
-    }
-    if (checksCarry) session.checks_commit_sha = liveHead;
-  } else if (needsChecks) {
-    if (deferChecks) {
-      const visuals = require('../services/visuals');
-      await visuals.setChecksPending(pool, session.id, liveHead, 'building', 'commit-push')
-        .catch((err) => log.warn('votes', 'Deferred setChecksPending failed (non-fatal)', {
-          sessionId: session.id, headSha: liveHead, err: err.message,
-        }));
-      try { visuals.notifyChecksPending(session.id, liveHead, 'building', 'commit-push'); } catch (_) {}
-    } else {
-      await kickNativeRevisionChecks({ config, pool, session, headSha: liveHead });
-    }
-  } else if (checksCarry && !sameSha(session.checks_commit_sha, liveHead)) {
-    await pool.query(
-      `UPDATE chat_sessions SET checks_commit_sha = $1 WHERE id = $2`,
-      [liveHead, session.id]
-    ).catch((err) => log.warn('votes', 'Carrying checks stamp failed (non-fatal)', {
-      sessionId: session.id, headSha: liveHead, err: err.message,
-    }));
-    session.checks_commit_sha = liveHead;
+  // The preview machine decides both: it carries a green verdict of the old
+  // head, else checks the new one. A deferred caller hands off the build
+  // itself once its own pins are written.
+  if (checksCarry || (needsChecks && !deferChecks)) {
+    await require('../services/preview-workflow').revision({ pool, session, head: liveHead, source: 'reviewed-head',
+      trigger: 'commit-push', carryFrom: checksCarry ? oldHead : null });
   }
+  if (checksCarry) session.checks_commit_sha = liveHead;
 
   // A silent caller still announces votes it retired — only when there were
   // any: an epoch bump over a proposal nobody had voted on clears nothing.
@@ -2883,15 +2808,7 @@ function voteRoutes(config) {
             // Keep the session active so the new head can be rebuilt; never
             // open voting on code that did not produce the ready verdict.
             const detail = 'The proposal branch changed after checks. Rebuild the new head locally or from the web Dev session before promoting.';
-            // The preview machine owns the verdict when it is on; the 409
-            // below says the same to the author.
-            if (!require('../services/preview-workflow').enabled()) await pool.query(
-              `UPDATE chat_sessions SET check_state = 'error', check_error_detail = $1
-                WHERE id = $2 AND status = $4 AND source = 'cli_handoff'
-                  AND COALESCE(checks_commit_sha, handoff_head_sha)
-                      IS NOT DISTINCT FROM $3`,
-              [detail, session.id, req.cliHandoffCheckedHead, session.status]
-            ).catch(() => {});
+            // The verdict is the preview machine's; the 409 says it to the author.
             return res.status(409).json({
               error: 'branch_head_changed',
               message: detail,
@@ -3060,17 +2977,6 @@ function voteRoutes(config) {
         prTitle: session.pr_title || null,
       });
 
-      // #3043: a change may now be submitted while its own staging run is
-      // still checking the commit it went up on. That run keeps publishing
-      // into the promoted row (services/handoff-pipeline.js publishableStatus),
-      // so a second build here would only race it for the same verdict.
-      const handoffPipeline = require('../services/handoff-pipeline');
-      const ownRunChecksReviewedHead = !imported
-        && handoffPipeline.hasInFlightHandoffPipeline(session.id)
-        && !!session.reviewed_head_sha
-        && String(session.checks_commit_sha || '').toLowerCase()
-          === String(session.reviewed_head_sha).toLowerCase();
-
       // #183: a clone promoted straight off a headless auto run's pre-built
       // preview may not have its own staging yet (the copied card points at
       // the auto session's URL — same content, since the clone branch was
@@ -3080,10 +2986,6 @@ function voteRoutes(config) {
         // Imported rows already start their SHA-pinned preview/check build at
         // import time. Never fall through to the native branch-name build:
         // a fork head may not exist in the app repository at all.
-      } else if (ownRunChecksReviewedHead) {
-        log.info('votes', 'Promoted while its staging run checks the reviewed head', {
-          sessionId: session.id, headSha: session.reviewed_head_sha,
-        });
       } else if (!session.staging_url) {
         (async () => {
           // Use the exact revision captured before promotion. The fallback
@@ -3099,64 +3001,13 @@ function voteRoutes(config) {
               commitHash = ref.object.sha;
             } catch {}
           }
-          const app = { id: session.app_id, slug: session.app_slug, name: session.app_name, repo_url: session.repo_url };
-          // With WF_PREVIEWS_ENABLED on the preview machine builds and checks
-          // the reviewed head.
-          if (await require('../services/preview-workflow').revision({
+          // The preview machine builds and checks the reviewed head (a
+          // submission whose own run checks that head already is joined).
+          await require('../services/preview-workflow').revision({
             pool, session, head: commitHash === 'latest' ? null : commitHash, source: 'promote', trigger: 'promote-kick',
-          })) return;
-          // #607: stamp 'pending' + broadcast before the (minutes-long)
-          // staging build so the freshly promoted proposal's card shows
-          // "Checks running…" instead of a bare NULL-verdict "Re-run
-          // checks" button. captureForSession re-stamps idempotently.
-          {
-            const visualsService = require('../services/visuals');
-            await visualsService.setChecksPending(
-              pool, session.id, commitHash === 'latest' ? null : commitHash, 'building'
-            ).catch((err) => log.warn('votes', 'promote setChecksPending failed (non-fatal)', {
-              sessionId: session.id, err: err.message,
-            }));
-            visualsService.notifyChecksPending(session.id, commitHash === 'latest' ? null : commitHash, 'building', 'promote-kick');
-          }
-          let result;
-          try {
-            result = await staging.buildAndDeployStaging(config, session, app, commitHash);
-          } catch (err) {
-            // #461: the proposal is already promoted, so a swallowed build
-            // failure would leave check_state NULL — merge-blocked as
-            // "still running its tests" with no signal. Record a terminal
-            // 'error' verdict (with reason + once-per-streak owner nudge)
-            // before surfacing the failure to the outer catch's WARN log.
-            const stagingRecovery = require('../services/staging-recovery');
-            await stagingRecovery.recordStagingBootFailure({
-              config, pool, session,
-              commitHash: commitHash === 'latest' ? null : commitHash, err,
-            }).catch((e) => log.warn('votes', 'recordStagingBootFailure failed (non-fatal)', {
-              sessionId: session.id, err: e.message,
-            }));
-            throw err;
-          }
-          await pool.query(
-            `UPDATE chat_sessions SET staging_container_id = $1, staging_url = $2 WHERE id = $3`,
-            [result.containerId, result.stagingUrl, session.id]
-          );
-          await staging.verifyStagingEdge(session, result.hostname, result.stagingUrl);
-          // #195: capture before/after visuals off the fresh preview so
-          // headless proposals promoted from clones get media on the vote
-          // card + PR body even though the auto session's own staging (and
-          // its capture window) may be long gone. Fire-and-forget; the
-          // heuristic + all failure handling live inside the service.
-          const visualsService = require('../services/visuals');
-          visualsService.captureForSession(
-            config, session, app, commitHash === 'latest' ? null : commitHash, result,
-            // The promote path must merge on a verdict it just took, so this
-            // one runs even when the row already reads passing for the commit.
-            { trigger: 'promote-kick', force: true }
-          ).catch((err) => {
-            log.warn('votes', 'Post-promote visuals capture failed', { sessionId: session.id, err: err.message });
           });
         })().catch((err) => {
-          log.warn('votes', 'Post-promote staging build failed', { sessionId: session.id, err: err.message });
+          log.warn('votes', 'Post-promote preview hand-off failed', { sessionId: session.id, err: err.message });
         });
       } else {
         // #461: the preview already exists (e.g. built via the manual
@@ -3165,11 +3016,11 @@ function voteRoutes(config) {
         // commit). Kick a recheck NOW when the verdict is missing or
         // describes a different commit than the branch head, instead of
         // leaving the freshly-promoted proposal merge-blocked until a
-        // background sweep notices. Fire-and-forget; recheckSessionChecks
-        // re-runs against the live container (or rebuilds a dead one) and
-        // captureForSession is _inFlight-guarded.
+        // background sweep notices. Fire-and-forget; the preview machine
+        // re-runs against what serves (or rebuilds what does not) and joins a
+        // run already going for the head.
         (async () => {
-          let needsKick = !session.check_state || strandedPendingChecks(session);
+          let needsKick = !session.check_state;
           if (!needsKick && github.isEnabled() && repoOwner && repoName) {
             try {
               const octokit = await github.getInstallationOctokit(repoOwner);
@@ -4993,7 +4844,7 @@ function voteRoutes(config) {
       // Applied close-issue proposals join the Completed stream: a
       // kind='close_issue' governance row whose vote (or an admin
       // force-apply) actually closed the target carries payload.appliedAt
-      // (see maybeApplyCloseIssueProposal). Withdrawn (withdrawnAt) and
+      // (the governance machine's apply). Withdrawn (withdrawnAt) and
       // superseded (supersededAt) rows never carry it, so they stay out.
       // chat_count / last_message_at mirror the open-issues endpoint's
       // governance-thread subqueries so the 💬 badge and activity sort
@@ -7059,8 +6910,8 @@ async function checkAndMerge(config, pool, session, options = {}) {
     // services/check-admission.js). The integration gate just measured this
     // head clean, so the run that judges it can start now — the same kick
     // integration.onBecameClean makes, made here too so a merge attempt
-    // never waits on a hook that did not fire. recheckSessionChecks is
-    // _inFlight-guarded at the capture, so a double kick costs nothing.
+    // never waits on a hook that did not fire. The preview machine joins a
+    // second kick for the same head, so a double kick costs nothing.
     const checksDeferred = checkRows[0]?.check_state === 'pending'
       && checkRows[0]?.check_phase === 'deferred';
     // A run waiting for a checks slot (services/checks-queue.js): built, in
@@ -8400,7 +8251,6 @@ module.exports = {
   prImportFailureBody,
   shotsGateForSession,
   readShotsGate,
-  strandedPendingChecks,
   // The request an imported pull request implements (#1217), likewise.
   parseImportLinkedIssues,
   parseImportSummary,

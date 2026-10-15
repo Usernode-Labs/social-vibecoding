@@ -25,11 +25,9 @@ const path = require('node:path');
 
 process.env.CHECKS_QUEUE_POLL_MS = '250';
 delete process.env.APP_RUNTIME;
-delete process.env.PREVIEW_LIFECYCLE_ENABLED;
 
 const checksQueue = require('../src/services/checks-queue');
 const checkRuns = require('../src/services/check-runs');
-const harvest = require('../src/services/check-harvest');
 const stagingRecovery = require('../src/services/staging-recovery');
 const mainWatch = require('../src/services/main-watch');
 const unitSuite = require('../src/services/unit-suite');
@@ -43,9 +41,10 @@ const DSN = process.env.TEST_DATABASE_URL
 const SCHEMA = `checks_queue_pg_${process.pid}`;
 const SCOPED = `${DSN}${DSN.includes('?') ? '&' : '?'}options=${encodeURIComponent(`-c search_path=${SCHEMA}`)}`;
 
-// The two tables the queue reads besides its own, with the columns these
-// paths touch; check_runs exactly as schema.sql declares it, the checks
-// queue's columns included.
+// The tables the queue and the stale sweep read besides its own, with the
+// columns these paths touch; check_runs exactly as schema.sql declares it, the
+// checks queue's columns included. The preview machine's two tables are here
+// for the stale sweep, which leaves the sessions it works on alone.
 const CHECK_RUNS_DDL = (() => {
   const schema = fs.readFileSync(path.join(ROOT, 'src/db/schema.sql'), 'utf8');
   const start = schema.indexOf('CREATE TABLE IF NOT EXISTS check_runs');
@@ -73,6 +72,8 @@ const DDL = `
     imported_pr_head_sha TEXT, active_turn JSONB, staging_url TEXT,
     promoted_at TIMESTAMPTZ, last_activity_at TIMESTAMPTZ, created_at TIMESTAMPTZ DEFAULT NOW()
   );
+  CREATE TABLE wf_instances (machine TEXT, key TEXT, state TEXT, data JSONB, deadline_at TIMESTAMPTZ, PRIMARY KEY (machine, key));
+  CREATE TABLE wf_work (machine TEXT, key TEXT, kind TEXT, status TEXT);
   ${CHECK_RUNS_DDL}
 `;
 
@@ -388,7 +389,13 @@ test('a capture waits after its preview, says so, is not stale, and leaves the l
 
   const s = await session(pool, appId, { checks_commit_sha: 'sha-one', check_phase: 'building' });
   const app = { id: appId, slug: 'demo', name: 'Demo', repo_url: '' };
-  const first = visuals.captureForSession(config, s, app, 'sha-one', null, { trigger: 'commit-push' });
+  // The preview machine's checks.run: a claim's id, the work item's key, and
+  // the lease's signal, which the machine fires when a newer head cancels it.
+  const claim = (runKey) => ({ runId: crypto.randomUUID(), runKey, signal: new AbortController().signal });
+  const cancel = new AbortController();
+  const first = visuals.captureForSession(config, s, app, 'sha-one', null, {
+    trigger: 'commit-push', workflow: { ...claim('run-1-1'), signal: cancel.signal },
+  });
 
   const queued = await until(async () => {
     const { rows } = await pool.query('SELECT * FROM chat_sessions WHERE id = $1', [s.id]);
@@ -408,9 +415,6 @@ test('a capture waits after its preview, says so, is not stale, and leaves the l
   assert.ok(!stuck.rows.some((r) => r.id === s.id), 'the stale sweep leaves a run that is in line');
   const fresh2 = (await pool.query('SELECT * FROM chat_sessions WHERE id = $1', [s.id])).rows[0];
   assert.equal(stagingRecovery.checkRunOverdue(fresh2), false);
-  // A request for the same commit is told the run is coming.
-  assert.deepEqual(await harvest.runToCollect(config, pool, s.id, 'sha-one'),
-    { runId: row.run_id, owner: row.owner, capture: 'queued', unitSuite: 'queued', queued: true });
   // A session whose row has gone is overdue as before: the backstop.
   const lost = await session(pool, appId, { check_phase: 'queued' });
   await pool.query("UPDATE chat_sessions SET checks_checked_at = NOW() - INTERVAL '2 hours' WHERE id = $1", [lost.id]);
@@ -418,36 +422,36 @@ test('a capture waits after its preview, says so, is not stale, and leaves the l
     .rows.some((r) => r.id === lost.id));
   await pool.query('DELETE FROM chat_sessions WHERE id = $1', [lost.id]);
 
-  // A newer commit's request, in this process: the waiting run leaves at
-  // once, and the newer one takes its turn in line.
-  await visuals.captureForSession(config, s, app, 'sha-two', null, { trigger: 'commit-push' });
-  assert.equal(await first, undefined, 'it left with no verdict');
-  const second = await until(async () => {
-    const { rows } = await pool.query('SELECT * FROM check_runs WHERE session_id = $1', [s.id]);
-    return rows.length === 1 && rows[0].commit_sha === 'sha-two' ? rows[0] : null;
+  // A newer head: the machine cancels the waiting run, which leaves the line
+  // at once with no verdict; its row is the machine's cancel to clear.
+  cancel.abort(new Error('superseded'));
+  await assert.rejects(first, /superseded/);
+  await checkRuns.finish(pool, row.run_id);
+  await pool.query("UPDATE chat_sessions SET checks_commit_sha = 'sha-two', check_phase = 'building' WHERE id = $1", [s.id]);
+  const second = visuals.captureForSession(config, { ...s, checks_commit_sha: 'sha-two' }, app, 'sha-two', null, {
+    trigger: 'commit-push', workflow: claim('run-1-2'),
   });
-  assert.notEqual(second.run_id, row.run_id, 'the superseded run\'s row went with it');
   await until(async () => (await pool.query(
     "SELECT 1 FROM chat_sessions WHERE id = $1 AND check_phase = 'queued' AND checks_commit_sha = 'sha-two'", [s.id])).rows.length);
 
-  // The session moves on while the newer run waits: it leaves too.
+  // The session moves on while the newer run waits: it leaves the line on
+  // its own, settled with nothing to judge, and takes its row with it.
   await pool.query("UPDATE chat_sessions SET status = 'archived' WHERE id = $1", [s.id]);
-  await until(async () => (await pool.query('SELECT 1 FROM check_runs WHERE session_id = $1', [s.id])).rows.length === 0
-    && !visuals.hasInFlightCapture(s.id));
+  assert.equal((await second).outcome, 'blocked');
+  assert.equal((await pool.query('SELECT 1 FROM check_runs WHERE session_id = $1', [s.id])).rows.length, 0);
   assert.deepEqual(await admittedIds(pool), [holder], 'neither run took a slot');
 });
 
 // ── A restart ───────────────────────────────────────────────────────────
 
-test('a run waiting when its process died keeps its place: the next leader re-drives it there', async (t) => {
+test('a run waiting when its process died keeps its place: the retry of its work item asks as of then', async (t) => {
   const env = await fresh(t, { cap: 1 });
   if (!env) return;
   const { pool, appId } = env;
-  const config = { captureRuntime: 'kubernetes', kubernetes: { workerNamespace: 'workers' } };
   const holder = await as('live-pod', async () => ask(pool, await session(pool, appId)));
   await checksQueue.admit(pool);
   const s = await session(pool, appId, { check_phase: 'queued' });
-  const dying = await as('old-pod', () => ask(pool, s));
+  const dying = await as('old-pod', () => ask(pool, s, { manifest: { launched: false, workflow: true, runKey: 'run-1-1' } }));
   await sleep(20);
   const later = await as('live-pod', async () => ask(pool, await session(pool, appId)));
   const { rows: [before] } = await pool.query('SELECT queued_at FROM check_runs WHERE run_id = $1', [dying]);
@@ -458,35 +462,27 @@ test('a run waiting when its process died keeps its place: the next leader re-dr
   assert.equal(plan.byRun.get(later).ahead, 0, 'a dead run does not hold up the line');
   assert.equal(plan.byRun.get(dying).ahead, null);
   assert.ok(!(await stagingRecovery.findStuckCheckSessions({ pool, staleMs: 0, maxAutoRetries: 6 }))
-    .rows.some((r) => r.id === s.id), 'nor is it the stale sweep\'s: the harvest has it');
+    .rows.some((r) => r.id === s.id), 'nor is it the stale sweep\'s: the machine\'s retry has it');
 
-  // The new leader's boot harvest re-drives it; the capture it starts asks
-  // for its slot as of the place it had.
-  const redriven = [];
-  t.mock.method(stagingRecovery, 'recheckSessionChecks', async (args) => {
-    redriven.push(args);
-    await checksQueue.enqueue(pool, {
-      runId: crypto.randomUUID(), sessionId: args.session.id, commitSha: args.session.checks_commit_sha,
-      manifest: { launched: false }, queuedSince: args.queuedSince,
-    });
-    return 'rechecked';
-  });
-  const sweep = await as('new-pod', () => harvest.sweep(config, { reason: 'boot', pool, wait: true }));
-  const results = await sweep.done;
-  assert.deepEqual(results.map((r) => r.outcome), ['redriven']);
-  assert.equal(redriven.length, 1);
-  assert.equal(redriven[0].reason, 'orphaned-run');
-  assert.equal(new Date(redriven[0].queuedSince).getTime(), new Date(before.queued_at).getTime());
-  const { rows: [again] } = await pool.query('SELECT * FROM check_runs WHERE session_id = $1', [s.id]);
-  assert.notEqual(again.run_id, dying);
-  assert.equal(new Date(again.queued_at).getTime(), new Date(before.queued_at).getTime(), 'its place, not the back of the line');
+  // The work item's retry (preview services checks.run) reads the earlier
+  // claim's place, clears its row, and asks for its slot as of then.
+  const { rows: [placed] } = await pool.query(
+    "SELECT min(queued_at) AS at FROM check_runs WHERE session_id = $1 AND manifest->>'runKey' = 'run-1-1'", [s.id]);
+  await checkRuns.finish(pool, dying);
+  const again = crypto.randomUUID();
+  await as('new-pod', () => checksQueue.enqueue(pool, {
+    runId: again, sessionId: s.id, commitSha: s.checks_commit_sha,
+    manifest: { launched: false, workflow: true, runKey: 'run-1-1' }, queuedSince: placed.at,
+  }));
+  const { rows: [row] } = await pool.query('SELECT * FROM check_runs WHERE run_id = $1', [again]);
+  assert.equal(new Date(row.queued_at).getTime(), new Date(before.queued_at).getTime(), 'its place, not the back of the line');
 
   plan = await checksQueue.admit(pool);
-  assert.equal(plan.byRun.get(again.run_id).ahead, 0, 'ahead of the run that asked after it');
+  assert.equal(plan.byRun.get(again).ahead, 0, 'ahead of the run that asked after it');
   assert.equal(plan.byRun.get(later).ahead, 1);
   await checkRuns.finish(pool, holder);
   plan = await checksQueue.admit(pool);
-  assert.deepEqual(plan.admit, [again.run_id], 'and it gets the next slot');
+  assert.deepEqual(plan.admit, [again], 'and it gets the next slot');
 });
 
 // 12 Oct 2026: a release restarted the platform during a confirmation, and

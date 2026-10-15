@@ -3,17 +3,17 @@
 //
 // Three layers:
 //   1. Runner tests: a headless run whose Mayor dispatches
-//      dispatch_claude_code and whose worker pushes a commit now builds a
-//      staging preview (persisted on the headless row, announced via a
-//      stagingUrl-bearing system message, BEFORE the terminal
-//      headless_status='ready' write) while still opening NO pull request.
-//      A staging build failure is non-fatal: the run still finalizes
-//      ready/code.
+//      dispatch_claude_code and whose worker pushes a commit hands that
+//      commit to the preview machine (services/preview-workflow.js) and
+//      announces it with a "Building staging preview..." card (changesReady,
+//      BEFORE the terminal headless_status='ready' write) while still
+//      opening NO pull request. The machine writes the preview's outcome
+//      rows itself (src/workflow/preview/machine.ts), tested elsewhere.
 //   2. /promote route tests: headless rows are rejected outright; a
 //      PR-less clone gets its PR created lazily on its own branch at
 //      promote time (and the response carries the PR info); a failed PR
-//      creation 502s without promoting; promote kicks off a staging build
-//      for a clone that has none.
+//      creation 502s without promoting; promote hands a clone that has no
+//      preview of its own to the preview machine.
 //   3. /deploy-staging guard: headless rows 404.
 //
 // Like headless-clarify.test.js, the pool is an in-memory mock that
@@ -59,6 +59,7 @@ function loadSessions(mockPool, overrides = {}) {
     sessions: require.resolve('../src/routes/sessions'),
     notifications: require.resolve('../src/services/notifications'),
     syncMain: require.resolve('../src/services/sync-main'),
+    previewWorkflow: require.resolve('../src/services/preview-workflow'),
   };
 
   const githubStub = {
@@ -93,16 +94,22 @@ function loadSessions(mockPool, overrides = {}) {
     stopTurn: async () => false,
     ...(overrides.worker || {}),
   };
-  const stagingCalls = [];
   const stagingStub = {
     PrivateSecretMissingStagingDefaultError,
     MissingSecretsError,
-    buildAndDeployStaging: async (config, session, app, commitHash) => {
-      stagingCalls.push({ sessionId: session.id, commitHash });
-      return { containerId: 'stg-container-1', stagingUrl: 'https://stg-test.example', hostname: 'stg-test.example' };
-    },
     verifyStagingEdge: async () => {},
     ...(overrides.staging || {}),
+  };
+  // What reaches the preview machine (a revision, or a Preview/deploy).
+  const previewCalls = [];
+  const previewWorkflowStub = {
+    revision: async ({ session, head, source, trigger }) => {
+      previewCalls.push({ kind: 'revision', sessionId: session.id, head, source, trigger });
+    },
+    request: async ({ session, head, reason }) => {
+      previewCalls.push({ kind: 'request', sessionId: session.id, head, reason });
+      return { status: 'accepted' };
+    },
   };
 
   const originals = [
@@ -115,6 +122,7 @@ function loadSessions(mockPool, overrides = {}) {
     [paths.llm, stubModule(paths.llm, llmStub)],
     [paths.worker, stubModule(paths.worker, workerStub)],
     [paths.staging, stubModule(paths.staging, stagingStub)],
+    [paths.previewWorkflow, stubModule(paths.previewWorkflow, previewWorkflowStub)],
     [paths.appAccess, stubModule(paths.appAccess, {
       ...require('../src/services/app-access'),
       getAppForUser: async () => ({
@@ -152,7 +160,7 @@ function loadSessions(mockPool, overrides = {}) {
     delete require.cache[paths.prMetadata];
     delete require.cache[paths.syncMain];
   };
-  return { subject, stagingCalls, restore };
+  return { subject, previewCalls, restore };
 }
 
 // ── In-memory mock pool for the headless runner ─────────────────────────
@@ -310,9 +318,9 @@ async function startHeadlessRun(srv) {
   assert.equal(res.status, 201);
 }
 
-// ── 1. Headless runner: staging built, no PR ────────────────────────────
+// ── 1. Headless runner: preview handed off, no PR ──────────────────────
 
-test('headless code outcome builds staging (no PR) and persists the stagingUrl card message', async () => {
+test('headless code outcome hands the commit to the preview machine (no PR) and persists a building card', async () => {
   const pool = makeRunnerPool();
   const loaded = loadSessions(pool, {
     llm: sequencedLlm([BUILD_CALL_TURN, WRAPUP_TURN]),
@@ -325,78 +333,38 @@ test('headless code outcome builds staging (no PR) and persists the stagingUrl c
 
     assert.deepEqual(pool.state.terminal, { status: 'ready', outcome: 'code' });
 
-    // Staging was built from the pushed commit, exactly once.
-    assert.equal(loaded.stagingCalls.length, 1);
-    assert.equal(loaded.stagingCalls[0].commitHash, PUSHED_RESULT.sha);
+    // The pushed commit went to the preview machine, exactly once.
+    assert.equal(loaded.previewCalls.length, 1);
+    assert.deepEqual(loaded.previewCalls[0], {
+      kind: 'revision', sessionId: loaded.previewCalls[0].sessionId,
+      head: PUSHED_RESULT.sha, source: 'turn', trigger: 'commit-push',
+    });
 
-    // The staging columns were persisted on the headless row…
-    const stagingUpdateIdx = pool.calls.findIndex(
-      (c) => /UPDATE chat_sessions SET staging_container_id/i.test(c.sql)
+    // A system message carries the changesReady marker — that's what makes
+    // the "Changes ready" card render in every future clone of this run —
+    // and says the preview is building.
+    const cardIdx = pool.calls.findIndex(
+      (c) => /INSERT INTO chat_session_messages/i.test(c.sql) && c.params[1] === 'Building staging preview...'
     );
-    assert.ok(stagingUpdateIdx >= 0, 'staging columns persisted');
-    assert.equal(pool.calls[stagingUpdateIdx].params[1], 'https://stg-test.example');
+    assert.ok(cardIdx >= 0, 'building card persisted');
+    const card = JSON.parse(pool.calls[cardIdx].params[2]);
+    assert.equal(card.changesReady, true, 'the card carries changesReady');
+    assert.equal(card.stagingBuild, 'running');
+    assert.equal(card.prNumber, null);
 
     // …BEFORE the terminal ready write, so the first issues-panel refresh
-    // triggered by headless_update already sees the URL.
+    // triggered by headless_update already sees the card.
     const terminalIdx = pool.calls.findIndex(
       (c) => /UPDATE chat_sessions SET headless_status = 'ready'/i.test(c.sql)
     );
-    assert.ok(terminalIdx > stagingUpdateIdx, 'staging persisted before the terminal write');
+    assert.ok(terminalIdx > cardIdx, 'card persisted before the terminal write');
 
-    // A system message carries the stagingUrl metadata — that's what makes
-    // the "Changes ready" card render in every future clone of this run.
-    const cardMsg = pool.state.messages.find(
-      (m) => m.role === 'system' && m.metadata && m.metadata.stagingUrl
-    );
-    assert.ok(cardMsg, 'stagingUrl-bearing system message persisted');
-    assert.equal(cardMsg.metadata.stagingUrl, 'https://stg-test.example');
-    // #361: the explicit marker rides alongside the URL so the card is
-    // driven by `changesReady`, not incidentally by `stagingUrl`.
-    assert.equal(cardMsg.metadata.changesReady, true, 'success card carries changesReady');
-
-    // No PR: nothing ever wrote pr_number.
+    // The tail writes no preview columns (the machine owns them) and no PR.
+    assert.ok(!pool.calls.some((c) => /SET staging_container_id/i.test(c.sql)));
     assert.ok(
       !pool.calls.some((c) => /SET pr_number/i.test(c.sql)),
       'no PR was opened on the auto branch'
     );
-  } finally {
-    await srv.close();
-    loaded.restore();
-  }
-});
-
-test('headless staging build failure is non-fatal — run still finalizes ready/code', async () => {
-  const pool = makeRunnerPool();
-  const loaded = loadSessions(pool, {
-    llm: sequencedLlm([BUILD_CALL_TURN, WRAPUP_TURN]),
-    worker: { execInWorker: async () => PUSHED_RESULT },
-    staging: {
-      buildAndDeployStaging: async () => { throw new Error('docker exploded'); },
-    },
-  });
-  const srv = await startSessionsServer(loaded);
-  try {
-    await startHeadlessRun(srv);
-    await waitFor(() => pool.state.terminal !== null);
-
-    // The outcome is unchanged — the pushed commit is the deliverable.
-    assert.deepEqual(pool.state.terminal, { status: 'ready', outcome: 'code' });
-
-    // The failure was surfaced as a status message, and no staging columns
-    // (and no PR) were written.
-    const failMsg = pool.state.messages.find(
-      (m) => m.role === 'system' && /Staging build failed/.test(m.content || '')
-    );
-    assert.ok(failMsg, 'a staging-failed status message was persisted');
-    // #361: the failure branch persists the staging-independent marker so a
-    // clone still renders the "Changes ready" card (with a disabled Preview)
-    // instead of a card-less line. The pushed commit is the deliverable.
-    assert.equal(failMsg.metadata.changesReady, true, 'failure card carries changesReady');
-    assert.equal(failMsg.metadata.stagingFailed, true, 'metadata flags the staging failure');
-    assert.equal(failMsg.metadata.stagingErrorName, 'Error', 'error name persisted for the hint');
-    assert.deepEqual(failMsg.metadata.stagingMissingKeys, [], 'missing keys persisted (empty here)');
-    assert.ok(!pool.calls.some((c) => /SET staging_container_id/i.test(c.sql)));
-    assert.ok(!pool.calls.some((c) => /SET pr_number/i.test(c.sql)));
   } finally {
     await srv.close();
     loaded.restore();
@@ -423,7 +391,7 @@ test('POST /deploy-staging rejects headless sessions', async () => {
   try {
     const res = await fetch(`${srv.baseUrl}/api/sessions/42/deploy-staging`, { method: 'POST' });
     assert.equal(res.status, 404);
-    assert.equal(loaded.stagingCalls.length, 0);
+    assert.equal(loaded.previewCalls.length, 0);
   } finally {
     await srv.close();
     loaded.restore();
@@ -447,18 +415,20 @@ function loadVotes(mockPool, overrides = {}) {
     appAccess: require.resolve('../src/services/app-access'),
     prMetadata: require.resolve('../src/services/pr-metadata'),
     votes: require.resolve('../src/routes/votes'),
+    previewWorkflow: require.resolve('../src/services/preview-workflow'),
   };
 
-  const stagingCalls = [];
   const stagingStub = {
     PrivateSecretMissingStagingDefaultError,
     MissingSecretsError,
-    buildAndDeployStaging: async (config, session) => {
-      stagingCalls.push({ sessionId: session.id });
-      return { containerId: 'stg-c', stagingUrl: 'https://clone-stg.example', hostname: 'clone-stg.example' };
-    },
     verifyStagingEdge: async () => {},
     ...(overrides.staging || {}),
+  };
+  const previewCalls = [];
+  const previewWorkflowStub = {
+    revision: async ({ session, head, source, trigger }) => {
+      previewCalls.push({ sessionId: session.id, head, source, trigger });
+    },
   };
   const prMetadataStub = {
     applyPrMetadata: async () => null,
@@ -480,6 +450,7 @@ function loadVotes(mockPool, overrides = {}) {
       ...(overrides.github || {}),
     })],
     [paths.staging, stubModule(paths.staging, stagingStub)],
+    [paths.previewWorkflow, stubModule(paths.previewWorkflow, previewWorkflowStub)],
     [paths.docker, stubModule(paths.docker, {})],
     [paths.conflictResolver, stubModule(paths.conflictResolver, {
       checkAndResolveConflicts: async () => ({}),
@@ -517,13 +488,13 @@ function loadVotes(mockPool, overrides = {}) {
     }
     delete require.cache[paths.votes];
   };
-  return { subject, stagingCalls, restore };
+  return { subject, previewCalls, restore };
 }
 
 // Mock pool for /promote: holds one session row and answers the route's
 // queries against it — evaluating the is_headless clause for real.
 function makePromotePool(sessionRow) {
-  const state = { promoted: false, stagingUpdate: null };
+  const state = { promoted: false };
   const calls = [];
 
   async function query(sql, params = []) {
@@ -543,10 +514,6 @@ function makePromotePool(sessionRow) {
     }
     if (/UPDATE chat_sessions[\s\S]*SET status = 'promoted'/i.test(s)) {
       state.promoted = true;
-      return { rows: [], rowCount: 1 };
-    }
-    if (/UPDATE chat_sessions SET staging_container_id/i.test(s)) {
-      state.stagingUpdate = { containerId: params[0], url: params[1] };
       return { rows: [], rowCount: 1 };
     }
     return { rows: [], rowCount: 0 };
@@ -627,11 +594,11 @@ test('POST /promote on a PR-less clone creates the PR lazily on the clone branch
 
     assert.equal(pool.state.promoted, true);
 
-    // The clone had no staging of its own — promote kicked off a build
-    // (fire-and-forget) and persisted the result.
-    await waitFor(() => pool.state.stagingUpdate !== null);
-    assert.equal(pool.state.stagingUpdate.url, 'https://clone-stg.example');
-    assert.deepEqual(loaded.stagingCalls, [{ sessionId: 99 }]);
+    // The clone had no staging of its own — promote handed its head to the
+    // preview machine (fire-and-forget). GitHub is off here, so no exact
+    // head is named and the machine resolves the branch's own.
+    await waitFor(() => loaded.previewCalls.length > 0);
+    assert.deepEqual(loaded.previewCalls, [{ sessionId: 99, head: null, source: 'promote', trigger: 'promote-kick' }]);
   } finally {
     await srv.close();
     loaded.restore();
@@ -648,7 +615,7 @@ test('POST /promote 502s (and does not promote) when lazy PR creation fails', as
     const res = await fetch(`${srv.baseUrl}/api/sessions/99/promote`, { method: 'POST' });
     assert.equal(res.status, 502);
     assert.equal(pool.state.promoted, false);
-    assert.equal(loaded.stagingCalls.length, 0);
+    assert.equal(loaded.previewCalls.length, 0);
   } finally {
     await srv.close();
     loaded.restore();
@@ -673,9 +640,9 @@ test('POST /promote with an existing PR does not re-create it and skips the stag
     assert.equal(body.prNumber, 12);
     assert.equal(pool.state.promoted, true);
     assert.equal(prCalls.length, 0, 'no lazy PR creation when a PR exists');
-    // Settle briefly — the (absent) staging kick would fire post-response.
+    // Settle briefly — the (absent) preview hand-off would fire post-response.
     await new Promise((r) => setTimeout(r, 100));
-    assert.equal(loaded.stagingCalls.length, 0);
+    assert.equal(loaded.previewCalls.length, 0);
   } finally {
     await srv.close();
     loaded.restore();

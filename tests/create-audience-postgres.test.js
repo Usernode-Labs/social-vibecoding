@@ -189,6 +189,8 @@ test('creating a project for someone, against the full schema', { timeout: 18000
     assert.equal(plain.status, 201, JSON.stringify(plain.data));
     assert.equal(plain.data.app.template, null, 'no template is the empty starter, stored as nothing');
     assert.equal(plain.data.exampleScreen, undefined, 'only a ready-made app has an example picture');
+    const readApp = async (slug) => (await (await fetch(`${base}/api/apps/${slug}?status_recheck=1&manifest=summary`)).json()).app;
+    assert.equal((await readApp(plain.data.app.slug)).exampleChange, null, 'nor an example change for the walk');
     const named = await create({ name: 'Named empty', audience: 'solo', template: 'empty' });
     assert.equal(named.status, 201, JSON.stringify(named.data));
     assert.equal(named.data.app.template, null, 'naming the empty starter stores nothing either');
@@ -208,6 +210,8 @@ test('creating a project for someone, against the full schema', { timeout: 18000
     assert.equal(groceries.data.homeroomBot, undefined, 'no first version is started');
     // Its example picture, for the made screen's card to show at once.
     assert.equal(groceries.data.exampleScreen, '/illustrations/starters/grocery-list.png');
+    // And the first-session walk's example change, read with the app.
+    assert.equal((await readApp(groceries.data.app.slug)).exampleChange, 'add a price to each item');
     const { rows: firsts } = await pool.query('SELECT 1 FROM homeroom_bot_first_versions WHERE app_id = $1', [groceries.data.app.id]);
     assert.deepEqual(firsts, [], 'nor recorded for anyone to build');
     const { rows: sketches } = await pool.query('SELECT 1 FROM app_sketches WHERE app_id = $1', [groceries.data.app.id]);

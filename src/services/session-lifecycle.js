@@ -556,11 +556,14 @@ async function finalizeArchivedSession({
     });
   }
 
-  if (session?.staging_runtime_name || session?.staging_container_id) {
-    // Same contract as teardownStagingForSession above (#851): the chokepoint
-    // nulls the columns itself once removal is CONFIRMED, and a leak keeps
-    // them so the sweeper can retry. The archive itself proceeds regardless —
-    // closing the PR and changing status must not hinge on docker.
+  // A preview the machine is still building has no columns yet, and is
+  // retired all the same: the archive is what stops it.
+  const previewHeld = session ? await require('./preview-workflow').held(session.id).catch(() => false) : false;
+  if (session?.staging_runtime_name || session?.staging_container_id || previewHeld) {
+    // Same contract as teardownStagingForSession above (#851): the preview
+    // machine retires it (the session is archived by now, so for good), and
+    // the columns go once it has. The archive itself proceeds regardless —
+    // closing the PR and changing status must not hinge on the cluster.
     const result = await staging.teardownStaging(session, { slug: appSlug })
       .catch((err) => {
         log.warn('session-lifecycle', 'Staging teardown threw on archive', { sessionId, err: err.message });
