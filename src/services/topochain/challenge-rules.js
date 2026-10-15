@@ -543,6 +543,7 @@ function planCredits(rule, row, { candidates = [], credited = new Map(), now = D
       sourceKey: c.sourceKey,
       points: unitPoints({ payout: spec.payout, points, target, index: already }),
       activityAt: c.activityAt,
+      timestampPrecision: c.timestampPrecision,
       description: c.description || null,
       completion: !spec.counted && !weekly,
       needsGrade: spec.graded === true,
