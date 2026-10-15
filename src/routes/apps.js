@@ -338,7 +338,27 @@ function hubFirstVersion(state, viewerId, { member = false } = {}) {
     waits_on: mine && !ready ? (state.plan ? 'plan' : state.question ? 'question' : null) : null,
     conversation_id: mine ? (Number(state.conversationId) || null) : null,
     session_id: Number.isInteger(sessionId) && sessionId > 0 ? sessionId : null,
-    plan: member && !mine && !ready ? sharedPlan(state.plan || state.chosenPlan) : null,
+    plan: member && !mine && !ready && !state.stopped ? sharedPlan(state.plan || state.chosenPlan) : null,
+    // 14 Oct 2026: its build stopped (line 'stopped'), and for its maker
+    // where Try again is (stoppedThread).
+    ...(state.stopped ? { stopped: true, thread: mine ? stoppedThread(state) : null } : {}),
+  };
+}
+
+/**
+ * 14 Oct 2026 (newcomer run eight): where a first version's maker was told
+ * its build stopped, with Try again under it (homeroom-bot-dm.js
+ * stoppedThreadOf): `{ conversationId, threadRootId, messageId }`, the
+ * conversation their chat with Homeroom bot when the message cannot be
+ * read. Only ever sent to the maker. Pure.
+ */
+function stoppedThread(state) {
+  const said = state && state.stopped && typeof state.stopped === 'object' ? state.stopped : {};
+  const id = (value) => (Number.isInteger(Number(value)) && Number(value) > 0 ? Number(value) : null);
+  return {
+    conversationId: id(said.conversationId) || id(state && state.conversationId),
+    threadRootId: id(said.threadRootId),
+    messageId: id(said.messageId),
   };
 }
 
@@ -1786,7 +1806,13 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
               ...(estimate ? { estimate } : {}),
               // #4396: for a member who is not its maker, while it is not
               // ready, what the App tab's "While you wait" card offers.
-              ...(!mine && !state.ready ? await waitingMemberFields(pool, appRow.id, req.user?.id, state).catch(() => ({ member: false })) : {}),
+              ...(!mine && !state.ready && !state.stopped ? await waitingMemberFields(pool, appRow.id, req.user?.id, state).catch(() => ({ member: false })) : {}),
+              // 14 Oct 2026 (newcomer run eight): its build stopped, and
+              // nothing is live yet. The App tab keeps the first version's
+              // card, says Stopped, and gives its maker Try again: the
+              // build's thread in their chat with Homeroom bot (`thread`),
+              // where the bot's own Try again is.
+              ...(state.stopped ? { stopped: true, ...(mine ? { thread: stoppedThread(state) } : {}) } : {}),
               // Ready to try: the change, and who it waits on, as this
               // viewer reads it (firstVersionApproval).
               ...(state.ready && state.approval ? { approval: state.approval } : {}),
@@ -4477,7 +4503,7 @@ module.exports = {
   attachForkLineage,
   appRoutes, accessFlags, canDeleteApp, compactGlobalChatApp,
   deleteBlockReason, isCoreApp, hubFirstVersion, firstVersionLinesFor, sharedPlan, waitingMemberFields, firstVersionShowcaseFields,
-  firstVersionLiveFields,
+  firstVersionLiveFields, stoppedThread,
   // #2524: the activity guard and its two bounds, so the contract is
   // unit-testable without standing up the whole app router.
   activitySeconds, ACTIVITY_MAX_PER_POST, ACTIVITY_MAX_PER_DAY,

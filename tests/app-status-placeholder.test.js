@@ -942,3 +942,71 @@ test('#4449: the screenshot state plays a made-up recording and fetches nothing'
   assert.match(band, /'Sample live stream'/);
   assert.match(band, /'Not a real app'/);
 });
+
+// ── 14 Oct 2026, newcomer run eight: a first version whose build stopped ──
+//
+// Club Votes was built and its proposal refused, and the answer had no first
+// version any more, so this screen framed the starter template ("Welcome to
+// your new app! Everything on this screen is placeholder content…") with no
+// sign that anything had gone wrong. The server says it stopped now
+// (`first_version.stopped`, tests/first-version-stopped.test.js), and the
+// screen keeps the card and its first look, says Stopped, and gives its
+// maker Try again: the build's thread in their chat with Homeroom bot.
+
+const STOPPED = { line: 'stopped', step: 4, stopped: true, thread: { conversationId: 42, threadRootId: 880, messageId: 901 } };
+
+test('a stopped first version: the card and its first look, Stopped, and Try again for its maker; never the starter', () => {
+  const { AppView } = makeAppView();
+  const app = firstVersionApp({}, { ...STOPPED, screens: LOOK });
+  assert.equal(AppView._firstVersionPending(app), true, 'its first version is still in hand: nothing frames the starter');
+  const v = view(AppView, app);
+  assert.deepEqual(v, {
+    dot: null,
+    message: 'Plant Pal',
+    detail: null,
+    thumb: THUMB,
+    buildLine: 'stopped',
+    screens: { kind: 'first_look', at: LOOK.at, images: ['/api/apps/plant-pal/first-version/screens/first_look/0?v=1791453600000'] },
+    action: { key: 'botThread', label: 'Try again', slug: 'plant-pal', conversationId: 42, threadRootId: 880, messageId: 901, underCard: true },
+  });
+  const out = html(v);
+  assert.match(out, /data-app-first-version="stopped"/);
+  assert.match(out, /data-first-version-screens="first_look"/, 'the first look, as while it was built');
+  assert.match(out, /<span role="status" data-build-line="stopped"[^>]*>.*<span class="truncate">Stopped<\/span>/);
+  assert.match(out, /rounded-full bg-\[color:var\(--state-attention\)\]/, 'a still dot: something went wrong');
+  assert.doesNotMatch(out, /animate-spin/, 'nothing turns');
+  // Try again, the one primary button, right under the card and its line.
+  assert.equal((out.match(/<button/g) || []).length, 1);
+  assert.match(out, /<\/span><\/span><\/div><\/div><\/div><button id="app-first-version-retry"[^>]*>Try again<\/button>/);
+  assert.doesNotMatch(out, /min-h-9/, 'not the small quiet chat button: it is what to do now');
+  // Nothing promised while nothing is being made, and no steps under way.
+  assert.doesNotMatch(out, /notify you|data-app-first-version-promise|data-app-first-version-steps|Starter template|Welcome to your new app|placeholder/i);
+  // Nobody else can start it again: Stopped, and where it will open.
+  const member = html(view(makeAppView().AppView, firstVersionApp({}, { ...STOPPED, mine: false, conversationId: null, thread: undefined })));
+  assert.match(member, /data-build-line="stopped"[^>]*>.*>Stopped</);
+  assert.doesNotMatch(member, /<button|Try again/);
+  assert.match(member, />It opens here when it’s ready\.</);
+});
+
+test('a stopped first version\'s Try again opens the build\'s thread, else the message, else the chat', () => {
+  const { AppView, sandbox } = makeAppView();
+  const opened = [];
+  sandbox.UsernodeReact = { messages: { openAddress: (href) => opened.push(href), open: (id) => opened.push(`open:${id}`) } };
+  AppView.openFirstVersionThread('plant-pal', 42, 880, 901);
+  AppView.openFirstVersionThread('plant-pal', 42, null, 901);
+  AppView.openFirstVersionThread('plant-pal', 42, null, null);
+  AppView.openFirstVersionThread('plant-pal', null, 880, 901);
+  assert.deepEqual(opened, ['#messages/42/thread/880', '#messages/42/m/901', '#messages/42', 'open:null']);
+  // Without the bundle, the address does it.
+  sandbox.UsernodeReact = null;
+  sandbox.location = { hash: '' };
+  AppView.openFirstVersionThread('plant-pal', 42, 880, 901);
+  assert.equal(sandbox.location.hash, '#messages/42/thread/880');
+  // The button dispatches by name, with the thread.
+  const status = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/app-frame/app-status.tsx'), 'utf8');
+  assert.match(status, /botThread: \{ id: 'app-first-version-retry', opener: 'openFirstVersionThread' \},/);
+  assert.match(status, /call\(opener, action\.slug, action\.conversationId \?\? null, action\.threadRootId \?\? null, action\.messageId \?\? null\);/);
+  // Its maker's thread from the record, else their chat with the bot.
+  const v = view(AppView, firstVersionApp({}, { ...STOPPED, thread: undefined }));
+  assert.deepEqual([v.action.conversationId, v.action.threadRootId, v.action.messageId], [42, null, null]);
+});

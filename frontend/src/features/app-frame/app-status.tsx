@@ -18,7 +18,10 @@
  * ./first-version-screens.tsx).
  * Once that version is
  * built and up for approval, the same thumbnail says Ready to try, and the
- * screen says what it waits on, with Try it and See the change.
+ * screen says what it waits on, with Try it and See the change. If its build
+ * stopped (14 Oct 2026, newcomer run eight), the thumbnail stays, its line
+ * says Stopped, and its maker gets Try again (the build's thread in their
+ * chat with Homeroom bot), never the starter template the repo was made from.
  *
  * ── Why this can own `#app-content` ────────────────────────────────────
  *
@@ -127,12 +130,17 @@ export interface AppStatusView {
    * builds, "Open my chat with Homeroom bot" once it is ready to try.
    * `tryChange` and `seeChange` are a first version that is ready to try:
    * its change's preview and its change page, by the change's id.
+   * `botThread` (14 Oct 2026) is a stopped first version's Try again: the
+   * build's thread in its maker's chat with Homeroom bot, by the
+   * conversation, the thread's root and the message that said it stopped.
    */
   action: {
-    key: 'secrets' | 'buildLog' | 'botChat' | 'tryChange' | 'seeChange';
+    key: 'secrets' | 'buildLog' | 'botChat' | 'botThread' | 'tryChange' | 'seeChange';
     label: string;
     slug: string;
     conversationId?: number | null;
+    threadRootId?: number | null;
+    messageId?: number | null;
     sessionId?: number | null;
     /** A small secondary button, not the screen's one primary action. */
     quiet?: boolean;
@@ -241,17 +249,20 @@ const ACTIONS = {
   secrets: { id: 'awaiting-open-secrets', opener: 'openAwaitingSecrets' },
   buildLog: { id: 'app-error-build-log', opener: 'openAppBuildLog' },
   botChat: { id: 'app-first-version-chat', opener: 'openBotChat' },
+  botThread: { id: 'app-first-version-retry', opener: 'openFirstVersionThread' },
   tryChange: { id: 'app-first-version-try', opener: 'tryFirstVersion' },
   seeChange: { id: 'app-first-version-change', opener: 'openFirstVersionChange' },
 } as const;
 
 type StatusAction = NonNullable<AppStatusView['action']> | NonNullable<AppStatusView['alt']>;
 
-/** Its opener, with what it opens: a change by its id, else the DM by its id (or nothing). */
+/** Its opener, with what it opens: a change by its id, the build's thread, else the DM by its id (or nothing). */
 function press(action: StatusAction): void {
   const { opener } = ACTIONS[action.key];
   if (action.key === 'tryChange' || action.key === 'seeChange') call(opener, action.slug, action.sessionId ?? null);
-  else call(opener, action.slug, action.conversationId ?? null);
+  else if (action.key === 'botThread') {
+    call(opener, action.slug, action.conversationId ?? null, action.threadRootId ?? null, action.messageId ?? null);
+  } else call(opener, action.slug, action.conversationId ?? null);
 }
 
 const LINE = 'max-w-sm text-sm';
@@ -298,8 +309,9 @@ export function AppStatusView_({ view: answered }: { view: AppStatusView }): Rea
   const thumb = view.thumb || null;
   const line = view.buildLine === 'working' ? 'working' : buildLineOf(view.buildLine);
   const waiting = thumb && view.waiting ? view.waiting : null;
-  // N4: the steps, while it is made (never once it is ready to try).
-  const steps = thumb && line !== 'ready' && line !== 'live' && stepsOf(view.steps).length ? view.steps : null;
+  // N4: the steps, while it is made (never once it is ready to try, nor
+  // once its build stopped: nothing is under way).
+  const steps = thumb && line !== 'ready' && line !== 'live' && line !== 'stopped' && stepsOf(view.steps).length ? view.steps : null;
   const estimate = thumb && countsDown(line) ? estimateOf(view.estimate) : null;
   const caption = line === 'building' ? view.buildNote || null : null;
   const body = (

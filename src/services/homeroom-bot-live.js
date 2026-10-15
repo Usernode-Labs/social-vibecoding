@@ -275,9 +275,12 @@ function liveHomeroomText({ title, project }) {
 // GitHub issue, is activity on the request: the bot reads it again
 // (homeroom-bot.js classifyIssue, 'changed'), which is how a request it
 // could build gets built. The record stays on the run (build_error, shown
-// on the admin's Homeroom bot screen) and in the log.
-function buildFailedText(reason) {
-  const words = require('./homeroom-bot-dm').buildFailedWords(reason, 'this', 'bot');
+// on the admin's Homeroom bot screen) and in the log. 14 Oct 2026 (newcomer
+// run eight): a project's first version (`firstVersion`), built and not
+// proposed, is said as built and not live yet, never as waiting for an
+// approval it does not need.
+function buildFailedText(reason, { firstVersion = false } = {}) {
+  const words = require('./homeroom-bot-dm').buildFailedWords(reason, 'this', 'bot', { first: firstVersion });
   return `${words} Reply here (or on the GitHub issue) and it will try again.`;
 }
 

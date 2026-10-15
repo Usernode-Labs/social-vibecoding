@@ -3387,6 +3387,8 @@ const AppView = {
     const fv = appData.first_version || {};
     // Built and up for approval: no longer "being built" (_firstVersionReadyView).
     if (fv.ready) return AppView._firstVersionReadyView(appData);
+    // Its build stopped, and nothing is live yet (_firstVersionStoppedView).
+    if (fv.stopped === true) return AppView._firstVersionStoppedView(appData);
     const thumb = AppView._firstVersionThumb(appData);
     const waiting = AppView._firstVersionWaiting(appData);
     // Their DM, by its id when the record names it (members get neither).
@@ -3422,6 +3424,48 @@ const AppView = {
       tourSays: true,
       action: chat,
       ...(waiting ? { waiting } : {}),
+    };
+  },
+
+  /**
+   * 14 Oct 2026 (newcomer run eight, Club Votes, iPhone Safari): Homeroom
+   * bot's build of the first version stopped, and nothing is live yet
+   * (`first_version.stopped`, services/homeroom-bot-dm.js
+   * firstVersionState). The answer used to have no first version at all, so
+   * this screen framed the starter template the repo was made from
+   * ("Welcome to your new app! Everything on this screen is placeholder
+   * content…") with no sign that anything had gone wrong. It keeps the
+   * card and its first look, as while it was built, and its line says
+   * Stopped. Its maker gets Try again, which opens the build's thread in
+   * their chat with Homeroom bot (`first_version.thread`), where the bot's
+   * own Try again under its message starts it over; nobody else can, and
+   * they keep "It opens here when it’s ready." Nothing promises a
+   * notification while nothing is being made.
+   */
+  _firstVersionStoppedView(appData) {
+    const fv = appData.first_version || {};
+    const thumb = AppView._firstVersionThumb(appData);
+    const id = (value) => (Number.isInteger(value) && value > 0 ? value : null);
+    const thread = fv.thread && typeof fv.thread === 'object' ? fv.thread : {};
+    const mine = fv.mine === true;
+    return {
+      dot: null,
+      message: appData.name || appData.slug,
+      detail: null,
+      ...thumb,
+      buildLine: 'stopped',
+      ...(mine ? {} : { lines: [PlatformI18n.t('changes:firstVersion.opensWhenReady')] }),
+      action: mine
+        ? {
+          key: 'botThread',
+          label: PlatformI18n.t('changes:firstVersion.tryAgain'),
+          slug: appData.slug,
+          conversationId: id(thread.conversationId) || id(fv.conversationId),
+          threadRootId: id(thread.threadRootId),
+          messageId: id(thread.messageId),
+          underCard: true,
+        }
+        : null,
     };
   },
 
@@ -3646,6 +3690,26 @@ const AppView = {
     if (!slug || !Number.isInteger(id) || id <= 0) return;
     AppView._reactDevBoard()?.showVotes?.(id);
     location.hash = `#app/${encodeURIComponent(slug)}/dev/proposals/${id}`;
+  },
+
+  /**
+   * 14 Oct 2026: a stopped first version's Try again (_firstVersionStoppedView):
+   * the build's thread in its maker's chat with Homeroom bot, where the bot's
+   * Try again is; else the message itself, whose link lands inside its
+   * thread; else the chat (openBotChat). The address goes through Messages'
+   * openAddress, as a bell row's does, so it opens even when it is the one
+   * already in the bar.
+   */
+  openFirstVersionThread(slug, conversationId, threadRootId, messageId) {
+    const valid = (value) => Number.isInteger(value) && value > 0;
+    if (!valid(conversationId)) return AppView.openBotChat(slug, null);
+    const href = valid(threadRootId) ? `#messages/${conversationId}/thread/${threadRootId}`
+      : valid(messageId) ? `#messages/${conversationId}/m/${messageId}`
+        : `#messages/${conversationId}`;
+    const messages = window.UsernodeReact && window.UsernodeReact.messages;
+    if (messages && typeof messages.openAddress === 'function') messages.openAddress(href);
+    else location.hash = href;
+    return undefined;
   },
 
   /** The first-version screen's button: the viewer's DM with the Homeroom bot. */

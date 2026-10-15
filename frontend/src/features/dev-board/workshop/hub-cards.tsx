@@ -88,18 +88,22 @@ export function firstVersionLine(fv: HubFirstVersion): BuildLineState {
  *   see       its plan waits, read only (#4074)      a member who did not start it
  *   try       built and up for approval              everyone
  *   open      live, in the project's first week      everyone
+ *   retry     its build stopped, nothing live yet    the person who started it
  *
  * A card with a button hides its build line (the owner, 6 Oct 2026): "Your
  * plan is ready to review" over "Review the plan" said one thing twice, so
  * the button says it and the app's own line sits under its name. See the
  * plan is a quiet link beside the line, not a button, so "Planning it"
- * stays.
+ * stays. Try again (14 Oct 2026, newcomer run eight) keeps the line: it
+ * says Stopped, which the button does not, and opens the build's thread in
+ * its maker's chat with Homeroom bot, where the bot's own Try again is.
  */
-export type FirstVersionAction = 'review' | 'answer' | 'see' | 'try' | 'open';
+export type FirstVersionAction = 'review' | 'answer' | 'see' | 'try' | 'open' | 'retry';
 
 export function firstVersionAction(fv: HubFirstVersion): FirstVersionAction | null {
   const line = firstVersionLine(fv);
   if (line === 'live') return 'open';
+  if (line === 'stopped') return fv.mine ? 'retry' : null;
   if (fv.ready) return fv.session_id ? 'try' : null;
   if (fv.waits_on === 'plan') return 'review';
   if (fv.waits_on === 'question') return 'answer';
@@ -113,6 +117,7 @@ const ACTION_WORDS: Record<Exclude<FirstVersionAction, 'see'>, string> = {
   answer: 'project:hub.firstVersion.answer',
   try: 'project:hub.firstVersion.tryIt',
   open: 'project:hub.firstVersion.openApp',
+  retry: 'project:hub.firstVersion.tryAgain',
 };
 
 /**
@@ -191,9 +196,16 @@ export function FirstVersionCard({ slug, data, emoji = null, onSeePlan }: {
       (window as any).AppView?.tryFirstVersion?.(slug, fv.session_id);
     } else if (action === 'open') {
       (window as any).App?.openAppTab?.(slug, 'app');
+    } else if (action === 'retry') {
+      // The App tab's own opener for it (AppView.openFirstVersionThread).
+      const thread = fv.thread || null;
+      (window as any).AppView?.openFirstVersionThread?.(slug, thread?.conversationId ?? fv.conversation_id ?? null,
+        thread?.threadRootId ?? null, thread?.messageId ?? null);
     }
   };
   const button = action && action !== 'see';
+  // Try again keeps the line that says it stopped.
+  const lineShown = !button || action === 'retry';
   return (
     <section ref={ref} className="dev-ws-strip dev-ws-hub-first" data-ws-first-version={line}>
       <div className="dev-ws-hub-first-row">
@@ -201,7 +213,7 @@ export function FirstVersionCard({ slug, data, emoji = null, onSeePlan }: {
           name={data?.name || slug}
           colorKey={slug}
           emoji={emoji}
-          line={button ? null : line}
+          line={lineShown ? line : null}
           lineWords={named.words}
           lineNote={named.note}
         />

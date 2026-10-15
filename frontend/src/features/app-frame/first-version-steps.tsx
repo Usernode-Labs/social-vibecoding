@@ -24,7 +24,9 @@
  * and "about 17 min left" here, two times on one screen. It says "taking a
  * little longer than usual" once it has run past its usual end. The rest
  * are hollow and say nothing. A review that did not run is left out. No
- * accent: nothing here asks the viewer for anything.
+ * accent: nothing here asks the viewer for anything. The review's round
+ * ("Round 1 of 2") is said here alone since runs eight and nine (14 Oct
+ * 2026): on the build line it cut the time off a phone's width.
  */
 
 import type { ReactNode } from 'react';
