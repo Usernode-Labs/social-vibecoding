@@ -597,6 +597,12 @@ let platformFault = null;
 let lastVolumeSweepAt = 0;
 // When it last looked for live builds nothing finished.
 let lastLiveSweepAt = 0;
+// When it last looked for asks the voice queued that nothing ran (#5217),
+// and the session that was re-queued when: an ask whose change refuses
+// every turn is put back by the sweep, and this keeps that at one re-queue
+// per STRANDED_ASK_MS rather than one per pass.
+let lastAskSweepAt = 0;
+const askNudges = new Map();
 // Apps whose issues changed since the last pass (wake), and whether a full
 // reconcile was asked for (the mode was switched on, say). Read and cleared
 // at the top of every pass; only meaningful on the Pod running the loop.
@@ -5534,6 +5540,12 @@ async function runFollowUp(pool, config, {
     log.info('homeroom-bot', 'Activity on a bot proposal\'s issue, but nobody said anything new', {
       app: app.slug, issueNumber, sessionId: proposal.id,
     });
+    // #5217: an ask recorded after this run took its asks (or while the row
+    // was claimed) is stranded by this very return: the row is gone and
+    // nothing re-queues it. Put it back, so its next follow-up takes it.
+    // Guarded: with the voice off, asks are never taken, and a requeue here
+    // would bring the issue back every pass.
+    if (voiceOnChange) await requeueAsks();
     return { ran: false, reason: 'no_new_replies' };
   }
 
@@ -9692,6 +9704,75 @@ async function buildsNow(pool) {
 
 // ── The work loop ───────────────────────────────────────────────────────
 
+// #5217: an ask the voice queued that nothing ran. recordAsk puts its
+// follow-up first in the queue, but that answers null when a row for the
+// app and issue is already claimed (the running turn re-queues the asks
+// waiting when it ends), and several ends of the loop delete the row
+// without that requeue: runFollowUp's no_new_replies return, and
+// runTriage's not_open, has_proposal and claim-race returns. Nothing in
+// the loop read homeroom_bot_change_asks on its own, so such an ask sat
+// 'queued' until somebody else's words brought the change up again (in
+// the report, for five hours with the change idle and every check passing).
+// This sweep, on the refresh cadence, puts the follow-up back itself.
+const STRANDED_ASK_MS = 30 * 60 * 1000;
+
+/**
+ * Re-queue the follow-up of every stranded ask: a 'queued' ask on the
+ * bot's own promoted change, older than STRANDED_ASK_MS, younger than
+ * 7 days, whose app and issue have no queue row at all (a claimed row
+ * means a turn is on it, and that turn re-queues the asks waiting when it
+ * ends; a row held for the payer's week is left to that too). At most one
+ * re-queue per STRANDED_ASK_MS per change, so an ask that is refunded on
+ * every refusal (a busy change) does not come back every pass. Returns
+ * how many were re-queued; never throws.
+ */
+async function sweepStrandedAsks(pool, bot, settings, deps = {}) {
+  const now = deps.now ? deps.now() : Date.now();
+  if (!voiceModule(deps).voiceOn(settings, { type: 'session' }) || !bot?.id) return 0;
+  const { rows } = await pool.query(
+    `SELECT k.app_id, k.issue_number, k.session_id,
+            (ARRAY_AGG(k.asker_id ORDER BY k.id))[1] AS asker_id
+       FROM homeroom_bot_change_asks k
+       JOIN chat_sessions cs ON cs.id = k.session_id
+      WHERE k.status = 'queued'
+        AND k.created_at < NOW() - make_interval(secs => $1)
+        AND k.created_at > NOW() - INTERVAL '7 days'
+        AND cs.user_id = $2 AND cs.status = 'promoted' AND cs.is_headless = FALSE
+        AND k.issue_number = ANY(cs.linked_issues)
+        AND NOT EXISTS (SELECT 1 FROM homeroom_bot_queue q
+                         WHERE q.app_id = k.app_id AND q.issue_number = k.issue_number)
+      GROUP BY k.app_id, k.issue_number, k.session_id`,
+    [STRANDED_ASK_MS / 1000, Number(bot.id)],
+  );
+  let queued = 0;
+  for (const row of rows) {
+    const key = Number(row.session_id);
+    const last = askNudges.get(key) || 0;
+    if (now - last < STRANDED_ASK_MS) continue;
+    askNudges.set(key, now);
+    try {
+      const made = await enqueueFront(pool, {
+        appId: row.app_id, issueNumber: row.issue_number, userId: row.asker_id, reason: 'voice_update',
+      });
+      if (!made) continue;
+      queued += 1;
+      log.info('homeroom-bot', 'Re-queued a change\'s update nobody ran', {
+        appId: Number(row.app_id), issueNumber: Number(row.issue_number), sessionId: key,
+      });
+    } catch (err) {
+      log.warn('homeroom-bot', 'Could not re-queue a change\'s update nobody ran', {
+        sessionId: key, err: err.message,
+      });
+    }
+  }
+  // One change's nudge matters only until its next one is due: forget the
+  // old ones, so the map stays small.
+  for (const [key, at] of askNudges) {
+    if (now - at >= STRANDED_ASK_MS * 2) askNudges.delete(key);
+  }
+  return queued;
+}
+
 /**
  * One pass: take the loop lock, refresh the queue when due, drain up to
  * `concurrency` app batches, release. Returns what it did so a test can
@@ -9840,6 +9921,19 @@ async function runOnce(pool, config, deps = {}) {
       // #4242: and a build that succeeded and became no proposal is said.
       const unproposed = await (deps.dm || require('./homeroom-bot-dm')).sweepUnproposedBuilds?.(pool, { ws: deps.ws || null });
       if (unproposed) out.unproposedLooked = unproposed;
+    }
+
+    // And an update the voice queued that nothing ran comes back, on the
+    // same cadence (#5217). Before the fault check: the row it queues is
+    // dispatched by this same pass below.
+    if (now - lastAskSweepAt >= REFRESH_INTERVAL_MS) {
+      lastAskSweepAt = now;
+      try {
+        const stranded = await sweepStrandedAsks(pool, bot, settings, deps);
+        if (stranded) out.strandedAsks = stranded;
+      } catch (err) {
+        log.warn('homeroom-bot', 'Stranded-ask sweep failed', { err: err.message });
+      }
     }
 
     // Inside a platform-fault backoff nothing is dispatched (#3122). A wake
@@ -11149,6 +11243,8 @@ module.exports = {
   pickLive,
   personKeyOf,
   enqueueFront,
+  sweepStrandedAsks,
+  STRANDED_ASK_MS,
   billingOf,
   readReasonOf,
   readFingerprintOf,
@@ -11188,6 +11284,7 @@ module.exports = {
   _resetForTests() {
     lastRefreshAt = 0; triagePromptCache = null; stopped = false; passInFlight = false; lastPass = null;
     appBackoff.clear(); followUpBackoff.clear(); lastRefusals = []; platformFault = null; lastVolumeSweepAt = 0; lastLiveSweepAt = 0;
+    lastAskSweepAt = 0; askNudges.clear();
     inFlight.clear(); budgetPausedUntil = 0; platformSlugsCache = null;
     readsInFlight.clear(); lastReads.clear();
     passStartedAt = null; liveDispatchRunning = false; liveDispatchAgain = false; liveDispatchDone = Promise.resolve();

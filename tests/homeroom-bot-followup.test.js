@@ -178,12 +178,14 @@ test('what it says has no em dashes', () => {
 function harness({
   proposalStatus = 'promoted', revisions = 0, comments = [], issueThread = [], proposalThread = [], spec = null,
   result = { lastResultText: '```json\n{"action":"answer","reply":"Because the platform uses it."}\n```', pushOk: true, sha: OLD_HEAD },
+  voiceSettingsRows = [], asksWaiting = false,
 } = {}) {
   const calls = { queries: [], exec: [], loop: null, posts: [], reconciled: [], seen: [], cards: [], issueComments: [] };
   const pool = {
     async query(sql, params) {
       const s = String(sql);
       calls.queries.push({ s, params });
+      if (/SELECT key, value FROM platform_settings/.test(s)) return { rows: voiceSettingsRows };
       if (/SELECT id, status, pr_number FROM chat_sessions/.test(s)) {
         return { rows: proposalStatus ? [{ id: 5001, status: proposalStatus, pr_number: 25 }] : [] };
       }
@@ -194,6 +196,12 @@ function harness({
       }
       if (/COUNT\(\*\)::int AS n FROM homeroom_bot_runs/.test(s)) return { rows: [{ n: revisions }] };
       if (/INSERT INTO homeroom_bot_runs/.test(s)) return { rows: [{ id: 901 }] };
+      if (/INSERT INTO homeroom_bot_queue/.test(s)) return { rows: [{ id: 401 }] };
+      // voice.asksWaiting's: only that one (takeAsks's second UPDATE has
+      // ORDER BY id LIMIT 10, not LIMIT 1).
+      if (/FROM homeroom_bot_change_asks WHERE session_id = \$1 AND status = 'queued' LIMIT 1/.test(s)) {
+        return { rows: asksWaiting ? [{}] : [] };
+      }
       return { rows: [] };
     },
   };
@@ -255,6 +263,27 @@ test('activity with nothing a person said is recorded as seen, and costs nothing
   assert.equal(h.calls.posts.length, 0, 'nothing posted');
   const seen = h.calls.queries.find((q) => /UPDATE homeroom_bot_runs\s+SET thread_seen_at = GREATEST/.test(q.s));
   assert.deepEqual(seen.params, [800, ITEM.thread_seen_at], 'so the same activity does not bring it back');
+});
+
+// #5217: a follow-up that ends at no_new_replies deletes the queue row. An
+// ask recorded after it took its asks (or while the row was claimed, whose
+// enqueueFront answered null) is stranded by that very return otherwise:
+// the row is gone and nothing re-queues it. With the voice on, the asks
+// waiting go back in the queue; with it off, asks are never taken and
+// nothing is re-queued.
+test('#5217: a quiet pass re-queues the asks waiting on its change, and only with the voice on', async (t) => {
+  const on = harness({ voiceSettingsRows: [{ key: 'homeroom_bot_mode', value: 'live' }], asksWaiting: true });
+  const outOn = await run(t, on);
+  assert.deepEqual(outOn, { ran: false, reason: 'no_new_replies' });
+  const insert = on.calls.queries.find((q) => /INSERT INTO homeroom_bot_queue/.test(q.s));
+  assert.ok(insert, 'the asks waiting go back in the queue');
+  assert.deepEqual(insert.params, [APP.id, ITEM.issue_number, 'voice_update', null, null]);
+
+  const off = harness({});
+  const outOff = await run(t, off);
+  assert.deepEqual(outOff, { ran: false, reason: 'no_new_replies' });
+  assert.equal(off.calls.queries.find((q) => /INSERT INTO homeroom_bot_queue/.test(q.s)), undefined,
+    'the voice off: asks are never taken, and the quiet pass brings nothing back');
 });
 
 test('a question in the proposal\'s discussion is answered there and on the issue, with the code in front of it', async (t) => {
