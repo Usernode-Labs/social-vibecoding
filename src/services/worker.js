@@ -3969,7 +3969,25 @@ async function execInWorker(sessionId, {
     turnByokCents: registryBefore.turnByokCents,
     turnByokSwitched: registryBefore.turnByokSwitched,
     unpushed: registryBefore.unpushed ?? null,
+    // A turn this process was already running keeps running.
+    inFlight: !!registryBefore.inFlight,
   } : null;
+  // Undo this call's claim on the registry when it dispatches nothing. Only
+  // while the claim is still this call's: a dispatch that started alongside
+  // it may have claimed the session since, and its claim is not ours to undo.
+  // Why: session 8599's sync-on-resume lost the session to a build turn and
+  // wrote `inFlight: false` over it here, so the idle sweep saw the running
+  // turn's worker as idle and evicted it five minutes later, mid-turn.
+  const releaseRegistryClaim = () => {
+    const current = _registryGet(sessionId);
+    if (!current?.inFlight || String(current.activeTurnId) !== String(durableTurnId)) return;
+    _registryUpsert(sessionId, {
+      ...(replacedRegistryFields || {
+        activeTurnMode: null, journal: null, activeTurnId: null, inFlight: false,
+      }),
+      lastUsedMs: Date.now(),
+    });
+  };
   _registryUpsert(sessionId, {
     inFlight: true, activeTurnMode: mode, journal, activeTurnId: durableTurnId,
     turnByokCents: 0, turnByokSwitched: false,
@@ -4015,12 +4033,7 @@ async function execInWorker(sessionId, {
     // Put back what this call replaced: this dispatch never ran, so the
     // turn that owns the session (or the last one's remembered state) keeps
     // its in-memory record.
-    _registryUpsert(sessionId, {
-      ...(replacedRegistryFields || {
-        activeTurnMode: null, journal: null, activeTurnId: null,
-      }),
-      inFlight: false, lastUsedMs: Date.now(),
-    });
+    releaseRegistryClaim();
     await revokeHomeroomReadGrant(sessionId, homeroomGrant);
     // This turn's own prompt files are not used by anyone else (#4575).
     if (promptPaths.prompt !== TURN_PROMPT_PATH) {
@@ -4047,10 +4060,7 @@ async function execInWorker(sessionId, {
     } catch (err) {
       // Nothing was dispatched: this process's registry goes back as it was,
       // and the record stays for whoever owns the turn next.
-      _registryUpsert(sessionId, {
-        ...(replacedRegistryFields || { activeTurnMode: null, journal: null, activeTurnId: null }),
-        inFlight: false, lastUsedMs: Date.now(),
-      });
+      releaseRegistryClaim();
       await revokeHomeroomReadGrant(sessionId, homeroomGrant);
       throw err;
     }
