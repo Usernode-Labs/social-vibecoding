@@ -67,6 +67,15 @@ function harness(initial, caches = memoryCaches()) {
   // error, as fetch does for a redirect the HTTP cache kept under
   // redirect: 'error', or for a timeout.
   const rejectFromCache = new Map();
+  // The worker's AbortSignal.timeout, made controllable: a request (not
+  // 'reload') for one of these paths gets its headers, then its signal times
+  // out and its body read rejects with an AbortError, as a body that stalls
+  // past the timeout does in some Chromium versions.
+  const stallBody = new Set();
+  const timers = new WeakMap();
+  const WorkerAbortSignal = {
+    timeout: () => { const c = new AbortController(); timers.set(c.signal, c); return c.signal; },
+  };
   const clients = [];
   let failedPath = null;
   let offline = false;
@@ -83,6 +92,12 @@ function harness(initial, caches = memoryCaches()) {
     fetches.push({ path: url.pathname, cache: mode });
     if (rejectFromCache.has(url.pathname) && mode !== 'reload' && mode !== 'no-store') {
       throw rejectFromCache.get(url.pathname);
+    }
+    if (stallBody.has(url.pathname) && mode !== 'reload' && mode !== 'no-store') {
+      timers.get(init.signal)?.abort(new DOMException('signal timed out', 'TimeoutError'));
+      const read = () => Promise.reject(new DOMException('The operation was aborted.', 'AbortError'));
+      const stalled = { ok: true, status: 200, redirected: false, arrayBuffer: read, clone: () => stalled };
+      return stalled;
     }
     if (httpCache.has(url.pathname) && mode !== 'reload' && mode !== 'no-store') {
       return new Response(httpCache.get(url.pathname), { headers: { 'x-platform-build': serving.revision } });
@@ -107,7 +122,7 @@ function harness(initial, caches = memoryCaches()) {
         skipWaiting: async () => { lifecycle.push('skipWaiting'); },
         clients: { matchAll: async () => clients, claim: async () => { lifecycle.push('claim'); } },
       },
-      caches, fetch: fetcher, URL, Headers, Request, Response, AbortSignal,
+      caches, fetch: fetcher, URL, Headers, Request, Response, AbortSignal: WorkerAbortSignal,
       setTimeout, clearTimeout,
     });
     async function dispatch(name, extra = {}) {
@@ -134,7 +149,7 @@ function harness(initial, caches = memoryCaches()) {
     };
   }
   return {
-    caches, requests, fetches, httpCache, rejectFromCache, clients, worker,
+    caches, requests, fetches, httpCache, rejectFromCache, stallBody, clients, worker,
     serve: next => { serving = next; },
     fail: pathname => { failedPath = pathname; },
     offline: value => { offline = value; },

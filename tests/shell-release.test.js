@@ -336,3 +336,11 @@ test('a first fetch that times out fails at once, with no second 20s wait', asyn
   await assert.rejects(env.worker(a).install(), /timed out/);
   assert.deepEqual(assetFetches(env, appJs), ['default']);
 });
+
+test('a body that stalls past the timeout counts as a timeout even when its read rejects with AbortError', async t => {
+  const a = fixture(t, 'a'); const env = harness(a);
+  const appJs = `/b/${a.revision}/js/app.js`;
+  env.stallBody.add(appJs);
+  await assert.rejects(env.worker(a).install(), /aborted/);
+  assert.deepEqual(assetFetches(env, appJs), ['default'], 'no reload: the signal says it timed out');
+});
