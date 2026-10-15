@@ -506,39 +506,48 @@ test('a failing verdict on the bot\'s proposal queues its issue; anything else d
   assert.equal(await bot.noteProposalChecks({ async query() { throw new Error('down'); } }, { sessionId: 1 }), false, 'never throws');
 });
 
-test('every settled failing verdict reaches the bot, from each place a verdict settles', () => {
-  const visuals = read('src/services/visuals.js');
-  assert.match(visuals, /function noteBotChecksAfterChecks\(pool, session, state\) \{\n\s+if \(!session\?\.id\) return;/);
-  // B4: a passing or skipped one is the bot's change being ready to try.
-  assert.match(visuals, /if \(state === 'passing' \|\| state === 'skipped'\) \{[\s\S]*?noteChangeReady\(pool, session\.id\)[\s\S]*?return;\n\s+\}\n\s+if \(state !== 'failing'\) return;/);
-  assert.match(read('src/services/staging-recovery.js'), /visuals\.noteBotChecksAfterChecks\?\.\(pool, session, 'skipped'\);/);
-  assert.match(visuals, /require\('\.\/homeroom-bot'\)\.noteProposalChecks\(pool, \{ sessionId: session\.id \}\)/);
-  assert.match(visuals, /maybeAutoMergeAfterChecks\(config, getPool\(config\), session, completed\.state\);\n\s+noteBotChecksAfterChecks\(getPool\(config\), session, completed\.state\);/);
-  assert.match(visuals, /maybeAutoMergeAfterChecks\(config, pool, session, checksResult\.state\);\n\s+noteBotChecksAfterChecks\(pool, session, checksResult\.state\);/);
-  assert.match(read('src/services/check-harvest.js'), /visuals\.noteBotChecksAfterChecks\?\.\(pool, session, settled\.result\.state\);/);
+test('every settled verdict reaches the bot, through the preview machine\'s follow-ups', () => {
+  // The machine is where every verdict settles: a run's (live or collected),
+  // and a skipped one (staging-recovery hands it over). Each queues the
+  // follow-ups work with its state.
+  const machine = read('src/workflow/preview/machine.ts');
+  assert.match(machine, /kind: WORK\.followUps, key: `follow-ups:\$\{run\.key\}`,\n\s+input: \{ sessionId: d\.sessionId, appId: d\.appId, head: run\.head, state, deferred, trigger: d\.trigger \},/);
+  assert.match(machine, /work: \[followUps\(d, run, 'skipped'\)\]/);
+  assert.match(machine, /followUps\(d, run, state\),/);
+  assert.match(read('src/services/staging-recovery.js'),
+    /async function recordChecksSkipped\(\{ session, commitSha, reason \}\) \{\n\s+await workflow\(\)\.skipped\(\{ session, head: commitSha, reason \}\)/);
+  // B4: a passing or skipped one is the bot's change being ready to try; a
+  // failing one is the bot's to fix.
+  const services = read('src/workflow/preview/services.ts');
+  const work = services.slice(services.indexOf('[WORK.followUps]: {'), services.indexOf('[WORK.stopped]: {'));
+  assert.match(work, /if \(!deferred\) \{\n\s+if \(state === 'passing' \|\| state === 'skipped'\) \{\n\s+await legacy\('services\/homeroom-bot-dm'\)\.noteChangeReady\(pool, sessionId\);/);
+  assert.match(work, /\} else if \(state === 'failing'\) \{\n\s+await legacy\('services\/homeroom-bot'\)\.noteProposalChecks\(pool, \{ sessionId \}\);/);
   const schema = read('src/db/schema.sql');
   assert.match(schema, /ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS checks_head_sha TEXT;/);
 });
 
-test('a failing verdict hook costs an error verdict nothing, and a passing one only the ready check', async () => {
-  const visuals = require('../src/services/visuals');
+test('the follow-ups cost an error verdict nothing, and a passing one only the ready check and the merge re-read', async () => {
+  const { previewServices } = require('../src/workflow/preview/services.ts');
+  const { WORK } = require('../src/workflow/preview/machine.ts');
   const asked = [];
   const pool = { async query(sql) { asked.push(String(sql)); return { rows: [] }; } };
-  visuals.noteBotChecksAfterChecks(pool, { id: 5001 }, 'error');
-  await new Promise((r) => setImmediate(r));
+  const followUps = (state) => previewServices({ config: {}, pool })[WORK.followUps]
+    .run({ input: { sessionId: 5001, appId: 9, head: null, state } });
+  await followUps('error');
   assert.equal(asked.length, 0);
-  // B4: passing asks whether the change is ready to try, and nothing else
-  // (with what its before & after shots on that head say).
-  visuals.noteBotChecksAfterChecks(pool, { id: 5001 }, 'passing');
-  for (let i = 0; i < 20 && !asked.length; i += 1) await new Promise((r) => setImmediate(r));
-  assert.deepEqual(asked.map((s) => s.replace(/\s+/g, ' ').trim()),
-    ['SELECT status, check_state, approval_epoch, source, reviewed_head_sha, imported_pr_head_sha, '
+  // B4: passing asks whether the change is ready to try (with what its
+  // before & after shots on that head say), and whether it is still up for
+  // the merge queue.
+  await followUps('passing');
+  assert.deepEqual(asked.map((s) => s.replace(/\s+/g, ' ').trim()), [
+    'SELECT status, check_state, approval_epoch, source, reviewed_head_sha, imported_pr_head_sha, '
       + 'checks_commit_sha, handoff_head_sha, checks_checked_at, shots_state, shots_run_id, shots_detail, shots_updated_at, '
       + 'pr_title, pr_title_fallback, session_title '
-      + 'FROM chat_sessions WHERE id = $1']);
+      + 'FROM chat_sessions WHERE id = $1',
+    'SELECT status FROM chat_sessions WHERE id = $1',
+  ]);
   asked.length = 0;
-  visuals.noteBotChecksAfterChecks(pool, { id: 5001 }, 'failing');
-  for (let i = 0; i < 20 && !asked.length; i += 1) await new Promise((r) => setImmediate(r));
+  await followUps('failing');
   assert.ok(asked.some((s) => /AS looked/.test(s)), 'a failing one is looked up');
 });
 

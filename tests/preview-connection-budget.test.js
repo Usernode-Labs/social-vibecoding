@@ -386,15 +386,16 @@ test('#1771: pressure reclaim skips every preview somebody is using', () => {
     { id: 2, status: 'promoted', last_activity_at: '2026-09-02T00:00:00Z' }, // backs a live vote
     { id: 3, status: 'merging', last_activity_at: '2026-09-03T00:00:00Z' },  // mid-merge
     { id: 4, status: 'active', last_activity_at: '2026-09-04T00:00:00Z' },   // a turn in flight
-    { id: 5, status: 'paused', last_activity_at: '2026-09-05T00:00:00Z' },   // building
+    // A preview the machine is building is not excluded here: the machine
+    // refuses the retirement itself (staging.teardownStaging reports it busy).
+    { id: 5, status: 'paused', last_activity_at: '2026-09-05T00:00:00Z' },
     { id: 6, status: 'active', last_activity_at: '2026-09-06T00:00:00Z' },
   ];
   const victims = selectPressureVictims({
     rows,
     isBusy: (id) => id === 4,
-    hasInFlightBuild: (id) => id === 5,
   });
-  assert.deepEqual(victims.map((v) => v.id), [1, 6],
+  assert.deepEqual(victims.map((v) => v.id), [1, 5, 6],
     'a reviewer arriving at a dead link is worse than a tight connection budget');
   assert.equal(victims[0].id, 1, 'idle-longest first');
 });

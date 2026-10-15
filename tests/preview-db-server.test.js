@@ -751,35 +751,58 @@ test('while draining, a preview server that is down does not stop a build on the
 });
 
 test('a failed clone on the preview server is stored as a platform fault, so its retries apply', async () => {
+  // The preview machine's prepare work (src/workflow/preview/services.ts)
+  // reads the fault off the error, and its prepareFailed domain write
+  // (src/workflow/preview/machine.ts) stores it with the verdict.
   const ids = {
+    staging: require.resolve('../src/services/staging'),
     visuals: require.resolve('../src/services/visuals'),
-    lifecycle: require.resolve('../src/services/preview-lifecycle'),
+    sync: require.resolve('../src/services/boot-failure-sync'),
     logger: require.resolve('../src/services/logger'),
-    subject: require.resolve('../src/services/staging-recovery'),
+    recovery: require.resolve('../src/services/staging-recovery'),
   };
   const orig = {};
   for (const [key, id] of Object.entries(ids)) orig[key] = require.cache[id];
-  const stored = [];
-  stub(ids.visuals, {
-    summarizeBootFailure: (err) => err.message,
-    // Stop after the write: the rest of the function is unchanged.
-    storeChecks: async (pool, sessionId, commit, result, detail) => { stored.push({ result, detail }); return false; },
-  });
-  stub(ids.lifecycle, { isCancelled: () => false });
+  const build = { err: null };
+  stub(ids.staging, { prepareAttempt: async () => { throw build.err; } });
+  stub(ids.visuals, { summarizeBootFailure: (err) => err.message });
+  stub(ids.sync, { afterBootFailure: async () => null, explain: () => '' });
   stub(ids.logger, { info() {}, warn() {}, error() {}, debug() {} });
-  delete require.cache[ids.subject];
+  delete require.cache[ids.recovery];
   try {
-    const recovery = require(ids.subject);
-    const record = (err) => recovery.recordStagingBootFailure({ config: {}, pool: {}, session: { id: 5 }, commitHash: 'abc123', err });
+    const { previewServices } = require('../src/workflow/preview/services.ts');
+    const { preview, WORK } = require('../src/workflow/preview/machine.ts');
+    const pool = { async query(sql) {
+      if (/FROM chat_sessions cs JOIN apps/.test(String(sql))) return { rows: [{ id: 5, app_id: 2, app_slug: 'demo' }] };
+      if (/FROM apps WHERE id/.test(String(sql))) return { rows: [{ id: 2, slug: 'demo' }] };
+      return { rows: [] };
+    } };
+    const prepare = previewServices({ config: {}, pool })[WORK.prepare];
+    const prepareFailed = preview({ maxRetries: 5, retireAfterMs: 60000 }).writes.get('prepareFailed');
+    const stored = [];
+    const tx = { async query(sql, params) {
+      if (/SET check_state = \$1/.test(String(sql))) stored.push({ state: params[0], platformFault: params[5] });
+      return { rows: [], rowCount: 0 };
+    } };
+    const record = async (err) => {
+      build.err = err;
+      const r = await prepare.run({
+        input: { sessionId: 5, appId: 2, n: 1, head: 'abc123', db: TARGET }, key: 'prepare:1', attempt: 1,
+        resumeFrom: null, signal: new AbortController().signal, checkpoint: async () => {},
+      });
+      await prepareFailed(tx, { type: 'prepareFailed', sessionId: 5, appId: 2, userId: 1, head: 'abc123',
+        detail: r.detail, infrastructure: r.infrastructure, platformFault: r.platformFault, source: null }, { push() {} });
+    };
     await record(Object.assign(new Error('preview server refused'), { infrastructure: true, previewDatabaseServerFault: true }));
     await record(Object.assign(new Error('sorry, too many clients already'), { infrastructure: true }));
     await record(new Error('app crashed on boot'));
-    assert.deepEqual(stored.map((s) => s.result), [
-      { state: 'error', results: [], platformFault: true },
-      { state: 'error', results: [] },
-      { state: 'error', results: [] },
+    assert.deepEqual(stored, [
+      { state: 'error', platformFault: true },
+      { state: 'error', platformFault: false },
+      { state: 'error', platformFault: false },
     ], 'only the preview-server fault is stored differently');
     // What the stored flag buys: the error lane keeps retrying past the cap.
+    const recovery = require(ids.recovery);
     const row = (platform) => ({ consecutive_check_failures: 6, check_error_platform: platform, first_check_failure_at: new Date().toISOString() });
     assert.equal(recovery.errorWithinAutoRetries(row(true), { maxAutoRetries: 5 }), true);
     assert.equal(recovery.errorWithinAutoRetries(row(false), { maxAutoRetries: 5 }), false);
@@ -952,7 +975,7 @@ function loadReapForPressure(fx) {
   stub(ids.events, { record() {}, EVENT_TYPES: {} });
   stub(ids.ws, { broadcastToAdmins() {} });
   stub(ids.stagingEnv, { expectedStagingFingerprint: () => 'fp' });
-  stub(ids.staging, { hasInFlightBuild: () => false });
+  stub(ids.staging, {});
   stub(ids.pool, { getPool: () => mainPool });
   stub(ids.activeWorkers, { isSessionBusy: () => false });
   stub(ids.recovery, {
@@ -1066,7 +1089,6 @@ test('drain status counts what depends on the preview server, in every state and
   const ids = {
     logger: require.resolve('../src/services/logger'),
     docker: require.resolve('../src/services/docker'),
-    staging: require.resolve('../src/services/staging'),
     recovery: require.resolve('../src/services/staging-recovery'),
     dbManager: require.resolve('../src/services/db-manager'),
     events: require.resolve('../src/services/events'),
@@ -1083,7 +1105,6 @@ test('drain status counts what depends on the preview server, in every state and
     draining: true,
     shots: [],
     shotsRuns: 0,
-    localBuilds: new Set(),
     // session id → the row and the runtime's state (null: could not be read)
     sessions: {},
   };
@@ -1094,7 +1115,6 @@ test('drain status counts what depends on the preview server, in every state and
   stub(ids.events, { record() {}, EVENT_TYPES: {} });
   stub(ids.ws, { broadcastToAdmins() {} });
   stub(ids.stagingEnv, { expectedStagingFingerprint: () => 'fp' });
-  stub(ids.staging, { hasInFlightBuild: (id) => fx.localBuilds.has(id) });
   stub(ids.recovery, { inspectPreviewRuntime: async (session) => fx.sessions[session.id].state });
   stub(ids.pool, { getPool: () => ({ query: async (sql) => {
     sqls.push(sql);
@@ -1112,7 +1132,7 @@ test('drain status counts what depends on the preview server, in every state and
   try {
     const reap = require(ids.reap);
     const one = async (sessions, extra = {}) => {
-      Object.assign(fx, { sessions, shots: [], shotsRuns: 0, localBuilds: new Set() }, extra);
+      Object.assign(fx, { sessions, shots: [], shotsRuns: 0 }, extra);
       return reap.previewServerDrainStatus({}, { force: true });
     };
     // A dependent runtime counts in EVERY state it can exist in: one that is
@@ -1131,12 +1151,12 @@ test('drain status counts what depends on the preview server, in every state and
     assert.deepEqual(await one({ 1: { row: named, state: null } }),
       { previews: [], unread: 1, buildsInFlight: 0, shotsRuns: 0, shotsDatabases: 0, clear: false });
     // A first build has no runtime and no staging_url yet. It is counted
-    // from its row, so a build another platform replica is running counts.
+    // from its row (the phase the preview machine writes), so a build any
+    // platform replica is running counts.
     const firstBuild = await one({ 9: { row: { staging_url: null, building: true }, state: null } });
     assert.deepEqual(firstBuild, { previews: [], unread: 0, buildsInFlight: 1, shotsRuns: 0, shotsDatabases: 0, clear: false });
     assert.match(sqls.find((sql) => /FROM chat_sessions/.test(sql)), /check_state = 'pending' AND check_phase = 'building'/);
-    // This process's own builds, shots runs anywhere, shots databases there.
-    assert.equal((await one({ 1: { row: named, state: runtime('not_found') } }, { localBuilds: new Set([1]) })).clear, false);
+    // Shots runs anywhere, shots databases there.
     assert.equal((await one({}, { shotsRuns: 1 })).clear, false);
     assert.equal((await one({}, { shots: ['app_demo_evsrc_0123456789ab'] })).clear, false);
     assert.equal(logs.at(-1).message, 'Preview database server drain: still in use');

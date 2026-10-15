@@ -1,15 +1,17 @@
 'use strict';
 
-// Harvesting checks runs whose launching process died (services/check-harvest.js,
-// services/check-runs.js, the Kubernetes Job readers, and the visuals seat).
+// Reading a checks run's Jobs after the process that launched them is gone
+// (services/check-harvest.js, services/check-runs.js, the Kubernetes Job
+// readers, and unit-suite.collectUnitSuite).
 //
 // A platform rollout replaces the Pod that was streaming a proposal's
-// capture / unit-suite Jobs; the Jobs finish on the cluster anyway. These
-// tests pin that the verdict they produce is READ — through the same
-// settlement a live run ends with — rather than the suite being started over
-// ten minutes later by the stale sweep, and that every other outcome
-// (decided meanwhile, head moved, Jobs gone, process died pre-launch, a live
-// run already on the session) is classified the way the module header says.
+// capture / unit-suite Jobs; the Jobs finish on the cluster anyway. The
+// preview machine's checks run is a work item, and the retry of one whose
+// claim was lost collects them (collectForWorkflow). These tests pin that
+// the verdict they produce is READ — through the same settlement a live run
+// ends with — rather than the suite being started over, that a run with
+// nothing to read returns null so the retry runs it again, and that a
+// capture Job that says nothing about the proposal is the platform's fault.
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -18,58 +20,55 @@ const path = require('node:path');
 
 const harvest = require('../src/services/check-harvest');
 const checkRuns = require('../src/services/check-runs');
+const checkHistory = require('../src/services/check-history');
 const visuals = require('../src/services/visuals');
 const kubernetes = require('../src/services/kubernetes');
 const unitSuite = require('../src/services/unit-suite');
 const stagingRecovery = require('../src/services/staging-recovery');
 const appManifest = require('../src/services/app-manifest');
-const ws = require('../src/services/ws');
 
 const config = { captureRuntime: 'kubernetes', kubernetes: { workerNamespace: 'workers', appNamespace: 'apps' } };
 const flush = () => new Promise(setImmediate);
 
-// A pool that answers the handful of queries a harvest makes. `orphans` are
-// the check_runs rows (with the `stale` flag the SQL computes), `session` the
-// chat_sessions⋈apps row. Everything else is an empty result.
-function makePool({ orphans = [], session = null, answer = null } = {}) {
+// A pool that answers the handful of queries a collect makes. `runs` are the
+// check_runs rows a run's key names (the newest launched claim first);
+// everything else is an empty result unless `answer` says otherwise.
+function makePool({ runs = [], answer = null } = {}) {
   const pool = {
-    calls: [], deleted: [], claims: [],
+    calls: [], deleted: [],
     async query(sql, params) {
       pool.calls.push({ sql, params });
       if (answer) { const r = answer(sql, params); if (r) return r; }
-      if (/SELECT run_id, session_id, commit_sha, owner, manifest/.test(sql)) {
-        return { rows: orphans.map((r) => ({ ...r })), rowCount: orphans.length };
+      if (/SELECT run_id, session_id, commit_sha, manifest, started_at FROM check_runs/.test(sql)) {
+        return { rows: runs.map((r) => ({ ...r })), rowCount: runs.length };
       }
-      if (/UPDATE check_runs SET owner/.test(sql)) { pool.claims.push(params); return { rows: [], rowCount: 1 }; }
-      if (/UPDATE check_runs SET heartbeat_at/.test(sql)) return { rows: [], rowCount: 1 };
       if (/DELETE FROM check_runs/.test(sql)) { pool.deleted.push(params[0]); return { rows: [], rowCount: 1 }; }
-      if (/FROM chat_sessions cs JOIN apps a/.test(sql)) return { rows: session ? [{ ...session }] : [], rowCount: session ? 1 : 0 };
       return { rows: [], rowCount: 0 };
     },
   };
   return pool;
 }
 
-function orphanRow(over = {}) {
+// A claim of the machine's run 'run:7' that launched its Jobs.
+function runRow(over = {}) {
+  const { manifest = {}, ...rest } = over;
   return {
-    run_id: 'run-1', session_id: 42, commit_sha: 'abc123', owner: 'dead-pod:7',
-    started_at: new Date(Date.now() - 90_000).toISOString(), heartbeat_at: new Date(Date.now() - 70_000).toISOString(),
-    stale: true,
+    run_id: 'run-1', session_id: 42, commit_sha: 'abc123',
+    started_at: new Date(Date.now() - 90_000).toISOString(),
     manifest: {
-      launched: true, trigger: 'promote-kick', startedAt: Date.now() - 90_000,
+      workflow: true, runKey: 'run:7', launched: true, trigger: 'promote-kick', startedAt: Date.now() - 90_000,
       media: true, capturePaths: ['/'], targets: [{ kind: 'after' }], testsCount: 3, dispatched: ['/'],
+      ...manifest,
     },
-    ...over,
+    ...rest,
   };
 }
 
-function sessionRow(over = {}) {
-  return {
-    id: 42, app_id: 9, status: 'promoted', check_state: 'pending', check_phase: 'testing',
-    checks_commit_sha: 'abc123', app_slug: 'demo', app_name: 'Demo', repo_url: 'https://github.com/o/r',
-    app_runtime_name: null, app_runtime_kind: null,
-    ...over,
-  };
+const SESSION = { id: 42, app_id: 9, status: 'promoted', check_state: 'pending', checks_commit_sha: 'abc123' };
+const APP = { id: 9, slug: 'demo', name: 'Demo', repo_url: 'https://github.com/o/r' };
+
+function collect(pool, { signal } = {}) {
+  return harvest.collectForWorkflow(config, pool, { runKey: 'run:7', session: SESSION, app: APP, signal });
 }
 
 // Swap a module's exports for the test and restore them afterwards.
@@ -79,7 +78,7 @@ function stub(t, mod, patch) {
   t.after(() => { for (const [k, v] of Object.entries(saved)) mod[k] = v; });
 }
 
-// A settled harvest deletes the run's Jobs (kubernetes.deleteSettledCheckJobs).
+// A settled collect deletes the run's Jobs (kubernetes.deleteSettledCheckJobs).
 // Recorded for every test, so none reaches for a cluster.
 const realDeleteSettledCheckJobs = kubernetes.deleteSettledCheckJobs;
 let releasedJobs = [];
@@ -88,30 +87,6 @@ test.beforeEach(() => {
   kubernetes.deleteSettledCheckJobs = async (_cfg, run) => { releasedJobs.push(run); return 2; };
 });
 test.afterEach(() => { kubernetes.deleteSettledCheckJobs = realDeleteSettledCheckJobs; });
-
-function quietBroadcast(t) {
-  const seen = [];
-  stub(t, ws, { broadcastGlobal: (e) => seen.push(e) });
-  return seen;
-}
-
-// ── stillCurrent ────────────────────────────────────────────────────────
-
-test('stillCurrent: only a live session still pending on the manifest commit wants the run', () => {
-  const { stillCurrent } = harvest;
-  assert.equal(stillCurrent(null, 'abc').current, false);
-  assert.match(stillCurrent(null, 'abc').why, /gone/);
-  assert.match(stillCurrent(sessionRow({ status: 'merged' }), 'abc123').why, /merged/);
-  assert.match(stillCurrent(sessionRow({ check_state: 'passing' }), 'abc123').why, /passing/);
-  assert.match(stillCurrent(sessionRow({ check_state: null }), 'abc123').why, /unset/);
-  assert.match(stillCurrent(sessionRow({ check_phase: 'deferred' }), 'abc123').why, /deferred/,
-    'a shots-only run settles by stamping deferred; a manifest outliving the stamp is done');
-  assert.match(stillCurrent(sessionRow({ checks_commit_sha: 'def456' }), 'abc123').why, /head moved/);
-  assert.equal(stillCurrent(sessionRow(), 'abc123').current, true);
-  for (const status of ['promoted', 'active', 'paused', 'merging']) {
-    assert.equal(stillCurrent(sessionRow({ status }), 'abc123').current, true, status);
-  }
-});
 
 // ── check-runs: what counts as an orphan ────────────────────────────────
 
@@ -152,40 +127,20 @@ test('record / heartbeat / finish never throw into the checks pipeline', async (
   stop(); stop();
 });
 
-// ── The seat ────────────────────────────────────────────────────────────
+// ── collectForWorkflow: the settle path ─────────────────────────────────
 
-test('holdCapture takes the session\'s in-flight seat once, and release is idempotent', () => {
-  assert.equal(visuals.hasInFlightCapture(4242), false);
-  const release = visuals.holdCapture(4242, 'abc');
-  assert.equal(typeof release, 'function');
-  assert.equal(visuals.hasInFlightCapture(4242), true, 'every surface reads a harvest as a run');
-  assert.equal(visuals.holdCapture(4242, 'abc'), null, 'a second holder is refused');
-  release(null);
-  assert.equal(visuals.hasInFlightCapture(4242), false);
-  release(null);
-  assert.equal(visuals.hasInFlightCapture(4242), false);
-});
-
-// ── sweep: the settle path ──────────────────────────────────────────────
-
-test('an orphan whose Jobs finished is settled from their output through settleCaptureRun', async (t) => {
-  quietBroadcast(t);
-  const pool = makePool({ orphans: [orphanRow()], session: sessionRow() });
+test('a run whose Jobs finished is settled from their output through settleCaptureRun', async (t) => {
+  const pool = makePool({ runs: [runRow()] });
   const collected = [];
-  const evidence = [];
   let settledWith = null;
   stub(t, kubernetes, {
-    deleteSettledCheckJobs: async (_cfg, run) => {
-      releasedJobs.push({ ...run, manifestCleared: pool.deleted.includes(run.previewRunId) });
-    },
     findCheckJobs: async (_cfg, { sessionId, previewRunId }) => {
       assert.equal(sessionId, 42); assert.equal(previewRunId, 'run-1');
       return { capture: { name: 'sv-capture-s42-x', state: 'succeeded' }, unitSuite: { name: 'sv-unit-suite-s42-x', state: 'succeeded' } };
     },
-    collectCheckJob: async (_cfg, { name, kind, onStdoutLine }) => {
+    collectCheckJob: async (_cfg, { name, kind }) => {
       collected.push(kind);
       if (kind === 'capture') {
-        onStdoutLine('__USERNODE_TEST__ index=0 status=pass');
         return { state: 'succeeded', stdout: 'SHOT {"path":"/"}\n__USERNODE_TEST__ index=0 status=pass\n', stderr: 'capture warning', exitCode: 0, timedOut: false, partial: false, partialReason: '' };
       }
       assert.equal(name, 'sv-unit-suite-s42-x');
@@ -193,192 +148,86 @@ test('an orphan whose Jobs finished is settled from their output through settleC
     },
   });
   stub(t, visuals, {
-    settleCaptureRun: async (_cfg, _pool, run) => { settledWith = run; return { traceStatus: 'passing', result: { state: 'passing' } }; },
-    scheduleShots: (_cfg, _pool, id, head, trigger) => evidence.push({ id, head, trigger }),
+    settleCaptureRun: async (_cfg, _pool, run) => { settledWith = run; return { traceStatus: 'passing', result: { outcome: 'verdict', state: 'passing' } }; },
   });
 
-  const summary = await harvest.sweep(config, { reason: 'boot', pool });
-  assert.equal(summary.orphans, 1);
-  assert.equal(summary.claimed, 1);
-  const results = await summary.done;
-  assert.equal(results.length, 1);
-  assert.equal(results[0].outcome, 'settled');
-  assert.equal(results[0].state, 'passing');
-
+  const out = await collect(pool);
+  assert.deepEqual(out, { outcome: 'verdict', state: 'passing' }, 'the settlement is returned for the machine to store');
   assert.deepEqual(collected.sort(), ['capture', 'unit-suite']);
-  assert.equal(pool.claims.length, 1, 'the row was claimed before anything was read');
-  assert.deepEqual(pool.claims[0], ['run-1', checkRuns.selfOwner(), 'dead-pod:7']);
   assert.ok(settledWith, 'the run went through the shared settlement');
   assert.equal(settledWith.commitHash, 'abc123');
   assert.equal(settledWith.session.id, 42);
   assert.equal(settledWith.app.id, 9);
-  assert.equal(settledWith.trigger, 'promote-kick');
   assert.equal(settledWith.testsCount, 3);
   assert.deepEqual(settledWith.capturePaths, ['/']);
   assert.equal(settledWith.legacyMediaSuppressed, false,
-    'a manifest from before the flag reads as not superseded by before & after shots');
+    'a manifest that does not say so reads as not superseded by before & after shots');
   assert.equal(settledWith.stdout, 'SHOT {"path":"/"}\n__USERNODE_TEST__ index=0 status=pass\n');
   assert.equal(settledWith.stderr, 'capture warning');
   assert.equal(settledWith.runPartial, false);
   assert.equal(settledWith.unitOutcome.row.status, 'pass', 'the unit-suite row comes from the Job\'s own verdict');
   assert.equal(settledWith.unitOutcome.row.summary.tests, 5);
-  assert.equal(settledWith.send, null);
+  assert.deepEqual(settledWith.collect, { runId: 'run:7' }, 'its media are held under the run\'s key, as a live run\'s are');
   assert.equal('overlappedRollout' in settledWith, false,
-    'a harvested run is judged on its own results like a live one (tests/checks-rollout-overlap.test.js)');
-  assert.equal(settledWith.operation, null, 'lifecycle off: settled with the plain pool');
-  assert.deepEqual(pool.deleted, ['run-1'], 'the manifest is cleared once the verdict is stored');
-  assert.deepEqual(releasedJobs, [{ sessionId: 42, previewRunId: 'run-1', manifestCleared: true }],
-    'read out and settled, so the Jobs go now rather than holding Job slots until their TTL; '
-    + 'after the manifest, so no later harvest can come looking for them');
-  assert.deepEqual(evidence, [{ id: 42, head: 'abc123', trigger: 'checks-harvested' }],
-    'recovering checks must also hand the visual claim to the evidence runner');
-  assert.equal(visuals.hasInFlightCapture(42), false, 'the seat is handed back');
-  assert.equal(harvest.isHarvesting(42), false);
+    'a collected run is judged on its own results like a live one (tests/checks-rollout-overlap.test.js)');
+  assert.deepEqual(pool.deleted, ['run-1'], 'the manifest is cleared once it is read out');
+  assert.deepEqual(releasedJobs, [{ sessionId: 42, previewRunId: 'run-1' }],
+    'read out and settled, so the Jobs go now rather than holding Job slots until their TTL');
 });
 
-test('the claim phase completes before sweep() resolves; the Job read runs detached', async (t) => {
-  quietBroadcast(t);
-  const pool = makePool({ orphans: [orphanRow()], session: sessionRow() });
-  let finishCapture;
-  const captureDone = new Promise((resolve) => { finishCapture = resolve; });
+test('the unit Jobs are the early suite\'s when the manifest names one and the claim launched none of its own', async (t) => {
+  const pool = makePool({ runs: [runRow({ manifest: { unitRunId: 'early-1' } })] });
+  const asked = [];
+  let settledWith = null;
   stub(t, kubernetes, {
-    findCheckJobs: async () => ({ capture: { name: 'sv-capture-s42-x', state: 'running' }, unitSuite: null }),
-    collectCheckJob: async () => captureDone,
-  });
-  stub(t, visuals, { settleCaptureRun: async () => ({ traceStatus: 'failing', result: { state: 'failing' } }) });
-
-  const summary = await harvest.sweep(config, { reason: 'boot', pool });
-  assert.equal(summary.claimed, 1);
-  assert.equal(pool.claims.length, 1);
-  assert.equal(visuals.hasInFlightCapture(42), true, 'the stale sweep would now skip this session');
-  assert.equal(harvest.isHarvesting(42), true);
-  assert.deepEqual(pool.deleted, [], 'nothing settled yet');
-
-  // A second pass meanwhile finds nothing: the session is in flight here.
-  const again = await harvest.sweep(config, { reason: 'tick', pool });
-  assert.equal(again.orphans, 0);
-
-  finishCapture({ state: 'succeeded', stdout: 'TEST {"index":0,"status":"fail"}\n', stderr: '', exitCode: 0, timedOut: false, partial: false, partialReason: '' });
-  const results = await summary.done;
-  assert.equal(results[0].outcome, 'settled');
-  assert.equal(results[0].state, 'failing');
-  assert.equal(visuals.hasInFlightCapture(42), false);
-  assert.deepEqual(pool.deleted, ['run-1']);
-});
-
-test('a still-running Job\'s frames are re-published as progress for the card', async (t) => {
-  const seen = quietBroadcast(t);
-  const pool = makePool({ orphans: [orphanRow()], session: sessionRow() });
-  stub(t, kubernetes, {
-    findCheckJobs: async () => ({ capture: { name: 'sv-capture-s42-x', state: 'running' }, unitSuite: null }),
-    collectCheckJob: async (_cfg, { onStdoutLine }) => {
-      // The first frame flushes at once (no gap to respect yet); the second
-      // lands inside the minimum gap and rides the same snapshot chain.
-      onStdoutLine('__USERNODE_TEST__ index=0 status=pass');
-      onStdoutLine('__USERNODE_TEST__ index=1 status=fail');
-      await flush();
-      return { state: 'succeeded', stdout: '', stderr: '', exitCode: 0, timedOut: false, partial: false, partialReason: '' };
+    findCheckJobs: async (_cfg, { previewRunId }) => {
+      asked.push(previewRunId);
+      return previewRunId === 'early-1'
+        ? { capture: null, unitSuite: { name: 'sv-unit-early-s42-early-1', state: 'succeeded' } }
+        : { capture: { name: 'sv-capture-s42-x', state: 'succeeded' }, unitSuite: null };
     },
+    collectCheckJob: async (_cfg, { name, kind }) => (kind === 'capture' ? capturePassed : (assert.equal(name, 'sv-unit-early-s42-early-1'),
+      { state: 'succeeded', stdout: 'TAP version 13\n# tests 2\n# pass 2\n# fail 0\n', stderr: '', exitCode: 0, timedOut: false })),
   });
-  stub(t, visuals, { settleCaptureRun: async () => ({ traceStatus: 'passing', result: { state: 'passing' } }) });
-  const summary = await harvest.sweep(config, { reason: 'tick', pool });
-  await summary.done;
-  const progress = seen.filter((e) => e.event === 'checks_ready' && e.checkState === 'pending' && e.progress);
-  assert.ok(progress.length >= 1, `expected a progress broadcast, saw ${JSON.stringify(seen.map((e) => e.type || e.event))}`);
-  const first = progress[0];
-  assert.equal(first.sessionId, 42);
-  assert.equal(first.commitSha, 'abc123');
-  assert.equal(first.checkPhase, 'testing');
-  assert.equal(first.checkTrigger, 'promote-kick', 'the trigger the dead run recorded, so the card keeps its wording');
-  assert.equal(first.progress.expected, 3, 'the expected count comes from the manifest');
-  assert.equal(first.progress.ran, 1, 'counts pick up from the start of the Job\'s log');
-  assert.equal(first.progress.passed, 1);
-  const written = pool.calls.filter((c) => /checks_progress/.test(c.sql));
-  assert.ok(written.length >= 1, 'progress is also written to the row');
-  assert.equal(written[0].params[0], 42);
-  assert.equal(written[0].params[2], 'abc123', 'under the same commit guard a live run writes with');
+  stub(t, visuals, { settleCaptureRun: async (_c, _p, run) => { settledWith = run; return { traceStatus: 'passing', result: { state: 'passing' } }; } });
+  await collect(pool);
+  assert.deepEqual(asked, ['run-1', 'early-1']);
+  assert.equal(settledWith.unitOutcome.row.status, 'pass', 'the early suite\'s verdict');
+  assert.equal(settledWith.unitOutcome.row.summary.tests, 2);
+  assert.deepEqual(releasedJobs, [{ sessionId: 42, previewRunId: 'run-1' }, { sessionId: 42, previewRunId: 'early-1' }],
+    'both runs\' Jobs go once read out');
 });
 
-// ── sweep: moot, re-drive, busy, unreadable ─────────────────────────────
-
-test('a run whose session was decided meanwhile is moot: manifest cleared, nothing read', async (t) => {
-  quietBroadcast(t);
-  const pool = makePool({ orphans: [orphanRow()], session: sessionRow({ check_state: 'passing' }) });
+test('a run that found the early suite unreadable and launched its own is read from its own Jobs', async (t) => {
+  const pool = makePool({ runs: [runRow({ manifest: { unitRunId: 'early-1' } })] });
+  const asked = [];
+  let settledWith = null;
   stub(t, kubernetes, {
-    findCheckJobs: async () => assert.fail('a moot run must not touch the cluster'),
-    collectCheckJob: async () => assert.fail('a moot run must not touch the cluster'),
-  });
-  stub(t, stagingRecovery, { recheckSessionChecks: async () => assert.fail('a moot run is not re-driven') });
-  const summary = await harvest.sweep(config, { reason: 'boot', pool });
-  const [result] = await summary.done;
-  assert.equal(result.outcome, 'moot');
-  assert.match(result.why, /passing/);
-  assert.deepEqual(pool.deleted, ['run-1']);
-  assert.deepEqual(releasedJobs, [], 'a moot run deletes nothing; its Jobs are left to the TTL');
-  assert.equal(visuals.hasInFlightCapture(42), false);
-});
-
-test('a head that moved on makes the run moot rather than a verdict for the wrong commit', async (t) => {
-  quietBroadcast(t);
-  const pool = makePool({ orphans: [orphanRow()], session: sessionRow({ checks_commit_sha: 'newer99' }) });
-  stub(t, kubernetes, { findCheckJobs: async () => assert.fail('not read') });
-  const summary = await harvest.sweep(config, { reason: 'boot', pool });
-  const [result] = await summary.done;
-  assert.equal(result.outcome, 'moot');
-  assert.match(result.why, /head moved/);
-});
-
-test('a process that died before creating its Jobs is re-driven at once, with the seat handed back first', async (t) => {
-  quietBroadcast(t);
-  const pool = makePool({
-    orphans: [orphanRow({ manifest: { launched: false, trigger: 'promote-kick', startedAt: Date.now() - 20_000 } })],
-    session: sessionRow(),
-  });
-  const rechecks = [];
-  stub(t, kubernetes, { findCheckJobs: async () => assert.fail('nothing to find for a pre-launch death') });
-  stub(t, stagingRecovery, {
-    recheckSessionChecks: async ({ session, reason }) => {
-      assert.equal(visuals.hasInFlightCapture(42), false, 'captureForSession must not park behind the harvest asking for it');
-      rechecks.push({ sessionId: session.id, reason });
+    findCheckJobs: async (_cfg, { previewRunId }) => {
+      asked.push(previewRunId);
+      return { capture: { name: 'sv-capture-s42-x', state: 'succeeded' }, unitSuite: { name: 'sv-unit-suite-s42-own', state: 'succeeded' } };
     },
+    collectCheckJob: async (_cfg, { name, kind }) => (kind === 'capture' ? capturePassed : (assert.equal(name, 'sv-unit-suite-s42-own'),
+      { state: 'succeeded', stdout: 'TAP version 13\n# tests 3\n# pass 3\n# fail 0\n', stderr: '', exitCode: 0, timedOut: false })),
   });
-  const summary = await harvest.sweep(config, { reason: 'boot', pool });
-  const [result] = await summary.done;
-  assert.equal(result.outcome, 'redriven');
-  assert.deepEqual(rechecks, [{ sessionId: 42, reason: 'orphaned-run' }]);
-  assert.deepEqual(pool.deleted, ['run-1'], 'the dead run\'s manifest is gone; the re-drive records its own');
-  assert.equal(harvest.isHarvesting(42), false);
+  stub(t, visuals, { settleCaptureRun: async (_c, _p, run) => { settledWith = run; return { traceStatus: 'passing', result: { state: 'passing' } }; } });
+  await collect(pool);
+  assert.deepEqual(asked, ['run-1'], 'the early suite is not asked about');
+  assert.equal(settledWith.unitOutcome.row.summary.tests, 3, 'the suite the run launched itself');
 });
 
-test('a launched run whose capture Job cannot be found is re-driven, not left pending', async (t) => {
-  quietBroadcast(t);
-  const pool = makePool({ orphans: [orphanRow()], session: sessionRow() });
-  const rechecks = [];
-  stub(t, kubernetes, { findCheckJobs: async () => ({ capture: null, unitSuite: null }) });
-  stub(t, stagingRecovery, { recheckSessionChecks: async ({ reason }) => { rechecks.push(reason); } });
-  const summary = await harvest.sweep(config, { reason: 'tick', pool });
-  const [result] = await summary.done;
-  assert.equal(result.outcome, 'redriven');
-  assert.match(result.why, /capture Job not found/);
-  assert.deepEqual(rechecks, ['orphaned-run']);
-});
-
-test('a shots-only run over a range with no frontend files launches no capture Job, and that is not a re-drive', async (t) => {
-  quietBroadcast(t);
+test('a shots-only run over a range with no frontend files launches no capture Job, and settles all the same', async (t) => {
   const pool = makePool({
-    orphans: [orphanRow({ manifest: { launched: true, trigger: 'promote-kick', shotsOnly: true, media: false, legacyMediaSuppressed: true, admissionReason: 'conflicts', startedAt: Date.now() - 30_000 } })],
-    session: sessionRow(),
+    runs: [runRow({ manifest: { shotsOnly: true, media: false, legacyMediaSuppressed: true, admissionReason: 'conflicts', startedAt: Date.now() - 30_000 } })],
   });
   let settled = null;
   stub(t, kubernetes, {
     findCheckJobs: async () => ({ capture: null, unitSuite: null }),
     collectCheckJob: async () => assert.fail('no Job to collect'),
   });
-  stub(t, stagingRecovery, { recheckSessionChecks: async () => assert.fail('not a re-drive') });
-  stub(t, visuals, { settleCaptureRun: async (_c, _p, run) => { settled = run; return { traceStatus: 'deferred', result: { state: 'pending', deferred: true } }; } });
-  const summary = await harvest.sweep(config, { reason: 'tick', pool });
-  const [result] = await summary.done;
-  assert.equal(result.outcome, 'settled');
+  stub(t, visuals, { settleCaptureRun: async (_c, _p, run) => { settled = run; return { traceStatus: 'deferred', result: { outcome: 'deferred' } }; } });
+  const out = await collect(pool);
+  assert.deepEqual(out, { outcome: 'deferred' });
   assert.equal(settled.shotsOnly, true);
   assert.equal(settled.media, false);
   assert.equal(settled.legacyMediaSuppressed, true, 'its outcome says before & after shots replaced its screenshots');
@@ -386,169 +235,103 @@ test('a shots-only run over a range with no frontend files launches no capture J
   assert.equal(settled.stdout, '');
 });
 
-test('a capture Job that vanished mid-read re-drives a still-current session and is moot for a decided one', async (t) => {
-  quietBroadcast(t);
-  const rechecks = [];
+// ── collectForWorkflow: nothing to read, so the retry runs it again ─────
+
+test('a run with nothing to read is null: no launched claim, a manifest not the machine\'s, a capture Job missing', async (t) => {
+  let jobs = { capture: null, unitSuite: null };
+  stub(t, kubernetes, {
+    findCheckJobs: async () => jobs,
+    collectCheckJob: async () => assert.fail('nothing is read'),
+  });
+  stub(t, visuals, { settleCaptureRun: async () => assert.fail('nothing settles') });
+  // No claim of the run launched its Jobs (the process died before them).
+  assert.equal(await collect(makePool({ runs: [] })), null);
+  // A row that is not a machine run's.
+  assert.equal(await collect(makePool({ runs: [runRow({ manifest: { workflow: false } })] })), null);
+  // A launched run whose capture Job cannot be found, or one of whose shards is.
+  assert.equal(await collect(makePool({ runs: [runRow()] })), null);
+  jobs = { captures: [{ name: 'sv-capture-s42-x', state: 'succeeded' }], unitSuite: null };
+  const pool = makePool({ runs: [runRow({ manifest: { captureShards: 2 } })] });
+  assert.equal(await collect(pool), null);
+  assert.deepEqual(pool.deleted, [], 'the retry clears what its earlier claims left');
+  assert.deepEqual(releasedJobs, []);
+});
+
+test('a capture Job that vanished or was stopped mid-read is null, and nothing is cleared', async (t) => {
+  let state = 'gone';
   stub(t, kubernetes, {
     findCheckJobs: async () => ({ capture: { name: 'sv-capture-s42-x', state: 'running' }, unitSuite: null }),
-    collectCheckJob: async () => ({ state: 'gone', stdout: '', stderr: '', exitCode: null, timedOut: false, partial: true, partialReason: 'job gone' }),
+    collectCheckJob: async () => ({ state, stdout: '', stderr: '', exitCode: null, timedOut: false, partial: true, partialReason: 'job gone' }),
   });
-  stub(t, stagingRecovery, { recheckSessionChecks: async ({ reason }) => { rechecks.push(reason); } });
-  for (const [checkState, expected] of [['pending', 'redriven'], ['failing', 'moot']]) {
-    let reads = 0;
-    const pool = makePool({
-      orphans: [orphanRow()],
-      answer: (sql) => {
-        if (/FROM chat_sessions cs JOIN apps a/.test(sql)) {
-          reads += 1;
-          // Current on the first read (admission), possibly decided by the second (after the Job vanished).
-          return { rows: [sessionRow({ check_state: reads === 1 ? 'pending' : checkState })], rowCount: 1 };
-        }
-        return null;
-      },
-    });
-    rechecks.length = 0;
-    const summary = await harvest.sweep(config, { reason: 'tick', pool });
-    const [result] = await summary.done;
-    assert.equal(result.outcome, expected, checkState);
-    assert.deepEqual(rechecks, expected === 'redriven' ? ['orphaned-run'] : [], checkState);
-    assert.equal(visuals.hasInFlightCapture(42), false);
-    assert.deepEqual(pool.deleted, ['run-1'], checkState);
-    assert.deepEqual(releasedJobs, [], `${checkState}: only a settled run deletes its Jobs`);
+  stub(t, visuals, { settleCaptureRun: async () => assert.fail('nothing settles') });
+  for (state of ['gone', 'aborted']) {
+    const pool = makePool({ runs: [runRow()] });
+    assert.equal(await collect(pool), null, state);
+    assert.deepEqual(pool.deleted, [], state);
+    assert.deepEqual(releasedJobs, [], `${state}: only a settled run deletes its Jobs`);
   }
 });
 
-test('a live run already on the session wins: the harvester reports busy and leaves the row alone', async (t) => {
-  quietBroadcast(t);
-  const pool = makePool({ orphans: [orphanRow()], session: sessionRow() });
-  const release = visuals.holdCapture(42, 'abc123');
-  t.after(() => release(null));
-  // The listing itself excludes an in-flight session…
-  const summary = await harvest.sweep(config, { reason: 'tick', pool });
-  assert.equal(summary.orphans, 0);
-  // …and adopt() called directly on such a row yields 'busy' with no read.
-  stub(t, kubernetes, { findCheckJobs: async () => assert.fail('not read') });
-  const result = await harvest.adopt(config, pool, orphanRow(), { reason: 'test' });
-  assert.equal(result.outcome, 'busy');
-  assert.deepEqual(pool.deleted, [], 'the live run settles (or replaces) its own manifest');
-  assert.equal(visuals.hasInFlightCapture(42), true, 'the live run\'s seat is untouched');
+test('a run the machine cancels while its Jobs are read throws the cancel', async (t) => {
+  const controller = new AbortController();
+  const cancelled = new Error('cancelled');
+  stub(t, kubernetes, {
+    findCheckJobs: async () => ({ capture: { name: 'sv-capture-s42-x', state: 'running' }, unitSuite: null }),
+    collectCheckJob: async () => { controller.abort(cancelled); return capturePassed; },
+  });
+  stub(t, visuals, { settleCaptureRun: async () => assert.fail('nothing settles') });
+  const pool = makePool({ runs: [runRow()] });
+  await assert.rejects(collect(pool, { signal: controller.signal }), (err) => err === cancelled);
+  assert.deepEqual(pool.deleted, []);
 });
 
-test('a contested claim (another harvester got there first) is reported and not read', async (t) => {
-  quietBroadcast(t);
-  const pool = makePool({ orphans: [orphanRow()], session: sessionRow(), answer: (sql) => (/UPDATE check_runs SET owner/.test(sql) ? { rows: [], rowCount: 0 } : null) });
-  stub(t, kubernetes, { findCheckJobs: async () => assert.fail('not read') });
-  const summary = await harvest.sweep(config, { reason: 'tick', pool });
-  assert.equal(summary.claimed, 0);
-  const [result] = await summary.done;
-  assert.equal(result.outcome, 'contested');
-  assert.equal(visuals.hasInFlightCapture(42), false);
+test('a collect outside the Kubernetes capture runtime is a no-op', async () => {
+  const pool = makePool({ runs: [runRow()] });
+  assert.equal(await harvest.collectForWorkflow({ captureRuntime: 'docker' }, pool, { runKey: 'run:7', session: SESSION, app: APP }), null);
+  assert.equal(pool.calls.length, 0);
 });
 
-test('a capture Job that failed with nothing to salvage records an error verdict, like a live run that could not judge', async (t) => {
-  quietBroadcast(t);
-  const pool = makePool({ orphans: [orphanRow()], session: sessionRow() });
-  const stores = [];
-  const evidence = [];
+// ── collectForWorkflow: a Job that says nothing about the proposal ──────
+
+test('a capture Job that failed with nothing to salvage is blocked as the platform\'s fault, like a live run that could not judge', async (t) => {
+  const pool = makePool({ runs: [runRow()] });
   stub(t, kubernetes, {
     findCheckJobs: async () => ({ capture: { name: 'sv-capture-s42-x', state: 'failed' }, unitSuite: null }),
     collectCheckJob: async () => ({ state: 'failed', stdout: '   \n', stderr: 'BackoffLimitExceeded', exitCode: 1, timedOut: false, partial: true, partialReason: 'job BackoffLimitExceeded' }),
   });
-  stub(t, visuals, {
-    settleCaptureRun: async () => assert.fail('nothing to settle from'),
-    storeChecks: async (_pool, sessionId, commitSha, result, detail) => { stores.push({ sessionId, commitSha, result, detail }); return true; },
-    storeCaptureOutcome: async () => true,
-    scheduleShots: (_cfg, _pool, id, head, trigger) => evidence.push({ id, head, trigger }),
-  });
-  const summary = await harvest.sweep(config, { reason: 'tick', pool });
-  const [result] = await summary.done;
-  assert.equal(result.outcome, 'settled');
-  assert.equal(result.state, 'error');
-  assert.equal(stores.length, 1);
-  assert.equal(stores[0].sessionId, 42);
-  assert.equal(stores[0].commitSha, 'abc123');
-  assert.equal(stores[0].result.state, 'error');
-  assert.match(stores[0].detail, /BackoffLimitExceeded/);
-  assert.deepEqual(evidence, [{ id: 42, head: 'abc123', trigger: 'checks-harvested' }]);
+  stub(t, visuals, { settleCaptureRun: async () => assert.fail('nothing to settle from') });
+  const out = await collect(pool);
+  assert.deepEqual(out, { outcome: 'blocked', reason: 'capture Job failed (BackoffLimitExceeded)', platformFault: true });
   assert.deepEqual(pool.deleted, ['run-1']);
-  assert.deepEqual(releasedJobs, [{ sessionId: 42, previewRunId: 'run-1' }], 'an error verdict is settled too');
+  assert.deepEqual(releasedJobs, [{ sessionId: 42, previewRunId: 'run-1' }], 'it is read out too');
   // A Job that wrote nothing, its process dead under it, says nothing about
   // the proposal: the platform's fault, so the error lane keeps retrying it
   // past the six retries a proposal's own errors get.
-  assert.equal(stores[0].result.platformFault, true);
   const streak = { consecutive_check_failures: 7, check_error_platform: true, first_check_failure_at: new Date().toISOString() };
   assert.equal(stagingRecovery.errorWithinAutoRetries(streak), true);
   assert.equal(stagingRecovery.errorWithinAutoRetries({ ...streak, check_error_platform: false }), false);
 });
 
 test('a capture Job still running past its deadline is the platform\'s fault too', async (t) => {
-  quietBroadcast(t);
-  const pool = makePool({ orphans: [orphanRow()], session: sessionRow() });
-  const stores = [];
+  const pool = makePool({ runs: [runRow()] });
   stub(t, kubernetes, {
     findCheckJobs: async () => ({ capture: { name: 'sv-capture-s42-x', state: 'running' }, unitSuite: null }),
     collectCheckJob: async () => ({ state: 'timeout', stdout: 'SHOT {"path":"/"}\n', stderr: '', exitCode: null, timedOut: true, partial: true, partialReason: 'deadline' }),
   });
-  stub(t, visuals, {
-    settleCaptureRun: async () => assert.fail('nothing to settle from'),
-    storeChecks: async (_pool, _id, _sha, result, detail) => { stores.push({ result, detail }); return true; },
-    storeCaptureOutcome: async () => true,
-    scheduleShots: () => {},
-  });
-  const [result] = await (await harvest.sweep(config, { reason: 'tick', pool })).done;
-  assert.deepEqual([result.outcome, result.state], ['settled', 'error']);
-  assert.deepEqual(stores.map((s) => [s.result.state, s.result.platformFault]), [['error', true]]);
-  assert.match(stores[0].detail, /past its deadline/);
+  stub(t, visuals, { settleCaptureRun: async () => assert.fail('nothing to settle from') });
+  const out = await collect(pool);
+  assert.equal(out.outcome, 'blocked');
+  assert.equal(out.platformFault, true);
+  assert.match(out.reason, /past its deadline/);
 });
 
-// The graduation lookup decides whether the unit suite blocks merges. When
-// it failed, the harvest read "not graduated" and settled: a missing suite
-// was passed over and a red one read as advisory, the shape of the 13 Oct
-// incidents below. It waits for the next sweep instead.
-test('a graduation lookup that fails leaves the run for the next sweep: nothing stored, nothing re-driven', async (t) => {
-  quietBroadcast(t);
-  let lookupDown = true;
-  const pool = makePool({
-    orphans: [orphanRow()], session: sessionRow(),
-    answer: (sql) => {
-      if (/SELECT check_key FROM app_check_history/.test(sql) && lookupDown) throw new Error('connection reset');
-      return graduatedUnit(sql);
-    },
-  });
-  const settled = [];
-  const redrives = [];
-  stub(t, kubernetes, {
-    findCheckJobs: async () => ({ capture: { name: 'sv-capture-s42-x', state: 'succeeded' }, unitSuite: null }),
-    collectCheckJob: async () => capturePassed,
-  });
-  stub(t, visuals, {
-    settleCaptureRun: async (_c, _p, run) => { settled.push(run); return { traceStatus: 'passing', result: { state: 'passing' } }; },
-    storeChecks: async () => assert.fail('nothing is stored while graduation is unknown'),
-    scheduleShots: () => {},
-  });
-  stub(t, stagingRecovery, { recheckSessionChecks: async (args) => { redrives.push(args.reason); } });
-
-  const [first] = await (await harvest.sweep(config, { reason: 'boot', pool })).done;
-  assert.deepEqual([first.outcome, first.why], ['deferred', 'graduation lookup failed']);
-  assert.deepEqual(settled, [], 'not settled as if the suite were advisory');
-  assert.deepEqual(redrives, [], 'nor started over: its Jobs are still there to read');
-  assert.deepEqual(pool.deleted, [], 'the manifest stays, for the next sweep');
-  assert.deepEqual(releasedJobs, [], 'and so do its Jobs');
-  assert.equal(visuals.hasInFlightCapture(42), false, 'the seat is given back');
-
-  // The next sweep reads graduation: the suite blocks merges and its Jobs
-  // are gone, so only a fresh run can judge the head.
-  lookupDown = false;
-  const [second] = await (await harvest.sweep(config, { reason: 'tick', pool })).done;
-  assert.deepEqual([second.outcome, second.why], ['redriven', 'unit-suite Job not found']);
-  assert.deepEqual(settled, []);
-  assert.deepEqual(redrives, ['orphaned-run']);
-});
-
+// ── collectForWorkflow: a unit suite that blocks merges ─────────────────
+//
 // 13 Oct 2026: a release deleted #4996's finished red suite and stopped
-// #4973's, their runs were harvested without a unit suite, settled green and
+// #4973's, their runs were collected without a unit suite, settled green and
 // merged, and main went red twice. A suite that blocks merges is never
 // passed over: read in full, red in a shard it has, or a fresh run.
+
 function graduatedUnit(sql) {
   if (/SELECT check_key FROM app_check_history/.test(sql)) {
     return { rows: [{ check_key: appManifest.checkKey(unitSuite.UNIT_CHECK_NAME, unitSuite.UNIT_CHECK_PATH) }], rowCount: 1 };
@@ -557,39 +340,52 @@ function graduatedUnit(sql) {
 }
 const capturePassed = { state: 'succeeded', stdout: 'SHOT {"path":"/"}\n__USERNODE_TEST__ index=0 status=pass\n', stderr: '', exitCode: 0, timedOut: false, partial: false, partialReason: '' };
 
-test('a blocking unit suite whose Jobs are gone is re-driven, never settled without its row', async (t) => {
-  quietBroadcast(t);
-  const pool = makePool({ orphans: [orphanRow({ manifest: { ...orphanRow().manifest, unitRunId: 'early-1' } })], session: sessionRow(), answer: graduatedUnit });
-  const redrives = [];
-  let settled = false;
+// The graduation lookup decides whether the unit suite blocks merges. When
+// it failed, the harvest read "not graduated" and settled: a missing suite
+// was passed over and a red one read as advisory. The work item is retried
+// instead, and reads the Jobs again.
+test('a graduation lookup that fails throws for the retry: nothing settled, nothing cleared', async (t) => {
+  const pool = makePool({
+    runs: [runRow()],
+    answer: (sql) => {
+      if (/SELECT check_key FROM app_check_history/.test(sql)) throw new Error('connection reset');
+      return null;
+    },
+  });
   stub(t, kubernetes, {
     findCheckJobs: async () => ({ capture: { name: 'sv-capture-s42-x', state: 'succeeded' }, unitSuite: null }),
     collectCheckJob: async () => capturePassed,
   });
-  stub(t, visuals, { settleCaptureRun: async () => { settled = true; return { traceStatus: 'passing', result: { state: 'passing' } }; }, scheduleShots: () => {} });
-  stub(t, stagingRecovery, { recheckSessionChecks: async (args) => { redrives.push(args.reason); } });
-  const [result] = await (await harvest.sweep(config, { reason: 'boot', pool })).done;
-  assert.deepEqual([result.outcome, result.why], ['redriven', 'unit-suite Job not found']);
-  assert.equal(settled, false, 'no verdict without the suite');
-  assert.deepEqual(redrives, ['orphaned-run']);
+  stub(t, visuals, { settleCaptureRun: async () => assert.fail('not settled as if the suite were advisory') });
+  await assert.rejects(collect(pool), /connection reset/);
+  assert.deepEqual(pool.deleted, [], 'the manifest stays, for the retry');
+  assert.deepEqual(releasedJobs, [], 'and so do its Jobs');
+});
+
+test('a blocking unit suite whose Jobs are gone is null, never settled without its row', async (t) => {
+  const pool = makePool({ runs: [runRow({ manifest: { unitRunId: 'early-1' } })], answer: graduatedUnit });
+  stub(t, kubernetes, {
+    findCheckJobs: async () => ({ capture: { name: 'sv-capture-s42-x', state: 'succeeded' }, unitSuite: null }),
+    collectCheckJob: async () => capturePassed,
+  });
+  stub(t, visuals, { settleCaptureRun: async () => assert.fail('no verdict without the suite') });
+  assert.equal(await collect(pool), null);
+  assert.deepEqual(pool.deleted, []);
 });
 
 test('an advisory unit suite whose Jobs are gone settles without its row, as before', async (t) => {
-  quietBroadcast(t);
-  const pool = makePool({ orphans: [orphanRow()], session: sessionRow() });
+  const pool = makePool({ runs: [runRow()] });
   let settledWith = null;
   stub(t, kubernetes, {
     findCheckJobs: async () => ({ capture: { name: 'sv-capture-s42-x', state: 'succeeded' }, unitSuite: null }),
     collectCheckJob: async () => capturePassed,
   });
-  stub(t, visuals, { settleCaptureRun: async (_c, _p, run) => { settledWith = run; return { traceStatus: 'passing', result: { state: 'passing' } }; }, scheduleShots: () => {} });
-  const [result] = await (await harvest.sweep(config, { reason: 'boot', pool })).done;
-  assert.equal(result.outcome, 'settled');
+  stub(t, visuals, { settleCaptureRun: async (_c, _p, run) => { settledWith = run; return { traceStatus: 'passing', result: { state: 'passing' } }; } });
+  assert.deepEqual(await collect(pool), { state: 'passing' });
   assert.equal(settledWith.unitOutcome, null, 'its row would block nothing');
 });
 
 test('a red shard settles the suite red though another shard is gone, and a Job past its deadline is a red row', async (t) => {
-  quietBroadcast(t);
   const red = 'TAP version 13\nnot ok 1 - the plan\n  ---\n  error: boom\n  ...\n# tests 4\n# pass 3\n# fail 1\n';
   const cases = [
     { why: 'a red shard', unitShards: 3,
@@ -608,23 +404,14 @@ test('a red shard settles the suite red though another shard is gone, and a Job 
       : { capture: { name: 'sv-capture-s42-x', state: 'succeeded' }, unitSuite: null }),
     collectCheckJob: async (_c, { name, kind }) => (kind === 'capture' ? capturePassed : current.outputs[name]),
   });
-  stub(t, visuals, { settleCaptureRun: async (_c, _p, run) => { settledWith = run; return { traceStatus: 'failing', result: { state: 'failing' } }; }, scheduleShots: () => {} });
+  stub(t, visuals, { settleCaptureRun: async (_c, _p, run) => { settledWith = run; return { traceStatus: 'failing', result: { state: 'failing' } }; } });
   for (const c of cases) {
     current = c;
     settledWith = null;
-    const pool = makePool({ orphans: [orphanRow({ manifest: { ...orphanRow().manifest, unitRunId: 'early-1' } })], session: sessionRow(), answer: graduatedUnit });
-    const [result] = await (await harvest.sweep(config, { reason: 'boot', pool })).done;
-    assert.equal(result.outcome, 'settled', c.why);
+    const pool = makePool({ runs: [runRow({ manifest: { unitRunId: 'early-1' } })], answer: graduatedUnit });
+    assert.deepEqual(await collect(pool), { state: 'failing' }, c.why);
     assert.equal(settledWith.unitOutcome.row.status, 'fail', c.why);
   }
-});
-
-test('a sweep outside the Kubernetes capture runtime is a no-op', async () => {
-  const pool = makePool({ orphans: [orphanRow()] });
-  const summary = await harvest.sweep({ captureRuntime: 'docker' }, { pool });
-  assert.equal(summary.skipped, true);
-  assert.equal(pool.calls.length, 0);
-  assert.equal(typeof harvest.start({ captureRuntime: 'docker' }), 'function');
 });
 
 // ── unit-suite: the Job's verdict without the process that launched it ──
@@ -853,15 +640,72 @@ test('collectCheckJob reports a Job that disappeared as gone and a superseded ad
   assert.equal(aborted.state, 'aborted');
 });
 
-// ── A rollout's runs: handed over, and left to the harvest ──────────────
+// ── unit-suite: an early suite read by the checks run that follows ──────
+//
+// The preview machine starts the repo's unit suite with the build of an
+// attempt (checks.unitEarly); the checks run against that attempt reads its
+// Jobs to the end (collectUnitSuite) rather than starting its own.
+
+const workerConfig = { workerRuntime: 'kubernetes', kubernetes: { workerNamespace: 'workers' } };
+const readEarly = (pool, extra = {}) => unitSuite.collectUnitSuite({
+  config: workerConfig, pool, appId: 9, sessionId: 42, previewRunId: 'early-1', ...extra,
+});
+
+test('collectUnitSuite is null when there is nothing to read: no Jobs, a shard missing, no run id, no cluster', async (t) => {
+  let jobs = { capture: null, unitSuite: null };
+  stub(t, kubernetes, {
+    findCheckJobs: async (_cfg, { sessionId, previewRunId }) => {
+      assert.equal(sessionId, 42); assert.equal(previewRunId, 'early-1');
+      return jobs;
+    },
+    collectCheckJob: async () => assert.fail('nothing is read'),
+  });
+  const pool = makePool();
+  assert.equal(await readEarly(pool), null, 'no Jobs under that id');
+  jobs = { unitSuite: { name: 'sv-unit-early-s42-early-1', state: 'running' },
+    unitSuites: [{ name: 'sv-unit-early-s42-early-1', state: 'running' }], unitShards: 2 };
+  assert.equal(await readEarly(pool), null, 'one shard of two: part of a suite is not the suite');
+  assert.equal(await readEarly(pool, { previewRunId: null }), null);
+  assert.equal(await readEarly(pool, { config: { workerRuntime: 'docker' } }), null);
+});
+
+test('collectUnitSuite reads a finished suite\'s Jobs to an outcome, reporting progress as it goes', async (t) => {
+  const lines = ['TAP version 13', 'ok 1 - a', 'ok 2 - b', 'not ok 3 - c', '# tests 3', '# pass 2', '# fail 1'];
+  stub(t, kubernetes, {
+    findCheckJobs: async () => ({ unitSuite: { name: 'sv-unit-early-s42-early-1', state: 'failed' },
+      unitSuites: [{ name: 'sv-unit-early-s42-early-1', state: 'failed' }], unitShards: 1 }),
+    collectCheckJob: async (_cfg, { name, kind, onStdoutLine }) => {
+      assert.equal(name, 'sv-unit-early-s42-early-1');
+      assert.equal(kind, 'unit-suite');
+      for (const line of lines) onStdoutLine(line);
+      return { state: 'failed', stdout: `${unitSuite.SETUP_DONE_SENTINEL}\n${lines.join('\n')}\n`, stderr: '', exitCode: 1, timedOut: false };
+    },
+  });
+  let strict = null;
+  stub(t, checkHistory, {
+    loadGraduated: async (_pool, appId, o) => {
+      assert.equal(appId, 9);
+      strict = o.strict;
+      return new Set([appManifest.checkKey(unitSuite.UNIT_CHECK_NAME, unitSuite.UNIT_CHECK_PATH)]);
+    },
+  });
+  const progress = [];
+  const outcome = await readEarly(makePool(), { onProgress: (snap) => progress.push(snap) });
+  assert.equal(outcome.row.status, 'fail');
+  assert.equal(outcome.row.advisory, false, 'graduated: it blocks merges');
+  assert.equal(outcome.row.summary.fail, 1);
+  assert.equal(outcome.history.passed, false);
+  assert.equal(strict, true, 'whether it blocks is read strictly, never guessed as advisory');
+  assert.ok(progress.length >= 2, 'a snapshot as tests report, and the last one');
+  assert.equal(progress[progress.length - 1].done, true);
+});
+
+// ── A rollout's runs: handed over ───────────────────────────────────────
 //
 // 7 Oct 2026, 21:59 UTC. A new leader booted moments after the old Pod
-// exited. The old Pod had been harvesting 7014's run (capture still
-// running) and 7015's (both Jobs finished), so their rows still carried its
-// heartbeat: the boot harvest listed neither, and the stale sweep, whose
-// "in flight" test only knows its own process, started both over. The new
-// run's lifecycle cancelled 7014's capture mid-run, and 7015's finished
-// suite was thrown away.
+// exited, and the old Pod's rows still carried its heartbeat. A process
+// shutting down marks its rows stale at once, so whatever reads them next
+// does not take them for a live run's.
 
 test('release hands this process\'s rows over: stale at once, and its own heartbeat no longer matches them', async () => {
   const me = checkRuns.selfOwner();
@@ -876,17 +720,7 @@ test('release hands this process\'s rows over: stale at once, and its own heartb
   assert.equal(await checkRuns.release(null), 0);
 });
 
-test('a process shutting down adopts nothing: what it would seat, it has just handed over', async (t) => {
-  stub(t, require('../src/services/lifecycle'), { isShuttingDown: () => true });
-  const pool = makePool({ orphans: [orphanRow()], session: sessionRow() });
-  const summary = await harvest.sweep(config, { reason: 'tick', pool });
-  assert.equal(summary.skipped, true);
-  assert.equal(summary.reason, 'shutting down');
-  assert.equal(pool.calls.length, 0, 'not even listed');
-  assert.deepEqual(await summary.done, []);
-});
-
-// check_runs rows for runOnCluster / stopSupersededRuns.
+// check_runs rows for stopSupersededRuns.
 function runsPool(rows) {
   const pool = {
     calls: [],
@@ -894,146 +728,6 @@ function runsPool(rows) {
   };
   return pool;
 }
-
-const AT_2159 = Date.parse('2026-10-07T21:59:28Z');
-const TEN_MIN = 10 * 60 * 1000;
-
-test('runOnCluster: a capture still running, or a run that finished minutes ago, is left to the harvest', async (t) => {
-  const jobs = {
-    // 7014: the capture still going, the unit suite done at 21:56:53.
-    f7895663: {
-      capture: { name: 'sv-capture-s7014-f7895663', state: 'running', finishedAt: null },
-      unitSuite: { name: 'sv-unit-suite-s7014-f7895663', state: 'succeeded', finishedAt: '2026-10-07T21:56:53Z' },
-    },
-    // 7015: both Jobs finished, the last at 21:58:47.
-    '338cd4cb': {
-      capture: { name: 'sv-capture-s7015-338cd4cb', state: 'succeeded', finishedAt: '2026-10-07T21:58:47Z' },
-      unitSuite: { name: 'sv-unit-suite-s7015-338cd4cb', state: 'succeeded', finishedAt: '2026-10-07T21:58:18Z' },
-    },
-  };
-  const asked = [];
-  stub(t, kubernetes, {
-    findCheckJobs: async (_cfg, { sessionId, previewRunId }) => {
-      asked.push([sessionId, previewRunId]);
-      return jobs[previewRunId] || { capture: null, unitSuite: null };
-    },
-  });
-
-  const pool7014 = runsPool([{ run_id: 'f7895663', owner: 'old-pod:1' }]);
-  const running = await harvest.runOnCluster(config, pool7014,
-    { id: 7014, checks_commit_sha: 'abc123' }, { staleMs: TEN_MIN, now: AT_2159 });
-  assert.deepEqual(running, { runId: 'f7895663', owner: 'old-pod:1', capture: 'running', unitSuite: 'succeeded' });
-  assert.match(pool7014.calls[0].sql, /FROM check_runs\s+WHERE session_id = \$1 AND commit_sha IS NOT DISTINCT FROM \$2/,
-    'only a run for the commit the session is pending on: any other is moot to the harvest');
-  assert.deepEqual(pool7014.calls[0].params, [7014, 'abc123']);
-
-  const finished = await harvest.runOnCluster(config, runsPool([{ run_id: '338cd4cb', owner: 'old-pod:1' }]),
-    { id: 7015, checks_commit_sha: 'abc123' }, { staleMs: TEN_MIN, now: AT_2159 });
-  assert.deepEqual(finished, { runId: '338cd4cb', owner: 'old-pod:1', capture: 'succeeded', unitSuite: 'succeeded' });
-  assert.deepEqual(asked, [[7014, 'f7895663'], [7015, '338cd4cb']], 'found by the run id the manifest names');
-});
-
-test('runOnCluster: nothing to read, or nothing read in time, still starts over', async (t) => {
-  let jobs = { capture: null, unitSuite: null };
-  let reads = 0;
-  stub(t, kubernetes, {
-    findCheckJobs: async () => {
-      reads += 1;
-      if (jobs instanceof Error) throw jobs;
-      return jobs;
-    },
-  });
-  const session = { id: 7014, checks_commit_sha: 'abc123' };
-  const opts = { staleMs: TEN_MIN, now: AT_2159 };
-
-  // A capture Job gone (cancelled, or collected by its TTL): only a fresh
-  // run can judge the head, and the harvest would re-drive it anyway.
-  jobs = { capture: null, unitSuite: { name: 'u', state: 'running', finishedAt: null } };
-  assert.equal(await harvest.runOnCluster(config, runsPool([{ run_id: 'r1', owner: 'p' }]), session, opts), null);
-
-  // Finished more than CHECKS_STALE_MS ago and still not read: the harvest
-  // could not read it, so the stale sweep stays the backstop.
-  jobs = {
-    capture: { name: 'c', state: 'succeeded', finishedAt: '2026-10-07T21:45:28Z' },
-    unitSuite: { name: 'u', state: 'succeeded', finishedAt: '2026-10-07T21:45:55Z' },
-  };
-  assert.equal(await harvest.runOnCluster(config, runsPool([{ run_id: 'r1', owner: 'p' }]), session, opts), null);
-
-  // No manifest for the session's commit: nothing to ask the cluster about.
-  reads = 0;
-  assert.equal(await harvest.runOnCluster(config, runsPool([]), session, opts), null);
-  assert.equal(reads, 0);
-
-  // A cluster that cannot be read answers no rather than blocking recovery.
-  jobs = new Error('apiserver down');
-  assert.equal(await harvest.runOnCluster(config, runsPool([{ run_id: 'r1', owner: 'p' }]), session, opts), null);
-
-  // Outside the Kubernetes capture runtime there is no cluster to ask.
-  const pool = runsPool([{ run_id: 'r1', owner: 'p' }]);
-  assert.equal(await harvest.runOnCluster({ captureRuntime: 'docker' }, pool, session, opts), null);
-  assert.equal(pool.calls.length, 0);
-});
-
-test('runOnCluster asks about the commit it is given, the session\'s pin by default', async (t) => {
-  stub(t, kubernetes, { findCheckJobs: async () => ({ capture: { name: 'c', state: 'running', finishedAt: null }, unitSuite: null }) });
-  const pool = runsPool([{ run_id: 'r1', owner: 'p' }]);
-  await harvest.runOnCluster(config, pool, { id: 42, checks_commit_sha: 'abc123' }, { commitSha: 'def456', staleMs: TEN_MIN, now: AT_2159 });
-  await harvest.runOnCluster(config, pool, { id: 42, checks_commit_sha: 'abc123' }, { staleMs: TEN_MIN, now: AT_2159 });
-  assert.deepEqual(pool.calls.map((c) => c.params), [[42, 'def456'], [42, 'abc123']]);
-});
-
-// ── A path about to start a run asks first ──────────────────────────────
-
-test('runToCollect: a run of the commit the session still waits on is left to collect, whoever asks', async (t) => {
-  let reads = 0;
-  stub(t, kubernetes, {
-    findCheckJobs: async (_cfg, { previewRunId }) => {
-      reads += 1;
-      return { capture: { name: `sv-capture-s42-${previewRunId}`, state: 'running', finishedAt: null }, unitSuite: null };
-    },
-  });
-  const ask = (session, commitSha, manifests = [{ run_id: 'r1', owner: 'dead-pod:7' }]) => {
-    const pool = makePool({
-      session,
-      answer: (sql) => (/FROM check_runs\s+WHERE session_id = \$1 AND commit_sha/.test(sql)
-        ? { rows: manifests.map((r) => ({ ...r })), rowCount: manifests.length } : null),
-    });
-    return harvest.runToCollect(config, pool, 42, commitSha).then((run) => ({ run, pool }));
-  };
-
-  // Pending on the commit, its capture still running: leave it.
-  const { run, pool } = await ask(sessionRow(), 'abc123');
-  assert.deepEqual(run, { runId: 'r1', owner: 'dead-pod:7', capture: 'running', unitSuite: 'none' });
-  assert.match(pool.calls[0].sql, /FROM chat_sessions cs JOIN apps a/, 'the session is read now, not trusted from the caller');
-  assert.deepEqual(pool.calls[1].params, [42, 'abc123']);
-  // No commit named: the session's own pin.
-  assert.equal((await ask(sessionRow(), null)).run.runId, 'r1');
-
-  // A verdict already stored, a head that moved on, a deferred head, a closed
-  // session: the run is not one the row is waiting on, so nothing is asked
-  // of the cluster and a fresh run may start.
-  reads = 0;
-  for (const session of [
-    sessionRow({ check_state: 'failing' }),
-    sessionRow({ checks_commit_sha: 'def456' }),
-    sessionRow({ check_phase: 'deferred' }),
-    sessionRow({ status: 'merged' }),
-    null,
-  ]) {
-    assert.equal((await ask(session, 'abc123')).run, null, JSON.stringify(session && session.check_state));
-  }
-  assert.equal(reads, 0);
-  // Nothing of that commit on the cluster.
-  assert.equal((await ask(sessionRow(), 'abc123', [])).run, null);
-});
-
-test('runToCollect never throws and is a no-op off Kubernetes', async () => {
-  const broken = { calls: [], async query(sql) { this.calls.push(sql); throw new Error('db down'); } };
-  assert.equal(await harvest.runToCollect(config, broken, 42, 'abc123'), null);
-  const pool = makePool({ session: sessionRow() });
-  assert.equal(await harvest.runToCollect({ captureRuntime: 'docker' }, pool, 42, 'abc123'), null);
-  assert.equal(pool.calls.length, 0);
-});
 
 test('findCheckJobs says when a finished Job ended, so a run nobody read can be told from one just done', async (t) => {
   kubernetes._setClientsForTest({ batch: {
@@ -1119,41 +813,20 @@ test('stopCheckJobs deletes only running Jobs of runs it may stop, in the backgr
 
 // ── Wiring ──────────────────────────────────────────────────────────────
 
-test('the leader boot sequence seats orphans before the stale sweep looks, and the stale sweep skips a harvest', () => {
-  const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
-  const boot = server.indexOf("checkHarvest.sweep(config, { reason: 'boot' })");
-  assert.ok(boot > 0, 'the boot harvest sweep is wired');
-  const stuck = server.indexOf('.then(() => reconcileStuckChecks(config))', boot);
-  assert.ok(stuck > boot && stuck - boot < 1500, 'reconcileStuckChecks is chained after the harvest\'s claim phase');
-  assert.match(server, /checkHarvest\.start\(config\);/, 'the leader runs the harvest ticker');
-  assert.match(server, /function checkRecoveryInFlight\(sessionId\) \{[\s\S]{0,700}check-harvest'\)\.isHarvesting\(sessionId\)/,
-    'a session being harvested is never re-driven by the stale sweep');
-});
-
-test('captureForSession records a manifest before its Jobs exist and clears it on every exit path', () => {
+test('captureForSession records a manifest before its Jobs exist and clears it once it has settled', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'visuals.js'), 'utf8');
   const provisional = src.indexOf('manifest: { launched: false');
   const full = src.indexOf('launched: true');
   const launch = src.indexOf('kubernetes.runCaptureJob(');
   assert.ok(provisional > 0 && full > provisional && launch > full,
     'provisional manifest, then the full one, then the Job launch — in that order');
-  assert.match(src, /finally \{[\s\S]{0,1400}if \(harvestable && \(!workflow \|\| settledRun\)\) await checkRuns\.finish\(operation\?\.cleanupPool \|\| pool, runId\);/,
-    'the manifest is cleared in the run\'s finally (a preview machine\'s run keeps it unless it settled: its retry collects it)');
-  assert.match(src, /previewRunId: runId/, 'the Jobs carry the manifest\'s run id, which is how the harvester finds them');
+  assert.match(src, /finally \{[\s\S]{0,1400}if \(harvestable && settledRun\) await checkRuns\.finish\(pool, runId\);/,
+    'the manifest is cleared in the run\'s finally once it settled; otherwise its retry collects by it');
+  assert.match(src, /previewRunId: runId/, 'the Jobs carry the manifest\'s run id, which is how the collect finds them');
 });
 
-test('both stale sweeps ask the cluster before starting a session over, and a run stops what it supersedes', () => {
+test('a process shutting down hands its rows over, and a run stops what it supersedes before its own Jobs start', () => {
   const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
-  const reconcile = server.slice(server.indexOf('async function reconcileStuckChecks('));
-  const askBoot = reconcile.indexOf("checkRunLeftToHarvest(config, pool, session, 'stuck-checks-boot')");
-  const redriveBoot = reconcile.indexOf("reason: 'stuck-checks-boot'");
-  assert.ok(askBoot > 0 && redriveBoot > askBoot, 'reconcileStuckChecks asks before it re-drives');
-  const pass4 = server.slice(server.indexOf('// Pass 4: stuck-check reconcile'));
-  const askSweep = pass4.indexOf("checkRunLeftToHarvest(config, pool, session, 'stuck-checks-sweep')");
-  const stamp = pass4.indexOf('checkRecheckAttempts.set(session.id, Date.now());');
-  assert.ok(askSweep > 0 && stamp > askSweep, 'Pass 4 asks before it stamps its cooldown and re-drives');
-  assert.match(server, /async function checkRunLeftToHarvest\(config, pool, session, reason\) \{[\s\S]{0,300}runOnCluster\(config, pool, session, \{\s*staleMs: CHECKS_STALE_MS,/);
-
   const cleanup = server.slice(server.indexOf('async function cleanup() {'));
   const release = cleanup.indexOf("require('./src/services/check-runs').release(shutdownPool)");
   const poolEnd = cleanup.indexOf('shutdownPool.end()');

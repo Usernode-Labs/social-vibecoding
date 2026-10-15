@@ -772,24 +772,9 @@ async function resolveOneInner(config, pool, sessionId, admission = { reason: 'a
   await integration.setBlockReasons(pool, session.id, ['integrating']);
   broadcast(session, { integrating: true });
 
-  // Supersede and await the pre-resolution preview before the sync moves
-  // its branch. An error here must not admit a worker against a live run.
-  // A proposal the preview machine holds (WF_PREVIEWS_ENABLED) has nothing
-  // here to supersede: its builds and runs are the machine's, and the head
-  // the sync pushes reaches it as a new revision, which cancels the run of
-  // the old one. The lifecycle's row stopped following its revisions when
-  // the machine took it over, so asking it would refuse every repair.
-  const machineHeld = await require('./preview-workflow').held(session.id).catch(() => false);
-  try {
-    if (!machineHeld) await require('./preview-lifecycle').supersede(config, session.id, measured.headSha);
-  } catch (err) {
-    log.warn('merge-queue', 'Could not stop the old preview before conflict repair', {
-      sessionId, err: err.message,
-    });
-    await integration.setBlockReasons(pool, session.id, []);
-    broadcast(session, { integrating: false });
-    return { ok: false, reason: 'cancel_failed' };
-  }
+  // Nothing to supersede before the sync moves the branch: a proposal's
+  // builds and runs are the preview machine's, and the head the sync pushes
+  // reaches it as a new revision, which cancels the run of the old one.
 
   let sync;
   try {

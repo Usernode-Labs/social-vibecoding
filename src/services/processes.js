@@ -47,8 +47,6 @@ const WRITE_RETRY_MS = [500, 2000, 5000];
 
 const KINDS = Object.freeze([
   'session',        // a turn or an operation on a dev session (active-workers.js)
-  'staging_build',  // a preview build (staging.js)
-  'capture',        // a checks capture (visuals.js)
   'sync',           // a sync of a session's branch with main (sync-main.js)
   'handoff',        // a hand-off pipeline (handoff-pipeline.js)
   'shots',          // a before & after shots run, by session (shots-orchestrator.js)

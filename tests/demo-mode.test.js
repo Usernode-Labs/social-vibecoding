@@ -150,10 +150,14 @@ stubModule('../src/services/external-agent-patch', {
   MAX_PATCH_BYTES: 256 * 1024,
   applyPatch: async (...args) => { record('applyPatch')(...args); return state.patchResult; },
 });
-stubModule('../src/services/session-lifecycle', {
-  teardownStagingForSession: async (...args) => {
-    record('teardownStagingForSession')(...args);
-    return { torn: true };
+// The preview machine's adapter: a reset retires each of the partner's
+// previews through it. Each call notes whether the rows were already
+// deleted, because a retirement asked for after the delete has no row left
+// to adopt.
+stubModule('../src/services/preview-workflow', {
+  retire: async (...args) => {
+    record('retirePreview')(...args, { rowsDeleted: queriesLike('DELETE FROM chat_sessions').length > 0 });
+    return { taken: true, reason: null };
   },
 });
 stubModule('../src/routes/votes', {
@@ -747,7 +751,12 @@ test('reset takes the partner\'s proposals down, puts main back, and rebuilds', 
   assert.deepEqual(r.body.main, { from: 'z'.repeat(40), to: 'b'.repeat(40), moved: true });
   assert.equal(r.body.redeploy, 'started');
 
-  assert.deepEqual(calls.teardownStagingForSession.map((c) => c[0].sessionId), [9, 10]);
+  // For good, before the rows go: an idle retirement would wait for a build
+  // still going, and the delete would leave it running.
+  assert.deepEqual(calls.retirePreview.map(([args, seen]) => [args, seen.rowsDeleted]), [
+    [{ session: { id: 9, app_id: 1 }, reason: 'demo-reset', terminal: true }, false],
+    [{ session: { id: 10, app_id: 1 }, reason: 'demo-reset', terminal: true }, false],
+  ]);
   assert.deepEqual(calls.closePR.map((c) => c[2]), [43], 'the open PR is closed; the merged one is history');
   const [del] = queriesLike('DELETE FROM chat_sessions');
   assert.deepEqual(del.params[0], [9, 10]);

@@ -1,18 +1,16 @@
-// Per-session staging-build serialization (session 2258 friendly-fire
-// incident, 2026-07-14).
+// One preview build's preparation (services/staging.js
+// buildAndDeployStagingInner, reached through prepareAttempt: the preview
+// machine's preview.prepare work). The image build and the database clone
+// run side by side when the attempt's database does not exist yet, and the
+// deploy waits for both. Either failing settles the other before the
+// checkout is removed, and the attempt's database is left for the machine
+// to retire (a claim that lost its lease may share it with the retry now
+// using it).
 //
-// buildAndDeployStaging used to have no single-flight guard: a push-driven
-// build racing a recovery/recheck rebuild for the SAME session would reach
-// its clone step — which begins by dropping the prior staging DB via
-// pg_terminate_backend — and kill the other build's in-flight pg_restore
-// mid-COPY ("server closed the connection unexpectedly"). The loser then
-// recorded a checks 'error' and posted a scary ⚠ to the session chat for a
-// failure that was pure friendly fire.
-//
-// The guard chains builds per session id (concurrent triggers run
-// one-at-a-time), coalesces same-commit requests onto the in-flight
-// promise, keeps different sessions parallel, and never lets a failed
-// build block its successor.
+// The per-session queue this file was named for (session 2258's
+// friendly-fire incident, 2026-07-14: two builds of one session killing
+// each other's restore) is gone with buildAndDeployStaging: the machine
+// runs one attempt of a session at a time, each into its own database.
 //
 // Run with: node --test tests/staging-build-serialize.test.js
 
@@ -26,11 +24,12 @@ function stub(id, exports) {
 // Loads services/staging with every collaborator stubbed. The build's
 // slow step (cloneDatabase — the pg_dump|pg_restore in prod) is modeled
 // with a configurable async delay so tests can force overlap windows.
-// Returns an event log of ['start'|'clone'|'end', sessionId, commit] plus
-// a live counter of in-flight inner builds per session.
+// Returns an event log of ['clone', sessionId, db] / ['drop', db] /
+// ['rm', dir] / ['deploy'].
 function loadStaging({ cloneDelayMs = 20, buildImageImpl = null, cloneImpl = null, existsImpl = async () => false, dropImpl = null } = {}) {
   const ids = {
     logger: require.resolve('../src/services/logger'),
+    buildRetentionGuard: require.resolve('../src/services/build-retention-guard'),
     docker: require.resolve('../src/services/docker'),
     applicationRuntime: require.resolve('../src/services/application-runtime'),
     caddy: require.resolve('../src/services/caddy'),
@@ -46,17 +45,10 @@ function loadStaging({ cloneDelayMs = 20, buildImageImpl = null, cloneImpl = nul
   for (const [k, id] of Object.entries(ids)) orig[k] = require.cache[id];
 
   const events = [];
-  const inFlight = new Map(); // sessionId -> count of inner builds running
-  let maxConcurrent = 0;
-
-  const bump = (sid, d) => {
-    const n = (inFlight.get(sid) || 0) + d;
-    inFlight.set(sid, n);
-    const total = [...inFlight.values()].reduce((a, b) => a + b, 0);
-    if (total > maxConcurrent) maxConcurrent = total;
-  };
 
   stub(ids.logger, { info() {}, warn() {}, error() {}, debug() {} });
+  // A build holds the shared build-retention lock on its own connection.
+  stub(ids.buildRetentionGuard, { withResourceUse: (config, lock, key, fn) => fn(), withBuildUse: (config, fn) => fn() });
   stub(ids.github, { getCloneUrl: async () => 'https://x/clone.git', isEnabled: () => true });
   stub(ids.appManifest, { read: () => ({}) });
   stub(ids.appSecrets, {
@@ -69,18 +61,23 @@ function loadStaging({ cloneDelayMs = 20, buildImageImpl = null, cloneImpl = nul
     // into previews (URL only, no token), so the staging path calls this.
     platformApiBaseUrl: () => 'http://usernode:3000/api/app-platform',
   });
-  stub(ids.pool, { getPool: () => ({ query: async () => ({ rows: [] }) }) });
+  // A Docker attempt's deploy holds a per-session lock on its own connection.
+  const client = { query: async () => ({ rows: [] }), release() {} };
+  stub(ids.pool, { getPool: () => ({ query: async () => ({ rows: [] }), connect: async () => client }) });
   stub(ids.caddy, {
     stagingHostname: (slug, u) => `${slug}--${u}.example.test`,
     warmCert: async () => ({ ok: true, code: 200 }),
   });
 
-  // docker: track inner-build entry via the git clone execFileAsync call
-  // (first thing the inner build does) and exit via runContainer/cleanup.
+  // docker: the checkout's removal and the deploy are what the tests watch.
   stub(ids.docker, {
-    execFileAsync: async () => ({ stdout: '' }),
+    execFileAsync: async (cmd, argv) => {
+      if (cmd === 'rm') events.push(['rm', argv[argv.length - 1]]);
+      return { stdout: '' };
+    },
     buildImage: buildImageImpl || (async () => {}),
     runContainer: async () => { events.push(['deploy']); return 'cid123'; },
+    inspectContainer: async () => null,
     waitForHealthy: async () => {},
     stopAndRemove: async () => {},
     getHostPort: async () => null,
@@ -96,12 +93,9 @@ function loadStaging({ cloneDelayMs = 20, buildImageImpl = null, cloneImpl = nul
       // target name (staging_s<id>_<hash>) for the event log.
       const sid = Number(/staging_s(\d+)_/.exec(targetDb)?.[1] || 0);
       events.push(['clone', sid, targetDb]);
-      bump(sid, +1);
-      try {
-        if (cloneImpl) return await cloneImpl(sourceDb, targetDb);
-        await new Promise((r) => setTimeout(r, cloneDelayMs));
-        return { password: 'pw' };
-      } finally { bump(sid, -1); }
+      if (cloneImpl) return cloneImpl(sourceDb, targetDb);
+      await new Promise((r) => setTimeout(r, cloneDelayMs));
+      return { password: 'pw' };
     },
     connectionUrl: () => 'postgres://x',
   });
@@ -114,116 +108,18 @@ function loadStaging({ cloneDelayMs = 20, buildImageImpl = null, cloneImpl = nul
       if (orig[k]) require.cache[id] = orig[k]; else delete require.cache[id];
     }
   };
-  return {
-    subject, events, restore,
-    maxConcurrent: () => maxConcurrent,
-  };
+  return { subject, events, restore };
 }
 
 const mkSession = (id) => ({ id, branch_name: 'dev/x', staging_container_id: null });
 const mkApp = { id: 5, slug: 'widget', name: 'Widget', repo_url: 'https://github.com/acme/widget' };
 
-test('two concurrent builds for one session run sequentially, both to completion', async () => {
-  const { subject, events, maxConcurrent, restore } = loadStaging({ cloneDelayMs: 30 });
-  try {
-    // Fire both before awaiting either — without the guard these overlap
-    // and build B's clone-teardown would kill build A's restore.
-    const pA = subject.buildAndDeployStaging({ jwtSecret: 's' }, mkSession(7), mkApp, 'aaaaaa1');
-    const pB = subject.buildAndDeployStaging({ jwtSecret: 's' }, mkSession(7), mkApp, 'bbbbbb2');
-    const [rA, rB] = await Promise.all([pA, pB]);
-
-    assert.ok(rA.stagingUrl && rB.stagingUrl, 'both builds completed');
-    const clones = events.filter((e) => e[0] === 'clone' && e[1] === 7);
-    assert.equal(clones.length, 2, 'each distinct commit got its own build');
-    assert.equal(maxConcurrent(), 1, 'the two builds never overlapped');
-  } finally {
-    restore();
-  }
+// Attempt 1 of the session's preview, its first claim, the way the preview
+// machine's prepare work asks for it.
+const prepare = (subject, session, head) => subject.prepareAttempt({ jwtSecret: 's' }, session, mkApp, head, {
+  n: 1, claim: 1, dbName: `app_widget_staging_s${session.id}_aaaaaa`, servingN: null, checkpoint: async () => {},
 });
-
-test('same-commit concurrent requests coalesce onto one build', async () => {
-  const { subject, events, restore } = loadStaging({ cloneDelayMs: 30 });
-  try {
-    const pA = subject.buildAndDeployStaging({ jwtSecret: 's' }, mkSession(7), mkApp, 'cccccc3');
-    const pB = subject.buildAndDeployStaging({ jwtSecret: 's' }, mkSession(7), mkApp, 'cccccc3');
-    const [rA, rB] = await Promise.all([pA, pB]);
-
-    const clones = events.filter((e) => e[0] === 'clone' && e[1] === 7);
-    assert.equal(clones.length, 1, 'one shared build, not two identical ones');
-    assert.deepEqual(rA, rB, 'both callers receive the same result');
-  } finally {
-    restore();
-  }
-});
-
-test("'latest' never coalesces — it can point at different content over time", async () => {
-  const { subject, events, maxConcurrent, restore } = loadStaging({ cloneDelayMs: 20 });
-  try {
-    const pA = subject.buildAndDeployStaging({ jwtSecret: 's' }, mkSession(7), mkApp, 'latest');
-    const pB = subject.buildAndDeployStaging({ jwtSecret: 's' }, mkSession(7), mkApp, 'latest');
-    await Promise.all([pA, pB]);
-
-    const clones = events.filter((e) => e[0] === 'clone' && e[1] === 7);
-    assert.equal(clones.length, 2, "two 'latest' builds run (serialized), not one");
-    assert.equal(maxConcurrent(), 1, 'still never overlapping');
-  } finally {
-    restore();
-  }
-});
-
-test('different sessions still build in parallel', async () => {
-  const { subject, maxConcurrent, restore } = loadStaging({ cloneDelayMs: 40 });
-  try {
-    const pA = subject.buildAndDeployStaging({ jwtSecret: 's' }, mkSession(7), mkApp, 'dddddd4');
-    const pB = subject.buildAndDeployStaging({ jwtSecret: 's' }, mkSession(8), mkApp, 'eeeeee5');
-    await Promise.all([pA, pB]);
-    assert.equal(maxConcurrent(), 2, 'cross-session builds are not serialized');
-  } finally {
-    restore();
-  }
-});
-
-test('a failed build does not block the next queued build for the session', async () => {
-  let call = 0;
-  const { subject, events, restore } = loadStaging({
-    cloneDelayMs: 10,
-    // First build's image step blows up (e.g. broken Dockerfile on the old
-    // commit); the queued build with the fix must still run.
-    buildImageImpl: async () => {
-      call += 1;
-      if (call === 1) throw new Error('docker build failed');
-    },
-  });
-  try {
-    const pA = subject.buildAndDeployStaging({ jwtSecret: 's' }, mkSession(7), mkApp, 'ffffff6');
-    const pB = subject.buildAndDeployStaging({ jwtSecret: 's' }, mkSession(7), mkApp, 'abcdef7');
-    const [rA, rB] = await Promise.allSettled([pA, pB]);
-
-    assert.equal(rA.status, 'rejected', 'the broken build still surfaces its real error');
-    assert.match(rA.reason.message, /docker build failed/);
-    assert.equal(rB.status, 'fulfilled', 'the follow-up build ran and succeeded');
-    const clones = events.filter((e) => e[0] === 'clone' && e[1] === 7);
-    assert.equal(clones.length, 2, 'both builds started their independent clones');
-    assert.equal(events.filter(e => e[0] === 'drop').length, 1, 'failed build clone was cleaned up');
-  } finally {
-    restore();
-  }
-});
-
-test('sequential (non-overlapping) builds are independent — the chain self-cleans', async () => {
-  const { subject, events, restore } = loadStaging({ cloneDelayMs: 5 });
-  try {
-    await subject.buildAndDeployStaging({ jwtSecret: 's' }, mkSession(7), mkApp, '111111a');
-    // Same commit, but the first build has fully settled — this must be a
-    // fresh build (a re-deploy request), not a stale coalesced result.
-    await subject.buildAndDeployStaging({ jwtSecret: 's' }, mkSession(7), mkApp, '111111a');
-    const clones = events.filter((e) => e[0] === 'clone' && e[1] === 7);
-    assert.equal(clones.length, 2, 'settled chains do not swallow later rebuild requests');
-  } finally {
-    restore();
-  }
-});
-
+const CHECKOUT = '/tmp/usernode-preview-8-a1-c1';
 
 function deferred() {
   let resolve, reject;
@@ -238,7 +134,7 @@ test('image and clone overlap, and deploy waits for both', { timeout: 5000 }, as
     cloneImpl: async () => { cloneStarted.resolve(); return cloneDone.promise; },
   });
   try {
-    const result = subject.buildAndDeployStaging({ jwtSecret: 's' }, mkSession(8), mkApp, 'aaaaaa1');
+    const result = prepare(subject, mkSession(8), 'aaaaaa1');
     await Promise.all([imageStarted.promise, cloneStarted.promise]);
     imageDone.resolve();
     await new Promise(r => setImmediate(r));
@@ -262,18 +158,22 @@ for (const fails of ['image', 'clone', 'both']) {
       dropImpl: async () => { throw new Error('cleanup failed'); },
     });
     try {
-      const result = subject.buildAndDeployStaging({ jwtSecret: 's' }, mkSession(8), mkApp, 'aaaaaa1');
+      const result = prepare(subject, mkSession(8), 'aaaaaa1');
       const checked = assert.rejects(result, fails === 'clone' ? /clone failed/ : /image failed/);
       await Promise.all([imageStarted.promise, cloneStarted.promise]);
+      // The checkout is cleared once before the clone into it; count after.
+      const removals = () => events.filter(e => e[0] === 'rm' && e[1] === CHECKOUT).length;
+      const before = removals();
       if (fails === 'clone') cloneDone.reject(new Error('clone failed'));
       else imageDone.reject(new Error('image failed'));
       await new Promise(r => setImmediate(r));
-      assert.equal(events.some(e => e[0] === 'drop'), false, 'no cleanup while the sibling still runs');
+      assert.equal(removals(), before, 'no cleanup while the sibling still runs');
       if (fails === 'clone') imageDone.resolve();
       else if (fails === 'both') cloneDone.reject(new Error('clone failed'));
       else cloneDone.resolve({ password: 'pw' });
       await checked;
-      assert.equal(events.filter(e => e[0] === 'drop').length, 1);
+      assert.ok(removals() > before, 'the checkout is removed once both have settled');
+      assert.equal(events.some(e => e[0] === 'drop'), false, 'the attempt\'s database is the machine\'s to retire');
       assert.equal(events.some(e => e[0] === 'deploy'), false);
     } finally { imageDone.resolve(); cloneDone.resolve({ password: 'pw' }); restore(); }
   });
@@ -290,7 +190,7 @@ for (const lookup of ['existing', 'failed']) {
       buildImageImpl: async () => { throw new Error('image failed'); },
     });
     try {
-      await assert.rejects(subject.buildAndDeployStaging({ jwtSecret: 's' }, mkSession(8), mkApp, 'aaaaaa1'), /image failed/);
+      await assert.rejects(prepare(subject, mkSession(8), 'aaaaaa1'), /image failed/);
       assert.equal(events.some(e => ['clone', 'drop'].includes(e[0])), false);
     } finally { restore(); }
   });

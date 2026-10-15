@@ -10,7 +10,7 @@
 // their six retries (CHECK_MAX_AUTO_RETRIES) on it by 20:08, and after #4720
 // fixed it at 21:26 each waited for a person to press Re-run. The error lane
 // now keeps retrying such a fault for a day, 30 minutes apart once the
-// backoff tops out, and a platform boot makes it due at once.
+// backoff tops out, and a platform release retries it at once.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -107,17 +107,24 @@ test('the error lane keeps a platform fault past the cap for a day from its firs
   assert.equal(within(null), false);
 });
 
-test('a boot makes the platform faults inside their day due, before the stuck-checks reconcile', async () => {
-  const pool = recordingPool();
-  await stagingRecovery.rearmPlatformFaults(pool);
-  const { sql, params } = pool.calls[0];
-  assert.match(sql, /SET check_next_retry_at = NOW\(\)/);
-  assert.match(sql, /check_state = 'error'\s+AND check_error_platform\s+AND check_next_retry_at > NOW\(\)/);
-  assert.equal(params[0], stagingRecovery.PLATFORM_FAULT_RETRY_MS);
+test('a release retries the platform faults inside their day, once per release', () => {
+  // The preview machine holds every proposal's checks, so its leader does
+  // it as its loops start (src/workflow/platform.ts retryPlatformFaults),
+  // rather than a boot step making the old error lane's retry due.
+  const platform = fs.readFileSync(path.join(ROOT, 'src/workflow/platform.ts'), 'utf8');
+  const loops = platform.slice(platform.indexOf('export async function startWorkflowLoops('));
+  assert.match(loops.slice(0, loops.indexOf('\n}\n')), /await retryPlatformFaults\(\);/);
+  const fn = platform.slice(platform.indexOf('async function retryPlatformFaults('));
+  const body = fn.slice(0, fn.indexOf('\n}\n'));
+  assert.match(body, /\(state = 'failed' OR \(state = 'settled' AND data->>'verdict' = 'error'\)\)/);
+  assert.match(body, /AND \(data->>'platformFault'\)::boolean/);
+  assert.match(body, /AND \(data->>'firstFailureAt'\)::timestamptz > now\(\) - interval '1 day'/);
+  assert.match(body, /\{ type: 'RetryDue', payload: \{\} \}/);
+  assert.match(body, /requestKey: `release-retry:\$\{release\}:\$\{r\.key\}`/, 'the request key names the build: once per release');
 
   const server = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
-  assert.match(server, /\.then\(\(\) => rearmPlatformFaultsAtBoot\(config\)\)\s+\.then\(\(\) => reconcileStuckChecks\(config\)\)/);
-  assert.match(server, /Platform faults made due at boot/);
+  assert.doesNotMatch(server, /rearmPlatformFaults/, 'no boot step of its own');
+  assert.equal(stagingRecovery.rearmPlatformFaults, undefined);
 });
 
 test('the connector promises a re-run of a capped platform fault, and only that', () => {

@@ -1,6 +1,6 @@
 // #866 — fork-aware, SHA-pinned staging clone (services/staging.js).
 //
-// The bug: buildAndDeployStaging always cloned `--branch
+// The bug: the staging build always cloned `--branch
 // session.branch_name`. For an imported PR that branch name is the PR's HEAD
 // ref — and when the PR comes from a FORK that ref exists only in the fork,
 // never in the app's own repo. `git clone --branch` failed outright, the
@@ -14,19 +14,20 @@
 // fetched via that ref, then checked out detached. Same-repo imports take the
 // identical path, so there's one code path rather than a fork special case.
 //
-// What this suite pins down:
-//   - native sessions still clone their own branch, with no PR-ref fetch;
+// The build is the preview machine's now: each attempt reaches the clone
+// through staging.prepareAttempt (buildAndDeployStagingInner with the
+// attempt), always at an exact head. What this suite pins down:
 //   - a pinned + PR-numbered session clones WITHOUT --branch and fetches
 //     refs/pull/<N>/head, then detaches at the exact SHA;
 //   - if the PR ref is unavailable (very old PR, unusual host) it falls back
 //     to fetching the bare SHA rather than giving up;
-//   - a pinned session with no PR number keeps the historical
-//     detach-then-fetch-SHA behaviour;
+//   - a pinned session with no PR number (a native one) keeps the branch
+//     clone and the plain detach, and never touches refs/pull;
 //   - when nothing can produce the pinned commit the build THROWS — building
 //     whatever the clone happened to land on would preview the wrong code.
 //
 // Every collaborator is stubbed (same shape as
-// tests/staging-build-serialize.test.js) — no docker, no git, no Postgres.
+// tests/staging-prepare-attempt.test.js) — no docker, no git, no Postgres.
 //
 // Run with: node --test tests/pr-import-fork-clone.test.js
 
@@ -71,7 +72,8 @@ function loadStaging({ gitFail = null } = {}) {
     // into previews (URL only, no token), so the staging path calls this.
     platformApiBaseUrl: () => 'http://usernode:3000/api/app-platform',
   });
-  stub(ids.pool, { getPool: () => ({ query: async () => ({ rows: [] }) }) });
+  const query = async () => ({ rows: [] });
+  stub(ids.pool, { getPool: () => ({ query, connect: async () => ({ query, release() {} }) }) });
   stub(ids.caddy, {
     stagingHostname: (slug, u) => `${slug}--${u}.example.test`,
     warmCert: async () => ({ ok: true, code: 200 }),
@@ -87,12 +89,15 @@ function loadStaging({ gitFail = null } = {}) {
     buildImage: async () => {},
     runContainer: async () => 'cid123',
     waitForHealthy: async () => {},
-    stopAndRemove: async () => {},
+    inspectContainer: async () => ({ status: 'not_found', labels: {} }),
+    stopAndRemove: async () => ({ removed: true }),
     getHostPort: async () => null,
+    STAGING_STOP_GRACE_SEC: 2,
   });
   stub(ids.dbManager, {
     appDbName: (slug) => `app_${slug}`,
     stagingDbName: (slug, u, hash) => `app_${slug}_staging_${u}_${String(hash).substring(0, 6)}`,
+    databaseExists: async () => false,
     cloneDatabase: async () => ({ password: 'pw' }),
     connectionUrl: () => 'postgres://x',
   });
@@ -114,8 +119,14 @@ function loadStaging({ gitFail = null } = {}) {
 }
 
 const APP = { id: 5, slug: 'widget', name: 'Widget', repo_url: 'https://github.com/acme/widget' };
-const CONFIG = { jwtSecret: 's' };
+// A Docker runtime: its build reads the whole checkout, so the clone is the
+// plain (not root-only) one these argv assertions describe.
+const CONFIG = { jwtSecret: 's', appRuntime: 'docker' };
 const SHA = 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef';
+
+// One attempt of the preview machine (staging.prepareAttempt).
+const ATTEMPT = { n: 1, claim: 0, dbName: 'app_widget_staging_s91_deadbe', checkpoint: async () => {} };
+const build = (subject, session) => subject.prepareAttempt(CONFIG, session, APP, SHA, ATTEMPT);
 
 // An imported proposal: branch_name is the PR's head ref (which for a fork
 // PR does not exist in acme/widget), plus the PR number and pinned head sha.
@@ -125,25 +136,10 @@ const forkSession = (over = {}) => ({
   ...over,
 });
 
-test('a native session still clones its own branch and never touches refs/pull', async () => {
-  const { subject, find, restore } = loadStaging();
-  try {
-    await subject.buildAndDeployStaging(
-      CONFIG, { id: 7, branch_name: 'dev/native-work', staging_container_id: null }, APP, 'latest'
-    );
-    const clone = find('clone')[0];
-    assert.ok(clone, 'cloned once');
-    assert.ok(clone.includes('--branch'), 'native clone still selects the branch');
-    assert.equal(clone[clone.indexOf('--branch') + 1], 'dev/native-work');
-    assert.equal(find('fetch').length, 0, "'latest' pins nothing, so nothing is fetched");
-    assert.equal(find('checkout').length, 0, 'and HEAD is left on the branch tip');
-  } finally { restore(); }
-});
-
 test('an imported PR clones without --branch and fetches refs/pull/<N>/head', async () => {
   const { subject, find, git, restore } = loadStaging();
   try {
-    await subject.buildAndDeployStaging(CONFIG, forkSession(), APP, SHA);
+    await build(subject, forkSession());
     const clone = find('clone')[0];
     assert.ok(!clone.includes('--branch'),
       "a fork's head ref does not exist in the app's repo — cloning it would fail");
@@ -166,7 +162,7 @@ test('an imported PR clones without --branch and fetches refs/pull/<N>/head', as
 test('the PR-ref path never attempts a bare detach first (it could only fail)', async () => {
   const { subject, git, restore } = loadStaging();
   try {
-    await subject.buildAndDeployStaging(CONFIG, forkSession(), APP, SHA);
+    await build(subject, forkSession());
     const firstCheckout = git.findIndex((a) => a.includes('checkout'));
     const firstFetch = git.findIndex((a) => a.includes('fetch'));
     assert.ok(firstFetch >= 0 && firstFetch < firstCheckout,
@@ -181,7 +177,7 @@ test('an unavailable PR ref falls back to fetching the bare SHA', async () => {
     gitFail: (argv) => argv.includes('fetch') && argv.some((a) => String(a).startsWith('refs/pull/')),
   });
   try {
-    const res = await subject.buildAndDeployStaging(CONFIG, forkSession(), APP, SHA);
+    const res = await build(subject, forkSession());
     assert.ok(res.stagingUrl, 'the build still completed');
     const fetches = find('fetch');
     assert.equal(fetches.length, 2, 'tried the PR ref, then the SHA');
@@ -191,15 +187,14 @@ test('an unavailable PR ref falls back to fetching the bare SHA', async () => {
 });
 
 test('a pinned session with no PR number keeps the branch clone + plain detach', async () => {
-  const { subject, find, restore } = loadStaging();
+  const { subject, find, git, restore } = loadStaging();
   try {
-    await subject.buildAndDeployStaging(
-      CONFIG,
-      { id: 8, branch_name: 'dev/pinned', pr_number: null, staging_container_id: null },
-      APP, SHA
-    );
+    await build(subject, { id: 8, branch_name: 'dev/pinned', pr_number: null, staging_container_id: null });
     const clone = find('clone')[0];
     assert.ok(clone.includes('--branch'), 'no PR number → historical branch clone');
+    assert.equal(clone[clone.indexOf('--branch') + 1], 'dev/pinned');
+    assert.ok(!git.some((a) => a.some((x) => String(x).startsWith('refs/pull/'))),
+      'a native session never touches refs/pull');
     assert.equal(find('fetch').length, 0,
       'the branch tip already IS the pinned commit here, so the plain detach suffices');
     assert.ok(find('checkout')[0].includes(SHA), 'detached at the pinned commit');
@@ -212,7 +207,7 @@ test('a pinned commit that cannot be produced fails the build instead of preview
   });
   try {
     await assert.rejects(
-      () => subject.buildAndDeployStaging(CONFIG, forkSession(), APP, SHA),
+      () => build(subject, forkSession()),
       /failed/i,
       'every route to the commit failed, so the build must surface it (→ checks error)'
     );

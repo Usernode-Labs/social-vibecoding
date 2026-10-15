@@ -1,10 +1,9 @@
 'use strict';
 
-// The preview machine (src/workflow/preview/), as [main]'s preview sources
-// reach it. With WF_PREVIEWS_ENABLED on, every source of a preview or a
-// checks run hands its request here instead of building, capturing, writing
-// the verdict or tearing down itself; the machine decides and does the work.
-// With the flag off, enabled() is false and the sources run as before.
+// The preview machine (src/workflow/preview/), as the preview sources reach
+// it. Every source of a preview or a checks run hands its request here;
+// nothing else builds, captures, writes a verdict or tears down a preview:
+// the machine decides and does the work.
 
 const log = require('./logger');
 
@@ -12,13 +11,9 @@ const platform = () => require('../workflow/platform.ts');
 const SHA = /^[0-9a-f]{40}$/;
 const exact = (v) => (SHA.test(String(v || '').toLowerCase()) ? String(v).toLowerCase() : null);
 
-function enabled() {
-  try { return platform().previewsEnabled(); } catch { return false; }
-}
-
-// The machine holds the session (not detached or retired).
+// The machine holds the session (not retired).
 async function held(sessionId) {
-  return enabled() && platform().previewHeld(Number(sessionId));
+  return platform().previewHeld(Number(sessionId));
 }
 
 // What a source that names no exact head means (P-A1): the row's pin for its
@@ -43,18 +38,18 @@ async function exactHead(pool, session, head = null) {
   return exact(session.checks_commit_sha);
 }
 
-// A source announces a head. Answers whether the machine took it; a source
-// whose head cannot be resolved hands nothing (and builds nothing).
+// A source announces a head. A source whose head cannot be resolved hands
+// nothing (and nothing is built). Resolves the machine's outcome
+// ({ status: 'rejected', reason } when it is not taken: `same_head` for a head
+// it already builds or serves), or { status: 'rejected', reason: 'no_head' }.
 async function revision({ pool, session, head = null, source, trigger = null, carryFrom = null }) {
-  if (!enabled()) return false;
   const resolved = await exactHead(pool, session, head);
   if (!resolved) {
     log.warn('preview-workflow', 'No exact head to preview; nothing handed off', { sessionId: session.id, source });
-    return true;
+    return { status: 'rejected', reason: 'no_head' };
   }
-  await platform().submitRevision({ sessionId: Number(session.id), appId: Number(session.app_id), head: resolved, source, trigger,
+  return platform().submitRevision({ sessionId: Number(session.id), appId: Number(session.app_id), head: resolved, source, trigger,
     carryFrom: exact(carryFrom) });
-  return true;
 }
 
 // The preview itself (Preview click, deploy, a stale environment). Resolves
@@ -66,11 +61,18 @@ async function request({ pool, session, head = null, reason, actor = null }) {
 }
 
 // Run the checks again. A session the machine does not hold yet is enrolled
-// first with its head, so the recheck has something to run against.
+// first with the head its checks are about (staging-recovery.recheckHeadSha:
+// a promoted proposal's reviewed head, never a pin a run of an earlier commit
+// left), read from the row now: the caller's copy can predate a promote.
 async function recheck({ pool, session, reason, trigger = null, actor = null, system = false }) {
   const instance = await held(session.id) ? await platform().previewInstance(Number(session.id)) : null;
   if (!instance?.data?.head) {
-    await revision({ pool, session, head: session.checks_commit_sha, source: 'recheck', trigger });
+    const { rows: [pins] } = await pool.query(
+      `SELECT status, source, reviewed_head_sha, imported_pr_head_sha, checks_commit_sha, handoff_head_sha
+         FROM chat_sessions WHERE id = $1`, [session.id]);
+    const current = { ...session, ...(pins || {}) };
+    await revision({ pool, session: current, head: require('./staging-recovery').recheckHeadSha(current),
+      source: 'recheck', trigger });
   }
   return platform().requestRecheck({
     sessionId: Number(session.id), appId: Number(session.app_id), reason, trigger, actor, system,
@@ -87,24 +89,23 @@ async function skipped({ session, head, reason }) {
 }
 
 // The branch's code is no longer what the verdict describes (a CLI upload
-// not submitted yet, an update to a paused proposal). For a session the
-// machine holds, it clears the verdict; answers false otherwise, and the
-// caller clears it itself.
+// not submitted yet, an update to a paused proposal): the machine clears the
+// verdict (adopting a session it does not hold yet).
 async function clear({ session, reason }) {
-  if (!await held(session.id)) return false;
   await platform().checksCleared(Number(session.id), Number(session.app_id), reason);
-  return true;
 }
 
 // Retire a session's preview: terminal for a row that has left review
 // (archived, merged, deleted), otherwise an idle or pressure reclaim.
-// Answers null when the machine does not hold the session, else whether it
-// took the retirement ('accepted' or 'pending'; a refusal says why).
+// Answers whether the machine took it ('accepted' or 'pending'; a refusal
+// says why). A preview already retired, already retiring for good, or with
+// nothing serving is taken too: a second teardown of it has nothing to do.
+const ALREADY = new Set(['retired', 'already_retiring', 'already_idle']);
 async function retire({ session, reason, terminal }) {
-  if (!enabled()) return null;
   const out = await platform().retirePreview(Number(session.id), Number(session.app_id), reason, !!terminal);
-  if (!out) return null;
-  return { taken: out.status === 'accepted' || out.status === 'pending' || out.status === 'replayed', reason: out.reason || null };
+  const taken = out.status === 'accepted' || out.status === 'pending' || out.status === 'replayed'
+    || (out.status === 'rejected' && ALREADY.has(out.reason));
+  return { taken, reason: out.reason || null };
 }
 
 // An observer found the serving runtime gone: the machine rebuilds it.
@@ -116,4 +117,15 @@ async function lost({ session, detail = null }) {
   return true;
 }
 
-module.exports = { enabled, held, exactHead, revision, request, recheck, skipped, clear, retire, lost };
+// The machine is building the session's preview, retiring it, or waiting to
+// build it again after a failure (its RetryDue timer is set): a sweep that
+// finds the preview missing has nothing to add. A failure with no timer is
+// left to the stuck-checks lane, which asks for a recheck.
+const WORKING = new Set(['preparing', 'retiring']);
+async function working(sessionId) {
+  const instance = await platform().previewInstance(Number(sessionId));
+  if (WORKING.has(instance?.state)) return true;
+  return instance?.state === 'failed' && instance.deadline_at != null;
+}
+
+module.exports = { held, working, exactHead, revision, request, recheck, skipped, clear, retire, lost };

@@ -3523,7 +3523,7 @@ async function seedStagingAgentSession(pool, config) {
   // Put back on every boot, as the card's expiry is.
   await pool.query(
     `UPDATE chat_sessions SET check_state = 'skipped', check_error_detail = $2, test_results = '[]'::jsonb
-      WHERE id = $1`,
+      WHERE id = $1 AND NOT wf_holds('preview', 'session:' || id)`,
     [STAGING_AGENT_CHANGE_ID, 'branch has no commits beyond main, so there is nothing to test']
   );
 
@@ -3772,7 +3772,7 @@ async function seedStagingAgentFailingChecks(pool, config) {
     `UPDATE chat_sessions
         SET check_state = 'failing', test_results = $2::jsonb, check_error_detail = NULL,
             checks_commit_sha = $3, checks_checked_at = NOW() - INTERVAL '1 minute'
-      WHERE id = $1`,
+      WHERE id = $1 AND NOT wf_holds('preview', 'session:' || id)`,
     [STAGING_AGENT_FAILING_CHANGE_ID, JSON.stringify(STAGING_AGENT_FAILING_RESULTS), 'f'.repeat(40)]
   );
   log.info('db', 'Staging failing-checks agent fixture seeded', {
@@ -7202,7 +7202,7 @@ async function seedStagingVisuals(pool) {
           SET capture_state = 'partial',
               capture_detail = $1::jsonb,
               captured_at = NOW()
-        WHERE id = $2 AND capture_state IS NULL`,
+        WHERE id = $2 AND capture_state IS NULL AND NOT wf_holds('preview', 'session:' || id)`,
       [JSON.stringify({
         media: true,
         pathDefaulted: false,
@@ -10955,7 +10955,10 @@ async function seedStagingMyOpenPr(pool, config) {
               checks_base_behind_by = $7,
               freshness_checked_at = NOW() - INTERVAL '2 minutes',
               freshness_error = $8,
-              check_state = COALESCE($9, check_state),
+              -- The preview machine's once it holds the row (its guard refuses
+              -- a write from here).
+              check_state = CASE WHEN wf_holds('preview', 'session:' || id) THEN check_state
+                                 ELSE COALESCE($9, check_state) END,
               checks_checked_at = CASE WHEN $9 IS NULL THEN checks_checked_at
                                        ELSE NOW() - INTERVAL '10 minutes' END
         WHERE id = $1`,
@@ -11058,7 +11061,7 @@ async function seedStagingImportedPrProposal(pool, config) {
                 imported_pr_author = 'octo-contributor', check_state = 'passing',
                 checks_commit_sha = $2, checks_checked_at = NOW(),
                 test_results = $3::jsonb
-          WHERE id = $1`,
+          WHERE id = $1 AND NOT wf_holds('preview', 'session:' || id)`,
         [id1, headSha1, fixture1Results]
       );
     }
@@ -11117,7 +11120,7 @@ async function seedStagingImportedPrProposal(pool, config) {
                 imported_pr_author = 'octo-contributor', check_state = 'pending',
                 check_phase = 'testing',
                 checks_commit_sha = $2
-          WHERE id = $1`,
+          WHERE id = $1 AND NOT wf_holds('preview', 'session:' || id)`,
         [id2, headSha2]
       );
     }
@@ -11193,7 +11196,7 @@ async function seedStagingImportedPrProposal(pool, config) {
                 checks_commit_sha = $2, checks_checked_at = NOW(),
                 staging_url = NULL, staging_container_id = NULL,
                 promoted_at = NOW()
-          WHERE id = $1`,
+          WHERE id = $1 AND NOT wf_holds('preview', 'session:' || id)`,
         [id3, headSha3]
       );
     }
@@ -11343,7 +11346,7 @@ async function seedStagingChecksAdvisoryCard(pool, config) {
             SET check_state = $2, test_results = $3::jsonb,
                 checks_commit_sha = $4, checks_checked_at = NOW() - INTERVAL '6 minutes',
                 check_phase = NULL, check_error_detail = NULL
-          WHERE id = $1`,
+          WHERE id = $1 AND NOT wf_holds('preview', 'session:' || id)`,
         [have[0].id, checkState, JSON.stringify(results), sha]
       );
       return have[0].id;
@@ -11517,7 +11520,7 @@ async function seedStagingExternalAgentProposal(pool, config) {
                 pr_body = $5,
                 check_state = 'passing', checks_commit_sha = $3,
                 checks_checked_at = NOW()
-          WHERE id = $1`,
+          WHERE id = $1 AND NOT wf_holds('preview', 'session:' || id)`,
         [id, row.agent, row.headSha, forkOwner, row.body]
       );
     }

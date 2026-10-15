@@ -10122,7 +10122,7 @@ COMMENT ON TABLE global_chat_usage IS 'staging:private';
 -- Two tests read this file, cut it at a marker near the top of one of the
 -- blocks below, and EXECUTE everything from there to the end of the file
 -- against a disposable schema holding nothing but their own stub tables:
--- tests/account-email.test.js and tests/preview-lifecycle.test.js. So a
+-- tests/account-email.test.js. So a
 -- statement down here has to run with no `apps`, no `users` and nothing
 -- else the platform has. A new table carrying a foreign key belongs ABOVE
 -- this line.
@@ -11474,10 +11474,10 @@ COMMENT ON TABLE moderation_message_originals IS 'staging:private';
 
 CREATE UNIQUE INDEX IF NOT EXISTS moderation_reports_unique_open ON moderation_reports(case_id,cycle,reporter_user_id) WHERE legacy_type IS NULL;
 
--- Cross-Pod ownership of a preview build/capture; ephemeral runtime state.
---
--- tests/preview-lifecycle.test.js extracts this table definition into its
--- isolated scratch schema; later migrations may follow it normally.
+-- Cross-Pod ownership of a preview build/capture under the retired preview
+-- lifecycle; nothing writes it since the preview machine
+-- (src/workflow/preview/) became the only path. Kept for one release so a
+-- rollback target still finds it; drop it after that.
 CREATE TABLE IF NOT EXISTS preview_operations (
   session_id INTEGER PRIMARY KEY REFERENCES chat_sessions(id) ON DELETE CASCADE,
   desired_revision TEXT NOT NULL,
@@ -13869,7 +13869,10 @@ CREATE TRIGGER apps_wf_delivery_owned
 -- the checks' (which revision the verdict is for, and the verdict), and
 -- writes them in the transition that decides. checks_progress and
 -- check_phase stay the run's progress stream (a run says while it waits for
--- a checks slot, and when it starts testing) and are not guarded.
+-- a checks slot, and when it starts testing) and are not guarded. The old
+-- preview paths are deleted, so a write from outside the machine is refused
+-- whatever the cluster's ownership mode ('@raise'); a seed in migrate.js
+-- leaves a row the machine holds alone (wf_holds).
 DROP TRIGGER IF EXISTS chat_sessions_wf_preview_owned ON chat_sessions;
 CREATE TRIGGER chat_sessions_wf_preview_owned
   BEFORE UPDATE ON chat_sessions
@@ -13889,7 +13892,7 @@ CREATE TRIGGER chat_sessions_wf_preview_owned
         OR OLD.check_next_retry_at IS DISTINCT FROM NEW.check_next_retry_at
         OR OLD.console_check_state IS DISTINCT FROM NEW.console_check_state
         OR OLD.capture_state IS DISTINCT FROM NEW.capture_state)
-  EXECUTE FUNCTION wf_guard_owned_columns('@enrolled=preview/session:',
+  EXECUTE FUNCTION wf_guard_owned_columns('@enrolled=preview/session:', '@raise',
     'staging_url', 'staging_container_id', 'staging_image_ref', 'staging_build_ref', 'staging_runtime_kind',
     'staging_runtime_name', 'staging_commit_sha', 'checks_commit_sha', 'check_state',
     'test_results', 'check_error_detail', 'consecutive_check_failures', 'check_next_retry_at',

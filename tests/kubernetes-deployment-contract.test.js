@@ -228,9 +228,9 @@ test('Kubernetes passes the workflow flags through, off by default', () => {
   assert.match(values, /workflowMergeFollowupsEnabled: false/);
   assert.match(platform,
     /name: WF_MERGE_FOLLOWUPS_ENABLED, value: \{\{ \.Values\.platform\.workflowMergeFollowupsEnabled \| quote \}\}/);
-  assert.match(values, /workflowPreviewsEnabled: false/);
-  assert.match(platform,
-    /name: WF_PREVIEWS_ENABLED, value: \{\{ \.Values\.platform\.workflowPreviewsEnabled \| quote \}\}/);
+  // Previews have no flag either: the preview machine is the only path.
+  assert.doesNotMatch(platform, /WF_PREVIEWS_ENABLED|PREVIEW_LIFECYCLE_ENABLED/);
+  assert.doesNotMatch(values, /workflowPreviewsEnabled|previewLifecycleEnabled/);
 });
 
 test('Kubernetes workflow resolves all three images before publishing a release', () => {

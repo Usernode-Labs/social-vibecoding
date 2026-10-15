@@ -17,7 +17,6 @@ const appManifest = require('../services/app-manifest');
 const governanceService = require('../services/governance');
 const prImportSync = require('../services/pr-import-sync');
 const summaryFreshness = require('../services/summary-freshness');
-const sessionLifecycle = require('../services/session-lifecycle');
 const externalAgentPatch = require('../services/external-agent-patch');
 const { reviewedHeadForSession } = require('../services/pr-vote-revision');
 const { drainGuard } = require('../services/lifecycle');
@@ -818,8 +817,12 @@ function demoModeRoutes(config) {
 
       const sessions = await partnerSessions(app, partner);
       for (const s of sessions) {
-        await sessionLifecycle.teardownStagingForSession({ pool, sessionId: s.id, reason: 'demo-reset' })
-          .catch((err) => log.warn('demo-mode', 'Preview teardown failed', { sessionId: s.id, err: err.message }));
+        // For good, before the row goes: the preview machine stops a build
+        // still going and retires what serves (an idle retirement would wait
+        // for the build, and the delete below would leave it running).
+        await require('../services/preview-workflow').retire({
+          session: { id: s.id, app_id: app.id }, reason: 'demo-reset', terminal: true,
+        }).catch((err) => log.warn('demo-mode', 'Preview teardown failed', { sessionId: s.id, err: err.message }));
         if (githubUp && s.pr_number && s.status !== 'merged') {
           await github.closePR(repo.owner, repo.repo, s.pr_number)
             .catch((err) => log.warn('demo-mode', 'Closing the PR failed', { pr: s.pr_number, err: err.message }));

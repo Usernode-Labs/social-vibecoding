@@ -2,26 +2,26 @@
 // paths used to `return 'skipped'` with NO verdict written, leaving
 // check_state NULL — the merge gate blocks NULL as "still running its tests"
 // and the stuck-checks sweeper re-picked the row every pass, re-skipped, and
-// the proposal stayed merge-blocked forever. Now every no-op records an
-// explicit terminal verdict:
+// the proposal stayed merge-blocked forever. Now every no-op hands an
+// explicit terminal verdict to the preview machine:
 //
 //   - unparseable repo_url / missing GITHUB_BOT_TOKEN → 'skipped'
 //     ("checks unavailable: GitHub is not configured"), gate-passing;
 //   - branch not ahead of main → 'skipped' ("nothing to test");
-//   - compareCommits throw → 'error' (retryable via the existing
-//     storeChecks backoff bookkeeping).
+//   - compareCommits throw → the head the row knows is handed to the
+//     machine, whose build (and error lane) settles it.
 //
-// Also covers the two visuals helpers behind those verdicts:
+// rebuildSessionStaging, recordChecksSkipped and recheckSessionChecks only
+// hand over: the preview machine (services/preview-workflow.js) records the
+// verdict, broadcasts it, re-drives the merge and posts any note. So these
+// tests stub preview-workflow and assert what is handed over.
+//
+// Also covers the visuals helpers behind those verdicts:
 // storeChecksSkipped (writes 'skipped' + reason, clears the failure streak)
-// and setChecksPending (a later push returns a 'skipped' row to 'pending'),
-// plus recordStagingBootFailure's exported surface and recordChecksSkipped's
-// broadcast + auto-merge re-drive.
+// and setChecksPending (a later push returns a 'skipped' row to 'pending').
 //
 // Same require.cache stubbing pattern as ensure-staging.test.js — nothing
-// real spins up. The ahead_by===0 / compare-throw paths need a live
-// @octokit/rest import (not installed in the test tree), so their verdict
-// writes are exercised at the helper layer (storeChecksSkipped / the
-// storeChecks 'error' branch) rather than through rebuildSessionStaging.
+// real spins up; the compare goes through a stubbed services/github.
 //
 // Run with: node --test tests/staging-recovery-checks-verdicts.test.js
 
@@ -56,42 +56,49 @@ function makeRecordingPool() {
   };
 }
 
-// Load staging-recovery with visuals + ws stubbed so recordChecksSkipped /
-// recordStagingBootFailure calls are observable without touching Postgres.
-function loadRecovery() {
+// Load staging-recovery with the preview machine's front door
+// (services/preview-workflow), GitHub, ws and the workflow platform stubbed,
+// so every hand-off is observable without touching Postgres.
+function loadRecovery({ held = false, lost = false, working = false, compare = null } = {}) {
   const paths = {
     logger: require.resolve('../src/services/logger'),
-    visuals: require.resolve('../src/services/visuals'),
+    workflow: require.resolve('../src/services/preview-workflow'),
+    github: require.resolve('../src/services/github'),
     ws: require.resolve('../src/services/ws'),
+    platform: require.resolve('../src/workflow/platform.ts'),
     subject: require.resolve('../src/services/staging-recovery'),
   };
-  const skippedCalls = [];
-  const errorChecks = [];
-  const drains = [];
+  // Every call into the machine, in order: [name, argument].
+  const handed = [];
+  const compares = [];
   const broadcasts = [];
-  const notes = [];
+  const take = (name, out) => async (arg) => { handed.push([name, arg]); return typeof out === 'function' ? out(arg) : out; };
   const originals = [
     [paths.logger, stubModule(paths.logger, { info() {}, warn() {}, error() {}, debug() {} })],
-    [paths.visuals, stubModule(paths.visuals, {
-      storeChecksSkipped: async (_pool, sessionId, commitSha, reason, expectedCommitSha) => {
-        skippedCalls.push({ sessionId, commitSha, reason, expectedCommitSha });
-      },
-      storeChecks: async (_pool, sessionId, commitSha, result, detail) => {
-        errorChecks.push({ sessionId, commitSha, result, detail });
-      },
-      maybeAutoMergeAfterChecks: (_config, _pool, session, state) => {
-        drains.push({ sessionId: session.id, state });
-      },
-      summarizeBootFailure: (err) => (err && err.message) || 'boot failure',
+    [paths.workflow, stubModule(paths.workflow, {
+      held: take('held', held),
+      lost: take('lost', lost),
+      working: take('working', working),
+      revision: take('revision', undefined),
+      request: take('request', { status: 'accepted' }),
+      skipped: take('skipped', true),
+      recheck: take('recheck', undefined),
+    })],
+    [paths.github, stubModule(paths.github, {
+      getReadOctokit: async () => ({ rest: { repos: { compareCommits: async (args) => {
+        compares.push(args);
+        if (compare instanceof Error) throw compare;
+        return { data: compare };
+      } } } }),
+      describeGithubError: (err) => ({ message: err.message }),
     })],
     [paths.ws, stubModule(paths.ws, {
       broadcastGlobal: (m) => broadcasts.push(m),
       pushSessionUpdate: () => {},
-      // #866: imported proposals narrate into the group discussion thread
-      // (they have no dev chat), so this is now part of the failure path.
-      sendSystemMessage: async (_pool, appId, text, kind, metadata, target) => {
-        notes.push({ appId, text, kind, metadata, target });
-      },
+      sendSystemMessage: async () => { throw new Error('the machine posts its own notes'); },
+    })],
+    [paths.platform, stubModule(paths.platform, {
+      conflictResolved: async (...args) => { handed.push(['conflictResolved', args]); },
     })],
   ];
   delete require.cache[paths.subject];
@@ -102,7 +109,9 @@ function loadRecovery() {
     }
     delete require.cache[paths.subject];
   };
-  return { subject, skippedCalls, errorChecks, drains, broadcasts, notes, restore };
+  // The machine calls other than the probes (held / lost / working).
+  const handoffs = () => handed.filter(([name]) => !['held', 'lost', 'working'].includes(name));
+  return { subject, handed, handoffs, compares, broadcasts, restore };
 }
 
 const SESSION = {
@@ -136,11 +145,15 @@ test('stuck-check recovery includes submitted active CLI handoffs without wideni
       handoff_uploaded_sha: 'new-upload',
       handoff_upload_checked_sha: 'old-head',
     },
+    { id: 6, status: 'promoted', source: 'native' },
   ];
   const queries = [];
   const pool = {
     async query(sql, params) {
       queries.push({ sql: String(sql), params });
+      // The second read: which of them the preview machine is building or
+      // checking right now (its work is alive while its lease is).
+      if (/FROM wf_work/.test(String(sql))) return { rows: [{ key: 'session:6' }] };
       return { rows: candidates };
     },
   };
@@ -149,8 +162,8 @@ test('stuck-check recovery includes submitted active CLI handoffs without wideni
     const { rows } = await subject.findStuckCheckSessions({
       pool, staleMs: 600000, maxAutoRetries: 6,
     });
-    assert.deepEqual(rows.map((row) => row.id), [1, 2]);
-    assert.equal(queries.length, 1);
+    assert.deepEqual(rows.map((row) => row.id), [1, 2], 'a session the machine is working on is left to it');
+    assert.equal(queries.length, 2);
     assert.match(queries[0].sql,
       /cs\.status = 'active'[\s\S]*cs\.source = 'cli_handoff'/,
       'submitted pre-vote handoffs are selected alongside promoted proposals');
@@ -164,39 +177,8 @@ test('stuck-check recovery includes submitted active CLI handoffs without wideni
     // The fourth is how long a platform fault is retried past the cap
     // (tests/platform-fault-retry.test.js).
     assert.deepEqual(queries[0].params, [600000, 6, 50, subject.PLATFORM_FAULT_RETRY_MS]);
-  } finally { restore(); }
-});
-
-test('markInterruptedBuilds makes a killed build overdue now, and only a build that was still building', async () => {
-  // Proposal 5125, 2026-09-26: its staging build started at 14:55:38, a
-  // deploy's SIGTERM killed the platform at 14:55:51, and the run read as a
-  // live 'building' check until CHECKS_STALE_MS passed. A cleared clock is
-  // what checkRunOverdue and findStuckCheckSessions read as overdue.
-  const { subject, restore } = loadRecovery();
-  const queries = [];
-  const pool = {
-    async query(sql, params) {
-      queries.push({ sql: String(sql), params });
-      return { rows: [{ id: 5125 }] };
-    },
-  };
-  try {
-    assert.deepEqual(await subject.markInterruptedBuilds(pool, [5125, '5125', 7, 'x', null]), [5125]);
-    assert.equal(queries.length, 1);
-    assert.match(queries[0].sql, /SET checks_checked_at = NULL/);
-    assert.match(queries[0].sql, /check_state = 'pending' AND check_phase = 'building'/,
-      'a capture the harvest can re-seat, or a verdict that landed, is left alone');
-    assert.deepEqual(queries[0].params, [[5125, 7]], 'each session once, and only real ids');
-
-    queries.length = 0;
-    assert.deepEqual(await subject.markInterruptedBuilds(pool, []), []);
-    assert.deepEqual(await subject.markInterruptedBuilds(pool, undefined), []);
-    assert.equal(queries.length, 0, 'nothing in flight, nothing written');
-
-    const now = Date.now();
-    assert.equal(subject.checkRunOverdue({
-      check_state: 'pending', check_phase: 'building', checks_commit_sha: 'head', checks_checked_at: null,
-    }, { now, staleMs: 600000 }), true, 'the marked row is overdue at once');
+    assert.match(queries[1].sql, /kind IN \('preview\.prepare', 'checks\.run'\)/);
+    assert.deepEqual(queries[1].params, [['session:1', 'session:2', 'session:6']], 'only the rows in scope are looked up');
   } finally { restore(); }
 });
 
@@ -205,10 +187,10 @@ test('checkRunOverdue requires a submitted head and treats a missing timestamp a
   try {
     const now = Date.now();
     assert.equal(subject.checkRunOverdue({
-      check_state: 'pending', checks_commit_sha: 'head', checks_checked_at: null,
+      check_state: null, checks_commit_sha: 'head', checks_checked_at: null,
     }, { now, staleMs: 600000 }), true);
     assert.equal(subject.checkRunOverdue({
-      check_state: 'pending', checks_commit_sha: 'head',
+      check_state: null, checks_commit_sha: 'head',
       checks_checked_at: new Date(now - 1000),
     }, { now, staleMs: 600000 }), false);
     assert.equal(subject.checkRunOverdue({ check_state: null }, {
@@ -217,36 +199,38 @@ test('checkRunOverdue requires a submitted head and treats a missing timestamp a
   } finally { restore(); }
 });
 
-test('a deferred verdict is waiting on a conflict, not on a runner: never overdue, never swept', async () => {
+test("a 'pending' run is the preview machine's, alive while its lease is: never overdue by clock", () => {
   const { subject, restore } = loadRecovery();
   try {
     const now = Date.now();
-    // Hours old and still 'pending' — the shape the stale sweep exists to
-    // catch — but phase 'deferred' says no run was ever started for it
-    // (services/check-admission.js). Re-driving one would only defer again.
-    assert.equal(subject.checkRunOverdue({
-      check_state: 'pending', check_phase: 'deferred', checks_commit_sha: 'head',
-      checks_checked_at: new Date(now - 6 * 3600 * 1000),
-    }, { now, staleMs: 600000 }), false);
-    assert.equal(subject.checkRunOverdue({
-      check_state: 'pending', check_phase: 'deferred', checks_commit_sha: 'head', checks_checked_at: null,
-    }, { now, staleMs: 600000 }), false, 'even with no timestamp at all');
-    // The same head with a run actually going is judged as before.
-    assert.equal(subject.checkRunOverdue({
-      check_state: 'pending', check_phase: 'testing', checks_commit_sha: 'head',
-      checks_checked_at: new Date(now - 6 * 3600 * 1000),
-    }, { now, staleMs: 600000 }), true);
+    for (const phase of ['building', 'testing', 'queued', 'deferred', null]) {
+      for (const checkedAt of [null, new Date(now - 6 * 3600 * 1000)]) {
+        assert.equal(subject.checkRunOverdue({
+          check_state: 'pending', check_phase: phase, checks_commit_sha: 'head', checks_checked_at: checkedAt,
+        }, { now, staleMs: 600000 }), false, `phase ${phase}, ${checkedAt ? 'hours old' : 'no timestamp'}`);
+      }
+    }
+  } finally { restore(); }
+});
 
+test('a deferred verdict is waiting on a conflict, not on a runner: never swept', async () => {
+  const { subject, restore } = loadRecovery();
+  try {
+    // Phase 'deferred' says no run was ever started for it
+    // (services/check-admission.js). Re-driving one would only defer again.
     const queries = [];
     const pool = { query: async (sql, params) => { queries.push({ sql, params }); return { rows: [] }; } };
     await subject.findStuckCheckSessions({ pool, staleMs: 600000, maxAutoRetries: 6 });
     assert.match(queries[0].sql, /cs\.check_phase IS DISTINCT FROM 'deferred'/,
       'the pending branch of the sweep leaves deferred rows alone');
+    // An 'error' on a session the machine holds is the machine's own timer's.
+    assert.match(queries[0].sql,
+      /cs\.check_state = 'error'\s+AND NOT EXISTS \(SELECT 1 FROM wf_instances w[\s\S]*?w\.deadline_at IS NOT NULL\)/);
   } finally { restore(); }
 });
 
-test("rebuildSessionStaging: unparseable repo_url records a 'skipped' verdict (GitHub not configured)", async () => {
-  const { subject, skippedCalls, restore } = loadRecovery();
+test("rebuildSessionStaging: unparseable repo_url hands a 'skipped' verdict to the machine (GitHub not configured)", async () => {
+  const { subject, handoffs, compares, restore } = loadRecovery();
   try {
     const r = await subject.rebuildSessionStaging({
       config: {}, pool: makeRecordingPool(),
@@ -254,15 +238,18 @@ test("rebuildSessionStaging: unparseable repo_url records a 'skipped' verdict (G
       reason: 'test',
     });
     assert.equal(r, 'skipped');
-    assert.equal(skippedCalls.length, 1);
-    assert.equal(skippedCalls[0].sessionId, 42);
-    assert.match(skippedCalls[0].reason, /GitHub is not configured/);
-    assert.equal(skippedCalls[0].commitSha, 'cafe1234', 'stamps the last-known commit');
+    const [[name, arg], ...rest] = handoffs();
+    assert.equal(name, 'skipped');
+    assert.equal(rest.length, 0, 'nothing is built');
+    assert.equal(arg.session.id, 42);
+    assert.match(arg.reason, /GitHub is not configured/);
+    assert.equal(arg.head, 'cafe1234', 'stamps the last-known commit');
+    assert.equal(compares.length, 0);
   } finally { restore(); }
 });
 
-test("rebuildSessionStaging: missing GITHUB_BOT_TOKEN records a 'skipped' verdict", async () => {
-  const { subject, skippedCalls, restore } = loadRecovery();
+test("rebuildSessionStaging: missing GITHUB_BOT_TOKEN hands a 'skipped' verdict to the machine", async () => {
+  const { subject, handoffs, restore } = loadRecovery();
   const prev = process.env.GITHUB_BOT_TOKEN;
   delete process.env.GITHUB_BOT_TOKEN;
   try {
@@ -272,57 +259,168 @@ test("rebuildSessionStaging: missing GITHUB_BOT_TOKEN records a 'skipped' verdic
       reason: 'test',
     });
     assert.equal(r, 'skipped');
-    assert.equal(skippedCalls.length, 1);
-    assert.match(skippedCalls[0].reason, /GitHub is not configured/);
+    assert.deepEqual(handoffs().map(([name]) => name), ['skipped']);
+    assert.match(handoffs()[0][1].reason, /GitHub is not configured/);
   } finally {
     if (prev !== undefined) process.env.GITHUB_BOT_TOKEN = prev;
     restore();
   }
 });
 
-test('recordChecksSkipped: writes the verdict, broadcasts checks_ready, re-drives the auto-merge drain', async () => {
-  const { subject, skippedCalls, drains, broadcasts, restore } = loadRecovery();
+test('recordChecksSkipped: hands the verdict to the machine, which records, broadcasts and re-drives the merge', async () => {
+  const { subject, handoffs, broadcasts, restore } = loadRecovery();
   try {
     await subject.recordChecksSkipped({
-      config: {}, pool: makeRecordingPool(), session: { ...SESSION },
-      commitSha: 'beef5678', expectedCommitSha: 'cafe1234',
+      session: { ...SESSION }, commitSha: 'beef5678',
       reason: 'branch has no commits beyond main, so there is nothing to test',
     });
-    assert.equal(skippedCalls.length, 1);
-    assert.equal(skippedCalls[0].commitSha, 'beef5678');
-    assert.equal(skippedCalls[0].expectedCommitSha, 'cafe1234');
-    assert.match(skippedCalls[0].reason, /nothing to test/);
-    const ev = broadcasts.find((m) => m.event === 'checks_ready');
-    assert.ok(ev, 'checks_ready broadcast emitted');
-    assert.equal(ev.state, 'skipped');
-    assert.equal(ev.sessionId, 42);
-    assert.deepEqual(drains, [{ sessionId: 42, state: 'skipped' }],
-      'auto-merge drain re-driven with the skipped verdict');
+    assert.deepEqual(handoffs(), [['skipped', {
+      session: { ...SESSION }, head: 'beef5678',
+      reason: 'branch has no commits beyond main, so there is nothing to test',
+    }]]);
+    assert.deepEqual(broadcasts, [], 'the machine tells open clients, not this module');
   } finally { restore(); }
 });
 
-test('recordStagingBootFailure records the verdict and retires every stale preview pointer', async () => {
-  const { subject, errorChecks, restore } = loadRecovery();
-  const pool = makeRecordingPool();
+test('recordChecksSkipped is best-effort: a machine that refuses does not throw', async () => {
+  const { subject, restore } = loadRecovery();
   try {
-    assert.equal(typeof subject.recordStagingBootFailure, 'function', 'exported for the dev-turn tails');
-    await subject.recordStagingBootFailure({
-      config: {}, pool, session: { ...SESSION },
-      commitHash: 'cafe1234', err: new Error('relation "posts" does not exist'),
-    });
-    assert.equal(errorChecks.length, 1);
-    assert.equal(errorChecks[0].sessionId, 42);
-    assert.equal(errorChecks[0].commitSha, 'cafe1234');
-    assert.equal(errorChecks[0].result.state, 'error');
-    assert.match(errorChecks[0].detail, /does not exist/);
-    const retire = pool.queries.find((q) => /SET staging_container_id = NULL/.test(q.sql));
-    assert.ok(retire, 'a failed new build cannot leave the prior preview advertised');
-    assert.match(retire.sql, /staging_url = NULL/);
-    assert.match(retire.sql, /staging_commit_sha = NULL/);
-    assert.match(retire.sql, /checks_commit_sha IS NOT DISTINCT FROM \$2::text/,
-      'a late failed build cannot clear a newer preview');
-    assert.deepEqual(retire.params, [42, 'cafe1234']);
+    require.cache[require.resolve('../src/services/preview-workflow')].exports.skipped =
+      async () => { throw new Error('no instance'); };
+    await subject.recordChecksSkipped({ session: { ...SESSION }, commitSha: 'beef5678', reason: 'x' });
   } finally { restore(); }
+});
+
+// ── what a rebuild hands to the machine ──────────────────────────────────
+
+const AHEAD = { ahead_by: 2, base_commit: { sha: 'base0000' }, commits: [{ sha: 'tip-1' }, { sha: 'tip-2' }] };
+
+function withToken(fn) {
+  return async () => {
+    const prev = process.env.GITHUB_BOT_TOKEN;
+    process.env.GITHUB_BOT_TOKEN = 'tok';
+    try { await fn(); } finally {
+      if (prev === undefined) delete process.env.GITHUB_BOT_TOKEN; else process.env.GITHUB_BOT_TOKEN = prev;
+    }
+  };
+}
+
+const NATIVE = { ...SESSION, repo_url: 'https://github.com/acme/whiteboard', pr_number: 7 };
+
+test('a heal or a boot leaves a preview the machine is preparing, retiring or failing to it; a Preview click still asks', withToken(async () => {
+  for (const reason of ['heal', 'startup']) {
+    const { subject, handoffs, compares, restore } = loadRecovery({ held: true, lost: false, working: true, compare: AHEAD });
+    try {
+      assert.equal(await subject.rebuildSessionStaging({ config: {}, pool: makeRecordingPool(), session: NATIVE, reason }),
+        'left_to_machine', reason);
+      assert.deepEqual(handoffs(), [], `${reason}: nothing handed over`);
+      assert.equal(compares.length, 0, `${reason}: not even a compare`);
+    } finally { restore(); }
+  }
+  const { subject, handed, handoffs, restore } = loadRecovery({ held: true, lost: false, working: true, compare: AHEAD });
+  try {
+    assert.equal(await subject.rebuildSessionStaging({ config: {}, pool: makeRecordingPool(), session: NATIVE, reason: 'preview-click' }),
+      'handed_off');
+    assert.ok(!handed.some(([name]) => name === 'working'), 'a click does not ask whether the machine is busy');
+    assert.deepEqual(handoffs().map(([name, arg]) => [name, arg.head, arg.reason]), [['request', 'tip-2', 'ensure']]);
+  } finally { restore(); }
+}));
+
+test('a runtime observed gone, on a session the machine serves, is reported lost and nothing else', withToken(async () => {
+  for (const reason of ['heal', 'startup', 'preview-click']) {
+    const { subject, handed, handoffs, compares, restore } = loadRecovery({ held: true, lost: true, compare: AHEAD });
+    try {
+      assert.equal(await subject.rebuildSessionStaging({ config: {}, pool: makeRecordingPool(), session: NATIVE, reason }),
+        'handed_off');
+      const lost = handed.find(([name]) => name === 'lost');
+      assert.deepEqual(lost[1], { session: NATIVE, detail: reason });
+      assert.deepEqual(handoffs(), []);
+      assert.equal(compares.length, 0);
+    } finally { restore(); }
+  }
+  // Any other reason is not an observation: it goes the ordinary way.
+  const { subject, handed, handoffs, restore } = loadRecovery({ held: true, lost: true, compare: AHEAD });
+  try {
+    await subject.rebuildSessionStaging({ config: {}, pool: makeRecordingPool(), session: NATIVE, reason: 'stuck-checks-sweep' });
+    assert.ok(!handed.some(([name]) => name === 'lost'));
+    assert.deepEqual(handoffs().map(([name]) => name), ['revision']);
+  } finally { restore(); }
+}));
+
+test('a branch ahead of main is handed over as a revision of its tip, with the trigger its reason maps to', withToken(async () => {
+  const { subject, handoffs, compares, restore } = loadRecovery({ compare: AHEAD });
+  try {
+    const session = { ...NATIVE, status: 'active' };
+    assert.equal(await subject.rebuildSessionStaging({ config: {}, pool: makeRecordingPool(), session, reason: 'heal' }),
+      'handed_off');
+    assert.deepEqual(compares, [{ owner: 'acme', repo: 'whiteboard', base: 'main', head: 'feat/x' }]);
+    const [[name, arg]] = handoffs();
+    assert.equal(name, 'revision');
+    assert.equal(arg.head, 'tip-2');
+    assert.equal(arg.source, 'heal');
+    assert.equal(arg.trigger, 'stuck-sweep');
+  } finally { restore(); }
+}));
+
+test('a proposal up for approval is rebuilt at its reviewed head, not a tip past it; an explicit head wins over both', withToken(async () => {
+  const { subject, handoffs, restore } = loadRecovery({ compare: AHEAD });
+  try {
+    const session = { ...NATIVE, status: 'promoted', reviewed_head_sha: 'reviewed' };
+    await subject.rebuildSessionStaging({ config: {}, pool: makeRecordingPool(), session, reason: 'startup' });
+    await subject.rebuildSessionStaging({ config: {}, pool: makeRecordingPool(), session, reason: 'startup', headSha: 'asked' });
+    assert.deepEqual(handoffs().map(([, arg]) => [arg.head, arg.trigger]), [['reviewed', 'boot-reconcile'], ['asked', 'boot-reconcile']]);
+  } finally { restore(); }
+}));
+
+test("a branch level with main hands over a 'skipped' verdict on main's commit", withToken(async () => {
+  const { subject, handoffs, restore } = loadRecovery({ compare: { ahead_by: 0, base_commit: { sha: 'base0000' }, commits: [] } });
+  try {
+    assert.equal(await subject.rebuildSessionStaging({ config: {}, pool: makeRecordingPool(), session: NATIVE, reason: 'heal' }),
+      'skipped');
+    const [[name, arg]] = handoffs();
+    assert.equal(name, 'skipped');
+    assert.equal(arg.head, 'base0000');
+    assert.match(arg.reason, /^branch has no commits beyond main/);
+  } finally { restore(); }
+}));
+
+test('a compare that fails hands over the head the row knows; the machine\'s build settles it', withToken(async () => {
+  const { subject, handoffs, restore } = loadRecovery({ compare: new Error('Not Found') });
+  try {
+    assert.equal(await subject.rebuildSessionStaging({ config: {}, pool: makeRecordingPool(), session: NATIVE, reason: 'heal' }),
+      'handed_off');
+    assert.deepEqual(handoffs().map(([name, arg]) => [name, arg.head, arg.trigger]), [['revision', 'cafe1234', 'stuck-sweep']]);
+  } finally { restore(); }
+}));
+
+test('recheckSessionChecks hands the recheck to the machine, as a person\'s or the system\'s', async () => {
+  const { subject, handoffs, restore } = loadRecovery();
+  try {
+    for (const reason of ['manual-recheck', 'testing-update', 'preview-click', 'stuck-checks-sweep', 'startup']) {
+      assert.equal(await subject.recheckSessionChecks({ pool: makeRecordingPool(), session: SESSION, reason }), 'handed_off');
+    }
+    assert.deepEqual(handoffs().map(([name, arg]) => [name, arg.reason, arg.trigger, arg.system]), [
+      ['recheck', 'manual-recheck', 'manual-recheck', false],
+      ['recheck', 'testing-update', 'manual-recheck', false],
+      ['recheck', 'preview-click', 'manual-recheck', false],
+      ['recheck', 'stuck-checks-sweep', 'stuck-sweep', true],
+      ['recheck', 'startup', 'boot-reconcile', true],
+    ]);
+  } finally { restore(); }
+});
+
+test('a deferred head that now merges cleanly resumes the machine\'s own episode', async () => {
+  const held = loadRecovery({ held: true });
+  try {
+    await held.subject.recheckSessionChecks({ pool: makeRecordingPool(), session: SESSION, reason: 'conflict-resolved' });
+    assert.deepEqual(held.handoffs(), [['conflictResolved', [42, 5, 'cafe1234']]]);
+  } finally { held.restore(); }
+  // A session the machine does not hold yet goes through the ordinary recheck.
+  const free = loadRecovery({ held: false });
+  try {
+    await free.subject.recheckSessionChecks({ pool: makeRecordingPool(), session: SESSION, reason: 'conflict-resolved' });
+    assert.deepEqual(free.handoffs().map(([name, arg]) => [name, arg.trigger]), [['recheck', 'conflict-resolved']]);
+  } finally { free.restore(); }
 });
 
 // ── visuals helpers: the SQL behind the verdicts ─────────────────────────
@@ -407,7 +505,7 @@ test("setChecksPending returns a 'skipped' row to 'pending' for the next commit 
   } finally { restore(); }
 });
 
-test("storeChecks 'error' branch keeps the backoff bookkeeping the compare-throw path relies on", async () => {
+test("storeChecks 'error' branch keeps the backoff bookkeeping the error lane relies on", async () => {
   const { subject, restore } = loadVisuals();
   const pool = makeRecordingPool();
   try {
@@ -439,113 +537,30 @@ test('terminal check writes are discarded after a newer commit owns the session'
   } finally { restore(); }
 });
 
-// ── #866: imported proposals heal by SHA and narrate where they're visible ──
+// ── #866: imported proposals heal by SHA ─────────────────────────────────
 //
 // An imported PR reaches this file the moment its preview is GC'd or lost to a
 // restart, and every assumption the heal made about a session was a native
 // one: compare `main...<branch_name>` (a fork's head ref isn't in the base
-// repo → permanent 'error' verdict), open a PR if none exists (there always is
-// one — it's someone else's), and write the breadcrumb to
-// chat_session_messages (a surface an imported proposal cannot open).
-//
-// The compare path itself can't be driven here — rebuildSessionStaging does
-// `await import('@octokit/rest')`, which isn't installed in the test tree (see
-// the header note), and an ESM dynamic import can't be require.cache-stubbed.
-// So the reachable half is asserted behaviourally and the rest as source
-// invariants, the same convention as tests/staging-pill-fixture-visibility.js.
+// repo → permanent 'error' verdict) and open a PR if none exists (there always
+// is one — it's someone else's). Where its notes go is the machine's
+// (src/workflow/preview/machine.ts: buildStarted, published, prepareFailed).
 
-// A pool that answers recordStagingBootFailure's streak readback, so the
-// notify/post half of the function actually runs.
-function makeStreakPool(row) {
-  const queries = [];
-  return {
-    queries,
-    async query(sql, params) {
-      queries.push({ sql: String(sql), params });
-      if (/SELECT user_id, app_id, pr_number/.test(String(sql))) return { rows: [row] };
-      return { rows: [], rowCount: 1 };
-    },
-  };
-}
-
-const STREAK_ROW = { user_id: 3, app_id: 5, pr_number: 9401, consecutive_check_failures: 1, check_error_notified_at: null };
-
-test('boot failure on an IMPORTED proposal posts to the discussion thread, not the dev transcript', async () => {
-  const { subject, notes, restore } = loadRecovery();
-  const pool = makeStreakPool(STREAK_ROW);
+test('an imported proposal is compared and rebuilt at its recorded head sha, never its fork branch name', withToken(async () => {
+  const { subject, handoffs, compares, restore } = loadRecovery({ compare: AHEAD });
   try {
-    await subject.recordStagingBootFailure({
-      config: {}, pool,
-      session: { ...SESSION, source: 'imported', imported_pr_head_sha: 'abc123', pr_number: 9401 },
-      commitHash: 'abc123',
-      err: new Error('missing required secret OPENAI_KEY'),
-    });
-    assert.equal(notes.length, 1, 'exactly one post per failure streak');
-    const n = notes[0];
-    assert.deepEqual(n.target, { type: 'session', ref: 42 },
-      'targets the proposal discussion thread — an imported PR has no dev chat to read');
-    assert.match(n.text, /Staging preview failed to start/);
-    assert.match(n.text, /missing required secret OPENAI_KEY/, 'names the blocking reason');
-    assert.match(n.text, /can't merge yet/, 'connects the failure to the blocked merge');
-    assert.equal(n.metadata.checkError, true);
-    assert.equal(n.metadata.prNumber, 9401);
-    assert.ok(!pool.queries.some((q) => /INSERT INTO chat_session_messages/.test(q.sql)),
-      'no row written to the invisible surface');
+    const session = { ...NATIVE, source: 'imported', branch_name: 'fork-feature', imported_pr_head_sha: 'abc123', pr_number: null };
+    assert.equal(await subject.rebuildSessionStaging({ config: {}, pool: makeRecordingPool(), session, reason: 'heal' }),
+      'handed_off');
+    assert.equal(compares[0].head, 'abc123', 'a fork head ref is not in this repo');
+    assert.deepEqual(handoffs().map(([name, arg]) => [name, arg.head]), [['revision', 'abc123']],
+      'pinned to the head the votes describe, not the compare tip; and no PR opened for someone else\'s fork');
   } finally { restore(); }
-});
-
-test('boot failure on a NATIVE session still writes the dev-chat transcript row', async () => {
-  const { subject, notes, restore } = loadRecovery();
-  const pool = makeStreakPool(STREAK_ROW);
-  try {
-    await subject.recordStagingBootFailure({
-      config: {}, pool, session: { ...SESSION },
-      commitHash: 'cafe1234', err: new Error('port already in use'),
-    });
-    assert.equal(notes.length, 0, 'native sessions do not post to the group thread');
-    const insert = pool.queries.find((q) => /INSERT INTO chat_session_messages/.test(q.sql));
-    assert.ok(insert, 'the dev chat is where a native session reads its failures');
-    assert.match(String(insert.params[1]), /port already in use/);
-  } finally { restore(); }
-});
-
-test('a quiet backoff retry narrates nothing, imported or not', async () => {
-  const { subject, notes, restore } = loadRecovery();
-  const pool = makeStreakPool({ ...STREAK_ROW, consecutive_check_failures: 3, check_error_notified_at: '2026-07-01T00:00:00Z' });
-  try {
-    await subject.recordStagingBootFailure({
-      config: {}, pool, session: { ...SESSION, source: 'imported' },
-      commitHash: 'abc123', err: new Error('still broken'),
-    });
-    assert.equal(notes.length, 0, 'the streak was already announced');
-    assert.ok(!pool.queries.some((q) => /UPDATE chat_sessions SET check_error_notified_at/.test(q.sql)),
-      'and the stamp is not rewritten');
-  } finally { restore(); }
-});
-
-// ── source invariants for the compare/PR/breadcrumb branches ────────────
+}));
 
 const RECOVERY_SRC = require('node:fs').readFileSync(
   require('node:path').join(__dirname, '..', 'src', 'services', 'staging-recovery.js'), 'utf8'
 );
-
-test('the heal compares and pins the IMPORTED head sha, never the fork branch name', () => {
-  assert.match(RECOVERY_SRC, /const importedHead = imported \? \(session\.imported_pr_head_sha \|\| null\) : null;/,
-    'the recorded head sha is the imported identity');
-  assert.match(RECOVERY_SRC, /const compareHead = importedHead \|\| session\.branch_name;/,
-    'imported → sha, native → branch (a fork head ref is not in this repo)');
-  assert.match(RECOVERY_SRC, /base: 'main', head: compareHead/, 'the compare uses it');
-  assert.match(RECOVERY_SRC, /const commitHash = importedHead\s*\n\s*\|\|/,
-    'and the build is pinned to it, not to the compare tip');
-});
-
-test('the heal claims the resolved commit before staging can fail', () => {
-  assert.match(
-    RECOVERY_SRC,
-    /const commitHash = [\s\S]*?await visuals\.setChecksPending\(pool, session\.id, commitHash,[\s\S]*?buildAndDeployStaging\(config, session, app, commitHash\)/,
-    'a boot failure must be stored against the same commit the rebuild attempted'
-  );
-});
 
 test('an imported row with no recorded head sha records a terminal skip', () => {
   assert.match(RECOVERY_SRC, /if \(imported && !importedHead\) \{[\s\S]*?reason: 'imported PR has no recorded head commit, so there is nothing to preview'/,
@@ -557,11 +572,8 @@ test('the heal never opens a PR for an imported or unattended headless proposal'
     'only a human-owned native session may gain a draft PR during recovery');
 });
 
-test('the rebuilt-preview breadcrumb goes to the surface the proposal can show', () => {
-  const idx = RECOVERY_SRC.indexOf("session.source === 'imported'");
-  assert.ok(idx > 0, 'the breadcrumb branches on the session kind');
-  assert.match(RECOVERY_SRC, /\{ type: 'session', ref: session\.id \}/,
-    'imported → the discussion thread');
-  assert.match(RECOVERY_SRC, /INSERT INTO chat_session_messages/,
-    'native → the dev transcript, unchanged');
+test('recovery only hands over: it never builds, never posts a chat row, never stamps a verdict itself', () => {
+  const code = RECOVERY_SRC.replace(/^\s*\/\/.*$/gm, '');
+  assert.doesNotMatch(code, /\b(buildAndDeployStaging|captureForSession|setChecksPending|storeChecks\w*)\(/);
+  assert.doesNotMatch(code, /INSERT INTO chat_session_messages|INSERT INTO chat_messages|sendSystemMessage/);
 });

@@ -18,8 +18,9 @@
 //     nothing) keeps a row marked `couldNotRun` whose reason names the cause
 //     in plain words, and records no check history;
 //   * when that suite is merge-blocking the run is 'error', the same lane a
-//     refused capture takes: storeChecks bumps the streak and schedules the
-//     retry, and check_error_detail is the row's sentence;
+//     refused capture takes: the settlement carries the row's sentence as
+//     its error detail and no history, and the preview machine stores it,
+//     bumps the streak and schedules the retry;
 //   * an advisory one leaves the verdict alone;
 //   * an install that failed is split by npm's own error code
 //     (unit-suite.js INSTALL_FAILURES): the proposal's own package files
@@ -37,13 +38,21 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
+// The settlement takes its Postgres census through getPool(); pointing it at
+// the test's fake keeps the census off the network.
+const census = { pool: null };
+const poolId = require.resolve('../src/db/pool');
+require.cache[poolId] = {
+  id: poolId, filename: poolId, loaded: true, paths: [],
+  exports: { getPool: () => census.pool || { async query() { return { rows: [] }; } } },
+};
+
 const unitSuite = require('../src/services/unit-suite');
 const unitSuiteRow = require('../src/services/unit-suite-row');
 const visuals = require('../src/services/visuals');
 const kubernetes = require('../src/services/kubernetes');
 const github = require('../src/services/github');
 const checkHistory = require('../src/services/check-history');
-const lifecycle = require('../src/services/preview-lifecycle');
 const ws = require('../src/services/ws');
 const appManifest = require('../src/services/app-manifest');
 const tools = require('../src/services/mcp-tools');
@@ -439,21 +448,15 @@ test('a suite that ran and failed is still failing', () => {
     'advisory, as before');
 });
 
-// ── settleCaptureRun: what is stored ─────────────────────────────────────
+// ── settleCaptureRun: what the machine is handed to store ────────────────
 
+// The settlement stores no verdict and no history (the machine does, in
+// one transaction): `calls` shows it wrote nothing of the kind.
 function makePool() {
   const pool = {
-    calls: [], checks: [],
+    calls: [],
     async query(sql, params = []) {
       pool.calls.push({ sql, params });
-      if (/UPDATE chat_sessions\s+SET check_state = \$1/.test(sql)) {
-        const retryScheduled = /check_next_retry_at = NOW\(\) \+ make_interval/.test(sql);
-        pool.checks.push({
-          state: params[0], detail: retryScheduled ? params[4] : null, retryScheduled,
-          streakBumped: /consecutive_check_failures = consecutive_check_failures \+ 1/.test(sql),
-        });
-        return { rows: [], rowCount: 1 };
-      }
       return { rows: [], rowCount: 0 };
     },
     async connect() { return { query: (sql, params) => pool.query(sql, params), release() {} }; },
@@ -462,23 +465,25 @@ function makePool() {
 }
 
 function quiet(t, pool) {
-  for (const [mod, key, value] of [[lifecycle, 'current', () => ({ pool })], [ws, 'broadcastGlobal', () => {}]]) {
-    const saved = mod[key];
-    mod[key] = value;
-    t.after(() => { mod[key] = saved; });
-  }
+  census.pool = pool;
+  const saved = ws.broadcastGlobal;
+  ws.broadcastGlobal = () => {};
+  t.after(() => { census.pool = null; ws.broadcastGlobal = saved; });
 }
+
+const unitHistory = (out) => out.result.history.filter((h) => h.checkKey === UNIT_KEY);
+const wroteNothing = (pool) => !pool.calls.some((c) => /UPDATE chat_sessions\s+SET check_state|app_check_history/.test(c.sql));
 
 const GREEN = [0, 1, 2].map((i) => `__USERNODE_TEST__ index=${i} status=pass loadStatus=200\n${Buffer.from(JSON.stringify({ name: `Board check ${i + 1}`, path: '/board', consoleErrors: [] })).toString('base64')}\n__USERNODE_TEST_END__`).join('\n');
 
-function settle(pool, unitOutcome, sent = []) {
+function settle(pool, unitOutcome) {
   return visuals.settleCaptureRun({}, pool, {
     session: { id: 42, app_id: 9, status: 'promoted', source: 'native', checks_commit_sha: SHA, branch_name: 'usernode/s42' },
     app: { id: 9, slug: 'demo', name: 'Demo', repo_url: '' },
-    commitHash: SHA, trigger: 'commit-push', send: (type, data) => sent.push({ type, ...data }),
+    commitHash: SHA, collect: { runId: 'run-key-1' },
     runStartedAt: Date.now(), media: false, capturePaths: ['/board'], pathDefaulted: false,
     prodRunning: false, stagingOrigin: '', targets: [], testsCount: 3, dispatched: null, ceilingDropped: 0,
-    stdout: GREEN, stderr: '', runPartial: false, runPartialReason: '', unitOutcome, overlappedRollout: false,
+    stdout: GREEN, stderr: '', runPartial: false, runPartialReason: '', unitOutcome,
   });
 }
 
@@ -488,19 +493,16 @@ async function quotaOutcome(t, { graduated = true } = {}) {
   return runSuite();
 }
 
-test('a quota refusal: the run is an error, the retry is scheduled, no history moves', async (t) => {
+test('a quota refusal: the run is an error, for the error lane to retry, and no history moves', async (t) => {
   const unitOutcome = await quotaOutcome(t);
   const pool = makePool();
   quiet(t, pool);
-  const sent = [];
-  const out = await settle(pool, unitOutcome, sent);
-  assert.equal(out.result.state, 'error');
-  assert.deepEqual(pool.checks, [{
-    state: 'error', detail: 'The unit suite could not start: the cluster\'s job quota was full.',
-    retryScheduled: true, streakBumped: true,
-  }], 'the error branch of storeChecks: the same lane a refused capture takes');
-  assert.equal(sent.find((e) => e.type === 'checks_ready').checkState, 'error');
-  assert.ok(!pool.calls.some((c) => /app_check_history/.test(c.sql)), 'no fail_count stamped on a suite that never ran');
+  const out = await settle(pool, unitOutcome);
+  assert.equal(out.result.outcome, 'verdict');
+  assert.equal(out.result.state, 'error', 'the same lane a refused capture takes');
+  assert.equal(out.result.errorDetail, 'The unit suite could not start: the cluster\'s job quota was full.');
+  assert.deepEqual(out.result.history, [], 'no fail_count stamped on a suite that never ran');
+  assert.ok(wroteNothing(pool), 'the machine stores the verdict');
 });
 
 test('a setup failure with no output: the run is an error', async (t) => {
@@ -512,8 +514,7 @@ test('a setup failure with no output: the run is an error', async (t) => {
   quiet(t, pool);
   const out = await settle(pool, await runSuite());
   assert.equal(out.result.state, 'error');
-  assert.equal(pool.checks[0].detail, 'The unit suite stopped before any test ran: its job ended without printing anything.');
-  assert.equal(pool.checks[0].retryScheduled, true);
+  assert.equal(out.result.errorDetail, 'The unit suite stopped before any test ran: its job ended without printing anything.');
 });
 
 test('a run with real test failures: failing, as before, and its history recorded', async (t) => {
@@ -528,8 +529,9 @@ test('a run with real test failures: failing, as before, and its history recorde
   quiet(t, pool);
   const out = await settle(pool, await runSuite());
   assert.equal(out.result.state, 'failing');
-  assert.deepEqual(pool.checks.map((c) => [c.state, c.retryScheduled]), [['failing', false]]);
-  assert.ok(pool.calls.some((c) => /app_check_history/.test(c.sql)), 'a verdict about the code is history');
+  assert.equal(out.result.errorDetail, null);
+  assert.equal(unitHistory(out).length, 1, 'a verdict about the code is history');
+  assert.equal(unitHistory(out)[0].passed, false);
 });
 
 function installFailed(t, ...npm) {
@@ -550,10 +552,8 @@ test('an ETARGET install failure is the proposal\'s: failing, with history, in t
   const pool = makePool();
   quiet(t, pool);
   const out = await settle(pool, unitOutcome);
-  assert.equal(out.result.state, 'failing');
-  assert.deepEqual(pool.checks.map((c) => [c.state, c.retryScheduled]), [['failing', false]], 'no retry for a lockfile that will not install');
-  const history = pool.calls.find((c) => /app_check_history/.test(c.sql));
-  assert.ok(history && history.params.includes(UNIT_KEY), 'recorded as the unit suite\'s failure');
+  assert.equal(out.result.state, 'failing', 'not an error: no retry for a lockfile that will not install');
+  assert.equal(unitHistory(out).length, 1, 'recorded as the unit suite\'s failure');
 });
 
 test('an ECONNRESET install failure is the platform\'s: error, and the retry is scheduled', async (t) => {
@@ -563,13 +563,10 @@ test('an ECONNRESET install failure is the platform\'s: error, and the retry is 
   quiet(t, pool);
   const out = await settle(pool, unitOutcome);
   assert.equal(out.result.state, 'error');
-  assert.deepEqual(pool.checks, [{
-    state: 'error',
-    detail: 'The unit suite stopped before any test ran: installing its dependencies failed: the package registry could not be reached '
-      + '(npm error code ECONNRESET). Last output: npm error network aborted',
-    retryScheduled: true, streakBumped: true,
-  }]);
-  assert.ok(!pool.calls.some((c) => /app_check_history/.test(c.sql)));
+  assert.equal(out.result.errorDetail,
+    'The unit suite stopped before any test ran: installing its dependencies failed: the package registry could not be reached '
+      + '(npm error code ECONNRESET). Last output: npm error network aborted');
+  assert.deepEqual(out.result.history, []);
 });
 
 test('an install failure nothing listed knows is logged with its last line', async (t) => {
@@ -590,9 +587,7 @@ test('an advisory suite that could not run: the run keeps its verdict, and recor
   quiet(t, pool);
   const out = await settle(pool, unitOutcome);
   assert.equal(out.result.state, 'passing');
-  assert.deepEqual(pool.checks.map((c) => c.state), ['passing']);
-  const history = pool.calls.filter((c) => /app_check_history/.test(c.sql));
-  assert.ok(history.every((c) => !c.params.includes(UNIT_KEY)), 'the unit suite neither fails nor graduates');
+  assert.deepEqual(unitHistory(out), [], 'the unit suite neither fails nor graduates');
 });
 
 // ── What people and agents read ──────────────────────────────────────────
@@ -616,7 +611,7 @@ test('the stored row is recognised for what it is', () => {
 });
 
 test('the connector lists no failing test and says what happens next', () => {
-  // The row storeChecks wrote: the streak bumped and a retry scheduled.
+  // The row the machine stored: the streak bumped and a retry scheduled.
   const retrying = errored({ consecutive_check_failures: 1, check_next_retry_at: new Date(Date.now() + 120000).toISOString() });
   const shaped = tools.shapeProposal(retrying, ORIGIN);
   assert.deepEqual(shaped.checks.failing, []);

@@ -1611,9 +1611,8 @@ function shapeProposal(session, origin, viewerId = null) {
     pendingWrite: {
       buildInFlight: (() => {
         try {
-          // With WF_PREVIEWS_ENABLED on, the preview machine's phase says it.
-          return !!require('./staging').hasInFlightBuild(session.id)
-            || (require('./preview-workflow').enabled() && session.check_state === 'pending' && session.check_phase === 'building');
+          // The preview machine's phase says it.
+          return session.check_state === 'pending' && session.check_phase === 'building';
         } catch { return null; }
       })(),
     },

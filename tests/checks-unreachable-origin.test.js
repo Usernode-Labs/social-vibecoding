@@ -96,12 +96,13 @@ function visualsSource() {
   return fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'visuals.js'), 'utf8');
 }
 
-test('the override runs against container rows only, before the result is stored', () => {
+test('the override runs against container rows only, before the verdict is returned', () => {
   const source = visualsSource();
-  // Failure-publication helpers also call storeChecks; inspect the actual
-  // capture's classification/persistence order, not the entire module. That
-  // order lives in settleCaptureRun — the settlement half captureForSession
-  // and the check harvester share (services/check-harvest.js).
+  // Inspect the actual capture's classification order, not the entire
+  // module. That order lives in settleCaptureRun, the settlement the
+  // machine's checks.run collects (services/check-harvest.js). It stores
+  // nothing: the verdict it returns is what the machine's settling
+  // transition persists, backoff and check_error_detail included.
   const src = source.slice(source.indexOf('async function settleCaptureRun('));
   const override = src.indexOf('unreachableOriginDetail(containerRows');
   assert.ok(override > 0, 'the capture run must apply the override');
@@ -109,17 +110,21 @@ test('the override runs against container rows only, before the result is stored
   // page, so counting them would veto the override for free.
   assert.match(src.slice(override - 400, override),
     /checksResult\.results\.filter\(\(r\) => !extraRows\.includes\(r\)\)/);
-  assert.ok(override < src.indexOf('const stored = await storeChecks('),
-    'storeChecks is what persists the backoff and check_error_detail — override first');
+  const verdict = src.indexOf("outcome: 'verdict',");
+  assert.ok(verdict > 0, 'the settlement returns a verdict');
+  assert.ok(override < verdict, 'the returned state is what gets persisted — override first');
 });
 
 test('an error verdict records no check history', () => {
   // Recording it would stamp fail_count on checks that never ran, which is
   // how WorkQuest reached pass_count 0 / fail_count 2 on seven rows.
   const src = visualsSource();
-  // The asset-route row (#2315) and the render-health row record through the
-  // same guarded block.
-  const gate = src.match(/if \(\(dispatched \|\| unitOutcome \|\| assetOutcome \|\| renderOutcome\)([^)]*)\) \{\n\s+const historyRows/);
-  assert.ok(gate, 'the recordRun block must still be guarded here');
-  assert.match(gate[1], /checksResult\.state !== 'error'/);
+  const body = src.slice(src.indexOf('async function settleCaptureRun('));
+  // The settlement returns the history rows the machine records; the
+  // asset-route row (#2315) and the render-health row ride in the same list.
+  assert.match(body, /history: checksResult\.state === 'error' \? \[\]\s*: historyRowsOf\(checksResult, \{ dispatched, unitOutcome, assetOutcome, renderOutcome \}\)/,
+    'an error settlement must carry no history rows');
+  // And the machine, which records them, drops them again for an error.
+  const machine = fs.readFileSync(path.join(__dirname, '..', 'src', 'workflow', 'preview', 'machine.ts'), 'utf8');
+  assert.match(machine, /history: state === 'error' \|\| blocked \? \[\] :/);
 });

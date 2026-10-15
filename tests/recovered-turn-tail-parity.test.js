@@ -2,17 +2,18 @@
 //
 // A restart can land between any two steps of a build's tail, and recovery
 // (server.js finalizeRecoveredTurn) repeats whatever the live tail
-// (routes/sessions.js runClaudeCodeTool) had not finished. Four places where
-// the two had drifted apart:
+// (routes/sessions.js runClaudeCodeTool) had not finished. Neither tail
+// builds anything now: both retire a promoted proposal's votes, hand the
+// commit to the preview machine (services/preview-workflow.js revision) and
+// post a "Building staging preview..." card. Where the two must agree:
 //
-//   (a) the vote reset ran before staging, whatever its outcome; the live
-//       tail resets only once the new commit's preview is up;
-//   (b) recovery also posted the reset with no thread, which writes nothing
-//       (a platform line names its thread or is not written);
-//   (c) reusing a healthy preview for the SAME commit reset its checks
-//       anyway, wiping a passing verdict and running the capture again;
-//   (d) the live "Staging deployed!" card had no receipt and recovery's card
-//       had its own, so a restart after the live card posted a second one.
+//   (a) the votes are retired before the hand-off, since the proposal's
+//       reviewed head is the pin the machine checks a revision against;
+//   (b) the reset is posted in the proposal's own thread, once (a platform
+//       line names its thread or is not written);
+//   (c) the card is written under one receipt across the live and recovered
+//       tails, so a restart after the live card never posts a second one,
+//       and a failure card an earlier release's tail posted is honoured.
 //
 // Driven through the real finalizeRecoveredTurn with recording fakes, the
 // way tests/recovered-turn-push-heal.test.js drives it.
@@ -60,8 +61,7 @@ try {
   global.setTimeout = origSetTimeout;
 }
 const sessionsRoutes = require('../src/routes/sessions');
-const visuals = require('../src/services/visuals');
-const stagingRecovery = require('../src/services/staging-recovery');
+const previewWorkflow = require('../src/services/preview-workflow');
 const voteRevision = require('../src/services/vote-revision');
 const appAdmins = require('../src/services/app-admins');
 const ws = require('../src/services/ws');
@@ -73,15 +73,11 @@ function patch(t, target, name, fn) {
   t.after(() => { target[name] = original; });
 }
 
-function fakes(t, { needsRebuild = true } = {}) {
+function fakes(t) {
   log.length = 0;
-  patch(t, visuals, 'setChecksPending', async (_pool, sessionId, sha, phase, trigger) => {
-    log.push(['setChecksPending', sha, trigger]);
-    return true;
+  patch(t, previewWorkflow, 'revision', async ({ session, head, source, trigger }) => {
+    log.push(['revision', session.id, head, source, trigger]);
   });
-  patch(t, visuals, 'captureForSession', async (_config, _session, _app, sha) => { log.push(['capture', sha]); });
-  patch(t, stagingRecovery, 'stagingNeedsRebuild', async () => needsRebuild);
-  patch(t, stagingRecovery, 'recordStagingBootFailure', async () => { log.push(['recordStagingBootFailure']); });
   patch(t, appAdmins, 'refreshExplicitApproval', async () => false);
   patch(t, voteRevision, 'retireAndRecheck', async (_pool, session, sha, { announce }) => {
     log.push(['retireVotes', session.id, sha]);
@@ -92,7 +88,7 @@ function fakes(t, { needsRebuild = true } = {}) {
   patch(t, ws, 'pushVoteUpdate', () => {});
 }
 
-function makePool({ activeTurn = null, live = {}, checks = null } = {}) {
+function makePool({ activeTurn = null } = {}) {
   const calls = [];
   const effects = new Map();
   const query = async (sql, params = []) => {
@@ -123,12 +119,6 @@ function makePool({ activeTurn = null, live = {}, checks = null } = {}) {
     if (/SELECT active_turn FROM chat_sessions/i.test(text)) {
       return { rows: [{ active_turn: activeTurn }], rowCount: 1 };
     }
-    if (/SELECT staging_url, staging_container_id FROM chat_sessions/i.test(text)) {
-      return { rows: [{ staging_url: live.stagingUrl || null, staging_container_id: 'c-1' }], rowCount: 1 };
-    }
-    if (/SELECT checks_commit_sha, check_state FROM chat_sessions/i.test(text)) {
-      return { rows: checks ? [checks] : [], rowCount: checks ? 1 : 0 };
-    }
     if (/INSERT INTO chat_session_messages/i.test(text)) {
       log.push(['row', params[1]]);
       return { rows: [], rowCount: 1 };
@@ -137,20 +127,6 @@ function makePool({ activeTurn = null, live = {}, checks = null } = {}) {
     return { rows: [], rowCount: 0 };
   };
   return { calls, effects, query, async connect() { return { query, release() {} }; } };
-}
-
-function stagingFake({ fails = false } = {}) {
-  const calls = [];
-  return {
-    calls,
-    buildAndDeployStaging: async (...args) => {
-      calls.push(args);
-      log.push(['buildStaging']);
-      if (fails) throw new Error('container refused to boot');
-      return { containerId: 'c', stagingUrl: 'https://x.example', hostname: 'x.example' };
-    },
-    verifyStagingEdge: async () => {},
-  };
 }
 
 const SHA = 'feedface00112233';
@@ -164,6 +140,7 @@ const SESSION = {
 function args(over = {}) {
   return {
     config: {},
+    staging: {},
     session: { ...SESSION },
     sessionId: 510,
     result: { ahead: 1, sha: SHA, pushOk: true, lastResultText: 'Sorted it.', sessionId: 'cc-1' },
@@ -177,112 +154,74 @@ function args(over = {}) {
 
 const at = (pred) => log.findIndex(pred);
 
-// ── (a) the vote reset waits for the preview, and needs it ──────────────
+const TURN_ID = '66666666-6666-4666-8666-666666666666';
 
-test('a promoted proposal\'s votes are reset only after its new preview is up', async (t) => {
+// ── (a) the votes are retired, then the commit is handed off ────────────
+
+test('a promoted proposal\'s votes are retired before the commit goes to the preview machine', async (t) => {
   fakes(t);
-  const pool = makePool();
-  await finalizeRecoveredTurn(args({ pool, staging: stagingFake() }));
+  const activeTurn = { turnId: TURN_ID, phase: 'tail_pending', journal: '/j', tail: {} };
+  const ret = await finalizeRecoveredTurn(args({ pool: makePool({ activeTurn }), activeTurn }));
 
-  const card = at((e) => e[0] === 'row' && e[1] === 'Staging deployed!');
+  const claimed = at((e) => e[0] === 'milestone' && e[1].votesResetFor === SHA);
   const retired = at((e) => e[0] === 'retireVotes');
-  assert.ok(card >= 0 && retired >= 0);
-  assert.ok(card < retired, 'the reset follows the staging card, as in the live tail');
-  assert.ok(at((e) => e[0] === 'milestone' && e[1].votesResetFor === SHA) < retired,
-    'claimed before the votes are touched');
+  const handed = at((e) => e[0] === 'revision');
+  const card = at((e) => e[0] === 'row' && e[1] === 'Building staging preview...');
+  assert.ok(claimed >= 0 && retired >= 0 && handed >= 0 && card >= 0);
+  assert.ok(claimed < retired, 'claimed before the votes are touched');
+  assert.ok(retired < handed, 'the reviewed head moves before the machine checks the revision');
+  assert.ok(handed < card, 'the card follows the hand-off');
+  assert.deepEqual(log[handed].slice(1), [510, SHA, 'turn', 'boot-reconcile']);
+  assert.match(ret.summary, /The staging preview is building/);
+  assert.equal(at((e) => e[0] === 'row' && /^Staging (deployed|build failed)/.test(e[1])), -1,
+    'the tail no longer reports a build: the machine writes those rows itself');
 });
 
-test('a preview that fails leaves the votes alone, as the live tail does', async (t) => {
+test('an active session\'s votes are left alone; the commit is still handed off', async (t) => {
   fakes(t);
-  const pool = makePool();
-  const ret = await finalizeRecoveredTurn(args({ pool, staging: stagingFake({ fails: true }) }));
-  assert.match(ret.summary, /Staging build failed/);
-  assert.equal(at((e) => e[0] === 'retireVotes'), -1, 'no vote reset for a commit nobody can preview');
+  await finalizeRecoveredTurn(args({ pool: makePool(), session: { ...SESSION, status: 'active' } }));
+  assert.equal(at((e) => e[0] === 'retireVotes'), -1);
   assert.equal(at((e) => e[0] === 'milestone' && 'votesResetFor' in e[1]), -1);
+  assert.ok(at((e) => e[0] === 'revision') >= 0);
 });
 
 // ── (b) the reset's line goes to the proposal's thread, once ────────────
 
 test('the reset announcement names the proposal\'s thread and is posted once', async (t) => {
   fakes(t);
-  await finalizeRecoveredTurn(args({ pool: makePool(), staging: stagingFake() }));
+  await finalizeRecoveredTurn(args({ pool: makePool() }));
   const lines = log.filter((e) => e[0] === 'sendSystemMessage').map((e) => e[1]);
   assert.equal(lines.length, 1, 'no second, thread-less copy');
   assert.deepEqual(lines[0][5], { type: 'session', ref: 510 });
   assert.match(lines[0][2], /An update was pushed to PR #7 \(commit feedface\)/);
 });
 
-// ── (c) a reused preview keeps its commit's verdict ─────────────────────
+// ── (c) one staging card per turn, across the live and recovered tails ──
 
-const REUSE = { stagingUrl: 'https://kept.example' };
-const reuseArgs = (pool) => args({
-  pool, staging: stagingFake(), alreadyDone: { stagingUrl: REUSE.stagingUrl, completionRowPosted: true, prNumber: 7 },
-  session: { ...SESSION, status: 'active' },
-});
-
-test('a reused preview whose checks already passed for this commit is not re-checked', async (t) => {
-  fakes(t, { needsRebuild: false });
-  const pool = makePool({ live: REUSE, checks: { checks_commit_sha: SHA, check_state: 'passing' } });
-  const ret = await finalizeRecoveredTurn(reuseArgs(pool));
-  assert.match(ret.summary, /Staging preview is live: https:\/\/kept\.example/);
-  assert.equal(at((e) => e[0] === 'buildStaging'), -1, 'the healthy preview is reused');
-  assert.equal(at((e) => e[0] === 'setChecksPending'), -1, 'the passing verdict is kept');
-  assert.equal(at((e) => e[0] === 'capture'), -1, 'and not re-run');
-});
-
-test('a reused preview whose capture the restart took is captured again, without a reset', async (t) => {
-  fakes(t, { needsRebuild: false });
-  const pool = makePool({ live: REUSE, checks: { checks_commit_sha: SHA, check_state: 'pending' } });
-  await finalizeRecoveredTurn(reuseArgs(pool));
-  assert.equal(at((e) => e[0] === 'setChecksPending'), -1);
-  assert.ok(at((e) => e[0] === 'capture' && e[1] === SHA) >= 0, 'the lost capture runs');
-});
-
-test('a reused preview whose checks are for an older head is reset and re-checked', async (t) => {
-  fakes(t, { needsRebuild: false });
-  const pool = makePool({ live: REUSE, checks: { checks_commit_sha: 'olderhead', check_state: 'passing' } });
-  await finalizeRecoveredTurn(reuseArgs(pool));
-  const reset = at((e) => e[0] === 'setChecksPending');
-  assert.ok(reset >= 0, 'a stale passing verdict cannot satisfy the merge gate');
-  assert.deepEqual(log[reset].slice(1), [SHA, 'boot-reconcile']);
-  assert.ok(at((e) => e[0] === 'capture') > reset);
-});
-
-test('a rebuilt preview always pends its checks first, as the live tail does', async (t) => {
+test('a restart after the live "Building staging preview..." card does not post a second one', async (t) => {
   fakes(t);
-  const pool = makePool({ checks: { checks_commit_sha: SHA, check_state: 'passing' } });
-  await finalizeRecoveredTurn(args({ pool, staging: stagingFake(), session: { ...SESSION, status: 'active' } }));
-  assert.ok(at((e) => e[0] === 'setChecksPending') < at((e) => e[0] === 'buildStaging'));
-});
-
-// ── (d) one staging card per turn, across the live and recovered tails ──
-
-const TURN_ID = '66666666-6666-4666-8666-666666666666';
-
-test('a restart after the live "Staging deployed!" card does not post a second one', async (t) => {
-  fakes(t, { needsRebuild: false });
   const activeTurn = { turnId: TURN_ID, phase: 'tail_pending', journal: '/j', tail: {} };
-  const pool = makePool({ activeTurn, live: REUSE, checks: { checks_commit_sha: SHA, check_state: 'passing' } });
+  const pool = makePool({ activeTurn });
 
   // The live tail's card, written as runClaudeCodeTool writes it.
   const live = await sessionsRoutes.publishStagingOutcome({
-    pool, sessionId: 510, turnId: TURN_ID, tailIdentity: { turnId: TURN_ID }, outcome: 'success',
-    metadata: { stagingUrl: REUSE.stagingUrl, changesReady: true, prNumber: 7, prUrl: SESSION.pr_url },
+    pool, sessionId: 510, turnId: TURN_ID, tailIdentity: { turnId: TURN_ID }, outcome: 'building',
+    metadata: { changesReady: true, stagingBuild: 'running', prNumber: 7, prUrl: SESSION.pr_url },
   });
   assert.equal(live.applied, true);
 
-  // …then the restart, and the recovered tail reusing that preview.
+  // …then the restart, and the recovered tail handing the commit off again.
   await finalizeRecoveredTurn(args({
-    pool, staging: stagingFake(), activeTurn, session: { ...SESSION, status: 'active' },
-    alreadyDone: { ...activeTurn.tail, stagingUrl: REUSE.stagingUrl, completionRowPosted: true, prNumber: 7 },
+    pool, activeTurn, session: { ...SESSION, status: 'active' },
+    alreadyDone: { ...activeTurn.tail, completionRowPosted: true, prNumber: 7 },
   }));
 
-  assert.equal(log.filter((e) => e[0] === 'row' && e[1] === 'Staging deployed!').length, 1, 'one card');
-  assert.equal(at((e) => e[0] === 'emit' && e[1] === 'staging_ready'), -1, 'and no second reveal');
+  assert.equal(log.filter((e) => e[0] === 'row' && e[1] === 'Building staging preview...').length, 1, 'one card');
+  assert.ok(at((e) => e[0] === 'revision') >= 0, 'the machine joins a preview it already has');
   assert.equal(pool.effects.get(`${TURN_ID}:recovered_staging_publication`).state, 'completed');
 });
 
-test('a restart after the live failure card neither rebuilds nor posts it again', async (t) => {
+test('a restart after an earlier release\'s failure card neither hands off nor posts it again', async (t) => {
   fakes(t);
   const activeTurn = { turnId: TURN_ID, phase: 'tail_pending', journal: '/j', tail: {} };
   const pool = makePool({ activeTurn });
@@ -293,11 +232,10 @@ test('a restart after the live failure card neither rebuilds nor posts it again'
   });
   assert.equal(typeof activeTurn.tail.stagingFailed, 'object', 'the checkpoint commits with the card');
 
-  const staging = stagingFake();
   const ret = await finalizeRecoveredTurn(args({
-    pool, staging, activeTurn, alreadyDone: { ...activeTurn.tail, completionRowPosted: true, prNumber: 7 },
+    pool, activeTurn, alreadyDone: { ...activeTurn.tail, completionRowPosted: true, prNumber: 7 },
   }));
-  assert.equal(staging.calls.length, 0, 'a preview known to fail is not rebuilt');
+  assert.equal(at((e) => e[0] === 'revision'), -1, 'a preview known to fail is not handed off again');
   assert.equal(log.filter((e) => e[0] === 'row' && /^Staging/.test(e[1])).length, 1);
   assert.match(ret.summary, /Set the secret\./);
   assert.equal(at((e) => e[0] === 'retireVotes'), -1);

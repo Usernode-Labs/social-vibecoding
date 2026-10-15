@@ -274,22 +274,12 @@ The platform setting takes effect when the updated server is deployed. Existing
 child-app repositories and previews built from older commits retain their own
 server code; changing the scaffold does not retrofit them.
 
-## Coordinated preview lifecycle
+## Coordinated preview lifecycle (retired)
 
-`platform.previewLifecycleEnabled` (default `false`) sets
-`PREVIEW_LIFECYCLE_ENABLED`. With it enabled, builds, captures and teardown share
-one PostgreSQL advisory lock per session, across platform Pods. A durable
-`preview_operations` row records the desired revision, run UUID, phase and
-outcome. Advancing the session's checks/imported head cancels the old owner;
-the successor waits for its capture and unit-suite consumers to stop before
-changing the preview. Cancellation is not an app test failure.
-
-Capture and unit-suite Jobs carry `social.usernode.io/preview-run-id`. The owner
-requests foreground deletion and confirms Job/Pod termination. API errors keep
-replacement blocked; a DELETE acknowledgement alone does not establish that
-the browser stopped. After a platform restart, a successor for a NEWER revision
-stops orphaned check Jobs before using the preview; a run for the revision the
-session is still waiting on is harvested instead (below).
+`PREVIEW_LIFECYCLE_ENABLED` and its per-session advisory lock are gone: the
+preview machine (below) owns every build, checks run and teardown, one at a time
+per session, as durable work. Its `preview_operations` table stays for one
+release so a rollback target still finds it, and nothing writes it.
 
 ## Preview cleanup
 
@@ -520,113 +510,54 @@ two to thirty minutes apart). What people see has not changed with that: the
 proposal's checks read "Couldn't finish" and the step is shown as the
 author's, as for any checks error, although nothing is asked of them.
 
-## Harvesting check runs across platform rollouts
+## Check runs across platform rollouts
 
 Every merge to the self-app rolls the platform Deployment, and every checks
 run in flight at that moment loses the process that was streaming its capture
 and unit-suite Jobs. The Jobs themselves belong to the cluster and finish
-regardless. `services/check-harvest.js` reads them rather than starting over.
+regardless, and they are read rather than started over.
 
-Each run writes a manifest row to `check_runs` (session, commit, owner
-`hostname:pid`, launch context) before its Jobs are created and heartbeats it
-every `CHECK_RUN_HEARTBEAT_MS` (15s). A row with no heartbeat for
-`CHECK_RUN_ORPHAN_MS` (60s) is an orphan. The leader sweeps once at boot —
-before the stuck-checks reconcile, so a harvestable run is never re-driven as
-stuck — and every `CHECK_HARVEST_SWEEP_MS` (30s) after, at most
-`CHECK_HARVEST_CONCURRENCY` (3) adoptions at a time. An orphan is:
+A preview checks run is the preview machine's `checks.run` work item. Each run
+writes a manifest row to `check_runs` (session, commit, launch context, the
+work item's key) before its Jobs are created and heartbeats it every
+`CHECK_RUN_HEARTBEAT_MS` (15s). When the item's claim is lost (its process
+died, or its lease ran out), the retry of the same item collects the Jobs the
+manifest names (`check-harvest.collectForWorkflow`): a finished Job's log is
+read, a running one is waited on, and the output goes through the same
+settlement a live run ends with. It runs the checks again only when there is
+nothing to read, and never settles without a unit suite that blocks merges.
+A run that starts stops the still-running Jobs of the session's runs for other
+commits (background deletion; their input Secrets go with them).
 
-- **settled** when its Jobs are found by the `preview-run-id` label: a finished
-  Job's log is read, a running one is waited on with progress re-published to
-  the proposal card, and the output goes through the same settlement a live
-  run ends with (same parse, verdict, stores, commit guards, broadcasts);
-- **re-driven immediately** when there is nothing to read — the process died
-  before creating the Jobs, or the Jobs are gone (TTL, or cancelled);
-- **moot** when the session no longer wants the run — decided meanwhile, head
-  moved, session closed, or (under the preview lifecycle) a newer run owns it.
+The repo's unit suite usually starts with the preview build: the machine's
+`checks.unitEarly` launches it under an id derived from the attempt
+(`sv-unit-early-…` Jobs), and the checks run against that attempt reads it,
+from its own process or after a restart. It does not start for a head whose
+last checks errored, or while the cluster already runs as many unit suites as
+the checks queue admits (`EARLY_UNIT_SUITE=0` turns it off). The attempt's
+retirement deletes its Jobs.
 
-A platform process that shuts down hands its rows over first: it stamps
-their heartbeat as long past, so the next leader's boot sweep seats them at
-once instead of a minute later. A run whose process died without doing so is
-still covered: before the stale sweep starts a session over, it looks for that
-session's current run on the cluster. If the capture Job is still running, or
-the run finished less than `CHECKS_STALE_MS` ago, the harvest settles it
-instead. A run that starts stops the still-running Jobs of the session's runs
-for other commits (background deletion; their input Secrets go with them).
-Runs for the same commit are left to finish, because their verdict still
-counts.
-
-The paths that start a run ask the same question first (`runToCollect`): a
-manual "Re-run checks" (or `recheck_change`), a promote or vote-time kick, a
-recheck that would rebuild the preview, the sweeper's preview heal, boot
-recovery, and every capture under the preview lifecycle. While the session
-still waits on that commit's verdict and its run is on the cluster, nothing new
-starts; the button and the tool say the run is still going. Once the verdict is
-stored the manifest is gone and a re-run starts fresh. Only a run whose inputs
-changed (new capture routes or shots for the same commit) replaces it.
-
-Under `PREVIEW_LIFECYCLE_ENABLED` the harvester adopts the run's
-`preview_operations` row first and writes through the same ownership check a
-live run does; a request for a newer revision aborts the harvest. A capture
-for the same revision finds the run under the lifecycle lock and leaves it:
-it cancels only other commits' check Jobs and does not take the row. A build,
-or a forced capture, still cancels every check Job of the session. Outside the
-Kubernetes capture runtime the harvester is a no-op. The stale sweep
-(`CHECKS_STALE_MS`) remains the backstop for rows with no manifest at all.
+The main-watch suite after a direct merge keeps its own hand-over: a platform
+process that shuts down stamps its `check_runs` rows' heartbeat as long past,
+so the next leader adopts them at once instead of a minute later.
 
 Every capture rechecks the exact deployed revision, image, environment
 fingerprint, completed rollout, application health and public edge before
-starting. Check results and screenshot transactions verify the current run and
-revision under a session row lock. Newer revisions cannot publish older output;
-same-commit recovery after a rebuild can replace an infrastructure-error verdict.
-Manual reruns, unit checks, browser checks, screenshots, PR visuals, progress and
-automatic merging remain supported. Docker retains its existing lifecycle.
-
-Kubernetes rebuilds reconcile the existing Ingress and Service instead of
-deleting them first. This removes the missing-host TLS routing window, but does
-not promise uninterrupted interactive previews during application/database
-replacement. Already-started image builds and database preparation settle before
-ownership passes; obsolete captures are cancelled explicitly. Build artifacts
-remain subject to normal retention. This change does not add Envoy retries.
-
-### Activation and rollback
-
-Apply the additive schema migration with the release. **Do not use an ordinary
-rolling flag change:** a flag-off Pod can bypass the coordinator even if it runs
-the new binary. The chart defaults off to make this transition explicit.
-
-1. Schedule a brief platform maintenance window and pause proposal mutations.
-   Through the installation's GitOps owner, scale the platform to zero and
-   confirm all platform Pods have terminated. Keep app previews and PostgreSQL
-   running; do not delete the preview Ingresses.
-2. With platform replicas still zero, set `platform.previewLifecycleEnabled: true`
-   and select the coordinator-capable release. Confirm the schema hook succeeded.
-3. Restore the normal replica count and resume mutations. Verify a new revision
-   supersedes an active capture, both old check Jobs stop, and the new run
-   produces checks/screenshots for its own revision. Further releases may roll
-   normally while every participating Pod keeps coordination enabled.
-
-Rollback across this boundary uses the same stop-all-platform-Pods procedure.
-Before starting a flag-off/older release, terminate outstanding capture and
-unit-suite Jobs and confirm their Pods have stopped. Retain the additive table.
-The mixed-mode restriction also applies to manually started platform processes.
-
-For local validation, `tests/preview-lifecycle.test.js` uses independent real
-PostgreSQL connections and an isolated temporary schema. Set
-`PREVIEW_LIFECYCLE_TEST_DATABASE_URL` to a disposable test database, or use the
-existing `SQL_CHECK_CONNECTION_URL` supplied by the unit runner. It never falls
-back to the application's `DATABASE_URL`. Kubernetes termination and cancellation
-are covered by `tests/kubernetes-preview-cancellation.test.js` with API doubles.
+starting. Newer revisions cannot publish older output. Kubernetes rebuilds
+reconcile the existing Ingress and Service instead of deleting them first,
+which removes the missing-host TLS routing window; it does not promise
+uninterrupted interactive previews during application/database replacement.
 
 ## Check Jobs, their input Secrets and the worker quota
 
 A checks run creates a capture Job and a unit-suite Job in the worker namespace,
 each with an input Secret the Job owns. Once the run's verdict is stored and
 its `check_runs` manifest cleared, the run deletes its finished Jobs with
-background propagation, which takes their Pods and Secrets too; the harvester
-does the same after settling an orphan. The Jobs' `ttlSecondsAfterFinished`
+background propagation, which takes their Pods and Secrets too; a run
+collected after a lost claim does the same once it settles. The Jobs' `ttlSecondsAfterFinished`
 (3600 s) covers everything else: superseded or failed runs, the main-watch
 suite, and whatever a crash leaves. Keep it at least that long, because it is
-how late a harvest can still read a run after a slow leader handover.
+how late a retry can still read a run after a slow leader handover.
 
 `services/check-retention.js` removes what no owner will. On the leader, every
 15 minutes and at most 50 deletions a pass, it deletes:
@@ -739,50 +670,44 @@ instance waits until the release comes back.
 
 ## Workflow preview machine
 
-`platform.workflowPreviewsEnabled` (default `false`) becomes `WF_PREVIEWS_ENABLED`. When
-it is on, every source of a preview or a checks run asks the preview machine, which builds,
-checks and retires previews as durable work, and records who is working on a session.
-The stuck-checks sweep, the harvest, the by-name reap and the orphan-database sweep leave
-the sessions it holds alone. It needs no other workflow flag. `docs/workflows.md` explains
-the machine.
+The preview machine in `src/workflow/preview/` builds, checks and retires every
+proposal's preview, and the App bench studio's previews, as durable work, and records
+who is working on a session. It has no flag: its old paths (the per-process build queue,
+the preview lifecycle, the check harvest's sweep, the in-memory capture seat, the early
+unit suite's module, the turn tails' own builds) are deleted. `docs/workflows.md`
+explains the machine.
 
-**On the cluster.** A preview keeps its per-session Deployment, Service and Ingress
-(`sv-preview-<appId>-s<sessionId>`). Each attempt has its own env Secret
-(`<name>-env-a<n>`) and database (one per claim of its build, should a build be claimed
-again after a crash), and the Deployment carries the annotation
-`social.usernode.io/preview-attempt`: the newest attempt that wrote it and which claim of
-its build, as `n.k` (a bare `n` is claim 0). The attempt's Secret carries the same
-annotation, so an older claim never writes its database back into it. A failed rollout
-restores the template that served, so the older revision keeps serving. Each platform
-process also holds one more database connection, for its presence lock.
-
-### Activation and rollback
-
-1. **Set the value** in the platform's values in the infra repository. Argo CD rolls the
-   Deployments.
-2. **While the replaced Pods drain.** A Pod the release replaced finishes the previews it
-   was building the old way, for up to `platform.drainMinutes`. Once a new Pod has recorded
-   the flag, the ownership trigger logs such writes in `wf_ownership_violations` (`log`
-   mode in production).
-   - **Where the work runs.** The machine's builds and checks runs are its work items,
-     which only the leader runs: with the web and conductor split, the conductor Pod.
-     Each build clones the proposal into that Pod's `/tmp` and follows its rollout there,
-     so size `platform.conductor.resources` for the previews built at once.
-3. **Verify.**
-   - **The new Pod's log.** `Workflow runtime started` lists `preview`.
-   - **Admin → Workflows.** The next revision appears as `preview / session:<id>`, goes
-     through `preparing` and `checking`, and settles; the problems panel is empty.
-   - **The cluster.** `kubectl -n social-apps get secrets` shows `-env-a<n>` Secrets, only
-     for attempts that serve or are being prepared.
-
-**Rollback.** Set the value back to `false`. The next boot hands every session the machine
-holds back to the old paths (`Detach`): its work is cancelled, what it built stays (its
-databases follow the old naming, so the orphan sweep collects them once unlinked), and the
-old paths own the sessions again. Turning it on again later adopts each session from its
-row. The old paths delete a preview's `-env` Secret only: a held session's `-env-a<n>`
-Secrets stay until the machine retires the preview again, or are deleted by hand: list
-them with `kubectl -n social-apps get secrets -l social.usernode.io/session-id=<id>` and
-delete only the `-env-a<n>` ones (the `-env` Secret is the old paths' preview's).
+- **Where the work runs.** Its builds and checks runs are work items, which only the
+  leader runs: with the web and conductor split, the conductor Pod. Each build clones the
+  proposal into that Pod's `/tmp` and follows its rollout there, so size
+  `platform.conductor.resources` for the previews built at once.
+- **On the cluster.** A preview keeps its per-session Deployment, Service and Ingress
+  (`sv-preview-<appId>-s<sessionId>`). Each attempt has its own env Secret
+  (`<name>-env-a<n>`) and database (one per claim of its build, should a build be claimed
+  again after a crash), and the Deployment carries the annotation
+  `social.usernode.io/preview-attempt`: the newest attempt that wrote it and which claim
+  of its build, as `n.k` (a bare `n` is claim 0). The attempt's Secret carries the same
+  annotation, so an older claim never writes its database back into it. A failed rollout
+  restores the template that served, so the older revision keeps serving. Each platform
+  process also holds one more database connection, for its presence lock.
+- **The sweeps only observe.** The boot heal and the sweeper's heal report a runtime
+  that is gone or stale to the machine, the stuck-checks sweep hands it a row with no
+  verdict, and the reapers ask it to retire; each leaves a session it is building,
+  checking or retrying alone. The orphan-database sweep keeps every database of a
+  session it holds.
+- **Ownership is enforced.** A write to a held session's preview or checks columns from
+  outside the machine is refused (`WF_OWNERSHIP_VIOLATION`), whatever
+  `WF_OWNERSHIP_MODE` says. The staging seeds in `migrate.js` leave a row it holds alone.
+- **Rolling back past this release.** Code from before it still reads
+  `WF_PREVIEWS_ENABLED` and `PREVIEW_LIFECYCLE_ENABLED`; with the first off it would hand
+  every session back to paths the guard now refuses. Keep
+  `platform.workflowPreviewsEnabled: true` in the infra values (this chart no longer reads
+  it) until no rollback target predates this release.
+- **Verify after a release.** The Pod's log shows `Workflow runtime started` listing
+  `preview`; Admin → Workflows shows each new revision as `preview / session:<id>` going
+  through `preparing` and `checking` to `settled`, with an empty problems panel; and
+  `kubectl -n social-apps get secrets` shows `-env-a<n>` Secrets only for attempts that
+  serve or are being prepared.
 
 ## Read-only inventory and logs
 

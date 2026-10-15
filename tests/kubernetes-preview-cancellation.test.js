@@ -118,9 +118,7 @@ test('a cancelled run cannot create a check Job', async t => {
   await assert.rejects(kubernetes.runCaptureJob(config, { sessionId: 42, env: {}, signal: controller.signal }), /superseded/);
 });
 
-test('teardown waits for the original Deployment UID to disappear', async t => {
-  const oldFlag = process.env.PREVIEW_LIFECYCLE_ENABLED;
-  process.env.PREVIEW_LIFECYCLE_ENABLED = 'true';
+test('teardown given the Deployment\'s UID waits for that Deployment to disappear', async t => {
   t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 1000 });
   let stopping = true; let deleted; let complete = false;
   kubernetes._setClientsForTest({ apps: {
@@ -128,12 +126,8 @@ test('teardown waits for the original Deployment UID to disappear', async t => {
     deleteNamespacedDeployment: async request => { deleted = request; },
   }, core: { deleteNamespacedService: async () => {}, deleteNamespacedSecret: async () => {} },
   networking: { deleteNamespacedIngress: async () => {} } });
-  t.after(() => {
-    kubernetes._setClientsForTest(null);
-    if (oldFlag === undefined) delete process.env.PREVIEW_LIFECYCLE_ENABLED;
-    else process.env.PREVIEW_LIFECYCLE_ENABLED = oldFlag;
-  });
-  const pending = kubernetes.deleteApplication(config, 'sv-preview-42').then(() => { complete = true; });
+  t.after(() => kubernetes._setClientsForTest(null));
+  const pending = kubernetes.deleteApplication(config, 'sv-preview-42', { uid: 'original' }).then(() => { complete = true; });
   await flush();
   assert.equal(deleted.body.preconditions.uid, 'original');
   // The policy rides in the body with the precondition: a query option
@@ -142,6 +136,19 @@ test('teardown waits for the original Deployment UID to disappear', async t => {
   assert.equal(deleted.propagationPolicy, undefined);
   assert.equal(complete, false);
   stopping = false; t.mock.timers.tick(250); await pending;
+});
+
+test('teardown without a UID deletes and returns, without waiting', async t => {
+  let deleted;
+  kubernetes._setClientsForTest({ apps: {
+    readNamespacedDeployment: async () => assert.fail('nothing to wait for'),
+    deleteNamespacedDeployment: async request => { deleted = request; },
+  }, core: { deleteNamespacedService: async () => {}, deleteNamespacedSecret: async () => {} },
+  networking: { deleteNamespacedIngress: async () => {} } });
+  t.after(() => kubernetes._setClientsForTest(null));
+  await kubernetes.deleteApplication(config, 'sv-preview-42');
+  assert.equal(deleted.name, 'sv-preview-42');
+  assert.equal(deleted.body?.preconditions, undefined, 'no precondition: whatever is there goes');
 });
 
 test('a healthy old replica is insufficient to start capture of a replacement', async t => {

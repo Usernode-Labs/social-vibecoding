@@ -490,38 +490,12 @@ async function openCampaignProposal({ config, pool, campaign, app, files, summar
 // Never throws into the campaign loop.
 function kickChecks(config, pool, session, app) {
   (async () => {
-    // With WF_PREVIEWS_ENABLED on the preview machine builds and checks the
-    // campaign's exact head (its pin, else the branch tip), never 'latest'.
-    const previewWorkflow = require('./preview-workflow');
-    if (previewWorkflow.enabled()) {
-      const { rows: [row] } = await pool.query(
-        'SELECT cs.*, a.repo_url FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1', [session.id]);
-      if (row) await previewWorkflow.revision({ pool, session: row, source: 'fleet', trigger: 'fleet-maintenance' });
-      return;
-    }
-    const visuals = require('./visuals');
-    const staging = require('./staging');
-    await visuals.setChecksPending(pool, session.id, null, 'building', 'fleet-maintenance')
-      .catch((err) => log.warn('fleet-maintenance', 'setChecksPending failed (non-fatal)', { sessionId: session.id, err: err.message }));
-    visuals.notifyChecksPending(session.id, null, 'building', 'fleet-maintenance');
-    let result;
-    try {
-      result = await staging.buildAndDeployStaging(config, session, app, 'latest');
-    } catch (err) {
-      const stagingRecovery = require('./staging-recovery');
-      await stagingRecovery.recordStagingBootFailure({
-        config, pool, session, commitHash: null, err,
-      }).catch((e) => log.warn('fleet-maintenance', 'recordStagingBootFailure failed (non-fatal)', { sessionId: session.id, err: e.message }));
-      throw err;
-    }
-    await pool.query(
-      `UPDATE chat_sessions SET staging_container_id = $1, staging_url = $2 WHERE id = $3`,
-      [result.containerId, result.stagingUrl, session.id]
-    );
-    await staging.verifyStagingEdge(session, result.hostname, result.stagingUrl);
-    visuals.captureForSession(config, session, app, null, result, { trigger: 'fleet-maintenance' })
-      .catch((err) => log.warn('fleet-maintenance', 'Campaign visuals capture failed', { sessionId: session.id, err: err.message }));
-  })().catch((err) => log.warn('fleet-maintenance', 'Campaign staging build failed', { sessionId: session.id, err: err.message }));
+    // The preview machine builds and checks the campaign's exact head (its
+    // pin, else the branch tip), never 'latest'.
+    const { rows: [row] } = await pool.query(
+      'SELECT cs.*, a.repo_url FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1', [session.id]);
+    if (row) await require('./preview-workflow').revision({ pool, session: row, source: 'fleet', trigger: 'fleet-maintenance' });
+  })().catch((err) => log.warn('fleet-maintenance', 'Campaign checks hand-off failed', { sessionId: session.id, app: app && app.slug, err: err.message }));
 }
 
 // ─── The campaign loop ───────────────────────────────────────────────

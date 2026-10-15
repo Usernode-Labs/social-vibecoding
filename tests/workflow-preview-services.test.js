@@ -4,7 +4,8 @@
 // with the build, the cluster and the databases stubbed: a build failure is
 // a result the machine decides on, a cancelled attempt undoes what it
 // created and reports nothing, a retried run collects what the earlier
-// claim left on the cluster (or starts over under the same id), and a
+// claim left on the cluster (or starts over under the same id, in the place
+// in line the earlier claim had), the unit suite starts with the build, and a
 // retirement closes only when nothing is left.
 
 const test = require('node:test');
@@ -62,15 +63,27 @@ stub('../src/services/check-runs', {
   ...require('../src/services/check-runs'),
   async finish(pool, runId) { calls.push(['finish', runId]); },
 });
+const notes = [];
+stub('../src/services/homeroom-bot-dm', { ...require('../src/services/homeroom-bot-dm'),
+  async noteChangeStopped(pool, sessionId, o) { notes.push(['bot', sessionId, o.why]); } });
+stub('../src/services/shots-orchestrator', { ...require('../src/services/shots-orchestrator'),
+  async noteNotStarted(pool, sessionId, reason) { notes.push(['shots', sessionId, reason]); } });
+const suites = { launched: [], running: 0, jobs: new Set() };
+stub('../src/services/unit-suite', { ...require('../src/services/unit-suite'),
+  isEnabled: () => true,
+  async maybeRunUnitSuite(o) { suites.launched.push(o); return null; } });
+stub('../src/services/checks-queue', { ...require('../src/services/checks-queue'), maxConcurrentRuns: () => 2 });
 const realVisuals = require('../src/services/visuals');
 stub('../src/services/visuals', {
   ...realVisuals,
   async captureForSession(config, row, app, head, staging, opts) {
     calls.push(['capture', head, staging.runtimeName, opts.workflow.runId]);
+    captured.push(opts.workflow);
     return { outcome: 'verdict', state: 'passing' };
   },
 });
 
+const captured = [];
 const { previewServices } = require('../src/workflow/preview/services.ts');
 const { WORK } = require('../src/workflow/preview/machine.ts');
 const { LeaseLost } = require('../src/workflow/kernel/index.ts');
@@ -79,9 +92,11 @@ const work = { cancelled: true };
 const runs = { rows: [] };
 const pool = { async query(text) {
   if (/FROM wf_work WHERE id/.test(text)) return { rows: [{ cancelled: work.cancelled }] };
+  if (/min\(queued_at\)/.test(text)) return { rows: [{ at: runs.queuedAt ?? null }] };
+  if (/FROM wf_instances WHERE machine = 'preview'/.test(text)) return { rows: suites.preparing ? [{ '?column?': 1 }] : [] };
   if (/FROM check_runs WHERE session_id/.test(text)) return { rows: runs.rows };
   if (/FROM chat_sessions cs JOIN apps/.test(text)) return { rows: [{ id: 5, app_id: 2, app_slug: 'shop', repo_url: '' }] };
-  if (/FROM apps WHERE id/.test(text)) return { rows: [{ id: 2, slug: 'shop' }] };
+  if (/FROM apps WHERE id/.test(text)) return { rows: [{ id: 2, slug: 'shop', repo_url: 'https://github.com/acme/shop' }] };
   return { rows: [] };
 } };
 const handlers = previewServices({ config: { captureRuntime: 'kubernetes', kubernetes: {} }, pool });
@@ -219,3 +234,75 @@ test('a reclaimed build clones into its own claim\'s database, never the one a c
   assert.equal(out.db, dbs[1], 'and the receipt says which one serves');
 });
 
+
+test('a preview that will not start tells the bot, and an imported pull request\'s shots too', async () => {
+  notes.length = 0;
+  await handlers[WORK.stopped].run(ctx({ sessionId: 5, imported: false }));
+  assert.deepEqual(notes, [['bot', 5, 'preview']]);
+  notes.length = 0;
+  await handlers[WORK.stopped].run(ctx({ sessionId: 6, imported: true }));
+  assert.deepEqual(notes, [['bot', 6, 'preview'], ['shots', 6, 'no_staging_preview']]);
+});
+
+test('the unit suite starts with the build, under the attempt\'s own id, unless it is off, joined or the cluster is full', async () => {
+  const { unitEarlyRunId } = require('../src/workflow/preview/services.ts');
+  const k8s = require('../src/services/kubernetes');
+  k8s.findCheckJobs = async (config, { previewRunId }) => (suites.jobs.has(previewRunId)
+    ? { unitSuites: [{ name: 'sv-unit-early-s5-x', state: 'running' }] } : { unitSuites: [] });
+  k8s.countRunningUnitSuiteJobs = async () => suites.running;
+  const workers = previewServices({ config: { captureRuntime: 'kubernetes', workerRuntime: 'kubernetes', kubernetes: {} }, pool });
+  const input = { sessionId: 5, appId: 2, n: 3, head };
+  const id = unitEarlyRunId(5, 3);
+  assert.notEqual(id, unitEarlyRunId(5, 4), 'one per attempt');
+
+  suites.launched.length = 0;
+  assert.equal((await workers[WORK.unitEarly].run(ctx(input))).why, 'not_preparing',
+    'not once its attempt serves, failed or was superseded: nothing would read it');
+  assert.equal(suites.launched.length, 0);
+  suites.preparing = true;
+  assert.deepEqual(await workers[WORK.unitEarly].run(ctx(input)), { started: true, runId: id });
+  assert.equal(suites.launched.length, 1);
+  const o = suites.launched[0];
+  assert.deepEqual([o.ref, o.previewRunId, o.jobNamePrefix, o.strict], [head, id, 'sv-unit-early', true],
+    'the head itself, under the attempt\'s id and a Job name of its own');
+
+  suites.jobs.add(id);
+  assert.deepEqual(await workers[WORK.unitEarly].run(ctx(input)), { started: true, runId: id, joined: true },
+    'a retry finds the Jobs it launched');
+  suites.jobs.clear();
+  suites.running = 2;
+  assert.equal((await workers[WORK.unitEarly].run(ctx(input))).why, 'busy', 'not while the cluster runs as many as the queue admits');
+  suites.running = 0;
+  process.env.EARLY_UNIT_SUITE = '0';
+  assert.equal((await workers[WORK.unitEarly].run(ctx(input))).why, 'off');
+  delete process.env.EARLY_UNIT_SUITE;
+  assert.equal((await handlers[WORK.unitEarly].run(ctx(input))).why, 'off', 'only where the worker runtime is Kubernetes');
+  assert.equal(suites.launched.length, 1);
+
+  // The checks run against the attempt is told where to find it; retiring
+  // the attempt removes its Jobs.
+  captured.length = 0;
+  await workers[WORK.run].run(ctx({ ...input, runId: 'run-3-9', runtimeName: 'sv-preview-2-s5', url: 'https://shop--s5.apps' }));
+  assert.equal(captured[0].unitRunId, id);
+  calls.length = 0;
+  await workers[WORK.retireAttempt].run(ctx({ sessionId: 5, appId: 2, appSlug: 'shop', n: 3, db: 'app_shop_staging_s5_333333' }));
+  assert.ok(calls.some((c) => c[0] === 'delete-jobs' && c[1] === id), 'the attempt\'s early suite goes with it');
+  calls.length = 0;
+  await workers[WORK.retire].run(ctx({ sessionId: 5, appId: 2, appSlug: 'shop', runtimeName: 'sv-preview-2-s5', runtimeKind: 'kubernetes',
+    attempts: [{ n: 3, db: 'db3' }] }));
+  assert.ok(calls.some((c) => c[0] === 'delete-jobs' && c[1] === id), 'and with the whole preview');
+});
+
+test('a run claimed again asks for its checks slot as of the place the earlier claim had', async () => {
+  const input = { sessionId: 5, appId: 2, n: 1, head, runId: 'run-1-8', trigger: 'commit-push',
+    runtimeName: 'sv-preview-2-s5', runtimeKind: 'kubernetes', url: 'https://shop--s5.apps' };
+  collected.next = null;
+  runs.queuedAt = '2026-10-15T12:00:00.000Z';
+  captured.length = 0;
+  await handlers[WORK.run].run(ctx(input, { attempt: 2 }));
+  assert.equal(captured[0].queuedSince, '2026-10-15T12:00:00.000Z');
+  captured.length = 0;
+  await handlers[WORK.run].run(ctx(input));
+  assert.equal(captured[0].queuedSince, null, 'a first claim joins the back of the line');
+  delete runs.queuedAt;
+});

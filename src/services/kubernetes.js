@@ -1752,20 +1752,14 @@ async function restartApplication(config, runtimeName) {
   return waitForDeployment(namespace, runtimeName, { generation: restarted?.metadata?.generation, uid: restarted?.metadata?.uid });
 }
 
-// `uid`: delete the Deployment only if it is still that one (a preview
-// attempt's own). `identity`: read every resource's UID first and delete
+// `uid`: delete the Deployment only if it is still that one, and wait for
+// its Pods to go. `identity`: read every resource's UID first and delete
 // each with it as a precondition, plus the named `secrets` (the preview
 // machine's retirement, so a same-named successor keeps its resources).
-async function deleteApplication(config, runtimeName, { uid: ownUid = null, identity = false, secrets = [] } = {}) {
+async function deleteApplication(config, runtimeName, { uid = null, identity = false, secrets = [] } = {}) {
   const namespace = config.kubernetes.appNamespace;
   const { apps, core, networking } = getClients();
   if (identity) return deleteByIdentity(config, runtimeName, secrets);
-  const coordinated = require('./preview-lifecycle').enabled(config);
-  let uid = ownUid;
-  if (coordinated && !uid) {
-    try { uid = (await apps.readNamespacedDeployment({ name: runtimeName, namespace })).metadata.uid; }
-    catch (err) { if (!isNotFound(err)) throw err; }
-  }
   const deletions = await Promise.allSettled([
     deleteIfPresent(networking, 'deleteNamespacedIngress', runtimeName, namespace),
     deleteIfPresent(core, 'deleteNamespacedService', runtimeName, namespace),
@@ -1785,7 +1779,7 @@ async function deleteApplication(config, runtimeName, { uid: ownUid = null, iden
   ]);
   const failed = deletions.find(result => result.status === 'rejected');
   if (failed) throw failed.reason;
-  if (coordinated && uid) {
+  if (uid) {
     const deadline = Date.now() + 60000;
     for (;;) {
       let deployment;
@@ -2525,9 +2519,9 @@ async function deleteRunCheckJobs(config, { sessionId, previewRunId }) {
 
 // A DELETE response only acknowledges termination. Keep preview ownership
 // until every consuming Pod has stopped, including Jobs orphaned by a crash.
-// `spare(runId)` keeps the Jobs of the runs it names (by preview-run-id):
-// the preview lifecycle spares a run of the revision it is about to leave
-// to the harvest (check-harvest.runToCollect).
+// `spare(runId)` keeps the Jobs of the runs it names (by preview-run-id).
+// An early unit suite (`sv-unit-early-…`) is never touched here: it goes
+// with its attempt (preview services retireAttempt).
 async function cancelPreviewChecks(config, sessionId, previewRunId = null, { spare = () => false } = {}) {
   const { batch, core } = getClients();
   const namespace = config.kubernetes.workerNamespace;
@@ -2699,7 +2693,7 @@ function checkPlacement(cfg, checkSelector) {
 }
 
 // `namePrefix` names a Job outside the preview's own check Jobs: an early
-// unit suite (services/early-unit-suite.js) is `sv-unit-early-…`, which
+// unit suite (preview services checks.unitEarly) is `sv-unit-early-…`, which
 // cancelPreviewChecks and stopCheckJobs leave alone. `nameSuffix` and
 // `shard` name and label one of a run's capture shards; `cpuRequest` is a
 // shard's smaller share of the scheduler (services/visuals.js

@@ -102,17 +102,18 @@ async function removeApp(pool, config, app) {
     });
   }
 
-  // With WF_PREVIEWS_ENABLED on, the previews the preview machine holds for
-  // this app are retired by it, by identity. Its work needs only the names
-  // it recorded, so the rows can go below.
+  // The app's previews are retired by the preview machine, by identity: the
+  // ones it holds, and any a row still points at (adopted from the row). Its
+  // work needs only the names it recorded, so the rows can go below.
   try {
     const previewWorkflow = require('./preview-workflow');
-    if (previewWorkflow.enabled()) {
-      const { rows } = await pool.query(
-        `SELECT cs.id FROM chat_sessions cs JOIN wf_instances w ON w.machine = 'preview' AND w.key = 'session:' || cs.id
-          WHERE cs.app_id = $1 AND w.state NOT IN ('retired', 'detached', '(none)')`, [app.id]);
-      for (const r of rows) await previewWorkflow.retire({ session: { id: r.id, app_id: app.id }, reason: 'app_deleted', terminal: true });
-    }
+    const { rows } = await pool.query(
+      `SELECT cs.id FROM chat_sessions cs
+         LEFT JOIN wf_instances w ON w.machine = 'preview' AND w.key = 'session:' || cs.id
+        WHERE cs.app_id = $1
+          AND ((w.key IS NOT NULL AND w.state NOT IN ('retired', 'detached'))
+               OR cs.staging_url IS NOT NULL OR cs.staging_runtime_name IS NOT NULL)`, [app.id]);
+    for (const r of rows) await previewWorkflow.retire({ session: { id: r.id, app_id: app.id }, reason: 'app_deleted', terminal: true });
   } catch (err) {
     log.warn('apps', 'Could not hand the app\'s previews to the preview machine', { appId: app.id, err: err.message });
   }
