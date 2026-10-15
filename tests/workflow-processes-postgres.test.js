@@ -340,12 +340,17 @@ test('workflow machines in a process of their own, and through its crash', { tim
       assert.deepEqual((await instance('preview', `session:${busy.id}`)).data.operations.map((o) => o.kind), ['operation']);
       await platform.mergeConfirmed({ sessionId: carrier.id, appId: a.id, mergeSha: SHA('9'), force: false, tally: { yes: 1, required: 1, active: 1 } });
       await procs.until(() => settled('merge-followups', mergeKey(carrier), 'included.find'), 'the search for carried changes');
-      const read = async () => (await pool.query('SELECT status, included_in_session_id FROM chat_sessions WHERE id = $1', [busy.id])).rows[0];
-      await procs.until(async () => (await read()).included_in_session_id, 'a mark that should not come', 2000).catch(() => {});
-      assert.deepEqual({ ...await read() }, { status: 'promoted', included_in_session_id: null }, 'left as it is while busy');
-      const refusal = (await pool.query(
+      // Wait for the decision itself, not a fixed time: the find settling
+      // only starts the chain (its WorkDone decided on the carrier, then the
+      // Included it sends appended and decided on this change), and a mark
+      // would be written by that same decision. A two-second window read the
+      // refusal before a loaded machine had decided it (#5059).
+      const refusal = async () => (await pool.query(
         `SELECT result, reason FROM wf_events WHERE machine = 'merge-followups' AND key = $1 AND type = 'Included'`, [mergeKey(busy)])).rows[0];
-      assert.deepEqual({ ...refusal }, { result: 'rejected', reason: 'worked_on' }, 'refused by the change\'s own guard, from the record');
+      await procs.until(async () => (await refusal())?.result, 'the carried message to be decided');
+      assert.deepEqual({ ...await refusal() }, { result: 'rejected', reason: 'worked_on' }, 'refused by the change\'s own guard, from the record');
+      const { rows: [row] } = await pool.query('SELECT status, included_in_session_id FROM chat_sessions WHERE id = $1', [busy.id]);
+      assert.deepEqual({ ...row }, { status: 'promoted', included_in_session_id: null }, 'left as it is while busy');
     } finally {
       done();
     }
