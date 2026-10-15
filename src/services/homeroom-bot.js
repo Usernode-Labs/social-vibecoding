@@ -1103,8 +1103,10 @@ function suggestedAnswers(raw, fallback = null) {
 }
 
 // B6: a plan its person sees before anything is built: at most this many
-// bullets, each at most this long (the prompt asks for 80), and at most two
-// questions, each with two to four answers (the suggested one first).
+// bullets, each at most this long (the prompts ask for 40 for a first
+// version, 60 for a complicated change; the clip is a last resort), and at
+// most two questions, each with two to four answers (the suggested one
+// first).
 const MAX_PLAN_BULLETS = 5;
 const PLAN_BULLET_MAX = 120;
 const MAX_PLAN_QUESTIONS = 2;

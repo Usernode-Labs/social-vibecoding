@@ -155,8 +155,8 @@ const SURFACES = {
 // plan page for members. No side padding, so the rows line up with the
 // card's text. The App tab's card keeps its dots (#4053).
 const PLAN_ROW = {
-  first: 'py-3 text-[0.9375rem] leading-[22px] text-zinc-900 dark:text-zinc-100',
-  next: 'py-3 text-[0.9375rem] leading-[22px] text-zinc-900 shadow-[inset_0_1px_0_var(--app-sheet-line)] dark:text-zinc-100',
+  first: 'text-pretty py-3 text-[0.9375rem] leading-[22px] text-zinc-900 dark:text-zinc-100',
+  next: 'text-pretty py-3 text-[0.9375rem] leading-[22px] text-zinc-900 shadow-[inset_0_1px_0_var(--app-sheet-line)] dark:text-zinc-100',
 } as const;
 
 // One answer of a choice, picked or not: a 44px row with no side padding, so
@@ -168,9 +168,11 @@ const ANSWER_ROW = {
 
 // Where a plan's first question begins: under a hairline when lines of the
 // plan are above it (its card), or at the top of a card of its own (the made
-// screen's quick questions, ../first-session/made.tsx).
+// screen's quick questions, ../first-session/made.tsx). #5224: the hairline
+// sits halfway between the last line and the question, so the plan and the
+// question no longer run together.
 const QUESTION_TOP = {
-  divided: 'mt-3.5 pt-3 shadow-[inset_0_1px_0_var(--app-sheet-line)]',
+  divided: 'mt-2 pt-5 shadow-[inset_0_1px_0_var(--app-sheet-line)]',
   plain: 'pt-3',
 } as const;
 
