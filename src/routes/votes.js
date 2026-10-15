@@ -7797,9 +7797,16 @@ async function checkAndMerge(config, pool, session, options = {}) {
       const failLabel = session.pr_title
         ? `PR #${session.pr_number || session.id}: ${session.pr_title}`
         : `PR #${session.pr_number || session.id}`;
+      // An image refused for running as root is the app's own Dockerfile,
+      // not something an operator retries away: say what to change.
+      const deployFailure = require('../services/deploy-failure');
+      const rootImage = deployFailure.isRootImageRefusal(err);
       await sendSystemMessage(pool, session.app_id,
-        `${failLabel} merged on GitHub, but the production deploy failed: ${err.message}. ` +
-        `The change is on main; an operator can retry the deploy once the cause is resolved.`,
+        rootImage
+          ? `${failLabel} merged on GitHub, but it cannot go live: ${deployFailure.ROOT_IMAGE_FIX} ` +
+            `Production keeps serving the previous version until then.`
+          : `${failLabel} merged on GitHub, but the production deploy failed: ${err.message}. ` +
+            `The change is on main; an operator can retry the deploy once the cause is resolved.`,
         'system', null, { type: 'session', ref: session.id }
       ).catch(() => {});
 
