@@ -137,6 +137,9 @@ type WorkshopRow = {
   owed?: string[];
   /** Every vote owed, the ones swiped past too (`unseenRow` sets it). */
   owedCount?: number;
+  /** The viewer has an invite link out for it and nobody has joined yet
+      (GET /api/apps `invite_link_out`, routes/apps.js inviteLinkOut). */
+  invite_link_out?: boolean;
 };
 
 function SectionGlyph({ audience }: { audience: Audience }) {
@@ -170,8 +173,14 @@ function demoQuery(): string {
  *     The order of the section already says which moved last.
  *   Just you                   → when it last moved ("2h ago"). There is one
  *     member, and it is you.
+ *
+ * AN INVITE OUT (15 Oct 2026): a project the viewer has sent an invite link
+ * for, that nobody has joined yet, says "Invite link out" in that fact's
+ * place: it is what is going on with it. It stays in its section: a link
+ * out does not make Just you a private community, somebody joining does.
  */
 export function rowSubtitle(row: WorkshopRow, now = Date.now()): string {
+  if (row.invite_link_out) return translate('communities:row.inviteOut');
   if (row.audience !== 'solo') {
     const members = Number(row.member_count) || 0;
     return members > 0 ? translate('communities:row.members', { count: members }) : '';

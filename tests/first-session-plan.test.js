@@ -117,7 +117,7 @@ test('while the plan waits, the build\'s note says so instead of promising a mes
   // calling it the real app is gone.
   // N4 (13 Oct 2026): with the stage's own words and how long it has run.
   // (Run six: the line only while nothing else on the screen says where it is.)
-  assert.match(src, /<SketchCard made=\{made\} sketch=\{sketch\} line=\{ownLine \? line : null\} note=\{note\} lineWords=\{named\.words\} lineNote=\{named\.note\} \/>/);
+  assert.match(src, /<SketchCard made=\{made\} sketch=\{sketch\} line=\{ownLine \? line : null\} note=\{note\} lineWords=\{named\.words\} lineNote=\{named\.note\} band=\{appScreen\} bandClassName=\{APP_BAND\} bandCorner=\{viewSwitch\} \/>/);
   // (A little lower while the setup's card, or the first look card, stands
   // in for its status line, #4900, or while nothing does, run six.)
   assert.match(src, /const rowHidden = settingUp \|\| ranInPlace \|\| !ownLine;/);

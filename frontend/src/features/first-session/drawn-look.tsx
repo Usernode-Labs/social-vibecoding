@@ -12,7 +12,6 @@
  * takes its place, at the same size, once it is in:
  *
  *   the made screen's first look card   ./made.tsx FirstLookPhone
- *   the tour's last card                ./first-look.tsx TourFirstLook
  *   the hub's first look card           ../dev-board/workshop/hub-cards.tsx
  *   the App tab's band and Live         ../app-frame/first-version-screens.tsx,
  *                                       ../app-frame/live-band.tsx

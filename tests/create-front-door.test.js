@@ -104,7 +104,7 @@ test('the island opens the Create door over nothing else, on importing when aske
     assert.equal(island.openCreate(setMode, true), true);
     assert.deepEqual(state, { kind: 'make', entry: 'create', startImport: true });
     // Something already up stays.
-    state = { kind: 'tour', info: { slug: 'x', name: 'X' }, path: 'maker' };
+    state = { kind: 'tour', info: { slug: 'x', name: 'X' }, path: 'walk' };
     assert.equal(island.openCreate(setMode), false);
     assert.equal(state.kind, 'tour');
   });
@@ -121,9 +121,10 @@ test('from Create: nothing is answered, the grid is refreshed, and it ends on th
   assert.doesNotMatch(door, /noteAnswered|recordLookAround|onLookAround/);
   assert.match(door, /onClose=\{\(\) => leaveDoor\(false\)\}/);
   // The made screen's way on: the hub from Create, the tour on the first session.
-  const made = src.slice(src.indexOf("if (mode.kind === 'made') {"), src.indexOf("if (mode.kind === 'welcome') {"));
-  // The maker's tour tells its cards to the server (made-moments.ts, run five).
-  assert.match(made, /if \(fromCreate\) \{\s+leaveDoor\(true\);\s+enterScreen\('hub', made\.slug\);\s+return;\s+\}\s+enterScreen\('home', made\.slug\);\s+setMode\(\{ kind: 'tour', info, path: 'maker', moments: true \}\);/);
+  const made = src.slice(src.indexOf("if (mode.kind === 'made') {"), src.indexOf("if (mode.kind === 'held') return <WelcomeHeld />;"));
+  // The hub from Create, before anything of the first session's is owed;
+  // the first session's app or walk otherwise (tests/first-session-app-tip.test.js).
+  assert.match(made, /if \(fromCreate\) \{\s+leaveDoor\(true\);\s+enterScreen\('hub', made\.slug\);\s+return;\s+\}\s+const uid = legacy\(\)\.App\?\.user\?\.id;/);
   assert.match(made, /onSetSecrets=\{\(\) => \{\s+leaveDoor\(true\);\s+legacy\(\)\.Secrets\?\.open\?\.\(made\.slug\);\s+\}\}/);
   assert.match(made, /if \(fromCreate\) leaveDoor\(true\);\s+enterScreen\('bot', made\.slug, conversationId\);/);
 });

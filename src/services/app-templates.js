@@ -45,6 +45,15 @@
  *   an entry below       its title, summary, icon, features, tables and the
  *                        declared `tests` the new repository ships with.
  *
+ * A ready-made app also has an example picture: its main screen with a few
+ * sample entries, at a phone's size (public/illustrations/starters/<id>.png,
+ * the entry's `exampleScreen`). The made screen shows it, tagged "Example",
+ * on the new project's card the moment it is made, before the project has
+ * anything of its own to show (frontend/src/features/first-session/made.tsx,
+ * from POST /api/apps's `exampleScreen`).
+ * scripts/render-starter-examples.js draws them from the starter's own
+ * screen; run it again when a ready-made app's screen changes.
+ *
  * Rules every starter keeps: the platform conventions, like any app (the
  * bridge by relative path and never vendored, no CDN, the viewer's theme,
  * staging seeds gated on USERNODE_ENV and owned by fake identities, "now"
@@ -65,6 +74,9 @@ const path = require('path');
 const DEFAULT_TEMPLATE = 'empty';
 const STARTERS_DIR = path.join(__dirname, '..', '..', 'app-templates');
 
+/** Where a ready-made app's example picture is served (public/, scripts/render-starter-examples.js). */
+const exampleScreen = (id) => `/illustrations/starters/${id}.png`;
+
 // Files every starter directory carries, relative to it. A starter may add
 // more; these are the ones server.js and index.html depend on.
 const REQUIRED_FILES = ['api.js', 'public/index.html', 'public/app.js'];
@@ -82,6 +94,7 @@ function tierList(id, { plural, one, example, title }) {
     id,
     dir: 'tier-list',
     ready: true,
+    exampleScreen: exampleScreen(id),
     title,
     summary: `A tier list of the group's favorite ${plural}: anyone adds one, everyone drags them into tiers, and the group's ranking shows where each lands.`,
     icon: '📊',
@@ -262,6 +275,7 @@ const TEMPLATES = Object.freeze([
   Object.freeze({
     id: 'grocery-list',
     ready: true,
+    exampleScreen: exampleScreen('grocery-list'),
     title: 'Grocery list',
     summary: 'One shared grocery list that works like Homeroom\'s Todo List app: categories, ticked items kept in place, undo, search and due dates.',
     icon: '🛒',
@@ -286,6 +300,7 @@ const TEMPLATES = Object.freeze([
   Object.freeze({
     id: 'chore-list',
     ready: true,
+    exampleScreen: exampleScreen('chore-list'),
     title: 'Chore list',
     summary: 'The group\'s chores, each always one person\'s or taking turns; turns move on every Monday.',
     icon: '🧹',
@@ -310,6 +325,7 @@ const TEMPLATES = Object.freeze([
   Object.freeze({
     id: 'lending-library',
     ready: true,
+    exampleScreen: exampleScreen('lending-library'),
     title: 'Lending library',
     summary: 'The things members can lend each other, who has each one now, and who has asked for it next.',
     icon: '📚',
@@ -334,6 +350,7 @@ const TEMPLATES = Object.freeze([
   Object.freeze({
     id: 'study-timer',
     ready: true,
+    exampleScreen: exampleScreen('study-timer'),
     title: 'Study timer',
     summary: 'One big Start button for a 25 minute focus session, a gentle beep when it ends, and how many sessions you finished today.',
     icon: '⏱️',
@@ -362,6 +379,7 @@ const TEMPLATES = Object.freeze([
   Object.freeze({
     id: 'potluck-planner',
     ready: true,
+    exampleScreen: exampleScreen('potluck-planner'),
     title: 'Potluck planner',
     summary: 'Potlucks with a date and a place, who is bringing what by course (so the table is not six salads), and a chat for each one.',
     icon: '🍲',
