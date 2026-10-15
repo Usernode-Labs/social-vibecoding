@@ -28,6 +28,7 @@ import { SidebarIcon } from '@/components/ui/icons';
 import { useMessages } from '../../../lib/i18n/react';
 import { listText, t as translate } from '../../../lib/i18n/runtime';
 import { useStoreState } from '../../../lib/use-store-state';
+import { navStore } from '../../nav/nav-store.js';
 import { placeHandle, placeName, type PlaceKey } from './places';
 import { placeStore, toggleTray } from './place-store';
 
@@ -106,12 +107,20 @@ export function usePhoneHeader(): boolean {
  * published the toggle here; the header only draws the button and calls it.
  * The band's own button is hidden on a phone (app.css), so this is the one
  * a person sees.
+ *
+ * It also asks #5168's question: is the app view the screen on show? The
+ * header carries this button on every route, and a project page stays
+ * mounted behind the other tabs, so the mounted check alone passed on
+ * Discover, Home, Messages and Profile and the button drew there — a tray
+ * for a project that is not on screen. navStore answers it the way
+ * header-title.tsx's `inApp` does.
  */
 export function HeaderPlace({ slug, name }: { slug: string | null; name: string }): ReactNode {
   const phone = usePhoneHeader();
+  const { screen } = useStoreState(navStore);
   const { slug: mounted, owed, unread, tray } = useStoreState(placeStore);
   const button = useRef<HTMLButtonElement | null>(null);
-  if (!phone || !slug || mounted !== slug) return null;
+  if (!phone || !slug || mounted !== slug || screen !== 'app-view') return null;
   return (
     <PlacesButton
       name={name}
