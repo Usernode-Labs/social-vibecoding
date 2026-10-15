@@ -42,3 +42,35 @@ test('a head that cannot be resolved hands nothing and builds nothing', async ()
     { status: 'rejected', reason: 'no_head' });
   assert.equal(submitted.length, before);
 });
+
+test('a failed preview is the machine\'s whether or not its retry timer is set: past the cap a sweep starts nothing', async () => {
+  for (const [state, deadline, expected] of [
+    ['preparing', null, true], ['retiring', null, true],
+    ['failed', new Date(), true], ['failed', null, true],
+    ['settled', null, false], ['idle', null, false],
+  ]) {
+    platform.previewInstance = async () => ({ state, data: {}, deadline_at: deadline });
+    assert.equal(await workflow.working(5), expected, `${state}${deadline ? ' with a timer' : ''}`);
+  }
+  platform.previewInstance = async () => null;
+  assert.equal(await workflow.working(5), false, 'a session it does not hold');
+});
+
+test('retired means the machine applied the retirement: not one pending, faulted, or refused for another reason', async () => {
+  for (const [out, retired, taken] of [
+    [{ status: 'accepted' }, true, true],
+    [{ status: 'replayed' }, true, true],
+    [{ status: 'rejected', reason: 'retired' }, true, true],
+    [{ status: 'rejected', reason: 'already_retiring' }, true, true],
+    [{ status: 'rejected', reason: 'already_idle' }, true, true],
+    [{ status: 'pending' }, false, true],
+    [{ status: 'faulted' }, false, false],
+    [{ status: 'rejected', reason: 'worked_on' }, false, false],
+  ]) {
+    let waited;
+    platform.retirePreview = async (id, appId, reason, terminal, waitMs) => { waited = waitMs; return out; };
+    const r = await workflow.retire({ session: { id: 5, app_id: 2 }, reason: 'app_deleted', terminal: true, waitMs: 30000 });
+    assert.deepEqual([r.retired, r.taken], [retired, taken], JSON.stringify(out));
+    assert.equal(waited, 30000, 'the caller\'s wait reaches the machine');
+  }
+});

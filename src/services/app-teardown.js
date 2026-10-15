@@ -113,10 +113,10 @@ async function removeApp(pool, config, app) {
 // The app's previews are retired by the preview machine, by identity: the
 // ones it holds, and any a row still points at, which it adopts from the row
 // when it applies the request. Its work needs only the names it recorded, so
-// the rows can go afterwards, but only once each request is APPLIED: one the
-// machine has only recorded would find the row gone and never retire what it
-// named. First, so a refusal leaves the app as it was; a delete asked again
-// finishes it.
+// the rows can go afterwards, but only once each request has RETIRED it: one
+// the machine has only recorded would find the row gone and never retire what
+// it named, and one it refused or faulted on retires nothing. First, so a
+// refusal leaves the app as it was; a delete asked again finishes it.
 const RETIRE_WAIT_MS = 30_000;
 async function retirePreviews(pool, app) {
   const previewWorkflow = require('./preview-workflow');
@@ -129,8 +129,8 @@ async function retirePreviews(pool, app) {
   for (const r of rows) {
     const out = await previewWorkflow.retire({ session: { id: r.id, app_id: app.id }, reason: 'app_deleted', terminal: true,
       waitMs: RETIRE_WAIT_MS });
-    if (!out.applied) {
-      throw new Error(`The preview of proposal ${r.id} is not retired yet; delete the app again in a minute`);
+    if (!out.retired) {
+      throw new Error(`The preview of proposal ${r.id} is not retired yet (${out.reason || out.status}); delete the app again in a minute`);
     }
   }
 }

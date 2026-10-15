@@ -100,16 +100,17 @@ async function clear({ session, reason }) {
 // Answers whether the machine took it ('accepted' or 'pending'; a refusal
 // says why). A preview already retired, already retiring for good, or with
 // nothing serving is taken too: a second teardown of it has nothing to do.
-// `applied` says the machine has decided it, not just recorded it: a caller
-// about to delete the session row waits for that (`waitMs`), because a
-// preview the machine does not hold yet is adopted from the row when the
-// request is applied.
+// `retired` says the machine has applied it and the preview is retired or
+// being retired: a caller about to delete the session row needs that
+// (`waitMs`), because a preview the machine does not hold yet is adopted from
+// the row when the request is applied. A request still pending, refused for
+// another reason, or faulted is not.
 const ALREADY = new Set(['retired', 'already_retiring', 'already_idle']);
 async function retire({ session, reason, terminal, waitMs = undefined }) {
   const out = await platform().retirePreview(Number(session.id), Number(session.app_id), reason, !!terminal, waitMs);
-  const taken = out.status === 'accepted' || out.status === 'pending' || out.status === 'replayed'
+  const done = out.status === 'accepted' || out.status === 'replayed'
     || (out.status === 'rejected' && ALREADY.has(out.reason));
-  return { taken, applied: out.status !== 'pending', reason: out.reason || null };
+  return { taken: done || out.status === 'pending', retired: done, status: out.status, reason: out.reason || null };
 }
 
 // An observer found the serving runtime gone: the machine rebuilds it.
@@ -121,15 +122,16 @@ async function lost({ session, detail = null }) {
   return true;
 }
 
-// The machine is building the session's preview, retiring it, or waiting to
-// build it again after a failure (its RetryDue timer is set): a sweep that
-// finds the preview missing has nothing to add. A failure with no timer is
-// left to the stuck-checks lane, which asks for a recheck.
-const WORKING = new Set(['preparing', 'retiring']);
+// The machine is building the session's preview, retiring it, or its last
+// build failed: a sweep that finds the preview (or the older one a failed
+// build left serving) missing has nothing to add. A failure runs again on the
+// machine's timer while the streak is under its cap, else from the
+// stuck-checks lane within the row's own cap, else when a person asks;
+// never because a sweep noticed a runtime gone.
+const WORKING = new Set(['preparing', 'retiring', 'failed']);
 async function working(sessionId) {
   const instance = await platform().previewInstance(Number(sessionId));
-  if (WORKING.has(instance?.state)) return true;
-  return instance?.state === 'failed' && instance.deadline_at != null;
+  return WORKING.has(instance?.state);
 }
 
 module.exports = { held, working, exactHead, revision, request, recheck, skipped, clear, retire, lost };
