@@ -2514,7 +2514,9 @@ async function runTests(browser, tests, opts) {
     try {
       // The group's own ceiling, so a rolling assert window can never
       // outlive the budget this race enforces (see ASSERT_REPORT_RESERVE_MS).
-      const groupOpts = { ...settleOpts, groupDeadlineAt: now() + groupBudgetMs, timing };
+      const groupOpts = { ...settleOpts, groupDeadlineAt: now() + groupBudgetMs };
+      // Where the group writes how long its cold load took.
+      groupOpts.timing = timing;
       outcome = await Promise.race([
         Promise.resolve()
           .then(() => runTestGroup(browser, group, groupOpts))
