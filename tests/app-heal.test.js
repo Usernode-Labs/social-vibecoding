@@ -560,3 +560,26 @@ test('repo provisioning is skipped when GitHub is disabled', async () => {
   assert.equal(r.status, 'healthy');
   assert.equal(fx.repoCreateCalls.length, 0);
 });
+
+// The Deployment's template is an image refused for running as root, and the
+// previous ReplicaSet keeps serving (Goalio, 17 Sep to 15 Oct 2026): a restart
+// rolls out the same refusal and a rebuild of the same commit makes the same
+// image, so the heal waits for a commit that changes the Dockerfile.
+test('an app whose newer commit was refused for running as root is not restarted or rebuilt', async (t) => {
+  const kube = require('../src/services/kubernetes');
+  t.mock.method(kube, 'getApplicationStatus', async () => 'restarting');
+  let restarts = 0;
+  t.mock.method(kube, 'restartApplication', async () => { restarts += 1; });
+  const refused = { stage: 'healthcheck', kind: 'root_image', sha: 'newsha', reason: 'runs as root' };
+  const result = await appHeal.checkAndHealOne({ ...config, appRuntime: 'kubernetes' }, fakePool, app({ last_failure: refused }));
+  assert.equal(result.status, 'waits_for_new_commit');
+  assert.equal(restarts, 0);
+  assert.deepEqual(fx.rebuildCalls, []);
+
+  // A record of the commit that is live is stale, not a reason to stop healing.
+  appHeal._resetForTests();
+  const stale = await appHeal.checkAndHealOne({ ...config, appRuntime: 'kubernetes' }, fakePool,
+    app({ last_failure: { ...refused, sha: 'oldsha' } }));
+  assert.notEqual(stale.status, 'waits_for_new_commit');
+  assert.equal(restarts, 1);
+});
