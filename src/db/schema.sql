@@ -10676,6 +10676,16 @@ COMMENT ON COLUMN homeroom_bot_runs.build_no_change IS 'staging:private';
 ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_retry JSONB;
 COMMENT ON COLUMN homeroom_bot_runs.build_retry IS 'staging:private';
 
+-- 15 Oct 2026: a live first version that was built and could not be
+-- proposed, finished by its maker's Try again (homeroom-bot.js
+-- finishBuiltFirstVersion): the session the build left is proposed as the
+-- build would have proposed it. { at, by (who tapped it), session_id (the
+-- session it proposes), outcome ('proposed' or 'failed', once known) }.
+-- Claimed once per run, so a second tap proposes nothing; a claim with no
+-- outcome after FINISH_STALE_MINUTES is a process that died and is taken
+-- again. Nothing private: no words, only ids and times.
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_finish JSONB;
+
 -- Where a live or shadow build is between its steps, saved at each step
 -- boundary so a restart carries it on from there instead of building it
 -- again or sending it back to be triaged (homeroom-bot-checkpoint.js):

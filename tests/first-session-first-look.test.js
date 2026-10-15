@@ -110,8 +110,9 @@ test('the first look card: the picture once it is there, "Drawing your screensâ€
   assert.match(index, /\{step\.firstLook \? <TourFirstLook slug=\{info\.slug\} name=\{info\.name\} \/> : null\}/);
   assert.match(index, /\{step\.firstLook \? t\('core:common\.done'\) : step\.last \? t\('onboarding:firstSession\.tour\.gotIt'\) : t\('onboarding:firstSession\.tour\.next'\)\}/);
   assert.equal(message('core:common.done'), 'Done');
-  // Asked again while there is none, and stops once it is drawn.
+  // Asked again while there is none, and stops once it is pictured (15 Oct
+  // 2026: a drawn screen alone is asked past, tests/first-look-drawn.test.js).
   const look = read(`${DIR}/first-look.tsx`);
-  assert.match(look, /if \(src && src !== broken\) return undefined;/);
+  assert.match(look, /if \(src && src !== broken && !isDrawnLook\(src\)\) return undefined;/);
   assert.match(look, /const timer = window\.setInterval\(read, FIRST_LOOK_POLL_MS\);/);
 });

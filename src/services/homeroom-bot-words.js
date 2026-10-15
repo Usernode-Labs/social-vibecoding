@@ -87,6 +87,9 @@ const FIRST_PERSON = Object.freeze([
   [/Homeroom bot built (.+?), but couldn't put it up for approval\./, 'I built $1, but couldn\'t put it up for approval.'],
   // A first version built and not proposed (14 Oct 2026: FIRST_UNPROPOSED_SAID).
   [/Homeroom bot built (.+?) but couldn't put it live yet\./, 'I built $1 but couldn\'t put it live yet.'],
+  // And its maker's Try again finishes it (15 Oct 2026: live.buildFailedText).
+  [/can tap Try again in their chat with Homeroom bot, and it will finish it\./,
+    'can tap Try again in their chat with me, and I\'ll finish it.'],
   [/: it ended up with no changes to show\./, ': I ended up with no changes to show.'],
   [/Homeroom bot couldn't\b/g, 'I couldn\'t'],
   // Leaving a request to the people holding it (homeroom-bot-holds.js).

@@ -167,10 +167,15 @@ test('no failure surface says "pick it up" any more', () => {
 // again, and a push that said "couldn't put it up for a vote". A first
 // version goes live without a vote (D1), so every stop of one says what is
 // true without approval, a proposal or a vote; a later change keeps its words.
+// 15 Oct 2026: one built and only not proposed is finished by Try again
+// (homeroom-bot.js finishBuiltFirstVersion), so it says it finishes it, and
+// its request says where Try again is: a reply there would start it over.
+// Every other cause still starts over.
+const FINISH = 'Whoever asked for it can tap Try again in their chat with Homeroom bot, and it will finish it.';
 const FIRST_CAUSES = [
   ['the change was built but could not be proposed: Server is restarting',
-    'I built Book Club but couldn\'t put it live yet. Tap Try again and I\'ll start over.',
-    'Homeroom bot built this but couldn\'t put it live yet.'],
+    'I built Book Club but couldn\'t put it live yet. Tap Try again and I\'ll finish it.',
+    'Homeroom bot built this but couldn\'t put it live yet.', FINISH],
   ['the build ran past its time limit (finished after a restart)',
     'I couldn\'t finish building Book Club: it took longer than I\'m allowed. Tap Try again and I\'ll start over.',
     'Homeroom bot couldn\'t finish building this: the build took longer than it\'s allowed.'],
@@ -194,30 +199,30 @@ test('a first version that stopped is said without approval, a proposal or a vot
   const words = require('../src/services/homeroom-bot-words');
   const notifyCopy = require('../src/services/homeroom-bot-notify-copy');
   const context = { appName: 'Book Club', issueNumber: 1, issueTitle: 'First version of Book Club', firstVersion: true };
-  for (const [reason, toThem, onRequest] of FIRST_CAUSES) {
+  for (const [reason, toThem, onRequest, ending = RETRY] of FIRST_CAUSES) {
     // Its maker's chat, in the request's thread and in the main chat.
     assert.equal(dm.dmText('build_failed', { reason }, { ...context, threaded: true }), toThem, reason);
     assert.equal(dm.dmText('build_failed', { reason }, context), `**Book Club**, its first version\n\n${toThem}`, reason);
     // The request (and its GitHub comment), and its Homeroom copy.
     const posted = live.buildFailedText(reason, { firstVersion: true });
-    assert.equal(posted, `${onRequest} ${RETRY}`, reason);
+    assert.equal(posted, `${onRequest} ${ending}`, reason);
     for (const text of [toThem, posted, words.firstPerson(posted)]) {
       assert.doesNotMatch(text, APPROVAL, `${reason}: ${text}`);
       assert.doesNotMatch(text, DASH);
     }
   }
   assert.equal(words.firstPerson(live.buildFailedText(FIRST_CAUSES[0][0], { firstVersion: true })),
-    'I built this but couldn\'t put it live yet. Reply here and I\'ll try again.');
+    'I built this but couldn\'t put it live yet. Whoever asked for it can tap Try again in their chat with me, and I\'ll finish it.');
   // Without a name, it is the first version.
   assert.equal(dm.dmText('build_failed', { reason: FIRST_CAUSES[0][0] }, { ...context, appName: '', threaded: true }),
-    'I built the first version but couldn\'t put it live yet. Tap Try again and I\'ll start over.');
+    'I built the first version but couldn\'t put it live yet. Tap Try again and I\'ll finish it.');
 
   // The push and the bell row of that message.
   const pool = { async query() { return { rows: [] }; } };
   const metadata = { kind: 'build_failed', appName: 'Book Club', firstVersion: true, said: 'build_not_proposed' };
   const copy = notifyCopy.botMomentCopy(await dm.notificationDetail(pool, dm.momentOf(metadata), metadata));
   assert.deepEqual([copy.title, copy.body, copy.bellLabel, copy.bellSubject],
-    ['Book Club', 'Stopped: I built your first version but couldn\'t put it live yet. Tap Try again.', 'Stopped', 'Book Club first version']);
+    ['Book Club', 'Stopped: I built your first version but couldn\'t put it live yet. Tap Try again and I\'ll finish it.', 'Stopped', 'Book Club first version']);
   assert.doesNotMatch(copy.body, APPROVAL);
   // Every stop's push for a first version.
   for (const said of notifyCopy.SAID_BY_MOMENT.stopped) {

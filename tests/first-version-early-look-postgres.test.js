@@ -187,6 +187,52 @@ test('an early first look: kept, shown until the spec saves its own, handed to t
     assert.equal(JSON.stringify(report).includes('Pizza night'), false);
   });
 
+  await t.test('15 Oct 2026: drawn but not pictured yet, the drawn screen is shown, as a document that runs nothing', async () => {
+    // Newcomer run nine: the worker for its picture was slow to start, and
+    // the made screen showed an empty phone for 11 seconds after Submit.
+    const app = await project('club-votes-drawn', 'https://github.com/o/club-votes-drawn');
+    const hold = {};
+    const held = new Promise((resolve) => { hold.release = resolve; });
+    const slow = deps({
+      worker: {
+        async ensureWorkerImage() {},
+        async ensureWorker(sessionId) { await held; return `w-${sessionId}`; },
+        async runBenchCapture() { return `${fvs.MARKER} ${JSON.stringify({ ok: true, png: PNG.toString('base64') })}\n`; },
+      },
+    });
+    assert.equal(await early.startEarlyLook(pool, { app, user: maker, brief: 'x', plan: PLAN, config: {}, bot: BOT }, slow), true);
+    let row = null;
+    for (let i = 0; i < 200 && row?.status !== 'drawn'; i += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      ({ rows: [row] } = await pool.query('SELECT status, drawn_at FROM first_version_early_looks WHERE app_id = $1', [app.id]));
+      // eslint-disable-next-line no-await-in-loop
+      if (row?.status !== 'drawn') await new Promise((r) => { setTimeout(r, 10); });
+    }
+    assert.equal(row.status, 'drawn', 'drawn, its worker still starting');
+    let showcase = await fvs.showcaseOf(pool, app.id);
+    assert.deepEqual(showcase.screens.first_look, { count: 1, at: new Date(row.drawn_at).toISOString(), drawn: true });
+    assert.equal(fvs.firstVersionShowcase(showcase, 'building').screens.drawn, true);
+    assert.equal(await fvs.readScreen(pool, app.id, 'first_look', 0), null, 'no picture yet');
+    const doc = await fvs.readDrawnDocument(pool, app.id);
+    assert.match(doc, /^<!doctype html>/);
+    assert.ok(doc.includes('Pizza night?'));
+    // The worker starts; the picture is saved and takes its place.
+    hold.release();
+    assert.deepEqual(await early._pendingForTests.get(app.id), { ok: true, error: null });
+    showcase = await fvs.showcaseOf(pool, app.id);
+    assert.equal('drawn' in showcase.screens.first_look, false);
+    assert.ok((await fvs.readScreen(pool, app.id, 'first_look', 0)).data.equals(PNG));
+    assert.ok(await fvs.readDrawnDocument(pool, app.id), 'a frame asked for just then still has it');
+    // The spec's own first look replaces both.
+    await pool.query(`UPDATE homeroom_bot_first_versions SET status = 'filed', issue_number = 1 WHERE app_id = $1`, [app.id]);
+    const { rows: [run] } = await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, build_note) VALUES ($1, 1, 'live', 'ready', $2) RETURNING id`,
+      [app.id, PLAN.buildNote],
+    );
+    await fvs.storeScreens(pool, run.id, 'first_look', [{ data: PNG, width: 1, height: 1 }]);
+    assert.equal(await fvs.readDrawnDocument(pool, app.id), null);
+  });
+
   await t.test('a failure is recorded and harmless: nothing shown, nothing handed to the spec', async () => {
     const app = await project('club-votes-2', 'https://github.com/o/club-votes-2');
     const failing = deps({ llm: { isEnabled: () => true, estimateCostCents: () => 0, async generateFirstLook() { throw new Error('529'); } } });

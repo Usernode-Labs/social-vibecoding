@@ -12,21 +12,29 @@
  * The images are the server's, read by the project's members only
  * (public/js/app-view.js _firstVersionScreens names them); this draws
  * pictures and nothing else. A picture that will not load is left out, and
- * with none left the thumbnail is drawn as it was (`onEmpty`). Only on the
- * App tab: the made screen, the invite page, Home and the hub keep the
+ * with none left the thumbnail is drawn as it was (`onEmpty`). The made
+ * screen, the tour and the hub draw the first look themselves
+ * (../first-session/first-look.tsx); the invite page and Home keep the
  * thumbnail.
+ *
+ * 15 Oct 2026 (newcomer run nine): a first look whose picture is not saved
+ * yet is its drawn screen, framed so that it runs and loads nothing
+ * (../first-session/drawn-look.tsx), in the same phone; the App tab
+ * (./app-status.tsx) swaps the picture in once it is loaded (useLookSwap).
  */
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
+import { DrawnLook, isDrawnLook } from '../first-session/drawn-look';
 
 /** What the band draws (AppView._firstVersionScreens). */
 export interface FirstVersionScreens {
   kind: 'first_look' | 'real';
   /** When the real screens were taken (ISO), for the pill. */
   at: string | null;
+  /** Each picture's URL; a first look not pictured yet is its drawn screen's (isDrawnLook). */
   images: string[];
 }
 
@@ -100,15 +108,19 @@ export function ScreensBand({ screens, name, onEmpty }: { screens: FirstVersionS
         {shown.map((src, i) => (
           <div key={src} className="flex h-full w-full shrink-0 snap-center items-end justify-center pb-6">
             <div className={FRAME}>
-              <img
-                src={src}
-                alt={screens.kind === 'first_look'
-                  ? t('agent:appFrame.screens.alt.firstLook', { project: name })
-                  : t('agent:appFrame.screens.alt.real', { project: name, number: i + 1, total: shown.length })}
-                className="h-full w-full object-cover object-top"
-                draggable={false}
-                onError={() => setFailed((prev) => new Set(prev).add(src))}
-              />
+              {isDrawnLook(src) ? (
+                <DrawnLook src={src} label={t('agent:appFrame.screens.alt.firstLook', { project: name })} width={125} />
+              ) : (
+                <img
+                  src={src}
+                  alt={screens.kind === 'first_look'
+                    ? t('agent:appFrame.screens.alt.firstLook', { project: name })
+                    : t('agent:appFrame.screens.alt.real', { project: name, number: i + 1, total: shown.length })}
+                  className="h-full w-full object-cover object-top"
+                  draggable={false}
+                  onError={() => setFailed((prev) => new Set(prev).add(src))}
+                />
+              )}
             </div>
           </div>
         ))}

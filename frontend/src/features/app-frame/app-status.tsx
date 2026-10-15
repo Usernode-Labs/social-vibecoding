@@ -49,6 +49,7 @@ import { CheckIcon } from '@/components/ui/icons';
 import { useStoreState } from '../../lib/use-store-state';
 import { type BuildLineState, buildLineOf, phaseLine, useNow } from '../first-session/build-line';
 import { stepsOf } from '../first-session/build-line-words.js';
+import { useLookSwap } from '../first-session/drawn-look';
 import { useTourRunning } from '../first-session/tour-running';
 import { FeaturedCard, sketching, useSketch } from '../first-session/sketch-card';
 import { appStatusStore } from './app-status-store.js';
@@ -168,6 +169,9 @@ export interface FirstVersionThumb {
   sketch?: boolean;
 }
 
+/** The band's first picture, what useLookSwap waits on. */
+const firstImage = (screens: FirstVersionScreens): string | null => (Array.isArray(screens.images) && screens.images[0]) || null;
+
 /**
  * The project's thumbnail, with its sketch's tagline once that is read
  * (GET /api/apps/:slug/sketch, as the made screen reads it), else its
@@ -196,12 +200,15 @@ function FirstVersionCard({ thumb, line, caption = null, usual = null, estimate 
   const named = phaseLine(line, phase, now, listed ? null : caption, left);
   const sketch = useSketch(thumb.sketch === false ? null : thumb.slug);
   const card = sketch.card;
+  // 15 Oct 2026: a first look that is only drawn so far stays until the
+  // picture that follows it is loaded (../first-session/drawn-look.tsx).
+  const steady = useLookSwap(screens ?? null, firstImage);
   // Pictures that would not load leave the thumbnail as it was, until there
   // are others to show (the real screens after a first look, say).
-  const shownKey = hasScreens(screens) ? `${screens.kind} ${screens.images.join(' ')}` : '';
+  const shownKey = hasScreens(steady) ? `${steady.kind} ${steady.images.join(' ')}` : '';
   const [emptyKey, setEmptyKey] = useState<string | null>(null);
   const onEmpty = useCallback(() => setEmptyKey(shownKey), [shownKey]);
-  const shows = hasScreens(screens) && emptyKey !== shownKey ? screens : null;
+  const shows = hasScreens(steady) && emptyKey !== shownKey ? steady : null;
   // #4449: while it is built, Preview (the above) or Live, Live unless
   // Preview was picked for this project (run six). At "Testing it" the
   // switch goes, and the real screens show;

@@ -115,7 +115,8 @@ test('only the first look, read as the tour\'s last card reads it, and nothing u
   assert.match(card, /fetch\(madeAppUrl\(slug\), \{ credentials: 'same-origin', cache: 'no-store' \}\)/, 'GET /api/apps/:slug, past the worker\'s cache, as the tour reads it');
   assert.match(card, /const found = firstLookSrc\(body, slug, FIRST_LOOK_ONLY\);/);
   assert.match(src, /const FIRST_LOOK_ONLY: readonly string\[\] = \['first_look'\];/);
-  assert.match(card, /if \(!wanted \|\| !slug \|\| \(src && src !== broken\)\) return undefined;/, 'asked again only while it is not there');
+  assert.match(card, /if \(!wanted \|\| !slug \|\| \(src && src !== broken && !isDrawnLook\(src\)\)\) return undefined;/,
+    'asked again only while it is not there, or only drawn (15 Oct 2026, tests/first-look-drawn.test.js)');
   assert.match(card, /\}, FIRST_VERSION_POLL_MS\);/);
   // Held back while the tour runs: its own last card is this picture.
   assert.match(card, /const touring = useTourRunning\(\);/);

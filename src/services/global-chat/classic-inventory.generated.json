@@ -2929,6 +2929,21 @@
     },
     {
       "source": "src/routes/apps.js",
+      "method": "GET",
+      "path": "/api/apps/:slug/first-version/first-look/drawn",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.get.apps.item.first.version.first.look.drawn.f2074f8d",
+      "domain": "apps",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#app/:slug/app"
+    },
+    {
+      "source": "src/routes/apps.js",
       "method": "POST",
       "path": "/api/apps/:slug/first-version/answers",
       "expression": null,
