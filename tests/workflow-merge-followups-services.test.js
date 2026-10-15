@@ -128,3 +128,15 @@ test('the bot, the DM, the journey and the main check run strict, so a failure i
   await call(h, WORK.mainCheck, { appId: 2, sessionId: 5, prNumber: 8, mergeSha: 'a'.repeat(40) });
   assert.equal(seen.mainCheck.strict, true);
 });
+
+test('an app.deliver item left from before asks app-delivery for its deploy itself, keyed by the item', async () => {
+  // Whichever release applies its result (an older Pod's code would not
+  // ask), the deploy it stood for is asked here.
+  const asked = [];
+  const h = mergeFollowupsServices({ config: {}, pool, requestDeploy: async (...args) => { asked.push(args); return 1; } });
+  const reuse = { imageRef: 'img', buildRef: 'b', commitSha: 'c'.repeat(40), owner: 'acme', repo: 'shop' };
+  const out = await h[WORK.deliver].run({ input: { appId: 2, sessionId: 5, mergeSha: 'a'.repeat(40), prNumber: 8, reuse },
+    workId: 'w-1', key: 'deliver', attempt: 1, resumeFrom: null, checkpoint: async () => {} });
+  assert.deepEqual(out, { handOff: true });
+  assert.deepEqual(asked, [[2, 'merge', { prNumber: 8, revision: 'a'.repeat(40), reuse, requestKey: 'handoff:w-1' }]]);
+});

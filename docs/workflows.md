@@ -673,7 +673,7 @@ rebuild, rollover's rebuild and a demo reset (`platform.requestDeploy`).
 - **One deploy at a time.** Requests that arrive during a deploy are served by one more
   deploy after it, however many there are. The deploy is the work item `app.deploy`
   (`staging.deployProduction`, under the cross-process build lock), at most four at a time
-  across apps. A merge's commit already running is not deployed again, and demo mode's
+  in the leading process. A merge's commit already running is not deployed again, and demo mode's
   preview image is reused, only when every request the deploy serves offers it. A deploy
   serving a request made by hand (Redeploy, Check for updates, a demo reset) retries even
   a commit refused for running as root; missing keys and an image that runs as root are

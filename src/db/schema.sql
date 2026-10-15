@@ -13668,9 +13668,9 @@ CREATE TRIGGER wf_events_writer
 -- guard below checks before it guards a row. Code outside the machine that
 -- must leave such a row alone (a legacy migration, a backfill) asks the same
 -- question in its WHERE clause, so the two cannot disagree.
--- An instance a machine has handed back holds nothing: 'detached' (its flag
--- was turned off and the old paths own the row again) and the preview
--- machine's 'retired' (a retired preview's row is the old paths' again, as
+-- An instance a machine has handed back holds nothing: 'detached' (left by
+-- the preview machine's flag, before its old paths were deleted) and the
+-- preview machine's 'retired' (a retired preview's row is the old paths' again, as
 -- an unarchived proposal's must be until its next event).
 CREATE OR REPLACE FUNCTION wf_holds(machine_name TEXT, instance_key TEXT) RETURNS BOOLEAN AS $$
   SELECT EXISTS (SELECT 1 FROM wf_settings WHERE key = 'enabled:' || machine_name)
@@ -13779,7 +13779,10 @@ DROP TRIGGER IF EXISTS chat_sessions_merged_live ON chat_sessions;
 
 -- Only the machine moves a proposal into 'merged' (the merge appends an
 -- event; recovery appends the same one), and once it holds a row it owns
--- the merge's columns.
+-- the merge's columns. One write is not the machine's and is let through:
+-- included_in_session_id set to NULL, which is the foreign key's own
+-- ON DELETE SET NULL when the change that carried it is deleted (a demo
+-- reset deletes the partner's changes, which may have carried another).
 DROP TRIGGER IF EXISTS chat_sessions_wf_merged ON chat_sessions;
 CREATE TRIGGER chat_sessions_wf_merged
   BEFORE UPDATE ON chat_sessions
@@ -13792,7 +13795,7 @@ CREATE TRIGGER chat_sessions_wf_merge_owned
   FOR EACH ROW
   WHEN (OLD.merged_at IS DISTINCT FROM NEW.merged_at
         OR OLD.merge_commit_sha IS DISTINCT FROM NEW.merge_commit_sha
-        OR OLD.included_in_session_id IS DISTINCT FROM NEW.included_in_session_id
+        OR (OLD.included_in_session_id IS DISTINCT FROM NEW.included_in_session_id AND NEW.included_in_session_id IS NOT NULL)
         OR OLD.live_at IS DISTINCT FROM NEW.live_at)
   EXECUTE FUNCTION wf_guard_owned_columns('@enrolled=merge-followups/session:',
     'merged_at', 'merge_commit_sha', 'included_in_session_id', 'live_at');

@@ -99,7 +99,7 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
   // an uncaught 'error' and end the process. The pool replaces it.
   workflowPool.on('error', (err: Error) => log!.warn('workflow', 'Idle workflow database connection lost', { message: err.message }));
   kernelPool = workflowPool;
-  const deps = { config, pool: appPool };
+  const deps = { config, pool: appPool, requestDeploy };
   machine = governanceProposal({ dataKey: config.dataEncryptionKey, notifiers: governanceNotifiers(deps) });
   merges = mergeFollowups({ dataKey: config.dataEncryptionKey, notifiers: mergeFollowupsNotifiers(deps) });
   deliveries = appDelivery();
@@ -442,12 +442,17 @@ export async function buildsUnderWay(target?: BuildTarget): Promise<{ key: strin
 // ── App delivery ────────────────────────────────────────────────────────
 
 // Ask for a deploy of an app's production (the Redeploy route, the drift
-// poller, heal, rollover, a secret change, a demo reset): recorded at once,
-// deployed by the machine one at a time. Resolves the event's id; the
-// "deploying" state and its end reach browsers from the machine.
-export async function requestDeploy(appId: number, reason: string): Promise<number> {
-  return runtime!.append(deliveries!, appKey(appId), { type: 'DeployRequested', payload: { appId, reason } },
-    { requestKey: `deploy:${reason}:${randomUUID()}`, source: { kind: 'system', name: reason }, appId });
+// poller, heal, rollover, a demo reset, and the old deploy work a merge or
+// a secret change recorded before every deploy was app-delivery's):
+// recorded at once, deployed by the machine one at a time. Resolves the
+// event's id; the "deploying" state and its end reach browsers from the
+// machine. A request key makes asking again a replay.
+export async function requestDeploy(appId: number, reason: string, o: {
+  prNumber?: number | null; revision?: string | null; reuse?: unknown; requestKey?: string;
+} = {}): Promise<number> {
+  return runtime!.append(deliveries!, appKey(appId), { type: 'DeployRequested', payload: {
+    appId, reason, prNumber: o.prNumber ?? null, revision: o.revision ?? null, reuse: o.reuse ?? null,
+  } }, { requestKey: o.requestKey ?? `deploy:${reason}:${randomUUID()}`, source: { kind: 'system', name: reason }, appId });
 }
 
 // ── Previews and required checks ────────────────────────────────────────

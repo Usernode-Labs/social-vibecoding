@@ -341,6 +341,12 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
     assert.ok((await lines(carried)).some((l) => /is live, as part of PR #\d+: Fix\./.test(l.content)), 'and now it says so');
     const { rows: [n] } = await pool.query(`SELECT detail FROM notifications WHERE session_id = $1 AND kind = 'pr_merged'`, [carried.id]);
     assert.match(n.detail, /^Included in #\d+, which went live\.$/);
+    // Who carried it is the machine's; only the foreign key's own SET NULL,
+    // when the carrier is deleted (a demo reset), gets past the guard.
+    await assert.rejects(pool.query('UPDATE chat_sessions SET included_in_session_id = $2 WHERE id = $1', [carried.id, busy.id]),
+      /WF_OWNERSHIP_VIOLATION: chat_sessions.included_in_session_id/);
+    await pool.query('DELETE FROM chat_sessions WHERE id = $1', [carrier.id]);
+    assert.equal((await row(carried.id)).included_in_session_id, null);
   });
 
   await t.test('F9: the preview teardown reads the row as merged', async () => {
@@ -696,6 +702,21 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
     await settle();
     assert.equal((await instance(s)).state, 'live');
     assert.ok((await workOf(s)).some((w) => w.kind === WORK.teardown));
+  });
+
+  await t.test('a merge from before that another deploy made live first still lets its preview go when its item hands off', async () => {
+    const a = await app();
+    const s = await proposal(a);
+    await merge(s);
+    await asBefore(s);
+    // App-delivery's deploy of the merge commit, heard before the item ran.
+    await send(s, 'Deployed', { sha: SHA('a') });
+    await rt.drain();
+    assert.equal((await instance(s)).state, 'live');
+    assert.ok(!(await workOf(s)).some((w) => w.kind === WORK.teardown));
+    work.results.set(WORK.deliver, { handOff: true });
+    try { await settle(); } finally { work.results.delete(WORK.deliver); }
+    assert.ok((await workOf(s)).some((w) => w.kind === WORK.teardown), 'the preview goes');
   });
 
   await t.test('an admin\'s retry of a merge whose own deploy failed before asks app-delivery', async () => {

@@ -633,7 +633,7 @@ has no flag: the old merge tail (`finalizeMerge` and its follow-ups), the
 ## Workflow app-delivery machine
 
 The app-delivery machine in `src/workflow/app-delivery/` runs every production deploy of
-an app, one at a time per app and at most four at a time across apps, for everyone who
+an app, one at a time per app and at most four at a time in the leading process, for everyone who
 asks (a merge, a secret change, the drift poller, Check for updates, Redeploy, heal, a
 rollover whose image is gone, a demo reset). It has no flag: each caller used to deploy
 itself, in its own process, with "deploying" in that process's memory; now it records a
@@ -650,10 +650,12 @@ request and the machine deploys. `docs/workflows.md` explains the machine.
 - **During the rollout that brings it.** An old Pod still deploys the old way; the
   cross-process build lock keeps its deploy and the machine's from running on one app at
   once, and each reads the other's "deploying".
-- **Rolling back past this release.** Older code deploys in each caller again; the
-  `app-delivery` instances keep their state, and that code still finishes the requests
-  they hold. Nothing in the infra values needs keeping for it (`workflowAppDeliveryEnabled`
-  stays as it is until the values are cleaned up).
+- **Rolling back past this release.** Older code deploys in each caller again. It still
+  runs a deploy app delivery had under way (it registers the machine while one is), but a
+  request left open after a failed deploy waits: the merge or secret change that asked is
+  version 5, which older code leaves alone, so it is answered once the release comes back.
+  Nothing in the infra values needs keeping for it (`workflowAppDeliveryEnabled` stays as
+  it is until the values are cleaned up).
 - **Verify after a release.** The Pod's log shows `Workflow runtime started` with
   `app-delivery`; the next deploy appears in Admin → Workflows as
   `app-delivery / app:<id>`, `deploying`, then `idle`, and the version pill spins during

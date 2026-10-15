@@ -422,7 +422,8 @@ function andWork(out: Outcome<MFState>, work: WorkRequest[]): Outcome<MFState> {
 // that deployed before app-delivery ran every deploy) can also make the
 // change live, and included.find hands the carried changes on. An
 // app.deliver's first result, whatever it is, lets the preview go, unless
-// it handed the merge to app-delivery, whose answer does.
+// it handed the merge to app-delivery, whose answer does (or the merge is
+// live already: another deploy contained it first).
 const handedOff = (e: Event<WorkResultPayload>) => e.payload.kind === WORK.deliver
   && !!(e.payload.result as { handOff?: boolean } | null)?.handOff;
 function workResult(status: Followup['status']) {
@@ -432,7 +433,8 @@ function workResult(status: Followup['status']) {
       (s.data.followups[e.payload.workKey]?.status === 'pending' ? ok() : reject('stale_result')),
     to: (s: any, e: Event<WorkResultPayload>, f: Facts, ctx: TransitionContext): Outcome<MFState> => {
       const out = decide(s, e, f, ctx);
-      return e.payload.kind === WORK.deliver && !handedOff(e) && !s.data.followups.teardown ? andWork(out, [teardownWork(s.data)]) : out;
+      const letGo = e.payload.kind === WORK.deliver && (!handedOff(e) || s.name === 'live') && !s.data.followups.teardown;
+      return letGo ? andWork(out, [teardownWork(s.data)]) : out;
     },
   };
 }

@@ -303,10 +303,10 @@ async function watchIssuesClosedAfterMerge({ owner, repo, prNumber, linkedIssues
   // #144: optimistically suppress every referenced number up front. The
   // merge path already did this for linked_issues, but the resolved set
   // can be wider (hand-edited `Closes #N` in the PR body), and when this
-  // watch is RESUMED after a platform restart (server.js
-  // resumeIssueCloseWatches — the self-edits app's GHA deploy rolls the
-  // platform right after merge, killing the original watcher) the fresh
-  // process has an empty suppression list. Anything that turns out to
+  // watch is RUN AGAIN after a platform restart (the merge-followups
+  // machine's issues.closeAfterMerge work is retried in a fresh process: the
+  // self-edits app's release rolls the platform right after merge) the
+  // fresh process has an empty suppression list. Anything that turns out to
   // still be open is unsuppressed below.
   try {
     github.noteIssuesClosed(owner, repo, numbers);

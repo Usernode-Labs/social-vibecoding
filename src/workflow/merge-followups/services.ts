@@ -9,9 +9,10 @@ import { backoff, closeAndComment, gone, permanent } from '../github-work.ts';
 import { liveShotsRun } from './facts.ts';
 import { WORK } from './machine.ts';
 
-interface Deps { config: any; pool: Pool }
+// requestDeploy: platform.ts's, for the deploy work left from before.
+interface Deps { config: any; pool: Pool; requestDeploy?: (appId: number, reason: string, o?: Record<string, unknown>) => Promise<number> }
 
-export function mergeFollowupsServices({ config, pool }: Deps): Record<string, WorkHandler> {
+export function mergeFollowupsServices({ config, pool, requestDeploy }: Deps): Record<string, WorkHandler> {
   const github = () => legacy('services/github');
   const session = async (id: number) => (await pool.query(
     `SELECT cs.*, a.slug AS app_slug, a.repo_url FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1`,
@@ -21,11 +22,20 @@ export function mergeFollowupsServices({ config, pool }: Deps): Record<string, W
   return {
     // The merge's own deploy, as merges recorded it before every deploy
     // was app-delivery's. An item of it left from then deploys nothing: it
-    // hands the merge to app-delivery (machine.ts), which deploys it.
+    // asks app-delivery for the deploy it stood for, here, so the deploy is
+    // asked whichever release applies its result (during a rollout an older
+    // Pod may, and its code would not ask), and answers `handOff`: the
+    // machine then asks app-delivery on the merge's behalf too (one more
+    // request, served by the same deploys). The request key is the item's,
+    // so a retry asks once.
     [WORK.deliver]: {
-      maxAttempts: 3,
+      maxAttempts: 5,
       backoffMs: backoff,
-      async run(): Promise<Json> {
+      async run({ input, workId }): Promise<Json> {
+        await requestDeploy!(Number(input.appId), 'merge', {
+          prNumber: input.prNumber ?? null, revision: input.mergeSha ?? null, reuse: input.reuse ?? null,
+          requestKey: `handoff:${workId}`,
+        });
         return { handOff: true };
       },
     },
