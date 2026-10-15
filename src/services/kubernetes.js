@@ -1974,6 +1974,15 @@ async function ensureWorker(config, { sessionId, env, onProgress, temporary = fa
         spec: {
           serviceAccountName: cfg.workerServiceAccount,
           automountServiceAccountToken: false,
+          // The pause container becomes PID 1 and reaps zombies, as `--init`
+          // does on Docker (services/docker.js). worker-run.sh ends in `exec
+          // sleep infinity`, which never calls wait(), so every orphaned
+          // `git` of an agent's turn stayed a zombie: 900–1,700 PIDs per
+          // worker with about 20 live processes (Oct 2026), all of them
+          // counted against the kubelet's per-Pod PID limit. Not PID 1,
+          // `sleep` also ends on SIGTERM instead of holding the Pod for its
+          // whole grace period.
+          shareProcessNamespace: true,
           securityContext: nodePodSecurityContext(),
           containers: [{
             name: 'worker', image: cfg.workerImage, imagePullPolicy: 'IfNotPresent',
@@ -2773,6 +2782,9 @@ async function runCheckJob(config, {
     template: { metadata: { labels: { ...checkLabels } }, spec: {
       restartPolicy: 'Never', serviceAccountName: cfg.workerServiceAccount,
       automountServiceAccountToken: false, securityContext: nodePodSecurityContext(),
+      // A pause PID 1 reaps what the browser and the suite orphan, as on the
+      // worker (ensureWorker). The Job still ends with the check's own exit.
+      shareProcessNamespace: true,
       ...checkPlacement(cfg, checkSelector),
       containers: [container], ...(podVolumes.length ? { volumes: podVolumes } : {}),
     } },
