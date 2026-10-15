@@ -20,9 +20,11 @@ import { useMessages } from '../../lib/i18n/react';
 /** The message id of the line under the title: what happened and what to try. */
 export const APPS_LOAD_ERROR_DETAIL = 'discover:loadError.detail';
 
-export function AppsLoadError({ title, onRetry, className = '' }: {
+export function AppsLoadError({ title, onRetry, detail, className = '' }: {
   title: string;
   onRetry: () => void;
+  /** Overrides the line under the title; defaults to the directory's own. */
+  detail?: string;
   className?: string;
 }) {
   const t = useMessages('discover');
@@ -34,7 +36,7 @@ export function AppsLoadError({ title, onRetry, className = '' }: {
     >
       <WarningTriangleIcon className="h-8 w-8 text-amber-600 dark:text-amber-400" aria-hidden="true" />
       <p className="text-[15px] font-semibold text-zinc-900 dark:text-zinc-100">{title}</p>
-      <p className="max-w-xs text-sm text-zinc-500 dark:text-zinc-400">{t(APPS_LOAD_ERROR_DETAIL)}</p>
+      <p className="max-w-xs text-sm text-zinc-500 dark:text-zinc-400">{detail == null ? t(APPS_LOAD_ERROR_DETAIL) : detail}</p>
       <Button type="button" variant="pillAccent" size="pill" className="mt-1" onClick={onRetry}>
         {t('core:common.tryAgain')}
       </Button>
