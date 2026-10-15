@@ -124,6 +124,9 @@ function addressedMod() { return require('./homeroom-bot-addressed'); }
 // The bot's voice outside its DM (homeroom-bot-voice.js): which places it
 // answers in, and the asks it queues on its changes.
 function voiceModule(deps) { return (deps && deps.voice) || require('./homeroom-bot-voice'); }
+// Its proposals for requests closed some other way (a person's change, a
+// close vote, GitHub): withdrawn, which frees their slots.
+function closedRequests() { return require('./homeroom-bot-closed-requests'); }
 
 // One name, in the live module, which compares thread authors against it.
 const { BOT_USERNAME } = live;
@@ -1415,11 +1418,19 @@ function parseRepo(url) {
 
 // ── The queue ───────────────────────────────────────────────────────────
 
+// The projects the refresh reads: every one that runs on a repository, and
+// (newcomer run nine, 15 Oct 2026) one still being set up whose first
+// version the bot builds is filed (homeroom-bot-dm.js FILEABLE_SQL files it
+// once its repository holds the starter), so its request is read while the
+// starter is built and deployed, not once it runs.
 async function listApps(pool) {
   const { rows } = await pool.query(
     `SELECT id, slug, name, repo_url, self_hosted
        FROM apps
       WHERE status = 'running' AND repo_url IS NOT NULL
+         OR (status = 'creating' AND repo_url IS NOT NULL AND EXISTS (
+           SELECT 1 FROM homeroom_bot_first_versions fv
+            WHERE fv.app_id = apps.id AND fv.bot_builds AND fv.status = 'filed'))
       ORDER BY id`,
   );
   return rows;
@@ -1627,6 +1638,18 @@ async function refreshApp(pool, app, {
   const fetched = await github.fetchPublicIssues(repo.owner, repo.repo);
   const issues = Array.isArray(fetched?.issues) ? fetched.issues : [];
   if (!issues.length && fetched?.note) { out.skipped = 'github_unavailable'; return out; }
+
+  // A proposal of the bot's for requests closed on GitHub, where Homeroom
+  // gets no signal (a person's change and a close vote withdraw theirs as
+  // they close: homeroom-bot-closed-requests.js), is withdrawn here, and the
+  // slot it held goes to a held request in this same refresh. Live apps
+  // only, and only from a whole, fresh list; GitHub then confirms each close.
+  if (capRoom && bot && !fetched?.note && !fetched?.truncatedList) {
+    const { withdrawn } = await closedRequests().sweepClosedRequests(pool, {
+      appId: app.id, openNumbers: issues.map((issue) => Number(issue.number)), deps: { github },
+    });
+    if (withdrawn.length) capRoom = await capRoomFor(pool, bot, app.id, settings);
+  }
 
   // #3264: on a live app (capRoom is set only there) a person's reply in the
   // discussion of the bot's own open proposal is activity on its issue, so
@@ -3442,7 +3465,7 @@ async function runTriage(pool, config, {
           recordFailure,
           deps: {
             github, worker, agentTurn, limits, threadContext, managedOpenRouter, sessions,
-            activeWorkers, votes: deps.votes || null, dm: deps.dm || null, ...liveD,
+            activeWorkers, votes: deps.votes || null, dm: deps.dm || null, fixedCheckSync: deps.fixedCheckSync || null, ...liveD,
             ...(deps.voice ? { voice: deps.voice } : {}), ...(deps.voiceDeps ? { voiceDeps: deps.voiceDeps } : {}),
           },
         });
@@ -6000,7 +6023,9 @@ async function noteProposalChecks(pool, { sessionId } = {}) {
 
 /**
  * ONE turn on the bot's own proposal to fix its failing checks, or the
- * hand-off to a person when it may not or cannot. Every outcome that spent
+ * hand-off to a person when it may not or cannot; before the first hand-off
+ * of a red check, a change behind main is brought up to date with it once
+ * instead, and its checks run again (handOff). Every outcome that spent
  * a turn, and every hand-off, records the head it looked at, so the same
  * failing head is never looked at twice; a platform fault records nothing
  * of the kind and keeps the queue row, as a triage's does.
@@ -6043,7 +6068,7 @@ async function runChecksFix(pool, config, {
   }
 
   let runId = null;
-  const handOff = async ({ why, verdict, extra = {}, notChange = false }) => {
+  const handOff = async ({ why, verdict, extra = {}, notChange = false, cause = null }) => {
     runId = await insertRun(pool, {
       ...billingOf(item, runMode),
       readReason: readReasonOf(item),
@@ -6054,6 +6079,32 @@ async function runChecksFix(pool, config, {
     });
     await recordSnapshot(runId);
     await dropRow();
+    // Before anybody is asked, a change behind main is brought up to date
+    // with it once and its checks run again (fixed-check-sync.js
+    // syncBeforeHandOff): a red check its fix turn could not get past is
+    // often main's of the time, fixed since. PR #4851 sat red from 12 Oct,
+    // 18 yes votes waiting, on a test #4843 had fixed on main. Not when the
+    // turn said the failures are the change's own, nor for what its shots
+    // showed not working, which no sync changes. A check still failing on
+    // the synced head comes back through this round, and is handed over.
+    if (failing.length && !broken.length && cause !== 'change') {
+      const synced = await Promise.resolve()
+        .then(() => (deps.fixedCheckSync || require('./fixed-check-sync'))
+          .syncBeforeHandOff({ config, pool, sessionId: session.id, head }))
+        .catch(() => null);
+      if (synced?.synced) {
+        await pool.query('UPDATE homeroom_bot_runs SET build_note = $2 WHERE id = $1',
+          [runId, 'Brought up to date with main before handing it over; its checks run again.']).catch(() => {});
+        await live.postOnProposal({
+          pool, ws: deps.ws, app, issueNumber, runId, kind: 'checks_synced', bot, sessionId: session.id,
+          text: followup.checksSyncedText({ failingCount: failing.length }),
+        }).catch((err) => log.warn('homeroom-bot', 'Checks sync note failed', { app: app.slug, issueNumber, err: err.message }));
+        log.info('homeroom-bot', 'Synced its proposal with main before handing its failing checks to a person', {
+          app: app.slug, issueNumber, sessionId: session.id, head, sha: synced.sha || null, runId,
+        });
+        return { ran: true, verdict, runId, acted: 'checks_synced' };
+      }
+    }
     // Only shots that could not reach a change, and no data was added: the
     // change works, and its shots card already says why each was skipped, so
     // nobody is told anything more. The head is looked at, so this is not
@@ -6284,6 +6335,7 @@ async function runChecksFix(pool, config, {
     extra: { ...spent, ...(turn.stopped ? { budgetStop: 'wall clock' } : {}) },
     // The turn found the failures are not the change's (followup.CAUSES).
     notChange: parsed?.action === 'person' && parsed.cause === 'not_change' && failing.length > 0 && !broken.length,
+    cause: parsed?.action === 'person' ? parsed.cause : null,
   });
 }
 
@@ -6437,6 +6489,7 @@ async function finishRecoveredFollowUp({
         managedOpenRouter: deps.managedOpenRouter || require('./openrouter-managed-keys'),
         agentTurn: deps.agentTurn || require('./agent-turn'),
         votes: deps.votes || null, dm: deps.dm || null, notifications: deps.notifications || null,
+        fixedCheckSync: deps.fixedCheckSync || null,
         ...liveDeps(deps),
       };
       const common = {
@@ -6557,6 +6610,8 @@ async function keepNoChange(pool, runId, noChange) {
  */
 function autoRetryable(built) {
   if (!built || built.ok || built.skipped || built.blocked || built.lostClaim || built.notProposed) return false;
+  // Its project's setup failed (15 Oct 2026): another try would stop the same way.
+  if (built.setupFailed) return false;
   if (built.partial) return false;
   return typeof built.specMd === 'string' && built.specMd.trim().length > 0;
 }
@@ -6608,9 +6663,12 @@ async function recordLiveBuild(pool, runId, built, model = null) {
   // A build that finished from a failed turn's work (buildAndPropose's
   // keepPartial), and a first version tried once more (buildLive), say so
   // beside what came of it.
+  // 15 Oct 2026: and one its maker's Try again proposed after it was built
+  // and could not be (finishBuiltFirstVersion), with why it could not.
   const notes = [
     built.partial ? `finished from partial work (${built.partial.reason})` : null,
     built.retried ? `tried once more after: ${built.retried.error || 'unknown'}` : null,
+    built.finished ? `proposed on its maker's Try again after: ${built.finished.error || 'unknown'}` : null,
     built.specNote,
   ].filter(Boolean);
   const error = built.ok
@@ -6641,9 +6699,11 @@ async function recordLiveBuild(pool, runId, built, model = null) {
  * What a live build came to, said on its issue: the proposal (and the spec
  * on it, where the group votes), the request found impossible, or the build
  * that did not become a proposal. Shared by the live path and the recovery
- * of a live build a restart interrupted (#3471). Returns what was done.
+ * of a live build a restart interrupted (#3471). `firstVersion`: the
+ * project's first version, whose stop is said without approval (14 Oct
+ * 2026, live.buildFailedText). Returns what was done.
  */
-async function announceBuilt({ pool, ws, app, bot, issueNumber, runId, built, say, domain }) {
+async function announceBuilt({ pool, ws, app, bot, issueNumber, runId, built, say, domain, firstVersion = false }) {
   await recordLiveBuild(pool, runId, built, built.model || null);
   if (built.ok) {
     // The run's first proposal stays its proposal (recordLiveBuild).
@@ -6694,9 +6754,266 @@ async function announceBuilt({ pool, ws, app, bot, issueNumber, runId, built, sa
   });
   // Said once per run, whatever brought the build here again.
   if (!await runPosted(pool, runId, 'build_failed')) {
-    await say('build_failed', live.buildFailedText(built.error), { dm: { reason: built.error } });
+    await say('build_failed', live.buildFailedText(built.error, { firstVersion }), { dm: { reason: built.error } });
   }
   return 'build_failed';
+}
+
+// ── Try again finishes a first version that was built (15 Oct 2026) ─────
+//
+// A first version built to the end whose proposal was refused stops "built
+// but could not be proposed": its session paused, its branch pushed
+// (homeroom-bot-live.js buildAndPropose; promoteOwnBuild throws a refusal it
+// can wait out back to the build, #5162, so this is one it could not). Its
+// maker read "Tap Try again" (#5170), and Try again started over: the tap
+// reached the bot's chat model, which put the request first in the queue
+// (homeroom-bot-mayor.js start_request), so it was read again, planned again
+// for Build it, and built again in a new session, tens of minutes paid from
+// the maker's allowance, with the built session left behind; and
+// claimAutoRetry leaves such a build alone on purpose. Now the tap is
+// decided without the model (homeroom-bot-dm.js finishOnTryAgain): the
+// session the build left is proposed exactly as the build proposes one
+// (promoteOwnBuild: as the bot, past the drain guard with OWN_WORK, under its
+// ceiling), the run records it as its proposal and says so (announceBuilt),
+// and from there it is any proposed first version: tested, ready to try, live
+// without a vote. Whatever would make that unsafe (any other stop, a newer
+// look at the request, its session or branch gone or moved, the request
+// closed or answered) leaves the tap to the model, which starts it over.
+
+// A claim this old with no outcome is a process that died holding it: the
+// promote route itself refuses a session already up, so taking it again
+// cannot propose twice.
+const FINISH_STALE_MINUTES = 10;
+
+/**
+ * The run Try again would finish, with what deciding it reads: its build
+ * session; the request's newest run; the fields progress.firstVersionStopped
+ * reads, as homeroom-bot-progress.js requestRows reads them (the request's
+ * newest proposal's state, whether the request is closed); whether it is in
+ * the queue (a start over asked for already); its project; and the maker of
+ * the project's first version when this request is it. Null when no run.
+ */
+async function finishableRun(pool, runId) {
+  const { rows: [run] = [] } = await pool.query(
+    `SELECT r.id, r.app_id, r.issue_number, r.mode, r.verdict, r.build_ok, r.build_error,
+            r.build_session_id, r.build_branch, r.build_sha, r.build_commits, r.build_spec_md,
+            r.proposal_session_id, r.build_finish,
+            COALESCE((r.build_finish->>'at')::timestamptz < NOW() - make_interval(mins => $2), FALSE) AS finish_stale,
+            (SELECT n.id FROM homeroom_bot_runs n
+              WHERE n.app_id = r.app_id AND n.issue_number = r.issue_number
+              ORDER BY n.id DESC LIMIT 1) AS newest_run_id,
+            bs.status AS session_status, bs.user_id AS session_user_id, bs.branch_name AS session_branch,
+            bs.is_headless AS session_headless,
+            ps.status AS own_proposal_status,
+            (SELECT CASE WHEN cs.status = 'merged' AND cs.live_at IS NULL THEN 'merging' ELSE cs.status END
+               FROM homeroom_bot_runs p JOIN chat_sessions cs ON cs.id = p.proposal_session_id
+              WHERE p.app_id = r.app_id AND p.issue_number = r.issue_number
+              ORDER BY p.id DESC LIMIT 1) AS proposal_status,
+            (SELECT ri.status = 'closed' FROM issues ri
+              WHERE ri.app_id = r.app_id AND ri.github_issue_number = r.issue_number
+              ORDER BY ri.id DESC LIMIT 1) AS request_closed,
+            EXISTS (SELECT 1 FROM homeroom_bot_queue q
+                     WHERE q.app_id = r.app_id AND q.issue_number = r.issue_number) AS queued,
+            f.user_id AS maker_id,
+            a.slug, a.name, a.repo_url
+       FROM homeroom_bot_runs r
+       JOIN apps a ON a.id = r.app_id
+       LEFT JOIN chat_sessions bs ON bs.id = r.build_session_id
+       LEFT JOIN chat_sessions ps ON ps.id = r.proposal_session_id
+       LEFT JOIN homeroom_bot_first_versions f
+         ON f.app_id = r.app_id AND f.issue_number = r.issue_number AND f.bot_builds = TRUE AND f.status = 'filed'
+      WHERE r.id = $1`,
+    [Number(runId), FINISH_STALE_MINUTES],
+  );
+  return run || null;
+}
+
+/**
+ * Pure (15 Oct 2026): why Try again from `userId` cannot finish `run`
+ * (finishableRun) from what was built, or null when it can: the newest look
+ * at the first version of `userId`'s own project, stopped as its screens say
+ * (progress.firstVersionStopped) because it was built and only not proposed,
+ * nothing else under way for it (no queue row: a start over is asked for
+ * already), and its session still the bot's, paused, on the branch the build
+ * pushed. The branch's head on GitHub is checked after this.
+ */
+function whyNotFinish(run, { userId, botId }) {
+  if (!run) return 'no_run';
+  if (!run.maker_id || Number(run.maker_id) !== Number(userId)) return 'not_their_first_version';
+  if (Number(run.newest_run_id) !== Number(run.id)) return 'not_newest';
+  if (!require('./homeroom-bot-progress').firstVersionStopped(run)) return 'not_stopped';
+  if (require('./homeroom-bot-dm').buildFailedCause(run.build_error).cause !== 'unproposed') return 'not_unproposed';
+  if (run.proposal_session_id) return 'proposed';
+  if (run.queued) return 'queued';
+  if (!run.build_session_id || run.session_status !== 'paused') return 'session_gone';
+  if (Number(run.session_user_id) !== Number(botId) || run.session_headless === true) return 'not_the_bots';
+  if (!run.session_branch || (run.build_branch && run.build_branch !== run.session_branch)) return 'branch_moved';
+  return null;
+}
+
+/**
+ * 15 Oct 2026: Try again from `user` under their first version that was
+ * built and could not be proposed (homeroom-bot-dm.js finishOnTryAgain): the
+ * session its build left proposed, and the run on its way as any proposed
+ * first version is. `onProposed(app)` is called once it is proposed, before
+ * the run says so. Resolves
+ *   { ok: true, sessionId, prNumber, app }  proposed now;
+ *   { ok: true, already: true, app }        another tap has it, or it is up;
+ *   { ok: false, why, app }                 not proposed: the caller starts
+ *                                           it over, as Try again did before.
+ * Claimed once per run (build_finish), so a double tap proposes once. Never
+ * throws, and never answers ok: false once it has proposed.
+ */
+async function finishBuiltFirstVersion(pool, config, { runId, user, bot, deps = {}, onProposed = null }) {
+  let run;
+  let app = null;
+  try {
+    run = await finishableRun(pool, runId);
+    if (!run || !user?.id || !bot?.id) return { ok: false, why: 'no_run', app };
+    app = { id: Number(run.app_id), slug: run.slug, name: run.name, repo_url: run.repo_url };
+    const mine = run.maker_id && Number(run.maker_id) === Number(user.id);
+    // Up already (this run's proposal, a tap's or its build's own), or
+    // another tap is proposing it now: nothing more is proposed.
+    if (mine && run.proposal_session_id && ['promoted', 'merging'].includes(run.own_proposal_status)) {
+      return { ok: true, already: true, app };
+    }
+    const finish = run.build_finish && typeof run.build_finish === 'object' ? run.build_finish : null;
+    if (mine && finish && !finish.outcome && !run.finish_stale) return { ok: true, already: true, app };
+    // Proposed by a tap, and not recorded on the run yet (proposeFinished
+    // says so under that tap first): up, as long as its session is.
+    if (mine && finish?.outcome === 'proposed' && ['promoted', 'merging'].includes(run.session_status)) {
+      return { ok: true, already: true, app };
+    }
+    // Tried once and refused: what follows is the start over.
+    if (finish?.outcome === 'failed') return { ok: false, why: 'finish_failed', app };
+    // A claim whose process died after it proposed and before the run said
+    // so: its session is up, and is recorded and said now (proposeFinished
+    // reads it back, proposedAlready), with nothing checked again.
+    const recovering = !!(mine && finish && !finish.outcome && run.finish_stale && !run.proposal_session_id
+      && Number(finish.session_id) === Number(run.build_session_id)
+      && ['promoted', 'merging'].includes(run.session_status));
+    if (!recovering) {
+      const why = whyNotFinish(run, { userId: user.id, botId: bot.id });
+      if (why) return { ok: false, why, app };
+      const settings = await readSettings(pool);
+      if (!live.isLiveFor(settings, app)) return { ok: false, why: 'not_live', app };
+      const repo = parseRepo(run.repo_url);
+      const github = deps.github || require('./github');
+      if (!repo || typeof github.isEnabled !== 'function' || !github.isEnabled()) return { ok: false, why: 'no_github', app };
+      // What the build pushed is still there, as it was: a branch deleted, or
+      // moved by somebody since, is not what was built.
+      const head = await Promise.resolve()
+        .then(() => github.getBranchSha(repo.owner, repo.repo, run.session_branch))
+        .catch((err) => {
+          log.info('homeroom-bot', 'Try again: the built branch could not be read', { runId: run.id, err: err.message });
+          return null;
+        });
+      if (!head) return { ok: false, why: 'branch_gone', app };
+      if (run.build_sha && String(head).toLowerCase() !== String(run.build_sha).toLowerCase()) {
+        return { ok: false, why: 'branch_moved', app };
+      }
+      // The backstop every proposal of the bot's meets (whyNotBuild): another
+      // proposal of the request, another build of it under way, or its issue
+      // closed on GitHub.
+      const skip = await whyNotBuild(pool, {
+        runId: run.id, botId: bot.id, appId: app.id, issueNumber: Number(run.issue_number), github, repo,
+      });
+      if (skip) return { ok: false, why: 'skip', detail: skip, app };
+    }
+    const { rows: claimed } = await pool.query(
+      `UPDATE homeroom_bot_runs
+          SET build_finish = jsonb_build_object('at', NOW(), 'by', $2::int, 'session_id', $3::int)
+        WHERE id = $1 AND build_ok = FALSE AND proposal_session_id IS NULL AND build_session_id = $3
+          AND (build_finish IS NULL
+               OR (build_finish->>'outcome' IS NULL
+                   AND (build_finish->>'at')::timestamptz < NOW() - make_interval(mins => $4)))
+        RETURNING id`,
+      [run.id, Number(user.id), Number(run.build_session_id), FINISH_STALE_MINUTES],
+    );
+    if (!claimed.length) return { ok: true, already: true, app };
+  } catch (err) {
+    log.warn('homeroom-bot', 'Try again could not read a first version it built; it starts over', { runId, err: err.message });
+    return { ok: false, why: 'error', app };
+  }
+  return proposeFinished(pool, config, { run, app, user, bot, deps, onProposed });
+}
+
+/**
+ * finishBuiltFirstVersion once its claim is taken: propose, then record and
+ * say it as the build would have. A refusal gives the claim its outcome and
+ * answers ok: false; from the proposal on, nothing answers ok: false.
+ */
+async function proposeFinished(pool, config, { run, app, user, bot, deps, onProposed }) {
+  const sessionId = Number(run.build_session_id);
+  const issueNumber = Number(run.issue_number);
+  const settle = (outcome) => pool.query(
+    'UPDATE homeroom_bot_runs SET build_finish = build_finish || jsonb_build_object(\'outcome\', $2::text) WHERE id = $1',
+    [run.id, outcome],
+  ).catch((err) => log.warn('homeroom-bot', 'Could not record what Try again came to', { runId: run.id, outcome, err: err.message }));
+  const since = new Date().toISOString();
+  let promoted;
+  try {
+    const settings = await readSettings(pool);
+    promoted = await live.proposedAlready(pool, sessionId) || await live.promoteOwnBuild({
+      pool, steps: durableSteps.none(), ...(Array.isArray(deps.proposeRetryMs) ? { waits: deps.proposeRetryMs } : {}),
+      config, bot, sessionId, router: deps.votesRouter || null, ceiling: botProposalCeiling(settings),
+    });
+  } catch (err) {
+    promoted = { status: 500, body: { error: err.message } };
+  }
+  if (promoted?.status !== 200 || !promoted.body?.ok) {
+    const why = promoted?.body?.error || promoted?.body?.message || `promotion answered ${promoted?.status}`;
+    await settle('failed');
+    log.warn('homeroom-bot', 'Try again could not propose a first version it built; it starts over', {
+      app: app.slug, issueNumber, runId: run.id, sessionId, why,
+    });
+    return { ok: false, why: 'refused', detail: why, app };
+  }
+  const prNumber = promoted.body.prNumber ?? null;
+  await settle('proposed');
+  log.info('homeroom-bot', 'Try again proposed a first version it had built', {
+    app: app.slug, issueNumber, runId: run.id, sessionId, prNumber, userId: user.id,
+  });
+  void timeline.recordStep(pool, { runId: run.id, step: 'proposed', sessionId, detail: prNumber ? { prNumber: Number(prNumber) } : null });
+  if (typeof onProposed === 'function') {
+    try { await onProposed(app); } catch (err) {
+      log.warn('homeroom-bot', 'Could not say a first version is being finished', { runId: run.id, err: err.message });
+    }
+  }
+  // Recorded and said as the build says a proposal: the run's proposal, its
+  // card on the request and in its maker's chat (built and being tested,
+  // then ready to try), the plan on the proposal, and what the bot has seen.
+  try {
+    const github = deps.github || require('./github');
+    const ws = deps.ws || require('./ws');
+    const repo = parseRepo(run.repo_url);
+    const postedAt = [];
+    const botLogin = await live.botUsernameOf(github);
+    const say = liveSayer({
+      pool, github, ws, app, repo, issueNumber, issue: null, runId: run.id, bot, botLogin,
+      notifications: deps.notifications || null, postedAt,
+    });
+    const { rows: [spec] = [] } = await pool.query(
+      'SELECT version FROM chat_session_specs WHERE session_id = $1 ORDER BY version DESC LIMIT 1', [sessionId],
+    ).catch(() => ({ rows: [] }));
+    await announceBuilt({
+      pool, ws, app, bot, issueNumber, runId: run.id, say, domain: deps.domain || require('./caddy').USERNODE_DOMAIN,
+      firstVersion: true,
+      built: {
+        ok: true, sessionId, prNumber, branchName: run.session_branch, sha: run.build_sha || null,
+        commits: run.build_commits == null ? undefined : Number(run.build_commits),
+        specMd: run.build_spec_md || null, specVersion: spec?.version ?? null,
+        finished: { error: run.build_error },
+      },
+    });
+    await live.advanceSeen({
+      pool, github, threadContext: deps.threadContext || require('./thread-context'), app, repo, issueNumber,
+      runId: run.id, since, postedAt,
+    }).catch((err) => log.warn('homeroom-bot', 'Could not record what the bot has seen', { err: err.message }));
+  } catch (err) {
+    log.warn('homeroom-bot', 'Try again proposed a first version, but could not say so', { runId: run.id, sessionId, err: err.message });
+  }
+  return { ok: true, sessionId, prNumber, app };
 }
 
 async function actOnVerdict({
@@ -7718,6 +8035,10 @@ async function buildLive({
       // WP1 (#2): asked once the plan is written and again just before it is
       // proposed (whyNotBuild).
       skipCheck: () => whyNotBuild(pool, { runId, botId: bot.id, appId: app.id, issueNumber, github, repo }),
+      // Newcomer run nine (15 Oct 2026): a first version filed while its
+      // project was set up stops at the same steps when that setup failed,
+      // and waits for the project to run before it is proposed.
+      ...(firstVersion ? { setupCheck: setupCheckFor(pool, app.id) } : {}),
       // Linked before any turn runs, so a restart mid-build can find the run
       // (#3471): the build's worker outlives the restart; this process does
       // not. From here restart recovery owns it, so it is no longer waiting.
@@ -7913,7 +8234,9 @@ async function buildLive({
   } else {
     // Once: a restart after it was said does not say it again (and each post
     // is also guarded on the posts table: runPosted).
-    acted = await steps.once('announced', () => announceBuilt({ pool, ws, app, bot, issueNumber, runId, built, say, domain: deps.domain }));
+    acted = await steps.once('announced', () => announceBuilt({
+      pool, ws, app, bot, issueNumber, runId, built, say, domain: deps.domain, firstVersion,
+    }));
   }
   await pool.query('UPDATE homeroom_bot_runs SET live_build_waiting_at = NULL WHERE id = $1', [runId]).catch(() => {});
   await live.advanceSeen({
@@ -8134,6 +8457,98 @@ function heldForFirstVersion(holds, { appId, issueNumber, firstVersion = false, 
 }
 
 /**
+ * Newcomer run nine (15 Oct 2026): the projects among `appIds` whose first
+ * version the bot builds is filed and not read yet, which runOnce refreshes
+ * and starts the read of before anything else in its pass.
+ */
+async function firstVersionsToRead(pool, appIds = []) {
+  const ids = [...new Set((Array.isArray(appIds) ? appIds : [])
+    .map(Number).filter((n) => Number.isInteger(n) && n > 0))];
+  if (!ids.length) return [];
+  const { rows } = await pool.query(
+    `SELECT fv.app_id
+       FROM homeroom_bot_first_versions fv
+      WHERE fv.app_id = ANY($1::int[]) AND fv.bot_builds AND fv.status = 'filed' AND fv.issue_number IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM homeroom_bot_runs r
+           WHERE r.app_id = fv.app_id AND r.issue_number = fv.issue_number)`,
+    [ids],
+  );
+  return rows.map((r) => Number(r.app_id));
+}
+
+// ── A first version filed while its project is set up ───────────────────
+//
+// Newcomer run nine (15 Oct 2026): a first version is filed once its
+// repository holds the starter (homeroom-bot-dm.js FILEABLE_SQL), while the
+// starter is still built and deployed, so its plan, spec and build start
+// without waiting for the project to run. They need only the repository and
+// the build's own worker (its review's captures run the app in that worker
+// on a database of its own). What does need the project is its proposal:
+// the proposal's preview copies the project's database, and its merge
+// deploys over the project's container. So a first version's build waits for
+// its project to run before it is proposed, and stops, as a build that did
+// not finish does (announceBuilt), when the project's setup failed: before
+// it starts (buildOne), at its steps (homeroom-bot-live.js buildAndPropose
+// `setupCheck`), and before it is proposed.
+
+// The reasons a first version stops for its project's setup, as the run
+// records them; their words are a build's that could not start, did not
+// finish, or was built and not put live (homeroom-bot-dm.js
+// buildFailedCause), so nothing new is said.
+const SETUP_FAILED_BEFORE = 'the build could not start (its project could not be set up)';
+const SETUP_FAILED_DURING = 'its project could not be set up, so the build was stopped';
+const SETUP_NOT_PROPOSED = 'the change was built but could not be proposed: its project was still being set up';
+// How long a built first version waits for its project to run before it is
+// proposed, and how often it looks. A project is 'creating' for a minute or
+// so, and the creation watchdog fails one that takes ten
+// (app-creation-owner.js), long before a build ends.
+const SETUP_WAIT_MS = 15 * 60 * 1000;
+const SETUP_POLL_MS = 5 * 1000;
+
+/**
+ * Why a first version on `appId` stops for its project's setup, or null to
+ * go on: 'failed' when its creation failed (or it is gone), 'timeout' when
+ * it was still being set up for all of `waitMs`. Without `wait` a project
+ * still being set up is no reason; with it, it is waited for. A project
+ * running, or in any other state (awaiting its secrets, say), is set up as
+ * far as its first version is concerned: what such a project does to a
+ * proposal is what it always did. `fence` (a durable build's) is called
+ * between looks, so a build this process no longer holds stops waiting.
+ * Throws what the read throws.
+ */
+async function projectSetUpStop(pool, appId, {
+  wait = false, waitMs = SETUP_WAIT_MS, pollMs = SETUP_POLL_MS, fence = null, sleep = null, now = Date.now,
+} = {}) {
+  const until = now() + waitMs;
+  for (;;) {
+    if (typeof fence === 'function') fence();
+    // eslint-disable-next-line no-await-in-loop
+    const { rows: [app] = [] } = await pool.query('SELECT status FROM apps WHERE id = $1', [appId]);
+    if (!app || app.status === 'error' || app.status === 'deleted') return 'failed';
+    if (app.status !== 'creating' || !wait) return null;
+    if (now() + pollMs > until) return 'timeout';
+    // eslint-disable-next-line no-await-in-loop
+    await (sleep ? sleep(pollMs) : new Promise((resolve) => { setTimeout(resolve, pollMs); }));
+  }
+}
+
+/**
+ * A first version's `setupCheck` for buildAndPropose: resolves null to go
+ * on, or what the build comes to: `{ error }` (stopped), or `{ error,
+ * notProposed }` (built, and its session left for a person to propose, as a
+ * proposal refused is). `waiting` is projectSetUpStop's clock, for a test.
+ */
+function setupCheckFor(pool, appId, waiting = {}) {
+  return async ({ wait = false, fence = null } = {}) => {
+    const stop = await projectSetUpStop(pool, appId, { ...waiting, wait, fence });
+    if (stop === 'timeout') return { error: SETUP_NOT_PROPOSED, notProposed: true };
+    if (stop === 'failed') return { error: SETUP_FAILED_DURING };
+    return null;
+  };
+}
+
+/**
  * The live queue's heads, in priority order, with who each one is for.
  * Nothing on an app in `excludeAppIds` (backed off); on an app in
  * `busyAppIds` (its session taken), only follow-ups. A follow-up (#3703),
@@ -8142,8 +8557,11 @@ function heldForFirstVersion(holds, { appId, issueNumber, firstVersion = false, 
  * that proposal's discussion, and it is one turn on the proposal's own
  * session.
  */
+// `firstVersionsOnly` (15 Oct 2026): only a project's first version's own
+// request, for the read runOnce starts before its full refresh and sweeps.
 async function liveCandidates(pool, {
   scope: given = null, liveSlugs = [], excludeAppIds, pausedApps, busyAppIds = [], botId = null, limit = 200, excludeFollowUps = [],
+  firstVersionsOnly = false,
 }) {
   // A scope from live.liveScope; a bare list of slugs is just those apps.
   const scope = given || { all: false, slugs: liveSlugs, except: [] };
@@ -8211,10 +8629,14 @@ async function liveCandidates(pool, {
                OR (fu.id IS NOT NULL AND m.thread_type = 'session' AND m.thread_ref = fu.id))
              AND m.created_at > NOW() - make_interval(secs => $11)
         )
+        AND (NOT $12::boolean OR EXISTS (
+          SELECT 1 FROM homeroom_bot_first_versions fvo
+           WHERE fvo.app_id = q.app_id AND fvo.issue_number = q.issue_number AND fvo.bot_builds
+        ))
       ORDER BY (q.priority = 0) DESC, (fu.id IS NOT NULL) DESC, q.priority, q.enqueued_at
       LIMIT $4`,
     [scope.slugs, excludeAppIds, pausedApps, limit, busyAppIds, botId, excludeFollowUps, ABANDONED_LIVE_WINDOW_DAYS,
-      scope.all, scope.except, SETTLE_MS / 1000],
+      scope.all, scope.except, SETTLE_MS / 1000, !!firstVersionsOnly],
   );
   return rows;
 }
@@ -8455,6 +8877,30 @@ async function buildOne(pool, config, { bot, app, run, settings, deps = {} }) {
   }
   const dm = deps.dm || require('./homeroom-bot-dm');
   const requester = await dm.requesterOf(pool, app.id, issueNumber).catch(() => null);
+  // Newcomer run nine (15 Oct 2026): a first version filed while its project
+  // was set up is not started once that setup failed. It ends as a build
+  // that could not start does (below), and nothing of it runs.
+  if (requester?.firstVersion) {
+    const stop = await projectSetUpStop(pool, app.id).catch((err) => {
+      log.warn('homeroom-bot', 'Could not read whether a first version\'s project is set up (building it)', {
+        app: app.slug, issueNumber, err: err.message,
+      });
+      return null;
+    });
+    if (stop) {
+      log.warn('homeroom-bot', 'First version not built: its project could not be set up', { app: app.slug, issueNumber, runId: run.id });
+      const say = liveSayer({
+        pool, github, ws: buildDeps.ws, app, repo, issueNumber, issue, runId: Number(run.id), bot,
+        botLogin: await live.botUsernameOf(github).catch(() => null), notifications: deps.notifications || null,
+      });
+      await announceBuilt({
+        pool, ws: buildDeps.ws, app, bot, issueNumber, runId: Number(run.id), say, domain: buildDeps.domain,
+        firstVersion: true, built: { ok: false, error: SETUP_FAILED_BEFORE, setupFailed: true },
+      }).catch(() => {});
+      await pool.query('UPDATE homeroom_bot_runs SET live_build_waiting_at = NULL WHERE id = $1', [run.id]).catch(() => {});
+      return { ran: true, verdict: 'ready', runId: Number(run.id), acted: 'build_failed' };
+    }
+  }
   const seedReadAt = new Date().toISOString();
   const [{ comments = [] } = {}, thread, botLogin] = await Promise.all([
     github.fetchIssueComments(repo.owner, repo.repo, issueNumber).catch(() => ({ comments: [] })),
@@ -8520,6 +8966,7 @@ async function buildOne(pool, config, { bot, app, run, settings, deps = {} }) {
     });
     await announceBuilt({
       pool, ws: buildDeps.ws, app, bot, issueNumber, runId: Number(run.id), say, domain: buildDeps.domain,
+      firstVersion: !!requester?.firstVersion,
       built: { ok: false, error: `the build could not start (${clip(err.message, 200)})` },
     }).catch(() => {});
     await pool.query('UPDATE homeroom_bot_runs SET live_build_waiting_at = NULL WHERE id = $1', [run.id]).catch(() => {});
@@ -8978,9 +9425,13 @@ async function startLiveBuilds(pool, config, { settings, bot, deps = {}, seen })
 /**
  * Fill the free slots, live first. Returns the promises of the work it
  * started (each resolves to its outcome). `seen` keeps one drain from
- * starting the same row twice.
+ * starting the same row twice. `firstVersionsOnly` (15 Oct 2026): only the
+ * reads of projects' first versions, which runOnce starts before its full
+ * refresh and sweeps; nothing of the build lane or the background lane.
  */
-async function dispatch(pool, config, { settings, bot, backedOff = [], deps = {}, seen = new Set(), now = Date.now() }) {
+async function dispatch(pool, config, {
+  settings, bot, backedOff = [], deps = {}, seen = new Set(), now = Date.now(), firstVersionsOnly = false,
+}) {
   if (refusingNew() || settings.mode === 'off') return [];
   if (faultBackoff(now) || budgetPausedUntil > Date.now()) return [];
   const started = [];
@@ -8991,7 +9442,7 @@ async function dispatch(pool, config, { settings, bot, backedOff = [], deps = {}
 
   // Live builds waiting their turn first: they are further along than
   // anything still to be read.
-  started.push(...await dispatchLiveBuilds(pool, config, { settings, bot, deps, seen, now }));
+  if (!firstVersionsOnly) started.push(...await dispatchLiveBuilds(pool, config, { settings, bot, deps, seen, now }));
 
   const running = [...inFlight.values()];
   const liveActive = running.filter((e) => e.lane === 'live');
@@ -9005,7 +9456,7 @@ async function dispatch(pool, config, { settings, bot, backedOff = [], deps = {}
   if (liveSlots && !live.scopeIsEmpty(scope)) {
     const candidates = (await liveCandidates(pool, {
       scope, excludeAppIds: backedOff, busyAppIds: sessionTaken, botId: bot?.id ?? null,
-      pausedApps: settings.pausedApps || [], excludeFollowUps: followUpsBackedOff(now),
+      pausedApps: settings.pausedApps || [], excludeFollowUps: followUpsBackedOff(now), firstVersionsOnly,
     })).filter((row) => !seen.has(Number(row.id)));
     const picks = pickLive(candidates, {
       busyAppIds: sessionTaken, blockedAppIds: backedOff, active: liveActive,
@@ -9058,6 +9509,7 @@ async function dispatch(pool, config, { settings, bot, backedOff = [], deps = {}
     }
   }
 
+  if (firstVersionsOnly) return started;
   // Background: a batch of one app's issues per start, as before.
   const shadowActive = [...inFlight.values()].filter((e) => e.lane === 'background').length;
   for (let i = shadowActive; i < (settings.concurrency || DEFAULTS.concurrency); i += 1) {
@@ -9269,6 +9721,35 @@ async function runOnce(pool, config, deps = {}) {
     const pausedBefore = budgetPausedUntil > Date.now();
     const early = await dispatchLiveBuilds(pool, config, { settings, bot, deps, seen, now });
     out.liveBuilds = early.length;
+    // An app inside its backoff window is skipped exactly like a paused one
+    // (#2737). Without this, a session that refuses every turn is retried on
+    // every wake, which is how one wedged app wrote 121 rows in a day.
+    const backedOff = [];
+    for (const [appId] of appBackoff) {
+      if (backoffFor(appId, now)) backedOff.push(Number(appId));
+      else appBackoff.delete(appId);
+    }
+    out.backedOffApps = backedOff.length;
+    // Newcomer run nine (15 Oct 2026): a woken project whose first version
+    // was just filed is refreshed and its request's read started here,
+    // before the full refresh and the sweeps, which every
+    // REFRESH_INTERVAL_MS read every app first: 14.6 s from filing to its
+    // run, against about 4 s in runs seven and eight. Its read alone; the
+    // rest of the pass is as it was.
+    const firstReads = targeted.length
+      ? await firstVersionsToRead(pool, targeted).catch((err) => {
+        log.warn('homeroom-bot', 'Could not read which woken projects wait on their first version', { err: err.message });
+        return [];
+      })
+      : [];
+    if (firstReads.length) {
+      const summary = await refreshApps(pool, settings, firstReads, { ...deps, bot });
+      out.refreshed = true;
+      if (summary.queued) log.info('homeroom-bot', 'First versions queued ahead of the pass', summary);
+      const reads = await dispatch(pool, config, { settings, bot, backedOff, deps, seen, now, firstVersionsOnly: true });
+      out.firstVersionReads = reads.length;
+      early.push(...reads);
+    }
     // A pass that was not already paused says what it dispatched, even when
     // these builds found the budget spent and it stops below.
     if (!pausedBefore) out.dispatched = early.length;
@@ -9286,7 +9767,9 @@ async function runOnce(pool, config, deps = {}) {
       out.refreshed = true;
       if (summary.queued) log.info('homeroom-bot', 'Queue refreshed', summary);
     } else if (targeted.length) {
-      const summary = await refreshApps(pool, settings, targeted, { ...deps, bot });
+      // The first versions' projects were refreshed above.
+      const rest = targeted.filter((id) => !firstReads.includes(Number(id)));
+      const summary = rest.length ? await refreshApps(pool, settings, rest, { ...deps, bot }) : { queued: 0 };
       out.refreshed = true;
       out.woken = targeted.length;
       if (summary.queued) log.info('homeroom-bot', 'Queue refreshed on activity', summary);
@@ -9338,15 +9821,6 @@ async function runOnce(pool, config, deps = {}) {
       return out;
     }
 
-    // An app inside its backoff window is skipped exactly like a paused one
-    // (#2737). Without this, a session that refuses every turn is retried on
-    // every wake, which is how one wedged app wrote 121 rows in a day.
-    const backedOff = [];
-    for (const [appId] of appBackoff) {
-      if (backoffFor(appId, now)) backedOff.push(Number(appId));
-      else appBackoff.delete(appId);
-    }
-    out.backedOffApps = backedOff.length;
     // The weekly cap ran out under a piece of work: wait for the idle pass.
     if (budgetPausedUntil > Date.now()) {
       out.paused = 'budget';
@@ -10497,6 +10971,11 @@ module.exports = {
   carryApprovedPlan,
   autoRetryable,
   claimAutoRetry,
+  // 15 Oct 2026: Try again finishes a first version that was built.
+  finishBuiltFirstVersion,
+  finishableRun,
+  whyNotFinish,
+  FINISH_STALE_MINUTES,
   retireWaitingPlans,
   settleStalePlans,
   planChangesFor,
@@ -10654,6 +11133,14 @@ module.exports = {
   firstVersionHolds,
   isFirstVersionRequest,
   heldForFirstVersion,
+  // 15 Oct 2026: a first version filed while its project is set up.
+  firstVersionsToRead,
+  listApps,
+  projectSetUpStop,
+  setupCheckFor,
+  SETUP_FAILED_BEFORE,
+  SETUP_FAILED_DURING,
+  SETUP_NOT_PROPOSED,
   workingNow,
   dmChatSummary,
   dispatch,

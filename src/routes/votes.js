@@ -5477,6 +5477,21 @@ function voteRoutes(config) {
       if (IS_STAGING && req.query.demo === '1' && proposal.checks_estimate == null) {
         proposal = { ...proposal, checks_estimate: require('../services/checks-estimate').DEMO_ESTIMATE };
       }
+      // #5064: a merge of the platform's own app opened on its own (a link
+      // from the bell or Home, beyond the board's first page) gets the
+      // board's deployment_state too, so its page says "going live" until
+      // the running build carries it rather than reading the live_at the
+      // legacy merge stamps at once. A child app's keeps its words.
+      if (proposal.status === 'merged' && proposal.deployment_state == null && gatedApp.self_hosted
+          && !(IS_STAGING && req.query.demo === '1')) {
+        const { rows: [selfApp] } = await pool.query(
+          'SELECT id, slug, self_hosted, main_sha, release_stall FROM apps WHERE id = $1', [gatedApp.id]);
+        if (selfApp) {
+          const row = { ...proposal };
+          await annotateDeploymentState(config, pool, selfApp, [row]);
+          proposal = row;
+        }
+      }
       // Merged into the platform's own app and not live yet: when the next
       // release carries it (services/release-watch.js), which the page says
       // as "Merged; goes live in the next release (about 8 minutes)". A
@@ -7782,9 +7797,16 @@ async function checkAndMerge(config, pool, session, options = {}) {
       const failLabel = session.pr_title
         ? `PR #${session.pr_number || session.id}: ${session.pr_title}`
         : `PR #${session.pr_number || session.id}`;
+      // An image refused for running as root is the app's own Dockerfile,
+      // not something an operator retries away: say what to change.
+      const deployFailure = require('../services/deploy-failure');
+      const rootImage = deployFailure.isRootImageRefusal(err);
       await sendSystemMessage(pool, session.app_id,
-        `${failLabel} merged on GitHub, but the production deploy failed: ${err.message}. ` +
-        `The change is on main; an operator can retry the deploy once the cause is resolved.`,
+        rootImage
+          ? `${failLabel} merged on GitHub, but it cannot go live: ${deployFailure.ROOT_IMAGE_FIX} ` +
+            `Production keeps serving the previous version until then.`
+          : `${failLabel} merged on GitHub, but the production deploy failed: ${err.message}. ` +
+            `The change is on main; an operator can retry the deploy once the cause is resolved.`,
         'system', null, { type: 'session', ref: session.id }
       ).catch(() => {});
 

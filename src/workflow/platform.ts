@@ -165,7 +165,8 @@ async function previewsHeld(pool: Pool): Promise<boolean> {
 // release before the rollout. A history, so an older Pod booting after a
 // newer one (a rollout) does not erase that the newer build ran. One
 // statement: the row lock serialises two processes booting at once. Every
-// process records it, flags or not, so it is there when a flag is turned on.
+// serving process records it, flags or not, so it is there when a flag is
+// turned on (releaseServing).
 async function recordBooted(pool: Pool): Promise<void> {
   const sha = String(process.env.GIT_SHA || '').toLowerCase();
   if (!/^[0-9a-f]{40}$/.test(sha)) return;
@@ -194,7 +195,6 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
   log = legacy('services/logger');
   const appPool = legacy('db/pool').getPool(config);
   await syncSettings(appPool, config);
-  await recordBooted(appPool).catch((err) => log!.warn('workflow', 'Could not record the booted build', { message: err.message }));
   if (runtime) return;
   for (const name of FLAGS.keys()) {
     const blocked = flagBlocked(name, config);
@@ -272,8 +272,22 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
   }
   runtime = started;
   log!.info('workflow', 'Workflow runtime started', { machines: machines.map((m) => m.name) });
-  if (merges) await releaseBooted(appPool).catch((err) => log!.warn('workflow', 'Could not report the running release', { message: err.message }));
   if (opts.loops) await startWorkflowLoops();
+}
+
+// This process serves people the build it booted with: server.js calls it
+// once its listener is up, on a process that serves requests, beside
+// platform-release.recordRunning. The build is recorded on the platform's
+// own row (recordBooted), and every self-hosted merge waiting to go live
+// hears it is deployed (releaseBooted). A conductor serves nobody
+// (docs/plans/web-and-conductor.md): its booting says nothing about what
+// people get, and a release's conductor can be up before its web Pods
+// serve, so it never calls this. Never throws.
+export async function releaseServing(pool: Pool): Promise<void> {
+  const warn = (what: string) => (err: Error) =>
+    (log ?? legacy('services/logger')).warn('workflow', what, { message: err.message });
+  await recordBooted(pool).catch(warn('Could not record the booted build'));
+  if (merges) await releaseBooted(pool).catch(warn('Could not report the running release'));
 }
 
 // The leader's part: timers and services, then enrolling every open

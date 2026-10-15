@@ -13,7 +13,9 @@
  * What is genuinely new glows briefly (./live-glow.ts).
  *
  * The pill says where it is: "Starting the app…" (the first look stays under
- * it), "Live · just updated" / "Live · updated N s ago", "A restart failed ·
+ * it, or its drawn screen while it is not pictured yet, 15 Oct 2026:
+ * ../first-session/drawn-look.tsx), "Live · just updated" /
+ * "Live · updated N s ago", "A restart failed ·
  * showing the last good screen", or, once the build's watcher has stopped,
  * "Last screen from the build" (N7: the card keeps that frame while the
  * build is reviewed and tested, and asks only now and then whether a new
@@ -28,6 +30,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Replayer } from 'rrweb';
 
 import { useMessages } from '../../lib/i18n/react';
+import { DrawnLook, isDrawnLook } from '../first-session/drawn-look';
 import type { FirstVersionScreens } from './first-version-screens';
 import { GLOW_RULES, GlowTracker } from './live-glow';
 import { type FirstVersionLive, type LivePhase, livePill } from './live-switch';
@@ -293,7 +296,8 @@ export default function LiveBand({ live, firstLook, name }: {
               : t('agent:appFrame.live.frame.live', { project: name })}
           role="img"
         >
-          {look && !drawn ? (
+          {look && !drawn && isDrawnLook(look) ? <DrawnLook src={look} label={name} width={125} hidden /> : null}
+          {look && !drawn && !isDrawnLook(look) ? (
             <img src={look} alt="" className="absolute inset-0 h-full w-full object-cover object-top" draggable={false} />
           ) : null}
           <div

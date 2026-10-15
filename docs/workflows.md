@@ -650,7 +650,9 @@ What a merged pull request still has to do once GitHub has merged it
 - **Merged, then live.** The change is `live` once production runs a build that contains
   it: its own delivery, or a `Deployed` report checked against GitHub
   (`delivery.verify`). Every successful `rebuildProduction` reports one, and so does the
-  platform's own release, at boot.
+  platform's own release, once a process serving people runs it (`releaseServing`, from
+  the listener's start; never a conductor, which serves nobody and can be up before the
+  release's web Pods).
   - Only then are these written: `chat_sessions.live_at`, the "is live" line, the
     author's notification, the requester's DM and the journey record.
   - Until then the change reads merged and going live.
@@ -674,7 +676,7 @@ What a merged pull request still has to do once GitHub has merged it
 - **With app delivery on,** a merge asks `app-delivery` for its deploy by message instead
   of running `app.deliver`, and its answer (`Delivered` with the build's sha, or
   `DeliveryFailed`) decides as the work result did. The platform's own release is still
-  heard at boot; on a Docker host, its host deployer is told by durable work
+  heard from the processes serving it; on a Docker host, its host deployer is told by durable work
   (`host.nudgeDeployer`).
 
 ### app-delivery

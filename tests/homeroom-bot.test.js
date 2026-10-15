@@ -1563,7 +1563,9 @@ test('capRoomFor counts the same two things the live check does', async () => {
   assert.equal((refresh.match(/deps\.bot && live\.isLiveFor\(settings, app\)/g) || []).length, 2,
     'both the timed refresh and a wake ask for room, and only on a live app');
   assert.match(SRC, /refreshQueue\(pool, settings, \{ \.\.\.deps, bot \}\)/);
-  assert.match(SRC, /refreshApps\(pool, settings, targeted, \{ \.\.\.deps, bot \}\)/);
+  // A wake's refresh, the woken first versions' ahead of the rest (15 Oct 2026).
+  assert.match(SRC, /refreshApps\(pool, settings, firstReads, \{ \.\.\.deps, bot \}\)/);
+  assert.match(SRC, /refreshApps\(pool, settings, rest, \{ \.\.\.deps, bot \}\)/);
 });
 
 test('refreshApp treats a degraded GitHub read as "no answer", not "no issues"', async () => {

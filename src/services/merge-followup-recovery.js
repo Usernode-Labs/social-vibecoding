@@ -10,6 +10,7 @@ const staging = require('./staging');
 const mainWatch = require('./main-watch');
 const mergeLock = require('./merge-finalization-lock');
 const githubBudget = require('./github-budget');
+const deployFailure = require('./deploy-failure');
 const { getPool } = require('../db/pool');
 const leaderTimers = require('./leader-timers');
 
@@ -92,6 +93,10 @@ async function recover(config, {
       // The self-hosted app is released by the host/cluster deployer and its
       // release watch. A child app with an older recorded SHA needs delivery.
       if (row.self_hosted || row.main_sha === sha) continue;
+      // This commit's image was refused for running as root: delivering it
+      // again cannot go differently, and the row already says why. A commit
+      // that changes the Dockerfile is a new sha and goes ahead.
+      if (deployFailure.waitsForNewCommit(row.last_failure, sha)) continue;
       try {
         const result = await rebuild(config, row, { reuseRunningRevision: sha });
         const saved = await pool.query(

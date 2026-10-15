@@ -45,6 +45,7 @@ const docker = require('./docker');
 const applicationRuntime = require('./application-runtime');
 const appOutages = require('./app-outages');
 const appTeardown = require('./app-teardown');
+const deployFailure = require('./deploy-failure');
 const { getPool } = require('../db/pool');
 const lifecycle = require('./lifecycle');
 const leaderTimers = require('./leader-timers');
@@ -368,6 +369,16 @@ async function checkAndHealOne(config, pool, app, { probeRunning = false, backgr
   if (runtimeRef.runtimeKind === 'kubernetes') {
     if (state === 'running' && (!probeRunning || await applicationRuntime.probeHealth(config, runtimeRef))) {
       return { status: 'healthy', slug: app.slug };
+    }
+    // The Deployment's template is an image refused for running as root
+    // (a newer commit than the one that last went live; the previous
+    // ReplicaSet keeps serving). A restart rolls the same refusal out and
+    // waits five minutes for it; a rebuild of the same commit makes the same
+    // image. Only a commit that changes the Dockerfile helps, and a merge or
+    // the drift poller deploys that.
+    const refused = deployFailure.asRecord(app.last_failure);
+    if (refused?.kind === deployFailure.ROOT_IMAGE && refused.sha && refused.sha !== app.main_sha) {
+      return { status: 'waits_for_new_commit', slug: app.slug };
     }
     if (Date.now() - (healAttempts.get(app.slug) || 0) < cooldownMs(config)) {
       return { status: 'cooldown', slug: app.slug };

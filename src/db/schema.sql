@@ -6728,6 +6728,31 @@ CREATE INDEX IF NOT EXISTS idx_waitlist_release_links_expires
   ON waitlist_release_links (expires_at);
 COMMENT ON TABLE waitlist_release_links IS 'staging:private';
 
+-- The admit mail as the admin Journey's first mile reads it (services/
+-- journey.js), kept on the released row after the mail log forgets it. The
+-- log (mail_deliveries and its mail_events) keeps 30 days, and a cohort's
+-- first mile is read for as long as there is one, so the log's retention
+-- sweep (services/mail/index.js pruneDeliveries) copies a released row's
+-- facts here in the same statement that deletes them: when its "you're in"
+-- mail was first sent, whether one was tracked, its first open and first
+-- followed link (never a scanner's or prefetcher's request), and the first
+-- sign-in code asked for after the admit. Each is the earliest seen and
+-- never moves once set, so a sweep that runs in batches keeps the same
+-- values. `release_link_followed_at` is the first spend of the mail's
+-- one-time sign-in link (services/release-links.js spend), which click
+-- tracking leaves out on purpose and whose rows are deleted a day after
+-- they expire: it is written as the link is spent. Times and a flag, like
+-- confirmed_at beside them, and no capability: not column-private, which
+-- here marks a credential and hides it from the debug role, where these are
+-- what somebody debugging a first mile needs. A staging clone empties this
+-- table's rows with every other signup surface (migrate.js seeds its own).
+ALTER TABLE waitlist_signups ADD COLUMN IF NOT EXISTS release_mail_sent_at TIMESTAMPTZ;
+ALTER TABLE waitlist_signups ADD COLUMN IF NOT EXISTS release_mail_tracked BOOLEAN;
+ALTER TABLE waitlist_signups ADD COLUMN IF NOT EXISTS release_mail_opened_at TIMESTAMPTZ;
+ALTER TABLE waitlist_signups ADD COLUMN IF NOT EXISTS release_mail_clicked_at TIMESTAMPTZ;
+ALTER TABLE waitlist_signups ADD COLUMN IF NOT EXISTS release_code_asked_at TIMESTAMPTZ;
+ALTER TABLE waitlist_signups ADD COLUMN IF NOT EXISTS release_link_followed_at TIMESTAMPTZ;
+
 -- Outbound mail log (src/services/mail/). Every send attempt lands here
 -- with its outcome, and it is the ONLY place an operator can see what
 -- happened: the endpoints that trigger mail are always-200 by contract
@@ -10676,6 +10701,16 @@ COMMENT ON COLUMN homeroom_bot_runs.build_no_change IS 'staging:private';
 ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_retry JSONB;
 COMMENT ON COLUMN homeroom_bot_runs.build_retry IS 'staging:private';
 
+-- 15 Oct 2026: a live first version that was built and could not be
+-- proposed, finished by its maker's Try again (homeroom-bot.js
+-- finishBuiltFirstVersion): the session the build left is proposed as the
+-- build would have proposed it. { at, by (who tapped it), session_id (the
+-- session it proposes), outcome ('proposed' or 'failed', once known) }.
+-- Claimed once per run, so a second tap proposes nothing; a claim with no
+-- outcome after FINISH_STALE_MINUTES is a process that died and is taken
+-- again. Nothing private: no words, only ids and times.
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_finish JSONB;
+
 -- Where a live or shadow build is between its steps, saved at each step
 -- boundary so a restart carries it on from there instead of building it
 -- again or sending it back to be triaged (homeroom-bot-checkpoint.js):
@@ -13740,7 +13775,8 @@ CREATE TRIGGER issues_wf_governance_owned
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS live_at TIMESTAMPTZ;
 -- booted_shas: the platform's own row only. The builds platform processes
 -- booted with, newest first, at most ten: [{ "sha": ..., "at": ... }].
--- Written by each process at startup (src/workflow/platform.ts), never by
+-- Written by each process that serves requests, once it listens
+-- (src/workflow/platform.ts releaseServing; never a conductor), never by
 -- the migration Job: main_sha is seeded from the incoming release's GIT_SHA
 -- by the migration that runs BEFORE the rollout, so it can name a build that
 -- does not serve yet. A history, not the last boot: during a rollout an

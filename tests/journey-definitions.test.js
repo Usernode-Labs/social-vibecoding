@@ -155,6 +155,46 @@ test('the admit mail\'s engagement: a followed link is an open, and an untracked
   assert.equal(journey.mailEngagement({ mail_status: null, mail_tracked: null }).note, null, 'no mail, no note');
 });
 
+test('the mail followed: its one-time link or a code, whichever came first, and a spent link is a click', () => {
+  assert.deepEqual(journey.followedMail({ mail_link_at: '2026-10-07T11:40:00Z', code_asked_at: '2026-10-07T12:00:00Z' }),
+    { done: true, at: new Date('2026-10-07T11:40:00Z'), note: 'its sign-in link' });
+  assert.deepEqual(journey.followedMail({ mail_link_at: null, code_asked_at: '2026-10-07T12:00:00Z' }),
+    { done: true, at: new Date('2026-10-07T12:00:00Z'), note: 'a sign-in code' });
+  assert.deepEqual(journey.followedMail({}, { expired: true }),
+    { done: false, stuck: 'Admitted, never followed the mail', expired: true });
+  // Click tracking leaves the one-time link out, so its spend is the click,
+  // tracked mail or not.
+  assert.deepEqual(journey.mailEngagement({ mail_status: 'sent', mail_tracked: null, mail_link_at: '2026-10-07T11:40:00Z' }),
+    { tracked: true, opened: true, clicked: true, note: 'clicked the link' });
+});
+
+test('what a maker asked for is one line, cut short', () => {
+  assert.equal(journey.askedText('  Track   the\npantry  '), 'Track the pantry');
+  assert.equal(journey.askedText(''), null);
+  assert.equal(journey.askedText(null), null);
+  const long = journey.askedText('x'.repeat(journey.ASKED_MAX + 50));
+  assert.equal(long.length, journey.ASKED_MAX);
+  assert.ok(long.endsWith('\u2026'));
+});
+
+test('a first version: live, failed, waiting on its maker, stalled or still building, and not recorded before stages were', () => {
+  const now = new Date('2026-10-15T12:00:00Z');
+  const made = '2026-10-15T09:00:00Z';
+  const of = (stages, extra = {}) => journey.firstVersionOf({ bot_builds: true, created_at: made, stages, ...extra }, now,
+    { stagesFrom: '2026-10-13T00:00:00Z' });
+  const at = (minutes) => new Date(Date.parse(made) + minutes * 60000).toISOString();
+  assert.equal(journey.firstVersionOf({ bot_builds: false, created_at: made }, now), null, 'nothing for the bot to build');
+  const live = of({ plan_written: at(1), picked_up: at(3), live: at(20) }, { near_live: true, back_at: at(25) });
+  assert.deepEqual([live.outcome, live.last, live.nearLive, live.backSeconds], ['live', 'live', true, 300]);
+  assert.equal(of({ plan_written: at(1), picked_up: at(3) }, { run_failed: true }).outcome, 'failed');
+  assert.equal(of({ plan_written: at(1) }, { filing: 'failed' }).outcome, 'failed');
+  assert.equal(of({ plan_written: at(1) }).outcome, 'waiting', 'a plan written waits on its maker');
+  assert.equal(of({ plan_written: at(1), picked_up: at(3) }).outcome, 'stalled', `nothing for ${journey.STALL_MINUTES} min`);
+  assert.equal(of({ plan_written: at(170), picked_up: at(175) }).outcome, 'building');
+  assert.deepEqual(journey.firstVersionOf({ bot_builds: true, created_at: '2026-10-01T09:00:00Z', stages: null }, now,
+    { stagesFrom: '2026-10-13T00:00:00Z' }), { recorded: false, outcome: null, last: null, stages: {}, nearLive: null, backSeconds: null });
+});
+
 test('first-mile steps: expired mail proof reads unknown, and nothing counts past an unfinished account', () => {
   const now = at('2026-11-15T12:00:00Z');
   const old = journey.firstMileSteps({

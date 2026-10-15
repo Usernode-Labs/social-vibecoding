@@ -286,7 +286,9 @@ const EVENT_TYPES = Object.freeze({
   //                        (services/first-session-moments.js), for the
   //                        person and project: { kind, clientAt (the
   //                        browser's clock), receivedAt (the server's), ... }.
-  //                        Test accounts' too: the Journey reads none of it.
+  //                        Test accounts' too: the Journey's made-screen
+  //                        reading counts real people only (journey.js
+  //                        MADE_SCREEN_SQL).
   FIRST_VERSION_STAGE: 'first_version_stage',
   FIRST_SESSION_MOMENT: 'first_session_moment',
   // Somebody was refused a session because a session cap was full

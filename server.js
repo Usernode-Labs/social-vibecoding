@@ -1552,9 +1552,11 @@ async function becomeLeader() {
   leaderTimers.every('account-deletion-cleanup', runAccountDeletionCleanup, 60_000);
 
   // A project created with a description files it as its first request once
-  // it runs (services/homeroom-bot-dm.js). The creation hook in
-  // app-creator.js does it; this files one the hook missed or could not
-  // file yet, whether or not the Homeroom bot is on. A no-op on staging.
+  // its repository holds the starter (services/homeroom-bot-dm.js
+  // FILEABLE_SQL; 15 Oct 2026, while it is still being set up). The
+  // creation hooks in app-creator.js do it; this files one the hooks missed
+  // or could not file yet, whether or not the Homeroom bot is on. A no-op on
+  // staging.
   const runFirstRequestSweep = () => require('./src/services/homeroom-bot-dm')
     .sweepFirstVersions(getPool(config), config)
     .then((n) => { if (n) log.info('apps', 'First requests filed', { filed: n }); })
@@ -1830,6 +1832,7 @@ async function start() {
     const platformRelease = require('./src/services/platform-release');
     if (processRole.servesRequests(ownRole)) platformRelease.recordRunning(getPool(config));
     platformRelease.recordBoot(getPool(config));
+    if (processRole.servesRequests(ownRole)) require('./src/workflow/platform.ts').releaseServing(getPool(config));
   });
   // Let Envoy retire idle upstream connections at 60s before Node closes them.
   // Keep a 15s margin for transit and timer scheduling; applies to self-previews too.
@@ -1916,6 +1919,10 @@ module.exports = {
   sweepOrphanTurns,
   // docs/plans/web-and-conductor.md: and for idle warm workers.
   sweepLeftWarmWorkers,
+  // 14 Oct 2026: the idle eviction and the auto-pause sweeper's first pass,
+  // each of which leaves a session a durable build holds alone.
+  sweepIdleWarmWorkers,
+  autoPauseIdleSessions,
   // #1378: the detached-turn resume itself, so tests can prove a stop that
   // lands on an ADOPTED turn terminalizes it as a stop instead of narrating
   // an interruption (or retrying it). Driving it through adoptOrphanWorker
@@ -5417,6 +5424,41 @@ const SWEEP_INTERVAL_MS = 30 * 1000;
 
 let sweeperHandle = null;
 
+// 14 Oct 2026 (#5162's follow-up): a durable build holds its session for
+// its whole run, its turns and the time between them, wherever the build
+// runs (services/build-runs.js holdsSession), and ensureWorker keeps its
+// worker on its image until the build ends. A release's draining process
+// forgets its idle warm workers and the new leader adopts them
+// (sweepLeftWarmWorkers), so the worker a DRAINING process's build is still
+// using between turns can sit in this registry, idle by its clock, or in a
+// sweep's list of idle sessions: stopping it there takes the build's worker
+// from under it. So every sweep that stops or pauses a session's worker
+// without that session asking (the idle eviction below, the auto-pause
+// sweeper's first pass, and session-lifecycle.js's slot eviction) asks this
+// first, of a session it would otherwise act on, and leaves a held one
+// alone until its build ends. A read that fails answers false (build-runs
+// logs it), and the sweep does what it did before.
+function heldByDurableBuild(sessionId, pool = getPool(config)) {
+  return require('./src/services/build-runs').holdsSession(pool, sessionId);
+}
+
+// What a sweep left to a build is logged once while it stays a candidate,
+// not on every pass: each sweep keeps the ids it said (`said`), and forgets
+// those it no longer finds (`seen`, this pass's candidates).
+function sayLeftToBuild(said, sessionId, message, fields = {}) {
+  const id = Number(sessionId);
+  if (said.has(id)) return;
+  said.add(id);
+  log.info('server', message, { sessionId: id, ...fields });
+}
+
+function forgetUnseen(said, seen) {
+  const ids = new Set([...seen].map(Number));
+  for (const id of said) if (!ids.has(id)) said.delete(id);
+}
+
+const idleLeftToBuilds = new Set();
+
 // Every process sweeps its own warm registry (startProcessDuties): a web
 // process never leads, and its turns' workers are its own. A session busy
 // anywhere is left alone: a turn on another process may be using the very
@@ -5430,40 +5472,58 @@ function startIdleEvictionSweeper() {
   });
   sweeperHandle = setInterval(async () => {
     if (lifecycle.isShuttingDown()) return;
-    const now = Date.now();
-    const snapshot = worker.warmRegistrySnapshot();
-    for (const meta of snapshot) {
-      if (meta.inFlight) continue;
-      if (meta.bootstrapping) continue;
-      if (now - meta.lastUsedMs < WORKER_IDLE_EVICTION_MS) continue;
-      if (activeWorkersSvc.isSessionBusyElsewhere(meta.sessionId)) continue;
-      // Warm in another process too: forget it here and leave it to them;
-      // the last one keeping it warm evicts it. If they all forget it at
-      // once, the leader's sweep for left-behind workers adopts it.
-      if (processes.heldElsewhere('warm', meta.sessionId)) {
-        worker.forgetWorker(meta.sessionId);
-        log.info('server', 'Idle warm worker left to another process that keeps it warm', {
-          sessionId: meta.sessionId, containerName: meta.containerName,
-        });
-        continue;
-      }
-      try {
-        await worker.evictWorker(meta.sessionId);
-        log.info('server', 'Idle warm worker evicted', {
-          sessionId: meta.sessionId,
-          containerName: meta.containerName,
-          idleMs: now - meta.lastUsedMs,
-        });
-      } catch (err) {
-        log.warn('server', 'Idle eviction failed', {
-          sessionId: meta.sessionId, err: err.message,
-        });
-      }
-    }
+    await sweepIdleWarmWorkers().catch((err) => {
+      log.warn('server', 'Idle eviction sweep failed', { err: err.message });
+    });
   }, SWEEP_INTERVAL_MS).unref();
   // .unref() so the sweeper doesn't hold the event loop open if everything
   // else has shut down. We still clearInterval explicitly in cleanup() to
   // race-free stop the sweeper before exit.
+}
+
+// One pass of the idle eviction: every worker in this registry idle past
+// WORKER_IDLE_EVICTION_MS is evicted, unless it is in use, busy elsewhere,
+// kept warm by another process, or a durable build holds its session
+// (heldByDurableBuild). `held` is that question, for tests.
+async function sweepIdleWarmWorkers({ now = Date.now(), held = heldByDurableBuild } = {}) {
+  const snapshot = worker.warmRegistrySnapshot();
+  forgetUnseen(idleLeftToBuilds, snapshot.map((meta) => meta.sessionId));
+  for (const meta of snapshot) {
+    if (meta.inFlight) continue;
+    if (meta.bootstrapping) continue;
+    if (now - meta.lastUsedMs < WORKER_IDLE_EVICTION_MS) continue;
+    if (activeWorkersSvc.isSessionBusyElsewhere(meta.sessionId)) continue;
+    // Warm in another process too: forget it here and leave it to them;
+    // the last one keeping it warm evicts it. If they all forget it at
+    // once, the leader's sweep for left-behind workers adopts it.
+    if (processes.heldElsewhere('warm', meta.sessionId)) {
+      worker.forgetWorker(meta.sessionId);
+      log.info('server', 'Idle warm worker left to another process that keeps it warm', {
+        sessionId: meta.sessionId, containerName: meta.containerName,
+      });
+      continue;
+    }
+    // A durable build's, between its turns, wherever the build runs.
+    if (await held(meta.sessionId)) {
+      sayLeftToBuild(idleLeftToBuilds, meta.sessionId, 'Not evicting an idle warm worker: a durable build holds its session', {
+        containerName: meta.containerName, idleMs: now - meta.lastUsedMs,
+      });
+      continue;
+    }
+    idleLeftToBuilds.delete(Number(meta.sessionId));
+    try {
+      await worker.evictWorker(meta.sessionId);
+      log.info('server', 'Idle warm worker evicted', {
+        sessionId: meta.sessionId,
+        containerName: meta.containerName,
+        idleMs: now - meta.lastUsedMs,
+      });
+    } catch (err) {
+      log.warn('server', 'Idle eviction failed', {
+        sessionId: meta.sessionId, err: err.message,
+      });
+    }
+  }
 }
 
 // Session auto-pause sweeper. Distinct from the worker idle-eviction
@@ -5556,6 +5616,50 @@ const FRESHNESS_REFRESH_COOLDOWN_MS = Math.max(
   60 * 1000
 );
 
+const autoPauseLeftToBuilds = new Set();
+
+// The auto-pause sweeper's first pass (startSessionAutoPauseSweeper below):
+// idle 'active' sessions paused, their workers destroyed and their slots
+// freed. Never one mid-turn (active_turn, isSessionBusy), and, since 14 Oct
+// 2026, never one a durable build holds between its turns
+// (heldByDurableBuild): the auto-pause idle window is minutes, and a build
+// on a draining process can be quiet that long while its review runs.
+// `held` is that question, for tests. Resolves the ids it paused.
+async function autoPauseIdleSessions(pool, { idleMs, exemptFixtures = false, held = (id) => heldByDurableBuild(id, pool) } = {}) {
+  const paused = [];
+  try {
+    const { rows } = await pool.query(
+      `SELECT id FROM chat_sessions
+       WHERE status = 'active'
+         AND active_turn IS NULL
+         AND source IS DISTINCT FROM 'imported'
+         AND last_activity_at < NOW() - make_interval(secs => $1::double precision / 1000.0)
+         AND NOT ($2::boolean AND COALESCE(branch_name, '') LIKE 'staging-fixture/%')
+       ORDER BY last_activity_at ASC
+       LIMIT 50`,
+      [idleMs, !!exemptFixtures]
+    );
+    forgetUnseen(autoPauseLeftToBuilds, rows.map((row) => row.id));
+    for (const row of rows) {
+      if (activeWorkersSvc.isSessionBusy(row.id)) continue;
+      if (await held(row.id)) {
+        sayLeftToBuild(autoPauseLeftToBuilds, row.id, 'Not auto-pausing an idle session: a durable build holds it');
+        continue;
+      }
+      autoPauseLeftToBuilds.delete(Number(row.id));
+      try {
+        const out = await sessionLifecycle.pauseSession({ pool, sessionId: row.id, reason: 'auto-idle' });
+        if (out && out.paused) paused.push(Number(row.id));
+      } catch (err) {
+        log.warn('server', 'Auto-pause failed', { sessionId: row.id, err: err.message });
+      }
+    }
+  } catch (err) {
+    log.warn('server', 'Session auto-pause sweep failed', { err: err.message });
+  }
+  return paused;
+}
+
 function startSessionAutoPauseSweeper(config) {
   if (sessionSweeperHandle) return;
   if (!config.sessionAutopauseIdleMs || config.sessionAutopauseIdleMs <= 0) {
@@ -5600,30 +5704,9 @@ function startSessionAutoPauseSweeper(config) {
     // them costs no capacity. The predicate is the branch prefix migrate.js
     // seeds them under, and it is gated on USERNODE_ENV so production's
     // sweep is byte-for-byte what it was.
-    const exemptFixtures = process.env.USERNODE_ENV === 'staging';
-    try {
-      const { rows } = await pool.query(
-        `SELECT id FROM chat_sessions
-         WHERE status = 'active'
-           AND active_turn IS NULL
-           AND source IS DISTINCT FROM 'imported'
-           AND last_activity_at < NOW() - make_interval(secs => $1::double precision / 1000.0)
-           AND NOT ($2::boolean AND COALESCE(branch_name, '') LIKE 'staging-fixture/%')
-         ORDER BY last_activity_at ASC
-         LIMIT 50`,
-        [config.sessionAutopauseIdleMs, exemptFixtures]
-      );
-      for (const row of rows) {
-        if (activeWorkersSvc.isSessionBusy(row.id)) continue;
-        try {
-          await sessionLifecycle.pauseSession({ pool, sessionId: row.id, reason: 'auto-idle' });
-        } catch (err) {
-          log.warn('server', 'Auto-pause failed', { sessionId: row.id, err: err.message });
-        }
-      }
-    } catch (err) {
-      log.warn('server', 'Session auto-pause sweep failed', { err: err.message });
-    }
+    await autoPauseIdleSessions(pool, {
+      idleMs: config.sessionAutopauseIdleMs, exemptFixtures: process.env.USERNODE_ENV === 'staging',
+    });
 
     // Pass 2: staging GC. Reclaim the staging container + cloned DB from
     // sessions cold past the (much longer) staging-idle window. Skips

@@ -531,6 +531,10 @@
     "text": "Live",
     "description": "First line of a notification: the viewer's proposed change was approved and is now running. An adjective. The change's title is on the line below."
   },
+  "row.merged.goingLive": {
+    "text": "Going live",
+    "description": "First line of a notification: the viewer's proposed change was approved and is being put into the running project, but is not running yet. The change's title is on the line below."
+  },
   "row.merged.yourChange": {
     "text": "your change",
     "description": "Second line of a notification that the viewer's change went live, when the change has no title. Lower case: it stands where the title would."
@@ -538,6 +542,10 @@
   "row.votedMerged.label": {
     "text": "A change you voted on is live",
     "description": "First line of a notification: a change the viewer voted yes or no on was approved and is now running. The change's title is on the line below."
+  },
+  "row.votedMerged.goingLive": {
+    "text": "A change you voted on is going live",
+    "description": "First line of a notification: a change the viewer voted yes or no on was approved and is being put into the running project, but is not running yet. The change's title is on the line below."
   },
   "row.votedMerged.aChange": {
     "text": "a change",

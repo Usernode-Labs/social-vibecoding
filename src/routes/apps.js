@@ -338,7 +338,27 @@ function hubFirstVersion(state, viewerId, { member = false } = {}) {
     waits_on: mine && !ready ? (state.plan ? 'plan' : state.question ? 'question' : null) : null,
     conversation_id: mine ? (Number(state.conversationId) || null) : null,
     session_id: Number.isInteger(sessionId) && sessionId > 0 ? sessionId : null,
-    plan: member && !mine && !ready ? sharedPlan(state.plan || state.chosenPlan) : null,
+    plan: member && !mine && !ready && !state.stopped ? sharedPlan(state.plan || state.chosenPlan) : null,
+    // 14 Oct 2026: its build stopped (line 'stopped'), and for its maker
+    // where Try again is (stoppedThread).
+    ...(state.stopped ? { stopped: true, thread: mine ? stoppedThread(state) : null } : {}),
+  };
+}
+
+/**
+ * 14 Oct 2026 (newcomer run eight): where a first version's maker was told
+ * its build stopped, with Try again under it (homeroom-bot-dm.js
+ * stoppedThreadOf): `{ conversationId, threadRootId, messageId }`, the
+ * conversation their chat with Homeroom bot when the message cannot be
+ * read. Only ever sent to the maker. Pure.
+ */
+function stoppedThread(state) {
+  const said = state && state.stopped && typeof state.stopped === 'object' ? state.stopped : {};
+  const id = (value) => (Number.isInteger(Number(value)) && Number(value) > 0 ? Number(value) : null);
+  return {
+    conversationId: id(said.conversationId) || id(state && state.conversationId),
+    threadRootId: id(said.threadRootId),
+    messageId: id(said.messageId),
   };
 }
 
@@ -1473,7 +1493,8 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       });
 
       // What the project should do, from the create dialog: filed as its
-      // first request, under its creator's name, once the project runs. For
+      // first request, under its creator's name, once its repository holds
+      // the starter (homeroom-bot-dm.js FILEABLE_SQL). For
       // somebody the Homeroom bot builds for (#3624), the bot builds it and
       // says so in their DM, which the dialog then offers to open; for
       // anybody else it is left to the group. Optional here (a connector
@@ -1786,7 +1807,13 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
               ...(estimate ? { estimate } : {}),
               // #4396: for a member who is not its maker, while it is not
               // ready, what the App tab's "While you wait" card offers.
-              ...(!mine && !state.ready ? await waitingMemberFields(pool, appRow.id, req.user?.id, state).catch(() => ({ member: false })) : {}),
+              ...(!mine && !state.ready && !state.stopped ? await waitingMemberFields(pool, appRow.id, req.user?.id, state).catch(() => ({ member: false })) : {}),
+              // 14 Oct 2026 (newcomer run eight): its build stopped, and
+              // nothing is live yet. The App tab keeps the first version's
+              // card, says Stopped, and gives its maker Try again: the
+              // build's thread in their chat with Homeroom bot (`thread`),
+              // where the bot's own Try again is.
+              ...(state.stopped ? { stopped: true, ...(mine ? { thread: stoppedThread(state) } : {}) } : {}),
               // Ready to try: the change, and who it waits on, as this
               // viewer reads it (firstVersionApproval).
               ...(state.ready && state.approval ? { approval: state.approval } : {}),
@@ -1945,6 +1972,37 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       return res.send(Buffer.isBuffer(row.data) ? row.data : Buffer.from(row.data || ''));
     } catch (err) {
       log.error('apps', 'Failed to read a first version screen', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // 15 Oct 2026 (newcomer run nine): the early first look's DRAWN screen,
+  // which the first look shows until its picture above is saved
+  // (`first_version.screens.drawn`, services/first-version-screens.js
+  // readDrawnDocument), for the same readers as the picture: the project's
+  // MEMBERS, 404 for anyone else and for none. It is model-written HTML, so
+  // every answer is a document that can do nothing (DRAWN_CSP): `sandbox`
+  // gives it an opaque origin with scripts, forms and navigation off, and
+  // nothing loads but its inline styles and data: images and fonts. The
+  // shell frames it with sandbox="" as well (frontend/src/features/
+  // first-session/drawn-look.tsx). Cached no longer than the picture.
+  router.get('/api/apps/:slug/first-version/first-look/drawn', async (req, res) => {
+    const fvScreens = require('../services/first-version-screens');
+    res.set({
+      'Content-Security-Policy': fvScreens.DRAWN_CSP,
+      'X-Content-Type-Options': 'nosniff',
+      'Referrer-Policy': 'no-referrer',
+    });
+    try {
+      if (!req.user?.id) return res.status(404).json({ error: 'Not found' });
+      const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS);
+      if (!app || !(await communities.isMember(pool, app.id, req.user.id))) return res.status(404).json({ error: 'Not found' });
+      const doc = await fvScreens.readDrawnDocument(pool, app.id);
+      if (!doc) return res.status(404).json({ error: 'Not found' });
+      res.set({ 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'private, max-age=3600' });
+      return res.send(doc);
+    } catch (err) {
+      log.error('apps', 'Failed to read a first version\'s drawn screen', { message: err.message });
       return res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -2772,8 +2830,10 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         return res.json({ ok: true });
       }
       // Fire-and-forget: same fan-out as the drift-poller and dev-chat
-      // merge paths use. Errors land on the deploy-status broadcast.
-      staging.rebuildProduction(config, app)
+      // merge paths use. Errors land on the deploy-status broadcast. Asked
+      // for by hand, so it retries even a commit the automatic paths have
+      // stopped retrying (deploy-failure.js waitsForNewCommit).
+      staging.rebuildProduction(config, app, { retrySameCommit: true })
         .then(async ({ containerId, sha }) => {
           await pool.query(
             `UPDATE apps SET container_id = $1, main_sha = $2, status = 'running',
@@ -4477,7 +4537,7 @@ module.exports = {
   attachForkLineage,
   appRoutes, accessFlags, canDeleteApp, compactGlobalChatApp,
   deleteBlockReason, isCoreApp, hubFirstVersion, firstVersionLinesFor, sharedPlan, waitingMemberFields, firstVersionShowcaseFields,
-  firstVersionLiveFields,
+  firstVersionLiveFields, stoppedThread,
   // #2524: the activity guard and its two bounds, so the contract is
   // unit-testable without standing up the whole app router.
   activitySeconds, ACTIVITY_MAX_PER_POST, ACTIVITY_MAX_PER_DAY,

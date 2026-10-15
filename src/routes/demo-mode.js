@@ -851,7 +851,7 @@ function demoModeRoutes(config) {
           .catch((err) => log.warn('demo-mode', 'Deploy request after reset failed', { slug: app.slug, err: err.message }));
       } else if (main && main.moved) {
         redeploy = 'started';
-        staging.rebuildProduction(config, app)
+        staging.rebuildProduction(config, app, { retrySameCommit: true })
           .then(async ({ containerId, sha }) => {
             await pool.query(
               `UPDATE apps SET container_id = $1, main_sha = $2, status = 'running',

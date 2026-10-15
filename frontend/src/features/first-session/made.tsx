@@ -120,9 +120,10 @@ import { askForPingWhileBotBuilds } from '../dialogs/ping-ask';
 import { PlanChoices } from '../messages/bot-plan-view';
 import type { HomeroomBotPlanQuestion } from '../messages/types';
 
-import { BUILD_LINE_WORDS, type BuildLineState, buildLineAsks, buildLineDone, buildLineOf, phaseLine, useNow } from './build-line';
+import { BUILD_LINE_WORDS, type BuildLineState, buildLineAsks, buildLineDone, buildLineOf, buildLineStopped, phaseLine, useNow } from './build-line';
 import { noteBuildStarted } from './build-line-words.js';
 import { copyText, inviteText } from './copy-invite';
+import { DrawnLook, isDrawnLook, ownSrc, useLookSwap } from './drawn-look';
 import { FIRST_LOOK_POLL_MS, firstLookSrc } from './first-look';
 import { syncBuildActivity } from '../app-frame/build-activity';
 import { countsDown, estimateOf, leftNote } from '../app-frame/first-version-eta';
@@ -1152,6 +1153,9 @@ const FIRST_LOOK_STEP = 'truncate text-[14px] font-medium leading-[18px] text-zi
 const FIRST_LOOK_STEP_ASKS = 'truncate text-[14px] font-semibold leading-[18px] text-[color:var(--accent)]';
 const FIRST_LOOK_NOTE = 'truncate text-[13px] leading-[18px] text-zinc-500 dark:text-zinc-400';
 
+// The phone's picture fades in over its outline.
+const LOOK_FADES = 'transition-opacity duration-300 ease-out motion-reduce:transition-none';
+
 /**
  * The phone: the first look once there is one (the picture tour step 9 and
  * the App tab show, ./first-look.tsx firstLookSrc), faded in once it has
@@ -1159,11 +1163,21 @@ const FIRST_LOOK_NOTE = 'truncate text-[13px] leading-[18px] text-zinc-500 dark:
  * the project's card has while it is sketched. With reduced motion nothing
  * moves. A picture that will not load is given back (`onBroken`), and the
  * outline stays until another comes.
+ *
+ * 15 Oct 2026 (newcomer run nine, 11 seconds of the outline after Submit):
+ * until the picture is saved, the drawn screen itself (./drawn-look.tsx),
+ * faded in the same way; the picture then takes its place once it is in
+ * (useLookSwap), cut in rather than faded over the outline, since it is the
+ * same screen.
  */
-function FirstLookPhone({ src, name, onBroken }: { src: string | null; name: string; onBroken: (src: string) => void }) {
+function FirstLookPhone({ src: next, name, onBroken }: { src: string | null; name: string; onBroken: (src: string) => void }) {
   const t = useMessages('onboarding');
+  const src = useLookSwap(next, ownSrc);
   const [loaded, setLoaded] = useState<string | null>(null);
-  const shown = !!src && loaded === src;
+  // The picture after the drawn screen is in already: no outline between.
+  const cut = !!src && !!loaded && loaded !== src && isDrawnLook(loaded) && !isDrawnLook(src);
+  const shown = !!src && (loaded === src || cut);
+  const alt = t('onboarding:firstSession.made.firstLook.alt', { app: name });
   return (
     <div data-made-first-look-phone={shown ? 'ready' : 'drawing'} className={FIRST_LOOK_PHONE}>
       {shown ? null : (
@@ -1174,15 +1188,24 @@ function FirstLookPhone({ src, name, onBroken }: { src: string | null; name: str
           </div>
         </div>
       )}
-      {src ? (
+      {src && isDrawnLook(src) ? (
+        <DrawnLook
+          key={src}
+          src={src}
+          label={alt}
+          width={50}
+          onLoad={() => setLoaded(src)}
+          className={`${LOOK_FADES} ${shown ? 'opacity-100' : 'opacity-0'}`}
+        />
+      ) : src ? (
         <img
           key={src}
           src={src}
-          alt={t('onboarding:firstSession.made.firstLook.alt', { app: name })}
+          alt={alt}
           draggable={false}
           onLoad={() => setLoaded(src)}
           onError={() => onBroken(src)}
-          className={`absolute inset-0 h-full w-full object-cover object-top transition-opacity duration-300 ease-out motion-reduce:transition-none ${shown ? 'opacity-100' : 'opacity-0'}`}
+          className={`absolute inset-0 h-full w-full object-cover object-top ${cut ? '' : `${LOOK_FADES} `}${shown ? 'opacity-100' : 'opacity-0'}`}
         />
       ) : null}
     </div>
@@ -1370,12 +1393,14 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
   // ONE THING AT A TIME: the first look card, and its picture from the same
   // read (./first-look.tsx firstLookSrc), asked for as often as tour step 9
   // asks (FIRST_LOOK_POLL_MS) while there is none. One that would not load
-  // (`brokenLook`) counts as none until another comes.
+  // (`brokenLook`) counts as none until another comes. 15 Oct 2026: while
+  // there is only its drawn screen (./drawn-look.tsx) it is asked for as
+  // often, until its picture is saved.
   const firstLookHere = firstLookHereFor({ botBuilds, imported, readyMade, entry });
   const [look, setLook] = useState<string | null>(null);
   const [brokenLook, setBrokenLook] = useState<string | null>(null);
   const lookShown = look && look !== brokenLook ? look : null;
-  const lookWaits = firstLookHere && !lookShown;
+  const lookWaits = firstLookHere && (!lookShown || isDrawnLook(lookShown));
   useEffect(() => {
     let live = true;
     const read = () => fetch(madeAppUrl(made.slug), { credentials: 'same-origin', cache: 'no-store' })
@@ -1533,9 +1558,9 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
     : buildNote(botBuilds, !!plan, stalled, imported, readyMade);
   const plainLine = named.words || (line === 'planning' && served === 'plan' ? translate(BUILD_LINE_WORDS.planning) : buildLine(fv, appStatus, botBuilds, imported, readyMade));
   // Something is under way: the project being set up, or the bot's build
-  // (not while its plan waits on them, nor on a setup that stopped: then
-  // nothing is).
-  const busy = appStatus === 'creating' || (botBuilds && !(fv && fv.ready) && !plan && !stalled);
+  // (not while its plan waits on them, nor on a setup or a build that
+  // stopped: then nothing is).
+  const busy = appStatus === 'creating' || (botBuilds && !(fv && fv.ready) && !plan && !stalled && !buildLineStopped(line));
   // Its setup's card, once it has run: in place, saying what the plain card would.
   const ranInPlace = setupShown && !settingUp && !stalled;
   const tile = sketch.card?.emoji || made.emoji || made.name.slice(0, 1);
@@ -1554,7 +1579,7 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
       setup: false,
       words: named.words || (line && line !== 'working' ? t(BUILD_LINE_WORDS[line]) : t(SETUP_SET_UP)),
       note: named.note || t(SETUP_SET_UP),
-      busy: !!line && !buildLineAsks(line) && !buildLineDone(line),
+      busy: !!line && !buildLineAsks(line) && !buildLineDone(line) && !buildLineStopped(line),
       asks: !!line && buildLineAsks(line),
     };
 

@@ -36,7 +36,10 @@
  *                readScreen fall back to it: shownFor, pictureFor) until the
  *                run has one of its own, and only while the run is the one
  *                built from this plan (forRun). The spec's own first look
- *                replaces it the moment it is saved, as before.
+ *                replaces it the moment it is saved, as before. From the
+ *                moment it is drawn until its picture is saved, the drawn
+ *                screen itself stands in (screenFor), served as an inert
+ *                document (first-version-screens.js readDrawnDocument).
  *   KEPT TO      the build's spec starts its main screen from it (forSpec,
  *                homeroom-bot-live.js EARLY_LOOK_LINES), so the app keeps
  *                the promise the picture made.
@@ -495,7 +498,8 @@ function forRun(run, planNote) {
   return !!note && String(run.build_note || '').startsWith(note);
 }
 
-const SHOWN_SQL = `SELECT l.status, l.saved_at, l.png IS NOT NULL AS has_png, f.early_plan->>'buildNote' AS plan_note
+const SHOWN_SQL = `SELECT l.status, l.saved_at, l.drawn_at, l.png IS NOT NULL AS has_png, l.screen IS NOT NULL AS has_screen,
+       f.early_plan->>'buildNote' AS plan_note
   FROM first_version_early_looks l
   LEFT JOIN homeroom_bot_first_versions f ON f.app_id = l.app_id
  WHERE l.app_id = $1`;
@@ -512,13 +516,42 @@ const SPEC_SQL = `SELECT l.status, l.screen, l.created_at, f.early_plan->>'build
 
 /**
  * The early first look the App tab shows for `run` in place of its own
- * (first-version-screens.js showcaseOf): { at }, when it is saved.
+ * (first-version-screens.js showcaseOf): { at, drawn }, once it is saved
+ * (`drawn` false, `at` when), and before that from the moment it is drawn
+ * (`drawn` true, `at` when it was drawn).
+ *
+ * 15 Oct 2026, newcomer run nine: the worker its picture is drawn in took
+ * about 30 seconds longer than usual to start, so the picture was saved 48
+ * seconds after Make it, and the made screen showed an empty phone for 11
+ * seconds after Submit while the screen, drawn in under 20, waited for it.
+ * The picture is 20 seconds at best. So the drawn screen itself is shown
+ * until then (screenFor), in a frame that runs and loads nothing.
  */
 async function shownFor(pool, appId, run = null) {
   if (!enabled()) return null;
   const { rows: [row] } = await pool.query(SHOWN_SQL, [Number(appId)]);
-  if (!row || row.status !== 'ready' || !row.has_png || !forRun(run, row.plan_note)) return null;
-  return { at: row.saved_at || null };
+  if (!row || !forRun(run, row.plan_note)) return null;
+  if (row.status === 'ready' && row.has_png) return { at: row.saved_at || null, drawn: false };
+  if (row.status === 'drawn' && row.has_screen) return { at: row.drawn_at || null, drawn: true };
+  return null;
+}
+
+const SCREEN_SQL = `SELECT l.status, l.screen, f.early_plan->>'buildNote' AS plan_note
+  FROM first_version_early_looks l
+  LEFT JOIN homeroom_bot_first_versions f ON f.app_id = l.app_id
+ WHERE l.app_id = $1`;
+
+/**
+ * Its drawn screen, the <template> the picture is drawn from, while shownFor
+ * offers it (drawn) and once it is pictured (ready, so a frame asked for as
+ * the picture is saved still has it); else null. One that failed is not
+ * shown: the spec draws its own (forSpec).
+ */
+async function screenFor(pool, appId, run = null) {
+  if (!enabled()) return null;
+  const { rows: [row] } = await pool.query(SCREEN_SQL, [Number(appId)]);
+  if (!row || !row.screen || (row.status !== 'drawn' && row.status !== 'ready') || !forRun(run, row.plan_note)) return null;
+  return String(row.screen);
 }
 
 /** Its picture, as readScreen answers: { content_type, data }, or null. */
@@ -579,6 +612,7 @@ module.exports = {
   forRun,
   shownFor,
   pictureFor,
+  screenFor,
   forSpec,
   _pendingForTests: pending,
 };

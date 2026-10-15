@@ -90,7 +90,8 @@ test('a building payload makes the whole activity: the screen\'s stage, the buil
   });
   // The stage is the build line's own words, never the activity's.
   const stage = (fv) => m.planBuildActivity(building(fv), null, { now: NOW, origin: ORIGIN }).args.stage;
-  assert.equal(stage({ phase: { key: 'checking', since: at(-1), round: 1, rounds: 2 } }), 'Checking the screens · round 1 of 2');
+  // 14 Oct 2026: the line's words, without the round, so the Lock Screen says what the App tab does.
+  assert.equal(stage({ phase: { key: 'checking', since: at(-1), round: 1, rounds: 2 } }), 'Checking the screens');
   assert.equal(stage({ phase: { key: 'starting', since: null } }), 'Starting the build');
   assert.equal(stage({ phase: null }), 'Building it');
   assert.equal(stage({ line: 'testing', phase: { key: 'testing', since: at(-1) } }), 'Testing it');
