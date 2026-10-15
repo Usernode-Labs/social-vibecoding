@@ -232,10 +232,15 @@ test('one too big for the bus carries its number, and the other process reads it
 
 const bot = require('../src/services/homeroom-bot');
 
+// The moment the bot went on for everyone is fixed before the issue below:
+// left unset, readSettings counts it from now, and an issue made before now
+// reads as one the bot has seen, so the test passed before 10:00 UTC on
+// 15 Oct 2026 and failed after it.
 const SETTINGS = [
   { key: bot.KEY_MODE, value: 'live' },
   { key: bot.KEY_PER_PERSON, value: '3' },
   { key: bot.KEY_LIVE_AT_ONCE, value: '8' },
+  { key: bot.KEY_EVERYONE_SINCE, value: '2026-10-01T00:00:00.000Z' },
 ];
 const APP = { id: 101, slug: 'club-votes', name: 'Club Votes', repo_url: 'https://github.com/o/club-votes', self_hosted: false };
 
