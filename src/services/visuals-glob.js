@@ -125,6 +125,14 @@ function atomsFor(glob) {
   return atoms;
 }
 
+// A test-only work counter: the growth test in tests/visual-impact-glob.test.js
+// reads it to pin the O(atoms x candidate length) promise without a clock,
+// whose readings flake on a busy CI host. Nothing in production reads it, and
+// it changes no answer the matcher gives.
+let matchSteps = 0;
+function _matchStepsForTests() { return matchSteps; }
+function _resetMatchStepsForTests() { matchSteps = 0; }
+
 function visualImpactMatches(pattern, file) {
   const glob = String(pattern == null ? '' : pattern).replace(/\\/g, '/');
   const candidate = String(file == null ? '' : file).replace(/\\/g, '/').replace(/^\.\//, '');
@@ -149,10 +157,12 @@ function visualImpactMatches(pattern, file) {
     if (atom.t === LIT) {
       const c = atom.c;
       for (let p = 0; p < len; p++) {
+        matchSteps++;
         if (cur[p] && candidate[p] === c) { next[p + 1] = 1; alive = true; }
       }
     } else if (atom.t === QM) {
       for (let p = 0; p < len; p++) {
+        matchSteps++;
         if (cur[p] && candidate[p] !== '/') { next[p + 1] = 1; alive = true; }
       }
     } else if (atom.t === STAR) {
@@ -163,30 +173,34 @@ function visualImpactMatches(pattern, file) {
       // at the same `/`.
       let i = 0;
       for (let p = 0; p <= len; p++) {
+        matchSteps++;
         if (!cur[p]) continue;
         next[p] = 1; alive = true;
         if (p > i) i = p;
-        while (i < len && candidate[i] !== '/') { next[i + 1] = 1; i++; }
+        while (i < len && candidate[i] !== '/') { matchSteps++; next[i + 1] = 1; i++; }
       }
     } else if (atom.t === ANY) {
       // `.*` — zero or more of anything except a line terminator, which is
       // where the old regex's `.` stopped.
       let i = 0;
       for (let p = 0; p <= len; p++) {
+        matchSteps++;
         if (!cur[p]) continue;
         next[p] = 1; alive = true;
         if (p > i) i = p;
-        while (i < len && !isTerminator(candidate[i])) { next[i + 1] = 1; i++; }
+        while (i < len && !isTerminator(candidate[i])) { matchSteps++; next[i + 1] = 1; i++; }
       }
     } else { // DIRS
       // `(?:.*/)?` — either nothing, or any run ending at a `/`. Same forward
       // sweep, marking the position AFTER each slash it passes.
       let i = 0;
       for (let p = 0; p <= len; p++) {
+        matchSteps++;
         if (!cur[p]) continue;
         next[p] = 1; alive = true;
         if (p > i) i = p;
         while (i < len && !isTerminator(candidate[i])) {
+          matchSteps++;
           if (candidate[i] === '/') next[i + 1] = 1;
           i++;
         }
@@ -199,4 +213,7 @@ function visualImpactMatches(pattern, file) {
   return !!cur[len];
 }
 
-module.exports = { visualImpactMatches, compileGlob, MAX_CACHED_GLOBS };
+module.exports = {
+  visualImpactMatches, compileGlob, MAX_CACHED_GLOBS,
+  _matchStepsForTests, _resetMatchStepsForTests,
+};
