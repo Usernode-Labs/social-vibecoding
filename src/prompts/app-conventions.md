@@ -3544,6 +3544,11 @@ locally inside the worker the same way a staging container does:
   `INLOOP_DATABASE_URL` for exactly this. Typical launch:
   `usernode-run-inloop node server.js &`
   (or this app's declared `dapp.json` entrypoint).
+- **Stop only what you started**, by its own PID (`$!` right after the
+  launch) or its job (`kill %1`). Never signal PID 1 (`kill 1`), every
+  process (`kill -1`), or every process a `/proc` walk finds: PID 1 is
+  the worker's init, and stopping it restarts the worker and ends your
+  turn.
 - The launch command supplies the manifest's committed `staging_default` /
   `default` values, as staging does. If a required value has no committed
   fallback, it reports the missing key and stops. Never copy a production
