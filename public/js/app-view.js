@@ -8963,6 +8963,28 @@ const AppView = {
     return AppView._loadDevFeed();
   },
 
+  // (#5164) The project hub's quiet refresh: the For you card (the votes
+  // owed) and Recently live, re-read while one of the hub's own places is
+  // showing. A timed tick and a return to the tab call it; a socket burst
+  // still goes through refreshDevData, and a tick landing beside one joins
+  // the same run (_loadDevData's in-flight join / queue).
+  //
+  // `whole` widens the read to the whole board (a return to the tab, where
+  // the missed time can have moved anything); a tick reads only the parts
+  // the hub's two cards draw from — the proposals' tallies and the merged
+  // list — so it stays light. Nothing here runs off the board or under a
+  // hidden tab, and a board that has not loaded whole once is not partly
+  // refreshed.
+  refreshHubLive({ whole = false } = {}) {
+    if (!AppView.appData || typeof App === 'undefined' || App.currentTab !== 'dev') return undefined;
+    if (App.currentSubTab !== 'forum') return undefined;
+    if (document.hidden) return undefined;
+    if (!AppView._devDataReady) return undefined;
+    App._announceRefreshIntent?.();
+    const parts = whole ? null : new Set(['promoted', 'merged']);
+    return AppView._loadDevFeed(parts ? { parts } : null);
+  },
+
   // What a live burst moved, as board parts: a vote moves the proposals'
   // tallies (and, on a merge, the Completed list); a verdict moves the one
   // row's checks, wherever it lives. Anything else — a session appearing or

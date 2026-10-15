@@ -156,7 +156,7 @@ test('the landing: the story in place of the pitch unless switched off, for nobo
 test('the story: label, headline, "For example" and the three examples, "Get started", then Sign in', () => {
   const html = renderComponent('frontend/src/features/auth/story.tsx', 'Story', { primaryClass: 'pill', onStart() {}, onSignIn() {} });
   // Each row: its emoji (the tier list draws a chart, no text), title and line.
-  const TEMPLATE_ROWS = loadTsx(`${DIR}/examples.ts`).TEMPLATES.flatMap((t) => (t.chart ? [message(t.title), message(t.line)] : [t.emoji, message(t.title), message(t.line)]));
+  const TEMPLATE_ROWS = loadTsx(`${DIR}/examples.ts`).FRONT.flatMap((t) => (t.chart ? [message(t.title), message(t.line)] : [t.emoji, message(t.title), message(t.line)]));
   const text = html.replace(/<[^>]+>/g, '\n').split('\n').map((t) => t.trim()).filter(Boolean)
     .map((t) => t.replace(/&#x27;/g, "'"));
   assert.deepEqual(text, [
@@ -182,10 +182,15 @@ test('the story: label, headline, "For example" and the three examples, "Get sta
 
 // Evan, 8 Oct 2026: the three examples became sentences to finish, each a
 // whole description in a tap or two with the part that makes it theirs left
-// to them. The same three on the story and the make screen.
-test('three templates, the same on the story and the make screen, each a whole starting point', () => {
-  const { TEMPLATES, OWN, sentence, suggestedName, firstChoice, descriptionOf } = loadTsx(`${DIR}/examples.ts`);
-  assert.deepEqual(TEMPLATES.map((t) => t.key), ['tier', 'game', 'organizer']);
+// to them. Evan, 15 Oct 2026: the front three are a tier list, a game and
+// an organizer, the same on the story and the make screen; a poll, find a
+// time, a sign-up sheet and a group challenge are behind "Something else…".
+test('the front three on the story and the make screen, the rest behind Something else, each a whole starting point', () => {
+  const { TEMPLATES, FRONT, FRONT_KEYS, MORE, OWN, sentence, suggestedName, firstChoice, descriptionOf } = loadTsx(`${DIR}/examples.ts`);
+  assert.deepEqual(TEMPLATES.map((t) => t.key), ['tier', 'poll', 'game', 'organizer', 'findtime', 'signup', 'challenge']);
+  assert.deepEqual([...FRONT_KEYS], ['tier', 'game', 'organizer'], 'one list of the front three, for a test of what shows first');
+  assert.deepEqual(FRONT.map((t) => t.key), ['tier', 'game', 'organizer']);
+  assert.deepEqual(MORE.map((t) => t.key), ['poll', 'findtime', 'signup', 'challenge'], 'the rest, in the catalog\'s order');
   for (const t of TEMPLATES) {
     // What a person reads is a message id (frontend/locales/en/onboarding.json);
     // the sentence's head is the catalog's, up to its blank.
@@ -205,7 +210,7 @@ test('three templates, the same on the story and the make screen, each a whole s
     assert.doesNotMatch(JSON.stringify(words), /—/, `${t.key}: no em dash`);
   }
   // The tier list: one tap is a whole description.
-  const [tier, game, organizer] = TEMPLATES;
+  const [tier, poll, game, organizer, findtime, signup, challenge] = TEMPLATES;
   assert.equal(firstChoice(tier), 'restaurants');
   assert.equal(sentence(tier, 'hikes', '').text, 'A tier list for our favorite hikes. Anyone can add items, everyone sorts them, and we can see where they land.');
   assert.deepEqual(tier.choices.map((c) => message(c.name)), ['Restaurant Tier List', 'Hiking Tier List', 'City Tier List', 'Game Tier List']);
@@ -221,14 +226,30 @@ test('three templates, the same on the story and the make screen, each a whole s
   assert.equal(suggestedName(game, OWN, 'a card game'), '', 'their own game is theirs to name');
   assert.equal(suggestedName(game, 'trivia', ''), 'Trivia Night');
   // The organizer: each choice says what it keeps.
-  assert.deepEqual(organizer.choices.map((c) => [message(c.label), message(c.name)]), [['Groceries', 'Grocery List'], ['Chores', 'Chore List'], ['Shared library', 'Lending Library'], ['Potlucks', 'Potluck Planner'], ['Study timer', 'Study Timer']]);
+  assert.deepEqual(organizer.choices.map((c) => [message(c.label), message(c.name)]), [['Groceries', 'Grocery List'], ['Chores', 'Chore List'], ['Shared library', 'Lending Library'], ['Study timer', 'Study Timer']],
+    'its potluck moved to the sign-up sheet');
   // (What the ready-made chore list does: it sends no nudge.)
   assert.equal(sentence(organizer, 'chores', '').text, 'An app to organize our chores: who\'s on what this week, and whose turn it is next.');
   assert.equal(sentence(organizer, 'library', '').text, 'An app to organize our shared library: what we can borrow, who has it now, and who\'s asking for it next.');
   assert.equal(suggestedName(organizer, OWN, 'camping gear'), 'Camping Gear List');
-  // The story says the same three, the tier list drawn as a tier list.
+  // Poll the group: where to eat, what to spend on, movie night.
+  assert.equal(message(poll.short), 'Poll the group');
+  assert.equal(firstChoice(poll), 'dinner');
+  assert.equal(sentence(poll, 'dinner', '').text, 'An app for us to decide where to eat: anyone can suggest options, everyone votes, and we see what wins.');
+  assert.deepEqual(poll.choices.map((c) => [message(c.label), message(c.name)]), [['Where to eat', 'Dinner Decider'], ['What to spend on', 'Spending Poll'], ['Movie night', 'Movie Night Poll']]);
+  assert.equal(suggestedName(poll, OWN, 'where to go'), '', 'their own question is theirs to name');
+  // Find a time, a sign-up sheet (the potluck is here now) and a challenge.
+  assert.equal(sentence(findtime, 'bookclub', '').text, 'An app to find a time for our book club to meet: everyone marks when they\'re free, and we see what works.');
+  assert.deepEqual(findtime.choices.map((c) => message(c.label)), ['Book club', 'Game night', 'Trip']);
+  assert.deepEqual(signup.choices.map((c) => [message(c.label), message(c.name)]), [['Potluck', 'Potluck Planner'], ['Volunteer shifts', 'Volunteer Sign-ups'], ['Who\'s coming', 'Who\'s Coming']]);
+  assert.equal(sentence(challenge, 'miles', '').text, 'A challenge for our group: who logs the most miles this month, with a leaderboard.');
+  assert.deepEqual(challenge.choices.map((c) => message(c.label)), ['Miles', 'Steps', 'Books']);
+  assert.equal(suggestedName(challenge, OWN, 'push-ups'), 'Push-ups Challenge');
+  // The story says the front three, the tier list drawn as a tier list, and
+  // nothing from behind Something else.
   const story = renderComponent('frontend/src/features/auth/story.tsx', 'Story', { primaryClass: 'pill', onStart() {}, onSignIn() {} });
-  for (const t of TEMPLATES) assert.ok(story.includes(`>${message(t.title)}<`) && story.includes(`>${message(t.line)}<`), t.key);
+  for (const t of FRONT) assert.ok(story.includes(`>${message(t.title)}<`) && story.includes(`>${message(t.line)}<`), t.key);
+  for (const t of MORE) assert.ok(!story.includes(`>${message(t.title)}<`), `${t.key} is not on the story`);
   assert.match(story, /data-tier-chart=""/);
 });
 
@@ -265,15 +286,16 @@ test('"Make it" makes a private community through the dialog\'s own route', () =
 test('a choice that needs no typing makes a ready-made app, with nothing for Homeroom bot to build', () => {
   const { TEMPLATES, OWN, readyMadeOf } = loadTsx(`${DIR}/examples.ts`);
   const appTemplates = require('../src/services/app-templates');
-  const [tier, game, organizer] = TEMPLATES;
-  const made = [...tier.choices, ...organizer.choices].map((c) => c.template);
+  const game = TEMPLATES.find((t) => t.key === 'game');
+  const ready = TEMPLATES.filter((t) => t !== game);
+  const made = ready.flatMap((t) => t.choices).map((c) => c.template);
   assert.deepEqual(made, appTemplates.READY_IDS, 'every no-typing choice, and only those, is a ready-made app');
   for (const c of game.choices) assert.equal(readyMadeOf(game, c.key), null, `${c.key}: a game is always built`);
-  assert.equal(readyMadeOf(tier, OWN), null, 'their own words are built');
-  assert.equal(readyMadeOf(organizer, OWN), null);
-  assert.deepEqual(readyMadeOf(tier, 'hikes'), { template: 'tier-list-hikes', emoji: '📊' });
+  for (const t of ready) assert.equal(readyMadeOf(t, OWN), null, `${t.key}: their own words are built`);
+  assert.deepEqual(readyMadeOf(TEMPLATES[0], 'hikes'), { template: 'tier-list-hikes', emoji: '📊' });
+  assert.deepEqual(readyMadeOf(TEMPLATES.find((t) => t.key === 'signup'), 'potluck'), { template: 'potluck-planner', emoji: '🍲' }, 'a potluck is still the potluck planner');
   // Its icon is the ready-made app's own, so the made screen and the tile agree.
-  for (const t of [tier, organizer]) {
+  for (const t of ready) {
     for (const c of t.choices) assert.equal(readyMadeOf(t, c.key).emoji, appTemplates.get(c.template).icon, c.key);
   }
 
@@ -449,7 +471,7 @@ test('with the keyboard up nothing scrolls under the status bar: the bar stays, 
 // his own description over it. Since 8 Oct 2026 the starting points are
 // templates: a sentence is the template's until it is written out and
 // changed, and the name follows the choice until they type one.
-test('a template fills in the description and the name; words of their own let go of it, and the name stays theirs', () => {
+test('a template fills in the description and the name; words of their own let go of it, and the name stays theirs', (t) => {
   const src = read(`${DIR}/make.tsx`);
   // The plain box's onChange marks Your own idea the moment its words are not
   // the template's written out.
@@ -483,7 +505,12 @@ test('a template fills in the description and the name; words of their own let g
     // The allowance row's store (dialogs/app-allowance.tsx, which Make it reads for its limit).
     useSyncExternalStore(subscribe, get) { at++; return get(); },
   };
-  const { MakeScreen } = loadTsx(`${DIR}/make.tsx`, { stubs: { react: React, '../../lib/i18n/react': ENGLISH_HOOK } });
+  // The sheet goes on <body> through a portal: drawn in place here, so its
+  // element is in the tree to find (its rows are found by drawing it).
+  const { MakeScreen } = loadTsx(`${DIR}/make.tsx`, { stubs: { react: React, 'react-dom': { createPortal: (el) => el }, '../../lib/i18n/react': ENGLISH_HOOK } });
+  const hadDocument = 'document' in globalThis;
+  if (!hadDocument) globalThis.document = { body: {} };
+  t.after(() => { if (!hadDocument) delete globalThis.document; });
   const draw = () => { at = 0; return MakeScreen({ who: 'Jordan', onMade() {}, onLookAround() {} }); };
   const find = (node, test, out = []) => {
     if (!node || typeof node !== 'object') return out;
@@ -499,9 +526,13 @@ test('a template fills in the description and the name; words of their own let g
   const brief = (tree) => find(tree, (n) => n.props.id === 'first-session-brief')[0];
   const words = (tree) => find(tree, (n) => n.props.id === 'make-words')[0];
   const nameField = (tree) => find(tree, (n) => n.props.id === 'first-session-name')[0];
+  // "Something else…" (./more-sheet.tsx): the sheet, and its rows as it draws them.
+  const sheet = (tree) => find(tree, (n) => n.props.onPickIdea !== undefined)[0];
+  const sheetRows = (tree) => { const s = sheet(tree); return find(s.type(s.props), (n) => n.props['data-make-more'] !== undefined); };
   let tree = draw();
-  assert.deepEqual(tiles(tree).map((c) => c.props['data-first-session-example']), ['tier', 'game', 'organizer', 'idea'], 'four tiles, Your own idea last');
+  assert.deepEqual(tiles(tree).map((c) => c.props['data-first-session-example']), ['tier', 'game', 'organizer', 'more'], 'the front three, then Something else');
   assert.deepEqual(pressed(tree), [], 'none picked yet');
+  assert.equal(sheet(tree), undefined, 'the sheet is shut');
   assert.ok(brief(tree), 'it opens on the plain box');
   // One tap on the tier list: its first choice, a whole description, a name.
   tiles(tree)[0].props.onClick();
@@ -537,7 +568,7 @@ test('a template fills in the description and the name; words of their own let g
   assert.deepEqual(pressed(tree), ['tier'], 'the same words are not their own');
   brief(tree).props.onChange({ target: { value: `${brief(tree).props.value} And a map of them.` } });
   tree = draw();
-  assert.deepEqual(pressed(tree), ['idea'], 'their own words: Your own idea');
+  assert.deepEqual(pressed(tree), ['idea'], 'their own words: Your own idea, which takes the fourth tile');
   assert.equal(nameField(tree).props.value, 'Trail Talk', 'the name stays theirs');
 
   // The game starts on Your own, with a box for the rest and nothing to write out.
@@ -555,12 +586,36 @@ test('a template fills in the description and the name; words of their own let g
   tree = draw();
   assert.equal(nameField(tree).props.value, 'Board Game Night');
   assert.equal(words(tree).props.placeholder, 'For example, we roll dice and race each other around the board');
-  // Your own idea: the plain box again, and a suggested name goes with the template.
+  // Your own idea, from Something else: the plain box again, and a suggested
+  // name goes with the template.
   tiles(tree)[3].props.onClick();
   tree = draw();
+  assert.ok(sheet(tree), 'the fourth tile opens the sheet');
+  assert.deepEqual(sheetRows(tree).map((r) => r.props['data-make-more']), ['idea', 'poll', 'findtime', 'signup', 'challenge'], 'Your own idea first, then the rest');
+  sheet(tree).props.onPickIdea();
+  tree = draw();
+  assert.equal(sheet(tree), undefined, 'a pick shuts it');
   assert.deepEqual(pressed(tree), ['idea']);
   assert.ok(brief(tree));
   assert.equal(nameField(tree).props.value, '');
+  // A starting point from the sheet takes the fourth tile over, and the
+  // tile opens the sheet again.
+  tiles(tree)[3].props.onClick();
+  tree = draw();
+  sheetRows(tree).find((r) => r.props['data-make-more'] === 'signup').props.onClick();
+  tree = draw();
+  assert.equal(sheet(tree), undefined);
+  assert.deepEqual(tiles(tree).map((c) => c.props['data-first-session-example']), ['tier', 'game', 'organizer', 'signup']);
+  assert.deepEqual(pressed(tree), ['signup']);
+  assert.deepEqual(chips(tree).map((c) => c.props['data-make-choice']), ['potluck', 'shifts', 'rsvp', 'own']);
+  assert.equal(nameField(tree).props.value, 'Potluck Planner');
+  tiles(tree)[3].props.onClick();
+  tree = draw();
+  assert.equal(sheet(tree).props.picked.key, 'signup', 'the sheet marks what holds the tile');
+  sheet(tree).props.onClose();
+  tree = draw();
+  assert.equal(sheet(tree), undefined);
+  assert.deepEqual(pressed(tree), ['signup'], 'shutting it keeps the pick');
 });
 
 test('the game\'s box reads as a field to type in, and the tiles are two by two', () => {
