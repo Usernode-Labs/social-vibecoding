@@ -21,6 +21,9 @@
 //      own origin (platform.json, https only), answers that origin alone,
 //      draws what is on screen at its scroll position, and puts the app's
 //      own `window.snapdom` back.
+//   3b. THE PANEL'S PICTURE (#4975). The side panel's document draws itself,
+//      and takeBase lays its picture in at the frame's rectangle, beside the
+//      app's.
 //   4. THE SEAMS. The dialog takes a handed-over comment; the drawing
 //      library is the pinned, recorded copy, byte for byte.
 
@@ -136,11 +139,15 @@ test('the reworked mode: the bar as the view\'s header, the phone sheet, and the
   assert.match(src, /phone && draft\.active == null \?/);
   assert.match(src, /nextPinRow\n          \) : \(/);
   // The close-up at the top of the sheet draws the pin's area of the picture
-  // the pin is on: the comment's own once drawn, the view picture while it
-  // still shows the same view, and nothing (never a stretched thumbnail)
-  // otherwise.
+  // the pin is on: the comment's own once drawn — the full picture now, with
+  // the crop framed on it (#5020) — the view picture while it still shows
+  // the same view, and nothing (never a stretched thumbnail) otherwise.
   assert.match(src, /<CloseUp\s+view=\{closeUpSrc\}/);
   assert.match(src, /const closeUpSrc = activePicture\?\.url \|\| \(viewDiffers \? '' : viewShot\?\.url \|\| ''\);/);
+  assert.match(src, /crop=\{activePicture\?\.cut\?\.rect \?\? null\}/,
+    'the close-up frames the crop on the full picture');
+  assert.doesNotMatch(src, /pin=\{\(boxComment \? pinInCrop/,
+    'the pin is a full-picture fraction now, never mapped into the crop');
   const closeUp = read('frontend/src/features/comment-pin/close-up.tsx');
   assert.match(closeUp, /touchAction: 'none'/, 'the close-up box only, never the page under it');
   assert.match(closeUp, /\{t\('devchat:commentPin\.closeUp\.pinchHint'\)\}/);
@@ -185,12 +192,18 @@ test('on a phone the keyboard is not the page moving, and the sheet stays under 
   assert.match(src, /if \(next\.width === was\.width && keyboardAbout\(\)\) return;/, 'a height-only resize with the keys about is the keys');
   assert.match(src, /vv\?\.addEventListener\('resize', onResize\);/, 'and the keys leaving re-measures');
   // Scrolls that are not the page: the mode's own sheet and field, and a
-  // document pan while the keys are about unless the person made it.
+  // document pan while the keys are about.
   assert.match(src, /if \(target instanceof Node && host\.contains\(target\)\) return;/);
-  assert.match(src, /if \(isDocumentScroll\(target\) && keyboardAbout\(\) && performance\.now\(\) - ownScrollAt\.current > 300\) return;/);
+  assert.match(src, /if \(isDocumentScroll\(target\) && keyboardAbout\(\)\) return;/);
   assert.match(src, /const keyboardAbout = \(\) => textFocused\(document\)\s*\|\| document\.documentElement\.classList\.contains\(KB_OPEN_CLASS\)\s*\|\| performance\.now\(\) < keyboardUntil\.current;/);
-  // A drag on the picture scrolls the page under the finger, and says so.
-  assert.match(src, /t\.scroller\.scrollBy\(\(t\.last\.x - p\.x\) \/ k, \(t\.last\.y - p\.y\) \/ k\);/);
+  // The page holds still while the mode is up (#5045): the wheel is stopped
+  // at the layer by hand (React's onWheel is passive), and a drag never
+  // scrolls.
+  assert.doesNotMatch(src, /scrollBy\(/);
+  assert.doesNotMatch(src, /scrollerAt/);
+  assert.doesNotMatch(src, /onWheel=\{/);
+  assert.match(src, /addEventListener\('wheel', onWheel, \{ passive: false \}\)/);
+  assert.match(src, /const onWheel = \(e: WheelEvent\) => \{ e\.preventDefault\(\); \};/);
   // Fields take the keyboard without iOS panning the page (and the bar) away.
   assert.match(src, /t\.focus\(\{ preventScroll: true \}\);\s*t\.setSelectionRange/);
   assert.doesNotMatch(src, /\.focus\(\)/, 'no focus that pans');
@@ -206,13 +219,75 @@ test('on a phone the keyboard is not the page moving, and the sheet stays under 
   assert.match(css, /#comment-pin-box\.comment-sheet \.comment-sheet-actions \{\s*position: sticky;\s*bottom: calc\(-1 \* var\(--comment-sheet-pb\)\);/);
 });
 
+test('on a phone a tap leaves a small comment, and only its field opens the sheet', () => {
+  // Evan, 14 Oct 2026: a tap opened the whole sheet with the keyboard over
+  // the page he was still looking at, the sheet's ✕ was hard to find and to
+  // hit, and its arrows ("Open in the form") read as "make this bigger" and
+  // left comment mode. Now a tap leaves the pin and a small box beside it,
+  // with no field and so no keyboard; a tap on the box opens the sheet with
+  // the keys, in the same gesture; the pin and the box drag; ✕ closes it.
+  const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
+  assert.match(src, /const small = phone && !expanded && !!draft && draft\.active != null;/);
+  assert.match(src, /\{draft && target && smallComment \? \(/);
+  assert.match(src, /id="comment-pin-small"/);
+  // No keyboard until the sheet: on a phone the focus effect waits for it.
+  assert.match(src, /const writing = !phone \|\| expanded;/);
+  assert.match(src, /if \(!t \|\| !writing\) return;/);
+  // The field opens the sheet inside the tap: drawn first (flushSync), then
+  // focused, or iOS would not raise the keys.
+  assert.match(src, /flushSync\(\(\) => setExpanded\(true\)\);\s*const field = textRef\.current;\s*if \(!field\) return;\s*field\.focus\(\{ preventScroll: true \}\);/);
+  assert.match(src, /onClick=\{expand\}/);
+  // A new comment, the request's first or its next, starts small.
+  assert.equal((src.match(/setExpanded\(false\);\n\s+setDraft\(\{/g) || []).length, 2);
+  // A drag on the box or on the open pin moves the pin; a lift without one is a tap.
+  assert.match(src, /if \(Math\.hypot\(dx, dy\) <= 8\) return;/);
+  assert.match(src, /place\(onPicture\(\{ x: d\.from\.x \+ e\.clientX - d\.start\.x, y: d\.from\.y \+ e\.clientY - d\.start\.y \}\)\);/);
+  assert.match(src, /performance\.now\(\) - draggedAt\.current < 400/, 'the click a drag ends with is not a tap');
+  assert.match(src, /const handle = on && small;/);
+  assert.match(src, /onPointerDown=\{\(e\) => e\.stopPropagation\(\)\}\s*onClick=\{closeSmall\}/, 'its ✕ never starts a drag');
+  // With the sheet open, a press on the page above it folds it; the pin stays.
+  assert.match(src, /if \(phone && expanded && draft && draft\.active != null\) \{\s*if \(!draft\.sending\) setExpanded\(false\);\s*return;\s*\}/);
+  // The sheet's head: Minimize folds it, ✕ is a disc in a 44px target, and
+  // on a phone nothing in it hands over to the form (the bar's Form does).
+  assert.match(src, /const PHONE_TOOL = 'grid h-11 w-11 /);
+  assert.match(src, /onClick=\{collapse\}\s*className=\{PHONE_TOOL\}/);
+  assert.match(src, /onClick=\{requestDiscard\}\s*className=\{PHONE_TOOL\}/);
+  const head = src.slice(src.indexOf('const head = draft && target ? ('), src.indexOf('const small = phone'));
+  const phoneHead = head.slice(head.indexOf('{phone ? ('), head.indexOf(') : (\n        <>'));
+  assert.ok(phoneHead.includes('ChevronDownIcon'), 'the phone head is found');
+  assert.doesNotMatch(phoneHead, /toForm/);
+  assert.match(src, /<div className="comment-sheet-head">\s*<div aria-hidden="true" className="comment-sheet-grabber" \/>/);
+  const css = read('public/css/app.css');
+  assert.match(css, /#comment-pin-box\.comment-sheet \.comment-sheet-head \{\s*position: sticky;\s*top: -0\.75rem;/,
+    'the head stays at the top while the sheet scrolls under it');
+  assert.match(css, /\.comment-small-in \{ animation: comment-small-in 160ms ease-out; \}/);
+  assert.equal(message('devchat:commentPin.box.minimize'), 'Minimize');
+  assert.equal(message('devchat:commentPin.box.write'), 'Write your comment');
+  // The box keeps above the home indicator.
+  assert.match(src, /style=\{\{ height: 'var\(--platform-safe-bottom, 0px\)' \}\}/);
+  assert.match(src, /size\.height - \(inset \|\| barAt \? 0 : BAR_SPACE\) - safeBottom/);
+});
+
+test('the preview draws only the pins that fall inside it', () => {
+  // Two pins far apart on a phone's tall picture do not both fit the
+  // preview's 64x42 slice, and the one outside was drawn over the Title and
+  // Kudos rows (iPhone 17 Pro simulator, 14 Oct 2026).
+  const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
+  assert.match(src, /\.filter\(\(\{ left, top \}\) => left >= 0 && left <= 64 && top >= 0 && top <= 42\)/);
+});
+
 test('the close-up always zooms a full picture about its own pin', () => {
   const closeUp = read('frontend/src/features/comment-pin/close-up.tsx');
   // The stretched-thumbnail fallback, and its pin placed as a fraction of
   // the box, are gone.
   assert.doesNotMatch(closeUp, /\bown\?: |\{own \?/);
   assert.doesNotMatch(closeUp, /object-cover/);
-  assert.match(closeUp, /export function CloseUp\(\{ view, pin \}: \{ view: string; pin: Point \}\)/);
+  assert.match(closeUp, /export function CloseUp\(\{ view, pin, crop \}: \{ view: string; pin: Point; crop\?: Rect \| null \}\)/);
+  // A cut picture is shown whole: the kept part is framed where the zoom
+  // draws the picture, and the rest is dimmed (#5020).
+  assert.match(closeUp, /view2\.offset\.x \+ crop\.x \* view2\.size\.width/);
+  assert.match(closeUp, /view2\.offset\.y \+ crop\.y \* view2\.size\.height/);
+  assert.match(closeUp, /boxShadow: CROP_SHADE/);
   // A picture already in memory can load before an effect runs: its size is
   // kept with its own source rather than reset by one.
   assert.match(closeUp, /const picture = loaded && loaded\.src === view \? loaded\.size : null;/);
@@ -222,6 +297,10 @@ test('the close-up always zooms a full picture about its own pin', () => {
   // The comment's own picture is kept whole for it.
   const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
   assert.match(src, /b\?\.canvas\.toBlob\(\(blob\) => \{[\s\S]*?land\(\{ url \}\);/);
+  // CropFrame and the reopened views (#5020) dim with the one shared shade.
+  assert.match(src, /height: rect\.height \* H, boxShadow: CROP_SHADE/,
+    'CropFrame dims with the shared shade, not its own literal');
+  assert.equal(picture.CROP_SHADE, '0 0 0 9999px rgba(0,0,0,0.45)');
 });
 
 test('the first picture animates out of the live page instead of a bare grey ground (#4665)', () => {
@@ -275,7 +354,7 @@ test('opening and leaving are one motion each, never a frame-long jump (12 Oct 2
   assert.match(src, /leave\(\(\) => \{\s*if \(post\) \{\s*handOver\(post\);/, 'Form opens after the mode has left');
   assert.match(src, /leave\(\(\) => handOver\(post\)\);/, 'and a failed post hands over the same way');
   assert.match(src, /else leave\(\); \}\}/, 'the confirm\'s Discard on Done');
-  assert.equal((src.match(/\bonClose\(\)/g) || []).length, 2, 'onClose only inside leave and on the card\'s link, which navigates');
+  assert.equal((src.match(/\bonClose\(\)/g) || []).length, 3, 'onClose only inside leave and on the cards\' links, which navigate (the sent card\'s link joins the marker card\'s, #5008)');
   assert.match(css, /\.comment-mode-leaving \.comment-shot-in \{ animation: comment-shot-out 200ms ease-in forwards; \}/);
   assert.match(css, /@keyframes comment-shot-out \{\s*to \{ transform: var\(--comment-shot-from, none\); border-radius: 0; \}\s*\}/);
   assert.match(css, /\.comment-mode-leaving > :not\(\.comment-shot-in\):not\(\.comment-shot-ground-in\) \{ animation: comment-fade-out 120ms ease-in forwards; \}/);
@@ -369,7 +448,9 @@ test('"Screenshot" leads the bar above the picture, never over the picture (#477
   const bar = src.slice(src.indexOf('role="toolbar"'));
   const label = bar.indexOf("{t('devchat:commentPin.view.chip')}");
   assert.ok(label > 0, 'the word renders inside the toolbar');
-  assert.ok(label < bar.indexOf('{confirm ? ('), 'it leads the bar, before either of its states');
+  // It leads every state of the bar — the crop frame's (#4977) first, then
+  // the question, then the usual one.
+  assert.ok(label < bar.indexOf('{cropping && cropView ? ('), 'it leads the bar, before each of its states');
   assert.equal(src.split("t('devchat:commentPin.view.chip')").length - 1, 1, 'rendered once, in the bar');
   assert.match(bar, /\{shotLabel \? \(\s*<>\s*\{\/\*[\s\S]*?\*\/\}\s*<span\s+aria-hidden="true"\s+className=\{`comment-shot-label-in min-w-0 truncate pl-1\.5 text-\[13px\] font-semibold text-zinc-500 dark:text-zinc-400\$\{confirm \? ' hidden sm:inline' : ''\}`\}/,
     'a muted label that truncates first, and stays while the bar asks its question on a computer: the picture is still there');
@@ -490,10 +571,137 @@ test('a preview crop slides to the pins and puts them where the crop drew them',
   assert.equal(wide.height, 42);
   assert.ok(Math.abs(wide.x - (64 - wide.width)) < 1e-9);
   // The chip draws the crop and its pins with it, never as fractions of the box.
+  // A cropped picture is shown whole now, the part kept framed and the rest
+  // dimmed (#5020), and only the pins the crop keeps are drawn.
   const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
-  assert.match(src, /const crop = coverCrop\(\{ width: 64, height: 42 \}, pic\.size \|\| size, focus\);/);
-  assert.match(src, /style=\{\{ left: crop\.x \+ c\.pin\.x \* crop\.width, top: crop\.y \+ c\.pin\.y \* crop\.height \}\}/);
+  assert.match(src, /const shown = pic\.size \|\| size;/);
+  assert.match(src, /const crop = coverCrop\(\{ width: 64, height: 42 \}, shown, focus\);/);
+  assert.match(src, /\(\{ c, left: crop\.x \+ at\.x \* crop\.width, top: crop\.y \+ at\.y \* crop\.height \}\)/);
   assert.doesNotMatch(src, /left: `\$\{c\.pin\.x \* 100\}%`/);
+  assert.match(src, /<img\s+src=\{pic\.thumb\}/,
+    'the chip draws the full picture, never the crop\'s own thumb');
+  assert.match(src, /left: crop\.x \+ pic\.cut\.rect\.x \* crop\.width/,
+    'the frame sits over the kept part of the full picture');
+  assert.match(src, /boxShadow: CROP_SHADE/, 'the kept part is framed, the rest dimmed');
+  assert.match(src, /pinInCrop\(c\.pin, pic\.cut\.rect\) !== null/, 'a pin the crop cut away is not drawn');
+});
+
+// ── 1d. Cropping a screenshot by dragging its corners and edges (#4977) ─
+
+test('dragCrop moves only the sides the handle names, inward only, and never below the minimum', () => {
+  // Fractions of a picture add up to noise past the twelfth decimal; the
+  // frame's geometry is what is pinned, not the last bits of the sum.
+  const rounded = (r) => ({ x: +r.x.toFixed(10), y: +r.y.toFixed(10), width: +r.width.toFixed(10), height: +r.height.toFixed(10) });
+  const is = (actual, expected, note) => assert.deepEqual(rounded(actual), expected, note);
+  const full = { x: 0, y: 0, width: 1, height: 1 };
+  // A corner moves exactly its two sides; the opposite ones stay put.
+  is(picture.dragCrop(full, 'nw', { x: 0.25, y: 0.1 }, { width: 0.05, height: 0.05 }),
+    { x: 0.25, y: 0.1, width: 0.75, height: 0.9 });
+  is(picture.dragCrop(full, 'se', { x: -0.2, y: -0.3 }, { width: 0.05, height: 0.05 }),
+    { x: 0, y: 0, width: 0.8, height: 0.7 });
+  is(picture.dragCrop(full, 'ne', { x: -0.1, y: 0.2 }, { width: 0.05, height: 0.05 }),
+    { x: 0, y: 0.2, width: 0.9, height: 0.8 });
+  is(picture.dragCrop(full, 'sw', { x: 0.15, y: -0.25 }, { width: 0.05, height: 0.05 }),
+    { x: 0.15, y: 0, width: 0.85, height: 0.75 });
+  // An edge moves only its one side.
+  const part = { x: 0.2, y: 0.2, width: 0.5, height: 0.5 };
+  is(picture.dragCrop(part, 'e', { x: 0.1, y: 0.4 }, { width: 0.05, height: 0.05 }),
+    { x: 0.2, y: 0.2, width: 0.6, height: 0.5 }, 'east grows to the picture\'s edge, height untouched');
+  is(picture.dragCrop(part, 'w', { x: 0.1, y: 0.4 }, { width: 0.05, height: 0.05 }),
+    { x: 0.3, y: 0.2, width: 0.4, height: 0.5 }, 'west moves the left side only');
+  is(picture.dragCrop(part, 'n', { x: 0.4, y: -0.15 }, { width: 0.05, height: 0.05 }),
+    { x: 0.2, y: 0.05, width: 0.5, height: 0.65 }, 'north moves the top side only');
+  is(picture.dragCrop(part, 's', { x: 0.4, y: 0.15 }, { width: 0.05, height: 0.05 }),
+    { x: 0.2, y: 0.2, width: 0.5, height: 0.65 }, 'south grows the bottom only');
+  // Inward only: a drag past the picture's edge clamps there.
+  is(picture.dragCrop(part, 'e', { x: 1, y: 0 }, { width: 0.05, height: 0.05 }),
+    { x: 0.2, y: 0.2, width: 0.8, height: 0.5 });
+  is(picture.dragCrop(part, 'w', { x: -1, y: 0 }, { width: 0.05, height: 0.05 }),
+    { x: 0, y: 0.2, width: 0.7, height: 0.5 });
+  is(picture.dragCrop(part, 'n', { x: 0, y: -1 }, { width: 0.05, height: 0.05 }),
+    { x: 0.2, y: 0, width: 0.5, height: 0.7 });
+  is(picture.dragCrop(part, 's', { x: 0, y: 1 }, { width: 0.05, height: 0.05 }),
+    { x: 0.2, y: 0.2, width: 0.5, height: 0.8 });
+  // Crossing sides stops at the minimum, never inverting the frame: a west
+  // or north handle dragged far inward stops a minimum short of its
+  // opposite side.
+  const thin = { x: 0.1, y: 0.1, width: 0.3, height: 0.3 };
+  is(picture.dragCrop(thin, 'w', { x: 0.5, y: 0 }, { width: 0.1, height: 0.1 }),
+    { x: 0.3, y: 0.1, width: 0.1, height: 0.3 }, 'west stops a minimum short of the right side');
+  is(picture.dragCrop(thin, 'n', { x: 0, y: 0.5 }, { width: 0.1, height: 0.1 }),
+    { x: 0.1, y: 0.3, width: 0.3, height: 0.1 }, 'north stops a minimum short of the bottom');
+  is(picture.dragCrop(thin, 'e', { x: 0.9, y: 0 }, { width: 0.1, height: 0.1 }),
+    { x: 0.1, y: 0.1, width: 0.9, height: 0.3 }, 'east stops at the picture\'s right edge');
+  is(picture.dragCrop(thin, 'se', { x: 0.9, y: 0.9 }, { width: 0.1, height: 0.1 }),
+    { x: 0.1, y: 0.1, width: 0.9, height: 0.9 }, 'a corner clamps on both sides at once');
+});
+
+test('pinInCrop maps a pin into the crop, and nulls the ones the crop cuts away', () => {
+  // No crop: every pin comes back unchanged.
+  assert.deepEqual(picture.pinInCrop({ x: 0.3, y: 0.7 }, null), { x: 0.3, y: 0.7 });
+  const crop = { x: 0.25, y: 0.25, width: 0.5, height: 0.5 };
+  assert.deepEqual(picture.pinInCrop({ x: 0.5, y: 0.5 }, crop), { x: 0.5, y: 0.5 }, 'the crop\'s middle stays the middle');
+  assert.deepEqual(picture.pinInCrop({ x: 0.25, y: 0.75 }, crop), { x: 0, y: 1 }, 'the crop\'s corner maps to the frame\'s');
+  assert.equal(picture.pinInCrop({ x: 0.1, y: 0.5 }, crop), null, 'left of the frame is gone');
+  assert.equal(picture.pinInCrop({ x: 0.5, y: 0.9 }, crop), null, 'below the frame is gone');
+  assert.equal(picture.pinInCrop({ x: 0.5, y: 0.5 }, { x: 0.5, y: 0.5, width: 0, height: 0.5 }), null, 'a flat frame keeps nothing');
+  assert.deepEqual(picture.pinInCrop({ x: 0.8, y: 0.8 }, picture.FULL_CROP), { x: 0.8, y: 0.8 }, 'the full crop keeps everything, unchanged');
+});
+
+test('cropPixels rounds a crop to whole pixels inside the picture, and isFullCrop says when nothing was cut', () => {
+  const size = { width: 1000, height: 500 };
+  assert.deepEqual(picture.cropPixels(size, { x: 0.1, y: 0.2, width: 0.5, height: 0.4 }),
+    { x: 100, y: 100, width: 500, height: 200 });
+  assert.deepEqual(picture.cropPixels(size, picture.FULL_CROP), { x: 0, y: 0, width: 1000, height: 500 });
+  // Rounding never leaves the picture or collapses to nothing.
+  assert.deepEqual(picture.cropPixels(size, { x: 0.9995, y: 0, width: 0.001, height: 1 }),
+    { x: 999, y: 0, width: 1, height: 500 });
+  assert.deepEqual(picture.cropPixels({ width: 10, height: 10 }, { x: 0.95, y: 0.95, width: 0.05, height: 0.05 }),
+    { x: 9, y: 9, width: 1, height: 1 });
+  assert.equal(picture.isFullCrop(picture.FULL_CROP), true);
+  assert.equal(picture.isFullCrop({ x: 0, y: 0, width: 1, height: 1 }), true);
+  assert.equal(picture.isFullCrop(null), true, 'no crop is the whole picture');
+  assert.equal(picture.isFullCrop({ x: 0.0005, y: 0, width: 0.9998, height: 1 }), true, 'a hair off full is still full');
+  assert.equal(picture.isFullCrop({ x: 0.01, y: 0, width: 0.99, height: 1 }), false);
+});
+
+test('a cropped picture posts cropped: the frame is cut off the canvas and its pins remapped', () => {
+  const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
+  // The posted pins go through pinInCrop, and a pin the crop cuts away does
+  // not post — the part of the picture it was on is gone.
+  assert.match(src, /const pins = live\.map\(\(c, i\) => \(\{ c, i, at: pinInCrop\(c\.pin, pic\.cut\?\.rect \?\? null\) \}\)\)/,
+    'every comment\'s pin maps through pinInCrop');
+  assert.match(src, /\.filter\(\(\{ c, at \}\) => c\.picture === pic\.key && at\)/,
+    'a pin outside the crop does not post');
+  assert.match(src, /const canvas = pic\.cut \? cropCanvas\(base\.canvas, pic\.cut\.rect\) : base\.canvas;/,
+    'the posted picture is the crop cut off the full canvas');
+  assert.match(src, /const blob = await encodeUnder\(canvas\);/,
+    'the cropped canvas is what is encoded');
+  // Applying the crop: comments outside go, with a toast saying how many.
+  assert.match(src, /const dropped = onPic\.filter\(\(c\) => pinInCrop\(c\.pin, crop\.rect\) === null\);/);
+  assert.match(src, /t\('devchat:commentPin\.crop\.removed', \{ count: dropped\.length \}\)/);
+  // Crop opens at the saved rect, or the whole picture when there is none.
+  assert.match(src, /setCropping\(\{ picture: pic\.key, rect: pic\.cut\?\.rect \?\? FULL_CROP \}\)/);
+});
+
+test('the crop frame reads its words from the catalog, and the thumbnail gains a Crop button', () => {
+  const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
+  assert.match(src, /aria-label=\{t\('devchat:commentPin\.shot\.cropLabel'\)\}/,
+    'the thumbnail\'s crop button is named for screen readers');
+  assert.match(src, /t\('devchat:commentPin\.crop\.title'\)/, 'the bar names the drag');
+  assert.match(src, /t\('devchat:commentPin\.crop\.keepOne'\)/, 'the bar says why Apply is off');
+  assert.match(src, /t\('devchat:commentPin\.crop\.dropping', \{ count: cropView\.dropped \}\)/,
+    'the bar counts what applying would remove');
+  assert.equal(message('devchat:commentPin.shot.crop'), 'Crop');
+  assert.equal(message('devchat:commentPin.shot.cropLabel'), 'Crop the screenshot');
+  assert.equal(message('devchat:commentPin.crop.title'), 'Drag the corners or edges to crop');
+  assert.equal(message('devchat:commentPin.crop.reset'), 'Reset');
+  assert.equal(message('devchat:commentPin.crop.apply'), 'Apply');
+  assert.equal(message('devchat:commentPin.crop.keepOne'), 'Keep at least one pin inside');
+  assert.equal(message('devchat:commentPin.crop.dropping', { count: 1 }), '1 comment outside will be removed');
+  assert.equal(message('devchat:commentPin.crop.dropping', { count: 3 }), '3 comments outside will be removed');
+  assert.equal(message('devchat:commentPin.crop.removed', { count: 1 }), 'Removed 1 comment outside the crop.');
+  assert.equal(message('devchat:commentPin.crop.removed', { count: 2 }), 'Removed 2 comments outside the crop.');
 });
 
 // ── 1c. The retake when the picture lost what the pin is on (#4773) ────
@@ -577,6 +785,74 @@ test('takeBase checks the pin\'s element and retakes at most once, with a clean 
   // The app's picture is laid into the retake too, so a pin beside the frame
   // keeps it.
   assert.match(src, /if \(frameRect\) await layInApp\(again, retaken, frameRect, picture\);/);
+});
+
+// ── 3b. The side panel's picture (#4975) ──────────────────────────────
+
+test('takeBase asks the side panel for its picture with the others, and lays it in on the first picture and the retake', () => {
+  const src = read('frontend/src/features/comment-pin/picture.ts');
+  // The panel's frame is found by id, measured and visibility-checked, like
+  // any other frame the picture fills in.
+  assert.match(src, /getElementById\('side-panel-frame'\)/);
+  assert.match(src, /export function panelFrame\(\): \{ frame: HTMLIFrameElement; rect: Rect \} \| null \{/);
+  // Asked once, in the same Promise.all as the shell and the app's picture,
+  // so the slowest of the three bounds the wait.
+  assert.match(src, /Promise\.all\(\[shell, app, panelPicture\]\)/);
+  // Laid in at the frame's rectangle times the picture's real scale, on the
+  // first canvas and on the retake (the same blob, asked once).
+  assert.match(src, /await layInPanel\(canvas, actual, panel\?\.rect, panelBlob\);/);
+  assert.match(src, /await layInPanel\(again, retaken, panel\?\.rect, panelBlob\);/);
+  // No plate when it did not answer: the frame's rectangle keeps whatever
+  // the shell drew there, at worst the empty body the bug described.
+  const lay = src.match(/async function layInPanel[\s\S]*?\n\}/);
+  assert.ok(lay, 'layInPanel exists beside layInApp');
+  assert.doesNotMatch(lay[0], /fillStyle|fillText/);
+  // The flow's own overlays keep the treatment they had: the panel is not
+  // one of them, and the kit's touch-header drawer (.un-panel) stays.
+  assert.deepEqual(picture.PAGE_EXCLUDES, [
+    '#feedback-modal',
+    '#apps-switcher-sheet',
+    '#apps-switcher-overlay',
+    '.overlay-scrim',
+    '.un-modal',
+    '.un-sheet',
+    '.un-panel',
+    '.un-action-sheet',
+    '.un-backdrop',
+  ]);
+});
+
+test('drawDocument is the panel drawing its own page, with the shell\'s exclusions and none laid in', () => {
+  const src = read('frontend/src/features/comment-pin/picture.ts');
+  // Frames are hidden in place (no panel page runs an app the picture could
+  // ask), the flow's overlays are cut out, scrollers are flattened for
+  // WebKit's first paint.
+  assert.match(src, /exclude: \['iframe'\],\s*\n\s*excludeMode: 'hide',\s*\n\s*filter: \(el: Element\) => !isPageOverlay\(el\),\s*\n\s*filterMode: 'remove',\s*\n\s*plugins: \[FLAT_SCROLLERS\],/,
+    'the same exclusions as drawShell, over the panel document\'s own body');
+  // It hands back a PNG blob, and null on any failure.
+  assert.match(src, /return await toBlob\(canvas, 'image\/png'\);/);
+  const draw = src.match(/export async function drawDocument[\s\S]*?\n\}\n\nexport interface Base/);
+  assert.ok(draw, 'drawDocument is exported beside drawShell');
+  assert.match(draw[0], /catch \{\s*\n\s*return null;/, 'any failure is null, never a rejection');
+});
+
+test('requestPanelPicture: no runtime, a throwing draw, a slow draw, a real answer', async () => {
+  const blob = new Blob(['png'], { type: 'image/png' });
+  const frame = (embed) => ({
+    contentWindow: embed ? { UsernodeReact: { sidePanelEmbed: embed } } : {},
+  });
+  // The panel still booting or gone: no runtime, nothing to lay in.
+  assert.equal(await picture.requestPanelPicture(frame(null), 1, 50), null);
+  // A draw that throws resolves null, never a rejection.
+  assert.equal(await picture.requestPanelPicture(
+    frame({ picture: () => { throw new Error('gone'); } }), 1, 50), null);
+  // One that never answers is cut off by the timeout.
+  assert.equal(await picture.requestPanelPicture(
+    frame({ picture: () => new Promise(() => {}) }), 1, 20), null);
+  // One that answers is passed through as it said.
+  assert.equal(await picture.requestPanelPicture(frame({ picture: async () => blob }), 1, 50), blob);
+  // Something that is not a picture is not drawn.
+  assert.equal(await picture.requestPanelPicture(frame({ picture: async () => 'png' }), 1, 50), null);
 });
 
 // ── 2. Posting ────────────────────────────────────────────────────────
@@ -998,11 +1274,15 @@ test('comment mode opens on demand into a host of its own, once, and C asks it t
   assert.match(src, /id="comment-pin-box"\s+role="dialog"/);
   // Each picture is drawn without the layer: no marker is ever in one.
   assert.match(src, /const promise = takeBase\(\{\s*host,/);
-  // Posted clean, each picture's pins beside it, numbered when there are several.
-  assert.match(src, /\.map\(\(\{ c, i \}\) => \(\{ x: c\.pin\.x, y: c\.pin\.y, n: many \? i \+ 1 : null, note: c\.text\.trim\(\) \}\)\);/);
+  // Posted clean, each picture's pins beside it, numbered when there are
+  // several. A cropped picture's pins map into the crop first (#4977), and a
+  // pin the crop cut away does not post.
+  assert.match(src, /\.map\(\(\{ c, i, at \}\) => \(\{ x: at!\.x, y: at!\.y, n: many \? i \+ 1 : null, note: c\.text\.trim\(\) \}\)\);/);
   assert.match(src, /if \(blob\) shots\.push\(\{ blob, pins \}\);/);
-  // A comment on the same view shares the earlier picture; another view is another picture, while there is room.
-  assert.match(src, /const same = d\.pictures\.find\(\(pic\) => pic\.view === view\.current && pic\.screen === routeOf\(\) && pic\.base !== null\);/);
+  // A comment on the same view shares the earlier picture; another view is
+  // another picture, while there is room. A cropped picture is shared only
+  // when the new pin's spot survived the crop (#4977).
+  assert.match(src, /const same = d\.pictures\.find\(\(pic\) => pic\.view === view\.current && pic\.screen === routeOf\(\)\s*&& pic\.base !== null && \(!pic\.cut \|\| pinInCrop\(pin, pic\.cut\.rect\) !== null\)\);/);
   assert.match(src, /if \(inUse \+ d\.images\.length >= MAX_PICTURES\) return \{ pictures: d\.pictures, picture: null \};/);
   // Kudos is one line that says who it is for.
   assert.match(src, />\{t\('devchat:commentPin\.kudos\.label'\)\}</);
@@ -1034,7 +1314,7 @@ test('comment mode opens on demand into a host of its own, once, and C asks it t
   assert.equal(message('devchat:commentPin.intro.gotIt'), 'Got it');
   assert.match(src, /<li>\{t\('devchat:commentPin\.intro\.form'\)\}<\/li>/);
   assert.equal(message('devchat:commentPin.intro.form'), 'Prefer the form? Tap Form to switch back at any time.');
-  // A finger: a tap is a comment, a drag scrolls.
+  // A finger: a tap is a comment, a drag does nothing.
   assert.match(src, /if \(!t\.moved\) place\(\{ x: e\.clientX, y: e\.clientY \}\);/);
   // The form is called the form.
   assert.doesNotMatch(src, /Detailed/);
@@ -1044,4 +1324,29 @@ test('comment mode opens on demand into a host of its own, once, and C asks it t
   // The dialog's rule for when a request can go to the app, read the same way.
   assert.match(src, /!\/github\\\.com\\\/\[\^\/\]\+\\\/\[\^\/\]\+\/\.test\(data\.repo_url \|\| ''\) \|\| data\.self_hosted/);
   assert.match(read('frontend/src/features/dialogs/feedback-controller.js'), /const hasRepo = \/github\\\.com\\\/\[\^\/\]\+\\\/\[\^\/\]\+\/\.test\(repoUrl\);/);
+});
+
+test('posting a comment shows a sent card on the screen (#5008), not only the toast', () => {
+  const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
+  // Send success marks the request sent; the toast stays as it was.
+  assert.match(src, /setSent\(d\.key\);/);
+  assert.match(src, /toast\(kudosLine \? t\('devchat:commentPin\.toast\.sentences'/);
+  // Typing the next comment stands the card down, and stays down after.
+  assert.match(src, /useEffect\(\(\) => \{\s*if \(hasWords\(draft\)\) setSent\(null\);\s*\}, \[draft\]\);/);
+  // The card: where it went in the marker's own words, the request's title,
+  // "View request" behind the post's link, and a close button. No hiding at
+  // any width: phones show it too, unlike the bar's posted chip.
+  assert.match(src, /aria-label=\{t\('devchat:commentPin\.sent\.label'\)\}/);
+  assert.match(src, /\{placeOf\(sentRequest\)\}/);
+  assert.match(src, /sentRequest\.title \? <p/);
+  assert.match(src, /sentRequest\.href \? \(\s*<a\s+href=\{sentRequest\.href\}\s+onClick=\{\(\) => onClose\(\)\}/);
+  assert.match(src, /devchat:commentPin\.card\.open/, 'the marker card\'s own words for the link');
+  assert.match(src, /sentRequest && !shotIntro && !cropping && !hasWords\(draft\) \? \(/, 'up while the next draft has no words');
+  const cardStart = src.indexOf('data-comment-pin-sent');
+  const cardClass = src.slice(src.indexOf('className="', cardStart), src.indexOf('"', src.indexOf('className="', cardStart) + 12));
+  assert.doesNotMatch(cardClass, /md:inline|hidden|sm:/, 'visible at every width');
+  assert.match(cardClass, /bg-white p-3 .* ring-1 ring-black\/10/, 'the marker card\'s own card');
+  assert.match(src.slice(cardStart, src.indexOf(') : null}', cardStart)), /\$\{PIN_SHAPE\} bg-violet-600/, 'the posted markers\' own disc');
+  assert.equal(message('devchat:commentPin.sent.label'), 'Request posted');
+  assert.match(src, /CheckIcon/, 'a check says it went through');
 });

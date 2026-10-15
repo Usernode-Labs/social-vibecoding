@@ -165,6 +165,9 @@ const IMAGE_TAG_RE = /:([0-9a-f]{6})$/;
 //   torn_down_no_db  — container removed, but the staging DB name could not
 //                      be derived, so it was deliberately left alone
 //   skipped_gone     — container vanished between listing and teardown
+//   skipped_workflow — the preview machine holds the session (it retires
+//                      what it built; a preview it is building has no row
+//                      pointer yet)
 //   failed           — stopAndRemove threw
 const TORN_DOWN = 'torn_down';
 const TORN_DOWN_NO_DB = 'torn_down_no_db';
@@ -338,7 +341,14 @@ async function listPreviews(config) {
  *     even when its env is stale;
  *   - sessions with a coding turn in flight — a rebuild/push is about to
  *     replace the preview anyway, and pulling the container out from under a
- *     live turn invites exactly the interleaving staging.js serialises against.
+ *     live turn invites exactly the interleaving staging.js serialises against;
+ *   - sessions with a checks run on the cluster (a check_runs row,
+ *     classify's `check_run_open`): a live run, one waiting for its checks
+ *     slot, or one whose process died and whose Jobs the harvest reads
+ *     (services/check-harvest.js). Its capture runs against this preview,
+ *     and a boot is both when this pass runs and when the harvest seats the
+ *     old leader's runs. The row goes when the run settles, and the next
+ *     pass takes the preview then.
  *
  * `isInFlight` is injected rather than required at module scope to keep the
  * module graph acyclic (worker.js reaches into staging paths) and the
@@ -349,6 +359,7 @@ function selectStale(items, expectedFp, { isInFlight = null } = {}) {
     if (item.fingerprint === expectedFp) return false;
     const status = item.session ? item.session.status : null;
     if (status && VOTE_BACKED_STATUSES.has(status)) return false;
+    if (item.session && item.session.check_run_open) return false;
     if (isInFlight && isInFlight(item.sessionId)) return false;
     return true;
   });
@@ -402,11 +413,13 @@ async function classify(pool, containers) {
   const ids = containers.map((c) => c.sessionId);
   // The runtime columns and staging_commit_sha are what teardownStaging
   // works from (and what the preview lifecycle compares) when the reap unit
-  // hands it this row.
+  // hands it this row. `check_run_open`: a checks run of the session is on
+  // the cluster, live or left for the harvest (selectStale).
   const { rows } = await pool.query(
     `SELECT cs.id, cs.status, cs.pr_number, cs.staging_container_id, cs.staging_url,
             cs.staging_runtime_kind, cs.staging_runtime_name, cs.staging_commit_sha,
-            a.slug AS app_slug
+            a.slug AS app_slug,
+            EXISTS (SELECT 1 FROM check_runs cr WHERE cr.session_id = cs.id) AS check_run_open
        FROM chat_sessions cs
        LEFT JOIN apps a ON a.id = cs.app_id
       WHERE cs.id = ANY($1::int[])`,
@@ -962,7 +975,11 @@ async function sweepOrphanDbs(config, { limit = null } = {}) {
 
     const [dbs, live, connected] = await Promise.all([
       pool.query(`SELECT datname FROM pg_database WHERE datname LIKE '%\\_staging\\_%'`),
-      pool.query(`SELECT id FROM chat_sessions WHERE staging_url IS NOT NULL`),
+      // A session the preview machine holds keeps its databases: its attempts
+      // exist before staging_url points at them, and it retires them itself.
+      pool.query(`SELECT id FROM chat_sessions WHERE staging_url IS NOT NULL
+                  UNION SELECT substr(key, length('session:') + 1)::int FROM wf_instances
+                   WHERE machine = 'preview' AND state NOT IN ('retired', 'detached', '(none)')`),
       pool.query(`SELECT DISTINCT datname FROM pg_stat_activity
                   WHERE backend_type = 'client backend' AND datname IS NOT NULL`),
     ]);
@@ -1123,9 +1140,13 @@ async function previewServerDrainStatus(config, { now = Date.now(), force = fals
       if (state.status === 'not_found') continue;
       if (dbManager.previewDatabaseServerOf(state.labels) === dbManager.PREVIEW_SERVER) status.previews.push(Number(session.id));
     }
+    // A shots eval's trial (services/shots-eval-runner.js) uses the same
+    // kind of copies on the same server.
     const runs = await pool.query(
-      `SELECT count(*)::int AS n FROM shot_runs
-        WHERE state IN ('planned','provisioning','exploring','replaying','reviewing')`
+      `SELECT ((SELECT count(*) FROM shot_runs
+                 WHERE state IN ('planned','provisioning','exploring','replaying','reviewing'))
+             + (SELECT count(*) FROM shots_eval_trials
+                 WHERE state IN ('provisioning','exploring','reviewing')))::int AS n`
     );
     status.shotsRuns = Number(runs.rows[0]?.n) || 0;
     status.shotsDatabases = (await dbManager.previewServerShotsDatabases()).length;
@@ -1359,6 +1380,9 @@ async function reapOne(item, config = {}) {
   if (!exists) return { outcome: 'skipped_gone' };
 
   const linked = namesPreview(item, item.session);
+  if (!linked && item.sessionId && await require('./preview-workflow').held(item.sessionId)) {
+    return { outcome: 'skipped_workflow' };
+  }
 
   if (linked) {
     try {

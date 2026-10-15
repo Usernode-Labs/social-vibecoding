@@ -242,7 +242,7 @@ test('captureForSession waits for its slot after the preview is up and before an
 test('a newer request for a session whose run is still waiting supersedes it at once', () => {
   const src = read('src/services/visuals.js');
   assert.match(src, /if \(movedOn && typeof running\.leaveQueue === 'function' && running\.leaveQueue\(\)\) \{/);
-  assert.match(src, /const flight = \{ operation, commitHash: commitHash \|\| null \};\s+_inFlight\.set\(key, flight\);/);
+  assert.match(src, /const flight = \{ operation, commitHash: commitHash \|\| null \};\s+if \(!workflow\) _inFlight\.set\(key, flight\);/);
 });
 
 test('every run\'s row going wakes this process\'s waiters', () => {
@@ -253,9 +253,9 @@ test('every run\'s row going wakes this process\'s waiters', () => {
 test('the harvest re-drives a run in the place it had in line', () => {
   const src = stripComments(read('src/services/check-harvest.js'));
   assert.match(src, /const queuedSince = row\.queued_at \|\| null;/);
-  assert.match(src, /recheckSessionChecks\(\{\s+config, pool, session, reason: 'orphaned-run', \.\.\.\(queuedSince \? \{ queuedSince \} : \{\}\),\s+\}\)/);
+  assert.match(src, /recheckSessionChecks\(\{\s+config, pool, session, reason: 'orphaned-run', \.\.\.\(queuedSince \? \{ queuedSince \} : \{\}\),\s+(\.\.\.\(mark \? \{ redrive: mark \} : \{\}\),\s+)?\}\)/);
   const recovery = stripComments(read('src/services/staging-recovery.js'));
-  assert.match(recovery, /async function recheckSessionChecks\(\{ config, pool, session, reason, queuedSince = null \}\)/);
+  assert.match(recovery, /async function recheckSessionChecks\(\{ config, pool, session, reason, queuedSince = null(, redrive = null)? \}\)/);
   assert.match(recovery, /\.\.\.\(queuedSince \? \{ queuedSince \} : \{\}\),/);
 });
 

@@ -169,3 +169,26 @@ test('firstVersionState: never ready while a follow-up is queued or running on i
   const merging = await stateAt('merging', { readiness: { ready: true } });
   assert.deepEqual([merging.state.step, merging.state.line, merging.state.ready], [6, 'ready', false]);
 });
+
+// Run five (13 Oct 2026, fix 7): at the merge (16:33:05) the App tab's card
+// read every step back at "Plan written: now" for about 30 s, until live_at.
+// Merged and not live yet is stage 'merging', which has no build phase, so
+// the step list was drawn as if nothing were decided.
+test('firstVersionState: going live keeps every step done, with Live under way', async () => {
+  const { state } = await stateAt('merging', { readiness: { ready: true } });
+  const by = Object.fromEntries(state.steps.map((s) => [s.key, s.state]));
+  assert.deepEqual(by, { plan: 'done', screens: 'done', build: 'done', check: 'skipped', test: 'done', live: 'now' });
+  assert.equal(state.phase, undefined, 'no build phase is named while it goes live');
+});
+
+test('firstVersionSteps: GOING_LIVE leaves nothing before Live to do, and keeps the minutes', () => {
+  const steps = progress.firstVersionSteps(progress.GOING_LIVE, {
+    made: '2026-10-13T15:41:31Z', decided: '2026-10-13T15:43:00Z', spec: '2026-10-13T15:50:00Z',
+    review: '2026-10-13T16:05:00Z', proposal: '2026-10-13T16:20:00Z',
+  });
+  assert.deepEqual(steps.map((s) => s.state), ['done', 'done', 'done', 'done', 'done', 'now']);
+  assert.deepEqual(steps.slice(0, 4).map((s) => s.minutes), [1, 7, 15, 15]);
+  assert.equal(steps[5].key, 'live');
+  // Never a phase a screen names (build-line-words.js PHASE_WORDS).
+  assert.equal(progress.FIRST_VERSION_PHASES.includes(progress.GOING_LIVE.key), false);
+});

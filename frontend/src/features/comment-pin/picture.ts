@@ -23,6 +23,16 @@
  * only), and it is laid into the frame's rectangle. An app that does not
  * answer in time gets a plain panel saying so; the comment still goes.
  *
+ * ── The side panel draws itself (#4975) ───────────────────────────────
+ *
+ * The panel beside the app is the platform itself in a same-origin frame
+ * (#side-panel-frame), and drawShell leaves every frame out — so a comment
+ * taken with the panel open carried its title bar over an empty body. The
+ * panel's document draws itself: `picture` on its embedded runtime
+ * (../side-panel/embedded.ts) answers with `drawDocument`'s blob — the same
+ * options as drawShell, run in the panel's own document — and takeBase lays
+ * it in at the frame's rectangle, beside the app's picture.
+ *
  * ── When ───────────────────────────────────────────────────────────────
  *
  * The page is drawn the moment a pin goes down (`takeBase`), so it shows the
@@ -53,6 +63,17 @@
  * and only for a pin on something with words: a page that really draws flat
  * never loops, and a pin on the running app's frame or on empty background
  * never asks for one.
+ *
+ * ── Crop (#4977) ──────────────────────────────────────────────────────
+ *
+ * A screenshot of the whole screen is often wider than the thing the person
+ * is pointing at, so comment mode can crop one: a frame over the picture
+ * whose corner and edge handles drag in (never out past the original
+ * capture). The crop lives as `Rect` fractions of the full picture, so it
+ * survives a resize and a device-pixel scale change. A comment's pin stays
+ * a fraction of the FULL picture; every reader maps it through `pinInCrop`
+ * into the crop's own fractions, and a pin outside the crop is null — the
+ * comment it belongs to goes with the part that was cut away.
  */
 
 export const LIB_SRC = '/usernode-bridge/v1/snapdom.js';
@@ -260,6 +281,96 @@ export function closeUpView(input: {
   };
 }
 
+// ── Crop (#4977) ───────────────────────────────────────────────────────
+
+/** A crop frame's handle: two named sides, or one. */
+export type CropHandle = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
+
+/** No crop: the whole picture. */
+export const FULL_CROP: Rect = { x: 0, y: 0, width: 1, height: 1 };
+
+/** The dim drawn outside a crop's kept rect. */
+export const CROP_SHADE = '0 0 0 9999px rgba(0,0,0,0.45)';
+
+/**
+ * A drag on one handle, as fractions of the picture: only the sides the
+ * handle names move, nothing passes the picture's edges, and a side never
+ * crosses its opposite — the two stop `min` apart, so the frame keeps the
+ * smallest size the caller allows (the pins must stay pointable). Inward
+ * only: the caller never widens the picture, only this could, and it
+ * clamps instead.
+ */
+export function dragCrop(crop: Rect, handle: CropHandle, delta: Point, min: Size): Rect {
+  const c = { ...crop };
+  const minW = Math.max(0, min.width);
+  const minH = Math.max(0, min.height);
+  const east = handle.includes('e');
+  const west = handle.includes('w');
+  const north = handle.includes('n');
+  const south = handle.includes('s');
+  if (east) c.width = clamp(c.width + delta.x, minW, 1 - c.x);
+  if (west) {
+    const right = c.x + c.width;
+    c.x = clamp(c.x + delta.x, 0, right - minW);
+    c.width = right - c.x;
+  }
+  if (south) c.height = clamp(c.height + delta.y, minH, 1 - c.y);
+  if (north) {
+    const bottom = c.y + c.height;
+    c.y = clamp(c.y + delta.y, 0, bottom - minH);
+    c.height = bottom - c.y;
+  }
+  return c;
+}
+
+/**
+ * A pin (a fraction of the full picture) as a fraction of the crop, or null
+ * when it falls outside the part kept. A null crop means no crop: the pin
+ * comes back unchanged.
+ */
+export function pinInCrop(pin: Point, crop: Rect | null): Point | null {
+  if (!crop) return { ...pin };
+  if (!crop.width || !crop.height) return null;
+  const x = (pin.x - crop.x) / crop.width;
+  const y = (pin.y - crop.y) / crop.height;
+  return x >= 0 && x <= 1 && y >= 0 && y <= 1 ? { x, y } : null;
+}
+
+/** A crop as pixels on a canvas of `size`, rounded, never smaller than a point. */
+export function cropPixels(size: Size, crop: Rect): Rect {
+  const x = clamp(Math.round(crop.x * size.width), 0, Math.max(0, size.width - 1));
+  const y = clamp(Math.round(crop.y * size.height), 0, Math.max(0, size.height - 1));
+  const width = clamp(Math.round(crop.width * size.width), 1, size.width - x);
+  const height = clamp(Math.round(crop.height * size.height), 1, size.height - y);
+  return { x, y, width, height };
+}
+
+/** Whether a crop keeps the whole picture (the frame was reset or never moved). */
+export function isFullCrop(crop: Rect | null): boolean {
+  if (!crop) return true;
+  const eps = 0.001;
+  return (
+    Math.abs(crop.x) < eps &&
+    Math.abs(crop.y) < eps &&
+    Math.abs(crop.width - 1) < eps &&
+    Math.abs(crop.height - 1) < eps
+  );
+}
+
+/** A new canvas holding just the crop, drawn from the picture's own pixels. */
+export function cropCanvas(canvas: HTMLCanvasElement, crop: Rect): HTMLCanvasElement {
+  const part = cropPixels({ width: canvas.width, height: canvas.height }, crop);
+  const out = document.createElement('canvas');
+  out.width = part.width;
+  out.height = part.height;
+  out.getContext('2d')?.drawImage(
+    canvas,
+    part.x, part.y, part.width, part.height,
+    0, 0, part.width, part.height,
+  );
+  return out;
+}
+
 /**
  * Ask the running app's frame for its picture. Resolves with what it said,
  * or null when it said nothing in time (an app without the bridge, an old
@@ -310,6 +421,40 @@ function cleanInfo(value: unknown): ElementInfo | null {
   const s = (x: unknown, n: number) => (typeof x === 'string' ? x.slice(0, n) : '');
   const info = { tag: s(v.tag, 40), id: s(v.id, 80), text: s(v.text, 80) };
   return info.tag ? info : null;
+}
+
+/**
+ * Ask the side panel's document for its picture (#4975). The panel is
+ * same-origin, so its runtime is read straight off the frame's window
+ * (`window.UsernodeReact.sidePanelEmbed`, mounted in ../side-panel/mount.ts)
+ * — no postMessage, unlike the app's. Null when the frame has no runtime yet
+ * (it is still booting, or gone), one that says nothing, or one that does not
+ * answer in time.
+ */
+export function requestPanelPicture(
+  frame: HTMLIFrameElement,
+  scale: number,
+  timeoutMs = APP_PICTURE_TIMEOUT_MS,
+): Promise<Blob | null> {
+  return new Promise((resolve) => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const finish = (value: Blob | null) => {
+      if (timer) clearTimeout(timer);
+      resolve(value);
+    };
+    timer = setTimeout(() => finish(null), timeoutMs);
+    try {
+      const win = frame.contentWindow as unknown as
+        { UsernodeReact?: { sidePanelEmbed?: { picture?: (s: number) => Promise<Blob | null> } } } | null;
+      const ask = win?.UsernodeReact?.sidePanelEmbed?.picture;
+      const said = ask && typeof ask === 'function' ? ask(scale) : null;
+      if (said && typeof said.then === 'function') {
+        said.then((blob) => finish(blob instanceof Blob ? blob : null), () => finish(null));
+      } else finish(null);
+    } catch {
+      finish(null);
+    }
+  });
 }
 
 /** The element under a point of the shell's own page, in a few words. */
@@ -565,6 +710,21 @@ export function pageClip(viewport?: Size | null): Rect {
 }
 
 /**
+ * The side panel's frame in this document, when it is actually on screen:
+ * found by its id, addressed, laid out and visible. Null otherwise — the
+ * panel closed, is only its title bar mid-transition, or was never open —
+ * and the picture then goes without it, as it did before #4975.
+ */
+export function panelFrame(): { frame: HTMLIFrameElement; rect: Rect } | null {
+  const frame = document.getElementById('side-panel-frame') as HTMLIFrameElement | null;
+  if (!frame || !frame.src) return null;
+  const r = frame.getBoundingClientRect();
+  if (r.width < 1 || r.height < 1) return null;
+  if (typeof frame.checkVisibility === 'function' && !frame.checkVisibility()) return null;
+  return { frame, rect: { x: r.left, y: r.top, width: r.width, height: r.height } };
+}
+
+/**
  * The shell's own page as it is on screen, without the comment's own layer,
  * without frames, which are other documents (the app's is laid in from its
  * own picture), and without the flow's own overlays (PAGE_EXCLUDES). The
@@ -595,6 +755,39 @@ async function drawShell(scale: number, host: Element, fresh = false, viewport?:
   return capture.toCanvas();
 }
 
+/**
+ * A document's own page as a picture (#4975): the side panel's document
+ * draws ITSELF with this, answering its runtime's `picture` (embedded.ts) —
+ * drawShell cannot reach into the frame, same-origin as it is, and nothing
+ * else fills it in. The same options as drawShell, run in the panel's own
+ * document (its body, its scrollers, its overlays), but without the comment
+ * layer's host to leave out — the panel draws no comment layer — and without
+ * anything laid in; a frame shown in a panel page stays a hidden placeholder
+ * exactly as in the shell. Null on any failure: the caller draws nothing
+ * rather than a wrong claim about the page.
+ */
+export async function drawDocument(scale: number): Promise<Blob | null> {
+  try {
+    const snapdom = await loadLibrary();
+    const capture = await snapdom(document.body, {
+      scale,
+      dpr: 1,
+      cache: 'soft',
+      clip: pageClip(),
+      backgroundColor: getComputedStyle(document.body).backgroundColor || '#ffffff',
+      exclude: ['iframe'],
+      excludeMode: 'hide',
+      filter: (el: Element) => !isPageOverlay(el),
+      filterMode: 'remove',
+      plugins: [FLAT_SCROLLERS],
+    });
+    const canvas = await capture.toCanvas();
+    return await toBlob(canvas, 'image/png');
+  } catch {
+    return null;
+  }
+}
+
 export interface Base {
   canvas: HTMLCanvasElement;
   scale: number;
@@ -603,9 +796,11 @@ export interface Base {
 }
 
 /**
- * Start drawing the page now: the shell, and the running app's own picture
- * when its frame is on screen. Resolves null when the shell itself could not
- * be drawn; the comment then goes without a picture.
+ * Start drawing the page now: the shell, the running app's own picture when
+ * its frame is on screen, and the side panel's own picture when the panel is
+ * (#4975) — all asked at once, so the slowest of them bounds the wait once.
+ * Resolves null when the shell itself could not be drawn; the comment then
+ * goes without a picture.
  */
 export function takeBase(opts: {
   host: Element;
@@ -619,26 +814,34 @@ export function takeBase(opts: {
   const { host, scale, frame, frameRect, pin, viewport } = opts;
   const width = Math.max(1, viewport?.width || window.innerWidth);
   const target = pinTarget(pin, host);
+  const panel = panelFrame();
+  const panelPicture = panel
+    ? requestPanelPicture(panel.frame, scale)
+    : Promise.resolve<Blob | null>(null);
   const app = frame && frameRect
     ? requestAppPicture(frame, { scale, x: pin.x - frameRect.x, y: pin.y - frameRect.y })
     : Promise.resolve(null);
   const shell = drawShell(scale, host, false, viewport).catch(() => null);
-  return Promise.all([shell, app]).then(async ([canvas, picture]) => {
+  return Promise.all([shell, app, panelPicture]).then(async ([canvas, picture, panelBlob]) => {
     if (!canvas) return null;
     // The scale the picture really has, read off it: everything drawn on it
-    // (the app, the pin, the words) is placed in CSS pixels times this.
+    // (the app, the panel, the pin, the words) is placed in CSS pixels times
+    // this.
     const actual = canvas.width / width;
     if (frameRect) await layInApp(canvas, actual, frameRect, picture);
+    await layInPanel(canvas, actual, panel?.rect, panelBlob);
     const checked = await missingUnderPin(canvas, actual, target);
     if (checked) {
       // Two frames, so an island caught mid-render has settled, then one
       // clean read of the page. Whatever it shows is used: the comment's pin
-      // data still names the element, so a second miss does not loop.
+      // data still names the element, so a second miss does not loop. The
+      // panel's blob, asked once up top, is laid in again as it was.
       await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
       const again = await drawShell(scale, host, true, viewport).catch(() => null);
       if (again) {
         const retaken = again.width / width;
         if (frameRect) await layInApp(again, retaken, frameRect, picture);
+        await layInPanel(again, retaken, panel?.rect, panelBlob);
         return { canvas: again, scale: retaken, app: picture };
       }
     }
@@ -691,6 +894,24 @@ async function layInApp(canvas: HTMLCanvasElement, scale: number, rect: Rect, pi
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText("The app's picture wasn't available", x + w / 2, y + h / 2);
+}
+
+/**
+ * The side panel's own picture into its frame's rectangle, beside the app's.
+ * No plate when it did not answer — the frame's rectangle keeps whatever the
+ * shell drew there (a hidden frame holds its place with `hide`), which at
+ * worst is the empty body the bug described, never a wrong claim about the
+ * page.
+ */
+async function layInPanel(canvas: HTMLCanvasElement, scale: number, rect: Rect | null, blob: Blob | null): Promise<void> {
+  if (!blob || !rect) return;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  try {
+    const bitmap = await createImageBitmap(blob);
+    ctx.drawImage(bitmap, rect.x * scale, rect.y * scale, rect.width * scale, rect.height * scale);
+    bitmap.close?.();
+  } catch { /* the shell's own drawing of the frame's place stays */ }
 }
 
 function toBlob(canvas: HTMLCanvasElement, type: string, quality?: number): Promise<Blob | null> {

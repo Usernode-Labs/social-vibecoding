@@ -755,6 +755,10 @@ test('#1130: no credential-SHAPED column name in schema.sql is readable without 
     // (services/bot-configs.js): it hides which side is which from the admin
     // picking, and the pick route also requires an admin who can write.
     'bot_config_pairs.token',
+    // And for a shots eval's blind pair (services/shots-eval.js): it hides
+    // which side is the live shots agent, and the pick route also requires an
+    // admin who can write.
+    'shots_eval_pairs.token',
 
     // Foreign keys TO a credential row. The id is a row number; the secret
     // itself lives in a column that IS denied (or, for user_ai_credentials,
@@ -770,6 +774,7 @@ test('#1130: no credential-SHAPED column name in schema.sql is readable without 
     // because credential hashes are the common case, but these hash
     // CONTENT, not secrets, and several are public by design.
     'session_visuals.commit_hash',         // a git commit sha
+    'check_run_media.commit_hash',         // a git commit sha (a checks run's media before it is published)
     'chains.block_hash',                   // public chain data
     'slot_outcome_reports.block_hash',      // public chain data
     'vrf_obligations.sender_pk_hash',      // a PUBLIC key's digest
@@ -777,6 +782,7 @@ test('#1130: no credential-SHAPED column name in schema.sql is readable without 
     'app_workshop_themes.input_hash',      // same: digest of the board the themes were grouped from
     'chat_sessions.pr_summary_source_body_hash', // digest of the public PR description, not a credential
     'shot_runs.plan_hash',                 // SHA-256 naming the published shots, not authentication material
+    'shots_eval_trials.plan_hash',         // the same, for a shots eval's trial's saved shots
     'homeroom_bot_run_snapshots.prompt_hash', // #3654: SHA-256 of the bot's prompt text, to group runs by prompt
     'wf_receipts.payload_hash',            // SHA-256 of a workflow event's type, payload and actor, to recognise a retried request
 
@@ -1031,8 +1037,11 @@ test('execute: the SQL console degrades to 503 (never runs unscoped) if the cons
       assert.equal(body.success, false);
       assert.equal(body.code, 'console_unavailable');
       // Never ran the query unscoped: no BEGIN/SET ROLE/wrapped-query
-      // calls should have reached the pool at all.
-      assert.equal(currentMockPool.calls.length, 0);
+      // calls reached the pool. The one read is of the leader's record of
+      // the role (db-console-role.js loadShared), which a process that
+      // never led asks before it refuses.
+      assert.ok(!currentMockPool.calls.some((c) => /^(BEGIN|SET LOCAL ROLE)/i.test(String(c).trim()) || String(c).includes('_topochain_console_q')));
+      assert.ok(currentMockPool.calls.every((c) => /FROM platform_db_roles/.test(String(c))), 'only the leader\'s record is read');
     } finally { server.close(); }
   } finally {
     consoleRoleMod.isAvailable = original;

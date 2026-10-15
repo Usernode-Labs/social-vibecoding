@@ -358,7 +358,9 @@ Installations without Helm can set both environment variables on the platform.
 
 Staging preview and production app Deployments receive one preferred Pod
 affinity term matching that cluster's `cnpg.io/instanceRole: primary`, weight
-100 across `topology.kubernetes.io/zone`. It matters on a cluster spread over
+100 across `topology.kubernetes.io/zone`. The platform's own Pods, web and
+conductor, get the same term from the chart, under the same switch: they make
+more queries than any app, the conductor's leader loops most of all. It matters on a cluster spread over
 data centres: a page makes many sequential queries, so a pod in another data
 centre pays that round trip on every one, and checks against such a preview
 fail on data that arrives too late. There is deliberately no term for the
@@ -390,14 +392,51 @@ Platform upgrades use a Kubernetes-native blue/green equivalent: a
 requires two consecutive readiness successes plus `minReadySeconds`, and keeps
 `maxUnavailable: 0`. The stable Service starts routing to the new Pod only
 after it is Ready; Kubernetes removes and terminates the old Pod after the new
-ReplicaSet is Available. Existing connections receive the platform's normal
-pre-stop and SIGTERM drain budget.
+ReplicaSet is Available.
 
-Both Pods may serve independent requests during the brief overlap. That is safe
-because `PLATFORM_LEADER_LOCK=1` uses the platform's PostgreSQL advisory-lock
+The terminated Pod does not cut the work it started
+([docs/plans/draining-releases.md](../../../docs/plans/draining-releases.md)).
+On SIGTERM it hands leadership to the new Pod at once, closes its tabs' sockets
+so they reconnect there, refuses anything new, and finishes its turns, previews,
+checks, shots runs and merges. It exits as soon as it holds nothing, or after
+`platform.drainMinutes` (40 by default), whichever comes first, handing over
+whatever is left. `terminationGracePeriodSeconds` is that plus a minute.
+Kubernetes keeps a terminating Pod out of the Service and out of the
+Deployment's replica count, so the rollout completes without waiting for it.
+When releases come faster than work finishes, at most `platform.drainingMax`
+replaced Pods finish at once; the oldest hands its work over first.
+
+Both Pods may serve independent requests during the brief overlap, and a
+replaced Pod may still run work for as long as it drains. That is safe because
+`PLATFORM_LEADER_LOCK=1` uses the platform's PostgreSQL advisory-lock
 coordinator: only one Pod runs singleton recovery, sweepers and reconcilers.
+Each process also records what it is working on (`platform_processes`,
+`process_holds`), so the new leader's recovery leaves a replaced Pod's live
+work alone, and a Stop clicked on one Pod reaches the Pod that runs the turn.
 This is intentionally implemented with the built-in Deployment controller;
 the cluster does not need Caddy, Argo Rollouts, or another rollout CRD.
+
+`platform.conductor.enabled` (on by default) splits the platform in two
+([docs/plans/web-and-conductor.md](../../../docs/plans/web-and-conductor.md)).
+The Deployment above runs `PROCESS_ROLE=web`: it serves people's requests and
+never stands for leader. A second Deployment, `<fullname>-conductor`
+(`platform.conductor.replicas`, 1 by default; more are standbys), runs
+`PROCESS_ROLE=conductor`: it holds the leader lock and runs the leader's work,
+on Pods the Service sends no requests to. Both use the same image, Pod and
+drain. The conductor's Pods keep the platform's `component` label, so every
+network policy that admits the platform admits them; the Service and the
+platform PodDisruptionBudget select `social.usernode.io/serves-requests:
+"true"`, which only the serving Pods carry. The Service is in Argo CD sync wave
+1, after the Deployments are healthy, so the release that first requires that
+label (or drops it, switching the split off) changes the selector only once
+the Pods it selects are rolled out and Ready. The platform Deployment's
+immutable selector also matches the conductor's Pods (ownership keeps them
+apart); select them by `social.usernode.io/process-role` rather than
+`deploy/<fullname>`. A release that switches the split off has the old
+conductor finish its work beside the new Pods, which lead again. The release
+that first switches it on replaces Pods running a build from before the split,
+which do not know a conductor as their successor: they hand over with the
+minute's cutover they had before draining releases, once.
 
 If the candidate never becomes Ready, the Deployment times out without taking
 the old ReplicaSet down. Roll back by restoring the previous OCI chart version

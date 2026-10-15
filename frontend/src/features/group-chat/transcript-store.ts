@@ -517,9 +517,11 @@ export interface TranscriptLead {
   /**
    * #4455: a change's page. `loaded` once its thread's history has answered;
    * `closed` is what the page says instead of a stream while nobody else can
-   * see the change (its thread is not read then).
+   * see the change (its thread is not read then). #5007: `issue` is the
+   * request the change was built for — the pointer above the replies opens
+   * its page, where the conversation about the change lives.
    */
-  change?: { loaded: boolean; closed: string | null } | null;
+  change?: { loaded: boolean; closed: string | null; issue?: { n: number; href: string } | null } | null;
   /**
    * The general chat only: where the reader's reading stood when the
    * channel opened (`GroupChat._takeUnreadMark`), the newest message read

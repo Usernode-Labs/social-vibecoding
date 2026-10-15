@@ -1,15 +1,18 @@
 import { useState, type ReactNode } from 'react';
 
-import { ChevronDownIcon } from '@/components/ui/icons';
+import {
+  ArrowPathIcon, ChatIcon, CheckIcon, ChevronDownIcon, ClockIcon, EllipsisHorizontalIcon, EyeIcon, InfoCircleIcon,
+  KeyIcon, ListLinesIcon, NoSymbolIcon, PencilSquareIcon, PlayIcon, SpinnerArcIcon, UserIcon, WarningTriangleIcon, XIcon,
+} from '@/components/ui/icons';
 
 import { useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
 import { useResolvedCommunityColor } from '../../lib/community-color';
 import * as api from './api';
 import { tryChange } from './bot-ready';
-import { requestHue, requestKey } from './bot-request';
+import { requestHue, requestKey, storyRootIn } from './bot-request';
 import { loadBotWork, useBotWork } from './bot-work';
-import { openThreadAt } from './store';
+import { loadedMessages, openThreadAt } from './store';
 import type { HomeroomBotCurrentJob, HomeroomBotJob, HomeroomBotPastJob, HomeroomBotWork } from './types';
 
 /*
@@ -29,12 +32,17 @@ import type { HomeroomBotCurrentJob, HomeroomBotJob, HomeroomBotPastJob, Homeroo
  *     opens the drawer OVER the chat, which keeps its place underneath,
  *     dimmed; the bar or the dimmed chat closes it. It starts closed; the
  *     person's choice is remembered on the device.
- *   - NEEDS YOU, a row each with ONE button that opens the request's thread
- *     at the message waiting on them (the entry's `ask`, flashed:
- *     store.openThreadAt). Opening a request closes the drawer.
+ *   - NEEDS YOU, a row each with ONE button that says what to do there.
  *   - READY TO TRY, with Try it and, when their yes would count, Approve: the
  *     ready card's own two acts (./bot-ready.tsx).
- *   - IN PROGRESS and DONE TODAY, a row each, saying what it is doing.
+ *   - IN PROGRESS, a row each, saying what it is doing.
+ *   - DONE TODAY, folded to its heading and count until pressed: a line
+ *     each, with a small tile and how it ended, like the chat's settled rows.
+ *
+ * Every row opens its request's story, as the chat's row does: the pane
+ * beside the chat, at the message waiting on them (the entry's `ask`,
+ * flashed: store.openThreadAt). A request from before threads opens on its
+ * oldest piece (./bot-request.ts storyRootIn). Opening one closes the drawer.
  *
  * Each request appears once, in the first group that fits, with its number
  * in its own colour. No step numbers and no timings: the thread says those.
@@ -248,6 +256,25 @@ export function trayNow(work: HomeroomBotWork | null): Map<string, StripRow> | n
   return map;
 }
 
+/**
+ * Each request in the tray's History by its key, with how it ended (its
+ * ending in the activity cards' words: homeroom-bot-activity.js OUTCOMES),
+ * at any age: what the chat's settled rows say. Read once per tray read.
+ */
+const ENDED_CACHE = new WeakMap<HomeroomBotWork, Map<string, string>>();
+export function trayEnded(work: HomeroomBotWork | null): Map<string, string> | null {
+  if (!work) return null;
+  const cached = ENDED_CACHE.get(work);
+  if (cached) return cached;
+  const map = new Map<string, string>();
+  for (const job of work.history) {
+    const key = requestKey(job);
+    if (key && job.outcome && !map.has(key)) map.set(key, job.outcome);
+  }
+  ENDED_CACHE.set(work, map);
+  return map;
+}
+
 /** Pure: the summary bar's parts, zero ones left out ("1 needs you", "2 ready to try"…). */
 export function summaryParts(model: StripModel): Array<{ group: StripGroup; text: string }> {
   const parts: Array<{ group: StripGroup; text: string }> = [];
@@ -323,9 +350,10 @@ const PILL_PRIMARY = 'inline-flex shrink-0 items-center rounded-full bg-violet-6
 const PILL_SECONDARY = 'inline-flex shrink-0 items-center rounded-full bg-white px-3 py-1.5 text-[13px] font-semibold text-zinc-900 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] hover:bg-zinc-50 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700';
 const NEED_INK = 'text-amber-700 dark:text-amber-400';
 
-/** Open a row's request: its thread at the message it names, else its own page. */
+/** Open a row's request: its story at the message it names, else its own page. */
 function openRow(row: StripRow): void {
-  if (row.rootId || row.focusId) { openThreadAt(row.rootId, row.focusId); return; }
+  const rootId = row.rootId || storyRootIn(loadedMessages(), requestKey(row.job));
+  if (rootId || row.focusId) { openThreadAt(rootId, row.focusId); return; }
   if (row.job.href && typeof window !== 'undefined') window.location.hash = row.job.href;
 }
 
@@ -333,10 +361,11 @@ function RowText({ row }: { row: StripRow }) {
   return (
     <span className="flex min-w-0 flex-1 flex-col">
       <span className="flex min-w-0 items-center gap-1.5">
+        <OpenState row={row} />
         {row.job.firstVersion ? null : <RequestTag number={row.job.issueNumber} />}
         <span className="truncate text-[15px] font-[650] leading-5 text-zinc-900 dark:text-zinc-100">{stripTitle(row.job)}</span>
       </span>
-      <span className={`truncate text-[13px] leading-[18px] first-letter:uppercase ${row.group === 'needs' ? NEED_INK : 'text-zinc-500 dark:text-zinc-400'}`} data-bot-strip-state="">{row.state}</span>
+      <span className="truncate text-[13px] leading-[18px] text-zinc-500 first-letter:uppercase dark:text-zinc-400" data-bot-strip-state="">{row.state}</span>
     </span>
   );
 }
@@ -345,13 +374,143 @@ function Tile({ job }: { job: HomeroomBotJob }) {
   return <ProjectTile name={job.appName} slug={job.appSlug} iconUrl={job.iconUrl} emoji={job.iconEmoji} />;
 }
 
-/** A Needs you row: its words, and its one button, which opens the thread at what waits. */
+// ── How a request ended ──
+
+type EndingTone = 'good' | 'ended' | 'trouble';
+type BadgeTone = EndingTone | 'need' | 'ready' | 'working';
+type Glyph = (props: { className?: string; strokeWidth?: string; 'aria-hidden'?: 'true' }) => ReactNode;
+interface Ending { key: string; tone: EndingTone; icon: Glyph; stroke?: string }
+
+/**
+ * A settled request's ending, by what its last run came to (the activity
+ * cards' tones, ./bot-activity.tsx): made it in (a green check), ended
+ * without a change (grey), or went wrong (red). `person` is the bot stepping
+ * back (homeroom-bot.js handOff): a call for a person to make, a change it
+ * may revise no further, failures it cannot fix safely; a person.
+ * Endings that still wait on somebody are never settled, so they are not here.
+ */
+const ENDINGS: Record<string, Ending> = {
+  live: { key: 'messages:bot.final.live', tone: 'good', icon: CheckIcon },
+  going_live: { key: 'messages:bot.final.goingLive', tone: 'good', icon: CheckIcon },
+  closed: { key: 'messages:bot.final.closed', tone: 'ended', icon: XIcon },
+  person: { key: 'messages:bot.final.person', tone: 'ended', icon: UserIcon, stroke: '1.75' },
+  held: { key: 'messages:bot.final.held', tone: 'ended', icon: ClockIcon },
+  stopped: { key: 'messages:bot.final.stopped', tone: 'ended', icon: NoSymbolIcon },
+  build_failed: { key: 'messages:bot.final.failed', tone: 'trouble', icon: WarningTriangleIcon },
+  failed: { key: 'messages:bot.final.failed', tone: 'trouble', icon: WarningTriangleIcon },
+};
+// A tile like the project's: the same small square family. What is still
+// open is tinted (amber while it waits on the person, blue while it is ready
+// to try); what is settled is grey, with only its glyph in colour, so it is
+// never louder than what is open and never reads as a request's number,
+// whose eight hues include a green and a red (./bot-request.ts).
+const BADGE_TINT: Record<BadgeTone, string> = {
+  good: 'bg-zinc-200/80 text-emerald-600 dark:bg-zinc-700/70 dark:text-emerald-400',
+  ended: 'bg-zinc-200/80 text-zinc-600 dark:bg-zinc-700/70 dark:text-zinc-300',
+  trouble: 'bg-zinc-200/80 text-red-600 dark:bg-zinc-700/70 dark:text-red-400',
+  need: 'bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-300',
+  ready: 'bg-violet-100 text-violet-700 dark:bg-violet-900/50 dark:text-violet-300',
+  working: 'bg-zinc-200/80 text-zinc-600 dark:bg-zinc-700/70 dark:text-zinc-300',
+};
+
+/** Where a request stands, as a small square: its glyph on its tone's tint. */
+function StatusBadge({ tone, icon: Icon, stroke = '2.5', words = null, spin = false, data }: {
+  tone: BadgeTone; icon: Glyph; stroke?: string; words?: string | null; spin?: boolean; data: string;
+}) {
+  return (
+    <span
+      className={`flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-[6px] ${BADGE_TINT[tone]}`}
+      title={words || undefined}
+      aria-hidden={words ? undefined : 'true'}
+      data-bot-badge={data}
+    >
+      <Icon aria-hidden="true" className={`h-3.5 w-3.5${spin ? ' animate-spin [animation-duration:2.4s]' : ''}`} strokeWidth={stroke} />
+      {words ? <span className="sr-only">{words}</span> : null}
+    </span>
+  );
+}
+
+/**
+ * How a request ended, as a small square after its project's tile, named
+ * for a screen reader and on hover. An ending the tray has no record of is a
+ * plain grey square named by the words it last said.
+ */
+export function FinalState({ outcome, fallback }: { outcome: string | null | undefined; fallback: string }) {
+  const t = useMessages('messages');
+  const ending = outcome ? ENDINGS[outcome] : undefined;
+  return (
+    <span className="contents" data-bot-final={outcome || ''}>
+      <StatusBadge
+        tone={ending?.tone || 'ended'} icon={ending?.icon || EllipsisHorizontalIcon} stroke={ending?.stroke}
+        words={ending ? t(ending.key) : fallback} data={outcome || 'unknown'}
+      />
+    </span>
+  );
+}
+
+/** What an open request waits on, by its Needs you case: the glyph of what to do. */
+const NEED_GLYPHS: Record<string, { icon: Glyph; stroke?: string }> = {
+  question: { icon: ChatIcon, stroke: '2' }, followup_ask: { icon: ChatIcon, stroke: '2' },
+  plan: { icon: ListLinesIcon },
+  person: { icon: UserIcon, stroke: '1.75' },
+  blocked: { icon: PencilSquareIcon, stroke: '2' }, empty: { icon: PencilSquareIcon, stroke: '2' },
+  build_failed: { icon: ArrowPathIcon, stroke: '2' }, first_version_failed: { icon: ArrowPathIcon, stroke: '2' },
+  failed: { icon: ArrowPathIcon, stroke: '2' }, stopped: { icon: ArrowPathIcon, stroke: '2' },
+  checks: { icon: EyeIcon, stroke: '2' }, needs_look: { icon: EyeIcon, stroke: '2' },
+  on_hold: { icon: ClockIcon }, secrets: { icon: KeyIcon, stroke: '2' },
+};
+
+/**
+ * Where an open request stands, as the same small square its ending will be:
+ * amber with what to do while it waits on the person (a bubble to answer, a
+ * pencil to add detail, a person to decide, a loop to try again), blue
+ * with a play mark while it is ready to try, grey and turning while the bot
+ * works on it. Decorative: the row's second line says it in words.
+ */
+export function OpenState({ row }: { row: StripRow }) {
+  if (row.group === 'needs') {
+    const glyph = NEED_GLYPHS[needsCase(row.job)] || { icon: InfoCircleIcon, stroke: '2' };
+    return <StatusBadge tone="need" icon={glyph.icon} stroke={glyph.stroke} data="needs" />;
+  }
+  if (row.group === 'ready') return <StatusBadge tone="ready" icon={PlayIcon} stroke="2" data="ready" />;
+  return <StatusBadge tone="working" icon={SpinnerArcIcon} spin data="progress" />;
+}
+
+/**
+ * A settled request on one line, in the chat and in Done today: the
+ * project's small tile at the end of the big tile's column, so it sits as
+ * close to its badge as a big tile does, then how it ended, its number and
+ * its title. Only what is still open gets two lines and a full tile.
+ */
+export function SettledLine({ name, slug, iconUrl, emoji, number, title, outcome, fallback, nested = false }: {
+  name: string; slug: string | null; iconUrl: string | null; emoji: string | null;
+  number: number | null | undefined; title: string; outcome: string | null | undefined; fallback: string;
+  /** Inside an opened run (./bot-news-line.tsx SettledRun): no big tile's column to keep. */
+  nested?: boolean;
+}) {
+  return (
+    <>
+      <span className={nested ? 'flex shrink-0' : 'flex w-9 shrink-0 justify-end'}>
+        <ProjectTile name={name} slug={slug} iconUrl={iconUrl} emoji={emoji} size="line" />
+      </span>
+      <span className="flex min-w-0 flex-1 items-center gap-1.5">
+        <FinalState outcome={outcome} fallback={fallback} />
+        <RequestTag number={number} size="line" />
+        <span className="truncate text-[14px] font-medium leading-5 text-zinc-700 dark:text-zinc-300">{title}</span>
+      </span>
+    </>
+  );
+}
+
+/** A Needs you row: the row opens the story at what waits, and its one button says what to do there. */
 function NeedsRow({ row, onOpen }: { row: StripRow; onOpen: (row: StripRow) => void }) {
   const t = useMessages('messages');
   return (
     <li className="flex items-center gap-3 px-4 py-2" data-bot-strip-row="needs" data-bot-strip-key={row.key}>
-      <Tile job={row.job} />
-      <RowText row={row} />
+      <button type="button" className="flex min-w-0 flex-1 items-center gap-2 text-left" data-bot-strip-open="" onClick={() => onOpen(row)}>
+        <Tile job={row.job} />
+        <RowText row={row} />
+      </button>
       <button type="button" className={PILL_PRIMARY} data-bot-strip-act="open" onClick={() => onOpen(row)}>{t(row.action || 'messages:bot.strip.action.open')}</button>
     </li>
   );
@@ -383,7 +542,7 @@ function ReadyRow({ row, onOpen }: { row: StripRow; onOpen: (row: StripRow) => v
   return (
     <li className="px-4 py-2" data-bot-strip-row="ready" data-bot-strip-key={row.key}>
       <div className="flex items-center gap-3">
-        <button type="button" className="flex min-w-0 flex-1 items-center gap-3 text-left" onClick={() => onOpen(row)}>
+        <button type="button" className="flex min-w-0 flex-1 items-center gap-2 text-left" data-bot-strip-open="" onClick={() => onOpen(row)}>
           <Tile job={row.job} />
           <RowText row={row} />
         </button>
@@ -395,11 +554,27 @@ function ReadyRow({ row, onOpen }: { row: StripRow; onOpen: (row: StripRow) => v
   );
 }
 
-/** A row that is itself the button: Done's. */
+/** A Done today row: one line, with how it ended. */
+function DoneRow({ row, onOpen }: { row: StripRow; onOpen: (row: StripRow) => void }) {
+  const job = row.job;
+  return (
+    <li data-bot-strip-row="done" data-bot-strip-key={row.key}>
+      <button type="button" className="flex w-full items-center gap-2 px-4 py-1.5 text-left" data-bot-strip-open="" onClick={() => onOpen(row)}>
+        <SettledLine
+          name={job.appName} slug={job.appSlug} iconUrl={job.iconUrl} emoji={job.iconEmoji}
+          number={job.firstVersion ? null : job.issueNumber} title={stripTitle(job)}
+          outcome={(job as HomeroomBotPastJob).outcome} fallback={row.state}
+        />
+      </button>
+    </li>
+  );
+}
+
+/** A row that is itself the button: In progress's. */
 function PlainRow({ row, onOpen }: { row: StripRow; onOpen: (row: StripRow) => void }) {
   return (
     <li data-bot-strip-row={row.group} data-bot-strip-key={row.key}>
-      <button type="button" className="flex w-full items-center gap-3 px-4 py-2 text-left" onClick={() => onOpen(row)}>
+      <button type="button" className="flex w-full items-center gap-2 px-4 py-2 text-left" data-bot-strip-open="" onClick={() => onOpen(row)}>
         <Tile job={row.job} />
         <RowText row={row} />
       </button>
@@ -436,9 +611,11 @@ export function BotStripView({ work, remembered = null, onRemember, now }: BotSt
   const t = useMessages('messages');
   const model = stripGroups(work, now || new Date());
   const [open, setOpen] = useState<boolean>(remembered ?? false);
+  // Done today is folded each time the drawer opens: what is settled waits behind its count.
+  const [doneOpen, setDoneOpen] = useState(false);
   const parts = summaryParts(model);
   if (!parts.length) return null;
-  const choose = (next: boolean) => { setOpen(next); onRemember?.(next); };
+  const choose = (next: boolean) => { setOpen(next); setDoneOpen(false); onRemember?.(next); };
   const onOpen = (row: StripRow) => { choose(false); openRow(row); };
   const needTags = model.needs.slice(0, NEEDS_LIMIT).map((row) => row.job.issueNumber).filter((n): n is number => !!n && n > 0);
   return (
@@ -491,8 +668,18 @@ export function BotStripView({ work, remembered = null, onRemember, now }: BotSt
             ) : null}
             {model.done.length ? (
               <>
-                <Eyebrow className="text-zinc-500 dark:text-zinc-400">{t('messages:bot.strip.group.done')}</Eyebrow>
-                <ul data-bot-strip-group="done">{model.done.map((row) => <PlainRow key={row.key} row={row} onOpen={onOpen} />)}</ul>
+                <button
+                  type="button"
+                  className={`${EYEBROW} flex w-full items-center gap-1.5 text-left text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200`}
+                  aria-expanded={doneOpen}
+                  data-bot-strip-done-toggle=""
+                  onClick={() => setDoneOpen(!doneOpen)}
+                >
+                  <span>{t('messages:bot.strip.group.done')}</span>
+                  <span className="font-semibold tabular-nums" data-bot-strip-done-count="">{`· ${model.done.length}`}</span>
+                  <ChevronDownIcon aria-hidden="true" className={`h-4 w-4 shrink-0 transition-transform ${doneOpen ? 'rotate-180' : ''}`} />
+                </button>
+                {doneOpen ? <ul data-bot-strip-group="done">{model.done.map((row) => <DoneRow key={row.key} row={row} onOpen={onOpen} />)}</ul> : null}
               </>
             ) : null}
           </div>

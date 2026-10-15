@@ -583,3 +583,38 @@ test('a GLM request refused on its shortlist is sent once more to every host; an
   await request(mine, { model: MODEL, input: [] });
   assert.deepEqual(calls[0].only, ['fireworks', 'together'], 'the platform\'s list replaces the default');
 });
+
+// Run seven (14 Oct 2026): how often a build leaves its shortlist is counted
+// per turn, so a request that fell back says so once, on its first line: a
+// refusal reported again with its host is the same request.
+test('a request that left its shortlist says so on its first line only, and the turn counts it once', async t => {
+  let refuse = 1;
+  const base = await upstream(t, async (req, res) => {
+    await json(req);
+    if (refuse > 0) {
+      refuse -= 1;
+      res.writeHead(429, { 'content-type': 'application/json' });
+      res.end('{"error":{"message":"busy","code":429}}');
+      return;
+    }
+    res.writeHead(503, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ error: { message: 'overloaded', code: 503, metadata: { provider_name: 'Sail Research' } } }));
+  });
+  const diagnostics = [];
+  const instance = await adapter(t, base, { onRequest: d => diagnostics.push(JSON.parse(JSON.stringify(d))) });
+  const response = await request(instance, { model: MODEL, input: [] });
+  assert.equal(response.status, 503);
+  await response.text();
+  assert.equal(diagnostics.length, 2, 'its line, then the refusal again with its host');
+  assert.equal(diagnostics[0].shortlistFallback, true);
+  assert.equal(diagnostics[1].shortlistFallback, undefined);
+  assert.equal(diagnostics[1].providerName, 'Sail Research');
+
+  const state = {};
+  for (const diagnostic of diagnostics) {
+    codex.normalizeCodexLine(JSON.stringify({ type: 'usernode.openrouter.request', diagnostic }), state);
+  }
+  codex.normalizeCodexLine(JSON.stringify({ type: 'usernode.openrouter.request', diagnostic: { httpStatus: 200 } }), state);
+  assert.equal(state.shortlistFallbacks, 1);
+  assert.deepEqual(state.routedProviders, ['Sail Research']);
+});

@@ -138,6 +138,9 @@ async function listOrphans(pool, { staleMs = ORPHAN_MS, isInFlight = () => false
             (heartbeat_at < NOW() - ($1::int * INTERVAL '1 millisecond')) AS stale
        FROM check_runs
       WHERE kind = 'proposal' AND session_id IS NOT NULL
+        -- A preview machine's run is the machine's: a retry of its work item
+        -- collects it (src/workflow/preview/services.ts), never the harvest.
+        AND (manifest->>'workflow') IS DISTINCT FROM 'true'
       ORDER BY started_at ASC
       LIMIT $2`,
     [Math.round(staleMs), limit]

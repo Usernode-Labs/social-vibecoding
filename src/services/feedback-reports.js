@@ -85,18 +85,21 @@ async function createPlatformIssue({ owner, repo, title, body, pat = process.env
 // person has been helped, so a bookkeeping failure must not turn their
 // submission into an error and invite a duplicate. `source` is null for the
 // feedback dialog, and 'homeroom_bot' for a report the bot filed for them.
-async function recordFeedbackReport(pool, { user, app, owner, repo, issueNumber, title, description, source = null }) {
+async function recordFeedbackReport(pool, { user, app, owner, repo, issueNumber, title, description, source = null,
+  bodyPrefix = null, bodySuffix = null }) {
   if (!user?.id) return;
   try {
-    await pool.query(
+    const { rows } = await pool.query(
       `INSERT INTO feedback_reports
-         (user_id, target, app_id, issue_owner, issue_repo, issue_number, title, description, source)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+         (user_id, target, app_id, issue_owner, issue_repo, issue_number, title, description, source, body_prefix, body_suffix)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+       RETURNING id`,
       [user.id, app ? 'app' : 'platform', app ? app.id : null,
         owner || null, repo || null,
         Number.isSafeInteger(issueNumber) ? issueNumber : null,
-        title ? String(title).slice(0, 512) : null, description, source]
+        title ? String(title).slice(0, 512) : null, description, source, bodyPrefix, bodySuffix]
     );
+    return rows[0] || null;
   } catch (err) {
     log.warn('feedback', 'Feedback report record failed', { issueNumber, message: err.message });
   }

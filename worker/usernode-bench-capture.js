@@ -61,7 +61,12 @@
 //      data (runDeclaredChecks). With BENCH_CAPTURE_MODE=checks they are all
 //      the step does: the Homeroom bot's build and fix turns run it before
 //      they end (worker/build-stop-hook.js), so a failing check is fixed in
-//      the turn rather than in a round after the proposal.
+//      the turn rather than in a round after the proposal. The `?demo=1`
+//      checks run first: a proposal's checks share one database and one
+//      signed-in viewer, so whatever a demo stores for the viewer is there
+//      for every other check on the platform, and here too (App bench run
+//      191: a `/` check of the empty state passed here now and then, and
+//      failed on the proposal).
 //
 // An app that will not install, build or boot is a RESULT (booted: false
 // and why), never a crash: the trial records it and the run goes on.
@@ -923,6 +928,24 @@ function probe(port) {
   });
 }
 
+/**
+ * Make sure nothing answers on `port` before this step boots its own copy
+ * there: an earlier run of this step whose app outlived it (App bench run
+ * 191: a check command piped to `head` died on the closed pipe before it
+ * stopped its app, and the next run checked that app, the old code) is
+ * stopped through usernode-run-inloop, which recorded it; anything else
+ * still answering is reported, never checked. Resolves { ok, error? }.
+ */
+async function clearPort({ env, port, launcher = env.BENCH_RUN_INLOOP || '/usr/local/bin/usernode-run-inloop', answers = probe }) {
+  if (fs.existsSync(launcher)) {
+    spawnSync(process.execPath, [launcher, '--stop'], { env: { ...env, INLOOP_PORT: String(port) }, encoding: 'utf8', timeout: 20000 });
+  }
+  if (await answers(port)) {
+    return { ok: false, error: `port ${port} is held by a process this step did not start, so it was not checked: stop it and run again` };
+  }
+  return { ok: true };
+}
+
 /** Launch the app through usernode-run-inloop and wait until it answers. */
 async function bootApp({ dir, env, command, port }) {
   const launcher = env.BENCH_RUN_INLOOP || '/usr/local/bin/usernode-run-inloop';
@@ -1115,6 +1138,15 @@ function readDeclaredChecks(dir) {
   }
 }
 
+/** Whether a declared check's route opens the populated demo (`?demo=1` in its query). Pure. */
+function isDemoPath(route) {
+  try { return new URL(String(route || '/'), 'http://localhost/').searchParams.get('demo') === '1'; } catch { return false; }
+}
+
+// Said of a check on a plain route that fails after the `?demo=1` checks ran.
+const AFTER_DEMO_NOTE = '(It ran after the ?demo=1 checks, as the same viewer on the same database, as on the platform: '
+  + 'demo rows stored for the viewer are there.)';
+
 /** A check's URL on this copy, signed in: its route, with the viewer's token added to its query (a hash route keeps its hash). Pure. */
 function checkUrl(baseUrl, route, token) {
   const url = new URL(route, `${String(baseUrl).replace(/\/+$/, '')}/`);
@@ -1207,24 +1239,36 @@ async function runDeclaredChecks(browser, baseUrl, token, tests, {
     if (!groups.has(url)) groups.set(url, []);
     groups.get(url).push(t);
   }
-  const entries = [...groups.entries()];
+  // The `?demo=1` routes first, then the rest (see the header, 6).
+  const all = [...groups.entries()];
+  const waves = [all.filter(([, g]) => isDemoPath(g[0].path)), all.filter(([, g]) => !isDemoPath(g[0].path))];
+  const afterDemo = waves[0].length > 0;
   const results = [];
-  let cursor = 0;
-  const lane = async () => {
-    for (;;) {
-      if (cursor >= entries.length || Date.now() - started > budgetMs) return;
-      const [url, group] = entries[cursor];
-      cursor += 1;
-      try {
-        // eslint-disable-next-line no-await-in-loop
-        results.push(...await runCheckGroup(browser, url, group, secrets, timing));
-      } catch (err) {
-        const why = redact(`the check could not run: ${clip(err.message, MAX_CHECK_REASON)}`, secrets);
-        for (const t of group) results.push({ name: t.name, path: t.path, pass: false, reason: why });
+  for (const [wave, entries] of waves.entries()) {
+    let cursor = 0;
+    const lane = async () => {
+      for (;;) {
+        if (cursor >= entries.length || Date.now() - started > budgetMs) return;
+        const [url, group] = entries[cursor];
+        cursor += 1;
+        let ran;
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          ran = await runCheckGroup(browser, url, group, secrets, timing);
+        } catch (err) {
+          const why = redact(`the check could not run: ${clip(err.message, MAX_CHECK_REASON)}`, secrets);
+          ran = group.map((t) => ({ name: t.name, path: t.path, pass: false, reason: why }));
+        }
+        // What a plain route's failure may be: the demo's rows (see the header, 6).
+        if (wave === 1 && afterDemo) {
+          ran = ran.map((r) => (r.pass ? r : { ...r, reason: `${clip(r.reason, MAX_CHECK_REASON - AFTER_DEMO_NOTE.length - 1)} ${AFTER_DEMO_NOTE}` }));
+        }
+        results.push(...ran);
       }
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(CHECK_CONCURRENCY, entries.length) }, lane));
+    };
+    // eslint-disable-next-line no-await-in-loop
+    await Promise.all(Array.from({ length: Math.min(CHECK_CONCURRENCY, entries.length) }, lane));
+  }
   const failed = results.filter((r) => !r.pass).map((r) => ({ name: r.name, path: r.path, reason: r.reason }));
   return {
     total: tests.length, ran: results.length, passed: results.length - failed.length, failed,
@@ -1243,6 +1287,9 @@ function checksReport(declared, { booted = true, error = null } = {}) {
 }
 
 async function main() {
+  // A reader that stops reading (`| head`) must not end this step before it
+  // stops the app it booted (see clearPort): its output is simply dropped.
+  process.stdout.on('error', () => {});
   const dir = process.cwd();
   const env = { ...process.env };
   const port = Number(env.INLOOP_PORT) || 3100;
@@ -1291,6 +1338,11 @@ async function main() {
   };
   const command = startCommand(pkg, (f) => fs.existsSync(path.join(dir, f)));
   result.steps.boot = { command: command.join(' ') };
+  const cleared = await clearPort({ env: appEnv, port });
+  if (!cleared.ok) {
+    result.error = cleared.error;
+    return emit();
+  }
   const booted = await bootApp({ dir, env: appEnv, command, port });
   if (!booted.ok) {
     result.error = booted.error;
@@ -1418,6 +1470,9 @@ module.exports = {
   takeShot,
   throwawayIdentity,
   MAX_DECLARED_CHECKS,
+  AFTER_DEMO_NOTE,
+  isDemoPath,
+  clearPort,
   declaredChecks,
   checkUrl,
   runCheckGroup,

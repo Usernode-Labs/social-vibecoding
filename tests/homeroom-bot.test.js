@@ -1819,8 +1819,10 @@ test('runTriage: the request comes first; the platform reference follows, small,
   // #4488 added the four tests for a `complicated` change (about 860
   // characters), which the work order asked to be in this prompt. `done`
   // (about 120 more) lets a request that is already there be offered for
-  // closing instead of left at "a person decides".
-  assert.ok(prompt.length < 21200, `a triage prompt stays small: ${prompt.length} chars`);
+  // closing instead of left at "a person decides". Newcomer run six (14 Oct
+  // 2026): the UI design guidance's line on forms on a phone (about 335
+  // characters), which every build reads, rides in the reference too.
+  assert.ok(prompt.length < 21500, `a triage prompt stays small: ${prompt.length} chars`);
   // The last thing the model reads is the one format parseVerdict accepts.
   assert.match(prompt, /END YOUR REPLY WITH EXACTLY ONE fenced JSON block in this format, and nothing after it:\n\{"verdict": "question" \| "empty" \| "ready" \| "person", "determined": true \| false, "missing_fact": "\.\.\.", "question": "\.\.\.", "default": "\.\.\.", "build_note": "\.\.\.", "reason": "\.\.\."\}$/);
 });

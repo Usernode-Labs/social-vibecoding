@@ -311,6 +311,7 @@ async function runDispatch({
   }
   if (await shouldStop()) return stoppedBeforeStart();
   const release = d.activeWorkers.beginSessionOperation(changeId);
+  await release.recorded;
   // #937: a new dispatch is the boundary that retires the previous turn's
   // pending stop, exactly as a new classic turn is.
   d.worker.clearPendingStop(changeId);

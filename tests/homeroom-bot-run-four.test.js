@@ -53,9 +53,10 @@ test('Build it wakes the loop where it runs, on whichever Pod the tap reached', 
     // Not the leader: its local wake does nothing, and the leader must hear.
     const went = await bot.goAhead(pool, { runId: 1746 });
     assert.equal(went.ok, true);
-    assert.deepEqual(published, [{ kind: bot.BUS_KIND, routing: null, data: { appId: 9 } }]);
-    // The leader, hearing it, runs its pass now.
-    bot._armForTests({});
+    assert.deepEqual(published, [{ kind: bot.BUS_KIND, routing: null, data: { appId: 9, buildRunId: 1746 } }]);
+    // The leader, hearing it, runs its pass now (and starts the build at
+    // once: tests/homeroom-bot-run-five.test.js).
+    bot._armForTests({}, { pool: { async query() { return { rows: [] }; } } });
     assert.equal(bot.onBusMessage(published[0].data), true);
     assert.deepEqual(bot._pendingForTests().apps, [9]);
   } finally {

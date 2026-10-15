@@ -47,6 +47,8 @@
 
 const log = require('./logger');
 const conversations = require('./conversations');
+// Newcomer run five: a first version's stages, as they happen.
+const timeline = require('./first-version-timeline');
 const notifyCopy = require('./homeroom-bot-notify-copy');
 
 const BOT_USERNAME = 'homeroom_bot';
@@ -553,12 +555,17 @@ async function sendDm(pool, {
   // The notification's detail: homeroom-bot-notify-copy.js words the push,
   // the bell and the email from the story's fields (contract 2.1).
   const detail = story ? await notificationDetail(pool, story, stored) : null;
+  // Run six: a first version's ready and live, for a maker who turned
+  // "We'll tell you when it's live" off, are said here and ring nothing.
+  const firstNews = !!metadata?.firstVersion && (story === 'ready' || story === 'live');
+  const muted = firstNews
+    && (await firstVersionNotify(pool, { appSlug: metadata.appSlug, userId }).catch(() => null)) === false;
   const send = (withCards) => conversations.sendMessage(pool, { id: bot.id }, opened.conversationId,
     withCards.length
       ? { ...input, objects: withCards }
       : { ...input, ...(cards.length && withoutCards ? { content: clip(withoutCards, conversations.MAX_MESSAGE_LENGTH || 8000) } : {}) },
     {
-      metadata: stored ? { [META]: stored } : null, notify: !!story, notificationDetail: detail,
+      metadata: stored ? { [META]: stored } : null, notify: !!story && !muted, notificationDetail: detail,
       notificationKind: (story && BUILD_KINDS[story]) || null,
     });
   let result = await send(cards);
@@ -571,7 +578,7 @@ async function sendDm(pool, {
     return null;
   }
   const messageId = result.messageId ?? result.message?.id ?? null;
-  if (!result.duplicate && story === 'ready') {
+  if (!result.duplicate && !muted && story === 'ready' && !metadata?.firstVersion) {
     // WP-E: "ready to try" by email when no phone can take the push.
     void require('./activity-mail').emailIfNoPush(pool, {
       userId, kind: 'build_ready', appName: metadata?.appName || null, appSlug: metadata?.appSlug || null,
@@ -581,6 +588,17 @@ async function sendDm(pool, {
       ...(stored?.requestTitle ? { requestTitle: stored.requestTitle } : {}),
       // Built, but part of it failed when Homeroom tried it: not "ready to try".
       ...(Array.isArray(metadata?.ready?.broken) && metadata.ready.broken.length ? { notWorking: true } : {}),
+    });
+  }
+  if (!result.duplicate && !muted && story === 'live' && metadata?.firstVersion) {
+    // Run six: a first version's email is its LIVE, the moment its maker
+    // was promised. It goes live without a vote a minute or two after it is
+    // ready to try (D1), and two emails that close together would be one
+    // too many (mail/rate-limit.js holds build mail five minutes apart), so
+    // its ready sends none. Worded as its push is, from the detail.
+    void require('./activity-mail').emailIfNoPush(pool, {
+      userId, kind: 'build_ready', appName: metadata?.appName || null, appSlug: metadata?.appSlug || null,
+      conversationId: opened.conversationId, messageId, threadRootId: root, detail,
     });
   }
   if (!result.duplicate) {
@@ -1950,7 +1968,10 @@ async function closePlanCards(pool, runIds, { stopped = false, ws = null, bot = 
  * card then reads "Building it", with its answers, everywhere. Resolves { ok: true,
  * choice, label } or { ok: false, status, error }.
  */
-async function decidePlanTap(pool, { user, action, choice, answers = [], deps = {} }) {
+// Newcomer run seven (14 Oct 2026): `planShown` false when it was decided
+// without the card's Build it (buildFromAnswers): the plan's bullets were
+// never put to its maker, so goAhead writes them as the plan's own lines.
+async function decidePlanTap(pool, { user, action, choice, answers = [], deps = {}, planShown = true }) {
   if (choice !== 'build') return { ok: false, status: 400, error: 'choice must be build' };
   const { rows: [card] } = await pool.query(
     'SELECT run_id, conversation_id FROM homeroom_bot_dm_messages WHERE message_id = $1 AND user_id = $2 AND kind = $3',
@@ -1965,6 +1986,7 @@ async function decidePlanTap(pool, { user, action, choice, answers = [], deps = 
   if (!claimed.length) return { ok: false, status: 409, error: 'already_decided' };
   const went = await (deps.botSvc || settingsModule()).goAhead(pool, {
     runId: Number(card.run_id), answers: Array.isArray(answers) ? answers.slice(0, 2) : [],
+    ...(planShown === false ? { planShown: false } : {}),
   });
   if (!went.ok) {
     await pool.query('UPDATE homeroom_bot_dm_actions SET status = \'failed\', error = $2 WHERE id = $1', [action.id, 'plan_gone']);
@@ -2006,6 +2028,12 @@ async function decidePlanTap(pool, { user, action, choice, answers = [], deps = 
  * the card says it is being built, with the answers it went with), else
  * straight on (goAhead: a card that could not be sent). Resolves what
  * decidePlanTap or goAhead did, or null when nothing waits.
+ *
+ * Newcomer run seven (14 Oct 2026, Club Votes): either way its maker was
+ * not shown the plan's bullets (the made screen shows its questions alone,
+ * and a plan decided before it was sent goes ahead the moment it is), so
+ * they go ahead with `planShown: false` (goAhead): the bullets are the
+ * plan's own lines, and only the answers are theirs.
  */
 async function buildFromAnswers(pool, { appId, issueNumber, runId = null, userId, answers = [], deps = {} }) {
   const { rows: [run] } = await pool.query(
@@ -2025,8 +2053,8 @@ async function buildFromAnswers(pool, { appId, issueNumber, runId = null, userId
     [run.id, PLAN_KIND, userId],
   );
   const picks = Array.isArray(answers) ? answers.slice(0, 2).map((a) => (typeof a === 'string' ? a : null)) : [];
-  if (action) return decidePlanTap(pool, { user: { id: userId }, action, choice: 'build', answers: picks, deps });
-  const went = await (deps.botSvc || settingsModule()).goAhead(pool, { runId: Number(run.id), answers: picks });
+  if (action) return decidePlanTap(pool, { user: { id: userId }, action, choice: 'build', answers: picks, deps, planShown: false });
+  const went = await (deps.botSvc || settingsModule()).goAhead(pool, { runId: Number(run.id), answers: picks, planShown: false });
   if (went.ok) {
     await require('./first-version-plan').noteDecided(pool, {
       appId: went.appId, issueNumber: went.issueNumber, answers: went.chosen.map((c) => c.answer),
@@ -3188,6 +3216,7 @@ function laterChatLive(pool, run, { config, sha, deps = {} }) {
     try {
       if (await liveAfterMerge(config, { ...run, id: run.app_id }, { sha, deps })) {
         await noteChatLive(pool, run);
+        void timeline.record(pool, { runId: run.run_id, stage: 'live', detail: { late: true } });
         return;
       }
     } catch (err) {
@@ -3253,7 +3282,7 @@ async function noteProposalMerged(pool, session, { config = null, sha = null, li
   if (session?.id) await (deps.voice || require('./homeroom-bot-voice')).dropAsks(pool, session.id);
   if (!session?.id) return null;
   const { rows } = await pool.query(
-    `SELECT r.app_id, r.issue_number, a.slug, a.name, a.self_hosted, a.runtime_kind, a.runtime_name
+    `SELECT r.id AS run_id, r.app_id, r.issue_number, a.slug, a.name, a.self_hosted, a.runtime_kind, a.runtime_name
        FROM homeroom_bot_runs r JOIN apps a ON a.id = r.app_id
       WHERE r.proposal_session_id = $1
       ORDER BY r.id DESC LIMIT 1`,
@@ -3261,6 +3290,9 @@ async function noteProposalMerged(pool, session, { config = null, sha = null, li
   );
   if (!rows.length) return null;
   const run = rows[0];
+  // A first version's timeline (first-version-timeline.js): merged now, and
+  // live once its app answers on what was deployed, below.
+  void timeline.record(pool, { runId: run.run_id, stage: 'merged', sessionId: session.id });
   const platform = !!run.self_hosted;
   const live = known === true ? true : await liveAfterMerge(config, { ...run, id: run.app_id }, { sha, deps });
   // B9: the chat message it was asked in, if it was, says it is live, once
@@ -3269,6 +3301,8 @@ async function noteProposalMerged(pool, session, { config = null, sha = null, li
   // chip moves on the merge, as it always did.
   if (live || platform) await noteChatLive(pool, run, deps);
   else laterChatLive(pool, run, { config, sha, deps });
+  // Live now; one that did not answer yet is recorded live by the later look.
+  if (live || platform) void timeline.record(pool, { runId: run.run_id, stage: 'live', sessionId: session.id });
   const requester = await requesterOf(pool, run.app_id, run.issue_number);
   // #8: their activity tray reads again, whether or not the DM says it.
   if (requester) require('./homeroom-bot-tray').noteWorkChanged(requester.userId, deps);
@@ -3350,9 +3384,12 @@ async function quotedTarget(pool, userId, quotedId) {
 
 /**
  * One story: the request whose thread a person's message was written in,
- * from the thread's first message, the request's card: { rootId, appId,
- * appSlug, appName, issueNumber, title, firstVersion }, or null for a
- * message in the main chat (or in a thread that is no request's).
+ * from the thread's first message: { rootId, appId, appSlug, appName,
+ * issueNumber, title, firstVersion }, or null for a message in the main chat
+ * (or in a thread that is no request's). The first message is the request's
+ * card, or for a request from before threads any of the bot's messages about
+ * it: the chat opens that request's story on its oldest one, and a reply
+ * written there is about the request all the same.
  */
 async function threadRequest(pool, { userId, conversationId, message }) {
   let rootId = Number(message?.threadRootId) || null;
@@ -3369,7 +3406,7 @@ async function threadRequest(pool, { userId, conversationId, message }) {
        FROM homeroom_bot_dm_messages d
        JOIN apps a ON a.id = d.app_id
        LEFT JOIN homeroom_bot_requesters q ON q.app_id = d.app_id AND q.issue_number = d.issue_number
-      WHERE d.message_id = $1 AND d.user_id = $2 AND d.kind = 'activity'`,
+      WHERE d.message_id = $1 AND d.user_id = $2`,
     [rootId, userId],
   );
   if (!card) return null;
@@ -3404,6 +3441,123 @@ function mirroredText(content, { question = false } = {}) {
 }
 
 /**
+ * #4974: close the bot's asks on a request that a reply on the request's
+ * discussion has answered — the question still open in the DM, and a
+ * blocked/empty/person note still showing its buttons. Only asks recorded
+ * before the reply (`before`) settle, so news the bot sends after it stays
+ * open. The ask's stamp is kept in microseconds by Postgres, but a reply's
+ * stamp arrives as a JS Date, cut to the millisecond, so the comparison is
+ * made at the millisecond too: a reply in the same millisecond as an ask
+ * settles it. A question reads answered; the others closed, with `answeredOnRequest`
+ * saying where the answer went. Resolves the rows settled (newest first),
+ * each with its message's thread root for the line noteRequestReply writes.
+ * Never throws.
+ */
+async function settleMirroredAsks(pool, { userId, appId, issueNumber, before = null, ws = null }) {
+  const appIdNum = Number(appId);
+  const n = Number(issueNumber);
+  try {
+    if (!userId || !appIdNum || !n) return [];
+    const { rows } = await pool.query(
+      `SELECT d.message_id, d.conversation_id, d.kind, d.question_status, m.thread_root_id
+         FROM homeroom_bot_dm_messages d
+         JOIN conversation_messages m ON m.id = d.message_id AND m.deleted_at IS NULL
+        WHERE d.user_id = $1 AND d.app_id = $2 AND d.issue_number = $3
+          AND d.kind = ANY($4::text[])
+          AND ($5::timestamptz IS NULL OR date_trunc('milliseconds', d.created_at) <= $5)
+          AND (d.question_status = 'open'
+            OR (d.question_status IS NULL AND m.metadata->'homeroomBot'->>'status' = 'open'))
+        ORDER BY d.message_id DESC`,
+      [userId, appIdNum, n, [...MIRRORED_KINDS], before],
+    );
+    for (const row of rows) {
+      const question = QUESTION_KINDS.has(row.kind);
+      if (question) {
+        await pool.query(
+          `UPDATE homeroom_bot_dm_messages
+              SET question_status = 'answered', answered_at = COALESCE(answered_at, NOW())
+            WHERE message_id = $1 AND question_status IS DISTINCT FROM 'answered'`,
+          [row.message_id],
+        );
+      } else {
+        await pool.query(
+          `UPDATE homeroom_bot_dm_messages
+              SET answered_at = COALESCE(answered_at, NOW())
+            WHERE message_id = $1 AND answered_at IS NULL`,
+          [row.message_id],
+        );
+      }
+      await setQuestionState(pool, row.message_id,
+        question ? { status: 'answered', answeredOnRequest: true } : { status: 'closed', answeredOnRequest: true },
+        { ws, conversationId: row.conversation_id, userId });
+    }
+    return rows;
+  } catch (err) {
+    log.warn('homeroom-bot-dm', 'Could not settle the asks a request reply answers', { issueNumber: n, err: err.message });
+    return [];
+  }
+}
+
+/**
+ * #4974: a person's reply landed on a request's discussion (ws, once the
+ * message is in): the bot's asks on it stop waiting on the requester, and
+ * their DM's thread for the request says so with one quiet line. Whoever
+ * replied, the requester is whose DM carries the news; the bot's own and
+ * other synthetic posts never get here (ws skips them, and so does this).
+ * The line is written only when an ask was settled, so of two replies before
+ * the bot looks again the first alone says it. Resolves
+ * { settled, line } — the rows settled and the line written — or null when
+ * the request has no requester. Never throws.
+ */
+async function noteRequestReply(pool, { appId, issueNumber, userId, chatMessageId, content, createdAt = null, deps = {} }) {
+  const appIdNum = Number(appId);
+  const n = Number(issueNumber);
+  const authorId = Number(userId);
+  try {
+    if (!appIdNum || !n || !authorId) return null;
+    const { rows: authors } = await pool.query(
+      'SELECT id, username, is_synthetic FROM users WHERE id = $1', [authorId],
+    );
+    // A synthetic account's post is the bot's or the platform's own, never
+    // a person's answer.
+    if (!authors.length || authors[0].is_synthetic) return null;
+    const requester = await requesterOf(pool, appIdNum, n).catch(() => null);
+    if (!requester) return null;
+    const ws = deps.ws || null;
+    const settled = await settleMirroredAsks(pool, {
+      userId: requester.userId, appId: appIdNum, issueNumber: n, before: createdAt, ws,
+    });
+    if (!settled.length) return { settled, line: null };
+    try {
+      require('./homeroom-bot-tray').noteWorkChanged(requester.userId, deps);
+    } catch { /* the tray re-reads on its own */ }
+    // One quiet line, in the request's thread: theirs if they wrote it, else
+    // who did. The thread hangs off the card, else off the ask it settled.
+    const mine = Number(requester.userId) === authorId;
+    const author = mine ? null
+      : (await pool.query('SELECT username FROM users WHERE id = $1', [authorId])).rows[0]?.username || null;
+    const said = clip(content, 140);
+    const card = await cardShown(pool, requester.userId, appIdNum, n).catch(() => null);
+    const line = await stepLine(pool, {
+      bot: await botAccount(pool),
+      userId: requester.userId,
+      app: (await pool.query('SELECT id, slug, name FROM apps WHERE id = $1', [appIdNum])).rows[0] || null,
+      issueNumber: n,
+      card: { messageId: card?.messageId || settled[0].thread_root_id || settled[0].message_id },
+      step: 'replied',
+      key: chatMessageId ? `hrbot-replied-${Number(chatMessageId)}` : null,
+      content: mine
+        ? `You replied on the request's discussion: “${said}”`
+        : `@${author || 'someone'} replied on the request's discussion: “${said}”`,
+    });
+    return { settled, line };
+  } catch (err) {
+    log.warn('homeroom-bot-dm', 'Could not note a reply on a request', { issueNumber: n, err: err.message });
+    return null;
+  }
+}
+
+/**
  * Post a person's words on a request's discussion, as their own message:
  * an answer to the bot's open question there, or a reply about the request.
  * That is what wakes the bot, and the request goes to the front of its
@@ -3422,7 +3576,7 @@ async function postOnRequest(pool, { user, target, text, prepared = false, reaso
   const content = prepared ? clip(text, 3900) : mirroredText(text, { question });
   const posted = await ws.handleMessage(
     pool,
-    { user, appId: app.id, appSlug: app.slug, postedVia: null },
+    { user, appId: app.id, appSlug: app.slug, postedVia: null, viaBotDm: true },
     { type: 'chat', content, thread: { type: 'issue', ref: Number(target.issue_number) } },
   ).catch((err) => ({ ok: false, code: err.message }));
   if (!posted?.ok) {
@@ -3444,7 +3598,29 @@ async function postOnRequest(pool, { user, target, text, prepared = false, reaso
     await setQuestionState(pool, target.message_id, { status: 'answered', answer: clip(text, 300) }, {
       ws, conversationId: target.conversation_id, userId: user.id,
     });
+  } else if (MIRRORED_KINDS.has(target.kind)) {
+    // #4974: a non-question ask (a stop with its buttons) is answered by the
+    // same DM answer: its buttons go, and the tray stops calling it Needs you.
+    const { rows: open } = await pool.query(
+      `SELECT 1 FROM conversation_messages
+        WHERE id = $1 AND deleted_at IS NULL AND metadata->'homeroomBot'->>'status' = 'open'`,
+      [target.message_id],
+    );
+    if (open.length) {
+      await pool.query(
+        `UPDATE homeroom_bot_dm_messages
+            SET answered_at = COALESCE(answered_at, NOW())
+          WHERE message_id = $1 AND answered_at IS NULL`,
+        [target.message_id],
+      );
+      await setQuestionState(pool, target.message_id, { status: 'closed', answeredOnRequest: true }, {
+        ws, conversationId: target.conversation_id, userId: user.id,
+      });
+    }
   }
+  try {
+    require('./homeroom-bot-tray').noteWorkChanged(user.id, deps);
+  } catch { /* the tray re-reads on its own */ }
   try {
     await settingsModule().enqueueFront(pool, {
       appId: app.id, issueNumber: Number(target.issue_number), userId: user.id, reason,
@@ -4241,6 +4417,30 @@ function normalizeBrief(raw) {
 }
 
 /**
+ * Pure: what the bot says in its maker's DM at Make it, while the project is
+ * set up (startFirstVersion). #4097: the project's name is a line of its
+ * own, which Messages draws as the project's card (frontend/src/features/
+ * messages/bot-head-card.tsx); with the hello, after it.
+ *
+ * Run six (14 Oct 2026): it described the old flow, a plan sent here first
+ * and a first version "for you to try". Made from a door that lands on the
+ * made screen (`earlyPlan`), the plan's questions are answered THERE, and a
+ * first version goes live without a vote (D1): so it says what comes next
+ * from here, and that it tells them here once it is live. Made anywhere else
+ * (a connector's create), the plan still comes here as a card with Build it.
+ */
+function firstVersionStartedText({ name, hello = false, earlyPlan = false, off = false }) {
+  const head = hello
+    ? `${MAKER_HELLO}\n\n**${name}**\n\nI'm setting up ${name} now.`
+    : `**${name}**\n\nThanks! I'm setting up ${name} now.`;
+  const next = earlyPlan
+    ? 'I\'ll draw its screens, build the first version and tell you here when it\'s live.'
+    : 'Once it\'s ready I\'ll send you my plan here first, then build its first version and tell you here when it\'s live.';
+  const paused = off ? '\n\nI\'m switched off right now, so this waits until I\'m back on.' : '';
+  return `${head} ${next}${paused}`;
+}
+
+/**
  * A project was just created with a description (routes/apps.js): what the
  * create dialog asks as "What should it do?". Recorded, so it is filed as
  * the project's first request once the project is running, under its
@@ -4264,7 +4464,7 @@ async function startFirstVersion(pool, config, { app, user, brief, earlyPlan = f
      ON CONFLICT (app_id) DO NOTHING`,
     [app.id, user.id, text, !!bot],
   );
-  if (bot && earlyPlan) await require('./first-version-plan').startEarlyPlan(pool, { app, user, brief: text });
+  if (bot && earlyPlan) await require('./first-version-plan').startEarlyPlan(pool, { app, user, brief: text, config, bot });
   if (!bot) {
     log.info('homeroom-bot-dm', 'Project will file its description as its first request', { app: app.slug, userId: user.id });
     return null;
@@ -4272,20 +4472,11 @@ async function startFirstVersion(pool, config, { app, user, brief, earlyPlan = f
   const name = app.name || app.slug;
   // B5: a maker's first project is where the bot says hello, once.
   const hello = await claimHello(pool, { userId: user.id, botId: bot.id, kind: 'maker' });
-  const off = settings.mode === 'off' ? '\n\nI\'m switched off right now, so this waits until I\'m back on.' : '';
   const sent = await sendDm(pool, {
     bot,
     userId: user.id,
     idempotencyKey: `hrbot-create-${app.id}`,
-    // B6: the plan comes first, and the build waits for their Build it.
-    // #4097: the project's name is a line of its own, which Messages draws
-    // as the project's card (frontend/src/features/messages/bot-head-card.tsx);
-    // with the hello, after it.
-    content: hello
-      ? `${MAKER_HELLO}\n\n**${name}**\n\nI'm setting up ${name} now. Once it's ready I'll send you my plan here first, `
-        + `then build its first version for you to try.${off}`
-      : `**${name}**\n\nThanks! I'm setting up ${name} now. Once it's ready I'll send you my plan here first, `
-        + `then build its first version for you to try.${off}`,
+    content: firstVersionStartedText({ name, hello: !!hello, earlyPlan, off: settings.mode === 'off' }),
     metadata: {
       kind: 'first_version_started', appSlug: app.slug, appName: name,
       ...(hello ? { hello: MAKER_HELLO, actions: promptActions(MAKER_PROMPTS), status: 'open' } : {}),
@@ -4294,6 +4485,54 @@ async function startFirstVersion(pool, config, { app, user, brief, earlyPlan = f
   if (hello) await noteHelloSent(pool, user.id, sent?.messageId);
   log.info('homeroom-bot-dm', 'Project will be built from its description', { app: app.slug, userId: user.id });
   return sent ? { conversationId: sent.conversationId } : null;
+}
+
+// ── "We'll tell you when it's live" ──────────────────────────────────────
+//
+// Run six (14 Oct 2026): a first version takes about 23 minutes, so its
+// maker leaves, and the tour's last step promised "we'll message you when
+// it's live". Being told is ON from Make it, unless its maker turns it off
+// (homeroom_bot_first_versions.notify_live, true on the row's insert):
+// its "ready to try" and "live" ring (the bell and the phone's push), and
+// when no phone can take the push its live is emailed (sendDm, below).
+// Off, both are still said in the chat, quietly: no bell, no push, no email.
+// The plan card's switch (frontend/src/features/messages/notify-me.tsx)
+// reads and sets it through routes/conversations.js.
+
+function slugOf(value) {
+  return typeof value === 'string' ? value.slice(0, 200) : '';
+}
+
+/**
+ * Whether the maker of `appSlug`'s first version is told when it is ready
+ * and live. Null when `userId` did not make it (or it was made with no
+ * description, so there is none).
+ */
+async function firstVersionNotify(pool, { appSlug, userId }) {
+  const slug = slugOf(appSlug);
+  if (!slug || !Number.isInteger(Number(userId)) || Number(userId) <= 0) return null;
+  const { rows } = await pool.query(
+    `SELECT f.notify_live FROM homeroom_bot_first_versions f JOIN apps a ON a.id = f.app_id
+      WHERE a.slug = $1 AND f.user_id = $2`,
+    [slug, Number(userId)],
+  );
+  return rows.length ? rows[0].notify_live !== false : null;
+}
+
+/** Turn it on or off for the first version's maker. Resolves what it is now, or null when it is not theirs. */
+async function setFirstVersionNotify(pool, { appSlug, userId, on }) {
+  const slug = slugOf(appSlug);
+  if (!slug || !Number.isInteger(Number(userId)) || Number(userId) <= 0 || typeof on !== 'boolean') return null;
+  const { rows } = await pool.query(
+    `UPDATE homeroom_bot_first_versions f SET notify_live = $3
+       FROM apps a
+      WHERE a.id = f.app_id AND a.slug = $1 AND f.user_id = $2
+      RETURNING f.notify_live`,
+    [slug, Number(userId), on],
+  );
+  if (!rows.length) return null;
+  log.info('homeroom-bot-dm', 'First version notifications set', { app: slug, userId: Number(userId), on });
+  return rows[0].notify_live !== false;
 }
 
 /**
@@ -4636,9 +4875,14 @@ async function firstVersionState(pool, appId, deps = {}) {
     ),
   });
   const base = { userId: Number(row.user_id), creator: row.username || null, conversationId: Number(row.conversation_id) || null };
+  // Run five: decided, and its build not picked up yet: the build starting,
+  // named so on every screen, never "Drawing the screens" before any are.
+  const starting = decidedEarly
+    ? { phase: { key: 'starting', since: row.answered_at ? new Date(row.answered_at).toISOString() : null } }
+    : {};
   if (row.status !== 'filed') {
     if (progress.setupOf(row).outcome) return null;
-    return { ...base, ...at('setting_up'), question: false, ready: false, ...early, ...steps(null) };
+    return { ...base, ...at('setting_up'), question: false, ready: false, ...starting, ...early, ...steps(null) };
   }
   const states = await progress.requestStates(pool, { userId: row.user_id });
   const found = states.find((s) => Number(s.row.app_id) === Number(row.app_id)
@@ -4684,7 +4928,11 @@ async function firstVersionState(pool, appId, deps = {}) {
       ? await firstLookAtOf(pool, found.row.run_id).catch(() => null)
       : null;
     const phase = !replanning && !ready ? progress.firstVersionPhase({ ...found.state, stage }, found.row, { firstLookAt }) : null;
-    const listed = ready ? {} : steps(phase, {
+    // Run five (13 Oct 2026, fix 7): merged and not live yet, its steps
+    // stay done and Live is under way. With no phase they were drawn from
+    // the start ("Plan written: now") for the half minute until live_at.
+    const goingLive = found.state.stage === 'merging';
+    const listed = ready ? {} : steps(goingLive ? progress.GOING_LIVE : phase, {
       decided: row.answered_at || (phase ? found.row.build_started_at : null),
       firstLook: firstLookAt,
       spec: found.row.spec_at,
@@ -4715,11 +4963,11 @@ async function firstVersionState(pool, appId, deps = {}) {
   // Filed, and nothing in progress: either it came to something, or the bot
   // has not picked it up yet (filing wakes it, and it reads it next).
   if (found && progress.outcomeOf(found.row)) return null;
-  return { ...base, ...at('queued'), question: false, ready: false, ...early, ...steps(null) };
+  return { ...base, ...at('queued'), question: false, ready: false, ...starting, ...early, ...steps(null) };
 }
 
 // N4: the stages from its spec turn on, when a first look may be drawn.
-const LOOKED_STAGES = new Set(['planning', 'building', 'reviewing', 'proposing', 'checks', 'checks_failed', 'fix_queued', 'fixing']);
+const LOOKED_STAGES = new Set(['planning', 'building', 'reviewing', 'proposing', 'checks', 'checks_failed', 'fix_queued', 'fixing', 'merging']);
 
 /** N4: when a first version's run had its first look drawn, or null. */
 async function firstLookAtOf(pool, runId) {
@@ -4915,6 +5163,8 @@ module.exports = {
   newestOpenQuestion,
   postOnRequest,
   postOnProposal,
+  settleMirroredAsks,
+  noteRequestReply,
   voteLineFor,
   voteLineTarget,
   handVoteLine,
@@ -4933,7 +5183,10 @@ module.exports = {
   noteUserMessage,
   normalizeBrief,
   firstVersionIssue,
+  firstVersionStartedText,
   startFirstVersion,
+  firstVersionNotify,
+  setFirstVersionNotify,
   fileFirstVersion,
   sweepFirstVersions,
   firstVersionApproval,

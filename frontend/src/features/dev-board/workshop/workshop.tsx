@@ -92,7 +92,7 @@ import {
   ApprovalLine, CommunityCard, ShareItCard, canLeave,
   communityPending, leaveCommunity, useCommunity,
 } from './community-card';
-import { FirstVersionCard, ForYouCard, RecentlyLive, hubAlone, hubWorkEmpty, owesVote } from './hub-cards';
+import { FirstLookCard, FirstVersionCard, ForYouCard, RecentlyLive, hubAlone, hubWorkEmpty, owesVote } from './hub-cards';
 import { ProjectDiscussion } from './project-discussion';
 import {
   channelPlace, findChannel, isChannelPlace, isPlaceKey, placeHandle, placeHref, unreadTotal, type PlaceKey,
@@ -1824,10 +1824,9 @@ const SEGMENTS_MAX = 24;
  * or a callback the feed keeps stable (`openFull`, `toggleMore`), so an item
  * renders again only when something it draws changed.
  */
-const FeedItem = memo(function FeedItem({ row, index, count, tint, near, voted, wide, swipe, slug, open, onFull, onMore, onPrev, renderApp }: {
+const FeedItem = memo(function FeedItem({ row, index, tint, near, voted, wide, swipe, slug, open, onFull, onMore, onPrev, renderApp }: {
   row: QueueRow;
   index: number;
-  count: number;
   /** 'a' or 'b': the row's own, for life (see `tintFor` in NeedsFeed). */
   tint: 'a' | 'b';
   near: boolean;
@@ -1842,9 +1841,11 @@ const FeedItem = memo(function FeedItem({ row, index, count, tint, near, voted, 
   /** "more" and "less", a tap on a drawn picture, and the D key: one toggle. */
   onMore: () => void;
   /**
-   * Back to the item before, from the chevron beside the counter (#3517).
-   * Handed down on a phone only, where the Previous and Next beside the
-   * rail are hidden; unset on a wide window, which has those.
+   * Back to the item before, from the chevron at the right end of the
+   * card's top line, where the counter sat before it moved to the feed's
+   * own strip (#3517). Handed down on a phone only, where the Previous and
+   * Next beside the rail are hidden; unset on a wide window, which has
+   * those.
    */
   onPrev?: () => void;
   /** Draws the row's project over its by-line, where rows mix projects. */
@@ -1855,10 +1856,6 @@ const FeedItem = memo(function FeedItem({ row, index, count, tint, near, voted, 
   const title = row.card.title.text || row.card.title.title;
   const facts = factsFor(row, voted);
   const summary = row.summary || null;
-  // The progress line is one segment an item (app.css masks the gaps), lit
-  // up to and including the one in view; one unbroken line past
-  // SEGMENTS_MAX, where the segments would be slivers.
-  const pct = Math.round(((index + 1) / Math.max(1, count)) * 1000) / 10;
   // #4490: THE PICTURE, in one order: the run's own screens, then its
   // author's diagram (or a group decision's, from its own facts), a legacy
   // capture pair, then "What it touches". A Mermaid diagram that cannot be
@@ -1915,7 +1912,6 @@ const FeedItem = memo(function FeedItem({ row, index, count, tint, near, voted, 
       data-ws-picture={pictureless ? 'none' : undefined}
       data-ws-app={row.app ? row.app.slug : undefined}
     >
-      <div className="dev-ws-item-progress" style={{ '--ws-n': count <= SEGMENTS_MAX ? count : 1 } as CSSProperties} aria-hidden="true"><i style={{ width: `${pct}%` }} /></div>
       <div className="dev-ws-item-top">
         {voted ? (
           <span className="dev-ws-item-done" data-ws-item-done="" data-ws-voted={voted}>
@@ -1935,7 +1931,8 @@ const FeedItem = memo(function FeedItem({ row, index, count, tint, near, voted, 
         {/* #3517: THE WAY BACK, WHERE A PHONE CAN SEE IT. Swiping down was
             always the way back, but nothing on the card said so, and the
             Previous beside the rail is a wide window's. This is that
-            button, on the line that already says where you are, from the
+            button, at the right end of the card's top line (where the
+            counter sat before it moved to the feed's own strip), from the
             second item on: it points the way it goes, and at the top of
             the card it is in nobody's swipe. */}
         {onPrev && index > 0 ? (
@@ -1943,7 +1940,6 @@ const FeedItem = memo(function FeedItem({ row, index, count, tint, near, voted, 
             <ChevronUpIcon className="dev-ws-item-prev-icon" aria-hidden="true" />
           </button>
         ) : null}
-        <span className="dev-ws-item-of">{`${index + 1} / ${count}`}</span>
       </div>
       {shots && row.visuals ? <ShotsPicture v={row.visuals} near={near} wide={wide} />
         : picture.kind === 'diagram' ? (
@@ -3221,6 +3217,13 @@ export function NeedsFeed({ rows, models, slug, canPost, onDone, onHub, onSugges
     </div>
   );
 
+  // THE PLACE IN THE FEED, for the strip under the header (#4754). The
+  // segments and the counter used to ride each card's top line, so they
+  // slid away with the card; they sit on one fixed line now, and only the
+  // lit part and the number change as the cards scroll under it. One
+  // unbroken line past SEGMENTS_MAX, where the segments would be slivers.
+  const pct = Math.round((Math.min(i + 1, n) / Math.max(1, n)) * 1000) / 10;
+
   return (
     <div
       className="dev-ws-needs"
@@ -3229,43 +3232,58 @@ export function NeedsFeed({ rows, models, slug, canPost, onDone, onHub, onSugges
       data-ws-kb={kbUp ? '' : undefined}
       data-ws-end={row ? undefined : ''}
     >
-      {/* THE FEED. A real scroll container with snap points, not a swap of one
-          rendered card: every row stays in the DOM (the legacy fillers find
-          their hosts, a deep link can name a row that is not in view), a
-          drag pages it with `scroll-snap`, and the index is read back from
-          the scroll position so a swipe and a press cannot disagree. */}
-      <div className="dev-ws-needs-scroll" data-ws-feed="" ref={scrollRef} onScroll={onScroll}>
-        {items.map((r, k) => (
-          <FeedItem
-            key={r.key}
-            row={r}
-            index={k}
-            count={n}
-            tint={tints[k]}
-            near={Math.abs(k - i) <= 1}
-            voted={answered[r.key] || null}
-            wide={wide}
-            swipe={!wide && canSwipeVote(r) && !answered[r.key]}
-            slug={slug}
-            open={k === i && captionOpen}
-            onFull={openFull}
-            onMore={toggleMore}
-            onPrev={wide ? undefined : prevItem}
-            renderApp={renderApp}
+      {/* THE STAGE. The strip and the scroller share one column, so the
+          strip is as wide as the card and sits directly over it while the
+          rail and the arrows stay beside the stage on a wide window. */}
+      <div className="dev-ws-needs-stage">
+        {/* WHERE YOU ARE, ON THE PAGE. It reads the same `at` the scroller
+            does, so a swipe and a press light it exactly where the cards
+            moved. The end card lights the line fully and says nothing (no
+            counter, as before), and an empty feed keeps the strip's height
+            so nothing jumps. */}
+        <div className="dev-ws-needs-progress" data-ws-progress="">
+          {n > 0 ? (
+            <div className="dev-ws-needs-progress-line" style={{ '--ws-n': n <= SEGMENTS_MAX ? n : 1 } as CSSProperties} aria-hidden="true"><i style={{ width: `${pct}%` }} /></div>
+          ) : null}
+          {row ? <span className="dev-ws-needs-of">{`${i + 1} / ${n}`}</span> : null}
+        </div>
+        {/* THE FEED. A real scroll container with snap points, not a swap of one
+            rendered card: every row stays in the DOM (the legacy fillers find
+            their hosts, a deep link can name a row that is not in view), a
+            drag pages it with `scroll-snap`, and the index is read back from
+            the scroll position so a swipe and a press cannot disagree. */}
+        <div className="dev-ws-needs-scroll" data-ws-feed="" ref={scrollRef} onScroll={onScroll}>
+          {items.map((r, k) => (
+            <FeedItem
+              key={r.key}
+              row={r}
+              index={k}
+              tint={tints[k]}
+              near={Math.abs(k - i) <= 1}
+              voted={answered[r.key] || null}
+              wide={wide}
+              swipe={!wide && canSwipeVote(r) && !answered[r.key]}
+              slug={slug}
+              open={k === i && captionOpen}
+              onFull={openFull}
+              onMore={toggleMore}
+              onPrev={wide ? undefined : prevItem}
+              renderApp={renderApp}
+            />
+          ))}
+          {/* ALWAYS, after the last item: the swipe past the end lands here.
+              With no items it is the whole screen. */}
+          <DoneItem
+            rows={items}
+            answered={answered}
+            left={left}
+            onDone={onDone}
+            onHub={onHub}
+            onSuggest={onSuggest}
+            doneLabel={doneLabel}
+            onBack={() => go(items.findIndex((r) => !answered[r.key]) - i)}
           />
-        ))}
-        {/* ALWAYS, after the last item: the swipe past the end lands here.
-            With no items it is the whole screen. */}
-        <DoneItem
-          rows={items}
-          answered={answered}
-          left={left}
-          onDone={onDone}
-          onHub={onHub}
-          onSuggest={onSuggest}
-          doneLabel={doneLabel}
-          onBack={() => go(items.findIndex((r) => !answered[r.key]) - i)}
-        />
+        </div>
       </div>
 
       {row ? (
@@ -3544,13 +3562,20 @@ export function NeedsFeed({ rows, models, slug, canPost, onDone, onHub, onSugges
  * count beside it, muted, or in the accent when the count asks for the
  * viewer (`ask`), as This week's "5 new" does.
  */
-function PartHead({ title, count, ask = false }: { title: string; count: string | null; ask?: boolean }): ReactNode {
+function PartHead({ title, count, ask = false, action = null }: {
+  title: string;
+  count: string | null;
+  ask?: boolean;
+  /** Optional control at the head's right end, as New for you's Mark all seen (#5056). */
+  action?: ReactNode;
+}): ReactNode {
   return (
     <div className="dev-ws-hweek-head">
       <span className="dev-ws-week-head">
         <b>{title}</b>
         {count ? <span className={ask ? 'dev-ws-week-fresh' : undefined}>{count}</span> : null}
       </span>
+      {action}
     </div>
   );
 }
@@ -4787,6 +4812,10 @@ export function DevWorkshop(): ReactNode {
         />
       ) : null}
       {slug ? <ShareItCard slug={slug} name={app.name || undefined} /> : null}
+      {/* Run six: the maker's first look while it is built, under Share it,
+          with the way to watch it built on the App tab. See ./hub-cards.tsx
+          FirstLookCard. */}
+      {slug ? <FirstLookCard slug={slug} data={community} /> : null}
       {slug ? <RecentlyLive slug={slug} rows={v.recentLive} onAll={() => openTab('workshop')} /> : null}
       {/* Start a new change was the hub's last line; it is the hero's ⋯
           now (../actions-row.tsx), as well as the Homeroom menu's. */}
@@ -5030,6 +5059,16 @@ export function DevWorkshop(): ReactNode {
               <PartHead
                 title={t('project:workshop.fresh.title')}
                 count={t('project:workshop.fresh.count', { count: freshRows.length })}
+                action={(
+                  <button
+                    type="button"
+                    className="dev-ws-since-clear un-touch-target"
+                    data-ws-fresh-clear=""
+                    onClick={clearSince}
+                  >
+                    {t('project:workshop.fresh.markAllSeen')}
+                  </button>
+                )}
               />
               <div className="dev-ws-wlist">
                 {(freshAll ? freshRows : freshRows.slice(0, WORKSHOP_WORK_FIRST)).map((r) => (

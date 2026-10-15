@@ -581,6 +581,9 @@ function parseLimit(rawLimit) {
 // `.release()` — exactly the shape both the real `pg` Pool and this
 // task's test mock provide.
 async function runConsoleQuery(pool, { query, limit }) {
+  // A process that never led (a web process) reads the leader's record of
+  // the role first: it also primes the table names the validator reads.
+  if (!consoleRole.isAvailable()) await consoleRole.loadShared(pool);
   const validation = validateStatement(query);
   if (!validation.ok) {
     return { kind: 'validation_error', reason: validation.reason };

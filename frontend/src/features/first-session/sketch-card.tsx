@@ -227,7 +227,7 @@ export function FeaturedCard({ name, colorKey, emoji, iconUrl = null, card, desc
  * with its icon, its name, and under it the build line when there is one,
  * else its one line.
  */
-export function ThumbRow({ name, colorKey, emoji, tagline = null, line = null, lineNote = null }: {
+export function ThumbRow({ name, colorKey, emoji, tagline = null, line = null, lineNote = null, lineWords = null }: {
   name: string;
   colorKey: string;
   emoji: string | null;
@@ -235,6 +235,8 @@ export function ThumbRow({ name, colorKey, emoji, tagline = null, line = null, l
   line?: BuildLineState | null;
   /** After the build line's words (BuildLine `note`). */
   lineNote?: string | null;
+  /** The stage's own words in place of the line's (BuildLine `words`, run five). */
+  lineWords?: string | null;
 }): ReactNode {
   const color = useResolvedCommunityColor({ iconEmoji: emoji, key: colorKey });
   const glyph = glyphOf(name, emoji, false);
@@ -252,7 +254,7 @@ export function ThumbRow({ name, colorKey, emoji, tagline = null, line = null, l
       <span className="flex min-w-0 flex-col gap-0.5">
         <span className="truncate text-[15px] font-[650] leading-5">{name}</span>
         {line ? (
-          <BuildLine state={line} note={lineNote} />
+          <BuildLine state={line} note={lineNote} words={lineWords} />
         ) : tagline ? (
           <span className="line-clamp-2 text-[13px] leading-[18px] text-zinc-500 dark:text-zinc-400">{tagline}</span>
         ) : null}

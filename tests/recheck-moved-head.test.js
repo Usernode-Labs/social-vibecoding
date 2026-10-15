@@ -195,7 +195,8 @@ test('the recheck reads the row before it decides, and the verdict store keeps t
   assert.match(fn, /rebuildSessionStaging\(\{ config, pool, session, reason, headSha: approvedHeadSha\(session\) \}\)/);
   assert.match(fn, /captureForSession\(config, session, app, head, null,/);
   // What fakeDb emulates: both verdict writes are guarded on the pinned commit.
-  const visuals = fs.readFileSync(path.join(ROOT, 'src/services/visuals.js'), 'utf8');
+  // (One copy, shared with the preview machine: src/workflow/rules/check-store.ts.)
+  const visuals = fs.readFileSync(path.join(ROOT, 'src/workflow/rules/check-store.ts'), 'utf8');
   const store = visuals.slice(visuals.indexOf('async function storeChecks('), visuals.indexOf('async function storeChecksSkipped('));
   assert.equal((store.match(/AND checks_commit_sha IS NOT DISTINCT FROM \$3::text`/g) || []).length, 2);
 });

@@ -1,7 +1,7 @@
 'use strict';
 
 // The workflow kernel (src/workflow/kernel/) against the full PostgreSQL
-// schema. One subtest per kernel guarantee (K1-K17 in the workflow
+// schema. One subtest per kernel guarantee (K1-K19 in the workflow
 // foundation's guarantee list), driven through a small test machine.
 
 const test = require('node:test');
@@ -24,7 +24,7 @@ function counter({ name = 'kt-counter', version = 1 } = {}) {
     events: {
       Create: any, Add: (p) => { if (!Number.isInteger(p?.n)) throw new Error('n must be an integer'); return p; },
       Explode: any, Flaky: any, Swallow: any, Sneaky: any, Lock: any, Send: any, Work: any,
-      Arm: any, Tick: any, Admit: any, Close: any, Shout: any,
+      Arm: any, Tick: any, Admit: any, Close: any, Shout: any, Cancel: any,
     },
     create: ['Create'],
     terminal: ['closed'],
@@ -39,6 +39,7 @@ function counter({ name = 'kt-counter', version = 1 } = {}) {
     authorize: {
       Create: () => ok(), Add: () => ok(), Explode: () => ok(), Flaky: () => ok(), Swallow: () => ok(),
       Sneaky: () => ok(), Lock: () => ok(), Send: () => ok(), Work: () => ok(), Arm: () => ok(), Close: () => ok(), Shout: () => ok(),
+      Cancel: () => ok(),
       Tick: (e) => (e.source.kind === 'timer' ? ok() : reject('timer_only')),
       Admit: (e, f) => (f.admission ? ok() : reject('admission_off')),
     },
@@ -73,6 +74,7 @@ function counter({ name = 'kt-counter', version = 1 } = {}) {
             })),
           }),
         },
+        Cancel: { to: (s, e) => ({ ...same(s, {}), cancel: e.payload.keys.map((key) => ({ kind: 'kt.echo', key })) }) },
         WorkSucceeded: {
           guard: (s, e) => (e.payload.workKey === s.data.expect ? ok() : reject('stale_result')),
           to: (s, e) => same(s, { results: [...s.data.results, ['ok', e.payload.workKey, e.payload.result]] }),
@@ -628,9 +630,13 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
     // One finishes its step whatever the signal says (a deploy); one gives up on it.
     handlers['k7s-done'] = async () => { started.add('done'); await gate; return { finished: true }; };
     handlers['k7s-quit'] = async (ctx) => {
-      if (ctx.attempt > 1) return { resumed: true };
+      if (ctx.attempt > 1) return { resumed: ctx.resumeFrom };
       started.add('quit');
-      await new Promise((resolve, reject) => ctx.signal.addEventListener('abort', () => reject(ctx.signal.reason), { once: true }));
+      await new Promise((resolve) => ctx.signal.addEventListener('abort', resolve, { once: true }));
+      // The step it was in had done its part when the stop came: kept, under
+      // the lease this process still holds, before it gives up.
+      await ctx.checkpoint({ step: 'done before the stop' });
+      throw ctx.signal.reason;
     };
     await route('k7s', 'Work', { keys: ['k7s-done', 'k7s-quit'], workKey: 'k7s-done' });
     await rt.drain();
@@ -643,13 +649,74 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
     const items = new Map((await pool.query(`SELECT work_key, status FROM wf_work WHERE work_key LIKE 'k7s-%'`)).rows.map((w) => [w.work_key, w.status]));
     assert.equal(items.get('k7s-done'), 'reported', 'its result is kept, not run again after the lease');
     assert.equal(items.get('k7s-quit'), 'running', 'nothing reported; the next claim resumes it');
+    const { rows: [kept] } = await pool.query(`SELECT checkpoint FROM wf_work WHERE work_key = 'k7s-quit'`);
+    assert.deepEqual(kept.checkpoint, { step: 'done before the stop' }, 'a stopping process still checkpoints under its lease');
+    // The stopping process gave its lease up: the next process need not wait it out.
+    const { rows: [quit] } = await pool.query(`SELECT lease_until <= now() AS given_up FROM wf_work WHERE work_key = 'k7s-quit'`);
+    assert.equal(quit.given_up, true, 'a stopped item\'s lease is given up at once');
     await rt.drain();
     assert.deepEqual((await inst('k7s')).data.results.map((x) => x.slice(0, 2)), [['ok', 'k7s-done']]);
-    // Its lease lapses and the next claim finishes it, so no later test meets it.
-    await sleep(700);
+    // The next claim finishes it, so no later test meets it.
     await rt.runServices();
     await rt.drain();
     assert.equal((await pool.query(`SELECT status FROM wf_work WHERE work_key = 'k7s-quit'`)).rows[0].status, 'settled');
+  });
+
+  await t.test('K7 a resumable item\'s lost attempts are not its tries; errors are, and lost ones are bounded', async () => {
+    const resumable = { ...echo, resumable: true, maxLostAttempts: 3 };
+    const gone = (ctx) => new Promise((resolve, reject) => {
+      if (ctx.signal.aborted) { reject(ctx.signal.reason); return; }
+      ctx.signal.addEventListener('abort', () => reject(ctx.signal.reason), { once: true });
+    });
+    const r = make({ services: { 'kt.echo': resumable } });
+    await create('k7r');
+    const seen = [];
+    handlers['k7r-w'] = async (ctx) => {
+      seen.push({ attempt: ctx.attempt, lost: ctx.lostAttempts, resumeFrom: ctx.resumeFrom });
+      await ctx.checkpoint({ step: ctx.attempt });
+      // Its process goes (a restart): the lease lapses and the handler gives up on its signal.
+      if (ctx.attempt <= 3) await gone(ctx);
+      return { finished: ctx.attempt };
+    };
+    await route('k7r', 'Work', { workKey: 'k7r-w' });
+    await rt.drain();
+    for (let i = 0; i < 3; i++) {
+      // As the service loop does: claim again until a slot is free and the item is due.
+      while (seen.length < i + 1) { void r.runServices(); await sleep(50); }
+      await pool.query(`UPDATE wf_work SET lease_until = now() - interval '1 second' WHERE work_key = 'k7r-w'`);
+    }
+    // Three lost attempts and maxAttempts 2: a plain handler would be exhausted by now.
+    while ((await pool.query(`SELECT status FROM wf_work WHERE work_key = 'k7r-w'`)).rows[0].status === 'running') {
+      await r.runServices();
+      await sleep(50);
+    }
+    let item = (await pool.query(`SELECT * FROM wf_work WHERE work_key = 'k7r-w'`)).rows[0];
+    assert.equal(item.status, 'reported');
+    assert.equal(item.attempt_count, 4);
+    assert.equal(item.lost_attempts, 3);
+    assert.deepEqual(seen.map((x) => x.lost), [0, 1, 2, 3]);
+    assert.deepEqual(seen.map((x) => x.resumeFrom), [null, { step: 1 }, { step: 2 }, { step: 3 }]);
+    await rt.drain();
+    assert.deepEqual((await inst('k7r')).data.results.map((x) => x.slice(0, 2)), [['ok', 'k7r-w']]);
+
+    // A handler that keeps taking its process down is still bounded.
+    await create('k7x');
+    let tries = 0;
+    handlers['k7x-w'] = async (ctx) => { tries += 1; await gone(ctx); };
+    await route('k7x', 'Work', { workKey: 'k7x-w' });
+    await rt.drain();
+    for (let i = 0; i < 4; i++) {
+      while (tries < i + 1) { void r.runServices(); await sleep(50); }
+      await pool.query(`UPDATE wf_work SET lease_until = now() - interval '1 second' WHERE work_key = 'k7x-w'`);
+    }
+    while ((await pool.query(`SELECT status FROM wf_work WHERE work_key = 'k7x-w'`)).rows[0].status === 'running') {
+      await r.runServices();
+      await sleep(50);
+    }
+    await rt.drain();
+    item = (await pool.query(`SELECT * FROM wf_work WHERE work_key = 'k7x-w'`)).rows[0];
+    assert.equal(item.status, 'settled');
+    assert.deepEqual((await inst('k7x')).data.results.map((x) => x.slice(0, 2)), [['exhausted', 'k7x-w']]);
   });
 
   await t.test('K7 a work item that continues an earlier one starts from its checkpoint', async () => {
@@ -670,6 +737,66 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
     await rt.runServices();
     assert.deepEqual(seen.get('k7c-2'), { closed: true, commented: true }, 'the continuing item resumes');
     assert.equal(seen.get('k7c-3'), null, 'an item that names nothing starts fresh');
+  });
+
+  await t.test('K18 cancelled work never reports: a queued item never runs, a running one aborts', async () => {
+    await create('k18');
+    let started;
+    const running = new Promise((r) => { started = r; });
+    let aborted = false;
+    handlers['k18-run'] = async (ctx) => {
+      started();
+      while (!ctx.signal.aborted) await sleep(20);
+      aborted = true;
+      return { late: true };
+    };
+    await route('k18', 'Work', { workKey: 'k18-run' });
+    await rt.drain();
+    const run = rt.runServices();
+    await running;
+    await route('k18', 'Work', { workKey: 'k18-q' });
+    const cancel = await route('k18', 'Cancel', { keys: ['k18-run', 'k18-q', 'k18-none'] });
+    await rt.drain();
+    await run;
+    assert.ok(aborted, 'the running handler saw its signal abort');
+    const items = (await pool.query(
+      `SELECT work_key, status, result, claim_id, attempt_count FROM wf_work WHERE key = 'k18' ORDER BY work_key`)).rows;
+    assert.deepEqual(items.map((w) => [w.work_key, w.status, w.result, w.claim_id, w.attempt_count]),
+      [['k18-q', 'settled', { cancelled: true }, null, 0], ['k18-run', 'settled', { cancelled: true }, null, 1]]);
+    assert.equal(await rt.runServices(), 0, 'nothing is left to claim');
+    await rt.drain();
+    assert.equal((await pool.query(`SELECT count(*)::int AS n FROM wf_events WHERE key = 'k18' AND type LIKE 'Work%ed'`)).rows[0].n, 0);
+    const attempt = (await pool.query(
+      `SELECT a.outcome, a.error FROM wf_work_attempts a JOIN wf_work w ON w.id = a.work_id WHERE w.work_key = 'k18-run'`)).rows;
+    assert.deepEqual(attempt, [{ outcome: 'lost', error: { message: 'work cancelled', code: 'cancelled' } }]);
+    const emitted = (await event(cancel)).emitted.cancelled;
+    assert.deepEqual(emitted.map((c) => [c.key, c.id !== null]), [['k18-run', true], ['k18-q', true], ['k18-none', false]],
+      'the event records what it cancelled; an unknown key cancels nothing');
+  });
+
+  await t.test('K19 cancelling an item that already reported makes its result stale', async () => {
+    await create('k19');
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    let started;
+    const running = new Promise((r) => { started = r; });
+    handlers['k19-w'] = async () => { started(); await gate; return { built: true }; };
+    await route('k19', 'Work', { workKey: 'k19-w' });
+    await rt.drain();
+    const run = rt.runServices();
+    await running;
+    // The cancel is appended before the result, and applied after it reported.
+    await route('k19', 'Cancel', { keys: ['k19-w'] });
+    release();
+    await run;
+    assert.equal((await pool.query(`SELECT status FROM wf_work WHERE work_key = 'k19-w'`)).rows[0].status, 'reported');
+    await rt.drain();
+    const result = (await pool.query(
+      `SELECT result, reason FROM wf_events WHERE key = 'k19' AND type = 'WorkSucceeded'`)).rows;
+    assert.deepEqual(result, [{ result: 'rejected', reason: 'work_cancelled' }]);
+    const item = (await pool.query(`SELECT status, result FROM wf_work WHERE work_key = 'k19-w'`)).rows[0];
+    assert.deepEqual([item.status, item.result], ['settled', { outcome: 'succeeded', value: { built: true }, cancelled: true }]);
+    assert.deepEqual((await inst('k19')).data.results, [], 'the machine never saw the result');
   });
 
   await t.test('K8/K13 retries are bounded and reported; accepted work runs with admission off', async () => {

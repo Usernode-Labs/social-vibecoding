@@ -318,6 +318,11 @@ test('card: the tile carries no users badge and no status dot', () => {
   // The name keeps its two lines: the caption needs only one.
   assert.doesNotMatch(Home.renderAppCard(baseApp({ first_version_line: 'plan' })), /\[&_\.app-card-title\]/);
   assert.match(Home.renderAppCard(baseApp({ status: 'error', first_version_line: 'planning' })), />Error</);
+  assert.equal(Home.appView(baseApp({ first_version_line: 'building', first_version_phase: { key: 'building', since: null } })).statusLabel, 'Building');
+  // Run five: the stage the App tab names, in its short word; before the spec turn, Starting.
+  // Run seven: the spec's stages are "Planning" (the plan and first look are made at Make it).
+  assert.equal(Home.appView(baseApp({ first_version_line: 'building', first_version_phase: { key: 'drawing', since: null } })).statusLabel, 'Planning');
+  assert.equal(Home.appView(baseApp({ first_version_line: 'building', first_version_phase: { key: 'starting', since: null } })).statusLabel, 'Starting');
   assert.equal(Home.appView(baseApp({ first_version_line: 'building' })).statusLabel, 'Building');
   assert.equal(Home.appView(baseApp({ first_version_line: 'question' })).statusLabel, 'Question');
   assert.equal(Home.appView(baseApp({ first_version_line: 'ready' })).statusLabel, 'Ready to try');

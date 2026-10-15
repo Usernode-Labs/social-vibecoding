@@ -127,7 +127,7 @@ change follows it, and updates it when a request changes the look on purpose.
 
 The kit is in \`styles/tailwind-input.css\`: colour tokens with a light and
 a dark value (named in \`tailwind.config.js\`), and a few components
-(\`btn-primary\`, \`btn-secondary\`, \`field\`, \`list\` and \`list-row\`,
+(\`page-column\`, \`btn-primary\`, \`btn-secondary\`, \`field\`, \`list\`, \`list-row\`,
 \`card\`, \`section-label\`, \`skeleton\`, \`state-empty\`, \`state-error\`).
 Re-theme by changing the token values there, keeping every text pair at
 4.5:1 or more in both looks.
@@ -139,12 +139,17 @@ Re-theme by changing the token values there, keeping every text pair at
 - A field's label says what it is; its placeholder, if any, is an example
   that says so ("e.g. 5.0"), never a bare value that could pass for one
   already entered.
+- Each screen sits in \`page-column\`, one centred column on a wide window.
 - Every screen that loads data has honest loading, empty and error states.
   Never show the empty state while loading or after a failure; an error says
-  what failed, what still works, and offers Retry.
+  what failed, what still works, and offers Retry. Loading has the content's
+  own shape (its rows, with \`skeleton\` bars for their text).
 - Seed obviously fake staging demo data so the populated screen can be seen
   ("Staging mock data" in the platform conventions).
-- No cards in cards, no uppercase eyebrows, no emoji as icons.`;
+- No cards in cards, no uppercase eyebrows, no emoji as icons.
+- A header that shows the app's own mark shows the project's icon there
+  (the emoji in \`dapp.json\`'s \`icon\` block) or no mark at all: never an
+  empty tile, and never \`brand/icon.png\`, which the app does not serve.`;
 
 // The design kit's half of styles/tailwind-input.css, after the three
 // @tailwind lines. Part of the Tailwind build every new app shares (a
@@ -213,6 +218,14 @@ const DESIGN_KIT_CSS = `
  * text-small (tailwind.config.js), nothing in between.
  */
 @layer components {
+  /* Each screen's content in one centred column, <main
+     class="page-column">. A phone fills it; a wider window keeps it a
+     readable column instead of stretching rows and buttons across the
+     window. The screen's own padding goes inside it. */
+  .page-column {
+    @apply mx-auto w-full max-w-2xl;
+  }
+
   /* Buttons: one primary per screen, the rest secondary. At least 44 px
      each way, so they are easy to tap. */
   .btn-primary,
@@ -257,7 +270,9 @@ const DESIGN_KIT_CSS = `
   }
 
   /* The states of anything that loads data. Show exactly one at a time:
-     - loading: .skeleton shapes where the data will be, never a blank;
+     - loading: the content's own shape, never a blank: the same list and
+       rows at their height, with .skeleton bars where their text goes, so
+       nothing moves when the data arrives;
      - empty, only when the load WORKED and found nothing: a title, one
        sentence and the action that fills it;
      - error, only when the load FAILED: what failed, what still works,
@@ -994,11 +1009,14 @@ value = "build"
         {
           ...(about ? { description: about } : {}),
           // A starter's tile icon, else the first session card's, and the
-          // checks a starter's first proposal runs.
+          // checks a starter's first proposal runs. The empty starter ships
+          // an empty `tests` array, so the key its checks go under is there
+          // from the first commit: App bench run 191's builds wrote theirs
+          // under `checks`, which the platform never reads.
           ...(icon ? { icon } : {}),
           secrets: [],
           ...(governanceBlock ? { governance: governanceBlock } : {}),
-          ...(starter ? { tests: starter.tests } : {}),
+          tests: starter ? starter.tests : [],
         },
         null,
         2,
@@ -1513,6 +1531,9 @@ function escapeHtml(str) {
 module.exports = {
   getTemplateFiles,
   getConnectorScaffoldFiles,
+  // The Empty starter's design kit (its tokens and components), for the
+  // early first look's prompt (first-version-early-look.js).
+  DESIGN_KIT_CSS,
   getCanonicalRepoFile,
   canonicalRepoUrl,
   CANONICAL_REPO_PATH,

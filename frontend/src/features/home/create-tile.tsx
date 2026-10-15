@@ -154,24 +154,14 @@ export function CreateTile({ view, style }: { view: CreateTileView; style?: stri
 // drag-time `#app-list > .home-create-tile` rules in app.css are about the
 // grid's canvas, which this does not live in. `.home-create-btn:focus-visible`
 // still applies.
-//
-// #4936: while creation is open it is a FILLED primary button — the one
-// accent action on the "Show all N apps" line, small, in the blue accent —
-// not dim text next to that line's link. At the quota it stays quiet grey,
-// so it does not invite a tap that cannot complete. The button recipe is
-// the one `@/components/ui/button.tsx`'s `default` variant uses, written as
-// complete literals: Tailwind's extractor is a regex over source text.
 const COMPACT = 'home-create-btn group inline-flex shrink-0 items-center gap-1.5 rounded-lg '
-  + 'px-3 py-1.5 text-xs font-medium transition-colors';
-const COMPACT_INK_ON = 'bg-violet-600 text-white hover:bg-violet-500';
-const COMPACT_INK_OFF = 'text-zinc-400 hover:bg-zinc-100 dark:text-zinc-500 dark:hover:bg-zinc-800';
-// The tile's dashed face, shrunk to the line: same ring colours (FACE_OFF),
-// same plus, one size down — the locked entry's look. While creation is open
-// the entry is a filled button, so the plus is drawn plain, without the
-// dashed ring (a ring inside a filled button looks broken) and inherits the
-// button's white ink.
+  + 'px-3 py-1.5 text-xs font-medium transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-800';
+const COMPACT_INK_ON = 'text-zinc-600 group-hover:text-violet-700 dark:text-zinc-400 '
+  + 'dark:group-hover:text-violet-400';
+const COMPACT_INK_OFF = 'text-zinc-400 dark:text-zinc-500';
+// The tile's dashed face, shrunk to the line: same ring colours (FACE_ON /
+// FACE_OFF), same plus, one size down.
 const COMPACT_FACE = 'flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-dashed';
-const COMPACT_FACE_PLAIN = 'flex h-5 w-5 shrink-0 items-center justify-center rounded-md';
 
 export function CreateCompact({ view }: { view: CreateTileView }) {
   const t = useMessages('home');
@@ -193,7 +183,7 @@ export function CreateCompact({ view }: { view: CreateTileView }) {
         win().App?.showCreateModal?.();
       }}
     >
-      <span className={on ? COMPACT_FACE_PLAIN : `${COMPACT_FACE} ${FACE_OFF}`} aria-hidden="true">
+      <span className={`${COMPACT_FACE} ${on ? FACE_ON : FACE_OFF}`} aria-hidden="true">
         <PlusWideIcon className="h-3 w-3" strokeWidth="2" />
       </span>
       {t(CREATE_TILE_LABEL)}

@@ -552,8 +552,10 @@ Seed rules:
   `ON CONFLICT DO NOTHING`.
 - **Obviously fake.** Give seeded rows a consistent "Staging demo …"
   prefix so they can't be mistaken for real user content. (A first
-  version's `?demo=1` demo is labelled once instead: see "A first
-  version's populated demo" below.)
+  version's `?demo=1` demo, and any rows it seeds on boot, are
+  labelled once instead, on an element marked
+  `data-usernode-demo-note`: see "A first version's populated demo"
+  below.)
 - **Small.** A handful of rows — just enough for the testing steps.
   (A project's first version is the one exception: see "A first
   version's populated demo" below.)
@@ -578,12 +580,18 @@ seed rules change. Every later change keeps the rules above.
   screen and a half of the main screen at phone width (390×844), not
   a handful.
 - **Labelled once, not on every row.** The screen says "Staging demo"
-  once, plainly and visibly: a banner or a line at the top of the
-  screen, or the name of the list or collection the rows belong to.
+  once, plainly and visibly: a banner or a line of its own at the top
+  of the screen (never the app's name, nor in place of its tagline),
+  or the name of the list or collection the rows belong to.
   Each row needs no label of its own (a "Staging demo" pill or prefix
   on every row only clutters the screen), and this replaces the
   "Staging demo …" prefix above for these rows. The rows themselves
   stay obviously made up: no real people and no real private data.
+  The element that carries the label gets the attribute
+  `data-usernode-demo-note`: the banner or the line itself, or, in a
+  list's name, a `<span data-usernode-demo-note>` around the label's
+  own words, so the name stays. Homeroom hides that element where it
+  shows the app with its sample data under a label of its own.
 - **The viewer's own data too.** What the app keeps for a person
   (their items, choices, progress, saved things) is shown as the
   viewer's: a demo where only made-up people have done anything shows
@@ -609,6 +617,12 @@ the plain route keeps its test of the production-shaped answer. The
 viewer's demo rows must never be what makes a check of the form "has
 this user done X" pass (see the next section): keep such checks off
 demo rows, or add the rows to the responses rather than storing them.
+The same goes for a check of the plain route's empty state: a proposal's
+checks run at the same time, signed in as one account, on one staging
+database, so once the `?demo=1` check has stored that account's rows the
+plain route shows them too. Add the viewer's rows to the `?demo=1`
+responses without storing them, or store them marked as demo and leave
+those out of every response without `?demo=1`.
 
 ### Seeded data must not fabricate a signal your logic reads
 
@@ -1277,6 +1291,9 @@ Rules:
 - If both `emoji` and `image` are declared, the image wins; the emoji
   is the fallback should the image file fail validation (missing,
   oversized, wrong format).
+- **Inside the app.** A header that shows the app's own mark shows
+  this icon (its emoji) or no mark at all: never an empty tile.
+  `brand/icon.png` is not served, so the app cannot load it.
 - **Changing the icon is just a PR that edits this block** (and, for
   an image, commits the file). The change takes effect when the PR is
   voted in, merged, and redeployed — not before. Don't mutate the
@@ -3555,9 +3572,14 @@ locally inside the worker the same way a staging container does:
   to `/tailwind.css` shipped a blank production page for days. Only once
   the page itself is sound, suspect missing seed data — the local DB starts
   empty. Check the app's existing staging fixtures or
-  `?demo=1` route first. A sign-in screen means this browser is signed out;
-  use an existing documented fake staging account through the normal UI if
-  possible. Do not change auth code or seed passwords solely for this check.
+  `?demo=1` route first. For an app that verifies the platform's identity
+  token, the launch signs it in as Homeroom does: it prints a link that opens
+  the app signed in, and `usernode-run-inloop --link <route>` prints one for
+  any route (`usernode-run-checks` signs its checks in the same way). A page
+  opened without it is signed out. For an app with a sign-in of its own, a
+  sign-in screen means this browser is signed out; use an existing documented
+  fake staging account through the normal UI if possible. Do not change auth
+  code, mint a token or seed passwords solely for this check.
 - Keep it tight (a couple of launch→check→fix cycles, a minute or two).
   **If the app won't boot** — no local Postgres, a missing required
   secret, a crash on start — report the blocker. You can still finish

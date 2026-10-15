@@ -11,6 +11,7 @@ const mainWatch = require('./main-watch');
 const mergeLock = require('./merge-finalization-lock');
 const githubBudget = require('./github-budget');
 const { getPool } = require('../db/pool');
+const leaderTimers = require('./leader-timers');
 
 // main's tip through the drift poller's conditional read: this sweep runs
 // every four minutes over every app with a merged proposal, and an unchanged
@@ -115,17 +116,18 @@ async function recover(config, {
   return { scanned: rows.length, delivered, checks, held, done: Promise.all(runs) };
 }
 
+// A leader timer (services/leader-timers.js): a follow-up delivers a merge to
+// production, so none starts once shutdown has begun, and a sweep under way
+// is drained. Returns the stop function.
 function start(config, { intervalMs = 4 * 60 * 1000 } = {}) {
   let running = false;
-  const timer = setInterval(() => {
-    if (running) return;
+  return leaderTimers.every('merge-followups', () => {
+    if (running) return undefined;
     running = true;
-    recover(config).catch((err) => {
+    return recover(config).catch((err) => {
       log.warn('merge-recovery', 'Follow-up sweep failed', { err: err.message });
     }).finally(() => { running = false; });
   }, intervalMs);
-  timer.unref?.();
-  return () => clearInterval(timer);
 }
 
 module.exports = { recover, start };

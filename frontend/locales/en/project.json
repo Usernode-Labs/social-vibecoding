@@ -531,6 +531,10 @@
     "text": "{{count}} since your last visit",
     "description": "Beside the \"New for you\" heading on the Workshop tab of a project's page: how many rows the card holds. {{count}} is that number."
   },
+  "workshop.fresh.markAllSeen": {
+    "text": "Mark all seen",
+    "description": "Button beside the \"New for you\" heading on the Workshop tab of a project's page: marks everything new since the viewer's last visit as seen, which empties the card."
+  },
   "workshop.fresh.buildIt": {
     "text": "Build it",
     "description": "Button on a new request's row in the \"New for you\" card on the Workshop tab of a project's page: starts building it, by asking Homeroom bot or with the viewer's own coding agent, whichever the request's own page offers."
@@ -1403,6 +1407,26 @@
     "text": "See the plan",
     "description": "Quiet link on the first-version card of a project's Hub, for a member who did not start the project: opens the plan for the first version to read, without being able to answer it."
   },
+  "hub.firstLook.kicker": {
+    "text": "First look",
+    "description": "Small label in capitals at the top of a card on a project's Hub, shown to the person who started the project while its first version is being built, beside a small picture of the app's main screen that the assistant called Homeroom bot drew before building it. \"Look\" is a noun: a first view of the app."
+  },
+  "hub.firstLook.title": {
+    "text": "Here's what you're making",
+    "description": "Title of the first-look card on a project's Hub, shown to the person who started the project while its first version is being built, beside a small picture of the app's main screen that Homeroom bot drew from their answers."
+  },
+  "hub.firstLook.text": {
+    "text": "Drawn from your answers. We'll tell you when the working app is live.",
+    "description": "Text of the first-look card on a project's Hub, under its title: the picture beside it was drawn from the answers the person gave when they made the project, the real app is still being built, and they will be told once it is published (\"live\")."
+  },
+  "hub.firstLook.watch": {
+    "text": "Watch Homeroom bot build it",
+    "description": "Button on the first-look card of a project's Hub: opens the project's App tab, where the app can be seen taking shape while the assistant called Homeroom bot builds it. \"It\" is the app; Homeroom bot is a name."
+  },
+  "hub.firstLook.alt": {
+    "text": "The first look at {{app}}'s main screen",
+    "description": "Description, for screen readers, of the small picture on the first-look card of a project's Hub: a drawing of the app's main screen, made before the app was built. {{app}} is the project's name."
+  },
   "hub.needs.title": {
     "text": "Needs you",
     "description": "Heading of the card on a project's Hub that leads to the Needs you tab: the proposals waiting for this person's vote."
@@ -2239,6 +2263,14 @@
     "text": "No replies yet",
     "description": "Line under a change, on its page, when nobody has replied to it."
   },
+  "topic.change.stream.conversationOn": {
+    "text": "Conversation lives on <0>#{{number}}</0>",
+    "description": "Line under a change, on its page, when the change was built for a request and has no replies of its own: the conversation about the change is on that request's page instead. <0> is the link to the request, shown as its number; {{number}} is that number. Nothing follows the link on the line."
+  },
+  "topic.change.stream.moreConversationOn": {
+    "text": "More of the conversation is on <0>#{{number}}</0>",
+    "description": "Line above the \"N replies\" row on a change's page, when the change was built for a request and also has replies of its own: the fuller conversation is on that request's page. <0> is the link to the request, shown as its number; {{number}} is that number."
+  },
   "topic.change.stream.loading": {
     "text": "Loading replies…",
     "description": "Line under a change, on its page, while the replies to it are being fetched."
@@ -2344,8 +2376,8 @@
     "description": "Accessible name of the row on a change's page, under its summary, that names the requests (filed issues) the change is meant to resolve."
   },
   "topic.requests.addresses": {
-    "text": "Addresses",
-    "description": "Label at the start of the row on a change's page that names the requests it resolves: the first request follows it as a chip, with a \"+N more\" button when there are others. A verb in the third person: this change addresses these requests. Not postal addresses."
+    "text": "Built for",
+    "description": "Label at the start of the row on a change's page that names the requests (filed issues) the change was built for: the first request follows it as a chip, with a \"+N more\" button when there are others."
   },
   "topic.requests.more_one": {
     "text": "+{{count}} more",

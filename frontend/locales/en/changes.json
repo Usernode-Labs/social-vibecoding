@@ -93,7 +93,11 @@
   },
   "firstVersion.opensWhenReady": {
     "text": "It opens here when it’s ready.",
-    "description": "Line under a new project's card on its App tab while the first version is being built. \"It\" is the app."
+    "description": "Line under a new project's card on its App tab while the first version is being built, for everyone but the person who started the project. \"It\" is the app."
+  },
+  "firstVersion.notifyWhenLive": {
+    "text": "We’ll notify you when it’s live",
+    "description": "Line beside a small check under a new project's card on its App tab, for the person who started the project, while its first version is being made: a promise that Homeroom will send them a notification once the app is live. \"It\" is the app; \"live\" means published and running for everyone."
   },
   "firstVersion.tryFromChat": {
     "text": "Try it from your chat.",
@@ -8186,6 +8190,14 @@
   "page.thread.shareToDiscuss": {
     "text": "Share this change to start a discussion.",
     "description": "Notice in place of the message box at the bottom of a person's own change that is not shared with the project's members yet. \"Share\" is a verb; \"change\" is a noun."
+  },
+  "page.thread.onlyYouLinked": {
+    "text": "Only you can see this change. Its conversation so far is on the request.",
+    "description": "Shown where the replies would be on a person's own change that they have not shared with the project's members yet, when the change was built for a request: the request's page is where its conversation is. \"Change\" is a noun; \"request\" is a filed issue."
+  },
+  "page.thread.shareToDiscussLinked": {
+    "text": "Share this change to discuss it here. Until then, reply on the request.",
+    "description": "Notice in place of the message box at the bottom of a person's own change that is not shared with the project's members yet, when the change was built for a request: sharing opens the discussion here; until then people reply on the request. \"Share\" is a verb; \"request\" is a filed issue."
   },
   "page.thread.replyPlaceholder": {
     "text": "Reply…",

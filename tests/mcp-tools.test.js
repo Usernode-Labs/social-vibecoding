@@ -2797,6 +2797,9 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     // one registered only for a full platform admin, and every route behind
     // them (routes/bench-studio.js) refuses anybody else.
     'cancel_bench_trial',
+    // Before & after shots evals (routes/shots-evals.js): full platform admins
+    // only, like the studio and the bot's configurations.
+    'cancel_shots_eval',
     'claim_request',
     // #4266. Puts away one of the user's own unsubmitted work orders, freeing
     // its slot; list_my_work_orders, below, is the list it is chosen from.
@@ -2804,7 +2807,7 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     'create_bench_context_pack', 'create_request',
     // Test accounts for first-run testing (create_test_account,
     // create_test_phone_sign_in, send_test_release_email, list_test_accounts,
-    // retire_test_account):
+    // retire_test_account, get_run_report):
     // registered only for a full platform admin, and every route behind them
     // refuses anybody else.
     'create_test_account', 'create_test_phone_sign_in',
@@ -2817,6 +2820,8 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     // #3654. One benchmark run's results, as aggregates only.
     'get_bench_run',
     'get_bench_studio', 'get_bench_studio_run', 'get_bench_suite', 'get_bench_trial',
+    // A benchmark trial's whole transcript, a page at a time (bench_trial_lines).
+    'get_bench_trial_transcript',
     // The Homeroom bot's first-version configurations (routes/bot-configs.js):
     // the next blind pair to pick. Full platform admins only, like the rest.
     'get_bot_config_pair',
@@ -2838,6 +2843,10 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     'get_message',
     'get_platform_build', 'get_platform_conventions', 'get_proposal',
     'get_recent_shots', 'get_request',
+    // A test project's run report (services/run-report.js), beside the
+    // test-account tools: full platform admins only, like them.
+    'get_run_report',
+    'get_shots_eval', 'get_shots_eval_pair', 'get_shots_eval_shots',
     // Specs on a request (services/request-specs.js): reading one, and the
     // platform's own format for writing one. post_spec, below, posts it.
     'get_spec', 'get_spec_format', 'keep_bench_trial',
@@ -2848,13 +2857,13 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     'label_bench_task',
     // #3654. Running the benchmark (launch_bench_run, list_bench_runs, with
     // get_bench_run and cancel_bench_run above): the same full-admin gate.
-    'launch_bench_run', 'launch_bench_studio',
+    'launch_bench_run', 'launch_bench_studio', 'launch_shots_eval',
     'list_apps', 'list_bench_context_packs', 'list_bench_grading_queue', 'list_bench_runs',
     'list_bench_suites', 'list_bench_trials', 'list_bot_configs',
     'list_my_proposals',
     // #4266. Exactly the work orders prepare_work's open-work-order cap counts.
     'list_my_work_orders',
-    'list_recent_shots', 'list_requests', 'list_test_accounts',
+    'list_recent_shots', 'list_requests', 'list_shots_configs', 'list_shots_evals', 'list_test_accounts',
     // #1405. They write a row, but only into the CALLER'S OWN notification
     // feed — see the allow-rule reasoning in services/mcp-connect-constants.js
     // for why that is a different category from the acting tools below.
@@ -2881,13 +2890,13 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     'retire_test_account',
     // The configurations' writes: a version saved, a role set, a scope's
     // side-build budget set, a pick.
-    'save_bot_config',
+    'save_bot_config', 'save_shots_config',
     // The waitlist's "you're in" mail sent to a test address: full platform
     // admins only, like the other test-account tools.
     'send_test_release_email',
     'set_bot_config_budget', 'set_bot_config_role',
     'start_change',
-    'start_platform_build', 'submit_bench_grade', 'submit_bench_reference', 'submit_bot_config_pick', 'submit_platform_build', 'submit_work',
+    'start_platform_build', 'submit_bench_grade', 'submit_bench_reference', 'submit_bot_config_pick', 'submit_platform_build', 'submit_shots_eval_pick', 'submit_work',
     'sync_change',
     'update_proposal_description', 'update_proposal_issues', 'whoami',
     'withdraw_change',
@@ -3095,19 +3104,20 @@ test('ACTING_TOOLS names every user-directed action, and every one is a write', 
   // out of it would leak into the read-only globs.
   assert.deepEqual([...tools.ACTING_TOOLS].sort(), [
     'add_bench_task',
-    'cancel_bench_run', 'cancel_bench_trial',
+    'cancel_bench_run', 'cancel_bench_trial', 'cancel_shots_eval',
     'close_work_order',
     'create_bench_context_pack', 'create_request', 'create_test_account', 'create_test_phone_sign_in',
     'demo_mode', 'demo_promote', 'demo_propose', 'demo_reset', 'demo_vote',
     'deploy_bench_preview', 'edit_bench_task', 'keep_bench_trial',
-    'label_bench_task', 'launch_bench_run', 'launch_bench_studio',
+    'label_bench_task', 'launch_bench_run', 'launch_bench_studio', 'launch_shots_eval',
     'post_message', 'post_spec', 'prepare_work', 'promote_change', 'propose_close_request',
     'rate_homeroom_bot_run', 'recheck_change', 'rerun_bench_trial',
     'retire_test_account',
     // The Homeroom bot's configurations: full admins only.
-    'save_bot_config', 'send_test_release_email', 'set_bot_config_budget', 'set_bot_config_role', 'start_change',
+    // Before & after shots evals: full admins only.
+    'save_bot_config', 'save_shots_config', 'send_test_release_email', 'set_bot_config_budget', 'set_bot_config_role', 'start_change',
     'start_platform_build', 'submit_bench_grade', 'submit_bench_reference', 'submit_bot_config_pick',
-    'submit_platform_build', 'submit_work', 'sync_change',
+    'submit_platform_build', 'submit_shots_eval_pick', 'submit_work', 'sync_change',
     'update_proposal_description', 'update_proposal_issues', 'withdraw_change',
   ]);
   for (const name of tools.ACTING_TOOLS) {

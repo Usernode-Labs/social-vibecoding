@@ -80,6 +80,7 @@ import { TourFirstLook } from './first-look';
 import { type Made, type MakeEntry, MakeScreen } from './make';
 import { FeaturedCard } from './sketch-card';
 import { MadeScreen, madeAppOf, madeAppUrl } from './made';
+import { noteMoment } from './made-moments';
 import { APP_MENU, BOTTOM_BARS, type FirstVersionStage, invitedSteps, lookAroundSteps, makerSteps, privateSteps, type TourScreen, type TourStep } from './tour-steps';
 import { noteFirstSessionVisit, setTourRunning } from './tour-running';
 import { appReady, tileSettled, TOUR_WAIT_MAX_MS, WAIT_CHECK_MS, WAIT_GRACE_MS, WAIT_POLL_MS } from './tour-wait';
@@ -493,6 +494,23 @@ export function footTop(bars: Box[], viewport: { width: number; height: number }
 }
 
 /**
+ * The surface a `{ clear }` step keeps its card off (./card-placement.ts
+ * clearOf), as the reader sees it: the first element it names that is on
+ * the page, or, on touch, the kit's sheet that presents it (native.js
+ * presentSheet lifts the menu into `.un-sheet`, whose grabber and rounded
+ * top sit above the menu's own box; ../home/tour/spotlight.ts panelBox
+ * measures the same surface). Null when none is drawn.
+ */
+export function surfaceBox(selectors: string, root: Pick<Document, 'querySelectorAll'> = document): Box | null {
+  for (const el of Array.from(root.querySelectorAll(selectors))) {
+    const surface = (typeof el.closest === 'function' ? el.closest('.un-sheet') : null) || el;
+    const r = surface.getBoundingClientRect();
+    if (r.width > 0 && r.height > 0) return { left: r.left, top: r.top, width: r.width, height: r.height };
+  }
+  return null;
+}
+
+/**
  * The coach card's position for a target box, as inline style
  * (./card-placement.ts does the arithmetic, over what this measures). It
  * never covers the tab bar, and it is always whole on the screen, on a
@@ -507,16 +525,24 @@ export function cardPlacement(
   const place = step.place;
   const above = place && typeof place === 'object' && 'above' in place ? document.querySelector(place.above) : null;
   const [below] = place && typeof place === 'object' && 'below' in place ? visibleBoxes(place.below) : [];
+  const clear = place && typeof place === 'object' && 'clear' in place ? surfaceBox(place.clear) : null;
   return cardPosition(box, place, viewport, {
     foot,
     aboveTop: above ? above.getBoundingClientRect().top : null,
     belowBottom: below ? below.top + below.height : null,
+    clear,
     pad: PAD,
   });
 }
 
-/** The tour over the live shell (see the header); exported so a test can draw its card. */
-export function Tour({ info, steps, onEnd, start = 0 }: { info: FirstSessionInfo; steps: TourStep[]; onEnd: () => void; start?: number }) {
+/**
+ * The tour over the live shell (see the header); exported so a test can draw
+ * its card. `moments`: the maker's tour after the made screen, whose start,
+ * cards and end are told to the server as they happen (./made-moments.ts).
+ */
+export function Tour({ info, steps, onEnd: endTour, start = 0, moments = false }: {
+  info: FirstSessionInfo; steps: TourStep[]; onEnd: () => void; start?: number; moments?: boolean;
+}) {
   const t = useMessages('onboarding');
   // A screenshot state may open it part-way (tourShot, below), on its own
   // screen; the tour itself always starts at its first card.
@@ -546,6 +572,25 @@ export function Tour({ info, steps, onEnd, start = 0 }: { info: FirstSessionInfo
   indexRef.current = index;
   const box = boxForStep(measured, index);
   const pressBox = pressForStep(measured, index);
+
+  // Newcomer run five (13 Oct 2026): the maker's tour, card by card, for the
+  // run report. Its end says on which card, and whether it was skipped.
+  const momentsRef = useRef(moments);
+  useEffect(() => {
+    if (momentsRef.current) noteMoment(info.slug, 'tour_started', { steps: steps.length });
+  }, []);
+  useEffect(() => {
+    if (momentsRef.current) noteMoment(info.slug, 'tour_step_shown', { step: index + 1, steps: steps.length });
+  }, [index]);
+  const ended = useRef(false);
+  const finish = useCallback((how: 'done' | 'skipped') => {
+    if (momentsRef.current && !ended.current) {
+      ended.current = true;
+      noteMoment(info.slug, 'tour_ended', { step: indexRef.current + 1, steps: steps.length, how });
+    }
+    endTour();
+  }, [info.slug, steps.length, endTour]);
+  const onEnd = useCallback(() => finish('done'), [finish]);
 
   // While it is up, the hub's first-version card and the App tab hold back
   // their "Review the plan" (./tour-running.ts): the tour asks for nothing
@@ -750,8 +795,8 @@ export function Tour({ info, steps, onEnd, start = 0 }: { info: FirstSessionInfo
 
   const skip = useCallback(() => {
     enterScreen(steps[steps.length - 1].screen, info.slug, info.conversationId);
-    onEnd();
-  }, [steps, info.slug, onEnd]);
+    finish('skipped');
+  }, [steps, info.slug, finish]);
 
   // A tap step rings the control that leads on: the whole cut-out, kept a
   // ring's width inside the screen, or its `press` within a wider cut-out.
@@ -1146,7 +1191,7 @@ export type Mode =
   // `entry` 'create' is the Create button's (see the header); none is the first session's.
   | { kind: 'make'; shot?: MakeShot; entry?: MakeEntry; startImport?: boolean }
   | { kind: 'made'; made: Made; entry?: MakeEntry }
-  | { kind: 'tour'; info: FirstSessionInfo; path: TourPath; start?: number };
+  | { kind: 'tour'; info: FirstSessionInfo; path: TourPath; start?: number; moments?: boolean };
 
 export type TourPath = 'invited' | 'maker' | 'look' | 'private';
 
@@ -1612,6 +1657,8 @@ export function FirstSession() {
         underHeader={fromCreate && underHeader}
         onContinue={(_skipped, firstVersion) => {
           const info = { slug: made.slug, name: made.name, iconEmoji: made.emoji, conversationId: made.conversationId, firstVersion };
+          // Run five: Invite people later, or the way on once the link is out (./made-moments.ts).
+          noteMoment(made.slug, _skipped ? 'invite_later_tapped' : 'continue_tapped');
           markSeen(made.slug);
           rememberCommunity(made.slug);
           // From Create: the project's own hub, where its first change is
@@ -1623,7 +1670,7 @@ export function FirstSession() {
             return;
           }
           enterScreen('home', made.slug);
-          setMode({ kind: 'tour', info, path: 'maker' });
+          setMode({ kind: 'tour', info, path: 'maker', moments: true });
         }}
         // The plan is answered in the chat with Homeroom bot: the first
         // session ends there, with no tour over it.
@@ -1658,6 +1705,6 @@ export function FirstSession() {
     );
   }
   if (mode.kind === 'held') return <WelcomeHeld />;
-  if (mode.kind === 'tour') return <Tour info={mode.info} steps={steps} onEnd={end} start={mode.start} />;
+  if (mode.kind === 'tour') return <Tour info={mode.info} steps={steps} onEnd={end} start={mode.start} moments={!!mode.moments} />;
   return null;
 }

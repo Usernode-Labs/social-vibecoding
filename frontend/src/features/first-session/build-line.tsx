@@ -70,16 +70,18 @@ export function soFarNote(since: string | null | undefined, now: number): string
  * phase: the phase's own words and how long it has run while the line says
  * it is being built; else none, and the line says its own words. `caption`
  * (the build's "Adding the tier rows") is the note while it builds, ahead of
- * the time.
+ * the time. `left` (run six, the App tab's "about 15 min left",
+ * ../app-frame/first-version-eta.ts) is said in place of the time so far
+ * when there is one.
  */
-export function phaseLine(line: BuildLineState | null, value: unknown, now: number, caption: string | null = null): { words: string | null; note: string | null } {
+export function phaseLine(line: BuildLineState | null, value: unknown, now: number, caption: string | null = null, left: string | null = null): { words: string | null; note: string | null } {
   const phase = line === 'building' ? (phaseOf(value) as FirstVersionPhase | null) : null;
   if (!phase) return { words: null, note: null };
-  const soFar = soFarNote(phase.since, now);
+  const time = left || soFarNote(phase.since, now);
   const adding = phase.key === 'building' && caption ? caption : null;
   return {
     words: phaseWords(phase),
-    note: adding && soFar ? translate('onboarding:buildLine.withNote', { line: adding, note: soFar }) : adding || soFar,
+    note: adding && time ? translate('onboarding:buildLine.withNote', { line: adding, note: time }) : adding || time,
   };
 }
 
@@ -107,7 +109,7 @@ export type ServerBuildLine = keyof typeof BUILD_LINE_WORDS;
 export type BuildLineState = ServerBuildLine | 'working';
 
 /** The same lines on a Home tile (./build-line-words.js). */
-export { BUILD_LINE_TILE_WORDS, buildLineTileClass, buildLineTileOf } from './build-line-words.js';
+export { BUILD_LINE_TILE_WORDS, PHASE_TILE_WORDS, buildLineTileClass, buildLineTileOf, buildLineTileWordsOf, phaseKeyOf } from './build-line-words.js';
 
 /** The line in an answer (`first_version.line`), or null for none or one this shell does not know. */
 export function buildLineOf(value: unknown): ServerBuildLine | null {
@@ -130,7 +132,7 @@ export function buildLineDone(state: BuildLineState): boolean {
  * `note`, after the words: how long it usually takes, where a screen says so
  * (#4392, Homeroom bot's thanks: "Building it · usually 10 to 25 min").
  * `words` (N4): the stage's own words in place of the line's, already in
- * the language on screen ("Drawing the screens" while it is `building`).
+ * the language on screen ("Working out the details" while it is `building`).
  */
 export function BuildLine({ state, note = null, words: own = null, className = '' }: {
   state: BuildLineState; note?: string | null; words?: string | null; className?: string;

@@ -572,9 +572,9 @@ test('a shadow build records a failed spec on its run, and the platform gets lon
     bot: BOT, claim: { id: 903, app_id: 9, issue_number: 15, build_note: 'x', build_spec_md: SPEC }, settings, deps,
   });
   assert.equal(passed.presetSpec, SPEC, 'a run whose spec a recovered spec turn kept builds from it (#3401)');
-  const link = queries.find((q) => /SET build_session_id = \$2, build_checkpoint = jsonb_build_object\('sessionId', \$2::int, 'step', 'session'[^]*WHERE id = \$1/.test(q.sql));
-  assert.deepEqual(link.params, [903, 6100], 'the session is linked to the run as soon as it exists, starting its checkpoint');
-  assert.equal(typeof passed.onStep, 'function', 'and each step it reaches is saved (homeroom-bot-checkpoint.js)');
+  const link = queries.find((q) => /^UPDATE homeroom_bot_runs SET build_session_id = \$2 WHERE id = \$1$/.test(q.sql));
+  assert.deepEqual(link.params, [903, 6100], 'the session is linked to the run as soon as it exists');
+  assert.equal(typeof passed.deps.durable?.once, 'function', 'and its steps run on the build\'s durable context (durable-steps.js)');
 
   assert.deepEqual(bot.buildBudgets(apps[10], {}, 60_000), { turnBudgetMs: 180_000, specBudgetMs: 3 * live.SPEC_TURN_MAX_MS });
   assert.deepEqual(bot.buildBudgets(APP, {}, 60_000), { turnBudgetMs: 60_000, specBudgetMs: live.SPEC_TURN_MAX_MS });

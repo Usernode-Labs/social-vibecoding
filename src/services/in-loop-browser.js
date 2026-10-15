@@ -96,8 +96,11 @@ const IN_LOOP_BROWSER_GUIDANCE = `- OPTIONAL in-loop browser (encouraged, NOT re
     mode against a FRESH, EMPTY local database — a real Postgres runs in
     this container and the \`inloop\` DB is recreated for each build turn —
     so seed any data your route needs in this same commit per the "Staging
-    mock data" convention. A protected route also needs an existing local
-    test sign-in; a login screen is not evidence that the changed route works.
+    mock data" convention. For an app that verifies the platform's identity
+    token, the launch signs the app in as Homeroom does and prints a link that
+    opens it signed in; \`usernode-run-inloop --link <route>\` prints one for
+    any route. A page opened without it is signed out, and a login screen is
+    not evidence that the changed route works.
   - A BLANK, unstyled or broken-looking page is a BUG until you have ruled
     the page itself out: read \`browser_console_messages\` and confirm every
     stylesheet and script loaded. Because this launch builds and serves the
@@ -108,10 +111,12 @@ const IN_LOOP_BROWSER_GUIDANCE = `- OPTIONAL in-loop browser (encouraged, NOT re
     production page for days. Only once the page itself is sound, suspect
     MISSING SEED DATA, not a bug — the local DB starts empty. Check the
     app's existing staging fixtures or
-    \`?demo=1\` route first. A sign-in screen means the browser is signed out.
-    Use the app's already documented fake staging account through its normal
-    sign-in flow if one exists. Do not edit product authentication or create a
-    new user or password solely to make this local visual check pass.
+    \`?demo=1\` route first. A sign-in screen means the browser is signed out:
+    open the launch's signed-in link, or, for an app with a sign-in of its
+    own, use its already documented fake staging account through its normal
+    sign-in flow if one exists. Do not edit product authentication, mint a
+    token or create a new user or password solely to make this local visual
+    check pass.
   - SELF-APP (social-vibecoding) only: it is a hash-routed SPA, so put the
     route after the \`#\` (e.g. \`http://127.0.0.1:$INLOOP_PORT/#/leaderboard\`)
     or the page just boots to the home feed.
@@ -148,11 +153,12 @@ const IN_LOOP_BROWSER_GUIDANCE = `- OPTIONAL in-loop browser (encouraged, NOT re
     the same navigation, console-error and
     wait-based selector/text assertions as staging. If \`dapp.json\` declares
     \`inLoopCheckAuth\`, the checker signs in once with that existing local
-    fixture and copies its browser session into each isolated check. The
-    Playwright MCP browser has a separate session; sign it in through the app
-    UI only if that works promptly. Staging uses a platform-issued capture
-    identity, so local checks with a different account are not proof of
-    identical account permissions.
+    fixture and copies its browser session into each isolated check;
+    otherwise, for an app the launch signed in, it signs each check in the
+    same way the launch's link does. The Playwright MCP browser has a separate
+    session: open the launch's signed-in link in it. Staging uses a
+    platform-issued capture identity, so local checks with a different
+    account are not proof of identical account permissions.
     No flags runs the whole declared suite (fine for small suites, slow for
     hundreds of checks).
     Attempt this when you touched \`dapp.json\` tests or changed a
@@ -177,6 +183,9 @@ const HOSTED_CLAUDE_IN_LOOP_BROWSER_GUIDANCE = `- Follow the complete "In-loop b
   - \`usernode-run-inloop\` builds the app and serves the platform's hosted
     assets as production does, so a blank page or a failed stylesheet or
     script there is a real bug. Never silence one with an empty response.
+  - For an app that verifies the platform's identity token, the launch signs
+    it in and prints a signed-in link (\`usernode-run-inloop --link <route>\`
+    prints one for any route). Open that, never mint a token of your own.
   - If you changed \`dapp.json\` tests, try to boot the app and run
     \`usernode-run-checks --changed\`. If you changed a screen covered by an
     unchanged check, use \`usernode-run-checks --filter <distinctive name or path>\`;

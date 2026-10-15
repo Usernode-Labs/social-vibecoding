@@ -484,11 +484,22 @@ async function setCapOverride(pool, slug, capBytesOrNull, deps = {}) {
 
 // ── Admin API payloads ────────────────────────────────────────────────
 
+// The leader's sweep runs on its timer; an admin's sweep runs where the
+// request landed. The newer of this process's and the leader's published
+// one (services/leader-status.js, docs/plans/web-and-conductor.md).
+async function newestSweep(pool) {
+  const published = await require('./leader-status').read(LAST_SWEEP_STATUS_KEY, pool);
+  const finished = (s) => String((s && s.finishedAt) || '');
+  return [state.lastSweep, published].filter(Boolean)
+    .sort((a, b) => finished(b).localeCompare(finished(a)))[0] || null;
+}
+const LAST_SWEEP_STATUS_KEY = 'app-storage-cap.sweep';
+
 async function adminPayload(pool, { now } = {}) {
   return {
     apps: await listApps(pool, { now }),
     defaults: config(),
-    lastSweep: state.lastSweep,
+    lastSweep: await newestSweep(pool),
   };
 }
 
@@ -558,6 +569,7 @@ module.exports = {
   adminPayload,
   demoAdminPayload,
   lastSweep,
+  LAST_SWEEP_STATUS_KEY,
   isStaging,
   DEFAULT_CAP_BYTES,
   DEFAULT_WARN_PERCENT,

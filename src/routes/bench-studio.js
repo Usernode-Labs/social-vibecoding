@@ -83,6 +83,7 @@ function benchStudioRoutes(config) {
     const out = await studio.launch(pool, config, {
       briefSet: b.briefSet, refs: b.refs, briefs: b.briefs, models: b.models, contextPackIds: b.contextPackIds,
       references: b.references, repeats: b.repeats, capUsd: b.capUsd, concurrency: b.concurrency, note: b.note,
+      sharedPlans: b.sharedPlans,
     }, { actorId: req.user.id });
     if (out.ok) log.info('bench', 'Studio run launched', { by: req.user.username, via, runId: out.run.id, trials: out.trials, capUsd: out.run.capUsd });
     return out;
@@ -251,6 +252,17 @@ function benchStudioRoutes(config) {
     const id = idParam(req.params.id);
     if (!id) return bad('Invalid trial id');
     return studio.trialDetail(pool, id, { images: req.query?.images === '1' });
+  }));
+  // A page of its transcript (bench_trial_lines), oldest first.
+  router.get('/api/bot-studio/trials/:id/transcript', requireAdminWrite, handler('Bench trial transcript (connector)', async (req) => {
+    const id = idParam(req.params.id);
+    if (!id) return bad('Invalid trial id');
+    const q = req.query || {};
+    return studio.transcriptOf(pool, id, {
+      step: typeof q.step === 'string' && q.step ? q.step : null,
+      after: q.after ? Number(q.after) : null,
+      limit: q.limit ? Number(q.limit) : undefined,
+    });
   }));
 
   // The Homeroom bot's own data, and a run's rating.

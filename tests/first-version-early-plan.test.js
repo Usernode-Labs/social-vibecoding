@@ -58,6 +58,33 @@ test('the reply is read as a triage verdict\'s plan is: bullets, at most two que
   assert.deepEqual(none.questions, []);
 });
 
+test('run five: the shapes a model sends for "a few lines" are forgiven; a missing field is not', () => {
+  // The plan as one string: a bullet a line, numbered or not.
+  for (const plan of ['- Make a poll\n- Everyone votes once\n\n- See who won', '1. Make a poll\r\n2) Everyone votes once\n3. See who won']) {
+    assert.deepEqual(fvPlan.parsePlanReply(JSON.stringify({ ...REPLY, plan })).bullets,
+      ['Make a poll', 'Everyone votes once', 'See who won'], plan);
+  }
+  // The build note as a list of lines, the ones that are not text left out.
+  const lines = fvPlan.parsePlanReply(JSON.stringify({ ...REPLY, build_note: ['One screen: the open polls.', 7, 'Its primary action is New poll.'] }));
+  assert.match(lines.buildNote, /^One screen: the open polls\.\nIts primary action is New poll\.\n\nAssumptions:\n- Votes are anonymous$/);
+  for (const field of ['plan', 'build_note']) {
+    assert.equal(fvPlan.parsePlanReply(JSON.stringify({ ...REPLY, [field]: undefined })), null, `no ${field}`);
+    assert.equal(fvPlan.usableAnswer({ ...REPLY, [field]: undefined }), false, `no ${field}`);
+  }
+  assert.equal(fvPlan.usableAnswer(REPLY), true);
+  assert.equal(fvPlan.usableAnswer({ ...REPLY, plan: 'Make a poll' }), true, 'one line is a plan of one');
+  // GLM is asked for three lines and a real note; Haiku's structured output
+  // is sent the schema without the bounds (tests/helper-model.test.js).
+  assert.equal(fvPlan.PLAN_SCHEMA.properties.plan.minItems, 3);
+  assert.equal(fvPlan.PLAN_SCHEMA.properties.build_note.minLength, 40);
+  // What a refused reply looked like, never what it said (the whole shape:
+  // tests/first-version-plan-shape.test.js).
+  const refused = fvPlan.replyShape(JSON.stringify({ plan: 'Polls for the club', build_note: [] }));
+  assert.deepEqual([refused.why, refused.keys], ['no_note', [
+    { key: 'plan', type: 'string', length: 18 }, { key: 'build_note', type: 'array', length: 0, items: [] }]]);
+  assert.deepEqual([fvPlan.replyShape('sorry').why, fvPlan.replyShape('sorry').chars], ['no_json', 5]);
+});
+
 test('the prompt: the description, its creator, its real people, a game starter and the language, with the triage\'s rules', () => {
   const prompt = fvPlan.planUserPrompt({
     name: 'Club Votes', brief: 'Polls for our running club', maker: { username: 'evan' }, locale: 'es',
@@ -77,6 +104,10 @@ test('the prompt: the description, its creator, its real people, a game starter 
     /light and a dark look/, /Sample names, dates and numbers are placeholders/, /no em dashes/]) {
     assert.match(fvPlan.PLAN_SYSTEM, rule);
   }
+  // App bench run 196 (Club Votes): a plan narrower than the description's
+  // own examples, kept by the spec, failed 8 of 15 blind-graded builds.
+  const flatPlan = fvPlan.PLAN_SYSTEM.replace(/\s+/g, ' ');
+  assert.match(flatPlan, /Kept to its core, never narrower than its words: it can do each example the description gives\. Where people choose or decide something \("which day", "which film"\), plan the options they pick between, written by whoever asks; plain yes or no only where the description asks for that\./);
   assert.deepEqual(fvPlan.PLAN_SCHEMA.required, ['plan', 'choices', 'build_note', 'assumptions']);
 });
 
@@ -100,6 +131,7 @@ test('the plan is asked of the configuration\'s triage model through the helper 
   assert.equal(made.plan.questions.length, 2);
   assert.equal(calls[0].model, fvPlan.PLAN_MODEL);
   assert.equal(calls[0].schema, fvPlan.PLAN_SCHEMA);
+  assert.equal(calls[0].validate, fvPlan.usableAnswer, 'a GLM answer the parse refuses goes to Haiku');
   assert.deepEqual(spent, [[7, 0.4]]);
   // Too slow: no plan, and the triage plans it.
   const slow = await fvPlan.makePlan(pool, {
@@ -112,6 +144,7 @@ test('the plan is asked of the configuration\'s triage model through the helper 
     deps: { ...deps, llm: { ...deps.llm, async generateFirstVersionPlan() { return { text: 'sorry', usage: null }; } } },
   });
   assert.deepEqual([unusable.plan, unusable.error], [null, 'unusable_reply']);
+  assert.deepEqual([unusable.shape.why, unusable.shape.chars], ['no_json', 5], 'its shape, kept for the row and the log');
   // A configuration whose triage is not a helper model still asks the helper model.
   assert.equal(await fvPlan.planModel(pool, { botConfigs: { async currentVersion() { return { recipe: { models: { triage: 'anthropic/claude-opus-5.5' } } }; } } }), fvPlan.PLAN_MODEL);
   // The helper is registered as the sketch's is (llm.js helperMessage; tests/helper-model.test.js).
@@ -144,7 +177,9 @@ test('started once, only for a first version the bot builds, and never without a
   const route = read('src/routes/apps.js');
   assert.match(route, /homeroomBotDm\.startFirstVersion\(pool, config, \{\s+app: appRow, user: req\.user, brief: req\.body\.brief,[\s\S]*?earlyPlan: MAKE_ORIGINS\.has\(req\.body\.from\),/);
   assert.match(read('src/services/homeroom-bot-dm.js'),
-    /if \(bot && earlyPlan\) await require\('\.\/first-version-plan'\)\.startEarlyPlan\(pool, \{ app, user, brief: text \}\);/);
+    // And, since newcomer run six, the server's config and the bot, for the
+    // early first look drawn from the plan (tests/first-version-early-look.test.js).
+    /if \(bot && earlyPlan\) await require\('\.\/first-version-plan'\)\.startEarlyPlan\(pool, \{ app, user, brief: text, config, bot \}\);/);
 });
 
 test('a plan\'s state: pending until written (a stopped process\'s reads failed), decided once answered or when it asks nothing', () => {
@@ -193,8 +228,9 @@ test('the bot builds from the plan at Make it with no triage turn, and goes ahea
   assert.match(src, /if \(acted === PLAN_ACTED\.waiting \|\| acted === PLAN_ACTED\.unsent\) \{\s+const went = await goAheadIfDecided/);
   const dm = read('src/services/homeroom-bot-dm.js');
   assert.match(dm, /\.\.\.\(quiet \? \{ moment: null \} : \{\}\),/);
-  // Through its card when it has one: the same decision Build it makes.
-  assert.match(dm, /if \(action\) return decidePlanTap\(pool, \{ user: \{ id: userId \}, action, choice: 'build', answers: picks, deps \}\);/);
+  // Through its card when it has one: the same decision Build it makes,
+  // but with the plan's bullets never shown to its maker (run seven).
+  assert.match(dm, /if \(action\) return decidePlanTap\(pool, \{ user: \{ id: userId \}, action, choice: 'build', answers: picks, deps, planShown: false \}\);/);
   // And Build it in the chat notes the plan decided, for the steps.
   assert.match(dm, /await require\('\.\/first-version-plan'\)\.noteDecided\(pool, \{\s+appId: went\.appId, issueNumber: went\.issueNumber, answers: went\.chosen\.map\(\(c\) => c\.answer\),/);
 });
@@ -258,16 +294,95 @@ test('the made screen: the questions in place of the invite line until answered,
   assert.ok(ask < src.indexOf('data-first-session-hint='), 'in place of the invite line and its buttons');
   assert.match(src, /const asked = answered \? null : askedQuestions\(fv\);/);
   assert.match(src, /const res = await fetch\(answersUrl\(made\.slug\), \{\s+method: 'POST',/);
-  assert.match(src, /const line: BuildLineState \| null = answered && \(served === 'planning' \|\| served === 'plan'\) \? 'building' : served;/);
+  assert.match(src, /const line: BuildLineState \| null = answered && \(served === 'planning' \|\| served === 'plan'\) \? 'building'\s+: asked && served === 'plan' \? 'planning' : served;/);
   // Read as often as the setup while the plan is still being written.
-  assert.match(src, /const t = window\.setInterval\(read, settingUp \|\| planComing \? READY_POLL_MS : 10000\);/);
+  assert.match(src, /const t = window\.setInterval\(read, settingUp \|\| planComing \? READY_POLL_MS : lookWaits \? FIRST_LOOK_POLL_MS : 10000\);/);
   const { MadeScreen } = loadTsx(MADE);
   const html = renderToHtml(createElement(MadeScreen, {
     made: { slug: 'club-votes', name: 'Club Votes', emoji: '🗳️', description: null, example: null, conversationId: 12 },
     me: 'evan', onContinue() {}, onOpenChat() {},
   }));
   assert.doesNotMatch(html, /data-first-session-questions/, 'nothing asked before a plan is read');
+  // Run five: before the first read, no invite buttons to skip the questions
+  // with. Run six: one spinner over the line, and nothing else under way.
+  assert.match(html, /<div role="status" data-first-session-checking=""[^>]*><svg[^>]*animate-spin[^>]*>[\s\S]*?<\/svg><p>Checking whether Homeroom bot needs to ask you anything first\.<\/p><\/div>/);
+  assert.doesNotMatch(html, />Share invite<\/button>/);
+  assert.doesNotMatch(html, /Invite people later/);
+});
+
+// ── Newcomer run five (13 Oct 2026, Club Votes) ──
+
+test('run five, 1b: no invite buttons while the plan may still ask something, for at most a minute', () => {
+  const { checksForQuestions, PLAN_CHECK_MS, CHECKING_LINE, MadeScreen } = loadTsx(MADE);
+  assert.equal(PLAN_CHECK_MS, 60000);
+  assert.equal(message(CHECKING_LINE), 'Checking whether Homeroom bot needs to ask you anything first.', 'the approved canvas\'s words');
+  const bot = { makesPlan: true, read: true, waited: false };
+  assert.equal(checksForQuestions(null, { ...bot, read: false }), true, 'before the first read');
+  assert.equal(checksForQuestions({ early: { status: 'pending' } }, bot), true, 'its plan is being written');
+  assert.equal(checksForQuestions({ early: { status: 'ready', questions: QS, answered: false } }, bot), false, 'the questions take the place');
+  assert.equal(checksForQuestions({ early: { status: 'ready', questions: [], answered: false } }, bot), false, 'asks nothing: the invite buttons');
+  assert.equal(checksForQuestions({ step: 1, of: 7 }, bot), false, 'failed (no plan said): the invite buttons');
+  assert.equal(checksForQuestions(null, bot), false, 'read, and nothing to build: the invite buttons');
+  assert.equal(checksForQuestions({ early: { status: 'pending' } }, { ...bot, waited: true }), false, 'still pending after a minute: the invite buttons');
+  assert.equal(checksForQuestions(null, { ...bot, read: false, waited: true }), false);
+  assert.equal(checksForQuestions(null, { ...bot, makesPlan: false, read: false }), false, 'an import, a ready-made app, or nothing for the bot to build');
+  // A project the bot does not build opens on its invite buttons, as before.
+  const html = renderToHtml(createElement(MadeScreen, {
+    made: { slug: 'club-votes', name: 'Club Votes', emoji: null, description: null, example: null, conversationId: null },
+    me: 'evan', onContinue() {}, onOpenChat() {},
+  }));
   assert.match(html, />Share invite<\/button>/);
+  assert.doesNotMatch(html, /data-first-session-checking/);
+  const imported = renderToHtml(createElement(MadeScreen, {
+    made: { slug: 'club-votes', name: 'Club Votes', emoji: null, description: null, example: null, conversationId: 12, imported: true },
+    me: 'evan', onContinue() {}, onOpenChat() {},
+  }));
+  assert.match(imported, />Share invite<\/button>/);
+  // Wired: questions first, then the line, then the buttons.
+  const src = read(MADE);
+  const questions = src.indexOf('{asked && !stalled ? (');
+  const checking = src.indexOf(') : checking ? (');
+  assert.ok(questions > 0 && checking > questions && checking < src.indexOf('data-first-session-hint='));
+  assert.match(src, /const checking = !asked && !stalled && checksForQuestions\(fv, \{ makesPlan: botBuilds && !imported && !readyMade, read: readOnce, waited: planWaited \}\);/);
+  assert.match(src, /const t = window\.setTimeout\(\(\) => setPlanWaited\(true\), PLAN_CHECK_MS\);/);
+});
+
+test('run five, 2: while the questions are asked here, the line says the bot is planning it, not that the plan is ready to review', () => {
+  const src = read(MADE);
+  // The chat's card asks the same questions: the line does not send them there.
+  assert.match(src, /: asked && served === 'plan' \? 'planning' : served;/);
+  assert.match(src, /const plainLine = named\.words \|\| \(line === 'planning' && served === 'plan' \? translate\(BUILD_LINE_WORDS\.planning\)/);
+  assert.equal(message('onboarding:buildLine.planning'), 'Homeroom bot is planning it');
+  // Its card for the chat is not drawn over the questions either.
+  assert.match(src, /\{plan && !stalled && fromCreate && !asked \? <PlanWaitsCard/);
+});
+
+test('run five, 3: the lines over the questions hold their height whatever they say, so Submit stays under the finger', () => {
+  const { SetupProgress, SETUP_ROW, SETUP_NOTE } = loadTsx(MADE);
+  // The setup card: one height in every state, its title one line, its note at most two.
+  assert.match(SETUP_ROW, /(^| )h-\[84px\]( |$)/);
+  assert.match(SETUP_NOTE, /line-clamp-2/);
+  const heights = [
+    { step: 0, slow: false, waitedOut: false },
+    { step: 2, slow: false, waitedOut: false },
+    { step: 4, slow: true, waitedOut: true },
+    { step: 4, slow: false, waitedOut: false, done: { line: 'Homeroom bot is planning it', busy: true } },
+    { step: 4, slow: false, waitedOut: false, done: { line: 'A much longer line that would wrap onto a second line on a phone', busy: false } },
+  ].map((props) => {
+    const html = renderToHtml(createElement(SetupProgress, props));
+    assert.match(html, /<p class="truncate text-\[15px\] font-\[650\] leading-5">/, 'the title on one line');
+    assert.match(html, /<p class="line-clamp-2 text-\[13px\] leading-\[18px\]/, 'the note on at most two');
+    return html.match(/<div class="([^"]*rounded-\[20px\][^"]*)"/)[1];
+  });
+  assert.equal(new Set(heights).size, 1, 'the same box whatever it says');
+  // The plain card's build line: one line, a fixed height.
+  const src = read(MADE);
+  assert.match(src, /data-first-session-build-row="" className="mt-4 flex h-5 [^"]*"/);
+  assert.match(src, /<span data-first-session-build="" className="min-w-0 truncate">\{plainLine\}<\/span>/);
+  // Over a sketch, the build line is one line of a fixed least height (BuildLine).
+  const line = read('frontend/src/features/first-session/build-line.tsx');
+  assert.match(line, /className=\{`flex min-h-\[24px\] min-w-0 items-center gap-2 text-\[15px\] leading-5 /);
+  assert.match(line, /<span className="truncate">/);
 });
 
 test('the server says the bot builds it once its plan is decided, not that it plans it', async () => {
@@ -293,4 +408,8 @@ test('the server says the bot builds it once its plan is decided, not that it pl
   assert.deepEqual(asking.steps.map((s) => [s.key, s.state]), [['plan', 'now'], ['screens', 'next'], ['build', 'next'], ['check', 'next'], ['test', 'next'], ['live', 'next']]);
   // Answered while the project is still set up: the plan is done, the screens next in hand.
   assert.deepEqual(answered.steps.slice(0, 3).map((s) => [s.key, s.state]), [['plan', 'done'], ['screens', 'now'], ['build', 'next']]);
+  // Run five: and the build is starting, named so on every screen; nothing drawn yet.
+  assert.deepEqual(answered.phase, { key: 'starting', since: '2026-10-13T10:00:30.000Z' });
+  assert.equal(asksNothing.phase.key, 'starting');
+  assert.equal(asking.phase, undefined, 'not while its questions wait');
 });

@@ -52,7 +52,7 @@ test('plans, questions and talks, each the viewer\'s own, newest first', async (
   assert.deepEqual(pool.calls.map((c) => c.params), [
     [7, 5, waiting.MAX_EACH],
     [7, 5, waiting.MAX_EACH],
-    [7, 5, 3, waiting.TALK_DAYS, waiting.MAX_EACH],
+    [7, 5, 3, waiting.TALK_DAYS, waiting.MAX_EACH, waiting.BOT_HOLD_DAYS],
   ]);
 });
 
@@ -80,6 +80,22 @@ test('a talk needs both sides, recently, with nothing deleted or hidden, on an o
   assert.match(sql, /cs\.status IN \('active', 'paused', 'promoted', 'merging'\)/);
   assert.match(sql, /LIMIT \$5/);
   assert.equal(waiting.TALK_DAYS, 3);
+});
+
+test('a talk on a request the bot is reading, has queued or is building is not waiting on the viewer', () => {
+  const sql = waiting.TALKS_SQL;
+  // The whole exclusion sits behind the issue guard: session threads are
+  // unchanged.
+  assert.match(sql, /AND NOT \(t\.thread_type = 'issue' AND \(\s*EXISTS \(SELECT 1 FROM homeroom_bot_queue q\s*WHERE q\.app_id = \$1 AND q\.issue_number = t\.thread_ref\s*AND \(q\.started_at IS NOT NULL\s*OR \(q\.priority = 0 AND \(q\.held_until IS NULL OR q\.held_until <= NOW\(\)\)\)\)\)\s*OR EXISTS \(SELECT 1 FROM homeroom_bot_runs r\s*WHERE r\.app_id = \$1 AND r\.issue_number = t\.thread_ref\s*AND r\.mode = 'live' AND r\.verdict = 'ready' AND r\.build_ok IS NULL\s*AND r\.proposal_session_id IS NULL\s*AND \(r\.live_build_waiting_at IS NOT NULL OR r\.build_session_id IS NOT NULL\)\s*AND r\.created_at > NOW\(\) - make_interval\(days => \$6\)\)\)\)/);
+  // A held queue row waits: it matches neither reading of the queue.
+  assert.doesNotMatch(sql, /held_until > NOW\(\)|held_until IS NULL OR.*priority = 2/);
+  // A run waiting for Build it (awaiting_go_at, no build session) matches
+  // neither reading, so it still lists as a plan.
+  assert.doesNotMatch(sql, /awaiting_go_at/);
+  assert.equal(waiting.BOT_HOLD_DAYS, 7);
+  const window = read('src/services/homeroom-bot.js').match(/const ABANDONED_LIVE_WINDOW_DAYS = (\d+);/);
+  assert.ok(window, 'homeroom-bot.js declares ABANDONED_LIVE_WINDOW_DAYS');
+  assert.equal(Number(window[1]), waiting.BOT_HOLD_DAYS, 'BOT_HOLD_DAYS is the same window the bot abandons a live build after');
 });
 
 test('without the bot, or for the bot itself, there are no talks; a failed read is nothing waiting', async () => {

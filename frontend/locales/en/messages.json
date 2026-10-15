@@ -871,6 +871,34 @@
     "text": "I’ve started on it",
     "description": "Where a request stands, on the line under its title in a news row in the chat with Homeroom bot: the bot (speaking as I) started working on the request. Sentence case: it is a line of its own."
   },
+  "bot.final.live": {
+    "text": "Live",
+    "description": "How a finished request ended, on its one-line row in the chat with Homeroom bot (after a green check): its change is live."
+  },
+  "bot.final.goingLive": {
+    "text": "Going live",
+    "description": "The same, after a green check: its change was approved and is on its way live."
+  },
+  "bot.final.closed": {
+    "text": "Closed",
+    "description": "The same: its change was closed without going live."
+  },
+  "bot.final.person": {
+    "text": "Handed to a person",
+    "description": "How a finished request ended, on its one-line row in the chat with Homeroom bot (a person icon; read out and shown on hover): the bot stepped back and left it for a person, a decision it should not make or a change it could take no further."
+  },
+  "bot.final.held": {
+    "text": "Held back",
+    "description": "The same: the change was ready but held back by a limit, and nothing more came of it."
+  },
+  "bot.final.stopped": {
+    "text": "Stopped",
+    "description": "The same: the bot’s work on it stopped before it finished."
+  },
+  "bot.final.failed": {
+    "text": "Couldn’t build",
+    "description": "The same, after a red cross: the bot could not finish building it."
+  },
   "bot.news.answer": {
     "text": "Needs your answer",
     "description": "Where a request stands, on the line under its title in a news row in the chat with Homeroom bot: the bot asked the person a question about it. Sentence case: it is a line of its own."
@@ -923,12 +951,24 @@
     "text": "Asked for more detail",
     "description": "The same line when the bot's ask for more detail no longer waits on the person. Past tense; sentence case."
   },
+  "bot.news.past.ready": {
+    "text": "Was ready to try",
+    "description": "The same line when the change the bot built is no longer up for the person to try (it went live, was closed or was replaced). Past tense; sentence case."
+  },
+  "bot.news.finished_one": {
+    "text": "{{count}} finished",
+    "description": "A folded line in the chat with Homeroom bot standing for finished requests in a row, after their small status squares; a tap shows them. {{count}} is how many."
+  },
+  "bot.news.finished_other": {
+    "text": "{{count}} finished",
+    "description": "A folded line in the chat with Homeroom bot standing for finished requests in a row, after their small status squares; a tap shows them. {{count}} is how many."
+  },
   "bot.news.updates_one": {
-    "text": "· {{count}} update ›",
+    "text": "· {{count}} update",
     "description": "End of the news line for a request's card in the chat with Homeroom bot: how many messages its thread holds; a tap opens it. {{count}} is that number."
   },
   "bot.news.updates_other": {
-    "text": "· {{count}} updates ›",
+    "text": "· {{count}} updates",
     "description": "End of the news line for a request's card in the chat with Homeroom bot: how many messages its thread holds; a tap opens it. {{count}} is that number."
   },
   "bot.span.underMinute": {
@@ -1578,6 +1618,14 @@
   "bot.notify.turnOn": {
     "text": "Turn on notifications",
     "description": "Button shown when notifications are off for Homeroom on this phone: opens the phone's notification settings."
+  },
+  "bot.notify.liveOn": {
+    "text": "We’ll tell you when it’s live",
+    "description": "Switch under Homeroom bot's plan for a new project's first version, shown with a check while it is on (it starts on): the person is notified when the first version goes live. Tapping it turns it off."
+  },
+  "bot.notify.liveOff": {
+    "text": "Notify me when it’s live",
+    "description": "The same switch once the person turned it off: tapping it turns notifications for the first version going live back on."
   },
   "composer.attachLimit_one": {
     "text": "You can attach up to {{count}} file.",
@@ -3105,11 +3153,11 @@
   },
   "thread.loadingOlder": {
     "text": "Loading…",
-    "description": "Label of the \"Load earlier messages\" button while earlier messages load."
+    "description": "Line at the top of a conversation while earlier messages load after scrolling up."
   },
   "thread.loadEarlier": {
     "text": "Load earlier messages",
-    "description": "Button at the top of a conversation: fetches the messages before the ones shown."
+    "description": "Button at the top of a conversation, shown only after loading earlier messages failed: tries again."
   },
   "thread.loadingNewer": {
     "text": "Loading…",

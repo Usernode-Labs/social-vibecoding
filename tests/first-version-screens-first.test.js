@@ -175,9 +175,149 @@ test('the live build draws the first look from the saved screen, and from the wh
   assert.match(src, /onScreen: \(\{ n, markup, containerName \}\) => \{\s+if \(Number\(n\) !== 1\) return;\s+void firstVersionScreens\(\)\.renderSavedFirstLook\(\{/);
   assert.match(src, /onFirstLook: \(\{ specHtml, containerName \}\) => \(drewEarly \? false : firstVersionScreens\(\)\.renderFirstLook\(\{/);
   assert.match(src, /onFirstLook: null, onScreen: null,/, 'the retry drew none');
-  // A spec a restart caught gets its saved screens back off its worker too.
-  assert.match(src, /plan\.result = await live\.fillSavedScreens\(\{\s+fvScreens: firstVersionScreens\(\), screens: null, worker,\s+containerName: typeof worker\.workerRuntimeName === 'function' \? worker\.workerRuntimeName\(Number\(sessionId\)\) : null,/);
-  assert.ok(src.indexOf('plan.result = await live.fillSavedScreens(') < src.indexOf('const specRead = plan.mode === \'scout\''));
   const liveSrc = read('src/services/homeroom-bot-live.js');
   assert.match(liveSrc, /locale, onScreen,/);
+  // A spec a restart caught is followed by its durable turn, and its result
+  // gets its saved screens back off its worker as a spec seen through does.
+  const draft = liveSrc.slice(liveSrc.indexOf('async function draftSpec('), liveSrc.indexOf('\nasync function ', liveSrc.indexOf('async function draftSpec(') + 1));
+  const turnAt = draft.indexOf("durableTurn.runTurn(steps, 'spec', {");
+  const fillAt = draft.indexOf('await fillSavedScreens({ fvScreens, screens: savedScreens, worker, containerName, result: routed.result })');
+  assert.ok(turnAt > 0 && fillAt > turnAt, 'the saved screens are filled into whatever the turn resolved, followed or not');
+});
+
+// Newcomer run five (13 October 2026): the spec saved nothing and drew both
+// screens in its final answer, so the first look came 15 s after a spec of
+// 4 min 18 s. The instruction sat after the long HTML contract and the
+// screens brief, and an earlier PLAN MODE line told the spec to create
+// nothing. Now it follows the plan and the PLAN MODE paragraph, which names
+// `usernode-screen` as its one exception; and a spec that saves nothing is
+// warned about and counted, with how soon its first screen was saved when
+// it did, so the numbers say whether the prompt is enough.
+
+test('the screens-first instruction comes straight after the plan, before the format, and PLAN MODE excepts it', () => {
+  const prompt = live.specPrompt({ seed: 'S', buildNote: 'p', firstVersion: true, html: true });
+  const at = (needle) => {
+    const i = prompt.indexOf(needle);
+    assert.ok(i >= 0, `the prompt holds ${needle}`);
+    return i;
+  };
+  const first = at(live.FIRST_VERSION_SCREENS_FIRST);
+  assert.equal(prompt.indexOf(live.FIRST_VERSION_SCREENS_FIRST, first + 1), -1, 'said once');
+  assert.ok(at('You are running in PLAN MODE') < first, 'after the PLAN MODE paragraph');
+  assert.ok(at('The one exception is `usernode-screen`, below') < first);
+  assert.ok(first < at('The spec must be:'), 'before the spec\'s rules');
+  assert.ok(first < at('HTML SPEC FORMAT:'), 'before the long HTML contract');
+  assert.ok(first < at('FIRST VERSION SCREENS:'), 'before the screens brief');
+  assert.match(prompt, /discarded when it ends\.\nThe one exception is `usernode-screen`, below: it saves a screen you drew outside the repository, and you\nmust run it\.\n\nDRAW THE MAIN SCREEN FIRST\./);
+  assert.match(live.FIRST_VERSION_SCREENS_FIRST, /within your first few minutes, and before your final answer/);
+  const later = live.specPrompt({ seed: 'S', buildNote: 'p', html: true });
+  assert.doesNotMatch(later, /usernode-screen|exception is/, 'a later change is not told of it');
+  assert.match(later, /do not edit,\ncreate, delete, commit, or push anything;/);
+});
+
+test('the first screen is drawn without the staging label the demo wears', () => {
+  const { FIRST_VERSION_SCREENS_BRIEF } = require('../src/services/prompts');
+  assert.match(FIRST_VERSION_SCREENS_BRIEF, /The first is normally the main screen, populated with the demo data your Design subsection describes but drawn WITHOUT its "Staging demo" label/);
+  assert.match(FIRST_VERSION_SCREENS_BRIEF, /the Design subsection still says where the label goes, and the build adds it there/);
+  assert.doesNotMatch(FIRST_VERSION_SCREENS_BRIEF, /—/);
+});
+
+test('a missed first look is a warning, not info', () => {
+  const src = read('src/services/first-version-screens.js');
+  assert.match(src, /log\.warn\('first-version-screens', 'No first look from the spec\\'s screen'/);
+  assert.match(src, /log\.warn\('first-version-screens', 'Could not read a saved screen'/);
+  assert.doesNotMatch(src, /log\.info\(/);
+});
+
+function specDeps({ save }) {
+  return {
+    worker: {
+      async execInWorker(_id, { onProgress }) {
+        onProgress('Reading public/index.html');
+        if (save) onProgress('$ usernode-screen 1 <<\'SCREEN\'');
+        return { lastResultText: save ? SPEC : SPEC.replace('<template data-screen data-from="1"></template>', SCREEN) };
+      },
+      async runLiveScript(_c, _s, { args }) { return save && args[0].endsWith('/1.html') ? SCREEN : ''; },
+      async stopTurn() {},
+    },
+    sessions: {
+      async runCodexAttemptLoop({ dispatchOnce }) { return { result: await dispatchOnce({}), estimatedCostUsd: 0.4 }; },
+      async persistScoutPublication() { return { specVersion: 1 }; },
+    },
+    agentTurn: { async resolveCodexRuntimeContext() { return {}; } },
+    activeWorkers: new Set(),
+  };
+}
+
+async function runSpec({ save, firstVersion = true, html = true }) {
+  const log = require('../src/services/logger');
+  const realWarn = log.warn;
+  const warned = [];
+  const recorded = [];
+  log.warn = (component, message, detail) => { warned.push({ component, message, detail }); };
+  const pool = {
+    async query(sql, params) {
+      if (/INSERT INTO events/.test(String(sql))) recorded.push({ type: params[3], appId: params[1], sessionId: params[2], metadata: JSON.parse(params[4]) });
+      return { rows: [] };
+    },
+  };
+  try {
+    const spec = await live.draftSpec({
+      pool, config: html ? { htmlSpecApps: ['*'] } : {}, bot: { id: 1 }, session: { id: 6, app_id: 41, app_slug: 'club-votes', branch_name: 'b' }, containerName: 'w-6',
+      seed: 'seed', buildNote: 'note', turnBudgetMs: 60000, model: 'm', deps: specDeps({ save }), firstVersion,
+    });
+    return { spec, warned, recorded };
+  } finally {
+    log.warn = realWarn;
+  }
+}
+
+test('a first version\'s spec that saved no screen is warned about and counted', async () => {
+  const { spec, warned, recorded } = await runSpec({ save: false });
+  assert.equal(spec.ok, true, spec.error);
+  assert.ok(spec.specHtml.includes('<h2>Open polls</h2>'), 'drawn in full, as before');
+  const warning = warned.find((w) => /saved no screen/.test(w.message));
+  assert.ok(warning, 'warned');
+  assert.equal(warning.component, 'homeroom-bot');
+  assert.equal(warning.detail.sessionId, 6);
+  assert.equal(recorded.length, 1);
+  assert.equal(recorded[0].type, 'bot_spec_screens');
+  assert.equal(recorded[0].appId, 41);
+  assert.equal(recorded[0].sessionId, 6);
+  assert.equal(recorded[0].metadata.saved, 0);
+  assert.equal(recorded[0].metadata.firstSavedMs, null);
+  assert.equal(recorded[0].metadata.ok, true);
+  assert.equal(recorded[0].metadata.stopped, false);
+  assert.equal(typeof recorded[0].metadata.specMs, 'number');
+});
+
+test('a spec that saved its screen is counted with how soon, and not warned about; a later change or a markdown spec is not counted', async () => {
+  const { spec, warned, recorded } = await runSpec({ save: true });
+  assert.equal(spec.ok, true, spec.error);
+  assert.ok(!warned.some((w) => /saved no screen/.test(w.message)));
+  assert.equal(recorded.length, 1);
+  assert.equal(recorded[0].metadata.saved, 1);
+  assert.equal(typeof recorded[0].metadata.firstSavedMs, 'number');
+  assert.ok(recorded[0].metadata.firstSavedMs <= recorded[0].metadata.specMs);
+
+  const later = await runSpec({ save: false, firstVersion: false });
+  assert.ok(!later.warned.some((w) => /saved no screen/.test(w.message)));
+  assert.deepEqual(later.recorded, []);
+  const markdown = await runSpec({ save: false, html: false });
+  assert.ok(!markdown.warned.some((w) => /saved no screen/.test(w.message)), 'a markdown spec is never asked to save one');
+  assert.deepEqual(markdown.recorded, []);
+  const events = require('../src/services/events');
+  assert.equal(events.EVENT_TYPES.BOT_SPEC_SCREENS, 'bot_spec_screens');
+});
+
+test('the watcher says when the first screen was read', async () => {
+  let t = 1000;
+  const watch = fvs.screenWatcher({ delayMs: 1, read: async () => SCREEN, now: () => { t += 500; return t; } });
+  assert.equal(watch.firstSavedAt(), null);
+  watch('$ usernode-screen 1 <<\'SCREEN\'');
+  await watch.idle();
+  assert.equal(watch.firstSavedAt(), 1500);
+  watch('$ usernode-screen 2 <<\'SCREEN\'');
+  await watch.idle();
+  assert.equal(watch.firstSavedAt(), 1500, 'the first one only');
 });

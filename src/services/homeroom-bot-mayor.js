@@ -2129,14 +2129,30 @@ function defaultSchedule(work, ms) {
   return handle;
 }
 
-/** Ask the turn for `message` again, try `attempt`, after its delay. Never throws. */
+/**
+ * Ask the turn for `message` again, try `attempt`, after its delay. Never
+ * throws. The process marks the message as its own while it waits
+ * (services/processes.js 'dm_defer', a marker no drain waits for), and holds
+ * it while the try runs ('dm_answer', which a drain does): resumeDeferred
+ * elsewhere leaves either alone. A process that exits while it waits leaves
+ * the message to the leader's minute sweep.
+ */
 function scheduleDeferred(pool, config, args, attempt) {
   const schedule = args.deps?.schedule || defaultSchedule;
-  schedule(() => deferredTurn(pool, config, args, attempt).catch((err) => {
-    log.warn('homeroom-bot-mayor', 'A DM answer asked again failed', { userId: args.user?.id, attempt, err: err.message });
-    return null;
-  }), DEFER_DELAYS_MS[attempt - 1]);
+  const processes = require('./processes');
+  const id = args.message?.id;
+  const unmark = id != null ? processes.hold('dm_defer', id) : () => {};
+  schedule(() => {
+    const release = id != null ? processes.hold('dm_answer', id) : () => {};
+    unmark();
+    return deferredTurn(pool, config, args, attempt).catch((err) => {
+      log.warn('homeroom-bot-mayor', 'A DM answer asked again failed', { userId: args.user?.id, attempt, err: err.message });
+      return null;
+    }).finally(release);
+  }, DEFER_DELAYS_MS[attempt - 1]);
 }
+
+const DEFER_HOLD_KINDS = ['dm_defer', 'dm_answer'];
 
 /**
  * One later try at a message the model could not answer: its whole turn
@@ -2168,19 +2184,23 @@ async function deferredTurn(pool, config, { bot, user, conversationId, message, 
  * After a restart: the answers a process that has gone was to ask again. A
  * message whose newest turn said it would answer later ('deferred', or a
  * plain answer marked `later`) and has had fewer than every try is asked
- * again, soon. Called once by the leader as the bot starts
- * (homeroom-bot.js start). Never throws; resolves how many it picked up.
+ * again, soon, unless a live process still holds it (scheduleDeferred: a web
+ * process, which answers DMs and never leads, docs/plans/web-and-conductor.md,
+ * or the replaced leader finishing its work). Called by the leader as the
+ * bot starts (homeroom-bot.js start), and every minute after for what a
+ * process that died left (`minAgeSeconds`: a turn just written is not yet
+ * held). Never throws; resolves how many it picked up.
  */
-async function resumeDeferred(pool, config, deps = {}) {
+async function resumeDeferred(pool, config, deps = {}, { minAgeSeconds = 0 } = {}) {
   try {
     const bot = await dmModule(deps).botAccount(pool);
     if (!bot) return 0;
-    const { rows } = await pool.query(
+    const { rows: found } = await pool.query(
       `SELECT t.message_id, t.conversation_id, t.tries, u.id AS user_id, u.username,
               u.is_synthetic, u.has_platform_access, u.is_admin, u.private_member_since,
               m.content, m.reply_to_id
          FROM (
-           SELECT DISTINCT ON (message_id) message_id, conversation_id, user_id, fallback,
+           SELECT DISTINCT ON (message_id) message_id, conversation_id, user_id, fallback, created_at,
                   COUNT(*) OVER (PARTITION BY message_id)::int AS tries
              FROM homeroom_bot_dm_turns
             WHERE message_id IS NOT NULL AND created_at > NOW() - INTERVAL '20 minutes'
@@ -2188,9 +2208,26 @@ async function resumeDeferred(pool, config, deps = {}) {
          ) t
          JOIN users u ON u.id = t.user_id
          JOIN conversation_messages m ON m.id = t.message_id AND m.deleted_at IS NULL
-        WHERE t.fallback IN ('deferred', 'plain_later') AND t.tries <= $1`,
-      [DEFER_DELAYS_MS.length],
+        WHERE t.fallback IN ('deferred', 'plain_later') AND t.tries <= $1
+          AND t.created_at < NOW() - make_interval(secs => $2)
+          -- Written to since: that message's turn reads this one too
+          -- (deferredTurn skips it), so it is not picked up again and again.
+          AND NOT EXISTS (
+            SELECT 1 FROM conversation_messages n
+             WHERE n.conversation_id = t.conversation_id AND n.sender_id = t.user_id AND n.id > t.message_id
+               AND n.deleted_at IS NULL AND n.thread_root_id IS NULL)`,
+      [DEFER_DELAYS_MS.length, Math.max(0, Number(minAgeSeconds) || 0)],
     );
+    const processes = deps.processes || require('./processes');
+    const rows = [];
+    for (const row of found) {
+      if (DEFER_HOLD_KINDS.some((kind) => processes.heldHere(kind, row.message_id))) continue;
+      // Exact, not the mirror: a duplicate answer is what this prevents. A
+      // holder this process cannot read is one it must not act over.
+      let holders;
+      try { holders = await processes.holders(DEFER_HOLD_KINDS, row.message_id, pool); } catch { continue; }
+      if (!holders.length) rows.push(row);
+    }
     for (const row of rows) {
       // What dm.hasBot reads about the person (deferredTurn checks it), as the
       // auth middleware builds it: with only an id and a name, every answer a
@@ -4008,6 +4045,7 @@ module.exports = {
   commentOnRequest,
   startRequest,
   resumeDeferred,
+  scheduleDeferred,
   deferredTurn,
   // #11 (WP3)
   withdrawGate,

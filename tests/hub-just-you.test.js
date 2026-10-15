@@ -61,7 +61,7 @@ const community = (over = {}) => ({
 });
 
 const building = (over = {}) => ({
-  step: 4, of: 7, line: 'building', ready: false, mine: true, creator: 'evan',
+  step: 4, of: 7, line: 'building', phase: { key: 'building', since: null }, ready: false, mine: true, creator: 'evan',
   waits_on: null, conversation_id: 41, session_id: null, ...over,
 });
 
@@ -77,6 +77,9 @@ test('a just-you project being built: the thumbnail and its build line, and no s
   assert.match(html, /<span role="status" data-build-line="building"[^>]*>.*>Building it<\/span><\/span>/,
     'the made screen\'s and the App tab\'s words, with a spinner');
   assert.match(html, /animate-spin/);
+  // Run five: the stage the App tab names.
+  assert.match(card(building({ phase: { key: 'drawing', since: null } })), /<span class="truncate">Working out the details<\/span>/);
+  assert.match(card(building({ phase: { key: 'starting', since: null } })), /<span class="truncate">Starting the build<\/span>/);
   // #4053: no "Step 4 of 7" and no ring counting it: step numbers stay in
   // Homeroom bot's chat. Evan, 5 Oct 2026: no average build time either.
   // #4045: no "First version" heading: the thumbnail is what it is.
@@ -165,7 +168,7 @@ test('the line is the server\'s for this viewer, and its words are the build lin
   const src = read(HUB);
   const body = src.slice(src.indexOf('export const FIRST_VERSION_POLL_MS'), src.indexOf('export const owesVote'));
   assert.match(body, /return buildLineOf\(fv\.line\) \|\| \(fv\.ready \? 'ready' : 'planning'\);/);
-  assert.match(body, /<ThumbRow\s+name=\{data\?\.name \|\| slug\}\s+colorKey=\{slug\}\s+emoji=\{emoji\}\s+line=\{button \? null : line\}\s+\/>/);
+  assert.match(body, /<ThumbRow\s+name=\{data\?\.name \|\| slug\}\s+colorKey=\{slug\}\s+emoji=\{emoji\}\s+line=\{button \? null : line\}\s+lineWords=\{named\.words\}\s+lineNote=\{named\.note\}\s+\/>/);
   const code = body.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
   for (const name of ['Homeroom bot is planning it', 'Your plan is ready to review', 'Planning it', 'Building it', 'Testing it', 'Ready to try', 'Step ']) {
     for (const quote of ["'", '"', '`', '>']) {
@@ -284,11 +287,11 @@ test('the server cuts the bot\'s state to what the hub says, and hands the maker
     question: false, ready: false, plan: { bullets: ['A trail list'], actionId: 5 },
   };
   assert.deepEqual(hubFirstVersion(state, 7, { member: true }), {
-    step: 3, of: 7, line: 'plan', ready: false, mine: true, creator: 'evan',
+    step: 3, of: 7, line: 'plan', phase: null, ready: false, mine: true, creator: 'evan',
     waits_on: 'plan', conversation_id: 41, session_id: null, plan: null,
   }, 'the line as the state says it for this viewer, and no build time; its maker answers it in their chat');
   assert.deepEqual(hubFirstVersion({ ...state, line: 'plan-member' }, 9), {
-    step: 3, of: 7, line: 'plan-member', ready: false, mine: false, creator: 'evan',
+    step: 3, of: 7, line: 'plan-member', phase: null, ready: false, mine: false, creator: 'evan',
     waits_on: null, conversation_id: null, session_id: null, plan: null,
   }, 'nobody else is told what it waits on from its maker, or handed their chat');
   // #4074: a MEMBER who did not start it reads the plan, read only: what it

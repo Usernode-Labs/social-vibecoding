@@ -249,6 +249,14 @@ const EVENT_TYPES = Object.freeze({
   //   bot_build_nudged     a nudge, once it ended; adds { committed }
   BOT_BUILD_NO_CHANGE: 'bot_build_no_change',
   BOT_BUILD_NUDGED: 'bot_build_nudged',
+  // A first version's spec turn, once it ends (homeroom-bot-live.js
+  // draftSpec, newcomer run five): how many screens it saved with
+  // `usernode-screen` while it ran, and how long into the turn the first
+  // one was read, so a weekly query can read how often the first look comes
+  // early and how early. { saved, firstSavedMs (null when none was),
+  // specMs, ok, stopped, model }. A spec that saved none is also logged as
+  // a warning.
+  BOT_SPEC_SCREENS: 'bot_spec_screens',
   // #4449: Live, the new app shown taking shape while its first version is
   // built (services/first-version-live.js). Written to compare build times
   // with and without the watcher, and to see how often Live showed nothing.
@@ -266,6 +274,21 @@ const EVENT_TYPES = Object.freeze({
   LIVE_BUILD_STREAM: 'live_build_stream',
   LIVE_BUILD_OPENED: 'live_build_opened',
   LIVE_BUILD_WATCHED: 'live_build_watched',
+  // Newcomer run five (13 Oct 2026): what a first version's timings could
+  // only be pieced together from screenshots and a polling watcher.
+  //   first_version_stage   a first version moved to a new stage, written
+  //                        by the pipeline as it moves
+  //                        (services/first-version-timeline.js), for its
+  //                        maker and project. metadata: { stage, runId,
+  //                        issueNumber, ... } (STAGES there names each stage
+  //                        and what it adds)
+  //   first_session_moment  the made screen showed something, or was tapped
+  //                        (services/first-session-moments.js), for the
+  //                        person and project: { kind, clientAt (the
+  //                        browser's clock), receivedAt (the server's), ... }.
+  //                        Test accounts' too: the Journey reads none of it.
+  FIRST_VERSION_STAGE: 'first_version_stage',
+  FIRST_SESSION_MOMENT: 'first_session_moment',
   // Somebody was refused a session because a session cap was full
   // (services/session-lifecycle.js recordCapacityRefusal): { cap: 'global'
   // | 'user', path: where they asked }. The infra topic's "Turned away at a
@@ -289,6 +312,12 @@ const EVENT_TYPES = Object.freeze({
   // (a crash, the memory limit, a failed liveness probe): the infra topic's
   // "Homeroom crashes" counts those. A rollout starts new pods instead.
   PLATFORM_BOOTED: 'platform_booted',
+  // A checks run got its slot in the checks queue (services/checks-queue.js
+  // waitForSlot), or went ahead without one because the queue could not be
+  // read or joined: { runId, kind, class, waitedMs, failedOpen }. Admin →
+  // Health & status reads the last day of them for its Checks queue block.
+  // No backfill: a wait left nothing behind before this shipped.
+  CHECKS_SLOT_GRANTED: 'checks_slot_granted',
 });
 
 // Record a single analytics event. Fire-and-forget — returns a promise

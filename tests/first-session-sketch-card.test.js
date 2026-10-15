@@ -237,18 +237,23 @@ test('the small size, for a row: the tile on its colour, the name, and the line 
 test('the made screen draws the thumbnail with its line, its emoji is the screen\'s icon, and nothing is framed', () => {
   const made = read(`${DIR}/made.tsx`);
   assert.match(made, /import \{ SketchCard, showsCard, useSketch \} from '\.\/sketch-card';/);
-  assert.match(made, /\{card \? \(\n\s+<SketchCard made=\{made\} sketch=\{sketch\} line=\{line\} note=\{note\} lineWords=\{named\.words\} lineNote=\{named\.note\} \/>/);
+  // Run six: the line only when nothing else on the screen says where it is (ownLine).
+  assert.match(made, /\{card \? \(\n\s+<SketchCard made=\{made\} sketch=\{sketch\} line=\{ownLine \? line : null\} note=\{note\} lineWords=\{named\.words\} lineNote=\{named\.note\} \/>/);
   assert.match(made, /const tile = sketch\.card\?\.emoji \|\| made\.emoji \|\| made\.name\.slice\(0, 1\);/);
   assert.match(made, /made=\{sketch\.card \? \{ \.\.\.made, emoji: sketch\.card\.emoji \} : made\}/, 'the invite sheet shows it too');
   // (The plain card of a project with no sketch, such as an import, keeps its
   // status dot; the thumbnail never draws one.)
   assert.doesNotMatch(made, /<iframe|sketch\.html|sketchCaption|Step \$\{/);
   assert.doesNotMatch(SRC, /status-dot/);
-  // Rendered with nothing read yet: the card being sketched, Homeroom bot planning it.
+  // Rendered with nothing read yet: the card being sketched, and no line
+  // under it while the screen checks for questions (run six: one thing at a
+  // time, the checking line). From Create, past the questions, the line is
+  // the hub's to say next and stays under the card (first-session-started).
   const { MadeScreen } = loadTsx(`${DIR}/made.tsx`);
   const html = renderToHtml(createElement(MadeScreen, { made: MADE, me: 'Maya', onContinue() {}, onOpenChat() {} }));
   assert.match(html, /data-featured-card="sketching"/);
-  assert.match(html, /data-build-line="planning"/);
+  assert.doesNotMatch(html, /data-build-line=/);
+  assert.match(html, /data-first-session-checking=""/);
   // The poll asks past the service worker's cache.
   assert.match(SRC, /fetch\(`\/api\/apps\/\$\{encodeURIComponent\(slug\)\}\/sketch`, \{ credentials: 'same-origin', cache: 'no-store' \}\)/);
 });

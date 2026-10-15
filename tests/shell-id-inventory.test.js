@@ -360,6 +360,16 @@ const RETIRED_IDS = {
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
+  'feedback-sent-edit': '#4803: correct a just-filed request from its confirmation for five minutes.',
+  'feedback-first-edit': '#4803: the same correction action on the first-request confirmation.',
+  'feedback-edit': '#4803: shared correction form, initially hidden; its controller owns the fields and visibility.',
+  'feedback-edit-heading': '#4803: accessible heading of the feedback correction form.',
+  'feedback-edit-window': '#4803: server-authorized time remaining to correct the request.',
+  'feedback-edit-title': '#4803: the existing request title, ready to correct.',
+  'feedback-edit-text': '#4803: the existing request description, ready to correct.',
+  'feedback-edit-status': '#4803: save failure, expiry or stale-edit message without losing the typed corrections.',
+  'feedback-edit-cancel': '#4803: return to the confirmation or close a profile-opened editor.',
+  'feedback-edit-save': '#4803: save the title and description to the same request.',
   // ── #4405: custom domains ───────────────────────────────────────────────
   'app-domain-modal': '#4405: the Custom domain dialog (features/dialogs/app-domain.tsx), opened from the hub\'s ⋯ menu\'s Settings & rules row for whoever manages the project, or by `?shot=app-domain`. Ships hidden and EMPTY but for its title, its error line and the Close pill; everything else arrives from GET /api/apps/:slug/domain in its onOpen, so the prerender and the first client render agree. The ids that render behind that read (and so are not in the prerender, nor here): #app-domain-input and #app-domain-add (the claim form), #app-domain-section with #app-domain-status (the state in words and the sentence that says why), #app-domain-records (the CNAME and TXT rows dapp.json\'s declared check selects on), #app-domain-check, #app-domain-open and #app-domain-remove.',
   'app-domain-error': '#4405: the dialog\'s error line, hidden until a request fails.',

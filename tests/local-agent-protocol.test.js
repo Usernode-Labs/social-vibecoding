@@ -123,10 +123,15 @@ test('enqueueTurn carries the base commit and branch to the machine', async () =
   assert.equal(result.lease.id, '7');
   const insert = pool.last();
   assert.deepEqual(
-    insert.params,
+    insert.params.slice(0, 7),
     [42, '7', 5, 'add a button', 'b'.repeat(40), 'dev/x', 'build'],
     'and defaults to a build turn when the caller does not say'
   );
+  // The caller is the turn's platform-side waiter from here on: the id
+  // it waits and claims the tail under (local-agent-recovery.js).
+  assert.match(insert.params[7], /^[0-9a-f-]{36}$/);
+  assert.equal(result.waiterId, insert.params[7]);
+  assert.match(insert.sql, /waiter_seen_at\)\s+VALUES \([^)]*NOW\(\)\)/);
 });
 
 test('enqueueTurn dispatches scout turns down the same path, and rejects nonsense modes', async () => {

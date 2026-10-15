@@ -281,7 +281,8 @@ export function loadCommunities(force = false): Promise<void> {
   loading = (async () => {
     try {
       const [appsRes, countsRes] = await Promise.all([
-        fetch(`/api/apps${q}`, { credentials: 'same-origin' }),
+        // Joined rows only (#5023), the ones kept below.
+        fetch(`/api/apps?scope=joined${q.replace('?', '&')}`, { credentials: 'same-origin' }),
         fetch(`/api/workshop/counts${q}`, { credentials: 'same-origin' }).catch(() => null),
       ]);
       if (!appsRes.ok) return;

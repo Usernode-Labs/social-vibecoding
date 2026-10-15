@@ -89,8 +89,12 @@ test('a ready verdict that was never built says where it got to and why; a run s
           queued: 2, building: 1, built: 40, failed: 3,
           lane: { at: '2026-10-09T10:00:00Z', started: 0, inFlight: 2, paused: 'budget', detail: 'weekly limit reached' },
           fault: null,
-          // The live builds beside the lane (homeroom-bot.js buildsNow).
-          live: { building: 1, waiting: 2 },
+          // The live builds beside the lane (homeroom-bot.js buildsNow), and
+          // the live build loop's own last pass (run five, 13 Oct 2026).
+          live: {
+            building: 1, waiting: 2,
+            lastPass: { startedAt: '2026-10-09T10:01:00.000Z', ms: 41, slots: 2, waiting: 3, started: 1, paused: null, extra: 'dropped' },
+          },
         },
         runs: [
           // Run four (13 Oct 2026): a first version building, its review
@@ -120,7 +124,8 @@ test('a ready verdict that was never built says where it got to and why; a run s
   assert.deepEqual(out.runs.map((r) => r.readReason), ['changed:github', 'new', 'retry_failed', null, null, null],
     'fixed-shape reasons only');
   assert.deepEqual(out.buildLane, {
-    queued: 2, building: 1, live: { building: 1, waiting: 2 },
+    // No live loop's pass in the payload: the Pod that answered runs none.
+    queued: 2, building: 1, live: { building: 1, waiting: 2, lastPass: null, passRunningSince: null },
     lastPass: { at: '2026-10-09T10:00:00Z', started: 0, inFlight: 2, paused: 'budget', detail: 'weekly limit reached' },
     fault: null,
   });

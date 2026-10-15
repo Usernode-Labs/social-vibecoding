@@ -69,6 +69,8 @@ export interface EmbeddedRuntime {
   forward(route: string): boolean;
   /** An app's App tab, asked for in here: the running app beside the panel. */
   openApp(slug: string): void;
+  /** The top document's comment picture asks for this document's own page (#4975). */
+  picture(scale: number): Promise<Blob | null>;
   /** Has the first page been routed and reported? */
   isBooted(): boolean;
 }
@@ -314,6 +316,23 @@ export function installEmbeddedRuntime(win: Win): EmbeddedRuntime | null {
       // App tab; from a button (openAppTab, switchTab) it has not moved.
       if (booted && appTabSlug(route())) restore();
       top()?.openApp?.(slug);
+    },
+    // The comment's picture asks from the top document's handlers; like go()
+    // above, the draw runs on THIS document's turn, because the page it
+    // draws is this one. Null until the first page has been routed and
+    // reported: a panel still booting has nothing settled to draw. The
+    // drawing module is imported only when asked — no comment work loads in
+    // a panel that is never screenshotted — and every failure resolves
+    // null, which the caller draws as nothing.
+    picture(scale: number): Promise<Blob | null> {
+      if (!booted) return Promise.resolve(null);
+      return new Promise((resolve) => {
+        win.setTimeout(() => {
+          import('../comment-pin/picture')
+            .then((m) => m.drawDocument(scale))
+            .then(resolve, () => resolve(null));
+        }, 0);
+      });
     },
     isBooted: () => booted,
   };

@@ -61,15 +61,29 @@
 #                              when a turn that changed something tries to
 #                              end, sending it back (twice at most) while a
 #                              check dapp.json declares fails (L2). The result
-#                              line then carries stop_hook_check_blocks
+#                              line then carries stop_hook_check_blocks.
+#                              The hook also stops any server the agent left
+#                              running in its workspace before the checks and
+#                              the turn's end: stop_hook_servers_stopped,
+#                              on the result line when it stopped any
 #   STOP_GUARD_DEADLINE        when the platform stops the turn (epoch ms):
 #                              the checks are not started with too little left
+#   STOP_GUARD_REQUIRE_TESTS   1, with STOP_GUARD_CHECKS (a first version's
+#                              build and review fixes): a dapp.json with a
+#                              `checks` key or no routed `tests` sends the
+#                              turn back too (build-stop-hook.js)
 #   BUILD_PROFILE              first_version: a build of a project's first
 #                              version (the Homeroom bot's build and review
 #                              fixes) loads only the tools one uses: the
 #                              browser without visible_changes, the Homeroom
 #                              read tools narrowed to get_platform_conventions,
 #                              and no WebSearch, WebFetch or NotebookEdit
+#   LEAN_TURNS                 1: such a build under its configuration's
+#                              lean_turns tweak also leaves out the delegation,
+#                              planning and to-do tools and the browser tools
+#                              a build never uses, and the request adapter
+#                              cuts stale browser and shell output from what
+#                              each model call re-sends
 #   PAT                        legacy back-compat — not set by the
 #                              current platform. The push step uses
 #                              `usernode-push` (which calls back into
@@ -387,6 +401,13 @@ if [ "$MODE" = "scout" ]; then
   PERMISSION_FLAGS="--dangerously-skip-permissions --disallowed-tools Edit Write NotebookEdit"
 elif [ -n "$FIRST_VERSION_BUILD" ]; then
   PERMISSION_FLAGS="--dangerously-skip-permissions --disallowed-tools WebSearch WebFetch NotebookEdit"
+  # Build speed (L7, lean_turns): every model call re-sends every tool's
+  # definition. A first version's build has no use for a subagent, a plan
+  # mode or a to-do list (each a model call of its own), nor for installing
+  # a browser, uploading files, tabs or raw Playwright code.
+  if [ "${LEAN_TURNS:-}" = "1" ]; then
+    PERMISSION_FLAGS="$PERMISSION_FLAGS Task Agent TodoWrite ExitPlanMode mcp__playwright__browser_install mcp__playwright__browser_file_upload mcp__playwright__browser_tabs mcp__playwright__browser_run_code"
+  fi
 elif [ "$MODE" = "shots" ]; then
   # Shots turns operate only through platform-seeded MCP servers. Removing
   # every filesystem, shell, web and delegation tool prevents the model from
@@ -441,6 +462,22 @@ if [ -n "${HOMEROOM_MCP_TOKEN:-}" ] && [ -f "$HOMEROOM_MCP_CONFIG" ]; then
   elif [ "$MODE" = "build" ] || [ "$MODE" = "scout" ]; then
     BROWSER_MCP_FLAGS="--mcp-config $HOMEROOM_MCP_CONFIG --strict-mcp-config"
   fi
+fi
+
+# App bench run 193 (14 Oct 2026): a first version's build called
+# browser_evaluate on a promise nothing settled (the kit's confirm dialog,
+# waiting for a click) and the call held the turn for 1,800 s, Claude Code's
+# own limit on one MCP tool call, before it failed. Every MCP call a build
+# makes (the browser, Homeroom's read tools, visible changes) answers in
+# seconds: none of the run's other browser calls took 20. Two minutes is past
+# every limit Playwright sets itself (5 s an action, 60 s a navigation), so
+# only a call that would never return reaches it, and it fails while the
+# build still has time to go on. A Codex build's browser gets 60 s
+# (run-codex-agent.sh). The shots agent records clips, and keeps Claude
+# Code's own limit. A value already in the environment is kept.
+if [ "$MODE" = "build" ]; then
+  MCP_TOOL_TIMEOUT="${MCP_TOOL_TIMEOUT:-120000}"
+  export MCP_TOOL_TIMEOUT
 fi
 
 SHOTS_PROXY_PID=""
@@ -548,12 +585,18 @@ if [ "$MODE" = "build" ] && [ "${STOP_GUARD:-}" = "1" ]; then
     USERNODE_STOP_GUARD_START="$TURN_START_SHA"
     USERNODE_STOP_GUARD_COUNT="$STOP_GUARD_DIR/blocks"
     USERNODE_STOP_GUARD_REPO=$(pwd)
-    export USERNODE_STOP_GUARD_START USERNODE_STOP_GUARD_COUNT USERNODE_STOP_GUARD_REPO
+    # The servers it stopped because the agent left them running (the hook's
+    # header, LEFTOVER SERVERS), counted for the result line.
+    USERNODE_STOP_GUARD_SERVERS="$STOP_GUARD_DIR/servers"
+    export USERNODE_STOP_GUARD_START USERNODE_STOP_GUARD_COUNT USERNODE_STOP_GUARD_REPO USERNODE_STOP_GUARD_SERVERS
     if [ -n "$STOP_GUARD_CHECKS_ON" ]; then
       USERNODE_STOP_GUARD_CHECKS="$STOP_GUARD_CHECKS"
       USERNODE_STOP_GUARD_CHECKS_COUNT="$STOP_GUARD_DIR/checks"
+      USERNODE_STOP_GUARD_CHECKS_PASSED="$STOP_GUARD_DIR/checks-passed"
       USERNODE_STOP_GUARD_DEADLINE="${STOP_GUARD_DEADLINE:-}"
-      export USERNODE_STOP_GUARD_CHECKS USERNODE_STOP_GUARD_CHECKS_COUNT USERNODE_STOP_GUARD_DEADLINE
+      USERNODE_STOP_GUARD_REQUIRE_TESTS="${STOP_GUARD_REQUIRE_TESTS:-}"
+      export USERNODE_STOP_GUARD_CHECKS USERNODE_STOP_GUARD_CHECKS_COUNT USERNODE_STOP_GUARD_CHECKS_PASSED USERNODE_STOP_GUARD_DEADLINE
+      export USERNODE_STOP_GUARD_REQUIRE_TESTS
     fi
     STOP_GUARD_FLAGS="--settings $STOP_GUARD_DIR/settings.json"
   else
@@ -609,6 +652,14 @@ if [ -n "$STOP_GUARD_FLAGS" ]; then
     if [ "$STOP_HOOK_CHECK_BLOCKS" -gt 0 ]; then
       echo "__USERNODE_WARN__ The app's declared checks failed when the agent tried to end its turn; the checks gate sent it back to fix them (stop_hook_check_blocks=$STOP_HOOK_CHECK_BLOCKS)"
     fi
+  fi
+  # Servers the agent left running that the hook stopped (only when there
+  # were some, so a turn's line reads as before otherwise).
+  STOP_HOOK_SERVERS=$(cat "$USERNODE_STOP_GUARD_SERVERS" 2>/dev/null || echo 0)
+  case "$STOP_HOOK_SERVERS" in ''|*[!0-9]*) STOP_HOOK_SERVERS=0 ;; esac
+  if [ "$STOP_HOOK_SERVERS" -gt 0 ]; then
+    STOP_HOOK_BLOCKS_FIELD="$STOP_HOOK_BLOCKS_FIELD stop_hook_servers_stopped=$STOP_HOOK_SERVERS"
+    echo "__USERNODE_WARN__ The agent left servers running in its workspace; the stop guard stopped them as the turn ended (stop_hook_servers_stopped=$STOP_HOOK_SERVERS)"
   fi
 fi
 if [ -n "$STOP_GUARD_DIR" ]; then rm -rf "$STOP_GUARD_DIR" 2>/dev/null || true; fi

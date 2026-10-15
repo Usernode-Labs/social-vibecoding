@@ -70,9 +70,13 @@ test('execInWorker issues the grant after the prompt is written and revokes it o
   assert.ok(mint > exec.indexOf('await writeTurnPrompt('), 'a failed prompt write has nothing to revoke');
   assert.ok(mint < exec.indexOf('buildTurnSecretEnv({'));
   const revokes = [...exec.matchAll(/await revokeHomeroomReadGrant\(sessionId, homeroomGrant\)/g)].map((m) => m.index);
-  assert.equal(revokes.length, 3, 'a secret-env failure, a persist failure, and the finally');
-  assert.ok(revokes[1] < exec.indexOf("throw err;\n  }\n\n  // Visible to the `finally`"), 'before the persist-failure throw');
-  assert.ok(revokes[2] > exec.lastIndexOf('} finally {'), 'in the finally');
+  assert.equal(revokes.length, 4, 'a secret-env failure, a persist failure, a turn-record hook that fails, and the finally');
+  const record = exec.indexOf("if (typeof onTurnRecord === 'function') {");
+  assert.ok(revokes[1] < record, 'the persist failure\'s, before the turn record is reported');
+  // A durable build that could not keep the record's identity starts no turn
+  // (services/durable-turn.js): the grant goes with it.
+  assert.ok(revokes[2] > record && revokes[2] < exec.indexOf('// Visible to the `finally`'), 'the turn-record hook\'s');
+  assert.ok(revokes[3] > exec.lastIndexOf('} finally {'), 'in the finally');
 
   const helper = src.slice(src.indexOf('async function mintHomeroomReadGrant('), src.indexOf('async function revokeHomeroomReadGrant('));
   assert.match(helper, /status IN \('active', 'promoted'\)/, 'only for a change the grant\'s liveness check would accept');
@@ -243,7 +247,7 @@ test('Codex gets the bridge on build and scout, with the grant named but never w
   assert.match(config, /exclude = \["OPENROUTER_API_KEY"\]\n/);
 });
 
-function claudeArgs(mode, { grant = true, browser = true, profile = null } = {}) {
+function claudeArgs(mode, { grant = true, browser = true, profile = null, lean = false } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'homeroom-claude-'));
   const bin = path.join(dir, 'bin');
   fs.mkdirSync(bin, { recursive: true });
@@ -280,8 +284,10 @@ exit 0
     ...(mode === 'build' ? { SYSTEM_PROMPT_FILE: systemPrompt } : {}),
     HOMEROOM_MCP_CONFIG: homeroomConfig, BROWSER_MCP_CONFIG: browserConfig, BROWSER_ONLY_MCP_CONFIG: browserOnlyConfig,
     ...(profile ? { BUILD_PROFILE: profile } : {}),
+    ...(lean ? { LEAN_TURNS: '1' } : {}),
   };
   delete env.HOMEROOM_READ_TOOLS;
+  if (!lean) delete env.LEAN_TURNS;
   if (!profile) delete env.BUILD_PROFILE;
   if (grant) env.HOMEROOM_MCP_TOKEN = GRANT; else delete env.HOMEROOM_MCP_TOKEN;
   spawnSync('sh', [CLAUDE_RUNNER], { env, encoding: 'utf8' });
@@ -330,6 +336,33 @@ test('a first version\'s build loads the browser alone, the conventions alone, a
   const sd = scout.args.indexOf('--disallowed-tools');
   assert.deepEqual(scout.args.slice(sd, sd + 4), ['--disallowed-tools', 'Edit', 'Write', 'NotebookEdit']);
   assert.equal(scout.readTools, '');
+});
+
+// Build speed (L7, 13 Oct 2026): a first version's build under its
+// configuration's lean_turns tweak also leaves out the delegation, planning
+// and to-do tools, and the browser tools a build never uses. Without the
+// tweak, and for any other turn, LEAN_TURNS changes nothing.
+test('lean_turns: a first version\'s build leaves out the tools it never uses; nothing else changes', () => {
+  const lean = claudeArgs('build', { profile: 'first_version', lean: true });
+  const d = lean.args.indexOf('--disallowed-tools');
+  const off = lean.args.slice(d + 1, lean.args.findIndex((a, i) => i > d && a.startsWith('--')));
+  for (const tool of ['WebSearch', 'WebFetch', 'NotebookEdit', 'Task', 'Agent', 'TodoWrite', 'ExitPlanMode',
+    'mcp__playwright__browser_install', 'mcp__playwright__browser_file_upload', 'mcp__playwright__browser_tabs',
+    'mcp__playwright__browser_run_code']) {
+    assert.ok(off.includes(tool), tool);
+  }
+  for (const kept of ['Bash', 'Read', 'Edit', 'Write', 'Glob', 'Grep', 'Skill', 'mcp__playwright__browser_evaluate',
+    'mcp__playwright__browser_take_screenshot', 'mcp__playwright__browser_drag']) {
+    assert.ok(!off.includes(kept), kept);
+  }
+  // The profile alone, and an ordinary build or a scout with the switch, are as before.
+  const plain = claudeArgs('build', { profile: 'first_version' });
+  const pd = plain.args.indexOf('--disallowed-tools');
+  assert.deepEqual(plain.args.slice(pd, pd + 5), ['--disallowed-tools', 'WebSearch', 'WebFetch', 'NotebookEdit', '--mcp-config']);
+  assert.ok(!claudeArgs('build', { lean: true }).args.includes('--disallowed-tools'), 'an ordinary build ignores it');
+  const scout = claudeArgs('scout', { profile: 'first_version', lean: true });
+  const sd = scout.args.indexOf('--disallowed-tools');
+  assert.deepEqual(scout.args.slice(sd, sd + 4), ['--disallowed-tools', 'Edit', 'Write', 'NotebookEdit']);
 });
 
 test('the bridge offers only the read tools its runner names, never one outside the set', async (t) => {

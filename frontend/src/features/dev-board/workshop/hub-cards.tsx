@@ -18,7 +18,9 @@
  *
  * A project Homeroom bot is still building gets its FIRST VERSION card
  * first, right under the hero: where the build stands, and the way to the
- * bot's chat when the bot waits on its maker (FirstVersionCard below).
+ * bot's chat when the bot waits on its maker (FirstVersionCard below). Its
+ * maker also gets the FIRST LOOK at it, under Share it, once Homeroom bot
+ * has drawn it (FirstLookCard).
  *
  * ── A project nobody else is in ────────────────────────────────────────
  *
@@ -44,7 +46,7 @@
  * useCommunity) and draw nothing until it has answered.
  */
 
-import { useEffect, useId, useRef, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { SectionHeader, ListRow } from '@/components/ui/grouped-list';
@@ -53,8 +55,11 @@ import { BallotIcon, BoardIcon, ChatIcon, CheckIcon, ChevronRightIcon, ClockIcon
 import { RichMessage, useMessages } from '../../../lib/i18n/react';
 import { agoStamp } from '../../../lib/timestamp';
 import { changeHref } from '../../../lib/change-href';
-import { type BuildLineState, buildLineOf } from '../../first-session/build-line';
+import { type BuildLineState, buildLineOf, phaseLine, useNow } from '../../first-session/build-line';
 import { useTourRunning } from '../../first-session/tour-running';
+import { firstLookSrc } from '../../first-session/first-look';
+import { countsDown, estimateOf, leftNote } from '../../app-frame/first-version-eta';
+import { madeAppUrl } from '../../first-session/made';
 import { ThumbRow } from '../../first-session/sketch-card';
 import { open as openConversation, openBot } from '../../messages/store';
 import type { DevWorkshopView, ListRow as BoardRow } from '../card/model';
@@ -167,11 +172,17 @@ export function FirstVersionCard({ slug, data, emoji = null, onSeePlan }: {
   // no Review the plan here, only the build line saying the bot is on it.
   const touring = useTourRunning();
   const t = useMessages('project');
+  const now = useNow();
   if (!fv) return null;
   const asked = firstVersionAction(fv);
   const held = touring && asked === 'review';
   const line: BuildLineState = held ? 'working' : firstVersionLine(fv);
   const action = held ? null : asked;
+  // Run five: the stage by its own name while it is built, as the App tab
+  // and the Home tile name it ("Starting the build", "Working out the details").
+  // Run six: the time left, as the App tab says it, when there is an estimate.
+  const left = countsDown(line) ? leftNote(estimateOf(fv.estimate), now) : null;
+  const named = phaseLine(line, fv.phase, now, null, left);
   const press = () => {
     if (action === 'review' || action === 'answer') {
       if (fv.conversation_id) openConversation(fv.conversation_id);
@@ -191,6 +202,8 @@ export function FirstVersionCard({ slug, data, emoji = null, onSeePlan }: {
           colorKey={slug}
           emoji={emoji}
           line={button ? null : line}
+          lineWords={named.words}
+          lineNote={named.note}
         />
         {action === 'see' ? (
           <button
@@ -222,6 +235,117 @@ export function FirstVersionCard({ slug, data, emoji = null, onSeePlan }: {
           </Button>
         )
       ) : null}
+    </section>
+  );
+}
+
+/* ── First look ──────────────────────────────────────────────────────── */
+
+/**
+ * Whether the hub offers its maker the first look (FirstLookCard): their
+ * own first version, being built or tested, not ready to try and not live.
+ * Its words ("Drawn from your answers") are the maker's alone, and once it
+ * is ready to try, the First version card above has Try it. Pure.
+ */
+export function hubShowsFirstLook(fv: HubFirstVersion | null | undefined): boolean {
+  return !!fv && fv.mine && !fv.ready && (fv.line === 'building' || fv.line === 'testing');
+}
+
+/** The first look alone, never the real screens: its words say it was drawn from the plan. */
+const FIRST_LOOK_ONLY: readonly string[] = ['first_look'];
+
+/**
+ * FIRST LOOK (newcomer run six, 14 Oct 2026). After the tour's Done the
+ * maker landed on the hub: "Building it", the Share it card, then empty
+ * space down to the Resume bar. The first look, the picture of the app's
+ * main screen Homeroom bot drew from the plan (services/first-version-
+ * screens.js), was only on the App tab and on the tour's last card. While
+ * their first version is built and that picture is there, it is a card
+ * under Share it: the picture small and phone-shaped, "FIRST LOOK", "Here's
+ * what you're making", one line, and "Watch Homeroom bot build it", which
+ * opens the App tab, where the live picture of the build is.
+ *
+ * The picture is read as the tour's last card reads it (../../first-session/
+ * first-look.tsx: GET /api/apps/:slug `first_version.screens`, the first look
+ * alone here), asked again every FIRST_VERSION_POLL_MS while it is not
+ * there, and once it is, not again. Nothing to share: inviting is the Share
+ * it card's, and an invite is to the community, not to a picture of its app.
+ * Gone once it is ready to try or live (hubShowsFirstLook), and held back
+ * while the first-session tour runs (../../first-session/tour-running.ts),
+ * whose own last card is this picture.
+ */
+export function FirstLookCard({ slug, data }: { slug: string; data: CommunityPayload | null }): ReactNode {
+  const touring = useTourRunning();
+  const wanted = hubShowsFirstLook(data?.first_version);
+  const [src, setSrc] = useState<string | null>(null);
+  // A picture that would not load is asked for again, as one not there yet.
+  const [broken, setBroken] = useState<string | null>(null);
+  useEffect(() => {
+    if (!wanted || !slug || (src && src !== broken)) return undefined;
+    let live = true;
+    const read = () => fetch(madeAppUrl(slug), { credentials: 'same-origin', cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((body) => {
+        const found = firstLookSrc(body, slug, FIRST_LOOK_ONLY);
+        if (live && found && found !== broken) setSrc(found);
+      })
+      .catch(() => {});
+    read();
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') read();
+    }, FIRST_VERSION_POLL_MS);
+    return () => { live = false; window.clearInterval(timer); };
+  }, [wanted, slug, src, broken]);
+  const shown = src && src !== broken ? src : null;
+  if (!wanted || touring || !shown) return null;
+  return <FirstLookView slug={slug} name={data?.name || slug} src={shown} onBroken={() => setBroken(shown)} />;
+}
+
+/**
+ * "Watch Homeroom bot build it": the project's App tab, where the live
+ * picture of the build is (features/app-frame/app-status.tsx), as the First
+ * version card's Open app goes there.
+ */
+export function watchBuild(slug: string): void {
+  (window as any).App?.openAppTab?.(slug, 'app');
+}
+
+/** The first look card once its picture is there (FirstLookCard). */
+export function FirstLookView({ slug, name, src, onBroken }: {
+  slug: string;
+  name: string;
+  /** The first look's own URL (../../first-session/first-look.tsx firstLookSrc). */
+  src: string;
+  /** The picture would not load: the card asks for it again. */
+  onBroken?: () => void;
+}): ReactNode {
+  const t = useMessages('project');
+  return (
+    <section className="dev-ws-strip dev-ws-first-look" data-ws-first-look="">
+      <img
+        src={src}
+        alt={t('project:hub.firstLook.alt', { app: name })}
+        width={64}
+        height={138}
+        draggable={false}
+        onError={onBroken}
+        className="dev-ws-first-look-shot"
+      />
+      <div className="dev-ws-first-look-body">
+        <p className="dev-ws-first-look-kicker">{t('project:hub.firstLook.kicker')}</p>
+        <p className="dev-ws-head-title">{t('project:hub.firstLook.title')}</p>
+        <p className="dev-ws-strip-text">{t('project:hub.firstLook.text')}</p>
+        <Button
+          type="button"
+          variant="pillNeutral"
+          size="sm"
+          ink="neutral"
+          data-ws-first-look-watch=""
+          onClick={() => watchBuild(slug)}
+        >
+          {t('project:hub.firstLook.watch')}
+        </Button>
+      </div>
     </section>
   );
 }

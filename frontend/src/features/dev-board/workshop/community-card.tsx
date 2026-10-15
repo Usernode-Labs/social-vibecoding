@@ -102,6 +102,11 @@ export type HubFirstVersion = {
       buildLineOf), the App tab's and the made screen's; the words are
       ../../first-session/build-line.tsx's, never written here. */
   line: string | null;
+  /** Run five: its stage while it is built (homeroom-bot-progress.js
+      firstVersionPhase), named as the App tab names it. */
+  phase?: unknown;
+  /** Run six: how long it still has to go (services/first-version-eta.js). */
+  estimate?: unknown;
   /** Built and up for approval: ready to try. */
   ready: boolean;
   /** The description is the viewer's. */

@@ -56,6 +56,7 @@ const usernames = require('./usernames');
 const { listActiveUserIds } = require('./active-users');
 const notificationPreferences = require('./notification-preferences');
 const { firstVersionSql } = require('./first-version-rule');
+const notificationBookmarks = require('./notification-bookmarks');
 
 // Usernames in this app are [A-Za-z0-9_]+, length-restricted on signup.
 // Match @token that is NOT preceded by a word character (so emails don't
@@ -931,24 +932,14 @@ async function createStalePrNotification(pool, { userId, appId, sessionId }) {
 // pile up if the owner hasn't looked yet. The streak gate in
 // staging-recovery.recordStagingBootFailure already limits this to once per
 // failure streak; the dedup is belt-and-suspenders against re-fires.
-async function createCheckFailedNotification(pool, { userId, appId, sessionId }) {
-  if (!userId || !sessionId) return [];
-  // #1374. allowsKind fails OPEN on a read error: the quiet failure mode of
-  // this whole feature is a notification silently not arriving, and this one
-  // is telling somebody their proposal cannot merge.
-  if (!await notificationPreferences.allowsKind(pool, { userId, appId, kind: 'check_failed' })) return [];
-  const { rows } = await pool.query(
-    `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind)
-     SELECT $1, $2, $3, NULL, 'check_failed'
-      WHERE NOT EXISTS (
-        SELECT 1 FROM notifications n
-        WHERE n.user_id = $1 AND n.session_id = $3
-          AND n.kind = 'check_failed' AND n.read_at IS NULL
-      )
-     RETURNING id, user_id, app_id, session_id, source_user_id, kind, created_at`,
-    [userId, appId, sessionId]
-  );
-  return rows;
+// One copy, shared with the preview machine
+// (src/workflow/rules/change-notifications.ts). #1374: allowsKind fails
+// OPEN on a read error here: the quiet failure mode of this whole feature
+// is a notification silently not arriving, and this one is telling
+// somebody their proposal cannot merge.
+function createCheckFailedNotification(pool, { userId, appId, sessionId }) {
+  return changeNotifications.createCheckFailedNotification(pool, { userId, appId, sessionId },
+    notificationPreferences.allowsKind);
 }
 
 // #161: dev-session completion notification (kind='session_done').
@@ -1612,7 +1603,16 @@ async function markApproverInviteNotificationsRead(pool, userId, appId) {
 // keyset comparison still ride idx_notifications_user_recent on
 // (user_id, created_at DESC), and `kind` is a cheap equality check on the rows
 // that index already produced.
-async function listForUser(pool, userId, { limit = 100, before = null, kinds = null } = {}) {
+//
+// #4769: the drawer's Saved section reads the SAME feed query, with
+// `savedOnly`: a bookmark join instead of the feed's `saved` flag, ordered
+// by when each row was pinned, and without the merged-hidden clause — a
+// merged change's ask was hidden from the FEED because the change behind it
+// is gone, but this reader saved the row on purpose; the save is the
+// instruction to keep showing it. Riding the one query keeps the saved rows
+// on the same column list, ownership and hydration boundary as the feed, so
+// a saved row serializes to exactly the shape the click branches route on.
+async function listForUser(pool, userId, { limit = 100, before = null, kinds = null, savedOnly = false } = {}) {
   const params = [userId];
   let cursorClause = '';
   if (before && before.createdAt && before.id != null) {
@@ -1629,11 +1629,25 @@ async function listForUser(pool, userId, { limit = 100, before = null, kinds = n
   // it or try it leave the list instead of staying as read entries somebody
   // taps and finds a merged page behind. `IS NOT DISTINCT FROM` so a row
   // with no session behind it (NULL cs.status) evaluates to false and is
-  // kept, rather than to NULL and dropped by the NOT.
-  params.push(MERGED_HIDDEN_KINDS);
-  const mergedHiddenClause = `AND NOT (n.kind = ANY($${params.length}::text[]) AND cs.status IS NOT DISTINCT FROM 'merged')`;
+  // kept, rather than to NULL and dropped by the NOT. The saved section
+  // leaves the clause off (see the #4769 note above this function).
+  let mergedHiddenClause = '';
+  if (!savedOnly) {
+    params.push(MERGED_HIDDEN_KINDS);
+    mergedHiddenClause = `AND NOT (n.kind = ANY($${params.length}::text[]) AND cs.status IS NOT DISTINCT FROM 'merged')`;
+  }
   params.push(limit);
   const limitIdx = params.length; // last param is the limit
+  const savedSelect = savedOnly
+    ? `TRUE AS saved, nb.created_at AS saved_at`
+    : `EXISTS (SELECT 1 FROM notification_bookmarks nb
+                 WHERE nb.notification_id = n.id AND nb.user_id = $1) AS saved`;
+  const savedJoin = savedOnly
+    ? `JOIN notification_bookmarks nb ON nb.notification_id = n.id AND nb.user_id = $1`
+    : '';
+  const orderClause = savedOnly
+    ? `ORDER BY nb.created_at DESC, n.id DESC`
+    : `ORDER BY n.created_at DESC, n.id DESC`;
   const { rows } = await pool.query(
     `SELECT n.id, n.kind,
             CASE WHEN n.read_at IS NULL AND ${DECIDED_ASK_SETTLED_SQL}
@@ -1658,7 +1672,8 @@ async function listForUser(pool, userId, { limit = 100, before = null, kinds = n
             ${FRIEND_REQUEST_PENDING_SQL} AS friend_request_pending,
             n.detail,
             pv.reason AS vote_reason,
-            ${LIVE_ROW_COLUMNS_SQL}
+            ${LIVE_ROW_COLUMNS_SQL},
+            ${savedSelect}
      FROM notifications n
      LEFT JOIN apps a ON a.id = n.app_id
      LEFT JOIN chat_messages cm ON cm.id = n.chat_message_id
@@ -1669,11 +1684,12 @@ async function listForUser(pool, userId, { limit = 100, before = null, kinds = n
      LEFT JOIN users su ON su.id = n.source_user_id
      LEFT JOIN pr_votes pv ON pv.session_id = n.session_id AND pv.user_id = n.source_user_id
      ${FILED_MESSAGE_JOIN_SQL}
+     ${savedJoin}
      WHERE n.user_id = $1 AND ${CONVERSATION_ACCESS_SQL} AND ${CHAT_SENDER_ACCESS_SQL}
      ${mergedHiddenClause}
      ${cursorClause}
      ${kindClause}
-     ORDER BY n.created_at DESC, n.id DESC
+     ${orderClause}
      LIMIT $${limitIdx}`,
     params
   );
@@ -1723,6 +1739,27 @@ async function getForUser(pool, userId, id) {
     [id, userId]
   );
   return rows[0] || null;
+}
+
+// #4769: the drawer's Saved section — this user's saved notifications,
+// newest save first. It rides the feed query with `savedOnly` (see the
+// note above listForUser), so a saved row serializes to exactly the shape
+// the click branches route on.
+async function listSavedForUser(pool, userId, { limit = notificationBookmarks.MAX_SAVED } = {}) {
+  if (!userId) return [];
+  return listForUser(pool, userId, { limit, savedOnly: true });
+}
+
+// Best-effort variant for the notifications payload: the drawer's saved
+// section must never be the reason the whole dropdown 500s. Same contract
+// as messageBookmarks.listForUserSafe.
+async function listSavedForUserSafe(pool, userId, options) {
+  try {
+    return await listSavedForUser(pool, userId, options);
+  } catch (err) {
+    log.warn('notifications', 'saved notification list failed', { message: err.message });
+    return [];
+  }
 }
 
 async function countUnread(pool, userId) {
@@ -2129,6 +2166,13 @@ function serialize(row) {
       ? { digestWaiting: Number(row.digest_waiting) } : {}),
     ...(row.kind === 'first_message' || row.kind === 'channel_message'
       ? { requestNumber: row.bot_request_number != null ? Number(row.bot_request_number) : null } : {}),
+    // #4769: whether this row is in the user's saved set. Only the feed
+    // page and the saved section select the flag (the exact lookup
+    // doesn't), so it is false there — a false rather than absent keeps
+    // the wire shape total. The saved section also selects WHEN the row
+    // was pinned, which orders that section; the feed page never does.
+    saved: !!row.saved,
+    ...(row.saved_at ? { savedAt: row.saved_at } : {}),
   };
 }
 
@@ -2176,6 +2220,8 @@ module.exports = {
   markApproverInviteNotificationsRead,
   filterToCollaborators,
   listForUser,
+  listSavedForUser,
+  listSavedForUserSafe,
   getForUser,
   countUnread,
   markRead,

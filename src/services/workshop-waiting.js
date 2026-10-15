@@ -15,7 +15,10 @@
 //     `botAwaits` already (homeroom-bot-addressed.js waitingOn).
 //   - talks: a change or a request whose discussion has messages from both
 //     the viewer and the bot, the last of them within TALK_DAYS: a back and
-//     forth they are in. `botLast` says who spoke last.
+//     forth they are in. `botLast` says who spoke last. A request the bot is
+//     reading, has queued or is building is the bot's turn, not the
+//     viewer's, so it is not listed (the readings of homeroom-bot-progress.js
+//     botWorkByIssue).
 //
 // Only the viewer's own: every row is a request recorded as theirs, a
 // question asked of them, or a thread they wrote in. Never throws: a read
@@ -27,6 +30,13 @@ const log = require('./logger');
 const TALK_DAYS = 3;
 /** The most of each kind one answer carries. */
 const MAX_EACH = 10;
+/**
+ * How long a live build still counts as the bot's turn, the same window as
+ * homeroom-bot.js ABANDONED_LIVE_WINDOW_DAYS. Read as a literal there rather
+ * than required: homeroom-bot.js is a large module the unit test should not
+ * load.
+ */
+const BOT_HOLD_DAYS = 7;
 
 const PLANS_SQL = `
   SELECT q.issue_number, run.awaiting_go_at AS at
@@ -72,6 +82,17 @@ const TALKS_SQL = `
     LEFT JOIN chat_sessions cs ON t.thread_type = 'session' AND cs.id = t.thread_ref AND cs.app_id = $1
    WHERE t.mine_at IS NOT NULL AND t.bot_at IS NOT NULL
      AND (t.thread_type = 'issue' OR cs.status IN ('active', 'paused', 'promoted', 'merging'))
+     AND NOT (t.thread_type = 'issue' AND (
+       EXISTS (SELECT 1 FROM homeroom_bot_queue q
+                WHERE q.app_id = $1 AND q.issue_number = t.thread_ref
+                  AND (q.started_at IS NOT NULL
+                       OR (q.priority = 0 AND (q.held_until IS NULL OR q.held_until <= NOW()))))
+       OR EXISTS (SELECT 1 FROM homeroom_bot_runs r
+                WHERE r.app_id = $1 AND r.issue_number = t.thread_ref
+                  AND r.mode = 'live' AND r.verdict = 'ready' AND r.build_ok IS NULL
+                  AND r.proposal_session_id IS NULL
+                  AND (r.live_build_waiting_at IS NOT NULL OR r.build_session_id IS NOT NULL)
+                  AND r.created_at > NOW() - make_interval(days => $6))))
    ORDER BY at DESC
    LIMIT $5`;
 
@@ -96,7 +117,7 @@ async function waitingOnViewer(pool, { appId, userId, botId = null }) {
     const { rows: questions } = await pool.query(QUESTIONS_SQL, [appId, userId, MAX_EACH]);
     out.questions = questions.map((r) => ({ number: Number(r.issue_number), at: iso(r.at) }));
     if (botId && Number(botId) !== Number(userId)) {
-      const { rows: talks } = await pool.query(TALKS_SQL, [appId, userId, botId, TALK_DAYS, MAX_EACH]);
+      const { rows: talks } = await pool.query(TALKS_SQL, [appId, userId, botId, TALK_DAYS, MAX_EACH, BOT_HOLD_DAYS]);
       out.talks = talks.map((r) => ({
         type: r.thread_type === 'issue' ? 'issue' : 'session',
         ref: Number(r.thread_ref),
@@ -126,4 +147,4 @@ function demoWaiting(now = Date.now()) {
   };
 }
 
-module.exports = { TALK_DAYS, MAX_EACH, waitingOnViewer, demoWaiting, PLANS_SQL, QUESTIONS_SQL, TALKS_SQL };
+module.exports = { TALK_DAYS, MAX_EACH, BOT_HOLD_DAYS, waitingOnViewer, demoWaiting, PLANS_SQL, QUESTIONS_SQL, TALKS_SQL };

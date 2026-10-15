@@ -1,8 +1,9 @@
 'use strict';
 
-// A restart no longer loses a finished build: restart recovery of a Homeroom
-// bot build does what the live path does, against the FULL PostgreSQL schema
-// and through server.js's own restart recovery.
+// A restart no longer loses a finished build, against the FULL PostgreSQL
+// schema: server.js's restart recovery leaves a durable build's worker to
+// its build, and the build's next attempt follows the turn the restart
+// caught and reads it the way the live path reads a turn it ran itself.
 //
 // From 5 to 12 Oct 2026, 25 bot builds failed because the platform restarted
 // under them, though each agent turn ran on in its worker and finished. What
@@ -13,12 +14,20 @@
 //     read as the agent's own failure, "the agent exited with code 143";
 //   - a build turn that changed nothing was failed, where the live path
 //     nudges it once.
+// That recovery is gone. A build is a durable build on the workflow kernel
+// (docs/plans/bot-build-workflow.md): its session carries `workflow_owner`,
+// which server.js reads against the build's instance, and the same pipeline
+// (homeroom-bot-live.js buildAndPropose) runs again after the restart,
+// on a durable context whose build turn was under way when the restart
+// came. Its turn step follows the turn (services/durable-turn.js) and hands
+// the pipeline what the live path would have had.
 //
 // The worker is a fake that writes a real journal: each turn's lines are
 // written to a file, and the replay reads that file through the worker's own
 // parser (parseLine, finalizeHarnessResult), as resumeTurnFromJournal does
-// with a journal tailed from a live worker. The run rows, the session, its
-// turn record, the snapshot and the events are real.
+// with a journal tailed from a live worker. The sessions, their turn
+// records, the build's instance, the restart count, the clock's saved stop
+// and the events are real.
 //
 // Like the repository's other postgres tests it skips when no database is
 // reachable, unless TEST_DATABASE_URL insists on one.
@@ -83,35 +92,43 @@ function replay(file, harness = 'claude') {
   return realWorker.finalizeHarnessResult(state);
 }
 
+const calls = [];
 const pushes = [];
 let pushAnswer = async () => ({ sha: null });
 const dispatches = [];
 let nudgeJournal = null;
-require.cache[workerPath].exports = {
+const fakeWorker = {
   ...realWorker,
   usesKubernetesWorkers: () => false,
-  resumeTurnFromJournal: async (_sessionId, opts) => replay(opts.journal, opts.agentHarness || 'claude'),
+  // The turn the restart caught, followed through its journal.
+  resumeTurnFromJournal: async (sessionId, opts) => {
+    calls.push(['resume', sessionId]);
+    return replay(opts.journal, opts.agentHarness || 'claude');
+  },
   execPushFromWorker: async (sessionId, branch) => {
     pushes.push([sessionId, branch]);
     return pushAnswer(sessionId, branch);
   },
-  // The nudge: a new turn in the same worker, whose journal is written here.
+  // A new turn in the same worker (the spec, the nudge), its journal written here.
   execInWorker: async (sessionId, opts) => {
+    if (opts.mode === 'scout') return { lastResultText: '' };
     dispatches.push({ sessionId, ...opts });
     return replay(writeJournal(`nudge-${sessionId}`, nudgeJournal));
   },
   ensureWorkerImage: async () => {},
   ensureWorker: async (sessionId) => `usernode-worker-${sessionId}`,
-  stopTurn: async () => true,
-  finishTurn: async () => true,
+  stopTurn: async (sessionId) => { calls.push(['stopTurn', sessionId]); return true; },
+  finishTurn: async (sessionId) => { calls.push(['finishTurn', sessionId]); return true; },
   markTurnTail: async () => true,
   noteTailMilestone: async () => true,
-  clearActiveTurn: async () => true,
-  adoptWarmWorker: () => {},
-  destroyWorker: async () => {},
+  clearActiveTurn: async (sessionId) => { calls.push(['clearActiveTurn', sessionId]); return true; },
+  adoptWarmWorker: (sessionId) => { calls.push(['adoptWarmWorker', sessionId]); },
+  destroyWorker: async (name) => { calls.push(['destroyWorker', name]); },
   isWorkerExecuting: async () => true,
   getTurnByokCents: () => 0,
+  getPendingStop: () => null,
 };
+require.cache[workerPath].exports = fakeWorker;
 const wsPath = require.resolve('../src/services/ws');
 const realWs = require(wsPath);
 require.cache[wsPath].exports = {
@@ -136,25 +153,19 @@ try {
 const bot = require('../src/services/homeroom-bot');
 const live = require('../src/services/homeroom-bot-live');
 const dm = require('../src/services/homeroom-bot-dm');
-const snapshots = require('../src/services/homeroom-bot-snapshots');
-const github = require('../src/services/github');
+const durableSteps = require('../src/services/durable-steps');
 const agentTurn = require('../src/services/agent-turn');
-const sessionsRoutes = require('../src/routes/sessions');
-const managedKeys = require('../src/services/openrouter-managed-keys');
 
-agentTurn.persistRecoveredAgentThread = async () => {};
-agentTurn.settleRecoveredAgentAttempt = async () => null;
-sessionsRoutes.resumeRecoveredCodexFreshRetry = async () => null;
-managedKeys.usesIncludedKey = async () => false;
-// The nudge's runtime: one attempt, dispatched to the worker as it is.
-sessionsRoutes.runCodexAttemptLoop = async ({ dispatchOnce, resumeThreadId }) => ({
-  result: await dispatchOnce({ agentHarness: 'claude', resumeSessionId: resumeThreadId }),
-});
+// A turn recovery stops has its ledger attempt closed; the attempts here
+// are not in the ledger, so the close is recorded instead.
+const abandoned = [];
+agentTurn.completeCodexAttempt = async ({ turnUuid, errorCode }) => { abandoned.push({ turnUuid, errorCode }); return { updated: true }; };
 
 const BUDGET_MS = bot.DEFAULTS.turnSeconds * 1000;
+const MODEL = 'z-ai/glm-5.3-flash';
 const ago = (ms) => new Date(Date.now() - ms).toISOString();
 
-test('restart recovery finishes a bot build the way the live path would have', { timeout: 120000 }, async (t) => {
+test('a restart no longer loses a finished bot build: recovery leaves it to its build, which reads its turn as the live path does', { timeout: 120000 }, async (t) => {
   const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 2000 });
   try { await admin.query('SELECT 1'); } catch (err) {
     await admin.end();
@@ -166,17 +177,7 @@ test('restart recovery finishes a bot build the way the live path would have', {
   await admin.query(`CREATE DATABASE ${name}`);
   const url = new URL(DSN); url.pathname = `/${name}`;
   const pool = new Pool({ connectionString: String(url), max: 8 });
-  const real = {
-    post: live.post, mentionTargets: live.mentionTargets, botUsernameOf: live.botUsernameOf,
-    prepareProposal: live.prepareProposal, promoteAsBot: live.promoteAsBot, postSpecOnProposal: live.postSpecOnProposal,
-    fetchPublicIssue: github.fetchPublicIssue,
-  };
   t.after(async () => {
-    Object.assign(live, {
-      post: real.post, mentionTargets: real.mentionTargets, botUsernameOf: real.botUsernameOf,
-      prepareProposal: real.prepareProposal, promoteAsBot: real.promoteAsBot, postSpecOnProposal: real.postSpecOnProposal,
-    });
-    github.fetchPublicIssue = real.fetchPublicIssue;
     bot._resetForTests();
     await pool.end();
     await admin.query(`DROP DATABASE ${name}`);
@@ -185,88 +186,188 @@ test('restart recovery finishes a bot build the way the live path would have', {
   });
   await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
 
-  const posts = [];
-  const promoted = [];
-  live.post = async (args) => { posts.push(args); return { postId: posts.length }; };
-  live.mentionTargets = async () => [];
-  live.botUsernameOf = async () => 'usernode-bot';
-  live.prepareProposal = async () => ({});
-  live.postSpecOnProposal = async () => {};
-  live.promoteAsBot = async ({ sessionId }) => { promoted.push(sessionId); return { status: 200, body: { ok: true, prNumber: 70 + promoted.length } }; };
-  github.fetchPublicIssue = async (_o, _r, n) => ({ issue: { number: n, title: `Request ${n}`, state: 'open' } });
-
   const { rows: [botUser] } = await pool.query(
-    `INSERT INTO users (username, password, is_synthetic) VALUES ('homeroom_bot', 'x', TRUE) RETURNING id`,
+    `INSERT INTO users (username, password, is_synthetic) VALUES ('homeroom_bot', 'x', TRUE) RETURNING id, username`,
   );
   const { rows: [app] } = await pool.query(
     `INSERT INTO apps (name, slug, status, repo_url) VALUES ('Page Turners', 'page-turners-30094f', 'running', $1)
-     RETURNING id, slug, name, repo_url`,
+     RETURNING id, slug, name, repo_url, self_hosted`,
     ['https://github.com/usernode-bot/page-turners-30094f'],
   );
-
-  // A live build's session, its build turn in flight (`journal`, already
-  // written: the turn finished while the platform was down), and its run.
-  const build = async (issueNumber, journal, { startedAt = ago(60_000), extra = {} } = {}) => {
+  const REPO = { owner: 'usernode-bot', repo: 'page-turners-30094f' };
+  const reset = () => {
+    calls.length = 0; pushes.length = 0; dispatches.length = 0; abandoned.length = 0;
+    pushAnswer = async () => ({ sha: null });
+    nudgeJournal = null;
+  };
+  const turnOf = (journal, extra = {}) => {
     const turnId = `turn-${crypto.randomBytes(4).toString('hex')}`;
-    const activeTurn = {
+    return {
       turnId, turnUuid: `uuid-${turnId}`, journal, phase: 'executing', mode: 'build',
-      backend: 'codex_openrouter', harness: 'claude', model: 'z-ai/glm-5.3-flash', startedAt, attemptNumber: 1,
+      backend: 'codex_openrouter', harness: 'claude', model: MODEL, startedAt: ago(60_000), attemptNumber: 1,
       ...extra,
     };
+  };
+  const sessionRow = async (id) => (await pool.query('SELECT status, active_turn, workflow_owner FROM chat_sessions WHERE id = $1', [id])).rows[0];
+  // The build's instance on the bot-build machine, written as the kernel
+  // writes it (only the transition pipeline may).
+  const instance = async (key, state) => pool.query(`BEGIN; SET LOCAL app.wf_writer = 'transition';
+    INSERT INTO wf_instances (machine, key, app_id, state, data, machine_version)
+      VALUES ('bot-build', '${key}', ${Number(app.id)}, '${state}', '{"target":"live"}', 1)
+      ON CONFLICT (machine, key) DO UPDATE SET state = EXCLUDED.state, updated_at = NOW();
+    COMMIT`);
+
+  // ── server.js's restart recovery ──────────────────────────────────────
+
+  await t.test('server.js leaves a durable build\'s worker to its build while the build is under way, and only then', async () => {
+    reset();
+    const { rows: [run] } = await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, build_note) VALUES ($1, 20, 'live', 'ready', 'build it') RETURNING id`,
+      [app.id],
+    );
+    const key = `run:${run.id}`;
+    const activeTurn = turnOf(writeJournal('owned', { ahead: 1, sha: 'a'.repeat(40) }));
     const { rows: [s] } = await pool.query(
-      `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, is_headless, linked_issues, active_turn, spec_md, agent_model)
-       VALUES ($1, $2, $3, 'active', FALSE, '{}', $4, '# Spec\n\nAdd a host column.', 'z-ai/glm-5.3-flash') RETURNING id, branch_name`,
-      [app.id, botUser.id, `dev/homeroom_bot-${turnId}`, JSON.stringify(activeTurn)],
+      `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, is_headless, linked_issues, active_turn, workflow_owner)
+       VALUES ($1, $2, 'dev/homeroom_bot-owned', 'active', FALSE, '{}', $3, $4) RETURNING id`,
+      [app.id, botUser.id, JSON.stringify(activeTurn), `bot-build/${key}`],
     );
-    const { rows: [r] } = await pool.query(
-      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, build_note, build_session_id)
-       VALUES ($1, $2, 'live', 'ready', 'build it', $3) RETURNING id`,
-      [app.id, issueNumber, s.id],
+    await instance(key, 'building');
+    const recover = () => adoptOrphanWorker(
+      { name: `usernode-worker-${s.id}`, sessionId: s.id, state: 'running' },
+      { config: {}, pool, staging: {}, ghub: {}, broadcastGlobal: () => {} },
     );
-    return { sessionId: s.id, runId: r.id, turnId, branch: s.branch_name };
+    await recover();
+    assert.deepEqual(calls, [['adoptWarmWorker', s.id]], 'its worker is kept, and nothing else is done to it');
+    const kept = await sessionRow(s.id);
+    assert.equal(kept.status, 'active');
+    assert.equal(kept.active_turn.turnId, activeTurn.turnId, 'its turn record is the build\'s to follow');
+    assert.deepEqual(abandoned, []);
+
+    // Once its build has ended, the session is no build's: what is left on
+    // it is stopped, and the session put to rest.
+    reset();
+    await instance(key, 'failed');
+    await recover();
+    assert.deepEqual(calls.map((c) => c[0]), ['adoptWarmWorker', 'stopTurn', 'finishTurn']);
+    assert.deepEqual(abandoned, [{ turnUuid: activeTurn.turnUuid, errorCode: 'recovery_abandoned' }]);
+    assert.equal((await sessionRow(s.id)).status, 'paused');
+  });
+
+  // ── The build's next attempt ──────────────────────────────────────────
+
+  const deps = {
+    worker: fakeWorker,
+    sessions: {
+      async runCodexAttemptLoop(args) {
+        // The spec turn writes nothing: the build goes on from the plan.
+        if (args.mode === 'scout') return { result: await args.dispatchOnce({}), error: null };
+        return { result: await args.dispatchOnce({ agentHarness: 'claude', resumeSessionId: args.resumeThreadId }), error: null };
+      },
+      async persistScoutPublication() { return { specVersion: 1 }; },
+    },
+    agentTurn: {
+      async resolveCodexRuntimeContext() { return {}; },
+      async persistRecoveredAgentThread() {},
+      async settleRecoveredAgentAttempt() { return { estimatedCost: { estimatedCostUsd: 0.3 } }; },
+    },
+    sessionLifecycle: {
+      async ensureSessionBranch({ sessionId }) {
+        const branchName = `dev/homeroom_bot-s${sessionId}`;
+        await pool.query('UPDATE chat_sessions SET branch_name = $2 WHERE id = $1', [sessionId, branchName]);
+        return { branchName };
+      },
+    },
+    activeWorkers: new Set(),
+    votesRouter: (() => {
+      const router = require('express').Router();
+      router.post('/api/sessions/:id/promote', (req, res) => { proposed.push(Number(req.params.id)); res.json({ ok: true, prNumber: 70 + proposed.length }); });
+      return router;
+    })(),
+    seesImages: false,
   };
-  const recover = (sessionId) => adoptOrphanWorker(
-    { name: `usernode-worker-${sessionId}`, sessionId, state: 'running' },
-    { config: {}, pool, staging: {}, ghub: {}, broadcastGlobal: () => {} },
-  );
-  const runRow = async (id) => (await pool.query(
-    'SELECT build_ok, build_error, build_sha, build_commits, build_no_change FROM homeroom_bot_runs WHERE id = $1', [id],
-  )).rows[0];
-  const reset = () => {
-    pushes.length = 0; dispatches.length = 0; posts.length = 0; promoted.length = 0;
-    pushAnswer = async () => ({ sha: null });
+  const proposed = [];
+
+  /**
+   * The pipeline run again after a restart, as the build's work item runs
+   * it on its next claim: its build turn (`journal`) was dispatched by the
+   * attempt before, which saved it as under way, and its record is on the
+   * session. `clockAgoMs` is when the build's clock started; `botStop` that
+   * the clock had stopped the turn before the restart.
+   */
+  const carriedOn = async (issueNumber, journal, { clockAgoMs = 60_000, botStop = false, propose = true } = {}) => {
+    const activeTurn = turnOf(journal, { startedAt: ago(clockAgoMs) });
+    const { rows: [run] } = await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, build_note) VALUES ($1, $2, $3, 'ready', 'build it') RETURNING id`,
+      [app.id, issueNumber, propose ? 'live' : 'shadow'],
+    );
+    const saves = [];
+    const steps = durableSteps.durable({
+      resumeFrom: {
+        build_clock: Date.now() - clockAgoMs,
+        'turn:build': {
+          phase: 'started', mode: 'build', deadlineAt: Date.now() - clockAgoMs + BUDGET_MS, headBefore: null,
+          record: { turnId: activeTurn.turnId, journal },
+        },
+      },
+      checkpoint: async (v) => { saves.push(v); },
+      signal: new AbortController().signal,
+      owner: `bot-build/run:${run.id}`,
+    });
+    let sessionId = null;
+    const out = await live.buildAndPropose({
+      pool, config: {}, bot: botUser, app, repo: REPO, issueNumber, issue: { title: `Request ${issueNumber}` },
+      seed: `Request #${issueNumber}: show who hosts each meeting.`, buildNote: 'build it',
+      turnBudgetMs: BUDGET_MS, model: MODEL, propose, origin: { lane: propose ? 'live' : 'shadow', runId: run.id },
+      // The turn the attempt before dispatched, on the session it opened.
+      onSession: async (session) => {
+        sessionId = Number(session.id);
+        await pool.query('UPDATE chat_sessions SET active_turn = $2 WHERE id = $1', [session.id, JSON.stringify(activeTurn)]);
+        if (botStop) {
+          // What the bot's clock saved as it stopped the turn (homeroom-bot-live.js stopOnClock).
+          await live.stopOnClock(pool, { stopTurn: async () => true }, session.id);
+          assert.ok(live.botStopOf((await sessionRow(session.id)).active_turn));
+        }
+      },
+      deps: { ...deps, durable: steps },
+    });
+    return { out, sessionId, runId: run.id, saves, turnId: activeTurn.turnId };
   };
-  const context = { appName: 'Page Turners', issueTitle: 'Display location and host information' };
+  const followed = (sessionId) => calls.filter((c) => c[0] === 'resume' && c[1] === sessionId).length;
 
   await t.test('(i) a commit the restart kept from being pushed is pushed from the worker, and proposed', async () => {
     reset();
     const sha = 'c'.repeat(40);
     pushAnswer = async () => ({ sha });
     const journal = writeJournal('push-caught', { said: 'Added the host column.', ahead: 1, sha, pushOk: 0 });
-    const { sessionId, runId, branch } = await build(21, journal);
-    await recover(sessionId);
-    assert.deepEqual(pushes, [[sessionId, branch]], 'pushed once, from the worker, to the session branch');
-    assert.deepEqual(promoted, [sessionId], 'proposed');
-    const row = await runRow(runId);
-    assert.equal(row.build_ok, true);
-    assert.equal(row.build_error, null);
-    assert.equal(row.build_sha, sha);
-    assert.equal(row.build_commits, 1);
-    assert.equal(posts.some((p) => p.kind === 'build_failed'), false, 'nothing said about a failure');
+    const { out, sessionId, runId, saves, turnId } = await carriedOn(21, journal);
+    assert.equal(followed(sessionId), 1, 'the turn was followed, not dispatched again');
+    assert.equal(dispatches.length, 0);
+    assert.deepEqual(pushes, [[sessionId, `dev/homeroom_bot-s${sessionId}`]], 'pushed once, from the worker, to the session branch');
+    assert.equal(out.ok, true, out.error);
+    assert.equal(out.sha, sha);
+    assert.equal(out.commits, 1);
+    assert.deepEqual(proposed.slice(-1), [sessionId], 'proposed');
+    const kept = saves.find((v) => v['turn:build']?.phase === 'done')['turn:build'];
+    assert.deepEqual(kept.record, { turnId, journal }, 'the followed turn\'s result is kept, under its record');
+    assert.equal(kept.out.routed.result.repushed, true);
+    assert.equal((await sessionRow(sessionId)).workflow_owner, `bot-build/run:${runId}`,
+      'the session carries the build that owns it, which server.js reads');
   });
 
   await t.test('(i) a commit that still cannot be pushed is a push failure, never "no change to propose"', async () => {
     reset();
     pushAnswer = async () => { throw Object.assign(new Error('git push: connection reset'), { code: 'push_failed' }); };
     const journal = writeJournal('push-lost', { ahead: 1, sha: 'd'.repeat(40), pushOk: 0 });
-    const { sessionId, runId } = await build(22, journal);
-    await recover(sessionId);
+    const before = proposed.length;
+    const { out, sessionId } = await carriedOn(22, journal);
     assert.equal(pushes.length, 1);
-    assert.deepEqual(promoted, []);
-    const row = await runRow(runId);
-    assert.equal(row.build_ok, false);
-    assert.equal(row.build_error, 'couldn\'t push the build\'s commit (push_failed) (finished after a restart)');
+    assert.equal(proposed.length, before, 'not proposed');
     assert.equal(dispatches.length, 0, 'a push that did not go through is not nudged');
+    assert.equal(out.ok, false);
+    assert.match(out.error, /^couldn't push the build's commit \(push_failed\)/,
+      'the build\'s commit is in its worker: its push failed, it did not come to nothing');
+    assert.equal((await sessionRow(sessionId)).status, 'archived');
   });
 
   await t.test('(ii) a journal ending in 143 with the bot\'s own stop saved is the time-out it was', async () => {
@@ -274,104 +375,62 @@ test('restart recovery finishes a bot build the way the live path would have', {
     // The turn the bot's clock stopped just before the restart: its journal
     // ends in the 143 the stop left, with no RESULT line.
     const journal = writeJournal('clock-stop', { finished: false, exit: 143 });
-    const { sessionId, runId, turnId } = await build(23, journal);
-    // What the clock saved before it stopped the turn (homeroom-bot-live.js).
-    const stops = [];
-    await live.stopOnClock(pool, { stopTurn: async (id) => { stops.push(id); return true; } }, sessionId);
-    assert.deepEqual(stops, [sessionId]);
-    const { rows: [{ active_turn: saved }] } = await pool.query('SELECT active_turn FROM chat_sessions WHERE id = $1', [sessionId]);
-    assert.equal(saved.turnId, turnId);
-    assert.equal(saved.botStop.why, 'time_limit');
-    assert.ok(live.botStopOf(saved));
     assert.ok(live.failedClaudeTurn(replay(journal)), 'read alone, the journal says the agent failed');
-
-    await recover(sessionId);
-    const row = await runRow(runId);
-    assert.equal(row.build_ok, false);
-    assert.equal(row.build_error, 'the build ran past its time limit (finished after a restart)',
-      'with the live path\'s wording, not "the agent exited with code 143"');
-    const failed = posts.find((p) => p.kind === 'build_failed');
-    assert.ok(failed);
-    assert.equal(dm.dmText('build_failed', failed.dm, { ...context, issueNumber: 23 }).split('\n\n')[1],
-      'I couldn\'t finish building this: it took longer than I\'m allowed. Reply here and I\'ll try again.');
+    const { out, sessionId } = await carriedOn(23, journal, { botStop: true });
+    assert.equal(followed(sessionId), 1);
+    assert.equal(out.ok, false);
+    assert.match(out.error, /^the build ran past its time limit/, 'with the live path\'s wording, not "the agent exited with code 143"');
+    assert.equal(dm.buildFailedWords(out.error), 'I couldn\'t finish building this: it took longer than I\'m allowed.',
+      'and its person is told so');
+    assert.equal(dispatches.length, 0, 'a turn its clock stopped is not nudged');
   });
 
   await t.test('a journal ending in 143 with no saved stop is still the agent\'s failure', async () => {
     reset();
     const journal = writeJournal('agent-died', { finished: false, exit: 143 });
-    const { sessionId, runId } = await build(24, journal);
-    await recover(sessionId);
-    assert.equal((await runRow(runId)).build_error, 'the build turn failed (the agent exited with code 143) (finished after a restart)');
+    const { out } = await carriedOn(24, journal);
+    assert.equal(out.ok, false);
+    assert.match(out.error, /^the build turn failed \(the agent exited with code 143\)/);
   });
 
-  await t.test('(iii) a recovered build that changed nothing, with time left, is nudged once, and the nudge proposed', async () => {
+  await t.test('(iii) a followed build that changed nothing, with time left, is nudged once, and the nudge proposed', async () => {
     reset();
     const journal = writeJournal('no-change', { said: 'Here is my plan: ...', threadId: 'thread-first', ahead: 0, pushOk: 1 });
-    const { sessionId, runId, branch } = await build(25, journal);
-    await snapshots.recordSnapshot(pool, {
-      runId, stage: 'build', appId: app.id, issueNumber: 25,
-      texts: { seed: 'Request #25: show who hosts each meeting.', build_note: 'build it', preset_spec: '' },
-      extra: { model: 'z-ai/glm-5.3-flash', firstVersion: false, platformRepo: false },
-    });
     const sha = 'e'.repeat(40);
     nudgeJournal = { said: 'Added it.', threadId: 'thread-first', ahead: 1, sha, pushOk: 1 };
-    await recover(sessionId);
+    const { out, sessionId } = await carriedOn(25, journal);
 
+    assert.equal(followed(sessionId), 1);
     assert.equal(dispatches.length, 1, 'one nudge');
     const [nudge] = dispatches;
     assert.equal(nudge.mode, 'build');
-    assert.equal(nudge.resumeSessionId, 'thread-first', 'continuing the agent\'s own conversation');
-    assert.equal(nudge.branchName, branch);
+    assert.equal(nudge.resumeSessionId, 'thread-first', 'continuing the agent\'s own conversation, as the followed turn reported it');
+    assert.equal(nudge.branchName, `dev/homeroom_bot-s${sessionId}`);
     assert.equal(nudge.telemetryComponent, live.BUILD_NUDGE_TELEMETRY);
     assert.match(nudge.prompt, /^The plan is approved\. You ended your turn without changing anything/);
     assert.match(nudge.resumeFallbackPrompt, /Request #25: show who hosts each meeting\./,
       'with the whole build prompt, should the conversation not continue');
-    assert.deepEqual(promoted, [sessionId], 'what the nudge built is proposed');
-    const row = await runRow(runId);
-    assert.equal(row.build_ok, true);
-    assert.equal(row.build_sha, sha);
-    assert.equal(row.build_no_change.nudged, true);
-    assert.equal(row.build_no_change.committed, true);
-    assert.deepEqual(row.build_no_change.turns.map((x) => [x.turn, x.ended]), [['build', 'no_change'], ['nudge', 'changed']]);
+    assert.equal(out.ok, true, out.error);
+    assert.equal(out.sha, sha);
+    assert.deepEqual(proposed.slice(-1), [sessionId], 'what the nudge built is proposed');
+    assert.equal(out.noChange.nudged, true);
+    assert.equal(out.noChange.committed, true);
+    assert.deepEqual(out.noChange.turns.map((x) => [x.turn, x.ended]), [['build', 'no_change'], ['nudge', 'changed']]);
     const { rows: counted } = await pool.query(
       `SELECT event_type AS type FROM events WHERE session_id = $1 AND event_type IN ('bot_build_no_change', 'bot_build_nudged') ORDER BY id`, [sessionId],
     );
     assert.deepEqual(counted.map((e) => e.type), ['bot_build_no_change', 'bot_build_nudged'], 'counted as the live path counts them');
   });
 
-  await t.test('(iii) a shadow build is nudged the same way, once its session is free, and recorded built', async () => {
-    reset();
-    const journal = writeJournal('shadow-no-change', { threadId: 'thread-shadow', ahead: 0, pushOk: 1 });
-    const { sessionId, runId } = await build(27, journal);
-    await pool.query("UPDATE homeroom_bot_runs SET mode = 'shadow', build_at = NOW() WHERE id = $1", [runId]);
-    await snapshots.recordSnapshot(pool, {
-      runId, stage: 'build', appId: app.id, issueNumber: 27, texts: { seed: 'Request #27.', build_note: '', preset_spec: '' },
-    });
-    const sha = 'f'.repeat(40);
-    nudgeJournal = { threadId: 'thread-shadow', ahead: 2, sha, pushOk: 1 };
-    await recover(sessionId);
-    assert.equal(dispatches.length, 1, 'one nudge');
-    assert.equal(dispatches[0].resumeSessionId, 'thread-shadow');
-    assert.deepEqual(promoted, [], 'a shadow build is never proposed');
-    const row = await runRow(runId);
-    assert.equal(row.build_ok, true);
-    assert.equal(row.build_sha, sha);
-    assert.equal(row.build_commits, 2);
-    assert.deepEqual(row.build_no_change.turns.map((x) => [x.turn, x.ended]), [['build', 'no_change'], ['nudge', 'changed']]);
-    const { rows: [s] } = await pool.query('SELECT status FROM chat_sessions WHERE id = $1', [sessionId]);
-    assert.equal(s.status, 'archived', 'put away once it is recorded');
-  });
-
-  await t.test('a recovered build that changed nothing with too little time left is not nudged, and says why', async () => {
+  await t.test('a followed build that changed nothing with too little of its clock left is not nudged, and says why', async () => {
     reset();
     const journal = writeJournal('no-change-late', { ahead: 0, pushOk: 1 });
-    // Its clock gives back one restart's time, less than a nudge needs.
-    const { sessionId, runId } = await build(26, journal, { startedAt: ago(BUDGET_MS) });
-    await recover(sessionId);
+    // Its clock started a whole budget ago: what is left is less than a nudge needs.
+    const { out } = await carriedOn(26, journal, { clockAgoMs: BUDGET_MS });
     assert.equal(dispatches.length, 0);
-    const row = await runRow(runId);
-    assert.equal(row.build_error, 'the build produced no change to propose (finished after a restart)');
-    assert.equal(row.build_no_change.nudged, false);
-    assert.match(row.build_no_change.notNudged, /minutes of its clock were left/);
+    assert.equal(out.ok, false);
+    assert.equal(out.error, 'the build produced no change to propose');
+    assert.equal(out.noChange.nudged, false);
+    assert.match(out.noChange.notNudged, /minutes of its clock were left/);
   });
 });

@@ -209,6 +209,7 @@ const INFO: Record<string, string> = {
   kudos: 'Per ISO week, how many users gave 0, 1, 2, 3, 4–5, 6–10 or 11+ kudos (everyone gets a budget of 20/week). The 0 bucket is registered users who gave none that week, making this a participation view rather than a raw count. Counts direct PR kudos only. Issue-bounty pledges draw on the same weekly allowance but are not in this series.',
   'spend-distribution': 'Per day, how many users\' platform-funded AI spend (what the caps track) fell into each dollar bucket. The <b>$0</b> bucket is every registered user (as of that day) with no platform spend, and it usually dwarfs the paid buckets, so it is hidden by default; use the <b>Show $0</b> toggle to include it. The top tier splits <b>$20+ platform only</b> (heavy spenders with no usable own key) from <b>$20+ own key</b> (heavy spenders who had a personal Anthropic key configured, or spent on it that day, so could keep going). These are DAY buckets, not cap boundaries. The account cap is weekly, so a day above $20 is a heavy day rather than a refusal. The "has own key" signal is a current snapshot corrected by that day\'s own-key spend, so past-day attribution is approximate.',
   'ui-failures': 'Representative instrumented journeys over the last 14 days. Failure rate divides failed outcomes by successful plus failed outcomes; cancellations, timeouts, and navigation departures are shown separately. Repeats and departures are descriptive signals, not proof that someone was frustrated. Delivery receipts describe observed coverage, but cannot count telemetry that never reached the server.',
+  'page-loads': 'One Navigation Timing duration per full page load or reload (browser start to load finish), over the chosen window. Each load is credited to the first real screen the shell showed, or "Left before a screen showed" when none appeared before the load ended. In-page navigation and post-load fetches are not measured, and a page hidden before its load finished is left out because browsers slow hidden pages on purpose. The same privacy limits as UI failures apply: no service identities, nobody who objected, and admins excluded unless the box above is ticked.',
 };
 
 // Per-card Overview definitions (#341). Keyed by a stable card id, mirroring
@@ -1453,6 +1454,74 @@ function UIExperience({ report }: { report: any }) {
   );
 }
 
+// Page load times (#4965): one Navigation Timing duration per full page load,
+// credited to the first real screen the shell showed. The same
+// privacy-limited pipeline that records UI failures, so the same cohort rules
+// apply (the checkbox above governs it too).
+const LOAD_SCREEN_LABELS: Record<string, string> = {
+  home: 'Home', discover: 'Discover', communities: 'Communities',
+  challenges: 'Challenges', profile: 'Profile', my_proposals: 'My proposals',
+  settings: 'Settings', messages: 'Messages', assistant: 'Global Chat',
+  agent_session: 'Agent session', app: 'Running app', project: 'Project page',
+  shell_boot: 'Left before a screen showed',
+};
+
+const LOAD_DAY_OPTIONS: Array<[string, string]> = [
+  ['1', '1 day'], ['7', '7 days'], ['14', '14 days'], ['30', '30 days'],
+];
+
+function PageLoads({ report, days, onDays }: { report: any; days: string; onDays: (v: string) => void }) {
+  const unavailable = !report || report.unavailable;
+  const screens = (!unavailable && Array.isArray(report.screens)) ? report.screens : [];
+  return (
+    <section id="page-loads" className={`${AdminUI.card} p-4`}>
+      <div className="flex items-center justify-between flex-wrap gap-2 mb-1">
+        <h3 className={H3}>Page load times<InfoIcon info="page-loads" /></h3>
+        {!unavailable ? (
+          <ToggleGroup cls="load-days-btn" attr="data-days" value={days}
+            options={LOAD_DAY_OPTIONS} onChange={onDays} />
+        ) : null}
+      </div>
+      <p className={SUB}>How long full page loads take, from the browser starting to the page finishing loading. Each load is credited to the first screen shown.</p>
+      {unavailable ? (
+        <p className={AdminUI.cardDescription}>Page load analytics could not be loaded.</p>
+      ) : (
+        <div>
+          {screens.length ? (
+            <div className={AdminUI.tableWrap}>
+              <table className={AdminUI.table}>
+                <thead className={AdminUI.thead}><tr>
+                  <th className={AdminUI.th}>Screen</th><th className={AdminUI.th}>Loads</th>
+                  <th className={AdminUI.th}>People</th><th className={AdminUI.th}>Median</th>
+                  <th className={AdminUI.th}>95th percentile</th>
+                </tr></thead>
+                <tbody>
+                  <tr className={AdminUI.trHover}>
+                    <td className={AdminUI.td}>All page loads</td>
+                    <td className={`${AdminUI.td} tabular-nums`}>{fmtInt(report.total?.loads)}</td>
+                    <td className={`${AdminUI.td} tabular-nums`}>{fmtInt(report.total?.people)}</td>
+                    <td className={`${AdminUI.td} tabular-nums`}>{uiDuration(report.total?.p50Ms)}</td>
+                    <td className={`${AdminUI.td} tabular-nums`}>{uiDuration(report.total?.p95Ms)}</td>
+                  </tr>
+                  {screens.map((row: any) => (
+                    <tr className={AdminUI.trHover} key={row.screen}>
+                      <td className={AdminUI.td}>{LOAD_SCREEN_LABELS[row.screen] || row.screen}</td>
+                      <td className={`${AdminUI.td} tabular-nums`}>{fmtInt(row.loads)}</td>
+                      <td className={`${AdminUI.td} tabular-nums`}>{fmtInt(row.people)}</td>
+                      <td className={`${AdminUI.td} tabular-nums`}>{uiDuration(row.p50Ms)}</td>
+                      <td className={`${AdminUI.td} tabular-nums`}>{uiDuration(row.p95Ms)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : EMPTY}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function AnalyticsSection() {
   const [gate, setGate] = useState<string | null>(null);
   const [data, setData] = useState<any>(null);
@@ -1463,6 +1532,10 @@ function AnalyticsSection() {
   const [spendMode, setSpendMode] = useState<'platform' | 'user' | 'both'>('platform');
   const [builderMode, setBuilderMode] = useState<'platform' | 'user' | 'both'>('platform');
   const [spendDistIncludeZero, setSpendDistIncludeZero] = useState(INITIAL_SPEND_DIST_ZERO);
+  // Page load times have their own window (default 7 days), so they refetch
+  // on their own the way the funnels do.
+  const [loadDays, setLoadDays] = useState('7');
+  const [loadReport, setLoadReport] = useState<any>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
@@ -1557,6 +1630,20 @@ function AnalyticsSection() {
     })();
   }, [authed, includeAdmins, cohort]);
 
+  // Page load times (#4965), refetched when the window or the admin flag
+  // flips. A failure keeps the card with its "could not be loaded" line.
+  useEffect(() => {
+    if (!authed) return;
+    (async () => {
+      try {
+        const r = await getJSON(withAdmins(`/api/admin/analytics/page-loads?days=${encodeURIComponent(loadDays)}`));
+        if (alive.current) setLoadReport(r);
+      } catch {
+        if (alive.current) setLoadReport({ unavailable: true });
+      }
+    })();
+  }, [authed, includeAdmins, loadDays]);
+
   const d = data;
   const daily = (d?.generalUsers && d.generalUsers.daily) || [];
   const wau = (d?.powerUsers && d.powerUsers.wau) || [];
@@ -1601,6 +1688,8 @@ function AnalyticsSection() {
           </section>
 
           <UIExperience report={d?.uiFailures} />
+
+          <PageLoads report={loadReport} days={loadDays} onDays={setLoadDays} />
 
           {/* Daily spend */}
           <section className={`${AdminUI.card} p-4`}>

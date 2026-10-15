@@ -119,7 +119,9 @@ test('Empty is the scaffold every project always got, byte for byte', () => {
   assert.doesNotMatch(server, /\/api\/press|\/api\/leaderboard|presses/);
   assert.match(server, /app\.listen\(port/);
   assert.doesNotMatch(server, /require\('\.\/api'\)/);
-  assert.deepEqual(JSON.parse(file(plain, 'dapp.json')), { secrets: [] });
+  // The key a first version's checks go under is there from the first
+  // commit (App bench run 191: builds wrote theirs under `checks`).
+  assert.deepEqual(JSON.parse(file(plain, 'dapp.json')), { secrets: [], tests: [] });
   // #4047: the welcome card opens with the app's thumbnail tile (no sketch,
   // no starter here, so the name's letter falls back the way the home tile
   // does).

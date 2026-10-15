@@ -572,3 +572,87 @@ test('a page hydrates each distinct card once, however many messages carry it', 
   }
   assert.notEqual(cards.get(10)[0], cards.get(11)[0], 'each message carries its own copy');
 });
+
+test('a page reads its distinct cards a few at a time, not one after another', async (t) => {
+  const original = github.fetchPublicIssue;
+  t.after(() => { github.fetchPublicIssue = original; });
+  let inFlight = 0;
+  let most = 0;
+  github.fetchPublicIssue = async (owner, repo, number) => {
+    inFlight += 1;
+    most = Math.max(most, inFlight);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    inFlight -= 1;
+    return { issue: { number, title: `Request ${number}`, state: 'closed' } };
+  };
+  const rows = Array.from({ length: 14 }, (_, i) => ({
+    id: i + 1, message_id: 100 + i, position: 0, object_type: 'github_issue', app_id: 7, object_ref: 500 + i, object_version: null,
+  }));
+  const pool = {
+    query: async (sql) => {
+      if (sql.includes('FROM conversation_message_objects')) return { rows };
+      if (/FROM user_app_blocks/.test(sql)) return { rows: [] };
+      if (sql.includes('FROM apps WHERE id = $1')) {
+        return { rows: [{ id: 7, slug: 'demo', name: 'Demo', repo_url: 'https://github.com/example/demo.git', view_visibility: 'public', collab_visibility: 'public' }] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    },
+  };
+  const cards = await sharedObjects.hydrateForMessages(pool, { id: 3, isAdmin: false }, rows.map((r) => r.message_id));
+  assert.ok(most > 1, 'more than one at a time');
+  assert.ok(most <= 6, `at most six at once (saw ${most})`);
+  assert.deepEqual(rows.map((r) => cards.get(r.message_id)[0].title), rows.map((r) => `Request ${r.object_ref}`), 'each card where it was');
+});
+
+test('when GitHub cannot answer, a request card takes the title Homeroom holds for it', async (t) => {
+  const original = github.fetchPublicIssue;
+  t.after(() => { github.fetchPublicIssue = original; });
+  github.fetchPublicIssue = async () => ({ issue: null, note: 'fetch failed' });
+  const asked = [];
+  const pool = {
+    query: async (sql, params) => {
+      if (sql.includes('FROM conversation_message_objects')) {
+        return { rows: [
+          { id: 1, message_id: 10, position: 0, object_type: 'github_issue', app_id: 7, object_ref: 4752, object_version: null },
+          { id: 2, message_id: 11, position: 0, object_type: 'github_issue', app_id: 7, object_ref: 4753, object_version: null },
+        ] };
+      }
+      if (/FROM user_app_blocks/.test(sql)) return { rows: [] };
+      if (sql.includes('FROM apps WHERE id = $1')) {
+        return { rows: [{ id: 7, slug: 'demo', name: 'Demo', repo_url: 'https://github.com/example/demo.git', view_visibility: 'public', collab_visibility: 'public' }] };
+      }
+      if (sql.includes('FROM homeroom_bot_requesters') && sql.includes('FROM issues')) {
+        asked.push(params[1]);
+        return { rows: params[1] === 4752 ? [{ title: 'Fix missing needs-you area on needs-you page' }] : [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    },
+  };
+  const cards = await sharedObjects.hydrateForMessages(pool, { id: 3, isAdmin: false }, [10, 11]);
+  assert.equal(cards.get(10)[0].title, 'Fix missing needs-you area on needs-you page', 'not "Issue #4752"');
+  assert.equal(cards.get(11)[0].title, 'Issue #4753', 'nothing held: its number');
+  assert.deepEqual(asked.sort(), [4752, 4753]);
+});
+
+test('the chat with the bot sends its news rows without their cards; the server and the client agree on which rows those are', () => {
+  const conversations = require('../src/services/conversations');
+  const row = (meta, over = {}) => ({ sender_is_synthetic: true, msg_type: 'message', deleted_at: null, metadata: { homeroomBot: meta }, ...over });
+  assert.equal(conversations.isBotNewsRow(row({ kind: 'activity', issueNumber: 18 })), true);
+  assert.equal(conversations.isBotNewsRow(row({ kind: 'merged', firstVersion: true })), true);
+  assert.equal(conversations.isBotNewsRow(row({ kind: 'activity' })), true, 'a card is news');
+  assert.equal(conversations.isBotNewsRow(row({ kind: 'chat', issueNumber: 18 })), false, 'conversation keeps its cards');
+  assert.equal(conversations.isBotNewsRow(row({ kind: 'question', issueNumber: 18, moment: 'reply' })), false);
+  assert.equal(conversations.isBotNewsRow(row({ kind: 'note' })), false, 'about no request');
+  assert.equal(conversations.isBotNewsRow(row({ kind: 'question', issueNumber: 18 }, { sender_is_synthetic: false })), false, 'a person\'s message is theirs');
+  assert.equal(conversations.isBotNewsRow(row({ kind: 'question', issueNumber: 18 }, { deleted_at: new Date() })), false);
+  // The client's isBotNews draws exactly these rows as one line with no card.
+  const client = read('frontend/src/features/messages/bot-request.ts');
+  const listed = client.slice(client.indexOf('const CONVERSATION_KINDS = new Set(['), client.indexOf(']);', client.indexOf('const CONVERSATION_KINDS')));
+  const kinds = [...listed.matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
+  assert.deepEqual([...conversations.BOT_CONVERSATION_KINDS].sort(), kinds.sort(), 'the same conversation kinds on both sides');
+  assert.match(client, /return \(Number\(meta\.issueNumber\) > 0\) \|\| !!meta\.firstVersion \|\| meta\.kind === 'activity';/);
+  // Every main-stream read in the chat with the bot leaves them out; a story keeps them.
+  const source = read('src/services/conversations.js');
+  assert.equal((source.match(/hydrateMessages\((?:pool|db), user, page, \{ cards \}\)/g) || []).length, 3, 'newest, newer and a permalink window');
+  assert.match(source, /const \[hydratedRoot, messages\] = await Promise\.all\(\[\s*hydrateMessages\(pool, user, root\.rows\),\s*hydrateMessages\(pool, user, page\),/);
+});

@@ -1442,6 +1442,9 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
 .messages-bot-answers .messages-bot-tint { color: var(--accent-tint-ink); background: var(--accent-tint); }
 /* Tapped, it turns grey and says so, with a check: settled, not pressable. */
 .messages-bot-answers .messages-bot-done { color: var(--text-muted); background: var(--dc-raised); cursor: default; filter: none; }
+/* Run six: a first version's "We'll tell you when it's live", on. Settled,
+   so grey with a check as Done is; but a switch, so a tap turns it off. */
+.messages-bot-answers .messages-bot-on { color: var(--text-muted); background: var(--dc-raised); }
 /* B6: an answer tapped as a choice (a plan's, or one of two questions)
    takes the same accent fill. Nothing is sent until Build it. */
 .messages-bot-answers button[aria-pressed="true"] { color: var(--accent-ink); background: var(--accent); }
@@ -4323,6 +4326,36 @@ html.un-ios.web-browser-chrome:not([data-community-tint]) body:has(:is(#home-scr
 html.un-ios.web-browser-chrome:not([data-community-tint]) body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header {
   background-color: var(--dc-sheet-solid);
 }
+/* …AND ON THE APP TAB, WHERE THE PAGE IS NOT THE SCROLLER (newcomer run
+   six, 14 Oct 2026, iPhone Safari 26). Safari takes the strip's colour from
+   a bar FIXED (or sticky) at the top. On the routes above a phone browser
+   scrolls the document (lib/browser-scroll.ts), so the bar is sticky
+   (`html[data-browser-scroller]`) and the strip follows its ground. The App
+   tab of a first version being built is the platform's own page, but the
+   document is not its scroller (pageScroller answers only the project's own
+   pages, #dev-forum-scroll), so its bar sat in the flow, Safari found no bar
+   to take a colour from, and the strip stayed the hub's teal over the App
+   tab's light bar. Sticky at the top here as well: the page does not
+   scroll, so the bar stays exactly where it was, and the strip takes the
+   opaque ground the rule above gives it. Back on the hub the bar is sticky
+   and tinted again (`data-community-tint`), and the strip turns teal.
+   …AND ON EVERY OTHER SCREEN THE DOCUMENT DOES NOT SCROLL (newcomer run
+   seven, 14 Oct 2026, iPhone Safari 26): from the hub to Messages the strip
+   stayed teal over Messages' light bar, for the same reason. Of the routes
+   above, only Home, Browse, Leaderboard, Profile and Settings are page
+   scrollers (lib/browser-scroll.ts PAGES); Messages, Communities, #general,
+   an agent's session and a profile's proposals each scroll an element of
+   their own, so their bar is sticky here too. Sticky changes no layout on
+   them: it offsets the bar only when its nearest scroller, <body>
+   (`overflow: hidden`, 100dvh), scrolls, and nothing scrolls it, so the
+   bar stays where it sits in the flow; and it is already `relative z-10`,
+   so it was a stacking context and a containing block before. */
+html.un-ios.web-browser-chrome:not([data-community-tint]):not([data-browser-scroller]) body:has(:is(#messages-screen, #workshop-screen, #global-chat-screen,
+             #agent-session-screen, #profile-proposals-screen):not(.hidden)) #platform-header,
+html.un-ios.web-browser-chrome:not([data-community-tint]):not([data-browser-scroller]) body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header {
+  position: sticky;
+  top: 0;
+}
 /* THE BAR TAKES THE APP'S TONE (#1945). A dark app under the light shell
    used to sit beneath a cream strip, and a light app under the dark shell
    beneath a night one: the bar has no surface inside an app, so the
@@ -5646,6 +5679,12 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
      under-reserving does not merely crop the last card, it parks Create and
      Challenges permanently behind the bar. */
   padding-bottom: max(var(--platform-tabs-h, 0px), var(--platform-safe-bottom));
+  /* 4px, so the first label (its own `pt-4`) clears the header's notch by
+     the 12px Workshop, Messages and Profile leave: the bar overlaps this
+     box by 8. It sits on #home-body, not the search bar, because the bar
+     parks by its own offsetHeight (home.js), and a taller bar would park
+     the gap away with it. */
+  padding-top: 4px;
 }
 html[data-browser-scroller="home-screen"] .home-body-fill {
   /* The header overlaps its content by .5rem (its rounded lower edge). */
@@ -5846,7 +5885,9 @@ html[data-browser-scroller="home-screen"] .home-body-fill {
   #browse-screen .browse-pane-head {
     position: static;
     margin: 0;
-    padding: 12px 12px 10px;
+    /* 20px at the top: 8 under the header's notch, 12 of air (12 left the
+       search field 4px under the bar). */
+    padding: 20px 12px 10px;
     background: transparent;
   }
   #browse-screen .browse-pane-body,
@@ -10582,6 +10623,13 @@ html.un-kb #settings-content-col > .settings-sheet {
   margin-bottom: 0;
   padding-bottom: 32px;
 }
+/* From md up the sheet sits BESIDE the sidebar, whose search field starts
+   at the root's top. The 12px shoulder put the sheet's top edge 12px below
+   the field's, so the two columns did not line up; there the root's
+   `md:pt-5` (8 for the header's notch, 12 of air) is the step for both. */
+@media (min-width: 768px) {
+  #settings-content-col > .settings-sheet { margin-top: 0; }
+}
 .settings-sheet > [data-settings-section] { max-width: 40rem; }
 /* A PAGE shows several parts at once since the settings restructure
    (Account is Profile, Username, Email & recovery, Password and Delete
@@ -11183,6 +11231,29 @@ html.platform-kb-open #comment-pin-box.comment-sheet {
   margin-bottom: calc(-1 * var(--comment-sheet-pb));
   padding-bottom: var(--comment-sheet-pb);
   background-color: var(--dc-sheet-solid);
+}
+/* And its head the same at the top (14 Oct 2026): the grabber, where the
+   request goes, Minimize and ✕ stay at the sheet's top edge while the rest
+   scrolls under them. Under the close-up and scrolled away with the keys
+   up, the ✕ was hard to find. Held the sheet's top padding (p-3) higher,
+   for the same reason the actions row is held lower. */
+#comment-pin-box.comment-sheet .comment-sheet-head {
+  position: sticky;
+  top: -0.75rem;
+  z-index: 1;
+  flex: none;
+  margin-top: -0.75rem;
+  padding-top: 0.75rem;
+  background-color: var(--dc-sheet-solid);
+}
+/* The phone's small box (the comment before its sheet) comes in beside its
+   pin rather than appearing in a frame. Opacity and transform only. */
+.comment-small-in { animation: comment-small-in 160ms ease-out; }
+@keyframes comment-small-in {
+  from { opacity: 0; transform: translateY(4px) scale(0.97); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .comment-small-in { animation: none; }
 }
 /* THE PAPERCLIP'S POPOVER (#4127): Photo and Video, in the vote popover's
    frame (.dev-vote-pop / .messages-new-pop: same radius, surface, hairline
@@ -16689,6 +16760,18 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-change-shots-line { margin: 8px 0 0; display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--text-muted); }
 .dev-change-shots-tiles { margin-top: 8px; }
 .dev-change-closed-note { margin: 0; padding: 6px 16px 12px; font-size: 15px; color: var(--text-muted); }
+/* #5007: a change built for a request points its replies at the request
+   where its conversation lives. The `p` variant sits above the "N replies"
+   row; the `div` one replaces the "No replies yet" row and keeps that
+   row's hairline. Same spacing and type as the reply-count row. */
+p.dev-change-issue-pointer {
+  margin: 0;
+  padding: 2px 16px 4px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.dev-change-issue-link { color: var(--accent); font-weight: 600; text-decoration: none; }
+.dev-change-issue-link:hover { text-decoration: underline; }
 
 /* Shot details, in the Details sheet. */
 .dev-shot-details-claims { margin: 6px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
@@ -17487,33 +17570,47 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 }
 .dev-ws-item[data-ws-tint="a"] { background-image: linear-gradient(165deg, rgba(139, 92, 246, .16), rgba(20, 23, 31, 0) 55%, rgba(244, 114, 182, .10)); }
 .dev-ws-item[data-ws-tint="b"] { background-image: linear-gradient(165deg, rgba(59, 130, 246, .16), rgba(20, 23, 31, 0) 55%, rgba(251, 191, 36, .08)); }
-/* The progress line: one segment an item, lit up to the one in view. The
-   gaps are a mask, so the count is a number on the line (`--ws-n`) rather
-   than an element an item. */
-.dev-ws-item-progress {
-  position: absolute; left: 12px; right: 12px; top: 10px; height: 3px; z-index: 2;
-  border-radius: 3px; background: rgba(255, 255, 255, .25);
+/* #4754: THE STAGE. The strip and the scroller share one column, so the
+   strip is as wide as the card and sits over it, and neither scrolls. */
+.dev-ws-needs-stage {
+  flex: 1 1 auto; min-height: 0;
+  display: flex; flex-direction: column;
+}
+/* Where you are, on the page: one segment an item, lit up to the one in
+   view. The gaps are a mask, so the count is a number on the line
+   (`--ws-n`) rather than an element an item. The page's own colours: the
+   base is the sheet hairline and the lit part the ink that marks where you
+   are (--lit-ink), where the card drew the line white on the dark. */
+.dev-ws-needs-progress {
+  flex: 0 0 auto;
+  display: flex; align-items: center; gap: 12px;
+  height: 20px; margin: 0 6px 6px;
+}
+.dev-ws-needs-progress-line {
+  flex: 1 1 auto; height: 3px; border-radius: 3px;
+  background: var(--app-sheet-line);
   -webkit-mask-image: repeating-linear-gradient(90deg, #000 0 calc(100% / var(--ws-n, 1) - 4px), transparent calc(100% / var(--ws-n, 1) - 4px) calc(100% / var(--ws-n, 1)));
   mask-image: repeating-linear-gradient(90deg, #000 0 calc(100% / var(--ws-n, 1) - 4px), transparent calc(100% / var(--ws-n, 1) - 4px) calc(100% / var(--ws-n, 1)));
 }
-.dev-ws-item-progress > i { display: block; height: 100%; background: #fff; }
+.dev-ws-needs-progress-line > i { display: block; height: 100%; background: var(--lit-ink); }
+.dev-ws-needs-of {
+  flex: none;
+  font-size: 11px; font-weight: 700; letter-spacing: .06em; color: var(--text-muted);
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
 .dev-ws-item-top {
   position: relative; z-index: 2;
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
   min-height: 20px; margin: 22px 14px 0;
 }
 .dev-ws-item-top > .dev-ws-eyebrow { font-size: 10.5px; font-weight: 700; letter-spacing: .09em; color: rgba(255, 255, 255, .7); min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.dev-ws-item-of {
-  font-size: 11px; font-weight: 700; letter-spacing: .06em; color: rgba(255, 255, 255, .7);
-  font-variant-numeric: tabular-nums; white-space: nowrap;
-}
-/* #3517: the way back on a phone, beside the counter (workshop.tsx draws it
+/* #3517: the way back on a phone, at the right end of the card's top line,
+   where the counter sat before it moved to the strip (workshop.tsx draws it
    there only, from the second item on). A small round, the rail's own fill,
-   drawn at 26px but held to the row's 20px by negative margins, so the
-   counter under it sits where it does on the first card, which has none: a
-   swipe from one to the next must not nudge it. `margin-left: auto` takes
-   the row's free space, so it rides beside the counter rather than in the
-   middle of the row; the tap target is the 44px square around it. */
+   drawn at 26px but held to the row's 20px by negative margins.
+   `margin-left: auto` takes the row's free space, so it rides at the row's
+   right end rather than in the middle of it; the tap target is the 44px
+   square around it. */
 .dev-ws-item-prev {
   position: relative; flex: none;
   width: 26px; height: 26px; margin: -3px -4px -3px auto; padding: 0;
@@ -17560,6 +17657,12 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 }
 .dev-ws-item[data-ws-open] > .dev-ws-item-caption {
   overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none;
+}
+/* #5039: a diagram's picture is words too, so its caption sits below it in
+   the flow, still clear of the rail. Open ("more") it keeps the overlay. */
+.dev-ws-item:not([data-ws-open]):has(> .dev-ws-diagram) > .dev-ws-item-caption {
+  position: relative; left: auto; right: auto; bottom: auto;
+  flex: none; margin: 12px 80px 16px 14px;
 }
 .dev-ws-item-by {
   display: flex; align-items: center; gap: 8px; margin: 0; min-width: 0;
@@ -17619,6 +17722,15 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
    when the words run long), in a larger size, and the summary runs to eight
    lines before "more" is offered. No art stands in for the picture. */
 .dev-ws-item[data-ws-picture="none"] > .dev-ws-item-caption { top: 56px; }
+/* #5039: the caption's words sit on a soft panel of the card's own dark
+   colour, so they never lie on the picture's own words. Every pictured card
+   gets it; a pictureless card, where the words fill the card and nothing
+   sits behind them, does not. */
+.dev-ws-item:not([data-ws-picture="none"]) > .dev-ws-item-caption {
+  padding: 10px 12px; border-radius: 16px;
+  background: rgba(20, 23, 31, .55);
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+}
 .dev-ws-item[data-ws-picture="none"] > .dev-ws-item-caption > :first-child { margin-top: auto; }
 .dev-ws-item[data-ws-picture="none"] > .dev-ws-item-caption > :last-child { margin-bottom: auto; }
 .dev-ws-item[data-ws-picture="none"] .dev-ws-item-title { font-size: 22px; line-height: 1.2; -webkit-line-clamp: 4; }
@@ -17988,6 +18100,32 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 }
 .dev-ws-share:has(.dev-ws-join-pop) { position: relative; z-index: 5; }
 
+/* ── First look (hub-cards.tsx FirstLookCard, newcomer run six) ──────
+   The maker's, under Share it, while their first version is built: the
+   picture Homeroom bot drew of its main screen, small and phone-shaped
+   (cropped from the top, as a phone shows a screen), beside a small-caps
+   kicker, the card's sentence-case title and line in Share it's own type,
+   and its one button. The picture's box is fixed, so nothing moves as it
+   loads. */
+.dev-ws-strip.dev-ws-first-look { flex-direction: row; align-items: flex-start; gap: 14px; }
+.dev-ws-first-look-shot {
+  flex: none; width: 64px; height: 138px; border-radius: 12px;
+  object-fit: cover; object-position: top;
+  background: var(--bg-secondary);
+  box-shadow: 0 0 0 1px var(--app-sheet-line);
+}
+.dev-ws-first-look-body {
+  flex: 1 1 auto; min-width: 0;
+  display: flex; flex-direction: column; align-items: flex-start; gap: 4px;
+}
+.dev-ws-first-look-kicker {
+  margin: 0; font-size: 12px; font-weight: 700; line-height: 16px;
+  letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-muted);
+}
+.dev-ws-first-look-body .dev-ws-head-title { margin: 0; }
+.dev-ws-first-look-body .dev-ws-strip-text { color: var(--text-muted); }
+.dev-ws-first-look-body > button { margin-top: 8px; }
+
 /* ── Approval rules (community-card.tsx ApprovalRules) ─────────────── */
 .dev-ws-rules-line { margin: 0; font-size: 14px; line-height: 1.45; color: var(--text-primary); }
 
@@ -18146,7 +18284,7 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
   color: var(--text-primary); overflow-wrap: anywhere;
 }
 .dev-ws-item > .dev-ws-diagram {
-  flex: 1 1 auto; min-height: 0; margin: 16px 0 0; padding: 0 24px 16px; overflow: hidden;
+  flex: 1 1 auto; min-height: 0; margin: 16px 0 0; padding: 0 80px 16px 24px; overflow: hidden;
   gap: 14px; border-radius: 0; background: none; box-shadow: none;
 }
 .dev-ws-item > .dev-ws-diagram .dev-ws-diagram-src { margin: 2px 0 0; font-size: 12.5px; }
@@ -18211,8 +18349,15 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
   display: grid; grid-template-columns: 84px minmax(0, 1fr) 64px; gap: 10px; align-items: center; opacity: .45;
 }
 .dev-ws-touches-row[data-touched] { opacity: 1; }
-.dev-ws-touches-row > .dev-ws-diagram-what { font-size: 15px; }
+.dev-ws-touches-row > .dev-ws-diagram-what { font-size: 15px; overflow-wrap: normal; }
 .dev-ws-touches-n { font-size: 13px; color: var(--text-muted); text-align: right; white-space: nowrap; }
+/* #5039: where the browser can subgrid, the name and count columns are as
+   wide as the longest entry in any row, so the bars stay aligned and an
+   area's name is never cut ("Database" whole, whatever the text size). */
+@supports (grid-template-columns: subgrid) {
+  .dev-ws-touches > .dev-ws-diagram-rows { display: grid; grid-template-columns: max-content minmax(0, 1fr) max-content; }
+  .dev-ws-touches-row { grid-column: 1 / -1; grid-template-columns: subgrid; }
+}
 /* Mermaid: the library's SVG, scaled to the sheet. */
 .dev-ws-diagram-svg { display: flex; justify-content: center; min-height: 0; }
 .dev-ws-diagram-svg > svg { display: block; max-width: 100%; height: auto; max-height: 360px; }
@@ -18901,9 +19046,8 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
    screen readers and the declared checks, and the band's button is hidden.
    The header draws its own button (place-bar.tsx HeaderPlace), 28px like the
    header's other controls, and the place's name beside the switcher as a
-   small lowered label, a subscript to the chip rather than a second title;
-   the tint they sit on and the dot's ring are the community's, as the band's
-   were. The place name holds its ground (`flex-shrink: 0`, capped) so a long
+   small quiet tag (below); the tint they sit on and the dot's ring are the
+   community's, as the band's were. The place name holds its ground (`flex-shrink: 0`, capped) so a long
    community name shortens in the switcher first, which is the name the old
    second row did not show. On Homeroom's own pages that name is the
    wordmark drawing, which has no shorten-with-ellipsis of its own: it scales
@@ -18925,11 +19069,18 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
     display: inline-block;
     flex-shrink: 0; min-width: 0; max-width: 45%; overflow: hidden;
     text-overflow: ellipsis; white-space: nowrap;
-    /* A subscript-style label (evan's ask): small, like the header's own
-       subtitle tuning, and dropped to the chip's foot rather than centred
-       as a second title would be. White still, on the tint it sits on. */
-    align-self: flex-end; margin-bottom: 2px;
-    font-size: 11px; font-weight: 600; line-height: 1; color: #fff;
+    /* A SMALL QUIET TAG, CENTRED ON THE TITLE'S LINE (newcomer run six,
+       14 Oct 2026). It was a subscript dropped to the chip's foot, 11px
+       with `align-self: flex-end`, and "Club Votes ⌄ Hub" read as a word
+       that had slipped a few points under the name's baseline. Now it is a
+       pill in the header's own ink, as the bell and the back disc are
+       (`--brand-tint` / `--brand-ink`: white on the community's tint
+       here), centred on the row beside the switcher, so it reads as a
+       label on the name rather than a second line. */
+    align-self: center;
+    padding: 2px 8px; border-radius: 999px;
+    background: var(--brand-tint); color: var(--brand-ink);
+    font-size: 12px; font-weight: 600; line-height: 16px;
   }
 }
 
@@ -19831,12 +19982,18 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
        never lies across the card's caption or the arrows beside the rail. */
     padding-bottom: 34px;
   }
-  .dev-ws-needs-scroll { flex: 0 1 440px; max-width: 440px; border-radius: 22px; box-shadow: 0 16px 40px rgba(20, 23, 31, .25); }
+  /* The stage takes the card's width, so the strip above it is as wide as
+     the card and not as wide as the rail beside it. The scroller fills the
+     stage (its base rule is already `flex: 1 1 auto; min-height: 0`). */
+  .dev-ws-needs-stage { flex: 0 1 440px; max-width: 440px; }
+  .dev-ws-needs-scroll { border-radius: 22px; box-shadow: 0 16px 40px rgba(20, 23, 31, .25); }
+  .dev-ws-needs-progress { margin: 0 4px 8px; }
   /* The end card is the page's own, with its own hairline: no reel's shadow. */
-  .dev-ws-needs[data-ws-end] > .dev-ws-needs-scroll { box-shadow: none; }
-  .dev-ws-item-progress { left: 14px; right: 14px; top: 12px; }
+  .dev-ws-needs[data-ws-end] .dev-ws-needs-scroll { box-shadow: none; }
   .dev-ws-item-top { margin: 26px 16px 0; }
   .dev-ws-item-caption { left: 18px; right: 18px; bottom: 20px; gap: 8px; }
+  /* #5039: beside the card, the caption below a diagram needs no rail lane. */
+  .dev-ws-item:not([data-ws-open]):has(> .dev-ws-diagram) > .dev-ws-item-caption { margin: 12px 18px 20px; }
   .dev-ws-item-avatar { width: 32px; height: 32px; font-size: 13px; }
   .dev-ws-item-by b { font-size: 15px; }
   .dev-ws-item-title { font-size: 21px; line-height: 1.2; }
@@ -19858,7 +20015,7 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
   .dev-ws-needs:is([data-ws-sheet="comments"], [data-ws-sheet="ask"]) .dev-ws-item-caption > :not(.dev-ws-item-by) { display: none; }
   .dev-ws-needs:is([data-ws-sheet="comments"], [data-ws-sheet="ask"]) .dev-ws-item-scrim { height: 180px; }
   .dev-ws-needs:is([data-ws-sheet="comments"], [data-ws-sheet="ask"]) .dev-ws-item[data-ws-picture="none"] > .dev-ws-item-caption { top: auto; }
-  .dev-ws-needs:is([data-ws-sheet="comments"], [data-ws-sheet="ask"]) .dev-ws-needs-scroll { flex-basis: 400px; }
+  .dev-ws-needs:is([data-ws-sheet="comments"], [data-ws-sheet="ask"]) .dev-ws-needs-stage { flex-basis: 400px; }
   .dev-ws-rail {
     position: relative; right: auto; bottom: auto; z-index: auto;
     flex: 0 0 64px; justify-content: flex-end; padding-bottom: 20px; gap: 16px;
@@ -23458,10 +23615,10 @@ html.in-side-panel body {
   .dev-kanban-step-name, .dev-kanban-step-n { font-size: 14px; }
   .dev-kanban-step-arrow { display: none; }
   .dev-kanban-card { padding: 2px 12px 6px; }
-  /* The head: the way back and the name, then the search, the switch and
-     the filters a line each. */
+  /* The head: the way back and the name, then the search on its own line,
+     and the switch and the filters sharing the line under it (#5029). */
   .dev-ws-allbar #dev-kanban-search { flex-basis: 100%; max-width: none; min-width: 0; }
-  .dev-ws-allbar #dev-filter-chips { flex: 1 1 100%; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .dev-ws-allbar #dev-filter-chips { flex: 1 1 0; min-width: 0; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
   .dev-ws-allbar .dev-ws-pagehead-title { font-size: 20px; line-height: 26px; }
 }
 @media (max-width: 640px) {

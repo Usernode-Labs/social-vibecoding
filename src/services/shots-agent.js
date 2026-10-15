@@ -324,8 +324,10 @@ async function dispatchClaude(config, options, deps) {
   let result;
   try { result = await withDispatchTimeout(deps.workerService.execInWorker(session.id, {
     mode: 'shots',
-    prompt: TASK_PROMPT,
-    systemPrompt: SYSTEM_PROMPT,
+    // A shots eval's trial (shots-eval-runner.js) tries other prompts; every
+    // proposal's own run takes these.
+    prompt: options.taskPrompt || TASK_PROMPT,
+    systemPrompt: options.systemPrompt || SYSTEM_PROMPT,
     model,
     // Always a fresh thread: the brief carries everything the agent needs,
     // and the author's thread belongs to a different model.

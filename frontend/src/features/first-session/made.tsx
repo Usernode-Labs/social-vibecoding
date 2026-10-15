@@ -97,12 +97,19 @@
  *
  * UNTIL IT RUNS (#4900) the way on is off and a small card under the project
  * says how far its setup has got (SetupProgress, below).
+ *
+ * ONE THING AT A TIME (newcomer run six, 14 Oct 2026): for a project Homeroom
+ * bot builds from its description, the first session's screen says one thing
+ * is going on, never three. While it checks for questions, the project and
+ * one spinner over the checking line; while it asks, the project and the
+ * questions; at the invite ask, the project and one card, the first look,
+ * that carries how far it has got (FirstLookCard, below).
  */
 
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
-import { XIcon } from '@/components/ui/icons';
+import { SpinnerRingIcon, XIcon } from '@/components/ui/icons';
 import { ProgressRing } from '@/components/ui/progress-ring';
 import { Wordmark } from '@/components/ui/wordmark';
 
@@ -113,8 +120,13 @@ import { askForPingWhileBotBuilds } from '../dialogs/ping-ask';
 import { PlanChoices } from '../messages/bot-plan-view';
 import type { HomeroomBotPlanQuestion } from '../messages/types';
 
-import { BUILD_LINE_WORDS, type BuildLineState, buildLineOf, phaseLine, useNow } from './build-line';
+import { BUILD_LINE_WORDS, type BuildLineState, buildLineAsks, buildLineDone, buildLineOf, phaseLine, useNow } from './build-line';
+import { noteBuildStarted } from './build-line-words.js';
 import { copyText, inviteText } from './copy-invite';
+import { FIRST_LOOK_POLL_MS, firstLookSrc } from './first-look';
+import { syncBuildActivity } from '../app-frame/build-activity';
+import { countsDown, estimateOf, leftNote } from '../app-frame/first-version-eta';
+import { noteMoment } from './made-moments';
 import type { Made, MakeEntry } from './make';
 import type { FirstVersionStage } from './tour-steps';
 import { type Person, PeopleRow } from './people-row';
@@ -151,6 +163,13 @@ type FirstVersion = {
   early?: EarlyPlan;
   /** N4: the stage named, with when it began (homeroom-bot-progress.js firstVersionPhase). */
   phase?: unknown;
+  /** Run six: how long it still has to go (services/first-version-eta.js). */
+  estimate?: unknown;
+  /** Its maker reads it (routes/apps.js): the Live Activity is theirs. */
+  mine?: boolean;
+  /** N4: every step, and once it is ready, who it waits on: for the Live Activity. */
+  steps?: unknown;
+  approval?: unknown;
 } | null;
 
 /**
@@ -219,6 +238,33 @@ export function askedQuestions(fv: FirstVersion): HomeroomBotPlanQuestion[] | nu
   if (!early || early.status !== 'ready' || early.answered || !Array.isArray(early.questions)) return null;
   const questions = early.questions.filter((q) => q && typeof q.question === 'string' && Array.isArray(q.answers) && q.answers.length >= 2);
   return questions.length ? questions.slice(0, 2) : null;
+}
+
+/**
+ * Run five (13 Oct 2026): Share invite and Invite people later showed from
+ * the first second, so a tap on either skipped the questions that came a
+ * few seconds later. While the plan from Make it is being written, or
+ * before the first read of a project the bot builds from a description,
+ * the screen says it is checking in their place (CHECKING_LINE). Once the
+ * plan is ready the questions come, or the invite buttons when it asks
+ * nothing; a plan that failed, or one still not written PLAN_CHECK_MS after
+ * the screen opened, gives the invite buttons back too.
+ */
+export const PLAN_CHECK_MS = 60000;
+
+/** The line in place of the invite buttons while the plan is checked. A message id. */
+export const CHECKING_LINE = 'onboarding:firstSession.made.checkingQuestions';
+
+/**
+ * Whether the screen is still checking for questions: `makesPlan` is a
+ * project the bot builds from its description (not an import or a
+ * ready-made app), `read` whether the project has been read once, and
+ * `waited` whether PLAN_CHECK_MS has passed. Pure.
+ */
+export function checksForQuestions(fv: FirstVersion, { makesPlan, read, waited }: { makesPlan: boolean; read: boolean; waited: boolean }): boolean {
+  if (!makesPlan || waited) return false;
+  if (!read) return true;
+  return !!fv && !fv.ready && !!fv.early && fv.early.status === 'pending';
 }
 
 /**
@@ -919,6 +965,16 @@ export const SETUP_DONE = 'onboarding:firstSession.made.setup.done';
 export const SETUP_SET_UP = 'onboarding:firstSession.made.setup.setUp';
 
 /**
+ * Run five (13 Oct 2026): the lines over the questions hold their height
+ * whatever they say, so a read that changes them never moves Submit from
+ * under a finger (everything dropped about 35pt between seeing Submit and
+ * tapping it). The card is one height in every state: its title one line,
+ * its note at most two, room kept for both.
+ */
+export const SETUP_ROW = 'flex h-[84px] items-center gap-3 rounded-[20px] bg-white py-3 pl-3 pr-4 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900';
+export const SETUP_NOTE = 'line-clamp-2 text-[13px] leading-[18px] text-zinc-500 dark:text-zinc-400';
+
+/**
  * How far the setup has got, under the project while the way on waits for it
  * (IT RUNS BEFORE THE WAY ON GOES): a ring with the step ("2/4", the bot's
  * activity cards' ring, turning while it is under way), the step in words,
@@ -940,7 +996,7 @@ export function SetupProgress({ step, slow, waitedOut, done = null }: {
   if (done) {
     return (
       <section data-made-setup="done" className="mt-4">
-        <div className="flex items-center gap-3 rounded-[20px] bg-white py-3 pl-3 pr-4 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900">
+        <div className={SETUP_ROW}>
           <ProgressRing
             pct={100}
             label={`${total}/${total}`}
@@ -950,8 +1006,8 @@ export function SetupProgress({ step, slow, waitedOut, done = null }: {
             trackClassName="dark:stroke-zinc-700"
           />
           <div role="status" className="min-w-0 flex-1">
-            <p className="text-[15px] font-[650] leading-snug">{done.line}</p>
-            <p className="text-[13px] text-zinc-500 dark:text-zinc-400">{t(SETUP_DONE)}</p>
+            <p className="truncate text-[15px] font-[650] leading-5">{done.line}</p>
+            <p className={SETUP_NOTE}>{t(SETUP_DONE)}</p>
           </div>
         </div>
       </section>
@@ -960,7 +1016,7 @@ export function SetupProgress({ step, slow, waitedOut, done = null }: {
   const at = step > 0 && step <= total ? SETUP_STEPS[step - 1] : null;
   return (
     <section data-made-setup={at || 'started'} className="mt-4">
-      <div className="flex items-center gap-3 rounded-[20px] bg-white py-3 pl-3 pr-4 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900">
+      <div className={SETUP_ROW}>
         <ProgressRing
           pct={at ? Math.round((step / total) * 100) : 0}
           label={at ? `${step}/${total}` : undefined}
@@ -969,15 +1025,258 @@ export function SetupProgress({ step, slow, waitedOut, done = null }: {
           trackClassName="dark:stroke-zinc-700"
         />
         <div role="status" className="min-w-0 flex-1">
-          <p className="text-[15px] font-[650] leading-snug">{at ? t(SETUP_WORDS[at]) : t(GETTING_READY)}</p>
-          <p className="text-[13px] text-zinc-500 dark:text-zinc-400">{setupEstimate(slow, waitedOut)}</p>
+          <p className="truncate text-[15px] font-[650] leading-5">{at ? t(SETUP_WORDS[at]) : t(GETTING_READY)}</p>
+          <p className={SETUP_NOTE}>{setupEstimate(slow, waitedOut)}</p>
         </div>
       </div>
     </section>
   );
 }
 
-type Community = { member_count?: number; members?: (Person & { source?: string })[] } | null;
+/*
+ * ONE THING AT A TIME (newcomer run six, 14 Oct 2026, iPhone 17 Safari, Club
+ * Votes). Between Make it and the questions the screen said three things
+ * were under way at once: "Homeroom bot is planning it" under the project,
+ * the setup's card ("Setting up its storage… 1/4", "This usually takes about
+ * a minute."), and "Checking whether Homeroom bot needs to ask you anything
+ * first." where the buttons go. With the questions up, the planning line
+ * stayed, though the plan was written, and "Preparing it to run… 3/4" sat
+ * over them. After Submit, a "Starting the build" line and the setup's card
+ * were both there again. Now a project Homeroom bot builds from its
+ * description, on the first session (`firstLookHere`), says one thing at a
+ * time (screenOf):
+ *
+ *   checking   the project, then one spinner over the checking line, just
+ *              under it (IN ONE PLACE, run seven);
+ *   questions  the project, then the questions and Submit, in that place;
+ *   invite     the project, then one card that carries both the first look
+ *              and how far it has got (FirstLookCard), then the invite line
+ *              and its buttons.
+ *
+ * The setup goes on underneath the whole time and is read as before (the way
+ * on still waits for it); its progress is drawn only from the invite ask on.
+ * The project's own card is the same in every state: its icon is what the
+ * people invited see, so the first look goes in the card under it, never in
+ * it. From Create the screen hands on to the hub, which shows the setup as it
+ * goes: there the line under the project says where it is once the
+ * questions are done, as before.
+ */
+
+/** Which of the three the screen shows, or 'stalled' for a setup that stopped. Pure. */
+export type MadeScreenState = 'checking' | 'questions' | 'invite' | 'stalled';
+
+export function screenOf({ checking, asking, stalled }: { checking: boolean; asking: boolean; stalled: boolean }): MadeScreenState {
+  if (stalled) return 'stalled';
+  if (asking) return 'questions';
+  return checking ? 'checking' : 'invite';
+}
+
+/**
+ * What stands under the project in each state, beside the one thing the
+ * state says. `ownLine`: the project's own line under it (the build line
+ * under a sketch, the plain card's row). `setupCard`: SetupProgress, while
+ * it is set up and once it has run in place. `firstLook`: FirstLookCard,
+ * which carries the setup's progress and then the stage in their place.
+ * While it checks or asks, none of the three. Pure.
+ */
+export function madeParts(screen: MadeScreenState, firstLookHere: boolean): { ownLine: boolean; setupCard: boolean; firstLook: boolean } {
+  const quiet = screen === 'checking' || screen === 'questions';
+  const firstLook = firstLookHere && screen === 'invite';
+  return { ownLine: !quiet && !firstLook, setupCard: !quiet && !firstLookHere, firstLook };
+}
+
+/*
+ * IN ONE PLACE (newcomer run seven, 14 Oct 2026, iPhone Safari, Club Votes):
+ * the body grew and centred the project in the room above the footer, so
+ * while it checked the spinner sat about 150px under the card, by the
+ * toolbar, and when the questions came about 3 seconds later the card
+ * jumped up to make room for them. While it checks or asks, the body now
+ * stands at the top and takes only its own height (MADE_BODY_TOP), so the
+ * spinner line is 16px under the card and the questions come in its place,
+ * with the card where it was. The invite ask (and a stopped setup) is
+ * centred as before (MADE_BODY).
+ */
+export const MADE_BODY = 'flex grow flex-col justify-center gap-4 py-4';
+export const MADE_BODY_TOP = 'flex flex-col gap-4 py-4';
+
+/** The made screen's body for a state: at the top while it checks or asks, else centred. Pure. */
+export function madeBodyClass(screen: MadeScreenState): string {
+  return screen === 'checking' || screen === 'questions' ? MADE_BODY_TOP : MADE_BODY;
+}
+
+/**
+ * Whose made screen carries the first look card: a project Homeroom bot
+ * builds from its description (not an import or a ready-made app), on the
+ * first session (from Create the screen goes to the hub at once). Pure.
+ */
+export function firstLookHereFor({ botBuilds, imported, readyMade, entry }: { botBuilds: boolean; imported: boolean; readyMade: boolean; entry: MakeEntry }): boolean {
+  return botBuilds && !imported && !readyMade && entry !== 'create';
+}
+
+/** The first look card's small caps kicker and its title, message ids. */
+export const FIRST_LOOK_KICKER = 'onboarding:firstSession.made.firstLook.kicker';
+export const FIRST_LOOK_TITLE = 'onboarding:firstSession.made.firstLook.title';
+
+/**
+ * The first look card's second progress line while it is set up: how long it
+ * usually takes, then that it is taking longer, then that they can go on.
+ * SetupProgress's own words (setupEstimate), said short enough for the
+ * card's narrow column.
+ */
+export function firstLookEstimate(slow: boolean, waitedOut: boolean): string {
+  if (waitedOut) return translate('onboarding:firstSession.made.firstLook.goOn');
+  return slow ? translate('onboarding:firstSession.made.firstLook.slow') : translate('onboarding:firstSession.made.firstLook.usual');
+}
+
+/**
+ * What the first look card's progress row says: the setup's step while it
+ * is set up (SetupProgress's ring and words), then the first version's stage
+ * in the words every screen says it in (`words`, ./build-line.tsx: the
+ * phase's own, else the build line's), with its note.
+ */
+export type FirstLookProgress =
+  | { setup: true; step: number; slow: boolean; waitedOut: boolean }
+  | { setup: false; words: string; note: string; busy: boolean; asks: boolean };
+
+/*
+ * One height in every state (run five's rule for what stands over the
+ * buttons): a picture arriving, the setup's step or the stage changing, a
+ * note that is longer or shorter, none of it moves the buttons under it.
+ * The phone is the App tab's frame (../app-frame/first-version-screens.tsx,
+ * 390 × 844) drawn small.
+ */
+export const FIRST_LOOK_ROW = 'flex h-[132px] items-center gap-3.5 rounded-[20px] bg-white py-3 pl-3.5 pr-4 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900';
+export const FIRST_LOOK_PHONE = 'relative h-[108px] w-[50px] shrink-0 overflow-hidden rounded-[11px] bg-zinc-100 shadow-[0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-800';
+const FIRST_LOOK_STATUS = 'mt-2 flex h-10 items-center gap-2.5';
+const FIRST_LOOK_STEP = 'truncate text-[14px] font-medium leading-[18px] text-zinc-700 dark:text-zinc-300';
+const FIRST_LOOK_STEP_ASKS = 'truncate text-[14px] font-semibold leading-[18px] text-[color:var(--accent)]';
+const FIRST_LOOK_NOTE = 'truncate text-[13px] leading-[18px] text-zinc-500 dark:text-zinc-400';
+
+/**
+ * The phone: the first look once there is one (the picture tour step 9 and
+ * the App tab show, ./first-look.tsx firstLookSrc), faded in once it has
+ * loaded; until then its outline, with a band of light passing over it, as
+ * the project's card has while it is sketched. With reduced motion nothing
+ * moves. A picture that will not load is given back (`onBroken`), and the
+ * outline stays until another comes.
+ */
+function FirstLookPhone({ src, name, onBroken }: { src: string | null; name: string; onBroken: (src: string) => void }) {
+  const t = useMessages('onboarding');
+  const [loaded, setLoaded] = useState<string | null>(null);
+  const shown = !!src && loaded === src;
+  return (
+    <div data-made-first-look-phone={shown ? 'ready' : 'drawing'} className={FIRST_LOOK_PHONE}>
+      {shown ? null : (
+        <div aria-hidden="true" className="absolute inset-0">
+          <div className="absolute left-1/2 top-[5px] h-[3px] w-3 -translate-x-1/2 rounded-full bg-zinc-300 dark:bg-zinc-600" />
+          <div className="pointer-events-none absolute inset-0 overflow-hidden motion-reduce:hidden">
+            <div className="h-full w-2/5 bg-gradient-to-r from-transparent via-white/70 to-transparent motion-safe:animate-card-sweep dark:via-white/[0.06]" />
+          </div>
+        </div>
+      )}
+      {src ? (
+        <img
+          key={src}
+          src={src}
+          alt={t('onboarding:firstSession.made.firstLook.alt', { app: name })}
+          draggable={false}
+          onLoad={() => setLoaded(src)}
+          onError={() => onBroken(src)}
+          className={`absolute inset-0 h-full w-full object-cover object-top transition-opacity duration-300 ease-out motion-reduce:transition-none ${shown ? 'opacity-100' : 'opacity-0'}`}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+/** The first look card's progress row: a ring, and two lines beside it. */
+function FirstLookStatus({ progress }: { progress: FirstLookProgress }) {
+  const t = useMessages('onboarding');
+  const total = SETUP_STEPS.length;
+  if (progress.setup) {
+    const { step, slow, waitedOut } = progress;
+    const at = step > 0 && step <= total ? SETUP_STEPS[step - 1] : null;
+    return (
+      <div role="status" data-made-first-look-status={at || 'started'} className={FIRST_LOOK_STATUS}>
+        <ProgressRing
+          pct={at ? Math.round((step / total) * 100) : 0}
+          label={at ? `${step}/${total}` : undefined}
+          title={at ? t('onboarding:firstSession.made.setup.ring', { step, total }) : t(GETTING_READY)}
+          spinning
+          trackClassName="dark:stroke-zinc-700"
+        />
+        <div className="min-w-0 flex-1">
+          <p className={FIRST_LOOK_STEP}>{at ? t(SETUP_WORDS[at]) : t(GETTING_READY)}</p>
+          <p className={FIRST_LOOK_NOTE}>{firstLookEstimate(slow, waitedOut)}</p>
+        </div>
+      </div>
+    );
+  }
+  // Set up: the ring full and quiet (a done state gets no accent), turning
+  // while the bot is still at work, and the stage beside it.
+  const { words, note, busy, asks } = progress;
+  return (
+    <div role="status" data-made-first-look-status="stage" className={FIRST_LOOK_STATUS}>
+      <ProgressRing
+        pct={100}
+        title={words}
+        spinning={busy}
+        arcClassName="stroke-zinc-400 dark:stroke-zinc-500"
+        trackClassName="dark:stroke-zinc-700"
+      />
+      <div className="min-w-0 flex-1">
+        <p className={asks ? FIRST_LOOK_STEP_ASKS : FIRST_LOOK_STEP}>{words}</p>
+        <p className={FIRST_LOOK_NOTE}>{note}</p>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The invite ask's one card under the project: on the left, the first look
+ * in a small phone; on the right, a small caps "First look", "Here's what
+ * Homeroom bot is making", and how far it has got (FirstLookStatus). The
+ * picture is swapped in where the outline was, whenever it comes: it can be
+ * there already (drawn from the plan at Make it) or a minute after Submit.
+ */
+export function FirstLookCard({ src, name, progress, onBroken = () => {} }: {
+  /** The first look's URL (./first-look.tsx firstLookSrc), or null while there is none. */
+  src: string | null;
+  name: string;
+  progress: FirstLookProgress;
+  onBroken?: (src: string) => void;
+}) {
+  const t = useMessages('onboarding');
+  return (
+    <section data-made-first-look={src ? 'ready' : 'drawing'} aria-labelledby="made-first-look-title">
+      <div className={FIRST_LOOK_ROW}>
+        <FirstLookPhone src={src} name={name} onBroken={onBroken} />
+        <div className="flex min-w-0 flex-1 flex-col">
+          <p className="text-[12px] font-bold uppercase leading-4 tracking-[0.06em] text-zinc-500 dark:text-zinc-400">{t(FIRST_LOOK_KICKER)}</p>
+          <h2 id="made-first-look-title" className="mt-0.5 line-clamp-2 text-[15px] font-[650] leading-5">{t(FIRST_LOOK_TITLE)}</h2>
+          <FirstLookStatus progress={progress} />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/**
+ * In place of the invite line and its buttons while the plan may still have
+ * questions (checksForQuestions): one spinner over the checking line, the
+ * one thing the screen says is going on (ONE THING AT A TIME).
+ */
+export function CheckingLine() {
+  const t = useMessages('onboarding');
+  return (
+    <div role="status" data-first-session-checking="" className="flex flex-col items-center gap-2.5 text-center text-[15px] leading-5 text-zinc-500 dark:text-zinc-400">
+      <SpinnerRingIcon className="h-5 w-5 shrink-0 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+      <p>{t(CHECKING_LINE)}</p>
+    </div>
+  );
+}
+
+type Community ={ member_count?: number; members?: (Person & { source?: string })[] } | null;
 
 const COMMUNITY_POLL_MS = 10000;
 
@@ -1063,8 +1362,20 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
   // Its plan from Make it is being written: read as often as the setup is,
   // so its questions slot in the moment they are there.
   const planComing = !!fv && !!fv.early && fv.early.status === 'pending';
+  // Whether the project has been read once (checksForQuestions).
+  const [readOnce, setReadOnce] = useState(false);
   // Read again at once after Submit (`reread`), so the line moves on.
   const [reread, setReread] = useState(0);
+  const botBuilds = made.conversationId != null;
+  // ONE THING AT A TIME: the first look card, and its picture from the same
+  // read (./first-look.tsx firstLookSrc), asked for as often as tour step 9
+  // asks (FIRST_LOOK_POLL_MS) while there is none. One that would not load
+  // (`brokenLook`) counts as none until another comes.
+  const firstLookHere = firstLookHereFor({ botBuilds, imported, readyMade, entry });
+  const [look, setLook] = useState<string | null>(null);
+  const [brokenLook, setBrokenLook] = useState<string | null>(null);
+  const lookShown = look && look !== brokenLook ? look : null;
+  const lookWaits = firstLookHere && !lookShown;
   useEffect(() => {
     let live = true;
     const read = () => fetch(madeAppUrl(made.slug), { credentials: 'same-origin', cache: 'no-store' })
@@ -1072,17 +1383,20 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
       .then((body) => {
         const app = madeAppOf(body);
         if (live && app) {
+          setReadOnce(true);
           setFv(app.firstVersion);
           setAppStatus(app.status);
           setSetupStep((was) => Math.max(was, setupStepOf(app.phase)));
           if (app.firstVersion && !app.firstVersion.ready) setBuilding(true);
+          const found = firstLookSrc(body, made.slug);
+          if (found) setLook(found);
         }
       })
       .catch(() => {});
     read();
-    const t = window.setInterval(read, settingUp || planComing ? READY_POLL_MS : 10000);
+    const t = window.setInterval(read, settingUp || planComing ? READY_POLL_MS : lookWaits ? FIRST_LOOK_POLL_MS : 10000);
     return () => { live = false; window.clearInterval(t); };
-  }, [made.slug, settingUp, planComing, reread]);
+  }, [made.slug, settingUp, planComing, lookWaits, reread]);
 
   // QUICK QUESTIONS: Submit keeps the answers and starts the build. Once
   // pressed here the questions go at once, whatever the next read says.
@@ -1091,6 +1405,7 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
   const [answerError, setAnswerError] = useState<string | null>(null);
   const submitAnswers = useCallback(async (answers: Array<string | null>) => {
     if (answering) return;
+    noteMoment(made.slug, 'submit_tapped', { count: answers.length });
     setAnswering(true);
     setAnswerError(null);
     try {
@@ -1102,6 +1417,9 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
       });
       if (!res.ok) throw new Error(String(res.status));
       setAnswered(true);
+      // Run six: Home's tile says it is starting too, from now
+      // (./build-line-words.js noteBuildStarted), not the list's "Plan ready".
+      noteBuildStarted(made.slug);
       setReread((n) => n + 1);
     } catch {
       setAnswerError(translate('onboarding:firstSession.made.questions.error'));
@@ -1110,6 +1428,13 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
     }
   }, [answering, made.slug]);
   const asked = answered ? null : askedQuestions(fv);
+  // Run five: no invite buttons while the plan may still have questions
+  // (checksForQuestions), for at most PLAN_CHECK_MS.
+  const [planWaited, setPlanWaited] = useState(false);
+  useEffect(() => {
+    const t = window.setTimeout(() => setPlanWaited(true), PLAN_CHECK_MS);
+    return () => window.clearTimeout(t);
+  }, []);
 
   // How long it has waited, from the screen's opening or the last Try again
   // (`round`): longer than usual (`slow`), then long enough to let them on
@@ -1161,7 +1486,6 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
   // first version at all: it is live once it runs.
   const making = imported || readyMade ? appStatus !== 'running' : (!!stalled || !(building && !fv));
 
-  const botBuilds = made.conversationId != null;
   // WP-E: "Get a ping when it's ready?" in the Homeroom app, now that there
   // is something to be pinged about (features/dialogs/ping-ask.ts: it shows
   // nothing on the web, or once the phone's answer is decided).
@@ -1172,18 +1496,42 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
   const card = !imported && !readyMade && showsCard(sketch.state);
   const served = madeLine(fv, botBuilds, !making, stalled, imported);
   // Answered here: built from now on, never planned again, until the next
-  // read says where it is.
-  const line: BuildLineState | null = answered && (served === 'planning' || served === 'plan') ? 'building' : served;
+  // read says where it is. Run five: while the questions are asked here,
+  // the line says the bot is planning it, never "Your plan is ready to
+  // review", which led to the chat's card asking the same questions.
+  const line: BuildLineState | null = answered && (served === 'planning' || served === 'plan') ? 'building'
+    : asked && served === 'plan' ? 'planning' : served;
+  const checking = !asked && !stalled && checksForQuestions(fv, { makesPlan: botBuilds && !imported && !readyMade, read: readOnce, waited: planWaited });
   // N4: the stage by its own name while it is built, and for how long.
   const now = useNow();
-  const named = phaseLine(line, fv?.phase, now);
+  // Answered here and not read since: the build starting (run five).
+  // Run six: the time left, as the App tab says it, when there is an estimate.
+  const left = countsDown(line) ? leftNote(estimateOf(fv?.estimate), now) : null;
+  const phase = fv?.phase || (answered && line === 'building' ? { key: 'starting' } : null);
+  const named = phaseLine(line, phase, now, null, left);
+  // Run six: the maker's Live Activity says what this line says, from
+  // Submit on (../app-frame/build-activity.ts; the App tab calls the same).
+  // Once the first version is gone the line says Live, which ends it.
+  useEffect(() => {
+    syncBuildActivity({
+      slug: made.slug,
+      name: made.name,
+      mine: fv ? fv.mine === true : false,
+      line,
+      phase,
+      steps: fv?.steps,
+      estimate: fv?.estimate,
+      approval: fv?.approval,
+    });
+    // `phase` is made from these (a new object on each render while answered).
+  }, [made.slug, made.name, fv, line, answered, now]);
   // The thumbnail says only what the build line does not: a quiet note when
   // the bot builds nothing, or what a stopped setup or an import needs. The
   // plain card says the build's words and one line about what happens next.
   const note = card
     ? (stalled || imported ? buildNote(botBuilds, !!plan, stalled, imported) : botBuilds ? null : t(NO_BOT_NOTE))
     : buildNote(botBuilds, !!plan, stalled, imported, readyMade);
-  const plainLine = named.words || (answered && line === 'building' ? translate(BUILD_LINE_WORDS.building) : buildLine(fv, appStatus, botBuilds, imported, readyMade));
+  const plainLine = named.words || (line === 'planning' && served === 'plan' ? translate(BUILD_LINE_WORDS.planning) : buildLine(fv, appStatus, botBuilds, imported, readyMade));
   // Something is under way: the project being set up, or the bot's build
   // (not while its plan waits on them, nor on a setup that stopped: then
   // nothing is).
@@ -1193,6 +1541,57 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
   const tile = sketch.card?.emoji || made.emoji || made.name.slice(0, 1);
   // Where its first version stands, for the tour that follows (N1).
   const stage = madeStage(fv, botBuilds && !imported && !readyMade, !making);
+  // ONE THING AT A TIME (run six): which of checking, the questions and the
+  // invite ask is up, and what stands under the project with it (madeParts).
+  const screen = screenOf({ checking, asking: !!asked && !stalled, stalled: !!stalled });
+  const { ownLine, setupCard, firstLook } = madeParts(screen, firstLookHere);
+  const rowHidden = settingUp || ranInPlace || !ownLine;
+  // The first look card's progress row: the setup's step until it runs, then
+  // the stage in the build line's own words (BuildLine), with its note.
+  const lookProgress: FirstLookProgress = settingUp
+    ? { setup: true, step: setupStep, slow, waitedOut }
+    : {
+      setup: false,
+      words: named.words || (line && line !== 'working' ? t(BUILD_LINE_WORDS[line]) : t(SETUP_SET_UP)),
+      note: named.note || t(SETUP_SET_UP),
+      busy: !!line && !buildLineAsks(line) && !buildLineDone(line),
+      asks: !!line && buildLineAsks(line),
+    };
+
+  // Newcomer run five (13 Oct 2026): when this screen first showed each
+  // thing, for the run report (./made-moments.ts). Each once per project on
+  // this page, however often a read draws it again.
+  useEffect(() => {
+    noteMoment(made.slug, 'made_shown', { entry: fromCreate ? 'create' : 'first_session' }, { once: true });
+  }, [made.slug, fromCreate]);
+  const planningShown = line === 'planning';
+  useEffect(() => {
+    if (planningShown) noteMoment(made.slug, 'planning_shown', {}, { once: true });
+  }, [made.slug, planningShown]);
+  const questionsShown = asked && !stalled ? asked.length : 0;
+  const [askedHere, setAskedHere] = useState(false);
+  useEffect(() => {
+    if (!questionsShown) return;
+    setAskedHere(true);
+    noteMoment(made.slug, 'questions_shown', { count: questionsShown }, { once: true });
+  }, [made.slug, questionsShown]);
+  // The invite line and its buttons: as the screen opens, and again once
+  // the questions that took their place are answered.
+  const inviteShown = !questionsShown;
+  useEffect(() => {
+    if (inviteShown) noteMoment(made.slug, 'invite_shown', askedHere ? { how: 'after_questions' } : {}, { once: true });
+  }, [made.slug, inviteShown, askedHere]);
+  // Share invite (Share again once the link is out) opened the sheet, and
+  // the link went out from it. Invite people later and the way on are told
+  // where they are handled (./index.tsx), Submit in submitAnswers.
+  const sentRef = useRef(sent);
+  sentRef.current = sent;
+  useEffect(() => {
+    if (inviting) noteMoment(made.slug, 'share_invite_tapped', sentRef.current ? { how: 'again' } : {});
+  }, [made.slug, inviting]);
+  useEffect(() => {
+    if (sentHow) noteMoment(made.slug, 'invite_sent', { how: sentHow });
+  }, [made.slug, sentHow]);
   return (
     <div
       ref={rootRef}
@@ -1212,32 +1611,35 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
       )}
       <div className="mx-auto flex w-full max-w-sm grow flex-col px-6 pb-[max(36px,env(safe-area-inset-bottom))]">
         {/* The community and its app, one block, centred between the logo bar
-            and the line over the buttons (canvas C3-started, C5-shared). */}
-        <div data-first-session-made-body="" className="flex grow flex-col justify-center gap-4 py-4">
+            and the line over the buttons (canvas C3-started, C5-shared);
+            at the top while it checks or asks (IN ONE PLACE). */}
+        <div data-first-session-made-body="" className={madeBodyClass(screen)}>
           <div className="flex flex-col items-center gap-2.5 text-center">
             <PeopleRow people={peopleOf(community, me)} />
             <h1 id="first-session-made-title" className="text-[15px] font-normal leading-5 text-zinc-600 dark:text-zinc-400">{t(COMMUNITY_LABEL)}</h1>
           </div>
           {card ? (
-            <SketchCard made={made} sketch={sketch} line={line} note={note} lineWords={named.words} lineNote={named.note} />
+            <SketchCard made={made} sketch={sketch} line={ownLine ? line : null} note={note} lineWords={named.words} lineNote={named.note} />
           ) : (
             <div className="flex flex-col items-center rounded-[20px] bg-white px-6 py-7 text-center shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900">
               <span className="app-icon-tile flex h-20 w-20 items-center justify-center rounded-[22px] text-5xl" aria-hidden="true">{tile}</span>
               <p className="mt-3 text-[22px] font-extrabold leading-tight">{made.name}</p>
               {made.description ? <p className="mt-1 text-[15px] text-zinc-500 dark:text-zinc-400">{made.description}</p> : null}
-              {/* While its setup's card is up, that card says where it is. */}
-              {settingUp || ranInPlace ? null : (
-                <div className="mt-4 flex items-center gap-2 text-[14px] text-zinc-600 dark:text-zinc-300">
+              {/* While its setup's card or the first look card is up, that
+                  card says where it is; while it checks or asks, nothing does. */}
+              {rowHidden ? null : (
+                <div data-first-session-build-row="" className="mt-4 flex h-5 max-w-full items-center gap-2 text-[14px] leading-5 text-zinc-600 dark:text-zinc-300">
                   {busy ? <span className="status-dot creating" aria-hidden="true" /> : null}
-                  <span data-first-session-build="">{plainLine}</span>
+                  <span data-first-session-build="" className="min-w-0 truncate">{plainLine}</span>
                 </div>
               )}
-              <p className={settingUp || ranInPlace ? 'mt-3 text-[13px] text-zinc-500 dark:text-zinc-400' : 'mt-1 text-[13px] text-zinc-500 dark:text-zinc-400'}>{note}</p>
+              <p className={rowHidden ? 'mt-3 text-[13px] text-zinc-500 dark:text-zinc-400' : 'mt-1 text-[13px] text-zinc-500 dark:text-zinc-400'}>{note}</p>
             </div>
           )}
           {/* Under the project, never above it: the thumbnail stays where it is. */}
-          {settingUp ? <SetupProgress step={setupStep} slow={slow} waitedOut={waitedOut} /> : null}
-          {ranInPlace ? <SetupProgress step={setupStep} slow={slow} waitedOut={waitedOut} done={{ line: card ? t(SETUP_SET_UP) : plainLine, busy }} /> : null}
+          {settingUp && setupCard ? <SetupProgress step={setupStep} slow={slow} waitedOut={waitedOut} /> : null}
+          {ranInPlace && setupCard ? <SetupProgress step={setupStep} slow={slow} waitedOut={waitedOut} done={{ line: card ? t(SETUP_SET_UP) : plainLine, busy }} /> : null}
+          {firstLook ? <FirstLookCard src={lookShown} name={made.name} progress={lookProgress} onBroken={setBrokenLook} /> : null}
           {stalled ? (
             <SetupStoppedCard stalled={stalled} busy={retrying} onRetry={() => { void retry(); }} onSetSecrets={() => onSetSecrets?.()} />
           ) : null}
@@ -1247,9 +1649,14 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
           {plan && !stalled && fromCreate && !asked ? <PlanWaitsCard name={made.name} onOpenChat={() => onOpenChat(plan.conversationId ?? made.conversationId)} /> : null}
         </div>
         {/* QUICK QUESTIONS: in place of the invite line and its buttons
-            until they are answered. */}
+            until they are answered, right under the project while the body
+            stands at the top (madeBodyClass), where the checking line was. */}
         {asked && !stalled ? (
           <QuickQuestions key={asked.map((q) => q.question).join('|')} name={made.name} questions={asked} busy={answering} error={answerError} onSubmit={(answers) => { void submitAnswers(answers); }} />
+        ) : checking ? (
+          // Run five: in place of the invite line and its buttons while the
+          // plan may still have questions, so a tap cannot skip them.
+          <CheckingLine />
         ) : (
         <>
         <p role="status" data-first-session-hint={sentHow || ''} className="text-center text-[15px] leading-5 text-zinc-500 dark:text-zinc-400">

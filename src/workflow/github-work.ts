@@ -3,12 +3,10 @@
 import type { Json, WorkContext } from './kernel/index.ts';
 import { legacy } from './legacy.ts';
 
-export const permanent = (message: string) => Object.assign(new Error(message), { permanent: true });
+import { permanent } from './work-errors.ts';
+
+export { missingSecrets, permanent } from './work-errors.ts';
 export const gone = (err: any) => err?.status === 404 || err?.status === 410;
-// A production rebuild refused for a required secret with no value
-// (staging.js MissingSecretsError, known by its name): it fails the same way
-// every time, so it is permanent.
-export const missingSecrets = (err: any) => err?.name === 'MissingSecretsError';
 // GitHub work retries from 30 s, doubling, up to 30 min apart.
 export const backoff = (attempt: number) => Math.min(30 * 60 * 1000, 30 * 1000 * 2 ** (attempt - 1));
 // How far before an attempt's own clock reading to look for its comment.

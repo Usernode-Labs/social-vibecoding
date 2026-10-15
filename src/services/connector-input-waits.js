@@ -42,6 +42,7 @@
 // one person still only needs telling them once that something wants them.
 
 const log = require('./logger');
+const leaderTimers = require('./leader-timers');
 
 // How long a wait sits before it is worth interrupting somebody over.
 //
@@ -193,21 +194,18 @@ async function sweepDue(pool, deps = {}) {
   return sent;
 }
 
-let intervalHandle = null;
-
 function start(config, deps = {}) {
-  if (intervalHandle) return;
+  if (leaderTimers.has('connector-input-waits')) return;
   const pool = deps.pool || require('../db/pool').getPool();
-  intervalHandle = setInterval(() => {
-    sweepDue(pool, deps).catch((err) => {
-      log.warn('connector-input-waits', 'sweep failed', { err: err.message });
-    });
-  }, SWEEP_INTERVAL_MS);
-  intervalHandle.unref?.();
+  // A leader timer (services/leader-timers.js): no sweep starts once
+  // shutdown has begun, and one under way is given the drain to finish.
+  leaderTimers.every('connector-input-waits', () => sweepDue(pool, deps).catch((err) => {
+    log.warn('connector-input-waits', 'sweep failed', { err: err.message });
+  }), SWEEP_INTERVAL_MS);
 }
 
 function stop() {
-  if (intervalHandle) { clearInterval(intervalHandle); intervalHandle = null; }
+  leaderTimers.clear('connector-input-waits');
 }
 
 module.exports = {

@@ -1321,8 +1321,12 @@ test('New for you: of what moved since your last visit, the requests filed since
   AppView._ghIssues.push({ number: 14, title: 'Old but busy', createdAt: at(10), updatedAt: at(1), lastMessageAt: at(1), user: 'dana', htmlUrl: 'https://github.com/x/y/issues/14' });
   const html = workshopHtml(AppView, 'workshop');
   const fresh = html.slice(html.indexOf('data-ws-fresh=""'), html.indexOf('data-ws-happened-head'));
-  // A part of What's happening's one card, headed as What happened's weeks are.
-  assert.match(fresh, /^data-ws-fresh=""><div class="dev-ws-hweek-head"><span class="dev-ws-week-head"><b>New for you<\/b><span>1 since your last visit<\/span><\/span><\/div>/);
+  // A part of What's happening's one card, headed as What happened's weeks
+  // are, with its own Mark all seen at the head's right end (#5056): it
+  // clears the same baseline What happened's does.
+  assert.match(fresh, /^data-ws-fresh=""><div class="dev-ws-hweek-head"><span class="dev-ws-week-head"><b>New for you<\/b><span>1 since your last visit<\/span><\/span><button type="button" class="dev-ws-since-clear un-touch-target" data-ws-fresh-clear="">Mark all seen<\/button><\/div>/);
+  assert.match(WORKSHOP, /data-ws-fresh-clear=""\s+onClick=\{clearSince\}/, 'the card\'s own clear is the existing one');
+  assert.ok(!fresh.includes('data-ws-since-clear=""'), 'What happened\'s button still selects exactly one element');
   const rows = [...fresh.matchAll(/data-ws-row="([^"]+)"/g)].map((m) => m[1]);
   assert.deepEqual(rows, ['since:issue:12'], 'a request filed before the visit is not new for you, and the vote is Needs you\'s');
   // The request: what it is, who filed it, and Build it — the request
@@ -1349,8 +1353,8 @@ test('New for you: of what moved since your last visit, the requests filed since
   mine._proposals[0].username = 'me';
   mine._proposals[0].user_id = 1;
   assert.ok(!workshopHtml(mine, 'workshop').slice(0, workshopHtml(mine, 'workshop').indexOf('data-ws-happened-head')).includes('since:proposal:34'));
-  assert.deepEqual(['workshop.fresh.title', 'workshop.fresh.buildIt'].map((k) => message(`project:${k}`)),
-    ['New for you', 'Build it']);
+  assert.deepEqual(['workshop.fresh.title', 'workshop.fresh.buildIt', 'workshop.fresh.markAllSeen'].map((k) => message(`project:${k}`)),
+    ['New for you', 'Build it', 'Mark all seen']);
 });
 
 test('the vote deck is its own tab; the unclaimed suggestion stays with the status', () => {
@@ -2223,7 +2227,7 @@ test('the vote badge is a ring AND the count in words, and cannot be closed', ()
   assert.ok(!html.includes('dev-ws-vote-ring'), 'no ring');
   assert.ok(!/proposals? needs? your vote</.test(html), 'no debt in words');
   assert.match(html, /class="dev-ws-eyebrow">Change · Waiting for your approval</, 'the kind, per item, in the change page\'s words');
-  assert.match(html, /class="dev-ws-item-of">1 \/ \d+</, 'and the place in the feed');
+  assert.match(html, /class="dev-ws-needs-of">1 \/ \d+</, 'and the place in the feed');
   assert.ok(!html.includes('dev-ws-needs-count'), 'the strip-head pair is retired');
   assert.ok(!CSS.includes('.dev-ws-needs-count {'), 'and so is its rule');
   assert.ok(!CSS.includes('.dev-ws-needs-end {'), 'and the wrapper it sat in');
@@ -3201,7 +3205,7 @@ test('every owed vote is in the deck, not on a filtered board', () => {
   // Five: the five proposals owed a vote, and nothing behind them (the
   // requests nobody has picked up are not the viewer's to answer). The count
   // rides the head.
-  assert.match(html, /class="dev-ws-item-of">1 \/ 5</, 'the feed counts the whole queue');
+  assert.match(html, /class="dev-ws-needs-of">1 \/ 5</, 'the feed counts the whole queue');
   assert.equal((html.match(/ data-ws-item="vote:/g) || []).length, 5, 'and every item is in the DOM');
   assert.equal((html.match(/ data-ws-item="need:/g) || []).length, 0, 'and no request is');
   // Plus the end card after them (#2172): one more snap slot, not a footer,
@@ -3248,8 +3252,8 @@ test('#2172: one card past the last item is the summary, and it is the screen wh
     'it says how many this pass answered and how many it passed over');
   // The counter and the progress line count the decisions only: the end card
   // is where you are once they are behind you, not a fourth decision.
-  assert.match(html, /class="dev-ws-item-of">1 \/ 3</);
-  assert.ok(!/class="dev-ws-item-of">4 \//.test(html), 'the end card has no counter');
+  assert.match(html, /class="dev-ws-needs-of">1 \/ 3</);
+  assert.ok(!/class="dev-ws-needs-of">4 \//.test(html), 'the end card has no counter');
   // Nothing answered yet and three passed over: the headline says "for now",
   // the line under it says what was skipped, and there is a way back to it
   // as well as the way on to what is live and back to the Hub.
@@ -5755,9 +5759,16 @@ test('the feed answers on the Vote sheet and moves by swipe, arrows or keys', ()
   }
   assert.deepEqual([message('project:needsYou.move.previous'), message('project:needsYou.move.next')], ['Previous', 'Next']);
   assert.match(CSS, /\.dev-ws-move \{ display: none; \}/, 'no arrows on a phone');
-  // The count rides each item's own top line beside its eyebrow: it answers
-  // "where am I" for the thing in front of you.
-  assert.match(WORKSHOP, /className="dev-ws-item-of">\{`\$\{index \+ 1\} \/ \$\{count\}`\}/);
+  // #4754: THE COUNT RIDES THE FEED'S OWN STRIP, under the header and above
+  // the card, so it stays put while the cards scroll: it answers "where am
+  // I" for the thing in front of you, and the card draws neither the line
+  // nor the counter any more.
+  assert.match(WORKSHOP, /className="dev-ws-needs-of">\{`\$\{i \+ 1\} \/ \$\{n\}`\}/);
+  assert.ok(!WORKSHOP.includes('dev-ws-item-progress') && !WORKSHOP.includes('dev-ws-item-of'),
+    'the item no longer draws its own progress line or counter');
+  assert.equal((WORKSHOP.match(/data-ws-progress=""/g) || []).length, 1, 'the strip renders once');
+  const stripAt = WORKSHOP.indexOf('data-ws-progress=""');
+  assert.ok(stripAt > 0 && stripAt < WORKSHOP.indexOf('data-ws-feed=""'), 'the strip sits before the feed');
   // #3517: AND ON A PHONE, THE WAY BACK beside it. The arrows above are a
   // wide window's, so a phone had only the swipe down, which nothing on the
   // card mentioned (and which the refresh gesture used to take: see

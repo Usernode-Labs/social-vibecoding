@@ -1235,16 +1235,51 @@ const ChangeEvent = memo(function ChangeEvent({ msg }: { msg: TranscriptMessage 
  * one line. While nobody else can see the change, the stream is the one
  * line that says so (`lead.change.closed`).
  */
+/**
+ * #5007: the line that says where a change built for a request carries its
+ * conversation: on the request, whose number is a link that opens it, the
+ * same way the head's Built for chip does. Drawn in place of the "No
+ * replies yet" row while the change has none of its own, and above the "N
+ * replies" row once it has some.
+ */
+function IssuePointer({ issue, id }: { issue: { n: number; href: string }; id: string }) {
+  return (
+    <RichMessage
+      id={id}
+      values={{ number: issue.n }}
+      components={[<a
+        key="link"
+        href={issue.href}
+        className="dev-change-issue-link"
+        data-issue-ref={issue.n}
+        onClick={(event) => {
+          if (!issue.href.startsWith('#') && !issue.href.startsWith('/app/')) return;
+          if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+          event.preventDefault();
+          (window as any).AppView?.openTopic?.('issue', issue.n);
+        }}
+      />]}
+    />
+  );
+}
+
 export function ChangeRows({ view }: { view: TranscriptView }) {
   const rows = useMemo(() => changeStream(foldRepeats(view.messages)), [view.messages]);
   const count = changeReplyCount(rows);
   const lead = view.lead.change;
   const loaded = !!lead?.loaded;
+  const issue = lead?.issue || null;
   const t = useMessages('project');
   if (lead?.closed) {
     return (
       <>
-        <div className="messages-reply-count" data-change-replies="0"><span>{t('project:topic.change.stream.noReplies')}</span></div>
+        {issue ? (
+          <div className="messages-reply-count dev-change-issue-pointer" data-change-issue={issue.n}>
+            <span><IssuePointer issue={issue} id="project:topic.change.stream.conversationOn" /></span>
+          </div>
+        ) : (
+          <div className="messages-reply-count" data-change-replies="0"><span>{t('project:topic.change.stream.noReplies')}</span></div>
+        )}
         <p className="dev-change-closed-note">{lead.closed}</p>
       </>
     );
@@ -1268,9 +1303,24 @@ export function ChangeRows({ view }: { view: TranscriptView }) {
   });
   return (
     <>
-      <div className="messages-reply-count" data-change-replies={count}>
-        <span>{count ? t('project:topic.change.stream.replies', { count }) : loaded ? t('project:topic.change.stream.noReplies') : t('project:topic.change.stream.loading')}</span>
-      </div>
+      {issue && count ? (
+        <p className="dev-change-issue-pointer" data-change-issue={issue.n}>
+          <span><IssuePointer issue={issue} id="project:topic.change.stream.moreConversationOn" /></span>
+        </p>
+      ) : null}
+      {count || !loaded || !issue ? (
+        <div className="messages-reply-count" data-change-replies={count}>
+          <span>{count
+            ? t('project:topic.change.stream.replies', { count })
+            : loaded
+              ? t('project:topic.change.stream.noReplies')
+              : t('project:topic.change.stream.loading')}</span>
+        </div>
+      ) : (
+        <div className="messages-reply-count dev-change-issue-pointer" data-change-issue={issue.n}>
+          <span><IssuePointer issue={issue} id="project:topic.change.stream.conversationOn" /></span>
+        </div>
+      )}
       {view.lead.earlier ? (
         <div className="text-center py-1">
           <button type="button" id="gc-thread-earlier" className="messages-load-older" onClick={() => controller()?.loadThreadHistoryForOpen?.()}>

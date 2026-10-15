@@ -134,14 +134,14 @@ test('every read tool returns through readResult and no others do', () => {
     .map((m) => m[1]);
   assert.deepEqual([...new Set(hinted)].sort(), [
     'get_app', 'get_bench_context_pack', 'get_bench_gallery', 'get_bench_item', 'get_bench_reference_order', 'get_bench_run',
-    'get_bench_studio', 'get_bench_studio_run', 'get_bench_suite', 'get_bench_trial', 'get_bot_config_pair',
+    'get_bench_studio', 'get_bench_studio_run', 'get_bench_suite', 'get_bench_trial', 'get_bench_trial_transcript', 'get_bot_config_pair',
     'get_browser_languages',
     'get_change', 'get_check_output', 'get_checkout_status', 'get_connector_guidance', 'get_discussion', 'get_homeroom_bot',
     'get_message',
     'get_platform_build', 'get_platform_conventions', 'get_proposal', 'get_recent_shots',
-    'get_request', 'get_spec', 'get_spec_format', 'list_apps', 'list_bench_context_packs', 'list_bench_grading_queue', 'list_bench_runs',
+    'get_request', 'get_run_report', 'get_shots_eval', 'get_shots_eval_pair', 'get_shots_eval_shots', 'get_spec', 'get_spec_format', 'list_apps', 'list_bench_context_packs', 'list_bench_grading_queue', 'list_bench_runs',
     'list_bench_suites', 'list_bench_trials', 'list_bot_configs', 'list_my_proposals',
-    'list_my_work_orders', 'list_recent_shots', 'list_requests',
+    'list_my_work_orders', 'list_recent_shots', 'list_requests', 'list_shots_configs', 'list_shots_evals',
     'list_test_accounts', 'whoami',
   ]);
   for (const name of hinted) {

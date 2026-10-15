@@ -4,7 +4,7 @@ const { execFileSync, spawnSync } = require('node:child_process');
 
 const helmAvailable = spawnSync('helm', ['version', '--short'], { stdio: 'ignore' }).status === 0;
 
-test('Helm scopes preview placement to the configured external CNPG writer', {
+test('Helm scopes preview and platform placement to the configured external CNPG writer', {
   skip: !helmAvailable && 'helm is not installed',
 }, () => {
   const args = ['template', 'preview-placement-test', 'deploy/helm/social-vibecoding-platform',
@@ -30,5 +30,29 @@ test('Helm scopes preview placement to the configured external CNPG writer', {
       .map(([, key, value]) => [key, value]));
     assert.equal(env.PREVIEW_DATABASE_NAMESPACE, namespace, name);
     assert.equal(env.PREVIEW_DATABASE_CLUSTER, cluster, name);
+    // The platform's own Pods, web and conductor, follow the same primary
+    // (14 Oct 2026: a released Pod landed a data centre away from it).
+    const pods = rendered.split(/^---$/m).filter((doc) => /^kind: Deployment$/m.test(doc));
+    assert.equal(pods.length, 2, `${name}: the web and conductor Deployments`);
+    for (const doc of pods) {
+      const role = (doc.match(/social\.usernode\.io\/process-role: "?(\w+)"?$/m) || [])[1];
+      if (!cluster) {
+        assert.doesNotMatch(doc, /affinity:/, `${name}: ${role} has normal placement`);
+        continue;
+      }
+      assert.match(doc, new RegExp([
+        '      affinity:',
+        '        podAffinity:',
+        '          preferredDuringSchedulingIgnoredDuringExecution:',
+        '            - weight: 100',
+        '              podAffinityTerm:',
+        `                namespaces: \\["${namespace}"\\]`,
+        '                labelSelector:',
+        '                  matchLabels:',
+        `                    cnpg.io/cluster: "${cluster}"`,
+        '                    cnpg.io/instanceRole: primary',
+        '                topologyKey: topology.kubernetes.io/zone',
+      ].join('\n')), `${name}: ${role} prefers the primary's zone`);
+    }
   }
 });

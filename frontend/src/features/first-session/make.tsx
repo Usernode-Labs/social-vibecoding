@@ -1,3 +1,4 @@
+import { SpeakButton } from '../dictation/speak-button';
 /**
  * "What do you want to make?": the first thing an account made from the
  * signed-out story is asked (../auth/story.tsx sets the session's
@@ -156,7 +157,35 @@ export type Made = {
 
 const FIELD = 'px-4 pt-3 pb-2 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800';
 const LABEL = 'block text-[13px] text-zinc-500 dark:text-zinc-400';
-const INPUT = 'w-full border-0 bg-transparent px-0 py-1 text-[17px] text-zinc-900 dark:text-zinc-100 placeholder-zinc-500 focus:outline-none';
+/*
+ * UNDER ITS LABEL (newcomer run six, 14 Oct 2026, iPhone Safari, keyboard
+ * up): a description of about 200 characters is longer than the three rows
+ * the box shows, so the box scrolls, and its text ran up to the box's top
+ * edge, which was the label's own bottom edge. The line cut off there read
+ * as text passing under "What should it do?". Both fields keep 8px between
+ * their label and their writing (`pt-2`), and while the description is
+ * scrolled from its top its text fades out over the box's top line
+ * (BRIEF_FADE, `briefScrolled`), so a line scrolling up thins out inside its
+ * own box, below the label, never against it. Unscrolled there is no fade
+ * and the first line is drawn whole. The name is one line, which scrolls
+ * sideways and never up, so it needs the gap only.
+ *
+ * Run seven (14 Oct 2026, iPhone Safari) still saw a grey half line touching
+ * the label: the description's 8px was padding, inside its own scroll box,
+ * so scrolled text rose through it to the label's bottom edge, and the fade
+ * there was only starting. The description's gap is a margin now
+ * (BRIEF_INPUT, `mt-2`, no top padding), so the box's clip edge sits 8px
+ * under the label, and the fade hides the box's top 6px outright before it
+ * ramps in by 24px. Unscrolled, the first line starts 8px under the label as
+ * before. The name keeps its padding (INPUT).
+ */
+const INPUT = 'w-full border-0 bg-transparent px-0 pb-1 pt-2 text-[17px] text-zinc-900 dark:text-zinc-100 placeholder-zinc-500 focus:outline-none';
+const BRIEF_INPUT = 'mt-2 w-full border-0 bg-transparent px-0 pb-1 pt-0 text-[17px] text-zinc-900 dark:text-zinc-100 placeholder-zinc-500 focus:outline-none';
+export const BRIEF_FADE = '[mask-image:linear-gradient(to_bottom,transparent_6px,#000_24px)]';
+/** Whether the description's box is scrolled from its top, so its top edge fades (BRIEF_FADE). Pure. */
+export function briefFades(box: { scrollTop: number } | null | undefined): boolean {
+  return !!box && box.scrollTop > 0;
+}
 // Where the bar and the form start, and where they settle (see the header).
 const ARRIVING = 'translate-y-6 opacity-0 transition-[transform,opacity] duration-300 ease-out motion-reduce:transition-none';
 const ARRIVED = 'translate-y-0 opacity-100 transition-[transform,opacity] duration-300 ease-out motion-reduce:transition-none';
@@ -273,6 +302,7 @@ export function MakeScreen({
   // Sent only when it is another, as the project's own governance block.
   const [rule, setRule] = useState<PresetKey>(DEFAULT_PRESET);
   const [busy, setBusy] = useState(false);
+  const [dictating, setDictating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // The answer a press of "Make it" found missing, said under its field
   // until it changes.
@@ -288,6 +318,11 @@ export function MakeScreen({
   const wordsFieldRef = useRef<HTMLInputElement>(null);
   const wordsBoxRef = useRef<HTMLTextAreaElement>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
+  // UNDER ITS LABEL: the description's top edge fades while it is scrolled.
+  // Read on its scroll, and again after each render, since a box swapped in
+  // or a shorter description can land it back at its top without a scroll.
+  const [briefScrolled, setBriefScrolled] = useState(false);
+  useEffect(() => { setBriefScrolled(briefFades(briefRef.current)); });
   // Home holds still under it, and takes no tap or focus (lib/page-lock.ts).
   // From Create the header and what stands above this screen stay in use, so
   // only the scrolling stops there.
@@ -419,7 +454,7 @@ export function MakeScreen({
   };
 
   const make = useCallback(async () => {
-    if (busy || makingRef.current) return;
+    if (dictating || busy || makingRef.current) return;
     const gap: Missing = templated && said?.blank ? 'blank' : missingAnswer(text, name);
     if (gap) {
       setMissing(gap);
@@ -472,7 +507,7 @@ export function MakeScreen({
       makingRef.current = false;
       setBusy(false);
     }
-  }, [busy, templated, said, text, name, template, choice, rule, entry, onMade]);
+  }, [dictating, busy, templated, said, text, name, template, choice, rule, entry, onMade]);
   const needed = neededLine(missing, text, !!template?.finish);
   // The chips under the sentence: Your own… last, or first for the game.
   const ownChip = { key: OWN, label: 'onboarding:firstSession.make.ownChip' };
@@ -694,12 +729,21 @@ export function MakeScreen({
                       setMissing(null);
                     }}
                     onKeyDown={toName}
+                    onScroll={(e) => setBriefScrolled(briefFades(e.currentTarget))}
                     placeholder={t('onboarding:firstSession.make.briefPlaceholder')}
-                    className={`${INPUT} resize-none leading-[22px]`}
+                    className={`${BRIEF_INPUT}${briefScrolled ? ` ${BRIEF_FADE}` : ''} resize-none leading-[22px]`}
                   />
                   {waitlistIdea && brief === waitlistIdea ? <p data-make-waitlist-idea="" className={HINT}>{t(WAITLIST_IDEA_LINE)}</p> : null}
                 </>
               )}
+              <div className="flex justify-end">
+                <SpeakButton scope={`make:${mode}:${template?.key || 'idea'}:${written === null ? choice : 'written'}`} disabled={busy || mode !== 'make'} onBusyChange={setDictating}
+                  getText={() => templated ? words : brief} maxLength={templated ? template?.finish ? BRIEF_MAX - 200 : 60 : BRIEF_MAX}
+                  onText={(next) => {
+                    if (templated) { setChoice(OWN); changeWords(next); if (template && !nameTyped) setName(suggestedName(template, OWN, next)); }
+                    else { setBrief(next); setPicked(OWN_IDEA); setWritten(null); setError(null); setMissing(null); }
+                  }} />
+              </div>
               {missing === 'brief' || missing === 'blank' ? <p id="first-session-brief-needed" role="alert" className={NEEDED}>{needed}</p> : null}
             </div>
             <div className={FIELD}>
@@ -732,7 +776,7 @@ export function MakeScreen({
           <Button
             type="submit"
             data-make-submit=""
-            disabled={busy || quotaBlocks}
+            disabled={dictating || busy || quotaBlocks}
             layout="full"
             variant="pillAccent"
             size="pillLg"

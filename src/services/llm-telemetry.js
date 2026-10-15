@@ -59,6 +59,8 @@ const COMPONENTS = new Set([
   'app_sketch',
   // A first version's plan at Make it (services/first-version-plan.js).
   'first_version_plan',
+  // And its early first look, drawn from that plan (services/first-version-early-look.js).
+  'first_version_look',
   'challenge_grade',
   'challenge_grade_feedback',
   'challenge_grade_proposal',
@@ -68,6 +70,7 @@ const COMPONENTS = new Set([
   // The translation step's catalog requests (services/language-sync.js), sent
   // one by one or as a Message Batch.
   'language_sync',
+  'dictation',
   'other_helper',
 ]);
 const BILLING_PATHS = new Set([
@@ -133,6 +136,13 @@ function safeString(value, max = 255) {
 function safeReason(value) {
   const text = safeString(value, 64);
   return text && /^[a-zA-Z0-9_.:-]+$/.test(text) ? text : null;
+}
+
+// A routed host's display name, as OpenRouter reports it ("Together",
+// "Google Vertex"): words, never free text.
+function safeHostName(value) {
+  const text = safeString(value, 80);
+  return text && /^[A-Za-z0-9][A-Za-z0-9 ._-]*$/.test(text) ? text : null;
 }
 
 function safeOpaqueId(value, max = 180) {
@@ -204,8 +214,20 @@ function normalizeEvent(event = {}) {
     attempt_number: attempt && attempt > 0 ? attempt : null,
     correlation_id: safeOpaqueId(event.correlationId),
   };
+  // Which of OpenRouter's providers served (or refused) a helper call
+  // (llm.js askHelperModel), beside `provider`, which names the ledger's
+  // route ('openrouter'), not its host. A provider's name, never content;
+  // absent when unknown, so older rows and other callers are unchanged.
+  addOptional(normalized, { routed_provider: safeProviderName(event.routedProvider) });
 
   return Object.assign(normalized, normalizeDiagnostics(event));
+}
+
+// An OpenRouter provider's name as OpenRouter gives it ("Z.AI",
+// "DeepInfra", "Together"): a few plain characters, else nothing.
+function safeProviderName(value) {
+  const text = safeString(value, 80);
+  return text && /^[\w .-]+$/.test(text) ? text : null;
 }
 
 // Complete content-free diagnostic contract. Every value below is either a
@@ -226,6 +248,9 @@ function normalizeDiagnostics(event = {}) {
     service_tier: enumOrNull(event.serviceTier, SERVICE_TIERS),
     requested_inference_region: safeReason(event.requestedInferenceRegion),
     inference_region: safeReason(event.inferenceRegion),
+    // The host OpenRouter routed the call to (its `provider`), which
+    // `provider` ('openrouter') cannot say (run five, 13 Oct 2026).
+    served_provider: safeHostName(event.servedProvider),
     reasoning_effort: enumOrNull(event.reasoningEffort, REASONING_EFFORTS),
     error_class: enumOrNull(event.errorClass, ERROR_CLASSES),
 
@@ -312,6 +337,11 @@ function normalizeDiagnostics(event = {}) {
     image_moved_count: tokenCount(event.imageMovedCount),
     image_omitted_count: tokenCount(event.imageOmittedCount),
     image_pruned_count: tokenCount(event.imagePrunedCount),
+    // Under a first version's lean_turns tweak (worker.js
+    // noteCodingProviderToolOutput): the older browser and shell results its
+    // requests shortened, and the characters they left out.
+    tool_output_pruned_count: tokenCount(event.toolOutputPrunedCount),
+    tool_output_pruned_chars: tokenCount(event.toolOutputPrunedChars),
     // Where an OpenRouter coding turn's time went (worker.js
     // noteCodingRequestClock): the time a model request was open, the time
     // between requests split by the kind of tool that ran in it, and when
@@ -327,10 +357,23 @@ function normalizeDiagnostics(event = {}) {
     first_app_boot_ms: finiteNonnegative(event.firstAppBootMs),
     first_browser_call_ms: finiteNonnegative(event.firstBrowserCallMs),
     last_browser_call_ms: finiteNonnegative(event.lastBrowserCallMs),
+    // What the turn's own look-and-fix loop changed (worker.js
+    // noteFileChangeAfterBrowser): its edits after its first browser call,
+    // and how many files they touched. Counts only; absent for a turn that
+    // never used the browser. The paths themselves are kept on the turn's
+    // own agent_turns row (agent-turn.js), never in this ledger.
+    file_change_after_first_browser_count: tokenCount(event.fileChangeAfterFirstBrowserCount),
+    distinct_file_change_after_first_browser_count: tokenCount(event.distinctFileChangeAfterFirstBrowserCount
+      ?? (event.browserCallSeen === true && event.telemetryFileChangesAfterBrowser instanceof Set
+        ? event.telemetryFileChangesAfterBrowser.size : null)),
     // The Homeroom bot's build turns in Claude Code: how many times the stop
     // guard (worker/build-stop-hook.js) sent the agent back to work after it
     // tried to end a turn that had changed nothing. Absent without the guard.
     stop_hook_blocks: tokenCount(event.stopHookBlocks),
+    // And how many servers it left running in its workspace that the guard
+    // stopped as its turn ended (a server left running held run 190's turn
+    // open nine minutes). Absent without the guard.
+    stop_hook_servers_stopped: tokenCount(event.stopHookServersStopped),
     usage_reset_detected: booleanOrNull(event.usageResetDetected),
     // What a coding turn's first and last model requests carried, in bytes of
     // the wire request, as its request listener measured them (worker.js
@@ -352,6 +395,8 @@ function requestSizeFields(prefix, size) {
     [`${prefix}_input_bytes`]: tokenCount(size.inputBytes),
     [`${prefix}_instruction_bytes`]: tokenCount(size.instructionBytes),
     [`${prefix}_input_items`]: tokenCount(size.inputItems),
+    // Claude Code's adapter says what the tool definitions weigh.
+    ...(size.toolBytes != null ? { [`${prefix}_tool_bytes`]: tokenCount(size.toolBytes) } : {}),
   };
 }
 
@@ -508,14 +553,14 @@ const DIAGNOSTIC_METRIC_NAMES = Object.freeze([
   'image_sent_count', 'image_moved_count', 'image_omitted_count',
   'model_request_ms', 'browser_tool_ms', 'shell_tool_ms', 'edit_tool_ms', 'read_tool_ms',
   'other_tool_ms', 'first_file_change_ms', 'first_app_boot_ms', 'first_browser_call_ms',
-  'last_browser_call_ms', 'stop_hook_blocks',
+  'last_browser_call_ms', 'stop_hook_blocks', 'stop_hook_servers_stopped',
   'turn_duration_ms', 'turn_invocation_count', 'turn_result_count',
 ]);
 
 const CATEGORY_NAMES = Object.freeze([
   'request_mode', 'tool_choice_mode', 'output_format', 'thinking_mode',
   'requested_service_tier', 'service_tier', 'inference_region',
-  'requested_inference_region',
+  'requested_inference_region', 'served_provider',
   'reasoning_effort', 'error_class', 'usage_reset_detected',
   'turn_outcome', 'turn_error_code',
 ]);

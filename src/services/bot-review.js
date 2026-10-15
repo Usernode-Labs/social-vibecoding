@@ -45,30 +45,35 @@
 // What is recorded (the `review` state, on the live run or on a side
 // trial): the round-0 snapshot, and per round its commit, its capture's
 // artifact ids, the verdict, issues and previousFixed, and what the reviewer
-// call and the fix turn cost and took; then why it stopped.
+// call and the fix turn cost and took; then why it stopped; and on a live
+// run stopped by its round limit, what one last look at the final fix found
+// (`finalLook`, recorded only: see "A last look after the final fix").
 //
 // A REVIEW SURVIVES A RESTART (R5). Releases restart the platform many times
 // a day, and a review takes up to its budget. Each step saves the state
 // before it starts (`inFlight`: the capture's id, the round being reviewed,
 // the fix turn dispatched) and after it ends, with the process that ran it
 // (`leader`) and what the reviewer needs of the latest capture (`latest`).
-// Restart recovery (homeroom-bot.js finishRecoveredLive) hands that state
-// back as `resumeFrom`, and the loop carries on at the step that was cut:
+// The durable build that runs the review keeps that state as a step
+// (homeroom-bot-live.js reviewLanded, docs/plans/bot-build-workflow.md) and
+// hands it back as `resumeFrom` when a restart brings the build back, and
+// the loop carries on at the step that was cut:
 //   - round 0 never captured: captured now;
 //   - a capture under way: its result harvested from the worker it ran in
 //     (it runs detached, bench/capture.js), or taken again when it is gone;
 //   - a reviewer call under way: asked again for the same round, its cost
 //     recorded once, on that round;
-//   - a fix turn under way: the result restart recovery followed it to
-//     (`recoveredFix`), or the turn run again when it was lost;
+//   - a fix turn under way: followed to its end by its durable turn (or
+//     the result a caller followed it to: `recoveredFix`), or run again
+//     when it was lost;
 //   - then on as it would have gone, the final capture and the rollback
 //     included.
 // The time from the last step saved to the resume is given back on the
-// budget (`pausedMs`), and resumes are counted: past MAX_REVIEW_RESUMES the
-// caller proposes what is committed as it stands, as before.
+// budget (`pausedMs`), and resumes are counted on the state (`resumes`).
 
 const crypto = require('crypto');
 const log = require('./logger');
+const durableSteps = require('./durable-steps');
 
 const MAX_ISSUES = 8;
 const SEVERITIES = Object.freeze(['blocker', 'major', 'minor']);
@@ -90,6 +95,10 @@ const STOPS = Object.freeze({
   regressed: 'regressed',
   error: 'error',
 });
+// How much of why the loop stopped is kept: room for a failed fix turn's
+// reason and the last lines it ran (homeroom-bot-live.js failureDetail),
+// where a provider's refusal shows.
+const STOP_DETAIL_CHARS = 600;
 const REVIEW_TIMEOUT_MS = 4 * 60 * 1000;
 // A reviewer call may run this far past the review's budget, never further
 // than its own timeout.
@@ -104,15 +113,19 @@ const MAX_SPEC_CHARS = 24000;
 // Images in one reviewer call, together (the grading judge's own bound).
 const MAX_REVIEW_IMAGE_BYTES = 8 * 1024 * 1024;
 const MAX_FIELD_CHARS = 600;
+// A reply that is not the JSON asked for is asked for once more
+// (reviewCapture), when at least this much of the call's time is left.
+const MIN_REVIEW_RETRY_MS = 30 * 1000;
+const REVIEW_RETRY_NOTE = (problem) => `Your earlier answer to this message could not be used: ${problem}. `
+  + 'Answer again with ONLY the JSON object your instructions describe, with no prose before or after it and no code fence.';
 const TELEMETRY_COMPONENT = 'homeroom_bot_review';
-// Restarts one review may carry on through. The fourth proposes what is
-// committed as it stands (homeroom-bot.js finishRecoveredLive), so a review
-// that every release keeps catching still ends.
+// The restarts a review in progress may say it was carried on through
+// (canResume). A durable build carries its review on through any number,
+// each step kept, and is itself bounded by the restarts the kernel carries a
+// build through (src/workflow/bot-build/services.ts maxLostAttempts).
 const MAX_REVIEW_RESUMES = 3;
-// This process, stamped on every state the loop saves (`leader`): restart
-// recovery tells a review a process that is gone left behind (any other
-// stamp) from one this process is running, without waiting for it to go
-// quiet (homeroom-bot.js finishInterruptedReviews).
+// This process, stamped on every state the loop saves (`leader`): which
+// process ran the step a resumed review goes on from.
 const PROCESS_ID = crypto.randomBytes(8).toString('hex');
 
 function clip(text, max) {
@@ -308,6 +321,22 @@ function checkIssues(capture) {
 }
 
 /**
+ * What a capture's declared checks came to, as counts alone ({ total, ran,
+ * passed, failed }), or null for a capture that ran none. Round 0 keeps them
+ * beside its slim capture (slimCapture drops the checks), so whether a first
+ * build passed its own checks before any fix can be read back from a stored
+ * review (bench/speed.js reviewOutcomeOf). Pure.
+ */
+function checkCounts(capture) {
+  const d = capture?.declaredChecks;
+  if (!d || typeof d !== 'object') return null;
+  const ran = num(d.ran) || 0;
+  const passed = num(d.passed) || 0;
+  const listed = Array.isArray(d.failed) ? d.failed.length : 0;
+  return { total: num(d.total) || 0, ran, passed, failed: Math.max(listed, ran - passed) };
+}
+
+/**
  * The reviewer's answer with the capture's failing declared checks put first
  * (checkIssues): a `ship` with a failing check is a `fix`, and the reviewer's
  * own issues follow, MAX_ISSUES in all. Pure.
@@ -340,9 +369,8 @@ function issueLine(it, i) {
  * for six issues took twelve minutes, told to re-read the repository and to
  * make the build's whole visual sweep again. Pure.
  */
-function fixBrowserLines({ readsImages = false, issues = [] } = {}) {
+function fixBrowserLines({ readsImages = false, issues = [], lean = false } = {}) {
   const live = require('./homeroom-bot-live');
-  const { IN_LOOP_BROWSER_GUIDANCE } = require('./in-loop-browser');
   const look = readsImages
     ? 'take a screenshot (`browser_take_screenshot`)'
     : 'walk it through its accessibility snapshot (`browser_snapshot`; you read text, not images)';
@@ -352,7 +380,7 @@ function fixBrowserLines({ readsImages = false, issues = [] } = {}) {
     '',
     'The in-loop browser, as the platform\'s dev chat describes it. For you, "commit" in it means finishing your turn,',
     'since your working tree is committed for you:',
-    IN_LOOP_BROWSER_GUIDANCE,
+    live.inLoopGuidance({ lean }),
     '- For you, in this fix turn, check ONLY what the issues name. Once your fixes are in, boot the app once and, for',
     `  each issue, open its screen at the size, look and state it names and ${look}. Fix what is still wrong there.`,
     '  Do not check other widths, looks or states, and do not run rounds of looking and polishing: the reviewer',
@@ -398,9 +426,13 @@ function fixPrompt({
   // L2: the runner holds the turn to the app's own declared checks
   // (homeroom-bot-live.js appChecksLines).
   appChecks = false,
+  // The configuration's build-speed tweaks (bot-configs.js TWEAKS): under
+  // `lean_turns` the checks are left to the gate here too.
+  tweaks = [],
 }) {
   const live = require('./homeroom-bot-live');
   const buildContract = require('./build-contract');
+  const lean = appChecks && Array.isArray(tweaks) && tweaks.includes('lean_turns');
   const list = issues.map(issueLine).join('\n');
   return [
     seed ? clip(seed, MAX_BRIEF_CHARS) : '',
@@ -428,8 +460,9 @@ function fixPrompt({
     buildContract.buildContractBlock({ heading: 'Make exactly these fixes, and nothing else:', commits: 'harness' }),
     ...live.requestRulesLines(),
     ...(platformRepo ? live.PLATFORM_TEST_NOTE : []),
-    ...fixBrowserLines({ readsImages, issues }),
-    ...(appChecks ? live.appChecksLines() : []),
+    ...fixBrowserLines({ readsImages, issues, lean }),
+    ...live.APP_SERVER_LINES,
+    ...(appChecks ? live.appChecksLines({ lean, firstVersion: true }) : []),
     '',
     `End with two or three sentences saying what you changed. ${live.localeRule(locale)} Do not write a DESCRIPTION block: the proposal's description`,
     'is the build\'s own.',
@@ -501,8 +534,11 @@ async function callReviewer({
 /**
  * Review one capture: a capture that did not boot gets the boot issue with
  * no call; any other, one reviewer call with its eight most telling
- * screenshots. Resolves { ok, verdict, issues, previousFixed, costUsd, ms,
- * by } (`by` 'model' or 'platform'), or { ok: false, error, costUsd, ms }.
+ * screenshots, asked once more when its reply is not the JSON asked for
+ * (REVIEW_RETRY_NOTE). Resolves { ok, verdict, issues, previousFixed,
+ * costUsd, ms, by } (`by` 'model' or 'platform'), or { ok: false, error,
+ * costUsd, ms }, both with `retry` (what was wrong with the first reply)
+ * when it was asked again; costUsd and ms are both calls'.
  */
 async function reviewCapture({
   pool, config, userId, model, seed, spec, capture, previousIssues = null, round, maxRounds,
@@ -534,14 +570,34 @@ async function reviewCapture({
   const content = reviewerContent({
     brief: seed, spec, shots, identical: picked.identical, signals, previousIssues, round, maxRounds,
   });
-  const call = await (deps.callReviewer || callReviewer)({
-    pool, config, userId, model, system: reviewerSystemPrompt(locale), content, appId, sessionId, timeoutMs, deps,
+  const ask = (parts, budgetMs) => (deps.callReviewer || callReviewer)({
+    pool, config, userId, model, system: reviewerSystemPrompt(locale), content: parts, appId, sessionId, timeoutMs: budgetMs, deps,
   });
+  const call = await ask(content, timeoutMs);
   if (!call.ok) return { ok: false, error: call.error, costUsd: call.costUsd ?? null, ms: call.ms };
-  const parsed = parseReview(call.text);
-  if (!parsed.ok) return { ok: false, error: parsed.error, costUsd: call.costUsd ?? null, ms: call.ms };
+  let parsed = parseReview(call.text);
+  let costUsd = call.costUsd ?? null;
+  let ms = call.ms;
+  let retry = null;
+  // App bench run 193 (14 Oct 2026): one reviewer reply in 18 was not the
+  // JSON asked for, and the loop fails open, so that first version went out
+  // unreviewed and judged the run's worst. A reply that cannot be used is
+  // asked for once more, with the same screens, while the call's own time
+  // allows; a failed call (no reply at all) is not.
+  const leftMs = Number(timeoutMs) > 0 ? Number(timeoutMs) - (Number(call.ms) || 0) : null;
+  if (!parsed.ok && (leftMs == null || leftMs >= MIN_REVIEW_RETRY_MS)) {
+    retry = parsed.error;
+    const again = await ask([...content, { type: 'text', text: REVIEW_RETRY_NOTE(parsed.error) }], leftMs);
+    costUsd = costUsd == null && again.costUsd == null ? null : (Number(costUsd) || 0) + (Number(again.costUsd) || 0);
+    ms = (Number(ms) || 0) + (Number(again.ms) || 0);
+    parsed = again.ok ? parseReview(again.text) : { ok: false, error: again.error };
+  }
+  const retried = retry ? { retry } : {};
+  if (!parsed.ok) {
+    return { ok: false, error: retry ? `${parsed.error} (asked twice)` : parsed.error, costUsd, ms, ...retried };
+  }
   // L2: the app's own declared checks, which the reviewer cannot see fail.
-  return withCheckIssues({ ...parsed, costUsd: call.costUsd ?? null, ms: call.ms, by: 'model' }, capture);
+  return withCheckIssues({ ...parsed, costUsd, ms, by: 'model', ...retried }, capture);
 }
 
 // ── Storing a round's screenshots ────────────────────────────────────────
@@ -611,24 +667,28 @@ function artifactIdsOf(capture) {
  * `start` is the first build: { sha, commits, costUsd, activeMs }.
  *
  * R5: `resumeFrom` is the saved state of a review a restart cut short (see
- * the header): the loop carries on from it instead of starting over, and
- * `recoveredFix` is the result of the fix turn restart recovery followed to
- * its end, in fix()'s shape, used only when that state was waiting on its
- * round's fix. `leader` is stamped on every state saved. Once the platform
- * is shutting down (`isStopping`), the loop starts no further step and never
- * returns, as a bot turn that ends then is held (homeroom-bot-drain.js
- * holdAfterTurn): its last saved state is the next leader's to carry on, and
- * a step taken now (a fix turn, a rollback) would race it.
+ * the header): the loop carries on from it instead of starting over. A round
+ * whose fix had no result yet calls `fix` again for it; a build's fix is a
+ * durable turn (services/durable-turn.js), so that call follows the turn
+ * the restart caught, or returns the result it saved, rather than running
+ * it twice. `recoveredFix`, a fix turn's result in fix()'s shape, still
+ * stands in for that call when given. `leader` is stamped on every state
+ * saved. Once the build is no longer this process's (`fence` throws), the
+ * loop starts no further step: the stop is thrown to the build's handler,
+ * and its last saved state is the next owner's to carry on.
  *
  * Resolves the final state ({ state: 'done', round0, rounds, stop, finalSha,
  * finalCommits, finalCapture, lastBooted, costUsd (the review phase's own),
- * and `rolledBack` when a fix was undone }); never throws.
+ * and `rolledBack` when a fix was undone }); never throws, but a stop.
  */
 async function runReviewLoop({
   reviewer, start = {}, capture, review, fix, rollback = null, budgetCheck = null, skipCheck = null,
   onState = null, onProgress = null, now = Date.now,
   resumeFrom = null, recoveredFix = null, leader = PROCESS_ID,
-  isStopping = () => require('./lifecycle').isShuttingDown(),
+  // The durable context's fence (services/durable-steps.js): throws once the
+  // build is no longer this process's (its work item's lease is gone, or the
+  // process is stopping), before each step that acts.
+  fence = null,
 }) {
   const prior = inProgress(resumeFrom) ? JSON.parse(JSON.stringify(resumeFrom)) : null;
   // A review carried on keeps the shape it started with.
@@ -682,19 +742,24 @@ async function runReviewLoop({
     state.leader = leader;
     if (!onState) return;
     try { await onState(JSON.parse(JSON.stringify(state))); } catch (err) {
+      durableSteps.rethrowStop(err, 'review state');
       log.warn('bot-review', 'Could not record the review state (going on)', { err: err.message });
     }
   };
   const say = (line) => { if (onProgress) { try { onProgress(line); } catch { /* a watcher never stops a review */ } } };
-  // Shutting down: no further step (see above). Never resolves.
+  // No longer this process's to run: no further step (see above). The stop
+  // is thrown, past every catch below, to the build's handler, and the next
+  // claim of its work item carries the review on from its saved state.
   const holdIfStopping = async (next) => {
-    let stopping = false;
-    try { stopping = !!isStopping(); } catch { stopping = false; }
-    if (!stopping) return;
-    log.info('bot-review', 'Shutting down: the review stops here; the next leader carries it on', { next });
-    await new Promise(() => {});
+    if (typeof fence !== 'function') return;
+    try {
+      fence();
+    } catch (err) {
+      log.info('bot-review', 'The review stops here; the build\'s next owner carries it on', { next });
+      throw err;
+    }
   };
-  const stopWith = (stop, detail = null) => { state.stop = stop; state.stopDetail = detail ? clip(detail, 300) : null; };
+  const stopWith = (stop, detail = null) => { state.stop = stop; state.stopDetail = detail ? clip(detail, STOP_DETAIL_CHARS) : null; };
   // What the review has spent: each round's reviewer call and fix turn, as
   // that round records them, so a call asked again after a restart is
   // counted once.
@@ -806,6 +871,7 @@ async function runReviewLoop({
       const sha0 = start.sha || state.finalSha || null;
       const first = await runCapture(0);
       const r0ms = num(first?.ms) || 0;
+      const r0checks = first?.ok ? checkCounts(first.capture) : null;
       state.round0 = {
         sha: sha0,
         commits: num(start.commits) ?? state.finalCommits ?? null,
@@ -814,6 +880,8 @@ async function runReviewLoop({
         captureError: first?.ok ? null : clip(first?.error || 'the capture failed', 300),
         costUsd: num(start.costUsd),
         activeMs: (num(start.activeMs) || 0) + r0ms,
+        // Whether the first build passed its own declared checks (checkCounts).
+        ...(r0checks ? { declaredChecks: r0checks } : {}),
       };
       if (!first?.ok) {
         stopWith(STOPS.captureError, first?.error);
@@ -854,6 +922,8 @@ async function runReviewLoop({
         // round's one call.
         entry.reviewerCostUsd = num(rev?.costUsd);
         entry.reviewerMs = num(rev?.ms);
+        if (rev?.retry) entry.reviewerRetry = clip(rev.retry, 300);
+        else delete entry.reviewerRetry;
         recount();
         if (!rev?.ok) {
           entry.reviewerError = clip(rev?.error || 'the reviewer failed', 300);
@@ -894,7 +964,7 @@ async function runReviewLoop({
         }
         entry.fix = {
           ok: !!fx?.ok, sha: fx?.sha || null, commits: num(fx?.commits), costUsd: num(fx?.costUsd), ms: num(fx?.ms),
-          ...(fx?.ok ? {} : { error: clip(fx?.error || (fx?.stopped ? 'ran past the review\'s time' : 'the fix turn failed'), 300) }),
+          ...(fx?.ok ? {} : { error: clip(fx?.error || (fx?.stopped ? 'ran past the review\'s time' : 'the fix turn failed'), STOP_DETAIL_CHARS) }),
           ...(fx?.stopped ? { stopped: true } : {}),
           ...(recovered ? { recovered: true } : {}),
         };
@@ -926,6 +996,7 @@ async function runReviewLoop({
       entry = null;
     }
   } catch (err) {
+    durableSteps.rethrowStop(err, 'review loop');
     log.warn('bot-review', 'The review loop failed; what is built goes on', { err: err.message });
     if (!state.stop) stopWith(STOPS.error, err.message);
   }
@@ -963,11 +1034,13 @@ async function runReviewLoop({
           state.finalCommits = state.lastBooted.commits;
           state.finalCapture = bootedCapture;
         } catch (err) {
+          durableSteps.rethrowStop(err, 'review rollback');
           state.rollbackError = clip(err.message || String(err), 300);
           log.warn('bot-review', 'Could not roll a broken fix back; what is committed goes on', { from, to: state.lastBooted.sha, err: err.message });
         }
       }
     } catch (err) {
+      durableSteps.rethrowStop(err, 'review final capture');
       log.warn('bot-review', 'The final capture failed; what is built goes on', { err: err.message });
       if (!state.stop) stopWith(STOPS.error, err.message);
     }
@@ -981,6 +1054,149 @@ async function runReviewLoop({
   return state;
 }
 
+// ── A last look after the final fix ─────────────────────────────────────
+//
+// Run seven (14 Oct 2026): a review that stops on its round limit ends on a
+// fix nobody looks at. Round 2 found one major issue left, its fix ran (81 s,
+// 4 commits) and went out unseen; it had in fact worked, but nothing said
+// so. So when the loop stopped there, its final capture booted, and the last
+// round's fix landed on a list of issues, the reviewer looks once more at
+// that final capture with those issues as its PREVIOUS ISSUES, and the run
+// records which it saw fixed and which it saw open (`finalLook`).
+//
+// It is a record and nothing else. No round is added and nothing is stopped,
+// fixed or rolled back for it, so summaryOf, review_rounds and review_stop
+// are what they were; no timeline stage or progress line says it ran (the
+// App tab would read "round 3 of 2"). It never holds the build up: a live run
+// takes it in the background once the loop is over and the build has gone on
+// to its proposal (homeroom-bot-live.js reviewLanded, startFinalLook), and
+// writes it into the run's stored review on its own (recordFinalLook). Its
+// cost stays on it (finalLook.costUsd), out of the review's costUsd and
+// reviewerCost: the build has counted and debited those by the time the look
+// ends, and the side builds it is compared with take no last look.
+
+// The reviewer call's own limit: in the background it can take what a
+// round's call may.
+const FINAL_LOOK_TIMEOUT_MS = REVIEW_TIMEOUT_MS;
+
+/**
+ * What a finished review's last look would look at: { round (the round whose
+ * fix it checks), capture (the final capture), issues (that round's) }, or
+ * null when it earns none: not stopped on its round limit, a final capture
+ * that did not boot or is not of that fix's commit, a fix that did not land,
+ * no issues, or a look already taken. Pure.
+ */
+function finalLookDue(state) {
+  if (!state || typeof state !== 'object' || state.state !== 'done' || state.stop !== STOPS.rounds) return null;
+  if (state.finalLook || state.rolledBack || !state.startedAt) return null;
+  const capture = state.finalCapture;
+  if (!capture || typeof capture !== 'object' || capture.booted !== true) return null;
+  const rounds = Array.isArray(state.rounds) ? state.rounds.filter((r) => r && typeof r === 'object') : [];
+  const last = rounds[rounds.length - 1];
+  if (!last || last.verdict !== 'fix' || !last.fix || last.fix.ok !== true) return null;
+  // The final capture shows the fix only when the fix moved the branch:
+  // one that pushed nothing leaves the capture before it as the final one.
+  if (!last.fix.sha || last.fix.sha !== state.finalSha) return null;
+  const issues = (Array.isArray(last.issues) ? last.issues : []).filter((it) => it && typeof it.id === 'string' && it.id);
+  if (!issues.length) return null;
+  return { round: Number(last.round) || rounds.length, capture, issues };
+}
+
+/**
+ * Take the last look `due` describes (finalLookDue) with `review`, called as
+ * runReviewLoop's is ({ round, capture, previousIssues, timeoutMs }), and
+ * resolve what it found: { round, fixed, open, verdict, costUsd, ms, at },
+ * `fixed` the issues it listed as fixed and did not raise again, `open` the
+ * rest, or with `error` (and nothing fixed or open) when the call failed.
+ * Never throws.
+ */
+async function takeFinalLook({ due, review, now = Date.now }) {
+  const t0 = now();
+  const asked = due.issues.map((it) => it.id);
+  const done = (fields) => ({
+    round: due.round, fixed: [], open: [], verdict: null, costUsd: null, ms: Math.max(0, now() - t0),
+    ...fields, at: new Date(now()).toISOString(),
+  });
+  try {
+    const rev = await review({
+      round: due.round + 1, capture: due.capture, previousIssues: due.issues, timeoutMs: FINAL_LOOK_TIMEOUT_MS,
+    });
+    const spent = { costUsd: num(rev?.costUsd), ...(num(rev?.ms) != null ? { ms: num(rev.ms) } : {}) };
+    if (!rev?.ok) return done({ ...spent, error: clip(rev?.error || 'the reviewer failed', 300) });
+    const said = new Set(Array.isArray(rev.previousFixed) ? rev.previousFixed : []);
+    const raised = new Set((Array.isArray(rev.issues) ? rev.issues : []).map((it) => it && it.id));
+    const fixed = asked.filter((id) => said.has(id) && !raised.has(id));
+    return done({
+      ...spent, fixed, open: asked.filter((id) => !fixed.includes(id)),
+      verdict: VERDICTS.includes(rev.verdict) ? rev.verdict : null,
+      ...(rev.retry ? { retry: clip(rev.retry, 300) } : {}),
+    });
+  } catch (err) {
+    return done({ error: clip(err?.message || String(err), 300) });
+  }
+}
+
+/**
+ * Write a last look into a live run's stored review (homeroom_bot_runs.review
+ * .finalLook), and only there: never review_rounds or review_stop. Only into
+ * the review it was taken for (its startedAt), once it is done, and only
+ * when none is recorded yet. Resolves whether it wrote. Throws on a failed
+ * write.
+ */
+async function recordFinalLook(pool, runId, startedAt, look) {
+  const { rowCount } = await pool.query(
+    `UPDATE homeroom_bot_runs SET review = jsonb_set(review, '{finalLook}', $3::jsonb)
+      WHERE id = $1 AND jsonb_typeof(review) = 'object' AND review->>'state' = 'done'
+        AND review->>'startedAt' = $2 AND review->'finalLook' IS NULL`,
+    [Number(runId), String(startedAt), JSON.stringify(look)],
+  );
+  return rowCount > 0;
+}
+
+// The last looks still running in this process: a build never waits on
+// them; finalLooksSettled is for a test, or a shutdown that wants them in.
+const pendingFinalLooks = new Set();
+
+/**
+ * Take a finished review's last look for the live run `runId` in the
+ * background, when it earns one (finalLookDue) and the run has none yet: a
+ * restart that hands the same finished review back calls the reviewer no
+ * second time. Returns the look's promise (resolving the look, or null when
+ * none was taken), or null when none is due; the caller does not wait on
+ * it. Never rejects.
+ */
+function startFinalLook({ pool, runId, state, review, now = Date.now }) {
+  const due = runId ? finalLookDue(state) : null;
+  if (!due) return null;
+  const job = (async () => {
+    try {
+      const { rows: [row] } = await pool.query(
+        `SELECT review->'finalLook' IS NOT NULL AS taken FROM homeroom_bot_runs
+          WHERE id = $1 AND jsonb_typeof(review) = 'object' AND review->>'state' = 'done' AND review->>'startedAt' = $2`,
+        [Number(runId), String(state.startedAt)],
+      );
+      if (!row || row.taken) return null;
+      const look = await takeFinalLook({ due, review, now });
+      await recordFinalLook(pool, runId, state.startedAt, look);
+      log.info('bot-review', 'Took a last look after the final fix (recorded only)', {
+        runId: Number(runId), round: look.round, fixed: look.fixed.length, open: look.open.length, error: look.error || null,
+      });
+      return look;
+    } catch (err) {
+      log.warn('bot-review', 'Could not take or record the last look after the final fix', { runId: Number(runId), err: err.message });
+      return null;
+    }
+  })();
+  pendingFinalLooks.add(job);
+  job.finally(() => pendingFinalLooks.delete(job));
+  return job;
+}
+
+/** Resolves once every last look this process started has ended. */
+function finalLooksSettled() {
+  return Promise.allSettled([...pendingFinalLooks]);
+}
+
 /**
  * Whether restart recovery should carry a review on (runReviewLoop's
  * `resumeFrom`) rather than propose what is committed as it stands: it is
@@ -989,6 +1205,23 @@ async function runReviewLoop({
  */
 function canResume(review, max = MAX_REVIEW_RESUMES) {
   return inProgress(review) && (Number(review.resumes) || 0) < max;
+}
+
+/**
+ * Whether a fix turn's `result` restart recovery followed is the one a
+ * review's saved state was waiting on: its last round has a `fix` verdict
+ * and no fix yet, the turn was dispatched (its `inFlight` says so, or a
+ * review saved before `inFlight` existed was waiting on it), and it is not
+ * a commit a round already recorded, which is spent. Pure.
+ */
+function awaitsFix(review, result) {
+  if (!review || typeof review !== 'object' || !result || typeof result !== 'object') return false;
+  const rounds = Array.isArray(review.rounds) ? review.rounds : [];
+  const last = rounds.length ? rounds[rounds.length - 1] : null;
+  const awaiting = !!last && last.verdict === 'fix' && !last.fix
+    && (review.inFlight ? review.inFlight.step === 'fix' : true);
+  const spent = new Set([review.round0?.sha, ...rounds.map((r) => r?.fix?.sha)].filter(Boolean));
+  return awaiting && !(result.sha && spent.has(result.sha));
 }
 
 /**
@@ -1096,17 +1329,26 @@ module.exports = {
   parseReview,
   bootIssue,
   MAX_CHECK_ISSUES,
+  checkCounts,
   checkIssues,
   withCheckIssues,
   fixPrompt,
   fixBrowserLines,
   callReviewer,
   reviewCapture,
+  MIN_REVIEW_RETRY_MS,
   storeRoundShots,
   artifactIdsOf,
   runReviewLoop,
+  FINAL_LOOK_TIMEOUT_MS,
+  finalLookDue,
+  takeFinalLook,
+  recordFinalLook,
+  startFinalLook,
+  finalLooksSettled,
   canResume,
   recoveredFixOf,
+  awaitsFix,
   slimCapture,
   reviewForm,
   slimState,

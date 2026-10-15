@@ -467,6 +467,7 @@ function load() {
       return configured.split(',').map((s) => s.trim()).filter(Boolean);
     })(),
     openrouterApiBase,
+    dictationModel: process.env.DICTATION_MODEL || 'openai/whisper-large-v3-turbo',
     // Per-model host shortlists for coding turns (openRouterProviderShortlists
     // above): { model: 'slug,slug' | 'none' }, empty for the listeners' own.
     openrouterProviderShortlists: openRouterProviderShortlists(process.env.OPENROUTER_PROVIDER_SHORTLISTS),
@@ -712,6 +713,10 @@ function load() {
         .split(',').map((name) => name.trim()).filter(Boolean),
       buildkitSuccessRetentionHours: Number(process.env.BUILDKIT_SUCCESS_RETENTION_HOURS
         || process.env.KPACK_SUCCESS_RETENTION_HOURS || '48'),
+      // `auto` (default): a build uploads the registry layer cache only when
+      // it rebuilt something a later build can reuse. `always`: after every
+      // build, as before the choice existed.
+      buildkitCacheUpload: process.env.BUILDKIT_CACHE_UPLOAD || 'auto',
     },
     // Postgres connection pool size (pg `Pool.max`). pg's built-in default
     // is 10, which can bottleneck under many concurrent SSE turns + staging
@@ -804,6 +809,23 @@ function load() {
     // announcements) to the merge-followups machine, and a change reads
     // live only once production runs it. Off by default.
     wfMergeFollowupsEnabled: ['1', 'true'].includes(process.env.WF_MERGE_FOLLOWUPS_ENABLED),
+    // With WF_APP_DELIVERY_ENABLED on (and WF_MERGE_FOLLOWUPS_ENABLED, which
+    // it needs), every production deploy of an app is asked of the
+    // app-delivery machine: one at a time per app, recorded, and the
+    // "deploying" state is durable. Off by default.
+    wfAppDeliveryEnabled: ['1', 'true'].includes(process.env.WF_APP_DELIVERY_ENABLED),
+    // With WF_PREVIEWS_ENABLED on, a proposal's preview and its required
+    // checks are the preview machine's: every source asks it, one build and
+    // one checks run at a time, and what serves, what is built and which
+    // revision the verdict is for are durable. It also records who is working
+    // on a session. Off by default.
+    wfPreviewsEnabled: ['1', 'true'].includes(process.env.WF_PREVIEWS_ENABLED),
+    // How many 'error' verdicts in a row the checks' error lane re-runs on
+    // its own (staging-recovery.checkMaxAutoRetries, CHECK_MAX_AUTO_RETRIES).
+    checkMaxAutoRetries: (() => {
+      const n = Number.parseInt(process.env.CHECK_MAX_AUTO_RETRIES || '6', 10);
+      return Number.isFinite(n) ? n : 6;
+    })(),
     // Its own pool, so pipeline slots and the outcome listener never take
     // request connections, and how many slots each process runs. A staging
     // preview shares one Postgres server with the fleet: one slot, and a

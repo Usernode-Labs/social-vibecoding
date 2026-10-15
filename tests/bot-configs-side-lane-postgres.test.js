@@ -10,9 +10,6 @@
 //   - one already left that way, or cancelled by an admin, is settled on the
 //     lane's next pass; one this process still holds is left to its own
 //     finisher;
-//   - a side build going on from what it kept after a restart is counted at
-//     what is still to come of its estimate, so it is not capped for spend it
-//     already had; spend a restart threw away is still counted;
 //   - a side build's branch is kept while its pair waits for a pick (up to
 //     BRANCH_KEEP_WAITING_DAYS), and goes at seven days once it does not;
 //   - the pairs waiting per scope, which the Homeroom bot console's Overview
@@ -35,18 +32,6 @@ const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL
 const OPUS = 'anthropic/claude-opus-5.5';
 const GLM = 'z-ai/glm-5.3-flash';
 const BASE = 'a'.repeat(40);
-
-test('keptSpend: what a checkpoint\'s kept work was charged, never what a restart threw away', () => {
-  assert.equal(lane.keptSpend(null), 0);
-  assert.equal(lane.keptSpend({}), 0);
-  const cp = {
-    spec: { sessionId: 11, specMd: '# Plan' }, build: { sessionId: 12, sha: 'b'.repeat(40) },
-    sessions: [10, 11, 12], charged: { 10: 0.5, 11: 0.25, 12: 0.5 },
-  };
-  assert.equal(lane.keptSpend(cp), 0.75, 'the spec and the build it kept, not session 10 whose work was thrown away');
-  assert.equal(lane.keptSpend({ ...cp, build: null }), 0.25);
-  assert.equal(lane.keptSpend({ spec: { sessionId: 11 }, charged: {} }), 0, 'kept, but not charged yet');
-});
 
 test('side builds on the App bench lane against the full PostgreSQL schema', { timeout: 180000 }, async (t) => {
   const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 2000 });
@@ -89,11 +74,7 @@ test('side builds on the App bench lane against the full PostgreSQL schema', { t
      RETURNING id, slug, name, repo_url`,
   );
 
-  let ran = [];
-  runner.runStage = async ({ trial }) => {
-    ran.push(trial.id);
-    return { status: 'ok', cost_usd: 0.1, parsed: { built: true }, duration_ms: 5 };
-  };
+  runner.runStage = async () => ({ status: 'ok', cost_usd: 0.1, parsed: { built: true }, duration_ms: 5 });
   const deleted = [];
   const deps = {
     user,
@@ -133,16 +114,10 @@ test('side builds on the App bench lane against the full PostgreSQL schema', { t
     "SELECT status, error, trial_id FROM bot_config_results WHERE bot_run_id = $1 AND source = 'trial'", [botRunId],
   )).rows[0];
   const trialOf = async (id) => (await pool.query('SELECT status, error FROM bench_trials WHERE id = $1', [id])).rows[0];
-  // A restart handed the trial back: what its sessions spent is charged to
-  // its run, and its checkpoint says which of them did work it keeps.
-  const handedBack = (s, { kept }) => pool.query(
-    `UPDATE bench_trials SET claims = 1, prior_ms = 600000,
-            checkpoint = $2::jsonb, interrupted_cost_usd = $3
-      WHERE id = $1`,
-    [s.trialId, JSON.stringify({
-      ...(kept ? { spec: { sessionId: 901, specMd: '# Dark mode' } } : {}),
-      sessions: [901], charged: { 901: 1.0 },
-    }), kept ? 0 : 1.0],
+  // A restart put the trial back in the queue (lane.js releaseTrial): what
+  // its interrupted attempt spent is charged to its run, and kept on it.
+  const putBack = (s) => pool.query(
+    'UPDATE bench_trials SET claims = 1, prior_ms = 600000, interrupted_cost_usd = 1.0 WHERE id = $1', [s.trialId],
   ).then(() => pool.query('UPDATE bench_runs SET spent_usd = 1.0 WHERE id = $1', [s.benchRunId]));
 
   await t.test('a side build its run\'s cap stops is finished skipped, with why, and counted', async () => {
@@ -150,7 +125,7 @@ test('side builds on the App bench lane against the full PostgreSQL schema', { t
     const s = await sideBuild();
     // A restart threw its work away after it had spent $1.00 of its $1.20:
     // the $0.40 it needs again does not fit.
-    await handedBack(s, { kept: false });
+    await putBack(s);
     const out = await lane.tick(pool, {}, deps);
     assert.equal(out.paused, 'cap');
     assert.equal((await trialOf(s.trialId)).status, 'skipped_cap');
@@ -161,29 +136,6 @@ test('side builds on the App bench lane against the full PostgreSQL schema', { t
     assert.equal(stats.sideBuilds.skipped, 1, 'counted with the side builds that never ran');
     const { rows: pairs } = await pool.query('SELECT 1 FROM bot_config_pairs WHERE bot_run_id = $1', [s.botRunId]);
     assert.equal(pairs.length, 0, 'never offered');
-  });
-
-  await t.test('a side build going on from what it kept is counted at what is still to come, not capped for what it spent', async () => {
-    lane._resetForTests();
-    ran = [];
-    const s = await sideBuild();
-    // The same $1.00 spent, on a plan the restart kept: what is still to
-    // come is less than its whole $0.40 estimate, and fits what is left.
-    await handedBack(s, { kept: true });
-    const out = await lane.tick(pool, {}, deps);
-    assert.equal(out.started, 1, `claimed, not capped (${out.paused})`);
-    assert.equal(lane._inFlightForTests().get(s.trialId).est, 0, 'held at what is still to come');
-    await lane._awaitTrialsForTests();
-    assert.deepEqual(ran, [s.trialId]);
-    assert.equal((await trialOf(s.trialId)).status, 'ok');
-    assert.equal((await resultOf(s.botRunId)).status, 'done');
-    // A run that had spent all its cap is still stopped, kept work or not.
-    const over = await sideBuild();
-    await handedBack(over, { kept: true });
-    await pool.query('UPDATE bench_runs SET spent_usd = 1.3 WHERE id = $1', [over.benchRunId]);
-    await lane.tick(pool, {}, deps);
-    assert.equal((await trialOf(over.trialId)).status, 'skipped_cap');
-    assert.match((await resultOf(over.botRunId)).error, /^capped: its run had spent \$1\.30 of its \$1\.20 cap$/);
   });
 
   await t.test('one left pending before, or cancelled by an admin, is settled on the next pass; one in flight is left alone', async () => {

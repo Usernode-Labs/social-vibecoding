@@ -72,13 +72,16 @@ test('the checks run starts the shots right after it claims the preview, and sti
   const decided = body.indexOf('checksAlreadyDecided(pool, session.id, commitHash)');
   assert.ok(claim > 0 && early > claim && early < decided,
     'after the run claims its slot, before any early return');
-  assert.match(body, /scheduleShots\(config, pool, session\.id, commitHash\);\n  \}\n\}/,
-    'the hand-off after the checks stays as the fallback');
+  assert.match(body, /if \(!workflow\) \{\n[^}]*scheduleShots\(config, pool, session\.id, commitHash\);\n    \}\n  \}\n\}/,
+    'the hand-off after the checks stays as the fallback (a preview machine\'s run: its follow-ups)');
 });
 
 test('an interrupted run is looked for every 30 seconds, apart from the two-minute sweep', () => {
   const server = fs.readFileSync(path.join(__dirname, '../server.js'), 'utf8');
-  assert.match(server, /setInterval\(retryInterruptedShots, 30 \* 1000\)/);
-  const unstarted = server.slice(server.indexOf('const runUnstartedShots = '), server.indexOf('setInterval(runUnstartedShots'));
+  // Leader timers (services/leader-timers.js) since they stop at shutdown.
+  assert.match(server, /leaderTimers\.every\('shots-retry-interrupted', retryInterruptedShots, 30 \* 1000\)/);
+  const unstarted = server.slice(server.indexOf('const runUnstartedShots = '),
+    server.indexOf("leaderTimers.every('shots-recover-unstarted', runUnstartedShots"));
+  assert.ok(unstarted.length > 0, 'the unstarted sweep is still its own timer');
   assert.doesNotMatch(unstarted, /retryInterrupted/, 'the retry no longer waits for the slower sweep');
 });

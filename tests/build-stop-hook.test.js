@@ -284,9 +284,19 @@ const record = { args, env: {
   count: process.env.USERNODE_STOP_GUARD_COUNT || null,
   repo: process.env.USERNODE_STOP_GUARD_REPO || null,
 }, hooks: [] };
-if (work === 'commit') {
+if (work === 'commit' || work === 'commit_and_serve' || work === 'commit_then_tests') {
   fs.writeFileSync('feature.js', 'x\\n');
   execSync('git add -A && git commit -q -m feature');
+}
+// A server the "agent" leaves running in its workspace, as run 190's did.
+if (work === 'commit_and_serve') {
+  const { spawn } = require('child_process');
+  const server = spawn(process.execPath, ['-e', "require('http').createServer(() => {}).listen(0, '127.0.0.1', () => require('fs').writeFileSync('.serving', '1'))"],
+    { cwd: process.cwd(), detached: true, stdio: 'ignore' });
+  server.unref();
+  record.server = server.pid;
+  for (let i = 0; i < 100 && !fs.existsSync('.serving'); i += 1) spawnSync('sleep', ['0.05']);
+  fs.rmSync('.serving', { force: true });
 }
 const at = args.indexOf('--settings');
 if (at >= 0) {
@@ -306,6 +316,8 @@ if (at >= 0) {
     if (!verdict || verdict.decision !== 'block') break;
     active = true;
     if (work === 'after_first_block') fs.writeFileSync('made.js', 'made\\n');
+    // A first version sent back for its checks' key declares them under \`tests\`.
+    if (work === 'commit_then_tests') fs.writeFileSync('dapp.json', JSON.stringify({ tests: [{ name: 'Home', path: '/' }] }));
   }
 }
 fs.writeFileSync(process.env.STUB_LOG, JSON.stringify(record));
@@ -557,6 +569,60 @@ test('runGuard: a changed turn runs the checks, is sent back while one fails (co
   assert.deepEqual(hook.runGuard({ env: env3, git: committed, checks, fsImpl: unwritable }), { block: false, why: 'committed', checks: 'no_count' });
 });
 
+test('a first version\'s dapp.json: checks under `checks`, none, or not JSON are named; checks under `tests` pass', () => {
+  // Run 191's three no-check builds, as they wrote it.
+  const misplaced = hook.manifestProblem(JSON.stringify({ icon: { emoji: 'x' }, secrets: [], checks: [{ name: 'Home', path: '/' }] }));
+  assert.equal(misplaced.why, 'checks_misplaced');
+  assert.match(misplaced.reason, /declares checks under `checks`, a key the platform does not read: they would never run, here or on the proposal\. Move them into the top-level `tests` array/);
+  assert.match(misplaced.reason, /delete the `checks` key, and finish again\./);
+  assert.equal(hook.manifestProblem(JSON.stringify({ tests: [{ path: '/' }], checks: [] })).why, 'checks_misplaced', 'both: the stray key still goes');
+  for (const m of [{ secrets: [] }, { tests: [] }, { tests: [{ name: 'no path' }, { path: 'relative' }, { path: '//host' }, null, 'x'] }, { tests: {} }]) {
+    const none = hook.manifestProblem(JSON.stringify(m));
+    assert.equal(none.why, 'checks_none', JSON.stringify(m));
+    assert.match(none.reason, /declares no checks: its top-level `tests` array is missing, empty or has no check with a path\. A first version ships two or three there/);
+  }
+  assert.equal(hook.manifestProblem(null).why, 'checks_none', 'no dapp.json');
+  assert.equal(hook.manifestProblem('{"tests": [').why, 'checks_manifest_invalid');
+  assert.equal(hook.manifestProblem('[]').why, 'checks_manifest_invalid');
+  assert.equal(hook.manifestProblem(JSON.stringify({ tests: [{ name: 'Home', path: '/' }] })), null);
+  assert.equal(hook.manifestProblem(JSON.stringify({ tests: [{ path: ' /?demo=1 ' }] })), null);
+});
+
+test('runGuard: a first version whose dapp.json declares no checks the platform reads is sent back before anything boots', () => {
+  const dir = tmp('stop-guard-tests-');
+  const env = {
+    USERNODE_STOP_GUARD_START: START, USERNODE_STOP_GUARD_COUNT: path.join(dir, 'blocks'), USERNODE_STOP_GUARD_REPO: dir,
+    USERNODE_STOP_GUARD_CHECKS: '/cmd', USERNODE_STOP_GUARD_CHECKS_COUNT: path.join(dir, 'checks'),
+    USERNODE_STOP_GUARD_DEADLINE: String(Date.now() + 30 * 60_000), USERNODE_STOP_GUARD_REQUIRE_TESTS: '1',
+  };
+  const committed = (args) => (args[0] === 'rev-parse' ? `${OTHER}\n` : '');
+  const runs = [];
+  const checks = (args) => { runs.push(args); return PASSING; };
+  fs.writeFileSync(path.join(dir, 'dapp.json'), JSON.stringify({ secrets: [], checks: [{ name: 'Home', path: '/' }] }));
+  const sent = hook.runGuard({ env, git: committed, checks });
+  assert.equal(sent.block, true);
+  assert.equal(sent.why, 'checks_misplaced');
+  assert.equal(sent.checkBlocks, 1);
+  assert.equal(fs.readFileSync(env.USERNODE_STOP_GUARD_CHECKS_COUNT, 'utf8'), '1', 'counted with the checks gate\'s own sends');
+  assert.equal(runs.length, 0, 'nothing booted');
+  assert.equal(hook.hookOutput(sent), JSON.stringify({ decision: 'block', reason: sent.reason }));
+  // Moved under `tests`: the checks run, and pass.
+  fs.writeFileSync(path.join(dir, 'dapp.json'), JSON.stringify({ secrets: [], tests: [{ name: 'Home', path: '/' }] }));
+  assert.deepEqual(hook.runGuard({ env, git: committed, checks }), { block: false, why: 'committed', checks: 'checks_pass' });
+  assert.equal(runs.length, 1);
+  // Within the same cap as a failing check.
+  fs.writeFileSync(path.join(dir, 'dapp.json'), JSON.stringify({ tests: [] }));
+  assert.equal(hook.runGuard({ env, git: committed, checks }).why, 'checks_none');
+  assert.deepEqual(hook.runGuard({ env, git: committed, checks }), { block: false, why: 'committed', checks: 'checks_cap' });
+  // A later change (no REQUIRE_TESTS) is left as it is: no checks, nothing to run.
+  const later = { ...env, USERNODE_STOP_GUARD_CHECKS_COUNT: path.join(tmp('stop-guard-tests-'), 'checks') };
+  delete later.USERNODE_STOP_GUARD_REQUIRE_TESTS;
+  assert.deepEqual(hook.runGuard({ env: later, git: committed, checks }), { block: false, why: 'committed', checks: 'checks_pass' });
+  // Too little time left, or unchanged: as before, whatever dapp.json says.
+  const late = { ...env, USERNODE_STOP_GUARD_CHECKS_COUNT: path.join(tmp('stop-guard-tests-'), 'checks'), USERNODE_STOP_GUARD_DEADLINE: String(Date.now() + 60_000) };
+  assert.deepEqual(hook.runGuard({ env: late, git: committed, checks }), { block: false, why: 'committed', checks: 'checks_no_time' });
+});
+
 test('runChecks runs the platform\'s command in the repository and reads its result line; anything else is no result', () => {
   const dir = tmp('stop-guard-cmd-');
   const cmd = path.join(dir, 'usernode-app-check');
@@ -618,4 +684,160 @@ test('run-cc.sh: a turn that changed something is sent back once its checks fail
   const without = await runRunCc(plain, { STUB_WORK: 'commit', STOP_GUARD_CHECKS: path.join(plain.dir, 'absent') });
   assert.equal(without.code, 0, without.out);
   assert.match(resultLine(without.out), / stop_hook_blocks=0$/);
+});
+
+test('run-cc.sh: a first version with no checks under `tests` is sent back, and its checks run once it declares them', async () => {
+  const fx = runnerFixture();
+  const cmd = path.join(fx.dir, 'usernode-app-check');
+  const counter = path.join(fx.dir, 'check-runs');
+  fs.writeFileSync(cmd, [
+    '#!/bin/sh',
+    `n=$(cat "${counter}" 2>/dev/null || echo 0); n=$((n+1)); echo "$n" > "${counter}"`,
+    `echo '__USERNODE_BENCH_CAPTURE__ ${JSON.stringify(PASSING)}'`,
+    '',
+  ].join('\n'));
+  const ran = await runRunCc(fx, {
+    STUB_WORK: 'commit_then_tests', STOP_GUARD_CHECKS: cmd, STOP_GUARD_REQUIRE_TESTS: '1',
+    STOP_GUARD_DEADLINE: String(Date.now() + 30 * 60_000),
+  });
+  assert.equal(ran.code, 0, ran.out);
+  assert.deepEqual(ran.claude.hooks, ['block', null], 'sent back for its checks, then let go once they are under `tests`');
+  assert.equal(fs.readFileSync(counter, 'utf8').trim(), '1', 'booted only once they were declared');
+  assert.match(resultLine(ran.out), / stop_hook_check_blocks=1$/);
+});
+
+// ── Leftover servers (App bench run 190) ────────────────────────────────
+//
+// One build's final message came at 20:36:44 and its turn ended at 20:46:10:
+// Claude Code held the turn open until the server it had started as a
+// background task timed out. A review's fix turn left its own server on the
+// checks' port, and the checks gate failed twice on it.
+
+const TCP = [
+  '  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode',
+  '   0: 0100007F:0C1C 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 12345 1 0000000000000000 100 0 0 10 0',
+  '   1: 0100007F:0C1D 0100007F:9C40 01 00000000:00000000 00:00000000 00000000  1000        0 22222 1 0000000000000000 20 4 30 10 -1',
+].join('\n');
+
+test('a leftover server is a process listening from the workspace; Claude Code, the hook, MCP servers and browsers never are', () => {
+  assert.deepEqual([...hook.listeningInodes([TCP, null])], ['12345'], 'listening sockets only, not connections');
+  const ws = '/home/node/workspace';
+  const procs = [
+    { pid: 20, cwd: ws, cmd: 'node server.js', sockets: ['12345'] },
+    { pid: 21, cwd: `${ws}/api`, cmd: 'node /usr/local/bin/usernode-run-inloop node server.js', sockets: ['7', '12345'] },
+    { pid: 22, cwd: `${ws}2`, cmd: 'node server.js', sockets: ['12345'] },
+    { pid: 23, cwd: ws, cmd: 'node /usr/lib/node_modules/@playwright/mcp/cli.js', sockets: ['12345'] },
+    { pid: 24, cwd: ws, cmd: '/opt/pw-browsers/chromium/chrome --headless', sockets: ['12345'] },
+    { pid: 25, cwd: ws, cmd: 'node server.js', sockets: ['22222'] },
+    { pid: 26, cwd: ws, cmd: 'claude --print --verbose', sockets: ['12345'] },
+    { pid: 11, cwd: ws, cmd: 'node server.js', sockets: ['12345'] },
+    { pid: 27, cwd: null, cmd: 'node server.js', sockets: ['12345'] },
+  ];
+  assert.deepEqual(hook.leftoverServers({ repo: `${ws}/`, spare: new Set([10, 11]), listening: new Set(['12345']), procs }), [20, 21]);
+  assert.deepEqual(hook.leftoverServers({ repo: '/', spare: new Set(), listening: new Set(['12345']), procs }), [], 'never a whole filesystem');
+});
+
+test('stopLeftovers stops a server left running in the workspace, and nothing outside it', async () => {
+  const ws = tmp('stop-guard-ws-');
+  const elsewhere = tmp('stop-guard-elsewhere-');
+  const serve = (cwd) => new Promise((resolve) => {
+    const child = spawn(process.execPath, ['-e', "require('http').createServer(() => {}).listen(0, '127.0.0.1', () => console.log('up'))"],
+      { cwd, stdio: ['ignore', 'pipe', 'ignore'] });
+    child.stdout.once('data', () => resolve(child));
+  });
+  const left = await serve(ws);
+  const other = await serve(elsewhere);
+  const gone = new Promise((resolve) => left.on('exit', (code, signal) => resolve(signal)));
+  try {
+    assert.equal(hook.stopLeftovers({ repo: ws }), 1);
+    assert.equal(await gone, 'SIGTERM');
+    assert.equal(other.exitCode, null, 'a server outside the workspace runs on');
+    assert.equal(hook.stopLeftovers({ repo: ws }), 0, 'nothing left');
+  } finally {
+    left.kill('SIGKILL');
+    other.kill('SIGKILL');
+  }
+  // It fails open: nothing it can read, nothing stopped.
+  const blind = { readdirSync() { throw new Error('EACCES'); }, readFileSync() { throw new Error('EACCES'); }, readlinkSync() { throw new Error('EACCES'); } };
+  assert.equal(hook.stopLeftovers({ repo: ws, fsImpl: blind }), 0);
+});
+
+test('runGuard stops what was left serving once the turn may end, counts it, and never when it sends the turn back', () => {
+  const dir = tmp('stop-guard-servers-');
+  const env = {
+    USERNODE_STOP_GUARD_START: START, USERNODE_STOP_GUARD_COUNT: path.join(dir, 'blocks'), USERNODE_STOP_GUARD_REPO: dir,
+    USERNODE_STOP_GUARD_SERVERS: path.join(dir, 'servers'),
+  };
+  const stops = [];
+  const stop = (args) => { stops.push(args.repo); return 2; };
+  const unchanged = (args) => (args[0] === 'rev-parse' ? `${START}\n` : '');
+  assert.equal(hook.runGuard({ env, git: unchanged, stop }).block, true);
+  assert.deepEqual(stops, [], 'sent back to work: its server is still its own');
+  const committed = (args) => (args[0] === 'rev-parse' ? `${OTHER}\n` : '');
+  assert.deepEqual(hook.runGuard({ env, git: committed, stop }), { block: false, why: 'committed', stopped: 2 });
+  assert.deepEqual(stops, [dir]);
+  assert.equal(fs.readFileSync(env.USERNODE_STOP_GUARD_SERVERS, 'utf8'), '2');
+  hook.runGuard({ env, git: committed, stop });
+  assert.equal(fs.readFileSync(env.USERNODE_STOP_GUARD_SERVERS, 'utf8'), '4', 'added up over the turn');
+  // Before the checks run, so a server on their port cannot fail them.
+  const order = [];
+  const gated = { ...env, USERNODE_STOP_GUARD_CHECKS: '/cmd', USERNODE_STOP_GUARD_CHECKS_COUNT: path.join(dir, 'checks') };
+  hook.runGuard({ env: gated, git: committed, stop: () => { order.push('stop'); return 0; }, checks: () => { order.push('checks'); return PASSING; } });
+  assert.deepEqual(order, ['stop', 'checks']);
+});
+
+test('checks that passed are not run again on the same tree; a changed tree runs them again', () => {
+  const { dir, repo } = hookRepo();
+  fs.appendFileSync(path.join(repo, 'app.js'), 'console.log(2);\n');
+  const env = {
+    USERNODE_STOP_GUARD_START: git(repo, 'rev-parse', 'HEAD'), USERNODE_STOP_GUARD_COUNT: path.join(dir, 'blocks'),
+    USERNODE_STOP_GUARD_REPO: repo, USERNODE_STOP_GUARD_CHECKS: '/cmd', USERNODE_STOP_GUARD_CHECKS_COUNT: path.join(dir, 'checks'),
+    USERNODE_STOP_GUARD_CHECKS_PASSED: path.join(dir, 'checks-passed'),
+  };
+  let runs = 0;
+  const checks = () => { runs += 1; return PASSING; };
+  const none = () => 0;
+  assert.equal(hook.runGuard({ env, checks, stop: none }).checks, 'checks_pass');
+  assert.deepEqual(hook.runGuard({ env, checks, stop: none }), { block: false, why: 'uncommitted', checks: 'checks_passed_on_this_tree' });
+  assert.equal(runs, 1, 'the second stop on the same tree boots nothing');
+  assert.equal(git(repo, 'status', '--porcelain'), 'M app.js', 'the workspace\'s own index is untouched');
+  fs.writeFileSync(path.join(repo, 'new.js'), 'x\n');
+  assert.equal(hook.runGuard({ env, checks, stop: none }).checks, 'checks_pass');
+  assert.equal(runs, 2, 'a new file is a new tree');
+  // A failing run is never remembered as a pass.
+  fs.appendFileSync(path.join(repo, 'new.js'), 'y\n');
+  assert.equal(hook.runGuard({ env, checks: () => FAILING, stop: none }).block, true);
+  assert.equal(hook.runGuard({ env, checks, stop: none }).checks, 'checks_pass');
+  assert.equal(runs, 3);
+});
+
+test('run-cc.sh: a server the agent left running is stopped as its turn ends, and the result line counts it', async () => {
+  const fx = runnerFixture();
+  const ran = await runRunCc(fx, { STUB_WORK: 'commit_and_serve' });
+  assert.equal(ran.code, 0, ran.out);
+  assert.ok(Number.isInteger(ran.claude.server));
+  // Gone, or a zombie its exited parent left for init to reap: not serving.
+  const state0 = (() => { try { const st = fs.readFileSync(`/proc/${ran.claude.server}/stat`, 'utf8'); return st.slice(st.lastIndexOf(')') + 2, st.lastIndexOf(')') + 3); } catch { return 'gone'; } })();
+  assert.ok(['gone', 'Z', 'X'].includes(state0), `the server is stopped (state ${state0})`);
+  assert.match(resultLine(ran.out), / stop_hook_blocks=0 stop_hook_servers_stopped=1$/);
+  assert.match(ran.out, /__USERNODE_WARN__ The agent left servers running in its workspace; the stop guard stopped them as the turn ended \(stop_hook_servers_stopped=1\)/);
+  const state = worker.newWatchState();
+  for (const line of ran.out.split('\n')) worker.parseLine(line, () => {}, state);
+  assert.equal(llmTelemetry.normalizeDiagnostics(state).stop_hook_servers_stopped, 1);
+  assert.equal('stop_hook_servers_stopped' in llmTelemetry.normalizeDiagnostics(worker.newWatchState()), false);
+});
+
+test('the bot\'s build and fix prompts say how to boot the app, stop it, and use the platform\'s commands', () => {
+  const live = require('../src/services/homeroom-bot-live');
+  const botReview = require('../src/services/bot-review');
+  const text = live.APP_SERVER_LINES.join('\n');
+  assert.match(text, /`usernode-run-inloop node server\.js &`/);
+  assert.match(text, /never with your\s+shell tool's run_in_background/);
+  assert.match(text, /run `usernode-run-inloop --stop`/);
+  assert.match(text, /tools to run, not code to read/);
+  for (const line of live.APP_SERVER_LINES) assert.ok(!/—/.test(line), line);
+  for (const firstVersion of [true, false]) {
+    assert.ok(live.buildPrompt({ seed: 's', buildNote: 'n', firstVersion }).includes(text), `a build (first version: ${firstVersion})`);
+  }
+  assert.ok(botReview.fixPrompt({ spec: 'S', issues: [{ id: 'a', severity: 'major', screen: 'Home', problem: 'p', fix: 'f' }] }).includes(text), 'a review\'s fix');
 });

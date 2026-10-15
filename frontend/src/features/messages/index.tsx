@@ -34,9 +34,10 @@ import { isReadyMessage } from './bot-ready';
 import {
   alsoInChat, botRequestNames, botThreadTitle, changeBlocks, dotText, threadsAllowed, type ChangeBlock,
 } from './bot-shared';
-import { BotWorkSync, newestBotMessageId } from './bot-work';
+import { BotWorkSync, newestBotMessageId, useBotWork } from './bot-work';
 import { BotStrip, RequestTag } from './bot-strip';
-import { BotNewsLine, foldBotNews, isBotNews } from './bot-news-line';
+import { BotNewsLine, foldBotNews, isBotNews, newsStatusOf, SettledRun, type SettledRunItem } from './bot-news-line';
+import { requestKey } from './bot-request';
 import { MessageComposer } from './composer';
 import { CreateConversationDialog } from './create-dialog';
 import { ConversationMembersDialog } from './members-dialog';
@@ -47,7 +48,7 @@ import { useDismiss } from '../message-actions/use-dismiss';
 import { ShareItemDialog } from './share-dialog';
 import { ShareToDialog } from './share-to-dialog';
 import { JumpToLatest } from './jump-to-latest';
-import { useStickToBottom } from './stick-to-bottom';
+import { centreInScroller, isNearTop, needsMoreHistory, useStickToBottom } from './stick-to-bottom';
 import {
   firstUnreadId, jumpLabel, lineTopIn, messageRow, newMessagesLabel, openingScrollTop, useLineHold, useUnreadAffordances,
 } from './unread-anchor';
@@ -1792,10 +1793,16 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   const typing = conversationId ? typingUsers(conversationId) : [];
   // #2884: the runs of cards the viewer has opened, by their first message.
   const [expandedRuns, setExpandedRuns] = useState<ReadonlySet<string>>(() => new Set());
+  // One request, one story: where each request stands, for folding the settled ones.
+  const { work: botWork } = useBotWork();
   // #2387: the message a link pointed at, flashed once it is drawn.
   const focusId = snap.route.focusMessageId;
   const [flashId, setFlashId] = useState<number | null>(null);
   const shownFocus = useRef<number | null>(null);
+  // #5019: loading earlier messages on scroll. A failed load restores the
+  // button at the top as the manual way back, until it succeeds or the
+  // conversation (or its next-older cursor) changes.
+  const [olderFailed, setOlderFailed] = useState(false);
   // THE "NEW" LINE (./unread-anchor.ts): above the first message after where
   // reading had stopped when this conversation was opened (the store's
   // `unreadMark`). The transcript opens with it near the top.
@@ -1856,7 +1863,7 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
         shownFocus.current = focusId;
         previousLast.current = last;
         pinned.current = false;
-        requestAnimationFrame(() => row.scrollIntoView({ block: 'center' }));
+        requestAnimationFrame(() => centreInScroller(el, row));
         setFlashId(focusId);
         window.setTimeout(() => setFlashId((id) => (id === focusId ? null : id)), 2400);
         return;
@@ -1913,12 +1920,45 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   async function older() {
     const el = scroller.current;
     if (el) initialScroll.current = el.scrollHeight;
-    await loadOlder();
+    const ok = await loadOlder();
     requestAnimationFrame(() => {
       if (el && initialScroll.current !== null) el.scrollTop += el.scrollHeight - initialScroll.current;
       initialScroll.current = null;
     });
+    return ok;
   }
+
+  // #5019: scrolling up near the top reads the previous page in, one at a
+  // time, in place of the button that used to sit there. The latest values
+  // the guard reads go through a ref, so the scroll listener below attaches
+  // once per scroller instead of on every publish.
+  const olderGate = useRef({ conversationId, nextBefore: snap.nextBefore, loadingOlder: snap.loadingOlder, loadingThread: snap.loadingThread, olderFailed });
+  olderGate.current = { conversationId, nextBefore: snap.nextBefore, loadingOlder: snap.loadingOlder, loadingThread: snap.loadingThread, olderFailed };
+  function maybeLoadOlder() {
+    const el = scroller.current;
+    if (!el) return;
+    const gate = olderGate.current;
+    if (!gate.nextBefore || gate.loadingOlder || gate.loadingThread || gate.olderFailed) return;
+    if (!isNearTop(el)) return;
+    void older().then((ok) => { if (!ok) setOlderFailed(true); });
+  }
+  useIsomorphicLayoutEffect(() => { setOlderFailed(false); }, [conversationId, snap.nextBefore]);
+  useIsomorphicLayoutEffect(() => {
+    const el = scroller.current;
+    if (!el) return;
+    const onScroll = () => maybeLoadOlder();
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => el.removeEventListener('scroll', onScroll);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversationId]);
+  // A short thread keeps reading pages in until the screen fills or the
+  // conversation's older end is reached.
+  useIsomorphicLayoutEffect(() => {
+    const el = scroller.current;
+    if (!el) return;
+    if (needsMoreHistory(el)) maybeLoadOlder();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [snap.messages, snap.nextBefore, snap.loadingOlder]);
 
   // #3494: the room is up in its community's page, so this screen (hidden)
   // draws no second copy of it; and the page's copy draws nothing once
@@ -1959,6 +1999,30 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   // its newest piece; the earlier ones fold into that row (./bot-news-line.tsx).
   const newsFold = botDm ? foldBotNews(snap.messages, (message) => isMovedActivity(message) || plans.hidden.has(message.id)) : null;
   const byId = newsFold ? new Map(snap.messages.map((message) => [message.id, message])) : null;
+  // Settled rows in a row, waiting to be drawn as one folded line
+  // (./bot-news-line.tsx SettledRun); anything else drawn, a day or the
+  // "New" line ends the run.
+  let settledRun: SettledRunItem[] = [];
+  // A folded run opened or closed keeps its count where it was on screen:
+  // the reader is no longer following the newest line for that press.
+  const holdPlace = (el: HTMLElement) => {
+    pinned.current = false;
+    const top = el.getBoundingClientRect().top;
+    return () => {
+      const box = scroller.current;
+      const moved = el.getBoundingClientRect().top - top;
+      if (box && moved) box.scrollTop += moved;
+    };
+  };
+  const flushRun = () => {
+    if (settledRun.length === 1) {
+      const [item] = settledRun;
+      rows.push(<BotNewsLine key={item.message.clientKey || item.message.id} message={item.message} earlier={item.earlier} updates={item.updates} focused={item.focused} />);
+    } else if (settledRun.length) {
+      rows.push(<SettledRun key={`settled-${settledRun[0].message.id}`} items={settledRun} holdPlace={holdPlace} />);
+    }
+    settledRun = [];
+  };
   for (let index = 0; index < snap.messages.length; index += 1) {
     const message = snap.messages[index];
     // B6: a card Build it moved under its plan is drawn there, not here.
@@ -1968,6 +2032,8 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
     // One request, one row: news drawn inside a newer row about its request.
     if (newsFold?.hidden.has(message.id)) continue;
     const day = dayKey(message);
+    const settled = botDm && isBotNews(message) && !!newsStatusOf(message, botWork)?.settled;
+    if (!settled || (day && day !== previousDay) || (lineAt !== null && message.id >= lineAt && !lineDrawn)) flushRun();
     if (day && day !== previousDay) {
       rows.push(<div key={`day-${day}`} className="messages-day" aria-hidden="true">{dayLabel(message)}</div>);
       previousDay = day;
@@ -1975,38 +2041,23 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
     if (lineAt !== null && message.id >= lineAt) drawLine();
     // One request, one story: in the chat with Homeroom bot, the bot's news
     // about a request is ONE short line (./bot-news-line.tsx) whose tap opens
-    // the request's thread: its card, the moments the main stream also lists
-    // and the big cards from before threads, which open in place, whole.
+    // the request's story beside the chat: its thread, or for news from
+    // before threads its pieces, whole.
     if (botDm && isBotNews(message)) {
       const earlier = newsFold?.earlier.get(message.id) || [];
       // The story's size: its thread's replies, else the news folded in here.
       const root = message.threadRootId ? byId?.get(message.threadRootId) : message;
       const updates = root?.thread?.replyCount || (earlier.length ? earlier.length + 1 : 0);
+      const focused = flashId === message.id || earlier.some((item) => item.id === flashId);
+      previous = null;
+      if (settled) { settledRun.push({ message, earlier, updates, focused }); continue; }
       rows.push(<BotNewsLine
         key={message.clientKey || message.id}
         message={message}
         earlier={earlier}
         updates={updates}
-        focused={flashId === message.id || earlier.some((item) => item.id === flashId)}
-        full={() => (
-          <>
-            {[...earlier, message].map((item) => (
-              <MessageRow
-                key={item.clientKey || item.id}
-                message={item}
-                conversationId={conversationId}
-                channels={channels}
-                kind={kind}
-                focused={flashId === item.id}
-                planCardId={plans.cardOf.get(item.id) ?? null}
-                hidePrompts={plans.answersOpen}
-                botChat={botDm}
-              />
-            ))}
-          </>
-        )}
+        focused={focused}
       />);
-      previous = null;
       continue;
     }
     // #2387 follow-up: a thread's reply, drawn where it landed — one card for
@@ -2085,6 +2136,7 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
       index += hidden;
     }
   }
+  flushRun();
   return (
     <section className={`flex messages-thread-pane platform-kb-column dc-lift dc-lift-session messages-thread-${kind}${embedded ? ' messages-thread-embedded' : ''}`} aria-label={snap.active?.title || t('messages:thread.paneName')}>
       {embedded ? null : <ThreadHeader />}
@@ -2123,7 +2175,18 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
           ? <button type="button" onClick={() => messagesController.open(null)}>{t('messages:thread.backToMessages')}</button>
           : <button type="button" onClick={() => messagesController.route(conversationId)}>{t('core:common.tryAgain')}</button>}</div> : null}
         {!snap.loadingThread && !snap.threadError && snap.active && snap.active.membershipStatus === 'member' && !snap.messages.length ? <div className="messages-thread-empty"><span aria-hidden="true">👋</span><p>{t('messages:thread.emptyConversation')}</p></div> : null}
-        {snap.nextBefore ? <div className="flex justify-center py-2"><button type="button" disabled={snap.loadingOlder} onClick={() => void older()} className="messages-load-older">{snap.loadingOlder ? t('messages:thread.loadingOlder') : t('messages:thread.loadEarlier')}</button></div> : null}
+        {/* #5019: the old button row holds its height and, while loading, the
+            "Loading…" line where the button was. The button itself returns
+            only to retry a failed load; scrolling up does the rest. */}
+        {snap.nextBefore ? (
+          <div className="flex h-12 items-center justify-center" data-load-older="">
+            {snap.loadingOlder
+              ? <span role="status" className="text-[13px] text-zinc-500 dark:text-zinc-400">{t('messages:thread.loadingOlder')}</span>
+              : olderFailed
+                ? <button type="button" onClick={() => { setOlderFailed(false); void older().then((ok) => { if (!ok) setOlderFailed(true); }); }} className="messages-load-older">{t('messages:thread.loadEarlier')}</button>
+                : null}
+          </div>
+        ) : null}
         {rows}
         {/* #2387: a message link opened the transcript part-way back. */}
         {snap.nextAfter ? (
@@ -2133,12 +2196,15 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
           </div>
         ) : null}
       </div>
-      {/* Jump to latest, over the transcript's foot whenever the reader is
-          not at the bottom, with a dot for what arrived while they were up. */}
+      <div className="messages-typing" aria-live="polite">{typingLine(t, typing)}</div>
+      {/* Jump to latest whenever the reader is not at the bottom, with a dot
+          for what arrived while they were up. Run six: at the right edge,
+          hung just above the composer (below the typing line, which is
+          empty on the right), so it covers the strip under the words rather
+          than a message in the middle of the conversation. */}
       <TranscriptOverlay edge="foot">
         <JumpToLatestButton shown={unread.jump} dot={unread.arrived > 0} aria-label={jumpLabel(unread.arrived)} title={t('messages:thread.jumpToLatest')} onClick={jumpToLatest} />
       </TranscriptOverlay>
-      <div className="messages-typing" aria-live="polite">{typingLine(t, typing)}</div>
       <MessageComposer />
     </section>
   );
@@ -2234,7 +2300,7 @@ function ReplyThreadPanel() {
     if (!row) return;
     shownFocus.current = wanted;
     pinned.current = false;
-    requestAnimationFrame(() => row.scrollIntoView({ block: 'center' }));
+    requestAnimationFrame(() => centreInScroller(el, row));
     setFlashId(wanted);
     window.setTimeout(() => {
       setFlashId((id) => (id === wanted ? null : id));
@@ -2253,6 +2319,13 @@ function ReplyThreadPanel() {
   const replies = thread?.messages || [];
   // A plan in a request's thread carries the step of the card it hangs off (./bot-plan.tsx).
   const cardId = root && isActivityMessage(root) ? root.id : null;
+  // One request, one story: a story from before threads opens on its oldest
+  // piece (./bot-request.ts storyRootIn), and the pieces after it, still in
+  // the main stream, are drawn under it, whole.
+  const storyKey = botChat && root && !cardId && isBotNews(root) ? requestKey(root.metadata?.homeroomBot || {}) : null;
+  const pieces = storyKey && root
+    ? snap.messages.filter((item) => item.id > root.id && !item.threadRootId && !item.thread && isBotNews(item) && requestKey(item.metadata?.homeroomBot || {}) === storyKey)
+    : [];
   let previous: ConversationMessage | null = null;
   return (
     <aside className="messages-reply-pane platform-kb-column dc-lift dc-lift-session" aria-label={t('messages:replies.paneName')} data-reply-thread={rootId}>
@@ -2272,6 +2345,7 @@ function ReplyThreadPanel() {
         {/* The root's Reply quotes it into THIS thread's composer (#2387): its
             own threadRootId is null, being the main stream's message. */}
         {root ? <MessageRow message={{ ...root, thread: null, threadRootId: rootId }} conversationId={conversationId} channels={channels} kind={kind} inThread botChat={botChat} /> : null}
+        {pieces.map((item) => <MessageRow key={item.clientKey || item.id} message={{ ...item, thread: null, threadRootId: rootId }} conversationId={conversationId} channels={channels} kind={kind} inThread botChat={botChat} focused={flashId === item.id} />)}
         <div className="messages-reply-count" aria-hidden={!replies.length}>
           <span>{replies.length ? t('messages:replies.count', { count: replies.length }) : thread?.loading ? t('messages:replies.loading') : t('messages:replies.none')}</span>
         </div>
