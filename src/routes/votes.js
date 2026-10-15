@@ -7003,8 +7003,9 @@ async function checkAndMerge(config, pool, session, options = {}) {
     // build's verdict. Admin force-merge bypasses (skipped under !force).
     const { rows: checkRows } = await pool.query(
       `SELECT check_state, test_results, checks_checked_at,
-              check_error_detail, checks_commit_sha, check_phase, unit_suite_fresh_sha,
-              check_error_platform, consecutive_check_failures, first_check_failure_at
+              check_error_detail, checks_commit_sha, check_phase,
+              check_error_platform, consecutive_check_failures, first_check_failure_at,
+              unit_suite_fresh_sha
          FROM chat_sessions WHERE id = $1`,
       [session.id]
     );

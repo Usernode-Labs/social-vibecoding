@@ -644,7 +644,11 @@ test('postgres, full schema: while a fresh run is owed, a verdict with a copied 
     assert.equal(unitSuiteRow.freshSuiteOwed({ ...row, test_results: [reusedRow] }), true);
     assert.match(read_('src/routes/votes.js'), /const freshSuiteOwed = require\('\.\.\/services\/unit-suite-row'\)\.freshSuiteOwed\(checkRows\[0\]\);/);
     assert.match(read_('src/routes/votes.js'), /const checkState = checksRevisionMismatch \|\| freshSuiteOwed\s+\? 'pending'/);
-    assert.match(read_('src/routes/votes.js'), /checks_commit_sha, check_phase, unit_suite_fresh_sha\s+FROM chat_sessions WHERE id = \$1/);
+    // The gate's own read of the row carries the request (one column of
+    // its SELECT, wherever in the list).
+    const gateSelect = read_('src/routes/votes.js').match(/const \{ rows: checkRows \} = await pool\.query\(\s+`SELECT check_state, test_results, checks_checked_at,([\s\S]*?)FROM chat_sessions WHERE id = \$1`/);
+    assert.ok(gateSelect, 'the gate reads the row');
+    assert.match(gateSelect[1], /\bunit_suite_fresh_sha\b/);
 
     // A suite that could not run does not settle the request either.
     assert.equal(await visuals.storeChecks(pool, s.id, SHA, { state: 'error', results: [unitRow({ status: 'fail', couldNotRun: true })] }), true);
@@ -1130,4 +1134,20 @@ test('postgres, real settlement: with the unit suite switched off, a manual requ
   await visuals.setChecksPending(pool, session.id, SHA, 'testing', 'manual-recheck');
   await settle();
   assert.deepEqual(Object.values(await read()), ['error', SHA]);
+});
+
+test('with the preview lifecycle off, a manual capture does not take a run that copied a pass as its answer either', async (t) => {
+  const savedFlag = process.env.PREVIEW_LIFECYCLE_ENABLED;
+  delete process.env.PREVIEW_LIFECYCLE_ENABLED;
+  t.after(() => { if (savedFlag !== undefined) process.env.PREVIEW_LIFECYCLE_ENABLED = savedFlag; });
+  const harvest = require('../src/services/check-harvest');
+  assert.equal(require('../src/services/preview-lifecycle').enabled({}), false);
+  const asked = [];
+  t.mock.method(harvest, 'runToCollect', async (_c, _p, _id, _sha, opts) => { asked.push(opts || {}); return { runId: 'r', capture: 'running' }; });
+  const cfg = { captureRuntime: 'kubernetes', databaseUrl: 'postgres://unused/none' };
+  assert.equal(harvest.isEnabled(cfg), true);
+  const app = { id: 10, slug: 'x', repo_url: 'https://github.com/o/r' };
+  await visuals.captureForSession(cfg, { id: 99002, app_id: 10 }, app, SHA, null, { trigger: 'manual-recheck', force: true });
+  await visuals.captureForSession(cfg, { id: 99003, app_id: 10 }, app, SHA, null, { trigger: 'stuck-sweep' });
+  assert.deepEqual(asked.map((o) => !!o.forManual), [true, false]);
 });

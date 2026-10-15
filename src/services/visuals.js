@@ -2422,7 +2422,10 @@ async function captureForSession(config, session, app, commitHash, stagingResult
   // the run, as above. Only the Kubernetes capture runtime leaves runs on a
   // cluster, so elsewhere nothing is asked and nothing waits.
   if (!operation && !opts.replaceRun && require('./check-harvest').isEnabled(config)) {
-    const left = await require('./check-harvest').runToCollect(config, pool, session.id, commitHash);
+    // A person's "Run checks again" is not answered by a run that copied an
+    // earlier unit-suite pass (services/unit-suite-reuse.js).
+    const left = await require('./check-harvest').runToCollect(config, pool, session.id, commitHash,
+      { forManual: trigger === 'manual-recheck' });
     if (left) {
       log.info('visuals', 'A run of this commit is still on the cluster; leaving it to the harvest', {
         sessionId: session.id, commitHash: commitHash || null, trigger: trigger || null, ...left,
