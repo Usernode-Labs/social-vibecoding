@@ -98,7 +98,17 @@ function createShellReleaseCache({ manifest, storage, fetcher, worker, cryptoApi
     // fetched once more past the cache, which then decides as before.
     // Only downloaded assets are hashed. A normal cached load does no
     // hashing and no revalidation; identical bytes survive backend updates.
-    let response = await verified(await fetcher(url, { redirect: 'error', signal: AbortSignal.timeout(20000) }), entry);
+    let response = null;
+    try {
+      response = await verified(await fetcher(url, { redirect: 'error', signal: AbortSignal.timeout(20000) }), entry);
+    } catch (err) {
+      // A rejection is an unusable first answer like any other: a redirect
+      // the HTTP cache kept rejects under redirect: 'error', and the reload
+      // below gets past it. Only a timeout is not retried, so a slow network
+      // still costs one 20s wait, not two. Offline costs one more immediate
+      // rejection.
+      if (err && err.name === 'TimeoutError') throw err;
+    }
     if (!response) {
       response = await fetchFresh(url);
       if (!response.ok || response.redirected) throw new Error('Shell asset unavailable');

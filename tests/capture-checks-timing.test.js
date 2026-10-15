@@ -20,10 +20,11 @@ function collect() {
   return () => chunks.join('');
 }
 
-function fakeBrowser() {
+function fakeBrowser({ loadMs = 0 } = {}) {
   let contexts = 0;
   const newPage = async () => ({
-    on() {}, async setViewport() {}, async goto() { return { status: () => 200 }; },
+    on() {}, async setViewport() {},
+    async goto() { if (loadMs) await new Promise((r) => setTimeout(r, loadMs)); return { status: () => 200 }; },
     async waitForNetworkIdle() {}, async $() { return {}; }, async evaluate() { return true; }, async close() {},
   });
   return {
@@ -89,4 +90,14 @@ test('the platform logs the timing line as a reading, not a warning', () => {
   const src = require('node:fs').readFileSync(require.resolve('../src/services/visuals'), 'utf8');
   const settle = src.slice(src.indexOf('async function settleCaptureRun('));
   assert.match(settle, /if \(diag\.kind === 'checks-timing'\) \{\s*log\.info\('visuals', 'Checks timing', fields\);/);
+});
+
+test('a cold load\'s time is measured, not left at zero', async () => {
+  const tests = Array.from({ length: 4 }, (_, i) => ({ index: i, name: `c${i}`, path: `/p${i}`, url: `${ORIGIN}/p${i}` }));
+  const read = collect();
+  await runTests(fakeBrowser({ loadMs: 60 }), tests, { concurrency: 2, testTimeoutMs: 5000, ...FAST });
+  const d = parseDiagnostics(read()).find((x) => x.kind === 'checks-timing').data;
+  assert.equal(d.loads.n, 4);
+  assert.ok(d.loads.p50 >= 60 && d.loads.max >= 60, `the 60ms navigation is in every load (${JSON.stringify(d.loads)})`);
+  assert.ok(d.groups.p50 >= d.loads.p50, 'and in its group');
 });

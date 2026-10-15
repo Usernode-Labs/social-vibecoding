@@ -300,3 +300,39 @@ test('an update prefetch ends with the new build\'s bytes even when the HTTP cac
   assert.match(await (await worker.get('/', 'tab-b', true)).text(), new RegExp(b.revision));
   assert.match(await (await worker.get(newApp, 'tab-b')).text(), /textContent = 'b'/);
 });
+
+test('a first fetch that rejects (a redirect the HTTP cache kept) is recovered by the one reload', async t => {
+  const a = fixture(t, 'a'); const env = harness(a);
+  const appJs = `/b/${a.revision}/js/app.js`;
+  env.rejectFromCache.set(appJs, new TypeError('Failed to fetch: redirect mode is error'));
+  const worker = env.worker(a);
+  await worker.install(); await worker.activate();
+  assert.deepEqual(assetFetches(env, appJs), ['default', 'reload']);
+  env.offline(true);
+  assert.match(await (await worker.get(appJs)).text(), /textContent = 'a'/);
+
+  // The same through the update prefetch.
+  const b = fixture(t, 'b'); env.offline(false); env.serve(b);
+  const newApp = `/b/${b.revision}/js/app.js`;
+  env.rejectFromCache.set(newApp, new TypeError('Failed to fetch'));
+  assert.equal((await worker.prefetch(b.revision)).ok, true);
+  assert.deepEqual(assetFetches(env, newApp), ['default', 'reload']);
+});
+
+test('after a rejected first fetch, a failing reload fails the install and is not tried again', async t => {
+  const a = fixture(t, 'a'); const env = harness(a);
+  const appJs = `/b/${a.revision}/js/app.js`;
+  env.rejectFromCache.set(appJs, new TypeError('Failed to fetch'));
+  env.fail('/js/app.js');
+  await assert.rejects(env.worker(a).install(), /unavailable/);
+  assert.deepEqual(assetFetches(env, appJs), ['default', 'reload'], 'one reload, no more');
+});
+
+test('a first fetch that times out fails at once, with no second 20s wait', async t => {
+  const a = fixture(t, 'a'); const env = harness(a);
+  const appJs = `/b/${a.revision}/js/app.js`;
+  const timeout = new Error('signal timed out'); timeout.name = 'TimeoutError';
+  env.rejectFromCache.set(appJs, timeout);
+  await assert.rejects(env.worker(a).install(), /timed out/);
+  assert.deepEqual(assetFetches(env, appJs), ['default']);
+});
