@@ -42,7 +42,7 @@ import { MessageComposer } from './composer';
 import { CreateConversationDialog } from './create-dialog';
 import { ConversationMembersDialog } from './members-dialog';
 import { fullTime, UserAvatar, senderName } from './format';
-import { MessageRow } from './message-row';
+import { DiscussionRow, MessageRow } from './message-row';
 import { plainText } from './plain-text';
 import { useDismiss } from '../message-actions/use-dismiss';
 import { ShareItemDialog } from './share-dialog';
@@ -87,6 +87,7 @@ import {
   openBot,
 } from './store';
 import { typingLine } from './typing-line';
+import { issueRefHref } from './channels';
 import { AppIconContent, AppIconLink, appIconKind } from '../apps/app-card-view';
 import { PageBackButton } from '../dev-board/workshop/page-back';
 import { generalHubBack, openChannelHub, usePlatformSlug } from './channel-hub';
@@ -121,7 +122,7 @@ import { Improve } from '../improve/improve-controller.js';
 import { improveStore } from '../improve/improve-store.js';
 import { SessionRow, type SessionRowView } from '../improve/session-row';
 import { INBOX_FILTERS, buildInbox, sectionRuns, type AgentChat, type AppDiscussion, type InboxFilter, type InboxSection, inClockOrder } from './inbox';
-import type { ConversationMessage, ConversationSummary, MessagesAgentThread } from './types';
+import type { ConversationMessage, ConversationSummary, DiscussionMessage, MessagesAgentThread } from './types';
 
 /*
  * ── The screen, in the widget language ─────────────────────────────────
@@ -2310,6 +2311,27 @@ function ReplyThreadPanel() {
   const request = rootMeta ? botRequestNames(rootMeta) : null;
   const where = request ? request.project : active ? (kind === 'channel' ? `#${active.channelKey || active.title}` : active.title) : '';
   const replies = thread?.messages || [];
+  // #5219: on a request's thread the request's public discussion rides
+  // along, and the two read in one transcript, in the order they were said.
+  // Ties keep the DM replies first (the sort is stable); a reply still in
+  // flight (an optimistic local echo) stays last, whatever its time.
+  const discussion = thread?.discussion || null;
+  type MergedRow =
+    | { kind: 'reply'; message: ConversationMessage }
+    | { kind: 'discussion'; message: DiscussionMessage };
+  const merged: MergedRow[] = [
+    ...replies.map((message) => ({ kind: 'reply' as const, message })),
+    ...(discussion?.messages || []).map((message) => ({ kind: 'discussion' as const, message })),
+  ];
+  if (merged.length > 1) {
+    merged.sort((a, b) => (a.message.createdAt < b.message.createdAt ? -1 : a.message.createdAt > b.message.createdAt ? 1 : 0));
+    const inFlight = merged.filter((row) => row.kind === 'reply' && row.message.id < 0);
+    if (inFlight.length) {
+      merged.splice(0, merged.length,
+        ...merged.filter((row) => !(row.kind === 'reply' && row.message.id < 0)),
+        ...inFlight);
+    }
+  }
   // A plan in a request's thread carries the step of the card it hangs off (./bot-plan.tsx).
   const cardId = root && isActivityMessage(root) ? root.id : null;
   // One request, one story: a story from before threads opens on its oldest
@@ -2319,7 +2341,7 @@ function ReplyThreadPanel() {
   const pieces = storyKey && root
     ? snap.messages.filter((item) => item.id > root.id && !item.threadRootId && !item.thread && isBotNews(item) && requestKey(item.metadata?.homeroomBot || {}) === storyKey)
     : [];
-  let previous: ConversationMessage | null = null;
+  let previous: MergedRow | null = null;
   return (
     <aside className="messages-reply-pane platform-kb-column dc-lift dc-lift-session" aria-label={t('messages:replies.paneName')} data-reply-thread={rootId}>
       <header className="messages-thread-header">
@@ -2339,18 +2361,27 @@ function ReplyThreadPanel() {
             own threadRootId is null, being the main stream's message. */}
         {root ? <MessageRow message={{ ...root, thread: null, threadRootId: rootId }} conversationId={conversationId} channels={channels} kind={kind} inThread botChat={botChat} /> : null}
         {pieces.map((item) => <MessageRow key={item.clientKey || item.id} message={{ ...item, thread: null, threadRootId: rootId }} conversationId={conversationId} channels={channels} kind={kind} inThread botChat={botChat} focused={flashId === item.id} />)}
-        <div className="messages-reply-count" aria-hidden={!replies.length}>
-          <span>{replies.length ? t('messages:replies.count', { count: replies.length }) : thread?.loading ? t('messages:replies.loading') : t('messages:replies.none')}</span>
+        <div className="messages-reply-count" aria-hidden={!merged.length}>
+          <span>{merged.length ? t('messages:replies.count', { count: merged.length }) : thread?.loading ? t('messages:replies.loading') : t('messages:replies.none')}</span>
         </div>
-        {thread?.nextBefore ? <div className="flex justify-center py-2"><button type="button" disabled={thread.loading} onClick={() => void loadOlderReplies()} className="messages-load-older">{thread.loading ? t('messages:replies.loadingEarlier') : t('messages:replies.loadEarlier')}</button></div> : null}
+        {(thread?.nextBefore || discussion?.more) ? (
+          <div className="flex flex-wrap justify-center gap-x-3 gap-y-1 py-2">
+            {thread?.nextBefore ? <button type="button" disabled={thread.loading} onClick={() => void loadOlderReplies()} className="messages-load-older">{thread.loading ? t('messages:replies.loadingEarlier') : t('messages:replies.loadEarlier')}</button> : null}
+            {discussion?.more ? <a className="messages-load-older" href={issueRefHref(discussion.appSlug, String(discussion.issueNumber))}>{t('messages:replies.discussion.more')}</a> : null}
+          </div>
+        ) : null}
         {thread?.error ? <div className="messages-state messages-state-error"><p>{thread.error}</p><button type="button" onClick={() => void loadReplyThread(conversationId, rootId, true)}>{t('core:common.tryAgain')}</button></div> : null}
-        {replies.map((message) => {
-          const grouped = !!previous && !previous.failed && !message.failed
+        {merged.map((entry) => {
+          if (entry.kind === 'discussion') {
+            return <DiscussionRow key={`discussion-${entry.message.id}`} message={entry.message} appSlug={discussion.appSlug} issueNumber={discussion.issueNumber} />;
+          }
+          const { message } = entry;
+          const grouped = !!previous && previous.kind === 'reply' && !previous.message.failed && !message.failed
             && groupsWithPrevious(
-              { author: previous.sender.id, at: previous.createdAt },
+              { author: previous.message.sender.id, at: previous.message.createdAt },
               { author: message.sender.id, at: message.createdAt, reply: !!message.reply },
             );
-          previous = message;
+          previous = entry;
           return <MessageRow key={message.clientKey || message.id} message={{ ...message, threadRootId: message.threadRootId || rootId }} conversationId={conversationId} grouped={grouped} channels={channels} kind={kind} inThread botChat={botChat} focused={flashId === message.id} planCardId={cardId && isPlanMessage(message) ? cardId : null} />;
         })}
       </div>

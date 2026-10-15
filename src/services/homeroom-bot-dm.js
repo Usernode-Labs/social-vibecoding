@@ -3463,9 +3463,16 @@ async function newestOpenQuestion(pool, userId, { appId = null, issueNumber = nu
   return rows[0] || null;
 }
 
+/**
+ * The tail of every mirrored DM answer's text ("(Sent|Answered in a chat
+ * with Homeroom bot.)"), shared with conversations.js requestDiscussion so
+ * both read one constant.
+ */
+const MIRRORED_FROM_DM = 'in a chat with Homeroom bot.)';
+
 /** The text a DM answer is posted on the request with. */
 function mirroredText(content, { question = false } = {}) {
-  return `${clip(content, 3500)}\n\n(${question ? 'Answered' : 'Sent'} in a chat with Homeroom bot.)`;
+  return `${clip(content, 3500)}\n\n(${question ? 'Answered' : 'Sent'} ${MIRRORED_FROM_DM}`;
 }
 
 /**
@@ -5384,6 +5391,7 @@ module.exports = {
   liveAfterMerge,
   noteProposalChanged,
   isBotDirect,
+  MIRRORED_FROM_DM,
   mirroredText,
   noteUserMessage,
   normalizeBrief,
