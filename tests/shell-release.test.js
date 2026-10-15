@@ -231,3 +231,72 @@ test('every image path generates the release after CSS and retains its revision 
   assert.ok(ensure.indexOf("runNode('scripts/build-shell-release.js')") > ensure.indexOf("runNode('scripts/build-tailwind.js')"));
   assert.match(read('src/services/application-runtime.js'), /buildImage\(sourceDir, dockerImage, \{ GIT_SHA: revision \}/);
 });
+
+// ── The precache takes the page's copies from the HTTP cache ─────────────
+//
+// A first visit used to download the whole shell twice: once for the page and
+// once more for the worker's precache, which asked with cache: 'reload'. The
+// release worker now asks the HTTP cache first and hashes what it gets; only
+// a copy that is not the release's goes past the cache, once.
+
+const assetFetches = (env, pathname) => env.fetches.filter(f => f.path === pathname).map(f => f.cache);
+const reloadedAssets = env => env.fetches
+  .filter(f => f.cache === 'reload' && f.path !== '/shell/release.json').map(f => f.path);
+
+test('a first install stores the page\'s own copies without asking past the HTTP cache', async t => {
+  const a = fixture(t, 'a'); const env = harness(a);
+  const appJs = `/b/${a.revision}/js/app.js`;
+  env.httpCache.set(appJs, a.read('/js/app.js'));
+  const worker = env.worker(a);
+  await worker.install(); await worker.activate();
+  assert.deepEqual(assetFetches(env, appJs), ['default'], 'one request, answered by the HTTP cache');
+  assert.ok(!env.requests.includes(appJs), 'so it never reached the network');
+  assert.deepEqual(reloadedAssets(env), [], 'and no asset is asked for with reload');
+  env.offline(true);
+  assert.match(await (await worker.get(appJs)).text(), /textContent = 'a'/, 'stored for offline use');
+});
+
+test('a stale copy in the HTTP cache is fetched once more past it, and the right bytes are stored', async t => {
+  const a = fixture(t, 'a'); const env = harness(a);
+  const appJs = `/b/${a.revision}/js/app.js`;
+  env.httpCache.set(appJs, '/* another build */');
+  const worker = env.worker(a);
+  await worker.install(); await worker.activate();
+  assert.deepEqual(assetFetches(env, appJs), ['default', 'reload'], 'exactly one reload refetch');
+  assert.deepEqual(reloadedAssets(env), [appJs]);
+  env.offline(true);
+  assert.match(await (await worker.get(appJs)).text(), /textContent = 'a'/, 'never the stale bytes');
+});
+
+test('a refetch that still does not match, or still fails, fails the install as before', async t => {
+  const a = fixture(t, 'a'); const env = harness(a);
+  const appJs = `/b/${a.revision}/js/app.js`;
+  a.put('/js/app.js', '/* wrong rollout */');
+  await assert.rejects(env.worker(a).install(), /another release/);
+  assert.deepEqual(assetFetches(env, appJs), ['default', 'reload']);
+
+  const c = fixture(t, 'c'); const down = harness(c);
+  down.fail('/js/app.js');
+  await assert.rejects(down.worker(c).install(), /unavailable/);
+  assert.deepEqual(assetFetches(down, `/b/${c.revision}/js/app.js`), ['default', 'reload']);
+});
+
+test('an update prefetch ends with the new build\'s bytes even when the HTTP cache holds the old ones', async t => {
+  const a = fixture(t, 'a'); const b = fixture(t, 'b');
+  const env = harness(a); const worker = env.worker(a);
+  await worker.install(); await worker.activate();
+  env.serve(b);
+  // The old build's bytes at the new build's URLs: what a cache that
+  // revalidated its way to a 304 would hand back.
+  const newApp = `/b/${b.revision}/js/app.js`;
+  env.httpCache.set(newApp, a.read('/js/app.js'));
+  env.httpCache.set('/index.html', a.read('/index.html'));
+  env.fetches.length = 0;
+  assert.equal((await worker.prefetch(b.revision)).ok, true);
+  assert.deepEqual(assetFetches(env, '/shell/release.json'), ['reload'], 'the manifest is always fresh');
+  assert.deepEqual(assetFetches(env, newApp), ['default', 'reload']);
+  assert.deepEqual(assetFetches(env, '/index.html'), ['default', 'reload']);
+  env.offline(true);
+  assert.match(await (await worker.get('/', 'tab-b', true)).text(), new RegExp(b.revision));
+  assert.match(await (await worker.get(newApp, 'tab-b')).text(), /textContent = 'b'/);
+});

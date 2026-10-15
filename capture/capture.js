@@ -1681,330 +1681,6 @@ function emitDiag(kind, data, { uncapped = false } = {}) {
   return true;
 }
 
-// ── Build-static files from one store the pod's groups share ─────────────
-//
-// OFF unless CAPTURE_SHARED_ASSETS=1. Every group runs in a fresh browser
-// context (see runTestGroup), and a fresh context starts with an empty HTTP
-// cache: Chromium keeps an incognito-style context's cache in memory, for that
-// context alone. So each group downloads the same shell scripts, stylesheets,
-// fonts and images from the preview again, and the service worker the shell
-// registers then downloads most of them a second time to precache them
-// (`cache: 'reload'`). Against this repository's shell that is ~4.6 MB over
-// the wire per group, half of it the service worker's copy.
-//
-// This store serves those bytes from memory instead, to every context in the
-// pod. Only the bytes are shared: each group keeps its own context, so its
-// cookies, storage, service-worker registration and in-memory state are as
-// fresh as before. The document is never served from here (it has no static
-// extension), so every group still makes a real first load and hears its own
-// console and hydration errors.
-//
-// Why it is off. Measured on 15 Oct 2026 (30 one-check groups of this repo's
-// shell, 5 lanes, the capture image, a local mirror standing in for an
-// in-cluster preview), it cut what the preview served by 87% (137 → 18 MB)
-// but cost 8-12% more CPU and made the run 12-16% SLOWER (18-19 s → 21-22 s):
-// a body handed over CDP is base64 in a JSON message, decoded and copied,
-// which costs more per byte than reading it from a fast socket. Over a slow
-// link (the same harness against production over the internet) it made the
-// run 33% faster. Production capture pods run at ~5 busy cores for 5 lanes
-// and pull only 5-8 MB/s, i.e. CPU-bound, the first case. So it ships off,
-// with the switch, and the checks-timing line (runTests) says per pod what
-// it did when someone turns it on.
-//
-// Mechanism: one CDP `Fetch` session on the BROWSER target, paused only for
-// URL patterns of static-file extensions on the checks' own origins.
-//   * Browser-level Fetch sees the service worker's own fetches too (they come
-//     from the worker target, not the page), so its precache is covered with
-//     no per-target attach race. A per-page session misses all of them.
-//   * Puppeteer's page.setRequestInterception pauses EVERY request of the page,
-//     API calls included, and turns the page's HTTP cache off — both are
-//     changes to what a check observes. The patterns here never pause an API
-//     call or the document.
-//
-// What may be stored is what HTTP already lets a shared cache keep, and
-// narrower: a GET answered 200 on the checks' own origin, a static-file path
-// outside /api/, no Set-Cookie, Vary on nothing but Accept-Encoding, not
-// `no-store`, `no-cache` or `private`, and declared fresh for at least
-// SHARED_ASSET_MIN_FRESH_S (or `immutable`). A copy is served only while that
-// freshness lasts and never past the run (the store lives in this process).
-// A request that says itself it bypasses caches (Cache-Control / Pragma
-// no-cache on the request) goes to the network; a `cache: 'reload'` fetch
-// does not show that header at the interception point, so the service
-// worker's precache IS served from the store, with the same bytes the
-// preview gave for that URL (its release check hashes every one). A query
-// naming a token is never stored. This repository serves its shell under
-// /b/<build sha>/ with `immutable`, so its entries are scoped to the build by
-// their URL.
-//
-// The platform passes CAPTURE_SHARED_ASSETS through (services/visuals.js),
-// so it can be turned on or off without a new image.
-const SHARED_ASSET_EXTENSIONS = [
-  'js', 'mjs', 'css', 'woff2', 'woff', 'ttf', 'otf',
-  'png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'svg', 'ico', 'wasm',
-];
-// One day: anything fresher than a run (≤ 11 minutes) by a wide margin. A
-// `max-age=0` icon is asked for again, as the browser would.
-const SHARED_ASSET_MIN_FRESH_S = 86400;
-// Bounds on the pod's memory. This repository's whole shell is ~7 MB decoded.
-const SHARED_ASSET_MAX_ENTRY_BYTES = 16 * 1024 * 1024;
-const SHARED_ASSET_MAX_TOTAL_BYTES = 192 * 1024 * 1024;
-// How long one request's claim to fill a URL holds (see `filling`).
-const SHARED_ASSET_FILL_CLAIM_MS = 30000;
-// Never forwarded from a stored copy: the body is stored decoded, so its
-// encoding and length are restated, and the rest describe one connection.
-const SHARED_ASSET_DROP_HEADERS = new Set([
-  'content-encoding', 'content-length', 'transfer-encoding', 'connection', 'keep-alive', 'set-cookie',
-]);
-
-function sharedAssetsEnabled(env) {
-  const raw = env && env.CAPTURE_SHARED_ASSETS;
-  return raw != null && /^(1|true|on|yes)$/i.test(String(raw).trim());
-}
-
-// The http(s) origins the checks load, which are the only ones whose files
-// are kept.
-function checkOrigins(tests) {
-  const out = new Set();
-  for (const t of Array.isArray(tests) ? tests : []) {
-    try {
-      const u = new URL(t && t.url);
-      if (u.protocol === 'http:' || u.protocol === 'https:') out.add(u.origin);
-    } catch { /* not a URL: nothing to share for it */ }
-  }
-  return [...out];
-}
-
-// The Fetch patterns: each static extension, with and without a query.
-function sharedAssetPatterns(origins) {
-  const patterns = [];
-  for (const origin of origins) {
-    for (const ext of SHARED_ASSET_EXTENSIONS) {
-      patterns.push({ urlPattern: `${origin}/*.${ext}`, requestStage: 'Request' });
-      patterns.push({ urlPattern: `${origin}/*.${ext}?*`, requestStage: 'Request' });
-    }
-  }
-  return patterns;
-}
-
-function headerMap(list) {
-  const out = {};
-  for (const h of Array.isArray(list) ? list : []) {
-    if (!h || typeof h.name !== 'string') continue;
-    const k = h.name.toLowerCase();
-    out[k] = out[k] == null ? String(h.value) : `${out[k]}, ${h.value}`;
-  }
-  return out;
-}
-
-// Lower-cased request headers from a Fetch event's request object.
-function requestHeaderMap(headers) {
-  const out = {};
-  for (const [k, v] of Object.entries(headers || {})) out[k.toLowerCase()] = String(v);
-  return out;
-}
-
-// A URL this store will consider at all: GET-able static file on an origin
-// the checks load, outside /api/, with no token in its query.
-function sharedAssetUrlOk(url, origins) {
-  let u;
-  try { u = new URL(url); } catch { return false; }
-  if (!origins.includes(u.origin)) return false;
-  const p = u.pathname.toLowerCase();
-  if (p.startsWith('/api/') || p === '/api') return false;
-  if (/(^|[?&])[^=&]*token[^=&]*=/i.test(u.search.slice(1))) return false;
-  const ext = p.includes('.') ? p.slice(p.lastIndexOf('.') + 1) : '';
-  return SHARED_ASSET_EXTENSIONS.includes(ext);
-}
-
-// Whether the request asked not to be answered from a cache.
-function requestBypassesCache(reqHeaders) {
-  const cc = String(reqHeaders['cache-control'] || '').toLowerCase();
-  const pragma = String(reqHeaders.pragma || '').toLowerCase();
-  return /\b(no-cache|no-store|max-age=0)\b/.test(cc) || /\bno-cache\b/.test(pragma);
-}
-
-// How long (ms) a response may be served from the shared store, or 0 when it
-// may not be stored at all. See the rules above.
-function sharedAssetLifetimeMs({ method, status, headers, requestHeaders = {} }) {
-  if (String(method || 'GET').toUpperCase() !== 'GET' || status !== 200) return 0;
-  if (requestHeaders.range) return 0;
-  if (headers['set-cookie'] != null) return 0;
-  const vary = String(headers.vary || '').toLowerCase().split(',').map((s) => s.trim()).filter(Boolean);
-  if (vary.some((v) => v !== 'accept-encoding')) return 0;
-  const cc = String(headers['cache-control'] || '').toLowerCase();
-  if (/\b(no-store|no-cache|private)\b/.test(cc)) return 0;
-  const age = (name) => {
-    const m = cc.match(new RegExp(`(?:^|[,\\s])${name}\\s*=\\s*"?(\\d+)`));
-    return m ? Number(m[1]) : null;
-  };
-  // A shared cache reads s-maxage first.
-  const fresh = age('s-maxage') != null ? age('s-maxage') : age('max-age');
-  if (/\bimmutable\b/.test(cc) && (fresh == null || fresh >= SHARED_ASSET_MIN_FRESH_S)) {
-    return fresh == null ? Infinity : fresh * 1000;
-  }
-  return fresh != null && fresh >= SHARED_ASSET_MIN_FRESH_S ? fresh * 1000 : 0;
-}
-
-// The store and its Fetch handler. `session` is a CDP session on the browser
-// target (or a fake exposing send/on); nothing here talks to Puppeteer.
-// Every path that fails falls back to letting the request go to the network
-// unchanged: the store can make a load faster, never break one.
-function createSharedAssetStore({ session, origins, now = () => Date.now(), maxEntryBytes = SHARED_ASSET_MAX_ENTRY_BYTES, maxTotalBytes = SHARED_ASSET_MAX_TOTAL_BYTES } = {}) {
-  const entries = new Map(); // url -> { status, headers: [{name,value}], body (base64), bytes, expiresAt }
-  // url -> when one request started fetching it to store. A filler whose page
-  // closed mid-load never reports back, so a claim expires.
-  const filling = new Map();
-  // URLs whose answer could not be kept (not shareable by its headers, or too
-  // big for the bounds). They go to the network unread from then on, rather
-  // than have their bodies read again on every request.
-  const passThrough = new Set();
-  const counts = {
-    served: 0, servedBytes: 0, stored: 0, storedBytes: 0, fetched: 0,
-    notShareable: 0, bypassed: 0, errors: 0, totalBytes: 0,
-  };
-  const send = async (method, params) => {
-    try { await session.send(method, params); return true; } catch { counts.errors += 1; return false; }
-  };
-  const passOn = (requestId) => send('Fetch.continueRequest', { requestId });
-
-  const fresh = (url) => {
-    const e = entries.get(url);
-    if (!e) return null;
-    if (e.expiresAt <= now()) {
-      entries.delete(url);
-      counts.totalBytes -= e.bytes;
-      return null;
-    }
-    return e;
-  };
-
-  async function onRequest(ev) {
-    const { requestId, request = {} } = ev;
-    const url = String(request.url || '');
-    if (String(request.method || 'GET').toUpperCase() !== 'GET'
-      || ev.resourceType === 'Document' || !sharedAssetUrlOk(url, origins)) {
-      return passOn(requestId);
-    }
-    const reqHeaders = requestHeaderMap(request.headers);
-    if (reqHeaders.range) return passOn(requestId);
-    if (requestBypassesCache(reqHeaders)) {
-      counts.bypassed += 1;
-      return passOn(requestId);
-    }
-    if (passThrough.has(url)) return passOn(requestId);
-    const hit = fresh(url);
-    if (hit) {
-      const ok = await send('Fetch.fulfillRequest', {
-        requestId, responseCode: hit.status, responseHeaders: hit.headers, body: hit.body,
-      });
-      if (ok) { counts.served += 1; counts.servedBytes += hit.bytes; return true; }
-      return passOn(requestId);
-    }
-    counts.fetched += 1;
-    // One request at a time fills a URL; the others meanwhile simply go to
-    // the network as they always did, rather than wait on a fetch that may
-    // belong to a page that is about to close.
-    const claimedAt = filling.get(url);
-    if (claimedAt != null && now() - claimedAt < SHARED_ASSET_FILL_CLAIM_MS) return passOn(requestId);
-    filling.set(url, now());
-    const ok = await send('Fetch.continueRequest', { requestId, interceptResponse: true });
-    if (!ok) filling.delete(url);
-    return ok;
-  }
-
-  async function onResponse(ev) {
-    const { requestId, request = {} } = ev;
-    const url = String(request.url || '');
-    try {
-      if (ev.responseErrorReason) return passOn(requestId);
-      const headers = headerMap(ev.responseHeaders);
-      const lifetimeMs = sharedAssetLifetimeMs({
-        method: request.method, status: ev.responseStatusCode, headers,
-        requestHeaders: requestHeaderMap(request.headers),
-      });
-      if (!lifetimeMs) {
-        counts.notShareable += 1;
-        passThrough.add(url);
-        return passOn(requestId);
-      }
-      let got = null;
-      try { got = await session.send('Fetch.getResponseBody', { requestId }); } catch { got = null; }
-      if (got && typeof got.body === 'string') {
-        const buf = got.base64Encoded ? Buffer.from(got.body, 'base64') : Buffer.from(got.body, 'utf8');
-        if (!(buf.length > 0 && buf.length <= maxEntryBytes && counts.totalBytes + buf.length <= maxTotalBytes)) {
-          passThrough.add(url);
-        } else {
-          const kept = (ev.responseHeaders || [])
-            .filter((h) => h && !SHARED_ASSET_DROP_HEADERS.has(String(h.name).toLowerCase()))
-            .map((h) => ({ name: String(h.name), value: String(h.value) }));
-          kept.push({ name: 'Content-Length', value: String(buf.length) });
-          const prev = entries.get(url);
-          if (prev) counts.totalBytes -= prev.bytes;
-          entries.set(url, {
-            status: 200, headers: kept, body: buf.toString('base64'), bytes: buf.length,
-            expiresAt: now() + lifetimeMs,
-          });
-          counts.totalBytes += buf.length;
-          counts.stored += 1;
-          counts.storedBytes += buf.length;
-        }
-      }
-      // The response that was read goes on to its page untouched.
-      return passOn(requestId);
-    } finally {
-      filling.delete(url);
-    }
-  }
-
-  async function onPaused(ev) {
-    if (!ev || !ev.requestId) return false;
-    const atResponse = ev.responseStatusCode != null || ev.responseErrorReason != null;
-    try {
-      return await (atResponse ? onResponse(ev) : onRequest(ev));
-    } catch {
-      counts.errors += 1;
-      return passOn(ev.requestId);
-    }
-  }
-
-  return {
-    onPaused,
-    patterns: sharedAssetPatterns(origins),
-    async enable() {
-      session.on('Fetch.requestPaused', (ev) => { onPaused(ev); });
-      await session.send('Fetch.enable', { patterns: this.patterns });
-    },
-    async disable() {
-      try { await session.send('Fetch.disable'); } catch { /* the browser is closing */ }
-    },
-    stats() {
-      return {
-        entries: entries.size, served: counts.served, servedBytes: counts.servedBytes,
-        fetched: counts.fetched, stored: counts.stored, storedBytes: counts.storedBytes,
-        notShareable: counts.notShareable, bypassed: counts.bypassed, errors: counts.errors,
-      };
-    },
-  };
-}
-
-// Puts the store in front of every context of `browser`, or returns null when
-// it is off, there is nothing to share, or the browser cannot give a browser-
-// level session (a fake). Failing to install is never a reason to fail a run.
-async function installSharedAssetStore(browser, tests, env = process.env) {
-  if (!sharedAssetsEnabled(env)) return null;
-  const origins = checkOrigins(tests);
-  if (!origins.length || !browser || typeof browser.target !== 'function') return null;
-  try {
-    const session = await browser.target().createCDPSession();
-    const store = createSharedAssetStore({ session, origins });
-    await store.enable();
-    return store;
-  } catch (err) {
-    process.stderr.write(`capture: shared asset store not installed: ${err.message}\n`);
-    return null;
-  }
-}
-
 // Nearest-rank percentile over a numeric array (ms), 0 for none.
 function percentile(values, p) {
   const xs = values.filter((v) => Number.isFinite(v)).sort((a, b) => a - b);
@@ -2630,9 +2306,9 @@ async function runTests(browser, tests, opts) {
     if (!allRecovered) break;
   }
 
-  // How long this run's groups took, and what the shared asset store did,
-  // in one line the platform logs (visuals.js parseDiagnostics). Wall clock,
-  // not CPU: it is what a check run waits on. No verdict reads it.
+  // How long this run's groups took, in one line the platform logs
+  // (visuals.js parseDiagnostics). Wall clock, not CPU: it is what a check
+  // run waits on. No verdict reads it. Nothing in it names a URL.
   emitDiag('checks-timing', {
     shard: shard ? `${shard.index}/${shard.count}` : null,
     lanes: Math.min(concurrency, groups.length),
@@ -2640,7 +2316,6 @@ async function runTests(browser, tests, opts) {
     groups: timingSummary(groupTimes),
     loads: timingSummary(loadTimes),
     retries: timingSummary(retryTimes),
-    sharedAssets: o.assetStore && typeof o.assetStore.stats === 'function' ? o.assetStore.stats() : null,
   }, { uncapped: true });
 
   // `ran` and `expected` still count DECLARED checks only. A retry is a
@@ -2715,12 +2390,8 @@ async function main() {
     // "Admins only" gate on the /debug badge check — and each group's page
     // is its own window, so its document stays visible under concurrency.
     // The same isolation is what makes running the two side by side safe.
-    // The pod's shared store of build-static files (see
-    // createSharedAssetStore), in front of every context the suite opens.
-    const assetStore = tests.length ? await installSharedAssetStore(browser, tests, process.env) : null;
     const suite = tests.length
       ? runTests(browser, tests, {
-        assetStore,
         concurrency: poolSize(process.env),
         testTimeoutMs: testTimeoutMs(process.env),
         deadlineMs: testsDeadlineMs(process.env),
@@ -2752,4 +2423,4 @@ if (require.main === module) {
 // file whose BEHAVIOUR (how many navigations it makes, whether it starts a
 // recording) is the thing under test, and it takes its page from the browser
 // it is handed, so a fake browser exercises it without Chromium.
-module.exports = { sharedAssetsEnabled, checkOrigins, sharedAssetPatterns, sharedAssetUrlOk, sharedAssetLifetimeMs, createSharedAssetStore, installSharedAssetStore, timingSummary, testShard, groupCost, heaviestFirst, shardGroups, resolveTestViewport, RETRY_INDEX_BASE, RETRY_SHARD_STRIDE, networkSnapshot, documentOf, stylesheetProblem, makeStylesheetWatch, pageShowsSomethingInPage, readRenderHealth, parseCookie, resolveTargets, resolveDeviceScaleFactor, parseTargetViewport, parseCompanion, parseReady, waitForScenarioReady, mediaEnabled, resolveTests, captureTarget, runTests, runTestGroup, groupTestsByUrl, groupTestsByDocument, groupTests, cohortsOf, hashGroupCap, waitForQuiet, makeActivityClock, makeConsoleErrorSink, settleQuietMs, settleMaxMs, assertMaxMs, poolSize, testTimeoutMs, testsDeadlineMs, setFrameSink, CHROMIUM_LAUNCH_ARGS };
+module.exports = { timingSummary, testShard, groupCost, heaviestFirst, shardGroups, resolveTestViewport, RETRY_INDEX_BASE, RETRY_SHARD_STRIDE, networkSnapshot, documentOf, stylesheetProblem, makeStylesheetWatch, pageShowsSomethingInPage, readRenderHealth, parseCookie, resolveTargets, resolveDeviceScaleFactor, parseTargetViewport, parseCompanion, parseReady, waitForScenarioReady, mediaEnabled, resolveTests, captureTarget, runTests, runTestGroup, groupTestsByUrl, groupTestsByDocument, groupTests, cohortsOf, hashGroupCap, waitForQuiet, makeActivityClock, makeConsoleErrorSink, settleQuietMs, settleMaxMs, assertMaxMs, poolSize, testTimeoutMs, testsDeadlineMs, setFrameSink, CHROMIUM_LAUNCH_ARGS };

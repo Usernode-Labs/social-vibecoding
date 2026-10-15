@@ -254,12 +254,6 @@ const CAPTURE_SHARD_CONCURRENCY = process.env.CAPTURE_SHARD_CONCURRENCY || '5';
 // The checks' own pixel density (capture/capture.js TEST_DEVICE_SCALE_FACTOR):
 // 1× unless set. The shots keep the app's density.
 const CAPTURE_TEST_DEVICE_SCALE = process.env.CAPTURE_TEST_DEVICE_SCALE || '1';
-// The pod-wide store of build-static files (capture/capture.js
-// createSharedAssetStore). Off unless set to 1 here: measured, it cuts what
-// the preview serves by ~87% but costs CPU, and the capture pods are
-// CPU-bound (the note above that function). Passed through so it can be
-// switched without a new image.
-const CAPTURE_SHARED_ASSETS = process.env.CAPTURE_SHARED_ASSETS || '0';
 
 // Mint a 15-minute capture identity token for a seeded capture identity
 // row, scoped to the app being captured.
@@ -781,8 +775,8 @@ function reportedTestIndexes(stdout) {
 // Two kinds: 'network-changed', the pod's network state when a cold load
 // was cancelled by a network change and its group started over, and
 // 'checks-timing', one line per pod at its end: how long its groups and cold
-// loads took and what its shared asset store served. Logged, not stored: they
-// are for finding out what the runs do, not verdicts. A sharded run's stdout
+// loads took. Logged, not stored: they are for finding out what the runs do,
+// not verdicts. A sharded run's stdout
 // is its pods' joined, so the timing lines have a cap of their own (eight
 // shards and a sweep) and never take the other kinds' places.
 const MAX_DIAGNOSTICS = 5;
@@ -2861,7 +2855,6 @@ async function captureForSession(config, session, app, commitHash, stagingResult
           TESTS_DEADLINE_MS,
           // The checks' own density, 1× (capture.js TEST_DEVICE_SCALE_FACTOR).
           TEST_DEVICE_SCALE_FACTOR: CAPTURE_TEST_DEVICE_SCALE,
-          CAPTURE_SHARED_ASSETS,
       };
       if (shotsOnly && !media) {
         // A deferred verdict on a range with no frontend files: no
